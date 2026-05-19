@@ -23,6 +23,7 @@ FREETYPE_SRC += thirdparty/freetype/src/base/ftsystem.c
 FREETYPE_SRC += thirdparty/freetype/src/base/fttype1.c
 FREETYPE_SRC += thirdparty/freetype/src/cff/cff.c
 FREETYPE_SRC += thirdparty/freetype/src/cid/type1cid.c
+FREETYPE_SRC += thirdparty/freetype/src/gzip/ftgzip.c
 FREETYPE_SRC += thirdparty/freetype/src/psaux/psaux.c
 FREETYPE_SRC += thirdparty/freetype/src/pshinter/pshinter.c
 FREETYPE_SRC += thirdparty/freetype/src/psnames/psnames.c
@@ -176,6 +177,7 @@ LIBJPEG_SRC += thirdparty/libjpeg/jcmarker.c
 LIBJPEG_SRC += thirdparty/libjpeg/jcmaster.c
 LIBJPEG_SRC += thirdparty/libjpeg/jcomapi.c
 LIBJPEG_SRC += thirdparty/libjpeg/jcparam.c
+LIBJPEG_SRC += thirdparty/libjpeg/jcphuff.c
 LIBJPEG_SRC += thirdparty/libjpeg/jcprepct.c
 LIBJPEG_SRC += thirdparty/libjpeg/jcsample.c
 LIBJPEG_SRC += thirdparty/libjpeg/jdapimin.c
@@ -192,6 +194,7 @@ LIBJPEG_SRC += thirdparty/libjpeg/jdmainct.c
 LIBJPEG_SRC += thirdparty/libjpeg/jdmarker.c
 LIBJPEG_SRC += thirdparty/libjpeg/jdmaster.c
 LIBJPEG_SRC += thirdparty/libjpeg/jdmerge.c
+LIBJPEG_SRC += thirdparty/libjpeg/jdphuff.c
 LIBJPEG_SRC += thirdparty/libjpeg/jdpostct.c
 LIBJPEG_SRC += thirdparty/libjpeg/jdsample.c
 LIBJPEG_SRC += thirdparty/libjpeg/jdtrans.c
@@ -202,10 +205,12 @@ LIBJPEG_SRC += thirdparty/libjpeg/jfdctint.c
 LIBJPEG_SRC += thirdparty/libjpeg/jidctflt.c
 LIBJPEG_SRC += thirdparty/libjpeg/jidctfst.c
 LIBJPEG_SRC += thirdparty/libjpeg/jidctint.c
+LIBJPEG_SRC += thirdparty/libjpeg/jidctred.c
 LIBJPEG_SRC += thirdparty/libjpeg/jmemmgr.c
 LIBJPEG_SRC += thirdparty/libjpeg/jquant1.c
 LIBJPEG_SRC += thirdparty/libjpeg/jquant2.c
 LIBJPEG_SRC += thirdparty/libjpeg/jutils.c
+LIBJPEG_SRC += thirdparty/libjpeg/jsimd_none.c
 
 # --- LCMS2 (multi-threaded fork) ---
 

@@ -127,7 +127,11 @@
 /* SumatraPDF: opening multiple epub files will crash because different threads will clobber
 * fz_hb_secret. Locking is not good enough
 */
+#ifdef _MSC_VER
 __declspec(thread) static fz_context *fz_hb_secret = NULL;
+#else
+static __thread fz_context *fz_hb_secret = NULL;
+#endif
 
 static void set_hb_context(fz_context *ctx)
 {

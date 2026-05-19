@@ -102,7 +102,11 @@ typedef struct
 /* SumatraPDF: opening multiple PDF files with jpx imags will crash because different
  * threads will clobber opj_secret. Locking is not good enough
 */
+#ifdef _MSC_VER
 __declspec(thread) static fz_context *fz_opj_secret = NULL;
+#else
+static __thread fz_context *fz_opj_secret = NULL;
+#endif
 
 static void set_opj_context(fz_context *ctx)
 {

@@ -66,15 +66,15 @@ jpeg_free_large (j_common_ptr cinfo, void FAR * object, size_t sizeofobject)
  * Here we always say, "we got all you want bud!"
  */
 
-GLOBAL(long)
-jpeg_mem_available (j_common_ptr cinfo, long min_bytes_needed,
-		long max_bytes_needed, long already_allocated)
+GLOBAL(size_t)
+jpeg_mem_available (j_common_ptr cinfo, size_t min_bytes_needed,
+		size_t max_bytes_needed, size_t already_allocated)
 {
 	jpeg_cust_mem_data *cmem = GET_CUST_MEM_DATA(cinfo);
-	long ret = max_bytes_needed;
+	size_t ret = max_bytes_needed;
 
 	if (cmem->j_mem_avail)
-		ret = (cmem->j_mem_avail)(cinfo);
+		ret = (size_t)(cmem->j_mem_avail)(cinfo);
 
 	return ret;
 }

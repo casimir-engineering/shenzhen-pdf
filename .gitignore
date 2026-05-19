@@ -13,6 +13,8 @@ mupdf/generated/
 .vscode/ipch/
 # src/utils/BuildConfig.h
 artifacts/
+dist/
+portable/build/
 .idea/
 src/.vscode
 tools/pdfjs/coverage/

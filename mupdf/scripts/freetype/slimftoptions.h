@@ -3,7 +3,7 @@
 #include <freetype/config/ftoption.h>
 
 #define FT_CONFIG_OPTION_USE_ZLIB
-#define FT_CONFIG_OPTION_USE_BROTLI
+#undef FT_CONFIG_OPTION_USE_BROTLI
 
 #undef FT_CONFIG_OPTION_USE_LZW
 #undef FT_CONFIG_OPTION_USE_BZIP2

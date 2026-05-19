@@ -176,6 +176,9 @@ THIRD_GLUT_OBJ := $(THIRD_GLUT_SRC:%.c=$(OUT)/%.o)
 
 MUPDF_SRC := $(sort $(wildcard source/fitz/*.c))
 MUPDF_SRC += $(sort $(wildcard source/fitz/*.cpp))
+ifneq ($(OS),Windows_NT)
+  MUPDF_SRC := $(filter-out source/fitz/load-jxr-win.c,$(MUPDF_SRC))
+endif
 MUPDF_SRC += $(sort $(wildcard source/pdf/*.c))
 ifneq ($(xps),no)
 MUPDF_SRC += $(sort $(wildcard source/xps/*.c))
