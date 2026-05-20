@@ -219,6 +219,46 @@ static void free_favorites(app_state* state) {
     state->favorite_capacity = 0;
 }
 
+static void strip_known_document_extension(char* text) {
+    static const char* exts[] = {".pdf", ".xps", ".cbz", ".epub"};
+    if (!text) return;
+
+    for (gsize i = 0; i < G_N_ELEMENTS(exts); ++i) {
+        gsize ext_len = strlen(exts[i]);
+        char* match = NULL;
+        for (char* cursor = text; *cursor; ++cursor) {
+            if (g_ascii_strncasecmp(cursor, exts[i], ext_len) == 0) match = cursor;
+        }
+        if (!match) continue;
+        char next = match[ext_len];
+        if (next == '\0' || g_ascii_isspace(next) || next == '-') {
+            memmove(match, match + ext_len, strlen(match + ext_len) + 1);
+            return;
+        }
+    }
+}
+
+static char* display_name_for_path(const char* path) {
+    char* name = g_path_get_basename(path ? path : "");
+    strip_known_document_extension(name);
+    return name;
+}
+
+static char* display_label_without_extension(const char* label) {
+    char* text = g_strdup(label ? label : "");
+    strip_known_document_extension(text);
+    return text;
+}
+
+static char* display_path_without_extension(const char* path) {
+    char* text = g_strdup(path ? path : "");
+    char* slash = strrchr(text, G_DIR_SEPARATOR);
+    char* base = slash ? slash + 1 : text;
+    char* dot = strrchr(base, '.');
+    if (dot && dot > base) *dot = '\0';
+    return text;
+}
+
 static void add_favorite_item(app_state* state, const char* path, const char* title, int page_index,
                               gboolean document) {
     if (!path || !*path) return;
@@ -229,9 +269,9 @@ static void add_favorite_item(app_state* state, const char* path, const char* ti
     }
     state->favorites[state->favorite_count].path = g_strdup(path);
     if (title && *title) {
-        state->favorites[state->favorite_count].title = g_strdup(title);
+        state->favorites[state->favorite_count].title = display_label_without_extension(title);
     } else {
-        state->favorites[state->favorite_count].title = g_path_get_basename(path);
+        state->favorites[state->favorite_count].title = display_name_for_path(path);
     }
     state->favorites[state->favorite_count].page_index = page_index;
     state->favorites[state->favorite_count].document = document;
@@ -366,7 +406,9 @@ static void update_controls(app_state* state) {
     snprintf(text, sizeof(text), "Page %d of %d    Zoom %.0f%%", state->page_index + 1, page_count,
              state->zoom * 100.0);
     gtk_label_set_text(GTK_LABEL(state->status), text);
-    gtk_window_set_title(GTK_WINDOW(state->window), spdf_title(state->doc));
+    char* title = display_label_without_extension(spdf_title(state->doc));
+    gtk_window_set_title(GTK_WINDOW(state->window), title && *title ? title : "SumatraPDF");
+    g_free(title);
 }
 
 static void clear_list_box(GtkWidget* list) {
@@ -1074,12 +1116,15 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
 static void add_current_favorite(app_state* state, gboolean document) {
     char title[1024];
     char status[160];
+    char* display_title;
 
     if (!state->doc || !state->path) return;
+    display_title = display_label_without_extension(spdf_title(state->doc));
     if (document)
-        snprintf(title, sizeof(title), "%s", spdf_title(state->doc));
+        snprintf(title, sizeof(title), "%s", display_title);
     else
-        snprintf(title, sizeof(title), "%s - page %d", spdf_title(state->doc), state->page_index + 1);
+        snprintf(title, sizeof(title), "%s - page %d", display_title, state->page_index + 1);
+    g_free(display_title);
     add_favorite_item(state, state->path, title, document ? 0 : state->page_index, document);
     save_favorites(state);
     snprintf(status, sizeof(status), "Added %s favorite", document ? "document" : "page");
@@ -1117,12 +1162,16 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
 
     for (int i = 0; i < state->favorite_count; ++i) {
         char text[1600];
+        char* title;
+        char* path;
         GtkWidget* row;
         GtkWidget* label;
         if (!favorite_matches(&state->favorites[i], filter)) continue;
-        snprintf(text, sizeof(text), "%s%s\n%s", state->favorites[i].title ? state->favorites[i].title : "Favorite",
-                 state->favorites[i].document ? "" : " (page favorite)",
-                 state->favorites[i].path ? state->favorites[i].path : "");
+        title = display_label_without_extension(state->favorites[i].title ? state->favorites[i].title : "Favorite");
+        path = display_path_without_extension(state->favorites[i].path ? state->favorites[i].path : "");
+        snprintf(text, sizeof(text), "%s%s\n%s", title, state->favorites[i].document ? "" : " (page favorite)", path);
+        g_free(title);
+        g_free(path);
         row = gtk_list_box_row_new();
         label = gtk_label_new(text);
         gtk_label_set_xalign(GTK_LABEL(label), 0.0);
@@ -1148,10 +1197,11 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
             int hits = spdf_search_page(state->doc, page, filter, err, sizeof(err));
             if (hits <= 0) continue;
             char text[1600];
+            char* path = display_path_without_extension(state->path ? state->path : "Current document");
             GtkWidget* row = gtk_list_box_row_new();
             GtkWidget* label;
-            snprintf(text, sizeof(text), "%s\nPage %d - %d match%s", state->path ? state->path : "Current document",
-                     page + 1, hits, hits == 1 ? "" : "es");
+            snprintf(text, sizeof(text), "%s\nPage %d - %d match%s", path, page + 1, hits, hits == 1 ? "" : "es");
+            g_free(path);
             label = gtk_label_new(text);
             gtk_label_set_xalign(GTK_LABEL(label), 0.0);
             gtk_widget_set_margin_start(label, 8);

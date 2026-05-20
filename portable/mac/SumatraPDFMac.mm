@@ -19,6 +19,33 @@ static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) 
     return MAX(minValue, MIN(maxValue, value));
 }
 
+static NSString* spdf_display_label_without_extension(NSString* label) {
+    if (!label.length) return @"";
+    NSArray<NSString*>* extensions = @[ @".pdf", @".xps", @".cbz", @".epub" ];
+    for (NSString* ext in extensions) {
+        NSRange range = [label rangeOfString:ext options:NSCaseInsensitiveSearch | NSBackwardsSearch];
+        if (range.location == NSNotFound) continue;
+        NSUInteger end = range.location + range.length;
+        BOOL atEnd = end == label.length;
+        BOOL beforeSuffix = !atEnd && ([[NSCharacterSet whitespaceAndNewlineCharacterSet]
+                                           characterIsMember:[label characterAtIndex:end]] ||
+                                       [label characterAtIndex:end] == '-');
+        if (atEnd || beforeSuffix) return [label stringByReplacingCharactersInRange:range withString:@""];
+    }
+    return label;
+}
+
+static NSString* spdf_display_name_for_path(NSString* path) {
+    NSString* name = path.lastPathComponent;
+    return spdf_display_label_without_extension(name);
+}
+
+static NSString* spdf_display_path_without_extension(NSString* path) {
+    if (!path.length) return @"";
+    NSString* stem = path.stringByDeletingPathExtension;
+    return stem.length && ![stem isEqualToString:path] ? stem : path;
+}
+
 typedef NS_ENUM(NSInteger, SPDFFitMode) {
     SPDFFitModeCustom = 0,
     SPDFFitModeActual,
@@ -154,6 +181,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (void)activatePaletteSelection:(id)sender;
 - (void)updateFindControls;
 - (void)updateMinimap;
+- (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop;
+- (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex
+                             alignTop:(BOOL)alignTop
+                        restoreOrigin:(NSValue*)restoreOrigin;
+- (void)scrollDocumentClipViewToOrigin:(NSPoint)origin notify:(BOOL)notify;
 - (void)minimapViewDidRequestScrollToFraction:(CGFloat)yFraction;
 - (void)minimapViewDidRequestScrollToPage:(NSInteger)pageIndex yFractionInPage:(CGFloat)yFraction;
 - (void)minimapViewDidRequestCenterAtDocumentPoint:(NSPoint)documentPoint;
@@ -232,7 +264,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [[NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:7 yRadius:7] fill];
 
         SPDFDocumentTab* tab = self.tabs[(NSUInteger)i];
-        NSString* title = tab.title.length ? tab.title : tab.path.lastPathComponent;
+        NSString* title =
+            tab.path.length ? spdf_display_name_for_path(tab.path) : spdf_display_label_without_extension(tab.title);
         NSDictionary* titleAttrs = selected ? attrs : dimAttrs;
         CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
         CGFloat titleInset = 26.0;
@@ -1351,7 +1384,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
             if (![path isKindOfClass:NSString.class] || path.length == 0) continue;
             SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
             tab.path = path;
-            tab.title = [item[@"title"] isKindOfClass:NSString.class] ? item[@"title"] : path.lastPathComponent;
+            tab.title = spdf_display_name_for_path(path);
             tab.pageIndex = [item[@"page"] integerValue];
             tab.zoom = [item[@"zoom"] doubleValue] > 0 ? [item[@"zoom"] doubleValue] : 1.0;
             tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
@@ -1369,7 +1402,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         if (!tab.path.length) continue;
         [tabs addObject:@{
             @"path" : tab.path,
-            @"title" : tab.title ?: tab.path.lastPathComponent,
+            @"title" : spdf_display_name_for_path(tab.path),
             @"page" : @(tab.pageIndex),
             @"zoom" : @(tab.zoom),
             @"fitMode" : @(tab.fitMode),
@@ -1892,6 +1925,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop {
+    [self renderDocumentAndScrollToPage:pageIndex alignTop:alignTop restoreOrigin:nil];
+}
+
+- (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex
+                             alignTop:(BOOL)alignTop
+                        restoreOrigin:(NSValue*)restoreOrigin {
     if (!_doc || !_uiReady) return;
 
     [_window.contentView layoutSubtreeIfNeeded];
@@ -1931,7 +1970,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _pageView.viewMode = _viewMode;
     [self applySearchHighlightsToCurrentPage];
     [self resizeDocumentView];
-    [self scrollToPage:pageIndex alignTop:alignTop];
+    if (restoreOrigin)
+        [self scrollDocumentClipViewToOrigin:restoreOrigin.pointValue notify:YES];
+    else
+        [self scrollToPage:pageIndex alignTop:alignTop];
     [self syncToolbarState];
     [self updateControls];
     [self selectCurrentSidebarRow];
@@ -1947,18 +1989,53 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self updateMinimap];
 }
 
+- (NSPoint)clampedDocumentScrollOrigin:(NSPoint)origin {
+    NSClipView* clipView = _pageScrollView.contentView;
+    origin.x = spdf_clamp_cg(origin.x, 0.0, MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds)));
+    origin.y = spdf_clamp_cg(origin.y, 0.0, MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds)));
+    return origin;
+}
+
+- (void)scrollDocumentClipViewToOrigin:(NSPoint)origin notify:(BOOL)notify {
+    NSClipView* clipView = _pageScrollView.contentView;
+    origin = [self clampedDocumentScrollOrigin:origin];
+    _updatingFromScroll = YES;
+    [NSAnimationContext
+        runAnimationGroup:^(NSAnimationContext* context) {
+          context.duration = 0.0;
+          context.allowsImplicitAnimation = NO;
+          [clipView setBoundsOrigin:origin];
+          [self->_pageScrollView reflectScrolledClipView:clipView];
+        }
+        completionHandler:nil];
+    _updatingFromScroll = NO;
+    if (notify) {
+        [self documentScrollPositionChanged];
+        [self updateMinimap];
+    }
+}
+
 - (void)scrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop {
     if (_renderedPages.count == 0) return;
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
-    _updatingFromScroll = YES;
     if (alignTop) {
         NSPoint point = NSMakePoint(MAX(0, pageRect.origin.x - 12), MAX(0, pageRect.origin.y - 12));
-        [_pageView scrollPoint:point];
+        [self scrollDocumentClipViewToOrigin:point notify:NO];
     } else {
-        [_pageView scrollRectToVisible:pageRect];
+        NSClipView* clipView = _pageScrollView.contentView;
+        NSRect visible = clipView.bounds;
+        NSPoint origin = visible.origin;
+        if (NSMinX(pageRect) < NSMinX(visible))
+            origin.x = NSMinX(pageRect) - 12.0;
+        else if (NSMaxX(pageRect) > NSMaxX(visible))
+            origin.x = NSMaxX(pageRect) - NSWidth(visible) + 12.0;
+        if (NSMinY(pageRect) < NSMinY(visible))
+            origin.y = NSMinY(pageRect) - 12.0;
+        else if (NSMaxY(pageRect) > NSMaxY(visible))
+            origin.y = NSMaxY(pageRect) - NSHeight(visible) + 12.0;
+        [self scrollDocumentClipViewToOrigin:origin notify:NO];
     }
-    _updatingFromScroll = NO;
     [self documentScrollPositionChanged];
     [self updateMinimap];
 }
@@ -1996,12 +2073,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
 
-    _updatingFromScroll = YES;
-    [clipView scrollToPoint:origin];
-    [_pageScrollView reflectScrolledClipView:clipView];
-    _updatingFromScroll = NO;
-    [self documentScrollPositionChanged];
-    [self updateMinimap];
+    [self scrollDocumentClipViewToOrigin:origin notify:YES];
 }
 
 - (void)goToPage:(NSInteger)pageIndex preserveSinglePagePosition:(BOOL)preserveSinglePagePosition {
@@ -2125,12 +2197,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
 
-    _updatingFromScroll = YES;
-    [clipView scrollToPoint:origin];
-    [_pageScrollView reflectScrolledClipView:clipView];
-    _updatingFromScroll = NO;
-    [self documentScrollPositionChanged];
-    [self updateMinimap];
+    [self scrollDocumentClipViewToOrigin:origin notify:YES];
 }
 
 - (void)updateMinimap {
@@ -2170,11 +2237,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         origin.x = spdf_clamp_cg(origin.x, 0.0, maxX);
         origin.y = spdf_clamp_cg(origin.y, 0.0, maxY);
 
-        _updatingFromScroll = YES;
-        [clipView scrollToPoint:origin];
-        [_pageScrollView reflectScrolledClipView:clipView];
-        _updatingFromScroll = NO;
-        [self documentScrollPositionChanged];
+        [self scrollDocumentClipViewToOrigin:origin notify:YES];
         [self rememberActiveTabState];
         return;
     }
@@ -2218,7 +2281,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     if (!_doc || !_path.length) return;
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
     tab.path = _path;
-    tab.title = _path.lastPathComponent ?: tab.title;
+    tab.title = spdf_display_name_for_path(_path) ?: tab.title;
     tab.pageIndex = _pageIndex;
     tab.zoom = _zoom;
     tab.fitMode = _fitMode;
@@ -2326,15 +2389,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     if (fabs(_zoom - oldZoom) < 0.0001) return;
 
     CGFloat ratio = _zoom / oldZoom;
-    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
+    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO restoreOrigin:[NSValue valueWithPoint:oldOrigin]];
 
     NSPoint newOrigin = NSMakePoint(viewPoint.x * ratio - (viewPoint.x - oldOrigin.x),
                                     viewPoint.y * ratio - (viewPoint.y - oldOrigin.y));
     newOrigin.x = MAX(0, MIN(newOrigin.x, MAX(0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds))));
     newOrigin.y = MAX(0, MIN(newOrigin.y, MAX(0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds))));
-    [clipView scrollToPoint:newOrigin];
-    [_pageScrollView reflectScrolledClipView:clipView];
-    [self documentScrollPositionChanged];
+    [self scrollDocumentClipViewToOrigin:newOrigin notify:YES];
     [self persistActiveState];
 }
 
@@ -2352,8 +2413,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                     viewPoint.y * ratio - (viewPoint.y - oldOrigin.y));
     newOrigin.x = MAX(0, MIN(newOrigin.x, MAX(0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds))));
     newOrigin.y = MAX(0, MIN(newOrigin.y, MAX(0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds))));
-    [clipView scrollToPoint:newOrigin];
-    [_pageScrollView reflectScrolledClipView:clipView];
+    [self scrollDocumentClipViewToOrigin:newOrigin notify:NO];
     [self syncToolbarState];
     [self updateControls];
     [self documentScrollPositionChanged];
@@ -2363,12 +2423,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     if (!_doc) return;
     NSClipView* clipView = _pageScrollView.contentView;
     NSPoint origin = clipView.bounds.origin;
-    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
-    origin.x = MAX(0, MIN(origin.x, MAX(0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds))));
-    origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds))));
-    [clipView scrollToPoint:origin];
-    [_pageScrollView reflectScrolledClipView:clipView];
-    [self documentScrollPositionChanged];
+    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO restoreOrigin:[NSValue valueWithPoint:origin]];
 }
 
 - (void)finishLiveZoom:(NSTimer*)timer {
@@ -2434,7 +2489,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _viewMode = tab.viewMode;
     _pageView.viewMode = _viewMode;
     _pageView.currentPageIndex = _pageIndex;
-    tab.title = _path.lastPathComponent;
+    tab.title = spdf_display_name_for_path(_path);
 
     char outlineErr[1024];
     if (_doc && !spdf_load_outline(_doc, &_outline, outlineErr, sizeof(outlineErr)))
@@ -2448,12 +2503,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _statusLabel.stringValue = @"Opening...";
     dispatch_async(dispatch_get_main_queue(), ^{
       if (!_doc) return;
-      [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
-      if (!NSEqualPoints(tab.scrollOrigin, NSZeroPoint)) {
-          [_pageScrollView.contentView scrollToPoint:tab.scrollOrigin];
-          [_pageScrollView reflectScrolledClipView:_pageScrollView.contentView];
-      }
-      [self documentScrollPositionChanged];
+      NSValue* restoreOrigin =
+          NSEqualPoints(tab.scrollOrigin, NSZeroPoint) ? nil : [NSValue valueWithPoint:tab.scrollOrigin];
+      [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES restoreOrigin:restoreOrigin];
     });
 }
 
@@ -2497,7 +2549,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self rememberActiveTabState];
     SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
     tab.path = [path copy];
-    tab.title = path.lastPathComponent;
+    tab.title = spdf_display_name_for_path(path);
     tab.zoom = _zoom > 0 ? _zoom : 1.0;
     tab.fitMode = _fitMode;
     tab.viewMode = _viewMode;
@@ -2688,7 +2740,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _pageCountLabel.stringValue = [NSString stringWithFormat:@"/ %ld", (long)pageCount];
 
     if (hasDoc) {
-        NSString* displayName = _path.lastPathComponent ?: [NSString stringWithUTF8String:spdf_title(_doc)];
+        NSString* displayName =
+            _path.length ? spdf_display_name_for_path(_path) : [NSString stringWithUTF8String:spdf_title(_doc)];
         _window.title = [NSString stringWithFormat:@"%@ - SumatraPDF", displayName];
         NSString* mode = _viewMode == SPDFViewModeContinuous ? @"Continuous" : @"Single page";
         _statusLabel.stringValue =
@@ -2914,20 +2967,22 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (NSString*)shortProvenanceForPath:(NSString*)path {
-    if (path.length <= 52) return path.lastPathComponent;
-    NSString* head = [path substringToIndex:MIN((NSUInteger)20, path.length)];
-    NSString* tail = [path substringFromIndex:path.length - MIN((NSUInteger)28, path.length)];
+    NSString* displayPath = spdf_display_path_without_extension(path);
+    if (displayPath.length <= 52) return spdf_display_name_for_path(path);
+    NSString* head = [displayPath substringToIndex:MIN((NSUInteger)20, displayPath.length)];
+    NSString* tail = [displayPath substringFromIndex:displayPath.length - MIN((NSUInteger)28, displayPath.length)];
     return [NSString stringWithFormat:@"%@...%@", head, tail];
 }
 
 - (void)favoriteCurrentPage:(id)sender {
     (void)sender;
     if (!_path.length) return;
-    NSString* name = [NSString stringWithFormat:@"%@ p.%ld", _path.lastPathComponent, (long)_pageIndex + 1];
+    NSString* displayName = spdf_display_name_for_path(_path);
+    NSString* name = [NSString stringWithFormat:@"%@ p.%ld", displayName, (long)_pageIndex + 1];
     NSMutableDictionary* fav = [@{
         @"type" : @"page",
         @"path" : _path,
-        @"title" : _path.lastPathComponent,
+        @"title" : displayName,
         @"page" : @(_pageIndex),
         @"name" : name,
         @"created" : @((long)NSDate.date.timeIntervalSince1970)
@@ -2947,12 +3002,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (void)favoriteCurrentDocument:(id)sender {
     (void)sender;
     if (!_path.length) return;
+    NSString* displayName = spdf_display_name_for_path(_path);
     NSMutableDictionary* fav = [@{
         @"type" : @"document",
         @"path" : _path,
-        @"title" : _path.lastPathComponent,
+        @"title" : displayName,
         @"page" : @0,
-        @"name" : _path.lastPathComponent,
+        @"name" : displayName,
         @"created" : @((long)NSDate.date.timeIntervalSince1970)
     } mutableCopy];
     NSIndexSet* dupes = [_favorites indexesOfObjectsPassingTest:^BOOL(NSDictionary* obj, NSUInteger idx, BOOL* stop) {
@@ -3001,8 +3057,6 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         ((SPDFPaletteSearchField*)_paletteSearchField).reader = self;
         _paletteSearchField.translatesAutoresizingMaskIntoConstraints = NO;
         _paletteSearchField.delegate = self;
-        _paletteSearchField.target = self;
-        _paletteSearchField.action = @selector(activatePaletteSelection:);
         [content addSubview:_paletteSearchField];
 
         NSScrollView* scroll = [[NSScrollView alloc] init];
@@ -3080,17 +3134,15 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [_paletteResults addObjectsFromArray:favorites];
     }
 
-    if (_path.length) {
+    if (_path.length && query.length == 0) {
+        NSString* displayName = spdf_display_name_for_path(_path);
         [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Actions", @"subtitle" : @""}];
-        [_paletteResults addObject:@{
-            @"kind" : @"addPage",
-            @"title" : @"Favorite current page",
-            @"subtitle" : _path.lastPathComponent ?: @""
-        }];
+        [_paletteResults
+            addObject:@{@"kind" : @"addPage", @"title" : @"Favorite current page", @"subtitle" : displayName ?: @""}];
         [_paletteResults addObject:@{
             @"kind" : @"addDoc",
             @"title" : @"Favorite current document",
-            @"subtitle" : _path.lastPathComponent ?: @""
+            @"subtitle" : displayName ?: @""
         }];
     }
 
@@ -3121,11 +3173,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         if (lowerQuery.length == 0 || [haystack containsString:lowerQuery]) {
             NSString* subtitle = [self shortProvenanceForPath:fav[@"path"] ?: @""];
             if (prefix.length) subtitle = [NSString stringWithFormat:@"%@ - %@", prefix, subtitle];
-            [results addObject:@{@"kind": @"favorite",
-                                 @"title": fav[@"name"] ?: fav[@"title"] ?: @"Favorite",
-                                 @"subtitle": subtitle,
-                                 @"path": fav[@"path"] ?: @"",
-                                 @"page": fav[@"page"] ?: @0}];
+            NSString* title = spdf_display_label_without_extension(fav[@"name"] ?: fav[@"title"] ?: @"Favorite");
+            [results addObject:@{
+                @"kind" : @"favorite",
+                @"title" : title,
+                @"subtitle" : subtitle,
+                @"path" : fav[@"path"] ?: @"",
+                @"page" : fav[@"page"] ?: @0
+            }];
         }
     }
     return results;
