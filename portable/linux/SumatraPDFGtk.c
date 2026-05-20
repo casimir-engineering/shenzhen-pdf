@@ -52,6 +52,7 @@ typedef struct app_state {
     double zoom;
     int fit_mode_id;
     gboolean continuous_mode;
+    gboolean show_sidebar;
     gboolean panning;
     gboolean suppress_restore_once;
     double pan_start_x;
@@ -282,7 +283,8 @@ static void save_settings(app_state* state) {
     GString* json = g_string_new("{\n");
     g_string_append_printf(json, "  \"fitMode\": %d,\n", state->fit_mode_id);
     g_string_append_printf(json, "  \"zoom\": %.4f,\n", state->zoom);
-    g_string_append_printf(json, "  \"continuous\": %s\n", state->continuous_mode ? "true" : "false");
+    g_string_append_printf(json, "  \"continuous\": %s,\n", state->continuous_mode ? "true" : "false");
+    g_string_append_printf(json, "  \"showSidebar\": %s\n", state->show_sidebar ? "true" : "false");
     g_string_append(json, "}\n");
     write_text_file(state->settings_path, json->str);
     g_string_free(json, TRUE);
@@ -327,6 +329,7 @@ static void load_settings(app_state* state) {
     state->zoom = json_get_double(json, "zoom", state->zoom);
     state->zoom = MAX(0.10, MIN(8.0, state->zoom));
     state->continuous_mode = json_get_bool(json, "continuous", state->continuous_mode);
+    state->show_sidebar = json_get_bool(json, "showSidebar", state->show_sidebar);
     g_free(json);
 }
 
@@ -435,7 +438,7 @@ static void rebuild_sidebar(app_state* state) {
     clear_list_box(state->sidebar);
     clear_list_box(state->comments_sidebar);
 
-    if (!state->doc || (state->outline.count == 0 && state->comments.count == 0)) {
+    if (!state->show_sidebar || !state->doc || (state->outline.count == 0 && state->comments.count == 0)) {
         if (state->sidebar_container) gtk_widget_hide(state->sidebar_container);
         return;
     }
@@ -802,6 +805,13 @@ static void continuous_toggled(GtkToggleButton* button, gpointer user_data) {
     save_settings(state);
 }
 
+static void show_sidebar_toggled(GtkCheckMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    state->show_sidebar = gtk_check_menu_item_get_active(item);
+    rebuild_sidebar(state);
+    save_settings(state);
+}
+
 static void sidebar_row_selected(GtkListBox* box, GtkListBoxRow* row, gpointer user_data) {
     (void)box;
     app_state* state = (app_state*)user_data;
@@ -1000,7 +1010,8 @@ static char* backup_path_for_pdf(const char* path) {
 static gboolean ocr_finished_idle(gpointer data) {
     ocr_result* result = (ocr_result*)data;
     app_state* state = result->state;
-    if (state->ocr_button) gtk_widget_set_sensitive(state->ocr_button, state->doc != NULL);
+    if (state->ocr_button)
+        gtk_widget_set_sensitive(state->ocr_button, state->doc != NULL && path_has_pdf_extension(state->path));
     if (result->success) {
         open_path_at_page(state, result->path, result->page_index);
         gtk_label_set_text(GTK_LABEL(state->status), result->message ? result->message : "OCR complete.");
@@ -1070,11 +1081,15 @@ static gboolean ocr_install_finished_idle(gpointer data) {
     tesseract = g_find_program_in_path("tesseract");
     if (result->success && tool && tesseract) {
         gtk_widget_destroy(result->dialog);
-        if (result->state->ocr_button) gtk_widget_set_sensitive(result->state->ocr_button, TRUE);
+        if (result->state->ocr_button)
+            gtk_widget_set_sensitive(result->state->ocr_button,
+                                     result->state->doc != NULL && path_has_pdf_extension(result->state->path));
         ocr_clicked(GTK_BUTTON(result->state->ocr_button), result->state);
     } else {
         append_install_log(result->log, "\nOCR installation failed. The package manager output is shown above.\n");
-        if (result->state->ocr_button) gtk_widget_set_sensitive(result->state->ocr_button, result->state->doc != NULL);
+        if (result->state->ocr_button)
+            gtk_widget_set_sensitive(result->state->ocr_button,
+                                     result->state->doc != NULL && path_has_pdf_extension(result->state->path));
         gtk_label_set_text(GTK_LABEL(result->state->status), "OCR installation failed.");
     }
 
@@ -1482,23 +1497,43 @@ static void show_favorites_dialog(app_state* state) {
 }
 
 static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data) {
-    (void)widget;
     app_state* state = (app_state*)user_data;
     gboolean ctrl = (event->state & GDK_CONTROL_MASK) != 0;
     gboolean shift = (event->state & GDK_SHIFT_MASK) != 0;
+    GtkWidget* focus = gtk_window_get_focus(GTK_WINDOW(widget));
 
-    if (!ctrl) return FALSE;
-    if (event->keyval == GDK_KEY_f || event->keyval == GDK_KEY_F) {
+    if (ctrl && (event->keyval == GDK_KEY_f || event->keyval == GDK_KEY_F)) {
         gtk_widget_grab_focus(state->search_entry);
         gtk_editable_select_region(GTK_EDITABLE(state->search_entry), 0, -1);
         return TRUE;
     }
-    if (event->keyval == GDK_KEY_k || event->keyval == GDK_KEY_K) {
+    if (ctrl && (event->keyval == GDK_KEY_k || event->keyval == GDK_KEY_K)) {
         show_favorites_dialog(state);
         return TRUE;
     }
-    if (event->keyval == GDK_KEY_b || event->keyval == GDK_KEY_B) {
+    if (ctrl && (event->keyval == GDK_KEY_b || event->keyval == GDK_KEY_B)) {
         add_current_favorite(state, shift);
+        return TRUE;
+    }
+
+    if (ctrl || !state->doc || (focus && GTK_IS_EDITABLE(focus))) return FALSE;
+    if (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Up || event->keyval == GDK_KEY_Right ||
+        event->keyval == GDK_KEY_Down) {
+        if (!state->continuous_mode) {
+            if (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Up)
+                previous_clicked(NULL, state);
+            else
+                next_clicked(NULL, state);
+            return TRUE;
+        }
+
+        GtkAdjustment* adjustment = (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Right)
+                                        ? gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll))
+                                        : gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+        double delta = (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Up) ? -54.0 : 54.0;
+        double lower = gtk_adjustment_get_lower(adjustment);
+        double upper = gtk_adjustment_get_upper(adjustment) - gtk_adjustment_get_page_size(adjustment);
+        gtk_adjustment_set_value(adjustment, MAX(lower, MIN(gtk_adjustment_get_value(adjustment) + delta, upper)));
         return TRUE;
     }
     return FALSE;
@@ -1603,6 +1638,10 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->open_in_browser = gtk_menu_item_new_with_mnemonic("Open in Default _Browser");
     state->show_in_folder = gtk_menu_item_new_with_mnemonic("Show in _Folder");
     GtkWidget* quit_menu = gtk_menu_item_new_with_mnemonic("_Quit");
+    GtkWidget* view_menu = gtk_menu_new();
+    GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
+    GtkWidget* show_sidebar = gtk_check_menu_item_new_with_mnemonic("Show Side _Panel");
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(show_sidebar), state->show_sidebar);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(file), file_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), open_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->open_in_browser);
@@ -1610,6 +1649,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), quit_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), file);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), show_sidebar);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), view);
     gtk_box_pack_start(GTK_BOX(root), menubar, FALSE, FALSE, 0);
 
     GtkWidget* toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -1688,6 +1730,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(open_menu, "activate", G_CALLBACK(open_clicked), state);
     g_signal_connect(state->open_in_browser, "activate", G_CALLBACK(open_in_browser), state);
     g_signal_connect(state->show_in_folder, "activate", G_CALLBACK(show_in_folder), state);
+    g_signal_connect(show_sidebar, "toggled", G_CALLBACK(show_sidebar_toggled), state);
     g_signal_connect_swapped(quit_menu, "activate", G_CALLBACK(g_application_quit), app);
     g_signal_connect(prev, "clicked", G_CALLBACK(previous_clicked), state);
     g_signal_connect(next, "clicked", G_CALLBACK(next_clicked), state);
@@ -1747,6 +1790,7 @@ int main(int argc, char** argv) {
     state.zoom = 1.0;
     state.fit_mode_id = 2;
     state.continuous_mode = TRUE;
+    state.show_sidebar = TRUE;
     state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, g_get_num_processors()), FALSE, NULL);
     init_config_paths(&state);
     load_settings(&state);
