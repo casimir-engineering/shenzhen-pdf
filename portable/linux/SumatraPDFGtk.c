@@ -1,4 +1,5 @@
 #include <gtk/gtk.h>
+#include <gio/gio.h>
 #include <glib/gstdio.h>
 
 #include "sumatra_pdf_core.h"
@@ -19,6 +20,7 @@ typedef struct app_state {
     GtkApplication* app;
     GtkWidget* window;
     GtkWidget* open_in_browser;
+    GtkWidget* show_in_folder;
     GtkWidget* ocr_button;
     GtkWidget* page_box;
     GtkWidget* scroll;
@@ -345,6 +347,8 @@ static void update_controls(app_state* state) {
     gtk_widget_set_sensitive(state->fit_mode, state->doc != NULL);
     gtk_widget_set_sensitive(state->continuous, state->doc != NULL);
     if (state->open_in_browser) gtk_widget_set_sensitive(state->open_in_browser, state->doc != NULL);
+    if (state->show_in_folder)
+        gtk_widget_set_sensitive(state->show_in_folder, state->doc != NULL && state->path != NULL);
     if (state->ocr_button)
         gtk_widget_set_sensitive(state->ocr_button, state->doc != NULL && path_has_pdf_extension(state->path));
 
@@ -813,6 +817,86 @@ static void open_in_browser(GtkWidget* widget, gpointer user_data) {
     g_free(uri);
 }
 
+static gboolean reveal_file_with_file_manager(const char* uri) {
+    GError* error = NULL;
+    GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+    if (!bus) {
+        if (error) g_error_free(error);
+        return FALSE;
+    }
+
+    GVariantBuilder items;
+    g_variant_builder_init(&items, G_VARIANT_TYPE("as"));
+    g_variant_builder_add(&items, "s", uri);
+    GVariant* result = g_dbus_connection_call_sync(
+        bus, "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1",
+        "ShowItems", g_variant_new("(ass)", &items, ""), NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+    g_object_unref(bus);
+    if (result) {
+        g_variant_unref(result);
+        return TRUE;
+    }
+    if (error) g_error_free(error);
+    return FALSE;
+}
+
+static gboolean open_directory_uri(app_state* state, const char* directory) {
+    GError* error = NULL;
+    char* uri = g_filename_to_uri(directory, NULL, &error);
+    if (!uri) {
+        if (error) g_error_free(error);
+        return FALSE;
+    }
+
+    gboolean opened = gtk_show_uri_on_window(GTK_WINDOW(state->window), uri, GDK_CURRENT_TIME, &error);
+    if (error) g_error_free(error);
+    g_free(uri);
+    return opened;
+}
+
+static gboolean spawn_xdg_open_directory(const char* directory) {
+    GError* error = NULL;
+    char* xdg_open = g_find_program_in_path("xdg-open");
+    if (!xdg_open) return FALSE;
+
+    char* argv[] = {xdg_open, (char*)directory, NULL};
+    gboolean spawned = g_spawn_async(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, NULL, &error);
+    if (error) g_error_free(error);
+    g_free(xdg_open);
+    return spawned;
+}
+
+static void show_in_folder(GtkWidget* widget, gpointer user_data) {
+    (void)widget;
+    app_state* state = (app_state*)user_data;
+    GError* error = NULL;
+    char* uri;
+    char* directory;
+
+    if (!state->doc || !state->path) return;
+
+    uri = g_filename_to_uri(state->path, NULL, &error);
+    if (!uri) {
+        show_error(GTK_WINDOW(state->window), "Could not build file URI", error ? error->message : "");
+        if (error) g_error_free(error);
+        return;
+    }
+    if (reveal_file_with_file_manager(uri)) {
+        g_free(uri);
+        return;
+    }
+    g_free(uri);
+
+    directory = g_path_get_dirname(state->path);
+    if (open_directory_uri(state, directory) || spawn_xdg_open_directory(directory)) {
+        g_free(directory);
+        return;
+    }
+
+    show_error(GTK_WINDOW(state->window), "Could not show document in folder", "No file manager accepted the request.");
+    g_free(directory);
+}
+
 typedef struct ocr_task {
     app_state* state;
     char* tool;
@@ -1212,7 +1296,19 @@ static gboolean page_scroll_event(GtkWidget* widget, GdkEventScroll* event, gpoi
 static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
     (void)widget;
     app_state* state = (app_state*)user_data;
-    if (event->button != 2 && event->button != 3) return FALSE;
+
+    if (event->button == 3) {
+        GtkWidget* menu = gtk_menu_new();
+        GtkWidget* show_folder = gtk_menu_item_new_with_label("Show in Folder");
+        gtk_widget_set_sensitive(show_folder, state->doc != NULL && state->path != NULL);
+        g_signal_connect(show_folder, "activate", G_CALLBACK(show_in_folder), state);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), show_folder);
+        gtk_widget_show_all(menu);
+        gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
+        return TRUE;
+    }
+
+    if (event->button != 2 || !state->doc) return FALSE;
 
     GtkAdjustment* hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
     GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
@@ -1261,10 +1357,12 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* file = gtk_menu_item_new_with_mnemonic("_File");
     GtkWidget* open_menu = gtk_menu_item_new_with_mnemonic("_Open...");
     state->open_in_browser = gtk_menu_item_new_with_mnemonic("Open in Default _Browser");
+    state->show_in_folder = gtk_menu_item_new_with_mnemonic("Show in _Folder");
     GtkWidget* quit_menu = gtk_menu_item_new_with_mnemonic("_Quit");
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(file), file_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), open_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->open_in_browser);
+    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->show_in_folder);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), quit_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), file);
@@ -1345,6 +1443,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(open, "clicked", G_CALLBACK(open_clicked), state);
     g_signal_connect(open_menu, "activate", G_CALLBACK(open_clicked), state);
     g_signal_connect(state->open_in_browser, "activate", G_CALLBACK(open_in_browser), state);
+    g_signal_connect(state->show_in_folder, "activate", G_CALLBACK(show_in_folder), state);
     g_signal_connect_swapped(quit_menu, "activate", G_CALLBACK(g_application_quit), app);
     g_signal_connect(prev, "clicked", G_CALLBACK(previous_clicked), state);
     g_signal_connect(next, "clicked", G_CALLBACK(next_clicked), state);

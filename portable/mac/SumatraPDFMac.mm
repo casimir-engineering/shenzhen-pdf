@@ -1408,6 +1408,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [fileMenu addItemWithTitle:@"Open in Adobe Acrobat Reader"
                         action:@selector(openInExternalReader:)
                  keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Show in Folder" action:@selector(showInFolder:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Close" action:@selector(closeDocument:) keyEquivalent:@"w"];
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Print..." action:@selector(printDocument:) keyEquivalent:@"p"];
@@ -3662,6 +3663,17 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     }
 }
 
+- (void)showInFolder:(id)sender {
+    (void)sender;
+    if (!_path.length) {
+        NSBeep();
+        return;
+    }
+
+    NSURL* fileURL = [NSURL fileURLWithPath:_path];
+    [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ fileURL ]];
+}
+
 - (void)copyCurrentPageImage:(id)sender {
     (void)sender;
     if (!_doc || _pageIndex < 0 || _pageIndex >= (NSInteger)_renderedPages.count ||
@@ -3692,6 +3704,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [menu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@""];
     [menu addItem:[NSMenuItem separatorItem]];
     [menu addItemWithTitle:@"Favorite Page" action:@selector(favoriteCurrentPage:) keyEquivalent:@""];
+    [menu addItemWithTitle:@"Show in Folder" action:@selector(showInFolder:) keyEquivalent:@""];
     [menu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@""];
     [NSMenu popUpContextMenu:menu withEvent:event forView:view];
 }
@@ -3884,6 +3897,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     if (action == @selector(copySelection:)) return _selectedText.length > 0;
     if (action == @selector(ocrDocument:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+    if (action == @selector(showInFolder:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentPageImage:))
         return hasDoc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
                _renderedPages[(NSUInteger)_pageIndex].image != nil;
