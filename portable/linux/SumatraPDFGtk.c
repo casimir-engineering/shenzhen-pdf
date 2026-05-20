@@ -956,6 +956,25 @@ typedef struct ocr_result {
     char* message;
 } ocr_result;
 
+static void ocr_clicked(GtkButton* button, gpointer user_data);
+
+typedef struct ocr_install_task {
+    app_state* state;
+    GtkWidget* dialog;
+    GtkWidget* progress;
+    GtkWidget* log;
+    char* script;
+} ocr_install_task;
+
+typedef struct ocr_install_result {
+    app_state* state;
+    GtkWidget* dialog;
+    GtkWidget* progress;
+    GtkWidget* log;
+    gboolean success;
+    char* output;
+} ocr_install_result;
+
 static char* backup_path_for_pdf(const char* path) {
     char* dir = g_path_get_dirname(path);
     char* base = g_path_get_basename(path);
@@ -993,6 +1012,155 @@ static gboolean ocr_finished_idle(gpointer data) {
     g_free(result->message);
     g_free(result);
     return G_SOURCE_REMOVE;
+}
+
+static gboolean block_dialog_delete(GtkWidget* widget, GdkEvent* event, gpointer user_data) {
+    (void)widget;
+    (void)event;
+    (void)user_data;
+    return TRUE;
+}
+
+static gboolean pulse_install_progress(gpointer data) {
+    GtkProgressBar* progress = GTK_PROGRESS_BAR(data);
+    if (!GPOINTER_TO_INT(g_object_get_data(G_OBJECT(progress), "ocr-install-running"))) return G_SOURCE_REMOVE;
+    gtk_progress_bar_pulse(progress);
+    return G_SOURCE_CONTINUE;
+}
+
+static char* ocr_install_script(void) {
+    return g_strdup(
+        "set -e\n"
+        "if command -v ocrmypdf >/dev/null 2>&1 && command -v tesseract >/dev/null 2>&1; then exit 0; fi\n"
+        "if ! command -v pkexec >/dev/null 2>&1; then echo 'pkexec is required for graphical package installation.'; "
+        "exit 1; fi\n"
+        "if command -v apt-get >/dev/null 2>&1; then\n"
+        "  pkexec /bin/sh -c 'apt-get update && apt-get install -y ocrmypdf tesseract-ocr'\n"
+        "elif command -v dnf >/dev/null 2>&1; then\n"
+        "  pkexec dnf install -y ocrmypdf tesseract\n"
+        "elif command -v pacman >/dev/null 2>&1; then\n"
+        "  pkexec pacman -S --needed --noconfirm ocrmypdf tesseract\n"
+        "elif command -v zypper >/dev/null 2>&1; then\n"
+        "  pkexec zypper --non-interactive install ocrmypdf tesseract-ocr\n"
+        "else\n"
+        "  echo 'No supported package manager found (apt, dnf, pacman, zypper).'\n"
+        "  exit 1\n"
+        "fi\n"
+        "command -v ocrmypdf >/dev/null 2>&1\n"
+        "command -v tesseract >/dev/null 2>&1\n");
+}
+
+static void append_install_log(GtkWidget* log, const char* text) {
+    GtkTextBuffer* buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(log));
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(buffer, &end);
+    gtk_text_buffer_insert(buffer, &end, text ? text : "", -1);
+}
+
+static gboolean ocr_install_finished_idle(gpointer data) {
+    ocr_install_result* result = (ocr_install_result*)data;
+    char* tool = NULL;
+    char* tesseract = NULL;
+
+    g_object_set_data(G_OBJECT(result->progress), "ocr-install-running", GINT_TO_POINTER(FALSE));
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(result->progress), result->success ? 1.0 : 0.0);
+    append_install_log(result->log, result->output ? result->output : "");
+
+    tool = g_find_program_in_path("ocrmypdf");
+    tesseract = g_find_program_in_path("tesseract");
+    if (result->success && tool && tesseract) {
+        gtk_widget_destroy(result->dialog);
+        if (result->state->ocr_button) gtk_widget_set_sensitive(result->state->ocr_button, TRUE);
+        ocr_clicked(GTK_BUTTON(result->state->ocr_button), result->state);
+    } else {
+        append_install_log(result->log, "\nOCR installation failed. The package manager output is shown above.\n");
+        if (result->state->ocr_button) gtk_widget_set_sensitive(result->state->ocr_button, result->state->doc != NULL);
+        gtk_label_set_text(GTK_LABEL(result->state->status), "OCR installation failed.");
+    }
+
+    g_free(tool);
+    g_free(tesseract);
+    g_object_unref(result->dialog);
+    g_object_unref(result->progress);
+    g_object_unref(result->log);
+    g_free(result->output);
+    g_free(result);
+    return G_SOURCE_REMOVE;
+}
+
+static gpointer ocr_install_worker(gpointer data) {
+    ocr_install_task* task = (ocr_install_task*)data;
+    ocr_install_result* result = g_new0(ocr_install_result, 1);
+    gchar* stdout_text = NULL;
+    gchar* stderr_text = NULL;
+    GError* error = NULL;
+    int status = 0;
+    gchar* argv[] = {"/bin/sh", "-c", task->script, NULL};
+    gboolean ok =
+        g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, &stdout_text, &stderr_text, &status, &error);
+    GString* output = g_string_new("");
+
+    if (stdout_text) g_string_append(output, stdout_text);
+    if (stderr_text) g_string_append(output, stderr_text);
+    if (error && error->message) g_string_append_printf(output, "\n%s\n", error->message);
+
+    result->state = task->state;
+    result->dialog = task->dialog;
+    result->progress = task->progress;
+    result->log = task->log;
+    result->success = ok && g_spawn_check_wait_status(status, &error);
+    result->output = g_string_free(output, FALSE);
+
+    if (error) g_error_free(error);
+    g_free(stdout_text);
+    g_free(stderr_text);
+    g_free(task->script);
+    g_free(task);
+    g_idle_add(ocr_install_finished_idle, result);
+    return NULL;
+}
+
+static void install_ocr_then_run(app_state* state) {
+    GtkWidget* dialog = gtk_dialog_new();
+    GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget* title = gtk_label_new("Installing OCRmyPDF and Tesseract");
+    GtkWidget* progress = gtk_progress_bar_new();
+    GtkWidget* scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget* log = gtk_text_view_new();
+    ocr_install_task* task;
+
+    gtk_window_set_title(GTK_WINDOW(dialog), "Installing OCR");
+    gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(state->window));
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 640, 360);
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(log), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(log), TRUE);
+    gtk_widget_set_margin_start(title, 10);
+    gtk_widget_set_margin_end(title, 10);
+    gtk_widget_set_margin_top(title, 10);
+    gtk_widget_set_margin_bottom(title, 6);
+    gtk_widget_set_margin_start(progress, 10);
+    gtk_widget_set_margin_end(progress, 10);
+    gtk_widget_set_margin_bottom(progress, 8);
+    gtk_container_add(GTK_CONTAINER(scroll), log);
+    gtk_box_pack_start(GTK_BOX(content), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), progress, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 0);
+    g_signal_connect(dialog, "delete-event", G_CALLBACK(block_dialog_delete), NULL);
+    append_install_log(log, "Preparing OCR installer...\n");
+    gtk_widget_show_all(dialog);
+    g_object_set_data(G_OBJECT(progress), "ocr-install-running", GINT_TO_POINTER(TRUE));
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 120, pulse_install_progress, g_object_ref(progress), g_object_unref);
+
+    if (state->ocr_button) gtk_widget_set_sensitive(state->ocr_button, FALSE);
+    task = g_new0(ocr_install_task, 1);
+    task->state = state;
+    task->dialog = g_object_ref(dialog);
+    task->progress = g_object_ref(progress);
+    task->log = g_object_ref(log);
+    task->script = ocr_install_script();
+    g_thread_unref(g_thread_new("install-ocr", ocr_install_worker, task));
 }
 
 static gpointer ocr_worker(gpointer data) {
@@ -1041,6 +1209,7 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
     char err[1024];
     int has_text;
     char* tool;
+    char* tesseract;
     char* backup = NULL;
     char* dir;
     char* base;
@@ -1049,11 +1218,23 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
 
     if (!state->doc || !state->path || !path_has_pdf_extension(state->path)) return;
     tool = g_find_program_in_path("ocrmypdf");
-    if (!tool) {
-        show_error(GTK_WINDOW(state->window), "OCR tool not found",
-                   "Install OCRmyPDF with Tesseract support, then use OCR again.");
+    tesseract = g_find_program_in_path("tesseract");
+    if (!tool || !tesseract) {
+        GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(state->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION,
+                                                   GTK_BUTTONS_NONE, "Install OCR support?");
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+                                                 "SumatraPDF can install OCRmyPDF and Tesseract, then continue OCR "
+                                                 "automatically when installation finishes.");
+        gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_Install", GTK_RESPONSE_ACCEPT, "_Cancel", GTK_RESPONSE_CANCEL,
+                               NULL);
+        int response = gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        g_free(tool);
+        g_free(tesseract);
+        if (response == GTK_RESPONSE_ACCEPT) install_ocr_then_run(state);
         return;
     }
+    g_free(tesseract);
 
     has_text = spdf_document_has_text(state->doc, 0, err, sizeof(err));
     if (has_text < 0) {
@@ -1148,6 +1329,17 @@ static gboolean favorite_matches(favorite_item* favorite, const char* filter) {
     return matches;
 }
 
+static void add_list_separator(GtkWidget* list) {
+    GtkWidget* row = gtk_list_box_row_new();
+    GtkWidget* separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_start(separator, 8);
+    gtk_widget_set_margin_end(separator, 8);
+    gtk_widget_set_margin_top(separator, 2);
+    gtk_widget_set_margin_bottom(separator, 4);
+    gtk_container_add(GTK_CONTAINER(row), separator);
+    gtk_container_add(GTK_CONTAINER(list), row);
+}
+
 static void rebuild_favorites_list(GtkListBox* list, app_state* state, const char* filter) {
     GList* children = gtk_container_get_children(GTK_CONTAINER(list));
     for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
@@ -1159,6 +1351,7 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
     gtk_widget_set_margin_top(fav_header, 8);
     gtk_widget_set_margin_bottom(fav_header, 4);
     gtk_container_add(GTK_CONTAINER(list), fav_header);
+    add_list_separator(GTK_WIDGET(list));
 
     for (int i = 0; i < state->favorite_count; ++i) {
         char text[1600];
@@ -1192,6 +1385,7 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
         gtk_widget_set_margin_top(doc_header, 12);
         gtk_widget_set_margin_bottom(doc_header, 4);
         gtk_container_add(GTK_CONTAINER(list), doc_header);
+        add_list_separator(GTK_WIDGET(list));
 
         for (int page = 0; page < spdf_page_count(state->doc); ++page) {
             int hits = spdf_search_page(state->doc, page, filter, err, sizeof(err));

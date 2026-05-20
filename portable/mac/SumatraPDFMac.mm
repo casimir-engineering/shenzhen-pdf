@@ -86,6 +86,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) SPDFFitMode fitMode;
 @property(nonatomic) SPDFViewMode viewMode;
 @property(nonatomic) NSPoint scrollOrigin;
+@property(nonatomic) BOOL hasScrollOrigin;
 @end
 
 @implementation SPDFDocumentTab
@@ -1176,6 +1177,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSSearchField* _paletteSearchField;
     NSButton* _paletteAllDocsCheckbox;
     NSTableView* _paletteTable;
+    NSPanel* _ocrInstallPanel;
+    NSProgressIndicator* _ocrInstallProgress;
+    NSTextView* _ocrInstallLog;
+    NSTask* _ocrInstallTask;
     NSMutableArray<NSDictionary*>* _paletteResults;
     NSInteger _paletteMode;
     NSUInteger _paletteSearchGeneration;
@@ -1214,6 +1219,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL _updatingFromScroll;
     BOOL _sidebarPreferredVisible;
     BOOL _sidebarVisible;
+    BOOL _ocrInstallRunning;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
@@ -1390,6 +1396,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
             tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
             tab.viewMode = (SPDFViewMode)MAX(0, MIN(1, [item[@"viewMode"] integerValue]));
             tab.scrollOrigin = NSMakePoint([item[@"scrollX"] doubleValue], [item[@"scrollY"] doubleValue]);
+            tab.hasScrollOrigin = item[@"scrollX"] != nil || item[@"scrollY"] != nil;
             [_tabs addObject:tab];
         }
         _selectedTabIndex = MIN(MAX(0, [session[@"selectedTab"] integerValue]), MAX(0, (NSInteger)_tabs.count - 1));
@@ -1408,7 +1415,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
             @"fitMode" : @(tab.fitMode),
             @"viewMode" : @(tab.viewMode),
             @"scrollX" : @(tab.scrollOrigin.x),
-            @"scrollY" : @(tab.scrollOrigin.y)
+            @"scrollY" : @(tab.scrollOrigin.y),
+            @"hasScrollOrigin" : @(tab.hasScrollOrigin)
         }];
     }
     [self writeJSONObject:@{@"version" : @1, @"selectedTab" : @(MAX(0, _selectedTabIndex)), @"tabs" : tabs}
@@ -2287,6 +2295,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     tab.fitMode = _fitMode;
     tab.viewMode = _viewMode;
     tab.scrollOrigin = _pageScrollView.contentView.bounds.origin;
+    tab.hasScrollOrigin = YES;
 }
 
 - (void)persistActiveState {
@@ -2501,11 +2510,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self preloadInactiveTabs];
     [self savePersistentState];
     _statusLabel.stringValue = @"Opening...";
+    _pageScrollView.hidden = YES;
     dispatch_async(dispatch_get_main_queue(), ^{
-      if (!_doc) return;
-      NSValue* restoreOrigin =
-          NSEqualPoints(tab.scrollOrigin, NSZeroPoint) ? nil : [NSValue valueWithPoint:tab.scrollOrigin];
+      if (!_doc) {
+          _pageScrollView.hidden = NO;
+          return;
+      }
+      NSValue* restoreOrigin = tab.hasScrollOrigin ? [NSValue valueWithPoint:tab.scrollOrigin] : nil;
       [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES restoreOrigin:restoreOrigin];
+      _pageScrollView.hidden = NO;
+      [_pageView setNeedsDisplay:YES];
     });
 }
 
@@ -3108,7 +3122,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 - (BOOL)isSelectablePaletteResult:(NSDictionary*)result {
     NSString* kind = result[@"kind"];
-    return ![kind isEqualToString:@"header"] && ![kind isEqualToString:@"status"];
+    return ![kind isEqualToString:@"header"] && ![kind isEqualToString:@"separator"] &&
+           ![kind isEqualToString:@"status"];
 }
 
 - (void)selectFirstPaletteResult {
@@ -3131,6 +3146,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSArray<NSDictionary*>* favorites = [self favoriteResultsForQuery:query prefix:@""];
     if (favorites.count > 0) {
         [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Favorites", @"subtitle" : @""}];
+        [_paletteResults addObject:@{@"kind" : @"separator", @"title" : @"", @"subtitle" : @""}];
         [_paletteResults addObjectsFromArray:favorites];
     }
 
@@ -3149,6 +3165,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     if (query.length > 0 && _tabs.count > 0) {
         [_preloadQueue cancelAllOperations];
         [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Open documents", @"subtitle" : @""}];
+        [_paletteResults addObject:@{@"kind" : @"separator", @"title" : @"", @"subtitle" : @""}];
         [_paletteResults
             addObject:@{@"kind" : @"status", @"title" : @"Searching open documents...", @"subtitle" : @""}];
         [self runFindPaletteSearchForQuery:query generation:generation searchAll:YES];
@@ -3475,8 +3492,18 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (NSString*)ocrToolPath {
-    NSArray<NSString*>* candidates =
-        @[ @"/opt/homebrew/bin/ocrmypdf", @"/usr/local/bin/ocrmypdf", @"/usr/bin/ocrmypdf" ];
+    return [self
+        executablePathForTool:@"ocrmypdf"
+                   candidates:@[ @"/opt/homebrew/bin/ocrmypdf", @"/usr/local/bin/ocrmypdf", @"/usr/bin/ocrmypdf" ]];
+}
+
+- (NSString*)tesseractToolPath {
+    return [self
+        executablePathForTool:@"tesseract"
+                   candidates:@[ @"/opt/homebrew/bin/tesseract", @"/usr/local/bin/tesseract", @"/usr/bin/tesseract" ]];
+}
+
+- (NSString*)executablePathForTool:(NSString*)tool candidates:(NSArray<NSString*>*)candidates {
     NSFileManager* fm = NSFileManager.defaultManager;
     for (NSString* path in candidates) {
         if ([fm isExecutableFileAtPath:path]) return path;
@@ -3485,10 +3512,151 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSString* pathEnv = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
     for (NSString* dir in [pathEnv componentsSeparatedByString:@":"]) {
         if (dir.length == 0) continue;
-        NSString* path = [dir stringByAppendingPathComponent:@"ocrmypdf"];
+        NSString* path = [dir stringByAppendingPathComponent:tool];
         if ([fm isExecutableFileAtPath:path]) return path;
     }
     return nil;
+}
+
+- (void)appendOCRInstallLog:(NSString*)text {
+    if (!_ocrInstallLog || text.length == 0) return;
+    NSTextStorage* storage = _ocrInstallLog.textStorage;
+    [storage appendAttributedString:[[NSAttributedString alloc] initWithString:text]];
+    [_ocrInstallLog scrollRangeToVisible:NSMakeRange(storage.length, 0)];
+}
+
+- (void)showOCRInstallPanel {
+    if (!_ocrInstallPanel) {
+        _ocrInstallPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 640, 360)
+                                                      styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                                                        backing:NSBackingStoreBuffered
+                                                          defer:NO];
+        _ocrInstallPanel.title = @"Installing OCR";
+        _ocrInstallPanel.releasedWhenClosed = NO;
+
+        NSView* content = [[NSView alloc] initWithFrame:_ocrInstallPanel.contentView.bounds];
+        content.translatesAutoresizingMaskIntoConstraints = NO;
+        _ocrInstallPanel.contentView = content;
+
+        NSTextField* title = [NSTextField labelWithString:@"Installing OCRmyPDF and Tesseract"];
+        title.translatesAutoresizingMaskIntoConstraints = NO;
+        title.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+        [content addSubview:title];
+
+        _ocrInstallProgress = [[NSProgressIndicator alloc] init];
+        _ocrInstallProgress.translatesAutoresizingMaskIntoConstraints = NO;
+        _ocrInstallProgress.indeterminate = YES;
+        _ocrInstallProgress.style = NSProgressIndicatorStyleBar;
+        [content addSubview:_ocrInstallProgress];
+
+        NSScrollView* scroll = [[NSScrollView alloc] init];
+        scroll.translatesAutoresizingMaskIntoConstraints = NO;
+        scroll.hasVerticalScroller = YES;
+        [content addSubview:scroll];
+
+        _ocrInstallLog = [[NSTextView alloc] init];
+        _ocrInstallLog.editable = NO;
+        _ocrInstallLog.font = [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
+        scroll.documentView = _ocrInstallLog;
+
+        [NSLayoutConstraint activateConstraints:@[
+            [title.topAnchor constraintEqualToAnchor:content.topAnchor constant:14],
+            [title.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
+            [title.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
+            [_ocrInstallProgress.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10],
+            [_ocrInstallProgress.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
+            [_ocrInstallProgress.trailingAnchor constraintEqualToAnchor:title.trailingAnchor],
+            [scroll.topAnchor constraintEqualToAnchor:_ocrInstallProgress.bottomAnchor constant:12],
+            [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
+            [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
+            [scroll.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-14]
+        ]];
+    }
+
+    [_ocrInstallPanel center];
+    [_ocrInstallPanel makeKeyAndOrderFront:nil];
+    [_ocrInstallProgress startAnimation:nil];
+}
+
+- (NSString*)ocrInstallScript {
+    return @"set -e\n"
+           @"export PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"\n"
+           @"export NONINTERACTIVE=1\n"
+           @"if command -v brew >/dev/null 2>&1; then BREW=$(command -v brew); "
+           @"elif [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
+           @"elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; "
+           @"else echo 'Homebrew not found. Installing Homebrew...'; "
+           @"/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"; "
+           @"if [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
+           @"elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; "
+           @"else echo 'Homebrew installation did not produce a brew executable.'; exit 1; fi; fi\n"
+           @"echo \"Using $BREW\"\n"
+           @"\"$BREW\" install ocrmypdf tesseract\n";
+}
+
+- (void)installOCRAndRunAfterwards {
+    if (_ocrInstallRunning) {
+        [_ocrInstallPanel makeKeyAndOrderFront:nil];
+        return;
+    }
+
+    _ocrInstallRunning = YES;
+    _ocrButton.enabled = NO;
+    [self showOCRInstallPanel];
+    _ocrInstallLog.string = @"";
+    [self appendOCRInstallLog:@"Preparing OCR installer...\n"];
+
+    NSTask* task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
+    task.arguments = @[ @"-lc", [self ocrInstallScript] ];
+    NSPipe* pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    _ocrInstallTask = task;
+
+    __weak SumatraMacDelegate* weakSelf = self;
+    pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
+      NSData* chunk = handle.availableData;
+      if (chunk.length == 0) {
+          handle.readabilityHandler = nil;
+          return;
+      }
+      NSString* text = [[NSString alloc] initWithData:chunk encoding:NSUTF8StringEncoding] ?: @"";
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [weakSelf appendOCRInstallLog:text];
+      });
+    };
+
+    task.terminationHandler = ^(NSTask* finishedTask) {
+      pipe.fileHandleForReading.readabilityHandler = nil;
+      dispatch_async(dispatch_get_main_queue(), ^{
+        SumatraMacDelegate* strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_ocrInstallRunning = NO;
+        strongSelf->_ocrInstallTask = nil;
+        [strongSelf->_ocrInstallProgress stopAnimation:nil];
+        strongSelf->_ocrButton.enabled = strongSelf->_doc != NULL;
+        if (finishedTask.terminationStatus == 0 && [strongSelf ocrToolPath].length &&
+            [strongSelf tesseractToolPath].length) {
+            [strongSelf appendOCRInstallLog:@"\nOCR tools installed.\n"];
+            [strongSelf->_ocrInstallPanel orderOut:nil];
+            [strongSelf ocrDocument:nil];
+        } else {
+            [strongSelf
+                appendOCRInstallLog:@"\nOCR installation failed. The log above has the package manager output.\n"];
+            strongSelf->_statusLabel.stringValue = @"OCR installation failed.";
+        }
+      });
+    };
+
+    NSError* error = nil;
+    if (![task launchAndReturnError:&error]) {
+        _ocrInstallRunning = NO;
+        _ocrInstallTask = nil;
+        [_ocrInstallProgress stopAnimation:nil];
+        _ocrButton.enabled = _doc != NULL;
+        [self showError:@"Could not start OCR installer" detail:error.localizedDescription ?: @""];
+    }
 }
 
 - (NSString*)backupPathForPDFPath:(NSString*)path {
@@ -3514,10 +3682,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     }
 
     NSString* tool = [self ocrToolPath];
-    if (!tool.length) {
-        [self showError:@"OCR tool not found"
-                 detail:@"Install OCRmyPDF with Tesseract support, then use OCR again. On macOS: brew install "
-                        @"ocrmypdf. On Linux: install the ocrmypdf package for your distribution."];
+    NSString* tesseract = [self tesseractToolPath];
+    if (!tool.length || !tesseract.length) {
+        NSAlert* alert = [[NSAlert alloc] init];
+        alert.messageText = @"Install OCR support?";
+        alert.informativeText = @"SumatraPDF can install OCRmyPDF and Tesseract, then continue OCR automatically when "
+                                @"installation finishes.";
+        [alert addButtonWithTitle:@"Install"];
+        [alert addButtonWithTitle:@"Cancel"];
+        alert.alertStyle = NSAlertStyleInformational;
+        if ([alert runModal] == NSAlertFirstButtonReturn) [self installOCRAndRunAfterwards];
         return;
     }
 
@@ -3836,6 +4010,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     if (row < 0 || row >= (NSInteger)_paletteResults.count) return 42.0;
     NSString* kind = _paletteResults[(NSUInteger)row][@"kind"];
     if ([kind isEqualToString:@"header"]) return 28.0;
+    if ([kind isEqualToString:@"separator"]) return 10.0;
     if ([kind isEqualToString:@"status"]) return 36.0;
     return 42.0;
 }
@@ -3855,6 +4030,26 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (NSView*)tableView:(NSTableView*)tableView viewForTableColumn:(NSTableColumn*)tableColumn row:(NSInteger)row {
     (void)tableColumn;
     if (tableView == _paletteTable) {
+        NSDictionary* result = _paletteResults[(NSUInteger)row];
+        NSString* kind = result[@"kind"];
+        if ([kind isEqualToString:@"separator"]) {
+            NSView* view = [tableView makeViewWithIdentifier:@"PaletteSeparator" owner:self];
+            if (!view) {
+                view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 620, 10)];
+                view.identifier = @"PaletteSeparator";
+                NSBox* line = [[NSBox alloc] init];
+                line.translatesAutoresizingMaskIntoConstraints = NO;
+                line.boxType = NSBoxSeparator;
+                [view addSubview:line];
+                [NSLayoutConstraint activateConstraints:@[
+                    [line.leadingAnchor constraintEqualToAnchor:view.leadingAnchor constant:12],
+                    [line.trailingAnchor constraintEqualToAnchor:view.trailingAnchor constant:-12],
+                    [line.centerYAnchor constraintEqualToAnchor:view.centerYAnchor]
+                ]];
+            }
+            return view;
+        }
+
         NSTableCellView* cell = [tableView makeViewWithIdentifier:@"PaletteCell" owner:self];
         if (!cell) {
             cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 620, 44)];
@@ -3885,9 +4080,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
             ]];
         }
 
-        NSDictionary* result = _paletteResults[(NSUInteger)row];
         cell.textField.stringValue = result[@"title"] ?: @"";
-        NSString* kind = result[@"kind"];
         BOOL header = [kind isEqualToString:@"header"];
         BOOL status = [kind isEqualToString:@"status"];
         cell.textField.font = header ? [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold]
