@@ -11,6 +11,13 @@ static const CGFloat kPageGap = 26.0;
 static const CGFloat kMinZoom = 0.10;
 static const CGFloat kMaxZoom = 8.00;
 static const CGFloat kSelectionOverlayAlpha = 0.20;
+static const CGFloat kTabStripHeight = 42.0;
+static const CGFloat kToolbarTopInset = 82.0;
+static const CGFloat kMinimapWidth = 96.0;
+
+static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
+    return MAX(minValue, MIN(maxValue, value));
+}
 
 typedef NS_ENUM(NSInteger, SPDFFitMode) {
     SPDFFitModeCustom = 0,
@@ -31,17 +38,17 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 @property(nonatomic) NSInteger pageIndex;
 @property(nonatomic) CGFloat pageWidth;
 @property(nonatomic) CGFloat pageHeight;
-@property(nonatomic, strong) NSImage *image;
-@property(nonatomic, copy) NSArray<NSValue *> *highlights;
-@property(nonatomic, copy) NSArray<NSValue *> *selectionRects;
+@property(nonatomic, strong) NSImage* image;
+@property(nonatomic, copy) NSArray<NSValue*>* highlights;
+@property(nonatomic, copy) NSArray<NSValue*>* selectionRects;
 @end
 
 @implementation SPDFRenderedPage
 @end
 
 @interface SPDFDocumentTab : NSObject
-@property(nonatomic, copy) NSString *path;
-@property(nonatomic, copy) NSString *title;
+@property(nonatomic, copy) NSString* path;
+@property(nonatomic, copy) NSString* title;
 @property(nonatomic) NSInteger pageIndex;
 @property(nonatomic) CGFloat zoom;
 @property(nonatomic) SPDFFitMode fitMode;
@@ -51,8 +58,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 @implementation SPDFDocumentTab
 
-- (instancetype)init
-{
+- (instancetype)init {
     self = [super init];
     if (self) {
         _pageIndex = 0;
@@ -66,51 +72,66 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 @end
 
 @interface SPDFWorkerDocument : NSObject
-@property(nonatomic) spdf_document *document;
-@property(nonatomic, copy) NSString *path;
+@property(nonatomic) spdf_document* document;
+@property(nonatomic, copy) NSString* path;
 @end
 
 @implementation SPDFWorkerDocument
 
-- (void)dealloc
-{
+- (void)dealloc {
     spdf_close(_document);
 }
 
 @end
 
 @interface SPDFTabStripView : NSView
-@property(nonatomic, weak) SumatraMacDelegate *reader;
-@property(nonatomic, copy) NSArray<SPDFDocumentTab *> *tabs;
+@property(nonatomic, weak) SumatraMacDelegate* reader;
+@property(nonatomic, copy) NSArray<SPDFDocumentTab*>* tabs;
 @property(nonatomic) NSInteger selectedIndex;
+@property(nonatomic) CGFloat reservedLeadingInset;
 @end
 
 @interface SPDFPaletteSearchField : NSSearchField
-@property(nonatomic, weak) SumatraMacDelegate *reader;
+@property(nonatomic, weak) SumatraMacDelegate* reader;
 @end
 
 @interface SPDFDropView : NSView <NSDraggingDestination>
-@property(nonatomic, weak) SumatraMacDelegate *reader;
+@property(nonatomic, weak) SumatraMacDelegate* reader;
 @end
 
 @interface SPDFScrollView : NSScrollView
-@property(nonatomic, weak) SumatraMacDelegate *reader;
+@property(nonatomic, weak) SumatraMacDelegate* reader;
 @end
 
 @interface SPDFDocumentView : NSView <NSDraggingDestination>
-@property(nonatomic, copy) NSArray<SPDFRenderedPage *> *pages;
+@property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
 @property(nonatomic) NSInteger currentPageIndex;
 @property(nonatomic) CGFloat zoom;
 @property(nonatomic) SPDFViewMode viewMode;
-@property(nonatomic, weak) SumatraMacDelegate *reader;
+@property(nonatomic, weak) SumatraMacDelegate* reader;
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize;
 - (NSRect)rectForPageAtIndex:(NSInteger)pageIndex;
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect;
 @end
 
-@interface SumatraMacDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSTextFieldDelegate, NSMenuItemValidation>
-@property(nonatomic, copy) NSString *initialPath;
-- (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent *)event;
+@interface SPDFMinimapView : NSView
+@property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
+@property(nonatomic) NSRect documentVisibleRect;
+@property(nonatomic) CGFloat documentHeight;
+@property(nonatomic) SPDFViewMode viewMode;
+@property(nonatomic) NSInteger currentPageIndex;
+@property(nonatomic, weak) SumatraMacDelegate* reader;
+@end
+
+@interface SumatraMacDelegate : NSObject <NSApplicationDelegate,
+                                          NSWindowDelegate,
+                                          NSTableViewDataSource,
+                                          NSTableViewDelegate,
+                                          NSSearchFieldDelegate,
+                                          NSTextFieldDelegate,
+                                          NSMenuItemValidation>
+@property(nonatomic, copy) NSString* initialPath;
+- (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event;
 - (void)zoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)beginLiveZoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)documentScrollPositionChanged;
@@ -124,72 +145,76 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 - (void)paletteMoveSelection:(NSInteger)delta;
 - (void)closePalette:(id)sender;
 - (void)activatePaletteSelection:(id)sender;
-- (BOOL)openFilesFromPasteboard:(NSPasteboard *)pasteboard;
-- (void)showContextMenuForDocumentView:(NSView *)view event:(NSEvent *)event;
+- (void)updateFindControls;
+- (void)updateMinimap;
+- (void)minimapViewDidRequestScrollToFraction:(CGFloat)yFraction;
+- (void)minimapViewDidRequestScrollToPage:(NSInteger)pageIndex yFractionInPage:(CGFloat)yFraction;
+- (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard;
+- (void)showContextMenuForDocumentView:(NSView*)view event:(NSEvent*)event;
 @end
 
 @implementation SPDFTabStripView
 
-- (BOOL)isFlipped
-{
+- (BOOL)isFlipped {
     return YES;
 }
 
-- (CGFloat)tabWidth
-{
-    return 174.0;
+- (CGFloat)tabWidth {
+    NSInteger count = MAX(1, (NSInteger)self.tabs.count);
+    CGFloat available = NSMinX([self plusRect]) - [self leftInset] - 12.0 - (count - 1) * 6.0;
+    if (available <= 0) return 112.0;
+    return MAX(112.0, MIN(178.0, floor(available / count)));
 }
 
-- (CGFloat)leftInset
-{
-    return 138.0;
+- (CGFloat)leftInset {
+    return MAX(120.0, self.reservedLeadingInset > 0 ? self.reservedLeadingInset : 138.0);
 }
 
-- (NSRect)searchRect
-{
-    return NSMakeRect([self leftInset] - 38, 4, 30, 28);
+- (NSRect)searchRect {
+    return NSMakeRect([self leftInset] - 40, 7, 30, 28);
 }
 
-- (NSRect)plusRect
-{
-    return NSMakeRect(MAX([self leftInset] + 48, NSWidth(self.bounds) - 42), 4, 32, 28);
+- (NSRect)plusRect {
+    CGFloat x = MAX([self leftInset] + 48, NSWidth(self.bounds) - 42);
+    x = MIN(x, MAX([self leftInset] + 48, NSWidth(self.bounds) - 40));
+    return NSMakeRect(x, 7, 32, 28);
 }
 
-- (NSRect)rectForTabAtIndex:(NSInteger)index
-{
+- (NSRect)rectForTabAtIndex:(NSInteger)index {
     CGFloat x = [self leftInset] + index * ([self tabWidth] + 6);
     CGFloat maxRight = NSMinX([self plusRect]) - 10;
     CGFloat width = MIN([self tabWidth], maxRight - x);
-    return NSMakeRect(x, 3, width, 30);
+    return NSMakeRect(x, 7, width, 28);
 }
 
-- (void)setTabs:(NSArray<SPDFDocumentTab *> *)tabs
-{
+- (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs {
     _tabs = [tabs copy];
     [self setNeedsDisplay:YES];
 }
 
-- (void)setSelectedIndex:(NSInteger)selectedIndex
-{
+- (void)setSelectedIndex:(NSInteger)selectedIndex {
     _selectedIndex = selectedIndex;
     [self setNeedsDisplay:YES];
 }
 
-- (void)drawRect:(NSRect)dirtyRect
-{
+- (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
     [[NSColor clearColor] setFill];
     NSRectFill(self.bounds);
 
-    NSDictionary *attrs = @{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightMedium],
-                            NSForegroundColorAttributeName: NSColor.labelColor};
-    NSDictionary *dimAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:12],
-                               NSForegroundColorAttributeName: NSColor.secondaryLabelColor};
+    NSDictionary* attrs = @{
+        NSFontAttributeName : [NSFont systemFontOfSize:12 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName : NSColor.labelColor
+    };
+    NSDictionary* dimAttrs = @{
+        NSFontAttributeName : [NSFont systemFontOfSize:12],
+        NSForegroundColorAttributeName : NSColor.secondaryLabelColor
+    };
 
     NSRect searchRect = [self searchRect];
     [NSColor.controlBackgroundColor setFill];
     [[NSBezierPath bezierPathWithRoundedRect:searchRect xRadius:9 yRadius:9] fill];
-    NSBezierPath *search = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(searchRect, 8, 7)];
+    NSBezierPath* search = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(searchRect, 8, 7)];
     [NSColor.secondaryLabelColor setStroke];
     search.lineWidth = 1.4;
     [search stroke];
@@ -198,33 +223,40 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
-        if (NSWidth(tabRect) < 74)
-            break;
+        if (NSWidth(tabRect) < 74) break;
         BOOL selected = i == self.selectedIndex;
-        NSColor *fill = selected ? NSColor.windowBackgroundColor : [NSColor colorWithCalibratedWhite:0.18 alpha:0.76];
+        NSColor* fill = selected ? NSColor.windowBackgroundColor : NSColor.controlBackgroundColor;
         [fill setFill];
         [[NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:7 yRadius:7] fill];
 
-        SPDFDocumentTab *tab = self.tabs[(NSUInteger)i];
-        NSString *title = tab.title.length ? tab.title : tab.path.lastPathComponent;
-        NSRect titleRect = NSInsetRect(tabRect, 12, 6);
-        titleRect.size.width -= 18;
-        [title drawWithRect:titleRect options:NSStringDrawingTruncatesLastVisibleLine attributes:selected ? attrs : dimAttrs];
+        SPDFDocumentTab* tab = self.tabs[(NSUInteger)i];
+        NSString* title = tab.title.length ? tab.title : tab.path.lastPathComponent;
+        NSDictionary* titleAttrs = selected ? attrs : dimAttrs;
+        CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
+        NSRect titleRect = NSMakeRect(NSMinX(tabRect) + 12, floor(NSMidY(tabRect) - titleHeight / 2.0),
+                                      NSWidth(tabRect) - 34, titleHeight + 2);
+        [title drawWithRect:titleRect options:NSStringDrawingTruncatesLastVisibleLine attributes:titleAttrs];
 
-        NSString *close = @"x";
-        [close drawAtPoint:NSMakePoint(NSMaxX(tabRect) - 18, NSMinY(tabRect) + 7) withAttributes:dimAttrs];
+        NSString* close = @"x";
+        NSSize closeSize = [close sizeWithAttributes:dimAttrs];
+        [close drawAtPoint:NSMakePoint(NSMaxX(tabRect) - 18, floor(NSMidY(tabRect) - closeSize.height / 2.0))
+            withAttributes:dimAttrs];
     }
 
     NSRect plusRect = [self plusRect];
     [NSColor.controlBackgroundColor setFill];
     [[NSBezierPath bezierPathWithRoundedRect:plusRect xRadius:9 yRadius:9] fill];
-    NSDictionary *plusAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:16 weight:NSFontWeightRegular],
-                                NSForegroundColorAttributeName: NSColor.labelColor};
-    [@"+" drawAtPoint:NSMakePoint(NSMidX(plusRect) - 4, NSMinY(plusRect) + 3) withAttributes:plusAttrs];
+    NSDictionary* plusAttrs = @{
+        NSFontAttributeName : [NSFont systemFontOfSize:16 weight:NSFontWeightRegular],
+        NSForegroundColorAttributeName : NSColor.labelColor
+    };
+    NSSize plusSize = [@"+" sizeWithAttributes:plusAttrs];
+    [@"+" drawAtPoint:NSMakePoint(floor(NSMidX(plusRect) - plusSize.width / 2.0),
+                                  floor(NSMidY(plusRect) - plusSize.height / 2.0))
+        withAttributes:plusAttrs];
 }
 
-- (void)mouseDown:(NSEvent *)event
-{
+- (void)mouseDown:(NSEvent*)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     if (NSPointInRect(point, [self searchRect])) {
         [self.reader focusFind:self];
@@ -237,8 +269,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
-        if (!NSPointInRect(point, tabRect))
-            continue;
+        if (!NSPointInRect(point, tabRect)) continue;
         NSRect closeRect = NSMakeRect(NSMaxX(tabRect) - 22, NSMinY(tabRect), 22, NSHeight(tabRect));
         if (NSPointInRect(point, closeRect))
             [self.reader closeTabAtIndex:i];
@@ -252,8 +283,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 @implementation SPDFPaletteSearchField
 
-- (void)keyDown:(NSEvent *)event
-{
+- (void)keyDown:(NSEvent*)event {
     if (event.keyCode == 53) {
         [self.reader closePalette:self];
         return;
@@ -277,14 +307,12 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 @implementation SPDFDropView
 
-- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender
-{
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
     (void)sender;
     return NSDragOperationCopy;
 }
 
-- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender
-{
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
     return [self.reader openFilesFromPasteboard:sender.draggingPasteboard];
 }
 
@@ -294,8 +322,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     CGFloat _wheelAccumulator;
 }
 
-- (void)scrollWheel:(NSEvent *)event
-{
+- (void)scrollWheel:(NSEvent*)event {
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (self.reader && (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl))) {
         CGFloat delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY;
@@ -319,14 +346,13 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 
     [super scrollWheel:event];
-    if (self.reader)
-        [self.reader documentScrollPositionChanged];
+    if (self.reader) [self.reader documentScrollPositionChanged];
 }
 
-- (void)magnifyWithEvent:(NSEvent *)event
-{
+- (void)magnifyWithEvent:(NSEvent*)event {
     if (self.reader)
-        [self.reader beginLiveZoomByFactor:1.0 + event.magnification * 0.82 centeredAtWindowPoint:event.locationInWindow];
+        [self.reader beginLiveZoomByFactor:1.0 + event.magnification * 0.82
+                     centeredAtWindowPoint:event.locationInWindow];
 }
 
 @end
@@ -340,51 +366,44 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     NSPoint _lastPanPoint;
     NSTimeInterval _lastPanTime;
     NSPoint _panVelocity;
-    NSTimer *_inertiaTimer;
+    NSTimer* _inertiaTimer;
     NSInteger _selectionPageIndex;
     NSPoint _selectionStart;
 }
 
-- (BOOL)isFlipped
-{
+- (BOOL)isFlipped {
     return YES;
 }
 
-- (BOOL)acceptsFirstResponder
-{
+- (BOOL)acceptsFirstResponder {
     return YES;
 }
 
-- (void)setPages:(NSArray<SPDFRenderedPage *> *)pages
-{
+- (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
     _pages = [pages copy];
     [self setNeedsDisplay:YES];
 }
 
-- (CGFloat)widestPage
-{
+- (CGFloat)widestPage {
     CGFloat widest = 0;
-    for (SPDFRenderedPage *page in self.pages)
-        widest = MAX(widest, page.pageWidth * self.zoom);
+    for (SPDFRenderedPage* page in self.pages) widest = MAX(widest, page.pageWidth * self.zoom);
     return widest;
 }
 
-- (NSSize)documentSizeForClipSize:(NSSize)clipSize
-{
+- (NSSize)documentSizeForClipSize:(NSSize)clipSize {
     CGFloat width = MAX(clipSize.width, [self widestPage] + kPageMargin);
     CGFloat height = kPageMargin;
 
-    if (self.pages.count == 0)
-        return NSMakeSize(MAX(clipSize.width, 600), MAX(clipSize.height, 500));
+    if (self.pages.count == 0) return NSMakeSize(MAX(clipSize.width, 600), MAX(clipSize.height, 500));
 
     if (self.viewMode == SPDFViewModeSingle) {
         NSInteger index = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
-        SPDFRenderedPage *page = self.pages[(NSUInteger)index];
+        SPDFRenderedPage* page = self.pages[(NSUInteger)index];
         CGFloat pageHeight = page.pageHeight * self.zoom;
         height = pageHeight + kPageMargin;
     } else {
         height = kPageMargin / 2.0;
-        for (SPDFRenderedPage *page in self.pages) {
+        for (SPDFRenderedPage* page in self.pages) {
             CGFloat pageHeight = page.pageHeight * self.zoom;
             height += pageHeight + kPageGap;
         }
@@ -394,38 +413,33 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return NSMakeSize(width, MAX(height, clipSize.height));
 }
 
-- (NSRect)rectForPageAtIndex:(NSInteger)pageIndex
-{
-    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count)
-        return NSZeroRect;
+- (NSRect)rectForPageAtIndex:(NSInteger)pageIndex {
+    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return NSZeroRect;
 
     CGFloat y = kPageMargin / 2.0;
     if (self.viewMode == SPDFViewModeSingle) {
         pageIndex = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
     } else {
         for (NSInteger i = 0; i < pageIndex; ++i) {
-            SPDFRenderedPage *prev = self.pages[(NSUInteger)i];
+            SPDFRenderedPage* prev = self.pages[(NSUInteger)i];
             y += prev.pageHeight * self.zoom + kPageGap;
         }
     }
 
-    SPDFRenderedPage *page = self.pages[(NSUInteger)pageIndex];
+    SPDFRenderedPage* page = self.pages[(NSUInteger)pageIndex];
     CGFloat width = page.pageWidth * self.zoom;
     CGFloat height = page.pageHeight * self.zoom;
     CGFloat x = floor((NSWidth(self.bounds) - width) / 2.0);
     return NSMakeRect(MAX(kPageMargin / 2.0, x), y, width, height);
 }
 
-- (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect
-{
-    if (self.pages.count == 0)
-        return 0;
-    if (self.viewMode == SPDFViewModeSingle)
-        return self.currentPageIndex;
+- (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
+    if (self.pages.count == 0) return 0;
+    if (self.viewMode == SPDFViewModeSingle) return self.currentPageIndex;
 
     NSInteger bestPage = self.currentPageIndex;
     CGFloat bestOverlap = -1;
-    for (SPDFRenderedPage *page in self.pages) {
+    for (SPDFRenderedPage* page in self.pages) {
         NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
         CGFloat overlap = NSHeight(NSIntersectionRect(visibleRect, pageRect));
         if (overlap > bestOverlap) {
@@ -436,9 +450,8 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return bestPage;
 }
 
-- (void)drawPage:(SPDFRenderedPage *)page inRect:(NSRect)pageRect
-{
-    NSShadow *shadow = [[NSShadow alloc] init];
+- (void)drawPage:(SPDFRenderedPage*)page inRect:(NSRect)pageRect {
+    NSShadow* shadow = [[NSShadow alloc] init];
     shadow.shadowBlurRadius = 12.0;
     shadow.shadowOffset = NSMakeSize(0.0, -2.0);
     shadow.shadowColor = [NSColor colorWithCalibratedWhite:0.0 alpha:0.28];
@@ -450,11 +463,16 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [NSGraphicsContext restoreGraphicsState];
 
     if (page.image)
-        [page.image drawInRect:pageRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0 respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}];
+        [page.image drawInRect:pageRect
+                      fromRect:NSZeroRect
+                     operation:NSCompositingOperationSourceOver
+                      fraction:1.0
+                respectFlipped:YES
+                         hints:@{NSImageHintInterpolation : @(NSImageInterpolationHigh)}];
 
     if (page.highlights.count > 0 && self.zoom > 0) {
         [[NSColor colorWithCalibratedRed:1.0 green:0.84 blue:0.12 alpha:0.38] setFill];
-        for (NSValue *value in page.highlights) {
+        for (NSValue* value in page.highlights) {
             NSRect r = [value rectValue];
             r.origin.x = pageRect.origin.x + r.origin.x * self.zoom;
             r.origin.y = pageRect.origin.y + r.origin.y * self.zoom;
@@ -466,7 +484,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
     if (page.selectionRects.count > 0 && self.zoom > 0) {
         [[NSColor colorWithCalibratedRed:0.40 green:0.62 blue:0.86 alpha:kSelectionOverlayAlpha] setFill];
-        for (NSValue *value in page.selectionRects) {
+        for (NSValue* value in page.selectionRects) {
             NSRect r = [value rectValue];
             r.origin.x = pageRect.origin.x + r.origin.x * self.zoom;
             r.origin.y = pageRect.origin.y + r.origin.y * self.zoom;
@@ -477,15 +495,16 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)drawRect:(NSRect)dirtyRect
-{
+- (void)drawRect:(NSRect)dirtyRect {
     [NSColor.windowBackgroundColor setFill];
     NSRectFill(self.bounds);
 
     if (self.pages.count == 0) {
-        NSDictionary *attrs = @{NSForegroundColorAttributeName: [NSColor secondaryLabelColor],
-                                NSFontAttributeName: [NSFont systemFontOfSize:16 weight:NSFontWeightMedium]};
-        NSString *message = @"Open a document";
+        NSDictionary* attrs = @{
+            NSForegroundColorAttributeName : [NSColor secondaryLabelColor],
+            NSFontAttributeName : [NSFont systemFontOfSize:16 weight:NSFontWeightMedium]
+        };
+        NSString* message = @"Open a document";
         NSSize size = [message sizeWithAttributes:attrs];
         [message drawAtPoint:NSMakePoint((NSWidth(self.bounds) - size.width) / 2.0, 72.0) withAttributes:attrs];
         return;
@@ -493,50 +512,46 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
     if (self.viewMode == SPDFViewModeSingle) {
         NSInteger index = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
-        SPDFRenderedPage *page = self.pages[(NSUInteger)index];
+        SPDFRenderedPage* page = self.pages[(NSUInteger)index];
         NSRect pageRect = [self rectForPageAtIndex:index];
-        if (NSIntersectsRect(dirtyRect, pageRect))
-            [self drawPage:page inRect:pageRect];
+        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect];
         return;
     }
 
-    for (SPDFRenderedPage *page in self.pages) {
+    for (SPDFRenderedPage* page in self.pages) {
         NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
-        if (NSIntersectsRect(dirtyRect, pageRect))
-            [self drawPage:page inRect:pageRect];
+        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect];
     }
 }
 
-- (BOOL)point:(NSPoint)point fallsInPage:(NSInteger *)pageIndex pagePoint:(NSPoint *)pagePoint
-{
+- (BOOL)point:(NSPoint)point fallsInPage:(NSInteger*)pageIndex pagePoint:(NSPoint*)pagePoint {
     if (self.viewMode == SPDFViewModeSingle && self.pages.count > 0) {
         NSInteger index = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
         NSRect pageRect = [self rectForPageAtIndex:index];
         if (NSPointInRect(point, pageRect)) {
-            if (pageIndex)
-                *pageIndex = index;
+            if (pageIndex) *pageIndex = index;
             if (pagePoint)
-                *pagePoint = NSMakePoint((point.x - pageRect.origin.x) / self.zoom, (point.y - pageRect.origin.y) / self.zoom);
+                *pagePoint =
+                    NSMakePoint((point.x - pageRect.origin.x) / self.zoom, (point.y - pageRect.origin.y) / self.zoom);
             return YES;
         }
         return NO;
     }
 
-    for (SPDFRenderedPage *page in self.pages) {
+    for (SPDFRenderedPage* page in self.pages) {
         NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
         if (NSPointInRect(point, pageRect)) {
-            if (pageIndex)
-                *pageIndex = page.pageIndex;
+            if (pageIndex) *pageIndex = page.pageIndex;
             if (pagePoint)
-                *pagePoint = NSMakePoint((point.x - pageRect.origin.x) / self.zoom, (point.y - pageRect.origin.y) / self.zoom);
+                *pagePoint =
+                    NSMakePoint((point.x - pageRect.origin.x) / self.zoom, (point.y - pageRect.origin.y) / self.zoom);
             return YES;
         }
     }
     return NO;
 }
 
-- (void)mouseDown:(NSEvent *)event
-{
+- (void)mouseDown:(NSEvent*)event {
     if (!self.reader) {
         [super mouseDown:event];
         return;
@@ -559,31 +574,27 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)mouseDragged:(NSEvent *)event
-{
+- (void)mouseDragged:(NSEvent*)event {
     if (!_isSelecting) {
         [super mouseDragged:event];
         return;
     }
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     NSRect pageRect = [self rectForPageAtIndex:_selectionPageIndex];
-    if (NSIsEmptyRect(pageRect))
-        return;
-    NSPoint pagePoint = NSMakePoint((point.x - pageRect.origin.x) / self.zoom, (point.y - pageRect.origin.y) / self.zoom);
+    if (NSIsEmptyRect(pageRect)) return;
+    NSPoint pagePoint =
+        NSMakePoint((point.x - pageRect.origin.x) / self.zoom, (point.y - pageRect.origin.y) / self.zoom);
     [self.reader documentViewSelectionChangedOnPage:_selectionPageIndex from:_selectionStart to:pagePoint];
 }
 
-- (void)mouseUp:(NSEvent *)event
-{
+- (void)mouseUp:(NSEvent*)event {
     (void)event;
     _isSelecting = NO;
 }
 
-- (void)beginPanWithEvent:(NSEvent *)event
-{
-    NSScrollView *scrollView = self.enclosingScrollView;
-    if (!scrollView)
-        return;
+- (void)beginPanWithEvent:(NSEvent*)event {
+    NSScrollView* scrollView = self.enclosingScrollView;
+    if (!scrollView) return;
     [_inertiaTimer invalidate];
     _inertiaTimer = nil;
     _isPanning = YES;
@@ -595,13 +606,11 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [[NSCursor closedHandCursor] set];
 }
 
-- (void)continuePanWithEvent:(NSEvent *)event
-{
-    if (!_isPanning)
-        return;
+- (void)continuePanWithEvent:(NSEvent*)event {
+    if (!_isPanning) return;
 
-    NSScrollView *scrollView = self.enclosingScrollView;
-    NSClipView *clipView = scrollView.contentView;
+    NSScrollView* scrollView = self.enclosingScrollView;
+    NSClipView* clipView = scrollView.contentView;
     NSPoint current = event.locationInWindow;
     NSPoint delta = NSMakePoint(current.x - _panStartInWindow.x, current.y - _panStartInWindow.y);
     NSPoint origin = NSMakePoint(_panStartOrigin.x - delta.x, _panStartOrigin.y + delta.y);
@@ -615,10 +624,9 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [scrollView reflectScrolledClipView:clipView];
 }
 
-- (void)stepPanInertia:(NSTimer *)timer
-{
-    NSScrollView *scrollView = self.enclosingScrollView;
-    NSClipView *clipView = scrollView.contentView;
+- (void)stepPanInertia:(NSTimer*)timer {
+    NSScrollView* scrollView = self.enclosingScrollView;
+    NSClipView* clipView = scrollView.contentView;
     if (!scrollView || !clipView) {
         [timer invalidate];
         _inertiaTimer = nil;
@@ -641,199 +649,379 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)endPan
-{
+- (void)endPan {
     _isPanning = NO;
     [[NSCursor arrowCursor] set];
     if (hypot(_panVelocity.x, _panVelocity.y) > 90.0) {
         [_inertiaTimer invalidate];
-        _inertiaTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 target:self selector:@selector(stepPanInertia:) userInfo:nil repeats:YES];
+        _inertiaTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0
+                                                         target:self
+                                                       selector:@selector(stepPanInertia:)
+                                                       userInfo:nil
+                                                        repeats:YES];
     }
 }
 
-- (void)rightMouseDown:(NSEvent *)event
-{
+- (void)rightMouseDown:(NSEvent*)event {
     _rightMouseMoved = NO;
-    if (event.modifierFlags & NSEventModifierFlagCommand)
-        return;
+    if (event.modifierFlags & NSEventModifierFlagCommand) return;
     [self beginPanWithEvent:event];
 }
 
-- (void)rightMouseDragged:(NSEvent *)event
-{
+- (void)rightMouseDragged:(NSEvent*)event {
     _rightMouseMoved = YES;
-    if (_isPanning)
-        [self continuePanWithEvent:event];
+    if (_isPanning) [self continuePanWithEvent:event];
 }
 
-- (void)rightMouseUp:(NSEvent *)event
-{
+- (void)rightMouseUp:(NSEvent*)event {
     BOOL forceMenu = (event.modifierFlags & NSEventModifierFlagCommand) != 0;
-    if (forceMenu || !_rightMouseMoved)
-        [self.reader showContextMenuForDocumentView:self event:event];
-    if (_isPanning)
-        [self endPan];
+    if (forceMenu || !_rightMouseMoved) [self.reader showContextMenuForDocumentView:self event:event];
+    if (_isPanning) [self endPan];
 }
 
-- (void)otherMouseDown:(NSEvent *)event
-{
+- (void)otherMouseDown:(NSEvent*)event {
     if (event.buttonNumber == 2)
         [self beginPanWithEvent:event];
     else
         [super otherMouseDown:event];
 }
 
-- (void)otherMouseDragged:(NSEvent *)event
-{
+- (void)otherMouseDragged:(NSEvent*)event {
     if (_isPanning)
         [self continuePanWithEvent:event];
     else
         [super otherMouseDragged:event];
 }
 
-- (void)otherMouseUp:(NSEvent *)event
-{
+- (void)otherMouseUp:(NSEvent*)event {
     if (_isPanning)
         [self endPan];
     else
         [super otherMouseUp:event];
 }
 
-- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender
-{
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
     (void)sender;
     return NSDragOperationCopy;
 }
 
-- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender
-{
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
     return [self.reader openFilesFromPasteboard:sender.draggingPasteboard];
 }
 
 @end
 
+@implementation SPDFMinimapView
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+- (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
+    _pages = [pages copy];
+    [self setNeedsDisplay:YES];
+}
+
+- (CGFloat)widestPage {
+    CGFloat widest = 0;
+    for (SPDFRenderedPage* page in self.pages) widest = MAX(widest, page.pageWidth);
+    return widest;
+}
+
+- (BOOL)layoutXScale:(CGFloat*)xScaleOut
+              yScale:(CGFloat*)yScaleOut
+                 gap:(CGFloat*)gapOut
+          contentTop:(CGFloat*)topOut
+       contentHeight:(CGFloat*)heightOut {
+    if (self.pages.count == 0 || NSWidth(self.bounds) < 16 || NSHeight(self.bounds) < 16) return NO;
+
+    CGFloat widest = [self widestPage];
+    if (widest <= 0) return NO;
+
+    CGFloat xScale = (NSWidth(self.bounds) - 18.0) / widest;
+    CGFloat gap = 4.0;
+    CGFloat rawHeight = 0;
+    for (SPDFRenderedPage* page in self.pages) rawHeight += page.pageHeight * xScale;
+    rawHeight += gap * MAX(0, (NSInteger)self.pages.count - 1);
+
+    CGFloat available = MAX(1.0, NSHeight(self.bounds) - 16.0);
+    CGFloat compression = rawHeight > available ? available / rawHeight : 1.0;
+    CGFloat contentHeight = rawHeight * compression;
+    if (xScaleOut) *xScaleOut = xScale;
+    if (yScaleOut) *yScaleOut = xScale * compression;
+    if (gapOut) *gapOut = gap * compression;
+    if (topOut) *topOut = floor(MAX(8.0, (NSHeight(self.bounds) - contentHeight) / 2.0));
+    if (heightOut) *heightOut = contentHeight;
+    return YES;
+}
+
+- (void)drawPlaceholderInRect:(NSRect)rect {
+    if (NSHeight(rect) < 6.0 || NSWidth(rect) < 10.0) return;
+    [[NSColor colorWithCalibratedWhite:0.76 alpha:0.34] setFill];
+    NSInteger lines = (NSInteger)spdf_clamp_cg(floor(NSHeight(rect) / 7.0), 2.0, 16.0);
+    CGFloat y = NSMinY(rect) + MAX(2.0, NSHeight(rect) * 0.08);
+    CGFloat lineHeight = MAX(1.0, NSHeight(rect) * 0.018);
+    for (NSInteger i = 0; i < lines; ++i) {
+        CGFloat widthFactor = (i % 5 == 4) ? 0.56 : 0.78;
+        NSRect line = NSMakeRect(NSMinX(rect) + NSWidth(rect) * 0.12, y, NSWidth(rect) * widthFactor, lineHeight);
+        NSRectFillUsingOperation(line, NSCompositingOperationSourceOver);
+        y += MAX(3.0, NSHeight(rect) / (CGFloat)(lines + 2));
+        if (y > NSMaxY(rect) - 2.0) break;
+    }
+}
+
+- (void)drawRects:(NSArray<NSValue*>*)rects
+         pageRect:(NSRect)pageRect
+           xScale:(CGFloat)xScale
+           yScale:(CGFloat)yScale
+            color:(NSColor*)color
+        minHeight:(CGFloat)minHeight {
+    if (rects.count == 0) return;
+    [color setFill];
+    for (NSValue* value in rects) {
+        NSRect r = [value rectValue];
+        r.origin.x = NSMinX(pageRect) + r.origin.x * xScale;
+        r.origin.y = NSMinY(pageRect) + r.origin.y * yScale;
+        r.size.width = MAX(1.0, r.size.width * xScale);
+        r.size.height = MAX(minHeight, r.size.height * yScale);
+        NSRectFillUsingOperation(NSIntersectionRect(r, pageRect), NSCompositingOperationSourceOver);
+    }
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    [NSColor.windowBackgroundColor setFill];
+    NSRectFill(self.bounds);
+    [NSColor.separatorColor setFill];
+    NSRectFill(NSMakeRect(0, 0, 1, NSHeight(self.bounds)));
+
+    CGFloat xScale = 1.0;
+    CGFloat yScale = 1.0;
+    CGFloat gap = 4.0;
+    CGFloat contentTop = 8.0;
+    CGFloat contentHeight = 0;
+    if (![self layoutXScale:&xScale yScale:&yScale gap:&gap contentTop:&contentTop contentHeight:&contentHeight])
+        return;
+
+    CGFloat y = contentTop;
+    BOOL drawImages = self.pages.count <= 400;
+    for (SPDFRenderedPage* page in self.pages) {
+        CGFloat pageWidth = page.pageWidth * xScale;
+        CGFloat pageHeight = MAX(1.0, page.pageHeight * yScale);
+        NSRect pageRect = NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
+        if (NSHeight(pageRect) >= 1.0) {
+            [[NSColor whiteColor] setFill];
+            NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
+            if (drawImages && page.image && NSHeight(pageRect) >= 5.0) {
+                [page.image drawInRect:pageRect
+                              fromRect:NSZeroRect
+                             operation:NSCompositingOperationSourceOver
+                              fraction:1.0
+                        respectFlipped:YES
+                                 hints:@{NSImageHintInterpolation : @(NSImageInterpolationLow)}];
+            } else {
+                [self drawPlaceholderInRect:pageRect];
+            }
+            [self drawRects:page.highlights
+                   pageRect:pageRect
+                     xScale:xScale
+                     yScale:yScale
+                      color:[NSColor colorWithCalibratedRed:1.0 green:0.78 blue:0.05 alpha:0.78]
+                  minHeight:1.3];
+            [self drawRects:page.selectionRects
+                   pageRect:pageRect
+                     xScale:xScale
+                     yScale:yScale
+                      color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
+                  minHeight:1.0];
+            if (page.pageIndex == self.currentPageIndex) {
+                [[NSColor controlAccentColor] setStroke];
+                NSBezierPath* path = [NSBezierPath bezierPathWithRect:NSInsetRect(pageRect, -1, -1)];
+                path.lineWidth = 1.5;
+                [path stroke];
+            }
+        }
+        y += pageHeight + gap;
+    }
+
+    if (self.documentHeight > 1.0 && contentHeight > 1.0) {
+        CGFloat yFraction = spdf_clamp_cg(NSMinY(self.documentVisibleRect) / self.documentHeight, 0.0, 1.0);
+        CGFloat heightFraction = spdf_clamp_cg(NSHeight(self.documentVisibleRect) / self.documentHeight, 0.02, 1.0);
+        NSRect visibleRect = NSMakeRect(5.0, contentTop + yFraction * contentHeight, NSWidth(self.bounds) - 10.0,
+                                        MAX(10.0, heightFraction * contentHeight));
+        if (NSMaxY(visibleRect) > contentTop + contentHeight)
+            visibleRect.origin.y = contentTop + contentHeight - NSHeight(visibleRect);
+        visibleRect.origin.y = MAX(contentTop, visibleRect.origin.y);
+        [[NSColor colorWithCalibratedRed:0.18 green:0.55 blue:0.92 alpha:0.18] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:visibleRect xRadius:4 yRadius:4] fill];
+        [[NSColor controlAccentColor] setStroke];
+        NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:visibleRect xRadius:4 yRadius:4];
+        path.lineWidth = 1.2;
+        [path stroke];
+    }
+}
+
+- (void)sendScrollRequestForEvent:(NSEvent*)event {
+    CGFloat xScale = 1.0;
+    CGFloat yScale = 1.0;
+    CGFloat gap = 4.0;
+    CGFloat contentTop = 8.0;
+    CGFloat contentHeight = 0;
+    if (![self layoutXScale:&xScale yScale:&yScale gap:&gap contentTop:&contentTop contentHeight:&contentHeight])
+        return;
+
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    CGFloat y = contentTop;
+    for (SPDFRenderedPage* page in self.pages) {
+        CGFloat pageWidth = page.pageWidth * xScale;
+        CGFloat pageHeight = MAX(1.0, page.pageHeight * yScale);
+        NSRect pageRect = NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
+        if (NSPointInRect(point, pageRect)) {
+            CGFloat inPage = spdf_clamp_cg((point.y - NSMinY(pageRect)) / MAX(1.0, NSHeight(pageRect)), 0.0, 1.0);
+            [self.reader minimapViewDidRequestScrollToPage:page.pageIndex yFractionInPage:inPage];
+            return;
+        }
+        y += pageHeight + gap;
+    }
+
+    CGFloat fraction = spdf_clamp_cg((point.y - contentTop) / MAX(1.0, contentHeight), 0.0, 1.0);
+    [self.reader minimapViewDidRequestScrollToFraction:fraction];
+}
+
+- (void)mouseDown:(NSEvent*)event {
+    [self sendScrollRequestForEvent:event];
+}
+
+- (void)mouseDragged:(NSEvent*)event {
+    [self sendScrollRequestForEvent:event];
+}
+
+@end
+
 @interface SPDFPrintView : NSView
-@property(nonatomic, copy) NSArray<SPDFRenderedPage *> *pages;
+@property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
 @end
 
 @implementation SPDFPrintView
 
-- (BOOL)isFlipped
-{
+- (BOOL)isFlipped {
     return YES;
 }
 
-- (BOOL)knowsPageRange:(NSRangePointer)range
-{
+- (BOOL)knowsPageRange:(NSRangePointer)range {
     range->location = 1;
     range->length = self.pages.count;
     return YES;
 }
 
-- (NSRect)rectForPage:(NSInteger)page
-{
-    NSPrintInfo *info = NSPrintOperation.currentOperation.printInfo;
+- (NSRect)rectForPage:(NSInteger)page {
+    NSPrintInfo* info = NSPrintOperation.currentOperation.printInfo;
     NSSize paper = info.paperSize;
     return NSMakeRect(0, (page - 1) * paper.height, paper.width, paper.height);
 }
 
-- (void)drawRect:(NSRect)dirtyRect
-{
-    NSPrintInfo *info = NSPrintOperation.currentOperation.printInfo;
+- (void)drawRect:(NSRect)dirtyRect {
+    NSPrintInfo* info = NSPrintOperation.currentOperation.printInfo;
     NSSize paper = info.paperSize;
     NSInteger pageNumber = MAX(1, (NSInteger)floor(dirtyRect.origin.y / paper.height) + 1);
     NSInteger pageIndex = pageNumber - 1;
-    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count)
-        return;
+    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return;
 
     NSRect pageRect = [self rectForPage:pageNumber];
     [[NSColor whiteColor] setFill];
     NSRectFill(pageRect);
 
-    SPDFRenderedPage *page = self.pages[(NSUInteger)pageIndex];
-    if (!page.image)
-        return;
+    SPDFRenderedPage* page = self.pages[(NSUInteger)pageIndex];
+    if (!page.image) return;
 
     NSRect imageable = info.imageablePageBounds;
     imageable.origin.x += pageRect.origin.x;
     imageable.origin.y += pageRect.origin.y;
     CGFloat scale = MIN(NSWidth(imageable) / page.image.size.width, NSHeight(imageable) / page.image.size.height);
     NSSize drawSize = NSMakeSize(page.image.size.width * scale, page.image.size.height * scale);
-    NSRect drawRect = NSMakeRect(imageable.origin.x + (NSWidth(imageable) - drawSize.width) / 2.0,
-                                 imageable.origin.y + (NSHeight(imageable) - drawSize.height) / 2.0,
-                                 drawSize.width,
-                                 drawSize.height);
-    [page.image drawInRect:drawRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0 respectFlipped:YES hints:@{NSImageHintInterpolation: @(NSImageInterpolationHigh)}];
+    NSRect drawRect =
+        NSMakeRect(imageable.origin.x + (NSWidth(imageable) - drawSize.width) / 2.0,
+                   imageable.origin.y + (NSHeight(imageable) - drawSize.height) / 2.0, drawSize.width, drawSize.height);
+    [page.image drawInRect:drawRect
+                  fromRect:NSZeroRect
+                 operation:NSCompositingOperationSourceOver
+                  fraction:1.0
+            respectFlipped:YES
+                     hints:@{NSImageHintInterpolation : @(NSImageInterpolationHigh)}];
 }
 
 @end
 
 @implementation SumatraMacDelegate {
-    NSWindow *_window;
-    NSTitlebarAccessoryViewController *_tabAccessory;
-    SPDFTabStripView *_tabStrip;
-    NSSplitView *_splitView;
-    NSTableView *_sidebarTable;
-    NSView *_sidebarContainer;
-    SPDFScrollView *_pageScrollView;
-    SPDFDocumentView *_pageView;
-    NSButton *_openButton;
-    NSButton *_prevButton;
-    NSButton *_nextButton;
-    NSTextField *_pageField;
-    NSTextField *_pageCountLabel;
-    NSButton *_zoomOutButton;
-    NSButton *_zoomInButton;
-    NSPopUpButton *_fitModePopup;
-    NSButton *_continuousButton;
-    NSSearchField *_searchField;
-    NSButton *_findPrevButton;
-    NSButton *_findNextButton;
-    NSTextField *_statusLabel;
-    NSSegmentedControl *_sidebarModeControl;
-    NSPanel *_palettePanel;
-    NSSearchField *_paletteSearchField;
-    NSButton *_paletteAllDocsCheckbox;
-    NSTableView *_paletteTable;
-    NSMutableArray<NSDictionary *> *_paletteResults;
+    NSWindow* _window;
+    NSTitlebarAccessoryViewController* _tabAccessory;
+    SPDFTabStripView* _tabStrip;
+    NSSplitView* _splitView;
+    NSTableView* _sidebarTable;
+    NSView* _sidebarContainer;
+    NSView* _documentContainer;
+    SPDFScrollView* _pageScrollView;
+    SPDFDocumentView* _pageView;
+    SPDFMinimapView* _minimapView;
+    NSLayoutConstraint* _minimapWidthConstraint;
+    NSButton* _openButton;
+    NSButton* _prevButton;
+    NSButton* _nextButton;
+    NSTextField* _pageField;
+    NSTextField* _pageCountLabel;
+    NSButton* _zoomOutButton;
+    NSButton* _zoomInButton;
+    NSPopUpButton* _fitModePopup;
+    NSButton* _continuousButton;
+    NSSearchField* _searchField;
+    NSButton* _findPrevButton;
+    NSButton* _findNextButton;
+    NSTextField* _findCountLabel;
+    NSTextField* _statusLabel;
+    NSSegmentedControl* _sidebarModeControl;
+    NSPanel* _palettePanel;
+    NSSearchField* _paletteSearchField;
+    NSButton* _paletteAllDocsCheckbox;
+    NSTableView* _paletteTable;
+    NSMutableArray<NSDictionary*>* _paletteResults;
     NSInteger _paletteMode;
     NSUInteger _paletteSearchGeneration;
     id _paletteEventMonitor;
-    NSOperationQueue *_renderQueue;
-    NSOperationQueue *_preloadQueue;
-    NSOperationQueue *_findQueue;
+    NSOperationQueue* _renderQueue;
+    NSOperationQueue* _preloadQueue;
+    NSOperationQueue* _findQueue;
 
-    spdf_document *_doc;
+    spdf_document* _doc;
     spdf_outline _outline;
-    NSMutableArray<NSDictionary *> *_sidebarItems;
-    NSMutableArray<SPDFRenderedPage *> *_renderedPages;
-    NSMutableArray<SPDFDocumentTab *> *_tabs;
-    NSMutableArray<NSDictionary *> *_favorites;
-    NSMutableDictionary<NSNumber *, NSArray<NSValue *> *> *_findHighlights;
-    NSMutableArray<NSDictionary *> *_findMatches;
+    NSMutableArray<NSDictionary*>* _sidebarItems;
+    NSMutableArray<SPDFRenderedPage*>* _renderedPages;
+    NSMutableArray<SPDFDocumentTab*>* _tabs;
+    NSMutableArray<NSDictionary*>* _favorites;
+    NSMutableDictionary<NSNumber*, NSArray<NSValue*>*>* _findHighlights;
+    NSMutableArray<NSDictionary*>* _findMatches;
     NSUInteger _findGeneration;
-    NSString *_path;
-    NSString *_pendingOpenPath;
-    NSMutableArray<NSString *> *_pendingOpenPaths;
+    BOOL _findSearchInProgress;
+    NSString* _path;
+    NSString* _pendingOpenPath;
+    NSMutableArray<NSString*>* _pendingOpenPaths;
     NSInteger _pageIndex;
     NSInteger _highlightPageIndex;
     NSInteger _findMatchIndex;
     NSInteger _selectionPageIndex;
-    NSString *_selectedText;
+    NSString* _selectedText;
     CGFloat _zoom;
     SPDFFitMode _fitMode;
     SPDFViewMode _viewMode;
     NSInteger _selectedTabIndex;
     NSUInteger _renderGeneration;
-    NSTimer *_zoomFinishTimer;
+    NSTimer* _zoomFinishTimer;
     BOOL _uiReady;
     BOOL _updatingSelection;
     BOOL _updatingFromScroll;
     BOOL _sidebarVisible;
 }
 
-- (void)applicationDidFinishLaunching:(NSNotification *)notification
-{
+- (void)applicationDidFinishLaunching:(NSNotification*)notification {
     (void)notification;
     _zoom = 1.0;
     _fitMode = SPDFFitModeWidth;
@@ -874,31 +1062,25 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [_window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
 
-    NSMutableArray<NSString *> *startupPaths = [NSMutableArray array];
-    if (_pendingOpenPath.length > 0)
-        [startupPaths addObject:_pendingOpenPath];
-    for (NSString *path in _pendingOpenPaths) {
-        if (path.length > 0 && ![startupPaths containsObject:path])
-            [startupPaths addObject:path];
+    NSMutableArray<NSString*>* startupPaths = [NSMutableArray array];
+    if (_pendingOpenPath.length > 0) [startupPaths addObject:_pendingOpenPath];
+    for (NSString* path in _pendingOpenPaths) {
+        if (path.length > 0 && ![startupPaths containsObject:path]) [startupPaths addObject:path];
     }
-    if (self.initialPath.length > 0)
-        [startupPaths addObject:self.initialPath];
+    if (self.initialPath.length > 0) [startupPaths addObject:self.initialPath];
     if (startupPaths.count > 0) {
-        for (NSString *path in startupPaths)
-            [self openPath:path];
+        for (NSString* path in startupPaths) [self openPath:path];
     } else if (_tabs.count > 0) {
         [self selectTabAtIndex:MAX(0, _selectedTabIndex)];
     }
 }
 
-- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender
-{
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
     (void)sender;
     return YES;
 }
 
-- (void)applicationWillTerminate:(NSNotification *)notification
-{
+- (void)applicationWillTerminate:(NSNotification*)notification {
     (void)notification;
     [_renderQueue cancelAllOperations];
     [_preloadQueue cancelAllOperations];
@@ -909,37 +1091,31 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     spdf_close(_doc);
 }
 
-- (BOOL)application:(NSApplication *)sender openFile:(NSString *)filename
-{
+- (BOOL)application:(NSApplication*)sender openFile:(NSString*)filename {
     (void)sender;
     if (!_uiReady) {
-        if (!_pendingOpenPath.length)
-            _pendingOpenPath = [filename copy];
-        if (filename.length && ![_pendingOpenPaths containsObject:filename])
-            [_pendingOpenPaths addObject:filename];
+        if (!_pendingOpenPath.length) _pendingOpenPath = [filename copy];
+        if (filename.length && ![_pendingOpenPaths containsObject:filename]) [_pendingOpenPaths addObject:filename];
         return YES;
     }
     [self openPath:filename];
     return YES;
 }
 
-- (void)application:(NSApplication *)application openFiles:(NSArray<NSString *> *)filenames
-{
+- (void)application:(NSApplication*)application openFiles:(NSArray<NSString*>*)filenames {
     (void)application;
     if (filenames.count > 0) {
         if (!_uiReady) {
             _pendingOpenPath = [filenames.firstObject copy];
             [_pendingOpenPaths addObjectsFromArray:filenames];
         } else {
-            for (NSString *filename in filenames)
-                [self openPath:filename];
+            for (NSString* filename in filenames) [self openPath:filename];
         }
     }
     [NSApp replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
 
-- (void)windowDidResize:(NSNotification *)notification
-{
+- (void)windowDidResize:(NSNotification*)notification {
     (void)notification;
     [self updateTabStripFrame];
     if (_doc && (_fitMode == SPDFFitModeWidth || _fitMode == SPDFFitModeHeight || _fitMode == SPDFFitModePage))
@@ -948,63 +1124,54 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         [self resizeDocumentView];
 }
 
-- (NSString *)supportDirectory
-{
-    NSURL *base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
-    NSString *dir = [base.path stringByAppendingPathComponent:@"SumatraPDF"];
+- (NSString*)supportDirectory {
+    NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                       inDomains:NSUserDomainMask]
+                      .firstObject;
+    NSString* dir = [base.path stringByAppendingPathComponent:@"SumatraPDF"];
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir;
 }
 
-- (NSString *)pathForStateFile:(NSString *)name
-{
+- (NSString*)pathForStateFile:(NSString*)name {
     return [[self supportDirectory] stringByAppendingPathComponent:name];
 }
 
-- (id)jsonObjectFromFile:(NSString *)name
-{
-    NSData *data = [NSData dataWithContentsOfFile:[self pathForStateFile:name]];
-    if (!data)
-        return nil;
+- (id)jsonObjectFromFile:(NSString*)name {
+    NSData* data = [NSData dataWithContentsOfFile:[self pathForStateFile:name]];
+    if (!data) return nil;
     return [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
 }
 
-- (void)writeJSONObject:(id)object toFile:(NSString *)name
-{
-    NSData *data = [NSJSONSerialization dataWithJSONObject:object options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
-    if (data)
-        [data writeToFile:[self pathForStateFile:name] atomically:YES];
+- (void)writeJSONObject:(id)object toFile:(NSString*)name {
+    NSData* data = [NSJSONSerialization dataWithJSONObject:object
+                                                   options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys
+                                                     error:nil];
+    if (data) [data writeToFile:[self pathForStateFile:name] atomically:YES];
 }
 
-- (void)loadPersistentState
-{
-    NSDictionary *settings = [self jsonObjectFromFile:@"settings.json"];
+- (void)loadPersistentState {
+    NSDictionary* settings = [self jsonObjectFromFile:@"settings.json"];
     if ([settings isKindOfClass:NSDictionary.class]) {
-        NSNumber *fit = settings[@"fitMode"];
-        NSNumber *view = settings[@"viewMode"];
-        NSNumber *sidebar = settings[@"showSidebar"];
-        if (fit)
-            _fitMode = (SPDFFitMode)MAX(0, MIN(4, fit.integerValue));
-        if (view)
-            _viewMode = (SPDFViewMode)MAX(0, MIN(1, view.integerValue));
-        if (sidebar)
-            _sidebarVisible = sidebar.boolValue;
+        NSNumber* fit = settings[@"fitMode"];
+        NSNumber* view = settings[@"viewMode"];
+        NSNumber* sidebar = settings[@"showSidebar"];
+        if (fit) _fitMode = (SPDFFitMode)MAX(0, MIN(4, fit.integerValue));
+        if (view) _viewMode = (SPDFViewMode)MAX(0, MIN(1, view.integerValue));
+        if (sidebar) _sidebarVisible = sidebar.boolValue;
     }
 
-    NSArray *favorites = [self jsonObjectFromFile:@"favorites.json"];
-    if ([favorites isKindOfClass:NSArray.class])
-        [_favorites addObjectsFromArray:favorites];
+    NSArray* favorites = [self jsonObjectFromFile:@"favorites.json"];
+    if ([favorites isKindOfClass:NSArray.class]) [_favorites addObjectsFromArray:favorites];
 
-    NSDictionary *session = [self jsonObjectFromFile:@"session.json"];
-    NSArray *tabs = [session isKindOfClass:NSDictionary.class] ? session[@"tabs"] : nil;
+    NSDictionary* session = [self jsonObjectFromFile:@"session.json"];
+    NSArray* tabs = [session isKindOfClass:NSDictionary.class] ? session[@"tabs"] : nil;
     if ([tabs isKindOfClass:NSArray.class]) {
-        for (NSDictionary *item in tabs) {
-            if (![item isKindOfClass:NSDictionary.class])
-                continue;
-            NSString *path = item[@"path"];
-            if (![path isKindOfClass:NSString.class] || path.length == 0)
-                continue;
-            SPDFDocumentTab *tab = [[SPDFDocumentTab alloc] init];
+        for (NSDictionary* item in tabs) {
+            if (![item isKindOfClass:NSDictionary.class]) continue;
+            NSString* path = item[@"path"];
+            if (![path isKindOfClass:NSString.class] || path.length == 0) continue;
+            SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
             tab.path = path;
             tab.title = [item[@"title"] isKindOfClass:NSString.class] ? item[@"title"] : path.lastPathComponent;
             tab.pageIndex = [item[@"page"] integerValue];
@@ -1018,68 +1185,75 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)savePersistentState
-{
-    NSMutableArray *tabs = [NSMutableArray array];
-    for (SPDFDocumentTab *tab in _tabs) {
-        if (!tab.path.length)
-            continue;
-        [tabs addObject:@{@"path": tab.path,
-                          @"title": tab.title ?: tab.path.lastPathComponent,
-                          @"page": @(tab.pageIndex),
-                          @"zoom": @(tab.zoom),
-                          @"fitMode": @(tab.fitMode),
-                          @"viewMode": @(tab.viewMode),
-                          @"scrollX": @(tab.scrollOrigin.x),
-                          @"scrollY": @(tab.scrollOrigin.y)}];
+- (void)savePersistentState {
+    NSMutableArray* tabs = [NSMutableArray array];
+    for (SPDFDocumentTab* tab in _tabs) {
+        if (!tab.path.length) continue;
+        [tabs addObject:@{
+            @"path" : tab.path,
+            @"title" : tab.title ?: tab.path.lastPathComponent,
+            @"page" : @(tab.pageIndex),
+            @"zoom" : @(tab.zoom),
+            @"fitMode" : @(tab.fitMode),
+            @"viewMode" : @(tab.viewMode),
+            @"scrollX" : @(tab.scrollOrigin.x),
+            @"scrollY" : @(tab.scrollOrigin.y)
+        }];
     }
-    [self writeJSONObject:@{@"version": @1,
-                            @"selectedTab": @(MAX(0, _selectedTabIndex)),
-                            @"tabs": tabs} toFile:@"session.json"];
-    [self writeJSONObject:@{@"version": @1,
-                            @"fitMode": @(_fitMode),
-                            @"viewMode": @(_viewMode),
-                            @"showSidebar": @(_sidebarVisible)} toFile:@"settings.json"];
+    [self writeJSONObject:@{@"version" : @1, @"selectedTab" : @(MAX(0, _selectedTabIndex)), @"tabs" : tabs}
+                   toFile:@"session.json"];
+    [self writeJSONObject:@{
+        @"version" : @1,
+        @"fitMode" : @(_fitMode),
+        @"viewMode" : @(_viewMode),
+        @"showSidebar" : @(_sidebarVisible)
+    }
+                   toFile:@"settings.json"];
     [self writeJSONObject:_favorites toFile:@"favorites.json"];
 }
 
-- (void)buildMenu
-{
-    NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@""];
+- (void)buildMenu {
+    NSMenu* mainMenu = [[NSMenu alloc] initWithTitle:@""];
 
-    NSMenuItem *appItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+    NSMenuItem* appItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
     [mainMenu addItem:appItem];
-    NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"SumatraPDF"];
+    NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"SumatraPDF"];
     [appMenu addItemWithTitle:@"About SumatraPDF" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit SumatraPDF" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
 
-    NSMenuItem *fileItem = [[NSMenuItem alloc] initWithTitle:@"File" action:nil keyEquivalent:@""];
+    NSMenuItem* fileItem = [[NSMenuItem alloc] initWithTitle:@"File" action:nil keyEquivalent:@""];
     [mainMenu addItem:fileItem];
-    NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+    NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
     [fileMenu addItemWithTitle:@"Open..." action:@selector(openDocument:) keyEquivalent:@"o"];
-    [fileMenu addItemWithTitle:@"Open in Adobe Acrobat Reader" action:@selector(openInExternalReader:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Open in Adobe Acrobat Reader"
+                        action:@selector(openInExternalReader:)
+                 keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Close" action:@selector(closeDocument:) keyEquivalent:@"w"];
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Print..." action:@selector(printDocument:) keyEquivalent:@"p"];
     [fileMenu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@""];
     fileItem.submenu = fileMenu;
 
-    NSMenuItem *goItem = [[NSMenuItem alloc] initWithTitle:@"Go To" action:nil keyEquivalent:@""];
+    NSMenuItem* goItem = [[NSMenuItem alloc] initWithTitle:@"Go To" action:nil keyEquivalent:@""];
     [mainMenu addItem:goItem];
-    NSMenu *goMenu = [[NSMenu alloc] initWithTitle:@"Go To"];
-    [goMenu addItemWithTitle:@"First Page" action:@selector(firstPage:) keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSHomeFunctionKey)]];
+    NSMenu* goMenu = [[NSMenu alloc] initWithTitle:@"Go To"];
+    [goMenu addItemWithTitle:@"First Page"
+                      action:@selector(firstPage:)
+               keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSHomeFunctionKey)]];
     [goMenu addItemWithTitle:@"Previous Page" action:@selector(previousPage:) keyEquivalent:@"["];
     [goMenu addItemWithTitle:@"Next Page" action:@selector(nextPage:) keyEquivalent:@"]"];
-    [goMenu addItemWithTitle:@"Last Page" action:@selector(lastPage:) keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSEndFunctionKey)]];
+    [goMenu addItemWithTitle:@"Last Page"
+                      action:@selector(lastPage:)
+               keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSEndFunctionKey)]];
     [goMenu addItem:[NSMenuItem separatorItem]];
     [goMenu addItemWithTitle:@"Go To Page..." action:@selector(focusPageField:) keyEquivalent:@"l"];
     goItem.submenu = goMenu;
 
-    NSMenuItem *zoomItem = [[NSMenuItem alloc] initWithTitle:@"Zoom" action:nil keyEquivalent:@""];
+    NSMenuItem* zoomItem = [[NSMenuItem alloc] initWithTitle:@"Zoom" action:nil keyEquivalent:@""];
     [mainMenu addItem:zoomItem];
-    NSMenu *zoomMenu = [[NSMenu alloc] initWithTitle:@"Zoom"];
+    NSMenu* zoomMenu = [[NSMenu alloc] initWithTitle:@"Zoom"];
     [zoomMenu addItemWithTitle:@"Zoom In" action:@selector(zoomIn:) keyEquivalent:@"+"];
     [zoomMenu addItemWithTitle:@"Zoom Out" action:@selector(zoomOut:) keyEquivalent:@"-"];
     [zoomMenu addItemWithTitle:@"Actual Size" action:@selector(actualSize:) keyEquivalent:@"0"];
@@ -1089,45 +1263,51 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [zoomMenu addItemWithTitle:@"Fit Height" action:@selector(fitHeight:) keyEquivalent:@"2"];
     zoomItem.submenu = zoomMenu;
 
-    NSMenuItem *viewItem = [[NSMenuItem alloc] initWithTitle:@"View" action:nil keyEquivalent:@""];
+    NSMenuItem* viewItem = [[NSMenuItem alloc] initWithTitle:@"View" action:nil keyEquivalent:@""];
     [mainMenu addItem:viewItem];
-    NSMenu *viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
+    NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
     [viewMenu addItemWithTitle:@"Single Page" action:@selector(setSinglePageMode:) keyEquivalent:@"4"];
     [viewMenu addItemWithTitle:@"Continuous" action:@selector(setContinuousMode:) keyEquivalent:@"5"];
     [viewMenu addItem:[NSMenuItem separatorItem]];
     [viewMenu addItemWithTitle:@"Show Sidebar" action:@selector(toggleSidebar:) keyEquivalent:@""];
-    NSMenuItem *fullScreen = [viewMenu addItemWithTitle:@"Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
+    NSMenuItem* fullScreen = [viewMenu addItemWithTitle:@"Full Screen"
+                                                 action:@selector(toggleFullScreen:)
+                                          keyEquivalent:@"f"];
     fullScreen.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     [viewMenu addItem:[NSMenuItem separatorItem]];
     [viewMenu addItemWithTitle:@"Rotate Left" action:@selector(unimplementedMenuItem:) keyEquivalent:@""];
     [viewMenu addItemWithTitle:@"Rotate Right" action:@selector(unimplementedMenuItem:) keyEquivalent:@""];
     viewItem.submenu = viewMenu;
 
-    NSMenuItem *editItem = [[NSMenuItem alloc] initWithTitle:@"Edit" action:nil keyEquivalent:@""];
+    NSMenuItem* editItem = [[NSMenuItem alloc] initWithTitle:@"Edit" action:nil keyEquivalent:@""];
     [mainMenu addItem:editItem];
-    NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+    NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
     [editMenu addItemWithTitle:@"Copy" action:@selector(copySelection:) keyEquivalent:@"c"];
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Find" action:@selector(focusFind:) keyEquivalent:@"f"];
     [editMenu addItemWithTitle:@"Find Next" action:@selector(findNext:) keyEquivalent:@"g"];
-    NSMenuItem *prevFind = [editMenu addItemWithTitle:@"Find Previous" action:@selector(findPrevious:) keyEquivalent:@"G"];
+    NSMenuItem* prevFind = [editMenu addItemWithTitle:@"Find Previous"
+                                               action:@selector(findPrevious:)
+                                        keyEquivalent:@"G"];
     prevFind.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     editItem.submenu = editMenu;
 
-    NSMenuItem *favoritesItem = [[NSMenuItem alloc] initWithTitle:@"Favorites" action:nil keyEquivalent:@""];
+    NSMenuItem* favoritesItem = [[NSMenuItem alloc] initWithTitle:@"Favorites" action:nil keyEquivalent:@""];
     [mainMenu addItem:favoritesItem];
-    NSMenu *favoritesMenu = [[NSMenu alloc] initWithTitle:@"Favorites"];
+    NSMenu* favoritesMenu = [[NSMenu alloc] initWithTitle:@"Favorites"];
     [favoritesMenu addItemWithTitle:@"Search Favorites..." action:@selector(showFavoritesPalette:) keyEquivalent:@"k"];
     [favoritesMenu addItem:[NSMenuItem separatorItem]];
     [favoritesMenu addItemWithTitle:@"Favorite Current Page" action:@selector(favoriteCurrentPage:) keyEquivalent:@"b"];
-    NSMenuItem *docFav = [favoritesMenu addItemWithTitle:@"Favorite Current Document" action:@selector(favoriteCurrentDocument:) keyEquivalent:@"B"];
+    NSMenuItem* docFav = [favoritesMenu addItemWithTitle:@"Favorite Current Document"
+                                                  action:@selector(favoriteCurrentDocument:)
+                                           keyEquivalent:@"B"];
     docFav.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [favoritesMenu addItemWithTitle:@"Manage Favorites..." action:@selector(showFavoritesPalette:) keyEquivalent:@""];
     favoritesItem.submenu = favoritesMenu;
 
-    NSMenuItem *settingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings" action:nil keyEquivalent:@""];
+    NSMenuItem* settingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings" action:nil keyEquivalent:@""];
     [mainMenu addItem:settingsItem];
-    NSMenu *settingsMenu = [[NSMenu alloc] initWithTitle:@"Settings"];
+    NSMenu* settingsMenu = [[NSMenu alloc] initWithTitle:@"Settings"];
     [settingsMenu addItemWithTitle:@"Options..." action:@selector(unimplementedMenuItem:) keyEquivalent:@","];
     [settingsMenu addItemWithTitle:@"Advanced Options..." action:@selector(unimplementedMenuItem:) keyEquivalent:@""];
     settingsItem.submenu = settingsMenu;
@@ -1135,19 +1315,18 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     NSApp.mainMenu = mainMenu;
 }
 
-- (NSButton *)buttonWithTitle:(NSString *)title action:(SEL)action
-{
-    NSButton *button = [NSButton buttonWithTitle:title target:self action:action];
+- (NSButton*)buttonWithTitle:(NSString*)title action:(SEL)action {
+    NSButton* button = [NSButton buttonWithTitle:title target:self action:action];
     button.bezelStyle = NSBezelStyleTexturedRounded;
     button.translatesAutoresizingMaskIntoConstraints = NO;
     return button;
 }
 
-- (void)buildWindow
-{
+- (void)buildWindow {
     NSRect frame = NSMakeRect(120, 80, 1120, 800);
     _window = [[NSWindow alloc] initWithContentRect:frame
-                                          styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
+                                          styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                                    NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
                                             backing:NSBackingStoreBuffered
                                               defer:NO];
     _window.delegate = self;
@@ -1157,24 +1336,24 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _window.titlebarAppearsTransparent = YES;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
 
-    _tabStrip = [[SPDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(frame), 36)];
+    _tabStrip = [[SPDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(frame), kTabStripHeight)];
     _tabStrip.autoresizingMask = NSViewWidthSizable;
     _tabStrip.reader = self;
     _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
     _tabAccessory = [[NSTitlebarAccessoryViewController alloc] init];
     _tabAccessory.view = _tabStrip;
-    _tabAccessory.layoutAttribute = NSLayoutAttributeTop;
+    _tabAccessory.layoutAttribute = NSLayoutAttributeBottom;
     [_window addTitlebarAccessoryViewController:_tabAccessory];
     [self updateTabStripFrame];
 
-    SPDFDropView *content = [[SPDFDropView alloc] initWithFrame:frame];
+    SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
     content.reader = self;
-    [content registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    [content registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
     content.translatesAutoresizingMaskIntoConstraints = NO;
     _window.contentView = content;
 
-    NSStackView *toolbar = [[NSStackView alloc] init];
+    NSStackView* toolbar = [[NSStackView alloc] init];
     toolbar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     toolbar.alignment = NSLayoutAttributeCenterY;
     toolbar.spacing = 6.0;
@@ -1198,7 +1377,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _zoomInButton = [self buttonWithTitle:@"+" action:@selector(zoomIn:)];
 
     _fitModePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
-    [_fitModePopup addItemsWithTitles:@[@"Custom", @"Actual", @"Fit Width", @"Fit Height", @"Fit Page"]];
+    [_fitModePopup addItemsWithTitles:@[ @"Custom", @"Actual", @"Fit Width", @"Fit Height", @"Fit Page" ]];
     _fitModePopup.target = self;
     _fitModePopup.action = @selector(fitModePopupChanged:);
     _fitModePopup.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1217,8 +1396,14 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [_searchField.widthAnchor constraintEqualToConstant:190].active = YES;
     _findPrevButton = [self buttonWithTitle:@"<" action:@selector(findPrevious:)];
     _findNextButton = [self buttonWithTitle:@">" action:@selector(findNext:)];
+    _findCountLabel = [NSTextField labelWithString:@""];
+    _findCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _findCountLabel.alignment = NSTextAlignmentCenter;
+    _findCountLabel.textColor = NSColor.secondaryLabelColor;
+    _findCountLabel.font = [NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
     [_findPrevButton.widthAnchor constraintEqualToConstant:30].active = YES;
     [_findNextButton.widthAnchor constraintEqualToConstant:30].active = YES;
+    [_findCountLabel.widthAnchor constraintEqualToConstant:64].active = YES;
 
     [toolbar addArrangedSubview:_openButton];
     [toolbar addArrangedSubview:_prevButton];
@@ -1230,6 +1415,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [toolbar addArrangedSubview:_fitModePopup];
     [toolbar addArrangedSubview:_continuousButton];
     [toolbar addArrangedSubview:_searchField];
+    [toolbar addArrangedSubview:_findCountLabel];
     [toolbar addArrangedSubview:_findPrevButton];
     [toolbar addArrangedSubview:_findNextButton];
 
@@ -1251,7 +1437,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _sidebarModeControl.translatesAutoresizingMaskIntoConstraints = NO;
     [_sidebarContainer addSubview:_sidebarModeControl];
 
-    NSScrollView *sidebarScroll = [[NSScrollView alloc] init];
+    NSScrollView* sidebarScroll = [[NSScrollView alloc] init];
     sidebarScroll.hasVerticalScroller = YES;
     sidebarScroll.translatesAutoresizingMaskIntoConstraints = NO;
     [_sidebarContainer addSubview:sidebarScroll];
@@ -1261,7 +1447,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _sidebarTable.rowHeight = 25.0;
     _sidebarTable.dataSource = self;
     _sidebarTable.delegate = self;
-    NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:@"title"];
+    NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"title"];
     column.title = @"Title";
     column.width = 230.0;
     [_sidebarTable addTableColumn:column];
@@ -1280,6 +1466,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
     _pageScrollView = [[SPDFScrollView alloc] init];
     _pageScrollView.reader = self;
+    _pageScrollView.translatesAutoresizingMaskIntoConstraints = NO;
     _pageScrollView.hasVerticalScroller = YES;
     _pageScrollView.hasHorizontalScroller = YES;
     _pageScrollView.autohidesScrollers = NO;
@@ -1289,17 +1476,41 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _pageScrollView.contentView.drawsBackground = YES;
     _pageScrollView.contentView.backgroundColor = NSColor.windowBackgroundColor;
     _pageScrollView.contentView.postsBoundsChangedNotifications = YES;
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(clipViewBoundsChanged:) name:NSViewBoundsDidChangeNotification object:_pageScrollView.contentView];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(clipViewBoundsChanged:)
+                                                 name:NSViewBoundsDidChangeNotification
+                                               object:_pageScrollView.contentView];
 
     _pageView = [[SPDFDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 800, 1000)];
     _pageView.reader = self;
-    [_pageView registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    [_pageView registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
     _pageView.viewMode = _viewMode;
     _pageView.zoom = _zoom;
     _pageScrollView.documentView = _pageView;
 
+    _documentContainer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)];
+    _documentContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    [_documentContainer addSubview:_pageScrollView];
+
+    _minimapView = [[SPDFMinimapView alloc] init];
+    _minimapView.translatesAutoresizingMaskIntoConstraints = NO;
+    _minimapView.reader = self;
+    _minimapView.wantsLayer = YES;
+    [_documentContainer addSubview:_minimapView];
+    _minimapWidthConstraint = [_minimapView.widthAnchor constraintEqualToConstant:kMinimapWidth];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [_pageScrollView.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
+        [_pageScrollView.leadingAnchor constraintEqualToAnchor:_documentContainer.leadingAnchor],
+        [_pageScrollView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor],
+        [_pageScrollView.trailingAnchor constraintEqualToAnchor:_minimapView.leadingAnchor],
+        [_minimapView.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
+        [_minimapView.trailingAnchor constraintEqualToAnchor:_documentContainer.trailingAnchor],
+        [_minimapView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor], _minimapWidthConstraint
+    ]];
+
     [_splitView addSubview:_sidebarContainer];
-    [_splitView addSubview:_pageScrollView];
+    [_splitView addSubview:_documentContainer];
 
     _statusLabel = [NSTextField labelWithString:@"Ready"];
     _statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1307,7 +1518,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [content addSubview:_statusLabel];
 
     [NSLayoutConstraint activateConstraints:@[
-        [toolbar.topAnchor constraintEqualToAnchor:content.topAnchor constant:38],
+        [toolbar.topAnchor constraintEqualToAnchor:content.topAnchor constant:kToolbarTopInset],
         [toolbar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
         [toolbar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         [toolbar.heightAnchor constraintEqualToConstant:42],
@@ -1330,51 +1541,46 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self updateControls];
 }
 
-- (CGFloat)backingScale
-{
+- (CGFloat)backingScale {
     CGFloat scale = _window.backingScaleFactor;
-    if (scale <= 0)
-        scale = NSScreen.mainScreen.backingScaleFactor;
+    if (scale <= 0) scale = NSScreen.mainScreen.backingScaleFactor;
     return scale > 0 ? scale : 1.0;
 }
 
-- (CGFloat)zoomForFitMode:(SPDFFitMode)fitMode pageIndex:(NSInteger)pageIndex
-{
-    if (!_doc)
-        return _zoom;
-    if (fitMode == SPDFFitModeCustom)
-        return _zoom;
-    if (fitMode == SPDFFitModeActual)
-        return 1.0;
+- (CGFloat)zoomForFitMode:(SPDFFitMode)fitMode pageIndex:(NSInteger)pageIndex {
+    if (!_doc) return _zoom;
+    if (fitMode == SPDFFitModeCustom) return _zoom;
+    if (fitMode == SPDFFitModeActual) return 1.0;
 
     char err[1024];
     float pageWidth = 0;
     float pageHeight = 0;
-    if (!spdf_page_size(_doc, (int)pageIndex, &pageWidth, &pageHeight, err, sizeof(err)) || pageWidth <= 0 || pageHeight <= 0)
+    if (!spdf_page_size(_doc, (int)pageIndex, &pageWidth, &pageHeight, err, sizeof(err)) || pageWidth <= 0 ||
+        pageHeight <= 0)
         return _zoom;
 
     NSSize clipSize = _pageScrollView.contentView.bounds.size;
     CGFloat widthZoom = (clipSize.width - kPageMargin * 1.7) / pageWidth;
     CGFloat heightZoom = (clipSize.height - kPageMargin) / pageHeight;
-    if (fitMode == SPDFFitModeWidth)
-        return MAX(kMinZoom, MIN(kMaxZoom, widthZoom));
-    if (fitMode == SPDFFitModeHeight)
-        return MAX(kMinZoom, MIN(kMaxZoom, heightZoom));
+    if (fitMode == SPDFFitModeWidth) return MAX(kMinZoom, MIN(kMaxZoom, widthZoom));
+    if (fitMode == SPDFFitModeHeight) return MAX(kMinZoom, MIN(kMaxZoom, heightZoom));
     return MAX(kMinZoom, MIN(kMaxZoom, MIN(widthZoom, heightZoom)));
 }
 
-- (SPDFRenderedPage *)renderedPageAtIndex:(NSInteger)pageIndex document:(spdf_document *)doc zoom:(CGFloat)zoom displayScale:(CGFloat)displayScale error:(char *)err errorLength:(size_t)errLen
-{
+- (SPDFRenderedPage*)renderedPageAtIndex:(NSInteger)pageIndex
+                                document:(spdf_document*)doc
+                                    zoom:(CGFloat)zoom
+                            displayScale:(CGFloat)displayScale
+                                   error:(char*)err
+                             errorLength:(size_t)errLen {
     float pageWidth = 0;
     float pageHeight = 0;
-    if (!spdf_page_size(doc, (int)pageIndex, &pageWidth, &pageHeight, err, errLen))
-        return nil;
+    if (!spdf_page_size(doc, (int)pageIndex, &pageWidth, &pageHeight, err, errLen)) return nil;
 
     spdf_bitmap bitmap;
-    if (!spdf_render_page_rgba(doc, (int)pageIndex, (float)(zoom * displayScale), &bitmap, err, errLen))
-        return nil;
+    if (!spdf_render_page_rgba(doc, (int)pageIndex, (float)(zoom * displayScale), &bitmap, err, errLen)) return nil;
 
-    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+    NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
                                                                     pixelsWide:bitmap.width
                                                                     pixelsHigh:bitmap.height
                                                                  bitsPerSample:8
@@ -1389,10 +1595,10 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
     NSSize pointSize = NSMakeSize(pageWidth * zoom, pageHeight * zoom);
     rep.size = pointSize;
-    NSImage *image = [[NSImage alloc] initWithSize:pointSize];
+    NSImage* image = [[NSImage alloc] initWithSize:pointSize];
     [image addRepresentation:rep];
 
-    SPDFRenderedPage *page = [[SPDFRenderedPage alloc] init];
+    SPDFRenderedPage* page = [[SPDFRenderedPage alloc] init];
     page.pageIndex = pageIndex;
     page.pageWidth = pageWidth;
     page.pageHeight = pageHeight;
@@ -1402,14 +1608,19 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return page;
 }
 
-- (SPDFRenderedPage *)renderedPageAtIndex:(NSInteger)pageIndex error:(char *)err errorLength:(size_t)errLen
-{
-    return [self renderedPageAtIndex:pageIndex document:_doc zoom:_zoom displayScale:[self backingScale] error:err errorLength:errLen];
+- (SPDFRenderedPage*)renderedPageAtIndex:(NSInteger)pageIndex error:(char*)err errorLength:(size_t)errLen {
+    return [self renderedPageAtIndex:pageIndex
+                            document:_doc
+                                zoom:_zoom
+                        displayScale:[self backingScale]
+                               error:err
+                         errorLength:errLen];
 }
 
-- (SPDFRenderedPage *)placeholderPageAtIndex:(NSInteger)pageIndex pageWidth:(CGFloat)pageWidth pageHeight:(CGFloat)pageHeight
-{
-    SPDFRenderedPage *page = [[SPDFRenderedPage alloc] init];
+- (SPDFRenderedPage*)placeholderPageAtIndex:(NSInteger)pageIndex
+                                  pageWidth:(CGFloat)pageWidth
+                                 pageHeight:(CGFloat)pageHeight {
+    SPDFRenderedPage* page = [[SPDFRenderedPage alloc] init];
     page.pageIndex = pageIndex;
     page.pageWidth = pageWidth;
     page.pageHeight = pageHeight;
@@ -1418,87 +1629,79 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return page;
 }
 
-- (spdf_document *)workerDocumentForPath:(NSString *)path error:(char *)err errorLength:(size_t)errLen
-{
-    if (!path.length)
-        return NULL;
+- (spdf_document*)workerDocumentForPath:(NSString*)path error:(char*)err errorLength:(size_t)errLen {
+    if (!path.length) return NULL;
 
-    NSMutableDictionary *threadDictionary = NSThread.currentThread.threadDictionary;
-    SPDFWorkerDocument *holder = threadDictionary[@"SumatraPDFWorkerDocument"];
-    if (holder && [holder.path isEqualToString:path] && holder.document)
-        return holder.document;
+    NSMutableDictionary* threadDictionary = NSThread.currentThread.threadDictionary;
+    SPDFWorkerDocument* holder = threadDictionary[@"SumatraPDFWorkerDocument"];
+    if (holder && [holder.path isEqualToString:path] && holder.document) return holder.document;
 
     holder = [[SPDFWorkerDocument alloc] init];
     holder.path = path;
     holder.document = spdf_open(path.fileSystemRepresentation, err, errLen);
-    if (!holder.document)
-        return NULL;
+    if (!holder.document) return NULL;
     threadDictionary[@"SumatraPDFWorkerDocument"] = holder;
     return holder.document;
 }
 
-- (NSArray<NSNumber *> *)pageRenderOrderForCount:(NSInteger)pageCount preferredPage:(NSInteger)preferredPage
-{
-    NSMutableArray<NSNumber *> *order = [NSMutableArray arrayWithCapacity:(NSUInteger)MAX(0, pageCount - 1)];
+- (NSArray<NSNumber*>*)pageRenderOrderForCount:(NSInteger)pageCount preferredPage:(NSInteger)preferredPage {
+    NSMutableArray<NSNumber*>* order = [NSMutableArray arrayWithCapacity:(NSUInteger)MAX(0, pageCount - 1)];
     for (NSInteger distance = 1; distance < pageCount; ++distance) {
         NSInteger after = preferredPage + distance;
         NSInteger before = preferredPage - distance;
-        if (after < pageCount)
-            [order addObject:@(after)];
-        if (before >= 0)
-            [order addObject:@(before)];
+        if (after < pageCount) [order addObject:@(after)];
+        if (before >= 0) [order addObject:@(before)];
     }
     return order;
 }
 
-- (void)enqueueRemainingPageRendersForGeneration:(NSUInteger)generation preferredPage:(NSInteger)preferredPage
-{
-    if (!_doc || !_path.length)
-        return;
+- (void)enqueueRemainingPageRendersForGeneration:(NSUInteger)generation preferredPage:(NSInteger)preferredPage {
+    if (!_doc || !_path.length) return;
 
-    NSString *path = [_path copy];
+    NSString* path = [_path copy];
     CGFloat zoom = _zoom;
     CGFloat displayScale = [self backingScale];
-    NSArray<NSNumber *> *order = [self pageRenderOrderForCount:(NSInteger)_renderedPages.count preferredPage:preferredPage];
-    for (NSNumber *number in order) {
+    NSArray<NSNumber*>* order = [self pageRenderOrderForCount:(NSInteger)_renderedPages.count
+                                                preferredPage:preferredPage];
+    for (NSNumber* number in order) {
         NSInteger index = number.integerValue;
         [_renderQueue addOperationWithBlock:^{
-            @autoreleasepool {
-                if (generation != self->_renderGeneration)
-                    return;
-                char err[1024];
-                spdf_document *workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
-                if (!workerDoc)
-                    return;
-                SPDFRenderedPage *page = [self renderedPageAtIndex:index document:workerDoc zoom:zoom displayScale:displayScale error:err errorLength:sizeof(err)];
-                if (!page)
-                    return;
+          @autoreleasepool {
+              if (generation != self->_renderGeneration) return;
+              char err[1024];
+              spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+              if (!workerDoc) return;
+              SPDFRenderedPage* page = [self renderedPageAtIndex:index
+                                                        document:workerDoc
+                                                            zoom:zoom
+                                                    displayScale:displayScale
+                                                           error:err
+                                                     errorLength:sizeof(err)];
+              if (!page) return;
 
-                [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    if (generation != self->_renderGeneration || !self->_doc || index >= (NSInteger)self->_renderedPages.count)
-                        return;
-                    SPDFRenderedPage *old = self->_renderedPages[(NSUInteger)index];
-                    page.highlights = self->_findHighlights[@(index)] ?: old.highlights ?: @[];
-                    page.selectionRects = old.selectionRects ?: @[];
-                    [self->_renderedPages replaceObjectAtIndex:(NSUInteger)index withObject:page];
-                    [self applySearchHighlightsToCurrentPage];
-                    [self resizeDocumentView];
-                }];
-            }
+              [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                if (generation != self->_renderGeneration || !self->_doc ||
+                    index >= (NSInteger)self->_renderedPages.count)
+                    return;
+                SPDFRenderedPage* old = self->_renderedPages[(NSUInteger)index];
+                page.highlights = self->_findHighlights[@(index)] ?: old.highlights ?: @[];
+                page.selectionRects = old.selectionRects ?: @[];
+                [self->_renderedPages replaceObjectAtIndex:(NSUInteger)index withObject:page];
+                [self applySearchHighlightsToCurrentPage];
+                [self resizeDocumentView];
+              }];
+          }
         }];
     }
 }
 
-- (void)renderPageIfNeededAtIndex:(NSInteger)pageIndex
-{
-    if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count)
-        return;
-    SPDFRenderedPage *existing = _renderedPages[(NSUInteger)pageIndex];
-    if (existing.image)
-        return;
+- (void)renderPageIfNeededAtIndex:(NSInteger)pageIndex {
+    if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
+    SPDFRenderedPage* existing = _renderedPages[(NSUInteger)pageIndex];
+    if (existing.image) return;
 
     char err[1024];
-    SPDFRenderedPage *page = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
+    SPDFRenderedPage* page = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
     if (!page) {
         _statusLabel.stringValue = [NSString stringWithFormat:@"Could not render page %ld", (long)pageIndex + 1];
         return;
@@ -1507,35 +1710,37 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     page.selectionRects = existing.selectionRects ?: @[];
     [_renderedPages replaceObjectAtIndex:(NSUInteger)pageIndex withObject:page];
     _pageView.pages = _renderedPages;
+    [self updateMinimap];
 }
 
-- (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop
-{
-    if (!_doc || !_uiReady)
-        return;
+- (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop {
+    if (!_doc || !_uiReady) return;
 
     [_window.contentView layoutSubtreeIfNeeded];
     [_renderQueue cancelAllOperations];
     _renderGeneration++;
     NSUInteger generation = _renderGeneration;
     _zoom = [self zoomForFitMode:_fitMode pageIndex:MAX(0, pageIndex)];
-    NSMutableArray<SPDFRenderedPage *> *pages = [NSMutableArray arrayWithCapacity:(NSUInteger)spdf_page_count(_doc)];
+    NSMutableArray<SPDFRenderedPage*>* pages = [NSMutableArray arrayWithCapacity:(NSUInteger)spdf_page_count(_doc)];
     char err[1024];
     NSInteger pageCount = spdf_page_count(_doc);
     pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
-    SPDFRenderedPage *preferredPage = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
+    SPDFRenderedPage* preferredPage = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
     if (!preferredPage) {
         [self showError:@"Could not render page" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
         return;
     }
     for (NSInteger i = 0; i < pageCount; ++i) {
-        SPDFRenderedPage *page = nil;
+        SPDFRenderedPage* page = nil;
         if (i == pageIndex)
             page = preferredPage;
         else
-            page = [self placeholderPageAtIndex:i pageWidth:preferredPage.pageWidth pageHeight:preferredPage.pageHeight];
+            page = [self placeholderPageAtIndex:i
+                                      pageWidth:preferredPage.pageWidth
+                                     pageHeight:preferredPage.pageHeight];
         if (!page) {
-            [self showError:@"Could not render page" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+            [self showError:@"Could not render page"
+                     detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
             return;
         }
         [pages addObject:page];
@@ -1552,21 +1757,20 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self syncToolbarState];
     [self updateControls];
     [self selectCurrentSidebarRow];
+    [self updateMinimap];
 
     [self enqueueRemainingPageRendersForGeneration:generation preferredPage:pageIndex];
 }
 
-- (void)resizeDocumentView
-{
+- (void)resizeDocumentView {
     NSSize size = [_pageView documentSizeForClipSize:_pageScrollView.contentView.bounds.size];
     [_pageView setFrameSize:size];
     [_pageView setNeedsDisplay:YES];
+    [self updateMinimap];
 }
 
-- (void)scrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop
-{
-    if (_renderedPages.count == 0)
-        return;
+- (void)scrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop {
+    if (_renderedPages.count == 0) return;
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
     _updatingFromScroll = YES;
@@ -1577,15 +1781,70 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         [_pageView scrollRectToVisible:pageRect];
     }
     _updatingFromScroll = NO;
+    [self documentScrollPositionChanged];
+    [self updateMinimap];
 }
 
-- (void)rememberActiveTabState
-{
-    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count)
+- (void)updateMinimap {
+    if (!_minimapView) return;
+    _minimapView.pages = _renderedPages ?: @[];
+    _minimapView.currentPageIndex = _pageIndex;
+    _minimapView.viewMode = _viewMode;
+    _minimapView.documentVisibleRect = _pageScrollView.contentView.bounds;
+    _minimapView.documentHeight = MAX(1.0, NSHeight(_pageView.bounds));
+    [_minimapView setNeedsDisplay:YES];
+}
+
+- (void)minimapViewDidRequestScrollToFraction:(CGFloat)yFraction {
+    if (!_doc || _renderedPages.count == 0) return;
+    yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
+    if (_viewMode == SPDFViewModeContinuous) {
+        NSClipView* clipView = _pageScrollView.contentView;
+        CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+        NSPoint origin = clipView.bounds.origin;
+        origin.y = spdf_clamp_cg(maxY * yFraction, 0.0, maxY);
+        [clipView scrollToPoint:origin];
+        [_pageScrollView reflectScrolledClipView:clipView];
+        [self documentScrollPositionChanged];
+        [self persistActiveState];
         return;
-    if (!_doc || !_path.length)
-        return;
-    SPDFDocumentTab *tab = _tabs[(NSUInteger)_selectedTabIndex];
+    }
+
+    NSInteger page = (NSInteger)floor(yFraction * (CGFloat)_renderedPages.count);
+    page = MAX(0, MIN(page, (NSInteger)_renderedPages.count - 1));
+    [self minimapViewDidRequestScrollToPage:page yFractionInPage:0.0];
+}
+
+- (void)minimapViewDidRequestScrollToPage:(NSInteger)pageIndex yFractionInPage:(CGFloat)yFraction {
+    if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
+    yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
+    _pageIndex = pageIndex;
+    _pageView.currentPageIndex = _pageIndex;
+    [self renderPageIfNeededAtIndex:_pageIndex];
+    [self resizeDocumentView];
+    if (_viewMode == SPDFViewModeContinuous) {
+        NSRect pageRect = [_pageView rectForPageAtIndex:_pageIndex];
+        NSClipView* clipView = _pageScrollView.contentView;
+        CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+        CGFloat targetY = NSMinY(pageRect) + NSHeight(pageRect) * yFraction - NSHeight(clipView.bounds) * 0.5;
+        NSPoint origin = clipView.bounds.origin;
+        origin.y = spdf_clamp_cg(targetY, 0.0, maxY);
+        [clipView scrollToPoint:origin];
+        [_pageScrollView reflectScrolledClipView:clipView];
+        [self documentScrollPositionChanged];
+    } else {
+        [self scrollToPage:_pageIndex alignTop:YES];
+    }
+    [self updateControls];
+    [self selectCurrentSidebarRow];
+    [self updateMinimap];
+    [self persistActiveState];
+}
+
+- (void)rememberActiveTabState {
+    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return;
+    if (!_doc || !_path.length) return;
+    SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
     tab.path = _path;
     tab.title = _path.lastPathComponent ?: tab.title;
     tab.pageIndex = _pageIndex;
@@ -1595,79 +1854,74 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     tab.scrollOrigin = _pageScrollView.contentView.bounds.origin;
 }
 
-- (void)persistActiveState
-{
+- (void)persistActiveState {
     [self rememberActiveTabState];
     [self savePersistentState];
 }
 
-- (NSInteger)indexOfTabForPath:(NSString *)path
-{
-    NSString *standardized = path.stringByStandardizingPath;
+- (NSInteger)indexOfTabForPath:(NSString*)path {
+    NSString* standardized = path.stringByStandardizingPath;
     for (NSInteger i = 0; i < (NSInteger)_tabs.count; ++i) {
-        NSString *tabPath = _tabs[(NSUInteger)i].path.stringByStandardizingPath;
-        if ([tabPath isEqualToString:standardized])
-            return i;
+        NSString* tabPath = _tabs[(NSUInteger)i].path.stringByStandardizingPath;
+        if ([tabPath isEqualToString:standardized]) return i;
     }
     return -1;
 }
 
-- (void)updateTabStrip
-{
+- (void)updateTabStrip {
     _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
+    [self updateTabStripFrame];
 }
 
-- (void)updateTabStripFrame
-{
-    if (!_tabStrip || !_window)
-        return;
+- (void)updateTabStripFrame {
+    if (!_tabStrip || !_window) return;
     CGFloat width = MAX(_window.frame.size.width, _window.minSize.width);
-    [_tabStrip setFrameSize:NSMakeSize(width, 36)];
+    CGFloat leadingInset = 138.0;
+    NSButton* zoomButton = [_window standardWindowButton:NSWindowZoomButton];
+    if (zoomButton) {
+        NSRect buttonWindowRect = [zoomButton convertRect:zoomButton.bounds toView:nil];
+        NSRect buttonRect = [_tabStrip convertRect:buttonWindowRect fromView:nil];
+        if (NSMaxX(buttonRect) > 30.0 && NSMaxX(buttonRect) < width / 2.0) leadingInset = NSMaxX(buttonRect) + 18.0;
+    }
+    _tabStrip.reservedLeadingInset = leadingInset;
+    [_tabStrip setFrameSize:NSMakeSize(width, kTabStripHeight)];
     [_tabStrip setNeedsDisplay:YES];
 }
 
-- (void)preloadInactiveTabs
-{
+- (void)preloadInactiveTabs {
     [_preloadQueue cancelAllOperations];
     for (NSInteger i = 0; i < (NSInteger)_tabs.count; ++i) {
-        if (i == _selectedTabIndex)
-            continue;
-        NSString *path = [_tabs[(NSUInteger)i].path copy];
-        if (!path.length)
-            continue;
+        if (i == _selectedTabIndex) continue;
+        NSString* path = [_tabs[(NSUInteger)i].path copy];
+        if (!path.length) continue;
         [_preloadQueue addOperationWithBlock:^{
-            @autoreleasepool {
-                char err[512];
-                spdf_document *doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
-                if (doc)
-                    spdf_close(doc);
-            }
+          @autoreleasepool {
+              char err[512];
+              spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+              if (doc) spdf_close(doc);
+          }
         }];
     }
 }
 
-- (NSPoint)visibleCenterWindowPoint
-{
+- (NSPoint)visibleCenterWindowPoint {
     NSRect visible = _pageScrollView.contentView.bounds;
     NSPoint centerInPageView = NSMakePoint(NSMidX(visible), NSMidY(visible));
     return [_pageView convertPoint:centerInPageView toView:nil];
 }
 
-- (void)zoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint
-{
-    if (!_doc || factor <= 0)
-        return;
+- (void)zoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint {
+    if (!_doc || factor <= 0) return;
 
-    NSClipView *clipView = _pageScrollView.contentView;
+    NSClipView* clipView = _pageScrollView.contentView;
     NSPoint viewPoint = [_pageView convertPoint:windowPoint fromView:nil];
     NSPoint oldOrigin = clipView.bounds.origin;
     CGFloat oldZoom = _zoom;
 
     _fitMode = SPDFFitModeCustom;
     _zoom = MAX(kMinZoom, MIN(kMaxZoom, _zoom * factor));
-    if (fabs(_zoom - oldZoom) < 0.0001)
-        return;
+    if (fabs(_zoom - oldZoom) < 0.0001) return;
 
     CGFloat ratio = _zoom / oldZoom;
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
@@ -1682,11 +1936,9 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self persistActiveState];
 }
 
-- (void)setZoomWithoutRendering:(CGFloat)newZoom centeredAtWindowPoint:(NSPoint)windowPoint
-{
-    if (!_doc)
-        return;
-    NSClipView *clipView = _pageScrollView.contentView;
+- (void)setZoomWithoutRendering:(CGFloat)newZoom centeredAtWindowPoint:(NSPoint)windowPoint {
+    if (!_doc) return;
+    NSClipView* clipView = _pageScrollView.contentView;
     NSPoint viewPoint = [_pageView convertPoint:windowPoint fromView:nil];
     NSPoint oldOrigin = clipView.bounds.origin;
     CGFloat oldZoom = _zoom > 0 ? _zoom : 1.0;
@@ -1702,23 +1954,22 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [_pageScrollView reflectScrolledClipView:clipView];
     [self syncToolbarState];
     [self updateControls];
+    [self documentScrollPositionChanged];
 }
 
-- (void)renderDocumentPreservingScrollPosition
-{
-    if (!_doc)
-        return;
-    NSClipView *clipView = _pageScrollView.contentView;
+- (void)renderDocumentPreservingScrollPosition {
+    if (!_doc) return;
+    NSClipView* clipView = _pageScrollView.contentView;
     NSPoint origin = clipView.bounds.origin;
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
     origin.x = MAX(0, MIN(origin.x, MAX(0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds))));
     origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds))));
     [clipView scrollToPoint:origin];
     [_pageScrollView reflectScrolledClipView:clipView];
+    [self documentScrollPositionChanged];
 }
 
-- (void)finishLiveZoom:(NSTimer *)timer
-{
+- (void)finishLiveZoom:(NSTimer*)timer {
     (void)timer;
     _zoomFinishTimer = nil;
     if (_doc) {
@@ -1727,42 +1978,40 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)beginLiveZoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint
-{
-    if (!_doc || factor <= 0)
-        return;
+- (void)beginLiveZoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint {
+    if (!_doc || factor <= 0) return;
     _fitMode = SPDFFitModeCustom;
     [self setZoomWithoutRendering:_zoom * factor centeredAtWindowPoint:windowPoint];
     [_zoomFinishTimer invalidate];
-    _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:0.18 target:self selector:@selector(finishLiveZoom:) userInfo:nil repeats:NO];
+    _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:0.18
+                                                        target:self
+                                                      selector:@selector(finishLiveZoom:)
+                                                      userInfo:nil
+                                                       repeats:NO];
 }
 
-- (void)openDocument:(id)sender
-{
+- (void)openDocument:(id)sender {
     (void)sender;
-    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    NSOpenPanel* panel = [NSOpenPanel openPanel];
     panel.canChooseFiles = YES;
     panel.canChooseDirectories = NO;
     panel.allowsMultipleSelection = NO;
-    panel.allowedFileTypes = @[@"pdf", @"xps", @"cbz", @"epub"];
-    if ([panel runModal] == NSModalResponseOK)
-        [self openPath:panel.URL.path];
+    panel.allowedFileTypes = @[ @"pdf", @"xps", @"cbz", @"epub" ];
+    if ([panel runModal] == NSModalResponseOK) [self openPath:panel.URL.path];
 }
 
-- (void)loadSelectedTab
-{
-    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count)
-        return;
-    SPDFDocumentTab *tab = _tabs[(NSUInteger)_selectedTabIndex];
-    if (!tab.path.length)
-        return;
-    NSString *path = tab.path;
+- (void)loadSelectedTab {
+    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return;
+    SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
+    if (!tab.path.length) return;
+    NSString* path = tab.path;
     [_renderQueue cancelAllOperations];
 
     char err[1024];
-    spdf_document *newDoc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+    spdf_document* newDoc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
     if (!newDoc) {
-        [self showError:@"Could not open document" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+        [self showError:@"Could not open document"
+                 detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
         return;
     }
 
@@ -1790,23 +2039,22 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self savePersistentState];
     _statusLabel.stringValue = @"Opening...";
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!_doc)
-            return;
-        [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
-        if (!NSEqualPoints(tab.scrollOrigin, NSZeroPoint)) {
-            [_pageScrollView.contentView scrollToPoint:tab.scrollOrigin];
-            [_pageScrollView reflectScrolledClipView:_pageScrollView.contentView];
-        }
-        char outlineErr[1024];
-        if (_doc && !spdf_load_outline(_doc, &_outline, outlineErr, sizeof(outlineErr)))
-            _statusLabel.stringValue = [NSString stringWithFormat:@"Opened, but outline was not available: %s", outlineErr];
-        if (_sidebarModeControl.selectedSegment == 1)
-            [self rebuildSidebar];
+      if (!_doc) return;
+      [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
+      if (!NSEqualPoints(tab.scrollOrigin, NSZeroPoint)) {
+          [_pageScrollView.contentView scrollToPoint:tab.scrollOrigin];
+          [_pageScrollView reflectScrolledClipView:_pageScrollView.contentView];
+      }
+      [self documentScrollPositionChanged];
+      char outlineErr[1024];
+      if (_doc && !spdf_load_outline(_doc, &_outline, outlineErr, sizeof(outlineErr)))
+          _statusLabel.stringValue =
+              [NSString stringWithFormat:@"Opened, but outline was not available: %s", outlineErr];
+      if (_sidebarModeControl.selectedSegment == 1) [self rebuildSidebar];
     });
 }
 
-- (void)closeDocument:(id)sender
-{
+- (void)closeDocument:(id)sender {
     (void)sender;
     if (_selectedTabIndex >= 0) {
         [self closeTabAtIndex:_selectedTabIndex];
@@ -1824,14 +2072,14 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [_sidebarItems removeAllObjects];
     [_renderedPages removeAllObjects];
     _pageView.pages = @[];
+    [self updateMinimap];
     _window.title = @"SumatraPDF";
     _statusLabel.stringValue = @"Ready";
     [_sidebarTable reloadData];
     [self updateControls];
 }
 
-- (void)openPath:(NSString *)path
-{
+- (void)openPath:(NSString*)path {
     if (!_uiReady || !_window) {
         _pendingOpenPath = [path copy];
         return;
@@ -1844,7 +2092,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 
     [self rememberActiveTabState];
-    SPDFDocumentTab *tab = [[SPDFDocumentTab alloc] init];
+    SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
     tab.path = [path copy];
     tab.title = path.lastPathComponent;
     tab.zoom = _zoom > 0 ? _zoom : 1.0;
@@ -1856,24 +2104,19 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self savePersistentState];
 }
 
-- (void)selectTabAtIndex:(NSInteger)index
-{
-    if (index < 0 || index >= (NSInteger)_tabs.count || (index == _selectedTabIndex && _doc))
-        return;
+- (void)selectTabAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)_tabs.count || (index == _selectedTabIndex && _doc)) return;
     [self rememberActiveTabState];
     _selectedTabIndex = index;
     [self loadSelectedTab];
     [self savePersistentState];
 }
 
-- (void)closeTabAtIndex:(NSInteger)index
-{
-    if (index < 0 || index >= (NSInteger)_tabs.count)
-        return;
+- (void)closeTabAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)_tabs.count) return;
     BOOL closingActive = index == _selectedTabIndex;
     [_tabs removeObjectAtIndex:(NSUInteger)index];
-    if (!closingActive && index < _selectedTabIndex)
-        _selectedTabIndex--;
+    if (!closingActive && index < _selectedTabIndex) _selectedTabIndex--;
 
     if (_tabs.count == 0) {
         _selectedTabIndex = -1;
@@ -1886,6 +2129,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         _renderGeneration++;
         [_renderedPages removeAllObjects];
         _pageView.pages = @[];
+        [self updateMinimap];
         [_sidebarItems removeAllObjects];
         [_sidebarTable reloadData];
         _window.title = @"SumatraPDF";
@@ -1906,19 +2150,18 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)newTabRequested:(id)sender
-{
+- (void)newTabRequested:(id)sender {
     [self openDocument:sender];
 }
 
-- (BOOL)openFilesFromPasteboard:(NSPasteboard *)pasteboard
-{
-    NSArray<NSURL *> *urls = [pasteboard readObjectsForClasses:@[[NSURL class]]
-                                                       options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+- (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard {
+    NSArray<NSURL*>* urls = [pasteboard readObjectsForClasses:@[ [NSURL class] ]
+                                                      options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
     BOOL opened = NO;
-    for (NSURL *url in urls) {
-        NSString *ext = url.pathExtension.lowercaseString;
-        if ([ext isEqualToString:@"pdf"] || [ext isEqualToString:@"xps"] || [ext isEqualToString:@"cbz"] || [ext isEqualToString:@"epub"]) {
+    for (NSURL* url in urls) {
+        NSString* ext = url.pathExtension.lowercaseString;
+        if ([ext isEqualToString:@"pdf"] || [ext isEqualToString:@"xps"] || [ext isEqualToString:@"cbz"] ||
+            [ext isEqualToString:@"epub"]) {
             [self openPath:url.path];
             opened = YES;
         }
@@ -1926,71 +2169,68 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return opened;
 }
 
-- (void)rebuildSidebar
-{
+- (void)rebuildSidebar {
     [_sidebarItems removeAllObjects];
     NSInteger pageCount = spdf_page_count(_doc);
     if (_sidebarModeControl.selectedSegment == 1 && _outline.count > 0) {
         for (int i = 0; i < _outline.count; ++i) {
             spdf_outline_item item = _outline.items[i];
-            NSString *title = item.title ? [NSString stringWithUTF8String:item.title] : @"Untitled";
-            [_sidebarItems addObject:@{@"title": title,
-                                       @"page": @(item.page_index),
-                                       @"level": @(item.level)}];
+            NSString* title = item.title ? [NSString stringWithUTF8String:item.title] : @"Untitled";
+            [_sidebarItems addObject:@{@"title" : title, @"page" : @(item.page_index), @"level" : @(item.level)}];
         }
     } else {
         for (NSInteger i = 0; i < pageCount; ++i)
-            [_sidebarItems addObject:@{@"title": [NSString stringWithFormat:@"Page %ld", (long)i + 1],
-                                       @"page": @(i),
-                                       @"level": @0}];
+            [_sidebarItems addObject:@{
+                @"title" : [NSString stringWithFormat:@"Page %ld", (long)i + 1],
+                @"page" : @(i),
+                @"level" : @0
+            }];
     }
     [_sidebarTable reloadData];
     [self selectCurrentSidebarRow];
 }
 
-- (void)sidebarModeChanged:(id)sender
-{
+- (void)sidebarModeChanged:(id)sender {
     (void)sender;
     [self rebuildSidebar];
 }
 
-- (void)clipViewBoundsChanged:(NSNotification *)notification
-{
+- (void)clipViewBoundsChanged:(NSNotification*)notification {
     (void)notification;
     [self documentScrollPositionChanged];
 }
 
-- (void)documentScrollPositionChanged
-{
-    if (_updatingFromScroll || _renderedPages.count == 0 || _viewMode != SPDFViewModeContinuous)
+- (void)documentScrollPositionChanged {
+    if (_renderedPages.count == 0) {
+        [self updateMinimap];
         return;
-    NSInteger visiblePage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
-    if (visiblePage != _pageIndex) {
-        _pageIndex = visiblePage;
-        _pageView.currentPageIndex = _pageIndex;
-        [self updateControls];
-        [self selectCurrentSidebarRow];
     }
+    if (!_updatingFromScroll && _viewMode == SPDFViewModeContinuous) {
+        NSInteger visiblePage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
+        if (visiblePage != _pageIndex) {
+            _pageIndex = visiblePage;
+            _pageView.currentPageIndex = _pageIndex;
+            [self updateControls];
+            [self selectCurrentSidebarRow];
+        }
+    }
+    [self updateMinimap];
 }
 
-- (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent *)event
-{
+- (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event {
     (void)event;
-    if (!_doc)
-        return NO;
+    if (!_doc) return NO;
     return _viewMode == SPDFViewModeSingle || _fitMode == SPDFFitModeHeight || _fitMode == SPDFFitModePage;
 }
 
-- (void)syncToolbarState
-{
+- (void)syncToolbarState {
     [_fitModePopup selectItemAtIndex:_fitMode];
     _continuousButton.state = _viewMode == SPDFViewModeContinuous ? NSControlStateValueOn : NSControlStateValueOff;
     _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
 }
 
-- (void)updateControls
-{
+- (void)updateControls {
     NSInteger pageCount = spdf_page_count(_doc);
     BOOL hasDoc = _doc != NULL;
     _prevButton.enabled = hasDoc && _pageIndex > 0;
@@ -2006,17 +2246,17 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _pageCountLabel.stringValue = [NSString stringWithFormat:@"/ %ld", (long)pageCount];
 
     if (hasDoc) {
-        NSString *displayName = _path.lastPathComponent ?: [NSString stringWithUTF8String:spdf_title(_doc)];
+        NSString* displayName = _path.lastPathComponent ?: [NSString stringWithUTF8String:spdf_title(_doc)];
         _window.title = [NSString stringWithFormat:@"%@ - SumatraPDF", displayName];
-        NSString *mode = _viewMode == SPDFViewModeContinuous ? @"Continuous" : @"Single page";
-        _statusLabel.stringValue = [NSString stringWithFormat:@"Page %ld of %ld    Zoom %.0f%%    %@", (long)_pageIndex + 1, (long)pageCount, _zoom * 100.0, mode];
+        NSString* mode = _viewMode == SPDFViewModeContinuous ? @"Continuous" : @"Single page";
+        _statusLabel.stringValue =
+            [NSString stringWithFormat:@"Page %ld of %ld    Zoom %.0f%%    %@", (long)_pageIndex + 1, (long)pageCount,
+                                       _zoom * 100.0, mode];
     }
 }
 
-- (void)selectCurrentSidebarRow
-{
-    if (!_doc || _updatingSelection)
-        return;
+- (void)selectCurrentSidebarRow {
+    if (!_doc || _updatingSelection) return;
     _updatingSelection = YES;
     NSInteger match = -1;
     for (NSInteger i = 0; i < _sidebarItems.count; ++i) {
@@ -2033,35 +2273,51 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _updatingSelection = NO;
 }
 
-- (void)updateFindControls
-{
+- (void)updateFindCountLabel {
+    if (!_findCountLabel) return;
+    if (!_doc || _searchField.stringValue.length == 0) {
+        _findCountLabel.stringValue = @"";
+        return;
+    }
+    if (_findSearchInProgress) {
+        _findCountLabel.stringValue = @"...";
+        return;
+    }
+    if (_findMatches.count == 0) {
+        _findCountLabel.stringValue = @"0 / 0";
+        return;
+    }
+    NSInteger current = _findMatchIndex >= 0 ? _findMatchIndex + 1 : 1;
+    _findCountLabel.stringValue = [NSString stringWithFormat:@"%ld / %ld", (long)current, (long)_findMatches.count];
+}
+
+- (void)updateFindControls {
     BOOL hasMatches = _findMatches.count > 0;
     _findPrevButton.enabled = hasMatches;
     _findNextButton.enabled = hasMatches;
+    [self updateFindCountLabel];
 }
 
-- (void)clearFindResults
-{
+- (void)clearFindResults {
     [_findQueue cancelAllOperations];
     _findGeneration++;
     [_findHighlights removeAllObjects];
     [_findMatches removeAllObjects];
     _findMatchIndex = -1;
+    _findSearchInProgress = NO;
     [self applySearchHighlightsToCurrentPage];
     [self updateFindControls];
 }
 
-- (NSArray<NSValue *> *)highlightRectsForPage:(NSInteger)pageIndex
-{
-    if (!_doc || _searchField.stringValue.length == 0)
-        return @[];
+- (NSArray<NSValue*>*)highlightRectsForPage:(NSInteger)pageIndex {
+    if (!_doc || _searchField.stringValue.length == 0) return @[];
     char err[1024];
     spdf_rect rects[256];
-    int count = spdf_search_page_rects(_doc, (int)pageIndex, _searchField.stringValue.UTF8String, rects, 256, err, sizeof(err));
-    if (count <= 0)
-        return @[];
+    int count =
+        spdf_search_page_rects(_doc, (int)pageIndex, _searchField.stringValue.UTF8String, rects, 256, err, sizeof(err));
+    if (count <= 0) return @[];
 
-    NSMutableArray<NSValue *> *values = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+    NSMutableArray<NSValue*>* values = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
     for (int i = 0; i < count; ++i) {
         NSRect r = NSMakeRect(rects[i].x0, rects[i].y0, rects[i].x1 - rects[i].x0, rects[i].y1 - rects[i].y0);
         [values addObject:[NSValue valueWithRect:r]];
@@ -2069,28 +2325,27 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return values;
 }
 
-- (void)applySearchHighlightsToCurrentPage
-{
-    for (SPDFRenderedPage *page in _renderedPages)
-        page.highlights = _findHighlights[@(page.pageIndex)] ?: @[];
+- (void)applySearchHighlightsToCurrentPage {
+    for (SPDFRenderedPage* page in _renderedPages) page.highlights = _findHighlights[@(page.pageIndex)] ?: @[];
     _pageView.pages = _renderedPages;
     [_pageView setNeedsDisplay:YES];
+    [self updateMinimap];
 }
 
-- (void)startFindForCurrentQuery
-{
+- (void)startFindForCurrentQuery {
     if (!_doc || !_path.length) {
         [self clearFindResults];
         return;
     }
 
-    NSString *query = [_searchField.stringValue copy];
+    NSString* query = [_searchField.stringValue copy];
     [_findQueue cancelAllOperations];
     _findGeneration++;
     NSUInteger generation = _findGeneration;
     [_findHighlights removeAllObjects];
     [_findMatches removeAllObjects];
     _findMatchIndex = -1;
+    _findSearchInProgress = NO;
     [self applySearchHighlightsToCurrentPage];
     [self updateFindControls];
 
@@ -2099,61 +2354,66 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         return;
     }
 
-    NSString *path = [_path copy];
+    NSString* path = [_path copy];
+    _findSearchInProgress = YES;
+    [self updateFindControls];
     _statusLabel.stringValue = [NSString stringWithFormat:@"Searching for \"%@\"...", query];
     [_findQueue addOperationWithBlock:^{
-        @autoreleasepool {
-            NSMutableDictionary<NSNumber *, NSArray<NSValue *> *> *highlights = [NSMutableDictionary dictionary];
-            NSMutableArray<NSDictionary *> *matches = [NSMutableArray array];
-            char openErr[1024];
-            spdf_document *doc = spdf_open(path.fileSystemRepresentation, openErr, sizeof(openErr));
-            if (!doc)
-                return;
-
-            NSInteger pageCount = spdf_page_count(doc);
-            for (NSInteger page = 0; page < pageCount; ++page) {
-                if (generation != self->_findGeneration)
-                    break;
-                char err[512];
-                spdf_rect rects[256];
-                int count = spdf_search_page_rects(doc, (int)page, query.UTF8String, rects, 256, err, sizeof(err));
-                if (count <= 0)
-                    continue;
-                NSMutableArray<NSValue *> *values = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
-                for (int i = 0; i < count; ++i) {
-                    NSRect r = NSMakeRect(rects[i].x0, rects[i].y0, rects[i].x1 - rects[i].x0, rects[i].y1 - rects[i].y0);
-                    [values addObject:[NSValue valueWithRect:r]];
-                    [matches addObject:@{@"page": @(page), @"rect": [NSValue valueWithRect:r]}];
-                }
-                highlights[@(page)] = values;
-            }
-            spdf_close(doc);
-
-            [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                if (generation != self->_findGeneration)
-                    return;
-                [self->_findHighlights removeAllObjects];
-                [self->_findHighlights addEntriesFromDictionary:highlights];
-                [self->_findMatches removeAllObjects];
-                [self->_findMatches addObjectsFromArray:matches];
-                self->_findMatchIndex = self->_findMatches.count > 0 ? 0 : -1;
-                [self applySearchHighlightsToCurrentPage];
+      @autoreleasepool {
+          NSMutableDictionary<NSNumber*, NSArray<NSValue*>*>* highlights = [NSMutableDictionary dictionary];
+          NSMutableArray<NSDictionary*>* matches = [NSMutableArray array];
+          char openErr[1024];
+          spdf_document* doc = spdf_open(path.fileSystemRepresentation, openErr, sizeof(openErr));
+          if (!doc) {
+              [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                if (generation != self->_findGeneration) return;
+                self->_findSearchInProgress = NO;
                 [self updateFindControls];
-                if (self->_findMatches.count > 0)
-                    self->_statusLabel.stringValue = [NSString stringWithFormat:@"%ld matches for \"%@\"", (long)self->_findMatches.count, query];
-                else
-                    self->_statusLabel.stringValue = [NSString stringWithFormat:@"No matches for \"%@\"", query];
-            }];
-        }
+              }];
+              return;
+          }
+
+          NSInteger pageCount = spdf_page_count(doc);
+          for (NSInteger page = 0; page < pageCount; ++page) {
+              if (generation != self->_findGeneration) break;
+              char err[512];
+              spdf_rect rects[256];
+              int count = spdf_search_page_rects(doc, (int)page, query.UTF8String, rects, 256, err, sizeof(err));
+              if (count <= 0) continue;
+              NSMutableArray<NSValue*>* values = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+              for (int i = 0; i < count; ++i) {
+                  NSRect r = NSMakeRect(rects[i].x0, rects[i].y0, rects[i].x1 - rects[i].x0, rects[i].y1 - rects[i].y0);
+                  [values addObject:[NSValue valueWithRect:r]];
+                  [matches addObject:@{@"page" : @(page), @"rect" : [NSValue valueWithRect:r]}];
+              }
+              highlights[@(page)] = values;
+          }
+          spdf_close(doc);
+
+          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            if (generation != self->_findGeneration) return;
+            [self->_findHighlights removeAllObjects];
+            [self->_findHighlights addEntriesFromDictionary:highlights];
+            [self->_findMatches removeAllObjects];
+            [self->_findMatches addObjectsFromArray:matches];
+            self->_findMatchIndex = self->_findMatches.count > 0 ? 0 : -1;
+            self->_findSearchInProgress = NO;
+            [self applySearchHighlightsToCurrentPage];
+            [self updateFindControls];
+            if (self->_findMatches.count > 0)
+                self->_statusLabel.stringValue =
+                    [NSString stringWithFormat:@"%ld matches for \"%@\"", (long)self->_findMatches.count, query];
+            else
+                self->_statusLabel.stringValue = [NSString stringWithFormat:@"No matches for \"%@\"", query];
+          }];
+      }
     }];
 }
 
-- (void)jumpToFindMatchAtIndex:(NSInteger)index
-{
-    if (!_doc || index < 0 || index >= (NSInteger)_findMatches.count)
-        return;
+- (void)jumpToFindMatchAtIndex:(NSInteger)index {
+    if (!_doc || index < 0 || index >= (NSInteger)_findMatches.count) return;
     _findMatchIndex = index;
-    NSDictionary *match = _findMatches[(NSUInteger)index];
+    NSDictionary* match = _findMatches[(NSUInteger)index];
     NSInteger page = [match[@"page"] integerValue];
     _pageIndex = MAX(0, MIN(page, spdf_page_count(_doc) - 1));
     _pageView.currentPageIndex = _pageIndex;
@@ -2163,24 +2423,24 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self scrollToPage:_pageIndex alignTop:YES];
     [self updateControls];
     [self selectCurrentSidebarRow];
-    _statusLabel.stringValue = [NSString stringWithFormat:@"Match %ld of %ld", (long)_findMatchIndex + 1, (long)_findMatches.count];
+    [self updateFindControls];
+    _statusLabel.stringValue =
+        [NSString stringWithFormat:@"Match %ld of %ld", (long)_findMatchIndex + 1, (long)_findMatches.count];
 }
 
-- (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end
-{
-    if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count)
-        return;
+- (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end {
+    if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
 
     char err[1024];
     spdf_rect rects[256];
-    char *text = NULL;
-    int count = spdf_select_page_text(_doc, (int)pageIndex, (float)start.x, (float)start.y, (float)end.x, (float)end.y, rects, 256, &text, err, sizeof(err));
+    char* text = NULL;
+    int count = spdf_select_page_text(_doc, (int)pageIndex, (float)start.x, (float)start.y, (float)end.x, (float)end.y,
+                                      rects, 256, &text, err, sizeof(err));
 
-    for (SPDFRenderedPage *page in _renderedPages)
-        page.selectionRects = @[];
+    for (SPDFRenderedPage* page in _renderedPages) page.selectionRects = @[];
 
     if (count > 0) {
-        NSMutableArray<NSValue *> *values = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+        NSMutableArray<NSValue*>* values = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
         for (int i = 0; i < count; ++i) {
             NSRect r = NSMakeRect(rects[i].x0, rects[i].y0, rects[i].x1 - rects[i].x0, rects[i].y1 - rects[i].y0);
             [values addObject:[NSValue valueWithRect:r]];
@@ -2193,139 +2453,133 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         _selectedText = nil;
     }
 
-    if (text)
-        spdf_free_string(text);
+    if (text) spdf_free_string(text);
     _pageView.pages = _renderedPages;
     [_pageView setNeedsDisplay:YES];
+    [self updateMinimap];
 }
 
-- (void)copySelection:(id)sender
-{
+- (void)copySelection:(id)sender {
     (void)sender;
     if (_selectedText.length == 0) {
         NSBeep();
         return;
     }
-    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
     [pasteboard clearContents];
     [pasteboard setString:_selectedText forType:NSPasteboardTypeString];
     _statusLabel.stringValue = @"Selected text copied.";
 }
 
-- (NSString *)shortProvenanceForPath:(NSString *)path
-{
-    if (path.length <= 52)
-        return path.lastPathComponent;
-    NSString *head = [path substringToIndex:MIN((NSUInteger)20, path.length)];
-    NSString *tail = [path substringFromIndex:path.length - MIN((NSUInteger)28, path.length)];
+- (NSString*)shortProvenanceForPath:(NSString*)path {
+    if (path.length <= 52) return path.lastPathComponent;
+    NSString* head = [path substringToIndex:MIN((NSUInteger)20, path.length)];
+    NSString* tail = [path substringFromIndex:path.length - MIN((NSUInteger)28, path.length)];
     return [NSString stringWithFormat:@"%@...%@", head, tail];
 }
 
-- (void)favoriteCurrentPage:(id)sender
-{
+- (void)favoriteCurrentPage:(id)sender {
     (void)sender;
-    if (!_path.length)
-        return;
-    NSString *name = [NSString stringWithFormat:@"%@ p.%ld", _path.lastPathComponent, (long)_pageIndex + 1];
-    NSMutableDictionary *fav = [@{@"type": @"page",
-                                  @"path": _path,
-                                  @"title": _path.lastPathComponent,
-                                  @"page": @(_pageIndex),
-                                  @"name": name,
-                                  @"created": @((long)NSDate.date.timeIntervalSince1970)} mutableCopy];
-    NSIndexSet *dupes = [_favorites indexesOfObjectsPassingTest:^BOOL(NSDictionary *obj, NSUInteger idx, BOOL *stop) {
-        (void)idx; (void)stop;
-        return [obj[@"path"] isEqualToString:_path] && [obj[@"type"] isEqualToString:@"page"] && [obj[@"page"] integerValue] == _pageIndex;
+    if (!_path.length) return;
+    NSString* name = [NSString stringWithFormat:@"%@ p.%ld", _path.lastPathComponent, (long)_pageIndex + 1];
+    NSMutableDictionary* fav = [@{
+        @"type" : @"page",
+        @"path" : _path,
+        @"title" : _path.lastPathComponent,
+        @"page" : @(_pageIndex),
+        @"name" : name,
+        @"created" : @((long)NSDate.date.timeIntervalSince1970)
+    } mutableCopy];
+    NSIndexSet* dupes = [_favorites indexesOfObjectsPassingTest:^BOOL(NSDictionary* obj, NSUInteger idx, BOOL* stop) {
+      (void)idx;
+      (void)stop;
+      return [obj[@"path"] isEqualToString:_path] && [obj[@"type"] isEqualToString:@"page"] &&
+             [obj[@"page"] integerValue] == _pageIndex;
     }];
-    if (dupes.count)
-        [_favorites removeObjectsAtIndexes:dupes];
+    if (dupes.count) [_favorites removeObjectsAtIndexes:dupes];
     [_favorites addObject:fav];
     [self savePersistentState];
     _statusLabel.stringValue = @"Page added to favorites.";
 }
 
-- (void)favoriteCurrentDocument:(id)sender
-{
+- (void)favoriteCurrentDocument:(id)sender {
     (void)sender;
-    if (!_path.length)
-        return;
-    NSMutableDictionary *fav = [@{@"type": @"document",
-                                  @"path": _path,
-                                  @"title": _path.lastPathComponent,
-                                  @"page": @0,
-                                  @"name": _path.lastPathComponent,
-                                  @"created": @((long)NSDate.date.timeIntervalSince1970)} mutableCopy];
-    NSIndexSet *dupes = [_favorites indexesOfObjectsPassingTest:^BOOL(NSDictionary *obj, NSUInteger idx, BOOL *stop) {
-        (void)idx; (void)stop;
-        return [obj[@"path"] isEqualToString:_path] && [obj[@"type"] isEqualToString:@"document"];
+    if (!_path.length) return;
+    NSMutableDictionary* fav = [@{
+        @"type" : @"document",
+        @"path" : _path,
+        @"title" : _path.lastPathComponent,
+        @"page" : @0,
+        @"name" : _path.lastPathComponent,
+        @"created" : @((long)NSDate.date.timeIntervalSince1970)
+    } mutableCopy];
+    NSIndexSet* dupes = [_favorites indexesOfObjectsPassingTest:^BOOL(NSDictionary* obj, NSUInteger idx, BOOL* stop) {
+      (void)idx;
+      (void)stop;
+      return [obj[@"path"] isEqualToString:_path] && [obj[@"type"] isEqualToString:@"document"];
     }];
-    if (dupes.count)
-        [_favorites removeObjectsAtIndexes:dupes];
+    if (dupes.count) [_favorites removeObjectsAtIndexes:dupes];
     [_favorites addObject:fav];
     [self savePersistentState];
     _statusLabel.stringValue = @"Document added to favorites.";
 }
 
-- (void)showFavoritesPalette:(id)sender
-{
+- (void)showFavoritesPalette:(id)sender {
     (void)sender;
     _paletteMode = 1;
     [self showPaletteWithTitle:@"Command"];
 }
 
-- (void)focusFind:(id)sender
-{
+- (void)focusFind:(id)sender {
     (void)sender;
     [_window makeFirstResponder:_searchField];
     [_searchField selectText:nil];
 }
 
-- (void)showFindPalette:(id)sender
-{
+- (void)showFindPalette:(id)sender {
     [self focusFind:sender];
 }
 
-- (void)showPaletteWithTitle:(NSString *)title
-{
+- (void)showPaletteWithTitle:(NSString*)title {
     if (!_palettePanel) {
-        _palettePanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 650, 420)
-                                                   styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskUtilityWindow | NSWindowStyleMaskClosable
-                                                     backing:NSBackingStoreBuffered
-                                                       defer:NO];
+        _palettePanel = [[NSPanel alloc]
+            initWithContentRect:NSMakeRect(0, 0, 650, 390)
+                      styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskUtilityWindow | NSWindowStyleMaskClosable
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
         _palettePanel.floatingPanel = YES;
         _palettePanel.hidesOnDeactivate = YES;
         _palettePanel.releasedWhenClosed = NO;
 
-        NSView *content = [[NSView alloc] initWithFrame:_palettePanel.contentView.bounds];
+        NSView* content = [[NSView alloc] initWithFrame:_palettePanel.contentView.bounds];
         content.translatesAutoresizingMaskIntoConstraints = NO;
         _palettePanel.contentView = content;
 
         _paletteSearchField = [[SPDFPaletteSearchField alloc] init];
-        ((SPDFPaletteSearchField *)_paletteSearchField).reader = self;
+        ((SPDFPaletteSearchField*)_paletteSearchField).reader = self;
         _paletteSearchField.translatesAutoresizingMaskIntoConstraints = NO;
         _paletteSearchField.delegate = self;
         _paletteSearchField.target = self;
         _paletteSearchField.action = @selector(activatePaletteSelection:);
         [content addSubview:_paletteSearchField];
 
-        _paletteAllDocsCheckbox = [NSButton checkboxWithTitle:@"Search in all open documents" target:self action:@selector(refreshPaletteResults)];
-        _paletteAllDocsCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
-        [content addSubview:_paletteAllDocsCheckbox];
-
-        NSScrollView *scroll = [[NSScrollView alloc] init];
+        NSScrollView* scroll = [[NSScrollView alloc] init];
         scroll.translatesAutoresizingMaskIntoConstraints = NO;
         scroll.hasVerticalScroller = YES;
         [content addSubview:scroll];
 
         _paletteTable = [[NSTableView alloc] init];
         _paletteTable.headerView = nil;
-        _paletteTable.rowHeight = 44.0;
+        _paletteTable.rowHeight = 42.0;
+        _paletteTable.intercellSpacing = NSMakeSize(0, 0);
+        _paletteTable.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
+        _paletteTable.allowsEmptySelection = NO;
         _paletteTable.dataSource = self;
         _paletteTable.delegate = self;
         _paletteTable.target = self;
         _paletteTable.action = @selector(activatePaletteSelection:);
         _paletteTable.doubleAction = @selector(activatePaletteSelection:);
-        NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:@"result"];
+        NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"result"];
         column.width = 620;
         [_paletteTable addTableColumn:column];
         scroll.documentView = _paletteTable;
@@ -2334,9 +2588,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
             [_paletteSearchField.topAnchor constraintEqualToAnchor:content.topAnchor constant:14],
             [_paletteSearchField.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
             [_paletteSearchField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
-            [_paletteAllDocsCheckbox.topAnchor constraintEqualToAnchor:_paletteSearchField.bottomAnchor constant:8],
-            [_paletteAllDocsCheckbox.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:16],
-            [scroll.topAnchor constraintEqualToAnchor:_paletteAllDocsCheckbox.bottomAnchor constant:10],
+            [scroll.topAnchor constraintEqualToAnchor:_paletteSearchField.bottomAnchor constant:10],
             [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
             [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
             [scroll.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]
@@ -2358,14 +2610,12 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [_palettePanel makeFirstResponder:_paletteSearchField];
 }
 
-- (BOOL)isSelectablePaletteResult:(NSDictionary *)result
-{
-    NSString *kind = result[@"kind"];
+- (BOOL)isSelectablePaletteResult:(NSDictionary*)result {
+    NSString* kind = result[@"kind"];
     return ![kind isEqualToString:@"header"] && ![kind isEqualToString:@"status"];
 }
 
-- (void)selectFirstPaletteResult
-{
+- (void)selectFirstPaletteResult {
     for (NSInteger i = 0; i < (NSInteger)_paletteResults.count; ++i) {
         if ([self isSelectablePaletteResult:_paletteResults[(NSUInteger)i]]) {
             [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)i] byExtendingSelection:NO];
@@ -2376,48 +2626,59 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [_paletteTable deselectAll:nil];
 }
 
-- (void)refreshPaletteResults
-{
+- (void)refreshPaletteResults {
     _paletteSearchGeneration++;
     NSUInteger generation = _paletteSearchGeneration;
     [_paletteResults removeAllObjects];
-    NSString *query = _paletteSearchField.stringValue.lowercaseString ?: @"";
+    NSString* query = _paletteSearchField.stringValue.lowercaseString ?: @"";
 
-    NSArray<NSDictionary *> *favorites = [self favoriteResultsForQuery:query prefix:@""];
+    NSArray<NSDictionary*>* favorites = [self favoriteResultsForQuery:query prefix:@""];
     if (favorites.count > 0) {
-        [_paletteResults addObject:@{@"kind": @"header", @"title": @"Favorites", @"subtitle": @""}];
+        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Favorites", @"subtitle" : @""}];
         [_paletteResults addObjectsFromArray:favorites];
     }
 
     if (_path.length) {
-        [_paletteResults addObject:@{@"kind": @"header", @"title": @"Actions", @"subtitle": @""}];
-        [_paletteResults addObject:@{@"kind": @"addPage", @"title": @"Favorite current page", @"subtitle": _path.lastPathComponent ?: @""}];
-        [_paletteResults addObject:@{@"kind": @"addDoc", @"title": @"Favorite current document", @"subtitle": _path.lastPathComponent ?: @""}];
+        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Actions", @"subtitle" : @""}];
+        [_paletteResults addObject:@{
+            @"kind" : @"addPage",
+            @"title" : @"Favorite current page",
+            @"subtitle" : _path.lastPathComponent ?: @""
+        }];
+        [_paletteResults addObject:@{
+            @"kind" : @"addDoc",
+            @"title" : @"Favorite current document",
+            @"subtitle" : _path.lastPathComponent ?: @""
+        }];
     }
 
     if (query.length > 0 && _tabs.count > 0) {
         [_preloadQueue cancelAllOperations];
-        [_paletteResults addObject:@{@"kind": @"header", @"title": @"Open documents", @"subtitle": @""}];
-        [_paletteResults addObject:@{@"kind": @"status", @"title": @"Searching open documents...", @"subtitle": @""}];
+        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Open documents", @"subtitle" : @""}];
+        [_paletteResults
+            addObject:@{@"kind" : @"status", @"title" : @"Searching open documents...", @"subtitle" : @""}];
         [self runFindPaletteSearchForQuery:query generation:generation searchAll:YES];
     } else if (_paletteResults.count == 0) {
-        [_paletteResults addObject:@{@"kind": @"status", @"title": @"No favorites yet", @"subtitle": @"Use Cmd+B or Cmd+Shift+B to add one."}];
+        [_paletteResults addObject:@{
+            @"kind" : @"status",
+            @"title" : @"No favorites yet",
+            @"subtitle" : @"Use Cmd+B or Cmd+Shift+B to add one."
+        }];
     }
 
     [_paletteTable reloadData];
     [self selectFirstPaletteResult];
 }
 
-- (NSArray<NSDictionary *> *)favoriteResultsForQuery:(NSString *)query prefix:(NSString *)prefix
-{
-    NSMutableArray<NSDictionary *> *results = [NSMutableArray array];
-    NSString *lowerQuery = query.lowercaseString ?: @"";
-    for (NSDictionary *fav in _favorites) {
-        NSString *haystack = [[NSString stringWithFormat:@"%@ %@ %@", fav[@"name"] ?: @"", fav[@"title"] ?: @"", fav[@"path"] ?: @""] lowercaseString];
+- (NSArray<NSDictionary*>*)favoriteResultsForQuery:(NSString*)query prefix:(NSString*)prefix {
+    NSMutableArray<NSDictionary*>* results = [NSMutableArray array];
+    NSString* lowerQuery = query.lowercaseString ?: @"";
+    for (NSDictionary* fav in _favorites) {
+        NSString* haystack = [[NSString stringWithFormat:@"%@ %@ %@", fav[@"name"] ?: @"", fav[@"title"] ?: @"",
+                                                         fav[@"path"] ?: @""] lowercaseString];
         if (lowerQuery.length == 0 || [haystack containsString:lowerQuery]) {
-            NSString *subtitle = [self shortProvenanceForPath:fav[@"path"] ?: @""];
-            if (prefix.length)
-                subtitle = [NSString stringWithFormat:@"%@ - %@", prefix, subtitle];
+            NSString* subtitle = [self shortProvenanceForPath:fav[@"path"] ?: @""];
+            if (prefix.length) subtitle = [NSString stringWithFormat:@"%@ - %@", prefix, subtitle];
             [results addObject:@{@"kind": @"favorite",
                                  @"title": fav[@"name"] ?: fav[@"title"] ?: @"Favorite",
                                  @"subtitle": subtitle,
@@ -2428,76 +2689,70 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return results;
 }
 
-- (void)runFindPaletteSearchForQuery:(NSString *)query generation:(NSUInteger)generation searchAll:(BOOL)searchAll
-{
-    NSString *currentPath = [_path copy];
-    NSArray<SPDFDocumentTab *> *tabs = [_tabs copy];
+- (void)runFindPaletteSearchForQuery:(NSString*)query generation:(NSUInteger)generation searchAll:(BOOL)searchAll {
+    NSString* currentPath = [_path copy];
+    NSArray<SPDFDocumentTab*>* tabs = [_tabs copy];
     [_preloadQueue addOperationWithBlock:^{
-        @autoreleasepool {
-            NSMutableArray<NSDictionary *> *results = [NSMutableArray array];
-            NSMutableSet<NSString *> *searchedPaths = [NSMutableSet set];
-            for (SPDFDocumentTab *tab in tabs) {
-                if (generation != self->_paletteSearchGeneration)
-                    return;
-                if (results.count >= 220)
-                    break;
-                BOOL isCurrent = [tab.path.stringByStandardizingPath isEqualToString:currentPath.stringByStandardizingPath];
-                if (!isCurrent && !searchAll)
-                    continue;
-                NSString *path = tab.path;
-                if (!path.length || [searchedPaths containsObject:path.stringByStandardizingPath])
-                    continue;
-                [searchedPaths addObject:path.stringByStandardizingPath];
+      @autoreleasepool {
+          NSMutableArray<NSDictionary*>* results = [NSMutableArray array];
+          NSMutableSet<NSString*>* searchedPaths = [NSMutableSet set];
+          for (SPDFDocumentTab* tab in tabs) {
+              if (generation != self->_paletteSearchGeneration) return;
+              if (results.count >= 220) break;
+              BOOL isCurrent =
+                  [tab.path.stringByStandardizingPath isEqualToString:currentPath.stringByStandardizingPath];
+              if (!isCurrent && !searchAll) continue;
+              NSString* path = tab.path;
+              if (!path.length || [searchedPaths containsObject:path.stringByStandardizingPath]) continue;
+              [searchedPaths addObject:path.stringByStandardizingPath];
 
-                char openErr[512];
-                spdf_document *doc = spdf_open(path.fileSystemRepresentation, openErr, sizeof(openErr));
-                if (!doc)
-                    continue;
-                NSInteger pageCount = spdf_page_count(doc);
-                for (NSInteger page = 0; page < pageCount && results.count < 220; ++page) {
-                    if (generation != self->_paletteSearchGeneration)
-                        break;
-                    char err[512];
-                    int hits = spdf_search_page(doc, (int)page, query.UTF8String, err, sizeof(err));
-                    if (hits > 0) {
-                        [results addObject:@{@"kind": @"find",
-                                             @"title": [NSString stringWithFormat:@"Page %ld: %d match%@", (long)page + 1, hits, hits == 1 ? @"" : @"es"],
-                                             @"subtitle": [self shortProvenanceForPath:path],
-                                             @"path": path,
-                                             @"page": @(page)}];
-                    }
-                }
-                spdf_close(doc);
-            }
+              char openErr[512];
+              spdf_document* doc = spdf_open(path.fileSystemRepresentation, openErr, sizeof(openErr));
+              if (!doc) continue;
+              NSInteger pageCount = spdf_page_count(doc);
+              for (NSInteger page = 0; page < pageCount && results.count < 220; ++page) {
+                  if (generation != self->_paletteSearchGeneration) break;
+                  char err[512];
+                  int hits = spdf_search_page(doc, (int)page, query.UTF8String, err, sizeof(err));
+                  if (hits > 0) {
+                      [results addObject:@{
+                          @"kind" : @"find",
+                          @"title" : [NSString
+                              stringWithFormat:@"Page %ld: %d match%@", (long)page + 1, hits, hits == 1 ? @"" : @"es"],
+                          @"subtitle" : [self shortProvenanceForPath:path],
+                          @"path" : path,
+                          @"page" : @(page)
+                      }];
+                  }
+              }
+              spdf_close(doc);
+          }
 
-            [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                if (generation != self->_paletteSearchGeneration || !self->_palettePanel.visible)
-                    return;
-                NSIndexSet *statusRows = [self->_paletteResults indexesOfObjectsPassingTest:^BOOL(NSDictionary *obj, NSUInteger idx, BOOL *stop) {
-                    (void)idx; (void)stop;
-                    return [obj[@"kind"] isEqualToString:@"status"];
+          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            if (generation != self->_paletteSearchGeneration || !self->_palettePanel.visible) return;
+            NSIndexSet* statusRows = [self->_paletteResults
+                indexesOfObjectsPassingTest:^BOOL(NSDictionary* obj, NSUInteger idx, BOOL* stop) {
+                  (void)idx;
+                  (void)stop;
+                  return [obj[@"kind"] isEqualToString:@"status"];
                 }];
-                if (statusRows.count)
-                    [self->_paletteResults removeObjectsAtIndexes:statusRows];
-                if (results.count > 0)
-                    [self->_paletteResults addObjectsFromArray:results];
-                else if (query.length > 0) {
-                    [self->_paletteResults addObject:@{@"kind": @"status",
-                                                       @"title": @"No open-document matches",
-                                                       @"subtitle": @""}];
-                }
-                [self->_paletteTable reloadData];
-                [self selectFirstPaletteResult];
-            }];
-        }
+            if (statusRows.count) [self->_paletteResults removeObjectsAtIndexes:statusRows];
+            if (results.count > 0)
+                [self->_paletteResults addObjectsFromArray:results];
+            else if (query.length > 0) {
+                [self->_paletteResults
+                    addObject:@{@"kind" : @"status", @"title" : @"No open-document matches", @"subtitle" : @""}];
+            }
+            [self->_paletteTable reloadData];
+            [self selectFirstPaletteResult];
+          }];
+      }
     }];
 }
 
-- (void)openPaletteResult:(NSDictionary *)result
-{
-    NSString *kind = result[@"kind"];
-    if (![self isSelectablePaletteResult:result])
-        return;
+- (void)openPaletteResult:(NSDictionary*)result {
+    NSString* kind = result[@"kind"];
+    if (![self isSelectablePaletteResult:result]) return;
     if ([kind isEqualToString:@"addPage"]) {
         [self favoriteCurrentPage:nil];
         return;
@@ -2506,7 +2761,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         [self favoriteCurrentDocument:nil];
         return;
     }
-    NSString *path = result[@"path"];
+    NSString* path = result[@"path"];
     NSInteger page = [result[@"page"] integerValue];
     if (path.length) {
         [self openPath:path];
@@ -2518,43 +2773,58 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)paletteMoveSelection:(NSInteger)delta
-{
-    if (_paletteResults.count == 0)
-        return;
+- (void)paletteMoveSelection:(NSInteger)delta {
+    if (_paletteResults.count == 0) return;
     NSInteger row = _paletteTable.selectedRow;
-    if (row < 0)
-        row = delta > 0 ? -1 : (NSInteger)_paletteResults.count;
-    for (NSInteger i = row + delta; i >= 0 && i < (NSInteger)_paletteResults.count; i += delta) {
-        if ([self isSelectablePaletteResult:_paletteResults[(NSUInteger)i]]) {
-            [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)i] byExtendingSelection:NO];
-            [_paletteTable scrollRowToVisible:i];
+    if (row < 0) row = delta > 0 ? -1 : 0;
+    NSInteger count = (NSInteger)_paletteResults.count;
+    for (NSInteger step = 0; step < count; ++step) {
+        row = (row + delta + count) % count;
+        if ([self isSelectablePaletteResult:_paletteResults[(NSUInteger)row]]) {
+            [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row] byExtendingSelection:NO];
+            [_paletteTable scrollRowToVisible:row];
             return;
         }
     }
 }
 
-- (void)installPaletteEventMonitor
-{
-    if (_paletteEventMonitor)
-        return;
-    __weak SumatraMacDelegate *weakSelf = self;
-    _paletteEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown | NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event) {
-        SumatraMacDelegate *strongSelf = weakSelf;
-        if (strongSelf && strongSelf->_palettePanel.visible) {
-            if (event.type == NSEventTypeKeyDown && event.keyCode == 53) {
-                [strongSelf closePalette:nil];
-                return nil;
-            }
-            if (event.type != NSEventTypeKeyDown && event.window != strongSelf->_palettePanel)
-                [strongSelf closePalette:nil];
-        }
-        return event;
-    }];
+- (void)installPaletteEventMonitor {
+    if (_paletteEventMonitor) return;
+    __weak SumatraMacDelegate* weakSelf = self;
+    _paletteEventMonitor =
+        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown |
+                                                      NSEventMaskOtherMouseDown | NSEventMaskKeyDown
+                                              handler:^NSEvent*(NSEvent* event) {
+                                                SumatraMacDelegate* strongSelf = weakSelf;
+                                                if (strongSelf && strongSelf->_palettePanel.visible) {
+                                                    if (event.type == NSEventTypeKeyDown &&
+                                                        event.window == strongSelf->_palettePanel) {
+                                                        if (event.keyCode == 53) {
+                                                            [strongSelf closePalette:nil];
+                                                            return nil;
+                                                        }
+                                                        if (event.keyCode == 125) {
+                                                            [strongSelf paletteMoveSelection:1];
+                                                            return nil;
+                                                        }
+                                                        if (event.keyCode == 126) {
+                                                            [strongSelf paletteMoveSelection:-1];
+                                                            return nil;
+                                                        }
+                                                        if (event.keyCode == 36 || event.keyCode == 76) {
+                                                            [strongSelf activatePaletteSelection:nil];
+                                                            return nil;
+                                                        }
+                                                    }
+                                                    if (event.type != NSEventTypeKeyDown &&
+                                                        event.window != strongSelf->_palettePanel)
+                                                        [strongSelf closePalette:nil];
+                                                }
+                                                return event;
+                                              }];
 }
 
-- (void)closePalette:(id)sender
-{
+- (void)closePalette:(id)sender {
     (void)sender;
     if (_paletteEventMonitor) {
         [NSEvent removeMonitor:_paletteEventMonitor];
@@ -2563,21 +2833,17 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [_palettePanel orderOut:nil];
 }
 
-- (void)activatePaletteSelection:(id)sender
-{
+- (void)activatePaletteSelection:(id)sender {
     (void)sender;
     NSInteger row = _paletteTable.selectedRow;
-    if (row < 0 || row >= (NSInteger)_paletteResults.count)
-        return;
-    NSDictionary *result = _paletteResults[(NSUInteger)row];
-    if (![self isSelectablePaletteResult:result])
-        return;
+    if (row < 0 || row >= (NSInteger)_paletteResults.count) return;
+    NSDictionary* result = _paletteResults[(NSUInteger)row];
+    if (![self isSelectablePaletteResult:result]) return;
     [self closePalette:nil];
     [self openPaletteResult:result];
 }
 
-- (void)previousPage:(id)sender
-{
+- (void)previousPage:(id)sender {
     (void)sender;
     if (_doc && _pageIndex > 0) {
         _pageIndex--;
@@ -2592,8 +2858,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)nextPage:(id)sender
-{
+- (void)nextPage:(id)sender {
     (void)sender;
     if (_doc && _pageIndex + 1 < spdf_page_count(_doc)) {
         _pageIndex++;
@@ -2608,8 +2873,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)firstPage:(id)sender
-{
+- (void)firstPage:(id)sender {
     (void)sender;
     if (_doc) {
         _pageIndex = 0;
@@ -2623,8 +2887,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)lastPage:(id)sender
-{
+- (void)lastPage:(id)sender {
     (void)sender;
     if (_doc) {
         _pageIndex = spdf_page_count(_doc) - 1;
@@ -2638,17 +2901,14 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)focusPageField:(id)sender
-{
+- (void)focusPageField:(id)sender {
     (void)sender;
     [_window makeFirstResponder:_pageField];
 }
 
-- (void)pageFieldChanged:(id)sender
-{
+- (void)pageFieldChanged:(id)sender {
     (void)sender;
-    if (!_doc)
-        return;
+    if (!_doc) return;
     NSInteger requested = _pageField.integerValue - 1;
     NSInteger pageCount = spdf_page_count(_doc);
     requested = MAX(0, MIN(requested, pageCount - 1));
@@ -2662,60 +2922,49 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self persistActiveState];
 }
 
-- (void)zoomIn:(id)sender
-{
+- (void)zoomIn:(id)sender {
     (void)sender;
     [self zoomByFactor:1.20 centeredAtWindowPoint:[self visibleCenterWindowPoint]];
 }
 
-- (void)zoomOut:(id)sender
-{
+- (void)zoomOut:(id)sender {
     (void)sender;
     [self zoomByFactor:1.0 / 1.20 centeredAtWindowPoint:[self visibleCenterWindowPoint]];
 }
 
-- (void)actualSize:(id)sender
-{
+- (void)actualSize:(id)sender {
     (void)sender;
-    if (!_doc)
-        return;
+    if (!_doc) return;
     _fitMode = SPDFFitModeActual;
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
     [self persistActiveState];
 }
 
-- (void)fitWidth:(id)sender
-{
+- (void)fitWidth:(id)sender {
     (void)sender;
-    if (!_doc)
-        return;
+    if (!_doc) return;
     _fitMode = SPDFFitModeWidth;
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
     [self persistActiveState];
 }
 
-- (void)fitHeight:(id)sender
-{
+- (void)fitHeight:(id)sender {
     (void)sender;
-    if (!_doc)
-        return;
+    if (!_doc) return;
     _fitMode = SPDFFitModeHeight;
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
     [self persistActiveState];
 }
 
-- (void)fitPage:(id)sender
-{
+- (void)fitPage:(id)sender {
     (void)sender;
-    if (!_doc)
-        return;
+    if (!_doc) return;
     _fitMode = SPDFFitModePage;
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
     [self persistActiveState];
 }
 
-- (void)fitModePopupChanged:(id)sender
-{
+- (void)fitModePopupChanged:(id)sender {
     (void)sender;
     _fitMode = (SPDFFitMode)_fitModePopup.indexOfSelectedItem;
     if (_doc) {
@@ -2724,11 +2973,9 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (void)setSinglePageMode:(id)sender
-{
+- (void)setSinglePageMode:(id)sender {
     (void)sender;
-    if (!_doc)
-        return;
+    if (!_doc) return;
     _viewMode = SPDFViewModeSingle;
     _pageView.viewMode = _viewMode;
     _pageView.currentPageIndex = _pageIndex;
@@ -2739,22 +2986,20 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self persistActiveState];
 }
 
-- (void)setContinuousMode:(id)sender
-{
+- (void)setContinuousMode:(id)sender {
     (void)sender;
-    if (!_doc)
-        return;
+    if (!_doc) return;
     _viewMode = SPDFViewModeContinuous;
     _pageView.viewMode = _viewMode;
     [self resizeDocumentView];
     [self scrollToPage:_pageIndex alignTop:NO];
     [self syncToolbarState];
     [self updateControls];
+    [self updateMinimap];
     [self persistActiveState];
 }
 
-- (void)toggleContinuous:(id)sender
-{
+- (void)toggleContinuous:(id)sender {
     (void)sender;
     if (_continuousButton.state == NSControlStateValueOn)
         [self setContinuousMode:sender];
@@ -2762,11 +3007,10 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         [self setSinglePageMode:sender];
 }
 
-- (void)toggleSidebar:(id)sender
-{
+- (void)toggleSidebar:(id)sender {
     (void)sender;
     if (!_sidebarVisible) {
-        [_splitView addSubview:_sidebarContainer positioned:NSWindowBelow relativeTo:_pageScrollView];
+        [_splitView addSubview:_sidebarContainer positioned:NSWindowBelow relativeTo:_documentContainer];
         [_splitView setPosition:240 ofDividerAtIndex:0];
         _sidebarVisible = YES;
     } else {
@@ -2776,13 +3020,11 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self persistActiveState];
 }
 
-- (void)toggleFullScreen:(id)sender
-{
+- (void)toggleFullScreen:(id)sender {
     [_window toggleFullScreen:sender];
 }
 
-- (void)printDocument:(id)sender
-{
+- (void)printDocument:(id)sender {
     (void)sender;
     if (!_doc) {
         NSBeep();
@@ -2792,84 +3034,91 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     char err[1024];
     for (NSInteger i = 0; i < (NSInteger)_renderedPages.count; ++i) {
         if (!_renderedPages[(NSUInteger)i].image) {
-            SPDFRenderedPage *page = [self renderedPageAtIndex:i error:err errorLength:sizeof(err)];
+            SPDFRenderedPage* page = [self renderedPageAtIndex:i error:err errorLength:sizeof(err)];
             if (!page) {
-                [self showError:@"Could not prepare print job" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+                [self showError:@"Could not prepare print job"
+                         detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
                 return;
             }
             [_renderedPages replaceObjectAtIndex:(NSUInteger)i withObject:page];
         }
     }
 
-    NSPrintInfo *info = [NSPrintInfo.sharedPrintInfo copy];
+    NSPrintInfo* info = [NSPrintInfo.sharedPrintInfo copy];
     info.horizontalPagination = NSPrintingPaginationModeClip;
     info.verticalPagination = NSPrintingPaginationModeClip;
     info.horizontallyCentered = YES;
     info.verticallyCentered = YES;
 
     NSSize paper = info.paperSize;
-    SPDFPrintView *printView = [[SPDFPrintView alloc] initWithFrame:NSMakeRect(0, 0, paper.width, paper.height * MAX(1, (NSInteger)_renderedPages.count))];
+    SPDFPrintView* printView = [[SPDFPrintView alloc]
+        initWithFrame:NSMakeRect(0, 0, paper.width, paper.height * MAX(1, (NSInteger)_renderedPages.count))];
     printView.pages = _renderedPages;
 
-    NSPrintOperation *operation = [NSPrintOperation printOperationWithView:printView printInfo:info];
+    NSPrintOperation* operation = [NSPrintOperation printOperationWithView:printView printInfo:info];
     operation.showsPrintPanel = YES;
     operation.showsProgressPanel = YES;
     [operation runOperationModalForWindow:_window delegate:nil didRunSelector:NULL contextInfo:NULL];
 }
 
-- (void)showProperties:(id)sender
-{
+- (void)showProperties:(id)sender {
     (void)sender;
-    if (!_doc)
-        return;
-    NSString *message = [NSString stringWithFormat:@"%@\n%ld pages\n%@", spdf_title(_doc) ? [NSString stringWithUTF8String:spdf_title(_doc)] : @"Untitled", (long)spdf_page_count(_doc), _path ?: @""];
-    NSAlert *alert = [[NSAlert alloc] init];
+    if (!_doc) return;
+    NSString* message =
+        [NSString stringWithFormat:@"%@\n%ld pages\n%@",
+                                   spdf_title(_doc) ? [NSString stringWithUTF8String:spdf_title(_doc)] : @"Untitled",
+                                   (long)spdf_page_count(_doc), _path ?: @""];
+    NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = @"Document Properties";
     alert.informativeText = message;
     [alert runModal];
 }
 
-- (void)openInExternalReader:(id)sender
-{
+- (void)openInExternalReader:(id)sender {
     (void)sender;
     if (!_path.length) {
         NSBeep();
         return;
     }
 
-    NSURL *fileURL = [NSURL fileURLWithPath:_path];
-    NSURL *acrobat = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"com.adobe.Reader"];
+    NSURL* fileURL = [NSURL fileURLWithPath:_path];
+    NSURL* acrobat = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"com.adobe.Reader"];
     if (!acrobat)
         acrobat = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"com.adobe.Acrobat.Pro"];
     if (acrobat) {
-        NSWorkspaceOpenConfiguration *config = [NSWorkspaceOpenConfiguration configuration];
-        [NSWorkspace.sharedWorkspace openURLs:@[fileURL] withApplicationAtURL:acrobat configuration:config completionHandler:nil];
+        NSWorkspaceOpenConfiguration* config = [NSWorkspaceOpenConfiguration configuration];
+        [NSWorkspace.sharedWorkspace openURLs:@[ fileURL ]
+                         withApplicationAtURL:acrobat
+                                configuration:config
+                            completionHandler:nil];
     } else {
         [NSWorkspace.sharedWorkspace openURL:fileURL];
     }
 }
 
-- (void)copyCurrentPageImage:(id)sender
-{
+- (void)copyCurrentPageImage:(id)sender {
     (void)sender;
-    if (!_doc || _pageIndex < 0 || _pageIndex >= (NSInteger)_renderedPages.count || !_renderedPages[(NSUInteger)_pageIndex].image) {
+    if (!_doc || _pageIndex < 0 || _pageIndex >= (NSInteger)_renderedPages.count ||
+        !_renderedPages[(NSUInteger)_pageIndex].image) {
         NSBeep();
         return;
     }
 
-    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
     [pasteboard clearContents];
-    [pasteboard writeObjects:@[_renderedPages[(NSUInteger)_pageIndex].image]];
+    [pasteboard writeObjects:@[ _renderedPages[(NSUInteger)_pageIndex].image ]];
     _statusLabel.stringValue = @"Page image copied.";
 }
 
-- (void)showContextMenuForDocumentView:(NSView *)view event:(NSEvent *)event
-{
-    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
-    NSMenuItem *copy = [menu addItemWithTitle:@"Copy" action:@selector(copySelection:) keyEquivalent:@""];
+- (void)showContextMenuForDocumentView:(NSView*)view event:(NSEvent*)event {
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
+    NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(copySelection:) keyEquivalent:@""];
     copy.enabled = _selectedText.length > 0;
-    NSMenuItem *copyImage = [menu addItemWithTitle:@"Copy Page Image" action:@selector(copyCurrentPageImage:) keyEquivalent:@""];
-    copyImage.enabled = _doc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count && _renderedPages[(NSUInteger)_pageIndex].image != nil;
+    NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
+                                            action:@selector(copyCurrentPageImage:)
+                                     keyEquivalent:@""];
+    copyImage.enabled = _doc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
+                        _renderedPages[(NSUInteger)_pageIndex].image != nil;
     [menu addItem:[NSMenuItem separatorItem]];
     [menu addItemWithTitle:@"Zoom In" action:@selector(zoomIn:) keyEquivalent:@""];
     [menu addItemWithTitle:@"Zoom Out" action:@selector(zoomOut:) keyEquivalent:@""];
@@ -2881,29 +3130,24 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [NSMenu popUpContextMenu:menu withEvent:event forView:view];
 }
 
-- (void)unimplementedMenuItem:(id)sender
-{
+- (void)unimplementedMenuItem:(id)sender {
     (void)sender;
     NSBeep();
     _statusLabel.stringValue = @"This SumatraPDF command is listed but not implemented yet.";
 }
 
-- (void)findNext:(id)sender
-{
+- (void)findNext:(id)sender {
     (void)sender;
     [self findFromCurrentForward:YES];
 }
 
-- (void)findPrevious:(id)sender
-{
+- (void)findPrevious:(id)sender {
     (void)sender;
     [self findFromCurrentForward:NO];
 }
 
-- (void)findFromCurrentForward:(BOOL)forward
-{
-    if (!_doc || _searchField.stringValue.length == 0)
-        return;
+- (void)findFromCurrentForward:(BOOL)forward {
+    if (!_doc || _searchField.stringValue.length == 0) return;
 
     if (_findMatches.count == 0) {
         [self startFindForCurrentQuery];
@@ -2917,8 +3161,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self jumpToFindMatchAtIndex:next];
 }
 
-- (void)controlTextDidChange:(NSNotification *)notification
-{
+- (void)controlTextDidChange:(NSNotification*)notification {
     if (notification.object == _searchField) {
         [self startFindForCurrentQuery];
     } else if (notification.object == _paletteSearchField) {
@@ -2926,30 +3169,71 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView
-{
-    if (tableView == _paletteTable)
-        return (NSInteger)_paletteResults.count;
+- (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)commandSelector {
+    (void)textView;
+    if (control != _paletteSearchField) return NO;
+    if (commandSelector == @selector(moveDown:)) {
+        [self paletteMoveSelection:1];
+        return YES;
+    }
+    if (commandSelector == @selector(moveUp:)) {
+        [self paletteMoveSelection:-1];
+        return YES;
+    }
+    if (commandSelector == @selector(insertNewline:) || commandSelector == @selector
+                                                            (insertNewlineIgnoringFieldEditor:)) {
+        [self activatePaletteSelection:control];
+        return YES;
+    }
+    if (commandSelector == @selector(cancelOperation:)) {
+        [self closePalette:control];
+        return YES;
+    }
+    return NO;
+}
+
+- (NSInteger)numberOfRowsInTableView:(NSTableView*)tableView {
+    if (tableView == _paletteTable) return (NSInteger)_paletteResults.count;
     return (NSInteger)_sidebarItems.count;
 }
 
-- (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row
-{
+- (CGFloat)tableView:(NSTableView*)tableView heightOfRow:(NSInteger)row {
+    if (tableView != _paletteTable) return _sidebarTable.rowHeight;
+    if (row < 0 || row >= (NSInteger)_paletteResults.count) return 42.0;
+    NSString* kind = _paletteResults[(NSUInteger)row][@"kind"];
+    if ([kind isEqualToString:@"header"]) return 28.0;
+    if ([kind isEqualToString:@"status"]) return 36.0;
+    return 42.0;
+}
+
+- (NSIndexSet*)tableView:(NSTableView*)tableView
+    selectionIndexesForProposedSelection:(NSIndexSet*)proposedSelectionIndexes {
+    if (tableView != _paletteTable) return proposedSelectionIndexes;
+    NSMutableIndexSet* filtered = [NSMutableIndexSet indexSet];
+    [proposedSelectionIndexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL* stop) {
+      (void)stop;
+      if (idx < self->_paletteResults.count && [self isSelectablePaletteResult:self->_paletteResults[idx]])
+          [filtered addIndex:idx];
+    }];
+    return filtered;
+}
+
+- (NSView*)tableView:(NSTableView*)tableView viewForTableColumn:(NSTableColumn*)tableColumn row:(NSInteger)row {
     (void)tableColumn;
     if (tableView == _paletteTable) {
-        NSTableCellView *cell = [tableView makeViewWithIdentifier:@"PaletteCell" owner:self];
+        NSTableCellView* cell = [tableView makeViewWithIdentifier:@"PaletteCell" owner:self];
         if (!cell) {
             cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 620, 44)];
             cell.identifier = @"PaletteCell";
 
-            NSTextField *title = [NSTextField labelWithString:@""];
+            NSTextField* title = [NSTextField labelWithString:@""];
             title.translatesAutoresizingMaskIntoConstraints = NO;
             title.lineBreakMode = NSLineBreakByTruncatingMiddle;
             title.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
             cell.textField = title;
             [cell addSubview:title];
 
-            NSTextField *subtitle = [NSTextField labelWithString:@""];
+            NSTextField* subtitle = [NSTextField labelWithString:@""];
             subtitle.translatesAutoresizingMaskIntoConstraints = NO;
             subtitle.identifier = @"subtitle";
             subtitle.lineBreakMode = NSLineBreakByTruncatingMiddle;
@@ -2967,27 +3251,28 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
             ]];
         }
 
-        NSDictionary *result = _paletteResults[(NSUInteger)row];
+        NSDictionary* result = _paletteResults[(NSUInteger)row];
         cell.textField.stringValue = result[@"title"] ?: @"";
-        NSString *kind = result[@"kind"];
+        NSString* kind = result[@"kind"];
         BOOL header = [kind isEqualToString:@"header"];
         BOOL status = [kind isEqualToString:@"status"];
-        cell.textField.font = header ? [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold] : [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+        cell.textField.font = header ? [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold]
+                                     : [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
         cell.textField.textColor = header || status ? NSColor.secondaryLabelColor : NSColor.labelColor;
-        for (NSView *subview in cell.subviews) {
+        for (NSView* subview in cell.subviews) {
             if ([subview.identifier isEqualToString:@"subtitle"]) {
-                ((NSTextField *)subview).stringValue = header ? @"" : result[@"subtitle"] ?: @"";
-                ((NSTextField *)subview).textColor = NSColor.secondaryLabelColor;
+                ((NSTextField*)subview).stringValue = header ? @"" : result[@"subtitle"] ?: @"";
+                ((NSTextField*)subview).textColor = NSColor.secondaryLabelColor;
             }
         }
         return cell;
     }
 
-    NSTableCellView *cell = [tableView makeViewWithIdentifier:@"SidebarCell" owner:self];
+    NSTableCellView* cell = [tableView makeViewWithIdentifier:@"SidebarCell" owner:self];
     if (!cell) {
         cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 230, 25)];
         cell.identifier = @"SidebarCell";
-        NSTextField *field = [NSTextField labelWithString:@""];
+        NSTextField* field = [NSTextField labelWithString:@""];
         field.translatesAutoresizingMaskIntoConstraints = NO;
         field.lineBreakMode = NSLineBreakByTruncatingTail;
         cell.textField = field;
@@ -2999,24 +3284,20 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         ]];
     }
 
-    NSDictionary *item = _sidebarItems[(NSUInteger)row];
+    NSDictionary* item = _sidebarItems[(NSUInteger)row];
     NSInteger level = [item[@"level"] integerValue];
-    NSString *indent = [@"" stringByPaddingToLength:(NSUInteger)(level * 3) withString:@" " startingAtIndex:0];
+    NSString* indent = [@"" stringByPaddingToLength:(NSUInteger)(level * 3) withString:@" " startingAtIndex:0];
     cell.textField.stringValue = [indent stringByAppendingString:item[@"title"]];
     cell.textField.font = [NSFont systemFontOfSize:13];
     cell.textField.textColor = [item[@"page"] integerValue] >= 0 ? NSColor.labelColor : NSColor.secondaryLabelColor;
     return cell;
 }
 
-- (void)tableViewSelectionDidChange:(NSNotification *)notification
-{
-    if (notification.object == _paletteTable)
-        return;
-    if (_updatingSelection)
-        return;
+- (void)tableViewSelectionDidChange:(NSNotification*)notification {
+    if (notification.object == _paletteTable) return;
+    if (_updatingSelection) return;
     NSInteger row = _sidebarTable.selectedRow;
-    if (row < 0 || row >= (NSInteger)_sidebarItems.count)
-        return;
+    if (row < 0 || row >= (NSInteger)_sidebarItems.count) return;
     NSInteger page = [_sidebarItems[(NSUInteger)row][@"page"] integerValue];
     if (page >= 0 && page != _pageIndex) {
         _pageIndex = page;
@@ -3027,18 +3308,18 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 }
 
-- (BOOL)validateMenuItem:(NSMenuItem *)menuItem
-{
+- (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
     SEL action = menuItem.action;
     BOOL hasDoc = _doc != NULL;
-    if (action == @selector(openDocument:) || action == @selector(toggleFullScreen:) || action == @selector(showFavoritesPalette:) || action == @selector(showFindPalette:) || action == @selector(focusFind:))
+    if (action == @selector(openDocument:) || action == @selector(toggleFullScreen:) ||
+        action == @selector(showFavoritesPalette:) || action == @selector(showFindPalette:) ||
+        action == @selector(focusFind:))
         return YES;
-    if (action == @selector(copySelection:))
-        return _selectedText.length > 0;
+    if (action == @selector(copySelection:)) return _selectedText.length > 0;
     if (action == @selector(copyCurrentPageImage:))
-        return hasDoc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count && _renderedPages[(NSUInteger)_pageIndex].image != nil;
-    if (!hasDoc)
-        return action == @selector(unimplementedMenuItem:);
+        return hasDoc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
+               _renderedPages[(NSUInteger)_pageIndex].image != nil;
+    if (!hasDoc) return action == @selector(unimplementedMenuItem:);
 
     if (action == @selector(setSinglePageMode:))
         menuItem.state = _viewMode == SPDFViewModeSingle ? NSControlStateValueOn : NSControlStateValueOff;
@@ -3058,9 +3339,8 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return YES;
 }
 
-- (void)showError:(NSString *)message detail:(NSString *)detail
-{
-    NSAlert *alert = [[NSAlert alloc] init];
+- (void)showError:(NSString*)message detail:(NSString*)detail {
+    NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = message;
     alert.informativeText = detail ?: @"";
     alert.alertStyle = NSAlertStyleWarning;
@@ -3069,8 +3349,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 @end
 
-int main(int argc, const char *argv[])
-{
+int main(int argc, const char* argv[]) {
     @autoreleasepool {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
@@ -3079,10 +3358,10 @@ int main(int argc, const char *argv[])
             }
         }
 
-        NSApplication *app = [NSApplication sharedApplication];
+        NSApplication* app = [NSApplication sharedApplication];
         app.activationPolicy = NSApplicationActivationPolicyRegular;
 
-        SumatraMacDelegate *delegate = [[SumatraMacDelegate alloc] init];
+        SumatraMacDelegate* delegate = [[SumatraMacDelegate alloc] init];
         for (int i = 1; i < argc; ++i) {
             if (argv[i][0] != '-') {
                 delegate.initialPath = [NSString stringWithUTF8String:argv[i]];
