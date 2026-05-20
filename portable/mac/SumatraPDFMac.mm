@@ -156,6 +156,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (void)updateMinimap;
 - (void)minimapViewDidRequestScrollToFraction:(CGFloat)yFraction;
 - (void)minimapViewDidRequestScrollToPage:(NSInteger)pageIndex yFractionInPage:(CGFloat)yFraction;
+- (void)minimapViewDidRequestCenterAtDocumentPoint:(NSPoint)documentPoint;
+- (void)minimapViewDidRequestCenterOnPage:(NSInteger)pageIndex
+                          xFractionInPage:(CGFloat)xFraction
+                          yFractionInPage:(CGFloat)yFraction;
 - (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard;
 - (void)showContextMenuForDocumentView:(NSView*)view event:(NSEvent*)event;
 @end
@@ -205,13 +209,18 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [[NSColor clearColor] setFill];
     NSRectFill(self.bounds);
 
+    NSMutableParagraphStyle* tabTitleStyle = [[NSMutableParagraphStyle alloc] init];
+    tabTitleStyle.alignment = NSTextAlignmentCenter;
+    tabTitleStyle.lineBreakMode = NSLineBreakByTruncatingMiddle;
     NSDictionary* attrs = @{
         NSFontAttributeName : [NSFont systemFontOfSize:12 weight:NSFontWeightMedium],
-        NSForegroundColorAttributeName : NSColor.labelColor
+        NSForegroundColorAttributeName : NSColor.labelColor,
+        NSParagraphStyleAttributeName : tabTitleStyle
     };
     NSDictionary* dimAttrs = @{
         NSFontAttributeName : [NSFont systemFontOfSize:12],
-        NSForegroundColorAttributeName : NSColor.secondaryLabelColor
+        NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
+        NSParagraphStyleAttributeName : tabTitleStyle
     };
 
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
@@ -226,9 +235,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         NSString* title = tab.title.length ? tab.title : tab.path.lastPathComponent;
         NSDictionary* titleAttrs = selected ? attrs : dimAttrs;
         CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
-        NSRect titleRect = NSMakeRect(NSMinX(tabRect) + 12, floor(NSMidY(tabRect) - titleHeight / 2.0),
-                                      NSWidth(tabRect) - 34, titleHeight + 2);
-        [title drawWithRect:titleRect options:NSStringDrawingTruncatesLastVisibleLine attributes:titleAttrs];
+        CGFloat titleInset = 26.0;
+        NSRect titleRect = NSMakeRect(NSMinX(tabRect) + titleInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
+                                      MAX(1.0, NSWidth(tabRect) - titleInset * 2.0), titleHeight + 2);
+        [title drawWithRect:titleRect
+                    options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
+                 attributes:titleAttrs];
 
         NSString* close = @"x";
         NSSize closeSize = [close sizeWithAttributes:dimAttrs];
@@ -700,7 +712,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 @end
 
-@implementation SPDFMinimapView
+@implementation SPDFMinimapView {
+    BOOL _draggingVisibleRect;
+    NSPoint _dragOffsetFromVisibleCenter;
+}
 
 - (BOOL)isFlipped {
     return YES;
@@ -831,6 +846,65 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return YES;
 }
 
+- (CGFloat)contentTopForDocumentCenterY:(CGFloat)documentY contentHeight:(CGFloat)contentHeight {
+    CGFloat available = MAX(1.0, NSHeight(self.bounds) - 16.0);
+    if (contentHeight < available) return floor((NSHeight(self.bounds) - contentHeight) / 2.0);
+
+    CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
+    CGFloat maxScroll = MAX(1.0, self.documentHeight - visibleHeight);
+    CGFloat originY = spdf_clamp_cg(documentY - visibleHeight * 0.5, 0.0, maxScroll);
+    CGFloat offset = (originY / maxScroll) * (contentHeight - available);
+    return 8.0 - offset;
+}
+
+- (NSPoint)documentPointForUnscrolledMiniPoint:(NSPoint)point scale:(CGFloat)scale gap:(CGFloat)gap {
+    CGFloat y = 0;
+    for (SPDFRenderedPage* page in self.pages) {
+        NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
+        NSRect documentRect = [self documentRectForPage:page];
+        if (NSIsEmptyRect(miniRect) || NSIsEmptyRect(documentRect)) {
+            y += MAX(1.0, page.pageHeight * scale) + gap;
+            continue;
+        }
+
+        if (point.y >= NSMinY(miniRect) && point.y <= NSMaxY(miniRect)) {
+            CGFloat xFraction = spdf_clamp_cg((point.x - NSMinX(miniRect)) / MAX(1.0, NSWidth(miniRect)), 0.0, 1.0);
+            CGFloat yFraction = spdf_clamp_cg((point.y - NSMinY(miniRect)) / MAX(1.0, NSHeight(miniRect)), 0.0, 1.0);
+            return NSMakePoint(NSMinX(documentRect) + xFraction * NSWidth(documentRect),
+                               NSMinY(documentRect) + yFraction * NSHeight(documentRect));
+        }
+
+        CGFloat gapStart = NSMaxY(miniRect);
+        CGFloat gapEnd = gapStart + gap;
+        if (point.y > gapStart && point.y < gapEnd) {
+            CGFloat xFraction = spdf_clamp_cg((point.x - NSMinX(miniRect)) / MAX(1.0, NSWidth(miniRect)), 0.0, 1.0);
+            CGFloat gapFraction = spdf_clamp_cg((point.y - gapStart) / MAX(1.0, gap), 0.0, 1.0);
+            return NSMakePoint(NSMinX(documentRect) + xFraction * NSWidth(documentRect),
+                               NSMaxY(documentRect) + gapFraction * kPageGap);
+        }
+        y += MAX(1.0, page.pageHeight * scale) + gap;
+    }
+
+    CGFloat yFraction = spdf_clamp_cg(point.y / MAX(1.0, y), 0.0, 1.0);
+    return NSMakePoint(NSMidX(self.documentVisibleRect), yFraction * self.documentHeight);
+}
+
+- (NSPoint)documentPointForMinimapCenterPoint:(NSPoint)point
+                                        scale:(CGFloat)scale
+                                          gap:(CGFloat)gap
+                                contentHeight:(CGFloat)contentHeight
+                                   contentTop:(CGFloat)contentTop {
+    NSPoint documentPoint = [self documentPointForUnscrolledMiniPoint:NSMakePoint(point.x, point.y - contentTop)
+                                                                scale:scale
+                                                                  gap:gap];
+    for (NSInteger i = 0; i < 8; ++i) {
+        CGFloat projectedTop = [self contentTopForDocumentCenterY:documentPoint.y contentHeight:contentHeight];
+        NSPoint unscrolledPoint = NSMakePoint(point.x, point.y - projectedTop);
+        documentPoint = [self documentPointForUnscrolledMiniPoint:unscrolledPoint scale:scale gap:gap];
+    }
+    return documentPoint;
+}
+
 - (void)drawPlaceholderInRect:(NSRect)rect {
     if (NSHeight(rect) < 6.0 || NSWidth(rect) < 10.0) return;
     [[NSColor colorWithCalibratedWhite:0.76 alpha:0.34] setFill];
@@ -943,29 +1017,44 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         return;
 
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    CGFloat y = contentTop;
-    for (SPDFRenderedPage* page in self.pages) {
-        CGFloat pageWidth = page.pageWidth * scale;
-        CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
-        NSRect pageRect = NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
-        if (NSPointInRect(point, pageRect)) {
-            CGFloat inPage = spdf_clamp_cg((point.y - NSMinY(pageRect)) / MAX(1.0, NSHeight(pageRect)), 0.0, 1.0);
-            [self.reader minimapViewDidRequestScrollToPage:page.pageIndex yFractionInPage:inPage];
-            return;
-        }
-        y += pageHeight + gap;
-    }
-
-    CGFloat fraction = spdf_clamp_cg((point.y - contentTop) / MAX(1.0, contentHeight), 0.0, 1.0);
-    [self.reader minimapViewDidRequestScrollToFraction:fraction];
+    if (_draggingVisibleRect)
+        point = NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, point.y - _dragOffsetFromVisibleCenter.y);
+    NSPoint documentPoint = [self documentPointForMinimapCenterPoint:point
+                                                               scale:scale
+                                                                 gap:gap
+                                                       contentHeight:contentHeight
+                                                          contentTop:contentTop];
+    [self.reader minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
 }
 
 - (void)mouseDown:(NSEvent*)event {
-    [self sendScrollRequestForEvent:event];
+    CGFloat scale = 1.0;
+    CGFloat gap = 4.0;
+    CGFloat contentTop = 8.0;
+    CGFloat contentHeight = 0;
+    NSRect visibleRect = NSZeroRect;
+    if (![self layoutScale:&scale
+                       gap:&gap
+                contentTop:&contentTop
+             contentHeight:&contentHeight
+               visibleRect:&visibleRect])
+        return;
+
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    _draggingVisibleRect = NSPointInRect(point, visibleRect);
+    _dragOffsetFromVisibleCenter =
+        _draggingVisibleRect ? NSMakePoint(point.x - NSMidX(visibleRect), point.y - NSMidY(visibleRect)) : NSZeroPoint;
+    if (!_draggingVisibleRect) [self sendScrollRequestForEvent:event];
 }
 
 - (void)mouseDragged:(NSEvent*)event {
     [self sendScrollRequestForEvent:event];
+}
+
+- (void)mouseUp:(NSEvent*)event {
+    (void)event;
+    _draggingVisibleRect = NO;
+    _dragOffsetFromVisibleCenter = NSZeroPoint;
 }
 
 @end
@@ -2005,11 +2094,19 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return closestPage;
 }
 
-- (void)scrollToPage:(NSInteger)pageIndex
-    preservingHorizontalPosition:(CGFloat)horizontalFraction
-          centeredAtPageFraction:(CGFloat)yFraction {
+- (NSPoint)continuousDocumentPointForPage:(NSInteger)pageIndex
+                          xFractionInPage:(CGFloat)xFraction
+                          yFractionInPage:(CGFloat)yFraction {
+    NSRect pageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
+    if (NSIsEmptyRect(pageRect)) return NSZeroPoint;
+    return NSMakePoint(NSMinX(pageRect) + spdf_clamp_cg(xFraction, 0.0, 1.0) * NSWidth(pageRect),
+                       NSMinY(pageRect) + spdf_clamp_cg(yFraction, 0.0, 1.0) * NSHeight(pageRect));
+}
+
+- (void)scrollToPage:(NSInteger)pageIndex centeredAtPageXFraction:(CGFloat)xFraction yFraction:(CGFloat)yFraction {
     if (_renderedPages.count == 0) return;
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
+    xFraction = spdf_clamp_cg(xFraction, 0.0, 1.0);
     yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
 
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
@@ -2020,8 +2117,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     CGFloat maxInPageY = MAX(0.0, NSHeight(pageRect) - NSHeight(clipView.bounds));
     CGFloat maxDocumentX = MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds));
     CGFloat maxDocumentY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
-    NSPoint origin = NSMakePoint(NSMinX(pageRect) + spdf_clamp_cg(horizontalFraction, 0.0, 1.0) * maxInPageX,
+    NSPoint origin = NSMakePoint(NSMinX(pageRect) + NSWidth(pageRect) * xFraction - NSWidth(clipView.bounds) * 0.5,
                                  NSMinY(pageRect) + NSHeight(pageRect) * yFraction - NSHeight(clipView.bounds) * 0.5);
+    origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMinX(pageRect) + maxInPageX);
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
     origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
@@ -2049,45 +2147,65 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (void)minimapViewDidRequestScrollToFraction:(CGFloat)yFraction {
     if (!_doc || _renderedPages.count == 0) return;
     yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
-    if (_viewMode == SPDFViewModeContinuous) {
-        NSClipView* clipView = _pageScrollView.contentView;
-        CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
-        NSPoint origin = clipView.bounds.origin;
-        origin.y = spdf_clamp_cg(maxY * yFraction, 0.0, maxY);
-        [clipView scrollToPoint:origin];
-        [_pageScrollView reflectScrolledClipView:clipView];
-        [self documentScrollPositionChanged];
-        [self persistActiveState];
-        return;
-    }
 
-    CGFloat pageFraction = 0.0;
-    NSInteger page = [self pageIndexForContinuousDocumentY:yFraction * [self continuousDocumentHeightForMinimap]
-                                              pageFraction:&pageFraction];
-    [self minimapViewDidRequestScrollToPage:page yFractionInPage:pageFraction];
+    NSPoint documentPoint = NSMakePoint(NSMidX([self continuousDocumentVisibleRectForMinimap]),
+                                        yFraction * [self continuousDocumentHeightForMinimap]);
+    [self minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
 }
 
 - (void)minimapViewDidRequestScrollToPage:(NSInteger)pageIndex yFractionInPage:(CGFloat)yFraction {
+    [self minimapViewDidRequestCenterOnPage:pageIndex xFractionInPage:0.5 yFractionInPage:yFraction];
+}
+
+- (void)minimapViewDidRequestCenterAtDocumentPoint:(NSPoint)documentPoint {
+    if (!_doc || _renderedPages.count == 0) return;
+
+    if (_viewMode == SPDFViewModeContinuous) {
+        NSClipView* clipView = _pageScrollView.contentView;
+        NSPoint origin = NSMakePoint(documentPoint.x - NSWidth(clipView.bounds) * 0.5,
+                                     documentPoint.y - NSHeight(clipView.bounds) * 0.5);
+        CGFloat maxX = MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds));
+        CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+        origin.x = spdf_clamp_cg(origin.x, 0.0, maxX);
+        origin.y = spdf_clamp_cg(origin.y, 0.0, maxY);
+
+        _updatingFromScroll = YES;
+        [clipView scrollToPoint:origin];
+        [_pageScrollView reflectScrolledClipView:clipView];
+        _updatingFromScroll = NO;
+        [self documentScrollPositionChanged];
+        [self rememberActiveTabState];
+        return;
+    }
+
+    CGFloat yFraction = 0.0;
+    NSInteger pageIndex = [self pageIndexForContinuousDocumentY:documentPoint.y pageFraction:&yFraction];
+    NSRect pageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
+    CGFloat xFraction =
+        NSIsEmptyRect(pageRect)
+            ? 0.5
+            : spdf_clamp_cg((documentPoint.x - NSMinX(pageRect)) / MAX(1.0, NSWidth(pageRect)), 0.0, 1.0);
+    [self minimapViewDidRequestCenterOnPage:pageIndex xFractionInPage:xFraction yFractionInPage:yFraction];
+}
+
+- (void)minimapViewDidRequestCenterOnPage:(NSInteger)pageIndex
+                          xFractionInPage:(CGFloat)xFraction
+                          yFractionInPage:(CGFloat)yFraction {
     if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
+    xFraction = spdf_clamp_cg(xFraction, 0.0, 1.0);
     yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
-    NSPoint relativePosition = [self relativeScrollPositionForCurrentPage];
+    NSPoint documentPoint = [self continuousDocumentPointForPage:pageIndex
+                                                 xFractionInPage:xFraction
+                                                 yFractionInPage:yFraction];
+    if (_viewMode == SPDFViewModeContinuous) {
+        [self minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
+        return;
+    }
     _pageIndex = pageIndex;
     _pageView.currentPageIndex = _pageIndex;
     [self renderPageIfNeededAtIndex:_pageIndex];
     [self resizeDocumentView];
-    if (_viewMode == SPDFViewModeContinuous) {
-        NSRect pageRect = [_pageView rectForPageAtIndex:_pageIndex];
-        NSClipView* clipView = _pageScrollView.contentView;
-        CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
-        CGFloat targetY = NSMinY(pageRect) + NSHeight(pageRect) * yFraction - NSHeight(clipView.bounds) * 0.5;
-        NSPoint origin = clipView.bounds.origin;
-        origin.y = spdf_clamp_cg(targetY, 0.0, maxY);
-        [clipView scrollToPoint:origin];
-        [_pageScrollView reflectScrolledClipView:clipView];
-        [self documentScrollPositionChanged];
-    } else {
-        [self scrollToPage:_pageIndex preservingHorizontalPosition:relativePosition.x centeredAtPageFraction:yFraction];
-    }
+    [self scrollToPage:_pageIndex centeredAtPageXFraction:xFraction yFraction:yFraction];
     [self updateControls];
     [self selectCurrentSidebarRow];
     [self updateMinimap];
