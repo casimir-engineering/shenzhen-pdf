@@ -145,6 +145,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize;
 - (NSRect)rectForPageAtIndex:(NSInteger)pageIndex;
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect;
+- (void)cancelTransientInteraction;
 @end
 
 @interface SPDFMinimapView : NSView
@@ -180,6 +181,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (void)paletteMoveSelection:(NSInteger)delta;
 - (void)closePalette:(id)sender;
 - (void)activatePaletteSelection:(id)sender;
+- (SPDFDocumentView*)newDocumentView;
+- (void)replaceDocumentViewForTabSwitch;
 - (void)updateFindControls;
 - (void)updateMinimap;
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop;
@@ -695,6 +698,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                                        userInfo:nil
                                                         repeats:YES];
     }
+}
+
+- (void)cancelTransientInteraction {
+    [_inertiaTimer invalidate];
+    _inertiaTimer = nil;
+    _isPanning = NO;
+    _isSelecting = NO;
+    _rightMouseMoved = NO;
+    _panVelocity = NSZeroPoint;
+    _selectionPageIndex = -1;
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
@@ -1699,11 +1712,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                                  name:NSViewBoundsDidChangeNotification
                                                object:_pageScrollView.contentView];
 
-    _pageView = [[SPDFDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 800, 1000)];
-    _pageView.reader = self;
-    [_pageView registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
-    _pageView.viewMode = _viewMode;
-    _pageView.zoom = _zoom;
+    _pageView = [self newDocumentView];
     _pageScrollView.documentView = _pageView;
 
     _documentContainer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)];
@@ -2502,8 +2511,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _zoom = tab.zoom > 0 ? tab.zoom : 1.0;
     _fitMode = tab.fitMode;
     _viewMode = tab.viewMode;
-    _pageView.viewMode = _viewMode;
-    _pageView.currentPageIndex = _pageIndex;
+    [self replaceDocumentViewForTabSwitch];
     tab.title = spdf_display_name_for_path(_path);
 
     char outlineErr[1024];
@@ -2643,6 +2651,29 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         }
     }
     return opened;
+}
+
+- (SPDFDocumentView*)newDocumentView {
+    SPDFDocumentView* view = [[SPDFDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 800, 1000)];
+    view.reader = self;
+    [view registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
+    view.viewMode = _viewMode;
+    view.zoom = _zoom;
+    view.currentPageIndex = _pageIndex;
+    return view;
+}
+
+- (void)replaceDocumentViewForTabSwitch {
+    [_pageView cancelTransientInteraction];
+    NSClipView* clipView = _pageScrollView.contentView;
+    BOOL previousPostsBoundsChangedNotifications = clipView.postsBoundsChangedNotifications;
+    clipView.postsBoundsChangedNotifications = NO;
+    _pageScrollView.documentView = nil;
+    _pageView = [self newDocumentView];
+    _pageScrollView.documentView = _pageView;
+    [clipView setBoundsOrigin:NSZeroPoint];
+    [_pageScrollView reflectScrolledClipView:clipView];
+    clipView.postsBoundsChangedNotifications = previousPostsBoundsChangedNotifications;
 }
 
 - (void)setSidebarActuallyVisible:(BOOL)visible {
