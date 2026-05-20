@@ -1,4 +1,5 @@
 #include <gtk/gtk.h>
+#include <glib/gstdio.h>
 
 #include "sumatra_pdf_core.h"
 
@@ -18,9 +19,13 @@ typedef struct app_state {
     GtkApplication* app;
     GtkWidget* window;
     GtkWidget* open_in_browser;
+    GtkWidget* ocr_button;
     GtkWidget* page_box;
     GtkWidget* scroll;
+    GtkWidget* sidebar_container;
+    GtkWidget* sidebar_tabs;
     GtkWidget* sidebar;
+    GtkWidget* comments_sidebar;
     GtkWidget* page_entry;
     GtkWidget* page_count_label;
     GtkWidget* fit_mode;
@@ -30,6 +35,7 @@ typedef struct app_state {
 
     spdf_document* doc;
     spdf_outline outline;
+    spdf_comments comments;
     char* path;
     char* config_dir;
     char* settings_path;
@@ -325,6 +331,11 @@ static void free_pixbuf_pixels(guchar* pixels, gpointer data) {
     g_free(pixels);
 }
 
+static gboolean path_has_pdf_extension(const char* path) {
+    const char* dot = path ? strrchr(path, '.') : NULL;
+    return dot && g_ascii_strcasecmp(dot, ".pdf") == 0;
+}
+
 static void update_controls(app_state* state) {
     int page_count = spdf_page_count(state->doc);
     char text[128];
@@ -334,6 +345,8 @@ static void update_controls(app_state* state) {
     gtk_widget_set_sensitive(state->fit_mode, state->doc != NULL);
     gtk_widget_set_sensitive(state->continuous, state->doc != NULL);
     if (state->open_in_browser) gtk_widget_set_sensitive(state->open_in_browser, state->doc != NULL);
+    if (state->ocr_button)
+        gtk_widget_set_sensitive(state->ocr_button, state->doc != NULL && path_has_pdf_extension(state->path));
 
     if (!state->doc) {
         gtk_entry_set_text(GTK_ENTRY(state->page_entry), "");
@@ -352,28 +365,55 @@ static void update_controls(app_state* state) {
     gtk_window_set_title(GTK_WINDOW(state->window), spdf_title(state->doc));
 }
 
-static void rebuild_sidebar(app_state* state) {
-    GList* children = gtk_container_get_children(GTK_CONTAINER(state->sidebar));
+static void clear_list_box(GtkWidget* list) {
+    GList* children = gtk_container_get_children(GTK_CONTAINER(list));
     for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
     g_list_free(children);
+}
 
-    if (!state->doc) return;
+static void add_sidebar_row(GtkWidget* list, const char* text, int page_index, int indent) {
+    GtkWidget* row = gtk_list_box_row_new();
+    GtkWidget* label = gtk_label_new(text);
+    gtk_widget_set_margin_start(label, 8 + indent * 14);
+    gtk_widget_set_margin_end(label, 8);
+    gtk_widget_set_margin_top(label, 4);
+    gtk_widget_set_margin_bottom(label, 4);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    g_object_set_data(G_OBJECT(row), "page-index", GINT_TO_POINTER(page_index));
+    gtk_container_add(GTK_CONTAINER(row), label);
+    gtk_container_add(GTK_CONTAINER(list), row);
+}
 
-    for (int i = 0; i < spdf_page_count(state->doc); ++i) {
-        char text[64];
-        snprintf(text, sizeof(text), "Page %d", i + 1);
-        GtkWidget* row = gtk_list_box_row_new();
-        GtkWidget* label = gtk_label_new(text);
-        gtk_widget_set_margin_start(label, 8);
-        gtk_widget_set_margin_end(label, 8);
-        gtk_widget_set_margin_top(label, 4);
-        gtk_widget_set_margin_bottom(label, 4);
-        gtk_label_set_xalign(GTK_LABEL(label), 0.0);
-        g_object_set_data(G_OBJECT(row), "page-index", GINT_TO_POINTER(i));
-        gtk_container_add(GTK_CONTAINER(row), label);
-        gtk_container_add(GTK_CONTAINER(state->sidebar), row);
+static void rebuild_sidebar(app_state* state) {
+    clear_list_box(state->sidebar);
+    clear_list_box(state->comments_sidebar);
+
+    if (!state->doc || (state->outline.count == 0 && state->comments.count == 0)) {
+        if (state->sidebar_container) gtk_widget_hide(state->sidebar_container);
+        return;
     }
-    gtk_widget_show_all(state->sidebar);
+
+    for (int i = 0; i < state->outline.count; ++i) {
+        spdf_outline_item item = state->outline.items[i];
+        add_sidebar_row(state->sidebar, item.title ? item.title : "Untitled", item.page_index, item.level);
+    }
+
+    for (int i = 0; i < state->comments.count; ++i) {
+        spdf_comment_item item = state->comments.items[i];
+        char text[512];
+        const char* body = item.text && *item.text ? item.text : (item.type && *item.type ? item.type : "Comment");
+        if (item.author && *item.author)
+            snprintf(text, sizeof(text), "%s: %s", item.author, body);
+        else
+            snprintf(text, sizeof(text), "%s", body);
+        add_sidebar_row(state->comments_sidebar, text, item.page_index, 0);
+    }
+
+    gtk_notebook_set_show_tabs(GTK_NOTEBOOK(state->sidebar_tabs),
+                               state->outline.count > 0 && state->comments.count > 0);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(state->sidebar_tabs), state->outline.count > 0 ? 0 : 1);
+    gtk_widget_show_all(state->sidebar_container);
 }
 
 static GdkPixbuf* render_page_pixbuf_for_doc(spdf_document* doc, int page_index, double zoom, char* err,
@@ -529,6 +569,7 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
     }
 
     spdf_free_outline(&state->outline);
+    spdf_free_comments(&state->comments);
     spdf_close(state->doc);
     state->doc = doc;
     free(state->path);
@@ -537,6 +578,7 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
     gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
     spdf_load_outline(state->doc, &state->outline, err, sizeof(err));
+    spdf_load_comments(state->doc, &state->comments, err, sizeof(err));
     rebuild_sidebar(state);
     render_current_page(state, TRUE);
     save_session(state);
@@ -769,6 +811,180 @@ static void open_in_browser(GtkWidget* widget, gpointer user_data) {
         if (error) g_error_free(error);
     }
     g_free(uri);
+}
+
+typedef struct ocr_task {
+    app_state* state;
+    char* tool;
+    char* path;
+    char* tmp_path;
+    int page_index;
+    gboolean has_text;
+} ocr_task;
+
+typedef struct ocr_result {
+    app_state* state;
+    char* path;
+    int page_index;
+    gboolean success;
+    char* message;
+} ocr_result;
+
+static char* backup_path_for_pdf(const char* path) {
+    char* dir = g_path_get_dirname(path);
+    char* base = g_path_get_basename(path);
+    char* dot = strrchr(base, '.');
+    char* stem = dot ? g_strndup(base, (gsize)(dot - base)) : g_strdup(base);
+    const char* ext = dot && dot[1] ? dot + 1 : "pdf";
+    char* name = g_strdup_printf("%s_backup.%s", stem, ext);
+    char* candidate = g_build_filename(dir, name, NULL);
+    int index = 2;
+    g_free(name);
+    while (g_file_test(candidate, G_FILE_TEST_EXISTS)) {
+        g_free(candidate);
+        name = g_strdup_printf("%s_backup_%d.%s", stem, index++, ext);
+        candidate = g_build_filename(dir, name, NULL);
+        g_free(name);
+    }
+    g_free(stem);
+    g_free(base);
+    g_free(dir);
+    return candidate;
+}
+
+static gboolean ocr_finished_idle(gpointer data) {
+    ocr_result* result = (ocr_result*)data;
+    app_state* state = result->state;
+    if (state->ocr_button) gtk_widget_set_sensitive(state->ocr_button, state->doc != NULL);
+    if (result->success) {
+        open_path_at_page(state, result->path, result->page_index);
+        gtk_label_set_text(GTK_LABEL(state->status), result->message ? result->message : "OCR complete.");
+    } else {
+        show_error(GTK_WINDOW(state->window), "OCR failed", result->message ? result->message : "");
+        gtk_label_set_text(GTK_LABEL(state->status), "OCR failed.");
+    }
+    g_free(result->path);
+    g_free(result->message);
+    g_free(result);
+    return G_SOURCE_REMOVE;
+}
+
+static gpointer ocr_worker(gpointer data) {
+    ocr_task* task = (ocr_task*)data;
+    ocr_result* result = g_new0(ocr_result, 1);
+    char jobs[32];
+    gchar* stdout_text = NULL;
+    gchar* stderr_text = NULL;
+    GError* error = NULL;
+    int status = 0;
+    gboolean ok;
+
+    snprintf(jobs, sizeof(jobs), "%u", MAX(1u, g_get_num_processors()));
+    gchar* argv[] = {task->tool, "--jobs",       jobs, "--rotate-pages",
+                     "--deskew", "--optimize",   "1",  task->has_text ? "--redo-ocr" : "--skip-text",
+                     task->path, task->tmp_path, NULL};
+
+    ok = g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, &stdout_text, &stderr_text, &status, &error);
+    result->state = task->state;
+    result->path = g_strdup(task->path);
+    result->page_index = task->page_index;
+    if (ok && g_spawn_check_wait_status(status, &error) && g_rename(task->tmp_path, task->path) == 0) {
+        result->success = TRUE;
+        result->message = g_strdup("OCR complete.");
+    } else {
+        const char* detail =
+            error && error->message ? error->message : (stderr_text && *stderr_text ? stderr_text : stdout_text);
+        result->message = g_strdup(detail ? detail : "OCRmyPDF exited with an error.");
+        g_remove(task->tmp_path);
+        if (error) g_error_free(error);
+    }
+
+    g_free(stdout_text);
+    g_free(stderr_text);
+    g_free(task->tool);
+    g_free(task->path);
+    g_free(task->tmp_path);
+    g_free(task);
+    g_idle_add(ocr_finished_idle, result);
+    return NULL;
+}
+
+static void ocr_clicked(GtkButton* button, gpointer user_data) {
+    (void)button;
+    app_state* state = (app_state*)user_data;
+    char err[1024];
+    int has_text;
+    char* tool;
+    char* backup = NULL;
+    char* dir;
+    char* base;
+    char* tmp_path;
+    ocr_task* task;
+
+    if (!state->doc || !state->path || !path_has_pdf_extension(state->path)) return;
+    tool = g_find_program_in_path("ocrmypdf");
+    if (!tool) {
+        show_error(GTK_WINDOW(state->window), "OCR tool not found",
+                   "Install OCRmyPDF with Tesseract support, then use OCR again.");
+        return;
+    }
+
+    has_text = spdf_document_has_text(state->doc, 0, err, sizeof(err));
+    if (has_text < 0) {
+        show_error(GTK_WINDOW(state->window), "Could not inspect document text", err);
+        g_free(tool);
+        return;
+    }
+
+    if (has_text > 0) {
+        GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(state->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
+                                                   GTK_BUTTONS_NONE, "This PDF already contains selectable text.");
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+                                                 "SumatraPDF will make a backup before OCR replaces it.");
+        gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_OCR and Backup", GTK_RESPONSE_ACCEPT, "_Cancel",
+                               GTK_RESPONSE_CANCEL, NULL);
+        int response = gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        if (response != GTK_RESPONSE_ACCEPT) {
+            g_free(tool);
+            return;
+        }
+
+        backup = backup_path_for_pdf(state->path);
+        GFile* src = g_file_new_for_path(state->path);
+        GFile* dst = g_file_new_for_path(backup);
+        GError* copy_error = NULL;
+        if (!g_file_copy(src, dst, G_FILE_COPY_NONE, NULL, NULL, NULL, &copy_error)) {
+            show_error(GTK_WINDOW(state->window), "Could not create OCR backup", copy_error ? copy_error->message : "");
+            if (copy_error) g_error_free(copy_error);
+            g_object_unref(src);
+            g_object_unref(dst);
+            g_free(backup);
+            g_free(tool);
+            return;
+        }
+        g_object_unref(src);
+        g_object_unref(dst);
+    }
+
+    dir = g_path_get_dirname(state->path);
+    base = g_path_get_basename(state->path);
+    char* tmp_name = g_strdup_printf(".%s.ocr-%u.pdf", base, g_random_int());
+    tmp_path = g_build_filename(dir, tmp_name, NULL);
+    g_free(tmp_name);
+    task = g_new0(ocr_task, 1);
+    task->state = state;
+    task->tool = tool;
+    task->path = g_strdup(state->path);
+    task->tmp_path = tmp_path;
+    task->page_index = state->page_index;
+    task->has_text = has_text > 0;
+    gtk_widget_set_sensitive(state->ocr_button, FALSE);
+    gtk_label_set_text(GTK_LABEL(state->status), "OCR running...");
+    g_thread_unref(g_thread_new("ocrmypdf", ocr_worker, task));
+    g_free(base);
+    g_free(dir);
+    g_free(backup);
 }
 
 static void add_current_favorite(app_state* state, gboolean document) {
@@ -1080,6 +1296,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
     state->search_entry = gtk_search_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(state->search_entry), "Find");
+    state->ocr_button = gtk_button_new_with_label("OCR");
 
     gtk_box_pack_start(GTK_BOX(toolbar), open, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), prev, FALSE, FALSE, 0);
@@ -1091,14 +1308,22 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(toolbar), state->fit_mode, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->continuous, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->search_entry, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->ocr_button, FALSE, FALSE, 0);
 
     GtkWidget* paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(root), paned, TRUE, TRUE, 0);
+    state->sidebar_container = gtk_notebook_new();
+    state->sidebar_tabs = state->sidebar_container;
+    gtk_widget_set_size_request(state->sidebar_container, 240, -1);
     state->sidebar = gtk_list_box_new();
-    gtk_widget_set_size_request(state->sidebar, 220, -1);
-    GtkWidget* sidebar_scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_container_add(GTK_CONTAINER(sidebar_scroll), state->sidebar);
-    gtk_paned_pack1(GTK_PANED(paned), sidebar_scroll, FALSE, FALSE);
+    state->comments_sidebar = gtk_list_box_new();
+    GtkWidget* chapters_scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget* comments_scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_container_add(GTK_CONTAINER(chapters_scroll), state->sidebar);
+    gtk_container_add(GTK_CONTAINER(comments_scroll), state->comments_sidebar);
+    gtk_notebook_append_page(GTK_NOTEBOOK(state->sidebar_tabs), chapters_scroll, gtk_label_new("Chapters"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(state->sidebar_tabs), comments_scroll, gtk_label_new("Comments"));
+    gtk_paned_pack1(GTK_PANED(paned), state->sidebar_container, FALSE, FALSE);
 
     state->scroll = gtk_scrolled_window_new(NULL, NULL);
     GtkWidget* page_box = gtk_event_box_new();
@@ -1125,11 +1350,13 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(next, "clicked", G_CALLBACK(next_clicked), state);
     g_signal_connect(zoom_out, "clicked", G_CALLBACK(zoom_out_clicked), state);
     g_signal_connect(zoom_in, "clicked", G_CALLBACK(zoom_in_clicked), state);
+    g_signal_connect(state->ocr_button, "clicked", G_CALLBACK(ocr_clicked), state);
     g_signal_connect(state->fit_mode, "changed", G_CALLBACK(fit_mode_changed), state);
     g_signal_connect(state->continuous, "toggled", G_CALLBACK(continuous_toggled), state);
     g_signal_connect(state->page_entry, "activate", G_CALLBACK(page_entry_activate), state);
     g_signal_connect(state->search_entry, "activate", G_CALLBACK(find_next), state);
     g_signal_connect(state->sidebar, "row-selected", G_CALLBACK(sidebar_row_selected), state);
+    g_signal_connect(state->comments_sidebar, "row-selected", G_CALLBACK(sidebar_row_selected), state);
     g_signal_connect(page_box, "scroll-event", G_CALLBACK(page_scroll_event), state);
     g_signal_connect(page_box, "button-press-event", G_CALLBACK(page_button_press), state);
     g_signal_connect(page_box, "motion-notify-event", G_CALLBACK(page_motion), state);
@@ -1141,6 +1368,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(state->window, "drag-data-received", G_CALLBACK(drag_data_received), state);
 
     gtk_widget_show_all(state->window);
+    gtk_widget_hide(state->sidebar_container);
     update_controls(state);
     if (!state->suppress_restore_once && !state->doc && state->restore_path && *state->restore_path)
         open_path_at_page(state, state->restore_path, state->restore_page_index);
@@ -1191,6 +1419,7 @@ int main(int argc, char** argv) {
     state.render_generation++;
     if (state.render_pool) g_thread_pool_free(state.render_pool, TRUE, TRUE);
     spdf_free_outline(&state.outline);
+    spdf_free_comments(&state.comments);
     spdf_close(state.doc);
     free(state.path);
     g_free(state.config_dir);

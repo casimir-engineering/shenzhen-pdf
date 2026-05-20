@@ -4,6 +4,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const CGFloat kPageMargin = 44.0;
@@ -12,7 +13,6 @@ static const CGFloat kMinZoom = 0.10;
 static const CGFloat kMaxZoom = 8.00;
 static const CGFloat kSelectionOverlayAlpha = 0.20;
 static const CGFloat kTabStripHeight = 42.0;
-static const CGFloat kToolbarTopInset = 82.0;
 static const CGFloat kMinimapWidth = 96.0;
 
 static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
@@ -30,6 +30,11 @@ typedef NS_ENUM(NSInteger, SPDFFitMode) {
 typedef NS_ENUM(NSInteger, SPDFViewMode) {
     SPDFViewModeSingle = 0,
     SPDFViewModeContinuous
+};
+
+typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
+    SPDFSidebarModeChapters = 0,
+    SPDFSidebarModeComments = 1
 };
 
 @class SumatraMacDelegate;
@@ -117,7 +122,9 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 @interface SPDFMinimapView : NSView
 @property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
 @property(nonatomic) NSRect documentVisibleRect;
+@property(nonatomic) CGFloat documentWidth;
 @property(nonatomic) CGFloat documentHeight;
+@property(nonatomic) CGFloat documentScale;
 @property(nonatomic) SPDFViewMode viewMode;
 @property(nonatomic) NSInteger currentPageIndex;
 @property(nonatomic, weak) SumatraMacDelegate* reader;
@@ -156,7 +163,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 @implementation SPDFTabStripView
 
 - (BOOL)isFlipped {
-    return YES;
+    return NO;
 }
 
 - (CGFloat)tabWidth {
@@ -167,11 +174,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 }
 
 - (CGFloat)leftInset {
-    return MAX(120.0, self.reservedLeadingInset > 0 ? self.reservedLeadingInset : 138.0);
-}
-
-- (NSRect)searchRect {
-    return NSMakeRect([self leftInset] - 40, 7, 30, 28);
+    return MAX(16.0, self.reservedLeadingInset > 0 ? self.reservedLeadingInset : 138.0);
 }
 
 - (NSRect)plusRect {
@@ -211,16 +214,6 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         NSForegroundColorAttributeName : NSColor.secondaryLabelColor
     };
 
-    NSRect searchRect = [self searchRect];
-    [NSColor.controlBackgroundColor setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:searchRect xRadius:9 yRadius:9] fill];
-    NSBezierPath* search = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(searchRect, 8, 7)];
-    [NSColor.secondaryLabelColor setStroke];
-    search.lineWidth = 1.4;
-    [search stroke];
-    [NSBezierPath strokeLineFromPoint:NSMakePoint(NSMaxX(searchRect) - 9, NSMaxY(searchRect) - 8)
-                              toPoint:NSMakePoint(NSMaxX(searchRect) - 5, NSMaxY(searchRect) - 4)];
-
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
         if (NSWidth(tabRect) < 74) break;
@@ -258,10 +251,6 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 - (void)mouseDown:(NSEvent*)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    if (NSPointInRect(point, [self searchRect])) {
-        [self.reader focusFind:self];
-        return;
-    }
     if (NSPointInRect(point, [self plusRect])) {
         [self.reader newTabRequested:self];
         return;
@@ -728,30 +717,117 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return widest;
 }
 
-- (BOOL)layoutXScale:(CGFloat*)xScaleOut
-              yScale:(CGFloat*)yScaleOut
-                 gap:(CGFloat*)gapOut
-          contentTop:(CGFloat*)topOut
-       contentHeight:(CGFloat*)heightOut {
+- (CGFloat)scrollFraction {
+    CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
+    CGFloat maxScroll = MAX(1.0, self.documentHeight - visibleHeight);
+    return spdf_clamp_cg(NSMinY(self.documentVisibleRect) / maxScroll, 0.0, 1.0);
+}
+
+- (NSRect)miniRectForPage:(SPDFRenderedPage*)targetPage scale:(CGFloat)scale gap:(CGFloat)gap {
+    CGFloat y = 0;
+    for (SPDFRenderedPage* page in self.pages) {
+        CGFloat pageWidth = MAX(1.0, page.pageWidth * scale);
+        CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
+        if (page == targetPage || page.pageIndex == targetPage.pageIndex) {
+            return NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
+        }
+        y += pageHeight + gap;
+    }
+    return NSZeroRect;
+}
+
+- (NSRect)documentRectForPage:(SPDFRenderedPage*)targetPage {
+    CGFloat documentScale = MAX(0.01, self.documentScale);
+    CGFloat documentWidth = MAX(1.0, self.documentWidth);
+    CGFloat y = kPageMargin / 2.0;
+
+    for (SPDFRenderedPage* page in self.pages) {
+        if (page.pageIndex >= targetPage.pageIndex) break;
+        y += page.pageHeight * documentScale + kPageGap;
+    }
+
+    CGFloat width = MAX(1.0, targetPage.pageWidth * documentScale);
+    CGFloat height = MAX(1.0, targetPage.pageHeight * documentScale);
+    CGFloat x = floor((documentWidth - width) / 2.0);
+    return NSMakeRect(MAX(kPageMargin / 2.0, x), y, width, height);
+}
+
+- (NSRect)miniRectForDocumentIntersection:(NSRect)intersection
+                             documentRect:(NSRect)documentRect
+                                 miniRect:(NSRect)miniRect {
+    if (NSIsEmptyRect(intersection) || NSIsEmptyRect(documentRect) || NSIsEmptyRect(miniRect)) return NSZeroRect;
+
+    CGFloat x0 = spdf_clamp_cg((NSMinX(intersection) - NSMinX(documentRect)) / NSWidth(documentRect), 0.0, 1.0);
+    CGFloat x1 = spdf_clamp_cg((NSMaxX(intersection) - NSMinX(documentRect)) / NSWidth(documentRect), 0.0, 1.0);
+    CGFloat y0 = spdf_clamp_cg((NSMinY(intersection) - NSMinY(documentRect)) / NSHeight(documentRect), 0.0, 1.0);
+    CGFloat y1 = spdf_clamp_cg((NSMaxY(intersection) - NSMinY(documentRect)) / NSHeight(documentRect), 0.0, 1.0);
+
+    return NSMakeRect(NSMinX(miniRect) + x0 * NSWidth(miniRect), NSMinY(miniRect) + y0 * NSHeight(miniRect),
+                      MAX(1.0, (x1 - x0) * NSWidth(miniRect)), MAX(1.0, (y1 - y0) * NSHeight(miniRect)));
+}
+
+- (NSRect)unscrolledVisibleRectForScale:(CGFloat)scale gap:(CGFloat)gap contentHeight:(CGFloat)contentHeight {
+    if (self.pages.count == 0 || contentHeight <= 0) return NSZeroRect;
+
+    if (self.documentHeight > 1.0) {
+        NSRect visible = NSZeroRect;
+        BOOL hasVisiblePage = NO;
+        for (SPDFRenderedPage* page in self.pages) {
+            NSRect documentRect = [self documentRectForPage:page];
+            NSRect intersection = NSIntersectionRect(self.documentVisibleRect, documentRect);
+            if (NSIsEmptyRect(intersection)) continue;
+
+            NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
+            NSRect miniVisible = [self miniRectForDocumentIntersection:intersection
+                                                          documentRect:documentRect
+                                                              miniRect:miniRect];
+            if (NSIsEmptyRect(miniVisible)) continue;
+
+            visible = hasVisiblePage ? NSUnionRect(visible, miniVisible) : miniVisible;
+            hasVisiblePage = YES;
+        }
+        if (hasVisiblePage) return NSInsetRect(visible, -2.0, -2.0);
+    }
+
+    CGFloat heightFraction =
+        spdf_clamp_cg(NSHeight(self.documentVisibleRect) / MAX(1.0, self.documentHeight), 0.02, 1.0);
+    CGFloat height = MAX(10.0, heightFraction * contentHeight);
+    CGFloat top = [self scrollFraction] * MAX(0.0, contentHeight - height);
+    if (top + height > contentHeight) top = MAX(0.0, contentHeight - height);
+    return NSMakeRect(5.0, top, NSWidth(self.bounds) - 10.0, height);
+}
+
+- (BOOL)layoutScale:(CGFloat*)scaleOut
+                gap:(CGFloat*)gapOut
+         contentTop:(CGFloat*)topOut
+      contentHeight:(CGFloat*)heightOut
+        visibleRect:(NSRect*)visibleOut {
     if (self.pages.count == 0 || NSWidth(self.bounds) < 16 || NSHeight(self.bounds) < 16) return NO;
 
     CGFloat widest = [self widestPage];
     if (widest <= 0) return NO;
 
-    CGFloat xScale = (NSWidth(self.bounds) - 18.0) / widest;
+    CGFloat scale = (NSWidth(self.bounds) - 18.0) / widest;
     CGFloat gap = 4.0;
-    CGFloat rawHeight = 0;
-    for (SPDFRenderedPage* page in self.pages) rawHeight += page.pageHeight * xScale;
-    rawHeight += gap * MAX(0, (NSInteger)self.pages.count - 1);
-
+    CGFloat contentHeight = 0;
+    for (SPDFRenderedPage* page in self.pages) contentHeight += page.pageHeight * scale;
+    contentHeight += gap * MAX(0, (NSInteger)self.pages.count - 1);
     CGFloat available = MAX(1.0, NSHeight(self.bounds) - 16.0);
-    CGFloat compression = rawHeight > available ? available / rawHeight : 1.0;
-    CGFloat contentHeight = rawHeight * compression;
-    if (xScaleOut) *xScaleOut = xScale;
-    if (yScaleOut) *yScaleOut = xScale * compression;
-    if (gapOut) *gapOut = gap * compression;
-    if (topOut) *topOut = floor(MAX(8.0, (NSHeight(self.bounds) - contentHeight) / 2.0));
+    NSRect visible = [self unscrolledVisibleRectForScale:scale gap:gap contentHeight:contentHeight];
+    CGFloat offset = 0;
+    if (contentHeight > available) {
+        CGFloat maxOffset = contentHeight - available;
+        offset = [self scrollFraction] * maxOffset;
+    }
+
+    CGFloat contentTop =
+        contentHeight < available ? floor((NSHeight(self.bounds) - contentHeight) / 2.0) : 8.0 - offset;
+    visible.origin.y += contentTop;
+    if (scaleOut) *scaleOut = scale;
+    if (gapOut) *gapOut = gap;
+    if (topOut) *topOut = contentTop;
     if (heightOut) *heightOut = contentHeight;
+    if (visibleOut) *visibleOut = visible;
     return YES;
 }
 
@@ -772,18 +848,17 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 - (void)drawRects:(NSArray<NSValue*>*)rects
          pageRect:(NSRect)pageRect
-           xScale:(CGFloat)xScale
-           yScale:(CGFloat)yScale
+            scale:(CGFloat)scale
             color:(NSColor*)color
         minHeight:(CGFloat)minHeight {
     if (rects.count == 0) return;
     [color setFill];
     for (NSValue* value in rects) {
         NSRect r = [value rectValue];
-        r.origin.x = NSMinX(pageRect) + r.origin.x * xScale;
-        r.origin.y = NSMinY(pageRect) + r.origin.y * yScale;
-        r.size.width = MAX(1.0, r.size.width * xScale);
-        r.size.height = MAX(minHeight, r.size.height * yScale);
+        r.origin.x = NSMinX(pageRect) + r.origin.x * scale;
+        r.origin.y = NSMinY(pageRect) + r.origin.y * scale;
+        r.size.width = MAX(1.0, r.size.width * scale);
+        r.size.height = MAX(minHeight, r.size.height * scale);
         NSRectFillUsingOperation(NSIntersectionRect(r, pageRect), NSCompositingOperationSourceOver);
     }
 }
@@ -795,21 +870,25 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [NSColor.separatorColor setFill];
     NSRectFill(NSMakeRect(0, 0, 1, NSHeight(self.bounds)));
 
-    CGFloat xScale = 1.0;
-    CGFloat yScale = 1.0;
+    CGFloat scale = 1.0;
     CGFloat gap = 4.0;
     CGFloat contentTop = 8.0;
     CGFloat contentHeight = 0;
-    if (![self layoutXScale:&xScale yScale:&yScale gap:&gap contentTop:&contentTop contentHeight:&contentHeight])
+    NSRect visibleRect = NSZeroRect;
+    if (![self layoutScale:&scale
+                       gap:&gap
+                contentTop:&contentTop
+             contentHeight:&contentHeight
+               visibleRect:&visibleRect])
         return;
 
     CGFloat y = contentTop;
     BOOL drawImages = self.pages.count <= 400;
     for (SPDFRenderedPage* page in self.pages) {
-        CGFloat pageWidth = page.pageWidth * xScale;
-        CGFloat pageHeight = MAX(1.0, page.pageHeight * yScale);
+        CGFloat pageWidth = page.pageWidth * scale;
+        CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
         NSRect pageRect = NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
-        if (NSHeight(pageRect) >= 1.0) {
+        if (NSHeight(pageRect) >= 1.0 && NSIntersectsRect(pageRect, self.bounds)) {
             [[NSColor whiteColor] setFill];
             NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
             if (drawImages && page.image && NSHeight(pageRect) >= 5.0) {
@@ -824,14 +903,12 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
             }
             [self drawRects:page.highlights
                    pageRect:pageRect
-                     xScale:xScale
-                     yScale:yScale
+                      scale:scale
                       color:[NSColor colorWithCalibratedRed:1.0 green:0.78 blue:0.05 alpha:0.78]
                   minHeight:1.3];
             [self drawRects:page.selectionRects
                    pageRect:pageRect
-                     xScale:xScale
-                     yScale:yScale
+                      scale:scale
                       color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
                   minHeight:1.0];
             if (page.pageIndex == self.currentPageIndex) {
@@ -844,37 +921,32 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         y += pageHeight + gap;
     }
 
-    if (self.documentHeight > 1.0 && contentHeight > 1.0) {
-        CGFloat yFraction = spdf_clamp_cg(NSMinY(self.documentVisibleRect) / self.documentHeight, 0.0, 1.0);
-        CGFloat heightFraction = spdf_clamp_cg(NSHeight(self.documentVisibleRect) / self.documentHeight, 0.02, 1.0);
-        NSRect visibleRect = NSMakeRect(5.0, contentTop + yFraction * contentHeight, NSWidth(self.bounds) - 10.0,
-                                        MAX(10.0, heightFraction * contentHeight));
-        if (NSMaxY(visibleRect) > contentTop + contentHeight)
-            visibleRect.origin.y = contentTop + contentHeight - NSHeight(visibleRect);
-        visibleRect.origin.y = MAX(contentTop, visibleRect.origin.y);
-        [[NSColor colorWithCalibratedRed:0.18 green:0.55 blue:0.92 alpha:0.18] setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:visibleRect xRadius:4 yRadius:4] fill];
-        [[NSColor controlAccentColor] setStroke];
-        NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:visibleRect xRadius:4 yRadius:4];
-        path.lineWidth = 1.2;
-        [path stroke];
+    if (contentHeight > 1.0) {
+        visibleRect = NSIntersectionRect(visibleRect, NSInsetRect(self.bounds, 1.0, 1.0));
+        if (NSWidth(visibleRect) > 1.0 && NSHeight(visibleRect) > 1.0) {
+            [[NSColor colorWithCalibratedRed:0.18 green:0.55 blue:0.92 alpha:0.18] setFill];
+            [[NSBezierPath bezierPathWithRoundedRect:visibleRect xRadius:4 yRadius:4] fill];
+            [[NSColor controlAccentColor] setStroke];
+            NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:visibleRect xRadius:4 yRadius:4];
+            path.lineWidth = 1.2;
+            [path stroke];
+        }
     }
 }
 
 - (void)sendScrollRequestForEvent:(NSEvent*)event {
-    CGFloat xScale = 1.0;
-    CGFloat yScale = 1.0;
+    CGFloat scale = 1.0;
     CGFloat gap = 4.0;
     CGFloat contentTop = 8.0;
     CGFloat contentHeight = 0;
-    if (![self layoutXScale:&xScale yScale:&yScale gap:&gap contentTop:&contentTop contentHeight:&contentHeight])
+    if (![self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL])
         return;
 
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     CGFloat y = contentTop;
     for (SPDFRenderedPage* page in self.pages) {
-        CGFloat pageWidth = page.pageWidth * xScale;
-        CGFloat pageHeight = MAX(1.0, page.pageHeight * yScale);
+        CGFloat pageWidth = page.pageWidth * scale;
+        CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
         NSRect pageRect = NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
         if (NSPointInRect(point, pageRect)) {
             CGFloat inPage = spdf_clamp_cg((point.y - NSMinY(pageRect)) / MAX(1.0, NSHeight(pageRect)), 0.0, 1.0);
@@ -954,7 +1026,6 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 @implementation SumatraMacDelegate {
     NSWindow* _window;
-    NSTitlebarAccessoryViewController* _tabAccessory;
     SPDFTabStripView* _tabStrip;
     NSSplitView* _splitView;
     NSTableView* _sidebarTable;
@@ -964,7 +1035,6 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     SPDFDocumentView* _pageView;
     SPDFMinimapView* _minimapView;
     NSLayoutConstraint* _minimapWidthConstraint;
-    NSButton* _openButton;
     NSButton* _prevButton;
     NSButton* _nextButton;
     NSTextField* _pageField;
@@ -974,6 +1044,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     NSPopUpButton* _fitModePopup;
     NSButton* _continuousButton;
     NSSearchField* _searchField;
+    NSButton* _ocrButton;
     NSButton* _findPrevButton;
     NSButton* _findNextButton;
     NSTextField* _findCountLabel;
@@ -993,6 +1064,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
     spdf_document* _doc;
     spdf_outline _outline;
+    spdf_comments _comments;
     NSMutableArray<NSDictionary*>* _sidebarItems;
     NSMutableArray<SPDFRenderedPage*>* _renderedPages;
     NSMutableArray<SPDFDocumentTab*>* _tabs;
@@ -1018,6 +1090,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     BOOL _uiReady;
     BOOL _updatingSelection;
     BOOL _updatingFromScroll;
+    BOOL _sidebarPreferredVisible;
     BOOL _sidebarVisible;
 }
 
@@ -1028,6 +1101,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _viewMode = SPDFViewModeContinuous;
     _highlightPageIndex = -1;
     _selectionPageIndex = -1;
+    _sidebarPreferredVisible = YES;
     _sidebarVisible = YES;
     _sidebarItems = [NSMutableArray array];
     _renderedPages = [NSMutableArray array];
@@ -1088,6 +1162,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self rememberActiveTabState];
     [self savePersistentState];
     spdf_free_outline(&_outline);
+    spdf_free_comments(&_comments);
     spdf_close(_doc);
 }
 
@@ -1124,6 +1199,20 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         [self resizeDocumentView];
 }
 
+- (void)windowDidEnterFullScreen:(NSNotification*)notification {
+    (void)notification;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self updateTabStripFrame];
+    });
+}
+
+- (void)windowDidExitFullScreen:(NSNotification*)notification {
+    (void)notification;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self updateTabStripFrame];
+    });
+}
+
 - (NSString*)supportDirectory {
     NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
                                                        inDomains:NSUserDomainMask]
@@ -1158,7 +1247,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         NSNumber* sidebar = settings[@"showSidebar"];
         if (fit) _fitMode = (SPDFFitMode)MAX(0, MIN(4, fit.integerValue));
         if (view) _viewMode = (SPDFViewMode)MAX(0, MIN(1, view.integerValue));
-        if (sidebar) _sidebarVisible = sidebar.boolValue;
+        if (sidebar) _sidebarPreferredVisible = sidebar.boolValue;
     }
 
     NSArray* favorites = [self jsonObjectFromFile:@"favorites.json"];
@@ -1206,7 +1295,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         @"version" : @1,
         @"fitMode" : @(_fitMode),
         @"viewMode" : @(_viewMode),
-        @"showSidebar" : @(_sidebarVisible)
+        @"showSidebar" : @(_sidebarPreferredVisible)
     }
                    toFile:@"settings.json"];
     [self writeJSONObject:_favorites toFile:@"favorites.json"];
@@ -1233,6 +1322,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [fileMenu addItemWithTitle:@"Close" action:@selector(closeDocument:) keyEquivalent:@"w"];
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Print..." action:@selector(printDocument:) keyEquivalent:@"p"];
+    [fileMenu addItemWithTitle:@"OCR Document..." action:@selector(ocrDocument:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@""];
     fileItem.submenu = fileMenu;
 
@@ -1336,22 +1426,19 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _window.titlebarAppearsTransparent = YES;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
 
-    _tabStrip = [[SPDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(frame), kTabStripHeight)];
-    _tabStrip.autoresizingMask = NSViewWidthSizable;
-    _tabStrip.reader = self;
-    _tabStrip.tabs = _tabs;
-    _tabStrip.selectedIndex = _selectedTabIndex;
-    _tabAccessory = [[NSTitlebarAccessoryViewController alloc] init];
-    _tabAccessory.view = _tabStrip;
-    _tabAccessory.layoutAttribute = NSLayoutAttributeBottom;
-    [_window addTitlebarAccessoryViewController:_tabAccessory];
-    [self updateTabStripFrame];
-
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
     content.reader = self;
     [content registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
     content.translatesAutoresizingMaskIntoConstraints = NO;
     _window.contentView = content;
+
+    _tabStrip = [[SPDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(frame), kTabStripHeight)];
+    _tabStrip.reader = self;
+    _tabStrip.tabs = _tabs;
+    _tabStrip.selectedIndex = _selectedTabIndex;
+    _tabStrip.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:_tabStrip];
+    [self updateTabStripFrame];
 
     NSStackView* toolbar = [[NSStackView alloc] init];
     toolbar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
@@ -1361,7 +1448,6 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     toolbar.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:toolbar];
 
-    _openButton = [self buttonWithTitle:@"Open" action:@selector(openDocument:)];
     _prevButton = [self buttonWithTitle:@"<" action:@selector(previousPage:)];
     _nextButton = [self buttonWithTitle:@">" action:@selector(nextPage:)];
     _pageField = [[NSTextField alloc] init];
@@ -1394,6 +1480,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _searchField.target = self;
     _searchField.action = @selector(findNext:);
     [_searchField.widthAnchor constraintEqualToConstant:190].active = YES;
+    _ocrButton = [self buttonWithTitle:@"OCR" action:@selector(ocrDocument:)];
     _findPrevButton = [self buttonWithTitle:@"<" action:@selector(findPrevious:)];
     _findNextButton = [self buttonWithTitle:@">" action:@selector(findNext:)];
     _findCountLabel = [NSTextField labelWithString:@""];
@@ -1405,7 +1492,6 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [_findNextButton.widthAnchor constraintEqualToConstant:30].active = YES;
     [_findCountLabel.widthAnchor constraintEqualToConstant:64].active = YES;
 
-    [toolbar addArrangedSubview:_openButton];
     [toolbar addArrangedSubview:_prevButton];
     [toolbar addArrangedSubview:_nextButton];
     [toolbar addArrangedSubview:_pageField];
@@ -1415,6 +1501,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [toolbar addArrangedSubview:_fitModePopup];
     [toolbar addArrangedSubview:_continuousButton];
     [toolbar addArrangedSubview:_searchField];
+    [toolbar addArrangedSubview:_ocrButton];
     [toolbar addArrangedSubview:_findCountLabel];
     [toolbar addArrangedSubview:_findPrevButton];
     [toolbar addArrangedSubview:_findNextButton];
@@ -1429,9 +1516,9 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _sidebarContainer.translatesAutoresizingMaskIntoConstraints = NO;
     _sidebarModeControl = [[NSSegmentedControl alloc] init];
     _sidebarModeControl.segmentCount = 2;
-    [_sidebarModeControl setLabel:@"Pages" forSegment:0];
-    [_sidebarModeControl setLabel:@"Contents" forSegment:1];
-    _sidebarModeControl.selectedSegment = 0;
+    [_sidebarModeControl setLabel:@"Chapters" forSegment:SPDFSidebarModeChapters];
+    [_sidebarModeControl setLabel:@"Comments" forSegment:SPDFSidebarModeComments];
+    _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
     _sidebarModeControl.target = self;
     _sidebarModeControl.action = @selector(sidebarModeChanged:);
     _sidebarModeControl.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1518,7 +1605,11 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [content addSubview:_statusLabel];
 
     [NSLayoutConstraint activateConstraints:@[
-        [toolbar.topAnchor constraintEqualToAnchor:content.topAnchor constant:kToolbarTopInset],
+        [_tabStrip.topAnchor constraintEqualToAnchor:content.topAnchor],
+        [_tabStrip.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+        [_tabStrip.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+        [_tabStrip.heightAnchor constraintEqualToConstant:kTabStripHeight],
+        [toolbar.topAnchor constraintEqualToAnchor:_tabStrip.bottomAnchor],
         [toolbar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
         [toolbar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         [toolbar.heightAnchor constraintEqualToConstant:42],
@@ -1533,10 +1624,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     ]];
 
     [_splitView setPosition:240 ofDividerAtIndex:0];
-    if (!_sidebarVisible) {
-        _sidebarVisible = YES;
-        [self toggleSidebar:nil];
-    }
+    if (!_sidebarPreferredVisible) [self setSidebarActuallyVisible:NO];
     [self syncToolbarState];
     [self updateControls];
 }
@@ -1785,13 +1873,176 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self updateMinimap];
 }
 
+- (NSPoint)relativeScrollPositionForPage:(NSInteger)pageIndex fromVisibleRect:(NSRect)visibleRect {
+    if (_renderedPages.count == 0) return NSZeroPoint;
+    pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
+    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
+    if (NSIsEmptyRect(pageRect)) return NSZeroPoint;
+
+    CGFloat maxX = MAX(1.0, NSWidth(pageRect) - NSWidth(visibleRect));
+    CGFloat maxY = MAX(1.0, NSHeight(pageRect) - NSHeight(visibleRect));
+    CGFloat relativeX = spdf_clamp_cg((NSMinX(visibleRect) - NSMinX(pageRect)) / maxX, 0.0, 1.0);
+    CGFloat relativeY = spdf_clamp_cg((NSMinY(visibleRect) - NSMinY(pageRect)) / maxY, 0.0, 1.0);
+    return NSMakePoint(relativeX, relativeY);
+}
+
+- (NSPoint)relativeScrollPositionForCurrentPage {
+    return [self relativeScrollPositionForPage:_pageIndex fromVisibleRect:_pageScrollView.contentView.bounds];
+}
+
+- (void)scrollToPage:(NSInteger)pageIndex preservingRelativePosition:(NSPoint)relativePosition {
+    if (_renderedPages.count == 0) return;
+    pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
+    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
+    if (NSIsEmptyRect(pageRect)) return;
+
+    NSClipView* clipView = _pageScrollView.contentView;
+    CGFloat maxInPageX = MAX(0.0, NSWidth(pageRect) - NSWidth(clipView.bounds));
+    CGFloat maxInPageY = MAX(0.0, NSHeight(pageRect) - NSHeight(clipView.bounds));
+    CGFloat maxDocumentX = MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds));
+    CGFloat maxDocumentY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+    NSPoint origin = NSMakePoint(NSMinX(pageRect) + spdf_clamp_cg(relativePosition.x, 0.0, 1.0) * maxInPageX,
+                                 NSMinY(pageRect) + spdf_clamp_cg(relativePosition.y, 0.0, 1.0) * maxInPageY);
+    origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
+    origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
+
+    _updatingFromScroll = YES;
+    [clipView scrollToPoint:origin];
+    [_pageScrollView reflectScrolledClipView:clipView];
+    _updatingFromScroll = NO;
+    [self documentScrollPositionChanged];
+    [self updateMinimap];
+}
+
+- (void)goToPage:(NSInteger)pageIndex preserveSinglePagePosition:(BOOL)preserveSinglePagePosition {
+    if (!_doc) return;
+    NSInteger pageCount = spdf_page_count(_doc);
+    if (pageCount <= 0) return;
+    pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
+    NSPoint relativePosition = preserveSinglePagePosition ? [self relativeScrollPositionForCurrentPage] : NSZeroPoint;
+
+    _pageIndex = pageIndex;
+    _pageView.currentPageIndex = _pageIndex;
+    [self renderPageIfNeededAtIndex:_pageIndex];
+    [self resizeDocumentView];
+    if (preserveSinglePagePosition)
+        [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition];
+    else
+        [self scrollToPage:_pageIndex alignTop:YES];
+    [self updateControls];
+    [self selectCurrentSidebarRow];
+    [_pageView setNeedsDisplay:YES];
+    [self persistActiveState];
+}
+
+- (CGFloat)continuousDocumentHeightForMinimap {
+    if (_renderedPages.count == 0) return MAX(1.0, NSHeight(_pageView.bounds));
+
+    CGFloat height = kPageMargin / 2.0;
+    for (SPDFRenderedPage* page in _renderedPages) height += page.pageHeight * _zoom + kPageGap;
+    height += kPageMargin / 2.0;
+    return MAX(height, NSHeight(_pageScrollView.contentView.bounds));
+}
+
+- (NSRect)continuousDocumentRectForPageAtIndex:(NSInteger)pageIndex {
+    if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return NSZeroRect;
+
+    CGFloat y = kPageMargin / 2.0;
+    for (NSInteger i = 0; i < pageIndex; ++i) {
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)i];
+        y += page.pageHeight * _zoom + kPageGap;
+    }
+
+    SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
+    CGFloat width = page.pageWidth * _zoom;
+    CGFloat height = page.pageHeight * _zoom;
+    CGFloat x = floor((NSWidth(_pageView.bounds) - width) / 2.0);
+    return NSMakeRect(MAX(kPageMargin / 2.0, x), y, width, height);
+}
+
+- (NSRect)continuousDocumentVisibleRectForMinimap {
+    NSRect visible = _pageScrollView.contentView.bounds;
+    if (_viewMode == SPDFViewModeContinuous || _renderedPages.count == 0) return visible;
+
+    NSRect singlePageRect = [_pageView rectForPageAtIndex:_pageIndex];
+    NSRect continuousPageRect = [self continuousDocumentRectForPageAtIndex:_pageIndex];
+    if (NSIsEmptyRect(singlePageRect) || NSIsEmptyRect(continuousPageRect)) return visible;
+
+    NSRect projected = NSMakeRect(NSMinX(continuousPageRect) + (NSMinX(visible) - NSMinX(singlePageRect)),
+                                  NSMinY(continuousPageRect) + (NSMinY(visible) - NSMinY(singlePageRect)),
+                                  NSWidth(visible), NSHeight(visible));
+    CGFloat maxX = MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(projected));
+    CGFloat maxY = MAX(0.0, [self continuousDocumentHeightForMinimap] - NSHeight(projected));
+    projected.origin.x = spdf_clamp_cg(projected.origin.x, 0.0, maxX);
+    projected.origin.y = spdf_clamp_cg(projected.origin.y, 0.0, maxY);
+    return projected;
+}
+
+- (NSInteger)pageIndexForContinuousDocumentY:(CGFloat)y pageFraction:(CGFloat*)pageFraction {
+    if (_renderedPages.count == 0) {
+        if (pageFraction) *pageFraction = 0.0;
+        return 0;
+    }
+
+    NSInteger closestPage = 0;
+    CGFloat closestDistance = CGFLOAT_MAX;
+    for (SPDFRenderedPage* page in _renderedPages) {
+        NSRect pageRect = [self continuousDocumentRectForPageAtIndex:page.pageIndex];
+        if (NSIsEmptyRect(pageRect)) continue;
+        if (y >= NSMinY(pageRect) && y <= NSMaxY(pageRect)) {
+            if (pageFraction)
+                *pageFraction = spdf_clamp_cg((y - NSMinY(pageRect)) / MAX(1.0, NSHeight(pageRect)), 0.0, 1.0);
+            return page.pageIndex;
+        }
+
+        CGFloat distance = MIN(fabs(y - NSMinY(pageRect)), fabs(y - NSMaxY(pageRect)));
+        if (distance < closestDistance) {
+            closestDistance = distance;
+            closestPage = page.pageIndex;
+            if (pageFraction) *pageFraction = y < NSMinY(pageRect) ? 0.0 : 1.0;
+        }
+    }
+    return closestPage;
+}
+
+- (void)scrollToPage:(NSInteger)pageIndex
+    preservingHorizontalPosition:(CGFloat)horizontalFraction
+          centeredAtPageFraction:(CGFloat)yFraction {
+    if (_renderedPages.count == 0) return;
+    pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
+    yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
+
+    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
+    if (NSIsEmptyRect(pageRect)) return;
+
+    NSClipView* clipView = _pageScrollView.contentView;
+    CGFloat maxInPageX = MAX(0.0, NSWidth(pageRect) - NSWidth(clipView.bounds));
+    CGFloat maxInPageY = MAX(0.0, NSHeight(pageRect) - NSHeight(clipView.bounds));
+    CGFloat maxDocumentX = MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds));
+    CGFloat maxDocumentY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+    NSPoint origin = NSMakePoint(NSMinX(pageRect) + spdf_clamp_cg(horizontalFraction, 0.0, 1.0) * maxInPageX,
+                                 NSMinY(pageRect) + NSHeight(pageRect) * yFraction - NSHeight(clipView.bounds) * 0.5);
+    origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
+    origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
+    origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
+
+    _updatingFromScroll = YES;
+    [clipView scrollToPoint:origin];
+    [_pageScrollView reflectScrolledClipView:clipView];
+    _updatingFromScroll = NO;
+    [self documentScrollPositionChanged];
+    [self updateMinimap];
+}
+
 - (void)updateMinimap {
     if (!_minimapView) return;
     _minimapView.pages = _renderedPages ?: @[];
     _minimapView.currentPageIndex = _pageIndex;
     _minimapView.viewMode = _viewMode;
-    _minimapView.documentVisibleRect = _pageScrollView.contentView.bounds;
-    _minimapView.documentHeight = MAX(1.0, NSHeight(_pageView.bounds));
+    _minimapView.documentVisibleRect = [self continuousDocumentVisibleRectForMinimap];
+    _minimapView.documentWidth = MAX(1.0, NSWidth(_pageView.bounds));
+    _minimapView.documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
+    _minimapView.documentScale = MAX(0.01, _zoom);
     [_minimapView setNeedsDisplay:YES];
 }
 
@@ -1810,14 +2061,16 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         return;
     }
 
-    NSInteger page = (NSInteger)floor(yFraction * (CGFloat)_renderedPages.count);
-    page = MAX(0, MIN(page, (NSInteger)_renderedPages.count - 1));
-    [self minimapViewDidRequestScrollToPage:page yFractionInPage:0.0];
+    CGFloat pageFraction = 0.0;
+    NSInteger page = [self pageIndexForContinuousDocumentY:yFraction * [self continuousDocumentHeightForMinimap]
+                                              pageFraction:&pageFraction];
+    [self minimapViewDidRequestScrollToPage:page yFractionInPage:pageFraction];
 }
 
 - (void)minimapViewDidRequestScrollToPage:(NSInteger)pageIndex yFractionInPage:(CGFloat)yFraction {
     if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
     yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
+    NSPoint relativePosition = [self relativeScrollPositionForCurrentPage];
     _pageIndex = pageIndex;
     _pageView.currentPageIndex = _pageIndex;
     [self renderPageIfNeededAtIndex:_pageIndex];
@@ -1833,7 +2086,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         [_pageScrollView reflectScrolledClipView:clipView];
         [self documentScrollPositionChanged];
     } else {
-        [self scrollToPage:_pageIndex alignTop:YES];
+        [self scrollToPage:_pageIndex preservingHorizontalPosition:relativePosition.x centeredAtPageFraction:yFraction];
     }
     [self updateControls];
     [self selectCurrentSidebarRow];
@@ -1876,16 +2129,16 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 - (void)updateTabStripFrame {
     if (!_tabStrip || !_window) return;
-    CGFloat width = MAX(_window.frame.size.width, _window.minSize.width);
-    CGFloat leadingInset = 138.0;
-    NSButton* zoomButton = [_window standardWindowButton:NSWindowZoomButton];
-    if (zoomButton) {
+    BOOL fullScreen = (_window.styleMask & NSWindowStyleMaskFullScreen) == NSWindowStyleMaskFullScreen;
+    CGFloat leadingInset = fullScreen ? 16.0 : 138.0;
+    NSButton* zoomButton = fullScreen ? nil : [_window standardWindowButton:NSWindowZoomButton];
+    if (zoomButton && _tabStrip.window) {
         NSRect buttonWindowRect = [zoomButton convertRect:zoomButton.bounds toView:nil];
         NSRect buttonRect = [_tabStrip convertRect:buttonWindowRect fromView:nil];
-        if (NSMaxX(buttonRect) > 30.0 && NSMaxX(buttonRect) < width / 2.0) leadingInset = NSMaxX(buttonRect) + 18.0;
+        if (NSMaxX(buttonRect) > 30.0 && NSMaxX(buttonRect) < NSWidth(_tabStrip.bounds) / 2.0)
+            leadingInset = NSMaxX(buttonRect) + 18.0;
     }
     _tabStrip.reservedLeadingInset = leadingInset;
-    [_tabStrip setFrameSize:NSMakeSize(width, kTabStripHeight)];
     [_tabStrip setNeedsDisplay:YES];
 }
 
@@ -1903,6 +2156,36 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
           }
         }];
     }
+}
+
+- (void)loadCommentsForCurrentDocumentAsync {
+    if (!_path.length) return;
+    NSString* path = [_path copy];
+    NSUInteger generation = _renderGeneration;
+    [_preloadQueue addOperationWithBlock:^{
+      @autoreleasepool {
+          spdf_comments* comments = (spdf_comments*)calloc(1, sizeof(spdf_comments));
+          if (!comments) return;
+          char err[1024];
+          spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+          if (doc) {
+              if (!spdf_load_comments(doc, comments, err, sizeof(err))) spdf_free_comments(comments);
+              spdf_close(doc);
+          }
+          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            if (generation == self->_renderGeneration &&
+                [self->_path.stringByStandardizingPath isEqualToString:path.stringByStandardizingPath]) {
+                spdf_free_comments(&self->_comments);
+                self->_comments = *comments;
+                free(comments);
+                [self rebuildSidebar];
+            } else {
+                spdf_free_comments(comments);
+                free(comments);
+            }
+          }];
+      }
+    }];
 }
 
 - (NSPoint)visibleCenterWindowPoint {
@@ -2016,6 +2299,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     }
 
     spdf_free_outline(&_outline);
+    spdf_free_comments(&_comments);
     spdf_close(_doc);
     _doc = newDoc;
     _path = [path copy];
@@ -2033,7 +2317,12 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _pageView.currentPageIndex = _pageIndex;
     tab.title = _path.lastPathComponent;
 
+    char outlineErr[1024];
+    if (_doc && !spdf_load_outline(_doc, &_outline, outlineErr, sizeof(outlineErr)))
+        _statusLabel.stringValue = [NSString stringWithFormat:@"Opened, but outline was not available: %s", outlineErr];
+
     [self rebuildSidebar];
+    [self loadCommentsForCurrentDocumentAsync];
     [self updateTabStrip];
     [self preloadInactiveTabs];
     [self savePersistentState];
@@ -2046,11 +2335,6 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
           [_pageScrollView reflectScrolledClipView:_pageScrollView.contentView];
       }
       [self documentScrollPositionChanged];
-      char outlineErr[1024];
-      if (_doc && !spdf_load_outline(_doc, &_outline, outlineErr, sizeof(outlineErr)))
-          _statusLabel.stringValue =
-              [NSString stringWithFormat:@"Opened, but outline was not available: %s", outlineErr];
-      if (_sidebarModeControl.selectedSegment == 1) [self rebuildSidebar];
     });
 }
 
@@ -2061,6 +2345,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         return;
     }
     spdf_free_outline(&_outline);
+    spdf_free_comments(&_comments);
     spdf_close(_doc);
     _doc = NULL;
     _path = nil;
@@ -2069,13 +2354,12 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _selectionPageIndex = -1;
     _selectedText = nil;
     _renderGeneration++;
-    [_sidebarItems removeAllObjects];
     [_renderedPages removeAllObjects];
     _pageView.pages = @[];
     [self updateMinimap];
     _window.title = @"SumatraPDF";
     _statusLabel.stringValue = @"Ready";
-    [_sidebarTable reloadData];
+    [self rebuildSidebar];
     [self updateControls];
 }
 
@@ -2121,6 +2405,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     if (_tabs.count == 0) {
         _selectedTabIndex = -1;
         spdf_free_outline(&_outline);
+        spdf_free_comments(&_comments);
         spdf_close(_doc);
         _doc = NULL;
         _path = nil;
@@ -2130,8 +2415,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         [_renderedPages removeAllObjects];
         _pageView.pages = @[];
         [self updateMinimap];
-        [_sidebarItems removeAllObjects];
-        [_sidebarTable reloadData];
+        [self rebuildSidebar];
         _window.title = @"SumatraPDF";
         _statusLabel.stringValue = @"Ready";
         [self updateTabStrip];
@@ -2169,22 +2453,60 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     return opened;
 }
 
+- (void)setSidebarActuallyVisible:(BOOL)visible {
+    if (!_splitView || !_sidebarContainer || !_documentContainer || visible == _sidebarVisible) return;
+    if (visible) {
+        [_splitView addSubview:_sidebarContainer positioned:NSWindowBelow relativeTo:_documentContainer];
+        [_splitView setPosition:240 ofDividerAtIndex:0];
+    } else {
+        [_sidebarContainer removeFromSuperview];
+    }
+    _sidebarVisible = visible;
+}
+
 - (void)rebuildSidebar {
     [_sidebarItems removeAllObjects];
-    NSInteger pageCount = spdf_page_count(_doc);
-    if (_sidebarModeControl.selectedSegment == 1 && _outline.count > 0) {
+    BOOL hasChapters = _outline.count > 0;
+    BOOL hasComments = _comments.count > 0;
+    BOOL hasSidebar = _doc && (hasChapters || hasComments);
+
+    [_sidebarModeControl setEnabled:hasChapters forSegment:SPDFSidebarModeChapters];
+    [_sidebarModeControl setEnabled:hasComments forSegment:SPDFSidebarModeComments];
+    if (hasChapters && !hasComments)
+        _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
+    else if (!hasChapters && hasComments)
+        _sidebarModeControl.selectedSegment = SPDFSidebarModeComments;
+    else if (!hasChapters && !hasComments)
+        _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
+
+    [self setSidebarActuallyVisible:hasSidebar && _sidebarPreferredVisible];
+    if (!hasSidebar) {
+        [_sidebarTable reloadData];
+        return;
+    }
+
+    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments && hasComments) {
+        for (int i = 0; i < _comments.count; ++i) {
+            spdf_comment_item item = _comments.items[i];
+            NSString* type = item.type && *item.type ? [NSString stringWithUTF8String:item.type] : @"Comment";
+            NSString* author = item.author && *item.author ? [NSString stringWithUTF8String:item.author] : @"";
+            NSString* text = item.text && *item.text ? [NSString stringWithUTF8String:item.text] : @"";
+            NSString* title = text.length ? text : type;
+            if (author.length) title = [NSString stringWithFormat:@"%@: %@", author, title];
+            [_sidebarItems
+                addObject:@{@"title" : title, @"page" : @(item.page_index), @"level" : @0, @"kind" : @"comment"}];
+        }
+    } else if (hasChapters) {
         for (int i = 0; i < _outline.count; ++i) {
             spdf_outline_item item = _outline.items[i];
             NSString* title = item.title ? [NSString stringWithUTF8String:item.title] : @"Untitled";
-            [_sidebarItems addObject:@{@"title" : title, @"page" : @(item.page_index), @"level" : @(item.level)}];
-        }
-    } else {
-        for (NSInteger i = 0; i < pageCount; ++i)
             [_sidebarItems addObject:@{
-                @"title" : [NSString stringWithFormat:@"Page %ld", (long)i + 1],
-                @"page" : @(i),
-                @"level" : @0
+                @"title" : title,
+                @"page" : @(item.page_index),
+                @"level" : @(item.level),
+                @"kind" : @"chapter"
             }];
+        }
     }
     [_sidebarTable reloadData];
     [self selectCurrentSidebarRow];
@@ -2241,6 +2563,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _fitModePopup.enabled = hasDoc;
     _continuousButton.enabled = hasDoc;
     _searchField.enabled = hasDoc;
+    _ocrButton.enabled = hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     [self updateFindControls];
     _pageField.stringValue = hasDoc ? [NSString stringWithFormat:@"%ld", (long)_pageIndex + 1] : @"";
     _pageCountLabel.stringValue = [NSString stringWithFormat:@"/ %ld", (long)pageCount];
@@ -2845,60 +3168,24 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 - (void)previousPage:(id)sender {
     (void)sender;
-    if (_doc && _pageIndex > 0) {
-        _pageIndex--;
-        _pageView.currentPageIndex = _pageIndex;
-        [self renderPageIfNeededAtIndex:_pageIndex];
-        [self resizeDocumentView];
-        [self scrollToPage:_pageIndex alignTop:YES];
-        [self updateControls];
-        [self selectCurrentSidebarRow];
-        [_pageView setNeedsDisplay:YES];
-        [self persistActiveState];
-    }
+    if (_doc && _pageIndex > 0)
+        [self goToPage:_pageIndex - 1 preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
 }
 
 - (void)nextPage:(id)sender {
     (void)sender;
-    if (_doc && _pageIndex + 1 < spdf_page_count(_doc)) {
-        _pageIndex++;
-        _pageView.currentPageIndex = _pageIndex;
-        [self renderPageIfNeededAtIndex:_pageIndex];
-        [self resizeDocumentView];
-        [self scrollToPage:_pageIndex alignTop:YES];
-        [self updateControls];
-        [self selectCurrentSidebarRow];
-        [_pageView setNeedsDisplay:YES];
-        [self persistActiveState];
-    }
+    if (_doc && _pageIndex + 1 < spdf_page_count(_doc))
+        [self goToPage:_pageIndex + 1 preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
 }
 
 - (void)firstPage:(id)sender {
     (void)sender;
-    if (_doc) {
-        _pageIndex = 0;
-        _pageView.currentPageIndex = _pageIndex;
-        [self renderPageIfNeededAtIndex:_pageIndex];
-        [self resizeDocumentView];
-        [self scrollToPage:_pageIndex alignTop:YES];
-        [self updateControls];
-        [self selectCurrentSidebarRow];
-        [self persistActiveState];
-    }
+    if (_doc) [self goToPage:0 preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
 }
 
 - (void)lastPage:(id)sender {
     (void)sender;
-    if (_doc) {
-        _pageIndex = spdf_page_count(_doc) - 1;
-        _pageView.currentPageIndex = _pageIndex;
-        [self renderPageIfNeededAtIndex:_pageIndex];
-        [self resizeDocumentView];
-        [self scrollToPage:_pageIndex alignTop:YES];
-        [self updateControls];
-        [self selectCurrentSidebarRow];
-        [self persistActiveState];
-    }
+    if (_doc) [self goToPage:spdf_page_count(_doc) - 1 preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
 }
 
 - (void)focusPageField:(id)sender {
@@ -2912,14 +3199,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     NSInteger requested = _pageField.integerValue - 1;
     NSInteger pageCount = spdf_page_count(_doc);
     requested = MAX(0, MIN(requested, pageCount - 1));
-    _pageIndex = requested;
-    _pageView.currentPageIndex = _pageIndex;
-    [self renderPageIfNeededAtIndex:_pageIndex];
-    [self resizeDocumentView];
-    [self scrollToPage:_pageIndex alignTop:YES];
-    [self updateControls];
-    [self selectCurrentSidebarRow];
-    [self persistActiveState];
+    [self goToPage:requested preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
 }
 
 - (void)zoomIn:(id)sender {
@@ -2976,11 +3256,12 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 - (void)setSinglePageMode:(id)sender {
     (void)sender;
     if (!_doc) return;
+    NSPoint relativePosition = [self relativeScrollPositionForCurrentPage];
     _viewMode = SPDFViewModeSingle;
     _pageView.viewMode = _viewMode;
     _pageView.currentPageIndex = _pageIndex;
     [self resizeDocumentView];
-    [self scrollToPage:_pageIndex alignTop:YES];
+    [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition];
     [self syncToolbarState];
     [self updateControls];
     [self persistActiveState];
@@ -2989,10 +3270,11 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 - (void)setContinuousMode:(id)sender {
     (void)sender;
     if (!_doc) return;
+    NSPoint relativePosition = [self relativeScrollPositionForCurrentPage];
     _viewMode = SPDFViewModeContinuous;
     _pageView.viewMode = _viewMode;
     [self resizeDocumentView];
-    [self scrollToPage:_pageIndex alignTop:NO];
+    [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition];
     [self syncToolbarState];
     [self updateControls];
     [self updateMinimap];
@@ -3009,19 +3291,185 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 - (void)toggleSidebar:(id)sender {
     (void)sender;
-    if (!_sidebarVisible) {
-        [_splitView addSubview:_sidebarContainer positioned:NSWindowBelow relativeTo:_documentContainer];
-        [_splitView setPosition:240 ofDividerAtIndex:0];
-        _sidebarVisible = YES;
-    } else {
-        [_sidebarContainer removeFromSuperview];
-        _sidebarVisible = NO;
-    }
+    _sidebarPreferredVisible = !_sidebarPreferredVisible;
+    [self rebuildSidebar];
     [self persistActiveState];
 }
 
 - (void)toggleFullScreen:(id)sender {
     [_window toggleFullScreen:sender];
+}
+
+- (NSString*)ocrToolPath {
+    NSArray<NSString*>* candidates =
+        @[ @"/opt/homebrew/bin/ocrmypdf", @"/usr/local/bin/ocrmypdf", @"/usr/bin/ocrmypdf" ];
+    NSFileManager* fm = NSFileManager.defaultManager;
+    for (NSString* path in candidates) {
+        if ([fm isExecutableFileAtPath:path]) return path;
+    }
+
+    NSString* pathEnv = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
+    for (NSString* dir in [pathEnv componentsSeparatedByString:@":"]) {
+        if (dir.length == 0) continue;
+        NSString* path = [dir stringByAppendingPathComponent:@"ocrmypdf"];
+        if ([fm isExecutableFileAtPath:path]) return path;
+    }
+    return nil;
+}
+
+- (NSString*)backupPathForPDFPath:(NSString*)path {
+    NSString* dir = path.stringByDeletingLastPathComponent;
+    NSString* stem = path.stringByDeletingPathExtension.lastPathComponent;
+    NSString* ext = path.pathExtension.length ? path.pathExtension : @"pdf";
+    NSFileManager* fm = NSFileManager.defaultManager;
+    NSString* candidate = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_backup.%@", stem, ext]];
+    NSInteger index = 2;
+    while ([fm fileExistsAtPath:candidate]) {
+        candidate = [dir
+            stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_backup_%ld.%@", stem, (long)index, ext]];
+        index++;
+    }
+    return candidate;
+}
+
+- (void)ocrDocument:(id)sender {
+    (void)sender;
+    if (!_doc || !_path.length || ![_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
+        NSBeep();
+        return;
+    }
+
+    NSString* tool = [self ocrToolPath];
+    if (!tool.length) {
+        [self showError:@"OCR tool not found"
+                 detail:@"Install OCRmyPDF with Tesseract support, then use OCR again. On macOS: brew install "
+                        @"ocrmypdf. On Linux: install the ocrmypdf package for your distribution."];
+        return;
+    }
+
+    char err[1024];
+    int hasText = spdf_document_has_text(_doc, 0, err, sizeof(err));
+    if (hasText < 0) {
+        [self showError:@"Could not inspect document text"
+                 detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+        return;
+    }
+
+    NSString* backupPath = nil;
+    if (hasText > 0) {
+        NSAlert* alert = [[NSAlert alloc] init];
+        alert.messageText = @"This PDF already contains selectable text.";
+        alert.informativeText = @"SumatraPDF will make a backup of the original file before OCR replaces it.";
+        [alert addButtonWithTitle:@"OCR and Backup"];
+        [alert addButtonWithTitle:@"Cancel"];
+        alert.alertStyle = NSAlertStyleWarning;
+        if ([alert runModal] != NSAlertFirstButtonReturn) return;
+
+        backupPath = [self backupPathForPDFPath:_path];
+        NSError* copyError = nil;
+        if (![NSFileManager.defaultManager copyItemAtPath:_path toPath:backupPath error:&copyError]) {
+            [self showError:@"Could not create OCR backup" detail:copyError.localizedDescription ?: @""];
+            return;
+        }
+    }
+
+    NSString* originalPath = [_path copy];
+    NSInteger originalPage = _pageIndex;
+    NSString* dir = originalPath.stringByDeletingLastPathComponent;
+    NSString* tmp = [dir
+        stringByAppendingPathComponent:[NSString stringWithFormat:@".%@.ocr-%@.pdf", originalPath.lastPathComponent,
+                                                                  NSUUID.UUID.UUIDString]];
+    NSInteger jobs = MAX(1, NSProcessInfo.processInfo.activeProcessorCount);
+    NSMutableArray<NSString*>* args = [@[
+        @"--jobs", [NSString stringWithFormat:@"%ld", (long)jobs], @"--rotate-pages", @"--deskew", @"--optimize", @"1"
+    ] mutableCopy];
+    [args addObject:hasText > 0 ? @"--redo-ocr" : @"--skip-text"];
+    [args addObject:originalPath];
+    [args addObject:tmp];
+
+    _ocrButton.enabled = NO;
+    _statusLabel.stringValue = [NSString stringWithFormat:@"OCR running with %ld workers...", (long)jobs];
+
+    NSTask* task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:tool];
+    task.arguments = args;
+    NSPipe* pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    __block NSMutableData* outputData = [NSMutableData data];
+    pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
+      NSData* chunk = handle.availableData;
+      if (chunk.length > 0) {
+          @synchronized(outputData) {
+              [outputData appendData:chunk];
+          }
+      } else {
+          handle.readabilityHandler = nil;
+      }
+    };
+
+    __weak SumatraMacDelegate* weakSelf = self;
+    task.terminationHandler = ^(NSTask* finishedTask) {
+      pipe.fileHandleForReading.readabilityHandler = nil;
+      NSData* tail = pipe.fileHandleForReading.readDataToEndOfFile;
+      if (tail.length > 0) {
+          @synchronized(outputData) {
+              [outputData appendData:tail];
+          }
+      }
+      NSData* data = nil;
+      @synchronized(outputData) {
+          data = [outputData copy];
+      }
+      NSString* output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+      dispatch_async(dispatch_get_main_queue(), ^{
+        SumatraMacDelegate* strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_ocrButton.enabled = strongSelf->_doc != NULL;
+        if (finishedTask.terminationStatus != 0) {
+            [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
+            NSString* detail = output.length > 1200 ? [output substringToIndex:1200] : output;
+            [strongSelf showError:@"OCR failed" detail:detail.length ? detail : @"OCRmyPDF exited with an error."];
+            strongSelf->_statusLabel.stringValue = @"OCR failed.";
+            return;
+        }
+
+        [strongSelf->_renderQueue cancelAllOperations];
+        strongSelf->_renderGeneration++;
+        spdf_close(strongSelf->_doc);
+        strongSelf->_doc = NULL;
+        NSError* moveError = nil;
+        NSURL* resultingURL = nil;
+        if (![NSFileManager.defaultManager replaceItemAtURL:[NSURL fileURLWithPath:originalPath]
+                                              withItemAtURL:[NSURL fileURLWithPath:tmp]
+                                             backupItemName:nil
+                                                    options:0
+                                           resultingItemURL:&resultingURL
+                                                      error:&moveError]) {
+            [strongSelf showError:@"Could not save OCR output" detail:moveError.localizedDescription ?: @""];
+            strongSelf->_statusLabel.stringValue = @"OCR output was not installed.";
+            return;
+        }
+
+        if (strongSelf->_selectedTabIndex >= 0 && strongSelf->_selectedTabIndex < (NSInteger)strongSelf->_tabs.count) {
+            SPDFDocumentTab* tab = strongSelf->_tabs[(NSUInteger)strongSelf->_selectedTabIndex];
+            tab.pageIndex = originalPage;
+        }
+        [strongSelf loadSelectedTab];
+        if (backupPath.length)
+            strongSelf->_statusLabel.stringValue =
+                [NSString stringWithFormat:@"OCR complete. Backup: %@", backupPath.lastPathComponent];
+        else
+            strongSelf->_statusLabel.stringValue = @"OCR complete.";
+      });
+    };
+
+    NSError* launchError = nil;
+    if (![task launchAndReturnError:&launchError]) {
+        _ocrButton.enabled = YES;
+        [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
+        [self showError:@"Could not start OCR" detail:launchError.localizedDescription ?: @""];
+    }
 }
 
 - (void)printDocument:(id)sender {
@@ -3316,6 +3764,8 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         action == @selector(focusFind:))
         return YES;
     if (action == @selector(copySelection:)) return _selectedText.length > 0;
+    if (action == @selector(ocrDocument:))
+        return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(copyCurrentPageImage:))
         return hasDoc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
                _renderedPages[(NSUInteger)_pageIndex].image != nil;
@@ -3334,7 +3784,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     else if (action == @selector(actualSize:))
         menuItem.state = _fitMode == SPDFFitModeActual ? NSControlStateValueOn : NSControlStateValueOff;
     else if (action == @selector(toggleSidebar:))
-        menuItem.state = _sidebarVisible ? NSControlStateValueOn : NSControlStateValueOff;
+        menuItem.state = _sidebarPreferredVisible ? NSControlStateValueOn : NSControlStateValueOff;
 
     return YES;
 }
