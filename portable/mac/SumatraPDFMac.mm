@@ -1230,6 +1230,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL _uiReady;
     BOOL _updatingSelection;
     BOOL _updatingFromScroll;
+    BOOL _suppressScrollCallbacks;
     BOOL _sidebarPreferredVisible;
     BOOL _sidebarVisible;
     BOOL _ocrInstallRunning;
@@ -1846,8 +1847,22 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (SPDFRenderedPage*)placeholderPageAtIndex:(NSInteger)pageIndex
-                                  pageWidth:(CGFloat)pageWidth
-                                 pageHeight:(CGFloat)pageHeight {
+                                   document:(spdf_document*)doc
+                              fallbackWidth:(CGFloat)fallbackWidth
+                             fallbackHeight:(CGFloat)fallbackHeight {
+    CGFloat pageWidth = fallbackWidth;
+    CGFloat pageHeight = fallbackHeight;
+    if (doc) {
+        char err[256];
+        float nativeWidth = 0;
+        float nativeHeight = 0;
+        if (spdf_page_size(doc, (int)pageIndex, &nativeWidth, &nativeHeight, err, sizeof(err)) && nativeWidth > 0 &&
+            nativeHeight > 0) {
+            pageWidth = nativeWidth;
+            pageHeight = nativeHeight;
+        }
+    }
+
     SPDFRenderedPage* page = [[SPDFRenderedPage alloc] init];
     page.pageIndex = pageIndex;
     page.pageWidth = pageWidth;
@@ -1883,6 +1898,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return order;
 }
 
+- (NSOperationQueuePriority)queuePriorityForRenderDistance:(NSInteger)distance {
+    if (distance <= 2) return NSOperationQueuePriorityVeryHigh;
+    if (distance <= 6) return NSOperationQueuePriorityHigh;
+    if (distance <= 18) return NSOperationQueuePriorityNormal;
+    return NSOperationQueuePriorityLow;
+}
+
 - (void)enqueueRemainingPageRendersForGeneration:(NSUInteger)generation preferredPage:(NSInteger)preferredPage {
     if (!_doc || !_path.length) return;
 
@@ -1893,7 +1915,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                                 preferredPage:preferredPage];
     for (NSNumber* number in order) {
         NSInteger index = number.integerValue;
-        [_renderQueue addOperationWithBlock:^{
+        if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
+        if (_renderedPages[(NSUInteger)index].image) continue;
+
+        NSInteger distance = labs(index - preferredPage);
+        NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
           @autoreleasepool {
               if (generation != self->_renderGeneration) return;
               char err[1024];
@@ -1914,12 +1940,22 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                 SPDFRenderedPage* old = self->_renderedPages[(NSUInteger)index];
                 page.highlights = self->_findHighlights[@(index)] ?: old.highlights ?: @[];
                 page.selectionRects = old.selectionRects ?: @[];
+                BOOL geometryChanged =
+                    fabs(old.pageWidth - page.pageWidth) > 0.01 || fabs(old.pageHeight - page.pageHeight) > 0.01;
                 [self->_renderedPages replaceObjectAtIndex:(NSUInteger)index withObject:page];
                 [self applySearchHighlightsToCurrentPage];
-                [self resizeDocumentView];
+                if (geometryChanged)
+                    [self resizeDocumentView];
+                else {
+                    self->_pageView.pages = self->_renderedPages;
+                    [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:index]];
+                    [self updateMinimap];
+                }
               }];
           }
         }];
+        operation.queuePriority = [self queuePriorityForRenderDistance:distance];
+        [_renderQueue addOperation:operation];
     }
 }
 
@@ -1970,8 +2006,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
             page = preferredPage;
         else
             page = [self placeholderPageAtIndex:i
-                                      pageWidth:preferredPage.pageWidth
-                                     pageHeight:preferredPage.pageHeight];
+                                       document:_doc
+                                  fallbackWidth:preferredPage.pageWidth
+                                 fallbackHeight:preferredPage.pageHeight];
         if (!page) {
             [self showError:@"Could not render page"
                      detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
@@ -1992,17 +2029,25 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
           [self applySearchHighlightsToCurrentPage];
           [self resizeDocumentView];
           if (restoreOrigin)
-              [self scrollDocumentClipViewToOrigin:restoreOrigin.pointValue notify:YES];
+              [self scrollDocumentClipViewToOrigin:restoreOrigin.pointValue notify:NO];
           else
               [self scrollToPage:pageIndex alignTop:alignTop];
         }
         completionHandler:nil];
+    NSInteger renderCenterPage = pageIndex;
+    if (restoreOrigin) {
+        renderCenterPage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
+        _pageIndex = renderCenterPage;
+        _pageView.currentPageIndex = _pageIndex;
+        [self renderPageIfNeededAtIndex:_pageIndex];
+    }
+
     [self syncToolbarState];
     [self updateControls];
     [self selectCurrentSidebarRow];
     [self updateMinimap];
 
-    [self enqueueRemainingPageRendersForGeneration:generation preferredPage:pageIndex];
+    [self enqueueRemainingPageRendersForGeneration:generation preferredPage:renderCenterPage];
 }
 
 - (void)resizeDocumentView {
@@ -2511,6 +2556,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _zoom = tab.zoom > 0 ? tab.zoom : 1.0;
     _fitMode = tab.fitMode;
     _viewMode = tab.viewMode;
+    _statusLabel.stringValue = @"Opening...";
+    NSClipView* clipView = _pageScrollView.contentView;
+    BOOL previousHidden = _pageScrollView.hidden;
+    BOOL previousPostsBoundsChangedNotifications = clipView.postsBoundsChangedNotifications;
+    BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
+    _suppressScrollCallbacks = YES;
+    _pageScrollView.hidden = YES;
+    clipView.postsBoundsChangedNotifications = NO;
     [self replaceDocumentViewForTabSwitch];
     tab.title = spdf_display_name_for_path(_path);
 
@@ -2523,16 +2576,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self updateTabStrip];
     [self preloadInactiveTabs];
     [self savePersistentState];
-    _statusLabel.stringValue = @"Opening...";
-    NSClipView* clipView = _pageScrollView.contentView;
-    BOOL previousHidden = _pageScrollView.hidden;
-    BOOL previousPostsBoundsChangedNotifications = clipView.postsBoundsChangedNotifications;
-    _pageScrollView.hidden = YES;
-    clipView.postsBoundsChangedNotifications = NO;
     NSValue* restoreOrigin = tab.hasScrollOrigin ? [NSValue valueWithPoint:tab.scrollOrigin] : nil;
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES restoreOrigin:restoreOrigin];
     clipView.postsBoundsChangedNotifications = previousPostsBoundsChangedNotifications;
     _pageScrollView.hidden = previousHidden;
+    _suppressScrollCallbacks = previousSuppressScrollCallbacks;
     [self documentScrollPositionChanged];
     [_pageView setNeedsDisplay:YES];
     [_pageScrollView displayIfNeeded];
@@ -2671,8 +2719,6 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _pageScrollView.documentView = nil;
     _pageView = [self newDocumentView];
     _pageScrollView.documentView = _pageView;
-    [clipView setBoundsOrigin:NSZeroPoint];
-    [_pageScrollView reflectScrolledClipView:clipView];
     clipView.postsBoundsChangedNotifications = previousPostsBoundsChangedNotifications;
 }
 
@@ -2742,10 +2788,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 - (void)clipViewBoundsChanged:(NSNotification*)notification {
     (void)notification;
+    if (_suppressScrollCallbacks) return;
     [self documentScrollPositionChanged];
 }
 
 - (void)documentScrollPositionChanged {
+    if (_suppressScrollCallbacks) return;
     if (_renderedPages.count == 0) {
         [self updateMinimap];
         return;
