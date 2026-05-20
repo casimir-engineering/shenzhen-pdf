@@ -85,6 +85,10 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 @property(nonatomic) NSInteger selectedIndex;
 @end
 
+@interface SPDFPaletteSearchField : NSSearchField
+@property(nonatomic, weak) SumatraMacDelegate *reader;
+@end
+
 @interface SPDFDropView : NSView <NSDraggingDestination>
 @property(nonatomic, weak) SumatraMacDelegate *reader;
 @end
@@ -115,7 +119,11 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 - (void)selectTabAtIndex:(NSInteger)index;
 - (void)closeTabAtIndex:(NSInteger)index;
 - (void)newTabRequested:(id)sender;
+- (void)focusFind:(id)sender;
 - (void)showFindPalette:(id)sender;
+- (void)paletteMoveSelection:(NSInteger)delta;
+- (void)closePalette:(id)sender;
+- (void)activatePaletteSelection:(id)sender;
 - (BOOL)openFilesFromPasteboard:(NSPasteboard *)pasteboard;
 - (void)showContextMenuForDocumentView:(NSView *)view event:(NSEvent *)event;
 @end
@@ -129,25 +137,30 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
 - (CGFloat)tabWidth
 {
-    return 154.0;
+    return 174.0;
+}
+
+- (CGFloat)leftInset
+{
+    return 138.0;
 }
 
 - (NSRect)searchRect
 {
-    return NSMakeRect(8, 5, 26, 22);
+    return NSMakeRect([self leftInset] - 38, 4, 30, 28);
 }
 
 - (NSRect)plusRect
 {
-    return NSMakeRect(MAX(40, NSWidth(self.bounds) - 34), 5, 26, 22);
+    return NSMakeRect(MAX([self leftInset] + 48, NSWidth(self.bounds) - 42), 4, 32, 28);
 }
 
 - (NSRect)rectForTabAtIndex:(NSInteger)index
 {
-    CGFloat x = 40 + index * ([self tabWidth] + 4);
-    CGFloat maxRight = NSMinX([self plusRect]) - 8;
-    CGFloat width = MIN([self tabWidth], MAX(86, maxRight - x));
-    return NSMakeRect(x, 4, width, 24);
+    CGFloat x = [self leftInset] + index * ([self tabWidth] + 6);
+    CGFloat maxRight = NSMinX([self plusRect]) - 10;
+    CGFloat width = MIN([self tabWidth], maxRight - x);
+    return NSMakeRect(x, 3, width, 30);
 }
 
 - (void)setTabs:(NSArray<SPDFDocumentTab *> *)tabs
@@ -173,45 +186,48 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     NSDictionary *dimAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:12],
                                NSForegroundColorAttributeName: NSColor.secondaryLabelColor};
 
-    NSBezierPath *search = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect([self searchRect], 7, 6)];
+    NSRect searchRect = [self searchRect];
+    [NSColor.controlBackgroundColor setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:searchRect xRadius:9 yRadius:9] fill];
+    NSBezierPath *search = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(searchRect, 8, 7)];
     [NSColor.secondaryLabelColor setStroke];
     search.lineWidth = 1.4;
     [search stroke];
-    [NSBezierPath strokeLineFromPoint:NSMakePoint(NSMaxX([self searchRect]) - 8, NSMaxY([self searchRect]) - 7)
-                              toPoint:NSMakePoint(NSMaxX([self searchRect]) - 4, NSMaxY([self searchRect]) - 3)];
+    [NSBezierPath strokeLineFromPoint:NSMakePoint(NSMaxX(searchRect) - 9, NSMaxY(searchRect) - 8)
+                              toPoint:NSMakePoint(NSMaxX(searchRect) - 5, NSMaxY(searchRect) - 4)];
 
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
-        if (NSWidth(tabRect) < 60)
+        if (NSWidth(tabRect) < 74)
             break;
         BOOL selected = i == self.selectedIndex;
-        NSColor *fill = selected ? NSColor.windowBackgroundColor : NSColor.controlBackgroundColor;
+        NSColor *fill = selected ? NSColor.windowBackgroundColor : [NSColor colorWithCalibratedWhite:0.18 alpha:0.76];
         [fill setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:6 yRadius:6] fill];
+        [[NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:7 yRadius:7] fill];
 
         SPDFDocumentTab *tab = self.tabs[(NSUInteger)i];
         NSString *title = tab.title.length ? tab.title : tab.path.lastPathComponent;
-        NSRect titleRect = NSInsetRect(tabRect, 10, 4);
-        titleRect.size.width -= 14;
+        NSRect titleRect = NSInsetRect(tabRect, 12, 6);
+        titleRect.size.width -= 18;
         [title drawWithRect:titleRect options:NSStringDrawingTruncatesLastVisibleLine attributes:selected ? attrs : dimAttrs];
 
         NSString *close = @"x";
-        [close drawAtPoint:NSMakePoint(NSMaxX(tabRect) - 17, NSMinY(tabRect) + 4) withAttributes:dimAttrs];
+        [close drawAtPoint:NSMakePoint(NSMaxX(tabRect) - 18, NSMinY(tabRect) + 7) withAttributes:dimAttrs];
     }
 
     NSRect plusRect = [self plusRect];
     [NSColor.controlBackgroundColor setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:plusRect xRadius:6 yRadius:6] fill];
+    [[NSBezierPath bezierPathWithRoundedRect:plusRect xRadius:9 yRadius:9] fill];
     NSDictionary *plusAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:16 weight:NSFontWeightRegular],
                                 NSForegroundColorAttributeName: NSColor.labelColor};
-    [@"+" drawAtPoint:NSMakePoint(NSMidX(plusRect) - 4, NSMinY(plusRect) + 1) withAttributes:plusAttrs];
+    [@"+" drawAtPoint:NSMakePoint(NSMidX(plusRect) - 4, NSMinY(plusRect) + 3) withAttributes:plusAttrs];
 }
 
 - (void)mouseDown:(NSEvent *)event
 {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     if (NSPointInRect(point, [self searchRect])) {
-        [self.reader showFindPalette:self];
+        [self.reader focusFind:self];
         return;
     }
     if (NSPointInRect(point, [self plusRect])) {
@@ -230,6 +246,31 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
             [self.reader selectTabAtIndex:i];
         return;
     }
+}
+
+@end
+
+@implementation SPDFPaletteSearchField
+
+- (void)keyDown:(NSEvent *)event
+{
+    if (event.keyCode == 53) {
+        [self.reader closePalette:self];
+        return;
+    }
+    if (event.keyCode == 125) {
+        [self.reader paletteMoveSelection:1];
+        return;
+    }
+    if (event.keyCode == 126) {
+        [self.reader paletteMoveSelection:-1];
+        return;
+    }
+    if (event.keyCode == 36 || event.keyCode == 76) {
+        [self.reader activatePaletteSelection:self];
+        return;
+    }
+    [super keyDown:event];
 }
 
 @end
@@ -746,6 +787,8 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     NSPopUpButton *_fitModePopup;
     NSButton *_continuousButton;
     NSSearchField *_searchField;
+    NSButton *_findPrevButton;
+    NSButton *_findNextButton;
     NSTextField *_statusLabel;
     NSSegmentedControl *_sidebarModeControl;
     NSPanel *_palettePanel;
@@ -755,8 +798,10 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     NSMutableArray<NSDictionary *> *_paletteResults;
     NSInteger _paletteMode;
     NSUInteger _paletteSearchGeneration;
+    id _paletteEventMonitor;
     NSOperationQueue *_renderQueue;
     NSOperationQueue *_preloadQueue;
+    NSOperationQueue *_findQueue;
 
     spdf_document *_doc;
     spdf_outline _outline;
@@ -764,11 +809,15 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     NSMutableArray<SPDFRenderedPage *> *_renderedPages;
     NSMutableArray<SPDFDocumentTab *> *_tabs;
     NSMutableArray<NSDictionary *> *_favorites;
+    NSMutableDictionary<NSNumber *, NSArray<NSValue *> *> *_findHighlights;
+    NSMutableArray<NSDictionary *> *_findMatches;
+    NSUInteger _findGeneration;
     NSString *_path;
     NSString *_pendingOpenPath;
     NSMutableArray<NSString *> *_pendingOpenPaths;
     NSInteger _pageIndex;
     NSInteger _highlightPageIndex;
+    NSInteger _findMatchIndex;
     NSInteger _selectionPageIndex;
     NSString *_selectedText;
     CGFloat _zoom;
@@ -796,6 +845,9 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _renderedPages = [NSMutableArray array];
     _tabs = [NSMutableArray array];
     _favorites = [NSMutableArray array];
+    _findHighlights = [NSMutableDictionary dictionary];
+    _findMatches = [NSMutableArray array];
+    _findMatchIndex = -1;
     _paletteResults = [NSMutableArray array];
     _pendingOpenPaths = [NSMutableArray array];
     _selectedTabIndex = -1;
@@ -809,6 +861,10 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _preloadQueue.name = @"SumatraPDF tab preloader";
     _preloadQueue.maxConcurrentOperationCount = MAX(2, cpuCount / 2);
     _preloadQueue.qualityOfService = NSQualityOfServiceUtility;
+    _findQueue = [[NSOperationQueue alloc] init];
+    _findQueue.name = @"SumatraPDF document find";
+    _findQueue.maxConcurrentOperationCount = 1;
+    _findQueue.qualityOfService = NSQualityOfServiceUserInitiated;
 
     [self loadPersistentState];
 
@@ -846,6 +902,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     (void)notification;
     [_renderQueue cancelAllOperations];
     [_preloadQueue cancelAllOperations];
+    [_findQueue cancelAllOperations];
     [self rememberActiveTabState];
     [self savePersistentState];
     spdf_free_outline(&_outline);
@@ -884,6 +941,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 - (void)windowDidResize:(NSNotification *)notification
 {
     (void)notification;
+    [self updateTabStripFrame];
     if (_doc && (_fitMode == SPDFFitModeWidth || _fitMode == SPDFFitModeHeight || _fitMode == SPDFFitModePage))
         [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
     else
@@ -1099,7 +1157,8 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _window.titlebarAppearsTransparent = YES;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
 
-    _tabStrip = [[SPDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, 680, 32)];
+    _tabStrip = [[SPDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(frame), 36)];
+    _tabStrip.autoresizingMask = NSViewWidthSizable;
     _tabStrip.reader = self;
     _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
@@ -1107,6 +1166,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _tabAccessory.view = _tabStrip;
     _tabAccessory.layoutAttribute = NSLayoutAttributeTop;
     [_window addTitlebarAccessoryViewController:_tabAccessory];
+    [self updateTabStripFrame];
 
     SPDFDropView *content = [[SPDFDropView alloc] initWithFrame:frame];
     content.reader = self;
@@ -1155,6 +1215,10 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _searchField.target = self;
     _searchField.action = @selector(findNext:);
     [_searchField.widthAnchor constraintEqualToConstant:190].active = YES;
+    _findPrevButton = [self buttonWithTitle:@"<" action:@selector(findPrevious:)];
+    _findNextButton = [self buttonWithTitle:@">" action:@selector(findNext:)];
+    [_findPrevButton.widthAnchor constraintEqualToConstant:30].active = YES;
+    [_findNextButton.widthAnchor constraintEqualToConstant:30].active = YES;
 
     [toolbar addArrangedSubview:_openButton];
     [toolbar addArrangedSubview:_prevButton];
@@ -1166,6 +1230,8 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [toolbar addArrangedSubview:_fitModePopup];
     [toolbar addArrangedSubview:_continuousButton];
     [toolbar addArrangedSubview:_searchField];
+    [toolbar addArrangedSubview:_findPrevButton];
+    [toolbar addArrangedSubview:_findNextButton];
 
     _splitView = [[NSSplitView alloc] init];
     _splitView.vertical = YES;
@@ -1241,7 +1307,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [content addSubview:_statusLabel];
 
     [NSLayoutConstraint activateConstraints:@[
-        [toolbar.topAnchor constraintEqualToAnchor:content.topAnchor],
+        [toolbar.topAnchor constraintEqualToAnchor:content.topAnchor constant:38],
         [toolbar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
         [toolbar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         [toolbar.heightAnchor constraintEqualToConstant:42],
@@ -1412,7 +1478,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
                     if (generation != self->_renderGeneration || !self->_doc || index >= (NSInteger)self->_renderedPages.count)
                         return;
                     SPDFRenderedPage *old = self->_renderedPages[(NSUInteger)index];
-                    page.highlights = old.highlights ?: @[];
+                    page.highlights = self->_findHighlights[@(index)] ?: old.highlights ?: @[];
                     page.selectionRects = old.selectionRects ?: @[];
                     [self->_renderedPages replaceObjectAtIndex:(NSUInteger)index withObject:page];
                     [self applySearchHighlightsToCurrentPage];
@@ -1437,7 +1503,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         _statusLabel.stringValue = [NSString stringWithFormat:@"Could not render page %ld", (long)pageIndex + 1];
         return;
     }
-    page.highlights = existing.highlights ?: @[];
+    page.highlights = _findHighlights[@(pageIndex)] ?: existing.highlights ?: @[];
     page.selectionRects = existing.selectionRects ?: @[];
     [_renderedPages replaceObjectAtIndex:(NSUInteger)pageIndex withObject:page];
     _pageView.pages = _renderedPages;
@@ -1552,6 +1618,15 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _tabStrip.selectedIndex = _selectedTabIndex;
 }
 
+- (void)updateTabStripFrame
+{
+    if (!_tabStrip || !_window)
+        return;
+    CGFloat width = MAX(_window.frame.size.width, _window.minSize.width);
+    [_tabStrip setFrameSize:NSMakeSize(width, 36)];
+    [_tabStrip setNeedsDisplay:YES];
+}
+
 - (void)preloadInactiveTabs
 {
     [_preloadQueue cancelAllOperations];
@@ -1629,12 +1704,25 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [self updateControls];
 }
 
+- (void)renderDocumentPreservingScrollPosition
+{
+    if (!_doc)
+        return;
+    NSClipView *clipView = _pageScrollView.contentView;
+    NSPoint origin = clipView.bounds.origin;
+    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
+    origin.x = MAX(0, MIN(origin.x, MAX(0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds))));
+    origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds))));
+    [clipView scrollToPoint:origin];
+    [_pageScrollView reflectScrolledClipView:clipView];
+}
+
 - (void)finishLiveZoom:(NSTimer *)timer
 {
     (void)timer;
     _zoomFinishTimer = nil;
     if (_doc) {
-        [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
+        [self renderDocumentPreservingScrollPosition];
         [self persistActiveState];
     }
 }
@@ -1646,7 +1734,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _fitMode = SPDFFitModeCustom;
     [self setZoomWithoutRendering:_zoom * factor centeredAtWindowPoint:windowPoint];
     [_zoomFinishTimer invalidate];
-    _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:0.09 target:self selector:@selector(finishLiveZoom:) userInfo:nil repeats:NO];
+    _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:0.18 target:self selector:@selector(finishLiveZoom:) userInfo:nil repeats:NO];
 }
 
 - (void)openDocument:(id)sender
@@ -1686,6 +1774,8 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _highlightPageIndex = -1;
     _selectionPageIndex = -1;
     _selectedText = nil;
+    _searchField.stringValue = @"";
+    [self clearFindResults];
     _renderGeneration++;
     _zoom = tab.zoom > 0 ? tab.zoom : 1.0;
     _fitMode = tab.fitMode;
@@ -1911,6 +2001,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _fitModePopup.enabled = hasDoc;
     _continuousButton.enabled = hasDoc;
     _searchField.enabled = hasDoc;
+    [self updateFindControls];
     _pageField.stringValue = hasDoc ? [NSString stringWithFormat:@"%ld", (long)_pageIndex + 1] : @"";
     _pageCountLabel.stringValue = [NSString stringWithFormat:@"/ %ld", (long)pageCount];
 
@@ -1942,6 +2033,24 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     _updatingSelection = NO;
 }
 
+- (void)updateFindControls
+{
+    BOOL hasMatches = _findMatches.count > 0;
+    _findPrevButton.enabled = hasMatches;
+    _findNextButton.enabled = hasMatches;
+}
+
+- (void)clearFindResults
+{
+    [_findQueue cancelAllOperations];
+    _findGeneration++;
+    [_findHighlights removeAllObjects];
+    [_findMatches removeAllObjects];
+    _findMatchIndex = -1;
+    [self applySearchHighlightsToCurrentPage];
+    [self updateFindControls];
+}
+
 - (NSArray<NSValue *> *)highlightRectsForPage:(NSInteger)pageIndex
 {
     if (!_doc || _searchField.stringValue.length == 0)
@@ -1963,11 +2072,98 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 - (void)applySearchHighlightsToCurrentPage
 {
     for (SPDFRenderedPage *page in _renderedPages)
-        page.highlights = @[];
-    if (_highlightPageIndex >= 0 && _highlightPageIndex < (NSInteger)_renderedPages.count)
-        _renderedPages[(NSUInteger)_highlightPageIndex].highlights = [self highlightRectsForPage:_highlightPageIndex];
+        page.highlights = _findHighlights[@(page.pageIndex)] ?: @[];
     _pageView.pages = _renderedPages;
     [_pageView setNeedsDisplay:YES];
+}
+
+- (void)startFindForCurrentQuery
+{
+    if (!_doc || !_path.length) {
+        [self clearFindResults];
+        return;
+    }
+
+    NSString *query = [_searchField.stringValue copy];
+    [_findQueue cancelAllOperations];
+    _findGeneration++;
+    NSUInteger generation = _findGeneration;
+    [_findHighlights removeAllObjects];
+    [_findMatches removeAllObjects];
+    _findMatchIndex = -1;
+    [self applySearchHighlightsToCurrentPage];
+    [self updateFindControls];
+
+    if (query.length == 0) {
+        _statusLabel.stringValue = @"Ready";
+        return;
+    }
+
+    NSString *path = [_path copy];
+    _statusLabel.stringValue = [NSString stringWithFormat:@"Searching for \"%@\"...", query];
+    [_findQueue addOperationWithBlock:^{
+        @autoreleasepool {
+            NSMutableDictionary<NSNumber *, NSArray<NSValue *> *> *highlights = [NSMutableDictionary dictionary];
+            NSMutableArray<NSDictionary *> *matches = [NSMutableArray array];
+            char openErr[1024];
+            spdf_document *doc = spdf_open(path.fileSystemRepresentation, openErr, sizeof(openErr));
+            if (!doc)
+                return;
+
+            NSInteger pageCount = spdf_page_count(doc);
+            for (NSInteger page = 0; page < pageCount; ++page) {
+                if (generation != self->_findGeneration)
+                    break;
+                char err[512];
+                spdf_rect rects[256];
+                int count = spdf_search_page_rects(doc, (int)page, query.UTF8String, rects, 256, err, sizeof(err));
+                if (count <= 0)
+                    continue;
+                NSMutableArray<NSValue *> *values = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+                for (int i = 0; i < count; ++i) {
+                    NSRect r = NSMakeRect(rects[i].x0, rects[i].y0, rects[i].x1 - rects[i].x0, rects[i].y1 - rects[i].y0);
+                    [values addObject:[NSValue valueWithRect:r]];
+                    [matches addObject:@{@"page": @(page), @"rect": [NSValue valueWithRect:r]}];
+                }
+                highlights[@(page)] = values;
+            }
+            spdf_close(doc);
+
+            [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                if (generation != self->_findGeneration)
+                    return;
+                [self->_findHighlights removeAllObjects];
+                [self->_findHighlights addEntriesFromDictionary:highlights];
+                [self->_findMatches removeAllObjects];
+                [self->_findMatches addObjectsFromArray:matches];
+                self->_findMatchIndex = self->_findMatches.count > 0 ? 0 : -1;
+                [self applySearchHighlightsToCurrentPage];
+                [self updateFindControls];
+                if (self->_findMatches.count > 0)
+                    self->_statusLabel.stringValue = [NSString stringWithFormat:@"%ld matches for \"%@\"", (long)self->_findMatches.count, query];
+                else
+                    self->_statusLabel.stringValue = [NSString stringWithFormat:@"No matches for \"%@\"", query];
+            }];
+        }
+    }];
+}
+
+- (void)jumpToFindMatchAtIndex:(NSInteger)index
+{
+    if (!_doc || index < 0 || index >= (NSInteger)_findMatches.count)
+        return;
+    _findMatchIndex = index;
+    NSDictionary *match = _findMatches[(NSUInteger)index];
+    NSInteger page = [match[@"page"] integerValue];
+    _pageIndex = MAX(0, MIN(page, spdf_page_count(_doc) - 1));
+    _pageView.currentPageIndex = _pageIndex;
+    [self renderPageIfNeededAtIndex:_pageIndex];
+    [self applySearchHighlightsToCurrentPage];
+    [self resizeDocumentView];
+    [self scrollToPage:_pageIndex alignTop:YES];
+    [self updateControls];
+    [self selectCurrentSidebarRow];
+    _statusLabel.stringValue = [NSString stringWithFormat:@"Match %ld of %ld", (long)_findMatchIndex + 1, (long)_findMatches.count];
 }
 
 - (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end
@@ -2074,20 +2270,19 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 {
     (void)sender;
     _paletteMode = 1;
-    [self showPaletteWithTitle:@"Favorites"];
+    [self showPaletteWithTitle:@"Command"];
 }
 
 - (void)focusFind:(id)sender
 {
     (void)sender;
-    [self showFindPalette:sender];
+    [_window makeFirstResponder:_searchField];
+    [_searchField selectText:nil];
 }
 
 - (void)showFindPalette:(id)sender
 {
-    (void)sender;
-    _paletteMode = 2;
-    [self showPaletteWithTitle:@"Find"];
+    [self focusFind:sender];
 }
 
 - (void)showPaletteWithTitle:(NSString *)title
@@ -2098,13 +2293,15 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
                                                      backing:NSBackingStoreBuffered
                                                        defer:NO];
         _palettePanel.floatingPanel = YES;
+        _palettePanel.hidesOnDeactivate = YES;
         _palettePanel.releasedWhenClosed = NO;
 
         NSView *content = [[NSView alloc] initWithFrame:_palettePanel.contentView.bounds];
         content.translatesAutoresizingMaskIntoConstraints = NO;
         _palettePanel.contentView = content;
 
-        _paletteSearchField = [[NSSearchField alloc] init];
+        _paletteSearchField = [[SPDFPaletteSearchField alloc] init];
+        ((SPDFPaletteSearchField *)_paletteSearchField).reader = self;
         _paletteSearchField.translatesAutoresizingMaskIntoConstraints = NO;
         _paletteSearchField.delegate = self;
         _paletteSearchField.target = self;
@@ -2126,6 +2323,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
         _paletteTable.dataSource = self;
         _paletteTable.delegate = self;
         _paletteTable.target = self;
+        _paletteTable.action = @selector(activatePaletteSelection:);
         _paletteTable.doubleAction = @selector(activatePaletteSelection:);
         NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:@"result"];
         column.width = 620;
@@ -2147,12 +2345,35 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
     _palettePanel.title = title;
     _paletteSearchField.stringValue = @"";
-    _paletteSearchField.placeholderString = _paletteMode == 1 ? @"Search favorites" : @"Search current document";
-    _paletteAllDocsCheckbox.hidden = _paletteMode != 2;
+    _paletteSearchField.placeholderString = @"Favorites and open documents";
+    _paletteAllDocsCheckbox.hidden = YES;
     [self refreshPaletteResults];
-    if (_palettePanel.sheetParent != _window)
-        [_window beginSheet:_palettePanel completionHandler:nil];
+    NSRect windowFrame = _window.frame;
+    NSRect panelFrame = _palettePanel.frame;
+    panelFrame.origin.x = NSMidX(windowFrame) - NSWidth(panelFrame) / 2.0;
+    panelFrame.origin.y = NSMaxY(windowFrame) - NSHeight(panelFrame) - 88.0;
+    [_palettePanel setFrame:panelFrame display:NO];
+    [_palettePanel makeKeyAndOrderFront:nil];
+    [self installPaletteEventMonitor];
     [_palettePanel makeFirstResponder:_paletteSearchField];
+}
+
+- (BOOL)isSelectablePaletteResult:(NSDictionary *)result
+{
+    NSString *kind = result[@"kind"];
+    return ![kind isEqualToString:@"header"] && ![kind isEqualToString:@"status"];
+}
+
+- (void)selectFirstPaletteResult
+{
+    for (NSInteger i = 0; i < (NSInteger)_paletteResults.count; ++i) {
+        if ([self isSelectablePaletteResult:_paletteResults[(NSUInteger)i]]) {
+            [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)i] byExtendingSelection:NO];
+            [_paletteTable scrollRowToVisible:i];
+            return;
+        }
+    }
+    [_paletteTable deselectAll:nil];
 }
 
 - (void)refreshPaletteResults
@@ -2162,42 +2383,29 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     [_paletteResults removeAllObjects];
     NSString *query = _paletteSearchField.stringValue.lowercaseString ?: @"";
 
-    if (_paletteMode == 1) {
-        if (_path.length) {
-            [_paletteResults addObject:@{@"kind": @"addPage", @"title": @"Favorite current page", @"subtitle": _path.lastPathComponent ?: @""}];
-            [_paletteResults addObject:@{@"kind": @"addDoc", @"title": @"Favorite current document", @"subtitle": _path.lastPathComponent ?: @""}];
-        }
-        for (NSDictionary *fav in _favorites) {
-            NSString *haystack = [[NSString stringWithFormat:@"%@ %@ %@", fav[@"name"] ?: @"", fav[@"title"] ?: @"", fav[@"path"] ?: @""] lowercaseString];
-            if (query.length == 0 || [haystack containsString:query]) {
-                [_paletteResults addObject:@{@"kind": @"favorite",
-                                             @"title": fav[@"name"] ?: fav[@"title"] ?: @"Favorite",
-                                             @"subtitle": [self shortProvenanceForPath:fav[@"path"] ?: @""],
-                                             @"path": fav[@"path"] ?: @"",
-                                             @"page": fav[@"page"] ?: @0}];
-            }
-        }
-    } else if (_paletteMode == 2) {
-        if (query.length > 0 && _doc) {
-            [_preloadQueue cancelAllOperations];
-            [_paletteResults addObject:@{@"kind": @"status", @"title": @"Searching...", @"subtitle": _paletteAllDocsCheckbox.state == NSControlStateValueOn ? @"Current document and open tabs" : @"Current document"}];
-            [self runFindPaletteSearchForQuery:query generation:generation searchAll:_paletteAllDocsCheckbox.state == NSControlStateValueOn];
-        } else {
-            for (NSDictionary *fav in _favorites) {
-                NSString *haystack = [[NSString stringWithFormat:@"%@ %@ %@", fav[@"name"] ?: @"", fav[@"title"] ?: @"", fav[@"path"] ?: @""] lowercaseString];
-                if (query.length == 0 || [haystack containsString:query]) {
-                    [_paletteResults addObject:@{@"kind": @"favorite",
-                                                 @"title": fav[@"name"] ?: fav[@"title"] ?: @"Favorite",
-                                                 @"subtitle": [NSString stringWithFormat:@"Favorite - %@", [self shortProvenanceForPath:fav[@"path"] ?: @""]],
-                                                 @"path": fav[@"path"] ?: @"",
-                                                 @"page": fav[@"page"] ?: @0}];
-                }
-            }
-        }
+    NSArray<NSDictionary *> *favorites = [self favoriteResultsForQuery:query prefix:@""];
+    if (favorites.count > 0) {
+        [_paletteResults addObject:@{@"kind": @"header", @"title": @"Favorites", @"subtitle": @""}];
+        [_paletteResults addObjectsFromArray:favorites];
     }
+
+    if (_path.length) {
+        [_paletteResults addObject:@{@"kind": @"header", @"title": @"Actions", @"subtitle": @""}];
+        [_paletteResults addObject:@{@"kind": @"addPage", @"title": @"Favorite current page", @"subtitle": _path.lastPathComponent ?: @""}];
+        [_paletteResults addObject:@{@"kind": @"addDoc", @"title": @"Favorite current document", @"subtitle": _path.lastPathComponent ?: @""}];
+    }
+
+    if (query.length > 0 && _tabs.count > 0) {
+        [_preloadQueue cancelAllOperations];
+        [_paletteResults addObject:@{@"kind": @"header", @"title": @"Open documents", @"subtitle": @""}];
+        [_paletteResults addObject:@{@"kind": @"status", @"title": @"Searching open documents...", @"subtitle": @""}];
+        [self runFindPaletteSearchForQuery:query generation:generation searchAll:YES];
+    } else if (_paletteResults.count == 0) {
+        [_paletteResults addObject:@{@"kind": @"status", @"title": @"No favorites yet", @"subtitle": @"Use Cmd+B or Cmd+Shift+B to add one."}];
+    }
+
     [_paletteTable reloadData];
-    if (_paletteResults.count)
-        [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+    [self selectFirstPaletteResult];
 }
 
 - (NSArray<NSDictionary *> *)favoriteResultsForQuery:(NSString *)query prefix:(NSString *)prefix
@@ -2263,17 +2471,23 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
             }
 
             [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                if (generation != self->_paletteSearchGeneration || self->_paletteMode != 2)
+                if (generation != self->_paletteSearchGeneration || !self->_palettePanel.visible)
                     return;
-                [self->_paletteResults removeAllObjects];
-                if (results.count > 0) {
+                NSIndexSet *statusRows = [self->_paletteResults indexesOfObjectsPassingTest:^BOOL(NSDictionary *obj, NSUInteger idx, BOOL *stop) {
+                    (void)idx; (void)stop;
+                    return [obj[@"kind"] isEqualToString:@"status"];
+                }];
+                if (statusRows.count)
+                    [self->_paletteResults removeObjectsAtIndexes:statusRows];
+                if (results.count > 0)
                     [self->_paletteResults addObjectsFromArray:results];
-                } else {
-                    [self->_paletteResults addObjectsFromArray:[self favoriteResultsForQuery:query prefix:@"Favorite"]];
+                else if (query.length > 0) {
+                    [self->_paletteResults addObject:@{@"kind": @"status",
+                                                       @"title": @"No open-document matches",
+                                                       @"subtitle": @""}];
                 }
                 [self->_paletteTable reloadData];
-                if (self->_paletteResults.count)
-                    [self->_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+                [self selectFirstPaletteResult];
             }];
         }
     }];
@@ -2282,7 +2496,7 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 - (void)openPaletteResult:(NSDictionary *)result
 {
     NSString *kind = result[@"kind"];
-    if ([kind isEqualToString:@"status"])
+    if (![self isSelectablePaletteResult:result])
         return;
     if ([kind isEqualToString:@"addPage"]) {
         [self favoriteCurrentPage:nil];
@@ -2296,14 +2510,57 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     NSInteger page = [result[@"page"] integerValue];
     if (path.length) {
         [self openPath:path];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (_doc && [_path.stringByStandardizingPath isEqualToString:path.stringByStandardizingPath]) {
-                _pageIndex = MAX(0, MIN(page, spdf_page_count(_doc) - 1));
-                _pageView.currentPageIndex = _pageIndex;
-                [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
-            }
-        });
+        if (_doc && [_path.stringByStandardizingPath isEqualToString:path.stringByStandardizingPath]) {
+            _pageIndex = MAX(0, MIN(page, spdf_page_count(_doc) - 1));
+            _pageView.currentPageIndex = _pageIndex;
+            [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
+        }
     }
+}
+
+- (void)paletteMoveSelection:(NSInteger)delta
+{
+    if (_paletteResults.count == 0)
+        return;
+    NSInteger row = _paletteTable.selectedRow;
+    if (row < 0)
+        row = delta > 0 ? -1 : (NSInteger)_paletteResults.count;
+    for (NSInteger i = row + delta; i >= 0 && i < (NSInteger)_paletteResults.count; i += delta) {
+        if ([self isSelectablePaletteResult:_paletteResults[(NSUInteger)i]]) {
+            [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)i] byExtendingSelection:NO];
+            [_paletteTable scrollRowToVisible:i];
+            return;
+        }
+    }
+}
+
+- (void)installPaletteEventMonitor
+{
+    if (_paletteEventMonitor)
+        return;
+    __weak SumatraMacDelegate *weakSelf = self;
+    _paletteEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown | NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event) {
+        SumatraMacDelegate *strongSelf = weakSelf;
+        if (strongSelf && strongSelf->_palettePanel.visible) {
+            if (event.type == NSEventTypeKeyDown && event.keyCode == 53) {
+                [strongSelf closePalette:nil];
+                return nil;
+            }
+            if (event.type != NSEventTypeKeyDown && event.window != strongSelf->_palettePanel)
+                [strongSelf closePalette:nil];
+        }
+        return event;
+    }];
+}
+
+- (void)closePalette:(id)sender
+{
+    (void)sender;
+    if (_paletteEventMonitor) {
+        [NSEvent removeMonitor:_paletteEventMonitor];
+        _paletteEventMonitor = nil;
+    }
+    [_palettePanel orderOut:nil];
 }
 
 - (void)activatePaletteSelection:(id)sender
@@ -2313,8 +2570,9 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     if (row < 0 || row >= (NSInteger)_paletteResults.count)
         return;
     NSDictionary *result = _paletteResults[(NSUInteger)row];
-    [_window endSheet:_palettePanel];
-    [_palettePanel orderOut:nil];
+    if (![self isSelectablePaletteResult:result])
+        return;
+    [self closePalette:nil];
     [self openPaletteResult:result];
 }
 
@@ -2647,34 +2905,22 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
     if (!_doc || _searchField.stringValue.length == 0)
         return;
 
-    char err[1024];
-    NSInteger pageCount = spdf_page_count(_doc);
-    for (NSInteger offset = 0; offset < pageCount; ++offset) {
-        NSInteger page = forward ? (_pageIndex + offset) % pageCount : (_pageIndex - offset + pageCount) % pageCount;
-        int hits = spdf_search_page(_doc, (int)page, _searchField.stringValue.UTF8String, err, sizeof(err));
-        if (hits > 0) {
-            _pageIndex = page;
-            _highlightPageIndex = page;
-            _pageView.currentPageIndex = _pageIndex;
-            [self applySearchHighlightsToCurrentPage];
-            [self resizeDocumentView];
-            [self scrollToPage:_pageIndex alignTop:YES];
-            [self updateControls];
-            [self selectCurrentSidebarRow];
-            _statusLabel.stringValue = [NSString stringWithFormat:@"Found %d match%@ on page %ld", hits, hits == 1 ? @"" : @"es", (long)page + 1];
-            return;
-        }
+    if (_findMatches.count == 0) {
+        [self startFindForCurrentQuery];
+        return;
     }
-    _highlightPageIndex = -1;
-    [self applySearchHighlightsToCurrentPage];
-    _statusLabel.stringValue = [NSString stringWithFormat:@"No matches for \"%@\"", _searchField.stringValue];
+    NSInteger next = _findMatchIndex;
+    if (next < 0)
+        next = forward ? 0 : (NSInteger)_findMatches.count - 1;
+    else
+        next = (next + (forward ? 1 : -1) + (NSInteger)_findMatches.count) % (NSInteger)_findMatches.count;
+    [self jumpToFindMatchAtIndex:next];
 }
 
 - (void)controlTextDidChange:(NSNotification *)notification
 {
     if (notification.object == _searchField) {
-        _highlightPageIndex = _pageIndex;
-        [self applySearchHighlightsToCurrentPage];
+        [self startFindForCurrentQuery];
     } else if (notification.object == _paletteSearchField) {
         [self refreshPaletteResults];
     }
@@ -2723,9 +2969,16 @@ typedef NS_ENUM(NSInteger, SPDFViewMode) {
 
         NSDictionary *result = _paletteResults[(NSUInteger)row];
         cell.textField.stringValue = result[@"title"] ?: @"";
+        NSString *kind = result[@"kind"];
+        BOOL header = [kind isEqualToString:@"header"];
+        BOOL status = [kind isEqualToString:@"status"];
+        cell.textField.font = header ? [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold] : [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+        cell.textField.textColor = header || status ? NSColor.secondaryLabelColor : NSColor.labelColor;
         for (NSView *subview in cell.subviews) {
-            if ([subview.identifier isEqualToString:@"subtitle"])
-                ((NSTextField *)subview).stringValue = result[@"subtitle"] ?: @"";
+            if ([subview.identifier isEqualToString:@"subtitle"]) {
+                ((NSTextField *)subview).stringValue = header ? @"" : result[@"subtitle"] ?: @"";
+                ((NSTextField *)subview).textColor = NSColor.secondaryLabelColor;
+            }
         }
         return cell;
     }
@@ -2821,7 +3074,7 @@ int main(int argc, const char *argv[])
     @autoreleasepool {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("SumatraPDF portable mac 0.4\n");
+                printf("SumatraPDF portable mac 0.5\n");
                 return 0;
             }
         }

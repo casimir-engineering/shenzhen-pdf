@@ -808,6 +808,13 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
     for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
     g_list_free(children);
 
+    GtkWidget* fav_header = gtk_label_new("Favorites");
+    gtk_label_set_xalign(GTK_LABEL(fav_header), 0.0);
+    gtk_widget_set_margin_start(fav_header, 8);
+    gtk_widget_set_margin_top(fav_header, 8);
+    gtk_widget_set_margin_bottom(fav_header, 4);
+    gtk_container_add(GTK_CONTAINER(list), fav_header);
+
     for (int i = 0; i < state->favorite_count; ++i) {
         char text[1600];
         GtkWidget* row;
@@ -823,9 +830,38 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
         gtk_widget_set_margin_end(label, 8);
         gtk_widget_set_margin_top(label, 6);
         gtk_widget_set_margin_bottom(label, 6);
-        g_object_set_data(G_OBJECT(row), "favorite-index", GINT_TO_POINTER(i));
+        g_object_set_data(G_OBJECT(row), "favorite-index", GINT_TO_POINTER(i + 1));
         gtk_container_add(GTK_CONTAINER(row), label);
         gtk_container_add(GTK_CONTAINER(list), row);
+    }
+
+    if (state->doc && filter && *filter) {
+        char err[1024];
+        GtkWidget* doc_header = gtk_label_new("Open documents");
+        gtk_label_set_xalign(GTK_LABEL(doc_header), 0.0);
+        gtk_widget_set_margin_start(doc_header, 8);
+        gtk_widget_set_margin_top(doc_header, 12);
+        gtk_widget_set_margin_bottom(doc_header, 4);
+        gtk_container_add(GTK_CONTAINER(list), doc_header);
+
+        for (int page = 0; page < spdf_page_count(state->doc); ++page) {
+            int hits = spdf_search_page(state->doc, page, filter, err, sizeof(err));
+            if (hits <= 0) continue;
+            char text[1600];
+            GtkWidget* row = gtk_list_box_row_new();
+            GtkWidget* label;
+            snprintf(text, sizeof(text), "%s\nPage %d - %d match%s", state->path ? state->path : "Current document",
+                     page + 1, hits, hits == 1 ? "" : "es");
+            label = gtk_label_new(text);
+            gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+            gtk_widget_set_margin_start(label, 8);
+            gtk_widget_set_margin_end(label, 8);
+            gtk_widget_set_margin_top(label, 6);
+            gtk_widget_set_margin_bottom(label, 6);
+            g_object_set_data(G_OBJECT(row), "search-page", GINT_TO_POINTER(page + 1));
+            gtk_container_add(GTK_CONTAINER(row), label);
+            gtk_container_add(GTK_CONTAINER(list), row);
+        }
     }
     gtk_widget_show_all(GTK_WIDGET(list));
 }
@@ -841,7 +877,13 @@ static void favorites_row_activated(GtkListBox* list, GtkListBoxRow* row, gpoint
 static void favorites_search_activate(GtkEntry* entry, gpointer user_data) {
     GtkWidget* list = GTK_WIDGET(g_object_get_data(G_OBJECT(entry), "favorites-list"));
     GtkListBoxRow* row = gtk_list_box_get_selected_row(GTK_LIST_BOX(list));
-    if (!row) row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list), 0);
+    if (!row ||
+        (!g_object_get_data(G_OBJECT(row), "favorite-index") && !g_object_get_data(G_OBJECT(row), "search-page"))) {
+        for (int i = 0; (row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list), i)) != NULL; ++i) {
+            if (g_object_get_data(G_OBJECT(row), "favorite-index") || g_object_get_data(G_OBJECT(row), "search-page"))
+                break;
+        }
+    }
     favorites_row_activated(GTK_LIST_BOX(list), row, user_data);
 }
 
@@ -850,7 +892,15 @@ static void favorites_row_activated(GtkListBox* list, GtkListBoxRow* row, gpoint
     GtkWidget* dialog = GTK_WIDGET(g_object_get_data(G_OBJECT(list), "favorites-dialog"));
     int index;
     if (!row) return;
-    index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "favorite-index"));
+    int search_page = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "search-page"));
+    if (search_page > 0) {
+        state->page_index = search_page - 1;
+        render_current_page(state, TRUE);
+        save_session(state);
+        gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+        return;
+    }
+    index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "favorite-index")) - 1;
     if (index >= 0 && index < state->favorite_count) {
         favorite_item* favorite = &state->favorites[index];
         open_path_at_page(state, favorite->path, favorite->document ? 0 : favorite->page_index);
@@ -1118,7 +1168,7 @@ int main(int argc, char** argv) {
     int status;
 
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
-        g_print("SumatraPDF portable gtk 0.4\n");
+        g_print("SumatraPDF portable gtk 0.5\n");
         return 0;
     }
 
