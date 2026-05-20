@@ -1971,17 +1971,23 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [pages addObject:page];
     }
 
-    _renderedPages = pages;
-    _pageView.pages = _renderedPages;
-    _pageView.currentPageIndex = _pageIndex;
-    _pageView.zoom = _zoom;
-    _pageView.viewMode = _viewMode;
-    [self applySearchHighlightsToCurrentPage];
-    [self resizeDocumentView];
-    if (restoreOrigin)
-        [self scrollDocumentClipViewToOrigin:restoreOrigin.pointValue notify:YES];
-    else
-        [self scrollToPage:pageIndex alignTop:alignTop];
+    [NSAnimationContext
+        runAnimationGroup:^(NSAnimationContext* context) {
+          context.duration = 0.0;
+          context.allowsImplicitAnimation = NO;
+          self->_renderedPages = pages;
+          self->_pageView.pages = self->_renderedPages;
+          self->_pageView.currentPageIndex = self->_pageIndex;
+          self->_pageView.zoom = self->_zoom;
+          self->_pageView.viewMode = self->_viewMode;
+          [self applySearchHighlightsToCurrentPage];
+          [self resizeDocumentView];
+          if (restoreOrigin)
+              [self scrollDocumentClipViewToOrigin:restoreOrigin.pointValue notify:YES];
+          else
+              [self scrollToPage:pageIndex alignTop:alignTop];
+        }
+        completionHandler:nil];
     [self syncToolbarState];
     [self updateControls];
     [self selectCurrentSidebarRow];
@@ -2510,17 +2516,18 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self preloadInactiveTabs];
     [self savePersistentState];
     _statusLabel.stringValue = @"Opening...";
+    NSClipView* clipView = _pageScrollView.contentView;
+    BOOL previousHidden = _pageScrollView.hidden;
+    BOOL previousPostsBoundsChangedNotifications = clipView.postsBoundsChangedNotifications;
     _pageScrollView.hidden = YES;
-    dispatch_async(dispatch_get_main_queue(), ^{
-      if (!_doc) {
-          _pageScrollView.hidden = NO;
-          return;
-      }
-      NSValue* restoreOrigin = tab.hasScrollOrigin ? [NSValue valueWithPoint:tab.scrollOrigin] : nil;
-      [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES restoreOrigin:restoreOrigin];
-      _pageScrollView.hidden = NO;
-      [_pageView setNeedsDisplay:YES];
-    });
+    clipView.postsBoundsChangedNotifications = NO;
+    NSValue* restoreOrigin = tab.hasScrollOrigin ? [NSValue valueWithPoint:tab.scrollOrigin] : nil;
+    [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES restoreOrigin:restoreOrigin];
+    clipView.postsBoundsChangedNotifications = previousPostsBoundsChangedNotifications;
+    _pageScrollView.hidden = previousHidden;
+    [self documentScrollPositionChanged];
+    [_pageView setNeedsDisplay:YES];
+    [_pageScrollView displayIfNeeded];
 }
 
 - (void)closeDocument:(id)sender {
