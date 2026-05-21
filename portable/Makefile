@@ -46,7 +46,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) mac/SumatraPDFMac.mm mac/Info.plist
 	sips -z 512 512 ../gfx/SumatraPDF-256x256x32.png --out "$(BUILD)/SumatraPDF.iconset/icon_512x512.png" >/dev/null
 	sips -z 1024 1024 ../gfx/SumatraPDF-256x256x32.png --out "$(BUILD)/SumatraPDF.iconset/icon_512x512@2x.png" >/dev/null
 	iconutil -c icns "$(BUILD)/SumatraPDF.iconset" -o "$(MAC_APP)/Contents/Resources/SumatraPDF.icns"
-	clang++ -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include "mac/SumatraPDFMac.mm" "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
+	clang++ -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include "mac/SumatraPDFMac.mm" "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework UniformTypeIdentifiers -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -q 'libcrypto.3.dylib'; then \
 		cp "$(OPENSSL_LIBCRYPTO)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
 		crypto_path=$$(otool -L "$(MAC_BIN)" | awk '/libcrypto.3.dylib/ { print $$1; exit }'); \

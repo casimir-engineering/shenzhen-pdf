@@ -458,6 +458,74 @@ static int append_comment_item(comment_builder* builder, const char* author, con
     return 1;
 }
 
+static int annot_type_should_surface(enum pdf_annot_type type) {
+    return type != PDF_ANNOT_LINK && type != PDF_ANNOT_POPUP && type != PDF_ANNOT_WIDGET && type != PDF_ANNOT_SCREEN;
+}
+
+static const char* dict_text_or_empty(fz_context* ctx, pdf_obj* obj, pdf_obj* key) {
+    const char* text;
+
+    if (!obj) return "";
+    text = pdf_dict_get_text_string(ctx, obj, key);
+    return text ? text : "";
+}
+
+static pdf_obj* popup_for_parent(fz_context* ctx, pdf_obj* annots, pdf_obj* parent) {
+    int i;
+    int count;
+
+    if (!annots || !parent) return NULL;
+    count = pdf_array_len(ctx, annots);
+    for (i = 0; i < count; ++i) {
+        pdf_obj* annot = pdf_array_get(ctx, annots, i);
+        pdf_obj* subtype = pdf_dict_get(ctx, annot, PDF_NAME(Subtype));
+        if (!pdf_name_eq(ctx, subtype, PDF_NAME(Popup))) continue;
+        if (pdf_objcmp_resolve(ctx, pdf_dict_get(ctx, annot, PDF_NAME(Parent)), parent) == 0) return annot;
+    }
+    return NULL;
+}
+
+static fz_rect annot_bounds(fz_context* ctx, pdf_annot* annot) {
+    fz_rect bounds = fz_empty_rect;
+    int i;
+
+    if (pdf_annot_has_quad_points(ctx, annot)) {
+        int count = pdf_annot_quad_point_count(ctx, annot);
+        for (i = 0; i < count; ++i)
+            bounds = fz_union_rect(bounds, fz_rect_from_quad(pdf_annot_quad_point(ctx, annot, i)));
+        if (!fz_is_empty_rect(bounds)) return bounds;
+    }
+
+    if (pdf_annot_has_ink_list(ctx, annot)) {
+        int stroke;
+        int stroke_count = pdf_annot_ink_list_count(ctx, annot);
+        for (stroke = 0; stroke < stroke_count; ++stroke) {
+            int vertex;
+            int vertex_count = pdf_annot_ink_list_stroke_count(ctx, annot, stroke);
+            for (vertex = 0; vertex < vertex_count; ++vertex)
+                bounds = fz_include_point_in_rect(bounds, pdf_annot_ink_list_stroke_vertex(ctx, annot, stroke, vertex));
+        }
+        if (!fz_is_empty_rect(bounds)) return fz_expand_rect(bounds, 2);
+    }
+
+    if (pdf_annot_has_vertices(ctx, annot)) {
+        int count = pdf_annot_vertex_count(ctx, annot);
+        for (i = 0; i < count; ++i) bounds = fz_include_point_in_rect(bounds, pdf_annot_vertex(ctx, annot, i));
+        if (!fz_is_empty_rect(bounds)) return fz_expand_rect(bounds, 2);
+    }
+
+    if (pdf_annot_has_line(ctx, annot)) {
+        fz_point a;
+        fz_point b;
+        pdf_annot_line(ctx, annot, &a, &b);
+        bounds = fz_include_point_in_rect(bounds, a);
+        bounds = fz_include_point_in_rect(bounds, b);
+        if (!fz_is_empty_rect(bounds)) return fz_expand_rect(bounds, 2);
+    }
+
+    return pdf_bound_annot(ctx, annot);
+}
+
 int spdf_load_comments(spdf_document* doc, spdf_comments* out, char* err, size_t err_len) {
     pdf_document* pdf = NULL;
     pdf_page* page = NULL;
@@ -478,13 +546,24 @@ int spdf_load_comments(spdf_document* doc, spdf_comments* out, char* err, size_t
         if (pdf) {
             for (i = 0; i < doc->page_count; ++i) {
                 pdf_annot* annot;
+                pdf_obj* annots;
                 page = pdf_load_page(doc->ctx, pdf, i);
+                annots = pdf_dict_get(doc->ctx, page->obj, PDF_NAME(Annots));
                 for (annot = pdf_first_annot(doc->ctx, page); annot; annot = pdf_next_annot(doc->ctx, annot)) {
+                    pdf_obj* obj = pdf_annot_obj(doc->ctx, annot);
+                    pdf_obj* popup = pdf_dict_get(doc->ctx, obj, PDF_NAME(Popup));
+                    enum pdf_annot_type annot_type = pdf_annot_type(doc->ctx, annot);
                     const char* contents = pdf_annot_contents(doc->ctx, annot);
                     const char* author = pdf_annot_author(doc->ctx, annot);
-                    const char* type = pdf_string_from_annot_type(doc->ctx, pdf_annot_type(doc->ctx, annot));
-                    fz_rect bounds = pdf_annot_rect(doc->ctx, annot);
-                    if ((!contents || !*contents) && (!author || !*author)) continue;
+                    const char* type = pdf_string_from_annot_type(doc->ctx, annot_type);
+                    fz_rect bounds;
+                    if (!popup) popup = popup_for_parent(doc->ctx, annots, obj);
+                    if (!contents || !*contents) contents = dict_text_or_empty(doc->ctx, popup, PDF_NAME(Contents));
+                    if (!author || !*author) author = dict_text_or_empty(doc->ctx, obj, PDF_NAME(T));
+                    if (!author || !*author) author = dict_text_or_empty(doc->ctx, popup, PDF_NAME(T));
+                    if ((!contents || !*contents) && (!author || !*author) && !annot_type_should_surface(annot_type))
+                        continue;
+                    bounds = annot_bounds(doc->ctx, annot);
                     if (!append_comment_item(&builder, author, contents, type, i, bounds))
                         fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
                 }

@@ -16,14 +16,23 @@ typedef struct favorite_item {
     gboolean document;
 } favorite_item;
 
+typedef struct find_match {
+    int page_index;
+    spdf_rect rect;
+} find_match;
+
 typedef struct app_state {
     GtkApplication* app;
     GtkWidget* window;
     GtkWidget* open_in_browser;
     GtkWidget* show_in_folder;
+    GtkWidget* show_sidebar_item;
+    GtkWidget* show_chapters_panel;
+    GtkWidget* show_comments_panel;
     GtkWidget* ocr_button;
     GtkWidget* page_box;
     GtkWidget* scroll;
+    GtkWidget* main_paned;
     GtkWidget* sidebar_container;
     GtkWidget* sidebar_tabs;
     GtkWidget* sidebar;
@@ -33,6 +42,9 @@ typedef struct app_state {
     GtkWidget* fit_mode;
     GtkWidget* continuous;
     GtkWidget* search_entry;
+    GtkWidget* find_prev_button;
+    GtkWidget* find_next_button;
+    GtkWidget* find_count_label;
     GtkWidget* status;
 
     spdf_document* doc;
@@ -43,16 +55,29 @@ typedef struct app_state {
     char* settings_path;
     char* session_path;
     char* favorites_path;
+    char* search_text;
+    char* empty_view_message;
     favorite_item* favorites;
     int favorite_count;
     int favorite_capacity;
+    int favorite_pending_delete;
     char* restore_path;
+    char* restore_search_text;
     int restore_page_index;
+    int restore_find_match_index;
+    find_match* find_matches;
+    int find_match_count;
+    int find_match_capacity;
+    int find_match_index;
+    guint find_debounce_id;
     int page_index;
+    int sidebar_width;
     double zoom;
     int fit_mode_id;
     gboolean continuous_mode;
     gboolean show_sidebar;
+    gboolean suppress_find_changed;
+    gboolean updating_sidebar_menu;
     gboolean panning;
     gboolean suppress_restore_once;
     double pan_start_x;
@@ -71,14 +96,19 @@ typedef struct render_task {
     guint generation;
     int page_index;
     double zoom;
+    char* search_text;
+    gboolean has_active_rect;
+    spdf_rect active_rect;
 } render_task;
 
 typedef struct render_result {
     app_state* state;
     GtkWidget* image;
     GdkPixbuf* pixbuf;
+    char* path;
     guint generation;
     int page_index;
+    gboolean missing_file;
     char err[1024];
 } render_result;
 
@@ -90,6 +120,10 @@ typedef struct scroll_request {
 
 static void render_current_page(app_state* state, gboolean scroll_to_top);
 static void open_path_at_page(app_state* state, const char* path, int page_index);
+static void start_find_for_current_query(app_state* state, int preferred_index, int preferred_page);
+static void update_controls(app_state* state);
+static void update_sidebar_menu_items(app_state* state);
+static void update_find_controls(app_state* state);
 
 static char* json_escape(const char* text) {
     GString* out = g_string_new("");
@@ -220,6 +254,17 @@ static void free_favorites(app_state* state) {
     state->favorite_capacity = 0;
 }
 
+static void remove_favorite_item(app_state* state, int index) {
+    if (index < 0 || index >= state->favorite_count) return;
+    g_free(state->favorites[index].path);
+    g_free(state->favorites[index].title);
+    if (index + 1 < state->favorite_count) {
+        memmove(&state->favorites[index], &state->favorites[index + 1],
+                (gsize)(state->favorite_count - index - 1) * sizeof(favorite_item));
+    }
+    state->favorite_count--;
+}
+
 static void strip_known_document_extension(char* text) {
     static const char* exts[] = {".pdf", ".xps", ".cbz", ".epub"};
     if (!text) return;
@@ -284,22 +329,32 @@ static void save_settings(app_state* state) {
     g_string_append_printf(json, "  \"fitMode\": %d,\n", state->fit_mode_id);
     g_string_append_printf(json, "  \"zoom\": %.4f,\n", state->zoom);
     g_string_append_printf(json, "  \"continuous\": %s,\n", state->continuous_mode ? "true" : "false");
-    g_string_append_printf(json, "  \"showSidebar\": %s\n", state->show_sidebar ? "true" : "false");
+    g_string_append_printf(json, "  \"showSidebar\": %s,\n", state->show_sidebar ? "true" : "false");
+    g_string_append_printf(json, "  \"sidebarWidth\": %d\n", state->sidebar_width);
     g_string_append(json, "}\n");
     write_text_file(state->settings_path, json->str);
     g_string_free(json, TRUE);
+}
+
+static const char* current_search_text(app_state* state) {
+    if (state->search_text) return state->search_text;
+    return state->restore_search_text ? state->restore_search_text : "";
 }
 
 static void save_session(app_state* state) {
     if (!state->doc && (!state->path || !*state->path)) return;
 
     char* path = json_escape(state->path ? state->path : "");
+    char* search = json_escape(current_search_text(state));
     GString* json = g_string_new("{\n");
     g_string_append_printf(json, "  \"path\": \"%s\",\n", path);
-    g_string_append_printf(json, "  \"page\": %d\n", state->doc ? state->page_index + 1 : 0);
+    g_string_append_printf(json, "  \"page\": %d,\n", state->doc ? state->page_index + 1 : 0);
+    g_string_append_printf(json, "  \"searchText\": \"%s\",\n", search);
+    g_string_append_printf(json, "  \"findMatchIndex\": %d\n", state->find_match_index);
     g_string_append(json, "}\n");
     write_text_file(state->session_path, json->str);
     g_string_free(json, TRUE);
+    g_free(search);
     g_free(path);
 }
 
@@ -330,6 +385,7 @@ static void load_settings(app_state* state) {
     state->zoom = MAX(0.10, MIN(8.0, state->zoom));
     state->continuous_mode = json_get_bool(json, "continuous", state->continuous_mode);
     state->show_sidebar = json_get_bool(json, "showSidebar", state->show_sidebar);
+    state->sidebar_width = MAX(140, MIN(560, json_get_int(json, "sidebarWidth", state->sidebar_width)));
     g_free(json);
 }
 
@@ -338,8 +394,11 @@ static void load_session(app_state* state) {
     gsize len = 0;
     if (!g_file_get_contents(state->session_path, &json, &len, NULL)) return;
     g_free(state->restore_path);
+    g_free(state->restore_search_text);
     state->restore_path = json_get_string(json, "path");
+    state->restore_search_text = json_get_string(json, "searchText");
     state->restore_page_index = MAX(0, json_get_int(json, "page", 1) - 1);
+    state->restore_find_match_index = json_get_int(json, "findMatchIndex", -1);
     g_free(json);
 }
 
@@ -381,8 +440,13 @@ static gboolean path_has_pdf_extension(const char* path) {
     return dot && g_ascii_strcasecmp(dot, ".pdf") == 0;
 }
 
+static void clear_empty_view_message(app_state* state) {
+    g_free(state->empty_view_message);
+    state->empty_view_message = NULL;
+}
+
 static void update_controls(app_state* state) {
-    int page_count = spdf_page_count(state->doc);
+    int page_count = state->doc ? spdf_page_count(state->doc) : 0;
     char text[128];
 
     gtk_widget_set_sensitive(state->page_entry, state->doc != NULL);
@@ -394,11 +458,13 @@ static void update_controls(app_state* state) {
         gtk_widget_set_sensitive(state->show_in_folder, state->doc != NULL && state->path != NULL);
     if (state->ocr_button)
         gtk_widget_set_sensitive(state->ocr_button, state->doc != NULL && path_has_pdf_extension(state->path));
+    update_find_controls(state);
+    update_sidebar_menu_items(state);
 
     if (!state->doc) {
         gtk_entry_set_text(GTK_ENTRY(state->page_entry), "");
         gtk_label_set_text(GTK_LABEL(state->page_count_label), "/ 0");
-        gtk_label_set_text(GTK_LABEL(state->status), "Ready");
+        gtk_label_set_text(GTK_LABEL(state->status), state->empty_view_message ? state->empty_view_message : "Ready");
         return;
     }
 
@@ -412,6 +478,71 @@ static void update_controls(app_state* state) {
     char* title = display_label_without_extension(spdf_title(state->doc));
     gtk_window_set_title(GTK_WINDOW(state->window), title && *title ? title : "SumatraPDF");
     g_free(title);
+}
+
+static void clear_find_results(app_state* state) {
+    g_free(state->find_matches);
+    state->find_matches = NULL;
+    state->find_match_count = 0;
+    state->find_match_capacity = 0;
+    state->find_match_index = -1;
+}
+
+static gboolean append_find_match(app_state* state, int page_index, spdf_rect rect) {
+    if (state->find_match_count == state->find_match_capacity) {
+        int capacity = state->find_match_capacity ? state->find_match_capacity * 2 : 64;
+        find_match* matches = g_realloc(state->find_matches, (gsize)capacity * sizeof(find_match));
+        if (!matches) return FALSE;
+        state->find_matches = matches;
+        state->find_match_capacity = capacity;
+    }
+    state->find_matches[state->find_match_count].page_index = page_index;
+    state->find_matches[state->find_match_count].rect = rect;
+    state->find_match_count++;
+    return TRUE;
+}
+
+static gboolean active_find_rect_for_page(app_state* state, int page_index, spdf_rect* rect) {
+    if (!state || state->find_match_index < 0 || state->find_match_index >= state->find_match_count) return FALSE;
+    find_match* match = &state->find_matches[state->find_match_index];
+    if (match->page_index != page_index) return FALSE;
+    if (rect) *rect = match->rect;
+    return TRUE;
+}
+
+static void update_find_controls(app_state* state) {
+    char text[64];
+    gboolean has_query = state->doc && current_search_text(state)[0] != '\0';
+    gboolean has_matches = has_query && state->find_match_count > 0;
+
+    if (state->find_prev_button) {
+        gtk_widget_set_visible(state->find_prev_button, has_query);
+        gtk_widget_set_sensitive(state->find_prev_button, has_matches);
+    }
+    if (state->find_next_button) {
+        gtk_widget_set_visible(state->find_next_button, has_query);
+        gtk_widget_set_sensitive(state->find_next_button, has_matches);
+    }
+    if (!state->find_count_label) return;
+    gtk_widget_set_visible(state->find_count_label, has_query);
+
+    if (!has_query) {
+        gtk_label_set_text(GTK_LABEL(state->find_count_label), "");
+    } else if (!has_matches) {
+        gtk_label_set_text(GTK_LABEL(state->find_count_label), "0 / 0");
+    } else {
+        snprintf(text, sizeof(text), "%d / %d", state->find_match_index + 1, state->find_match_count);
+        gtk_label_set_text(GTK_LABEL(state->find_count_label), text);
+    }
+}
+
+static void set_search_entry_text(app_state* state, const char* text) {
+    g_free(state->search_text);
+    state->search_text = g_strdup(text ? text : "");
+    if (!state->search_entry) return;
+    state->suppress_find_changed = TRUE;
+    gtk_entry_set_text(GTK_ENTRY(state->search_entry), text ? text : "");
+    state->suppress_find_changed = FALSE;
 }
 
 static void clear_list_box(GtkWidget* list) {
@@ -435,13 +566,17 @@ static void add_sidebar_row(GtkWidget* list, const char* text, int page_index, i
 }
 
 static void rebuild_sidebar(app_state* state) {
+    int requested_page = 0;
     clear_list_box(state->sidebar);
     clear_list_box(state->comments_sidebar);
 
     if (!state->show_sidebar || !state->doc || (state->outline.count == 0 && state->comments.count == 0)) {
         if (state->sidebar_container) gtk_widget_hide(state->sidebar_container);
+        update_sidebar_menu_items(state);
         return;
     }
+
+    if (state->sidebar_tabs) requested_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(state->sidebar_tabs));
 
     for (int i = 0; i < state->outline.count; ++i) {
         spdf_outline_item item = state->outline.items[i];
@@ -461,12 +596,98 @@ static void rebuild_sidebar(app_state* state) {
 
     gtk_notebook_set_show_tabs(GTK_NOTEBOOK(state->sidebar_tabs),
                                state->outline.count > 0 && state->comments.count > 0);
-    gtk_notebook_set_current_page(GTK_NOTEBOOK(state->sidebar_tabs), state->outline.count > 0 ? 0 : 1);
+    if (state->outline.count == 0)
+        requested_page = 1;
+    else if (state->comments.count == 0 || requested_page < 0)
+        requested_page = 0;
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(state->sidebar_tabs), requested_page);
     gtk_widget_show_all(state->sidebar_container);
+    update_sidebar_menu_items(state);
 }
 
-static GdkPixbuf* render_page_pixbuf_for_doc(spdf_document* doc, int page_index, double zoom, char* err,
-                                             size_t err_len) {
+static void update_sidebar_menu_items(app_state* state) {
+    gboolean has_panel = state->doc && (state->outline.count > 0 || state->comments.count > 0);
+    gboolean sidebar_visible = state->sidebar_container && gtk_widget_get_visible(state->sidebar_container);
+    int current_page = state->sidebar_tabs ? gtk_notebook_get_current_page(GTK_NOTEBOOK(state->sidebar_tabs)) : 0;
+
+    if (state->updating_sidebar_menu) return;
+    state->updating_sidebar_menu = TRUE;
+    if (state->show_sidebar_item) {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_sidebar_item), state->show_sidebar);
+        gtk_widget_set_sensitive(state->show_sidebar_item, has_panel);
+    }
+    if (state->show_chapters_panel) {
+        gtk_widget_set_sensitive(state->show_chapters_panel, state->doc && state->outline.count > 0);
+        gtk_menu_item_set_label(GTK_MENU_ITEM(state->show_chapters_panel),
+                                sidebar_visible && current_page == 0 ? "Hide Chapters Panel" : "Show Chapters Panel");
+    }
+    if (state->show_comments_panel) {
+        gtk_widget_set_sensitive(state->show_comments_panel, state->doc && state->comments.count > 0);
+        gtk_menu_item_set_label(GTK_MENU_ITEM(state->show_comments_panel),
+                                sidebar_visible && current_page == 1 ? "Hide Comments Panel" : "Show Comments Panel");
+    }
+    state->updating_sidebar_menu = FALSE;
+}
+
+static GdkPixbuf* decorate_page_pixbuf(spdf_document* doc, GdkPixbuf* pixbuf, int page_index, double zoom,
+                                       const char* search_text, const spdf_rect* active_rect) {
+    gboolean has_search = search_text && *search_text;
+    gboolean has_active = active_rect != NULL;
+    int width;
+    int height;
+    cairo_surface_t* surface;
+    cairo_t* cr;
+    GdkPixbuf* decorated;
+
+    if (!pixbuf || (!has_search && !has_active)) return pixbuf;
+
+    width = gdk_pixbuf_get_width(pixbuf);
+    height = gdk_pixbuf_get_height(pixbuf);
+    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cr = cairo_create(surface);
+    gdk_cairo_set_source_pixbuf(cr, pixbuf, 0, 0);
+    cairo_paint(cr);
+
+    if (has_search) {
+        char search_err[256];
+        spdf_rect rects[256];
+        int count = spdf_search_page_rects(doc, page_index, search_text, rects, 256, search_err, sizeof(search_err));
+        if (count > 0) {
+            cairo_set_source_rgba(cr, 1.0, 0.84, 0.12, 0.34);
+            for (int i = 0; i < count; ++i) {
+                double x = rects[i].x0 * zoom;
+                double y = rects[i].y0 * zoom;
+                double w = (rects[i].x1 - rects[i].x0) * zoom;
+                double h = (rects[i].y1 - rects[i].y0) * zoom;
+                cairo_rectangle(cr, x, y, w, h);
+                cairo_fill(cr);
+            }
+        }
+    }
+
+    if (has_active) {
+        double x = active_rect->x0 * zoom - 2.0;
+        double y = active_rect->y0 * zoom - 2.0;
+        double w = (active_rect->x1 - active_rect->x0) * zoom + 4.0;
+        double h = (active_rect->y1 - active_rect->y0) * zoom + 4.0;
+        cairo_set_source_rgba(cr, 0.94, 0.03, 0.02, 0.95);
+        cairo_set_line_width(cr, 1.25);
+        cairo_rectangle(cr, x, y, w, h);
+        cairo_stroke(cr);
+    }
+
+    decorated = gdk_pixbuf_get_from_surface(surface, 0, 0, width, height);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surface);
+    if (decorated) {
+        g_object_unref(pixbuf);
+        return decorated;
+    }
+    return pixbuf;
+}
+
+static GdkPixbuf* render_page_pixbuf_for_doc(spdf_document* doc, int page_index, double zoom, const char* search_text,
+                                             const spdf_rect* active_rect, char* err, size_t err_len) {
     spdf_bitmap bitmap;
     if (!spdf_render_page_rgba(doc, page_index, (float)zoom, &bitmap, err, err_len)) return NULL;
 
@@ -475,17 +696,84 @@ static GdkPixbuf* render_page_pixbuf_for_doc(spdf_document* doc, int page_index,
     GdkPixbuf* pixbuf = gdk_pixbuf_new_from_data(pixels, GDK_COLORSPACE_RGB, TRUE, 8, bitmap.width, bitmap.height,
                                                  bitmap.stride, free_pixbuf_pixels, NULL);
     spdf_free_bitmap(&bitmap);
+    pixbuf = decorate_page_pixbuf(doc, pixbuf, page_index, zoom, search_text, active_rect);
     return pixbuf;
 }
 
 static GdkPixbuf* render_page_pixbuf(app_state* state, int page_index, char* err, size_t err_len) {
-    return render_page_pixbuf_for_doc(state->doc, page_index, state->zoom, err, err_len);
+    spdf_rect active_rect;
+    const char* search_text = current_search_text(state);
+    gboolean has_active = active_find_rect_for_page(state, page_index, &active_rect);
+    return render_page_pixbuf_for_doc(state->doc, page_index, state->zoom, search_text,
+                                      has_active ? &active_rect : NULL, err, err_len);
 }
 
 static void clear_page_box(app_state* state) {
     GList* children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
     for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
     g_list_free(children);
+}
+
+static void show_empty_view_message(app_state* state, const char* message, const char* detail) {
+    GtkWidget* box;
+    GtkWidget* title;
+    GtkWidget* subtitle;
+    char* escaped_title;
+    char* markup;
+
+    clear_empty_view_message(state);
+    state->empty_view_message = g_strdup(message ? message : "Ready");
+    state->render_generation++;
+    if (!state->page_box) return;
+
+    clear_page_box(state);
+    box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    title = gtk_label_new(NULL);
+    subtitle = gtk_label_new(detail ? detail : "");
+    escaped_title = g_markup_escape_text(message ? message : "", -1);
+    markup = g_strdup_printf("<span size=\"large\" weight=\"bold\">%s</span>", escaped_title);
+
+    gtk_label_set_markup(GTK_LABEL(title), markup);
+    gtk_label_set_xalign(GTK_LABEL(title), 0.5);
+    gtk_label_set_xalign(GTK_LABEL(subtitle), 0.5);
+    gtk_label_set_ellipsize(GTK_LABEL(subtitle), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_widget_set_margin_start(box, 40);
+    gtk_widget_set_margin_end(box, 40);
+    gtk_widget_set_margin_top(box, 80);
+    gtk_widget_set_margin_bottom(box, 40);
+    gtk_widget_set_size_request(subtitle, 420, -1);
+
+    gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), subtitle, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(state->page_box), box, FALSE, FALSE, 0);
+    gtk_widget_show_all(state->page_box);
+
+    g_free(markup);
+    g_free(escaped_title);
+}
+
+static void show_missing_document(app_state* state, const char* path) {
+    char* title;
+    char* window_title;
+
+    spdf_free_outline(&state->outline);
+    spdf_free_comments(&state->comments);
+    spdf_close(state->doc);
+    state->doc = NULL;
+    clear_find_results(state);
+    free(state->path);
+    state->path = strdup(path ? path : "");
+    state->page_index = 0;
+    rebuild_sidebar(state);
+    show_empty_view_message(state, "File moved or deleted", path ? path : "");
+    title = display_name_for_path(path ? path : "");
+    window_title = g_strdup_printf("%s - Missing - SumatraPDF", title && *title ? title : "Missing file");
+    gtk_window_set_title(GTK_WINDOW(state->window), window_title);
+    gtk_label_set_text(GTK_LABEL(state->status), "File moved or deleted.");
+    update_controls(state);
+    save_session(state);
+    g_free(window_title);
+    g_free(title);
 }
 
 static void configure_page_image(GtkWidget* image) {
@@ -521,6 +809,8 @@ static gboolean render_finished_idle(gpointer data) {
         if (result->pixbuf) {
             gtk_image_set_from_pixbuf(GTK_IMAGE(result->image), result->pixbuf);
             gtk_widget_show(result->image);
+        } else if (result->missing_file) {
+            show_missing_document(state, result->path);
         } else if (!state->render_error_shown) {
             state->render_error_shown = TRUE;
             show_error(GTK_WINDOW(state->window), "Could not render page", result->err);
@@ -529,6 +819,7 @@ static gboolean render_finished_idle(gpointer data) {
 
     if (result->pixbuf) g_object_unref(result->pixbuf);
     g_object_unref(result->image);
+    g_free(result->path);
     g_free(result);
     return G_SOURCE_REMOVE;
 }
@@ -543,16 +834,25 @@ static void render_worker(gpointer data, gpointer user_data) {
     result->image = task->image;
     result->generation = task->generation;
     result->page_index = task->page_index;
+    result->path = g_strdup(task->path);
 
-    doc = spdf_open(task->path, result->err, sizeof(result->err));
+    if (!g_file_test(task->path, G_FILE_TEST_EXISTS)) {
+        result->missing_file = TRUE;
+        doc = NULL;
+    } else {
+        doc = spdf_open(task->path, result->err, sizeof(result->err));
+        if (!doc && !g_file_test(task->path, G_FILE_TEST_EXISTS)) result->missing_file = TRUE;
+    }
     if (doc) {
-        result->pixbuf =
-            render_page_pixbuf_for_doc(doc, task->page_index, task->zoom, result->err, sizeof(result->err));
+        result->pixbuf = render_page_pixbuf_for_doc(doc, task->page_index, task->zoom, task->search_text,
+                                                    task->has_active_rect ? &task->active_rect : NULL, result->err,
+                                                    sizeof(result->err));
         spdf_close(doc);
     }
 
     g_idle_add(render_finished_idle, result);
     g_free(task->path);
+    g_free(task->search_text);
     g_free(task);
 }
 
@@ -569,10 +869,13 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
     task->generation = state->render_generation;
     task->page_index = page_index;
     task->zoom = state->zoom;
+    task->search_text = g_strdup(current_search_text(state));
+    task->has_active_rect = active_find_rect_for_page(state, page_index, &task->active_rect);
 
     if (!g_thread_pool_push(state->render_pool, task, &error)) {
         g_object_unref(task->image);
         g_free(task->path);
+        g_free(task->search_text);
         g_free(task);
         if (!state->render_error_shown) {
             state->render_error_shown = TRUE;
@@ -611,7 +914,14 @@ static void scroll_to_rendered_page(app_state* state, GtkWidget* widget) {
 
 static void open_path_at_page(app_state* state, const char* path, int page_index) {
     char err[1024];
-    spdf_document* doc = spdf_open(path, err, sizeof(err));
+    spdf_document* doc;
+
+    if (!path || !g_file_test(path, G_FILE_TEST_EXISTS)) {
+        show_missing_document(state, path);
+        return;
+    }
+
+    doc = spdf_open(path, err, sizeof(err));
     if (!doc) {
         show_error(GTK_WINDOW(state->window), "Could not open document", err);
         return;
@@ -621,6 +931,7 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
     spdf_free_comments(&state->comments);
     spdf_close(state->doc);
     state->doc = doc;
+    clear_empty_view_message(state);
     free(state->path);
     state->path = strdup(path);
     state->page_index = MAX(0, MIN(page_index, spdf_page_count(state->doc) - 1));
@@ -634,6 +945,8 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
 }
 
 static void open_path(app_state* state, const char* path) {
+    set_search_entry_text(state, "");
+    clear_find_results(state);
     open_path_at_page(state, path, 0);
 }
 
@@ -739,9 +1052,11 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
 
 static void page_entry_activate(GtkEntry* entry, gpointer user_data) {
     app_state* state = (app_state*)user_data;
-    int page_count = spdf_page_count(state->doc);
-    int requested = atoi(gtk_entry_get_text(entry)) - 1;
+    int page_count;
+    int requested;
     if (!state->doc) return;
+    page_count = spdf_page_count(state->doc);
+    requested = atoi(gtk_entry_get_text(entry)) - 1;
     if (requested < 0) requested = 0;
     if (requested >= page_count) requested = page_count - 1;
     state->page_index = requested;
@@ -807,8 +1122,53 @@ static void continuous_toggled(GtkToggleButton* button, gpointer user_data) {
 
 static void show_sidebar_toggled(GtkCheckMenuItem* item, gpointer user_data) {
     app_state* state = (app_state*)user_data;
+    if (state->updating_sidebar_menu) return;
     state->show_sidebar = gtk_check_menu_item_get_active(item);
     rebuild_sidebar(state);
+    save_settings(state);
+}
+
+static void set_sidebar_panel(app_state* state, int panel_index) {
+    gboolean visible = state->sidebar_container && gtk_widget_get_visible(state->sidebar_container);
+    int current_page = state->sidebar_tabs ? gtk_notebook_get_current_page(GTK_NOTEBOOK(state->sidebar_tabs)) : -1;
+
+    if (!state->doc) return;
+    if (panel_index == 0 && state->outline.count == 0) return;
+    if (panel_index == 1 && state->comments.count == 0) return;
+
+    if (visible && current_page == panel_index) {
+        state->show_sidebar = FALSE;
+    } else {
+        state->show_sidebar = TRUE;
+        if (state->sidebar_tabs) gtk_notebook_set_current_page(GTK_NOTEBOOK(state->sidebar_tabs), panel_index);
+    }
+    rebuild_sidebar(state);
+    save_settings(state);
+}
+
+static void show_chapters_panel_clicked(GtkMenuItem* item, gpointer user_data) {
+    (void)item;
+    set_sidebar_panel((app_state*)user_data, 0);
+}
+
+static void show_comments_panel_clicked(GtkMenuItem* item, gpointer user_data) {
+    (void)item;
+    set_sidebar_panel((app_state*)user_data, 1);
+}
+
+static void sidebar_page_switched(GtkNotebook* notebook, GtkWidget* page, guint page_num, gpointer user_data) {
+    (void)notebook;
+    (void)page;
+    (void)page_num;
+    update_sidebar_menu_items((app_state*)user_data);
+}
+
+static void paned_position_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
+    (void)pspec;
+    app_state* state = (app_state*)user_data;
+    int position = gtk_paned_get_position(GTK_PANED(object));
+    if (position < 120) return;
+    state->sidebar_width = position;
     save_settings(state);
 }
 
@@ -824,29 +1184,125 @@ static void sidebar_row_selected(GtkListBox* box, GtkListBoxRow* row, gpointer u
     }
 }
 
-static void find_next(GtkEntry* entry, gpointer user_data) {
-    app_state* state = (app_state*)user_data;
-    const char* needle = gtk_entry_get_text(entry);
+static void jump_to_find_match(app_state* state, int index) {
+    char status[160];
+
+    if (!state->doc || index < 0 || index >= state->find_match_count) return;
+    state->find_match_index = index;
+    state->page_index = state->find_matches[index].page_index;
+    render_current_page(state, TRUE);
+    save_session(state);
+    update_find_controls(state);
+    snprintf(status, sizeof(status), "Match %d of %d", state->find_match_index + 1, state->find_match_count);
+    gtk_label_set_text(GTK_LABEL(state->status), status);
+}
+
+static void start_find_for_current_query(app_state* state, int preferred_index, int preferred_page) {
+    const char* needle = current_search_text(state);
     char err[1024];
     int page_count;
+    int chosen_index = -1;
 
-    if (!state->doc || !needle || !*needle) return;
+    if (state->find_debounce_id) {
+        g_source_remove(state->find_debounce_id);
+        state->find_debounce_id = 0;
+    }
+
+    clear_find_results(state);
+    if (!state->doc || !needle || !*needle) {
+        render_current_page(state, FALSE);
+        update_find_controls(state);
+        save_session(state);
+        return;
+    }
 
     page_count = spdf_page_count(state->doc);
-    for (int offset = 0; offset < page_count; ++offset) {
-        int page = (state->page_index + offset) % page_count;
-        int hits = spdf_search_page(state->doc, page, needle, err, sizeof(err));
-        if (hits > 0) {
-            char status[160];
-            state->page_index = page;
-            render_current_page(state, TRUE);
-            save_session(state);
-            snprintf(status, sizeof(status), "Found %d match%s on page %d", hits, hits == 1 ? "" : "es", page + 1);
-            gtk_label_set_text(GTK_LABEL(state->status), status);
-            return;
+    for (int page = 0; page < page_count; ++page) {
+        spdf_rect rects[256];
+        int hits = spdf_search_page_rects(state->doc, page, needle, rects, 256, err, sizeof(err));
+        if (hits <= 0) continue;
+        for (int i = 0; i < hits; ++i) {
+            int match_index = state->find_match_count;
+            if (!append_find_match(state, page, rects[i])) break;
+            if (chosen_index < 0 && preferred_page >= 0 && page == preferred_page) chosen_index = match_index;
         }
     }
-    gtk_label_set_text(GTK_LABEL(state->status), "No matches");
+
+    if (preferred_index >= 0 && preferred_index < state->find_match_count)
+        chosen_index = preferred_index;
+    else if (chosen_index < 0 && state->find_match_count > 0)
+        chosen_index = 0;
+
+    if (chosen_index >= 0) {
+        jump_to_find_match(state, chosen_index);
+    } else {
+        char status[192];
+        render_current_page(state, FALSE);
+        save_session(state);
+        update_find_controls(state);
+        snprintf(status, sizeof(status), "No matches for \"%s\"", needle);
+        gtk_label_set_text(GTK_LABEL(state->status), status);
+    }
+}
+
+static void find_step(app_state* state, gboolean forward) {
+    int next;
+    if (!state->doc || state->find_match_count <= 0) return;
+    next = state->find_match_index;
+    if (next < 0)
+        next = forward ? 0 : state->find_match_count - 1;
+    else
+        next = (next + (forward ? 1 : -1) + state->find_match_count) % state->find_match_count;
+    jump_to_find_match(state, next);
+}
+
+static void find_prev_clicked(GtkButton* button, gpointer user_data) {
+    (void)button;
+    find_step((app_state*)user_data, FALSE);
+}
+
+static void find_next_clicked(GtkButton* button, gpointer user_data) {
+    (void)button;
+    find_step((app_state*)user_data, TRUE);
+}
+
+static void find_activate(GtkEntry* entry, gpointer user_data) {
+    (void)entry;
+    app_state* state = (app_state*)user_data;
+    if (state->find_match_count > 0)
+        find_step(state, TRUE);
+    else
+        start_find_for_current_query(state, -1, -1);
+}
+
+static gboolean find_debounce_idle(gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    state->find_debounce_id = 0;
+    start_find_for_current_query(state, -1, -1);
+    return G_SOURCE_REMOVE;
+}
+
+static void find_search_changed(GtkEntry* entry, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    if (state->suppress_find_changed) return;
+    g_free(state->search_text);
+    state->search_text = g_strdup(gtk_entry_get_text(entry));
+    if (state->find_debounce_id) g_source_remove(state->find_debounce_id);
+    state->find_debounce_id = g_timeout_add(120, find_debounce_idle, state);
+    save_session(state);
+}
+
+static gboolean find_search_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data) {
+    (void)widget;
+    app_state* state = (app_state*)user_data;
+
+    if (event->keyval != GDK_KEY_Escape) return FALSE;
+    if (current_search_text(state)[0] != '\0') {
+        set_search_entry_text(state, "");
+        start_find_for_current_query(state, -1, -1);
+    }
+    if (state->scroll) gtk_widget_grab_focus(state->scroll);
+    return TRUE;
 }
 
 static void open_in_browser(GtkWidget* widget, gpointer user_data) {
@@ -1344,36 +1800,73 @@ static gboolean favorite_matches(favorite_item* favorite, const char* filter) {
     return matches;
 }
 
-static void add_list_separator(GtkWidget* list) {
-    GtkWidget* row = gtk_list_box_row_new();
-    GtkWidget* separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_widget_set_margin_start(separator, 8);
-    gtk_widget_set_margin_end(separator, 8);
-    gtk_widget_set_margin_top(separator, 2);
-    gtk_widget_set_margin_bottom(separator, 4);
-    gtk_container_add(GTK_CONTAINER(row), separator);
-    gtk_container_add(GTK_CONTAINER(list), row);
+static void install_palette_css(void) {
+    static gboolean installed = FALSE;
+    GtkCssProvider* provider;
+
+    if (installed) return;
+    provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(provider,
+                                    ".sumatra-palette-header {"
+                                    "  background-color: alpha(@theme_selected_bg_color, 0.16);"
+                                    "  border-radius: 6px;"
+                                    "}"
+                                    ".sumatra-palette-delete-confirm {"
+                                    "  color: #b00020;"
+                                    "}",
+                                    -1, NULL);
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(provider),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
+    installed = TRUE;
 }
+
+static void add_palette_header(GtkListBox* list, const char* text) {
+    GtkWidget* row = gtk_list_box_row_new();
+    GtkWidget* capsule = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    GtkWidget* label = gtk_label_new(NULL);
+    char* escaped = g_markup_escape_text(text ? text : "", -1);
+    char* markup = g_strdup_printf("<b>%s</b>", escaped);
+
+    gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
+    gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+    gtk_style_context_add_class(gtk_widget_get_style_context(capsule), "sumatra-palette-header");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_widget_set_margin_start(capsule, 8);
+    gtk_widget_set_margin_end(capsule, 8);
+    gtk_widget_set_margin_top(capsule, 8);
+    gtk_widget_set_margin_bottom(capsule, 4);
+    gtk_widget_set_margin_start(label, 12);
+    gtk_widget_set_margin_end(label, 12);
+    gtk_widget_set_margin_top(label, 5);
+    gtk_widget_set_margin_bottom(label, 5);
+    gtk_label_set_markup(GTK_LABEL(label), markup);
+    gtk_container_add(GTK_CONTAINER(capsule), label);
+    gtk_container_add(GTK_CONTAINER(row), capsule);
+    gtk_container_add(GTK_CONTAINER(list), row);
+    g_free(markup);
+    g_free(escaped);
+}
+
+static void favorites_delete_clicked(GtkButton* button, gpointer user_data);
 
 static void rebuild_favorites_list(GtkListBox* list, app_state* state, const char* filter) {
     GList* children = gtk_container_get_children(GTK_CONTAINER(list));
     for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
     g_list_free(children);
 
-    GtkWidget* fav_header = gtk_label_new("Favorites");
-    gtk_label_set_xalign(GTK_LABEL(fav_header), 0.0);
-    gtk_widget_set_margin_start(fav_header, 8);
-    gtk_widget_set_margin_top(fav_header, 8);
-    gtk_widget_set_margin_bottom(fav_header, 4);
-    gtk_container_add(GTK_CONTAINER(list), fav_header);
-    add_list_separator(GTK_WIDGET(list));
+    install_palette_css();
+    add_palette_header(list, "Favorites");
 
     for (int i = 0; i < state->favorite_count; ++i) {
         char text[1600];
         char* title;
         char* path;
         GtkWidget* row;
+        GtkWidget* box;
+        GtkWidget* button;
         GtkWidget* label;
+        gboolean armed = state->favorite_pending_delete == i;
         if (!favorite_matches(&state->favorites[i], filter)) continue;
         title = display_label_without_extension(state->favorites[i].title ? state->favorites[i].title : "Favorite");
         path = display_path_without_extension(state->favorites[i].path ? state->favorites[i].path : "");
@@ -1381,26 +1874,35 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
         g_free(title);
         g_free(path);
         row = gtk_list_box_row_new();
+        box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        button = gtk_button_new_with_label(armed ? "Confirm Delete" : "x");
         label = gtk_label_new(text);
         gtk_label_set_xalign(GTK_LABEL(label), 0.0);
-        gtk_widget_set_margin_start(label, 8);
+        gtk_widget_set_hexpand(label, TRUE);
+        gtk_widget_set_margin_start(box, 8);
+        gtk_widget_set_margin_end(box, 8);
+        gtk_widget_set_margin_top(box, 5);
+        gtk_widget_set_margin_bottom(box, 5);
+        gtk_widget_set_margin_start(label, 0);
         gtk_widget_set_margin_end(label, 8);
-        gtk_widget_set_margin_top(label, 6);
-        gtk_widget_set_margin_bottom(label, 6);
+        gtk_widget_set_margin_top(label, 1);
+        gtk_widget_set_margin_bottom(label, 1);
+        gtk_widget_set_size_request(button, armed ? 118 : 30, 28);
+        gtk_widget_set_tooltip_text(button, armed ? "Click again to delete this favorite" : "Delete favorite");
+        if (armed) gtk_style_context_add_class(gtk_widget_get_style_context(button), "sumatra-palette-delete-confirm");
+        g_object_set_data(G_OBJECT(button), "favorite-index", GINT_TO_POINTER(i + 1));
+        g_object_set_data(G_OBJECT(button), "favorites-list", list);
+        g_signal_connect(button, "clicked", G_CALLBACK(favorites_delete_clicked), state);
         g_object_set_data(G_OBJECT(row), "favorite-index", GINT_TO_POINTER(i + 1));
-        gtk_container_add(GTK_CONTAINER(row), label);
+        gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), label, TRUE, TRUE, 0);
+        gtk_container_add(GTK_CONTAINER(row), box);
         gtk_container_add(GTK_CONTAINER(list), row);
     }
 
     if (state->doc && filter && *filter) {
         char err[1024];
-        GtkWidget* doc_header = gtk_label_new("Open documents");
-        gtk_label_set_xalign(GTK_LABEL(doc_header), 0.0);
-        gtk_widget_set_margin_start(doc_header, 8);
-        gtk_widget_set_margin_top(doc_header, 12);
-        gtk_widget_set_margin_bottom(doc_header, 4);
-        gtk_container_add(GTK_CONTAINER(list), doc_header);
-        add_list_separator(GTK_WIDGET(list));
+        add_palette_header(list, "Open documents");
 
         for (int page = 0; page < spdf_page_count(state->doc); ++page) {
             int hits = spdf_search_page(state->doc, page, filter, err, sizeof(err));
@@ -1418,6 +1920,7 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
             gtk_widget_set_margin_top(label, 6);
             gtk_widget_set_margin_bottom(label, 6);
             g_object_set_data(G_OBJECT(row), "search-page", GINT_TO_POINTER(page + 1));
+            g_object_set_data_full(G_OBJECT(row), "search-text", g_strdup(filter), g_free);
             gtk_container_add(GTK_CONTAINER(row), label);
             gtk_container_add(GTK_CONTAINER(list), row);
         }
@@ -1425,25 +1928,115 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
     gtk_widget_show_all(GTK_WIDGET(list));
 }
 
+static GtkListBoxRow* favorites_action_row_at(GtkListBox* list, int start_index, int step);
+
 static void favorites_search_changed(GtkEntry* entry, gpointer user_data) {
     GtkWidget* list = GTK_WIDGET(g_object_get_data(G_OBJECT(entry), "favorites-list"));
     app_state* state = (app_state*)user_data;
+    state->favorite_pending_delete = -1;
     rebuild_favorites_list(GTK_LIST_BOX(list), state, gtk_entry_get_text(entry));
+    gtk_list_box_select_row(GTK_LIST_BOX(list), favorites_action_row_at(GTK_LIST_BOX(list), 0, 1));
 }
 
 static void favorites_row_activated(GtkListBox* list, GtkListBoxRow* row, gpointer user_data);
 
+static gboolean favorites_row_is_action(GtkListBoxRow* row) {
+    return row &&
+           (g_object_get_data(G_OBJECT(row), "favorite-index") || g_object_get_data(G_OBJECT(row), "search-page"));
+}
+
+static GtkListBoxRow* favorites_action_row_at(GtkListBox* list, int start_index, int step) {
+    GList* children = gtk_container_get_children(GTK_CONTAINER(list));
+    int count = 0;
+    GtkListBoxRow* result = NULL;
+    for (GList* rows = children; rows; rows = rows->next) count++;
+    if (count <= 0) {
+        g_list_free(children);
+        return NULL;
+    }
+
+    for (int offset = 0; offset < count; ++offset) {
+        int index = start_index + offset * step;
+        GtkListBoxRow* row;
+        if (index < 0 || index >= count) continue;
+        row = gtk_list_box_get_row_at_index(list, index);
+        if (favorites_row_is_action(row)) {
+            result = row;
+            break;
+        }
+    }
+    g_list_free(children);
+    return result;
+}
+
+static GtkListBoxRow* favorites_row_for_favorite_index(GtkListBox* list, int favorite_index) {
+    GtkListBoxRow* row;
+    for (int i = 0; (row = gtk_list_box_get_row_at_index(list, i)) != NULL; ++i) {
+        int index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "favorite-index")) - 1;
+        if (index == favorite_index) return row;
+    }
+    return NULL;
+}
+
+static const char* favorites_current_filter(GtkListBox* list) {
+    GtkWidget* search = GTK_WIDGET(g_object_get_data(G_OBJECT(list), "favorites-search"));
+    return search ? gtk_entry_get_text(GTK_ENTRY(search)) : "";
+}
+
+static void favorites_delete_clicked(GtkButton* button, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    GtkListBox* list = GTK_LIST_BOX(g_object_get_data(G_OBJECT(button), "favorites-list"));
+    int index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "favorite-index")) - 1;
+    const char* filter;
+    GtkListBoxRow* row;
+
+    if (!list || index < 0 || index >= state->favorite_count) return;
+    filter = favorites_current_filter(list);
+    if (state->favorite_pending_delete == index) {
+        remove_favorite_item(state, index);
+        state->favorite_pending_delete = -1;
+        save_favorites(state);
+        rebuild_favorites_list(list, state, filter);
+        gtk_list_box_select_row(list, favorites_action_row_at(list, 0, 1));
+        gtk_label_set_text(GTK_LABEL(state->status), "Favorite deleted.");
+        return;
+    }
+
+    state->favorite_pending_delete = index;
+    rebuild_favorites_list(list, state, filter);
+    row = favorites_row_for_favorite_index(list, index);
+    if (row) gtk_list_box_select_row(list, row);
+}
+
 static void favorites_search_activate(GtkEntry* entry, gpointer user_data) {
     GtkWidget* list = GTK_WIDGET(g_object_get_data(G_OBJECT(entry), "favorites-list"));
     GtkListBoxRow* row = gtk_list_box_get_selected_row(GTK_LIST_BOX(list));
-    if (!row ||
-        (!g_object_get_data(G_OBJECT(row), "favorite-index") && !g_object_get_data(G_OBJECT(row), "search-page"))) {
-        for (int i = 0; (row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list), i)) != NULL; ++i) {
-            if (g_object_get_data(G_OBJECT(row), "favorite-index") || g_object_get_data(G_OBJECT(row), "search-page"))
-                break;
-        }
-    }
+    if (!favorites_row_is_action(row)) row = favorites_action_row_at(GTK_LIST_BOX(list), 0, 1);
     favorites_row_activated(GTK_LIST_BOX(list), row, user_data);
+}
+
+static gboolean favorites_search_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data) {
+    (void)user_data;
+    GtkWidget* list = GTK_WIDGET(g_object_get_data(G_OBJECT(widget), "favorites-list"));
+    GtkWidget* dialog = GTK_WIDGET(g_object_get_data(G_OBJECT(list), "favorites-dialog"));
+    GtkListBox* box = GTK_LIST_BOX(list);
+    GtkListBoxRow* selected = gtk_list_box_get_selected_row(box);
+
+    if (event->keyval == GDK_KEY_Escape) {
+        gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_CLOSE);
+        return TRUE;
+    }
+    if (event->keyval == GDK_KEY_Down || event->keyval == GDK_KEY_Up) {
+        int current = selected ? gtk_list_box_row_get_index(selected) : (event->keyval == GDK_KEY_Down ? -1 : 999999);
+        int step = event->keyval == GDK_KEY_Down ? 1 : -1;
+        GtkListBoxRow* row = favorites_action_row_at(box, current + step, step);
+        if (row) {
+            gtk_list_box_select_row(box, row);
+            gtk_list_box_row_changed(row);
+        }
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static void favorites_row_activated(GtkListBox* list, GtkListBoxRow* row, gpointer user_data) {
@@ -1453,22 +2046,26 @@ static void favorites_row_activated(GtkListBox* list, GtkListBoxRow* row, gpoint
     if (!row) return;
     int search_page = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "search-page"));
     if (search_page > 0) {
-        state->page_index = search_page - 1;
-        render_current_page(state, TRUE);
-        save_session(state);
+        const char* search_text = (const char*)g_object_get_data(G_OBJECT(row), "search-text");
+        state->favorite_pending_delete = -1;
+        set_search_entry_text(state, search_text ? search_text : "");
+        start_find_for_current_query(state, -1, search_page - 1);
         gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
         return;
     }
     index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "favorite-index")) - 1;
     if (index >= 0 && index < state->favorite_count) {
         favorite_item* favorite = &state->favorites[index];
+        state->favorite_pending_delete = -1;
+        set_search_entry_text(state, "");
+        clear_find_results(state);
         open_path_at_page(state, favorite->path, favorite->document ? 0 : favorite->page_index);
         gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
     }
 }
 
 static void show_favorites_dialog(app_state* state) {
-    GtkWidget* dialog = gtk_dialog_new_with_buttons("Favorites", GTK_WINDOW(state->window), GTK_DIALOG_MODAL, "_Close",
+    GtkWidget* dialog = gtk_dialog_new_with_buttons("Command", GTK_WINDOW(state->window), GTK_DIALOG_MODAL, "_Close",
                                                     GTK_RESPONSE_CLOSE, NULL);
     GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
     GtkWidget* search = gtk_search_entry_new();
@@ -1476,7 +2073,8 @@ static void show_favorites_dialog(app_state* state) {
     GtkWidget* list = gtk_list_box_new();
 
     gtk_window_set_default_size(GTK_WINDOW(dialog), 560, 420);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(search), "Search favorites");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(search), "Favorites and current document");
+    state->favorite_pending_delete = -1;
     gtk_widget_set_margin_start(search, 8);
     gtk_widget_set_margin_end(search, 8);
     gtk_widget_set_margin_top(search, 8);
@@ -1485,14 +2083,18 @@ static void show_favorites_dialog(app_state* state) {
     gtk_box_pack_start(GTK_BOX(content), search, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 0);
     g_object_set_data(G_OBJECT(search), "favorites-list", list);
+    g_object_set_data(G_OBJECT(list), "favorites-search", search);
     g_object_set_data(G_OBJECT(list), "favorites-dialog", dialog);
     g_signal_connect(search, "search-changed", G_CALLBACK(favorites_search_changed), state);
     g_signal_connect(search, "activate", G_CALLBACK(favorites_search_activate), state);
+    g_signal_connect(search, "key-press-event", G_CALLBACK(favorites_search_key_press), state);
     g_signal_connect(list, "row-activated", G_CALLBACK(favorites_row_activated), state);
     rebuild_favorites_list(GTK_LIST_BOX(list), state, "");
+    gtk_list_box_select_row(GTK_LIST_BOX(list), favorites_action_row_at(GTK_LIST_BOX(list), 0, 1));
     gtk_widget_show_all(dialog);
     gtk_widget_grab_focus(search);
     gtk_dialog_run(GTK_DIALOG(dialog));
+    state->favorite_pending_delete = -1;
     gtk_widget_destroy(dialog);
 }
 
@@ -1512,6 +2114,7 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
         return TRUE;
     }
     if (ctrl && (event->keyval == GDK_KEY_b || event->keyval == GDK_KEY_B)) {
+        if (!state->doc || !state->path) return FALSE;
         add_current_favorite(state, shift);
         return TRUE;
     }
@@ -1640,8 +2243,10 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* quit_menu = gtk_menu_item_new_with_mnemonic("_Quit");
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
-    GtkWidget* show_sidebar = gtk_check_menu_item_new_with_mnemonic("Show Side _Panel");
-    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(show_sidebar), state->show_sidebar);
+    state->show_sidebar_item = gtk_check_menu_item_new_with_mnemonic("Show Side _Panel");
+    state->show_chapters_panel = gtk_menu_item_new_with_mnemonic("Show _Chapters Panel");
+    state->show_comments_panel = gtk_menu_item_new_with_mnemonic("Show _Comments Panel");
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_sidebar_item), state->show_sidebar);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(file), file_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), open_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->open_in_browser);
@@ -1650,7 +2255,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), quit_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), file);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
-    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), show_sidebar);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_sidebar_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_chapters_panel);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_comments_panel);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), view);
     gtk_box_pack_start(GTK_BOX(root), menubar, FALSE, FALSE, 0);
 
@@ -1680,6 +2287,10 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
     state->search_entry = gtk_search_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(state->search_entry), "Find");
+    if (state->restore_search_text) set_search_entry_text(state, state->restore_search_text);
+    state->find_count_label = gtk_label_new("");
+    state->find_prev_button = gtk_button_new_with_label("<");
+    state->find_next_button = gtk_button_new_with_label(">");
     state->ocr_button = gtk_button_new_with_label("OCR");
 
     gtk_box_pack_start(GTK_BOX(toolbar), open, FALSE, FALSE, 0);
@@ -1692,13 +2303,17 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(toolbar), state->fit_mode, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->continuous, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->search_entry, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->find_count_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->find_prev_button, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->find_next_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->ocr_button, FALSE, FALSE, 0);
 
     GtkWidget* paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    state->main_paned = paned;
     gtk_box_pack_start(GTK_BOX(root), paned, TRUE, TRUE, 0);
     state->sidebar_container = gtk_notebook_new();
     state->sidebar_tabs = state->sidebar_container;
-    gtk_widget_set_size_request(state->sidebar_container, 240, -1);
+    gtk_widget_set_size_request(state->sidebar_container, 180, -1);
     state->sidebar = gtk_list_box_new();
     state->comments_sidebar = gtk_list_box_new();
     GtkWidget* chapters_scroll = gtk_scrolled_window_new(NULL, NULL);
@@ -1710,6 +2325,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_paned_pack1(GTK_PANED(paned), state->sidebar_container, FALSE, FALSE);
 
     state->scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_can_focus(state->scroll, TRUE);
     GtkWidget* page_box = gtk_event_box_new();
     gtk_widget_add_events(page_box,
                           GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK | GDK_SCROLL_MASK);
@@ -1719,6 +2335,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_container_add(GTK_CONTAINER(page_box), state->page_box);
     gtk_container_add(GTK_CONTAINER(state->scroll), page_box);
     gtk_paned_pack2(GTK_PANED(paned), state->scroll, TRUE, FALSE);
+    gtk_paned_set_position(GTK_PANED(paned), state->sidebar_width);
 
     state->status = gtk_label_new("Ready");
     gtk_label_set_xalign(GTK_LABEL(state->status), 0.0);
@@ -1730,7 +2347,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(open_menu, "activate", G_CALLBACK(open_clicked), state);
     g_signal_connect(state->open_in_browser, "activate", G_CALLBACK(open_in_browser), state);
     g_signal_connect(state->show_in_folder, "activate", G_CALLBACK(show_in_folder), state);
-    g_signal_connect(show_sidebar, "toggled", G_CALLBACK(show_sidebar_toggled), state);
+    g_signal_connect(state->show_sidebar_item, "toggled", G_CALLBACK(show_sidebar_toggled), state);
+    g_signal_connect(state->show_chapters_panel, "activate", G_CALLBACK(show_chapters_panel_clicked), state);
+    g_signal_connect(state->show_comments_panel, "activate", G_CALLBACK(show_comments_panel_clicked), state);
     g_signal_connect_swapped(quit_menu, "activate", G_CALLBACK(g_application_quit), app);
     g_signal_connect(prev, "clicked", G_CALLBACK(previous_clicked), state);
     g_signal_connect(next, "clicked", G_CALLBACK(next_clicked), state);
@@ -1740,9 +2359,15 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(state->fit_mode, "changed", G_CALLBACK(fit_mode_changed), state);
     g_signal_connect(state->continuous, "toggled", G_CALLBACK(continuous_toggled), state);
     g_signal_connect(state->page_entry, "activate", G_CALLBACK(page_entry_activate), state);
-    g_signal_connect(state->search_entry, "activate", G_CALLBACK(find_next), state);
+    g_signal_connect(state->search_entry, "activate", G_CALLBACK(find_activate), state);
+    g_signal_connect(state->search_entry, "search-changed", G_CALLBACK(find_search_changed), state);
+    g_signal_connect(state->search_entry, "key-press-event", G_CALLBACK(find_search_key_press), state);
+    g_signal_connect(state->find_prev_button, "clicked", G_CALLBACK(find_prev_clicked), state);
+    g_signal_connect(state->find_next_button, "clicked", G_CALLBACK(find_next_clicked), state);
     g_signal_connect(state->sidebar, "row-selected", G_CALLBACK(sidebar_row_selected), state);
     g_signal_connect(state->comments_sidebar, "row-selected", G_CALLBACK(sidebar_row_selected), state);
+    g_signal_connect(state->sidebar_tabs, "switch-page", G_CALLBACK(sidebar_page_switched), state);
+    g_signal_connect(state->main_paned, "notify::position", G_CALLBACK(paned_position_changed), state);
     g_signal_connect(page_box, "scroll-event", G_CALLBACK(page_scroll_event), state);
     g_signal_connect(page_box, "button-press-event", G_CALLBACK(page_button_press), state);
     g_signal_connect(page_box, "motion-notify-event", G_CALLBACK(page_motion), state);
@@ -1756,8 +2381,11 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_show_all(state->window);
     gtk_widget_hide(state->sidebar_container);
     update_controls(state);
-    if (!state->suppress_restore_once && !state->doc && state->restore_path && *state->restore_path)
+    if (!state->suppress_restore_once && !state->doc && state->restore_path && *state->restore_path) {
         open_path_at_page(state, state->restore_path, state->restore_page_index);
+        if (state->restore_search_text && *state->restore_search_text)
+            start_find_for_current_query(state, state->restore_find_match_index, state->restore_page_index);
+    }
     state->suppress_restore_once = FALSE;
 }
 
@@ -1791,6 +2419,10 @@ int main(int argc, char** argv) {
     state.fit_mode_id = 2;
     state.continuous_mode = TRUE;
     state.show_sidebar = TRUE;
+    state.sidebar_width = 260;
+    state.find_match_index = -1;
+    state.restore_find_match_index = -1;
+    state.favorite_pending_delete = -1;
     state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, g_get_num_processors()), FALSE, NULL);
     init_config_paths(&state);
     load_settings(&state);
@@ -1803,6 +2435,7 @@ int main(int argc, char** argv) {
 
     save_settings(&state);
     save_session(&state);
+    if (state.find_debounce_id) g_source_remove(state.find_debounce_id);
     state.render_generation++;
     if (state.render_pool) g_thread_pool_free(state.render_pool, TRUE, TRUE);
     spdf_free_outline(&state.outline);
@@ -1814,6 +2447,10 @@ int main(int argc, char** argv) {
     g_free(state.session_path);
     g_free(state.favorites_path);
     g_free(state.restore_path);
+    g_free(state.restore_search_text);
+    g_free(state.search_text);
+    g_free(state.empty_view_message);
+    clear_find_results(&state);
     free_favorites(&state);
     g_object_unref(app);
     return status;
