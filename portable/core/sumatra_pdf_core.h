@@ -48,6 +48,32 @@ typedef struct spdf_comments {
     int count;
 } spdf_comments;
 
+typedef struct spdf_text_line {
+    char* text;
+    spdf_rect bounds;
+    float font_size;
+} spdf_text_line;
+
+typedef struct spdf_text_lines {
+    spdf_text_line* items;
+    int count;
+    int image_backed;
+} spdf_text_lines;
+
+typedef enum spdf_translation_background {
+    SPDF_TRANSLATION_BACKGROUND_NONE = -1,
+    SPDF_TRANSLATION_BACKGROUND_AUTO = 0,
+    SPDF_TRANSLATION_BACKGROUND_OPAQUE = 1
+} spdf_translation_background;
+
+typedef struct spdf_translated_line {
+    int page_index;
+    spdf_rect bounds;
+    const char* text;
+    float font_size;
+    int opaque_background;
+} spdf_translated_line;
+
 typedef enum spdf_link_kind {
     SPDF_LINK_NONE = 0,
     SPDF_LINK_URI = 1,
@@ -83,6 +109,8 @@ int spdf_search_page_rects_options(spdf_document* doc, int page_index, const cha
 int spdf_select_page_text(spdf_document* doc, int page_index, float ax, float ay, float bx, float by, spdf_rect* rects,
                           int rect_max, char** text_out, char* err, size_t err_len);
 void spdf_free_string(char* text);
+int spdf_extract_page_text_lines(spdf_document* doc, int page_index, spdf_text_lines* out, char* err, size_t err_len);
+void spdf_free_text_lines(spdf_text_lines* lines);
 
 int spdf_load_outline(spdf_document* doc, spdf_outline* out, char* err, size_t err_len);
 void spdf_free_outline(spdf_outline* outline);
@@ -100,6 +128,8 @@ int spdf_update_comment(spdf_document* doc, int comment_index, const char* text,
 int spdf_delete_comment(spdf_document* doc, int comment_index, char* err, size_t err_len);
 int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t err_len);
 int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t err_len);
+int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_translated_line* lines, int line_count,
+                              char* err, size_t err_len);
 
 #ifdef __cplusplus
 }

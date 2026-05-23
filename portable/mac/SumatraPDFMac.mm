@@ -29,6 +29,10 @@ static const CGFloat kMinimapDividerWidth = 5.0;
 static const NSInteger kBackgroundRenderBatchSize = 8;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
 
+#ifndef SPDF_MAC_TRANSLATION_CORE_READY
+#define SPDF_MAC_TRANSLATION_CORE_READY 0
+#endif
+
 typedef struct SPDFPageAnchor {
     NSInteger pageIndex;
     NSPoint pagePoint;
@@ -282,6 +286,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (BOOL)documentViewHandlePresentationMouseDown:(NSEvent*)event;
 - (BOOL)documentViewInPresentationMode;
 - (void)copySelection:(id)sender;
+- (void)translateDocument:(id)sender;
 - (void)selectTabAtIndex:(NSInteger)index;
 - (void)closeTabAtIndex:(NSInteger)index;
 - (void)newTabRequested:(id)sender;
@@ -2253,6 +2258,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSButton* _findRegexCheckbox;
     BOOL _findRegexMultiline;
     NSButton* _ocrButton;
+    NSButton* _translateButton;
     NSBox* _ocrSeparator;
     NSButton* _findPrevButton;
     NSButton* _findNextButton;
@@ -2329,6 +2335,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL _presentationPreviousSidebarPreferredVisible;
     BOOL _presentationPreviousMinimapPreferredVisible;
     BOOL _ocrInstallRunning;
+    BOOL _translationRunning;
+    BOOL _translationInstallRunning;
+    NSArray<NSDictionary*>* _pendingTranslationItems;
     BOOL _restoringSidebarLayout;
     BOOL _allowSidebarWidthPersistence;
     CGFloat _sidebarWidth;
@@ -2354,6 +2363,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _minimapVisible = YES;
     _presentationMode = NO;
     _presentationEnteredFullScreen = NO;
+    _translationRunning = NO;
+    _translationInstallRunning = NO;
     _restoringSidebarLayout = NO;
     _allowSidebarWidthPersistence = NO;
     _sidebarWidth = kDefaultSidebarWidth;
@@ -2644,6 +2655,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Print..." action:@selector(printDocument:) keyEquivalent:@"p"];
     [fileMenu addItemWithTitle:@"OCR Document..." action:@selector(ocrDocument:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Translate Document..." action:@selector(translateDocument:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@""];
     fileItem.submenu = fileMenu;
 
@@ -2802,6 +2814,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                   menu:menu
                                  state:NSControlStateValueOff
                                enabled:hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"]];
+    if ([hiddenViews containsObject:_translateButton])
+        [self addOverflowItemWithTitle:@"Translate Document..."
+                                action:@selector(translateDocument:)
+                                  menu:menu
+                                 state:NSControlStateValueOff
+                               enabled:hasDoc && !_translationRunning && !_translationInstallRunning];
     if ([hiddenViews containsObject:_findRegexCheckbox])
         [self addOverflowItemWithTitle:@"Regex"
                                 action:@selector(toggleFindRegex:)
@@ -2871,7 +2889,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (void)updateToolbarOverflow {
     if (!_toolbar || !_toolbarOverflowButton) return;
     NSArray<NSArray<NSView*>*>* groups = @[
-        @[ _ocrButton, _ocrSeparator ],
+        @[ _ocrButton, _translateButton, _ocrSeparator ],
         @[ _findCountLabel ],
         @[ _findPrevButton, _findNextButton ],
         @[ _findRegexCheckbox ],
@@ -3015,6 +3033,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [_findRegexCheckbox setContentCompressionResistancePriority:NSLayoutPriorityRequired
                                                  forOrientation:NSLayoutConstraintOrientationHorizontal];
     _ocrButton = [self buttonWithTitle:@"OCR" action:@selector(ocrDocument:)];
+    _ocrButton.toolTip = @"Run OCR on this PDF";
+    _translateButton = [self buttonWithTitle:@"Translate" action:@selector(translateDocument:)];
+    _translateButton.toolTip = @"Translate selected text or the document";
     _findPrevButton = [self buttonWithTitle:@"<" action:@selector(findPrevious:)];
     _findNextButton = [self buttonWithTitle:@">" action:@selector(findNext:)];
     _minimapToggleButton =
@@ -3049,6 +3070,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
     [_toolbar addArrangedSubview:_sidebarToggleButton];
     [_toolbar addArrangedSubview:_ocrButton];
+    [_toolbar addArrangedSubview:_translateButton];
     [_toolbar addArrangedSubview:_ocrSeparator];
     [_toolbar addArrangedSubview:_prevButton];
     [_toolbar addArrangedSubview:_nextButton];
@@ -4993,6 +5015,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _searchField.enabled = hasDoc;
     _findRegexCheckbox.enabled = hasDoc;
     _ocrButton.enabled = hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+    _translateButton.enabled = hasDoc && !_translationRunning && !_translationInstallRunning;
     _minimapToggleButton.enabled = hasDoc;
     [self updateFindControls];
     _pageField.stringValue = hasDoc ? [NSString stringWithFormat:@"%ld", (long)_pageIndex + 1] : @"";
@@ -5442,6 +5465,201 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (NSArray<NSValue*>*)currentSelectionRects {
     if (_selectionPageIndex < 0 || _selectionPageIndex >= (NSInteger)_renderedPages.count) return @[];
     return _renderedPages[(NSUInteger)_selectionPageIndex].selectionRects ?: @[];
+}
+
+- (NSString*)trimmedLanguageCode:(NSString*)code {
+    NSString* trimmed =
+        [[code ?: @"" lowercaseString] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSMutableString* sanitized = [NSMutableString string];
+    NSCharacterSet* allowed = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyz-_"];
+    for (NSUInteger i = 0; i < trimmed.length; ++i) {
+        unichar ch = [trimmed characterAtIndex:i];
+        if ([allowed characterIsMember:ch]) [sanitized appendFormat:@"%C", ch];
+    }
+    return sanitized;
+}
+
+- (NSString*)translationSuffixForTargetLanguage:(NSString*)targetLanguage {
+    NSString* language = [self trimmedLanguageCode:targetLanguage];
+    if ([language isEqualToString:@"en"]) return @"english";
+    if (!language.length) return @"translated";
+    return language;
+}
+
+- (NSString*)translatedOutputPathForPath:(NSString*)path targetLanguage:(NSString*)targetLanguage {
+    NSString* dir = path.stringByDeletingLastPathComponent;
+    NSString* stem = path.stringByDeletingPathExtension.lastPathComponent;
+    NSString* suffix = [self translationSuffixForTargetLanguage:targetLanguage];
+    return [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_%@.pdf", stem, suffix]];
+}
+
+- (NSDictionary*)promptForTranslationOptionsUsingSelection:(BOOL)usingSelection {
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = usingSelection ? @"Translate Selection" : @"Translate Document";
+    alert.informativeText = @"Offline Argos Translate will create a translated PDF next to the original document.";
+    [alert addButtonWithTitle:@"Translate"];
+    [alert addButtonWithTitle:@"Cancel"];
+
+    NSView* accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 74)];
+    NSTextField* sourceLabel = [NSTextField labelWithString:@"From"];
+    sourceLabel.frame = NSMakeRect(0, 45, 72, 22);
+    NSTextField* sourceField = [[NSTextField alloc] initWithFrame:NSMakeRect(84, 42, 96, 24)];
+    sourceField.placeholderString = @"zh";
+    sourceField.stringValue =
+        [NSUserDefaults.standardUserDefaults stringForKey:@"SPDFTranslateSourceLanguage"] ?: @"zh";
+    NSTextField* targetLabel = [NSTextField labelWithString:@"To"];
+    targetLabel.frame = NSMakeRect(0, 12, 72, 22);
+    NSTextField* targetField = [[NSTextField alloc] initWithFrame:NSMakeRect(84, 9, 96, 24)];
+    targetField.placeholderString = @"en";
+    targetField.stringValue =
+        [NSUserDefaults.standardUserDefaults stringForKey:@"SPDFTranslateTargetLanguage"] ?: @"en";
+    for (NSView* view in @[ sourceLabel, sourceField, targetLabel, targetField ]) [accessory addSubview:view];
+    alert.accessoryView = accessory;
+
+    if ([alert runModal] != NSAlertFirstButtonReturn) return nil;
+
+    NSString* source = [self trimmedLanguageCode:sourceField.stringValue];
+    NSString* target = [self trimmedLanguageCode:targetField.stringValue];
+    if (!source.length || !target.length) {
+        [self showError:@"Translation needs language codes"
+                 detail:@"Enter source and target language codes for Argos."];
+        return nil;
+    }
+    if ([source isEqualToString:target]) {
+        [self showError:@"Translation needs different languages" detail:@"The source and target language codes match."];
+        return nil;
+    }
+
+    [NSUserDefaults.standardUserDefaults setObject:source forKey:@"SPDFTranslateSourceLanguage"];
+    [NSUserDefaults.standardUserDefaults setObject:target forKey:@"SPDFTranslateTargetLanguage"];
+    return @{@"source" : source, @"target" : target};
+}
+
+- (NSString*)currentTextForTranslationUsingSelection:(BOOL*)usingSelection error:(NSString**)errorOut {
+    _pendingTranslationItems = nil;
+    BOOL hasSelection = _selectedText.length > 0 && _selectionPageIndex >= 0 && [self currentSelectionRects].count > 0;
+    if (hasSelection) {
+        NSRect bounds = NSZeroRect;
+        BOOL hasBounds = NO;
+        for (NSValue* value in [self currentSelectionRects]) {
+            NSRect rect = value.rectValue;
+            bounds = hasBounds ? NSUnionRect(bounds, rect) : rect;
+            hasBounds = YES;
+        }
+        if (!hasBounds) {
+            if (errorOut) *errorOut = @"Could not locate the selected text on the page.";
+            return nil;
+        }
+        _pendingTranslationItems = @[ @{
+            @"page" : @(_selectionPageIndex),
+            @"rect" : [NSValue valueWithRect:bounds],
+            @"font" : @(MAX(8.0, MIN(18.0, NSHeight(bounds) * 0.8)))
+        } ];
+        if (usingSelection) *usingSelection = YES;
+        return _selectedText;
+    }
+
+    if (usingSelection) *usingSelection = NO;
+    if (!_doc) {
+        if (errorOut) *errorOut = @"No document is open.";
+        return nil;
+    }
+
+    NSMutableArray<NSDictionary*>* items = [NSMutableArray array];
+    NSMutableString* text = [NSMutableString string];
+    char err[1024];
+    int pageCount = spdf_page_count(_doc);
+    for (int page = 0; page < pageCount; ++page) {
+        spdf_text_lines lines;
+        memset(&lines, 0, sizeof(lines));
+        if (!spdf_extract_page_text_lines(_doc, page, &lines, err, sizeof(err))) {
+            if (errorOut)
+                *errorOut = [NSString stringWithFormat:@"Could not extract text from page %d: %s", page + 1,
+                                                       err[0] ? err : "Unknown error"];
+            return nil;
+        }
+        for (int i = 0; i < lines.count; ++i) {
+            const char* lineText = lines.items[i].text;
+            if (!lineText || !*lineText) continue;
+            NSString* sourceLine = [NSString stringWithUTF8String:lineText] ?: @"";
+            if (sourceLine.length == 0) continue;
+            NSRect rect = NSMakeRect(lines.items[i].bounds.x0, lines.items[i].bounds.y0,
+                                     lines.items[i].bounds.x1 - lines.items[i].bounds.x0,
+                                     lines.items[i].bounds.y1 - lines.items[i].bounds.y0);
+            [items addObject:@{
+                @"page" : @(page),
+                @"rect" : [NSValue valueWithRect:rect],
+                @"font" : @(lines.items[i].font_size)
+            }];
+            [text appendString:sourceLine];
+            [text appendString:@"\n"];
+        }
+        spdf_free_text_lines(&lines);
+    }
+
+    if (items.count == 0 || text.length == 0) {
+        if (errorOut) *errorOut = @"No selectable document text was found. Run OCR first, then translate.";
+        return nil;
+    }
+    _pendingTranslationItems = items;
+    return text;
+}
+
+- (BOOL)writeTranslatedPDFWithText:(NSString*)text
+                        sourcePath:(NSString*)sourcePath
+                        outputPath:(NSString*)outputPath
+                             error:(NSError**)errorOut {
+    (void)sourcePath;
+    if (text.length == 0 || outputPath.length == 0 || _pendingTranslationItems.count == 0) return NO;
+
+    NSArray<NSString*>* outputLines = [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    NSMutableArray<NSString*>* mappedText = [NSMutableArray arrayWithCapacity:_pendingTranslationItems.count];
+    if (_pendingTranslationItems.count == 1) {
+        [mappedText addObject:text];
+    } else {
+        for (NSUInteger i = 0; i < _pendingTranslationItems.count; ++i) {
+            NSString* translated = i < outputLines.count ? outputLines[i] : @"";
+            [mappedText addObject:translated.length ? translated : @" "];
+        }
+        if (outputLines.count > _pendingTranslationItems.count && mappedText.count > 0) {
+            NSMutableString* tail = [mappedText.lastObject mutableCopy];
+            for (NSUInteger i = _pendingTranslationItems.count; i < outputLines.count; ++i) {
+                NSString* extra = outputLines[i];
+                if (extra.length == 0) continue;
+                if (tail.length > 0) [tail appendString:@"\n"];
+                [tail appendString:extra];
+            }
+            mappedText[mappedText.count - 1] = tail;
+        }
+    }
+
+    NSUInteger count = MIN(_pendingTranslationItems.count, mappedText.count);
+    spdf_translated_line* lines = (spdf_translated_line*)calloc(count ? count : 1, sizeof(spdf_translated_line));
+    if (!lines) return NO;
+    for (NSUInteger i = 0; i < count; ++i) {
+        NSDictionary* item = _pendingTranslationItems[i];
+        NSRect rect = [item[@"rect"] rectValue];
+        lines[i].page_index = [item[@"page"] intValue];
+        lines[i].bounds.x0 = (float)NSMinX(rect);
+        lines[i].bounds.y0 = (float)NSMinY(rect);
+        lines[i].bounds.x1 = (float)NSMaxX(rect);
+        lines[i].bounds.y1 = (float)NSMaxY(rect);
+        lines[i].font_size = [item[@"font"] floatValue];
+        lines[i].opaque_background = SPDF_TRANSLATION_BACKGROUND_AUTO;
+        lines[i].text = mappedText[i].UTF8String;
+    }
+
+    char err[1024];
+    BOOL ok = spdf_save_translated_copy(_doc, outputPath.fileSystemRepresentation, lines, (int)count, err, sizeof(err));
+    free(lines);
+    if (!ok && errorOut) {
+        NSString* detail = [NSString stringWithUTF8String:err[0] ? err : "Could not save translated PDF."];
+        *errorOut =
+            [NSError errorWithDomain:@"SumatraPDFTranslation"
+                                code:1
+                            userInfo:@{NSLocalizedDescriptionKey : detail ?: @"Could not save translated PDF."}];
+    }
+    return ok;
 }
 
 - (NSString*)currentCommentAuthor {
@@ -6549,6 +6767,19 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                    candidates:@[ @"/opt/homebrew/bin/tesseract", @"/usr/local/bin/tesseract", @"/usr/bin/tesseract" ]];
 }
 
+- (NSString*)argosToolPath {
+    NSString* userPath = [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/argos-translate"];
+    return [self
+        executablePathForTool:@"argos-translate"
+                   candidates:@[ @"/opt/homebrew/bin/argos-translate", @"/usr/local/bin/argos-translate", userPath ]];
+}
+
+- (NSString*)argospmToolPath {
+    NSString* userPath = [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/argospm"];
+    return [self executablePathForTool:@"argospm"
+                            candidates:@[ @"/opt/homebrew/bin/argospm", @"/usr/local/bin/argospm", userPath ]];
+}
+
 - (NSString*)executablePathForTool:(NSString*)tool candidates:(NSArray<NSString*>*)candidates {
     NSFileManager* fm = NSFileManager.defaultManager;
     for (NSString* path in candidates) {
@@ -6562,6 +6793,391 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         if ([fm isExecutableFileAtPath:path]) return path;
     }
     return nil;
+}
+
+- (NSString*)argosInstallScript {
+    return @"set -e\n"
+           @"export "
+           @"PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/"
+           @"bin:/usr/sbin:/sbin:$PATH\"\n"
+           @"if command -v argos-translate >/dev/null 2>&1; then exit 0; fi\n"
+           @"if command -v pipx >/dev/null 2>&1; then PIPX=$(command -v pipx); "
+           @"elif command -v brew >/dev/null 2>&1; then brew install pipx; "
+           @"PIPX=$(command -v pipx); "
+           @"else PIPX=\"\"; fi\n"
+           @"if [ -n \"$PIPX\" ]; then \"$PIPX\" install --include-deps "
+           @"argostranslate || "
+           @"\"$PIPX\" upgrade argostranslate; "
+           @"elif command -v python3 >/dev/null 2>&1; then python3 -m pip "
+           @"install --user argostranslate; "
+           @"else echo 'Python 3, pipx, or Homebrew is required to install Argos "
+           @"Translate.'; exit 1; fi\n";
+}
+
+- (void)runArgosPackageInstallFromLanguage:(NSString*)sourceLanguage
+                                toLanguage:(NSString*)targetLanguage
+                                sourceText:(NSString*)sourceText
+                                outputPath:(NSString*)outputPath {
+    NSString* packageTool = [self argospmToolPath];
+    if (!packageTool.length) {
+        [self showError:@"Argos package manager not found"
+                 detail:
+                     @"Install Argos Translate and the required offline "
+                     @"language package, then try again."];
+        return;
+    }
+
+    NSString* packageName = [NSString stringWithFormat:@"translate-%@_%@", sourceLanguage, targetLanguage];
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Install Argos language package?";
+    alert.informativeText = [NSString stringWithFormat:
+                                          @"The offline %@ to %@ package may be "
+                                          @"missing. SumatraPDF can ask argospm to "
+                                          @"install %@, then continue translation.",
+                                          sourceLanguage, targetLanguage, packageName];
+    [alert addButtonWithTitle:@"Install"];
+    [alert addButtonWithTitle:@"Cancel"];
+    alert.alertStyle = NSAlertStyleInformational;
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+
+    _translationInstallRunning = YES;
+    _translateButton.enabled = NO;
+    _statusLabel.stringValue = @"Installing Argos language package...";
+
+    NSTask* task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:packageTool];
+    task.arguments = @[ @"install", packageName ];
+    NSPipe* pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    __block NSMutableData* outputData = [NSMutableData data];
+    pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
+      NSData* chunk = handle.availableData;
+      if (chunk.length > 0) {
+          @synchronized(outputData) {
+              [outputData appendData:chunk];
+          }
+      } else {
+          handle.readabilityHandler = nil;
+      }
+    };
+
+    __weak SumatraMacDelegate* weakSelf = self;
+    task.terminationHandler = ^(NSTask* finishedTask) {
+      pipe.fileHandleForReading.readabilityHandler = nil;
+      NSData* tail = pipe.fileHandleForReading.readDataToEndOfFile;
+      if (tail.length > 0) {
+          @synchronized(outputData) {
+              [outputData appendData:tail];
+          }
+      }
+      NSData* data = nil;
+      @synchronized(outputData) {
+          data = [outputData copy];
+      }
+      NSString* output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+      dispatch_async(dispatch_get_main_queue(), ^{
+        SumatraMacDelegate* strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_translationInstallRunning = NO;
+        strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+        if (finishedTask.terminationStatus == 0) {
+            [strongSelf runArgosTranslationWithTool:[strongSelf argosToolPath]
+                                         sourceText:sourceText
+                                     sourceLanguage:sourceLanguage
+                                     targetLanguage:targetLanguage
+                                         outputPath:outputPath
+                                   offeredInstaller:YES];
+        } else {
+            NSString* detail = output.length > 1200 ? [output substringToIndex:1200] : output;
+            [strongSelf showError:@"Could not install Argos language package" detail:detail ?: @""];
+            strongSelf->_statusLabel.stringValue = @"Translation package installation failed.";
+        }
+      });
+    };
+
+    NSError* launchError = nil;
+    if (![task launchAndReturnError:&launchError]) {
+        _translationInstallRunning = NO;
+        _translateButton.enabled = _doc != NULL && !_translationRunning;
+        [self showError:@"Could not start argospm" detail:launchError.localizedDescription ?: @""];
+    }
+}
+
+- (BOOL)runArgosToolSynchronously:(NSString*)tool
+                   sourceLanguage:(NSString*)sourceLanguage
+                   targetLanguage:(NSString*)targetLanguage
+                            input:(NSString*)input
+                           output:(NSString**)outputOut
+                            error:(NSString**)errorOut {
+    if (outputOut) *outputOut = nil;
+    if (errorOut) *errorOut = nil;
+    NSTask* task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:tool];
+    task.arguments = @[ @"--from-lang", sourceLanguage, @"--to-lang", targetLanguage ];
+    NSPipe* inputPipe = [NSPipe pipe];
+    NSPipe* outputPipe = [NSPipe pipe];
+    task.standardInput = inputPipe;
+    task.standardOutput = outputPipe;
+    task.standardError = outputPipe;
+
+    NSError* launchError = nil;
+    if (![task launchAndReturnError:&launchError]) {
+        if (errorOut) *errorOut = launchError.localizedDescription ?: @"Could not start Argos Translate.";
+        return NO;
+    }
+
+    NSData* inputData = [input dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+    @try {
+        [inputPipe.fileHandleForWriting writeData:inputData];
+    } @catch (NSException* exception) {
+        (void)exception;
+    }
+    [inputPipe.fileHandleForWriting closeFile];
+
+    NSData* outputData = [outputPipe.fileHandleForReading readDataToEndOfFile];
+    [task waitUntilExit];
+    NSString* output = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding] ?: @"";
+    if (task.terminationStatus != 0) {
+        if (errorOut) *errorOut = output.length ? output : @"Argos Translate exited with an error.";
+        return NO;
+    }
+    if (outputOut) *outputOut = output;
+    return YES;
+}
+
+- (void)runArgosTranslationWithTool:(NSString*)tool
+                         sourceText:(NSString*)sourceText
+                     sourceLanguage:(NSString*)sourceLanguage
+                     targetLanguage:(NSString*)targetLanguage
+                         outputPath:(NSString*)outputPath
+                   offeredInstaller:(BOOL)offeredInstaller {
+    if (!tool.length) {
+        [self promptToInstallArgosAndContinueWithSourceText:sourceText
+                                             sourceLanguage:sourceLanguage
+                                             targetLanguage:targetLanguage
+                                                 outputPath:outputPath];
+        return;
+    }
+
+    _translationRunning = YES;
+    _translateButton.enabled = NO;
+    _statusLabel.stringValue = @"Translating with Argos...";
+
+    NSArray<NSDictionary*>* items = [_pendingTranslationItems copy] ?: @[];
+    NSArray<NSString*>* sourceLines =
+        [sourceText componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    __weak SumatraMacDelegate* weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      NSMutableArray<NSString*>* translatedLines = [NSMutableArray arrayWithCapacity:MAX((NSUInteger)1, items.count)];
+      for (NSUInteger i = 0; i < MAX((NSUInteger)1, items.count); ++i) [translatedLines addObject:@""];
+      NSString* failure = nil;
+
+      if (items.count <= 1) {
+          NSString* translated = nil;
+          if (![self runArgosToolSynchronously:tool
+                                sourceLanguage:sourceLanguage
+                                targetLanguage:targetLanguage
+                                         input:sourceText
+                                        output:&translated
+                                         error:&failure]) {
+              translated = nil;
+          }
+          if (translated) translatedLines[0] = translated;
+      } else {
+          NSUInteger start = 0;
+          while (start < items.count && !failure.length) {
+              NSInteger page = [items[start][@"page"] integerValue];
+              NSUInteger end = start + 1;
+              while (end < items.count && [items[end][@"page"] integerValue] == page) end++;
+
+              NSMutableString* pageInput = [NSMutableString string];
+              for (NSUInteger i = start; i < end; ++i) {
+                  NSString* line = i < sourceLines.count ? sourceLines[i] : @"";
+                  [pageInput appendString:line ?: @""];
+                  [pageInput appendString:@"\n"];
+              }
+
+              NSString* translated = nil;
+              if (![self runArgosToolSynchronously:tool
+                                    sourceLanguage:sourceLanguage
+                                    targetLanguage:targetLanguage
+                                             input:pageInput
+                                            output:&translated
+                                             error:&failure]) {
+                  break;
+              }
+              NSArray<NSString*>* pageOutput =
+                  [translated componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+              for (NSUInteger i = start; i < end; ++i) {
+                  NSUInteger local = i - start;
+                  NSString* line = local < pageOutput.count ? pageOutput[local] : @"";
+                  translatedLines[i] = line.length ? line : @" ";
+              }
+              if (pageOutput.count > end - start) {
+                  NSMutableString* tail = [translatedLines[end - 1] mutableCopy];
+                  for (NSUInteger i = end - start; i < pageOutput.count; ++i) {
+                      NSString* extra = pageOutput[i];
+                      if (!extra.length) continue;
+                      if (tail.length) [tail appendString:@"\n"];
+                      [tail appendString:extra];
+                  }
+                  translatedLines[end - 1] = tail;
+              }
+              start = end;
+          }
+      }
+
+      NSString* output = failure.length ? @"" : [translatedLines componentsJoinedByString:@"\n"];
+      dispatch_async(dispatch_get_main_queue(), ^{
+        SumatraMacDelegate* strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_translationRunning = NO;
+        strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationInstallRunning;
+        if (failure.length) {
+            if (!offeredInstaller) {
+                [strongSelf runArgosPackageInstallFromLanguage:sourceLanguage
+                                                    toLanguage:targetLanguage
+                                                    sourceText:sourceText
+                                                    outputPath:outputPath];
+                return;
+            }
+            NSString* detail = failure.length > 1200 ? [failure substringToIndex:1200] : failure;
+            [strongSelf showError:@"Translation failed" detail:detail.length ? detail : @"Argos exited with an error."];
+            strongSelf->_statusLabel.stringValue = @"Translation failed.";
+            return;
+        }
+
+        NSError* writeError = nil;
+        strongSelf->_pendingTranslationItems = items;
+        if (![strongSelf writeTranslatedPDFWithText:output
+                                         sourcePath:strongSelf->_path
+                                         outputPath:outputPath
+                                              error:&writeError]) {
+            [strongSelf showError:@"Could not save translation" detail:writeError.localizedDescription ?: @""];
+            strongSelf->_statusLabel.stringValue = @"Translation was not saved.";
+            return;
+        }
+
+        [strongSelf openPath:outputPath];
+        strongSelf->_statusLabel.stringValue =
+            [NSString stringWithFormat:@"Translation saved: %@", outputPath.lastPathComponent];
+      });
+    });
+}
+
+- (void)promptToInstallArgosAndContinueWithSourceText:(NSString*)sourceText
+                                       sourceLanguage:(NSString*)sourceLanguage
+                                       targetLanguage:(NSString*)targetLanguage
+                                           outputPath:(NSString*)outputPath {
+    if (_translationInstallRunning) return;
+
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Install Argos Translate?";
+    alert.informativeText =
+        @"SumatraPDF uses Argos Translate locally for offline translation. "
+        @"Install it, then continue translation.";
+    [alert addButtonWithTitle:@"Install"];
+    [alert addButtonWithTitle:@"Cancel"];
+    alert.alertStyle = NSAlertStyleInformational;
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+
+    _translationInstallRunning = YES;
+    _translateButton.enabled = NO;
+    _statusLabel.stringValue = @"Installing Argos Translate...";
+
+    NSTask* task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
+    task.arguments = @[ @"-lc", [self argosInstallScript] ];
+    NSPipe* pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    __block NSMutableData* outputData = [NSMutableData data];
+    pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
+      NSData* chunk = handle.availableData;
+      if (chunk.length > 0) {
+          @synchronized(outputData) {
+              [outputData appendData:chunk];
+          }
+      } else {
+          handle.readabilityHandler = nil;
+      }
+    };
+
+    __weak SumatraMacDelegate* weakSelf = self;
+    task.terminationHandler = ^(NSTask* finishedTask) {
+      pipe.fileHandleForReading.readabilityHandler = nil;
+      NSData* tail = pipe.fileHandleForReading.readDataToEndOfFile;
+      if (tail.length > 0) {
+          @synchronized(outputData) {
+              [outputData appendData:tail];
+          }
+      }
+      NSData* data = nil;
+      @synchronized(outputData) {
+          data = [outputData copy];
+      }
+      NSString* output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+      dispatch_async(dispatch_get_main_queue(), ^{
+        SumatraMacDelegate* strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_translationInstallRunning = NO;
+        strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+        NSString* tool = [strongSelf argosToolPath];
+        if (finishedTask.terminationStatus == 0 && tool.length) {
+            [strongSelf runArgosTranslationWithTool:tool
+                                         sourceText:sourceText
+                                     sourceLanguage:sourceLanguage
+                                     targetLanguage:targetLanguage
+                                         outputPath:outputPath
+                                   offeredInstaller:NO];
+        } else {
+            NSString* detail = output.length > 1200 ? [output substringToIndex:1200] : output;
+            [strongSelf showError:@"Could not install Argos Translate" detail:detail ?: @""];
+            strongSelf->_statusLabel.stringValue = @"Argos installation failed.";
+        }
+      });
+    };
+
+    NSError* error = nil;
+    if (![task launchAndReturnError:&error]) {
+        _translationInstallRunning = NO;
+        _translateButton.enabled = _doc != NULL && !_translationRunning;
+        [self showError:@"Could not start Argos installer" detail:error.localizedDescription ?: @""];
+    }
+}
+
+- (void)translateDocument:(id)sender {
+    (void)sender;
+    if (!_doc || !_path.length) {
+        NSBeep();
+        return;
+    }
+    if (_translationRunning || _translationInstallRunning) {
+        _statusLabel.stringValue = @"Translation is already running.";
+        return;
+    }
+
+    BOOL usingSelection = NO;
+    NSString* textError = nil;
+    NSString* sourceText = [self currentTextForTranslationUsingSelection:&usingSelection error:&textError];
+    if (sourceText.length == 0) {
+        [self showError:@"Could not prepare translation" detail:textError ?: @"No text is available to translate."];
+        return;
+    }
+
+    NSDictionary* options = [self promptForTranslationOptionsUsingSelection:usingSelection];
+    if (!options) return;
+
+    NSString* sourceLanguage = options[@"source"];
+    NSString* targetLanguage = options[@"target"];
+    NSString* outputPath = [self translatedOutputPathForPath:_path targetLanguage:targetLanguage];
+    [self runArgosTranslationWithTool:[self argosToolPath]
+                           sourceText:sourceText
+                       sourceLanguage:sourceLanguage
+                       targetLanguage:targetLanguage
+                           outputPath:outputPath
+                     offeredInstaller:NO];
 }
 
 - (void)appendOCRInstallLog:(NSString*)text {
@@ -7412,6 +8028,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     if (action == @selector(deleteComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(ocrDocument:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+    if (action == @selector(translateDocument:)) return hasDoc && !_translationRunning && !_translationInstallRunning;
     if (action == @selector(showInFolder:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentPageImage:))
         return hasDoc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&

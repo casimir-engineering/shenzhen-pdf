@@ -1,4 +1,5 @@
 #include <gtk/gtk.h>
+#include <cairo-pdf.h>
 #include <gio/gio.h>
 #include <glib/gstdio.h>
 
@@ -15,6 +16,7 @@
 #define MAX_FAVORITES 4096
 #define MAX_FIND_QUERY_BYTES 2048
 #define MAX_FIND_MATCHES 20000
+#define MAX_TRANSLATE_TEXT_BYTES (16 * 1024 * 1024)
 #define MAX_PALETTE_SEARCH_PAGES 250
 #define BACKGROUND_RENDER_RADIUS 3
 #define BACKGROUND_RENDER_BATCH_LIMIT 6
@@ -66,6 +68,8 @@ typedef struct app_state {
     GtkWidget* show_sidebar_item;
     GtkWidget* show_minimap_item;
     GtkWidget* presentation_item;
+    GtkWidget* translate_menu_item;
+    GtkWidget* translate_button;
     GtkWidget* ocr_button;
     GtkWidget* menubar;
     GtkWidget* tab_strip;
@@ -84,6 +88,7 @@ typedef struct app_state {
     GtkWidget* overflow_continuous_item;
     GtkWidget* overflow_search_regex_item;
     GtkWidget* overflow_search_regex_multiline_item;
+    GtkWidget* overflow_translate_item;
     GtkWidget* overflow_fit_mode_items[5];
     GtkWidget* tab_bar;
     GtkWidget* new_tab_button;
@@ -158,6 +163,8 @@ typedef struct app_state {
     gboolean updating_marker_strip_control;
     gboolean updating_presentation_menu;
     gboolean updating_overflow_controls;
+    gboolean translate_running;
+    gboolean translate_install_running;
     gboolean window_fullscreen;
     gboolean panning;
     gboolean selecting;
@@ -1141,6 +1148,14 @@ static void update_controls(app_state* state) {
     if (state->open_in_browser) gtk_widget_set_sensitive(state->open_in_browser, state->doc != NULL);
     if (state->show_in_folder)
         gtk_widget_set_sensitive(state->show_in_folder, state->doc != NULL && state->path != NULL);
+    if (state->translate_menu_item)
+        gtk_widget_set_sensitive(state->translate_menu_item,
+                                 state->doc != NULL && path_has_pdf_extension(state->path) &&
+                                     !state->translate_running && !state->translate_install_running);
+    if (state->translate_button)
+        gtk_widget_set_sensitive(state->translate_button, state->doc != NULL && path_has_pdf_extension(state->path) &&
+                                                              !state->translate_running &&
+                                                              !state->translate_install_running);
     if (state->ocr_button)
         gtk_widget_set_sensitive(state->ocr_button, state->doc != NULL && path_has_pdf_extension(state->path));
     update_find_controls(state);
@@ -3929,6 +3944,7 @@ typedef struct ocr_result {
 } ocr_result;
 
 static void ocr_clicked(GtkButton* button, gpointer user_data);
+static void translate_clicked(GtkButton* button, gpointer user_data);
 
 typedef struct ocr_install_task {
     app_state* state;
@@ -4271,6 +4287,764 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
     g_free(backup);
 }
 
+typedef struct translate_task {
+    app_state* state;
+    char* tool;
+    char* path;
+    char* input_text;
+    char* from_lang;
+    char* output_path;
+    char* tmp_pdf_path;
+    spdf_rect selection_bounds;
+    int page_index;
+    gboolean full_document;
+    gboolean has_selection_bounds;
+} translate_task;
+
+typedef struct translate_line_meta {
+    int page_index;
+    spdf_rect bounds;
+    float font_size;
+} translate_line_meta;
+
+typedef struct translate_result {
+    app_state* state;
+    char* output_path;
+    gboolean success;
+    char* message;
+} translate_result;
+
+typedef struct translate_install_task {
+    app_state* state;
+    GtkWidget* dialog;
+    GtkWidget* progress;
+    GtkWidget* log;
+    char* script;
+} translate_install_task;
+
+typedef struct translate_install_result {
+    app_state* state;
+    GtkWidget* dialog;
+    GtkWidget* progress;
+    GtkWidget* log;
+    gboolean success;
+    char* output;
+} translate_install_result;
+
+static gboolean subprocess_capture_utf8(char** argv, const char* input, char** output_out, char** error_out,
+                                        GError** error) {
+    GSubprocess* subprocess;
+    gchar* stdout_text = NULL;
+    gchar* stderr_text = NULL;
+    gboolean ok;
+
+    if (output_out) *output_out = NULL;
+    if (error_out) *error_out = NULL;
+    subprocess = g_subprocess_newv(
+        (const gchar* const*)argv,
+        G_SUBPROCESS_FLAGS_STDIN_PIPE | G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE, error);
+    if (!subprocess) return FALSE;
+
+    ok = g_subprocess_communicate_utf8(subprocess, input ? input : "", NULL, &stdout_text, &stderr_text, error);
+    if (output_out)
+        *output_out = stdout_text;
+    else
+        g_free(stdout_text);
+    if (error_out)
+        *error_out = stderr_text;
+    else
+        g_free(stderr_text);
+    ok = ok && g_subprocess_get_successful(subprocess);
+    g_object_unref(subprocess);
+    return ok;
+}
+
+static char* translate_output_path_for_pdf(const char* path) {
+    char* dir = g_path_get_dirname(path);
+    char* base = g_path_get_basename(path);
+    char* dot = strrchr(base, '.');
+    char* stem = dot ? g_strndup(base, (gsize)(dot - base)) : g_strdup(base);
+    char* name = g_strdup_printf("%s_english.pdf", stem);
+    char* output = g_build_filename(dir, name, NULL);
+    g_free(name);
+    g_free(stem);
+    g_free(base);
+    g_free(dir);
+    return output;
+}
+
+static char* translate_temp_path_for_pdf(const char* path) {
+    char* dir = g_path_get_dirname(path);
+    char* base = g_path_get_basename(path);
+    char* name = g_strdup_printf(".%s.translate-%u.pdf", base, g_random_int());
+    char* output = g_build_filename(dir, name, NULL);
+    g_free(name);
+    g_free(base);
+    g_free(dir);
+    return output;
+}
+
+static spdf_rect union_public_rect(spdf_rect a, spdf_rect b) {
+    spdf_rect r;
+    r.x0 = MIN(a.x0, b.x0);
+    r.y0 = MIN(a.y0, b.y0);
+    r.x1 = MAX(a.x1, b.x1);
+    r.y1 = MAX(a.y1, b.y1);
+    return r;
+}
+
+static gboolean append_translate_meta(translate_line_meta** metas, int* count, int* capacity, int page_index,
+                                      spdf_rect bounds, float font_size) {
+    translate_line_meta* next;
+    int next_capacity;
+
+    if (*count == *capacity) {
+        next_capacity = *capacity ? *capacity * 2 : 256;
+        next = g_renew(translate_line_meta, *metas, next_capacity);
+        if (!next) return FALSE;
+        *metas = next;
+        *capacity = next_capacity;
+    }
+    (*metas)[*count].page_index = page_index;
+    (*metas)[*count].bounds = bounds;
+    (*metas)[*count].font_size = font_size;
+    (*count)++;
+    return TRUE;
+}
+
+static char* extract_document_lines_for_translate(const char* path, translate_line_meta** metas_out,
+                                                  int* meta_count_out, char** message_out) {
+    spdf_document* doc;
+    GString* text;
+    translate_line_meta* metas = NULL;
+    int meta_count = 0;
+    int meta_capacity = 0;
+    char err[1024];
+    int page_count;
+
+    if (metas_out) *metas_out = NULL;
+    if (meta_count_out) *meta_count_out = 0;
+    if (message_out) *message_out = NULL;
+
+    doc = spdf_open(path, err, sizeof(err));
+    if (!doc) {
+        if (message_out) *message_out = g_strdup(err[0] ? err : "Could not open document for translation.");
+        return NULL;
+    }
+
+    text = g_string_new("");
+    page_count = spdf_page_count(doc);
+    for (int page = 0; page < page_count; ++page) {
+        spdf_text_lines lines;
+        memset(&lines, 0, sizeof(lines));
+        if (!spdf_extract_page_text_lines(doc, page, &lines, err, sizeof(err))) {
+            if (message_out)
+                *message_out = g_strdup_printf("Could not extract text from page %d: %s", page + 1,
+                                               err[0] ? err : "Unknown error");
+            spdf_free_text_lines(&lines);
+            g_free(metas);
+            g_string_free(text, TRUE);
+            spdf_close(doc);
+            return NULL;
+        }
+        for (int i = 0; i < lines.count; ++i) {
+            if (!lines.items[i].text || !*lines.items[i].text) continue;
+            if (!append_translate_meta(&metas, &meta_count, &meta_capacity, page, lines.items[i].bounds,
+                                       lines.items[i].font_size)) {
+                if (message_out) *message_out = g_strdup("Out of memory while preparing translation.");
+                spdf_free_text_lines(&lines);
+                g_free(metas);
+                g_string_free(text, TRUE);
+                spdf_close(doc);
+                return NULL;
+            }
+            g_string_append(text, lines.items[i].text);
+            g_string_append_c(text, '\n');
+        }
+        spdf_free_text_lines(&lines);
+    }
+    spdf_close(doc);
+
+    if (meta_count == 0 || text->len == 0) {
+        if (message_out)
+            *message_out = g_strdup("No selectable document text was found. Run OCR first, then translate.");
+        g_free(metas);
+        g_string_free(text, TRUE);
+        return NULL;
+    }
+
+    if (metas_out) *metas_out = metas;
+    if (meta_count_out) *meta_count_out = meta_count;
+    return g_string_free(text, FALSE);
+}
+
+static char* extract_full_document_text_for_translate(const char* path, char** message_out) {
+    char* tool = g_find_program_in_path("pdftotext");
+    char* output = NULL;
+    char* stderr_text = NULL;
+    GError* error = NULL;
+
+    if (message_out) *message_out = NULL;
+    if (tool) {
+        char* argv[] = {tool, "-layout", (char*)path, "-", NULL};
+        gboolean ok = subprocess_capture_utf8(argv, NULL, &output, &stderr_text, &error);
+        if (ok && output && output[0] != '\0') {
+            g_free(stderr_text);
+            g_free(tool);
+            return output;
+        }
+        if (message_out && stderr_text && *stderr_text) *message_out = g_strdup(stderr_text);
+        g_clear_error(&error);
+        g_free(output);
+        g_free(stderr_text);
+        output = NULL;
+        stderr_text = NULL;
+        g_free(tool);
+    }
+
+    tool = g_find_program_in_path("mutool");
+    if (tool) {
+        char* argv[] = {tool, "draw", "-F", "txt", "-o", "-", (char*)path, NULL};
+        gboolean ok = subprocess_capture_utf8(argv, NULL, &output, &stderr_text, &error);
+        if (ok && output && output[0] != '\0') {
+            g_free(stderr_text);
+            g_free(tool);
+            return output;
+        }
+        if (message_out && !*message_out && stderr_text && *stderr_text) *message_out = g_strdup(stderr_text);
+        g_clear_error(&error);
+        g_free(output);
+        g_free(stderr_text);
+        g_free(tool);
+    }
+
+    if (message_out && !*message_out)
+        *message_out = g_strdup(
+            "Full-document translation needs a document text extraction API, pdftotext, or mutool. "
+            "Select text and translate the selection, or install poppler-utils/mupdf-tools.");
+    return NULL;
+}
+
+static gboolean pdf_next_line(cairo_t* cr, double* y, double page_height, double margin, double line_height) {
+    *y += line_height;
+    if (*y <= page_height - margin) return FALSE;
+    cairo_show_page(cr);
+    *y = margin;
+    return TRUE;
+}
+
+static gboolean write_translated_text_pdf(const char* path, const char* source_path, const char* text,
+                                          char** message_out) {
+    const double page_width = 595.0;
+    const double page_height = 842.0;
+    const double margin = 48.0;
+    const double line_height = 15.0;
+    cairo_surface_t* surface;
+    cairo_t* cr;
+    cairo_status_t status;
+    char* title;
+    char* valid_text;
+    char** paragraphs;
+    double y = margin;
+
+    if (message_out) *message_out = NULL;
+    surface = cairo_pdf_surface_create(path, page_width, page_height);
+    cr = cairo_create(surface);
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    cairo_set_font_size(cr, 13.0);
+    title = g_path_get_basename(source_path);
+    cairo_move_to(cr, margin, y);
+    cairo_show_text(cr, "Translated to English");
+    y += line_height;
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(cr, 9.0);
+    cairo_move_to(cr, margin, y);
+    cairo_show_text(cr, title ? title : "");
+    y += line_height * 1.4;
+    cairo_set_font_size(cr, 11.0);
+
+    valid_text = g_utf8_make_valid(text ? text : "", -1);
+    paragraphs = g_strsplit(valid_text, "\n", -1);
+    for (int i = 0; paragraphs[i]; ++i) {
+        char* paragraph = g_strstrip(paragraphs[i]);
+        char** words;
+        GString* line;
+
+        if (!*paragraph) {
+            pdf_next_line(cr, &y, page_height, margin, line_height);
+            continue;
+        }
+
+        words = g_strsplit_set(paragraph, " \t\r", -1);
+        line = g_string_new("");
+        for (int word_index = 0; words[word_index]; ++word_index) {
+            cairo_text_extents_t extents;
+            char* candidate;
+            if (!*words[word_index]) continue;
+            candidate =
+                line->len ? g_strdup_printf("%s %s", line->str, words[word_index]) : g_strdup(words[word_index]);
+            cairo_text_extents(cr, candidate, &extents);
+            if (line->len && extents.x_advance > page_width - margin * 2.0) {
+                cairo_move_to(cr, margin, y);
+                cairo_show_text(cr, line->str);
+                pdf_next_line(cr, &y, page_height, margin, line_height);
+                g_string_assign(line, words[word_index]);
+            } else {
+                g_string_assign(line, candidate);
+            }
+            g_free(candidate);
+        }
+        if (line->len) {
+            cairo_move_to(cr, margin, y);
+            cairo_show_text(cr, line->str);
+            pdf_next_line(cr, &y, page_height, margin, line_height);
+        }
+        g_string_free(line, TRUE);
+        g_strfreev(words);
+    }
+
+    cairo_destroy(cr);
+    cairo_surface_finish(surface);
+    status = cairo_surface_status(surface);
+    cairo_surface_destroy(surface);
+    g_strfreev(paragraphs);
+    g_free(valid_text);
+    g_free(title);
+
+    if (status != CAIRO_STATUS_SUCCESS) {
+        if (message_out) *message_out = g_strdup(cairo_status_to_string(status));
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean translate_finished_idle(gpointer data) {
+    translate_result* result = (translate_result*)data;
+    app_state* state = result->state;
+
+    state->translate_running = FALSE;
+    update_controls(state);
+    if (result->success) {
+        open_path_in_tab_at_page(state, result->output_path, 0, TRUE);
+        gtk_label_set_text(GTK_LABEL(state->status), result->message ? result->message : "Translation complete.");
+    } else {
+        show_error(GTK_WINDOW(state->window), "Translation failed", result->message ? result->message : "");
+        gtk_label_set_text(GTK_LABEL(state->status), "Translation failed.");
+    }
+    g_free(result->output_path);
+    g_free(result->message);
+    g_free(result);
+    return G_SOURCE_REMOVE;
+}
+
+static gpointer translate_worker(gpointer data) {
+    translate_task* task = (translate_task*)data;
+    translate_result* result = g_new0(translate_result, 1);
+    char* input_text = NULL;
+    char* translated = NULL;
+    char* stderr_text = NULL;
+    char* detail = NULL;
+    translate_line_meta* metas = NULL;
+    int meta_count = 0;
+    int meta_capacity = 0;
+    GError* error = NULL;
+
+    result->state = task->state;
+    result->output_path = g_strdup(task->output_path);
+
+    if (task->input_text) {
+        input_text = g_strdup(task->input_text);
+        if (!append_translate_meta(
+                &metas, &meta_count, &meta_capacity, task->page_index, task->selection_bounds,
+                MAX(8.0f, MIN(18.0f, (task->selection_bounds.y1 - task->selection_bounds.y0) * 0.8f)))) {
+            result->message = g_strdup("Out of memory while preparing translation.");
+            goto done;
+        }
+    } else {
+        input_text = extract_document_lines_for_translate(task->path, &metas, &meta_count, &detail);
+        if (!input_text) {
+            char* fallback_detail = NULL;
+            input_text = extract_full_document_text_for_translate(task->path, &fallback_detail);
+            g_free(fallback_detail);
+        }
+    }
+
+    if (!input_text || input_text[0] == '\0') {
+        if (detail) {
+            result->message = detail;
+            detail = NULL;
+        } else {
+            result->message = g_strdup("No document text was available to translate.");
+        }
+        goto done;
+    }
+    if (strlen(input_text) > MAX_TRANSLATE_TEXT_BYTES) {
+        result->message = g_strdup("The extracted text is too large to translate in this build.");
+        goto done;
+    }
+
+    char* argv[] = {task->tool, "--from-lang", task->from_lang, "--to-lang", "en", NULL};
+    if (meta_count > 1) {
+        char** source_lines = g_strsplit(input_text, "\n", -1);
+        GString* translated_joined = g_string_new("");
+        int start = 0;
+        while (start < meta_count) {
+            int page = metas[start].page_index;
+            int end = start + 1;
+            GString* page_input = g_string_new("");
+            char* page_translated = NULL;
+            char* page_stderr = NULL;
+            GError* page_error = NULL;
+            while (end < meta_count && metas[end].page_index == page) end++;
+            for (int i = start; i < end; ++i) {
+                g_string_append(page_input, source_lines && source_lines[i] ? source_lines[i] : "");
+                g_string_append_c(page_input, '\n');
+            }
+            if (!subprocess_capture_utf8(argv, page_input->str, &page_translated, &page_stderr, &page_error) ||
+                !page_translated || page_translated[0] == '\0') {
+                const char* error_text = page_error && page_error->message ? page_error->message : NULL;
+                const char* process_text = page_stderr && *page_stderr ? page_stderr : page_translated;
+                result->message = g_strdup(
+                    error_text ? error_text : (process_text ? process_text : "Argos Translate exited with an error."));
+                if (page_error) g_error_free(page_error);
+                g_free(page_translated);
+                g_free(page_stderr);
+                g_string_free(page_input, TRUE);
+                g_string_free(translated_joined, TRUE);
+                g_strfreev(source_lines);
+                goto done;
+            }
+            char** page_output = g_strsplit(page_translated, "\n", -1);
+            for (int i = start; i < end; ++i) {
+                int local = i - start;
+                g_string_append(translated_joined,
+                                page_output && page_output[local] && page_output[local][0] ? page_output[local] : " ");
+                g_string_append_c(translated_joined, '\n');
+            }
+            g_strfreev(page_output);
+            g_free(page_translated);
+            g_free(page_stderr);
+            g_string_free(page_input, TRUE);
+            start = end;
+        }
+        translated = g_string_free(translated_joined, FALSE);
+        g_strfreev(source_lines);
+    } else if (!subprocess_capture_utf8(argv, input_text, &translated, &stderr_text, &error) || !translated ||
+               translated[0] == '\0') {
+        const char* error_text = error && error->message ? error->message : NULL;
+        const char* process_text = stderr_text && *stderr_text ? stderr_text : translated;
+        result->message =
+            g_strdup(error_text ? error_text : (process_text ? process_text : "Argos Translate exited with an error."));
+        goto done;
+    }
+
+    if (meta_count > 0) {
+        spdf_document* save_doc;
+        spdf_translated_line* lines;
+        char** output_lines;
+        char err[1024];
+
+        save_doc = spdf_open(task->path, err, sizeof(err));
+        if (!save_doc) {
+            result->message = g_strdup(err[0] ? err : "Could not reopen document to save translation.");
+            goto done;
+        }
+        lines = g_new0(spdf_translated_line, meta_count);
+        output_lines = g_strsplit(translated ? translated : "", "\n", -1);
+        for (int i = 0; i < meta_count; ++i) {
+            const char* line_text = output_lines && output_lines[i] && output_lines[i][0] ? output_lines[i] : " ";
+            if (meta_count == 1) line_text = translated && translated[0] ? translated : " ";
+            lines[i].page_index = metas[i].page_index;
+            lines[i].bounds = metas[i].bounds;
+            lines[i].font_size = metas[i].font_size;
+            lines[i].opaque_background = SPDF_TRANSLATION_BACKGROUND_AUTO;
+            lines[i].text = line_text;
+        }
+        if (!spdf_save_translated_copy(save_doc, task->tmp_pdf_path, lines, meta_count, err, sizeof(err))) {
+            result->message = g_strdup(err[0] ? err : "Could not write translated PDF.");
+            g_strfreev(output_lines);
+            g_free(lines);
+            spdf_close(save_doc);
+            goto done;
+        }
+        g_strfreev(output_lines);
+        g_free(lines);
+        spdf_close(save_doc);
+    } else if (!write_translated_text_pdf(task->tmp_pdf_path, task->path, translated, &detail)) {
+        result->message = detail ? detail : g_strdup("Could not write translated PDF.");
+        detail = NULL;
+        goto done;
+    }
+    if (g_rename(task->tmp_pdf_path, task->output_path) != 0) {
+        result->message = g_strdup("Could not move translated PDF into place.");
+        g_remove(task->tmp_pdf_path);
+        goto done;
+    }
+
+    result->success = TRUE;
+    result->message =
+        g_strdup(task->full_document ? "Translated document opened." : "Translated selection opened as a PDF.");
+
+done:
+    if (error) g_error_free(error);
+    g_free(input_text);
+    g_free(translated);
+    g_free(stderr_text);
+    g_free(detail);
+    g_free(metas);
+    g_free(task->tool);
+    g_free(task->path);
+    g_free(task->input_text);
+    g_free(task->from_lang);
+    g_free(task->output_path);
+    g_free(task->tmp_pdf_path);
+    g_free(task);
+    g_idle_add(translate_finished_idle, result);
+    return NULL;
+}
+
+static gboolean pulse_translate_install_progress(gpointer data) {
+    GtkProgressBar* progress = GTK_PROGRESS_BAR(data);
+    if (!GPOINTER_TO_INT(g_object_get_data(G_OBJECT(progress), "translate-install-running"))) return G_SOURCE_REMOVE;
+    gtk_progress_bar_pulse(progress);
+    return G_SOURCE_CONTINUE;
+}
+
+static char* translate_install_script(void) {
+    return g_strdup(
+        "set -e\n"
+        "export PATH=\"$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"\n"
+        "if command -v argos-translate >/dev/null 2>&1 && command -v argospm >/dev/null 2>&1; then exit 0; fi\n"
+        "echo 'Installing Argos Translate...'\n"
+        "if command -v pkexec >/dev/null 2>&1; then\n"
+        "  if command -v apt-get >/dev/null 2>&1; then\n"
+        "    pkexec /bin/sh -c 'apt-get update && apt-get install -y argos-translate' || true\n"
+        "  elif command -v dnf >/dev/null 2>&1; then\n"
+        "    pkexec dnf install -y argos-translate || true\n"
+        "  elif command -v pacman >/dev/null 2>&1; then\n"
+        "    pkexec pacman -S --needed --noconfirm argos-translate || true\n"
+        "  elif command -v zypper >/dev/null 2>&1; then\n"
+        "    pkexec zypper --non-interactive install argos-translate || true\n"
+        "  fi\n"
+        "fi\n"
+        "if ! command -v argos-translate >/dev/null 2>&1 || ! command -v argospm >/dev/null 2>&1; then\n"
+        "  if ! command -v python3 >/dev/null 2>&1; then echo 'python3 is required to install Argos Translate.'; exit "
+        "1; "
+        "fi\n"
+        "  python3 -m pip --version >/dev/null 2>&1 || python3 -m ensurepip --user >/dev/null 2>&1 || true\n"
+        "  python3 -m pip install --user --upgrade argostranslate || "
+        "python3 -m pip install --user --break-system-packages --upgrade argostranslate\n"
+        "fi\n"
+        "command -v argos-translate >/dev/null 2>&1\n"
+        "command -v argospm >/dev/null 2>&1\n"
+        "echo 'Argos Translate installed. Install source-to-English language models with argospm if needed.'\n");
+}
+
+static gboolean translate_install_finished_idle(gpointer data) {
+    translate_install_result* result = (translate_install_result*)data;
+    char* tool = NULL;
+    char* argospm = NULL;
+
+    result->state->translate_install_running = FALSE;
+    g_object_set_data(G_OBJECT(result->progress), "translate-install-running", GINT_TO_POINTER(FALSE));
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(result->progress), result->success ? 1.0 : 0.0);
+    append_install_log(result->log, result->output ? result->output : "");
+
+    tool = g_find_program_in_path("argos-translate");
+    argospm = g_find_program_in_path("argospm");
+    if (result->success && tool && argospm) {
+        gtk_widget_destroy(result->dialog);
+        update_controls(result->state);
+        translate_clicked(GTK_BUTTON(result->state->translate_button), result->state);
+    } else {
+        append_install_log(result->log,
+                           "\nArgos Translate installation failed. The package manager output is shown above.\n");
+        gtk_label_set_text(GTK_LABEL(result->state->status), "Translation support installation failed.");
+        update_controls(result->state);
+    }
+
+    g_free(tool);
+    g_free(argospm);
+    g_object_unref(result->dialog);
+    g_object_unref(result->progress);
+    g_object_unref(result->log);
+    g_free(result->output);
+    g_free(result);
+    return G_SOURCE_REMOVE;
+}
+
+static gpointer translate_install_worker(gpointer data) {
+    translate_install_task* task = (translate_install_task*)data;
+    translate_install_result* result = g_new0(translate_install_result, 1);
+    gchar* stdout_text = NULL;
+    gchar* stderr_text = NULL;
+    GError* error = NULL;
+    char* argv[] = {"/bin/sh", "-c", task->script, NULL};
+    gboolean ok = subprocess_capture_utf8(argv, NULL, &stdout_text, &stderr_text, &error);
+    GString* output = g_string_new("");
+
+    if (stdout_text) g_string_append(output, stdout_text);
+    if (stderr_text) g_string_append(output, stderr_text);
+    if (error && error->message) g_string_append_printf(output, "\n%s\n", error->message);
+
+    result->state = task->state;
+    result->dialog = task->dialog;
+    result->progress = task->progress;
+    result->log = task->log;
+    result->success = ok;
+    result->output = g_string_free(output, FALSE);
+
+    if (error) g_error_free(error);
+    g_free(stdout_text);
+    g_free(stderr_text);
+    g_free(task->script);
+    g_free(task);
+    g_idle_add(translate_install_finished_idle, result);
+    return NULL;
+}
+
+static void install_translate_then_run(app_state* state) {
+    GtkWidget* dialog = gtk_dialog_new();
+    GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget* title = gtk_label_new("Installing Argos Translate");
+    GtkWidget* progress = gtk_progress_bar_new();
+    GtkWidget* scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget* log = gtk_text_view_new();
+    translate_install_task* task;
+
+    if (state->translate_install_running) return;
+    state->translate_install_running = TRUE;
+    gtk_window_set_title(GTK_WINDOW(dialog), "Installing Translation Support");
+    gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(state->window));
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 640, 360);
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(log), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(log), TRUE);
+    gtk_widget_set_margin_start(title, 10);
+    gtk_widget_set_margin_end(title, 10);
+    gtk_widget_set_margin_top(title, 10);
+    gtk_widget_set_margin_bottom(title, 6);
+    gtk_widget_set_margin_start(progress, 10);
+    gtk_widget_set_margin_end(progress, 10);
+    gtk_widget_set_margin_bottom(progress, 8);
+    gtk_container_add(GTK_CONTAINER(scroll), log);
+    gtk_box_pack_start(GTK_BOX(content), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), progress, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 0);
+    g_signal_connect(dialog, "delete-event", G_CALLBACK(block_dialog_delete), NULL);
+    append_install_log(log, "Preparing Argos Translate installer...\n");
+    gtk_widget_show_all(dialog);
+    g_object_set_data(G_OBJECT(progress), "translate-install-running", GINT_TO_POINTER(TRUE));
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 120, pulse_translate_install_progress, g_object_ref(progress),
+                       g_object_unref);
+
+    update_controls(state);
+    task = g_new0(translate_install_task, 1);
+    task->state = state;
+    task->dialog = g_object_ref(dialog);
+    task->progress = g_object_ref(progress);
+    task->log = g_object_ref(log);
+    task->script = translate_install_script();
+    g_thread_unref(g_thread_new("install-translate", translate_install_worker, task));
+}
+
+static char* prompt_translate_source_language(app_state* state) {
+    GtkWidget* dialog =
+        gtk_dialog_new_with_buttons("Translate to English", GTK_WINDOW(state->window), GTK_DIALOG_MODAL, "_Cancel",
+                                    GTK_RESPONSE_CANCEL, "_Translate", GTK_RESPONSE_ACCEPT, NULL);
+    GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget* label = gtk_label_new("Source language code");
+    GtkWidget* entry = gtk_entry_new();
+    char* result = NULL;
+
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_entry_set_text(GTK_ENTRY(entry), "zh");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "zh, es, fr, de...");
+    gtk_widget_set_margin_start(label, 12);
+    gtk_widget_set_margin_end(label, 12);
+    gtk_widget_set_margin_top(label, 12);
+    gtk_widget_set_margin_start(entry, 12);
+    gtk_widget_set_margin_end(entry, 12);
+    gtk_widget_set_margin_top(entry, 6);
+    gtk_widget_set_margin_bottom(entry, 12);
+    gtk_box_pack_start(GTK_BOX(content), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), entry, FALSE, FALSE, 0);
+    gtk_widget_show_all(dialog);
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        const char* text = gtk_entry_get_text(GTK_ENTRY(entry));
+        result = g_strdup(text && *text ? text : "auto");
+        g_strstrip(result);
+        if (!*result) {
+            g_free(result);
+            result = g_strdup("auto");
+        }
+    }
+    gtk_widget_destroy(dialog);
+    return result;
+}
+
+static void translate_clicked(GtkButton* button, gpointer user_data) {
+    (void)button;
+    app_state* state = (app_state*)user_data;
+    char* tool;
+    char* argospm;
+    char* from_lang;
+    translate_task* task;
+
+    if (!state->doc || !state->path || !path_has_pdf_extension(state->path) || state->translate_running ||
+        state->translate_install_running)
+        return;
+
+    tool = g_find_program_in_path("argos-translate");
+    argospm = g_find_program_in_path("argospm");
+    if (!tool || !argospm) {
+        GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(state->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION,
+                                                   GTK_BUTTONS_NONE, "Install translation support?");
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+                                                 "SumatraPDF can install Argos Translate, then continue the "
+                                                 "translation flow when installation finishes.");
+        gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_Install", GTK_RESPONSE_ACCEPT, "_Cancel", GTK_RESPONSE_CANCEL,
+                               NULL);
+        int response = gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        g_free(tool);
+        g_free(argospm);
+        if (response == GTK_RESPONSE_ACCEPT) install_translate_then_run(state);
+        return;
+    }
+    g_free(argospm);
+
+    from_lang = prompt_translate_source_language(state);
+    if (!from_lang) {
+        g_free(tool);
+        return;
+    }
+
+    task = g_new0(translate_task, 1);
+    task->state = state;
+    task->tool = tool;
+    task->path = g_strdup(state->path);
+    if (has_text_selection(state)) {
+        spdf_rect bounds = state->selection_rects[0];
+        for (int i = 1; i < state->selection_rect_count; ++i)
+            bounds = union_public_rect(bounds, state->selection_rects[i]);
+        task->input_text = g_strdup(state->selected_text);
+        task->selection_bounds = bounds;
+        task->has_selection_bounds = TRUE;
+    }
+    task->from_lang = from_lang;
+    task->output_path = translate_output_path_for_pdf(state->path);
+    task->tmp_pdf_path = translate_temp_path_for_pdf(state->path);
+    task->page_index = state->page_index;
+    task->full_document = task->input_text == NULL;
+    state->translate_running = TRUE;
+    update_controls(state);
+    gtk_label_set_text(GTK_LABEL(state->status),
+                       task->full_document ? "Translating document..." : "Translating selection...");
+    g_thread_unref(g_thread_new("translate", translate_worker, task));
+}
+
 static void add_current_favorite(app_state* state, gboolean document) {
     char title[1024];
     char status[160];
@@ -4462,6 +5236,11 @@ static void update_toolbar_overflow_menu_state(app_state* state) {
         gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->overflow_search_regex_multiline_item),
                                        state->search_regex_multiline);
         gtk_widget_set_sensitive(state->overflow_search_regex_multiline_item, state->doc && state->search_regex);
+    }
+    if (state->overflow_translate_item) {
+        gtk_widget_set_sensitive(state->overflow_translate_item,
+                                 state->doc != NULL && path_has_pdf_extension(state->path) &&
+                                     !state->translate_running && !state->translate_install_running);
     }
     for (int i = 0; i < 5; ++i) {
         if (!state->overflow_fit_mode_items[i]) continue;
@@ -5186,6 +5965,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* edit_menu = gtk_menu_new();
     GtkWidget* edit = gtk_menu_item_new_with_mnemonic("_Edit");
     GtkWidget* set_comment_author = gtk_menu_item_new_with_mnemonic("Set _Author for Comments...");
+    state->translate_menu_item = gtk_menu_item_new_with_mnemonic("_Translate to English...");
     state->search_regex_multiline_item = gtk_check_menu_item_new_with_mnemonic("Regex _Multiline");
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
@@ -5207,6 +5987,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
                                    state->search_regex_multiline);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(edit), edit_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), set_comment_author);
+    gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), state->translate_menu_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), state->search_regex_multiline_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), edit);
@@ -5293,6 +6074,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->find_count_label = gtk_label_new("");
     state->find_prev_button = gtk_button_new_with_label("<");
     state->find_next_button = gtk_button_new_with_label(">");
+    state->translate_button = gtk_button_new_with_label("Translate");
+    gtk_widget_set_tooltip_text(state->translate_button, "Translate selection or document to English");
     state->ocr_button = gtk_button_new_with_label("OCR");
     gtk_entry_set_width_chars(GTK_ENTRY(state->search_entry), 10);
     gtk_entry_set_max_width_chars(GTK_ENTRY(state->search_entry), 13);
@@ -5320,6 +6103,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->overflow_continuous_item = gtk_check_menu_item_new_with_label("Continuous");
     state->overflow_search_regex_item = gtk_check_menu_item_new_with_label("Regex");
     state->overflow_search_regex_multiline_item = gtk_check_menu_item_new_with_label("Regex multiline");
+    state->overflow_translate_item = gtk_menu_item_new_with_label("Translate to English...");
     GtkWidget* overflow_fit_menu = gtk_menu_new();
     GtkWidget* overflow_fit = gtk_menu_item_new_with_label("Fit mode");
     GSList* fit_group = NULL;
@@ -5339,6 +6123,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), state->overflow_continuous_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), state->overflow_search_regex_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), state->overflow_search_regex_multiline_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), state->overflow_translate_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), overflow_ocr);
     gtk_widget_show_all(state->toolbar_overflow_menu);
     gtk_widget_hide(state->toolbar_overflow_button);
@@ -5360,6 +6145,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     toolbar_pack_item(toolbar, state->find_next_button, 86, NULL);
     toolbar_pack_item(toolbar, state->search_regex_check, 84, state->overflow_search_regex_item);
     toolbar_pack_item(toolbar, state->search_regex_multiline_check, 82, state->overflow_search_regex_multiline_item);
+    toolbar_pack_item(toolbar, state->translate_button, 98, state->overflow_translate_item);
     toolbar_pack_item(toolbar, state->ocr_button, 100, overflow_ocr);
     GtkWidget* toolbar_spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), toolbar_spacer, TRUE, TRUE, 0);
@@ -5426,6 +6212,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(state->open_in_browser, "activate", G_CALLBACK(open_in_browser), state);
     g_signal_connect(state->show_in_folder, "activate", G_CALLBACK(show_in_folder), state);
     g_signal_connect(set_comment_author, "activate", G_CALLBACK(set_comment_author_clicked), state);
+    g_signal_connect(state->translate_menu_item, "activate", G_CALLBACK(translate_clicked), state);
     g_signal_connect(state->search_regex_multiline_item, "toggled", G_CALLBACK(find_regex_multiline_toggled), state);
     g_signal_connect(state->show_sidebar_item, "toggled", G_CALLBACK(show_sidebar_toggled), state);
     g_signal_connect(state->show_minimap_item, "toggled", G_CALLBACK(show_minimap_toggled), state);
@@ -5445,10 +6232,13 @@ static void activate(GtkApplication* app, gpointer user_data) {
                      G_CALLBACK(overflow_search_regex_multiline_toggled), state);
     for (int i = 0; i < 5; ++i)
         g_signal_connect(state->overflow_fit_mode_items[i], "toggled", G_CALLBACK(overflow_fit_mode_toggled), state);
+    g_signal_connect(state->overflow_translate_item, "activate", G_CALLBACK(overflow_button_activate),
+                     state->translate_button);
     g_signal_connect(overflow_ocr, "activate", G_CALLBACK(overflow_button_activate), state->ocr_button);
     g_signal_connect(zoom_out, "clicked", G_CALLBACK(zoom_out_clicked), state);
     g_signal_connect(zoom_in, "clicked", G_CALLBACK(zoom_in_clicked), state);
     g_signal_connect(state->ocr_button, "clicked", G_CALLBACK(ocr_clicked), state);
+    g_signal_connect(state->translate_button, "clicked", G_CALLBACK(translate_clicked), state);
     g_signal_connect(state->fit_mode, "changed", G_CALLBACK(fit_mode_changed), state);
     g_signal_connect(state->continuous, "toggled", G_CALLBACK(continuous_toggled), state);
     g_signal_connect(state->page_entry, "activate", G_CALLBACK(page_entry_activate), state);

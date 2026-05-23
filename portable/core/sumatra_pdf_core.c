@@ -42,6 +42,18 @@ typedef struct comment_builder {
     int capacity;
 } comment_builder;
 
+typedef struct text_line_builder {
+    spdf_text_line* items;
+    int count;
+    int capacity;
+} text_line_builder;
+
+typedef struct page_image_stats {
+    double total_image_area;
+    double largest_image_area;
+    int image_count;
+} page_image_stats;
+
 static void set_error(char* err, size_t err_len, const char* message) {
     if (!err || err_len == 0) return;
     if (!message) message = "Unknown error";
@@ -649,6 +661,213 @@ int spdf_select_page_text(spdf_document* doc, int page_index, float ax, float ay
 
 void spdf_free_string(char* text) {
     free(text);
+}
+
+static double spdf_rect_area(fz_rect rect) {
+    double w;
+    double h;
+
+    if (fz_is_empty_rect(rect)) return 0.0;
+    w = (double)(rect.x1 - rect.x0);
+    h = (double)(rect.y1 - rect.y0);
+    if (w <= 0.0 || h <= 0.0) return 0.0;
+    return w * h;
+}
+
+static void spdf_rect_to_public(fz_rect rect, spdf_rect* out) {
+    out->x0 = rect.x0;
+    out->y0 = rect.y0;
+    out->x1 = rect.x1;
+    out->y1 = rect.y1;
+}
+
+static int append_extracted_text_line(text_line_builder* builder, const char* text, fz_rect bounds, float font_size) {
+    spdf_text_line* next_items;
+    int next_capacity;
+
+    if (builder->count == builder->capacity) {
+        next_capacity = builder->capacity ? builder->capacity * 2 : 64;
+        next_items = (spdf_text_line*)realloc(builder->items, (size_t)next_capacity * sizeof(spdf_text_line));
+        if (!next_items) return 0;
+        builder->items = next_items;
+        builder->capacity = next_capacity;
+    }
+
+    memset(&builder->items[builder->count], 0, sizeof(builder->items[builder->count]));
+    builder->items[builder->count].text = copy_string(text);
+    if (!builder->items[builder->count].text) return 0;
+    spdf_rect_to_public(bounds, &builder->items[builder->count].bounds);
+    builder->items[builder->count].font_size = font_size;
+    builder->count++;
+    return 1;
+}
+
+static void free_text_line_builder(text_line_builder* builder) {
+    int i;
+
+    if (!builder) return;
+    for (i = 0; i < builder->count; ++i) free(builder->items[i].text);
+    free(builder->items);
+    memset(builder, 0, sizeof(*builder));
+}
+
+static int rune_is_line_space(int rune) {
+    return rune == ' ' || rune == '\t' || rune == '\r' || rune == '\n' || rune == '\f';
+}
+
+static int append_line_text_rune(fz_context* ctx, fz_buffer* buf, int rune, int* last_was_space) {
+    if (rune_is_line_space(rune)) {
+        if (*last_was_space) return 0;
+        fz_append_byte(ctx, buf, ' ');
+        *last_was_space = 1;
+        return 1;
+    }
+    if (rune <= 32 || rune > 0x10ffff) rune = '?';
+    fz_append_rune(ctx, buf, rune);
+    *last_was_space = 0;
+    return 1;
+}
+
+static int append_stext_line(fz_context* ctx, text_line_builder* builder, fz_stext_line* line) {
+    fz_buffer* buf = NULL;
+    fz_stext_char* ch;
+    fz_rect bounds = fz_empty_rect;
+    double total_font_size = 0.0;
+    int font_count = 0;
+    int has_bounds = 0;
+    int last_was_space = 1;
+    const char* text;
+    size_t len;
+
+    fz_var(buf);
+    fz_try(ctx) {
+        buf = fz_new_buffer(ctx, 128);
+        for (ch = line->first_char; ch; ch = ch->next) {
+            fz_rect char_bounds = fz_rect_from_quad(ch->quad);
+            if (!fz_is_empty_rect(char_bounds)) {
+                bounds = has_bounds ? fz_union_rect(bounds, char_bounds) : char_bounds;
+                has_bounds = 1;
+            }
+            if (ch->size > 0.0f) {
+                total_font_size += ch->size;
+                font_count++;
+            }
+            append_line_text_rune(ctx, buf, ch->c, &last_was_space);
+        }
+
+        fz_terminate_buffer(ctx, buf);
+        text = fz_string_from_buffer(ctx, buf);
+        len = strlen(text);
+        while (len > 0 && text[len - 1] == ' ') len--;
+        if (len > 0 && has_bounds) {
+            char* trimmed = (char*)malloc(len + 1);
+            if (!trimmed) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+            memcpy(trimmed, text, len);
+            trimmed[len] = '\0';
+            if (!append_extracted_text_line(
+                    builder, trimmed, bounds,
+                    font_count > 0 ? (float)(total_font_size / (double)font_count) : bounds.y1 - bounds.y0)) {
+                free(trimmed);
+                fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+            }
+            free(trimmed);
+        }
+        fz_drop_buffer(ctx, buf);
+        buf = NULL;
+    }
+    fz_catch(ctx) {
+        if (buf) fz_drop_buffer(ctx, buf);
+        fz_rethrow(ctx);
+    }
+
+    return 1;
+}
+
+static void collect_image_stats_from_blocks(fz_rect page_bounds, fz_stext_block* block, page_image_stats* stats) {
+    for (; block; block = block->next) {
+        if (block->type == FZ_STEXT_BLOCK_IMAGE) {
+            double area = spdf_rect_area(fz_intersect_rect(block->bbox, page_bounds));
+            if (area > 0.0) {
+                stats->total_image_area += area;
+                if (area > stats->largest_image_area) stats->largest_image_area = area;
+                stats->image_count++;
+            }
+        } else if (block->type == FZ_STEXT_BLOCK_STRUCT && block->u.s.down) {
+            collect_image_stats_from_blocks(page_bounds, block->u.s.down->first_block, stats);
+        }
+    }
+}
+
+static int text_page_is_image_backed(fz_stext_page* text) {
+    page_image_stats stats;
+    double page_area;
+
+    memset(&stats, 0, sizeof(stats));
+    if (!text) return 0;
+    page_area = spdf_rect_area(text->mediabox);
+    if (page_area <= 0.0) return 0;
+    collect_image_stats_from_blocks(text->mediabox, text->first_block, &stats);
+    if (stats.largest_image_area / page_area >= 0.55) return 1;
+    if (stats.image_count > 1 && stats.total_image_area / page_area >= 0.75) return 1;
+    return 0;
+}
+
+static void extract_lines_from_blocks(fz_context* ctx, text_line_builder* builder, fz_stext_block* block) {
+    for (; block; block = block->next) {
+        if (block->type == FZ_STEXT_BLOCK_TEXT) {
+            fz_stext_line* line;
+            for (line = block->u.t.first_line; line; line = line->next) append_stext_line(ctx, builder, line);
+        } else if (block->type == FZ_STEXT_BLOCK_STRUCT && block->u.s.down) {
+            extract_lines_from_blocks(ctx, builder, block->u.s.down->first_block);
+        }
+    }
+}
+
+int spdf_extract_page_text_lines(spdf_document* doc, int page_index, spdf_text_lines* out, char* err, size_t err_len) {
+    fz_stext_page* text = NULL;
+    fz_stext_options opts;
+    text_line_builder builder;
+
+    set_error(err, err_len, "");
+    if (!out) {
+        set_error(err, err_len, "No text lines output was supplied.");
+        return 0;
+    }
+    memset(out, 0, sizeof(*out));
+    memset(&builder, 0, sizeof(builder));
+    if (!doc || page_index < 0 || page_index >= doc->page_count) {
+        set_error(err, err_len, "Page index is out of range.");
+        return 0;
+    }
+
+    fz_try(doc->ctx) {
+        memset(&opts, 0, sizeof(opts));
+        opts.flags = FZ_STEXT_PRESERVE_IMAGES;
+        text = fz_new_stext_page_from_page_number(doc->ctx, doc->doc, page_index, &opts);
+        extract_lines_from_blocks(doc->ctx, &builder, text ? text->first_block : NULL);
+        out->image_backed = text_page_is_image_backed(text);
+        fz_drop_stext_page(doc->ctx, text);
+        text = NULL;
+    }
+    fz_catch(doc->ctx) {
+        set_error(err, err_len, fz_caught_message(doc->ctx));
+        if (text) fz_drop_stext_page(doc->ctx, text);
+        free_text_line_builder(&builder);
+        return 0;
+    }
+
+    out->items = builder.items;
+    out->count = builder.count;
+    return 1;
+}
+
+void spdf_free_text_lines(spdf_text_lines* lines) {
+    int i;
+
+    if (!lines) return;
+    for (i = 0; i < lines->count; ++i) free(lines->items[i].text);
+    free(lines->items);
+    memset(lines, 0, sizeof(*lines));
 }
 
 static int append_outline_item(outline_builder* builder, const char* title, int page_index, int level) {
@@ -1424,6 +1643,255 @@ int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t e
         }
         free(temp_path);
     }
+    return 1;
+}
+
+static fz_rect normalized_public_rect(const spdf_rect* rect) {
+    float x0 = rect->x0 < rect->x1 ? rect->x0 : rect->x1;
+    float x1 = rect->x0 < rect->x1 ? rect->x1 : rect->x0;
+    float y0 = rect->y0 < rect->y1 ? rect->y0 : rect->y1;
+    float y1 = rect->y0 < rect->y1 ? rect->y1 : rect->y0;
+    return fz_make_rect(x0, y0, x1, y1);
+}
+
+static float translated_line_font_size(const spdf_translated_line* line, fz_rect rect) {
+    float size = line->font_size;
+
+    if (size <= 0.0f) size = (rect.y1 - rect.y0) * 0.8f;
+    if (size < 4.0f) size = 4.0f;
+    if (size > 96.0f) size = 96.0f;
+    return size;
+}
+
+static fz_rect translated_line_annotation_rect(const spdf_translated_line* line, float font_size) {
+    fz_rect rect = normalized_public_rect(&line->bounds);
+    float min_height = font_size * 1.35f;
+    float pad = font_size * 0.18f;
+
+    if (rect.x1 - rect.x0 < font_size) rect.x1 = rect.x0 + font_size;
+    if (rect.y1 - rect.y0 < min_height) rect.y1 = rect.y0 + min_height;
+    return fz_expand_rect(rect, pad);
+}
+
+static void append_page_content_stream(fz_context* ctx, pdf_document* pdf, pdf_obj* page_obj, fz_buffer* buf) {
+    pdf_obj* contents = pdf_dict_get(ctx, page_obj, PDF_NAME(Contents));
+    pdf_obj* new_contents = NULL;
+
+    fz_var(new_contents);
+    fz_try(ctx) {
+        if (!pdf_is_array(ctx, contents)) {
+            new_contents = pdf_new_array(ctx, pdf, 4);
+            if (contents) pdf_array_push(ctx, new_contents, contents);
+            pdf_dict_put(ctx, page_obj, PDF_NAME(Contents), new_contents);
+            contents = new_contents;
+        }
+        pdf_array_push_drop(ctx, contents, pdf_add_stream(ctx, pdf, buf, NULL, 0));
+    }
+    fz_always(ctx) {
+        pdf_drop_obj(ctx, new_contents);
+    }
+    fz_catch(ctx) {
+        fz_rethrow(ctx);
+    }
+}
+
+static fz_matrix annot_xobject_transform(fz_context* ctx, pdf_obj* annot_obj, pdf_obj* ap) {
+    fz_rect rect = pdf_dict_get_rect(ctx, annot_obj, PDF_NAME(Rect));
+    fz_rect bbox = pdf_dict_get_rect(ctx, ap, PDF_NAME(BBox));
+    fz_matrix transform = pdf_dict_get_matrix(ctx, ap, PDF_NAME(Matrix));
+    float w;
+    float h;
+    float x;
+    float y;
+
+    bbox = fz_transform_rect(bbox, transform);
+    if (fz_is_empty_rect(rect) || fz_is_empty_rect(bbox) || bbox.x1 == bbox.x0 || bbox.y1 == bbox.y0)
+        fz_throw(ctx, FZ_ERROR_FORMAT, "Annotation appearance has invalid bounds");
+
+    w = (rect.x1 - rect.x0) / (bbox.x1 - bbox.x0);
+    h = (rect.y1 - rect.y0) / (bbox.y1 - bbox.y0);
+    x = rect.x0 - bbox.x0 * w;
+    y = rect.y0 - bbox.y0 * h;
+    return fz_make_matrix(w, 0, 0, h, x, y);
+}
+
+static void remove_page_annotation(fz_context* ctx, pdf_obj* page_obj, pdf_obj* annot_obj) {
+    pdf_obj* annots = pdf_dict_get(ctx, page_obj, PDF_NAME(Annots));
+    int annot_num = pdf_to_num(ctx, annot_obj);
+    int i;
+
+    for (i = 0; i < pdf_array_len(ctx, annots); ++i) {
+        pdf_obj* item = pdf_array_get(ctx, annots, i);
+        if (item == annot_obj || (annot_num != 0 && pdf_to_num(ctx, item) == annot_num)) {
+            pdf_array_delete(ctx, annots, i);
+            return;
+        }
+    }
+}
+
+static void bake_overlay_annotation(fz_context* ctx, pdf_document* pdf, pdf_page* page, pdf_annot* annot) {
+    pdf_obj* page_obj = page->obj;
+    pdf_obj* annot_obj = pdf_annot_obj(ctx, annot);
+    pdf_obj* ap;
+    pdf_obj* res;
+    pdf_obj* xobjects;
+    fz_buffer* buf = NULL;
+    fz_matrix matrix;
+    char name[32];
+
+    fz_var(buf);
+    fz_try(ctx) {
+        ap = pdf_annot_ap(ctx, annot);
+        if (!ap || !pdf_is_stream(ctx, ap)) fz_throw(ctx, FZ_ERROR_FORMAT, "Could not generate translation overlay");
+
+        res = pdf_dict_get(ctx, page_obj, PDF_NAME(Resources));
+        if (!res) {
+            res = pdf_dict_get_inheritable(ctx, page_obj, PDF_NAME(Resources));
+            if (res)
+                pdf_dict_put(ctx, page_obj, PDF_NAME(Resources), res);
+            else
+                res = pdf_dict_put_dict(ctx, page_obj, PDF_NAME(Resources), 4);
+        }
+        xobjects = pdf_dict_get(ctx, res, PDF_NAME(XObject));
+        if (!xobjects) xobjects = pdf_dict_put_dict(ctx, res, PDF_NAME(XObject), 8);
+
+        snprintf(name, sizeof(name), "SPDFTr%d", pdf_to_num(ctx, annot_obj));
+        pdf_dict_puts(ctx, xobjects, name, ap);
+        pdf_dict_put(ctx, ap, PDF_NAME(Type), PDF_NAME(XObject));
+        pdf_dict_put(ctx, ap, PDF_NAME(Subtype), PDF_NAME(Form));
+
+        matrix = annot_xobject_transform(ctx, annot_obj, ap);
+        buf = fz_new_buffer(ctx, 256);
+        fz_append_printf(ctx, buf, "q\n%g %g %g %g %g %g cm\n/%s Do\nQ\n", matrix.a, matrix.b, matrix.c, matrix.d,
+                         matrix.e, matrix.f, name);
+        append_page_content_stream(ctx, pdf, page_obj, buf);
+        remove_page_annotation(ctx, page_obj, annot_obj);
+        fz_drop_buffer(ctx, buf);
+        buf = NULL;
+    }
+    fz_catch(ctx) {
+        if (buf) fz_drop_buffer(ctx, buf);
+        fz_rethrow(ctx);
+    }
+}
+
+static void compute_image_backed_pages(fz_context* ctx, fz_document* doc, int page_count, int* image_backed) {
+    fz_stext_page* text = NULL;
+    fz_stext_options opts;
+    int i;
+
+    fz_var(text);
+    memset(&opts, 0, sizeof(opts));
+    opts.flags = FZ_STEXT_PRESERVE_IMAGES;
+    fz_try(ctx) {
+        for (i = 0; i < page_count; ++i) {
+            text = fz_new_stext_page_from_page_number(ctx, doc, i, &opts);
+            image_backed[i] = text_page_is_image_backed(text);
+            fz_drop_stext_page(ctx, text);
+            text = NULL;
+        }
+    }
+    fz_catch(ctx) {
+        if (text) fz_drop_stext_page(ctx, text);
+        fz_rethrow(ctx);
+    }
+}
+
+static void add_translated_line_overlay(fz_context* ctx, pdf_document* pdf, const spdf_translated_line* line,
+                                        const int* image_backed) {
+    static const float black[3] = {0.0f, 0.0f, 0.0f};
+    static const float white[3] = {1.0f, 1.0f, 1.0f};
+    pdf_page* page = NULL;
+    pdf_annot* annot = NULL;
+    fz_rect raw_rect;
+    fz_rect annot_rect;
+    float font_size;
+    int opaque_background;
+
+    if (!line->text || !*line->text) return;
+
+    raw_rect = normalized_public_rect(&line->bounds);
+    font_size = translated_line_font_size(line, raw_rect);
+    annot_rect = translated_line_annotation_rect(line, font_size);
+    opaque_background = line->opaque_background == SPDF_TRANSLATION_BACKGROUND_OPAQUE ||
+                        (line->opaque_background == SPDF_TRANSLATION_BACKGROUND_AUTO && image_backed[line->page_index]);
+
+    fz_var(page);
+    fz_try(ctx) {
+        page = pdf_load_page(ctx, pdf, line->page_index);
+        annot = pdf_create_annot(ctx, page, PDF_ANNOT_FREE_TEXT);
+        pdf_set_annot_rect(ctx, annot, annot_rect);
+        pdf_set_annot_border_width(ctx, annot, 0.0f);
+        pdf_set_annot_contents(ctx, annot, line->text);
+        pdf_set_annot_default_appearance(ctx, annot, "Helv", font_size, 3, black);
+        if (opaque_background) pdf_set_annot_color(ctx, annot, 3, white);
+        pdf_update_annot(ctx, annot);
+        bake_overlay_annotation(ctx, pdf, page, annot);
+        pdf_drop_page(ctx, page);
+        page = NULL;
+    }
+    fz_catch(ctx) {
+        if (page) pdf_drop_page(ctx, page);
+        fz_rethrow(ctx);
+    }
+}
+
+int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_translated_line* lines, int line_count,
+                              char* err, size_t err_len) {
+    pdf_document* source_pdf = NULL;
+    pdf_document* out_pdf = NULL;
+    pdf_graft_map* graft_map = NULL;
+    pdf_write_options options;
+    int* image_backed = NULL;
+    int i;
+
+    set_error(err, err_len, "");
+    if (!doc || !path || !*path) {
+        set_error(err, err_len, "No document path was supplied.");
+        return 0;
+    }
+    if (line_count < 0 || (line_count > 0 && !lines)) {
+        set_error(err, err_len, "No translated lines were supplied.");
+        return 0;
+    }
+
+    fz_var(out_pdf);
+    fz_var(graft_map);
+    fz_var(image_backed);
+    fz_try(doc->ctx) {
+        source_pdf = pdf_specifics(doc->ctx, doc->doc);
+        if (!source_pdf) fz_throw(doc->ctx, FZ_ERROR_FORMAT, "Only PDF documents can be translated.");
+
+        image_backed = (int*)calloc((size_t)(doc->page_count > 0 ? doc->page_count : 1), sizeof(int));
+        if (!image_backed) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        compute_image_backed_pages(doc->ctx, doc->doc, doc->page_count, image_backed);
+
+        out_pdf = pdf_create_document(doc->ctx);
+        graft_map = pdf_new_graft_map(doc->ctx, out_pdf);
+        for (i = 0; i < doc->page_count; ++i) pdf_graft_mapped_page(doc->ctx, graft_map, -1, source_pdf, i);
+
+        for (i = 0; i < line_count; ++i) {
+            if (lines[i].page_index < 0 || lines[i].page_index >= doc->page_count)
+                fz_throw(doc->ctx, FZ_ERROR_FORMAT, "Translated line page index is out of range");
+            add_translated_line_overlay(doc->ctx, out_pdf, &lines[i], image_backed);
+        }
+
+        options = pdf_default_write_options;
+        options.do_compress = 1;
+        options.do_compress_images = 1;
+        options.do_compress_fonts = 1;
+        pdf_save_document(doc->ctx, out_pdf, path, &options);
+    }
+    fz_always(doc->ctx) {
+        free(image_backed);
+        if (graft_map) pdf_drop_graft_map(doc->ctx, graft_map);
+        if (out_pdf) pdf_drop_document(doc->ctx, out_pdf);
+    }
+    fz_catch(doc->ctx) {
+        set_error(err, err_len, fz_caught_message(doc->ctx));
+        return 0;
+    }
+
     return 1;
 }
 
