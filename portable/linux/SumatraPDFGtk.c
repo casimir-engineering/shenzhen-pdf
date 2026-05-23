@@ -47,10 +47,13 @@ typedef struct app_state {
     GtkWidget* open_in_browser;
     GtkWidget* show_in_folder;
     GtkWidget* show_sidebar_item;
-    GtkWidget* show_chapters_panel;
-    GtkWidget* show_comments_panel;
+    GtkWidget* presentation_item;
     GtkWidget* ocr_button;
+    GtkWidget* menubar;
     GtkWidget* tab_strip;
+    GtkWidget* toolbar;
+    GtkWidget* side_panel_button;
+    GtkWidget* marker_strip_button;
     GtkWidget* tab_bar;
     GtkWidget* new_tab_button;
     GtkWidget* page_box;
@@ -109,11 +112,17 @@ typedef struct app_state {
     int fit_mode_id;
     gboolean continuous_mode;
     gboolean show_sidebar;
+    gboolean show_find_markers;
+    gboolean presentation_mode;
+    gboolean presentation_prev_continuous_mode;
+    gboolean presentation_prev_show_sidebar;
     gboolean search_regex;
     gboolean search_regex_multiline;
     gboolean suppress_find_changed;
     gboolean switching_tabs;
     gboolean updating_sidebar_menu;
+    gboolean updating_marker_strip_control;
+    gboolean updating_presentation_menu;
     gboolean panning;
     gboolean selecting;
     gboolean clamping_horizontal;
@@ -122,6 +131,10 @@ typedef struct app_state {
     double pan_start_y;
     double pan_start_h;
     double pan_start_v;
+    double presentation_prev_zoom;
+    int presentation_prev_fit_mode_id;
+    GtkPolicyType presentation_prev_hpolicy;
+    GtkPolicyType presentation_prev_vpolicy;
     int selection_page_index;
     double selection_start_x;
     double selection_start_y;
@@ -200,12 +213,14 @@ static void start_find_for_current_query(app_state* state, int preferred_index, 
                                          gboolean reveal_match, gboolean preserve_scroll);
 static void update_controls(app_state* state);
 static void update_sidebar_menu_items(app_state* state);
+static void update_presentation_menu_item(app_state* state);
 static void update_find_controls(app_state* state);
 static void update_tab_strip(app_state* state);
 static void save_active_tab_state(app_state* state);
 static void select_tab(app_state* state, int index);
 static const char* current_search_text(app_state* state);
 static void set_regex_multiline_widget_active(GtkWidget* widget, gboolean active);
+static void set_presentation_mode(app_state* state, gboolean enable);
 
 static char* json_escape(const char* text) {
     GString* out = g_string_new("");
@@ -544,9 +559,9 @@ static void save_active_tab_state(app_state* state) {
         set_tab_title(tab, NULL, state->path);
     }
     tab->page_index = state->doc ? state->page_index : tab->page_index;
-    tab->zoom = state->zoom;
-    tab->fit_mode_id = state->fit_mode_id;
-    tab->continuous_mode = state->continuous_mode;
+    tab->zoom = state->presentation_mode ? state->presentation_prev_zoom : state->zoom;
+    tab->fit_mode_id = state->presentation_mode ? state->presentation_prev_fit_mode_id : state->fit_mode_id;
+    tab->continuous_mode = state->presentation_mode ? state->presentation_prev_continuous_mode : state->continuous_mode;
     g_free(tab->search_text);
     tab->search_text = g_strdup(current_search_text(state));
     tab->search_regex = state->search_regex;
@@ -557,10 +572,18 @@ static void save_active_tab_state(app_state* state) {
 static void save_settings(app_state* state) {
     char* author = json_escape(state->comment_author ? state->comment_author : "");
     GString* json = g_string_new("{\n");
-    g_string_append_printf(json, "  \"fitMode\": %d,\n", state->fit_mode_id);
-    g_string_append_printf(json, "  \"zoom\": %.4f,\n", state->zoom);
-    g_string_append_printf(json, "  \"continuous\": %s,\n", state->continuous_mode ? "true" : "false");
-    g_string_append_printf(json, "  \"showSidebar\": %s,\n", state->show_sidebar ? "true" : "false");
+    g_string_append_printf(json, "  \"fitMode\": %d,\n",
+                           state->presentation_mode ? state->presentation_prev_fit_mode_id : state->fit_mode_id);
+    g_string_append_printf(json, "  \"zoom\": %.4f,\n",
+                           state->presentation_mode ? state->presentation_prev_zoom : state->zoom);
+    g_string_append_printf(
+        json, "  \"continuous\": %s,\n",
+        (state->presentation_mode ? state->presentation_prev_continuous_mode : state->continuous_mode) ? "true"
+                                                                                                       : "false");
+    g_string_append_printf(
+        json, "  \"showSidebar\": %s,\n",
+        (state->presentation_mode ? state->presentation_prev_show_sidebar : state->show_sidebar) ? "true" : "false");
+    g_string_append_printf(json, "  \"showFindMarkers\": %s,\n", state->show_find_markers ? "true" : "false");
     g_string_append_printf(json, "  \"sidebarWidth\": %d,\n", state->sidebar_width);
     g_string_append_printf(json, "  \"commentAuthor\": \"%s\"\n", author);
     g_string_append(json, "}\n");
@@ -631,6 +654,7 @@ static void load_settings(app_state* state) {
     state->zoom = MAX(0.10, MIN(8.0, state->zoom));
     state->continuous_mode = json_get_bool(json, "continuous", state->continuous_mode);
     state->show_sidebar = json_get_bool(json, "showSidebar", state->show_sidebar);
+    state->show_find_markers = json_get_bool(json, "showFindMarkers", state->show_find_markers);
     state->sidebar_width = MAX(140, MIN(560, json_get_int(json, "sidebarWidth", state->sidebar_width)));
     comment_author = json_get_string(json, "commentAuthor");
     if (comment_author) {
@@ -920,6 +944,11 @@ static void clamp_horizontal_scroll(app_state* state) {
     hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
     if (!hadj) return;
 
+    if (state->presentation_mode) {
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(state->scroll), GTK_POLICY_NEVER, GTK_POLICY_NEVER);
+        return;
+    }
+
     if (!state->doc || !page_widget_geometry(state, state->page_index, &page_x, NULL, &page_width, NULL)) {
         gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(state->scroll), &hpolicy, &vpolicy);
         if (hpolicy != GTK_POLICY_AUTOMATIC)
@@ -997,6 +1026,7 @@ static void update_controls(app_state* state) {
         gtk_widget_set_sensitive(state->ocr_button, state->doc != NULL && path_has_pdf_extension(state->path));
     update_find_controls(state);
     update_sidebar_menu_items(state);
+    update_presentation_menu_item(state);
 
     if (!state->doc) {
         gtk_entry_set_text(GTK_ENTRY(state->page_entry), "");
@@ -1058,8 +1088,16 @@ static void update_find_controls(app_state* state) {
     gboolean has_matches = has_query && state->find_match_count > 0;
 
     if (state->find_markers) {
-        gtk_widget_set_visible(state->find_markers, state->doc && state->find_match_count > 0);
+        gtk_widget_set_visible(state->find_markers, state->doc && state->find_match_count > 0 &&
+                                                        state->show_find_markers && !state->presentation_mode);
         gtk_widget_queue_draw(state->find_markers);
+    }
+    if (state->marker_strip_button && !state->updating_marker_strip_control) {
+        state->updating_marker_strip_control = TRUE;
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->marker_strip_button), state->show_find_markers);
+        gtk_widget_set_sensitive(state->marker_strip_button,
+                                 state->doc && state->find_match_count > 0 && !state->presentation_mode);
+        state->updating_marker_strip_control = FALSE;
     }
 
     if (state->find_prev_button) {
@@ -1093,6 +1131,7 @@ static void set_search_entry_text(app_state* state, const char* text) {
 }
 
 static void clear_list_box(GtkWidget* list) {
+    if (!list) return;
     GList* children = gtk_container_get_children(GTK_CONTAINER(list));
     for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
     g_list_free(children);
@@ -1115,10 +1154,15 @@ static GtkWidget* add_sidebar_row(GtkWidget* list, const char* text, int page_in
 
 static void rebuild_sidebar(app_state* state) {
     int requested_page = 0;
+    if (!state || !state->sidebar_container || !state->sidebar_tabs || !state->sidebar || !state->comments_sidebar) {
+        update_sidebar_menu_items(state);
+        return;
+    }
     clear_list_box(state->sidebar);
     clear_list_box(state->comments_sidebar);
 
-    if (!state->show_sidebar || !state->doc || (state->outline.count == 0 && state->comments.count == 0)) {
+    if (state->presentation_mode || !state->show_sidebar || !state->doc ||
+        (state->outline.count == 0 && state->comments.count == 0)) {
         if (state->sidebar_container) gtk_widget_hide(state->sidebar_container);
         update_sidebar_menu_items(state);
         return;
@@ -1155,27 +1199,35 @@ static void rebuild_sidebar(app_state* state) {
 }
 
 static void update_sidebar_menu_items(app_state* state) {
-    gboolean has_panel = state->doc && (state->outline.count > 0 || state->comments.count > 0);
-    gboolean sidebar_visible = state->sidebar_container && gtk_widget_get_visible(state->sidebar_container);
-    int current_page = state->sidebar_tabs ? gtk_notebook_get_current_page(GTK_NOTEBOOK(state->sidebar_tabs)) : 0;
+    gboolean has_panel;
+    gboolean sidebar_visible;
 
+    if (!state) return;
+    has_panel = state->doc && (state->outline.count > 0 || state->comments.count > 0);
+    sidebar_visible = state->sidebar_container && gtk_widget_get_visible(state->sidebar_container);
     if (state->updating_sidebar_menu) return;
     state->updating_sidebar_menu = TRUE;
     if (state->show_sidebar_item) {
-        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_sidebar_item), state->show_sidebar);
-        gtk_widget_set_sensitive(state->show_sidebar_item, has_panel);
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_sidebar_item), sidebar_visible);
+        gtk_menu_item_set_label(GTK_MENU_ITEM(state->show_sidebar_item),
+                                sidebar_visible ? "Hide Side _Panel" : "Show Side _Panel");
+        gtk_widget_set_sensitive(state->show_sidebar_item, has_panel && !state->presentation_mode);
     }
-    if (state->show_chapters_panel) {
-        gtk_widget_set_sensitive(state->show_chapters_panel, state->doc && state->outline.count > 0);
-        gtk_menu_item_set_label(GTK_MENU_ITEM(state->show_chapters_panel),
-                                sidebar_visible && current_page == 0 ? "Hide Chapters Panel" : "Show Chapters Panel");
-    }
-    if (state->show_comments_panel) {
-        gtk_widget_set_sensitive(state->show_comments_panel, state->doc && state->comments.count > 0);
-        gtk_menu_item_set_label(GTK_MENU_ITEM(state->show_comments_panel),
-                                sidebar_visible && current_page == 1 ? "Hide Comments Panel" : "Show Comments Panel");
+    if (state->side_panel_button) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->side_panel_button), sidebar_visible);
+        gtk_widget_set_sensitive(state->side_panel_button, has_panel && !state->presentation_mode);
     }
     state->updating_sidebar_menu = FALSE;
+}
+
+static void update_presentation_menu_item(app_state* state) {
+    if (!state->presentation_item || state->updating_presentation_menu) return;
+    state->updating_presentation_menu = TRUE;
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->presentation_item), state->presentation_mode);
+    gtk_menu_item_set_label(GTK_MENU_ITEM(state->presentation_item),
+                            state->presentation_mode ? "Exit Diaporama" : "Diaporama");
+    gtk_widget_set_sensitive(state->presentation_item, state->doc != NULL);
+    state->updating_presentation_menu = FALSE;
 }
 
 static spdf_rect* copy_find_rects_for_page(app_state* state, int page_index, int* count_out) {
@@ -1383,6 +1435,7 @@ static void show_missing_document(app_state* state, const char* path) {
     char* title;
     char* window_title;
 
+    if (state->presentation_mode) set_presentation_mode(state, FALSE);
     spdf_free_outline(&state->outline);
     spdf_free_comments(&state->comments);
     spdf_close(state->doc);
@@ -1409,16 +1462,18 @@ static void show_missing_document(app_state* state, const char* path) {
     g_free(title);
 }
 
-static void configure_page_image(GtkWidget* image) {
-    gtk_widget_set_margin_start(image, 22);
-    gtk_widget_set_margin_end(image, 22);
-    gtk_widget_set_margin_top(image, 13);
-    gtk_widget_set_margin_bottom(image, 13);
+static void configure_page_image(app_state* state, GtkWidget* image) {
+    int horizontal_margin = state->presentation_mode ? 0 : 22;
+    int vertical_margin = state->presentation_mode ? 0 : 13;
+    gtk_widget_set_margin_start(image, horizontal_margin);
+    gtk_widget_set_margin_end(image, horizontal_margin);
+    gtk_widget_set_margin_top(image, vertical_margin);
+    gtk_widget_set_margin_bottom(image, vertical_margin);
 }
 
 static GtkWidget* append_page_image(app_state* state, cairo_surface_t* surface, int page_index) {
     GtkWidget* image = gtk_image_new_from_surface(surface);
-    configure_page_image(image);
+    configure_page_image(state, image);
     g_object_set_data(G_OBJECT(image), "page-index", GINT_TO_POINTER(page_index + 1));
     gtk_box_pack_start(GTK_BOX(state->page_box), image, FALSE, FALSE, 0);
     return image;
@@ -1426,7 +1481,7 @@ static GtkWidget* append_page_image(app_state* state, cairo_surface_t* surface, 
 
 static GtkWidget* append_page_slot(app_state* state, int page_index) {
     GtkWidget* image = gtk_image_new();
-    configure_page_image(image);
+    configure_page_image(state, image);
     g_object_set_data(G_OBJECT(image), "page-index", GINT_TO_POINTER(page_index + 1));
     gtk_box_pack_start(GTK_BOX(state->page_box), image, FALSE, FALSE, 0);
     return image;
@@ -1762,6 +1817,7 @@ static void tab_button_clicked(GtkButton* button, gpointer user_data) {
 }
 
 static void close_document_view(app_state* state) {
+    if (state->presentation_mode) set_presentation_mode(state, FALSE);
     spdf_free_outline(&state->outline);
     spdf_free_comments(&state->comments);
     spdf_close(state->doc);
@@ -1895,12 +1951,13 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
     if (state->fit_mode_id > 0) {
         GtkAllocation allocation;
         gtk_widget_get_allocation(state->scroll, &allocation);
-        double width_zoom = page_width > 0 ? (allocation.width - 54.0) / page_width : state->zoom;
-        double height_zoom = page_height > 0 ? (allocation.height - 54.0) / page_height : state->zoom;
+        double fit_padding = state->presentation_mode ? 0.0 : 54.0;
+        double width_zoom = page_width > 0 ? (allocation.width - fit_padding) / page_width : state->zoom;
+        double height_zoom = page_height > 0 ? (allocation.height - fit_padding) / page_height : state->zoom;
         if (state->fit_mode_id == 1)
             state->zoom = 1.0;
         else if (state->fit_mode_id == 2 && allocation.width > 80 && page_width > 0)
-            state->zoom = MAX(0.10, MIN(8.0, (allocation.width - 54.0) / page_width));
+            state->zoom = MAX(0.10, MIN(8.0, width_zoom));
         else if (state->fit_mode_id == 3 && allocation.height > 80 && page_height > 0)
             state->zoom = MAX(0.10, MIN(8.0, height_zoom));
         else if (state->fit_mode_id == 4 && allocation.width > 80 && allocation.height > 80)
@@ -1910,9 +1967,9 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
     state->render_generation++;
     state->render_error_shown = FALSE;
     gtk_widget_set_halign(state->page_box, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(state->page_box, GTK_ALIGN_START);
+    gtk_widget_set_valign(state->page_box, state->presentation_mode ? GTK_ALIGN_CENTER : GTK_ALIGN_START);
     gtk_widget_set_hexpand(state->page_box, FALSE);
-    gtk_widget_set_vexpand(state->page_box, FALSE);
+    gtk_widget_set_vexpand(state->page_box, state->presentation_mode);
     clear_page_box(state);
     page_count = spdf_page_count(state->doc);
     start_page = state->continuous_mode ? 0 : state->page_index;
@@ -2067,38 +2124,111 @@ static void continuous_toggled(GtkToggleButton* button, gpointer user_data) {
 
 static void show_sidebar_toggled(GtkCheckMenuItem* item, gpointer user_data) {
     app_state* state = (app_state*)user_data;
+    gboolean has_panel;
     if (state->updating_sidebar_menu) return;
+    has_panel = state->doc && (state->outline.count > 0 || state->comments.count > 0);
+    if (!has_panel || state->presentation_mode) {
+        update_sidebar_menu_items(state);
+        return;
+    }
     state->show_sidebar = gtk_check_menu_item_get_active(item);
     rebuild_sidebar(state);
     save_settings(state);
 }
 
-static void set_sidebar_panel(app_state* state, int panel_index) {
-    gboolean visible = state->sidebar_container && gtk_widget_get_visible(state->sidebar_container);
-    int current_page = state->sidebar_tabs ? gtk_notebook_get_current_page(GTK_NOTEBOOK(state->sidebar_tabs)) : -1;
-
-    if (!state->doc) return;
-    if (panel_index == 0 && state->outline.count == 0) return;
-    if (panel_index == 1 && state->comments.count == 0) return;
-
-    if (visible && current_page == panel_index) {
-        state->show_sidebar = FALSE;
-    } else {
-        state->show_sidebar = TRUE;
-        if (state->sidebar_tabs) gtk_notebook_set_current_page(GTK_NOTEBOOK(state->sidebar_tabs), panel_index);
+static void side_panel_button_toggled(GtkToggleButton* button, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    gboolean has_panel;
+    if (state->updating_sidebar_menu) return;
+    has_panel = state->doc && (state->outline.count > 0 || state->comments.count > 0);
+    if (!has_panel || state->presentation_mode) {
+        update_sidebar_menu_items(state);
+        return;
     }
+    state->show_sidebar = gtk_toggle_button_get_active(button);
     rebuild_sidebar(state);
     save_settings(state);
 }
 
-static void show_chapters_panel_clicked(GtkMenuItem* item, gpointer user_data) {
-    (void)item;
-    set_sidebar_panel((app_state*)user_data, 0);
+static void marker_strip_button_toggled(GtkToggleButton* button, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    if (state->updating_marker_strip_control) return;
+    state->show_find_markers = gtk_toggle_button_get_active(button);
+    update_find_controls(state);
+    save_settings(state);
 }
 
-static void show_comments_panel_clicked(GtkMenuItem* item, gpointer user_data) {
-    (void)item;
-    set_sidebar_panel((app_state*)user_data, 1);
+static void sync_view_controls_without_callbacks(app_state* state) {
+    gboolean switching_tabs = state->switching_tabs;
+    state->switching_tabs = TRUE;
+    if (state->fit_mode) gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
+    if (state->continuous) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
+    state->switching_tabs = switching_tabs;
+}
+
+static gboolean presentation_render_idle(gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    if (state->presentation_mode && state->doc) render_current_page(state, TRUE);
+    return G_SOURCE_REMOVE;
+}
+
+static void set_presentation_mode(app_state* state, gboolean enable) {
+    if (!state || enable == state->presentation_mode) return;
+    if (enable && !state->doc) return;
+
+    if (enable) {
+        gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(state->scroll), &state->presentation_prev_hpolicy,
+                                       &state->presentation_prev_vpolicy);
+        state->presentation_prev_continuous_mode = state->continuous_mode;
+        state->presentation_prev_fit_mode_id = state->fit_mode_id;
+        state->presentation_prev_show_sidebar = state->show_sidebar;
+        state->presentation_prev_zoom = state->zoom;
+        state->presentation_mode = TRUE;
+        state->continuous_mode = FALSE;
+        state->fit_mode_id = 4;
+        state->show_sidebar = FALSE;
+
+        sync_view_controls_without_callbacks(state);
+        if (state->menubar) gtk_widget_hide(state->menubar);
+        if (state->tab_strip) gtk_widget_hide(state->tab_strip);
+        if (state->toolbar) gtk_widget_hide(state->toolbar);
+        if (state->status) gtk_widget_hide(state->status);
+        if (state->find_markers) gtk_widget_hide(state->find_markers);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(state->scroll), GTK_POLICY_NEVER, GTK_POLICY_NEVER);
+        gtk_widget_grab_focus(state->scroll);
+        rebuild_sidebar(state);
+        gtk_window_fullscreen(GTK_WINDOW(state->window));
+        render_current_page(state, TRUE);
+        g_idle_add(presentation_render_idle, state);
+    } else {
+        state->presentation_mode = FALSE;
+        state->continuous_mode = state->presentation_prev_continuous_mode;
+        state->fit_mode_id = state->presentation_prev_fit_mode_id;
+        state->show_sidebar = state->presentation_prev_show_sidebar;
+        state->zoom = state->presentation_prev_zoom > 0.0 ? state->presentation_prev_zoom : state->zoom;
+
+        sync_view_controls_without_callbacks(state);
+        if (state->menubar) gtk_widget_show(state->menubar);
+        if (state->tab_strip) gtk_widget_show(state->tab_strip);
+        if (state->toolbar) gtk_widget_show(state->toolbar);
+        if (state->status) gtk_widget_show(state->status);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(state->scroll), state->presentation_prev_hpolicy,
+                                       state->presentation_prev_vpolicy);
+        gtk_window_unfullscreen(GTK_WINDOW(state->window));
+        rebuild_sidebar(state);
+        if (state->doc) render_current_page(state, TRUE);
+        save_active_tab_state(state);
+        save_session(state);
+        save_settings(state);
+    }
+    update_presentation_menu_item(state);
+    update_controls(state);
+}
+
+static void presentation_toggled(GtkCheckMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    if (state->updating_presentation_menu) return;
+    set_presentation_mode(state, gtk_check_menu_item_get_active(item));
 }
 
 static void sidebar_page_switched(GtkNotebook* notebook, GtkWidget* page, guint page_num, gpointer user_data) {
@@ -3643,6 +3773,14 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
     gboolean shift = (event->state & GDK_SHIFT_MASK) != 0;
     GtkWidget* focus = gtk_window_get_focus(GTK_WINDOW(widget));
 
+    if (state->presentation_mode && event->keyval == GDK_KEY_Escape) {
+        set_presentation_mode(state, FALSE);
+        return TRUE;
+    }
+    if (!ctrl && event->keyval == GDK_KEY_F5) {
+        set_presentation_mode(state, TRUE);
+        return state->doc != NULL;
+    }
     if (ctrl && (event->keyval == GDK_KEY_f || event->keyval == GDK_KEY_F)) {
         gtk_widget_grab_focus(state->search_entry);
         gtk_editable_select_region(GTK_EDITABLE(state->search_entry), 0, -1);
@@ -3752,6 +3890,17 @@ static gboolean page_scroll_event(GtkWidget* widget, GdkEventScroll* event, gpoi
 
 static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
     app_state* state = (app_state*)user_data;
+
+    if (state->presentation_mode && state->doc) {
+        if (event->button == 1) {
+            next_clicked(NULL, state);
+            return TRUE;
+        }
+        if (event->button == 3) {
+            previous_clicked(NULL, state);
+            return TRUE;
+        }
+    }
 
     if (event->button == 3) {
         GtkWidget* menu = gtk_menu_new();
@@ -3875,6 +4024,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(state->window), root);
 
+    GtkAccelGroup* accel_group = gtk_accel_group_new();
+    gtk_window_add_accel_group(GTK_WINDOW(state->window), accel_group);
+
     GtkWidget* menubar = gtk_menu_bar_new();
     GtkWidget* file_menu = gtk_menu_new();
     GtkWidget* file = gtk_menu_item_new_with_mnemonic("_File");
@@ -3889,8 +4041,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
     state->show_sidebar_item = gtk_check_menu_item_new_with_mnemonic("Show Side _Panel");
-    state->show_chapters_panel = gtk_menu_item_new_with_mnemonic("Show _Chapters Panel");
-    state->show_comments_panel = gtk_menu_item_new_with_mnemonic("Show _Comments Panel");
+    state->presentation_item = gtk_check_menu_item_new_with_mnemonic("_Diaporama");
+    gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_F5, 0, GTK_ACCEL_VISIBLE);
+    g_object_unref(accel_group);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_sidebar_item), state->show_sidebar);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(file), file_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), open_menu);
@@ -3908,10 +4061,11 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), edit);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_sidebar_item);
-    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_chapters_panel);
-    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_comments_panel);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), gtk_separator_menu_item_new());
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->presentation_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), view);
     gtk_box_pack_start(GTK_BOX(root), menubar, FALSE, FALSE, 0);
+    state->menubar = menubar;
 
     state->tab_strip = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     gtk_widget_set_margin_start(state->tab_strip, 8);
@@ -3933,10 +4087,15 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_set_margin_top(toolbar, 6);
     gtk_widget_set_margin_bottom(toolbar, 6);
     gtk_box_pack_start(GTK_BOX(root), toolbar, FALSE, FALSE, 0);
+    state->toolbar = toolbar;
 
     GtkWidget* open = gtk_button_new_with_label("Open");
     GtkWidget* prev = gtk_button_new_with_label("<");
     GtkWidget* next = gtk_button_new_with_label(">");
+    state->side_panel_button = gtk_toggle_button_new_with_label("Panel");
+    gtk_widget_set_tooltip_text(state->side_panel_button, "Show or hide the side panel");
+    state->marker_strip_button = gtk_toggle_button_new_with_label("Markers");
+    gtk_widget_set_tooltip_text(state->marker_strip_button, "Show or hide the find marker strip");
     state->page_entry = gtk_entry_new();
     gtk_entry_set_width_chars(GTK_ENTRY(state->page_entry), 5);
     state->page_count_label = gtk_label_new("/ 0");
@@ -3966,6 +4125,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(toolbar), open, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), prev, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), next, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->side_panel_button, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->marker_strip_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->page_entry, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->page_count_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), zoom_out, FALSE, FALSE, 0);
@@ -4036,11 +4197,12 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(set_comment_author, "activate", G_CALLBACK(set_comment_author_clicked), state);
     g_signal_connect(state->search_regex_multiline_item, "toggled", G_CALLBACK(find_regex_multiline_toggled), state);
     g_signal_connect(state->show_sidebar_item, "toggled", G_CALLBACK(show_sidebar_toggled), state);
-    g_signal_connect(state->show_chapters_panel, "activate", G_CALLBACK(show_chapters_panel_clicked), state);
-    g_signal_connect(state->show_comments_panel, "activate", G_CALLBACK(show_comments_panel_clicked), state);
+    g_signal_connect(state->presentation_item, "toggled", G_CALLBACK(presentation_toggled), state);
     g_signal_connect_swapped(quit_menu, "activate", G_CALLBACK(g_application_quit), app);
     g_signal_connect(prev, "clicked", G_CALLBACK(previous_clicked), state);
     g_signal_connect(next, "clicked", G_CALLBACK(next_clicked), state);
+    g_signal_connect(state->side_panel_button, "toggled", G_CALLBACK(side_panel_button_toggled), state);
+    g_signal_connect(state->marker_strip_button, "toggled", G_CALLBACK(marker_strip_button_toggled), state);
     g_signal_connect(zoom_out, "clicked", G_CALLBACK(zoom_out_clicked), state);
     g_signal_connect(zoom_in, "clicked", G_CALLBACK(zoom_in_clicked), state);
     g_signal_connect(state->ocr_button, "clicked", G_CALLBACK(ocr_clicked), state);
@@ -4123,6 +4285,7 @@ int main(int argc, char** argv) {
     state.fit_mode_id = 2;
     state.continuous_mode = TRUE;
     state.show_sidebar = TRUE;
+    state.show_find_markers = TRUE;
     state.search_regex_multiline = TRUE;
     state.sidebar_width = 260;
     state.find_match_index = -1;

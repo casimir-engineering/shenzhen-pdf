@@ -86,9 +86,15 @@ typedef NS_ENUM(NSInteger, SPDFFitMode) {
     SPDFFitModePage
 };
 
-typedef NS_ENUM(NSInteger, SPDFViewMode) { SPDFViewModeSingle = 0, SPDFViewModeContinuous };
+typedef NS_ENUM(NSInteger, SPDFViewMode) {
+    SPDFViewModeSingle = 0,
+    SPDFViewModeContinuous
+};
 
-typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFSidebarModeComments = 1 };
+typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
+    SPDFSidebarModeChapters = 0,
+    SPDFSidebarModeComments = 1
+};
 
 @class SumatraMacDelegate;
 
@@ -203,6 +209,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 @property(nonatomic) NSInteger activeFindPageIndex;
 @property(nonatomic) NSRect activeFindRect;
 @property(nonatomic) CGFloat activeFindAlpha;
+@property(nonatomic) BOOL presentationMode;
 @property(nonatomic, copy) NSString* emptyMessage;
 @property(nonatomic, weak) SumatraMacDelegate* reader;
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize;
@@ -241,6 +248,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 - (void)documentScrollPositionChanged;
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
+- (BOOL)documentViewHandlePresentationMouseDown:(NSEvent*)event;
+- (BOOL)documentViewInPresentationMode;
 - (void)copySelection:(id)sender;
 - (void)selectTabAtIndex:(NSInteger)index;
 - (void)closeTabAtIndex:(NSInteger)index;
@@ -294,6 +303,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 - (void)clearPageFieldFocus;
 - (void)clearToolbarFieldFocusForTabSwitch;
 - (void)restoreSidebarWidth;
+- (void)leavePresentationModeAndExitFullScreen:(BOOL)exitFullScreen sender:(id)sender;
 - (void)activateSidebarRow:(id)sender;
 - (void)scrollToPageRect:(NSRect)targetRect pageIndex:(NSInteger)pageIndex;
 - (void)flashPageRect:(NSRect)targetRect pageIndex:(NSInteger)pageIndex;
@@ -876,27 +886,34 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 - (CGFloat)continuousDocumentHeight {
     if (self.pages.count == 0) return 0.0;
 
-    CGFloat height = kPageMargin / 2.0;
-    for (SPDFRenderedPage* page in self.pages) height += [self viewSizeForPage:page].height + kPageGap;
-    height += kPageMargin / 2.0;
+    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
+    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
+    CGFloat height = pageMargin / 2.0;
+    for (SPDFRenderedPage* page in self.pages) height += [self viewSizeForPage:page].height + pageGap;
+    height += pageMargin / 2.0;
     return height;
 }
 
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize {
-    CGFloat width = MAX(clipSize.width, [self widestPage] + kPageMargin);
-    CGFloat height = kPageMargin;
+    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
+    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
+    CGFloat width = MAX(clipSize.width, [self widestPage] + pageMargin);
+    CGFloat height = pageMargin;
 
     if (self.pages.count == 0) return NSMakeSize(MAX(clipSize.width, 600), MAX(clipSize.height, 500));
+
+    if (self.presentationMode && self.viewMode == SPDFViewModeSingle)
+        return NSMakeSize(clipSize.width, clipSize.height);
 
     if (self.viewMode == SPDFViewModeSingle) {
         height = [self continuousDocumentHeight];
     } else {
-        height = kPageMargin / 2.0;
+        height = pageMargin / 2.0;
         for (SPDFRenderedPage* page in self.pages) {
             CGFloat pageHeight = [self viewSizeForPage:page].height;
-            height += pageHeight + kPageGap;
+            height += pageHeight + pageGap;
         }
-        height += kPageMargin / 2.0;
+        height += pageMargin / 2.0;
     }
 
     return NSMakeSize(width, MAX(height, clipSize.height));
@@ -905,10 +922,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 - (NSRect)rectForPageAtIndex:(NSInteger)pageIndex {
     if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return NSZeroRect;
 
-    CGFloat y = kPageMargin / 2.0;
+    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
+    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
+    CGFloat y = pageMargin / 2.0;
     for (NSInteger i = 0; i < pageIndex; ++i) {
         SPDFRenderedPage* prev = self.pages[(NSUInteger)i];
-        y += [self viewSizeForPage:prev].height + kPageGap;
+        y += [self viewSizeForPage:prev].height + pageGap;
     }
 
     SPDFRenderedPage* page = self.pages[(NSUInteger)pageIndex];
@@ -916,7 +935,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     CGFloat width = pageSize.width;
     CGFloat height = pageSize.height;
     CGFloat x = floor(([self viewportWidth] - width) / 2.0);
-    return NSMakeRect(MAX(kPageMargin / 2.0, [self pixelSnappedOrigin:x]), [self pixelSnappedOrigin:y], width, height);
+    if (self.presentationMode && self.viewMode == SPDFViewModeSingle) {
+        CGFloat centeredY = floor((NSHeight(self.bounds) - height) / 2.0);
+        return NSMakeRect(MAX(0.0, [self pixelSnappedOrigin:x]), MAX(0.0, [self pixelSnappedOrigin:centeredY]), width,
+                          height);
+    }
+    return NSMakeRect(MAX(pageMargin / 2.0, [self pixelSnappedOrigin:x]), [self pixelSnappedOrigin:y], width, height);
 }
 
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
@@ -952,7 +976,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     shadow.shadowColor = [NSColor colorWithCalibratedWhite:0.0 alpha:0.28];
 
     [NSGraphicsContext saveGraphicsState];
-    [shadow set];
+    if (!self.presentationMode) [shadow set];
     [[NSColor whiteColor] setFill];
     NSRectFill(pageRect);
     [NSGraphicsContext restoreGraphicsState];
@@ -1014,7 +1038,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
-    [NSColor.windowBackgroundColor setFill];
+    [(self.presentationMode ? NSColor.blackColor : NSColor.windowBackgroundColor) setFill];
     NSRectFill(self.bounds);
 
     if (self.pages.count == 0) {
@@ -1055,9 +1079,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
         if (NSPointInRect(point, pageRect)) {
             if (pageIndex) *pageIndex = index;
             if (pagePoint)
-                *pagePoint = [self convertViewPoint:point
-                              toPagePointInPageRect:pageRect
-                                               page:self.pages[(NSUInteger)index]];
+                *pagePoint =
+                    [self convertViewPoint:point toPagePointInPageRect:pageRect page:self.pages[(NSUInteger)index]];
             return YES;
         }
         return NO;
@@ -1107,6 +1130,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
         [super mouseDown:event];
         return;
     }
+    if ([self.reader documentViewHandlePresentationMouseDown:event]) return;
     if (event.modifierFlags & NSEventModifierFlagControl) {
         [self.reader showContextMenuForDocumentView:self event:event];
         return;
@@ -1243,6 +1267,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 
 - (void)rightMouseDown:(NSEvent*)event {
     _rightMouseMoved = NO;
+    if (self.reader && [self.reader documentViewHandlePresentationMouseDown:event]) {
+        _rightMouseMoved = YES;
+        return;
+    }
     if (event.modifierFlags & NSEventModifierFlagCommand) return;
     [self beginPanWithEvent:event];
 }
@@ -1253,6 +1281,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 }
 
 - (void)rightMouseUp:(NSEvent*)event {
+    if (self.reader && [self.reader documentViewInPresentationMode]) return;
     BOOL forceMenu = (event.modifierFlags & NSEventModifierFlagCommand) != 0;
     if (forceMenu || !_rightMouseMoved) [self.reader showContextMenuForDocumentView:self event:event];
     if (_isPanning) [self endPan];
@@ -1376,9 +1405,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
             if (NSIsEmptyRect(intersection)) continue;
 
             NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
-            NSRect miniVisible = [self miniRectForDocumentIntersection:intersection
-                                                          documentRect:documentRect
-                                                              miniRect:miniRect];
+            NSRect miniVisible =
+                [self miniRectForDocumentIntersection:intersection documentRect:documentRect miniRect:miniRect];
             if (NSIsEmptyRect(miniVisible)) continue;
 
             visible = hasVisiblePage ? NSUnionRect(visible, miniVisible) : miniVisible;
@@ -1477,9 +1505,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
                                           gap:(CGFloat)gap
                                 contentHeight:(CGFloat)contentHeight
                                    contentTop:(CGFloat)contentTop {
-    NSPoint documentPoint = [self documentPointForUnscrolledMiniPoint:NSMakePoint(point.x, point.y - contentTop)
-                                                                scale:scale
-                                                                  gap:gap];
+    NSPoint documentPoint =
+        [self documentPointForUnscrolledMiniPoint:NSMakePoint(point.x, point.y - contentTop) scale:scale gap:gap];
     for (NSInteger i = 0; i < 8; ++i) {
         CGFloat projectedTop = [self contentTopForDocumentCenterY:documentPoint.y contentHeight:contentHeight];
         NSPoint unscrolledPoint = NSMakePoint(point.x, point.y - projectedTop);
@@ -1574,11 +1601,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     CGFloat contentTop = 8.0;
     CGFloat contentHeight = 0;
     NSRect visibleRect = NSZeroRect;
-    if (![self layoutScale:&scale
-                       gap:&gap
-                contentTop:&contentTop
-             contentHeight:&contentHeight
-               visibleRect:&visibleRect])
+    if (!
+        [self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:&visibleRect])
         return;
 
     CGFloat y = contentTop;
@@ -1654,11 +1678,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     CGFloat contentTop = 8.0;
     CGFloat contentHeight = 0;
     NSRect visibleRect = NSZeroRect;
-    if (![self layoutScale:&scale
-                       gap:&gap
-                contentTop:&contentTop
-             contentHeight:&contentHeight
-               visibleRect:&visibleRect])
+    if (!
+        [self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:&visibleRect])
         return;
 
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
@@ -1755,6 +1776,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 @implementation SumatraMacDelegate {
     NSWindow* _window;
     SPDFTabStripView* _tabStrip;
+    SPDFToolbarStackView* _toolbar;
     NSSplitView* _splitView;
     NSTableView* _sidebarTable;
     NSView* _sidebarContainer;
@@ -1763,10 +1785,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     SPDFDocumentView* _pageView;
     SPDFMinimapView* _minimapView;
     SPDFMinimapDividerView* _minimapDividerView;
+    SPDFFindMarkerScroller* _markerScroller;
     NSLayoutConstraint* _minimapWidthConstraint;
     NSLayoutConstraint* _minimapDividerWidthConstraint;
     NSLayoutConstraint* _pageScrollToMinimapConstraint;
     NSLayoutConstraint* _pageScrollFullWidthConstraint;
+    NSLayoutConstraint* _tabStripHeightConstraint;
+    NSLayoutConstraint* _toolbarHeightConstraint;
     NSButton* _prevButton;
     NSButton* _nextButton;
     NSTextField* _pageField;
@@ -1775,6 +1800,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     NSButton* _zoomInButton;
     NSPopUpButton* _fitModePopup;
     NSButton* _continuousButton;
+    NSButton* _sidebarToggleButton;
+    NSButton* _minimapToggleButton;
     NSSearchField* _searchField;
     NSButton* _findRegexCheckbox;
     BOOL _findRegexMultiline;
@@ -1843,6 +1870,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     BOOL _sidebarVisible;
     BOOL _minimapPreferredVisible;
     BOOL _minimapVisible;
+    BOOL _presentationMode;
+    BOOL _presentationEnteredFullScreen;
+    SPDFViewMode _presentationPreviousViewMode;
+    SPDFFitMode _presentationPreviousFitMode;
+    BOOL _presentationPreviousSidebarPreferredVisible;
+    BOOL _presentationPreviousMinimapPreferredVisible;
     BOOL _ocrInstallRunning;
     BOOL _restoringSidebarLayout;
     BOOL _allowSidebarWidthPersistence;
@@ -1866,6 +1899,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     _sidebarVisible = YES;
     _minimapPreferredVisible = YES;
     _minimapVisible = YES;
+    _presentationMode = NO;
+    _presentationEnteredFullScreen = NO;
     _restoringSidebarLayout = NO;
     _allowSidebarWidthPersistence = NO;
     _sidebarWidth = kDefaultSidebarWidth;
@@ -1989,20 +2024,23 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     (void)notification;
     dispatch_async(dispatch_get_main_queue(), ^{
       [self updateTabStripFrame];
+      if (self->_presentationMode && self->_doc) [self renderDocumentAndScrollToPage:self->_pageIndex alignTop:YES];
     });
 }
 
 - (void)windowDidExitFullScreen:(NSNotification*)notification {
     (void)notification;
+    if (_presentationMode && _presentationEnteredFullScreen)
+        [self leavePresentationModeAndExitFullScreen:NO sender:nil];
     dispatch_async(dispatch_get_main_queue(), ^{
       [self updateTabStripFrame];
     });
 }
 
 - (NSString*)supportDirectory {
-    NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
-                                                       inDomains:NSUserDomainMask]
-                      .firstObject;
+    NSURL* base =
+        [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask]
+            .firstObject;
     NSString* dir = [base.path stringByAppendingPathComponent:@"SumatraPDF"];
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir;
@@ -2171,12 +2209,15 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     [viewMenu addItemWithTitle:@"Single Page" action:@selector(setSinglePageMode:) keyEquivalent:@"4"];
     [viewMenu addItemWithTitle:@"Continuous" action:@selector(setContinuousMode:) keyEquivalent:@"5"];
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    [viewMenu addItemWithTitle:@"Show Chapters Panel" action:@selector(toggleChaptersPanel:) keyEquivalent:@""];
-    [viewMenu addItemWithTitle:@"Show Comments Panel" action:@selector(toggleCommentsPanel:) keyEquivalent:@""];
+    [viewMenu addItemWithTitle:@"Show Side Panel" action:@selector(toggleSidebar:) keyEquivalent:@""];
     [viewMenu addItemWithTitle:@"Show Minimap" action:@selector(toggleMinimap:) keyEquivalent:@""];
-    NSMenuItem* fullScreen = [viewMenu addItemWithTitle:@"Full Screen"
-                                                 action:@selector(toggleFullScreen:)
-                                          keyEquivalent:@"f"];
+    NSMenuItem* presentation =
+        [viewMenu addItemWithTitle:@"Diaporama"
+                            action:@selector(togglePresentation:)
+                     keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSF5FunctionKey)]];
+    presentation.keyEquivalentModifierMask = 0;
+    NSMenuItem* fullScreen =
+        [viewMenu addItemWithTitle:@"Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
     fullScreen.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     [viewMenu addItem:[NSMenuItem separatorItem]];
     [viewMenu addItemWithTitle:@"Rotate Left" action:@selector(unimplementedMenuItem:) keyEquivalent:@""];
@@ -2195,9 +2236,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Find" action:@selector(focusFind:) keyEquivalent:@"f"];
     [editMenu addItemWithTitle:@"Find Next" action:@selector(findNext:) keyEquivalent:@"g"];
-    NSMenuItem* prevFind = [editMenu addItemWithTitle:@"Find Previous"
-                                               action:@selector(findPrevious:)
-                                        keyEquivalent:@"G"];
+    NSMenuItem* prevFind =
+        [editMenu addItemWithTitle:@"Find Previous" action:@selector(findPrevious:) keyEquivalent:@"G"];
     prevFind.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Regex Multiline" action:@selector(toggleFindRegexMultiline:) keyEquivalent:@""];
@@ -2263,16 +2303,19 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     [content addSubview:_tabStrip];
     [self updateTabStripFrame];
 
-    SPDFToolbarStackView* toolbar = [[SPDFToolbarStackView alloc] init];
-    toolbar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    toolbar.alignment = NSLayoutAttributeCenterY;
-    toolbar.spacing = 6.0;
-    toolbar.edgeInsets = NSEdgeInsetsMake(7, 8, 7, 8);
-    toolbar.translatesAutoresizingMaskIntoConstraints = NO;
-    [content addSubview:toolbar];
+    _toolbar = [[SPDFToolbarStackView alloc] init];
+    _toolbar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    _toolbar.alignment = NSLayoutAttributeCenterY;
+    _toolbar.spacing = 6.0;
+    _toolbar.edgeInsets = NSEdgeInsetsMake(7, 8, 7, 8);
+    _toolbar.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:_toolbar];
 
     _prevButton = [self buttonWithTitle:@"<" action:@selector(previousPage:)];
     _nextButton = [self buttonWithTitle:@">" action:@selector(nextPage:)];
+    _sidebarToggleButton = [self buttonWithTitle:@"Side" action:@selector(toggleSidebar:)];
+    [_sidebarToggleButton setButtonType:NSButtonTypeToggle];
+    _sidebarToggleButton.toolTip = @"Show or hide chapters and comments";
     _pageField = [[NSTextField alloc] init];
     _pageField.translatesAutoresizingMaskIntoConstraints = NO;
     _pageField.alignment = NSTextAlignmentRight;
@@ -2308,6 +2351,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     _ocrButton = [self buttonWithTitle:@"OCR" action:@selector(ocrDocument:)];
     _findPrevButton = [self buttonWithTitle:@"<" action:@selector(findPrevious:)];
     _findNextButton = [self buttonWithTitle:@">" action:@selector(findNext:)];
+    _minimapToggleButton = [self buttonWithTitle:@"Map" action:@selector(toggleMinimap:)];
+    [_minimapToggleButton setButtonType:NSButtonTypeToggle];
+    _minimapToggleButton.toolTip = @"Show or hide the minimap";
     _findCountLabel = [NSTextField labelWithString:@""];
     _findCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _findCountLabel.alignment = NSTextAlignmentCenter;
@@ -2322,21 +2368,23 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     ocrSeparator.translatesAutoresizingMaskIntoConstraints = NO;
     [ocrSeparator.widthAnchor constraintEqualToConstant:1].active = YES;
 
-    [toolbar addArrangedSubview:_ocrButton];
-    [toolbar addArrangedSubview:ocrSeparator];
-    [toolbar addArrangedSubview:_prevButton];
-    [toolbar addArrangedSubview:_nextButton];
-    [toolbar addArrangedSubview:_pageField];
-    [toolbar addArrangedSubview:_pageCountLabel];
-    [toolbar addArrangedSubview:_zoomOutButton];
-    [toolbar addArrangedSubview:_zoomInButton];
-    [toolbar addArrangedSubview:_fitModePopup];
-    [toolbar addArrangedSubview:_continuousButton];
-    [toolbar addArrangedSubview:_searchField];
-    [toolbar addArrangedSubview:_findRegexCheckbox];
-    [toolbar addArrangedSubview:_findCountLabel];
-    [toolbar addArrangedSubview:_findPrevButton];
-    [toolbar addArrangedSubview:_findNextButton];
+    [_toolbar addArrangedSubview:_ocrButton];
+    [_toolbar addArrangedSubview:ocrSeparator];
+    [_toolbar addArrangedSubview:_sidebarToggleButton];
+    [_toolbar addArrangedSubview:_prevButton];
+    [_toolbar addArrangedSubview:_nextButton];
+    [_toolbar addArrangedSubview:_pageField];
+    [_toolbar addArrangedSubview:_pageCountLabel];
+    [_toolbar addArrangedSubview:_zoomOutButton];
+    [_toolbar addArrangedSubview:_zoomInButton];
+    [_toolbar addArrangedSubview:_fitModePopup];
+    [_toolbar addArrangedSubview:_continuousButton];
+    [_toolbar addArrangedSubview:_searchField];
+    [_toolbar addArrangedSubview:_findRegexCheckbox];
+    [_toolbar addArrangedSubview:_findCountLabel];
+    [_toolbar addArrangedSubview:_findPrevButton];
+    [_toolbar addArrangedSubview:_findNextButton];
+    [_toolbar addArrangedSubview:_minimapToggleButton];
 
     _splitView = [[NSSplitView alloc] init];
     _splitView.vertical = YES;
@@ -2372,13 +2420,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     _sidebarTable.action = @selector(activateSidebarRow:);
     _sidebarTable.doubleAction = @selector(activateSidebarRow:);
     NSMenu* sidebarMenu = [[NSMenu alloc] initWithTitle:@""];
-    NSMenuItem* sidebarEditComment = [sidebarMenu addItemWithTitle:@"Edit Comment..."
-                                                            action:@selector(editComment:)
-                                                     keyEquivalent:@""];
+    NSMenuItem* sidebarEditComment =
+        [sidebarMenu addItemWithTitle:@"Edit Comment..." action:@selector(editComment:) keyEquivalent:@""];
     sidebarEditComment.target = self;
-    NSMenuItem* sidebarDeleteComment = [sidebarMenu addItemWithTitle:@"Delete Comment..."
-                                                              action:@selector(deleteComment:)
-                                                       keyEquivalent:@""];
+    NSMenuItem* sidebarDeleteComment =
+        [sidebarMenu addItemWithTitle:@"Delete Comment..." action:@selector(deleteComment:) keyEquivalent:@""];
     sidebarDeleteComment.target = self;
     _sidebarTable.menu = sidebarMenu;
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"title"];
@@ -2399,11 +2445,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 
     _pageScrollView = [[SPDFScrollView alloc] init];
     _pageScrollView.reader = self;
-    SPDFFindMarkerScroller* markerScroller = [[SPDFFindMarkerScroller alloc] initWithFrame:NSZeroRect];
-    markerScroller.reader = self;
-    _pageScrollView.verticalScroller = markerScroller;
+    _markerScroller = [[SPDFFindMarkerScroller alloc] initWithFrame:NSZeroRect];
+    _markerScroller.reader = self;
+    _pageScrollView.verticalScroller = _markerScroller;
     _pageScrollView.translatesAutoresizingMaskIntoConstraints = NO;
-    _pageScrollView.hasVerticalScroller = YES;
+    _pageScrollView.hasVerticalScroller = !_presentationMode;
     _pageScrollView.hasHorizontalScroller = NO;
     _pageScrollView.autohidesScrollers = NO;
     _pageScrollView.borderType = NSNoBorder;
@@ -2461,16 +2507,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     _statusLabel = [NSTextField labelWithString:@"Ready"];
     _statusLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
 
+    _tabStripHeightConstraint = [_tabStrip.heightAnchor constraintEqualToConstant:kTabStripHeight];
+    _toolbarHeightConstraint = [_toolbar.heightAnchor constraintEqualToConstant:42.0];
     [NSLayoutConstraint activateConstraints:@[
         [_tabStrip.topAnchor constraintEqualToAnchor:content.topAnchor],
         [_tabStrip.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-        [_tabStrip.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
-        [_tabStrip.heightAnchor constraintEqualToConstant:kTabStripHeight],
-        [toolbar.topAnchor constraintEqualToAnchor:_tabStrip.bottomAnchor],
-        [toolbar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-        [toolbar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
-        [toolbar.heightAnchor constraintEqualToConstant:42],
-        [_splitView.topAnchor constraintEqualToAnchor:toolbar.bottomAnchor],
+        [_tabStrip.trailingAnchor constraintEqualToAnchor:content.trailingAnchor], _tabStripHeightConstraint,
+        [_toolbar.topAnchor constraintEqualToAnchor:_tabStrip.bottomAnchor],
+        [_toolbar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+        [_toolbar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor], _toolbarHeightConstraint,
+        [_splitView.topAnchor constraintEqualToAnchor:_toolbar.bottomAnchor],
         [_splitView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
         [_splitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         [_splitView.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]
@@ -2512,8 +2558,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
         return _zoom;
 
     NSSize clipSize = [self documentClipSizeForLayout];
-    CGFloat widthZoom = (clipSize.width - kPageMargin * 1.7) / pageWidth;
-    CGFloat heightZoom = (clipSize.height - kPageMargin) / pageHeight;
+    CGFloat pageMargin = _presentationMode ? 0.0 : kPageMargin;
+    CGFloat widthZoom = (clipSize.width - pageMargin * 1.7) / pageWidth;
+    CGFloat heightZoom = (clipSize.height - pageMargin) / pageHeight;
     if (fitMode == SPDFFitModeWidth) return MAX(kMinZoom, MIN(kMaxZoom, widthZoom));
     if (fitMode == SPDFFitModeHeight) return MAX(kMinZoom, MIN(kMaxZoom, heightZoom));
     return MAX(kMinZoom, MIN(kMaxZoom, MIN(widthZoom, heightZoom)));
@@ -2639,8 +2686,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     NSString* path = [_path copy];
     CGFloat zoom = _zoom;
     CGFloat displayScale = [self backingScale];
-    NSArray<NSNumber*>* order = [self pageRenderOrderForCount:(NSInteger)_renderedPages.count
-                                                preferredPage:preferredPage];
+    NSArray<NSNumber*>* order =
+        [self pageRenderOrderForCount:(NSInteger)_renderedPages.count preferredPage:preferredPage];
     for (NSNumber* number in order) {
         NSInteger index = number.integerValue;
         if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
@@ -2745,26 +2792,25 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
         [pages addObject:page];
     }
 
-    [NSAnimationContext
-        runAnimationGroup:^(NSAnimationContext* context) {
-          context.duration = 0.0;
-          context.allowsImplicitAnimation = NO;
-          self->_renderedPages = pages;
-          self->_pageView.pages = self->_renderedPages;
-          self->_pageView.currentPageIndex = self->_pageIndex;
-          self->_pageView.zoom = self->_zoom;
-          self->_pageView.viewMode = self->_viewMode;
-          self->_pageView.backingScale = [self backingScale];
-          [self applySearchHighlightsToCurrentPage];
-          [self resizeDocumentView];
-          if (restoreOrigin)
-              [self scrollDocumentClipViewToOrigin:[self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
-                                                                           forPageIndex:pageIndex]
-                                            notify:NO];
-          else
-              [self scrollToPage:pageIndex alignTop:alignTop];
-        }
-        completionHandler:nil];
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
+      context.duration = 0.0;
+      context.allowsImplicitAnimation = NO;
+      self->_renderedPages = pages;
+      self->_pageView.pages = self->_renderedPages;
+      self->_pageView.currentPageIndex = self->_pageIndex;
+      self->_pageView.zoom = self->_zoom;
+      self->_pageView.viewMode = self->_viewMode;
+      self->_pageView.backingScale = [self backingScale];
+      [self applySearchHighlightsToCurrentPage];
+      [self resizeDocumentView];
+      if (restoreOrigin)
+          [self scrollDocumentClipViewToOrigin:[self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
+                                                                       forPageIndex:pageIndex]
+                                        notify:NO];
+      else
+          [self scrollToPage:pageIndex alignTop:alignTop];
+    }
+                        completionHandler:nil];
     NSInteger renderCenterPage = pageIndex;
     if (restoreOrigin) {
         renderCenterPage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
@@ -2809,7 +2855,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
         return;
     }
 
-    _pageScrollView.hasVerticalScroller = YES;
+    if (_presentationMode)
+        _pageScrollView.verticalScroller = nil;
+    else if (_pageScrollView.verticalScroller != _markerScroller)
+        _pageScrollView.verticalScroller = _markerScroller;
+    _pageScrollView.hasVerticalScroller = !_presentationMode;
     NSSize size = [_pageView documentSizeForClipSize:clipSize];
     BOOL needsHorizontalScroller = size.width > clipSize.width + 0.5;
     if (_pageScrollView.hasHorizontalScroller != needsHorizontalScroller) {
@@ -2905,14 +2955,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     NSClipView* clipView = _pageScrollView.contentView;
     origin = [self clampedDocumentScrollOrigin:origin];
     _updatingFromScroll = YES;
-    [NSAnimationContext
-        runAnimationGroup:^(NSAnimationContext* context) {
-          context.duration = 0.0;
-          context.allowsImplicitAnimation = NO;
-          [clipView setBoundsOrigin:origin];
-          [self->_pageScrollView reflectScrolledClipView:clipView];
-        }
-        completionHandler:nil];
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
+      context.duration = 0.0;
+      context.allowsImplicitAnimation = NO;
+      [clipView setBoundsOrigin:origin];
+      [self->_pageScrollView reflectScrolledClipView:clipView];
+    }
+                        completionHandler:nil];
     _updatingFromScroll = NO;
     if (notify) {
         [self documentScrollPositionChanged];
@@ -2956,25 +3005,23 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
                                             path:(NSString*)path {
     if (!_doc || generation != _renderGeneration || ![_path isEqualToString:path]) return;
 
-    [NSAnimationContext
-        runAnimationGroup:^(NSAnimationContext* context) {
-          context.duration = 0.0;
-          context.allowsImplicitAnimation = NO;
-          [self->_window.contentView layoutSubtreeIfNeeded];
-          [self->_documentContainer layoutSubtreeIfNeeded];
-          [self->_pageScrollView layoutSubtreeIfNeeded];
-          [self resizeDocumentView];
-          if (restoreOrigin) {
-              NSPoint origin = [self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
-                                                       forPageIndex:self->_pageIndex];
-              [self scrollDocumentClipViewToOrigin:origin notify:NO];
-          } else {
-              [self scrollToPage:self->_pageIndex alignTop:alignTop];
-          }
-          [self->_pageView setNeedsDisplay:YES];
-          [self->_pageScrollView displayIfNeeded];
-        }
-        completionHandler:nil];
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
+      context.duration = 0.0;
+      context.allowsImplicitAnimation = NO;
+      [self->_window.contentView layoutSubtreeIfNeeded];
+      [self->_documentContainer layoutSubtreeIfNeeded];
+      [self->_pageScrollView layoutSubtreeIfNeeded];
+      [self resizeDocumentView];
+      if (restoreOrigin) {
+          NSPoint origin = [self normalizedDocumentScrollOrigin:restoreOrigin.pointValue forPageIndex:self->_pageIndex];
+          [self scrollDocumentClipViewToOrigin:origin notify:NO];
+      } else {
+          [self scrollToPage:self->_pageIndex alignTop:alignTop];
+      }
+      [self->_pageView setNeedsDisplay:YES];
+      [self->_pageScrollView displayIfNeeded];
+    }
+                        completionHandler:nil];
     [self documentScrollPositionChanged];
     [self updateMinimap];
     if (!_suppressScrollCallbacks) [self rememberActiveTabState];
@@ -3209,9 +3256,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
     xFraction = spdf_clamp_cg(xFraction, 0.0, 1.0);
     yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
-    NSPoint documentPoint = [self continuousDocumentPointForPage:pageIndex
-                                                 xFractionInPage:xFraction
-                                                 yFractionInPage:yFraction];
+    NSPoint documentPoint =
+        [self continuousDocumentPointForPage:pageIndex xFractionInPage:xFraction yFractionInPage:yFraction];
     if (_viewMode == SPDFViewModeContinuous) {
         [self minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
         return;
@@ -3271,8 +3317,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     tab.customZoom = _rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom;
     tab.fitMode = _fitMode;
     tab.viewMode = _viewMode;
-    tab.scrollOrigin = [self normalizedDocumentScrollOrigin:_pageScrollView.contentView.bounds.origin
-                                               forPageIndex:_pageIndex];
+    tab.scrollOrigin =
+        [self normalizedDocumentScrollOrigin:_pageScrollView.contentView.bounds.origin forPageIndex:_pageIndex];
     tab.hasScrollOrigin = YES;
     [self rememberActiveTabFindState];
 }
@@ -3481,7 +3527,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     if ([_pageView point:viewPoint fallsInPage:&pageIndex pagePoint:&pagePoint]) {
         anchor.pageIndex = pageIndex;
         anchor.pagePoint = pagePoint;
-        anchor.offsetInViewport = NSMakePoint(viewPoint.x - NSMinX(clipView.bounds), viewPoint.y - NSMinY(clipView.bounds));
+        anchor.offsetInViewport =
+            NSMakePoint(viewPoint.x - NSMinX(clipView.bounds), viewPoint.y - NSMinY(clipView.bounds));
         anchor.valid = YES;
         return anchor;
     }
@@ -3676,7 +3723,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     clipView.postsBoundsChangedNotifications = NO;
     [self replaceDocumentViewForTabSwitch];
     _pageView.emptyMessage = @"Open a document";
-    _pageScrollView.hasVerticalScroller = YES;
+    if (_presentationMode)
+        _pageScrollView.verticalScroller = nil;
+    else if (_pageScrollView.verticalScroller != _markerScroller)
+        _pageScrollView.verticalScroller = _markerScroller;
+    _pageScrollView.hasVerticalScroller = !_presentationMode;
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
     tab.title = spdf_display_name_for_path(_path);
 
@@ -3844,8 +3895,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 }
 
 - (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard {
-    NSArray<NSURL*>* urls = [pasteboard readObjectsForClasses:@[ [NSURL class] ]
-                                                      options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
+    NSArray<NSURL*>* urls =
+        [pasteboard readObjectsForClasses:@[ [NSURL class] ] options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
     BOOL opened = NO;
     for (NSURL* url in urls) {
         NSString* ext = url.pathExtension.lowercaseString;
@@ -3900,6 +3951,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     if (!_splitView || !_sidebarContainer || !_sidebarVisible || _splitView.subviews.count < 2) return;
     _sidebarWidth = [self clampedSidebarWidth];
     _restoringSidebarLayout = YES;
+    _sidebarContainer.hidden = NO;
     [_splitView layoutSubtreeIfNeeded];
     [_splitView setPosition:_sidebarWidth ofDividerAtIndex:0];
     [_splitView layoutSubtreeIfNeeded];
@@ -3907,19 +3959,33 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 }
 
 - (void)setSidebarActuallyVisible:(BOOL)visible {
-    if (!_splitView || !_sidebarContainer || !_documentContainer || visible == _sidebarVisible) return;
-    if (visible) {
+    if (!_splitView || !_sidebarContainer || !_documentContainer) return;
+    if (![_splitView.subviews containsObject:_sidebarContainer])
         [_splitView addSubview:_sidebarContainer positioned:NSWindowBelow relativeTo:_documentContainer];
+    if (visible == _sidebarVisible && _sidebarContainer.hidden == !visible) return;
+
+    _restoringSidebarLayout = YES;
+    if (visible) {
         _sidebarVisible = YES;
+        _sidebarContainer.hidden = NO;
+        [_splitView layoutSubtreeIfNeeded];
+        [_splitView setPosition:[self clampedSidebarWidth] ofDividerAtIndex:0];
+        [_splitView layoutSubtreeIfNeeded];
+        _restoringSidebarLayout = NO;
         [self restoreSidebarWidth];
     } else {
         if (_allowSidebarWidthPersistence && [self currentSidebarFrameIsPersistable])
             _sidebarWidth = spdf_sane_sidebar_width(NSWidth(_sidebarContainer.frame), NSWidth(_splitView.bounds));
-        [_sidebarContainer removeFromSuperview];
         _sidebarVisible = NO;
+        [_splitView layoutSubtreeIfNeeded];
+        if (_splitView.subviews.count >= 2) [_splitView setPosition:0.0 ofDividerAtIndex:0];
+        _sidebarContainer.hidden = YES;
+        _restoringSidebarLayout = NO;
     }
     [_splitView layoutSubtreeIfNeeded];
     if (_doc) [self resizeDocumentView];
+    [self syncToolbarState];
+    [self updateControls];
 }
 
 - (void)setMinimapActuallyVisible:(BOOL)visible {
@@ -3969,7 +4035,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
                ofSubviewAt:(NSInteger)dividerIndex {
     (void)proposedMinimumPosition;
     (void)dividerIndex;
-    if (splitView == _splitView) return kMinSidebarWidth;
+    if (splitView == _splitView) return _sidebarVisible ? kMinSidebarWidth : 0.0;
     return proposedMinimumPosition;
 }
 
@@ -4029,14 +4095,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
             if (author.length) title = [NSString stringWithFormat:@"%@: %@", author, title];
             CGFloat width = item.bounds.x1 - item.bounds.x0;
             CGFloat height = item.bounds.y1 - item.bounds.y0;
-            NSMutableDictionary* sidebarItem =
-                [@{
-                    @"title" : title,
-                    @"page" : @(item.page_index),
-                    @"level" : @0,
-                    @"kind" : @"comment",
-                    @"commentIndex" : @(item.index)
-                } mutableCopy];
+            NSMutableDictionary* sidebarItem = [@{
+                @"title" : title,
+                @"page" : @(item.page_index),
+                @"level" : @0,
+                @"kind" : @"comment",
+                @"commentIndex" : @(item.index)
+            } mutableCopy];
             if (width > 0 && height > 0) {
                 sidebarItem[@"bounds"] =
                     [NSValue valueWithRect:NSMakeRect(item.bounds.x0, item.bounds.y0, width, height)];
@@ -4095,6 +4160,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 
 - (BOOL)documentArrowKeyDown:(NSEvent*)event {
     if (!_doc) return NO;
+    if (_presentationMode && event.keyCode == 53) {
+        [self leavePresentationModeAndExitFullScreen:YES sender:nil];
+        return YES;
+    }
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) return NO;
 
@@ -4138,6 +4207,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     [_fitModePopup itemAtIndex:SPDFFitModeActual].title = @"100%";
     [_fitModePopup selectItemAtIndex:_fitMode];
     _continuousButton.state = _viewMode == SPDFViewModeContinuous ? NSControlStateValueOn : NSControlStateValueOff;
+    _sidebarToggleButton.state = _sidebarVisible ? NSControlStateValueOn : NSControlStateValueOff;
+    _minimapToggleButton.state = _minimapVisible ? NSControlStateValueOn : NSControlStateValueOff;
     _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
 }
@@ -4145,8 +4216,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 - (void)updateControls {
     NSInteger pageCount = spdf_page_count(_doc);
     BOOL hasDoc = _doc != NULL;
+    BOOL hasSidebar = hasDoc && (_outline.count > 0 || _comments.count > 0);
     _prevButton.enabled = hasDoc && _pageIndex > 0;
     _nextButton.enabled = hasDoc && _pageIndex + 1 < pageCount;
+    _sidebarToggleButton.enabled = hasSidebar;
     _pageField.enabled = hasDoc;
     _zoomOutButton.enabled = hasDoc;
     _zoomInButton.enabled = hasDoc;
@@ -4155,6 +4228,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     _searchField.enabled = hasDoc;
     _findRegexCheckbox.enabled = hasDoc;
     _ocrButton.enabled = hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+    _minimapToggleButton.enabled = hasDoc;
     [self updateFindControls];
     _pageField.stringValue = hasDoc ? [NSString stringWithFormat:@"%ld", (long)_pageIndex + 1] : @"";
     _pageCountLabel.stringValue = [NSString stringWithFormat:@"/ %ld", (long)pageCount];
@@ -4529,7 +4603,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 
     char err[512];
     spdf_link_target target;
-    int hit = spdf_link_at_point(_doc, (int)pageIndex, (float)pagePoint.x, (float)pagePoint.y, &target, err, sizeof(err));
+    int hit =
+        spdf_link_at_point(_doc, (int)pageIndex, (float)pagePoint.x, (float)pagePoint.y, &target, err, sizeof(err));
     if (hit <= 0) return NO;
 
     if (target.kind == SPDF_LINK_URI && target.uri) {
@@ -4547,8 +4622,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     if (target.kind == SPDF_LINK_INTERNAL && target.page_index >= 0) {
         NSInteger targetPage = target.page_index;
         NSRect targetRect = NSZeroRect;
-        if (isfinite(target.x) && isfinite(target.y))
-            targetRect = NSMakeRect(target.x, target.y, 1.0, 24.0);
+        if (isfinite(target.x) && isfinite(target.y)) targetRect = NSMakeRect(target.x, target.y, 1.0, 24.0);
         _pageIndex = MAX(0, MIN(targetPage, spdf_page_count(_doc) - 1));
         _pageView.currentPageIndex = _pageIndex;
         [self renderPageIfNeededAtIndex:_pageIndex];
@@ -4568,6 +4642,23 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     return NO;
 }
 
+- (BOOL)documentViewHandlePresentationMouseDown:(NSEvent*)event {
+    if (!_presentationMode || !_doc) return NO;
+    if (event.type == NSEventTypeRightMouseDown) {
+        [self previousPage:nil];
+        return YES;
+    }
+    if (event.type == NSEventTypeLeftMouseDown) {
+        [self nextPage:nil];
+        return YES;
+    }
+    return NO;
+}
+
+- (BOOL)documentViewInPresentationMode {
+    return _presentationMode;
+}
+
 - (NSArray<NSValue*>*)currentSelectionRects {
     if (_selectionPageIndex < 0 || _selectionPageIndex >= (NSInteger)_renderedPages.count) return @[];
     return _renderedPages[(NSUInteger)_selectionPageIndex].selectionRects ?: @[];
@@ -4582,7 +4673,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 }
 
 - (NSDictionary*)promptForCommentEditorWithTitle:(NSString*)title
-                                      buttonTitle:(NSString*)buttonTitle
+                                     buttonTitle:(NSString*)buttonTitle
                                           author:(NSString*)author
                                             text:(NSString*)text {
     NSAlert* alert = [[NSAlert alloc] init];
@@ -4619,12 +4710,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     [alert.window setInitialFirstResponder:textView];
     [alert.window makeFirstResponder:textView];
     dispatch_async(dispatch_get_main_queue(), ^{
-        [alert.window makeFirstResponder:textView];
-        [textView setSelectedRange:commentRange];
+      [alert.window makeFirstResponder:textView];
+      [textView setSelectedRange:commentRange];
     });
     if ([alert runModal] != NSAlertFirstButtonReturn) return nil;
 
-    NSString* trimmedText = [textView.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString* trimmedText =
+        [textView.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSString* trimmedAuthor =
         [authorField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (trimmedText.length == 0) return nil;
@@ -4710,7 +4802,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     [_window makeFirstResponder:field];
     if ([alert runModal] != NSAlertFirstButtonReturn) return;
 
-    _commentAuthor = [field.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    _commentAuthor =
+        [field.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     [self savePersistentState];
     _statusLabel.stringValue = _commentAuthor.length ? @"Comment author saved." : @"Comment author reset.";
 }
@@ -4768,12 +4861,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
         return;
     }
 
-    NSString* author = item->author && *item->author ? [NSString stringWithUTF8String:item->author] : [self currentCommentAuthor];
+    NSString* author =
+        item->author && *item->author ? [NSString stringWithUTF8String:item->author] : [self currentCommentAuthor];
     NSString* text = item->text && *item->text ? [NSString stringWithUTF8String:item->text] : @"";
-    NSDictionary* result = [self promptForCommentEditorWithTitle:@"Edit Comment"
-                                                     buttonTitle:@"Save"
-                                                          author:author
-                                                            text:text];
+    NSDictionary* result =
+        [self promptForCommentEditorWithTitle:@"Edit Comment" buttonTitle:@"Save" author:author text:text];
     if (!result) return;
 
     _commentAuthor = result[@"author"] ?: @"";
@@ -4782,7 +4874,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
                                   err, sizeof(err));
     if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
     if (!ok) {
-        [self showError:@"Could not edit comment" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+        [self showError:@"Could not edit comment"
+                 detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
         return;
     }
 
@@ -4825,7 +4918,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     BOOL ok = spdf_delete_comment(_doc, (int)commentIndex, err, sizeof(err));
     if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
     if (!ok) {
-        [self showError:@"Could not delete comment" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+        [self showError:@"Could not delete comment"
+                 detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
         return;
     }
 
@@ -5544,13 +5638,21 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
 
 - (void)toggleSidebar:(id)sender {
     (void)sender;
-    _sidebarPreferredVisible = !_sidebarPreferredVisible;
+    BOOL canShowSidebar = _doc && (_outline.count > 0 || _comments.count > 0);
+    if (!_sidebarVisible && !canShowSidebar) {
+        [self syncToolbarState];
+        [self updateControls];
+        return;
+    }
+    _sidebarPreferredVisible = !_sidebarVisible;
     [self rebuildSidebar];
     [self persistActiveState];
 }
 
 - (void)toggleSidebarMode:(SPDFSidebarMode)mode {
     if (!_doc) return;
+    BOOL hasItems = mode == SPDFSidebarModeChapters ? _outline.count > 0 : _comments.count > 0;
+    if (!hasItems) return;
     BOOL sameVisibleMode = _sidebarVisible && _sidebarModeControl.selectedSegment == mode;
     _sidebarPreferredVisible = !sameVisibleMode;
     if (_sidebarPreferredVisible) _sidebarModeControl.selectedSegment = mode;
@@ -5573,6 +5675,82 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     _minimapPreferredVisible = !_minimapPreferredVisible;
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
     [self persistActiveState];
+}
+
+- (BOOL)windowIsFullScreen {
+    return (_window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+}
+
+- (void)applyPresentationChrome {
+    BOOL presentation = _presentationMode;
+    _tabStrip.hidden = presentation;
+    _toolbar.hidden = presentation;
+    _tabStripHeightConstraint.constant = presentation ? 0.0 : kTabStripHeight;
+    _toolbarHeightConstraint.constant = presentation ? 0.0 : 42.0;
+    _pageView.presentationMode = presentation;
+    if (presentation) {
+        _pageScrollView.hasVerticalScroller = NO;
+        _pageScrollView.verticalScroller = nil;
+    } else {
+        _pageScrollView.verticalScroller = _markerScroller;
+        _pageScrollView.hasVerticalScroller = YES;
+        _markerScroller.hidden = NO;
+    }
+    _pageScrollView.autohidesScrollers = presentation;
+    _pageScrollView.backgroundColor = presentation ? NSColor.blackColor : NSColor.windowBackgroundColor;
+    _pageScrollView.contentView.backgroundColor = presentation ? NSColor.blackColor : NSColor.windowBackgroundColor;
+    [_window.contentView layoutSubtreeIfNeeded];
+}
+
+- (void)enterPresentationMode:(id)sender {
+    if (!_doc || _presentationMode) return;
+
+    _presentationPreviousViewMode = _viewMode;
+    _presentationPreviousFitMode = _fitMode;
+    _presentationPreviousSidebarPreferredVisible = _sidebarPreferredVisible;
+    _presentationPreviousMinimapPreferredVisible = _minimapPreferredVisible;
+    _presentationEnteredFullScreen = ![self windowIsFullScreen];
+    _presentationMode = YES;
+
+    _sidebarPreferredVisible = NO;
+    _minimapPreferredVisible = NO;
+    _viewMode = SPDFViewModeSingle;
+    _fitMode = SPDFFitModePage;
+    _pageView.viewMode = _viewMode;
+    _pageView.currentPageIndex = _pageIndex;
+    [self applyPresentationChrome];
+    [self rebuildSidebar];
+    [self setMinimapActuallyVisible:NO];
+    [_window makeFirstResponder:_pageView];
+    [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
+    if (_presentationEnteredFullScreen) [_window toggleFullScreen:sender];
+}
+
+- (void)leavePresentationModeAndExitFullScreen:(BOOL)exitFullScreen sender:(id)sender {
+    if (!_presentationMode) return;
+
+    BOOL shouldExitFullScreen = exitFullScreen && _presentationEnteredFullScreen && [self windowIsFullScreen];
+    _presentationMode = NO;
+    _presentationEnteredFullScreen = NO;
+    _sidebarPreferredVisible = _presentationPreviousSidebarPreferredVisible;
+    _minimapPreferredVisible = _presentationPreviousMinimapPreferredVisible;
+    _viewMode = _presentationPreviousViewMode;
+    _fitMode = _presentationPreviousFitMode;
+    _pageView.viewMode = _viewMode;
+    _pageView.currentPageIndex = _pageIndex;
+    [self applyPresentationChrome];
+    [self rebuildSidebar];
+    [self setMinimapActuallyVisible:_minimapPreferredVisible];
+    if (_doc) [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
+    [self persistActiveState];
+    if (shouldExitFullScreen) [_window toggleFullScreen:sender];
+}
+
+- (void)togglePresentation:(id)sender {
+    if (_presentationMode)
+        [self leavePresentationModeAndExitFullScreen:YES sender:sender];
+    else
+        [self enterPresentationMode:sender];
 }
 
 - (void)toggleFullScreen:(id)sender {
@@ -5782,8 +5960,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     if (!tool.length || !tesseract.length) {
         NSAlert* alert = [[NSAlert alloc] init];
         alert.messageText = @"Install OCR support?";
-        alert.informativeText = @"SumatraPDF can install OCRmyPDF and Tesseract, then continue OCR automatically when "
-                                @"installation finishes.";
+        alert.informativeText =
+            @"SumatraPDF can install OCRmyPDF and Tesseract, then continue OCR automatically when "
+            @"installation finishes.";
         [alert addButtonWithTitle:@"Install"];
         [alert addButtonWithTitle:@"Cancel"];
         alert.alertStyle = NSAlertStyleInformational;
@@ -6030,24 +6209,19 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(copySelection:) keyEquivalent:@""];
     copy.enabled = _selectedText.length > 0;
     if (_contextCommentIndex >= 0) {
-        NSMenuItem* editComment = [menu addItemWithTitle:@"Edit Comment..."
-                                                  action:@selector(editComment:)
-                                           keyEquivalent:@""];
+        NSMenuItem* editComment =
+            [menu addItemWithTitle:@"Edit Comment..." action:@selector(editComment:) keyEquivalent:@""];
         editComment.target = self;
         editComment.representedObject = @(_contextCommentIndex);
-        NSMenuItem* deleteComment = [menu addItemWithTitle:@"Delete Comment..."
-                                                    action:@selector(deleteComment:)
-                                             keyEquivalent:@""];
+        NSMenuItem* deleteComment =
+            [menu addItemWithTitle:@"Delete Comment..." action:@selector(deleteComment:) keyEquivalent:@""];
         deleteComment.target = self;
         deleteComment.representedObject = @(_contextCommentIndex);
     }
-    NSMenuItem* addComment = [menu addItemWithTitle:@"Add Comment..."
-                                             action:@selector(addComment:)
-                                      keyEquivalent:@""];
+    NSMenuItem* addComment = [menu addItemWithTitle:@"Add Comment..." action:@selector(addComment:) keyEquivalent:@""];
     addComment.enabled = _doc != NULL && (_selectedText.length > 0 || _contextPageIndex >= 0);
-    NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
-                                            action:@selector(copyCurrentPageImage:)
-                                     keyEquivalent:@""];
+    NSMenuItem* copyImage =
+        [menu addItemWithTitle:@"Copy Page Image" action:@selector(copyCurrentPageImage:) keyEquivalent:@""];
     copyImage.enabled = _doc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
                         _renderedPages[(NSUInteger)_pageIndex].image != nil;
     [menu addItem:[NSMenuItem separatorItem]];
@@ -6056,13 +6230,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
     [menu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@""];
     [menu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@""];
     [menu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* favorite = [menu addItemWithTitle:@"Favorite Page"
-                                           action:@selector(favoriteCurrentPage:)
-                                    keyEquivalent:@""];
+    NSMenuItem* favorite =
+        [menu addItemWithTitle:@"Favorite Page" action:@selector(favoriteCurrentPage:) keyEquivalent:@""];
     favorite.enabled = _doc != NULL;
-    NSMenuItem* showInFolder = [menu addItemWithTitle:@"Show in Folder"
-                                               action:@selector(showInFolder:)
-                                        keyEquivalent:@""];
+    NSMenuItem* showInFolder =
+        [menu addItemWithTitle:@"Show in Folder" action:@selector(showInFolder:) keyEquivalent:@""];
     showInFolder.enabled = _doc != NULL && _path.length > 0;
     [menu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@""];
     [NSMenu popUpContextMenu:menu withEvent:event forView:view];
@@ -6236,9 +6408,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
                 cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 620, 44)];
                 cell.identifier = @"PaletteFavoriteCell";
 
-                deleteButton = [NSButton buttonWithTitle:@""
-                                                  target:self
-                                                  action:@selector(paletteFavoriteDeleteClicked:)];
+                deleteButton =
+                    [NSButton buttonWithTitle:@"" target:self action:@selector(paletteFavoriteDeleteClicked:)];
                 deleteButton.translatesAutoresizingMaskIntoConstraints = NO;
                 deleteButton.identifier = @"favoriteDelete";
                 deleteButton.bezelStyle = NSBezelStyleRounded;
@@ -6295,8 +6466,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
                 NSFontAttributeName : [NSFont systemFontOfSize:armed ? 11.0 : 17.0
                                                         weight:armed ? NSFontWeightSemibold : NSFontWeightRegular]
             };
-            deleteButton.attributedTitle = [[NSAttributedString alloc] initWithString:deleteTitle
-                                                                           attributes:attributes];
+            deleteButton.attributedTitle =
+                [[NSAttributedString alloc] initWithString:deleteTitle attributes:attributes];
             deleteButton.bordered = YES;
             deleteButton.bezelStyle = NSBezelStyleRounded;
             deleteButton.toolTip = armed ? @"Click again to delete this favorite" : @"Delete favorite";
@@ -6417,10 +6588,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
         action == @selector(showFavoritesPalette:) || action == @selector(showFindPalette:) ||
         action == @selector(focusFind:) || action == @selector(setCommentAuthor:))
         return YES;
-    if (action == @selector(toggleSidebar:) || action == @selector(toggleChaptersPanel:) ||
-        action == @selector(toggleCommentsPanel:)) {
-        BOOL chapters =
-            action == @selector(toggleChaptersPanel:) || _sidebarModeControl.selectedSegment == SPDFSidebarModeChapters;
+    if (action == @selector(toggleSidebar:)) {
+        BOOL hasSidebar = hasDoc && (_outline.count > 0 || _comments.count > 0);
+        menuItem.title = _sidebarVisible ? @"Hide Side Panel" : @"Show Side Panel";
+        menuItem.state = _sidebarVisible ? NSControlStateValueOn : NSControlStateValueOff;
+        return hasSidebar;
+    }
+    if (action == @selector(toggleChaptersPanel:) || action == @selector(toggleCommentsPanel:)) {
+        BOOL chapters = action == @selector(toggleChaptersPanel:);
         BOOL hasItems = chapters ? _outline.count > 0 : _comments.count > 0;
         NSString* panelName = chapters ? @"Chapters Panel" : @"Comments Panel";
         BOOL selectedVisible = _sidebarVisible && _sidebarModeControl.selectedSegment ==
@@ -6428,6 +6603,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) { SPDFSidebarModeChapters = 0, SPDFS
         menuItem.title = [NSString stringWithFormat:@"%@ %@", selectedVisible ? @"Hide" : @"Show", panelName];
         menuItem.state = selectedVisible ? NSControlStateValueOn : NSControlStateValueOff;
         return hasDoc && hasItems;
+    }
+    if (action == @selector(togglePresentation:)) {
+        menuItem.title = _presentationMode ? @"Exit Diaporama" : @"Diaporama";
+        menuItem.state = _presentationMode ? NSControlStateValueOn : NSControlStateValueOff;
+        return hasDoc;
     }
     if (action == @selector(toggleMinimap:)) {
         menuItem.title = _minimapPreferredVisible ? @"Hide Minimap" : @"Show Minimap";
