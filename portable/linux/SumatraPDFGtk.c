@@ -20,8 +20,8 @@
 #define BACKGROUND_RENDER_BATCH_LIMIT 6
 #define DEFAULT_WINDOW_WIDTH 960
 #define DEFAULT_WINDOW_HEIGHT 680
-#define MIN_WINDOW_WIDTH 640
-#define MIN_WINDOW_HEIGHT 420
+#define MIN_WINDOW_WIDTH 560
+#define MIN_WINDOW_HEIGHT 380
 #define MAX_WINDOW_WIDTH 4096
 #define MAX_WINDOW_HEIGHT 3072
 
@@ -4803,6 +4803,13 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
     state->continuous = gtk_check_button_new_with_label("Continuous");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
+    gtk_widget_set_tooltip_text(state->continuous, "Continuous scrolling");
+    GtkWidget* continuous_label = gtk_bin_get_child(GTK_BIN(state->continuous));
+    if (GTK_IS_LABEL(continuous_label)) {
+        gtk_label_set_ellipsize(GTK_LABEL(continuous_label), PANGO_ELLIPSIZE_END);
+        gtk_label_set_single_line_mode(GTK_LABEL(continuous_label), TRUE);
+    }
+    gtk_widget_set_size_request(state->continuous, 104, -1);
     state->search_entry = gtk_search_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(state->search_entry), "Find");
     if (state->tab_count == 0 && state->restore_search_text) set_search_entry_text(state, state->restore_search_text);
@@ -4814,11 +4821,11 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->find_prev_button = gtk_button_new_with_label("<");
     state->find_next_button = gtk_button_new_with_label(">");
     state->ocr_button = gtk_button_new_with_label("OCR");
-    gtk_entry_set_width_chars(GTK_ENTRY(state->search_entry), 14);
-    gtk_entry_set_max_width_chars(GTK_ENTRY(state->search_entry), 20);
+    gtk_entry_set_width_chars(GTK_ENTRY(state->search_entry), 10);
+    gtk_entry_set_max_width_chars(GTK_ENTRY(state->search_entry), 13);
     gtk_widget_set_margin_start(state->search_entry, 3);
     gtk_widget_set_margin_end(state->search_entry, 3);
-    gtk_widget_set_size_request(state->search_entry, 134, -1);
+    gtk_widget_set_size_request(state->search_entry, 96, -1);
     gtk_widget_set_hexpand(state->search_entry, FALSE);
 
     state->toolbar_overflow_button = gtk_menu_button_new();
@@ -4871,7 +4878,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     toolbar_pack_item(toolbar, zoom_in, 0, NULL);
     toolbar_pack_item(toolbar, state->fit_mode, 40, overflow_fit);
     toolbar_pack_item(toolbar, state->continuous, 70, state->overflow_continuous_item);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->search_entry, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->search_entry, FALSE, FALSE, 0);
     toolbar_pack_item(toolbar, state->find_count_label, 88, NULL);
     toolbar_pack_item(toolbar, state->find_prev_button, 86, NULL);
     toolbar_pack_item(toolbar, state->find_next_button, 86, NULL);

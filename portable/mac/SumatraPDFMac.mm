@@ -14,8 +14,12 @@ static const CGFloat kMinZoom = 0.10;
 static const CGFloat kMaxZoom = 8.00;
 static const CGFloat kSelectionOverlayAlpha = 0.20;
 static const CGFloat kTabStripHeight = 42.0;
-static const CGFloat kMinWindowWidth = 640.0;
-static const CGFloat kMinWindowHeight = 420.0;
+static const CGFloat kTabGap = 6.0;
+static const CGFloat kTabMinVisibleWidth = 112.0;
+static const CGFloat kTabMaxWidth = 320.0;
+static const CGFloat kTabControlWidth = 32.0;
+static const CGFloat kMinWindowWidth = 560.0;
+static const CGFloat kMinWindowHeight = 380.0;
 static const CGFloat kDefaultMinimapWidth = 110.0;
 static const CGFloat kDefaultSidebarWidth = 240.0;
 static const CGFloat kMinSidebarWidth = 176.0;
@@ -383,10 +387,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (CGFloat)tabWidth {
-    NSInteger count = MAX(1, (NSInteger)self.tabs.count);
-    CGFloat available = NSMinX([self plusRect]) - [self leftInset] - 12.0 - (count - 1) * 6.0;
-    if (available <= 0) return 74.0;
-    return MAX(74.0, MIN(320.0, floor(available / count)));
+    NSInteger count = MAX(1, (NSInteger)[self visibleTabIndexes].count);
+    CGFloat available = [self tabAreaWidthWithOverflow:[self hasOverflowTabs]] - (count - 1) * kTabGap;
+    if (available <= 0) return kTabMinVisibleWidth;
+    return MAX(1.0, MIN(kTabMaxWidth, floor(available / count)));
 }
 
 - (CGFloat)leftInset {
@@ -394,14 +398,94 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (NSRect)plusRect {
-    CGFloat x = MAX([self leftInset] + 48, NSWidth(self.bounds) - 42);
-    x = MIN(x, MAX([self leftInset] + 48, NSWidth(self.bounds) - 40));
-    return NSMakeRect(x, 7, 32, 28);
+    CGFloat x = MAX([self leftInset] + kTabControlWidth + 16.0, NSWidth(self.bounds) - 42);
+    x = MIN(x, MAX([self leftInset] + kTabControlWidth + 16.0, NSWidth(self.bounds) - 40));
+    return NSMakeRect(x, 7, kTabControlWidth, 28);
+}
+
+- (NSRect)overflowRectAssumingVisible {
+    CGFloat x = NSMinX([self plusRect]) - kTabControlWidth - kTabGap;
+    x = MAX([self leftInset], x);
+    return NSMakeRect(x, 7, kTabControlWidth, 28);
+}
+
+- (CGFloat)tabAreaRightWithOverflow:(BOOL)overflow {
+    return overflow ? NSMinX([self overflowRectAssumingVisible]) - 8.0 : NSMinX([self plusRect]) - 10.0;
+}
+
+- (CGFloat)tabAreaWidthWithOverflow:(BOOL)overflow {
+    return MAX(0.0, [self tabAreaRightWithOverflow:overflow] - [self leftInset]);
+}
+
+- (NSInteger)selectedIndexForLayout {
+    NSInteger count = (NSInteger)self.tabs.count;
+    if (count <= 0) return -1;
+    if (self.selectedIndex < 0) return 0;
+    return MIN(self.selectedIndex, count - 1);
+}
+
+- (NSInteger)visibleTabCapacityWithOverflow:(BOOL)overflow {
+    NSInteger count = (NSInteger)self.tabs.count;
+    if (count <= 0) return 0;
+
+    CGFloat areaWidth = [self tabAreaWidthWithOverflow:overflow];
+    if (areaWidth <= 0) return 1;
+
+    NSInteger capacity = (NSInteger)floor((areaWidth + kTabGap) / (kTabMinVisibleWidth + kTabGap));
+    return MAX(1, MIN(count, capacity));
+}
+
+- (BOOL)hasOverflowTabs {
+    NSInteger count = (NSInteger)self.tabs.count;
+    if (count <= 1) return NO;
+    return [self visibleTabCapacityWithOverflow:NO] < count;
+}
+
+- (NSArray<NSNumber*>*)visibleTabIndexes {
+    NSInteger count = (NSInteger)self.tabs.count;
+    if (count <= 0) return @[];
+
+    BOOL overflow = [self hasOverflowTabs];
+    NSInteger visibleCount = overflow ? [self visibleTabCapacityWithOverflow:YES] : count;
+    visibleCount = MAX(1, MIN(count, visibleCount));
+
+    NSInteger selected = [self selectedIndexForLayout];
+    NSInteger start = overflow ? selected - (visibleCount - 1) / 2 : 0;
+    start = MAX(0, MIN(start, count - visibleCount));
+
+    NSMutableArray<NSNumber*>* indexes = [NSMutableArray arrayWithCapacity:(NSUInteger)visibleCount];
+    for (NSInteger i = 0; i < visibleCount; ++i) {
+        [indexes addObject:@(start + i)];
+    }
+    return indexes;
+}
+
+- (NSArray<NSNumber*>*)hiddenTabIndexes {
+    if (![self hasOverflowTabs]) return @[];
+
+    NSMutableIndexSet* visibleIndexes = [NSMutableIndexSet indexSet];
+    for (NSNumber* index in [self visibleTabIndexes]) {
+        [visibleIndexes addIndex:(NSUInteger)index.integerValue];
+    }
+
+    NSMutableArray<NSNumber*>* hiddenIndexes = [NSMutableArray array];
+    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
+        if (![visibleIndexes containsIndex:(NSUInteger)i]) [hiddenIndexes addObject:@(i)];
+    }
+    return hiddenIndexes;
+}
+
+- (NSRect)overflowRect {
+    return [self hasOverflowTabs] ? [self overflowRectAssumingVisible] : NSZeroRect;
 }
 
 - (NSRect)rectForTabAtIndex:(NSInteger)index {
-    CGFloat x = [self leftInset] + index * ([self tabWidth] + 6);
-    CGFloat maxRight = NSMinX([self plusRect]) - 10;
+    NSArray<NSNumber*>* visibleIndexes = [self visibleTabIndexes];
+    NSUInteger visiblePosition = [visibleIndexes indexOfObject:@(index)];
+    if (visiblePosition == NSNotFound) return NSZeroRect;
+
+    CGFloat x = [self leftInset] + (CGFloat)visiblePosition * ([self tabWidth] + kTabGap);
+    CGFloat maxRight = [self tabAreaRightWithOverflow:[self hasOverflowTabs]];
     CGFloat width = MIN([self tabWidth], maxRight - x);
     return NSMakeRect(x, 7, width, 28);
 }
@@ -594,6 +678,26 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [closeX stroke];
     }
 
+    NSRect overflowRect = [self overflowRect];
+    if (!NSIsEmptyRect(overflowRect)) {
+        [NSColor.controlBackgroundColor setFill];
+        NSBezierPath* overflowPath = [NSBezierPath bezierPathWithRoundedRect:overflowRect xRadius:9 yRadius:9];
+        [overflowPath fill];
+        [[NSColor.separatorColor colorWithAlphaComponent:0.45] setStroke];
+        overflowPath.lineWidth = 1.0;
+        [overflowPath stroke];
+
+        [[NSColor.labelColor colorWithAlphaComponent:0.78] setFill];
+        CGFloat dotDiameter = 3.2;
+        CGFloat dotGap = 4.4;
+        CGFloat startX = floor(NSMidX(overflowRect) - dotDiameter * 1.5 - dotGap);
+        CGFloat y = floor(NSMidY(overflowRect) - dotDiameter / 2.0);
+        for (NSInteger i = 0; i < 3; ++i) {
+            NSRect dot = NSMakeRect(startX + (dotDiameter + dotGap) * i, y, dotDiameter, dotDiameter);
+            [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
+        }
+    }
+
     NSRect plusRect = [self plusRect];
     [NSColor.controlBackgroundColor setFill];
     [[NSBezierPath bezierPathWithRoundedRect:plusRect xRadius:9 yRadius:9] fill];
@@ -607,6 +711,49 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         withAttributes:plusAttrs];
 }
 
+- (void)showOverflowMenuWithEvent:(NSEvent*)event {
+    NSArray<NSNumber*>* hiddenIndexes = [self hiddenTabIndexes];
+    if (!hiddenIndexes.count) return;
+
+    [self hideHoverPanel];
+
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Hidden Tabs"];
+    for (NSNumber* indexNumber in hiddenIndexes) {
+        NSInteger index = indexNumber.integerValue;
+        NSString* title = [self titleForTabAtIndex:index];
+        if (!title.length) title = @"Untitled";
+
+        NSMenuItem* item =
+            [[NSMenuItem alloc] initWithTitle:title action:@selector(overflowTabMenuItemSelected:) keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = indexNumber;
+        item.state = index == self.selectedIndex ? NSControlStateValueOn : NSControlStateValueOff;
+        [menu addItem:item];
+    }
+
+    NSRect overflowRect = [self overflowRect];
+    NSEvent* menuEvent = event;
+    if (!menuEvent) {
+        NSPoint windowPoint = [self convertPoint:NSMakePoint(NSMinX(overflowRect), NSMinY(overflowRect)) toView:nil];
+        menuEvent = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                                       location:windowPoint
+                                  modifierFlags:0
+                                      timestamp:NSProcessInfo.processInfo.systemUptime
+                                   windowNumber:self.window.windowNumber
+                                        context:nil
+                                    eventNumber:0
+                                     clickCount:1
+                                       pressure:1.0];
+    }
+    [NSMenu popUpContextMenu:menu withEvent:menuEvent forView:self];
+}
+
+- (void)overflowTabMenuItemSelected:(NSMenuItem*)sender {
+    NSNumber* indexNumber = [sender.representedObject isKindOfClass:NSNumber.class] ? sender.representedObject : nil;
+    if (!indexNumber) return;
+    [self.reader selectTabAtIndex:indexNumber.integerValue];
+}
+
 - (void)mouseDown:(NSEvent*)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     if (NSPointInRect(point, [self plusRect])) {
@@ -614,8 +761,15 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         return;
     }
 
+    NSRect overflowRect = [self overflowRect];
+    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, overflowRect)) {
+        [self showOverflowMenuWithEvent:event];
+        return;
+    }
+
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
+        if (NSIsEmptyRect(tabRect)) continue;
         if (!NSPointInRect(point, tabRect)) continue;
         NSRect closeRect = NSInsetRect([self closeCircleRectForTabRect:tabRect], -5.0, -5.0);
         if (NSPointInRect(point, closeRect))
@@ -2519,6 +2673,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSFont* font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightLight];
     button.font = font;
     button.cell.font = font;
+    button.cell.wraps = NO;
+    button.cell.lineBreakMode = NSLineBreakByTruncatingTail;
     button.attributedTitle = [[NSAttributedString alloc]
         initWithString:button.title
             attributes:@{NSFontAttributeName : font, NSForegroundColorAttributeName : NSColor.labelColor}];
@@ -2737,9 +2893,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
     _continuousButton = [NSButton checkboxWithTitle:@"Continuous" target:self action:@selector(toggleContinuous:)];
     [self styleToolbarTextButton:_continuousButton];
+    _continuousButton.toolTip = @"Continuous scrolling";
     _continuousButton.translatesAutoresizingMaskIntoConstraints = NO;
     _continuousButton.state = NSControlStateValueOn;
-    [_continuousButton setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
+    [_continuousButton.widthAnchor constraintEqualToConstant:104].active = YES;
+    [_continuousButton setContentHuggingPriority:NSLayoutPriorityRequired
+                                  forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [_continuousButton setContentCompressionResistancePriority:NSLayoutPriorityRequired
                                                 forOrientation:NSLayoutConstraintOrientationHorizontal];
 
     _searchField = [[NSSearchField alloc] init];
@@ -2748,8 +2908,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _searchField.delegate = self;
     _searchField.target = nil;
     _searchField.action = NULL;
-    [_searchField.widthAnchor constraintGreaterThanOrEqualToConstant:112].active = YES;
-    [_searchField.widthAnchor constraintLessThanOrEqualToConstant:220].active = YES;
+    [_searchField.widthAnchor constraintGreaterThanOrEqualToConstant:88].active = YES;
+    [_searchField.widthAnchor constraintLessThanOrEqualToConstant:141].active = YES;
     [_searchField setContentHuggingPriority:NSLayoutPriorityDefaultLow - 1
                              forOrientation:NSLayoutConstraintOrientationHorizontal];
     [_searchField setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
