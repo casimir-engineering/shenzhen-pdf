@@ -18,6 +18,12 @@
 #define MAX_PALETTE_SEARCH_PAGES 250
 #define BACKGROUND_RENDER_RADIUS 3
 #define BACKGROUND_RENDER_BATCH_LIMIT 6
+#define DEFAULT_WINDOW_WIDTH 960
+#define DEFAULT_WINDOW_HEIGHT 680
+#define MIN_WINDOW_WIDTH 640
+#define MIN_WINDOW_HEIGHT 420
+#define MAX_WINDOW_WIDTH 4096
+#define MAX_WINDOW_HEIGHT 3072
 
 typedef struct favorite_item {
     char* path;
@@ -61,8 +67,18 @@ typedef struct app_state {
     GtkWidget* menubar;
     GtkWidget* tab_strip;
     GtkWidget* toolbar;
+    GtkWidget* side_panel_control;
     GtkWidget* side_panel_button;
+    GtkWidget* marker_strip_control;
     GtkWidget* marker_strip_button;
+    GtkWidget* toolbar_overflow_button;
+    GtkWidget* toolbar_overflow_menu;
+    GtkWidget* overflow_side_panel_item;
+    GtkWidget* overflow_marker_strip_item;
+    GtkWidget* overflow_continuous_item;
+    GtkWidget* overflow_search_regex_item;
+    GtkWidget* overflow_search_regex_multiline_item;
+    GtkWidget* overflow_fit_mode_items[5];
     GtkWidget* tab_bar;
     GtkWidget* new_tab_button;
     GtkWidget* page_box;
@@ -132,6 +148,8 @@ typedef struct app_state {
     gboolean updating_sidebar_menu;
     gboolean updating_marker_strip_control;
     gboolean updating_presentation_menu;
+    gboolean updating_overflow_controls;
+    gboolean window_fullscreen;
     gboolean panning;
     gboolean selecting;
     gboolean clamping_horizontal;
@@ -142,6 +160,8 @@ typedef struct app_state {
     double pan_start_v;
     double presentation_prev_zoom;
     int presentation_prev_fit_mode_id;
+    int window_width;
+    int window_height;
     GtkPolicyType presentation_prev_hpolicy;
     GtkPolicyType presentation_prev_vpolicy;
     int selection_page_index;
@@ -244,6 +264,7 @@ static void update_controls(app_state* state);
 static void update_sidebar_menu_items(app_state* state);
 static void update_presentation_menu_item(app_state* state);
 static void update_find_controls(app_state* state);
+static void update_toolbar_overflow_menu_state(app_state* state);
 static void update_tab_strip(app_state* state);
 static void save_active_tab_state(app_state* state);
 static void select_tab(app_state* state, int index);
@@ -252,6 +273,12 @@ static void set_regex_multiline_widget_active(GtkWidget* widget, gboolean active
 static void set_presentation_mode(app_state* state, gboolean enable);
 static void cancel_background_render(app_state* state);
 static void cancel_deferred_sidebar_load(app_state* state);
+
+static int clamp_int(int value, int min_value, int max_value) {
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
 
 static char* json_escape(const char* text) {
     GString* out = g_string_new("");
@@ -652,6 +679,12 @@ static void save_settings(app_state* state) {
         (state->presentation_mode ? state->presentation_prev_show_sidebar : state->show_sidebar) ? "true" : "false");
     g_string_append_printf(json, "  \"showFindMarkers\": %s,\n", state->show_find_markers ? "true" : "false");
     g_string_append_printf(json, "  \"sidebarWidth\": %d,\n", state->sidebar_width);
+    g_string_append_printf(json, "  \"windowWidth\": %d,\n",
+                           clamp_int(state->window_width > 0 ? state->window_width : DEFAULT_WINDOW_WIDTH,
+                                     MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH));
+    g_string_append_printf(json, "  \"windowHeight\": %d,\n",
+                           clamp_int(state->window_height > 0 ? state->window_height : DEFAULT_WINDOW_HEIGHT,
+                                     MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT));
     g_string_append_printf(json, "  \"commentAuthor\": \"%s\"\n", author);
     g_string_append(json, "}\n");
     write_text_file(state->settings_path, json->str);
@@ -723,6 +756,10 @@ static void load_settings(app_state* state) {
     state->show_sidebar = json_get_bool(json, "showSidebar", state->show_sidebar);
     state->show_find_markers = json_get_bool(json, "showFindMarkers", state->show_find_markers);
     state->sidebar_width = MAX(140, MIN(560, json_get_int(json, "sidebarWidth", state->sidebar_width)));
+    state->window_width =
+        clamp_int(json_get_int(json, "windowWidth", state->window_width), MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH);
+    state->window_height =
+        clamp_int(json_get_int(json, "windowHeight", state->window_height), MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT);
     comment_author = json_get_string(json, "commentAuthor");
     if (comment_author) {
         g_strstrip(comment_author);
@@ -1161,11 +1198,12 @@ static void update_find_controls(app_state* state) {
     }
     if (state->marker_strip_button && !state->updating_marker_strip_control) {
         state->updating_marker_strip_control = TRUE;
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->marker_strip_button), state->show_find_markers);
-        gtk_widget_set_sensitive(state->marker_strip_button,
+        gtk_switch_set_active(GTK_SWITCH(state->marker_strip_button), state->show_find_markers);
+        gtk_widget_set_sensitive(state->marker_strip_control ? state->marker_strip_control : state->marker_strip_button,
                                  state->doc && state->find_match_count > 0 && !state->presentation_mode);
         state->updating_marker_strip_control = FALSE;
     }
+    update_toolbar_overflow_menu_state(state);
 
     if (state->find_prev_button) {
         gtk_widget_set_visible(state->find_prev_button, has_query);
@@ -1281,10 +1319,12 @@ static void update_sidebar_menu_items(app_state* state) {
         gtk_widget_set_sensitive(state->show_sidebar_item, has_panel && !state->presentation_mode);
     }
     if (state->side_panel_button) {
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->side_panel_button), sidebar_visible);
-        gtk_widget_set_sensitive(state->side_panel_button, has_panel && !state->presentation_mode);
+        gtk_switch_set_active(GTK_SWITCH(state->side_panel_button), sidebar_visible);
+        gtk_widget_set_sensitive(state->side_panel_control ? state->side_panel_control : state->side_panel_button,
+                                 has_panel && !state->presentation_mode);
     }
     state->updating_sidebar_menu = FALSE;
+    update_toolbar_overflow_menu_state(state);
 }
 
 static void update_presentation_menu_item(app_state* state) {
@@ -2330,6 +2370,7 @@ static void fit_mode_changed(GtkComboBox* combo, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     state->fit_mode_id = gtk_combo_box_get_active(combo);
     if (state->switching_tabs) return;
+    update_toolbar_overflow_menu_state(state);
     render_current_page(state, FALSE);
     save_settings(state);
     save_session(state);
@@ -2339,6 +2380,7 @@ static void continuous_toggled(GtkToggleButton* button, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     state->continuous_mode = gtk_toggle_button_get_active(button);
     if (state->switching_tabs) return;
+    update_toolbar_overflow_menu_state(state);
     render_current_page(state, TRUE);
     save_settings(state);
     save_session(state);
@@ -2358,24 +2400,26 @@ static void show_sidebar_toggled(GtkCheckMenuItem* item, gpointer user_data) {
     save_settings(state);
 }
 
-static void side_panel_button_toggled(GtkToggleButton* button, gpointer user_data) {
+static void side_panel_switch_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     gboolean has_panel;
+    (void)pspec;
     if (state->updating_sidebar_menu) return;
     has_panel = state->doc && (state->outline.count > 0 || state->comments.count > 0);
     if (!has_panel || state->presentation_mode) {
         update_sidebar_menu_items(state);
         return;
     }
-    state->show_sidebar = gtk_toggle_button_get_active(button);
+    state->show_sidebar = gtk_switch_get_active(GTK_SWITCH(object));
     rebuild_sidebar(state);
     save_settings(state);
 }
 
-static void marker_strip_button_toggled(GtkToggleButton* button, gpointer user_data) {
+static void marker_strip_switch_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
     app_state* state = (app_state*)user_data;
+    (void)pspec;
     if (state->updating_marker_strip_control) return;
-    state->show_find_markers = gtk_toggle_button_get_active(button);
+    state->show_find_markers = gtk_switch_get_active(GTK_SWITCH(object));
     update_find_controls(state);
     save_settings(state);
 }
@@ -2386,6 +2430,7 @@ static void sync_view_controls_without_callbacks(app_state* state) {
     if (state->fit_mode) gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
     if (state->continuous) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
     state->switching_tabs = switching_tabs;
+    update_toolbar_overflow_menu_state(state);
 }
 
 static gboolean presentation_render_idle(gpointer user_data) {
@@ -2664,6 +2709,7 @@ static void find_regex_toggled(GtkToggleButton* button, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     state->search_regex = gtk_toggle_button_get_active(button);
     if (state->switching_tabs) return;
+    update_toolbar_overflow_menu_state(state);
     update_controls(state);
     start_find_for_current_query(state, -1, state->page_index, TRUE, FALSE);
 }
@@ -2694,7 +2740,62 @@ static void find_regex_multiline_toggled(GtkWidget* widget, gpointer user_data) 
         set_regex_multiline_widget_active(state->search_regex_multiline_item, active);
 
     if (state->switching_tabs) return;
+    update_toolbar_overflow_menu_state(state);
     start_find_for_current_query(state, -1, state->page_index, TRUE, FALSE);
+}
+
+static void overflow_button_activate(GtkMenuItem* item, gpointer user_data) {
+    GtkWidget* button = GTK_WIDGET(user_data);
+    (void)item;
+    if (GTK_IS_BUTTON(button)) gtk_button_clicked(GTK_BUTTON(button));
+}
+
+static void overflow_continuous_toggled(GtkCheckMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    if (state->updating_overflow_controls || !state->continuous) return;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), gtk_check_menu_item_get_active(item));
+}
+
+static void overflow_search_regex_toggled(GtkCheckMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    if (state->updating_overflow_controls || !state->search_regex_check) return;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->search_regex_check), gtk_check_menu_item_get_active(item));
+}
+
+static void overflow_search_regex_multiline_toggled(GtkCheckMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    if (state->updating_overflow_controls || !state->search_regex_multiline_check) return;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->search_regex_multiline_check),
+                                 gtk_check_menu_item_get_active(item));
+}
+
+static void overflow_marker_strip_toggled(GtkCheckMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    if (state->updating_overflow_controls || state->updating_marker_strip_control) return;
+    state->show_find_markers = gtk_check_menu_item_get_active(item);
+    update_find_controls(state);
+    save_settings(state);
+}
+
+static void overflow_side_panel_toggled(GtkCheckMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    gboolean has_panel;
+    if (state->updating_overflow_controls || state->updating_sidebar_menu) return;
+    has_panel = state->doc && (state->outline.count > 0 || state->comments.count > 0);
+    if (!has_panel || state->presentation_mode) {
+        update_sidebar_menu_items(state);
+        return;
+    }
+    state->show_sidebar = gtk_check_menu_item_get_active(item);
+    rebuild_sidebar(state);
+    save_settings(state);
+}
+
+static void overflow_fit_mode_toggled(GtkCheckMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    int fit_mode = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "sumatra-fit-mode"));
+    if (state->updating_overflow_controls || !gtk_check_menu_item_get_active(item) || !state->fit_mode) return;
+    gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), fit_mode);
 }
 
 static gboolean find_search_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data) {
@@ -2938,6 +3039,37 @@ static gboolean open_link_at_page_point(app_state* state, int page_index, double
 
     spdf_free_link_target(&target);
     return FALSE;
+}
+
+static gboolean link_at_page_point(app_state* state, int page_index, double page_x, double page_y) {
+    char err[512];
+    spdf_link_target target;
+    int hit;
+    gboolean has_link;
+
+    if (!state || !state->doc || page_index < 0) return FALSE;
+    hit = spdf_link_at_point(state->doc, page_index, (float)page_x, (float)page_y, &target, err, sizeof(err));
+    if (hit <= 0) return FALSE;
+    has_link =
+        (target.kind == SPDF_LINK_URI && target.uri) || (target.kind == SPDF_LINK_INTERNAL && target.page_index >= 0);
+    spdf_free_link_target(&target);
+    return has_link;
+}
+
+static void set_page_link_cursor(GtkWidget* widget, gboolean over_link) {
+    GdkWindow* window;
+
+    if (!widget) return;
+    window = gtk_widget_get_window(widget);
+    if (!window) return;
+    if (over_link) {
+        GdkDisplay* display = gtk_widget_get_display(widget);
+        GdkCursor* cursor = gdk_cursor_new_for_display(display, GDK_HAND2);
+        gdk_window_set_cursor(window, cursor);
+        g_object_unref(cursor);
+    } else {
+        gdk_window_set_cursor(window, NULL);
+    }
 }
 
 static char* prompt_for_comment_text(app_state* state, const char* default_text) {
@@ -3740,6 +3872,223 @@ static void install_palette_css(void) {
     installed = TRUE;
 }
 
+static void install_toolbar_css(void) {
+    static gboolean installed = FALSE;
+    GtkCssProvider* provider;
+
+    if (installed) return;
+    provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(provider,
+                                    ".sumatra-toolbar-switch-control {"
+                                    "  padding: 1px 4px;"
+                                    "  border-radius: 8px;"
+                                    "}"
+                                    ".sumatra-toolbar label,"
+                                    ".sumatra-toolbar button,"
+                                    ".sumatra-toolbar checkbutton {"
+                                    "  font-weight: normal;"
+                                    "}"
+                                    ".sumatra-toolbar-overflow {"
+                                    "  padding: 0 4px;"
+                                    "  border-radius: 8px;"
+                                    "  min-width: 30px;"
+                                    "}"
+                                    ".sumatra-toolbar-switch-control:disabled {"
+                                    "  color: alpha(@theme_fg_color, 0.45);"
+                                    "}"
+                                    "switch.sumatra-toolbar-switch {"
+                                    "  min-width: 34px;"
+                                    "  min-height: 18px;"
+                                    "  border-radius: 10px;"
+                                    "  background-color: alpha(@theme_fg_color, 0.20);"
+                                    "  border: 1px solid alpha(@theme_fg_color, 0.24);"
+                                    "}"
+                                    "switch.sumatra-toolbar-switch:checked {"
+                                    "  background-color: rgba(255, 255, 255, 0.94);"
+                                    "  border-color: rgba(255, 255, 255, 0.74);"
+                                    "}"
+                                    "switch.sumatra-toolbar-switch slider {"
+                                    "  min-width: 14px;"
+                                    "  min-height: 14px;"
+                                    "  border-radius: 8px;"
+                                    "  background-color: rgba(255, 255, 255, 0.96);"
+                                    "}"
+                                    "switch.sumatra-toolbar-switch:checked slider {"
+                                    "  background-color: rgba(0, 0, 0, 0.86);"
+                                    "}",
+                                    -1, NULL);
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(provider),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
+    installed = TRUE;
+}
+
+static gboolean toolbar_overflow_icon_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data) {
+    (void)user_data;
+    GtkAllocation allocation;
+    gtk_widget_get_allocation(widget, &allocation);
+    GtkStyleContext* context = gtk_widget_get_style_context(widget);
+    GdkRGBA color;
+    gtk_style_context_get_color(context, gtk_style_context_get_state(context), &color);
+    gdk_cairo_set_source_rgba(cr, &color);
+    double dot_size = 3.0;
+    double gap = 5.0;
+    double x = floor((allocation.width - dot_size * 3.0 - gap * 2.0) * 0.5);
+    double y = floor((allocation.height - dot_size) * 0.5);
+    for (int i = 0; i < 3; ++i) {
+        cairo_arc(cr, x + dot_size * 0.5 + i * (dot_size + gap), y + dot_size * 0.5, dot_size * 0.5, 0, G_PI * 2.0);
+        cairo_fill(cr);
+    }
+    return FALSE;
+}
+
+static GtkWidget* toolbar_switch_control_new(const char* title, GtkWidget** switch_out) {
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    GtkWidget* label = gtk_label_new(title);
+    GtkWidget* toggle = gtk_switch_new();
+
+    gtk_style_context_add_class(gtk_widget_get_style_context(box), "sumatra-toolbar-switch-control");
+    gtk_style_context_add_class(gtk_widget_get_style_context(toggle), "sumatra-toolbar-switch");
+    gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(toggle, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(box), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), toggle, FALSE, FALSE, 0);
+    *switch_out = toggle;
+    return box;
+}
+
+static void toolbar_pack_item(GtkWidget* toolbar, GtkWidget* item, int overflow_priority, GtkWidget* mirror_item) {
+    gtk_box_pack_start(GTK_BOX(toolbar), item, FALSE, FALSE, 0);
+    if (overflow_priority > 0)
+        g_object_set_data(G_OBJECT(item), "sumatra-overflow-priority", GINT_TO_POINTER(overflow_priority));
+    if (mirror_item) g_object_set_data(G_OBJECT(item), "sumatra-overflow-mirror", mirror_item);
+}
+
+static int widget_preferred_width(GtkWidget* widget) {
+    int min_width = 0;
+    int nat_width = 0;
+    gtk_widget_get_preferred_width(widget, &min_width, &nat_width);
+    return MAX(min_width, nat_width);
+}
+
+static void update_toolbar_overflow_menu_state(app_state* state) {
+    gboolean has_panel;
+    gboolean sidebar_visible;
+
+    if (!state || state->updating_overflow_controls) return;
+    state->updating_overflow_controls = TRUE;
+    has_panel = state->doc && (state->outline.count > 0 || state->comments.count > 0);
+    sidebar_visible = state->sidebar_container && gtk_widget_get_visible(state->sidebar_container);
+    if (state->overflow_side_panel_item) {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->overflow_side_panel_item), sidebar_visible);
+        gtk_widget_set_sensitive(state->overflow_side_panel_item, has_panel && !state->presentation_mode);
+    }
+    if (state->overflow_marker_strip_item) {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->overflow_marker_strip_item),
+                                       state->show_find_markers);
+        gtk_widget_set_sensitive(state->overflow_marker_strip_item,
+                                 state->doc && state->find_match_count > 0 && !state->presentation_mode);
+    }
+    if (state->overflow_continuous_item) {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->overflow_continuous_item), state->continuous_mode);
+        gtk_widget_set_sensitive(state->overflow_continuous_item, state->doc != NULL);
+    }
+    if (state->overflow_search_regex_item) {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->overflow_search_regex_item), state->search_regex);
+        gtk_widget_set_sensitive(state->overflow_search_regex_item, state->doc != NULL);
+    }
+    if (state->overflow_search_regex_multiline_item) {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->overflow_search_regex_multiline_item),
+                                       state->search_regex_multiline);
+        gtk_widget_set_sensitive(state->overflow_search_regex_multiline_item, state->doc && state->search_regex);
+    }
+    for (int i = 0; i < 5; ++i) {
+        if (!state->overflow_fit_mode_items[i]) continue;
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->overflow_fit_mode_items[i]), state->fit_mode_id == i);
+        gtk_widget_set_sensitive(state->overflow_fit_mode_items[i], state->doc != NULL);
+    }
+    state->updating_overflow_controls = FALSE;
+}
+
+static int compare_toolbar_items_by_priority(const void* a, const void* b) {
+    GtkWidget* widget_a = *(GtkWidget* const*)a;
+    GtkWidget* widget_b = *(GtkWidget* const*)b;
+    int priority_a = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget_a), "sumatra-overflow-priority"));
+    int priority_b = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget_b), "sumatra-overflow-priority"));
+    return priority_b - priority_a;
+}
+
+static void toolbar_size_allocate(GtkWidget* toolbar, GtkAllocation* allocation, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    GList* children;
+    GtkWidget** candidates;
+    int candidate_count = 0;
+    int total_width = 0;
+    int visible_count = 0;
+    int spacing;
+    int overflow_width = 0;
+    int hidden_count = 0;
+
+    if (!state || !state->toolbar_overflow_button) return;
+    children = gtk_container_get_children(GTK_CONTAINER(toolbar));
+    candidates = g_new0(GtkWidget*, g_list_length(children));
+    spacing = gtk_box_get_spacing(GTK_BOX(toolbar));
+
+    for (GList* it = children; it; it = it->next) {
+        GtkWidget* child = GTK_WIDGET(it->data);
+        if (child == state->toolbar_overflow_button) continue;
+        if (g_object_get_data(G_OBJECT(child), "sumatra-overflow-hidden")) {
+            g_object_set_data(G_OBJECT(child), "sumatra-overflow-hidden", NULL);
+            gtk_widget_show(child);
+        }
+    }
+    gtk_widget_hide(state->toolbar_overflow_button);
+
+    for (GList* it = children; it; it = it->next) {
+        GtkWidget* child = GTK_WIDGET(it->data);
+        int priority;
+        if (child == state->toolbar_overflow_button || !gtk_widget_get_visible(child)) continue;
+        priority = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "sumatra-overflow-priority"));
+        total_width += widget_preferred_width(child);
+        visible_count++;
+        if (priority > 0) candidates[candidate_count++] = child;
+    }
+    if (visible_count > 1) total_width += spacing * (visible_count - 1);
+
+    if (total_width > allocation->width && candidate_count > 0) {
+        overflow_width = widget_preferred_width(state->toolbar_overflow_button);
+        total_width += overflow_width + spacing;
+        qsort(candidates, (size_t)candidate_count, sizeof(GtkWidget*), compare_toolbar_items_by_priority);
+        for (int i = 0; i < candidate_count && total_width > allocation->width; ++i) {
+            GtkWidget* child = candidates[i];
+            GtkWidget* mirror = GTK_WIDGET(g_object_get_data(G_OBJECT(child), "sumatra-overflow-mirror"));
+            total_width -= widget_preferred_width(child) + spacing;
+            g_object_set_data(G_OBJECT(child), "sumatra-overflow-hidden", GINT_TO_POINTER(TRUE));
+            gtk_widget_hide(child);
+            if (mirror) gtk_widget_show(mirror);
+            hidden_count++;
+        }
+    }
+
+    for (int i = 0; i < candidate_count; ++i) {
+        GtkWidget* mirror = GTK_WIDGET(g_object_get_data(G_OBJECT(candidates[i]), "sumatra-overflow-mirror"));
+        if (!mirror) continue;
+        if (g_object_get_data(G_OBJECT(candidates[i]), "sumatra-overflow-hidden"))
+            gtk_widget_show(mirror);
+        else
+            gtk_widget_hide(mirror);
+    }
+    if (hidden_count > 0)
+        gtk_widget_show(state->toolbar_overflow_button);
+    else
+        gtk_widget_hide(state->toolbar_overflow_button);
+
+    update_toolbar_overflow_menu_state(state);
+    g_free(candidates);
+    g_list_free(children);
+}
+
 static void add_palette_header(GtkListBox* list, const char* text) {
     GtkWidget* row = gtk_list_box_row_new();
     GtkWidget* capsule = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -4072,6 +4421,10 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
     }
 
     if (ctrl || !state->doc || (focus && GTK_IS_EDITABLE(focus))) return FALSE;
+    if (state->presentation_mode && (event->keyval == GDK_KEY_space || event->keyval == GDK_KEY_KP_Space)) {
+        next_clicked(NULL, state);
+        return TRUE;
+    }
     if (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Up || event->keyval == GDK_KEY_Right ||
         event->keyval == GDK_KEY_Down) {
         if (!state->continuous_mode) {
@@ -4258,7 +4611,16 @@ static gboolean page_motion(GtkWidget* widget, GdkEventMotion* event, gpointer u
         return TRUE;
     }
 
-    if (!state->panning) return FALSE;
+    if (!state->panning) {
+        int page_index = -1;
+        double page_x = 0.0;
+        double page_y = 0.0;
+        gboolean over_link =
+            page_point_from_widget_point(state, widget, event->x, event->y, &page_index, &page_x, &page_y) &&
+            link_at_page_point(state, page_index, page_x, page_y);
+        set_page_link_cursor(widget, over_link);
+        return FALSE;
+    }
 
     GtkAdjustment* hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
     GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
@@ -4266,6 +4628,13 @@ static gboolean page_motion(GtkWidget* widget, GdkEventMotion* event, gpointer u
     gtk_adjustment_set_value(vadj, state->pan_start_v - (event->y_root - state->pan_start_y));
     clamp_horizontal_scroll(state);
     return TRUE;
+}
+
+static gboolean page_leave(GtkWidget* widget, GdkEventCrossing* event, gpointer user_data) {
+    (void)event;
+    (void)user_data;
+    set_page_link_cursor(widget, FALSE);
+    return FALSE;
 }
 
 static gboolean page_button_release(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
@@ -4312,6 +4681,23 @@ static gboolean startup_restore_idle(gpointer user_data) {
     return G_SOURCE_REMOVE;
 }
 
+static gboolean window_configure_event(GtkWidget* widget, GdkEventConfigure* event, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    (void)widget;
+    if (!state->presentation_mode && !state->window_fullscreen) {
+        state->window_width = clamp_int(event->width, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH);
+        state->window_height = clamp_int(event->height, MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT);
+    }
+    return FALSE;
+}
+
+static gboolean window_state_event(GtkWidget* widget, GdkEventWindowState* event, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    (void)widget;
+    state->window_fullscreen = (event->new_window_state & GDK_WINDOW_STATE_FULLSCREEN) != 0;
+    return FALSE;
+}
+
 static void activate(GtkApplication* app, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     state->app = app;
@@ -4319,7 +4705,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
 
     state->window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(state->window), "SumatraPDF");
-    gtk_window_set_default_size(GTK_WINDOW(state->window), 1100, 780);
+    gtk_window_set_default_size(GTK_WINDOW(state->window),
+                                clamp_int(state->window_width, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH),
+                                clamp_int(state->window_height, MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT));
 
     GtkWidget* root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(state->window), root);
@@ -4381,20 +4769,25 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(state->tab_strip), state->new_tab_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(root), state->tab_strip, FALSE, FALSE, 0);
 
-    GtkWidget* toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    install_toolbar_css();
+
+    GtkWidget* toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     gtk_widget_set_margin_start(toolbar, 8);
     gtk_widget_set_margin_end(toolbar, 8);
     gtk_widget_set_margin_top(toolbar, 6);
     gtk_widget_set_margin_bottom(toolbar, 6);
+    gtk_style_context_add_class(gtk_widget_get_style_context(toolbar), "sumatra-toolbar");
     gtk_box_pack_start(GTK_BOX(root), toolbar, FALSE, FALSE, 0);
     state->toolbar = toolbar;
 
     GtkWidget* open = gtk_button_new_with_label("Open");
     GtkWidget* prev = gtk_button_new_with_label("<");
     GtkWidget* next = gtk_button_new_with_label(">");
-    state->side_panel_button = gtk_toggle_button_new_with_label("Panel");
+    state->side_panel_control = toolbar_switch_control_new("Side panel", &state->side_panel_button);
+    gtk_widget_set_tooltip_text(state->side_panel_control, "Show or hide the side panel");
     gtk_widget_set_tooltip_text(state->side_panel_button, "Show or hide the side panel");
-    state->marker_strip_button = gtk_toggle_button_new_with_label("Markers");
+    state->marker_strip_control = toolbar_switch_control_new("Markers", &state->marker_strip_button);
+    gtk_widget_set_tooltip_text(state->marker_strip_control, "Show or hide the find marker strip");
     gtk_widget_set_tooltip_text(state->marker_strip_button, "Show or hide the find marker strip");
     state->page_entry = gtk_entry_new();
     gtk_entry_set_width_chars(GTK_ENTRY(state->page_entry), 5);
@@ -4421,25 +4814,74 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->find_prev_button = gtk_button_new_with_label("<");
     state->find_next_button = gtk_button_new_with_label(">");
     state->ocr_button = gtk_button_new_with_label("OCR");
+    gtk_entry_set_width_chars(GTK_ENTRY(state->search_entry), 14);
+    gtk_entry_set_max_width_chars(GTK_ENTRY(state->search_entry), 20);
+    gtk_widget_set_margin_start(state->search_entry, 3);
+    gtk_widget_set_margin_end(state->search_entry, 3);
+    gtk_widget_set_size_request(state->search_entry, 134, -1);
+    gtk_widget_set_hexpand(state->search_entry, FALSE);
 
-    gtk_box_pack_start(GTK_BOX(toolbar), open, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), prev, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), next, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->side_panel_button, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->marker_strip_button, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->page_entry, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->page_count_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), zoom_out, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), zoom_in, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->fit_mode, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->continuous, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->search_entry, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->search_regex_check, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->search_regex_multiline_check, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->find_count_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->find_prev_button, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->find_next_button, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(toolbar), state->ocr_button, FALSE, FALSE, 0);
+    state->toolbar_overflow_button = gtk_menu_button_new();
+    GtkWidget* overflow_icon = gtk_drawing_area_new();
+    gtk_widget_set_size_request(overflow_icon, 22, 20);
+    gtk_container_add(GTK_CONTAINER(state->toolbar_overflow_button), overflow_icon);
+    gtk_widget_show(overflow_icon);
+    g_signal_connect(overflow_icon, "draw", G_CALLBACK(toolbar_overflow_icon_draw), NULL);
+    gtk_widget_set_tooltip_text(state->toolbar_overflow_button, "More toolbar actions");
+    gtk_widget_set_no_show_all(state->toolbar_overflow_button, TRUE);
+    gtk_widget_set_size_request(state->toolbar_overflow_button, 30, 26);
+    gtk_style_context_add_class(gtk_widget_get_style_context(state->toolbar_overflow_button),
+                                "sumatra-toolbar-overflow");
+    state->toolbar_overflow_menu = gtk_menu_new();
+    gtk_menu_button_set_popup(GTK_MENU_BUTTON(state->toolbar_overflow_button), state->toolbar_overflow_menu);
+    state->overflow_side_panel_item = gtk_check_menu_item_new_with_label("Side panel");
+    state->overflow_marker_strip_item = gtk_check_menu_item_new_with_label("Markers");
+    state->overflow_continuous_item = gtk_check_menu_item_new_with_label("Continuous");
+    state->overflow_search_regex_item = gtk_check_menu_item_new_with_label("Regex");
+    state->overflow_search_regex_multiline_item = gtk_check_menu_item_new_with_label("Regex multiline");
+    GtkWidget* overflow_fit_menu = gtk_menu_new();
+    GtkWidget* overflow_fit = gtk_menu_item_new_with_label("Fit mode");
+    GSList* fit_group = NULL;
+    const char* fit_labels[] = {"Custom", "Actual", "Fit width", "Fit height", "Fit page"};
+    for (int i = 0; i < 5; ++i) {
+        state->overflow_fit_mode_items[i] = gtk_radio_menu_item_new_with_label(fit_group, fit_labels[i]);
+        fit_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(state->overflow_fit_mode_items[i]));
+        g_object_set_data(G_OBJECT(state->overflow_fit_mode_items[i]), "sumatra-fit-mode", GINT_TO_POINTER(i));
+        gtk_menu_shell_append(GTK_MENU_SHELL(overflow_fit_menu), state->overflow_fit_mode_items[i]);
+    }
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(overflow_fit), overflow_fit_menu);
+    GtkWidget* overflow_ocr = gtk_menu_item_new_with_label("OCR");
+    gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), state->overflow_side_panel_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), state->overflow_marker_strip_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), overflow_fit);
+    gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), state->overflow_continuous_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), state->overflow_search_regex_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), state->overflow_search_regex_multiline_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(state->toolbar_overflow_menu), overflow_ocr);
+    gtk_widget_show_all(state->toolbar_overflow_menu);
+    gtk_widget_hide(state->toolbar_overflow_button);
+
+    toolbar_pack_item(toolbar, open, 0, NULL);
+    toolbar_pack_item(toolbar, prev, 0, NULL);
+    toolbar_pack_item(toolbar, next, 0, NULL);
+    toolbar_pack_item(toolbar, state->side_panel_control, 50, state->overflow_side_panel_item);
+    toolbar_pack_item(toolbar, state->page_entry, 0, NULL);
+    toolbar_pack_item(toolbar, state->page_count_label, 0, NULL);
+    toolbar_pack_item(toolbar, zoom_out, 0, NULL);
+    toolbar_pack_item(toolbar, zoom_in, 0, NULL);
+    toolbar_pack_item(toolbar, state->fit_mode, 40, overflow_fit);
+    toolbar_pack_item(toolbar, state->continuous, 70, state->overflow_continuous_item);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->search_entry, TRUE, TRUE, 0);
+    toolbar_pack_item(toolbar, state->find_count_label, 88, NULL);
+    toolbar_pack_item(toolbar, state->find_prev_button, 86, NULL);
+    toolbar_pack_item(toolbar, state->find_next_button, 86, NULL);
+    toolbar_pack_item(toolbar, state->search_regex_check, 84, state->overflow_search_regex_item);
+    toolbar_pack_item(toolbar, state->search_regex_multiline_check, 82, state->overflow_search_regex_multiline_item);
+    toolbar_pack_item(toolbar, state->ocr_button, 100, overflow_ocr);
+    GtkWidget* toolbar_spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), toolbar_spacer, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->toolbar_overflow_button, FALSE, FALSE, 0);
+    toolbar_pack_item(toolbar, state->marker_strip_control, 60, state->overflow_marker_strip_item);
 
     GtkWidget* paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     state->main_paned = paned;
@@ -4469,8 +4911,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_set_size_request(state->find_markers, 8, -1);
     gtk_widget_set_tooltip_text(state->find_markers, "Find matches");
     GtkWidget* page_box = gtk_event_box_new();
-    gtk_widget_add_events(page_box,
-                          GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK | GDK_SCROLL_MASK);
+    gtk_widget_add_events(page_box, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK |
+                                        GDK_LEAVE_NOTIFY_MASK | GDK_SCROLL_MASK);
     gtk_event_box_set_visible_window(GTK_EVENT_BOX(page_box), FALSE);
     gtk_widget_set_hexpand(page_box, TRUE);
     gtk_widget_set_vexpand(page_box, TRUE);
@@ -4501,8 +4943,17 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect_swapped(quit_menu, "activate", G_CALLBACK(g_application_quit), app);
     g_signal_connect(prev, "clicked", G_CALLBACK(previous_clicked), state);
     g_signal_connect(next, "clicked", G_CALLBACK(next_clicked), state);
-    g_signal_connect(state->side_panel_button, "toggled", G_CALLBACK(side_panel_button_toggled), state);
-    g_signal_connect(state->marker_strip_button, "toggled", G_CALLBACK(marker_strip_button_toggled), state);
+    g_signal_connect(state->side_panel_button, "notify::active", G_CALLBACK(side_panel_switch_changed), state);
+    g_signal_connect(state->marker_strip_button, "notify::active", G_CALLBACK(marker_strip_switch_changed), state);
+    g_signal_connect(state->overflow_side_panel_item, "toggled", G_CALLBACK(overflow_side_panel_toggled), state);
+    g_signal_connect(state->overflow_marker_strip_item, "toggled", G_CALLBACK(overflow_marker_strip_toggled), state);
+    g_signal_connect(state->overflow_continuous_item, "toggled", G_CALLBACK(overflow_continuous_toggled), state);
+    g_signal_connect(state->overflow_search_regex_item, "toggled", G_CALLBACK(overflow_search_regex_toggled), state);
+    g_signal_connect(state->overflow_search_regex_multiline_item, "toggled",
+                     G_CALLBACK(overflow_search_regex_multiline_toggled), state);
+    for (int i = 0; i < 5; ++i)
+        g_signal_connect(state->overflow_fit_mode_items[i], "toggled", G_CALLBACK(overflow_fit_mode_toggled), state);
+    g_signal_connect(overflow_ocr, "activate", G_CALLBACK(overflow_button_activate), state->ocr_button);
     g_signal_connect(zoom_out, "clicked", G_CALLBACK(zoom_out_clicked), state);
     g_signal_connect(zoom_in, "clicked", G_CALLBACK(zoom_in_clicked), state);
     g_signal_connect(state->ocr_button, "clicked", G_CALLBACK(ocr_clicked), state);
@@ -4525,9 +4976,13 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(page_box, "scroll-event", G_CALLBACK(page_scroll_event), state);
     g_signal_connect(page_box, "button-press-event", G_CALLBACK(page_button_press), state);
     g_signal_connect(page_box, "motion-notify-event", G_CALLBACK(page_motion), state);
+    g_signal_connect(page_box, "leave-notify-event", G_CALLBACK(page_leave), state);
     g_signal_connect(page_box, "button-release-event", G_CALLBACK(page_button_release), state);
+    g_signal_connect(toolbar, "size-allocate", G_CALLBACK(toolbar_size_allocate), state);
     g_signal_connect(state->window, "key-press-event", G_CALLBACK(key_press), state);
     g_signal_connect(state->window, "notify::scale-factor", G_CALLBACK(window_scale_factor_changed), state);
+    g_signal_connect(state->window, "configure-event", G_CALLBACK(window_configure_event), state);
+    g_signal_connect(state->window, "window-state-event", G_CALLBACK(window_state_event), state);
 
     GtkTargetEntry drop_targets[] = {{"text/uri-list", 0, 0}};
     gtk_drag_dest_set(state->window, GTK_DEST_DEFAULT_ALL, drop_targets, 1, GDK_ACTION_COPY);
@@ -4582,6 +5037,8 @@ int main(int argc, char** argv) {
     state.show_find_markers = TRUE;
     state.search_regex_multiline = TRUE;
     state.sidebar_width = 260;
+    state.window_width = DEFAULT_WINDOW_WIDTH;
+    state.window_height = DEFAULT_WINDOW_HEIGHT;
     state.find_match_index = -1;
     state.restore_find_match_index = -1;
     state.selection_page_index = -1;
