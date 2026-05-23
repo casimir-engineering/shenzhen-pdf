@@ -5,6 +5,7 @@
 #include "sumatra_pdf_core.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,10 +17,29 @@ typedef struct favorite_item {
     gboolean document;
 } favorite_item;
 
+typedef struct document_tab {
+    char* path;
+    char* title;
+    int page_index;
+    double zoom;
+    int fit_mode_id;
+    gboolean continuous_mode;
+    char* search_text;
+    gboolean search_regex;
+    gboolean search_regex_multiline;
+    int find_match_index;
+} document_tab;
+
 typedef struct find_match {
     int page_index;
+    gboolean has_rect;
     spdf_rect rect;
 } find_match;
+
+typedef struct comment_edit_result {
+    char* author;
+    char* text;
+} comment_edit_result;
 
 typedef struct app_state {
     GtkApplication* app;
@@ -30,6 +50,9 @@ typedef struct app_state {
     GtkWidget* show_chapters_panel;
     GtkWidget* show_comments_panel;
     GtkWidget* ocr_button;
+    GtkWidget* tab_strip;
+    GtkWidget* tab_bar;
+    GtkWidget* new_tab_button;
     GtkWidget* page_box;
     GtkWidget* scroll;
     GtkWidget* main_paned;
@@ -42,9 +65,13 @@ typedef struct app_state {
     GtkWidget* fit_mode;
     GtkWidget* continuous;
     GtkWidget* search_entry;
+    GtkWidget* search_regex_check;
+    GtkWidget* search_regex_multiline_check;
+    GtkWidget* search_regex_multiline_item;
     GtkWidget* find_prev_button;
     GtkWidget* find_next_button;
     GtkWidget* find_count_label;
+    GtkWidget* find_markers;
     GtkWidget* status;
 
     spdf_document* doc;
@@ -56,11 +83,17 @@ typedef struct app_state {
     char* session_path;
     char* favorites_path;
     char* search_text;
+    char* comment_author;
     char* empty_view_message;
     favorite_item* favorites;
     int favorite_count;
     int favorite_capacity;
     int favorite_pending_delete;
+    document_tab* tabs;
+    int tab_count;
+    int tab_capacity;
+    int selected_tab;
+    int restore_selected_tab;
     char* restore_path;
     char* restore_search_text;
     int restore_page_index;
@@ -76,14 +109,29 @@ typedef struct app_state {
     int fit_mode_id;
     gboolean continuous_mode;
     gboolean show_sidebar;
+    gboolean search_regex;
+    gboolean search_regex_multiline;
     gboolean suppress_find_changed;
+    gboolean switching_tabs;
     gboolean updating_sidebar_menu;
     gboolean panning;
+    gboolean selecting;
+    gboolean clamping_horizontal;
     gboolean suppress_restore_once;
     double pan_start_x;
     double pan_start_y;
     double pan_start_h;
     double pan_start_v;
+    int selection_page_index;
+    double selection_start_x;
+    double selection_start_y;
+    spdf_rect selection_rects[256];
+    int selection_rect_count;
+    char* selected_text;
+    int context_page_index;
+    int context_comment_index;
+    double context_page_x;
+    double context_page_y;
     GThreadPool* render_pool;
     guint render_generation;
     gboolean render_error_shown;
@@ -96,7 +144,13 @@ typedef struct render_task {
     guint generation;
     int page_index;
     double zoom;
+    int display_scale;
     char* search_text;
+    gboolean search_regex;
+    spdf_rect* highlight_rects;
+    int highlight_rect_count;
+    spdf_rect* selection_rects;
+    int selection_rect_count;
     gboolean has_active_rect;
     spdf_rect active_rect;
 } render_task;
@@ -104,7 +158,7 @@ typedef struct render_task {
 typedef struct render_result {
     app_state* state;
     GtkWidget* image;
-    GdkPixbuf* pixbuf;
+    cairo_surface_t* surface;
     char* path;
     guint generation;
     int page_index;
@@ -118,12 +172,40 @@ typedef struct scroll_request {
     guint generation;
 } scroll_request;
 
+typedef struct scroll_position_request {
+    app_state* state;
+    guint generation;
+    double hvalue;
+    double vvalue;
+} scroll_position_request;
+
+typedef struct page_point_scroll_request {
+    app_state* state;
+    guint generation;
+    int page_index;
+    double x;
+    double y;
+    gboolean has_point;
+} page_point_scroll_request;
+
+typedef struct horizontal_clamp_request {
+    app_state* state;
+    guint generation;
+} horizontal_clamp_request;
+
 static void render_current_page(app_state* state, gboolean scroll_to_top);
 static void open_path_at_page(app_state* state, const char* path, int page_index);
-static void start_find_for_current_query(app_state* state, int preferred_index, int preferred_page);
+static void open_path(app_state* state, const char* path);
+static void start_find_for_current_query(app_state* state, int preferred_index, int preferred_page,
+                                         gboolean reveal_match, gboolean preserve_scroll);
 static void update_controls(app_state* state);
 static void update_sidebar_menu_items(app_state* state);
 static void update_find_controls(app_state* state);
+static void update_tab_strip(app_state* state);
+static void save_active_tab_state(app_state* state);
+static void select_tab(app_state* state, int index);
+static const char* current_search_text(app_state* state);
+static void set_regex_multiline_widget_active(GtkWidget* widget, gboolean active);
 
 static char* json_escape(const char* text) {
     GString* out = g_string_new("");
@@ -218,6 +300,56 @@ static gboolean json_get_bool(const char* json, const char* key, gboolean fallba
     if (strncmp(pos, "true", 4) == 0) return TRUE;
     if (strncmp(pos, "false", 5) == 0) return FALSE;
     return fallback;
+}
+
+static char* json_find_key(const char* json, const char* key) {
+    char pattern[96];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    return strstr(json, pattern);
+}
+
+static char* json_find_matching(const char* start, char open, char close) {
+    int depth = 0;
+    gboolean in_string = FALSE;
+    gboolean escaped = FALSE;
+
+    if (!start || *start != open) return NULL;
+    for (char* pos = (char*)start; *pos; ++pos) {
+        if (in_string) {
+            if (escaped) {
+                escaped = FALSE;
+            } else if (*pos == '\\') {
+                escaped = TRUE;
+            } else if (*pos == '"') {
+                in_string = FALSE;
+            }
+            continue;
+        }
+
+        if (*pos == '"') {
+            in_string = TRUE;
+        } else if (*pos == open) {
+            depth++;
+        } else if (*pos == close) {
+            depth--;
+            if (depth == 0) return pos;
+        }
+    }
+    return NULL;
+}
+
+static char* json_get_array_contents(const char* json, const char* key) {
+    char* pos = json_find_key(json, key);
+    char* start;
+    char* end;
+    if (!pos) return NULL;
+    pos = strchr(pos + strlen(key) + 2, ':');
+    if (!pos) return NULL;
+    start = strchr(pos, '[');
+    if (!start) return NULL;
+    end = json_find_matching(start, '[', ']');
+    if (!end) return NULL;
+    return g_strndup(start + 1, (gsize)(end - start - 1));
 }
 
 static void init_config_paths(app_state* state) {
@@ -324,16 +456,117 @@ static void add_favorite_item(app_state* state, const char* path, const char* ti
     state->favorite_count++;
 }
 
+static document_tab* active_tab(app_state* state) {
+    if (!state || state->selected_tab < 0 || state->selected_tab >= state->tab_count) return NULL;
+    return &state->tabs[state->selected_tab];
+}
+
+static void free_document_tab(document_tab* tab) {
+    if (!tab) return;
+    g_free(tab->path);
+    g_free(tab->title);
+    g_free(tab->search_text);
+    memset(tab, 0, sizeof(*tab));
+}
+
+static void free_document_tabs(app_state* state) {
+    for (int i = 0; i < state->tab_count; ++i) free_document_tab(&state->tabs[i]);
+    g_free(state->tabs);
+    state->tabs = NULL;
+    state->tab_count = 0;
+    state->tab_capacity = 0;
+    state->selected_tab = -1;
+}
+
+static int append_document_tab(app_state* state, const char* path, const char* title, int page_index, double zoom,
+                               int fit_mode_id, gboolean continuous_mode, const char* search_text,
+                               gboolean search_regex, gboolean search_regex_multiline, int find_match_index) {
+    if (state->tab_count == state->tab_capacity) {
+        int capacity = state->tab_capacity ? state->tab_capacity * 2 : 4;
+        state->tabs = g_realloc(state->tabs, (gsize)capacity * sizeof(document_tab));
+        memset(&state->tabs[state->tab_capacity], 0, (gsize)(capacity - state->tab_capacity) * sizeof(document_tab));
+        state->tab_capacity = capacity;
+    }
+
+    document_tab* tab = &state->tabs[state->tab_count];
+    tab->path = g_strdup(path ? path : "");
+    tab->title = title && *title ? g_strdup(title) : display_name_for_path(path ? path : "");
+    tab->page_index = MAX(0, page_index);
+    tab->zoom = zoom > 0.0 ? zoom : 1.0;
+    tab->fit_mode_id = fit_mode_id >= 0 && fit_mode_id <= 4 ? fit_mode_id : 2;
+    tab->continuous_mode = continuous_mode;
+    tab->search_text = g_strdup(search_text ? search_text : "");
+    tab->search_regex = search_regex;
+    tab->search_regex_multiline = search_regex_multiline;
+    tab->find_match_index = find_match_index;
+    return state->tab_count++;
+}
+
+static void set_tab_title(document_tab* tab, const char* title, const char* path) {
+    char* fallback;
+    if (!tab) return;
+    fallback = display_name_for_path(path ? path : tab->path);
+    g_free(tab->title);
+    tab->title = title && *title ? display_label_without_extension(title) : fallback;
+    if (title && *title) g_free(fallback);
+}
+
+static int find_tab_by_path(app_state* state, const char* path) {
+    char* canonical_path;
+    int result = -1;
+
+    if (!path || !*path) return -1;
+    canonical_path = g_canonicalize_filename(path, NULL);
+    for (int i = 0; i < state->tab_count; ++i) {
+        char* tab_path = state->tabs[i].path ? g_canonicalize_filename(state->tabs[i].path, NULL) : NULL;
+        if (tab_path && strcmp(canonical_path, tab_path) == 0) {
+            result = i;
+            g_free(tab_path);
+            break;
+        }
+        g_free(tab_path);
+    }
+    g_free(canonical_path);
+    return result;
+}
+
+static void save_active_tab_state(app_state* state) {
+    document_tab* tab = active_tab(state);
+    if (!tab) return;
+
+    if (state->path) {
+        g_free(tab->path);
+        tab->path = g_strdup(state->path);
+    }
+    if (state->doc) {
+        set_tab_title(tab, spdf_title(state->doc), state->path);
+    } else if (state->path && *state->path && (!tab->title || !*tab->title)) {
+        set_tab_title(tab, NULL, state->path);
+    }
+    tab->page_index = state->doc ? state->page_index : tab->page_index;
+    tab->zoom = state->zoom;
+    tab->fit_mode_id = state->fit_mode_id;
+    tab->continuous_mode = state->continuous_mode;
+    g_free(tab->search_text);
+    tab->search_text = g_strdup(current_search_text(state));
+    tab->search_regex = state->search_regex;
+    tab->search_regex_multiline = state->search_regex_multiline;
+    tab->find_match_index = state->find_match_index;
+}
+
 static void save_settings(app_state* state) {
+    char* author = json_escape(state->comment_author ? state->comment_author : "");
     GString* json = g_string_new("{\n");
     g_string_append_printf(json, "  \"fitMode\": %d,\n", state->fit_mode_id);
     g_string_append_printf(json, "  \"zoom\": %.4f,\n", state->zoom);
     g_string_append_printf(json, "  \"continuous\": %s,\n", state->continuous_mode ? "true" : "false");
     g_string_append_printf(json, "  \"showSidebar\": %s,\n", state->show_sidebar ? "true" : "false");
-    g_string_append_printf(json, "  \"sidebarWidth\": %d\n", state->sidebar_width);
+    g_string_append_printf(json, "  \"sidebarWidth\": %d,\n", state->sidebar_width);
+    g_string_append_printf(json, "  \"commentAuthor\": \"%s\"\n", author);
     g_string_append(json, "}\n");
     write_text_file(state->settings_path, json->str);
     g_string_free(json, TRUE);
+    g_free(author);
 }
 
 static const char* current_search_text(app_state* state) {
@@ -342,20 +575,32 @@ static const char* current_search_text(app_state* state) {
 }
 
 static void save_session(app_state* state) {
-    if (!state->doc && (!state->path || !*state->path)) return;
+    save_active_tab_state(state);
 
-    char* path = json_escape(state->path ? state->path : "");
-    char* search = json_escape(current_search_text(state));
     GString* json = g_string_new("{\n");
-    g_string_append_printf(json, "  \"path\": \"%s\",\n", path);
-    g_string_append_printf(json, "  \"page\": %d,\n", state->doc ? state->page_index + 1 : 0);
-    g_string_append_printf(json, "  \"searchText\": \"%s\",\n", search);
-    g_string_append_printf(json, "  \"findMatchIndex\": %d\n", state->find_match_index);
+    g_string_append_printf(json, "  \"selectedTab\": %d,\n", state->selected_tab);
+    g_string_append(json, "  \"tabs\": [\n");
+    for (int i = 0; i < state->tab_count; ++i) {
+        document_tab* tab = &state->tabs[i];
+        char* path = json_escape(tab->path ? tab->path : "");
+        char* title = json_escape(tab->title ? tab->title : "");
+        char* search = json_escape(tab->search_text ? tab->search_text : "");
+        g_string_append_printf(json,
+                               "    { \"path\": \"%s\", \"title\": \"%s\", \"page\": %d, \"zoom\": %.4f, "
+                               "\"fitMode\": %d, \"continuous\": %s, \"searchText\": \"%s\", "
+                               "\"searchRegex\": %s, \"searchRegexMultiline\": %s, \"findMatchIndex\": %d }%s\n",
+                               path, title, tab->page_index + 1, tab->zoom, tab->fit_mode_id,
+                               tab->continuous_mode ? "true" : "false", search, tab->search_regex ? "true" : "false",
+                               tab->search_regex_multiline ? "true" : "false", tab->find_match_index,
+                               i + 1 == state->tab_count ? "" : ",");
+        g_free(search);
+        g_free(title);
+        g_free(path);
+    }
+    g_string_append(json, "  ]\n");
     g_string_append(json, "}\n");
     write_text_file(state->session_path, json->str);
     g_string_free(json, TRUE);
-    g_free(search);
-    g_free(path);
 }
 
 static void save_favorites(app_state* state) {
@@ -377,6 +622,7 @@ static void save_favorites(app_state* state) {
 
 static void load_settings(app_state* state) {
     char* json = NULL;
+    char* comment_author;
     gsize len = 0;
     if (!g_file_get_contents(state->settings_path, &json, &len, NULL)) return;
     state->fit_mode_id = json_get_int(json, "fitMode", state->fit_mode_id);
@@ -386,6 +632,12 @@ static void load_settings(app_state* state) {
     state->continuous_mode = json_get_bool(json, "continuous", state->continuous_mode);
     state->show_sidebar = json_get_bool(json, "showSidebar", state->show_sidebar);
     state->sidebar_width = MAX(140, MIN(560, json_get_int(json, "sidebarWidth", state->sidebar_width)));
+    comment_author = json_get_string(json, "commentAuthor");
+    if (comment_author) {
+        g_strstrip(comment_author);
+        g_free(state->comment_author);
+        state->comment_author = comment_author;
+    }
     g_free(json);
 }
 
@@ -393,12 +645,64 @@ static void load_session(app_state* state) {
     char* json = NULL;
     gsize len = 0;
     if (!g_file_get_contents(state->session_path, &json, &len, NULL)) return;
+
+    char* tabs = json_get_array_contents(json, "tabs");
+    if (tabs) {
+        char* pos = tabs;
+        state->restore_selected_tab = json_get_int(json, "selectedTab", 0);
+        while ((pos = strchr(pos, '{')) != NULL) {
+            char* end = json_find_matching(pos, '{', '}');
+            char* object;
+            char* path;
+            char* title;
+            char* search_text;
+            int page_index;
+            double zoom;
+            int fit_mode_id;
+            gboolean continuous_mode;
+            gboolean search_regex;
+            gboolean search_regex_multiline;
+            int find_match_index;
+            if (!end) break;
+            object = g_strndup(pos, (gsize)(end - pos + 1));
+            path = json_get_string(object, "path");
+            title = json_get_string(object, "title");
+            search_text = json_get_string(object, "searchText");
+            page_index = MAX(0, json_get_int(object, "page", 1) - 1);
+            zoom = json_get_double(object, "zoom", state->zoom);
+            fit_mode_id = json_get_int(object, "fitMode", state->fit_mode_id);
+            continuous_mode = json_get_bool(object, "continuous", state->continuous_mode);
+            search_regex = json_get_bool(object, "searchRegex", state->search_regex);
+            search_regex_multiline = json_get_bool(object, "searchRegexMultiline", state->search_regex_multiline);
+            find_match_index = json_get_int(object, "findMatchIndex", -1);
+            if (path && *path)
+                append_document_tab(state, path, title, page_index, zoom, fit_mode_id, continuous_mode, search_text,
+                                    search_regex, search_regex_multiline, find_match_index);
+            g_free(search_text);
+            g_free(title);
+            g_free(path);
+            g_free(object);
+            pos = end + 1;
+        }
+        g_free(tabs);
+        g_free(json);
+        return;
+    }
+
     g_free(state->restore_path);
     g_free(state->restore_search_text);
     state->restore_path = json_get_string(json, "path");
     state->restore_search_text = json_get_string(json, "searchText");
+    state->search_regex = json_get_bool(json, "searchRegex", state->search_regex);
+    state->search_regex_multiline = json_get_bool(json, "searchRegexMultiline", state->search_regex_multiline);
     state->restore_page_index = MAX(0, json_get_int(json, "page", 1) - 1);
     state->restore_find_match_index = json_get_int(json, "findMatchIndex", -1);
+    if (state->restore_path && *state->restore_path) {
+        append_document_tab(state, state->restore_path, NULL, state->restore_page_index, state->zoom,
+                            state->fit_mode_id, state->continuous_mode, state->restore_search_text, state->search_regex,
+                            state->search_regex_multiline, state->restore_find_match_index);
+        state->restore_selected_tab = 0;
+    }
     g_free(json);
 }
 
@@ -435,6 +739,11 @@ static void free_pixbuf_pixels(guchar* pixels, gpointer data) {
     g_free(pixels);
 }
 
+static int display_scale_for_state(app_state* state) {
+    int scale = state && state->window ? gtk_widget_get_scale_factor(state->window) : 1;
+    return MAX(1, scale);
+}
+
 static gboolean path_has_pdf_extension(const char* path) {
     const char* dot = path ? strrchr(path, '.') : NULL;
     return dot && g_ascii_strcasecmp(dot, ".pdf") == 0;
@@ -445,12 +754,240 @@ static void clear_empty_view_message(app_state* state) {
     state->empty_view_message = NULL;
 }
 
+static gboolean clear_text_selection(app_state* state) {
+    gboolean had_selection =
+        state->selected_text != NULL || state->selection_rect_count > 0 || state->selection_page_index >= 0;
+    g_free(state->selected_text);
+    state->selected_text = NULL;
+    state->selection_page_index = -1;
+    state->selection_rect_count = 0;
+    state->selecting = FALSE;
+    return had_selection;
+}
+
+static gboolean has_text_selection(app_state* state) {
+    return state && state->selected_text && state->selected_text[0] != '\0' && state->selection_page_index >= 0 &&
+           state->selection_rect_count > 0;
+}
+
+static spdf_rect* copy_selection_rects_for_page(app_state* state, int page_index, int* count_out) {
+    spdf_rect* rects;
+    int count;
+
+    if (count_out) *count_out = 0;
+    if (!state || state->selection_page_index != page_index || state->selection_rect_count <= 0) return NULL;
+
+    count = MIN(state->selection_rect_count, (int)(sizeof(state->selection_rects) / sizeof(state->selection_rects[0])));
+    rects = g_new(spdf_rect, count);
+    memcpy(rects, state->selection_rects, (gsize)count * sizeof(spdf_rect));
+    if (count_out) *count_out = count;
+    return rects;
+}
+
+static gboolean widget_page_index(GtkWidget* widget, int* page_index) {
+    int stored = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "page-index"));
+    if (stored <= 0) return FALSE;
+    if (page_index) *page_index = stored - 1;
+    return TRUE;
+}
+
+static GtkWidget* page_widget_for_index(app_state* state, int page_index) {
+    GtkWidget* result = NULL;
+    GList* children;
+
+    if (!state || !state->page_box) return NULL;
+    children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+    for (GList* it = children; it; it = it->next) {
+        int child_page = -1;
+        if (widget_page_index(GTK_WIDGET(it->data), &child_page) && child_page == page_index) {
+            result = GTK_WIDGET(it->data);
+            break;
+        }
+    }
+    g_list_free(children);
+    return result;
+}
+
+static gboolean page_widget_geometry(app_state* state, int page_index, double* x, double* y, double* width,
+                                     double* height) {
+    GtkWidget* page_widget = page_widget_for_index(state, page_index);
+    GtkWidget* parent;
+    GtkAllocation allocation;
+    gint origin_x = 0;
+    gint origin_y = 0;
+
+    if (!page_widget || !state->page_box) return FALSE;
+    parent = gtk_widget_get_parent(state->page_box);
+    if (parent) gtk_widget_translate_coordinates(state->page_box, parent, 0, 0, &origin_x, &origin_y);
+    gtk_widget_get_allocation(page_widget, &allocation);
+    if (x) *x = (double)origin_x + allocation.x;
+    if (y) *y = (double)origin_y + allocation.y;
+    if (width) *width = allocation.width;
+    if (height) *height = allocation.height;
+    return allocation.width > 0 && allocation.height > 0;
+}
+
+static gboolean clamp_page_point(app_state* state, int page_index, double* x, double* y) {
+    char err[256];
+    float page_width = 0;
+    float page_height = 0;
+
+    if (!state || !state->doc) return FALSE;
+    if (!spdf_page_size(state->doc, page_index, &page_width, &page_height, err, sizeof(err))) return FALSE;
+    if (page_width <= 0 || page_height <= 0) return FALSE;
+    if (x) *x = MAX(0.0, MIN(*x, (double)page_width));
+    if (y) *y = MAX(0.0, MIN(*y, (double)page_height));
+    return TRUE;
+}
+
+static gboolean page_point_from_widget_point(app_state* state, GtkWidget* widget, double widget_x, double widget_y,
+                                             int* page_index, double* page_x, double* page_y) {
+    gint box_x;
+    gint box_y;
+    GList* children;
+
+    if (!state || !state->doc || !state->page_box) return FALSE;
+    if (!gtk_widget_translate_coordinates(widget, state->page_box, (gint)widget_x, (gint)widget_y, &box_x, &box_y))
+        return FALSE;
+
+    children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+    for (GList* it = children; it; it = it->next) {
+        GtkWidget* child = GTK_WIDGET(it->data);
+        GtkAllocation allocation;
+        int child_page = -1;
+        double x;
+        double y;
+
+        if (!widget_page_index(child, &child_page)) continue;
+        gtk_widget_get_allocation(child, &allocation);
+        if (box_x < allocation.x || box_x > allocation.x + allocation.width || box_y < allocation.y ||
+            box_y > allocation.y + allocation.height)
+            continue;
+
+        x = ((double)box_x - allocation.x) / MAX(0.001, state->zoom);
+        y = ((double)box_y - allocation.y) / MAX(0.001, state->zoom);
+        clamp_page_point(state, child_page, &x, &y);
+        if (page_index) *page_index = child_page;
+        if (page_x) *page_x = x;
+        if (page_y) *page_y = y;
+        g_list_free(children);
+        return TRUE;
+    }
+    g_list_free(children);
+    return FALSE;
+}
+
+static gboolean page_point_for_page_from_widget_point(app_state* state, int page_index, GtkWidget* widget,
+                                                      double widget_x, double widget_y, double* page_x,
+                                                      double* page_y) {
+    GtkWidget* page_widget;
+    GtkAllocation allocation;
+    gint box_x;
+    gint box_y;
+    double x;
+    double y;
+
+    if (!state || !state->doc || !state->page_box) return FALSE;
+    page_widget = page_widget_for_index(state, page_index);
+    if (!page_widget) return FALSE;
+    if (!gtk_widget_translate_coordinates(widget, state->page_box, (gint)widget_x, (gint)widget_y, &box_x, &box_y))
+        return FALSE;
+
+    gtk_widget_get_allocation(page_widget, &allocation);
+    x = ((double)box_x - allocation.x) / MAX(0.001, state->zoom);
+    y = ((double)box_y - allocation.y) / MAX(0.001, state->zoom);
+    clamp_page_point(state, page_index, &x, &y);
+    if (page_x) *page_x = x;
+    if (page_y) *page_y = y;
+    return TRUE;
+}
+
+static void clamp_horizontal_scroll(app_state* state) {
+    GtkAdjustment* hadj;
+    GtkPolicyType hpolicy;
+    GtkPolicyType vpolicy;
+    double page_x = 0;
+    double page_width = 0;
+    double lower;
+    double max_value;
+    double viewport_width;
+    double value;
+    double target;
+    GtkPolicyType desired_policy;
+
+    if (!state || !state->scroll || state->clamping_horizontal) return;
+
+    hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    if (!hadj) return;
+
+    if (!state->doc || !page_widget_geometry(state, state->page_index, &page_x, NULL, &page_width, NULL)) {
+        gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(state->scroll), &hpolicy, &vpolicy);
+        if (hpolicy != GTK_POLICY_AUTOMATIC)
+            gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(state->scroll), GTK_POLICY_AUTOMATIC, vpolicy);
+        return;
+    }
+
+    lower = gtk_adjustment_get_lower(hadj);
+    viewport_width = gtk_adjustment_get_page_size(hadj);
+    max_value = MAX(lower, gtk_adjustment_get_upper(hadj) - viewport_width);
+    value = gtk_adjustment_get_value(hadj);
+    target = value;
+
+    if (viewport_width <= 1.0 || page_width <= 1.0) return;
+
+    desired_policy = page_width <= viewport_width + 0.5 ? GTK_POLICY_NEVER : GTK_POLICY_AUTOMATIC;
+    gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(state->scroll), &hpolicy, &vpolicy);
+    if (hpolicy != desired_policy)
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(state->scroll), desired_policy, vpolicy);
+
+    if (page_width <= viewport_width + 0.5) {
+        target = page_x + page_width * 0.5 - viewport_width * 0.5;
+    } else {
+        double page_min = page_x;
+        double page_max = page_x + page_width - viewport_width;
+        target = MAX(page_min, MIN(value, page_max));
+    }
+    target = MAX(lower, MIN(target, max_value));
+
+    if (fabs(value - target) > 0.5) {
+        state->clamping_horizontal = TRUE;
+        gtk_adjustment_set_value(hadj, target);
+        state->clamping_horizontal = FALSE;
+    }
+}
+
+static gboolean clamp_horizontal_idle(gpointer data) {
+    horizontal_clamp_request* request = (horizontal_clamp_request*)data;
+    if (request->generation == request->state->render_generation) clamp_horizontal_scroll(request->state);
+    g_free(request);
+    return G_SOURCE_REMOVE;
+}
+
+static void schedule_horizontal_clamp(app_state* state) {
+    horizontal_clamp_request* request;
+    if (!state || !state->scroll) return;
+    request = g_new0(horizontal_clamp_request, 1);
+    request->state = state;
+    request->generation = state->render_generation;
+    g_idle_add(clamp_horizontal_idle, request);
+}
+
+static void horizontal_scroll_changed(GtkAdjustment* adjustment, gpointer user_data) {
+    (void)adjustment;
+    clamp_horizontal_scroll((app_state*)user_data);
+}
+
 static void update_controls(app_state* state) {
     int page_count = state->doc ? spdf_page_count(state->doc) : 0;
     char text[128];
 
     gtk_widget_set_sensitive(state->page_entry, state->doc != NULL);
     gtk_widget_set_sensitive(state->search_entry, state->doc != NULL);
+    if (state->search_regex_check) gtk_widget_set_sensitive(state->search_regex_check, state->doc != NULL);
+    if (state->search_regex_multiline_check)
+        gtk_widget_set_sensitive(state->search_regex_multiline_check, state->doc != NULL && state->search_regex);
+    if (state->search_regex_multiline_item)
+        gtk_widget_set_sensitive(state->search_regex_multiline_item, state->doc != NULL);
     gtk_widget_set_sensitive(state->fit_mode, state->doc != NULL);
     gtk_widget_set_sensitive(state->continuous, state->doc != NULL);
     if (state->open_in_browser) gtk_widget_set_sensitive(state->open_in_browser, state->doc != NULL);
@@ -465,6 +1002,7 @@ static void update_controls(app_state* state) {
         gtk_entry_set_text(GTK_ENTRY(state->page_entry), "");
         gtk_label_set_text(GTK_LABEL(state->page_count_label), "/ 0");
         gtk_label_set_text(GTK_LABEL(state->status), state->empty_view_message ? state->empty_view_message : "Ready");
+        clamp_horizontal_scroll(state);
         return;
     }
 
@@ -478,6 +1016,7 @@ static void update_controls(app_state* state) {
     char* title = display_label_without_extension(spdf_title(state->doc));
     gtk_window_set_title(GTK_WINDOW(state->window), title && *title ? title : "SumatraPDF");
     g_free(title);
+    schedule_horizontal_clamp(state);
 }
 
 static void clear_find_results(app_state* state) {
@@ -486,9 +1025,10 @@ static void clear_find_results(app_state* state) {
     state->find_match_count = 0;
     state->find_match_capacity = 0;
     state->find_match_index = -1;
+    if (state->find_markers) gtk_widget_queue_draw(state->find_markers);
 }
 
-static gboolean append_find_match(app_state* state, int page_index, spdf_rect rect) {
+static gboolean append_find_match(app_state* state, int page_index, spdf_rect rect, gboolean has_rect) {
     if (state->find_match_count == state->find_match_capacity) {
         int capacity = state->find_match_capacity ? state->find_match_capacity * 2 : 64;
         find_match* matches = g_realloc(state->find_matches, (gsize)capacity * sizeof(find_match));
@@ -497,6 +1037,7 @@ static gboolean append_find_match(app_state* state, int page_index, spdf_rect re
         state->find_match_capacity = capacity;
     }
     state->find_matches[state->find_match_count].page_index = page_index;
+    state->find_matches[state->find_match_count].has_rect = has_rect;
     state->find_matches[state->find_match_count].rect = rect;
     state->find_match_count++;
     return TRUE;
@@ -506,6 +1047,7 @@ static gboolean active_find_rect_for_page(app_state* state, int page_index, spdf
     if (!state || state->find_match_index < 0 || state->find_match_index >= state->find_match_count) return FALSE;
     find_match* match = &state->find_matches[state->find_match_index];
     if (match->page_index != page_index) return FALSE;
+    if (!match->has_rect) return FALSE;
     if (rect) *rect = match->rect;
     return TRUE;
 }
@@ -514,6 +1056,11 @@ static void update_find_controls(app_state* state) {
     char text[64];
     gboolean has_query = state->doc && current_search_text(state)[0] != '\0';
     gboolean has_matches = has_query && state->find_match_count > 0;
+
+    if (state->find_markers) {
+        gtk_widget_set_visible(state->find_markers, state->doc && state->find_match_count > 0);
+        gtk_widget_queue_draw(state->find_markers);
+    }
 
     if (state->find_prev_button) {
         gtk_widget_set_visible(state->find_prev_button, has_query);
@@ -551,7 +1098,7 @@ static void clear_list_box(GtkWidget* list) {
     g_list_free(children);
 }
 
-static void add_sidebar_row(GtkWidget* list, const char* text, int page_index, int indent) {
+static GtkWidget* add_sidebar_row(GtkWidget* list, const char* text, int page_index, int indent) {
     GtkWidget* row = gtk_list_box_row_new();
     GtkWidget* label = gtk_label_new(text);
     gtk_widget_set_margin_start(label, 8 + indent * 14);
@@ -563,6 +1110,7 @@ static void add_sidebar_row(GtkWidget* list, const char* text, int page_index, i
     g_object_set_data(G_OBJECT(row), "page-index", GINT_TO_POINTER(page_index));
     gtk_container_add(GTK_CONTAINER(row), label);
     gtk_container_add(GTK_CONTAINER(list), row);
+    return row;
 }
 
 static void rebuild_sidebar(app_state* state) {
@@ -591,7 +1139,8 @@ static void rebuild_sidebar(app_state* state) {
             snprintf(text, sizeof(text), "%s: %s", item.author, body);
         else
             snprintf(text, sizeof(text), "%s", body);
-        add_sidebar_row(state->comments_sidebar, text, item.page_index, 0);
+        GtkWidget* row = add_sidebar_row(state->comments_sidebar, text, item.page_index, 0);
+        if (item.index >= 0) g_object_set_data(G_OBJECT(row), "comment-index", GINT_TO_POINTER(item.index + 1));
     }
 
     gtk_notebook_set_show_tabs(GTK_NOTEBOOK(state->sidebar_tabs),
@@ -629,17 +1178,66 @@ static void update_sidebar_menu_items(app_state* state) {
     state->updating_sidebar_menu = FALSE;
 }
 
-static GdkPixbuf* decorate_page_pixbuf(spdf_document* doc, GdkPixbuf* pixbuf, int page_index, double zoom,
-                                       const char* search_text, const spdf_rect* active_rect) {
-    gboolean has_search = search_text && *search_text;
+static spdf_rect* copy_find_rects_for_page(app_state* state, int page_index, int* count_out) {
+    spdf_rect* rects;
+    int count = 0;
+
+    if (count_out) *count_out = 0;
+    if (!state || !state->find_matches) return NULL;
+
+    for (int i = 0; i < state->find_match_count; ++i) {
+        if (state->find_matches[i].page_index == page_index && state->find_matches[i].has_rect) count++;
+    }
+    if (count <= 0) return NULL;
+
+    rects = g_new(spdf_rect, count);
+    count = 0;
+    for (int i = 0; i < state->find_match_count; ++i) {
+        if (state->find_matches[i].page_index == page_index && state->find_matches[i].has_rect)
+            rects[count++] = state->find_matches[i].rect;
+    }
+    if (count_out) *count_out = count;
+    return rects;
+}
+
+static void draw_find_highlight(cairo_t* cr, const spdf_rect* rect, double zoom) {
+    double x = rect->x0 * zoom;
+    double y = rect->y0 * zoom;
+    double w = (rect->x1 - rect->x0) * zoom;
+    double h = (rect->y1 - rect->y0) * zoom;
+    cairo_rectangle(cr, x, y, w, h);
+    cairo_fill(cr);
+}
+
+static cairo_surface_t* page_surface_from_pixbuf(GdkPixbuf* pixbuf, int display_scale) {
+    int width = gdk_pixbuf_get_width(pixbuf);
+    int height = gdk_pixbuf_get_height(pixbuf);
+    cairo_surface_t* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_t* cr = cairo_create(surface);
+    gdk_cairo_set_source_pixbuf(cr, pixbuf, 0, 0);
+    cairo_paint(cr);
+    cairo_destroy(cr);
+    cairo_surface_set_device_scale(surface, display_scale, display_scale);
+    return surface;
+}
+
+static cairo_surface_t* decorate_page_surface(spdf_document* doc, GdkPixbuf* pixbuf, int page_index, double render_zoom,
+                                              int display_scale, const char* search_text, gboolean search_regex,
+                                              const spdf_rect* highlight_rects, int highlight_rect_count,
+                                              const spdf_rect* selection_rects, int selection_rect_count,
+                                              const spdf_rect* active_rect) {
+    gboolean has_search = search_text && *search_text && !search_regex;
+    gboolean has_highlights = highlight_rects && highlight_rect_count > 0;
+    gboolean has_selection = selection_rects && selection_rect_count > 0;
     gboolean has_active = active_rect != NULL;
     int width;
     int height;
     cairo_surface_t* surface;
     cairo_t* cr;
-    GdkPixbuf* decorated;
 
-    if (!pixbuf || (!has_search && !has_active)) return pixbuf;
+    if (!pixbuf) return NULL;
+    if (!has_search && !has_highlights && !has_selection && !has_active)
+        return page_surface_from_pixbuf(pixbuf, display_scale);
 
     width = gdk_pixbuf_get_width(pixbuf);
     height = gdk_pixbuf_get_height(pixbuf);
@@ -655,57 +1253,77 @@ static GdkPixbuf* decorate_page_pixbuf(spdf_document* doc, GdkPixbuf* pixbuf, in
         if (count > 0) {
             cairo_set_source_rgba(cr, 1.0, 0.84, 0.12, 0.34);
             for (int i = 0; i < count; ++i) {
-                double x = rects[i].x0 * zoom;
-                double y = rects[i].y0 * zoom;
-                double w = (rects[i].x1 - rects[i].x0) * zoom;
-                double h = (rects[i].y1 - rects[i].y0) * zoom;
-                cairo_rectangle(cr, x, y, w, h);
-                cairo_fill(cr);
+                draw_find_highlight(cr, &rects[i], render_zoom);
             }
         }
     }
 
+    if (has_highlights) {
+        cairo_set_source_rgba(cr, 1.0, 0.84, 0.12, 0.34);
+        for (int i = 0; i < highlight_rect_count; ++i) draw_find_highlight(cr, &highlight_rects[i], render_zoom);
+    }
+
+    if (has_selection) {
+        cairo_set_source_rgba(cr, 0.40, 0.62, 0.86, 0.34);
+        for (int i = 0; i < selection_rect_count; ++i) draw_find_highlight(cr, &selection_rects[i], render_zoom);
+    }
+
     if (has_active) {
-        double x = active_rect->x0 * zoom - 2.0;
-        double y = active_rect->y0 * zoom - 2.0;
-        double w = (active_rect->x1 - active_rect->x0) * zoom + 4.0;
-        double h = (active_rect->y1 - active_rect->y0) * zoom + 4.0;
+        double x = active_rect->x0 * render_zoom - 2.0;
+        double y = active_rect->y0 * render_zoom - 2.0;
+        double w = (active_rect->x1 - active_rect->x0) * render_zoom + 4.0;
+        double h = (active_rect->y1 - active_rect->y0) * render_zoom + 4.0;
         cairo_set_source_rgba(cr, 0.94, 0.03, 0.02, 0.95);
         cairo_set_line_width(cr, 1.25);
         cairo_rectangle(cr, x, y, w, h);
         cairo_stroke(cr);
     }
 
-    decorated = gdk_pixbuf_get_from_surface(surface, 0, 0, width, height);
     cairo_destroy(cr);
-    cairo_surface_destroy(surface);
-    if (decorated) {
-        g_object_unref(pixbuf);
-        return decorated;
-    }
-    return pixbuf;
+    cairo_surface_set_device_scale(surface, display_scale, display_scale);
+    return surface;
 }
 
-static GdkPixbuf* render_page_pixbuf_for_doc(spdf_document* doc, int page_index, double zoom, const char* search_text,
-                                             const spdf_rect* active_rect, char* err, size_t err_len) {
+static cairo_surface_t* render_page_surface_for_doc(spdf_document* doc, int page_index, double zoom, int display_scale,
+                                                    const char* search_text, gboolean search_regex,
+                                                    const spdf_rect* highlight_rects, int highlight_rect_count,
+                                                    const spdf_rect* selection_rects, int selection_rect_count,
+                                                    const spdf_rect* active_rect, char* err, size_t err_len) {
     spdf_bitmap bitmap;
-    if (!spdf_render_page_rgba(doc, page_index, (float)zoom, &bitmap, err, err_len)) return NULL;
+    double render_zoom = zoom * display_scale;
+    cairo_surface_t* surface;
+    if (!spdf_render_page_rgba(doc, page_index, (float)render_zoom, &bitmap, err, err_len)) return NULL;
 
     guchar* pixels = g_malloc((gsize)bitmap.stride * (gsize)bitmap.height);
     memcpy(pixels, bitmap.rgba, (size_t)bitmap.stride * (size_t)bitmap.height);
     GdkPixbuf* pixbuf = gdk_pixbuf_new_from_data(pixels, GDK_COLORSPACE_RGB, TRUE, 8, bitmap.width, bitmap.height,
                                                  bitmap.stride, free_pixbuf_pixels, NULL);
     spdf_free_bitmap(&bitmap);
-    pixbuf = decorate_page_pixbuf(doc, pixbuf, page_index, zoom, search_text, active_rect);
-    return pixbuf;
+    surface = decorate_page_surface(doc, pixbuf, page_index, render_zoom, display_scale, search_text, search_regex,
+                                    highlight_rects, highlight_rect_count, selection_rects, selection_rect_count,
+                                    active_rect);
+    g_object_unref(pixbuf);
+    return surface;
 }
 
-static GdkPixbuf* render_page_pixbuf(app_state* state, int page_index, char* err, size_t err_len) {
+static cairo_surface_t* render_page_surface(app_state* state, int page_index, char* err, size_t err_len) {
     spdf_rect active_rect;
+    spdf_rect* highlight_rects = NULL;
+    spdf_rect* selection_rects = NULL;
+    int highlight_rect_count = 0;
+    int selection_rect_count = 0;
+    cairo_surface_t* surface;
     const char* search_text = current_search_text(state);
     gboolean has_active = active_find_rect_for_page(state, page_index, &active_rect);
-    return render_page_pixbuf_for_doc(state->doc, page_index, state->zoom, search_text,
-                                      has_active ? &active_rect : NULL, err, err_len);
+    if (state->search_regex) highlight_rects = copy_find_rects_for_page(state, page_index, &highlight_rect_count);
+    selection_rects = copy_selection_rects_for_page(state, page_index, &selection_rect_count);
+    surface =
+        render_page_surface_for_doc(state->doc, page_index, state->zoom, display_scale_for_state(state), search_text,
+                                    state->search_regex, highlight_rects, highlight_rect_count, selection_rects,
+                                    selection_rect_count, has_active ? &active_rect : NULL, err, err_len);
+    g_free(highlight_rects);
+    g_free(selection_rects);
+    return surface;
 }
 
 static void clear_page_box(app_state* state) {
@@ -727,25 +1345,34 @@ static void show_empty_view_message(app_state* state, const char* message, const
     if (!state->page_box) return;
 
     clear_page_box(state);
+    gtk_widget_set_halign(state->page_box, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(state->page_box, GTK_ALIGN_FILL);
+    gtk_widget_set_hexpand(state->page_box, TRUE);
+    gtk_widget_set_vexpand(state->page_box, TRUE);
+
     box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     title = gtk_label_new(NULL);
     subtitle = gtk_label_new(detail ? detail : "");
     escaped_title = g_markup_escape_text(message ? message : "", -1);
     markup = g_strdup_printf("<span size=\"large\" weight=\"bold\">%s</span>", escaped_title);
 
+    gtk_widget_set_halign(box, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
+    gtk_widget_set_hexpand(box, TRUE);
+    gtk_widget_set_vexpand(box, TRUE);
     gtk_label_set_markup(GTK_LABEL(title), markup);
     gtk_label_set_xalign(GTK_LABEL(title), 0.5);
     gtk_label_set_xalign(GTK_LABEL(subtitle), 0.5);
     gtk_label_set_ellipsize(GTK_LABEL(subtitle), PANGO_ELLIPSIZE_MIDDLE);
     gtk_widget_set_margin_start(box, 40);
     gtk_widget_set_margin_end(box, 40);
-    gtk_widget_set_margin_top(box, 80);
+    gtk_widget_set_margin_top(box, 40);
     gtk_widget_set_margin_bottom(box, 40);
     gtk_widget_set_size_request(subtitle, 420, -1);
 
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), subtitle, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(state->page_box), box, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(state->page_box), box, TRUE, TRUE, 0);
     gtk_widget_show_all(state->page_box);
 
     g_free(markup);
@@ -761,6 +1388,8 @@ static void show_missing_document(app_state* state, const char* path) {
     spdf_close(state->doc);
     state->doc = NULL;
     clear_find_results(state);
+    clear_text_selection(state);
+    if (state->find_markers) gtk_widget_hide(state->find_markers);
     free(state->path);
     state->path = strdup(path ? path : "");
     state->page_index = 0;
@@ -771,7 +1400,11 @@ static void show_missing_document(app_state* state, const char* path) {
     gtk_window_set_title(GTK_WINDOW(state->window), window_title);
     gtk_label_set_text(GTK_LABEL(state->status), "File moved or deleted.");
     update_controls(state);
-    save_session(state);
+    if (!state->switching_tabs) {
+        save_active_tab_state(state);
+        update_tab_strip(state);
+        save_session(state);
+    }
     g_free(window_title);
     g_free(title);
 }
@@ -783,16 +1416,18 @@ static void configure_page_image(GtkWidget* image) {
     gtk_widget_set_margin_bottom(image, 13);
 }
 
-static GtkWidget* append_page_image(app_state* state, GdkPixbuf* pixbuf) {
-    GtkWidget* image = gtk_image_new_from_pixbuf(pixbuf);
+static GtkWidget* append_page_image(app_state* state, cairo_surface_t* surface, int page_index) {
+    GtkWidget* image = gtk_image_new_from_surface(surface);
     configure_page_image(image);
+    g_object_set_data(G_OBJECT(image), "page-index", GINT_TO_POINTER(page_index + 1));
     gtk_box_pack_start(GTK_BOX(state->page_box), image, FALSE, FALSE, 0);
     return image;
 }
 
-static GtkWidget* append_page_slot(app_state* state) {
+static GtkWidget* append_page_slot(app_state* state, int page_index) {
     GtkWidget* image = gtk_image_new();
     configure_page_image(image);
+    g_object_set_data(G_OBJECT(image), "page-index", GINT_TO_POINTER(page_index + 1));
     gtk_box_pack_start(GTK_BOX(state->page_box), image, FALSE, FALSE, 0);
     return image;
 }
@@ -806,8 +1441,8 @@ static gboolean render_finished_idle(gpointer data) {
     app_state* state = result->state;
 
     if (result->generation == state->render_generation) {
-        if (result->pixbuf) {
-            gtk_image_set_from_pixbuf(GTK_IMAGE(result->image), result->pixbuf);
+        if (result->surface) {
+            gtk_image_set_from_surface(GTK_IMAGE(result->image), result->surface);
             gtk_widget_show(result->image);
         } else if (result->missing_file) {
             show_missing_document(state, result->path);
@@ -817,7 +1452,7 @@ static gboolean render_finished_idle(gpointer data) {
         }
     }
 
-    if (result->pixbuf) g_object_unref(result->pixbuf);
+    if (result->surface) cairo_surface_destroy(result->surface);
     g_object_unref(result->image);
     g_free(result->path);
     g_free(result);
@@ -844,15 +1479,18 @@ static void render_worker(gpointer data, gpointer user_data) {
         if (!doc && !g_file_test(task->path, G_FILE_TEST_EXISTS)) result->missing_file = TRUE;
     }
     if (doc) {
-        result->pixbuf = render_page_pixbuf_for_doc(doc, task->page_index, task->zoom, task->search_text,
-                                                    task->has_active_rect ? &task->active_rect : NULL, result->err,
-                                                    sizeof(result->err));
+        result->surface = render_page_surface_for_doc(
+            doc, task->page_index, task->zoom, task->display_scale, task->search_text, task->search_regex,
+            task->highlight_rects, task->highlight_rect_count, task->selection_rects, task->selection_rect_count,
+            task->has_active_rect ? &task->active_rect : NULL, result->err, sizeof(result->err));
         spdf_close(doc);
     }
 
     g_idle_add(render_finished_idle, result);
     g_free(task->path);
     g_free(task->search_text);
+    g_free(task->highlight_rects);
+    g_free(task->selection_rects);
     g_free(task);
 }
 
@@ -869,13 +1507,20 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
     task->generation = state->render_generation;
     task->page_index = page_index;
     task->zoom = state->zoom;
+    task->display_scale = display_scale_for_state(state);
     task->search_text = g_strdup(current_search_text(state));
+    task->search_regex = state->search_regex;
+    if (state->search_regex)
+        task->highlight_rects = copy_find_rects_for_page(state, page_index, &task->highlight_rect_count);
+    task->selection_rects = copy_selection_rects_for_page(state, page_index, &task->selection_rect_count);
     task->has_active_rect = active_find_rect_for_page(state, page_index, &task->active_rect);
 
     if (!g_thread_pool_push(state->render_pool, task, &error)) {
         g_object_unref(task->image);
         g_free(task->path);
         g_free(task->search_text);
+        g_free(task->highlight_rects);
+        g_free(task->selection_rects);
         g_free(task);
         if (!state->render_error_shown) {
             state->render_error_shown = TRUE;
@@ -894,9 +1539,17 @@ static gboolean scroll_to_widget_idle(gpointer data) {
         GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
         double upper = gtk_adjustment_get_upper(vadj);
         double page_size = gtk_adjustment_get_page_size(vadj);
-        gtk_widget_get_allocation(request->widget, &allocation);
-        gtk_adjustment_set_value(vadj,
-                                 MAX(gtk_adjustment_get_lower(vadj), MIN((double)allocation.y, upper - page_size)));
+        int page_index = -1;
+        double page_y = 0.0;
+        if (widget_page_index(request->widget, &page_index) &&
+            page_widget_geometry(state, page_index, NULL, &page_y, NULL, NULL)) {
+            gtk_adjustment_set_value(vadj, MAX(gtk_adjustment_get_lower(vadj), MIN(page_y, upper - page_size)));
+        } else {
+            gtk_widget_get_allocation(request->widget, &allocation);
+            gtk_adjustment_set_value(vadj,
+                                     MAX(gtk_adjustment_get_lower(vadj), MIN((double)allocation.y, upper - page_size)));
+        }
+        clamp_horizontal_scroll(state);
     }
 
     g_object_unref(request->widget);
@@ -910,6 +1563,95 @@ static void scroll_to_rendered_page(app_state* state, GtkWidget* widget) {
     request->widget = g_object_ref(widget);
     request->generation = state->render_generation;
     g_idle_add(scroll_to_widget_idle, request);
+}
+
+static gboolean restore_scroll_position_idle(gpointer data) {
+    scroll_position_request* request = (scroll_position_request*)data;
+    app_state* state = request->state;
+
+    if (request->generation == state->render_generation && state->scroll) {
+        GtkAdjustment* hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+        GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+        gtk_adjustment_set_value(
+            hadj, MAX(gtk_adjustment_get_lower(hadj),
+                      MIN(request->hvalue, gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj))));
+        gtk_adjustment_set_value(
+            vadj, MAX(gtk_adjustment_get_lower(vadj),
+                      MIN(request->vvalue, gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj))));
+        clamp_horizontal_scroll(state);
+    }
+
+    g_free(request);
+    return G_SOURCE_REMOVE;
+}
+
+static void render_current_page_preserving_scroll(app_state* state) {
+    scroll_position_request* request = NULL;
+
+    if (state->scroll) {
+        GtkAdjustment* hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+        GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+        request = g_new0(scroll_position_request, 1);
+        request->state = state;
+        request->hvalue = gtk_adjustment_get_value(hadj);
+        request->vvalue = gtk_adjustment_get_value(vadj);
+    }
+
+    render_current_page(state, FALSE);
+    if (request) {
+        request->generation = state->render_generation;
+        g_idle_add(restore_scroll_position_idle, request);
+    }
+}
+
+static gboolean scroll_to_page_point_idle(gpointer data) {
+    page_point_scroll_request* request = (page_point_scroll_request*)data;
+    app_state* state = request->state;
+
+    if (request->generation == state->render_generation && state->scroll) {
+        GtkAdjustment* hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+        GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+        double page_x = 0.0;
+        double page_y = 0.0;
+        double page_width = 0.0;
+        double target_h;
+        double target_v;
+        double h_page = gtk_adjustment_get_page_size(hadj);
+        double v_page = gtk_adjustment_get_page_size(vadj);
+
+        if (page_widget_geometry(state, request->page_index, &page_x, &page_y, &page_width, NULL)) {
+            if (request->has_point) {
+                target_h = page_x + request->x * state->zoom - h_page * 0.5;
+                target_v = page_y + request->y * state->zoom - 20.0;
+            } else {
+                target_h = page_x + page_width * 0.5 - h_page * 0.5;
+                target_v = page_y;
+            }
+            gtk_adjustment_set_value(
+                hadj, MAX(gtk_adjustment_get_lower(hadj),
+                          MIN(target_h, gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj))));
+            gtk_adjustment_set_value(
+                vadj, MAX(gtk_adjustment_get_lower(vadj),
+                          MIN(target_v, gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj))));
+            clamp_horizontal_scroll(state);
+        }
+    }
+
+    g_free(request);
+    return G_SOURCE_REMOVE;
+}
+
+static void scroll_to_page_point(app_state* state, int page_index, double x, double y, gboolean has_point) {
+    page_point_scroll_request* request;
+    if (!state || !state->scroll) return;
+    request = g_new0(page_point_scroll_request, 1);
+    request->state = state;
+    request->generation = state->render_generation;
+    request->page_index = page_index;
+    request->x = x;
+    request->y = y;
+    request->has_point = has_point;
+    g_idle_add(scroll_to_page_point_idle, request);
 }
 
 static void open_path_at_page(app_state* state, const char* path, int page_index) {
@@ -932,6 +1674,7 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
     spdf_close(state->doc);
     state->doc = doc;
     clear_empty_view_message(state);
+    clear_text_selection(state);
     free(state->path);
     state->path = strdup(path);
     state->page_index = MAX(0, MIN(page_index, spdf_page_count(state->doc) - 1));
@@ -941,13 +1684,60 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
     spdf_load_comments(state->doc, &state->comments, err, sizeof(err));
     rebuild_sidebar(state);
     render_current_page(state, TRUE);
-    save_session(state);
+    if (!state->switching_tabs) {
+        save_active_tab_state(state);
+        update_tab_strip(state);
+        save_session(state);
+    }
+}
+
+static void open_path_in_tab_at_page(app_state* state, const char* path, int page_index, gboolean clear_search) {
+    int existing = find_tab_by_path(state, path);
+
+    if (existing >= 0) {
+        select_tab(state, existing);
+        if (clear_search) {
+            set_search_entry_text(state, "");
+            clear_find_results(state);
+        }
+        if (state->doc) {
+            state->page_index = MAX(0, MIN(page_index, spdf_page_count(state->doc) - 1));
+            render_current_page(state, TRUE);
+            save_active_tab_state(state);
+            update_tab_strip(state);
+            save_session(state);
+        }
+        return;
+    }
+
+    save_active_tab_state(state);
+    if (state->tab_count == 0 ||
+        (state->selected_tab >= 0 && state->selected_tab < state->tab_count && state->tabs[state->selected_tab].path &&
+         state->tabs[state->selected_tab].path[0] != '\0')) {
+        char* title = display_name_for_path(path);
+        int index = append_document_tab(state, path, title, page_index, state->zoom, state->fit_mode_id,
+                                        state->continuous_mode, "", FALSE, state->search_regex_multiline, -1);
+        g_free(title);
+        state->selected_tab = index;
+    } else if (state->selected_tab < 0 && state->tab_count > 0) {
+        state->selected_tab = 0;
+    }
+
+    if (clear_search) {
+        set_search_entry_text(state, "");
+        clear_find_results(state);
+    }
+    update_tab_strip(state);
+    open_path_at_page(state, path, page_index);
 }
 
 static void open_path(app_state* state, const char* path) {
-    set_search_entry_text(state, "");
-    clear_find_results(state);
-    open_path_at_page(state, path, 0);
+    int existing = find_tab_by_path(state, path);
+    if (existing >= 0) {
+        select_tab(state, existing);
+        return;
+    }
+    open_path_in_tab_at_page(state, path, 0, TRUE);
 }
 
 static void open_clicked(GtkButton* button, gpointer user_data) {
@@ -963,6 +1753,128 @@ static void open_clicked(GtkButton* button, gpointer user_data) {
         g_free(filename);
     }
     gtk_widget_destroy(dialog);
+}
+
+static void tab_button_clicked(GtkButton* button, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    int index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "tab-index")) - 1;
+    select_tab(state, index);
+}
+
+static void close_document_view(app_state* state) {
+    spdf_free_outline(&state->outline);
+    spdf_free_comments(&state->comments);
+    spdf_close(state->doc);
+    state->doc = NULL;
+    free(state->path);
+    state->path = NULL;
+    clear_find_results(state);
+    clear_text_selection(state);
+    set_search_entry_text(state, "");
+    if (state->find_markers) gtk_widget_hide(state->find_markers);
+    rebuild_sidebar(state);
+    show_empty_view_message(state, "Ready", "");
+    update_controls(state);
+}
+
+static void tab_close_clicked(GtkButton* button, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    int index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "tab-index")) - 1;
+    gboolean was_selected;
+
+    if (index < 0 || index >= state->tab_count) return;
+    was_selected = index == state->selected_tab;
+    if (was_selected) state->selected_tab = -1;
+    free_document_tab(&state->tabs[index]);
+    if (index + 1 < state->tab_count) {
+        memmove(&state->tabs[index], &state->tabs[index + 1],
+                (gsize)(state->tab_count - index - 1) * sizeof(document_tab));
+    }
+    state->tab_count--;
+    if (!was_selected && state->selected_tab > index) state->selected_tab--;
+
+    if (was_selected) {
+        close_document_view(state);
+        if (state->tab_count > 0) select_tab(state, MIN(index, state->tab_count - 1));
+    } else {
+        update_tab_strip(state);
+    }
+    save_session(state);
+}
+
+static void update_tab_strip(app_state* state) {
+    if (!state->tab_bar) return;
+
+    GList* children = gtk_container_get_children(GTK_CONTAINER(state->tab_bar));
+    for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
+    g_list_free(children);
+
+    for (int i = 0; i < state->tab_count; ++i) {
+        document_tab* tab = &state->tabs[i];
+        GtkWidget* frame = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        GtkWidget* button = gtk_button_new_with_label(tab->title && *tab->title ? tab->title : "Untitled");
+        GtkWidget* close = gtk_button_new_with_label("x");
+        char* tooltip = g_strdup(tab->path && *tab->path ? tab->path : tab->title);
+
+        gtk_widget_set_tooltip_text(button, tooltip);
+        gtk_widget_set_tooltip_text(close, "Close tab");
+        gtk_widget_set_size_request(button, 120, 28);
+        gtk_widget_set_size_request(close, 28, 28);
+        if (i == state->selected_tab) gtk_widget_set_sensitive(button, FALSE);
+        g_object_set_data(G_OBJECT(button), "tab-index", GINT_TO_POINTER(i + 1));
+        g_object_set_data(G_OBJECT(close), "tab-index", GINT_TO_POINTER(i + 1));
+        g_signal_connect(button, "clicked", G_CALLBACK(tab_button_clicked), state);
+        g_signal_connect(close, "clicked", G_CALLBACK(tab_close_clicked), state);
+        gtk_box_pack_start(GTK_BOX(frame), button, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(frame), close, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(state->tab_bar), frame, FALSE, FALSE, 0);
+        g_free(tooltip);
+    }
+
+    gtk_widget_show_all(state->tab_bar);
+}
+
+static void select_tab(app_state* state, int index) {
+    document_tab* tab;
+    char* search_text;
+    int preferred_find_index;
+    int preferred_page_index;
+
+    if (index < 0 || index >= state->tab_count) return;
+    if (index == state->selected_tab && state->doc) return;
+
+    save_active_tab_state(state);
+    state->selected_tab = index;
+    tab = active_tab(state);
+    search_text = g_strdup(tab->search_text ? tab->search_text : "");
+    preferred_find_index = tab->find_match_index;
+    preferred_page_index = tab->page_index;
+    state->switching_tabs = TRUE;
+    state->zoom = tab->zoom > 0.0 ? tab->zoom : 1.0;
+    state->fit_mode_id = tab->fit_mode_id >= 0 && tab->fit_mode_id <= 4 ? tab->fit_mode_id : 2;
+    state->continuous_mode = tab->continuous_mode;
+    state->search_regex = tab->search_regex;
+    state->search_regex_multiline = tab->search_regex_multiline;
+    set_search_entry_text(state, tab->search_text ? tab->search_text : "");
+    if (state->fit_mode) gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
+    if (state->continuous) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
+    if (state->search_regex_check)
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->search_regex_check), state->search_regex);
+    set_regex_multiline_widget_active(state->search_regex_multiline_check, state->search_regex_multiline);
+    set_regex_multiline_widget_active(state->search_regex_multiline_item, state->search_regex_multiline);
+    clear_find_results(state);
+    update_tab_strip(state);
+    open_path_at_page(state, tab->path, preferred_page_index);
+    state->switching_tabs = FALSE;
+    if (search_text && *search_text)
+        start_find_for_current_query(state, preferred_find_index, preferred_page_index, FALSE, TRUE);
+    else
+        clear_find_results(state);
+    update_find_controls(state);
+    save_active_tab_state(state);
+    update_tab_strip(state);
+    save_session(state);
+    g_free(search_text);
 }
 
 static void render_current_page(app_state* state, gboolean scroll_to_top) {
@@ -997,6 +1909,10 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
 
     state->render_generation++;
     state->render_error_shown = FALSE;
+    gtk_widget_set_halign(state->page_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(state->page_box, GTK_ALIGN_START);
+    gtk_widget_set_hexpand(state->page_box, FALSE);
+    gtk_widget_set_vexpand(state->page_box, FALSE);
     clear_page_box(state);
     page_count = spdf_page_count(state->doc);
     start_page = state->continuous_mode ? 0 : state->page_index;
@@ -1004,21 +1920,29 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
 
     if (state->continuous_mode) {
         GtkWidget** slots = g_new0(GtkWidget*, page_count);
-        GdkPixbuf* pixbuf;
+        cairo_surface_t* surface;
 
         for (int i = start_page; i < end_page; ++i) {
-            slots[i] = append_page_slot(state);
-            size_page_slot(slots[i], state->zoom, page_width, page_height);
+            float slot_width = page_width;
+            float slot_height = page_height;
+            char slot_err[256];
+            if (!spdf_page_size(state->doc, i, &slot_width, &slot_height, slot_err, sizeof(slot_err)) ||
+                slot_width <= 0 || slot_height <= 0) {
+                slot_width = page_width;
+                slot_height = page_height;
+            }
+            slots[i] = append_page_slot(state, i);
+            size_page_slot(slots[i], state->zoom, slot_width, slot_height);
         }
 
-        pixbuf = render_page_pixbuf(state, state->page_index, err, sizeof(err));
-        if (!pixbuf) {
+        surface = render_page_surface(state, state->page_index, err, sizeof(err));
+        if (!surface) {
             g_free(slots);
             show_error(GTK_WINDOW(state->window), "Could not render page", err);
             return;
         }
-        gtk_image_set_from_pixbuf(GTK_IMAGE(slots[state->page_index]), pixbuf);
-        g_object_unref(pixbuf);
+        gtk_image_set_from_surface(GTK_IMAGE(slots[state->page_index]), surface);
+        cairo_surface_destroy(surface);
         gtk_widget_show_all(state->page_box);
         if (scroll_to_top) scroll_to_rendered_page(state, slots[state->page_index]);
 
@@ -1031,13 +1955,13 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
         g_free(slots);
     } else {
         for (int i = start_page; i < end_page; ++i) {
-            GdkPixbuf* pixbuf = render_page_pixbuf(state, i, err, sizeof(err));
-            if (!pixbuf) {
+            cairo_surface_t* surface = render_page_surface(state, i, err, sizeof(err));
+            if (!surface) {
                 show_error(GTK_WINDOW(state->window), "Could not render page", err);
                 return;
             }
-            append_page_image(state, pixbuf);
-            g_object_unref(pixbuf);
+            append_page_image(state, surface, i);
+            cairo_surface_destroy(surface);
         }
         gtk_widget_show_all(state->page_box);
     }
@@ -1050,6 +1974,18 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
     update_controls(state);
 }
 
+static void window_scale_factor_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
+    (void)object;
+    (void)pspec;
+    app_state* state = (app_state*)user_data;
+    if (state->doc) render_current_page(state, FALSE);
+}
+
+static void clear_page_entry_focus(app_state* state) {
+    if (state->page_entry && gtk_widget_has_focus(state->page_entry) && state->scroll)
+        gtk_widget_grab_focus(state->scroll);
+}
+
 static void page_entry_activate(GtkEntry* entry, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     int page_count;
@@ -1060,6 +1996,7 @@ static void page_entry_activate(GtkEntry* entry, gpointer user_data) {
     if (requested < 0) requested = 0;
     if (requested >= page_count) requested = page_count - 1;
     state->page_index = requested;
+    clear_page_entry_focus(state);
     render_current_page(state, TRUE);
     save_session(state);
 }
@@ -1069,6 +2006,7 @@ static void previous_clicked(GtkButton* button, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     if (state->doc && state->page_index > 0) {
         state->page_index--;
+        clear_page_entry_focus(state);
         render_current_page(state, TRUE);
         save_session(state);
     }
@@ -1079,6 +2017,7 @@ static void next_clicked(GtkButton* button, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     if (state->doc && state->page_index + 1 < spdf_page_count(state->doc)) {
         state->page_index++;
+        clear_page_entry_focus(state);
         render_current_page(state, TRUE);
         save_session(state);
     }
@@ -1093,6 +2032,7 @@ static void zoom_in_clicked(GtkButton* button, gpointer user_data) {
     state->zoom = MIN(8.0, state->zoom * 1.15);
     render_current_page(state, FALSE);
     save_settings(state);
+    save_session(state);
 }
 
 static void zoom_out_clicked(GtkButton* button, gpointer user_data) {
@@ -1104,20 +2044,25 @@ static void zoom_out_clicked(GtkButton* button, gpointer user_data) {
     state->zoom = MAX(0.10, state->zoom / 1.15);
     render_current_page(state, FALSE);
     save_settings(state);
+    save_session(state);
 }
 
 static void fit_mode_changed(GtkComboBox* combo, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     state->fit_mode_id = gtk_combo_box_get_active(combo);
+    if (state->switching_tabs) return;
     render_current_page(state, FALSE);
     save_settings(state);
+    save_session(state);
 }
 
 static void continuous_toggled(GtkToggleButton* button, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     state->continuous_mode = gtk_toggle_button_get_active(button);
+    if (state->switching_tabs) return;
     render_current_page(state, TRUE);
     save_settings(state);
+    save_session(state);
 }
 
 static void show_sidebar_toggled(GtkCheckMenuItem* item, gpointer user_data) {
@@ -1197,11 +2142,14 @@ static void jump_to_find_match(app_state* state, int index) {
     gtk_label_set_text(GTK_LABEL(state->status), status);
 }
 
-static void start_find_for_current_query(app_state* state, int preferred_index, int preferred_page) {
+static void start_find_for_current_query(app_state* state, int preferred_index, int preferred_page,
+                                         gboolean reveal_match, gboolean preserve_scroll) {
     const char* needle = current_search_text(state);
     char err[1024];
+    char first_err[1024] = "";
     int page_count;
     int chosen_index = -1;
+    gboolean failed = FALSE;
 
     if (state->find_debounce_id) {
         g_source_remove(state->find_debounce_id);
@@ -1210,7 +2158,10 @@ static void start_find_for_current_query(app_state* state, int preferred_index, 
 
     clear_find_results(state);
     if (!state->doc || !needle || !*needle) {
-        render_current_page(state, FALSE);
+        if (preserve_scroll)
+            render_current_page_preserving_scroll(state);
+        else
+            render_current_page(state, FALSE);
         update_find_controls(state);
         save_session(state);
         return;
@@ -1219,13 +2170,32 @@ static void start_find_for_current_query(app_state* state, int preferred_index, 
     page_count = spdf_page_count(state->doc);
     for (int page = 0; page < page_count; ++page) {
         spdf_rect rects[256];
-        int hits = spdf_search_page_rects(state->doc, page, needle, rects, 256, err, sizeof(err));
-        if (hits <= 0) continue;
+        int hits = spdf_search_page_rects_options(state->doc, page, needle, state->search_regex ? 1 : 0,
+                                                  state->search_regex_multiline ? 1 : 0, rects, 256, err, sizeof(err));
+        if (hits < 0) {
+            snprintf(first_err, sizeof(first_err), "%s", err[0] ? err : "Search failed.");
+            failed = TRUE;
+            break;
+        }
+        if (hits == 0) continue;
         for (int i = 0; i < hits; ++i) {
             int match_index = state->find_match_count;
-            if (!append_find_match(state, page, rects[i])) break;
+            if (!append_find_match(state, page, rects[i], TRUE)) break;
             if (chosen_index < 0 && preferred_page >= 0 && page == preferred_page) chosen_index = match_index;
         }
+    }
+
+    if (failed) {
+        char status[256];
+        if (preserve_scroll)
+            render_current_page_preserving_scroll(state);
+        else
+            render_current_page(state, FALSE);
+        save_session(state);
+        update_find_controls(state);
+        snprintf(status, sizeof(status), "%s search failed: %s", state->search_regex ? "Regex" : "Find", first_err);
+        gtk_label_set_text(GTK_LABEL(state->status), status);
+        return;
     }
 
     if (preferred_index >= 0 && preferred_index < state->find_match_count)
@@ -1234,13 +2204,29 @@ static void start_find_for_current_query(app_state* state, int preferred_index, 
         chosen_index = 0;
 
     if (chosen_index >= 0) {
-        jump_to_find_match(state, chosen_index);
+        if (reveal_match) {
+            jump_to_find_match(state, chosen_index);
+        } else {
+            char status[192];
+            state->find_match_index = chosen_index;
+            if (preserve_scroll)
+                render_current_page_preserving_scroll(state);
+            else
+                render_current_page(state, FALSE);
+            save_session(state);
+            update_find_controls(state);
+            snprintf(status, sizeof(status), "%d matches for \"%s\"", state->find_match_count, needle);
+            gtk_label_set_text(GTK_LABEL(state->status), status);
+        }
     } else {
         char status[192];
-        render_current_page(state, FALSE);
+        if (preserve_scroll)
+            render_current_page_preserving_scroll(state);
+        else
+            render_current_page(state, FALSE);
         save_session(state);
         update_find_controls(state);
-        snprintf(status, sizeof(status), "No matches for \"%s\"", needle);
+        snprintf(status, sizeof(status), "No %smatches for \"%s\"", state->search_regex ? "regex " : "", needle);
         gtk_label_set_text(GTK_LABEL(state->status), status);
     }
 }
@@ -1272,13 +2258,13 @@ static void find_activate(GtkEntry* entry, gpointer user_data) {
     if (state->find_match_count > 0)
         find_step(state, TRUE);
     else
-        start_find_for_current_query(state, -1, -1);
+        start_find_for_current_query(state, -1, -1, TRUE, FALSE);
 }
 
 static gboolean find_debounce_idle(gpointer user_data) {
     app_state* state = (app_state*)user_data;
     state->find_debounce_id = 0;
-    start_find_for_current_query(state, -1, -1);
+    start_find_for_current_query(state, -1, -1, TRUE, FALSE);
     return G_SOURCE_REMOVE;
 }
 
@@ -1292,6 +2278,43 @@ static void find_search_changed(GtkEntry* entry, gpointer user_data) {
     save_session(state);
 }
 
+static void find_regex_toggled(GtkToggleButton* button, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    state->search_regex = gtk_toggle_button_get_active(button);
+    if (state->switching_tabs) return;
+    update_controls(state);
+    start_find_for_current_query(state, -1, state->page_index, TRUE, FALSE);
+}
+
+static gboolean check_widget_active(GtkWidget* widget) {
+    if (GTK_IS_CHECK_MENU_ITEM(widget)) return gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget));
+    return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+}
+
+static void set_regex_multiline_widget_active(GtkWidget* widget, gboolean active) {
+    if (!widget) return;
+    if (GTK_IS_CHECK_MENU_ITEM(widget)) {
+        if (gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget)) != active)
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(widget), active);
+    } else if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget)) != active) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(widget), active);
+    }
+}
+
+static void find_regex_multiline_toggled(GtkWidget* widget, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    gboolean active = check_widget_active(widget);
+
+    state->search_regex_multiline = active;
+    if (widget != state->search_regex_multiline_check)
+        set_regex_multiline_widget_active(state->search_regex_multiline_check, active);
+    if (widget != state->search_regex_multiline_item)
+        set_regex_multiline_widget_active(state->search_regex_multiline_item, active);
+
+    if (state->switching_tabs) return;
+    start_find_for_current_query(state, -1, state->page_index, TRUE, FALSE);
+}
+
 static gboolean find_search_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data) {
     (void)widget;
     app_state* state = (app_state*)user_data;
@@ -1299,9 +2322,53 @@ static gboolean find_search_key_press(GtkWidget* widget, GdkEventKey* event, gpo
     if (event->keyval != GDK_KEY_Escape) return FALSE;
     if (current_search_text(state)[0] != '\0') {
         set_search_entry_text(state, "");
-        start_find_for_current_query(state, -1, -1);
+        start_find_for_current_query(state, -1, -1, TRUE, FALSE);
     }
     if (state->scroll) gtk_widget_grab_focus(state->scroll);
+    return TRUE;
+}
+
+static void draw_find_marker(cairo_t* cr, double width, double height, int page_count, int page_index,
+                             gboolean active) {
+    double mark_height = 3.0;
+    double y;
+
+    if (page_count <= 0) return;
+    y = ((double)page_index + 0.5) / (double)page_count * MAX(1.0, height - mark_height);
+    y = MAX(0.0, MIN(y, height - mark_height));
+    if (active)
+        cairo_set_source_rgba(cr, 1.0, 0.45, 0.02, 0.95);
+    else
+        cairo_set_source_rgba(cr, 1.0, 0.86, 0.08, 0.90);
+    cairo_rectangle(cr, 1.0, y, MAX(1.0, width - 2.0), mark_height);
+    cairo_fill(cr);
+}
+
+static gboolean find_markers_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    GtkAllocation allocation;
+    int page_count = state->doc ? spdf_page_count(state->doc) : 0;
+    double width;
+    double height;
+
+    if (!state->doc || state->find_match_count <= 0 || page_count <= 0) return TRUE;
+
+    gtk_widget_get_allocation(widget, &allocation);
+    width = (double)allocation.width;
+    height = (double)allocation.height;
+
+    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.08);
+    cairo_rectangle(cr, 0.0, 0.0, width, height);
+    cairo_fill(cr);
+
+    for (int i = 0; i < state->find_match_count; ++i) {
+        if (i == state->find_match_index) continue;
+        draw_find_marker(cr, width, height, page_count, state->find_matches[i].page_index, FALSE);
+    }
+    if (state->find_match_index >= 0 && state->find_match_index < state->find_match_count) {
+        draw_find_marker(cr, width, height, page_count, state->find_matches[state->find_match_index].page_index, TRUE);
+    }
+
     return TRUE;
 }
 
@@ -1403,6 +2470,456 @@ static void show_in_folder(GtkWidget* widget, gpointer user_data) {
 
     show_error(GTK_WINDOW(state->window), "Could not show document in folder", "No file manager accepted the request.");
     g_free(directory);
+}
+
+static void update_text_selection(app_state* state, int page_index, double end_x, double end_y, gboolean rerender) {
+    char err[1024];
+    spdf_rect rects[256];
+    char* text = NULL;
+    int count;
+
+    if (!state || !state->doc || page_index < 0) return;
+
+    count =
+        spdf_select_page_text(state->doc, page_index, (float)state->selection_start_x, (float)state->selection_start_y,
+                              (float)end_x, (float)end_y, rects, 256, &text, err, sizeof(err));
+    g_free(state->selected_text);
+    state->selected_text = NULL;
+    state->selection_rect_count = 0;
+
+    if (count > 0 && text && text[0] != '\0') {
+        state->selection_page_index = page_index;
+        state->selection_rect_count = MIN(count, 256);
+        memcpy(state->selection_rects, rects, (gsize)state->selection_rect_count * sizeof(spdf_rect));
+        state->selected_text = g_strdup(text);
+    } else {
+        state->selection_page_index = state->selecting ? page_index : -1;
+    }
+
+    if (text) spdf_free_string(text);
+    if (count < 0) gtk_label_set_text(GTK_LABEL(state->status), err[0] ? err : "Could not select text.");
+    if (rerender) render_current_page_preserving_scroll(state);
+}
+
+static gboolean open_link_at_page_point(app_state* state, int page_index, double page_x, double page_y, guint32 time) {
+    char err[512];
+    spdf_link_target target;
+    int hit;
+
+    if (!state || !state->doc || page_index < 0) return FALSE;
+    hit = spdf_link_at_point(state->doc, page_index, (float)page_x, (float)page_y, &target, err, sizeof(err));
+    if (hit <= 0) {
+        if (hit < 0 && err[0]) gtk_label_set_text(GTK_LABEL(state->status), err);
+        return FALSE;
+    }
+
+    if (target.kind == SPDF_LINK_URI && target.uri) {
+        GError* error = NULL;
+        if (!gtk_show_uri_on_window(GTK_WINDOW(state->window), target.uri, time ? time : GDK_CURRENT_TIME, &error)) {
+            show_error(GTK_WINDOW(state->window), "Could not open link", error ? error->message : "");
+            if (error) g_error_free(error);
+        }
+        spdf_free_link_target(&target);
+        return TRUE;
+    }
+
+    if (target.kind == SPDF_LINK_INTERNAL && target.page_index >= 0) {
+        int page_count = spdf_page_count(state->doc);
+        gboolean has_point = isfinite(target.x) && isfinite(target.y);
+        state->page_index = MAX(0, MIN(target.page_index, page_count - 1));
+        render_current_page(state, FALSE);
+        scroll_to_page_point(state, state->page_index, target.x, target.y, has_point);
+        save_session(state);
+        spdf_free_link_target(&target);
+        return TRUE;
+    }
+
+    spdf_free_link_target(&target);
+    return FALSE;
+}
+
+static char* prompt_for_comment_text(app_state* state, const char* default_text) {
+    GtkWidget* dialog;
+    GtkWidget* content;
+    GtkWidget* label;
+    GtkWidget* scroll;
+    GtkWidget* text_view;
+    GtkTextBuffer* buffer;
+    char* result = NULL;
+
+    dialog = gtk_dialog_new_with_buttons("Add Comment", GTK_WINDOW(state->window), GTK_DIALOG_MODAL, "_Cancel",
+                                         GTK_RESPONSE_CANCEL, "_Add", GTK_RESPONSE_ACCEPT, NULL);
+    content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    label = gtk_label_new("Enter the comment text.");
+    scroll = gtk_scrolled_window_new(NULL, NULL);
+    text_view = gtk_text_view_new();
+    buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD_CHAR);
+    gtk_text_buffer_set_text(buffer, default_text ? default_text : "", -1);
+    gtk_widget_set_size_request(scroll, 420, 130);
+    gtk_widget_set_margin_start(label, 10);
+    gtk_widget_set_margin_end(label, 10);
+    gtk_widget_set_margin_top(label, 10);
+    gtk_widget_set_margin_bottom(label, 6);
+    gtk_widget_set_margin_start(scroll, 10);
+    gtk_widget_set_margin_end(scroll, 10);
+    gtk_widget_set_margin_bottom(scroll, 10);
+    gtk_container_add(GTK_CONTAINER(scroll), text_view);
+    gtk_box_pack_start(GTK_BOX(content), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 0);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+    gtk_widget_show_all(dialog);
+    gtk_widget_grab_focus(text_view);
+    {
+        GtkTextIter start;
+        GtkTextIter end;
+        gtk_text_buffer_get_bounds(buffer, &start, &end);
+        gtk_text_buffer_select_range(buffer, &start, &end);
+    }
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        GtkTextIter start;
+        GtkTextIter end;
+        gtk_text_buffer_get_bounds(buffer, &start, &end);
+        result = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+        g_strstrip(result);
+        if (!result[0]) {
+            g_free(result);
+            result = NULL;
+        }
+    }
+    gtk_widget_destroy(dialog);
+    return result;
+}
+
+static void free_comment_edit_result(comment_edit_result* result) {
+    if (!result) return;
+    g_free(result->author);
+    g_free(result->text);
+    g_free(result);
+}
+
+static const char* fallback_comment_author(void) {
+    const char* author = g_get_real_name();
+    if (!author || !*author || strcmp(author, "Unknown") == 0) author = g_get_user_name();
+    return author ? author : "";
+}
+
+static const char* current_comment_author(app_state* state) {
+    return state && state->comment_author && state->comment_author[0] ? state->comment_author
+                                                                      : fallback_comment_author();
+}
+
+static comment_edit_result* prompt_for_comment_editor(app_state* state, const char* title, const char* button_title,
+                                                      const char* author, const char* text) {
+    GtkWidget* dialog;
+    GtkWidget* content;
+    GtkWidget* author_label;
+    GtkWidget* author_entry;
+    GtkWidget* comment_label;
+    GtkWidget* scroll;
+    GtkWidget* text_view;
+    GtkTextBuffer* buffer;
+    comment_edit_result* result = NULL;
+
+    dialog = gtk_dialog_new_with_buttons(title ? title : "Comment", GTK_WINDOW(state->window), GTK_DIALOG_MODAL,
+                                         "_Cancel", GTK_RESPONSE_CANCEL, button_title ? button_title : "_Save",
+                                         GTK_RESPONSE_ACCEPT, NULL);
+    content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    author_label = gtk_label_new("Author");
+    author_entry = gtk_entry_new();
+    comment_label = gtk_label_new("Comment");
+    scroll = gtk_scrolled_window_new(NULL, NULL);
+    text_view = gtk_text_view_new();
+    buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+
+    gtk_label_set_xalign(GTK_LABEL(author_label), 0.0);
+    gtk_label_set_xalign(GTK_LABEL(comment_label), 0.0);
+    gtk_entry_set_text(GTK_ENTRY(author_entry), author ? author : "");
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD_CHAR);
+    gtk_text_buffer_set_text(buffer, text ? text : "", -1);
+    gtk_widget_set_size_request(scroll, 420, 130);
+    gtk_widget_set_margin_start(author_label, 10);
+    gtk_widget_set_margin_end(author_label, 10);
+    gtk_widget_set_margin_top(author_label, 10);
+    gtk_widget_set_margin_bottom(author_label, 4);
+    gtk_widget_set_margin_start(author_entry, 10);
+    gtk_widget_set_margin_end(author_entry, 10);
+    gtk_widget_set_margin_bottom(author_entry, 8);
+    gtk_widget_set_margin_start(comment_label, 10);
+    gtk_widget_set_margin_end(comment_label, 10);
+    gtk_widget_set_margin_bottom(comment_label, 4);
+    gtk_widget_set_margin_start(scroll, 10);
+    gtk_widget_set_margin_end(scroll, 10);
+    gtk_widget_set_margin_bottom(scroll, 10);
+    gtk_container_add(GTK_CONTAINER(scroll), text_view);
+    gtk_box_pack_start(GTK_BOX(content), author_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), author_entry, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), comment_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 0);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+    gtk_widget_show_all(dialog);
+    gtk_widget_grab_focus(text_view);
+    {
+        GtkTextIter start;
+        GtkTextIter end;
+        gtk_text_buffer_get_bounds(buffer, &start, &end);
+        gtk_text_buffer_select_range(buffer, &start, &end);
+    }
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        GtkTextIter start;
+        GtkTextIter end;
+        char* result_text;
+        char* result_author;
+
+        gtk_text_buffer_get_bounds(buffer, &start, &end);
+        result_text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+        result_author = g_strdup(gtk_entry_get_text(GTK_ENTRY(author_entry)));
+        g_strstrip(result_text);
+        g_strstrip(result_author);
+        if (result_text[0]) {
+            result = g_new0(comment_edit_result, 1);
+            result->author = result_author;
+            result->text = result_text;
+            result_author = NULL;
+            result_text = NULL;
+        }
+        g_free(result_author);
+        g_free(result_text);
+    }
+    gtk_widget_destroy(dialog);
+    return result;
+}
+
+static void refresh_comments_after_edit(app_state* state, const char* success, const char* refresh_failure) {
+    char err[1024];
+
+    spdf_free_comments(&state->comments);
+    if (spdf_load_comments(state->doc, &state->comments, err, sizeof(err)))
+        gtk_label_set_text(GTK_LABEL(state->status), success);
+    else
+        gtk_label_set_text(GTK_LABEL(state->status), refresh_failure);
+    rebuild_sidebar(state);
+    render_current_page_preserving_scroll(state);
+    update_controls(state);
+    save_session(state);
+}
+
+static void add_comment_clicked(GtkMenuItem* item, gpointer user_data) {
+    (void)item;
+    app_state* state = (app_state*)user_data;
+    gboolean has_selection = has_text_selection(state);
+    int page_index = has_selection ? state->selection_page_index : state->context_page_index;
+    char* comment;
+    char err[1024];
+    gboolean ok;
+
+    if (!state->doc || !state->path || page_index < 0 || page_index >= spdf_page_count(state->doc)) return;
+
+    comment = prompt_for_comment_text(state, has_selection ? state->selected_text : "");
+    if (!comment) return;
+
+    if (has_selection) {
+        ok = spdf_add_highlight_comment(state->doc, page_index, state->selection_rects, state->selection_rect_count,
+                                        comment, current_comment_author(state), err, sizeof(err));
+    } else {
+        ok = spdf_add_text_comment(state->doc, page_index, (float)state->context_page_x, (float)state->context_page_y,
+                                   comment, current_comment_author(state), err, sizeof(err));
+    }
+    if (ok) ok = spdf_save_document(state->doc, state->path, err, sizeof(err));
+    if (!ok) {
+        show_error(GTK_WINDOW(state->window), "Could not add comment", err[0] ? err : "Unknown error");
+        g_free(comment);
+        return;
+    }
+
+    refresh_comments_after_edit(state, "Comment added.", "Comment added, but comments could not refresh.");
+    g_free(comment);
+}
+
+static void set_comment_author_clicked(GtkMenuItem* item, gpointer user_data) {
+    (void)item;
+    app_state* state = (app_state*)user_data;
+    GtkWidget* dialog;
+    GtkWidget* content;
+    GtkWidget* label;
+    GtkWidget* entry;
+
+    dialog = gtk_dialog_new_with_buttons("Set Author for Comments", GTK_WINDOW(state->window), GTK_DIALOG_MODAL,
+                                         "_Cancel", GTK_RESPONSE_CANCEL, "_Save", GTK_RESPONSE_ACCEPT, NULL);
+    content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    label = gtk_label_new("New comments will use this author.");
+    entry = gtk_entry_new();
+
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_entry_set_text(GTK_ENTRY(entry), current_comment_author(state));
+    gtk_widget_set_size_request(entry, 360, -1);
+    gtk_widget_set_margin_start(label, 10);
+    gtk_widget_set_margin_end(label, 10);
+    gtk_widget_set_margin_top(label, 10);
+    gtk_widget_set_margin_bottom(label, 6);
+    gtk_widget_set_margin_start(entry, 10);
+    gtk_widget_set_margin_end(entry, 10);
+    gtk_widget_set_margin_bottom(entry, 10);
+    gtk_box_pack_start(GTK_BOX(content), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), entry, FALSE, FALSE, 0);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+    gtk_widget_show_all(dialog);
+    gtk_widget_grab_focus(entry);
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        char* author = g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)));
+        g_strstrip(author);
+        g_free(state->comment_author);
+        state->comment_author = author;
+        save_settings(state);
+        gtk_label_set_text(GTK_LABEL(state->status), author[0] ? "Comment author saved." : "Comment author reset.");
+    }
+    gtk_widget_destroy(dialog);
+}
+
+static spdf_comment_item* comment_item_for_index(app_state* state, int comment_index) {
+    if (!state || comment_index < 0) return NULL;
+    for (int i = 0; i < state->comments.count; ++i) {
+        if (state->comments.items[i].index == comment_index) return &state->comments.items[i];
+    }
+    return NULL;
+}
+
+static int comment_index_from_object(GObject* object) {
+    int stored = GPOINTER_TO_INT(g_object_get_data(object, "comment-index"));
+    return stored > 0 ? stored - 1 : -1;
+}
+
+static int comment_index_at_page_point(app_state* state, int page_index, double page_x, double page_y) {
+    if (!state || page_index < 0) return -1;
+
+    for (int i = 0; i < state->comments.count; ++i) {
+        spdf_comment_item item = state->comments.items[i];
+        double x0;
+        double x1;
+        double y0;
+        double y1;
+
+        if (item.page_index != page_index || item.index < 0) continue;
+        x0 = MIN(item.bounds.x0, item.bounds.x1) - 3.0;
+        x1 = MAX(item.bounds.x0, item.bounds.x1) + 3.0;
+        y0 = MIN(item.bounds.y0, item.bounds.y1) - 3.0;
+        y1 = MAX(item.bounds.y0, item.bounds.y1) + 3.0;
+        if (x1 <= x0 || y1 <= y0) continue;
+        if (page_x >= x0 && page_x <= x1 && page_y >= y0 && page_y <= y1) return item.index;
+    }
+    return -1;
+}
+
+static int comment_index_for_comment_action(GtkMenuItem* item, app_state* state) {
+    int comment_index = item ? comment_index_from_object(G_OBJECT(item)) : -1;
+    if (comment_index >= 0) return comment_index;
+    return state ? state->context_comment_index : -1;
+}
+
+static void edit_comment_clicked(GtkMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    int comment_index = comment_index_for_comment_action(item, state);
+    spdf_comment_item* comment = comment_item_for_index(state, comment_index);
+    comment_edit_result* result;
+    const char* author;
+    const char* text;
+    char err[1024];
+    gboolean ok;
+
+    if (!state->doc || !state->path || !comment) return;
+
+    author = comment->author && *comment->author ? comment->author : current_comment_author(state);
+    text = comment->text && *comment->text ? comment->text : "";
+    result = prompt_for_comment_editor(state, "Edit Comment", "_Save", author, text);
+    if (!result) return;
+
+    g_free(state->comment_author);
+    state->comment_author = g_strdup(result->author ? result->author : "");
+    ok = spdf_update_comment(state->doc, comment_index, result->text, result->author, err, sizeof(err));
+    if (ok) ok = spdf_save_document(state->doc, state->path, err, sizeof(err));
+    if (!ok) {
+        show_error(GTK_WINDOW(state->window), "Could not edit comment", err[0] ? err : "Unknown error");
+        free_comment_edit_result(result);
+        return;
+    }
+
+    save_settings(state);
+    refresh_comments_after_edit(state, "Comment updated.", "Comment updated, but comments could not refresh.");
+    free_comment_edit_result(result);
+}
+
+static gboolean confirm_delete_comment(app_state* state) {
+    GtkWidget* dialog;
+    int response;
+
+    dialog = gtk_message_dialog_new(GTK_WINDOW(state->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE,
+                                    "Delete comment?");
+    gtk_message_dialog_format_secondary_text(
+        GTK_MESSAGE_DIALOG(dialog), "This will remove the selected comment from the PDF and save the document.");
+    gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_Cancel", GTK_RESPONSE_CANCEL, "_Delete", GTK_RESPONSE_ACCEPT, NULL);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
+    response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    return response == GTK_RESPONSE_ACCEPT;
+}
+
+static void delete_comment_clicked(GtkMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    int comment_index = comment_index_for_comment_action(item, state);
+    spdf_comment_item* comment = comment_item_for_index(state, comment_index);
+    char err[1024];
+    gboolean ok;
+
+    if (!state->doc || !state->path || !comment) return;
+    if (!confirm_delete_comment(state)) return;
+
+    ok = spdf_delete_comment(state->doc, comment_index, err, sizeof(err));
+    if (ok) ok = spdf_save_document(state->doc, state->path, err, sizeof(err));
+    if (!ok) {
+        show_error(GTK_WINDOW(state->window), "Could not delete comment", err[0] ? err : "Unknown error");
+        return;
+    }
+
+    state->context_comment_index = -1;
+    refresh_comments_after_edit(state, "Comment deleted.", "Comment deleted, but comments could not refresh.");
+}
+
+static gboolean comments_sidebar_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    GtkListBoxRow* row;
+    int comment_index;
+    GtkWidget* menu;
+    GtkWidget* edit_comment;
+    GtkWidget* delete_comment;
+
+    if (event->button != 3) return FALSE;
+    row = gtk_list_box_get_row_at_y(GTK_LIST_BOX(widget), (gint)event->y);
+    if (!row) return FALSE;
+    comment_index = comment_index_from_object(G_OBJECT(row));
+    state->context_comment_index = comment_index;
+    gtk_list_box_select_row(GTK_LIST_BOX(widget), row);
+
+    menu = gtk_menu_new();
+    edit_comment = gtk_menu_item_new_with_label("Edit Comment...");
+    delete_comment = gtk_menu_item_new_with_label("Delete Comment...");
+    gtk_widget_set_sensitive(edit_comment, state->doc != NULL && comment_index >= 0);
+    gtk_widget_set_sensitive(delete_comment, state->doc != NULL && comment_index >= 0);
+    if (comment_index >= 0) {
+        g_object_set_data(G_OBJECT(edit_comment), "comment-index", GINT_TO_POINTER(comment_index + 1));
+        g_object_set_data(G_OBJECT(delete_comment), "comment-index", GINT_TO_POINTER(comment_index + 1));
+    }
+    g_signal_connect(edit_comment, "activate", G_CALLBACK(edit_comment_clicked), state);
+    g_signal_connect(delete_comment, "activate", G_CALLBACK(delete_comment_clicked), state);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), edit_comment);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), delete_comment);
+    gtk_widget_show_all(menu);
+    gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
+    return TRUE;
 }
 
 typedef struct ocr_task {
@@ -1900,29 +3417,49 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
         gtk_container_add(GTK_CONTAINER(list), row);
     }
 
-    if (state->doc && filter && *filter) {
+    if (filter && *filter) {
         char err[1024];
         add_palette_header(list, "Open documents");
 
-        for (int page = 0; page < spdf_page_count(state->doc); ++page) {
-            int hits = spdf_search_page(state->doc, page, filter, err, sizeof(err));
-            if (hits <= 0) continue;
-            char text[1600];
-            char* path = display_path_without_extension(state->path ? state->path : "Current document");
-            GtkWidget* row = gtk_list_box_row_new();
-            GtkWidget* label;
-            snprintf(text, sizeof(text), "%s\nPage %d - %d match%s", path, page + 1, hits, hits == 1 ? "" : "es");
-            g_free(path);
-            label = gtk_label_new(text);
-            gtk_label_set_xalign(GTK_LABEL(label), 0.0);
-            gtk_widget_set_margin_start(label, 8);
-            gtk_widget_set_margin_end(label, 8);
-            gtk_widget_set_margin_top(label, 6);
-            gtk_widget_set_margin_bottom(label, 6);
-            g_object_set_data(G_OBJECT(row), "search-page", GINT_TO_POINTER(page + 1));
-            g_object_set_data_full(G_OBJECT(row), "search-text", g_strdup(filter), g_free);
-            gtk_container_add(GTK_CONTAINER(row), label);
-            gtk_container_add(GTK_CONTAINER(list), row);
+        for (int tab_index = 0; tab_index < state->tab_count; ++tab_index) {
+            document_tab* tab = &state->tabs[tab_index];
+            spdf_document* doc = NULL;
+            gboolean borrowed_doc = FALSE;
+            char* display_path;
+            if (!tab->path || !*tab->path || !g_file_test(tab->path, G_FILE_TEST_EXISTS)) continue;
+
+            if (tab_index == state->selected_tab && state->doc) {
+                doc = state->doc;
+                borrowed_doc = TRUE;
+            } else {
+                doc = spdf_open(tab->path, err, sizeof(err));
+            }
+            if (!doc) continue;
+
+            display_path = tab->title && *tab->title ? display_label_without_extension(tab->title)
+                                                     : display_path_without_extension(tab->path);
+            for (int page = 0; page < spdf_page_count(doc); ++page) {
+                int hits = spdf_search_page(doc, page, filter, err, sizeof(err));
+                if (hits <= 0) continue;
+                char text[1600];
+                GtkWidget* row = gtk_list_box_row_new();
+                GtkWidget* label;
+                snprintf(text, sizeof(text), "%s\nPage %d - %d match%s", display_path, page + 1, hits,
+                         hits == 1 ? "" : "es");
+                label = gtk_label_new(text);
+                gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+                gtk_widget_set_margin_start(label, 8);
+                gtk_widget_set_margin_end(label, 8);
+                gtk_widget_set_margin_top(label, 6);
+                gtk_widget_set_margin_bottom(label, 6);
+                g_object_set_data(G_OBJECT(row), "search-page", GINT_TO_POINTER(page + 1));
+                g_object_set_data_full(G_OBJECT(row), "search-path", g_strdup(tab->path), g_free);
+                g_object_set_data_full(G_OBJECT(row), "search-text", g_strdup(filter), g_free);
+                gtk_container_add(GTK_CONTAINER(row), label);
+                gtk_container_add(GTK_CONTAINER(list), row);
+            }
+            g_free(display_path);
+            if (!borrowed_doc) spdf_close(doc);
         }
     }
     gtk_widget_show_all(GTK_WIDGET(list));
@@ -2047,9 +3584,11 @@ static void favorites_row_activated(GtkListBox* list, GtkListBoxRow* row, gpoint
     int search_page = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "search-page"));
     if (search_page > 0) {
         const char* search_text = (const char*)g_object_get_data(G_OBJECT(row), "search-text");
+        const char* search_path = (const char*)g_object_get_data(G_OBJECT(row), "search-path");
         state->favorite_pending_delete = -1;
+        if (search_path && *search_path) open_path_in_tab_at_page(state, search_path, search_page - 1, FALSE);
         set_search_entry_text(state, search_text ? search_text : "");
-        start_find_for_current_query(state, -1, search_page - 1);
+        start_find_for_current_query(state, -1, search_page - 1, TRUE, FALSE);
         gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
         return;
     }
@@ -2059,7 +3598,7 @@ static void favorites_row_activated(GtkListBox* list, GtkListBoxRow* row, gpoint
         state->favorite_pending_delete = -1;
         set_search_entry_text(state, "");
         clear_find_results(state);
-        open_path_at_page(state, favorite->path, favorite->document ? 0 : favorite->page_index);
+        open_path_in_tab_at_page(state, favorite->path, favorite->document ? 0 : favorite->page_index, TRUE);
         gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
     }
 }
@@ -2073,7 +3612,7 @@ static void show_favorites_dialog(app_state* state) {
     GtkWidget* list = gtk_list_box_new();
 
     gtk_window_set_default_size(GTK_WINDOW(dialog), 560, 420);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(search), "Favorites and current document");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(search), "Favorites and open documents");
     state->favorite_pending_delete = -1;
     gtk_widget_set_margin_start(search, 8);
     gtk_widget_set_margin_end(search, 8);
@@ -2137,6 +3676,7 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
         double lower = gtk_adjustment_get_lower(adjustment);
         double upper = gtk_adjustment_get_upper(adjustment) - gtk_adjustment_get_page_size(adjustment);
         gtk_adjustment_set_value(adjustment, MAX(lower, MIN(gtk_adjustment_get_value(adjustment) + delta, upper)));
+        if (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Right) clamp_horizontal_scroll(state);
         return TRUE;
     }
     return FALSE;
@@ -2150,8 +3690,8 @@ static void drag_data_received(GtkWidget* widget, GdkDragContext* context, gint 
     (void)info;
     app_state* state = (app_state*)user_data;
     gchar** uris = gtk_selection_data_get_uris(data);
-    if (uris && uris[0]) {
-        char* path = g_filename_from_uri(uris[0], NULL, NULL);
+    for (int i = 0; uris && uris[i]; ++i) {
+        char* path = g_filename_from_uri(uris[i], NULL, NULL);
         if (path) {
             open_path(state, path);
             g_free(path);
@@ -2159,6 +3699,41 @@ static void drag_data_received(GtkWidget* widget, GdkDragContext* context, gint 
     }
     g_strfreev(uris);
     gtk_drag_finish(context, TRUE, FALSE, time);
+}
+
+static void vertical_scroll_changed(GtkAdjustment* adjustment, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    GList* children;
+    int page = 0;
+    int best_page = -1;
+    double viewport_mid;
+    double best_distance = 0.0;
+
+    if (!state->doc || !state->continuous_mode || !state->page_box) return;
+    viewport_mid = gtk_adjustment_get_value(adjustment) + gtk_adjustment_get_page_size(adjustment) * 0.5;
+    children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+    for (GList* it = children; it; it = it->next, ++page) {
+        GtkAllocation allocation;
+        double center;
+        double distance;
+        gtk_widget_get_allocation(GTK_WIDGET(it->data), &allocation);
+        if (allocation.height <= 0) continue;
+        center = allocation.y + allocation.height * 0.5;
+        distance = center > viewport_mid ? center - viewport_mid : viewport_mid - center;
+        if (best_page < 0 || distance < best_distance) {
+            best_page = page;
+            best_distance = distance;
+        }
+    }
+    g_list_free(children);
+
+    if (best_page >= 0 && best_page != state->page_index) {
+        state->page_index = best_page;
+        clamp_horizontal_scroll(state);
+        update_controls(state);
+        save_active_tab_state(state);
+        if (!state->switching_tabs) save_session(state);
+    }
 }
 
 static gboolean page_scroll_event(GtkWidget* widget, GdkEventScroll* event, gpointer user_data) {
@@ -2176,17 +3751,61 @@ static gboolean page_scroll_event(GtkWidget* widget, GdkEventScroll* event, gpoi
 }
 
 static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
-    (void)widget;
     app_state* state = (app_state*)user_data;
 
     if (event->button == 3) {
         GtkWidget* menu = gtk_menu_new();
+        GtkWidget* edit_comment = gtk_menu_item_new_with_label("Edit Comment...");
+        GtkWidget* delete_comment = gtk_menu_item_new_with_label("Delete Comment...");
+        GtkWidget* add_comment = gtk_menu_item_new_with_label("Add Comment...");
+        int page_index = -1;
+        double page_x = 0.0;
+        double page_y = 0.0;
         GtkWidget* show_folder = gtk_menu_item_new_with_label("Show in Folder");
+        state->context_page_index = -1;
+        state->context_comment_index = -1;
+        if (page_point_from_widget_point(state, widget, event->x, event->y, &page_index, &page_x, &page_y)) {
+            state->context_page_index = page_index;
+            state->context_page_x = page_x;
+            state->context_page_y = page_y;
+            state->context_comment_index = comment_index_at_page_point(state, page_index, page_x, page_y);
+        }
+        gtk_widget_set_sensitive(edit_comment, state->doc != NULL && state->context_comment_index >= 0);
+        gtk_widget_set_sensitive(delete_comment, state->doc != NULL && state->context_comment_index >= 0);
+        if (state->context_comment_index >= 0) {
+            g_object_set_data(G_OBJECT(edit_comment), "comment-index",
+                              GINT_TO_POINTER(state->context_comment_index + 1));
+            g_object_set_data(G_OBJECT(delete_comment), "comment-index",
+                              GINT_TO_POINTER(state->context_comment_index + 1));
+        }
+        g_signal_connect(edit_comment, "activate", G_CALLBACK(edit_comment_clicked), state);
+        g_signal_connect(delete_comment, "activate", G_CALLBACK(delete_comment_clicked), state);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), edit_comment);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), delete_comment);
+        gtk_widget_set_sensitive(add_comment, state->doc != NULL && (has_text_selection(state) || page_index >= 0));
+        g_signal_connect(add_comment, "activate", G_CALLBACK(add_comment_clicked), state);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), add_comment);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         gtk_widget_set_sensitive(show_folder, state->doc != NULL && state->path != NULL);
         g_signal_connect(show_folder, "activate", G_CALLBACK(show_in_folder), state);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), show_folder);
         gtk_widget_show_all(menu);
         gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
+        return TRUE;
+    }
+
+    if (event->button == 1 && state->doc) {
+        int page_index = -1;
+        double page_x = 0.0;
+        double page_y = 0.0;
+        if (!page_point_from_widget_point(state, widget, event->x, event->y, &page_index, &page_x, &page_y))
+            return FALSE;
+        if (open_link_at_page_point(state, page_index, page_x, page_y, event->time)) return TRUE;
+        if (clear_text_selection(state)) render_current_page_preserving_scroll(state);
+        state->selecting = TRUE;
+        state->selection_page_index = page_index;
+        state->selection_start_x = page_x;
+        state->selection_start_y = page_y;
         return TRUE;
     }
 
@@ -2203,21 +3822,43 @@ static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpoi
 }
 
 static gboolean page_motion(GtkWidget* widget, GdkEventMotion* event, gpointer user_data) {
-    (void)widget;
     app_state* state = (app_state*)user_data;
+    if (state->selecting) {
+        double page_x = 0.0;
+        double page_y = 0.0;
+        if (page_point_for_page_from_widget_point(state, state->selection_page_index, widget, event->x, event->y,
+                                                  &page_x, &page_y)) {
+            update_text_selection(state, state->selection_page_index, page_x, page_y, FALSE);
+        }
+        return TRUE;
+    }
+
     if (!state->panning) return FALSE;
 
     GtkAdjustment* hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
     GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
     gtk_adjustment_set_value(hadj, state->pan_start_h - (event->x_root - state->pan_start_x));
     gtk_adjustment_set_value(vadj, state->pan_start_v - (event->y_root - state->pan_start_y));
+    clamp_horizontal_scroll(state);
     return TRUE;
 }
 
 static gboolean page_button_release(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
-    (void)widget;
-    (void)event;
     app_state* state = (app_state*)user_data;
+    if (event->button == 1 && state->selecting) {
+        double page_x = 0.0;
+        double page_y = 0.0;
+        if (page_point_for_page_from_widget_point(state, state->selection_page_index, widget, event->x, event->y,
+                                                  &page_x, &page_y)) {
+            update_text_selection(state, state->selection_page_index, page_x, page_y, TRUE);
+            if (!has_text_selection(state)) clear_text_selection(state);
+        } else {
+            clear_text_selection(state);
+            render_current_page_preserving_scroll(state);
+        }
+        state->selecting = FALSE;
+        return TRUE;
+    }
     state->panning = FALSE;
     return FALSE;
 }
@@ -2241,6 +3882,10 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->open_in_browser = gtk_menu_item_new_with_mnemonic("Open in Default _Browser");
     state->show_in_folder = gtk_menu_item_new_with_mnemonic("Show in _Folder");
     GtkWidget* quit_menu = gtk_menu_item_new_with_mnemonic("_Quit");
+    GtkWidget* edit_menu = gtk_menu_new();
+    GtkWidget* edit = gtk_menu_item_new_with_mnemonic("_Edit");
+    GtkWidget* set_comment_author = gtk_menu_item_new_with_mnemonic("Set _Author for Comments...");
+    state->search_regex_multiline_item = gtk_check_menu_item_new_with_mnemonic("Regex _Multiline");
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
     state->show_sidebar_item = gtk_check_menu_item_new_with_mnemonic("Show Side _Panel");
@@ -2254,12 +3899,33 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), quit_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), file);
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->search_regex_multiline_item),
+                                   state->search_regex_multiline);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(edit), edit_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), set_comment_author);
+    gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), gtk_separator_menu_item_new());
+    gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), state->search_regex_multiline_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), edit);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_sidebar_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_chapters_panel);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_comments_panel);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), view);
     gtk_box_pack_start(GTK_BOX(root), menubar, FALSE, FALSE, 0);
+
+    state->tab_strip = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_margin_start(state->tab_strip, 8);
+    gtk_widget_set_margin_end(state->tab_strip, 8);
+    gtk_widget_set_margin_top(state->tab_strip, 4);
+    gtk_widget_set_margin_bottom(state->tab_strip, 0);
+    state->tab_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    gtk_widget_set_hexpand(state->tab_bar, TRUE);
+    state->new_tab_button = gtk_button_new_with_label("+");
+    gtk_widget_set_tooltip_text(state->new_tab_button, "Open document in a new tab");
+    gtk_widget_set_size_request(state->new_tab_button, 32, 28);
+    gtk_box_pack_start(GTK_BOX(state->tab_strip), state->tab_bar, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(state->tab_strip), state->new_tab_button, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(root), state->tab_strip, FALSE, FALSE, 0);
 
     GtkWidget* toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_margin_start(toolbar, 8);
@@ -2287,7 +3953,11 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
     state->search_entry = gtk_search_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(state->search_entry), "Find");
-    if (state->restore_search_text) set_search_entry_text(state, state->restore_search_text);
+    if (state->tab_count == 0 && state->restore_search_text) set_search_entry_text(state, state->restore_search_text);
+    state->search_regex_check = gtk_check_button_new_with_label("Regex");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->search_regex_check), state->search_regex);
+    state->search_regex_multiline_check = gtk_check_button_new_with_label("Multiline");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->search_regex_multiline_check), state->search_regex_multiline);
     state->find_count_label = gtk_label_new("");
     state->find_prev_button = gtk_button_new_with_label("<");
     state->find_next_button = gtk_button_new_with_label(">");
@@ -2303,6 +3973,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(toolbar), state->fit_mode, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->continuous, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->search_entry, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->search_regex_check, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), state->search_regex_multiline_check, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->find_count_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->find_prev_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), state->find_next_button, FALSE, FALSE, 0);
@@ -2316,6 +3988,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_set_size_request(state->sidebar_container, 180, -1);
     state->sidebar = gtk_list_box_new();
     state->comments_sidebar = gtk_list_box_new();
+    gtk_widget_add_events(state->comments_sidebar, GDK_BUTTON_PRESS_MASK);
     GtkWidget* chapters_scroll = gtk_scrolled_window_new(NULL, NULL);
     GtkWidget* comments_scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_container_add(GTK_CONTAINER(chapters_scroll), state->sidebar);
@@ -2324,17 +3997,29 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_notebook_append_page(GTK_NOTEBOOK(state->sidebar_tabs), comments_scroll, gtk_label_new("Comments"));
     gtk_paned_pack1(GTK_PANED(paned), state->sidebar_container, FALSE, FALSE);
 
+    GtkWidget* document_view = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     state->scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_can_focus(state->scroll, TRUE);
+    g_signal_connect(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll)), "value-changed",
+                     G_CALLBACK(horizontal_scroll_changed), state);
+    g_signal_connect(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll)), "value-changed",
+                     G_CALLBACK(vertical_scroll_changed), state);
+    state->find_markers = gtk_drawing_area_new();
+    gtk_widget_set_size_request(state->find_markers, 8, -1);
+    gtk_widget_set_tooltip_text(state->find_markers, "Find matches");
     GtkWidget* page_box = gtk_event_box_new();
     gtk_widget_add_events(page_box,
                           GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK | GDK_SCROLL_MASK);
     gtk_event_box_set_visible_window(GTK_EVENT_BOX(page_box), FALSE);
+    gtk_widget_set_hexpand(page_box, TRUE);
+    gtk_widget_set_vexpand(page_box, TRUE);
     state->page_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_halign(state->page_box, GTK_ALIGN_CENTER);
     gtk_container_add(GTK_CONTAINER(page_box), state->page_box);
     gtk_container_add(GTK_CONTAINER(state->scroll), page_box);
-    gtk_paned_pack2(GTK_PANED(paned), state->scroll, TRUE, FALSE);
+    gtk_box_pack_start(GTK_BOX(document_view), state->scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(document_view), state->find_markers, FALSE, FALSE, 0);
+    gtk_paned_pack2(GTK_PANED(paned), document_view, TRUE, FALSE);
     gtk_paned_set_position(GTK_PANED(paned), state->sidebar_width);
 
     state->status = gtk_label_new("Ready");
@@ -2344,9 +4029,12 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(root), state->status, FALSE, FALSE, 3);
 
     g_signal_connect(open, "clicked", G_CALLBACK(open_clicked), state);
+    g_signal_connect(state->new_tab_button, "clicked", G_CALLBACK(open_clicked), state);
     g_signal_connect(open_menu, "activate", G_CALLBACK(open_clicked), state);
     g_signal_connect(state->open_in_browser, "activate", G_CALLBACK(open_in_browser), state);
     g_signal_connect(state->show_in_folder, "activate", G_CALLBACK(show_in_folder), state);
+    g_signal_connect(set_comment_author, "activate", G_CALLBACK(set_comment_author_clicked), state);
+    g_signal_connect(state->search_regex_multiline_item, "toggled", G_CALLBACK(find_regex_multiline_toggled), state);
     g_signal_connect(state->show_sidebar_item, "toggled", G_CALLBACK(show_sidebar_toggled), state);
     g_signal_connect(state->show_chapters_panel, "activate", G_CALLBACK(show_chapters_panel_clicked), state);
     g_signal_connect(state->show_comments_panel, "activate", G_CALLBACK(show_comments_panel_clicked), state);
@@ -2362,10 +4050,14 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(state->search_entry, "activate", G_CALLBACK(find_activate), state);
     g_signal_connect(state->search_entry, "search-changed", G_CALLBACK(find_search_changed), state);
     g_signal_connect(state->search_entry, "key-press-event", G_CALLBACK(find_search_key_press), state);
+    g_signal_connect(state->search_regex_check, "toggled", G_CALLBACK(find_regex_toggled), state);
+    g_signal_connect(state->search_regex_multiline_check, "toggled", G_CALLBACK(find_regex_multiline_toggled), state);
     g_signal_connect(state->find_prev_button, "clicked", G_CALLBACK(find_prev_clicked), state);
     g_signal_connect(state->find_next_button, "clicked", G_CALLBACK(find_next_clicked), state);
+    g_signal_connect(state->find_markers, "draw", G_CALLBACK(find_markers_draw), state);
     g_signal_connect(state->sidebar, "row-selected", G_CALLBACK(sidebar_row_selected), state);
     g_signal_connect(state->comments_sidebar, "row-selected", G_CALLBACK(sidebar_row_selected), state);
+    g_signal_connect(state->comments_sidebar, "button-press-event", G_CALLBACK(comments_sidebar_button_press), state);
     g_signal_connect(state->sidebar_tabs, "switch-page", G_CALLBACK(sidebar_page_switched), state);
     g_signal_connect(state->main_paned, "notify::position", G_CALLBACK(paned_position_changed), state);
     g_signal_connect(page_box, "scroll-event", G_CALLBACK(page_scroll_event), state);
@@ -2373,6 +4065,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(page_box, "motion-notify-event", G_CALLBACK(page_motion), state);
     g_signal_connect(page_box, "button-release-event", G_CALLBACK(page_button_release), state);
     g_signal_connect(state->window, "key-press-event", G_CALLBACK(key_press), state);
+    g_signal_connect(state->window, "notify::scale-factor", G_CALLBACK(window_scale_factor_changed), state);
 
     GtkTargetEntry drop_targets[] = {{"text/uri-list", 0, 0}};
     gtk_drag_dest_set(state->window, GTK_DEST_DEFAULT_ALL, drop_targets, 1, GDK_ACTION_COPY);
@@ -2381,10 +4074,16 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_show_all(state->window);
     gtk_widget_hide(state->sidebar_container);
     update_controls(state);
-    if (!state->suppress_restore_once && !state->doc && state->restore_path && *state->restore_path) {
-        open_path_at_page(state, state->restore_path, state->restore_page_index);
+    if (!state->suppress_restore_once && state->tab_count > 0) {
+        int index = state->restore_selected_tab >= 0 ? state->restore_selected_tab : 0;
+        select_tab(state, MAX(0, MIN(index, state->tab_count - 1)));
+    } else if (!state->suppress_restore_once && !state->doc && state->restore_path && *state->restore_path) {
+        open_path(state, state->restore_path);
         if (state->restore_search_text && *state->restore_search_text)
-            start_find_for_current_query(state, state->restore_find_match_index, state->restore_page_index);
+            start_find_for_current_query(state, state->restore_find_match_index, state->restore_page_index, FALSE,
+                                         TRUE);
+    } else {
+        update_tab_strip(state);
     }
     state->suppress_restore_once = FALSE;
 }
@@ -2394,10 +4093,15 @@ static void open_files(GtkApplication* app, GFile** files, gint n_files, const g
     app_state* state = (app_state*)user_data;
     if (!state->window) {
         state->suppress_restore_once = TRUE;
+        free_document_tabs(state);
+        g_free(state->restore_path);
+        g_free(state->restore_search_text);
+        state->restore_path = NULL;
+        state->restore_search_text = NULL;
         activate(app, user_data);
     }
-    if (n_files > 0) {
-        char* path = g_file_get_path(files[0]);
+    for (int i = 0; i < n_files; ++i) {
+        char* path = g_file_get_path(files[i]);
         if (path) {
             open_path(state, path);
             g_free(path);
@@ -2419,9 +4123,15 @@ int main(int argc, char** argv) {
     state.fit_mode_id = 2;
     state.continuous_mode = TRUE;
     state.show_sidebar = TRUE;
+    state.search_regex_multiline = TRUE;
     state.sidebar_width = 260;
     state.find_match_index = -1;
     state.restore_find_match_index = -1;
+    state.selection_page_index = -1;
+    state.context_page_index = -1;
+    state.context_comment_index = -1;
+    state.selected_tab = -1;
+    state.restore_selected_tab = -1;
     state.favorite_pending_delete = -1;
     state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, g_get_num_processors()), FALSE, NULL);
     init_config_paths(&state);
@@ -2449,9 +4159,12 @@ int main(int argc, char** argv) {
     g_free(state.restore_path);
     g_free(state.restore_search_text);
     g_free(state.search_text);
+    g_free(state.comment_author);
+    g_free(state.selected_text);
     g_free(state.empty_view_message);
     clear_find_results(&state);
     free_favorites(&state);
+    free_document_tabs(&state);
     g_object_unref(app);
     return status;
 }

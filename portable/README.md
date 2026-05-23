@@ -22,11 +22,66 @@ Build and install:
 make -C portable install
 ```
 
+Free open-source distribution without an Apple Developer account is best done by
+building on the user's Mac instead of asking them to open a downloaded `.app`.
+That avoids the browser quarantine path that causes the "Put in Trash" dialog.
+
+From a checkout:
+
+```sh
+./portable/install-mac-from-source.sh
+```
+
+From a published repository, replace the URL/ref with your fork:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/YOUR-USER/YOUR-REPO/YOUR-BRANCH/portable/install-mac-from-source.sh \
+  | bash -s -- https://github.com/YOUR-USER/YOUR-REPO YOUR-BRANCH
+```
+
+Development builds are ad-hoc signed so they can run locally. Public macOS
+downloads must be signed with an Apple Developer ID certificate and notarized,
+otherwise Gatekeeper shows "Apple could not verify..." malware warnings after a
+user downloads the app or DMG.
+
+Create a notarization profile once:
+
+```sh
+xcrun notarytool store-credentials sumatrapdf-notary \
+  --apple-id you@example.com \
+  --team-id TEAMID1234 \
+  --password app-specific-password
+```
+
+Then build the public DMG:
+
+```sh
+make -C portable release-dmg \
+  MAC_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID1234)" \
+  NOTARY_PROFILE=sumatrapdf-notary
+```
+
+TestFlight builds are packaged separately for App Store Connect. The publisher
+must provide the App Store Bundle ID, Apple Distribution identity, installer
+identity, and provisioning profile:
+
+```sh
+MAC_BUNDLE_ID=com.example.sumatrapdf \
+MAC_BUILD=6 \
+MAC_APPSTORE_IDENTITY="Apple Distribution: Friend Name (TEAMID1234)" \
+MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Friend Name (TEAMID1234)" \
+MAC_PROVISIONING_PROFILE="$HOME/Downloads/SumatraPDF_AppStore.provisionprofile" \
+./portable/build-mac-testflight.sh
+```
+
+See `portable/docs/testflight.md` for the full App Store Connect handoff.
+
 Build artifacts:
 
 ```text
 dist/SumatraPDF.app
 dist/SumatraPDF-mac-arm64.dmg
+dist/SumatraPDF-testflight-0.5.0-6.pkg
 /Applications/SumatraPDF.app
 ```
 
@@ -106,10 +161,13 @@ Implemented highlights:
 
 - The portable port is still experimental.
 - macOS is currently the most feature-complete frontend.
-- Linux shares the portable core and key search/favorites/sidebar/OCR behavior,
-  but visible tabs, the minimap, text-selection overlay, printing, and document
+- Linux shares the portable core and key tabs/search/favorites/sidebar/OCR
+  behavior, but the minimap, text-selection overlay, printing, and document
   properties still need GTK-specific UI work.
 - OCR modifies the source PDF only after creating a backup named like
   `document_backup.pdf`.
-- The macOS app is ad-hoc signed for local development and installation; it is
-  not notarized.
+- The default macOS build is ad-hoc signed for local development. Use
+  `make -C portable release-dmg` with `MAC_SIGN_IDENTITY` and `NOTARY_PROFILE`
+  for distributable signed/notarized builds.
+- Use `./portable/build-mac-testflight.sh` for App Store Connect/TestFlight
+  packages signed by the publishing Apple Developer account.

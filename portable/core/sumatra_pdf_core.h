@@ -38,6 +38,7 @@ typedef struct spdf_comment_item {
     char* author;
     char* text;
     char* type;
+    int index;
     int page_index;
     spdf_rect bounds;
 } spdf_comment_item;
@@ -46,6 +47,21 @@ typedef struct spdf_comments {
     spdf_comment_item* items;
     int count;
 } spdf_comments;
+
+typedef enum spdf_link_kind {
+    SPDF_LINK_NONE = 0,
+    SPDF_LINK_URI = 1,
+    SPDF_LINK_INTERNAL = 2
+} spdf_link_kind;
+
+typedef struct spdf_link_target {
+    spdf_link_kind kind;
+    char* uri;
+    int page_index;
+    float x;
+    float y;
+    float zoom;
+} spdf_link_target;
 
 spdf_document* spdf_open(const char* path, char* err, size_t err_len);
 void spdf_close(spdf_document* doc);
@@ -60,6 +76,10 @@ void spdf_free_bitmap(spdf_bitmap* bitmap);
 int spdf_search_page(spdf_document* doc, int page_index, const char* needle, char* err, size_t err_len);
 int spdf_search_page_rects(spdf_document* doc, int page_index, const char* needle, spdf_rect* rects, int rect_max,
                            char* err, size_t err_len);
+int spdf_search_page_options(spdf_document* doc, int page_index, const char* needle, int regex, int regex_multiline,
+                             char* err, size_t err_len);
+int spdf_search_page_rects_options(spdf_document* doc, int page_index, const char* needle, int regex,
+                                   int regex_multiline, spdf_rect* rects, int rect_max, char* err, size_t err_len);
 int spdf_select_page_text(spdf_document* doc, int page_index, float ax, float ay, float bx, float by, spdf_rect* rects,
                           int rect_max, char** text_out, char* err, size_t err_len);
 void spdf_free_string(char* text);
@@ -68,6 +88,17 @@ int spdf_load_outline(spdf_document* doc, spdf_outline* out, char* err, size_t e
 void spdf_free_outline(spdf_outline* outline);
 int spdf_load_comments(spdf_document* doc, spdf_comments* out, char* err, size_t err_len);
 void spdf_free_comments(spdf_comments* comments);
+int spdf_link_at_point(spdf_document* doc, int page_index, float x, float y, spdf_link_target* out, char* err,
+                       size_t err_len);
+void spdf_free_link_target(spdf_link_target* target);
+int spdf_add_highlight_comment(spdf_document* doc, int page_index, const spdf_rect* rects, int rect_count,
+                               const char* text, const char* author, char* err, size_t err_len);
+int spdf_add_text_comment(spdf_document* doc, int page_index, float x, float y, const char* text, const char* author,
+                          char* err, size_t err_len);
+int spdf_update_comment(spdf_document* doc, int comment_index, const char* text, const char* author, char* err,
+                        size_t err_len);
+int spdf_delete_comment(spdf_document* doc, int comment_index, char* err, size_t err_len);
+int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t err_len);
 int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t err_len);
 
 #ifdef __cplusplus
