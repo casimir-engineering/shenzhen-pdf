@@ -2671,13 +2671,18 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 - (void)styleToolbarTextButton:(NSButton*)button {
     NSFont* font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightLight];
+    NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
+    style.lineBreakMode = NSLineBreakByTruncatingTail;
     button.font = font;
     button.cell.font = font;
     button.cell.wraps = NO;
     button.cell.lineBreakMode = NSLineBreakByTruncatingTail;
-    button.attributedTitle = [[NSAttributedString alloc]
-        initWithString:button.title
-            attributes:@{NSFontAttributeName : font, NSForegroundColorAttributeName : NSColor.labelColor}];
+    button.attributedTitle = [[NSAttributedString alloc] initWithString:button.title
+                                                             attributes:@{
+                                                                 NSFontAttributeName : font,
+                                                                 NSForegroundColorAttributeName : NSColor.labelColor,
+                                                                 NSParagraphStyleAttributeName : style,
+                                                             }];
 }
 
 - (void)styleToolbarPanelButton:(NSButton*)button
@@ -2917,7 +2922,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _findRegexCheckbox = [NSButton checkboxWithTitle:@"Regex" target:self action:@selector(toggleFindRegex:)];
     [self styleToolbarTextButton:_findRegexCheckbox];
     _findRegexCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
-    [_findRegexCheckbox setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
+    [_findRegexCheckbox.widthAnchor constraintEqualToConstant:68].active = YES;
+    [_findRegexCheckbox setContentHuggingPriority:NSLayoutPriorityRequired
+                                   forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [_findRegexCheckbox setContentCompressionResistancePriority:NSLayoutPriorityRequired
                                                  forOrientation:NSLayoutConstraintOrientationHorizontal];
     _ocrButton = [self buttonWithTitle:@"OCR" action:@selector(ocrDocument:)];
     _findPrevButton = [self buttonWithTitle:@"<" action:@selector(findPrevious:)];

@@ -4815,6 +4815,12 @@ static void activate(GtkApplication* app, gpointer user_data) {
     if (state->tab_count == 0 && state->restore_search_text) set_search_entry_text(state, state->restore_search_text);
     state->search_regex_check = gtk_check_button_new_with_label("Regex");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->search_regex_check), state->search_regex);
+    GtkWidget* regex_label = gtk_bin_get_child(GTK_BIN(state->search_regex_check));
+    if (GTK_IS_LABEL(regex_label)) {
+        gtk_label_set_ellipsize(GTK_LABEL(regex_label), PANGO_ELLIPSIZE_END);
+        gtk_label_set_single_line_mode(GTK_LABEL(regex_label), TRUE);
+    }
+    gtk_widget_set_size_request(state->search_regex_check, 68, -1);
     state->search_regex_multiline_check = gtk_check_button_new_with_label("Multiline");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->search_regex_multiline_check), state->search_regex_multiline);
     state->find_count_label = gtk_label_new("");
