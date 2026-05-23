@@ -688,12 +688,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [overflowPath stroke];
 
         [[NSColor.labelColor colorWithAlphaComponent:0.78] setFill];
-        CGFloat dotDiameter = 3.2;
-        CGFloat dotGap = 4.4;
-        CGFloat startX = floor(NSMidX(overflowRect) - dotDiameter * 1.5 - dotGap);
-        CGFloat y = floor(NSMidY(overflowRect) - dotDiameter / 2.0);
+        CGFloat dotDiameter = 3.0;
+        CGFloat dotGap = 3.0;
+        CGFloat x = floor(NSMidX(overflowRect) - dotDiameter / 2.0);
+        CGFloat startY = floor(NSMidY(overflowRect) - dotDiameter * 1.5 - dotGap);
         for (NSInteger i = 0; i < 3; ++i) {
-            NSRect dot = NSMakeRect(startX + (dotDiameter + dotGap) * i, y, dotDiameter, dotDiameter);
+            NSRect dot = NSMakeRect(x, startY + (dotDiameter + dotGap) * i, dotDiameter, dotDiameter);
             [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
         }
     }
@@ -961,12 +961,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [outline stroke];
 
     [[NSColor.labelColor colorWithAlphaComponent:0.78 * alpha] setFill];
-    CGFloat dotSize = 3.2;
-    CGFloat gap = 5.0;
-    CGFloat startX = floor(NSMidX(bounds) - dotSize * 1.5 - gap);
-    CGFloat y = floor(NSMidY(bounds) - dotSize / 2.0);
+    CGFloat dotSize = 3.0;
+    CGFloat gap = 3.0;
+    CGFloat x = floor(NSMidX(bounds) - dotSize / 2.0);
+    CGFloat startY = floor(NSMidY(bounds) - dotSize * 1.5 - gap);
     for (NSInteger i = 0; i < 3; ++i) {
-        NSRect dot = NSMakeRect(startX + (dotSize + gap) * i, y, dotSize, dotSize);
+        NSRect dot = NSMakeRect(x, startY + (dotSize + gap) * i, dotSize, dotSize);
         [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
     }
 }
@@ -1682,6 +1682,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @implementation SPDFMinimapView {
     BOOL _draggingVisibleRect;
     NSPoint _dragOffsetFromVisibleCenter;
+    CGFloat _dragOffsetFromVisibleTop;
+    CGFloat _dragThumbTop;
+    CGFloat _dragLastMouseY;
+    CGFloat _dragSmoothedScale;
+    CGFloat _dragAccelerationBlend;
+    NSTimeInterval _dragLastTimestamp;
 }
 
 - (BOOL)isFlipped {
@@ -1875,6 +1881,40 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return documentPoint;
 }
 
+- (NSRect)draggableVisibleRectForRect:(NSRect)visibleRect {
+    return NSIntersectionRect(visibleRect, NSInsetRect(self.bounds, 1.0, 1.0));
+}
+
+- (BOOL)shouldUsePrecisionViewportDrag {
+    return self.pages.count >= 20;
+}
+
+- (CGFloat)precisionViewportBaseDragScale {
+    return spdf_clamp_cg(20.0 / MAX(1.0, (CGFloat)self.pages.count), 0.35, 0.85);
+}
+
+- (NSTimeInterval)precisionViewportDragDeltaTimeForTimestamp:(NSTimeInterval)timestamp {
+    NSTimeInterval deltaT = timestamp - _dragLastTimestamp;
+    if (!isfinite(deltaT) || deltaT <= 0.0) deltaT = 1.0 / 60.0;
+    return spdf_clamp_cg(deltaT, 1.0 / 240.0, 1.0 / 20.0);
+}
+
+- (CGFloat)precisionViewportDragScaleForDeltaY:(CGFloat)deltaY timestamp:(NSTimeInterval)timestamp {
+    if (![self shouldUsePrecisionViewportDrag]) return 1.0;
+
+    CGFloat baseScale = [self precisionViewportBaseDragScale];
+    NSTimeInterval deltaT = [self precisionViewportDragDeltaTimeForTimestamp:timestamp];
+    CGFloat speed = fabs(deltaY) / deltaT;
+    CGFloat targetBlend = spdf_clamp_cg((speed - 80.0) / (720.0 - 80.0), 0.0, 1.0);
+    targetBlend = targetBlend * targetBlend * targetBlend * (targetBlend * (targetBlend * 6.0 - 15.0) + 10.0);
+    if (_dragSmoothedScale <= 0.0) _dragSmoothedScale = baseScale;
+
+    CGFloat smoothing = 1.0 - exp(-deltaT / 0.12);
+    _dragAccelerationBlend += (targetBlend - _dragAccelerationBlend) * smoothing;
+    _dragSmoothedScale = baseScale + (1.0 - baseScale) * _dragAccelerationBlend;
+    return _dragSmoothedScale;
+}
+
 - (BOOL)documentPointForEvent:(NSEvent*)event documentPoint:(NSPoint*)documentPointOut {
     CGFloat scale = 1.0;
     CGFloat gap = 4.0;
@@ -2018,12 +2058,45 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     CGFloat gap = 4.0;
     CGFloat contentTop = 8.0;
     CGFloat contentHeight = 0;
-    if (![self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL])
+    NSRect visibleRect = NSZeroRect;
+    if (!
+        [self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:&visibleRect])
         return;
 
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    if (_draggingVisibleRect)
+    if (_draggingVisibleRect && [self shouldUsePrecisionViewportDrag]) {
+        NSRect track = NSInsetRect(self.bounds, 1.0, 1.0);
+        NSRect drawnVisibleRect = [self draggableVisibleRectForRect:visibleRect];
+        CGFloat thumbHeight = MIN(NSHeight(drawnVisibleRect), NSHeight(track));
+        CGFloat minTop = NSMinY(track);
+        CGFloat maxTop = MAX(minTop, NSMaxY(track) - thumbHeight);
+        CGFloat rawTop = point.y - _dragOffsetFromVisibleTop;
+
+        if (rawTop <= minTop) {
+            _dragThumbTop = minTop;
+            _dragLastMouseY = point.y;
+            _dragLastTimestamp = event.timestamp;
+            [self.reader minimapViewDidRequestScrollToFraction:0.0];
+            return;
+        }
+        if (rawTop >= maxTop) {
+            _dragThumbTop = maxTop;
+            _dragLastMouseY = point.y;
+            _dragLastTimestamp = event.timestamp;
+            [self.reader minimapViewDidRequestScrollToFraction:1.0];
+            return;
+        }
+
+        CGFloat deltaY = point.y - _dragLastMouseY;
+        CGFloat dragScale = [self precisionViewportDragScaleForDeltaY:deltaY timestamp:event.timestamp];
+        _dragThumbTop = spdf_clamp_cg(_dragThumbTop + deltaY * dragScale, minTop, maxTop);
+
+        _dragLastMouseY = point.y;
+        _dragLastTimestamp = event.timestamp;
+        point = NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, _dragThumbTop + thumbHeight * 0.5);
+    } else if (_draggingVisibleRect) {
         point = NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, point.y - _dragOffsetFromVisibleCenter.y);
+    }
     NSPoint documentPoint = [self documentPointForMinimapCenterPoint:point
                                                                scale:scale
                                                                  gap:gap
@@ -2043,9 +2116,17 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         return;
 
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    _draggingVisibleRect = NSPointInRect(point, visibleRect);
+    NSRect drawnVisibleRect = [self draggableVisibleRectForRect:visibleRect];
+    _draggingVisibleRect = NSPointInRect(point, drawnVisibleRect);
     _dragOffsetFromVisibleCenter =
-        _draggingVisibleRect ? NSMakePoint(point.x - NSMidX(visibleRect), point.y - NSMidY(visibleRect)) : NSZeroPoint;
+        _draggingVisibleRect ? NSMakePoint(point.x - NSMidX(drawnVisibleRect), point.y - NSMidY(drawnVisibleRect))
+                             : NSZeroPoint;
+    _dragOffsetFromVisibleTop = _draggingVisibleRect ? point.y - NSMinY(drawnVisibleRect) : 0.0;
+    _dragThumbTop = _draggingVisibleRect ? NSMinY(drawnVisibleRect) : 0.0;
+    _dragLastMouseY = point.y;
+    _dragSmoothedScale = [self shouldUsePrecisionViewportDrag] ? [self precisionViewportBaseDragScale] : 1.0;
+    _dragAccelerationBlend = 0.0;
+    _dragLastTimestamp = event.timestamp;
     if (!_draggingVisibleRect) [self sendScrollRequestForEvent:event];
 }
 
@@ -2075,6 +2156,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     (void)event;
     _draggingVisibleRect = NO;
     _dragOffsetFromVisibleCenter = NSZeroPoint;
+    _dragOffsetFromVisibleTop = 0.0;
+    _dragThumbTop = 0.0;
+    _dragLastMouseY = 0.0;
+    _dragSmoothedScale = 0.0;
+    _dragAccelerationBlend = 0.0;
+    _dragLastTimestamp = 0.0;
 }
 
 @end
