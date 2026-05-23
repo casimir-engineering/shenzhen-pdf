@@ -4,15 +4,30 @@
 #include "mupdf/pdf.h"
 
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+#define SPDF_MUPDF_STORE_LIMIT ((size_t)256 * 1024 * 1024)
+#define SPDF_MAX_RENDER_DIMENSION 32768
+#define SPDF_MAX_RENDER_BYTES ((size_t)512 * 1024 * 1024)
+
+typedef struct spdf_page_size_cache {
+    float width;
+    float height;
+    int valid;
+} spdf_page_size_cache;
 
 struct spdf_document {
     fz_context* ctx;
     fz_document* doc;
     char* title;
     int page_count;
+    spdf_page_size_cache* page_sizes;
 };
 
 typedef struct outline_builder {
@@ -65,7 +80,7 @@ spdf_document* spdf_open(const char* path, char* err, size_t err_len) {
         return NULL;
     }
 
-    ctx = fz_new_context(NULL, NULL, FZ_STORE_UNLIMITED);
+    ctx = fz_new_context(NULL, NULL, SPDF_MUPDF_STORE_LIMIT);
     if (!ctx) {
         set_error(err, err_len, "Could not create MuPDF context.");
         return NULL;
@@ -81,6 +96,11 @@ spdf_document* spdf_open(const char* path, char* err, size_t err_len) {
         opened->ctx = ctx;
         opened->doc = doc;
         opened->page_count = fz_count_pages(ctx, doc);
+        if (opened->page_count > 0) {
+            opened->page_sizes =
+                (spdf_page_size_cache*)calloc((size_t)opened->page_count, sizeof(spdf_page_size_cache));
+            if (!opened->page_sizes) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        }
 
         title[0] = '\0';
         if (fz_lookup_metadata(ctx, doc, FZ_META_INFO_TITLE, title, sizeof(title)) <= 0 || !title[0])
@@ -92,6 +112,7 @@ spdf_document* spdf_open(const char* path, char* err, size_t err_len) {
         set_error(err, err_len, fz_caught_message(ctx));
         if (opened) {
             free(opened->title);
+            free(opened->page_sizes);
             free(opened);
         }
         if (doc) fz_drop_document(ctx, doc);
@@ -107,6 +128,7 @@ void spdf_close(spdf_document* doc) {
     if (doc->doc) fz_drop_document(doc->ctx, doc->doc);
     if (doc->ctx) fz_drop_context(doc->ctx);
     free(doc->title);
+    free(doc->page_sizes);
     free(doc);
 }
 
@@ -120,6 +142,7 @@ const char* spdf_title(spdf_document* doc) {
 
 int spdf_page_size(spdf_document* doc, int page_index, float* width, float* height, char* err, size_t err_len) {
     fz_page* page = NULL;
+    spdf_page_size_cache* cached;
     fz_rect bounds;
 
     set_error(err, err_len, "");
@@ -127,10 +150,21 @@ int spdf_page_size(spdf_document* doc, int page_index, float* width, float* heig
         set_error(err, err_len, "Page index is out of range.");
         return 0;
     }
+    cached = doc->page_sizes ? &doc->page_sizes[page_index] : NULL;
+    if (cached && cached->valid) {
+        if (width) *width = cached->width;
+        if (height) *height = cached->height;
+        return 1;
+    }
 
     fz_try(doc->ctx) {
         page = fz_load_page(doc->ctx, doc->doc, page_index);
         bounds = fz_bound_page(doc->ctx, page);
+        if (cached) {
+            cached->width = bounds.x1 - bounds.x0;
+            cached->height = bounds.y1 - bounds.y0;
+            cached->valid = 1;
+        }
         if (width) *width = bounds.x1 - bounds.x0;
         if (height) *height = bounds.y1 - bounds.y0;
         fz_drop_page(doc->ctx, page);
@@ -145,10 +179,68 @@ int spdf_page_size(spdf_document* doc, int page_index, float* width, float* heig
     return 1;
 }
 
+static int render_page_size_allowed(float page_width, float page_height, float zoom, char* err, size_t err_len) {
+    double scaled_width;
+    double scaled_height;
+
+    if (!isfinite(page_width) || !isfinite(page_height) || page_width < 0.0f || page_height < 0.0f) {
+        set_error(err, err_len, "Page has invalid dimensions.");
+        return 0;
+    }
+
+    scaled_width = ceil((double)page_width * (double)zoom) + 2.0;
+    scaled_height = ceil((double)page_height * (double)zoom) + 2.0;
+    if (!isfinite(scaled_width) || !isfinite(scaled_height) || scaled_width > SPDF_MAX_RENDER_DIMENSION ||
+        scaled_height > SPDF_MAX_RENDER_DIMENSION ||
+        scaled_width * scaled_height * 4.0 > (double)SPDF_MAX_RENDER_BYTES) {
+        set_error(err, err_len, "Rendered page would be too large.");
+        return 0;
+    }
+
+    return 1;
+}
+
+static int render_pixmap_allocation_size(int width, int height, int comps, int src_stride, int* stride_out,
+                                         size_t* byte_count_out, char* err, size_t err_len) {
+    int stride;
+    size_t byte_count;
+
+    if (width <= 0 || height <= 0 || width > SPDF_MAX_RENDER_DIMENSION || height > SPDF_MAX_RENDER_DIMENSION) {
+        set_error(err, err_len, "Rendered page has invalid dimensions.");
+        return 0;
+    }
+    if (comps <= 0 || comps > 16 || src_stride <= 0 || (size_t)src_stride < (size_t)width * (size_t)comps) {
+        set_error(err, err_len, "Rendered page has an invalid pixel layout.");
+        return 0;
+    }
+    if (width > INT_MAX / 4) {
+        set_error(err, err_len, "Rendered page is too wide.");
+        return 0;
+    }
+
+    stride = width * 4;
+    if ((size_t)height > ((size_t)-1) / (size_t)stride) {
+        set_error(err, err_len, "Rendered page is too large.");
+        return 0;
+    }
+    byte_count = (size_t)stride * (size_t)height;
+    if (byte_count > SPDF_MAX_RENDER_BYTES) {
+        set_error(err, err_len, "Rendered page is too large.");
+        return 0;
+    }
+
+    *stride_out = stride;
+    *byte_count_out = byte_count;
+    return 1;
+}
+
 int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_bitmap* out, char* err, size_t err_len) {
     fz_pixmap* pix = NULL;
     unsigned char* dst = NULL;
     unsigned char* src;
+    size_t byte_count;
+    float page_width;
+    float page_height;
     int width;
     int height;
     int stride;
@@ -169,7 +261,13 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
         set_error(err, err_len, "Page index is out of range.");
         return 0;
     }
+    if (!isfinite(zoom)) {
+        set_error(err, err_len, "Zoom level is invalid.");
+        return 0;
+    }
     if (zoom <= 0.01f) zoom = 0.01f;
+    if (!spdf_page_size(doc, page_index, &page_width, &page_height, err, err_len)) return 0;
+    if (!render_page_size_allowed(page_width, page_height, zoom, err, err_len)) return 0;
 
     fz_try(doc->ctx) {
         pix = fz_new_pixmap_from_page_number(doc->ctx, doc->doc, page_index, fz_scale(zoom, zoom),
@@ -180,9 +278,11 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
         alpha = fz_pixmap_alpha(doc->ctx, pix);
         src_stride = fz_pixmap_stride(doc->ctx, pix);
         src = fz_pixmap_samples(doc->ctx, pix);
-        stride = width * 4;
+        if (!src ||
+            !render_pixmap_allocation_size(width, height, comps, src_stride, &stride, &byte_count, err, err_len))
+            fz_throw(doc->ctx, FZ_ERROR_FORMAT, "%s", err && *err ? err : "Rendered page is too large.");
 
-        dst = (unsigned char*)malloc((size_t)stride * (size_t)height);
+        dst = (unsigned char*)malloc(byte_count);
         if (!dst) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
 
         for (y = 0; y < height; ++y) {
@@ -1245,6 +1345,37 @@ static void set_comment_text_and_author(fz_context* ctx, pdf_annot* annot, pdf_o
     pdf_update_annot(ctx, annot);
 }
 
+static char* create_temp_save_path(fz_context* ctx, const char* path) {
+    static const char temp_name[] = ".sumatra-save-XXXXXX";
+    const char* slash = strrchr(path, '/');
+    size_t dir_len = slash ? (size_t)(slash - path + 1) : 0;
+    size_t temp_name_len = strlen(temp_name);
+    char* temp_path;
+    int fd;
+
+    if (dir_len > ((size_t)-1) - temp_name_len - 1) fz_throw(ctx, FZ_ERROR_SYSTEM, "Temporary save path is too long");
+
+    temp_path = (char*)malloc(dir_len + temp_name_len + 1);
+    if (!temp_path) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+    if (dir_len) memcpy(temp_path, path, dir_len);
+    memcpy(temp_path + dir_len, temp_name, temp_name_len + 1);
+
+    fd = mkstemp(temp_path);
+    if (fd < 0) {
+        int saved_errno = errno;
+        free(temp_path);
+        fz_throw(ctx, FZ_ERROR_SYSTEM, "Could not create a temporary save file: %s", strerror(saved_errno));
+    }
+    if (close(fd) != 0) {
+        int saved_errno = errno;
+        remove(temp_path);
+        free(temp_path);
+        fz_throw(ctx, FZ_ERROR_SYSTEM, "Could not close a temporary save file: %s", strerror(saved_errno));
+    }
+
+    return temp_path;
+}
+
 int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t err_len) {
     pdf_document* pdf = NULL;
     pdf_write_options options;
@@ -1270,10 +1401,7 @@ int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t e
         options.do_compress_fonts = 1;
         save_path = path;
         if (!incremental) {
-            size_t len = strlen(path) + 24;
-            temp_path = (char*)malloc(len);
-            if (!temp_path) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
-            snprintf(temp_path, len, "%s.sumatra-save-tmp", path);
+            temp_path = create_temp_save_path(doc->ctx, path);
             save_path = temp_path;
         }
         pdf_save_document(doc->ctx, pdf, save_path, &options);

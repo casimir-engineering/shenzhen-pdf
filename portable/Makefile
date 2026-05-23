@@ -23,6 +23,7 @@ MAC_INSTALLER_IDENTITY ?=
 MAC_CODESIGN_EXTRA ?=
 MAC_PROVISIONING_PROFILE ?=
 NOTARY_PROFILE ?=
+PORTABLE_OPTFLAGS ?= -O2 -DNDEBUG
 
 ifeq ($(MAC_SIGN_IDENTITY),-)
 MAC_CODESIGN_NESTED = if [ -f "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib" ]; then codesign --force --sign - "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; fi
@@ -44,8 +45,8 @@ mupdf-libs:
 $(BUILD):
 	mkdir -p "$(BUILD)"
 
-$(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) | $(BUILD)
-	clang -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
+$(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
 
 mac-app: $(MAC_BIN)
 
@@ -69,7 +70,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) mac/SumatraPDFMac.mm mac/Info.plist
 	sips -z 512 512 ../gfx/SumatraPDF-256x256x32.png --out "$(BUILD)/SumatraPDF.iconset/icon_512x512.png" >/dev/null
 	sips -z 1024 1024 ../gfx/SumatraPDF-256x256x32.png --out "$(BUILD)/SumatraPDF.iconset/icon_512x512@2x.png" >/dev/null
 	iconutil -c icns "$(BUILD)/SumatraPDF.iconset" -o "$(MAC_APP)/Contents/Resources/SumatraPDF.icns"
-	clang++ -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include "mac/SumatraPDFMac.mm" "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework UniformTypeIdentifiers -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include "mac/SumatraPDFMac.mm" "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework UniformTypeIdentifiers -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -q 'libcrypto.3.dylib'; then \
 		cp "$(OPENSSL_LIBCRYPTO)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
 		crypto_path=$$(otool -L "$(MAC_BIN)" | awk '/libcrypto.3.dylib/ { print $$1; exit }'); \
@@ -150,7 +151,7 @@ install: mac-app
 	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/SumatraPDF.app"
 
 linux: mupdf-libs | $(BUILD)
-	$(CC) -Icore -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk+-3.0) "$(CORE_SRC)" linux/SumatraPDFGtk.c $(MUPDF_LIBS) $$(pkg-config --libs gtk+-3.0 openssl) -lm -o "$(BUILD)/SumatraPDF-gtk"
+	$(CC) $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk+-3.0) "$(CORE_SRC)" linux/SumatraPDFGtk.c $(MUPDF_LIBS) $$(pkg-config --libs gtk+-3.0 openssl) -lm -o "$(BUILD)/SumatraPDF-gtk"
 
 clean:
 	rm -rf "$(BUILD)" "$(MAC_APP)" "$(MAC_DMG)" "$(MAC_TESTFLIGHT_PKG)"

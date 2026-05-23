@@ -10,6 +10,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define MAX_CONFIG_JSON_BYTES (2 * 1024 * 1024)
+#define MAX_SESSION_TABS 64
+#define MAX_FAVORITES 4096
+#define MAX_FIND_QUERY_BYTES 2048
+#define MAX_FIND_MATCHES 20000
+#define MAX_PALETTE_SEARCH_PAGES 250
+#define BACKGROUND_RENDER_RADIUS 3
+#define BACKGROUND_RENDER_BATCH_LIMIT 6
+
 typedef struct favorite_item {
     char* path;
     char* title;
@@ -146,8 +155,14 @@ typedef struct app_state {
     double context_page_x;
     double context_page_y;
     GThreadPool* render_pool;
+    guint document_generation;
     guint render_generation;
     gboolean render_error_shown;
+    guint sidebar_metadata_idle_id;
+    guint background_render_idle_id;
+    guint startup_restore_idle_id;
+    guint deferred_find_idle_id;
+    gboolean defer_find_until_idle;
 } app_state;
 
 typedef struct render_task {
@@ -206,6 +221,20 @@ typedef struct horizontal_clamp_request {
     guint generation;
 } horizontal_clamp_request;
 
+typedef struct generation_request {
+    app_state* state;
+    guint generation;
+} generation_request;
+
+typedef struct find_request {
+    app_state* state;
+    guint document_generation;
+    int preferred_index;
+    int preferred_page;
+    gboolean reveal_match;
+    gboolean preserve_scroll;
+} find_request;
+
 static void render_current_page(app_state* state, gboolean scroll_to_top);
 static void open_path_at_page(app_state* state, const char* path, int page_index);
 static void open_path(app_state* state, const char* path);
@@ -221,6 +250,8 @@ static void select_tab(app_state* state, int index);
 static const char* current_search_text(app_state* state);
 static void set_regex_multiline_widget_active(GtkWidget* widget, gboolean active);
 static void set_presentation_mode(app_state* state, gboolean enable);
+static void cancel_background_render(app_state* state);
+static void cancel_deferred_sidebar_load(app_state* state);
 
 static char* json_escape(const char* text) {
     GString* out = g_string_new("");
@@ -367,6 +398,42 @@ static char* json_get_array_contents(const char* json, const char* key) {
     return g_strndup(start + 1, (gsize)(end - start - 1));
 }
 
+static gboolean read_limited_text_file(const char* path, char** contents, gsize* len) {
+    GStatBuf st;
+    gboolean ok;
+
+    if (contents) *contents = NULL;
+    if (len) *len = 0;
+    if (!path) return FALSE;
+    if (g_stat(path, &st) == 0 && st.st_size > MAX_CONFIG_JSON_BYTES) return FALSE;
+    ok = g_file_get_contents(path, contents, len, NULL);
+    if (ok && len && *len > MAX_CONFIG_JSON_BYTES) {
+        g_free(contents ? *contents : NULL);
+        if (contents) *contents = NULL;
+        *len = 0;
+        return FALSE;
+    }
+    return ok;
+}
+
+static char* dup_limited_utf8(const char* text, gsize max_bytes) {
+    const char* end;
+    gsize len;
+
+    if (!text) return g_strdup("");
+    len = strlen(text);
+    if (len <= max_bytes) return g_strdup(text);
+
+    end = text + max_bytes;
+    while (end > text && (((const unsigned char*)end)[0] & 0xc0) == 0x80) end--;
+    if (end == text) end = text + max_bytes;
+    return g_strndup(text, (gsize)(end - text));
+}
+
+static gboolean find_query_too_long(const char* text) {
+    return text && strlen(text) > MAX_FIND_QUERY_BYTES;
+}
+
 static void init_config_paths(app_state* state) {
     state->config_dir = g_build_filename(g_get_user_config_dir(), "sumatrapdf", NULL);
     state->settings_path = g_build_filename(state->config_dir, "settings.json", NULL);
@@ -510,7 +577,7 @@ static int append_document_tab(app_state* state, const char* path, const char* t
     tab->zoom = zoom > 0.0 ? zoom : 1.0;
     tab->fit_mode_id = fit_mode_id >= 0 && fit_mode_id <= 4 ? fit_mode_id : 2;
     tab->continuous_mode = continuous_mode;
-    tab->search_text = g_strdup(search_text ? search_text : "");
+    tab->search_text = dup_limited_utf8(search_text ? search_text : "", MAX_FIND_QUERY_BYTES);
     tab->search_regex = search_regex;
     tab->search_regex_multiline = search_regex_multiline;
     tab->find_match_index = find_match_index;
@@ -647,7 +714,7 @@ static void load_settings(app_state* state) {
     char* json = NULL;
     char* comment_author;
     gsize len = 0;
-    if (!g_file_get_contents(state->settings_path, &json, &len, NULL)) return;
+    if (!read_limited_text_file(state->settings_path, &json, &len)) return;
     state->fit_mode_id = json_get_int(json, "fitMode", state->fit_mode_id);
     if (state->fit_mode_id < 0 || state->fit_mode_id > 4) state->fit_mode_id = 2;
     state->zoom = json_get_double(json, "zoom", state->zoom);
@@ -668,13 +735,13 @@ static void load_settings(app_state* state) {
 static void load_session(app_state* state) {
     char* json = NULL;
     gsize len = 0;
-    if (!g_file_get_contents(state->session_path, &json, &len, NULL)) return;
+    if (!read_limited_text_file(state->session_path, &json, &len)) return;
 
     char* tabs = json_get_array_contents(json, "tabs");
     if (tabs) {
         char* pos = tabs;
         state->restore_selected_tab = json_get_int(json, "selectedTab", 0);
-        while ((pos = strchr(pos, '{')) != NULL) {
+        while ((pos = strchr(pos, '{')) != NULL && state->tab_count < MAX_SESSION_TABS) {
             char* end = json_find_matching(pos, '{', '}');
             char* object;
             char* path;
@@ -734,9 +801,9 @@ static void load_favorites(app_state* state) {
     char* json = NULL;
     char* pos;
     gsize len = 0;
-    if (!g_file_get_contents(state->favorites_path, &json, &len, NULL)) return;
+    if (!read_limited_text_file(state->favorites_path, &json, &len)) return;
     pos = json;
-    while ((pos = strstr(pos, "\"path\"")) != NULL) {
+    while ((pos = strstr(pos, "\"path\"")) != NULL && state->favorite_count < MAX_FAVORITES) {
         char* end = strchr(pos, '}');
         char* object;
         char* path;
@@ -1123,10 +1190,10 @@ static void update_find_controls(app_state* state) {
 
 static void set_search_entry_text(app_state* state, const char* text) {
     g_free(state->search_text);
-    state->search_text = g_strdup(text ? text : "");
+    state->search_text = dup_limited_utf8(text ? text : "", MAX_FIND_QUERY_BYTES);
     if (!state->search_entry) return;
     state->suppress_find_changed = TRUE;
-    gtk_entry_set_text(GTK_ENTRY(state->search_entry), text ? text : "");
+    gtk_entry_set_text(GTK_ENTRY(state->search_entry), state->search_text);
     state->suppress_find_changed = FALSE;
 }
 
@@ -1225,7 +1292,7 @@ static void update_presentation_menu_item(app_state* state) {
     state->updating_presentation_menu = TRUE;
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->presentation_item), state->presentation_mode);
     gtk_menu_item_set_label(GTK_MENU_ITEM(state->presentation_item),
-                            state->presentation_mode ? "Exit Diaporama" : "Diaporama");
+                            state->presentation_mode ? "Exit Presentation Mode" : "Presentation Mode");
     gtk_widget_set_sensitive(state->presentation_item, state->doc != NULL);
     state->updating_presentation_menu = FALSE;
 }
@@ -1278,7 +1345,7 @@ static cairo_surface_t* decorate_page_surface(spdf_document* doc, GdkPixbuf* pix
                                               const spdf_rect* highlight_rects, int highlight_rect_count,
                                               const spdf_rect* selection_rects, int selection_rect_count,
                                               const spdf_rect* active_rect) {
-    gboolean has_search = search_text && *search_text && !search_regex;
+    gboolean has_search = search_text && *search_text && !search_regex && !find_query_too_long(search_text);
     gboolean has_highlights = highlight_rects && highlight_rect_count > 0;
     gboolean has_selection = selection_rects && selection_rect_count > 0;
     gboolean has_active = active_rect != NULL;
@@ -1394,6 +1461,7 @@ static void show_empty_view_message(app_state* state, const char* message, const
     clear_empty_view_message(state);
     state->empty_view_message = g_strdup(message ? message : "Ready");
     state->render_generation++;
+    cancel_background_render(state);
     if (!state->page_box) return;
 
     clear_page_box(state);
@@ -1436,10 +1504,12 @@ static void show_missing_document(app_state* state, const char* path) {
     char* window_title;
 
     if (state->presentation_mode) set_presentation_mode(state, FALSE);
+    cancel_deferred_sidebar_load(state);
     spdf_free_outline(&state->outline);
     spdf_free_comments(&state->comments);
     spdf_close(state->doc);
     state->doc = NULL;
+    state->document_generation++;
     clear_find_results(state);
     clear_text_selection(state);
     if (state->find_markers) gtk_widget_hide(state->find_markers);
@@ -1487,8 +1557,51 @@ static GtkWidget* append_page_slot(app_state* state, int page_index) {
     return image;
 }
 
+static int page_render_state(GtkWidget* image) {
+    return GPOINTER_TO_INT(g_object_get_data(G_OBJECT(image), "render-state"));
+}
+
+static void set_page_render_state(GtkWidget* image, int render_state) {
+    g_object_set_data(G_OBJECT(image), "render-state", GINT_TO_POINTER(render_state));
+}
+
 static void size_page_slot(GtkWidget* image, double zoom, float page_width, float page_height) {
     gtk_widget_set_size_request(image, MAX(1, (int)(page_width * zoom)), MAX(1, (int)(page_height * zoom)));
+}
+
+static void cancel_deferred_sidebar_load(app_state* state) {
+    if (state && state->sidebar_metadata_idle_id) {
+        g_source_remove(state->sidebar_metadata_idle_id);
+        state->sidebar_metadata_idle_id = 0;
+    }
+}
+
+static gboolean load_sidebar_metadata_idle(gpointer data) {
+    generation_request* request = (generation_request*)data;
+    app_state* state = request->state;
+    char err[1024];
+
+    if (state->sidebar_metadata_idle_id) state->sidebar_metadata_idle_id = 0;
+    if (request->generation == state->document_generation && state->doc) {
+        spdf_free_outline(&state->outline);
+        spdf_free_comments(&state->comments);
+        spdf_load_outline(state->doc, &state->outline, err, sizeof(err));
+        spdf_load_comments(state->doc, &state->comments, err, sizeof(err));
+        rebuild_sidebar(state);
+        update_controls(state);
+    }
+    return G_SOURCE_REMOVE;
+}
+
+static void schedule_deferred_sidebar_load(app_state* state) {
+    generation_request* request;
+
+    if (!state || !state->doc) return;
+    cancel_deferred_sidebar_load(state);
+    request = g_new0(generation_request, 1);
+    request->state = state;
+    request->generation = state->document_generation;
+    state->sidebar_metadata_idle_id = g_idle_add_full(G_PRIORITY_LOW, load_sidebar_metadata_idle, request, g_free);
 }
 
 static gboolean render_finished_idle(gpointer data) {
@@ -1498,10 +1611,12 @@ static gboolean render_finished_idle(gpointer data) {
     if (result->generation == state->render_generation) {
         if (result->surface) {
             gtk_image_set_from_surface(GTK_IMAGE(result->image), result->surface);
+            set_page_render_state(result->image, 2);
             gtk_widget_show(result->image);
         } else if (result->missing_file) {
             show_missing_document(state, result->path);
         } else if (!state->render_error_shown) {
+            set_page_render_state(result->image, 0);
             state->render_error_shown = TRUE;
             show_error(GTK_WINDOW(state->window), "Could not render page", result->err);
         }
@@ -1525,6 +1640,16 @@ static void render_worker(gpointer data, gpointer user_data) {
     result->generation = task->generation;
     result->page_index = task->page_index;
     result->path = g_strdup(task->path);
+
+    if (task->generation != task->state->render_generation) {
+        g_idle_add(render_finished_idle, result);
+        g_free(task->path);
+        g_free(task->search_text);
+        g_free(task->highlight_rects);
+        g_free(task->selection_rects);
+        g_free(task);
+        return;
+    }
 
     if (!g_file_test(task->path, G_FILE_TEST_EXISTS)) {
         result->missing_file = TRUE;
@@ -1553,7 +1678,7 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
     render_task* task;
     GError* error = NULL;
 
-    if (!state->render_pool || !state->path) return;
+    if (!state->render_pool || !state->path || page_render_state(image) != 0) return;
 
     task = g_new0(render_task, 1);
     task->state = state;
@@ -1570,7 +1695,9 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
     task->selection_rects = copy_selection_rects_for_page(state, page_index, &task->selection_rect_count);
     task->has_active_rect = active_find_rect_for_page(state, page_index, &task->active_rect);
 
+    set_page_render_state(image, 1);
     if (!g_thread_pool_push(state->render_pool, task, &error)) {
+        set_page_render_state(image, 0);
         g_object_unref(task->image);
         g_free(task->path);
         g_free(task->search_text);
@@ -1583,6 +1710,63 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
         }
     }
     if (error) g_error_free(error);
+}
+
+static int queue_background_pages_near_current(app_state* state, int limit) {
+    int queued = 0;
+    int page_count;
+
+    if (!state || !state->doc || !state->continuous_mode || limit <= 0) return 0;
+    page_count = spdf_page_count(state->doc);
+    for (int distance = 0; distance <= BACKGROUND_RENDER_RADIUS && queued < limit; ++distance) {
+        int pages[2];
+        int page_slots = 0;
+        if (distance == 0) {
+            pages[page_slots++] = state->page_index;
+        } else {
+            pages[page_slots++] = state->page_index + distance;
+            pages[page_slots++] = state->page_index - distance;
+        }
+
+        for (int i = 0; i < page_slots && queued < limit; ++i) {
+            GtkWidget* image;
+            int page = pages[i];
+            if (page < 0 || page >= page_count) continue;
+            image = page_widget_for_index(state, page);
+            if (!image || page_render_state(image) != 0) continue;
+            queue_page_render(state, image, page);
+            queued++;
+        }
+    }
+    return queued;
+}
+
+static gboolean background_render_idle(gpointer data) {
+    generation_request* request = (generation_request*)data;
+    app_state* state = request->state;
+
+    if (state->background_render_idle_id) state->background_render_idle_id = 0;
+    if (request->generation == state->render_generation)
+        queue_background_pages_near_current(state, BACKGROUND_RENDER_BATCH_LIMIT);
+    return G_SOURCE_REMOVE;
+}
+
+static void schedule_background_render(app_state* state) {
+    generation_request* request;
+
+    if (!state || !state->doc || !state->continuous_mode) return;
+    if (state->background_render_idle_id) return;
+    request = g_new0(generation_request, 1);
+    request->state = state;
+    request->generation = state->render_generation;
+    state->background_render_idle_id = g_idle_add_full(G_PRIORITY_LOW, background_render_idle, request, g_free);
+}
+
+static void cancel_background_render(app_state* state) {
+    if (state && state->background_render_idle_id) {
+        g_source_remove(state->background_render_idle_id);
+        state->background_render_idle_id = 0;
+    }
 }
 
 static gboolean scroll_to_widget_idle(gpointer data) {
@@ -1735,10 +1919,10 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
     state->page_index = MAX(0, MIN(page_index, spdf_page_count(state->doc) - 1));
     gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
-    spdf_load_outline(state->doc, &state->outline, err, sizeof(err));
-    spdf_load_comments(state->doc, &state->comments, err, sizeof(err));
+    state->document_generation++;
     rebuild_sidebar(state);
     render_current_page(state, TRUE);
+    schedule_deferred_sidebar_load(state);
     if (!state->switching_tabs) {
         save_active_tab_state(state);
         update_tab_strip(state);
@@ -1816,12 +2000,50 @@ static void tab_button_clicked(GtkButton* button, gpointer user_data) {
     select_tab(state, index);
 }
 
+static void cancel_deferred_find(app_state* state) {
+    if (state && state->deferred_find_idle_id) {
+        g_source_remove(state->deferred_find_idle_id);
+        state->deferred_find_idle_id = 0;
+    }
+}
+
+static gboolean deferred_find_idle(gpointer data) {
+    find_request* request = (find_request*)data;
+    app_state* state = request->state;
+
+    if (state->deferred_find_idle_id) state->deferred_find_idle_id = 0;
+    if (request->document_generation == state->document_generation && state->doc) {
+        start_find_for_current_query(state, request->preferred_index, request->preferred_page, request->reveal_match,
+                                     request->preserve_scroll);
+    }
+    return G_SOURCE_REMOVE;
+}
+
+static void schedule_deferred_find(app_state* state, int preferred_index, int preferred_page, gboolean reveal_match,
+                                   gboolean preserve_scroll) {
+    find_request* request;
+
+    if (!state || !state->doc) return;
+    cancel_deferred_find(state);
+    request = g_new0(find_request, 1);
+    request->state = state;
+    request->document_generation = state->document_generation;
+    request->preferred_index = preferred_index;
+    request->preferred_page = preferred_page;
+    request->reveal_match = reveal_match;
+    request->preserve_scroll = preserve_scroll;
+    state->deferred_find_idle_id = g_idle_add_full(G_PRIORITY_LOW, deferred_find_idle, request, g_free);
+}
+
 static void close_document_view(app_state* state) {
+    cancel_deferred_sidebar_load(state);
+    cancel_deferred_find(state);
     if (state->presentation_mode) set_presentation_mode(state, FALSE);
     spdf_free_outline(&state->outline);
     spdf_free_comments(&state->comments);
     spdf_close(state->doc);
     state->doc = NULL;
+    state->document_generation++;
     free(state->path);
     state->path = NULL;
     clear_find_results(state);
@@ -1922,10 +2144,14 @@ static void select_tab(app_state* state, int index) {
     update_tab_strip(state);
     open_path_at_page(state, tab->path, preferred_page_index);
     state->switching_tabs = FALSE;
-    if (search_text && *search_text)
-        start_find_for_current_query(state, preferred_find_index, preferred_page_index, FALSE, TRUE);
-    else
+    if (search_text && *search_text) {
+        if (state->defer_find_until_idle)
+            schedule_deferred_find(state, preferred_find_index, preferred_page_index, FALSE, TRUE);
+        else
+            start_find_for_current_query(state, preferred_find_index, preferred_page_index, FALSE, TRUE);
+    } else {
         clear_find_results(state);
+    }
     update_find_controls(state);
     save_active_tab_state(state);
     update_tab_strip(state);
@@ -1965,6 +2191,7 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
     }
 
     state->render_generation++;
+    cancel_background_render(state);
     state->render_error_shown = FALSE;
     gtk_widget_set_halign(state->page_box, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(state->page_box, state->presentation_mode ? GTK_ALIGN_CENTER : GTK_ALIGN_START);
@@ -1999,16 +2226,11 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
             return;
         }
         gtk_image_set_from_surface(GTK_IMAGE(slots[state->page_index]), surface);
+        set_page_render_state(slots[state->page_index], 2);
         cairo_surface_destroy(surface);
         gtk_widget_show_all(state->page_box);
         if (scroll_to_top) scroll_to_rendered_page(state, slots[state->page_index]);
-
-        for (int distance = 1; distance < page_count; ++distance) {
-            int next_page = state->page_index + distance;
-            int previous_page = state->page_index - distance;
-            if (next_page < page_count) queue_page_render(state, slots[next_page], next_page);
-            if (previous_page >= 0) queue_page_render(state, slots[previous_page], previous_page);
-        }
+        schedule_background_render(state);
         g_free(slots);
     } else {
         for (int i = start_page; i < end_page; ++i) {
@@ -2280,11 +2502,13 @@ static void start_find_for_current_query(app_state* state, int preferred_index, 
     int page_count;
     int chosen_index = -1;
     gboolean failed = FALSE;
+    gboolean capped = FALSE;
 
     if (state->find_debounce_id) {
         g_source_remove(state->find_debounce_id);
         state->find_debounce_id = 0;
     }
+    cancel_deferred_find(state);
 
     clear_find_results(state);
     if (!state->doc || !needle || !*needle) {
@@ -2294,6 +2518,17 @@ static void start_find_for_current_query(app_state* state, int preferred_index, 
             render_current_page(state, FALSE);
         update_find_controls(state);
         save_session(state);
+        return;
+    }
+    if (find_query_too_long(needle)) {
+        clear_find_results(state);
+        if (preserve_scroll)
+            render_current_page_preserving_scroll(state);
+        else
+            render_current_page(state, FALSE);
+        update_find_controls(state);
+        save_session(state);
+        gtk_label_set_text(GTK_LABEL(state->status), "Search query is too long.");
         return;
     }
 
@@ -2310,9 +2545,14 @@ static void start_find_for_current_query(app_state* state, int preferred_index, 
         if (hits == 0) continue;
         for (int i = 0; i < hits; ++i) {
             int match_index = state->find_match_count;
+            if (state->find_match_count >= MAX_FIND_MATCHES) {
+                capped = TRUE;
+                break;
+            }
             if (!append_find_match(state, page, rects[i], TRUE)) break;
             if (chosen_index < 0 && preferred_page >= 0 && page == preferred_page) chosen_index = match_index;
         }
+        if (capped) break;
     }
 
     if (failed) {
@@ -2345,7 +2585,8 @@ static void start_find_for_current_query(app_state* state, int preferred_index, 
                 render_current_page(state, FALSE);
             save_session(state);
             update_find_controls(state);
-            snprintf(status, sizeof(status), "%d matches for \"%s\"", state->find_match_count, needle);
+            snprintf(status, sizeof(status), "%s%d matches for \"%s\"", capped ? "First " : "", state->find_match_count,
+                     needle);
             gtk_label_set_text(GTK_LABEL(state->status), status);
         }
     } else {
@@ -2400,9 +2641,20 @@ static gboolean find_debounce_idle(gpointer user_data) {
 
 static void find_search_changed(GtkEntry* entry, gpointer user_data) {
     app_state* state = (app_state*)user_data;
+    const char* text;
+    char* limited;
     if (state->suppress_find_changed) return;
+    cancel_deferred_find(state);
+    text = gtk_entry_get_text(entry);
+    limited = dup_limited_utf8(text, MAX_FIND_QUERY_BYTES);
     g_free(state->search_text);
-    state->search_text = g_strdup(gtk_entry_get_text(entry));
+    state->search_text = limited;
+    if (strlen(text) != strlen(state->search_text)) {
+        state->suppress_find_changed = TRUE;
+        gtk_entry_set_text(entry, state->search_text);
+        state->suppress_find_changed = FALSE;
+        gtk_label_set_text(GTK_LABEL(state->status), "Search query truncated.");
+    }
     if (state->find_debounce_id) g_source_remove(state->find_debounce_id);
     state->find_debounce_id = g_timeout_add(120, find_debounce_idle, state);
     save_session(state);
@@ -2500,6 +2752,21 @@ static gboolean find_markers_draw(GtkWidget* widget, cairo_t* cr, gpointer user_
     }
 
     return TRUE;
+}
+
+static gboolean external_uri_scheme_allowed(const char* uri) {
+    const char* colon;
+    gsize len;
+    if (!uri || !*uri) return FALSE;
+    colon = strchr(uri, ':');
+    if (!colon || colon == uri) return FALSE;
+    for (const char* p = uri; p < colon; ++p) {
+        if (!g_ascii_isalnum(*p) && *p != '+' && *p != '-' && *p != '.') return FALSE;
+    }
+    len = (gsize)(colon - uri);
+    return (len == 4 && g_ascii_strncasecmp(uri, "http", len) == 0) ||
+           (len == 5 && g_ascii_strncasecmp(uri, "https", len) == 0) ||
+           (len == 6 && g_ascii_strncasecmp(uri, "mailto", len) == 0);
 }
 
 static void open_in_browser(GtkWidget* widget, gpointer user_data) {
@@ -2645,6 +2912,11 @@ static gboolean open_link_at_page_point(app_state* state, int page_index, double
 
     if (target.kind == SPDF_LINK_URI && target.uri) {
         GError* error = NULL;
+        if (!external_uri_scheme_allowed(target.uri)) {
+            gtk_label_set_text(GTK_LABEL(state->status), "Blocked link with unsupported URI scheme.");
+            spdf_free_link_target(&target);
+            return TRUE;
+        }
         if (!gtk_show_uri_on_window(GTK_WINDOW(state->window), target.uri, time ? time : GDK_CURRENT_TIME, &error)) {
             show_error(GTK_WINDOW(state->window), "Could not open link", error ? error->message : "");
             if (error) g_error_free(error);
@@ -3547,8 +3819,9 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
         gtk_container_add(GTK_CONTAINER(list), row);
     }
 
-    if (filter && *filter) {
+    if (filter && strlen(filter) >= 2 && !find_query_too_long(filter)) {
         char err[1024];
+        int searched_pages = 0;
         add_palette_header(list, "Open documents");
 
         for (int tab_index = 0; tab_index < state->tab_count; ++tab_index) {
@@ -3568,8 +3841,9 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
 
             display_path = tab->title && *tab->title ? display_label_without_extension(tab->title)
                                                      : display_path_without_extension(tab->path);
-            for (int page = 0; page < spdf_page_count(doc); ++page) {
+            for (int page = 0; page < spdf_page_count(doc) && searched_pages < MAX_PALETTE_SEARCH_PAGES; ++page) {
                 int hits = spdf_search_page(doc, page, filter, err, sizeof(err));
+                searched_pages++;
                 if (hits <= 0) continue;
                 char text[1600];
                 GtkWidget* row = gtk_list_box_row_new();
@@ -3590,6 +3864,7 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
             }
             g_free(display_path);
             if (!borrowed_doc) spdf_close(doc);
+            if (searched_pages >= MAX_PALETTE_SEARCH_PAGES) break;
         }
     }
     gtk_widget_show_all(GTK_WIDGET(list));
@@ -3867,6 +4142,7 @@ static void vertical_scroll_changed(GtkAdjustment* adjustment, gpointer user_dat
 
     if (best_page >= 0 && best_page != state->page_index) {
         state->page_index = best_page;
+        schedule_background_render(state);
         clamp_horizontal_scroll(state);
         update_controls(state);
         save_active_tab_state(state);
@@ -4012,6 +4288,30 @@ static gboolean page_button_release(GtkWidget* widget, GdkEventButton* event, gp
     return FALSE;
 }
 
+static gboolean startup_restore_idle(gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+
+    state->startup_restore_idle_id = 0;
+    if (!state->window) return G_SOURCE_REMOVE;
+
+    if (!state->suppress_restore_once && state->tab_count > 0) {
+        int index = state->restore_selected_tab >= 0 ? state->restore_selected_tab : 0;
+        state->defer_find_until_idle = TRUE;
+        select_tab(state, MAX(0, MIN(index, state->tab_count - 1)));
+        state->defer_find_until_idle = FALSE;
+    } else if (!state->suppress_restore_once && !state->doc && state->restore_path && *state->restore_path) {
+        open_path_in_tab_at_page(state, state->restore_path, state->restore_page_index, FALSE);
+        if (state->restore_search_text && *state->restore_search_text) {
+            set_search_entry_text(state, state->restore_search_text);
+            schedule_deferred_find(state, state->restore_find_match_index, state->restore_page_index, FALSE, TRUE);
+        }
+    } else {
+        update_tab_strip(state);
+    }
+    state->suppress_restore_once = FALSE;
+    return G_SOURCE_REMOVE;
+}
+
 static void activate(GtkApplication* app, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     state->app = app;
@@ -4041,7 +4341,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
     state->show_sidebar_item = gtk_check_menu_item_new_with_mnemonic("Show Side _Panel");
-    state->presentation_item = gtk_check_menu_item_new_with_mnemonic("_Diaporama");
+    state->presentation_item = gtk_check_menu_item_new_with_mnemonic("_Presentation Mode");
     gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_F5, 0, GTK_ACCEL_VISIBLE);
     g_object_unref(accel_group);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_sidebar_item), state->show_sidebar);
@@ -4236,18 +4536,12 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_show_all(state->window);
     gtk_widget_hide(state->sidebar_container);
     update_controls(state);
-    if (!state->suppress_restore_once && state->tab_count > 0) {
-        int index = state->restore_selected_tab >= 0 ? state->restore_selected_tab : 0;
-        select_tab(state, MAX(0, MIN(index, state->tab_count - 1)));
-    } else if (!state->suppress_restore_once && !state->doc && state->restore_path && *state->restore_path) {
-        open_path(state, state->restore_path);
-        if (state->restore_search_text && *state->restore_search_text)
-            start_find_for_current_query(state, state->restore_find_match_index, state->restore_page_index, FALSE,
-                                         TRUE);
-    } else {
+    if (state->suppress_restore_once) {
         update_tab_strip(state);
+        state->suppress_restore_once = FALSE;
+    } else {
+        state->startup_restore_idle_id = g_idle_add_full(G_PRIORITY_LOW, startup_restore_idle, state, NULL);
     }
-    state->suppress_restore_once = FALSE;
 }
 
 static void open_files(GtkApplication* app, GFile** files, gint n_files, const gchar* hint, gpointer user_data) {
@@ -4296,7 +4590,7 @@ int main(int argc, char** argv) {
     state.selected_tab = -1;
     state.restore_selected_tab = -1;
     state.favorite_pending_delete = -1;
-    state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, g_get_num_processors()), FALSE, NULL);
+    state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, MIN(2, g_get_num_processors())), FALSE, NULL);
     init_config_paths(&state);
     load_settings(&state);
     load_session(&state);
@@ -4309,6 +4603,10 @@ int main(int argc, char** argv) {
     save_settings(&state);
     save_session(&state);
     if (state.find_debounce_id) g_source_remove(state.find_debounce_id);
+    if (state.sidebar_metadata_idle_id) g_source_remove(state.sidebar_metadata_idle_id);
+    if (state.background_render_idle_id) g_source_remove(state.background_render_idle_id);
+    if (state.startup_restore_idle_id) g_source_remove(state.startup_restore_idle_id);
+    if (state.deferred_find_idle_id) g_source_remove(state.deferred_find_idle_id);
     state.render_generation++;
     if (state.render_pool) g_thread_pool_free(state.render_pool, TRUE, TRUE);
     spdf_free_outline(&state.outline);
