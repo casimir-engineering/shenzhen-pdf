@@ -29,6 +29,9 @@ static const CGFloat kSidebarMaxWidthFraction = 0.34;
 static const CGFloat kMinimapDividerWidth = 5.0;
 static const NSInteger kBackgroundRenderBatchSize = 8;
 static const NSInteger kRecentDocumentLimit = 10;
+static const NSInteger kRenderedImageKeepRadius = 12;
+static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
+static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
@@ -460,6 +463,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (NSString*)currentCommentAuthor;
 - (void)normalizeSidebarModeControlWidths;
 - (void)enqueueNearbyPageRendersForGeneration:(NSUInteger)generation preferredPage:(NSInteger)preferredPage;
+- (void)evictDistantRenderedPageImages;
 - (void)scheduleNearbyPageRendersAfterFirstPaintForGeneration:(NSUInteger)generation
                                                 preferredPage:(NSInteger)preferredPage;
 - (void)schedulePostFirstPaintWorkForGeneration:(NSUInteger)generation
@@ -2674,7 +2678,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _renderQueue.qualityOfService = NSQualityOfServiceUserInitiated;
     _preloadQueue = [[NSOperationQueue alloc] init];
     _preloadQueue.name = @"SumatraPDF tab preloader";
-    _preloadQueue.maxConcurrentOperationCount = MAX(2, cpuCount / 2);
+    _preloadQueue.maxConcurrentOperationCount = 1;
     _preloadQueue.qualityOfService = NSQualityOfServiceUtility;
     _findQueue = [[NSOperationQueue alloc] init];
     _findQueue.name = @"SumatraPDF document find";
@@ -3671,12 +3675,22 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                                                 colorSpaceName:NSDeviceRGBColorSpace
                                                                    bytesPerRow:bitmap.stride
                                                                   bitsPerPixel:32];
+    if (!rep || !rep.bitmapData) {
+        spdf_free_bitmap(&bitmap);
+        if (err && errLen > 0) snprintf(err, errLen, "%s", "Could not allocate page bitmap.");
+        return nil;
+    }
     memcpy(rep.bitmapData, bitmap.rgba, (size_t)bitmap.stride * (size_t)bitmap.height);
 
     displayScale = displayScale > 0 ? displayScale : 1.0;
     NSSize pointSize = NSMakeSize((CGFloat)bitmap.width / displayScale, (CGFloat)bitmap.height / displayScale);
     rep.size = pointSize;
     NSImage* image = [[NSImage alloc] initWithSize:pointSize];
+    if (!image) {
+        spdf_free_bitmap(&bitmap);
+        if (err && errLen > 0) snprintf(err, errLen, "%s", "Could not allocate page image.");
+        return nil;
+    }
     [image addRepresentation:rep];
     spdf_free_bitmap(&bitmap);
 
@@ -3844,6 +3858,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                     [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:index]];
                     [self updateMinimap];
                 }
+                [self evictDistantRenderedPageImages];
               }];
           }
         }];
@@ -3868,6 +3883,84 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [_renderedPages replaceObjectAtIndex:(NSUInteger)pageIndex withObject:page];
     _pageView.pages = _renderedPages;
     [self updateMinimap];
+    [self evictDistantRenderedPageImages];
+}
+
+- (NSUInteger)renderedImageByteCost:(SPDFRenderedPage*)page {
+    if (!page.image || page.imagePointWidth <= 0.0 || page.imagePointHeight <= 0.0) return 0;
+    CGFloat scale = page.imageScale > 0.0 ? page.imageScale : [self backingScale];
+    double pixels = ceil(page.imagePointWidth * scale) * ceil(page.imagePointHeight * scale);
+    if (!isfinite(pixels) || pixels <= 0.0) return 0;
+    double bytes = pixels * 4.0;
+    if (bytes > (double)NSUIntegerMax) return NSUIntegerMax;
+    return (NSUInteger)bytes;
+}
+
+- (void)addKeepRangeToSet:(NSMutableSet<NSNumber*>*)keep center:(NSInteger)center radius:(NSInteger)radius {
+    if (center < 0 || _renderedPages.count == 0) return;
+    NSInteger first = MAX(0, center - radius);
+    NSInteger last = MIN((NSInteger)_renderedPages.count - 1, center + radius);
+    for (NSInteger i = first; i <= last; ++i) [keep addObject:@(i)];
+}
+
+- (void)evictDistantRenderedPageImages {
+    if (!_renderedPages.count) return;
+
+    NSUInteger totalBytes = 0;
+    for (SPDFRenderedPage* page in _renderedPages) totalBytes += [self renderedImageByteCost:page];
+    if (totalBytes <= kRenderedImageSoftByteLimit) return;
+
+    NSMutableSet<NSNumber*>* keep = [NSMutableSet set];
+    [self addKeepRangeToSet:keep center:_pageIndex radius:kRenderedImageKeepRadius];
+    [self addKeepRangeToSet:keep center:_pageView.currentPageIndex radius:2];
+    [self addKeepRangeToSet:keep center:_pageView.activeFindPageIndex radius:1];
+    [self addKeepRangeToSet:keep center:_selectionPageIndex radius:1];
+    [self addKeepRangeToSet:keep center:_highlightPageIndex radius:1];
+    for (NSNumber* queuedPage in _queuedRenderPages) [keep addObject:queuedPage];
+
+    NSMutableArray<NSDictionary*>* candidates = [NSMutableArray array];
+    for (NSInteger i = 0; i < (NSInteger)_renderedPages.count; ++i) {
+        NSNumber* indexNumber = @(i);
+        if ([keep containsObject:indexNumber]) continue;
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)i];
+        NSUInteger bytes = [self renderedImageByteCost:page];
+        if (bytes == 0) continue;
+        NSInteger distance = labs(i - _pageIndex);
+        [candidates addObject:@{@"index" : indexNumber, @"distance" : @(distance), @"bytes" : @(bytes)}];
+    }
+
+    [candidates sortUsingComparator:^NSComparisonResult(NSDictionary* a, NSDictionary* b) {
+      NSInteger distanceA = [a[@"distance"] integerValue];
+      NSInteger distanceB = [b[@"distance"] integerValue];
+      if (distanceA != distanceB) return distanceA > distanceB ? NSOrderedAscending : NSOrderedDescending;
+      NSUInteger bytesA = [a[@"bytes"] unsignedIntegerValue];
+      NSUInteger bytesB = [b[@"bytes"] unsignedIntegerValue];
+      if (bytesA == bytesB) return NSOrderedSame;
+      return bytesA > bytesB ? NSOrderedAscending : NSOrderedDescending;
+    }];
+
+    BOOL evicted = NO;
+    for (NSDictionary* candidate in candidates) {
+        if (totalBytes <= kRenderedImageTargetByteLimit) break;
+        NSInteger index = [candidate[@"index"] integerValue];
+        if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)index];
+        NSUInteger bytes = [self renderedImageByteCost:page];
+        if (bytes == 0) continue;
+        page.image = nil;
+        page.imagePointWidth = 0.0;
+        page.imagePointHeight = 0.0;
+        page.imageZoom = 0.0;
+        page.imageScale = 0.0;
+        totalBytes = bytes > totalBytes ? 0 : totalBytes - bytes;
+        evicted = YES;
+    }
+
+    if (evicted) {
+        _pageView.pages = _renderedPages;
+        [_pageView setNeedsDisplay:YES];
+        [self updateMinimap];
+    }
 }
 
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop {
@@ -3942,6 +4035,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self updateControls];
     [self selectCurrentSidebarRow];
     [self updateMinimap];
+    [self evictDistantRenderedPageImages];
 
     [self scheduleNearbyPageRendersAfterFirstPaintForGeneration:generation preferredPage:renderCenterPage];
 }
@@ -5414,6 +5508,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         }
     }
     [self updateMinimap];
+    [self evictDistantRenderedPageImages];
 }
 
 - (BOOL)documentArrowKeyDown:(NSEvent*)event {
@@ -8332,6 +8427,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     operation.showsPrintPanel = YES;
     operation.showsProgressPanel = YES;
     [operation runOperationModalForWindow:_window delegate:nil didRunSelector:NULL contextInfo:NULL];
+    [self evictDistantRenderedPageImages];
 }
 
 - (void)showProperties:(id)sender {

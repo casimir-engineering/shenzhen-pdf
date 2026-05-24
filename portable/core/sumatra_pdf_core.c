@@ -550,7 +550,7 @@ static int append_match_rects(fz_context* ctx, void* opaque, int num_quads, fz_q
         builder->rects[builder->count].y1 = r.y1;
         builder->count++;
     }
-    return 0;
+    return builder->count >= builder->rect_max ? 1 : 0;
 }
 
 int spdf_search_page_rects_options(spdf_document* doc, int page_index, const char* needle, int regex,
@@ -1885,8 +1885,9 @@ static void add_translated_line_overlay(fz_context* ctx, pdf_document* pdf, cons
     raw_rect = normalized_public_rect(&line->bounds);
     font_size = translated_line_font_size(line, raw_rect);
     annot_rect = translated_line_annotation_rect(line, font_size);
-    opaque_background = line->opaque_background == SPDF_TRANSLATION_BACKGROUND_OPAQUE ||
-                        (line->opaque_background == SPDF_TRANSLATION_BACKGROUND_AUTO && image_backed[line->page_index]);
+    opaque_background =
+        line->opaque_background == SPDF_TRANSLATION_BACKGROUND_OPAQUE ||
+        (line->opaque_background == SPDF_TRANSLATION_BACKGROUND_AUTO && image_backed && image_backed[line->page_index]);
 
     fz_var(page);
     fz_try(ctx) {
@@ -1917,6 +1918,7 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
     pdf_graft_map* graft_map = NULL;
     pdf_write_options options;
     int* image_backed = NULL;
+    int needs_image_backed = 0;
     int i;
 
     set_error(err, err_len, "");
@@ -1936,17 +1938,22 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
         source_pdf = pdf_specifics(doc->ctx, doc->doc);
         if (!source_pdf) fz_throw(doc->ctx, FZ_ERROR_FORMAT, "Only PDF documents can be translated.");
 
-        image_backed = (int*)calloc((size_t)(doc->page_count > 0 ? doc->page_count : 1), sizeof(int));
-        if (!image_backed) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
-        compute_image_backed_pages(doc->ctx, doc->doc, doc->page_count, image_backed);
+        for (i = 0; i < line_count; ++i) {
+            if (lines[i].page_index < 0 || lines[i].page_index >= doc->page_count)
+                fz_throw(doc->ctx, FZ_ERROR_FORMAT, "Translated line page index is out of range");
+            if (lines[i].opaque_background == SPDF_TRANSLATION_BACKGROUND_AUTO) needs_image_backed = 1;
+        }
+        if (needs_image_backed) {
+            image_backed = (int*)calloc((size_t)(doc->page_count > 0 ? doc->page_count : 1), sizeof(int));
+            if (!image_backed) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
+            compute_image_backed_pages(doc->ctx, doc->doc, doc->page_count, image_backed);
+        }
 
         out_pdf = pdf_create_document(doc->ctx);
         graft_map = pdf_new_graft_map(doc->ctx, out_pdf);
         for (i = 0; i < doc->page_count; ++i) pdf_graft_mapped_page(doc->ctx, graft_map, -1, source_pdf, i);
 
         for (i = 0; i < line_count; ++i) {
-            if (lines[i].page_index < 0 || lines[i].page_index >= doc->page_count)
-                fz_throw(doc->ctx, FZ_ERROR_FORMAT, "Translated line page index is out of range");
             add_translated_line_overlay(doc->ctx, out_pdf, &lines[i], image_backed);
         }
 

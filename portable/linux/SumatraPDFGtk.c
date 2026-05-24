@@ -22,6 +22,7 @@
 #define MAX_PALETTE_SEARCH_PAGES 250
 #define BACKGROUND_RENDER_RADIUS 3
 #define BACKGROUND_RENDER_BATCH_LIMIT 6
+#define RENDERED_PAGE_EVICT_RADIUS 10
 #define DEFAULT_WINDOW_WIDTH 960
 #define DEFAULT_WINDOW_HEIGHT 680
 #define MIN_WINDOW_WIDTH 560
@@ -314,6 +315,7 @@ static void set_regex_multiline_widget_active(GtkWidget* widget, gboolean active
 static void set_presentation_mode(app_state* state, gboolean enable);
 static void cancel_background_render(app_state* state);
 static void cancel_deferred_sidebar_load(app_state* state);
+static void evict_distant_page_surfaces(app_state* state);
 
 static int clamp_int(int value, int min_value, int max_value) {
     if (value < min_value) return min_value;
@@ -1753,10 +1755,18 @@ static cairo_surface_t* render_page_surface_for_doc(spdf_document* doc, int page
     spdf_bitmap bitmap;
     double render_zoom = zoom * display_scale;
     cairo_surface_t* surface;
+    gsize byte_count;
+    guchar* pixels;
     if (!spdf_render_page_rgba(doc, page_index, (float)render_zoom, &bitmap, err, err_len)) return NULL;
 
-    guchar* pixels = g_malloc((gsize)bitmap.stride * (gsize)bitmap.height);
-    memcpy(pixels, bitmap.rgba, (size_t)bitmap.stride * (size_t)bitmap.height);
+    byte_count = (gsize)bitmap.stride * (gsize)bitmap.height;
+    pixels = g_try_malloc(byte_count);
+    if (!pixels) {
+        snprintf(err, err_len, "%s", "Could not allocate page bitmap.");
+        spdf_free_bitmap(&bitmap);
+        return NULL;
+    }
+    memcpy(pixels, bitmap.rgba, byte_count);
     GdkPixbuf* pixbuf = gdk_pixbuf_new_from_data(pixels, GDK_COLORSPACE_RGB, TRUE, 8, bitmap.width, bitmap.height,
                                                  bitmap.stride, free_pixbuf_pixels, NULL);
     spdf_free_bitmap(&bitmap);
@@ -1775,13 +1785,19 @@ static cairo_surface_t* render_page_surface(app_state* state, int page_index, ch
     int selection_rect_count = 0;
     cairo_surface_t* surface;
     const char* search_text = current_search_text(state);
+    const char* render_search_text = search_text;
     gboolean has_active = active_find_rect_for_page(state, page_index, &active_rect);
-    if (state->search_regex) highlight_rects = copy_find_rects_for_page(state, page_index, &highlight_rect_count);
+    if (state->find_match_count > 0) {
+        highlight_rects = copy_find_rects_for_page(state, page_index, &highlight_rect_count);
+        render_search_text = NULL;
+    } else if (state->search_regex) {
+        highlight_rects = copy_find_rects_for_page(state, page_index, &highlight_rect_count);
+    }
     selection_rects = copy_selection_rects_for_page(state, page_index, &selection_rect_count);
-    surface =
-        render_page_surface_for_doc(state->doc, page_index, state->zoom, display_scale_for_state(state), search_text,
-                                    state->search_regex, highlight_rects, highlight_rect_count, selection_rects,
-                                    selection_rect_count, has_active ? &active_rect : NULL, err, err_len);
+    surface = render_page_surface_for_doc(state->doc, page_index, state->zoom, display_scale_for_state(state),
+                                          render_search_text, state->search_regex, highlight_rects,
+                                          highlight_rect_count, selection_rects, selection_rect_count,
+                                          has_active ? &active_rect : NULL, err, err_len);
     g_free(highlight_rects);
     g_free(selection_rects);
     return surface;
@@ -1951,10 +1967,15 @@ static gboolean render_finished_idle(gpointer data) {
     app_state* state = result->state;
 
     if (result->generation == state->render_generation) {
-        if (result->surface) {
+        gboolean stale_surface = result->surface && state->continuous_mode &&
+                                 abs(result->page_index - state->page_index) > RENDERED_PAGE_EVICT_RADIUS;
+        if (stale_surface) {
+            set_page_render_state(result->image, 0);
+        } else if (result->surface) {
             gtk_image_set_from_surface(GTK_IMAGE(result->image), result->surface);
             set_page_render_state(result->image, 2);
             gtk_widget_show(result->image);
+            evict_distant_page_surfaces(state);
         } else if (result->missing_file) {
             show_missing_document(state, result->path);
         } else if (!state->render_error_shown) {
@@ -2109,6 +2130,22 @@ static void cancel_background_render(app_state* state) {
         g_source_remove(state->background_render_idle_id);
         state->background_render_idle_id = 0;
     }
+}
+
+static void evict_distant_page_surfaces(app_state* state) {
+    GList* children;
+
+    if (!state || !state->doc || !state->continuous_mode || !state->page_box) return;
+    children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+    for (GList* it = children; it; it = it->next) {
+        GtkWidget* image = GTK_WIDGET(it->data);
+        int page = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(image), "page-index")) - 1;
+        if (page < 0 || page_render_state(image) != 2) continue;
+        if (abs(page - state->page_index) <= RENDERED_PAGE_EVICT_RADIUS) continue;
+        gtk_image_clear(GTK_IMAGE(image));
+        set_page_render_state(image, 0);
+    }
+    g_list_free(children);
 }
 
 static gboolean scroll_to_widget_idle(gpointer data) {
@@ -6643,6 +6680,7 @@ static void vertical_scroll_changed(GtkAdjustment* adjustment, gpointer user_dat
     if (best_page >= 0 && best_page != state->page_index) {
         state->page_index = best_page;
         schedule_background_render(state);
+        evict_distant_page_surfaces(state);
         clamp_horizontal_scroll(state);
         update_controls(state);
         save_active_tab_state(state);
