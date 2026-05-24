@@ -1654,21 +1654,86 @@ static fz_rect normalized_public_rect(const spdf_rect* rect) {
     return fz_make_rect(x0, y0, x1, y1);
 }
 
+static float translated_text_units(const char* text) {
+    float units = 0.0f;
+
+    if (!text) return 0.0f;
+    while (*text) {
+        unsigned char ch = (unsigned char)*text;
+        if (ch <= 0x20) {
+            units += 0.28f;
+            text++;
+        } else if (ch < 0x80) {
+            if (ch == 'i' || ch == 'l' || ch == 'I' || ch == '.' || ch == ',' || ch == ':' || ch == ';')
+                units += 0.28f;
+            else if (ch == 'm' || ch == 'w' || ch == 'M' || ch == 'W' || ch == '@')
+                units += 0.82f;
+            else
+                units += 0.53f;
+            text++;
+        } else {
+            units += 0.92f;
+            text++;
+            while (((unsigned char)*text & 0xC0) == 0x80) text++;
+        }
+    }
+    return units;
+}
+
+static char* translated_text_single_line(const char* text) {
+    size_t len;
+    char* out;
+    char* dst;
+    int pending_space = 0;
+
+    if (!text) return NULL;
+    len = strlen(text);
+    out = (char*)malloc(len + 1);
+    if (!out) return NULL;
+    dst = out;
+    while (*text) {
+        unsigned char ch = (unsigned char)*text;
+        if (ch <= 0x20) {
+            pending_space = dst != out;
+            text++;
+            continue;
+        }
+        if (pending_space) {
+            *dst++ = ' ';
+            pending_space = 0;
+        }
+        *dst++ = *text++;
+    }
+    *dst = 0;
+    return out;
+}
+
 static float translated_line_font_size(const spdf_translated_line* line, fz_rect rect) {
     float size = line->font_size;
+    float rect_width = rect.x1 - rect.x0;
+    float rect_height = rect.y1 - rect.y0;
+    float units = translated_text_units(line->text);
 
-    if (size <= 0.0f) size = (rect.y1 - rect.y0) * 0.8f;
-    if (size < 4.0f) size = 4.0f;
+    if (size <= 0.0f) size = rect_height * 0.8f;
+    size *= 0.72f;
+    if (rect_height > 1.0f && size > rect_height * 0.78f) size = rect_height * 0.78f;
+    if (units > 0.0f && rect_width > 2.0f) {
+        float fit_size = (rect_width * 1.08f) / units;
+        if (fit_size > 0.0f && fit_size < size) size = fit_size;
+    }
+    if (size < 3.2f) size = 3.2f;
     if (size > 96.0f) size = 96.0f;
     return size;
 }
 
 static fz_rect translated_line_annotation_rect(const spdf_translated_line* line, float font_size) {
     fz_rect rect = normalized_public_rect(&line->bounds);
-    float min_height = font_size * 1.35f;
-    float pad = font_size * 0.18f;
+    float min_height = font_size * 1.15f;
+    float pad = font_size * 0.10f;
+    float text_width = translated_text_units(line->text) * font_size;
 
     if (rect.x1 - rect.x0 < font_size) rect.x1 = rect.x0 + font_size;
+    if (text_width > rect.x1 - rect.x0) rect.x1 = rect.x0 + text_width + pad * 2.0f;
     if (rect.y1 - rect.y0 < min_height) rect.y1 = rect.y0 + min_height;
     return fz_expand_rect(rect, pad);
 }
@@ -1807,8 +1872,15 @@ static void add_translated_line_overlay(fz_context* ctx, pdf_document* pdf, cons
     fz_rect annot_rect;
     float font_size;
     int opaque_background;
+    char* text = NULL;
 
     if (!line->text || !*line->text) return;
+
+    text = translated_text_single_line(line->text);
+    if (!text || !*text) {
+        free(text);
+        return;
+    }
 
     raw_rect = normalized_public_rect(&line->bounds);
     font_size = translated_line_font_size(line, raw_rect);
@@ -1822,7 +1894,7 @@ static void add_translated_line_overlay(fz_context* ctx, pdf_document* pdf, cons
         annot = pdf_create_annot(ctx, page, PDF_ANNOT_FREE_TEXT);
         pdf_set_annot_rect(ctx, annot, annot_rect);
         pdf_set_annot_border_width(ctx, annot, 0.0f);
-        pdf_set_annot_contents(ctx, annot, line->text);
+        pdf_set_annot_contents(ctx, annot, text);
         pdf_set_annot_default_appearance(ctx, annot, "Helv", font_size, 3, black);
         if (opaque_background) pdf_set_annot_color(ctx, annot, 3, white);
         pdf_update_annot(ctx, annot);
@@ -1831,9 +1903,11 @@ static void add_translated_line_overlay(fz_context* ctx, pdf_document* pdf, cons
         page = NULL;
     }
     fz_catch(ctx) {
+        free(text);
         if (page) pdf_drop_page(ctx, page);
         fz_rethrow(ctx);
     }
+    free(text);
 }
 
 int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_translated_line* lines, int line_count,

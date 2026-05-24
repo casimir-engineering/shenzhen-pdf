@@ -14,6 +14,8 @@
 #define MAX_CONFIG_JSON_BYTES (2 * 1024 * 1024)
 #define MAX_SESSION_TABS 64
 #define MAX_FAVORITES 4096
+#define MAX_RECENT_DOCUMENTS 10
+#define MAX_CLOSED_DOCUMENTS 10
 #define MAX_FIND_QUERY_BYTES 2048
 #define MAX_FIND_MATCHES 20000
 #define MAX_TRANSLATE_TEXT_BYTES (16 * 1024 * 1024)
@@ -27,6 +29,7 @@
 #define MAX_WINDOW_WIDTH 4096
 #define MAX_WINDOW_HEIGHT 3072
 #define MINIMAP_WIDTH 112
+#define MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD 20
 #define MINIMAP_PRECISE_PAGE_LIMIT 2000
 
 typedef struct favorite_item {
@@ -65,6 +68,8 @@ typedef struct app_state {
     GtkWidget* window;
     GtkWidget* open_in_browser;
     GtkWidget* show_in_folder;
+    GtkWidget* recently_opened_menu;
+    GtkWidget* reopen_closed_menu_item;
     GtkWidget* show_sidebar_item;
     GtkWidget* show_minimap_item;
     GtkWidget* presentation_item;
@@ -124,11 +129,17 @@ typedef struct app_state {
     char* favorites_path;
     char* search_text;
     char* comment_author;
+    char* translate_source_language;
+    char* translate_target_language;
     char* empty_view_message;
     favorite_item* favorites;
     int favorite_count;
     int favorite_capacity;
     int favorite_pending_delete;
+    char* recent_paths[MAX_RECENT_DOCUMENTS];
+    int recent_count;
+    char* closed_paths[MAX_CLOSED_DOCUMENTS];
+    int closed_count;
     document_tab* tabs;
     int tab_count;
     int tab_capacity;
@@ -169,12 +180,20 @@ typedef struct app_state {
     gboolean panning;
     gboolean selecting;
     gboolean minimap_dragging;
+    gboolean minimap_dragging_visible_rect;
+    gboolean tab_dragging;
     gboolean clamping_horizontal;
     gboolean suppress_restore_once;
     double pan_start_x;
     double pan_start_y;
     double pan_start_h;
     double pan_start_v;
+    double minimap_drag_offset_top;
+    double minimap_drag_thumb_top;
+    double minimap_drag_last_y;
+    double minimap_drag_last_time;
+    double tab_drag_start_x;
+    double tab_drag_start_y;
     double presentation_prev_zoom;
     int presentation_prev_fit_mode_id;
     int window_width;
@@ -189,6 +208,7 @@ typedef struct app_state {
     char* selected_text;
     int context_page_index;
     int context_comment_index;
+    int tab_drag_index;
     double context_page_x;
     double context_page_y;
     GThreadPool* render_pool;
@@ -251,6 +271,7 @@ typedef struct page_point_scroll_request {
     double x;
     double y;
     gboolean has_point;
+    gboolean preserve_horizontal;
 } page_point_scroll_request;
 
 typedef struct horizontal_clamp_request {
@@ -275,6 +296,8 @@ typedef struct find_request {
 static void render_current_page(app_state* state, gboolean scroll_to_top);
 static void open_path_at_page(app_state* state, const char* path, int page_index);
 static void open_path(app_state* state, const char* path);
+static void remember_recent_path(app_state* state, const char* path);
+static void reopen_last_closed_document(app_state* state);
 static void start_find_for_current_query(app_state* state, int preferred_index, int preferred_page,
                                          gboolean reveal_match, gboolean preserve_scroll);
 static void update_controls(app_state* state);
@@ -297,6 +320,44 @@ static int clamp_int(int value, int min_value, int max_value) {
     if (value > max_value) return max_value;
     return value;
 }
+
+static double clamp_double(double value, double min_value, double max_value) {
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static double smoothstep_double(double value) {
+    value = clamp_double(value, 0.0, 1.0);
+    return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
+}
+
+typedef struct translation_language {
+    const char* code;
+    const char* name;
+} translation_language;
+
+static const translation_language k_translation_languages[] = {
+    {"zh", "Chinese (Simplified)"},
+    {"en", "English"},
+    {"fr", "French"},
+    {"de", "German"},
+    {"es", "Spanish"},
+    {"it", "Italian"},
+    {"pt", "Portuguese"},
+    {"ru", "Russian"},
+    {"ja", "Japanese"},
+    {"ko", "Korean"},
+    {"ar", "Arabic"},
+    {"hi", "Hindi"},
+    {"nl", "Dutch"},
+    {"pl", "Polish"},
+    {"tr", "Turkish"},
+    {"vi", "Vietnamese"},
+    {"id", "Indonesian"},
+    {"uk", "Ukrainian"},
+    {"cs", "Czech"},
+};
 
 static char* json_escape(const char* text) {
     GString* out = g_string_new("");
@@ -348,6 +409,38 @@ static char* json_get_string(const char* json, const char* key) {
             g_string_append_c(out, *start);
         }
         start++;
+    }
+    g_string_free(out, TRUE);
+    return NULL;
+}
+
+static char* json_read_string_value(char** cursor) {
+    char* pos = *cursor;
+    GString* out;
+
+    while (*pos && isspace((unsigned char)*pos)) pos++;
+    if (*pos != '"') return NULL;
+    pos++;
+    out = g_string_new("");
+    while (*pos) {
+        if (*pos == '"') {
+            *cursor = pos + 1;
+            return g_string_free(out, FALSE);
+        }
+        if (*pos == '\\' && pos[1]) {
+            pos++;
+            if (*pos == 'n')
+                g_string_append_c(out, '\n');
+            else if (*pos == 'r')
+                g_string_append_c(out, '\r');
+            else if (*pos == 't')
+                g_string_append_c(out, '\t');
+            else
+                g_string_append_c(out, *pos);
+        } else {
+            g_string_append_c(out, *pos);
+        }
+        pos++;
     }
     g_string_free(out, TRUE);
     return NULL;
@@ -605,6 +698,100 @@ static void free_document_tabs(app_state* state) {
     state->selected_tab = -1;
 }
 
+static void free_path_list(char** paths, int* count) {
+    for (int i = 0; i < *count; ++i) g_free(paths[i]);
+    memset(paths, 0, sizeof(char*) * (gsize)*count);
+    *count = 0;
+}
+
+static void open_recent_menu_item(GtkWidget* widget, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    const char* path = (const char*)g_object_get_data(G_OBJECT(widget), "sumatra-recent-path");
+    if (path && *path) open_path(state, path);
+}
+
+static void update_recent_menu(app_state* state) {
+    GList* children;
+
+    if (!state->recently_opened_menu) return;
+    children = gtk_container_get_children(GTK_CONTAINER(state->recently_opened_menu));
+    for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
+    g_list_free(children);
+
+    if (state->recent_count == 0) {
+        GtkWidget* empty = gtk_menu_item_new_with_label("No Recent Documents");
+        gtk_widget_set_sensitive(empty, FALSE);
+        gtk_menu_shell_append(GTK_MENU_SHELL(state->recently_opened_menu), empty);
+    } else {
+        for (int i = 0; i < state->recent_count && i < MAX_RECENT_DOCUMENTS; ++i) {
+            char* name = display_name_for_path(state->recent_paths[i]);
+            char* label = g_strdup_printf("%d) %s", i + 1, name && *name ? name : state->recent_paths[i]);
+            GtkWidget* item = gtk_menu_item_new_with_label(label);
+            gtk_widget_set_tooltip_text(item, state->recent_paths[i]);
+            g_object_set_data_full(G_OBJECT(item), "sumatra-recent-path", g_strdup(state->recent_paths[i]), g_free);
+            g_signal_connect(item, "activate", G_CALLBACK(open_recent_menu_item), state);
+            gtk_menu_shell_append(GTK_MENU_SHELL(state->recently_opened_menu), item);
+            g_free(label);
+            g_free(name);
+        }
+    }
+    gtk_widget_show_all(state->recently_opened_menu);
+}
+
+static void remember_recent_path(app_state* state, const char* path) {
+    if (!state || !path || !*path) return;
+    for (int i = 0; i < state->recent_count; ++i) {
+        if (g_strcmp0(state->recent_paths[i], path) != 0) continue;
+        g_free(state->recent_paths[i]);
+        if (i + 1 < state->recent_count) {
+            memmove(&state->recent_paths[i], &state->recent_paths[i + 1],
+                    (gsize)(state->recent_count - i - 1) * sizeof(char*));
+        }
+        state->recent_count--;
+        break;
+    }
+    if (state->recent_count == MAX_RECENT_DOCUMENTS) {
+        g_free(state->recent_paths[MAX_RECENT_DOCUMENTS - 1]);
+        state->recent_count--;
+    }
+    if (state->recent_count > 0) {
+        memmove(&state->recent_paths[1], &state->recent_paths[0], (gsize)state->recent_count * sizeof(char*));
+    }
+    state->recent_paths[0] = g_strdup(path);
+    state->recent_count++;
+    update_recent_menu(state);
+}
+
+static void remember_closed_path(app_state* state, const char* path) {
+    if (!state || !path || !*path) return;
+    if (state->closed_count == MAX_CLOSED_DOCUMENTS) {
+        g_free(state->closed_paths[0]);
+        memmove(&state->closed_paths[0], &state->closed_paths[1], (MAX_CLOSED_DOCUMENTS - 1) * sizeof(char*));
+        state->closed_count--;
+    }
+    state->closed_paths[state->closed_count++] = g_strdup(path);
+    if (state->reopen_closed_menu_item) gtk_widget_set_sensitive(state->reopen_closed_menu_item, TRUE);
+}
+
+static char* pop_closed_path(app_state* state) {
+    char* path;
+
+    if (!state || state->closed_count == 0) return NULL;
+    path = state->closed_paths[state->closed_count - 1];
+    state->closed_paths[state->closed_count - 1] = NULL;
+    state->closed_count--;
+    if (state->reopen_closed_menu_item)
+        gtk_widget_set_sensitive(state->reopen_closed_menu_item, state->closed_count > 0);
+    return path;
+}
+
+static void reopen_last_closed_document(app_state* state) {
+    char* path = pop_closed_path(state);
+    if (!path) return;
+    open_path(state, path);
+    g_free(path);
+}
+
 static int append_document_tab(app_state* state, const char* path, const char* title, int page_index, double zoom,
                                int fit_mode_id, gboolean continuous_mode, const char* search_text,
                                gboolean search_regex, gboolean search_regex_multiline, int find_match_index) {
@@ -683,6 +870,8 @@ static void save_active_tab_state(app_state* state) {
 
 static void save_settings(app_state* state) {
     char* author = json_escape(state->comment_author ? state->comment_author : "");
+    char* translate_source = json_escape(state->translate_source_language ? state->translate_source_language : "zh");
+    char* translate_target = json_escape(state->translate_target_language ? state->translate_target_language : "en");
     GString* json = g_string_new("{\n");
     g_string_append_printf(json, "  \"fitMode\": %d,\n",
                            state->presentation_mode ? state->presentation_prev_fit_mode_id : state->fit_mode_id);
@@ -704,10 +893,21 @@ static void save_settings(app_state* state) {
     g_string_append_printf(json, "  \"windowHeight\": %d,\n",
                            clamp_int(state->window_height > 0 ? state->window_height : DEFAULT_WINDOW_HEIGHT,
                                      MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT));
-    g_string_append_printf(json, "  \"commentAuthor\": \"%s\"\n", author);
+    g_string_append_printf(json, "  \"commentAuthor\": \"%s\",\n", author);
+    g_string_append_printf(json, "  \"translateSourceLanguage\": \"%s\",\n", translate_source);
+    g_string_append_printf(json, "  \"translateTargetLanguage\": \"%s\",\n", translate_target);
+    g_string_append(json, "  \"recentlyOpened\": [\n");
+    for (int i = 0; i < state->recent_count; ++i) {
+        char* path = json_escape(state->recent_paths[i] ? state->recent_paths[i] : "");
+        g_string_append_printf(json, "    \"%s\"%s\n", path, i + 1 == state->recent_count ? "" : ",");
+        g_free(path);
+    }
+    g_string_append(json, "  ]\n");
     g_string_append(json, "}\n");
     write_text_file(state->settings_path, json->str);
     g_string_free(json, TRUE);
+    g_free(translate_target);
+    g_free(translate_source);
     g_free(author);
 }
 
@@ -765,6 +965,9 @@ static void save_favorites(app_state* state) {
 static void load_settings(app_state* state) {
     char* json = NULL;
     char* comment_author;
+    char* translate_source;
+    char* translate_target;
+    char* recent_array;
     gsize len = 0;
     if (!read_limited_text_file(state->settings_path, &json, &len)) return;
     state->fit_mode_id = json_get_int(json, "fitMode", state->fit_mode_id);
@@ -785,6 +988,45 @@ static void load_settings(app_state* state) {
         g_strstrip(comment_author);
         g_free(state->comment_author);
         state->comment_author = comment_author;
+    }
+    translate_source = json_get_string(json, "translateSourceLanguage");
+    if (translate_source) {
+        g_strstrip(translate_source);
+        if (*translate_source) {
+            g_free(state->translate_source_language);
+            state->translate_source_language = translate_source;
+        } else {
+            g_free(translate_source);
+        }
+    }
+    translate_target = json_get_string(json, "translateTargetLanguage");
+    if (translate_target) {
+        g_strstrip(translate_target);
+        if (*translate_target) {
+            g_free(state->translate_target_language);
+            state->translate_target_language = translate_target;
+        } else {
+            g_free(translate_target);
+        }
+    }
+    recent_array = json_get_array_contents(json, "recentlyOpened");
+    if (recent_array) {
+        char* pos = recent_array;
+        while (*pos && state->recent_count < MAX_RECENT_DOCUMENTS) {
+            char* path;
+            while (*pos && *pos != '"') pos++;
+            if (!*pos) break;
+            path = json_read_string_value(&pos);
+            if (path && *path) {
+                gboolean exists = FALSE;
+                for (int i = 0; i < state->recent_count; ++i) {
+                    if (g_strcmp0(state->recent_paths[i], path) == 0) exists = TRUE;
+                }
+                if (!exists) state->recent_paths[state->recent_count++] = g_strdup(path);
+            }
+            g_free(path);
+        }
+        g_free(recent_array);
     }
     g_free(json);
 }
@@ -1145,6 +1387,8 @@ static void update_controls(app_state* state) {
         gtk_widget_set_sensitive(state->search_regex_multiline_item, state->doc != NULL);
     gtk_widget_set_sensitive(state->fit_mode, state->doc != NULL);
     gtk_widget_set_sensitive(state->continuous, state->doc != NULL);
+    if (state->reopen_closed_menu_item)
+        gtk_widget_set_sensitive(state->reopen_closed_menu_item, state->closed_count > 0);
     if (state->open_in_browser) gtk_widget_set_sensitive(state->open_in_browser, state->doc != NULL);
     if (state->show_in_folder)
         gtk_widget_set_sensitive(state->show_in_folder, state->doc != NULL && state->path != NULL);
@@ -1957,12 +2201,17 @@ static gboolean scroll_to_page_point_idle(gpointer data) {
         double v_page = gtk_adjustment_get_page_size(vadj);
 
         if (page_widget_geometry(state, request->page_index, &page_x, &page_y, &page_width, NULL)) {
-            if (request->has_point) {
+            if (request->preserve_horizontal) {
+                target_h = gtk_adjustment_get_value(hadj);
+            } else if (request->has_point) {
                 target_h = page_x + request->x * state->zoom - h_page * 0.5;
                 target_v = page_y + request->y * state->zoom - 20.0;
             } else {
                 target_h = page_x + page_width * 0.5 - h_page * 0.5;
                 target_v = page_y;
+            }
+            if (request->preserve_horizontal) {
+                target_v = request->has_point ? page_y + request->y * state->zoom - 20.0 : page_y;
             }
             gtk_adjustment_set_value(
                 hadj, MAX(gtk_adjustment_get_lower(hadj),
@@ -1988,6 +2237,20 @@ static void scroll_to_page_point(app_state* state, int page_index, double x, dou
     request->x = x;
     request->y = y;
     request->has_point = has_point;
+    g_idle_add(scroll_to_page_point_idle, request);
+}
+
+static void scroll_to_page_point_preserving_horizontal(app_state* state, int page_index, double y) {
+    page_point_scroll_request* request;
+    if (!state || !state->scroll) return;
+    request = g_new0(page_point_scroll_request, 1);
+    request->state = state;
+    request->generation = state->render_generation;
+    request->page_index = page_index;
+    request->x = 0.0;
+    request->y = y;
+    request->has_point = TRUE;
+    request->preserve_horizontal = TRUE;
     g_idle_add(scroll_to_page_point_idle, request);
 }
 
@@ -2044,6 +2307,10 @@ static void open_path_in_tab_at_page(app_state* state, const char* path, int pag
             update_tab_strip(state);
             save_session(state);
         }
+        if (state->doc && state->path) {
+            remember_recent_path(state, state->path);
+            save_settings(state);
+        }
         return;
     }
 
@@ -2066,12 +2333,20 @@ static void open_path_in_tab_at_page(app_state* state, const char* path, int pag
     }
     update_tab_strip(state);
     open_path_at_page(state, path, page_index);
+    if (state->doc && state->path) {
+        remember_recent_path(state, state->path);
+        save_settings(state);
+    }
 }
 
 static void open_path(app_state* state, const char* path) {
     int existing = find_tab_by_path(state, path);
     if (existing >= 0) {
         select_tab(state, existing);
+        if (state->doc && state->path) {
+            remember_recent_path(state, state->path);
+            save_settings(state);
+        }
         return;
     }
     open_path_in_tab_at_page(state, path, 0, TRUE);
@@ -2157,9 +2432,13 @@ static void tab_close_clicked(GtkButton* button, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     int index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "tab-index")) - 1;
     gboolean was_selected;
+    char* closed_path;
 
     if (index < 0 || index >= state->tab_count) return;
     was_selected = index == state->selected_tab;
+    closed_path = g_strdup(state->tabs[index].path);
+    remember_closed_path(state, closed_path);
+    g_free(closed_path);
     if (was_selected) state->selected_tab = -1;
     free_document_tab(&state->tabs[index]);
     if (index + 1 < state->tab_count) {
@@ -2178,6 +2457,132 @@ static void tab_close_clicked(GtkButton* button, gpointer user_data) {
     save_session(state);
 }
 
+static void move_tab(app_state* state, int from_index, int to_index) {
+    document_tab moving;
+    int count;
+
+    if (!state || from_index < 0 || to_index < 0 || from_index == to_index) return;
+    count = state->tab_count;
+    if (from_index >= count || to_index >= count) return;
+
+    moving = state->tabs[from_index];
+    if (from_index < to_index) {
+        memmove(&state->tabs[from_index], &state->tabs[from_index + 1],
+                (gsize)(to_index - from_index) * sizeof(document_tab));
+    } else {
+        memmove(&state->tabs[to_index + 1], &state->tabs[to_index],
+                (gsize)(from_index - to_index) * sizeof(document_tab));
+    }
+    state->tabs[to_index] = moving;
+
+    if (state->selected_tab == from_index)
+        state->selected_tab = to_index;
+    else if (from_index < state->selected_tab && state->selected_tab <= to_index)
+        state->selected_tab--;
+    else if (to_index <= state->selected_tab && state->selected_tab < from_index)
+        state->selected_tab++;
+
+    update_tab_strip(state);
+    save_session(state);
+}
+
+static gboolean tab_handle_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data) {
+    (void)user_data;
+    GtkAllocation allocation;
+    GtkStyleContext* context;
+    GdkRGBA color;
+    double dot_size = 2.0;
+    double gap_x = 4.0;
+    double gap_y = 4.0;
+
+    gtk_widget_get_allocation(widget, &allocation);
+    context = gtk_widget_get_style_context(widget);
+    gtk_style_context_get_color(context, gtk_style_context_get_state(context), &color);
+    color.alpha *= 0.62;
+    gdk_cairo_set_source_rgba(cr, &color);
+    double start_x = floor(allocation.width * 0.5 - dot_size - gap_x * 0.5);
+    double start_y = floor(allocation.height * 0.5 - dot_size - gap_y * 0.5);
+    for (int column = 0; column < 2; ++column) {
+        for (int row = 0; row < 2; ++row) {
+            double x = start_x + column * (dot_size + gap_x);
+            double y = start_y + row * (dot_size + gap_y);
+            cairo_arc(cr, x + dot_size * 0.5, y + dot_size * 0.5, dot_size * 0.5, 0, G_PI * 2.0);
+            cairo_fill(cr);
+        }
+    }
+    return FALSE;
+}
+
+static int tab_index_for_bar_x(app_state* state, double x, int fallback_index) {
+    GList* children;
+    int target = fallback_index;
+
+    if (!state || !state->tab_bar) return fallback_index;
+    children = gtk_container_get_children(GTK_CONTAINER(state->tab_bar));
+    for (GList* it = children; it; it = it->next) {
+        GtkWidget* child = GTK_WIDGET(it->data);
+        GtkAllocation allocation;
+        int child_index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "tab-index")) - 1;
+        if (child_index < 0) continue;
+        gtk_widget_get_allocation(child, &allocation);
+        if (x < allocation.x + allocation.width * 0.5) {
+            target = child_index;
+            break;
+        }
+        target = child_index;
+    }
+    g_list_free(children);
+    return target;
+}
+
+static gboolean tab_handle_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    int index;
+
+    if (!state || event->button != 1) return FALSE;
+    index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "tab-index")) - 1;
+    if (index < 0 || index >= state->tab_count) return FALSE;
+    state->tab_drag_index = index;
+    state->tab_dragging = FALSE;
+    state->tab_drag_start_x = event->x_root;
+    state->tab_drag_start_y = event->y_root;
+    gtk_grab_add(widget);
+    return TRUE;
+}
+
+static gboolean tab_handle_motion(GtkWidget* widget, GdkEventMotion* event, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    double dx;
+    double dy;
+
+    (void)widget;
+    if (!state || state->tab_drag_index < 0) return FALSE;
+    dx = event->x_root - state->tab_drag_start_x;
+    dy = event->y_root - state->tab_drag_start_y;
+    if (!state->tab_dragging && hypot(dx, dy) < 3.0) return TRUE;
+    state->tab_dragging = TRUE;
+    return TRUE;
+}
+
+static gboolean tab_handle_button_release(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    gint bar_x = 0;
+    gint bar_y = 0;
+    int target;
+
+    if (!state || event->button != 1 || state->tab_drag_index < 0) return FALSE;
+    gtk_grab_remove(widget);
+    if (gtk_widget_translate_coordinates(widget, state->tab_bar, (gint)event->x, (gint)event->y, &bar_x, &bar_y)) {
+        target = tab_index_for_bar_x(state, (double)bar_x, state->tab_drag_index);
+        move_tab(state, state->tab_drag_index, target);
+    } else if (!state->tab_dragging) {
+        select_tab(state, state->tab_drag_index);
+    }
+    state->tab_drag_index = -1;
+    state->tab_dragging = FALSE;
+    return TRUE;
+}
+
 static void update_tab_strip(app_state* state) {
     if (!state->tab_bar) return;
 
@@ -2188,19 +2593,33 @@ static void update_tab_strip(app_state* state) {
     for (int i = 0; i < state->tab_count; ++i) {
         document_tab* tab = &state->tabs[i];
         GtkWidget* frame = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        GtkWidget* handle = gtk_event_box_new();
+        GtkWidget* handle_icon = gtk_drawing_area_new();
         GtkWidget* button = gtk_button_new_with_label(tab->title && *tab->title ? tab->title : "Untitled");
         GtkWidget* close = gtk_button_new_with_label("x");
         char* tooltip = g_strdup(tab->path && *tab->path ? tab->path : tab->title);
 
+        gtk_widget_set_tooltip_text(handle, "Drag to reorder tab");
         gtk_widget_set_tooltip_text(button, tooltip);
         gtk_widget_set_tooltip_text(close, "Close tab");
+        gtk_widget_set_size_request(handle, 24, 28);
+        gtk_widget_set_size_request(handle_icon, 18, 20);
         gtk_widget_set_size_request(button, 120, 28);
         gtk_widget_set_size_request(close, 28, 28);
         if (i == state->selected_tab) gtk_widget_set_sensitive(button, FALSE);
+        g_object_set_data(G_OBJECT(frame), "tab-index", GINT_TO_POINTER(i + 1));
+        g_object_set_data(G_OBJECT(handle), "tab-index", GINT_TO_POINTER(i + 1));
         g_object_set_data(G_OBJECT(button), "tab-index", GINT_TO_POINTER(i + 1));
         g_object_set_data(G_OBJECT(close), "tab-index", GINT_TO_POINTER(i + 1));
+        gtk_container_add(GTK_CONTAINER(handle), handle_icon);
+        g_signal_connect(handle_icon, "draw", G_CALLBACK(tab_handle_draw), NULL);
+        g_signal_connect(handle, "button-press-event", G_CALLBACK(tab_handle_button_press), state);
+        g_signal_connect(handle, "motion-notify-event", G_CALLBACK(tab_handle_motion), state);
+        g_signal_connect(handle, "button-release-event", G_CALLBACK(tab_handle_button_release), state);
+        gtk_widget_add_events(handle, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK);
         g_signal_connect(button, "clicked", G_CALLBACK(tab_button_clicked), state);
         g_signal_connect(close, "clicked", G_CALLBACK(tab_close_clicked), state);
+        gtk_box_pack_start(GTK_BOX(frame), handle, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(frame), button, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(frame), close, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(state->tab_bar), frame, FALSE, FALSE, 0);
@@ -2348,6 +2767,7 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
         gtk_adjustment_set_value(vadj, gtk_adjustment_get_lower(vadj));
     }
 
+    if (state->presentation_mode && state->scroll) gtk_widget_grab_focus(state->scroll);
     update_controls(state);
 }
 
@@ -3212,6 +3632,39 @@ static gboolean minimap_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data)
     return TRUE;
 }
 
+static gboolean minimap_should_use_precision_drag(minimap_layout* layout) {
+    return layout && layout->page_count >= MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD;
+}
+
+static double minimap_precision_drag_base_scale(int page_count) {
+    return clamp_double(20.0 / MAX(1, page_count), 0.28, 0.78);
+}
+
+static double minimap_event_time_seconds(guint32 event_time) {
+    if (event_time > 0) return (double)event_time / 1000.0;
+    return (double)g_get_monotonic_time() / 1000000.0;
+}
+
+static double minimap_drag_delta_time(app_state* state, double event_time) {
+    double delta = event_time - state->minimap_drag_last_time;
+    if (!isfinite(delta) || delta <= 0.0) delta = 1.0 / 60.0;
+    return clamp_double(delta, 1.0 / 240.0, 1.0 / 20.0);
+}
+
+static double minimap_precision_catchup_blend(app_state* state, double delta_y, double distance_to_raw,
+                                              double event_time) {
+    double delta_t;
+    double speed;
+    double velocity_blend;
+    double distance_blend;
+
+    delta_t = minimap_drag_delta_time(state, event_time);
+    speed = fabs(delta_y) / delta_t;
+    velocity_blend = smoothstep_double((speed - 70.0) / (360.0 - 70.0));
+    distance_blend = smoothstep_double((distance_to_raw - 6.0) / (24.0 - 6.0));
+    return MAX(velocity_blend, distance_blend);
+}
+
 static void minimap_scroll_to_y(app_state* state, GtkWidget* widget, double widget_y) {
     minimap_layout layout;
     double unscrolled_y;
@@ -3252,10 +3705,12 @@ static void minimap_scroll_to_y(app_state* state, GtkWidget* widget, double widg
         step = MAX(1.0, page_height * layout.scale) + layout.gap;
         page_index = MAX(0, MIN((int)floor(unscrolled_y / MAX(1.0, step)), layout.page_count - 1));
         page_y = unscrolled_y - (double)page_index * step;
-        state->page_index = page_index;
-        render_current_page(state, FALSE);
-        scroll_to_page_point(state, page_index, page_width * 0.5,
-                             page_height * MAX(0.0, MIN(page_y / MAX(1.0, page_height * layout.scale), 1.0)), TRUE);
+        if (state->page_index != page_index) {
+            state->page_index = page_index;
+            render_current_page(state, FALSE);
+        }
+        scroll_to_page_point_preserving_horizontal(
+            state, page_index, page_height * MAX(0.0, MIN(page_y / MAX(1.0, page_height * layout.scale), 1.0)));
         save_session(state);
         return;
     }
@@ -3267,9 +3722,11 @@ static void minimap_scroll_to_y(app_state* state, GtkWidget* widget, double widg
         mini_height = MAX(1.0, page_height * layout.scale);
         if (i == layout.page_count - 1 || unscrolled_y <= mini_height) {
             double page_fraction = MAX(0.0, MIN(unscrolled_y / mini_height, 1.0));
-            state->page_index = i;
-            render_current_page(state, FALSE);
-            scroll_to_page_point(state, i, page_width * 0.5, page_height * page_fraction, TRUE);
+            if (state->page_index != i) {
+                state->page_index = i;
+                render_current_page(state, FALSE);
+            }
+            scroll_to_page_point_preserving_horizontal(state, i, page_height * page_fraction);
             save_session(state);
             return;
         }
@@ -3277,11 +3734,146 @@ static void minimap_scroll_to_y(app_state* state, GtkWidget* widget, double widg
     }
 }
 
+static void minimap_scroll_to_top_fraction(app_state* state, GtkWidget* widget, double fraction) {
+    minimap_layout layout;
+    double unscrolled_y;
+
+    if (!state || !state->doc || !state->scroll || !minimap_measure(state, widget, &layout)) return;
+    fraction = clamp_double(fraction, 0.0, 1.0);
+
+    if (state->continuous_mode) {
+        GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+        double max_value = MAX(0.0, gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj));
+        gtk_adjustment_set_value(vadj, fraction * max_value);
+        gtk_widget_queue_draw(widget);
+        return;
+    }
+
+    unscrolled_y = fraction * layout.content_height;
+    if (layout.page_count > MINIMAP_PRECISE_PAGE_LIMIT) {
+        double page_width;
+        double page_height;
+        double step;
+        int page_index;
+        double page_y;
+        minimap_page_size(state, state->page_index, &page_width, &page_height);
+        step = MAX(1.0, page_height * layout.scale) + layout.gap;
+        page_index = MAX(0, MIN((int)floor(unscrolled_y / MAX(1.0, step)), layout.page_count - 1));
+        page_y = unscrolled_y - (double)page_index * step;
+        if (state->page_index != page_index) {
+            state->page_index = page_index;
+            render_current_page(state, FALSE);
+        }
+        scroll_to_page_point_preserving_horizontal(
+            state, page_index, page_height * MAX(0.0, MIN(page_y / MAX(1.0, page_height * layout.scale), 1.0)));
+        save_session(state);
+        return;
+    }
+
+    for (int i = 0; i < layout.page_count; ++i) {
+        double page_width;
+        double page_height;
+        double mini_height;
+        minimap_page_size(state, i, &page_width, &page_height);
+        mini_height = MAX(1.0, page_height * layout.scale);
+        if (i == layout.page_count - 1 || unscrolled_y <= mini_height) {
+            double page_fraction = MAX(0.0, MIN(unscrolled_y / mini_height, 1.0));
+            if (state->page_index != i) {
+                state->page_index = i;
+                render_current_page(state, FALSE);
+            }
+            scroll_to_page_point_preserving_horizontal(state, i, page_height * page_fraction);
+            save_session(state);
+            return;
+        }
+        unscrolled_y -= mini_height + layout.gap;
+    }
+}
+
+static void minimap_drag_visible_rect_to_y(app_state* state, GtkWidget* widget, double widget_y, guint32 event_time) {
+    minimap_layout layout;
+    double vx;
+    double vy;
+    double vw;
+    double vh;
+    double min_top;
+    double max_top;
+    double thumb_height;
+    double raw_top;
+    double delta_y;
+    double event_time_seconds;
+    double precision_top;
+    double catchup_blend;
+    double center_y;
+
+    if (!state || !state->doc || !state->scroll || !minimap_measure(state, widget, &layout)) return;
+    if (!state->minimap_dragging_visible_rect || !minimap_should_use_precision_drag(&layout)) {
+        minimap_scroll_to_y(state, widget, widget_y);
+        return;
+    }
+
+    minimap_visible_rect(state, &layout, &vx, &vy, &vw, &vh);
+    (void)vx;
+    (void)vy;
+    (void)vw;
+    thumb_height = MIN(vh, MAX(1.0, layout.height - 2.0));
+    min_top = 1.0;
+    max_top = MAX(min_top, layout.height - thumb_height - 1.0);
+    raw_top = widget_y - state->minimap_drag_offset_top;
+
+    event_time_seconds = minimap_event_time_seconds(event_time);
+    if (raw_top <= min_top) {
+        state->minimap_drag_thumb_top = min_top;
+        state->minimap_drag_last_y = widget_y;
+        state->minimap_drag_last_time = event_time_seconds;
+        minimap_scroll_to_top_fraction(state, widget, 0.0);
+        return;
+    }
+    if (raw_top >= max_top) {
+        state->minimap_drag_thumb_top = max_top;
+        state->minimap_drag_last_y = widget_y;
+        state->minimap_drag_last_time = event_time_seconds;
+        minimap_scroll_to_top_fraction(state, widget, 1.0);
+        return;
+    }
+
+    delta_y = widget_y - state->minimap_drag_last_y;
+    precision_top = state->minimap_drag_thumb_top + delta_y * minimap_precision_drag_base_scale(layout.page_count);
+    catchup_blend = minimap_precision_catchup_blend(state, delta_y, fabs(raw_top - precision_top), event_time_seconds);
+    state->minimap_drag_thumb_top =
+        clamp_double(precision_top + (raw_top - precision_top) * catchup_blend, min_top, max_top);
+    state->minimap_drag_last_y = widget_y;
+    state->minimap_drag_last_time = event_time_seconds;
+
+    center_y = state->minimap_drag_thumb_top + thumb_height * 0.5;
+    minimap_scroll_to_y(state, widget, center_y);
+}
+
 static gboolean minimap_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
     app_state* state = (app_state*)user_data;
+    minimap_layout layout;
+    double vx;
+    double vy;
+    double vw;
+    double vh;
+
     if (!state->doc || event->button != 1) return FALSE;
     state->minimap_dragging = TRUE;
-    minimap_scroll_to_y(state, widget, event->y);
+    state->minimap_dragging_visible_rect = FALSE;
+    if (minimap_measure(state, widget, &layout)) {
+        minimap_visible_rect(state, &layout, &vx, &vy, &vw, &vh);
+        if (event->x >= vx && event->x <= vx + vw && event->y >= vy && event->y <= vy + vh) {
+            state->minimap_dragging_visible_rect = TRUE;
+            state->minimap_drag_offset_top = event->y - vy;
+            state->minimap_drag_thumb_top = vy;
+            state->minimap_drag_last_y = event->y;
+            state->minimap_drag_last_time = minimap_event_time_seconds(event->time);
+        } else {
+            minimap_scroll_to_y(state, widget, event->y);
+        }
+    } else {
+        minimap_scroll_to_y(state, widget, event->y);
+    }
     if (state->scroll) gtk_widget_grab_focus(state->scroll);
     return TRUE;
 }
@@ -3289,7 +3881,10 @@ static gboolean minimap_button_press(GtkWidget* widget, GdkEventButton* event, g
 static gboolean minimap_motion(GtkWidget* widget, GdkEventMotion* event, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     if (!state->minimap_dragging) return FALSE;
-    minimap_scroll_to_y(state, widget, event->y);
+    if (state->minimap_dragging_visible_rect)
+        minimap_drag_visible_rect_to_y(state, widget, event->y, event->time);
+    else
+        minimap_scroll_to_y(state, widget, event->y);
     return TRUE;
 }
 
@@ -3298,6 +3893,11 @@ static gboolean minimap_button_release(GtkWidget* widget, GdkEventButton* event,
     (void)widget;
     if (event->button == 1) {
         state->minimap_dragging = FALSE;
+        state->minimap_dragging_visible_rect = FALSE;
+        state->minimap_drag_offset_top = 0.0;
+        state->minimap_drag_thumb_top = 0.0;
+        state->minimap_drag_last_y = 0.0;
+        state->minimap_drag_last_time = 0.0;
         return TRUE;
     }
     return FALSE;
@@ -4293,8 +4893,13 @@ typedef struct translate_task {
     char* path;
     char* input_text;
     char* from_lang;
+    char* to_lang;
     char* output_path;
     char* tmp_pdf_path;
+    GtkWidget* dialog;
+    GtkWidget* progress;
+    GtkWidget* log;
+    GCancellable* cancellable;
     spdf_rect selection_bounds;
     int page_index;
     gboolean full_document;
@@ -4310,9 +4915,21 @@ typedef struct translate_line_meta {
 typedef struct translate_result {
     app_state* state;
     char* output_path;
+    GtkWidget* dialog;
+    GtkWidget* progress;
+    GtkWidget* log;
     gboolean success;
+    gboolean canceled;
     char* message;
 } translate_result;
+
+typedef struct translate_progress_update {
+    app_state* state;
+    GtkWidget* progress;
+    GtkWidget* log;
+    double fraction;
+    char* message;
+} translate_progress_update;
 
 typedef struct translate_install_task {
     app_state* state;
@@ -4331,12 +4948,18 @@ typedef struct translate_install_result {
     char* output;
 } translate_install_result;
 
-static gboolean subprocess_capture_utf8(char** argv, const char* input, char** output_out, char** error_out,
-                                        GError** error) {
+static void translate_force_exit_subprocess(GCancellable* cancellable, gpointer user_data) {
+    (void)cancellable;
+    g_subprocess_force_exit(G_SUBPROCESS(user_data));
+}
+
+static gboolean subprocess_capture_utf8_with_cancel(char** argv, const char* input, char** output_out, char** error_out,
+                                                    GCancellable* cancellable, GError** error) {
     GSubprocess* subprocess;
     gchar* stdout_text = NULL;
     gchar* stderr_text = NULL;
     gboolean ok;
+    gulong cancel_id = 0;
 
     if (output_out) *output_out = NULL;
     if (error_out) *error_out = NULL;
@@ -4345,7 +4968,10 @@ static gboolean subprocess_capture_utf8(char** argv, const char* input, char** o
         G_SUBPROCESS_FLAGS_STDIN_PIPE | G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE, error);
     if (!subprocess) return FALSE;
 
-    ok = g_subprocess_communicate_utf8(subprocess, input ? input : "", NULL, &stdout_text, &stderr_text, error);
+    if (cancellable)
+        cancel_id = g_cancellable_connect(cancellable, G_CALLBACK(translate_force_exit_subprocess), subprocess, NULL);
+    ok = g_subprocess_communicate_utf8(subprocess, input ? input : "", cancellable, &stdout_text, &stderr_text, error);
+    if (cancellable && cancel_id) g_cancellable_disconnect(cancellable, cancel_id);
     if (output_out)
         *output_out = stdout_text;
     else
@@ -4359,12 +4985,65 @@ static gboolean subprocess_capture_utf8(char** argv, const char* input, char** o
     return ok;
 }
 
-static char* translate_output_path_for_pdf(const char* path) {
+static gboolean subprocess_capture_utf8(char** argv, const char* input, char** output_out, char** error_out,
+                                        GError** error) {
+    return subprocess_capture_utf8_with_cancel(argv, input, output_out, error_out, NULL, error);
+}
+
+static gboolean translate_progress_update_idle(gpointer data) {
+    translate_progress_update* update = (translate_progress_update*)data;
+
+    if (update->progress) {
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(update->progress), MAX(0.0, MIN(update->fraction, 1.0)));
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(update->progress), update->message ? update->message : "");
+    }
+    if (update->state && update->state->status && update->message)
+        gtk_label_set_text(GTK_LABEL(update->state->status), update->message);
+    if (update->log && update->message) {
+        append_install_log(update->log, update->message);
+        append_install_log(update->log, "\n");
+    }
+    if (update->progress) g_object_unref(update->progress);
+    if (update->log) g_object_unref(update->log);
+    g_free(update->message);
+    g_free(update);
+    return G_SOURCE_REMOVE;
+}
+
+static void queue_translate_progress(translate_task* task, double fraction, const char* message) {
+    translate_progress_update* update;
+
+    if (!task || !task->progress) return;
+    update = g_new0(translate_progress_update, 1);
+    update->state = task->state;
+    update->progress = g_object_ref(task->progress);
+    update->log = task->log ? g_object_ref(task->log) : NULL;
+    update->fraction = fraction;
+    update->message = g_strdup(message ? message : "");
+    g_idle_add(translate_progress_update_idle, update);
+}
+
+static void translate_cancel_clicked(GtkButton* button, gpointer user_data) {
+    GCancellable* cancellable = G_CANCELLABLE(user_data);
+    GtkWidget* widget = GTK_WIDGET(button);
+
+    if (cancellable) g_cancellable_cancel(cancellable);
+    gtk_button_set_label(button, "Canceling...");
+    gtk_widget_set_sensitive(widget, FALSE);
+}
+
+static const char* translation_suffix_for_target_language(const char* target_language) {
+    if (!target_language || !*target_language) return "translated";
+    if (g_strcmp0(target_language, "en") == 0) return "english";
+    return target_language;
+}
+
+static char* translate_output_path_for_pdf(const char* path, const char* target_language) {
     char* dir = g_path_get_dirname(path);
     char* base = g_path_get_basename(path);
     char* dot = strrchr(base, '.');
     char* stem = dot ? g_strndup(base, (gsize)(dot - base)) : g_strdup(base);
-    char* name = g_strdup_printf("%s_english.pdf", stem);
+    char* name = g_strdup_printf("%s_%s.pdf", stem, translation_suffix_for_target_language(target_language));
     char* output = g_build_filename(dir, name, NULL);
     g_free(name);
     g_free(stem);
@@ -4625,12 +5304,22 @@ static gboolean translate_finished_idle(gpointer data) {
     state->translate_running = FALSE;
     update_controls(state);
     if (result->success) {
+        if (result->progress) gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(result->progress), 1.0);
+        if (result->dialog) gtk_widget_destroy(result->dialog);
         open_path_in_tab_at_page(state, result->output_path, 0, TRUE);
         gtk_label_set_text(GTK_LABEL(state->status), result->message ? result->message : "Translation complete.");
+    } else if (result->canceled) {
+        if (result->dialog) gtk_widget_destroy(result->dialog);
+        gtk_label_set_text(GTK_LABEL(state->status), "Translation canceled.");
     } else {
+        if (result->progress) gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(result->progress), 0.0);
+        if (result->dialog) gtk_widget_destroy(result->dialog);
         show_error(GTK_WINDOW(state->window), "Translation failed", result->message ? result->message : "");
         gtk_label_set_text(GTK_LABEL(state->status), "Translation failed.");
     }
+    if (result->dialog) g_object_unref(result->dialog);
+    if (result->progress) g_object_unref(result->progress);
+    if (result->log) g_object_unref(result->log);
     g_free(result->output_path);
     g_free(result->message);
     g_free(result);
@@ -4651,6 +5340,12 @@ static gpointer translate_worker(gpointer data) {
 
     result->state = task->state;
     result->output_path = g_strdup(task->output_path);
+    result->dialog = task->dialog;
+    result->progress = task->progress;
+    result->log = task->log;
+
+    queue_translate_progress(task, 0.02,
+                             task->full_document ? "Extracting document text..." : "Preparing selection...");
 
     if (task->input_text) {
         input_text = g_strdup(task->input_text);
@@ -4683,7 +5378,7 @@ static gpointer translate_worker(gpointer data) {
         goto done;
     }
 
-    char* argv[] = {task->tool, "--from-lang", task->from_lang, "--to-lang", "en", NULL};
+    char* argv[] = {task->tool, "--from-lang", task->from_lang, "--to-lang", task->to_lang, NULL};
     if (meta_count > 1) {
         char** source_lines = g_strsplit(input_text, "\n", -1);
         GString* translated_joined = g_string_new("");
@@ -4695,17 +5390,29 @@ static gpointer translate_worker(gpointer data) {
             char* page_translated = NULL;
             char* page_stderr = NULL;
             GError* page_error = NULL;
+            char progress_text[160];
             while (end < meta_count && metas[end].page_index == page) end++;
+            g_snprintf(progress_text, sizeof(progress_text), "Translating page %d (%d of %d text blocks)...", page + 1,
+                       start, meta_count);
+            queue_translate_progress(task, 0.05 + 0.85 * ((double)start / MAX(1, meta_count)), progress_text);
             for (int i = start; i < end; ++i) {
                 g_string_append(page_input, source_lines && source_lines[i] ? source_lines[i] : "");
                 g_string_append_c(page_input, '\n');
             }
-            if (!subprocess_capture_utf8(argv, page_input->str, &page_translated, &page_stderr, &page_error) ||
+            if (!subprocess_capture_utf8_with_cancel(argv, page_input->str, &page_translated, &page_stderr,
+                                                     task->cancellable, &page_error) ||
                 !page_translated || page_translated[0] == '\0') {
                 const char* error_text = page_error && page_error->message ? page_error->message : NULL;
                 const char* process_text = page_stderr && *page_stderr ? page_stderr : page_translated;
-                result->message = g_strdup(
-                    error_text ? error_text : (process_text ? process_text : "Argos Translate exited with an error."));
+                if (g_error_matches(page_error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+                    result->canceled = TRUE;
+                    result->message = g_strdup("Translation canceled.");
+                } else {
+                    result->message = g_strdup_printf(
+                        "Page %d: %s", page + 1,
+                        error_text ? error_text
+                                   : (process_text ? process_text : "Argos Translate exited with an error."));
+                }
                 if (page_error) g_error_free(page_error);
                 g_free(page_translated);
                 g_free(page_stderr);
@@ -4726,18 +5433,28 @@ static gpointer translate_worker(gpointer data) {
             g_free(page_stderr);
             g_string_free(page_input, TRUE);
             start = end;
+            g_snprintf(progress_text, sizeof(progress_text), "Translated page %d (%d of %d text blocks).", page + 1,
+                       start, meta_count);
+            queue_translate_progress(task, 0.05 + 0.85 * ((double)start / MAX(1, meta_count)), progress_text);
         }
         translated = g_string_free(translated_joined, FALSE);
         g_strfreev(source_lines);
-    } else if (!subprocess_capture_utf8(argv, input_text, &translated, &stderr_text, &error) || !translated ||
-               translated[0] == '\0') {
+    } else if (!subprocess_capture_utf8_with_cancel(argv, input_text, &translated, &stderr_text, task->cancellable,
+                                                    &error) ||
+               !translated || translated[0] == '\0') {
         const char* error_text = error && error->message ? error->message : NULL;
         const char* process_text = stderr_text && *stderr_text ? stderr_text : translated;
-        result->message =
-            g_strdup(error_text ? error_text : (process_text ? process_text : "Argos Translate exited with an error."));
+        if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+            result->canceled = TRUE;
+            result->message = g_strdup("Translation canceled.");
+        } else {
+            result->message = g_strdup(
+                error_text ? error_text : (process_text ? process_text : "Argos Translate exited with an error."));
+        }
         goto done;
     }
 
+    queue_translate_progress(task, 0.93, "Writing translated PDF...");
     if (meta_count > 0) {
         spdf_document* save_doc;
         spdf_translated_line* lines;
@@ -4757,7 +5474,7 @@ static gpointer translate_worker(gpointer data) {
             lines[i].page_index = metas[i].page_index;
             lines[i].bounds = metas[i].bounds;
             lines[i].font_size = metas[i].font_size;
-            lines[i].opaque_background = SPDF_TRANSLATION_BACKGROUND_AUTO;
+            lines[i].opaque_background = SPDF_TRANSLATION_BACKGROUND_OPAQUE;
             lines[i].text = line_text;
         }
         if (!spdf_save_translated_copy(save_doc, task->tmp_pdf_path, lines, meta_count, err, sizeof(err))) {
@@ -4784,6 +5501,7 @@ static gpointer translate_worker(gpointer data) {
     result->success = TRUE;
     result->message =
         g_strdup(task->full_document ? "Translated document opened." : "Translated selection opened as a PDF.");
+    queue_translate_progress(task, 1.0, "Translation complete.");
 
 done:
     if (error) g_error_free(error);
@@ -4796,8 +5514,10 @@ done:
     g_free(task->path);
     g_free(task->input_text);
     g_free(task->from_lang);
+    g_free(task->to_lang);
     g_free(task->output_path);
     g_free(task->tmp_pdf_path);
+    if (task->cancellable) g_object_unref(task->cancellable);
     g_free(task);
     g_idle_add(translate_finished_idle, result);
     return NULL;
@@ -4949,39 +5669,81 @@ static void install_translate_then_run(app_state* state) {
     g_thread_unref(g_thread_new("install-translate", translate_install_worker, task));
 }
 
-static char* prompt_translate_source_language(app_state* state) {
-    GtkWidget* dialog =
-        gtk_dialog_new_with_buttons("Translate to English", GTK_WINDOW(state->window), GTK_DIALOG_MODAL, "_Cancel",
-                                    GTK_RESPONSE_CANCEL, "_Translate", GTK_RESPONSE_ACCEPT, NULL);
-    GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget* label = gtk_label_new("Source language code");
-    GtkWidget* entry = gtk_entry_new();
-    char* result = NULL;
+static void populate_translation_language_combo(GtkComboBoxText* combo, const char* selected_code) {
+    gboolean found = FALSE;
 
-    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
-    gtk_entry_set_text(GTK_ENTRY(entry), "zh");
-    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "zh, es, fr, de...");
-    gtk_widget_set_margin_start(label, 12);
-    gtk_widget_set_margin_end(label, 12);
-    gtk_widget_set_margin_top(label, 12);
-    gtk_widget_set_margin_start(entry, 12);
-    gtk_widget_set_margin_end(entry, 12);
-    gtk_widget_set_margin_top(entry, 6);
-    gtk_widget_set_margin_bottom(entry, 12);
-    gtk_box_pack_start(GTK_BOX(content), label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(content), entry, FALSE, FALSE, 0);
+    for (gsize i = 0; i < G_N_ELEMENTS(k_translation_languages); ++i) {
+        char* label = g_strdup_printf("%s (%s)", k_translation_languages[i].name, k_translation_languages[i].code);
+        gtk_combo_box_text_append(combo, k_translation_languages[i].code, label);
+        if (g_strcmp0(selected_code, k_translation_languages[i].code) == 0) found = TRUE;
+        g_free(label);
+    }
+    if (selected_code && *selected_code && !found) {
+        char* label = g_strdup_printf("Custom (%s)", selected_code);
+        gtk_combo_box_text_append(combo, selected_code, label);
+        g_free(label);
+    }
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(combo), selected_code && *selected_code ? selected_code : "zh");
+    if (gtk_combo_box_get_active(GTK_COMBO_BOX(combo)) < 0) gtk_combo_box_set_active(GTK_COMBO_BOX(combo), 0);
+}
+
+static gboolean prompt_translate_languages(app_state* state, char** from_lang_out, char** to_lang_out) {
+    GtkWidget* dialog = gtk_dialog_new_with_buttons("Translate", GTK_WINDOW(state->window), GTK_DIALOG_MODAL, "_Cancel",
+                                                    GTK_RESPONSE_CANCEL, "_Translate", GTK_RESPONSE_ACCEPT, NULL);
+    GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget* grid = gtk_grid_new();
+    GtkWidget* from_label = gtk_label_new("From");
+    GtkWidget* to_label = gtk_label_new("To");
+    GtkWidget* from_combo = gtk_combo_box_text_new();
+    GtkWidget* to_combo = gtk_combo_box_text_new();
+    gboolean accepted = FALSE;
+
+    if (from_lang_out) *from_lang_out = NULL;
+    if (to_lang_out) *to_lang_out = NULL;
+    gtk_label_set_xalign(GTK_LABEL(from_label), 0.0);
+    gtk_label_set_xalign(GTK_LABEL(to_label), 0.0);
+    populate_translation_language_combo(GTK_COMBO_BOX_TEXT(from_combo),
+                                        state->translate_source_language ? state->translate_source_language : "zh");
+    populate_translation_language_combo(GTK_COMBO_BOX_TEXT(to_combo),
+                                        state->translate_target_language ? state->translate_target_language : "en");
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_widget_set_margin_start(grid, 12);
+    gtk_widget_set_margin_end(grid, 12);
+    gtk_widget_set_margin_top(grid, 12);
+    gtk_widget_set_margin_bottom(grid, 12);
+    gtk_grid_attach(GTK_GRID(grid), from_label, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), from_combo, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), to_label, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), to_combo, 1, 1, 1, 1);
+    gtk_widget_set_hexpand(from_combo, TRUE);
+    gtk_widget_set_hexpand(to_combo, TRUE);
+    gtk_box_pack_start(GTK_BOX(content), grid, FALSE, FALSE, 0);
     gtk_widget_show_all(dialog);
     if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-        const char* text = gtk_entry_get_text(GTK_ENTRY(entry));
-        result = g_strdup(text && *text ? text : "auto");
-        g_strstrip(result);
-        if (!*result) {
-            g_free(result);
-            result = g_strdup("auto");
+        char* from_id = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(from_combo));
+        char* to_id = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(to_combo));
+        const char* from_active = gtk_combo_box_get_active_id(GTK_COMBO_BOX(from_combo));
+        const char* to_active = gtk_combo_box_get_active_id(GTK_COMBO_BOX(to_combo));
+        (void)from_id;
+        (void)to_id;
+        if (from_active && *from_active && to_active && *to_active && g_strcmp0(from_active, to_active) != 0) {
+            if (from_lang_out) *from_lang_out = g_strdup(from_active);
+            if (to_lang_out) *to_lang_out = g_strdup(to_active);
+            g_free(state->translate_source_language);
+            g_free(state->translate_target_language);
+            state->translate_source_language = g_strdup(from_active);
+            state->translate_target_language = g_strdup(to_active);
+            save_settings(state);
+            accepted = TRUE;
         }
+        g_free(from_id);
+        g_free(to_id);
     }
     gtk_widget_destroy(dialog);
-    return result;
+    if (!accepted && from_lang_out) g_clear_pointer(from_lang_out, g_free);
+    if (!accepted && to_lang_out) g_clear_pointer(to_lang_out, g_free);
+    return accepted;
 }
 
 static void translate_clicked(GtkButton* button, gpointer user_data) {
@@ -4990,6 +5752,15 @@ static void translate_clicked(GtkButton* button, gpointer user_data) {
     char* tool;
     char* argospm;
     char* from_lang;
+    char* to_lang;
+    GtkWidget* dialog;
+    GtkWidget* content;
+    GtkWidget* title;
+    GtkWidget* progress;
+    GtkWidget* scroll;
+    GtkWidget* log;
+    GtkWidget* cancel_button;
+    GCancellable* cancellable;
     translate_task* task;
 
     if (!state->doc || !state->path || !path_has_pdf_extension(state->path) || state->translate_running ||
@@ -5015,16 +5786,56 @@ static void translate_clicked(GtkButton* button, gpointer user_data) {
     }
     g_free(argospm);
 
-    from_lang = prompt_translate_source_language(state);
-    if (!from_lang) {
+    from_lang = NULL;
+    to_lang = NULL;
+    if (!prompt_translate_languages(state, &from_lang, &to_lang)) {
         g_free(tool);
         return;
     }
+
+    dialog = gtk_dialog_new();
+    content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    title = gtk_label_new("Translating with Argos");
+    progress = gtk_progress_bar_new();
+    scroll = gtk_scrolled_window_new(NULL, NULL);
+    log = gtk_text_view_new();
+    cancel_button = gtk_dialog_add_button(GTK_DIALOG(dialog), "_Cancel", GTK_RESPONSE_CANCEL);
+    cancellable = g_cancellable_new();
+
+    gtk_window_set_title(GTK_WINDOW(dialog), "Translating");
+    gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(state->window));
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 520, 240);
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+    gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(progress), TRUE);
+    gtk_progress_bar_set_text(GTK_PROGRESS_BAR(progress), "Preparing translation...");
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(log), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(log), TRUE);
+    gtk_widget_set_margin_start(title, 10);
+    gtk_widget_set_margin_end(title, 10);
+    gtk_widget_set_margin_top(title, 10);
+    gtk_widget_set_margin_bottom(title, 6);
+    gtk_widget_set_margin_start(progress, 10);
+    gtk_widget_set_margin_end(progress, 10);
+    gtk_widget_set_margin_bottom(progress, 8);
+    gtk_container_add(GTK_CONTAINER(scroll), log);
+    gtk_box_pack_start(GTK_BOX(content), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), progress, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 0);
+    g_signal_connect(dialog, "delete-event", G_CALLBACK(block_dialog_delete), NULL);
+    g_signal_connect_data(cancel_button, "clicked", G_CALLBACK(translate_cancel_clicked), g_object_ref(cancellable),
+                          (GClosureNotify)g_object_unref, 0);
+    append_install_log(log, "Preparing translation...\n");
+    gtk_widget_show_all(dialog);
 
     task = g_new0(translate_task, 1);
     task->state = state;
     task->tool = tool;
     task->path = g_strdup(state->path);
+    task->dialog = g_object_ref(dialog);
+    task->progress = g_object_ref(progress);
+    task->log = g_object_ref(log);
+    task->cancellable = cancellable;
     if (has_text_selection(state)) {
         spdf_rect bounds = state->selection_rects[0];
         for (int i = 1; i < state->selection_rect_count; ++i)
@@ -5034,7 +5845,8 @@ static void translate_clicked(GtkButton* button, gpointer user_data) {
         task->has_selection_bounds = TRUE;
     }
     task->from_lang = from_lang;
-    task->output_path = translate_output_path_for_pdf(state->path);
+    task->to_lang = to_lang;
+    task->output_path = translate_output_path_for_pdf(state->path, task->to_lang);
     task->tmp_pdf_path = translate_temp_path_for_pdf(state->path);
     task->page_index = state->page_index;
     task->full_document = task->input_text == NULL;
@@ -5168,6 +5980,81 @@ static gboolean toolbar_overflow_icon_draw(GtkWidget* widget, cairo_t* cr, gpoin
         cairo_arc(cr, x + dot_size * 0.5 + i * (dot_size + gap), y + dot_size * 0.5, dot_size * 0.5, 0, G_PI * 2.0);
         cairo_fill(cr);
     }
+    return FALSE;
+}
+
+static gboolean translate_icon_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data) {
+    (void)user_data;
+    GtkAllocation allocation;
+    GtkStyleContext* context;
+    GdkRGBA color;
+    double x;
+    double y;
+    double scale;
+
+    gtk_widget_get_allocation(widget, &allocation);
+    context = gtk_widget_get_style_context(widget);
+    gtk_style_context_get_color(context, gtk_style_context_get_state(context), &color);
+    gdk_cairo_set_source_rgba(cr, &color);
+    x = floor((allocation.width - 18.0) * 0.5);
+    y = floor((allocation.height - 18.0) * 0.5);
+    scale = 18.0 / 24.0;
+    cairo_save(cr);
+    cairo_translate(cr, x, y);
+    cairo_scale(cr, scale, scale);
+    cairo_set_line_width(cr, 1.9);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, 3.4, 3.4, 2.2, G_PI, G_PI * 1.5);
+    cairo_arc(cr, 12.6, 3.4, 2.2, G_PI * 1.5, G_PI * 2.0);
+    cairo_arc(cr, 12.6, 12.6, 2.2, 0.0, G_PI * 0.5);
+    cairo_arc(cr, 3.4, 12.6, 2.2, G_PI * 0.5, G_PI);
+    cairo_close_path(cr);
+    cairo_stroke(cr);
+
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, 11.4, 11.4, 2.2, G_PI, G_PI * 1.5);
+    cairo_arc(cr, 20.6, 11.4, 2.2, G_PI * 1.5, G_PI * 2.0);
+    cairo_arc(cr, 20.6, 20.6, 2.2, 0.0, G_PI * 0.5);
+    cairo_arc(cr, 11.4, 20.6, 2.2, G_PI * 0.5, G_PI);
+    cairo_close_path(cr);
+    cairo_stroke(cr);
+
+    cairo_move_to(cr, 4.0, 5.0);
+    cairo_line_to(cr, 12.0, 5.0);
+    cairo_move_to(cr, 8.0, 3.0);
+    cairo_line_to(cr, 8.0, 5.0);
+    cairo_move_to(cr, 5.8, 6.2);
+    cairo_curve_to(cr, 6.8, 8.5, 8.8, 8.5, 10.2, 6.2);
+    cairo_move_to(cr, 7.0, 8.0);
+    cairo_line_to(cr, 9.7, 10.7);
+    cairo_stroke(cr);
+
+    cairo_move_to(cr, 12.6, 20.0);
+    cairo_line_to(cr, 16.0, 11.8);
+    cairo_line_to(cr, 19.4, 20.0);
+    cairo_move_to(cr, 14.0, 17.0);
+    cairo_line_to(cr, 18.0, 17.0);
+    cairo_stroke(cr);
+
+    cairo_move_to(cr, 15.9, 1.5);
+    cairo_line_to(cr, 18.0, 1.5);
+    cairo_curve_to(cr, 19.6, 1.5, 20.5, 2.4, 20.5, 4.0);
+    cairo_line_to(cr, 20.5, 6.2);
+    cairo_move_to(cr, 18.0, 5.0);
+    cairo_line_to(cr, 20.5, 7.5);
+    cairo_line_to(cr, 23.0, 5.0);
+    cairo_move_to(cr, 8.1, 22.5);
+    cairo_line_to(cr, 6.0, 22.5);
+    cairo_curve_to(cr, 4.4, 22.5, 3.5, 21.6, 3.5, 20.0);
+    cairo_line_to(cr, 3.5, 17.8);
+    cairo_move_to(cr, 6.0, 19.0);
+    cairo_line_to(cr, 3.5, 16.5);
+    cairo_line_to(cr, 1.0, 19.0);
+    cairo_stroke(cr);
+    cairo_restore(cr);
     return FALSE;
 }
 
@@ -5634,7 +6521,8 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
     app_state* state = (app_state*)user_data;
     gboolean ctrl = (event->state & GDK_CONTROL_MASK) != 0;
     gboolean shift = (event->state & GDK_SHIFT_MASK) != 0;
-    GtkWidget* focus = gtk_window_get_focus(GTK_WINDOW(widget));
+    GtkWidget* focus = state->window ? gtk_window_get_focus(GTK_WINDOW(state->window)) : NULL;
+    (void)widget;
 
     if (state->presentation_mode && event->keyval == GDK_KEY_Escape) {
         set_presentation_mode(state, FALSE);
@@ -5653,10 +6541,30 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
         show_favorites_dialog(state);
         return TRUE;
     }
+    if (ctrl && shift && (event->keyval == GDK_KEY_t || event->keyval == GDK_KEY_T)) {
+        if (state->closed_count == 0) return FALSE;
+        reopen_last_closed_document(state);
+        return TRUE;
+    }
     if (ctrl && (event->keyval == GDK_KEY_b || event->keyval == GDK_KEY_B)) {
         if (!state->doc || !state->path) return FALSE;
         add_current_favorite(state, shift);
         return TRUE;
+    }
+
+    if (state->presentation_mode && state->doc && !ctrl) {
+        if (event->keyval == GDK_KEY_space || event->keyval == GDK_KEY_KP_Space) {
+            next_clicked(NULL, state);
+            return TRUE;
+        }
+        if (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Up) {
+            previous_clicked(NULL, state);
+            return TRUE;
+        }
+        if (event->keyval == GDK_KEY_Right || event->keyval == GDK_KEY_Down) {
+            next_clicked(NULL, state);
+            return TRUE;
+        }
     }
 
     if (ctrl || !state->doc || (focus && GTK_IS_EDITABLE(focus))) return FALSE;
@@ -5757,7 +6665,8 @@ static gboolean page_scroll_event(GtkWidget* widget, GdkEventScroll* event, gpoi
     return FALSE;
 }
 
-static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
+static gboolean presentation_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
+    (void)widget;
     app_state* state = (app_state*)user_data;
 
     if (state->presentation_mode && state->doc) {
@@ -5770,6 +6679,13 @@ static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpoi
             return TRUE;
         }
     }
+    return FALSE;
+}
+
+static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+
+    if (presentation_button_press(widget, event, user_data)) return TRUE;
 
     if (event->button == 3) {
         GtkWidget* menu = gtk_menu_new();
@@ -5924,7 +6840,9 @@ static gboolean startup_restore_idle(gpointer user_data) {
 static gboolean window_configure_event(GtkWidget* widget, GdkEventConfigure* event, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     (void)widget;
-    if (!state->presentation_mode && !state->window_fullscreen) {
+    if (state->presentation_mode && state->doc) {
+        g_idle_add(presentation_render_idle, state);
+    } else if (!state->window_fullscreen) {
         state->window_width = clamp_int(event->width, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH);
         state->window_height = clamp_int(event->height, MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT);
     }
@@ -5935,6 +6853,7 @@ static gboolean window_state_event(GtkWidget* widget, GdkEventWindowState* event
     app_state* state = (app_state*)user_data;
     (void)widget;
     state->window_fullscreen = (event->new_window_state & GDK_WINDOW_STATE_FULLSCREEN) != 0;
+    if (state->presentation_mode && state->window_fullscreen && state->doc) g_idle_add(presentation_render_idle, state);
     return FALSE;
 }
 
@@ -5944,6 +6863,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     if (state->zoom <= 0.0) state->zoom = 1.0;
 
     state->window = gtk_application_window_new(app);
+    gtk_widget_add_events(state->window, GDK_BUTTON_PRESS_MASK | GDK_KEY_PRESS_MASK);
     gtk_window_set_title(GTK_WINDOW(state->window), "SumatraPDF");
     gtk_window_set_default_size(GTK_WINDOW(state->window),
                                 clamp_int(state->window_width, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH),
@@ -5959,13 +6879,16 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* file_menu = gtk_menu_new();
     GtkWidget* file = gtk_menu_item_new_with_mnemonic("_File");
     GtkWidget* open_menu = gtk_menu_item_new_with_mnemonic("_Open...");
+    state->reopen_closed_menu_item = gtk_menu_item_new_with_mnemonic("Reopen Last _Closed");
+    GtkWidget* recently_opened = gtk_menu_item_new_with_mnemonic("Recently _Opened");
+    state->recently_opened_menu = gtk_menu_new();
     state->open_in_browser = gtk_menu_item_new_with_mnemonic("Open in Default _Browser");
     state->show_in_folder = gtk_menu_item_new_with_mnemonic("Show in _Folder");
     GtkWidget* quit_menu = gtk_menu_item_new_with_mnemonic("_Quit");
     GtkWidget* edit_menu = gtk_menu_new();
     GtkWidget* edit = gtk_menu_item_new_with_mnemonic("_Edit");
     GtkWidget* set_comment_author = gtk_menu_item_new_with_mnemonic("Set _Author for Comments...");
-    state->translate_menu_item = gtk_menu_item_new_with_mnemonic("_Translate to English...");
+    state->translate_menu_item = gtk_menu_item_new_with_mnemonic("_Translate...");
     state->search_regex_multiline_item = gtk_check_menu_item_new_with_mnemonic("Regex _Multiline");
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
@@ -5973,15 +6896,23 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->show_minimap_item = gtk_check_menu_item_new_with_mnemonic("Show _Minimap");
     state->presentation_item = gtk_check_menu_item_new_with_mnemonic("_Presentation Mode");
     gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_F5, 0, GTK_ACCEL_VISIBLE);
+    gtk_widget_add_accelerator(state->reopen_closed_menu_item, "activate", accel_group, GDK_KEY_t,
+                               GDK_CONTROL_MASK | GDK_SHIFT_MASK, GTK_ACCEL_VISIBLE);
+    gtk_widget_set_sensitive(state->reopen_closed_menu_item, state->closed_count > 0);
     g_object_unref(accel_group);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_sidebar_item), state->show_sidebar);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_minimap_item), state->show_minimap);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(file), file_menu);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(recently_opened), state->recently_opened_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), open_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->reopen_closed_menu_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), recently_opened);
+    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->open_in_browser);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->show_in_folder);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), quit_menu);
+    update_recent_menu(state);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), file);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->search_regex_multiline_item),
                                    state->search_regex_multiline);
@@ -6074,8 +7005,13 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->find_count_label = gtk_label_new("");
     state->find_prev_button = gtk_button_new_with_label("<");
     state->find_next_button = gtk_button_new_with_label(">");
-    state->translate_button = gtk_button_new_with_label("Translate");
-    gtk_widget_set_tooltip_text(state->translate_button, "Translate selection or document to English");
+    state->translate_button = gtk_button_new();
+    GtkWidget* translate_icon = gtk_drawing_area_new();
+    gtk_widget_set_size_request(translate_icon, 22, 20);
+    gtk_container_add(GTK_CONTAINER(state->translate_button), translate_icon);
+    gtk_widget_show(translate_icon);
+    g_signal_connect(translate_icon, "draw", G_CALLBACK(translate_icon_draw), NULL);
+    gtk_widget_set_tooltip_text(state->translate_button, "Translate selection or document");
     state->ocr_button = gtk_button_new_with_label("OCR");
     gtk_entry_set_width_chars(GTK_ENTRY(state->search_entry), 10);
     gtk_entry_set_max_width_chars(GTK_ENTRY(state->search_entry), 13);
@@ -6103,7 +7039,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->overflow_continuous_item = gtk_check_menu_item_new_with_label("Continuous");
     state->overflow_search_regex_item = gtk_check_menu_item_new_with_label("Regex");
     state->overflow_search_regex_multiline_item = gtk_check_menu_item_new_with_label("Regex multiline");
-    state->overflow_translate_item = gtk_menu_item_new_with_label("Translate to English...");
+    state->overflow_translate_item = gtk_menu_item_new_with_label("Translate...");
     GtkWidget* overflow_fit_menu = gtk_menu_new();
     GtkWidget* overflow_fit = gtk_menu_item_new_with_label("Fit mode");
     GSList* fit_group = NULL;
@@ -6145,7 +7081,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     toolbar_pack_item(toolbar, state->find_next_button, 86, NULL);
     toolbar_pack_item(toolbar, state->search_regex_check, 84, state->overflow_search_regex_item);
     toolbar_pack_item(toolbar, state->search_regex_multiline_check, 82, state->overflow_search_regex_multiline_item);
-    toolbar_pack_item(toolbar, state->translate_button, 98, state->overflow_translate_item);
+    toolbar_pack_item(toolbar, state->translate_button, 62, state->overflow_translate_item);
     toolbar_pack_item(toolbar, state->ocr_button, 100, overflow_ocr);
     GtkWidget* toolbar_spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), toolbar_spacer, TRUE, TRUE, 0);
@@ -6172,6 +7108,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* document_view = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     state->scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_can_focus(state->scroll, TRUE);
+    gtk_widget_add_events(state->scroll, GDK_BUTTON_PRESS_MASK | GDK_KEY_PRESS_MASK);
     g_signal_connect(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll)), "value-changed",
                      G_CALLBACK(horizontal_scroll_changed), state);
     g_signal_connect(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll)), "value-changed",
@@ -6209,6 +7146,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(open, "clicked", G_CALLBACK(open_clicked), state);
     g_signal_connect(state->new_tab_button, "clicked", G_CALLBACK(open_clicked), state);
     g_signal_connect(open_menu, "activate", G_CALLBACK(open_clicked), state);
+    g_signal_connect_swapped(state->reopen_closed_menu_item, "activate", G_CALLBACK(reopen_last_closed_document),
+                             state);
     g_signal_connect(state->open_in_browser, "activate", G_CALLBACK(open_in_browser), state);
     g_signal_connect(state->show_in_folder, "activate", G_CALLBACK(show_in_folder), state);
     g_signal_connect(set_comment_author, "activate", G_CALLBACK(set_comment_author_clicked), state);
@@ -6265,8 +7204,11 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(page_box, "motion-notify-event", G_CALLBACK(page_motion), state);
     g_signal_connect(page_box, "leave-notify-event", G_CALLBACK(page_leave), state);
     g_signal_connect(page_box, "button-release-event", G_CALLBACK(page_button_release), state);
+    g_signal_connect(state->scroll, "key-press-event", G_CALLBACK(key_press), state);
+    g_signal_connect(state->scroll, "button-press-event", G_CALLBACK(presentation_button_press), state);
     g_signal_connect(toolbar, "size-allocate", G_CALLBACK(toolbar_size_allocate), state);
     g_signal_connect(state->window, "key-press-event", G_CALLBACK(key_press), state);
+    g_signal_connect(state->window, "button-press-event", G_CALLBACK(presentation_button_press), state);
     g_signal_connect(state->window, "notify::scale-factor", G_CALLBACK(window_scale_factor_changed), state);
     g_signal_connect(state->window, "configure-event", G_CALLBACK(window_configure_event), state);
     g_signal_connect(state->window, "window-state-event", G_CALLBACK(window_state_event), state);
@@ -6324,6 +7266,8 @@ int main(int argc, char** argv) {
     state.show_minimap = TRUE;
     state.show_find_markers = TRUE;
     state.search_regex_multiline = TRUE;
+    state.translate_source_language = g_strdup("zh");
+    state.translate_target_language = g_strdup("en");
     state.sidebar_width = 260;
     state.window_width = DEFAULT_WINDOW_WIDTH;
     state.window_height = DEFAULT_WINDOW_HEIGHT;
@@ -6332,6 +7276,7 @@ int main(int argc, char** argv) {
     state.selection_page_index = -1;
     state.context_page_index = -1;
     state.context_comment_index = -1;
+    state.tab_drag_index = -1;
     state.selected_tab = -1;
     state.restore_selected_tab = -1;
     state.favorite_pending_delete = -1;
@@ -6366,10 +7311,14 @@ int main(int argc, char** argv) {
     g_free(state.restore_search_text);
     g_free(state.search_text);
     g_free(state.comment_author);
+    g_free(state.translate_source_language);
+    g_free(state.translate_target_language);
     g_free(state.selected_text);
     g_free(state.empty_view_message);
     clear_find_results(&state);
     free_favorites(&state);
+    free_path_list(state.recent_paths, &state.recent_count);
+    free_path_list(state.closed_paths, &state.closed_count);
     free_document_tabs(&state);
     g_object_unref(app);
     return status;

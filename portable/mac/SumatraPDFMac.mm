@@ -18,6 +18,7 @@ static const CGFloat kTabGap = 6.0;
 static const CGFloat kTabMinVisibleWidth = 112.0;
 static const CGFloat kTabMaxWidth = 320.0;
 static const CGFloat kTabControlWidth = 32.0;
+static const CGFloat kTabDragHandleWidth = 18.0;
 static const CGFloat kMinWindowWidth = 560.0;
 static const CGFloat kMinWindowHeight = 380.0;
 static const CGFloat kDefaultMinimapWidth = 110.0;
@@ -27,6 +28,7 @@ static const CGFloat kMaxSidebarWidth = 320.0;
 static const CGFloat kSidebarMaxWidthFraction = 0.34;
 static const CGFloat kMinimapDividerWidth = 5.0;
 static const NSInteger kBackgroundRenderBatchSize = 8;
+static const NSInteger kRecentDocumentLimit = 10;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
@@ -42,6 +44,11 @@ typedef struct SPDFPageAnchor {
 
 static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));
+}
+
+static CGFloat spdf_smoothstep_cg(CGFloat value) {
+    value = spdf_clamp_cg(value, 0.0, 1.0);
+    return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
 }
 
 static CGFloat spdf_max_sidebar_width_for_container(CGFloat containerWidth) {
@@ -97,6 +104,91 @@ static NSString* spdf_display_path_without_extension(NSString* path) {
     if (!path.length) return @"";
     NSString* stem = path.stringByDeletingPathExtension;
     return stem.length && ![stem isEqualToString:path] ? stem : path;
+}
+
+static NSArray<NSDictionary<NSString*, NSString*>*>* spdf_translation_languages() {
+    static NSArray<NSDictionary<NSString*, NSString*>*>* languages = nil;
+    if (languages) return languages;
+    languages = @[
+        @{@"code" : @"zh", @"name" : @"Chinese (Simplified)"}, @{@"code" : @"en", @"name" : @"English"},
+        @{@"code" : @"fr", @"name" : @"French"}, @{@"code" : @"de", @"name" : @"German"},
+        @{@"code" : @"es", @"name" : @"Spanish"}, @{@"code" : @"it", @"name" : @"Italian"},
+        @{@"code" : @"pt", @"name" : @"Portuguese"}, @{@"code" : @"ru", @"name" : @"Russian"},
+        @{@"code" : @"ja", @"name" : @"Japanese"}, @{@"code" : @"ko", @"name" : @"Korean"},
+        @{@"code" : @"ar", @"name" : @"Arabic"}, @{@"code" : @"hi", @"name" : @"Hindi"},
+        @{@"code" : @"nl", @"name" : @"Dutch"}, @{@"code" : @"pl", @"name" : @"Polish"},
+        @{@"code" : @"tr", @"name" : @"Turkish"}, @{@"code" : @"vi", @"name" : @"Vietnamese"},
+        @{@"code" : @"id", @"name" : @"Indonesian"}, @{@"code" : @"uk", @"name" : @"Ukrainian"},
+        @{@"code" : @"cs", @"name" : @"Czech"}
+    ];
+    return languages;
+}
+
+static NSImage* spdf_translate_toolbar_image() {
+    static NSImage* image = nil;
+    if (image) return image;
+
+    image = [[NSImage alloc] initWithSize:NSMakeSize(18.0, 18.0)];
+    [image lockFocus];
+    CGContextRef ctx = NSGraphicsContext.currentContext.CGContext;
+    CGContextSaveGState(ctx);
+    CGContextTranslateCTM(ctx, 0.0, 18.0);
+    CGContextScaleCTM(ctx, 18.0 / 24.0, -18.0 / 24.0);
+    CGContextSetLineWidth(ctx, 1.9);
+    CGContextSetLineCap(ctx, kCGLineCapRound);
+    CGContextSetLineJoin(ctx, kCGLineJoinRound);
+    CGContextSetStrokeColorWithColor(ctx, NSColor.blackColor.CGColor);
+
+    CGPathRef topCard = CGPathCreateWithRoundedRect(CGRectMake(1.2, 1.2, 13.6, 13.6), 2.2, 2.2, NULL);
+    CGContextAddPath(ctx, topCard);
+    CGContextStrokePath(ctx);
+    CGPathRelease(topCard);
+
+    CGPathRef lowerCard = CGPathCreateWithRoundedRect(CGRectMake(9.2, 9.2, 13.6, 13.6), 2.2, 2.2, NULL);
+    CGContextAddPath(ctx, lowerCard);
+    CGContextStrokePath(ctx);
+    CGPathRelease(lowerCard);
+
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, 4.0, 5.0);
+    CGContextAddLineToPoint(ctx, 12.0, 5.0);
+    CGContextMoveToPoint(ctx, 8.0, 3.0);
+    CGContextAddLineToPoint(ctx, 8.0, 5.0);
+    CGContextMoveToPoint(ctx, 5.8, 6.2);
+    CGContextAddQuadCurveToPoint(ctx, 7.9, 9.4, 10.2, 6.2);
+    CGContextMoveToPoint(ctx, 7.0, 8.0);
+    CGContextAddLineToPoint(ctx, 9.7, 10.7);
+    CGContextStrokePath(ctx);
+
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, 12.6, 20.0);
+    CGContextAddLineToPoint(ctx, 16.0, 11.8);
+    CGContextAddLineToPoint(ctx, 19.4, 20.0);
+    CGContextMoveToPoint(ctx, 14.0, 17.0);
+    CGContextAddLineToPoint(ctx, 18.0, 17.0);
+    CGContextStrokePath(ctx);
+
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, 15.9, 1.5);
+    CGContextAddLineToPoint(ctx, 18.0, 1.5);
+    CGContextAddQuadCurveToPoint(ctx, 20.5, 1.5, 20.5, 4.0);
+    CGContextAddLineToPoint(ctx, 20.5, 6.2);
+    CGContextMoveToPoint(ctx, 18.0, 5.0);
+    CGContextAddLineToPoint(ctx, 20.5, 7.5);
+    CGContextAddLineToPoint(ctx, 23.0, 5.0);
+    CGContextMoveToPoint(ctx, 8.1, 22.5);
+    CGContextAddLineToPoint(ctx, 6.0, 22.5);
+    CGContextAddQuadCurveToPoint(ctx, 3.5, 22.5, 3.5, 20.0);
+    CGContextAddLineToPoint(ctx, 3.5, 17.8);
+    CGContextMoveToPoint(ctx, 6.0, 19.0);
+    CGContextAddLineToPoint(ctx, 3.5, 16.5);
+    CGContextAddLineToPoint(ctx, 1.0, 19.0);
+    CGContextStrokePath(ctx);
+    CGContextRestoreGState(ctx);
+
+    [image unlockFocus];
+    [image setTemplate:YES];
+    return image;
 }
 
 static BOOL spdf_is_allowed_external_url(NSURL* url) {
@@ -197,6 +289,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic, copy) NSArray<SPDFDocumentTab*>* tabs;
 @property(nonatomic) NSInteger selectedIndex;
 @property(nonatomic) CGFloat reservedLeadingInset;
+- (BOOL)containsTabOrControlAtPoint:(NSPoint)point;
 @end
 
 @interface SPDFPaletteSearchField : NSSearchField
@@ -222,6 +315,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @end
 
 @interface SPDFScrollView : NSScrollView
+@property(nonatomic, weak) SumatraMacDelegate* reader;
+@end
+
+@interface SPDFWindow : NSWindow
 @property(nonatomic, weak) SumatraMacDelegate* reader;
 @end
 
@@ -284,12 +381,17 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
 - (BOOL)documentViewHandlePresentationMouseDown:(NSEvent*)event;
+- (BOOL)handlePresentationEvent:(NSEvent*)event;
+- (BOOL)handleTabStripMouseEvent:(NSEvent*)event;
 - (BOOL)documentViewInPresentationMode;
 - (void)copySelection:(id)sender;
 - (void)translateDocument:(id)sender;
 - (void)selectTabAtIndex:(NSInteger)index;
 - (void)closeTabAtIndex:(NSInteger)index;
+- (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex;
 - (void)newTabRequested:(id)sender;
+- (void)openRecentDocument:(id)sender;
+- (void)reopenLastClosedDocument:(id)sender;
 - (void)focusFind:(id)sender;
 - (void)showFindPalette:(id)sender;
 - (void)toggleFindRegex:(id)sender;
@@ -308,12 +410,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                              alignTop:(BOOL)alignTop
                         restoreOrigin:(NSValue*)restoreOrigin;
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin notify:(BOOL)notify;
+- (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify;
 - (NSPoint)normalizedDocumentScrollOrigin:(NSPoint)origin forPageIndex:(NSInteger)pageIndex;
 - (void)stabilizeDocumentLayoutWithRestoreOrigin:(NSValue*)restoreOrigin
                                         alignTop:(BOOL)alignTop
                                       generation:(NSUInteger)generation
                                             path:(NSString*)path;
 - (void)minimapViewDidRequestScrollToFraction:(CGFloat)yFraction;
+- (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction;
 - (void)minimapViewDidRequestScrollToPage:(NSInteger)pageIndex yFractionInPage:(CGFloat)yFraction;
 - (void)minimapViewDidRequestCenterAtDocumentPoint:(NSPoint)documentPoint;
 - (void)minimapViewDidRequestCenterOnPage:(NSInteger)pageIndex
@@ -329,6 +433,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (void)deleteComment:(id)sender;
 - (NSNumber*)commentIndexForSidebarRow:(NSInteger)row;
 - (BOOL)documentArrowKeyDown:(NSEvent*)event;
+- (void)installPresentationEventMonitor;
+- (void)removePresentationEventMonitor;
 - (NSArray<NSDictionary*>*)commentAnnotationsForPage:(NSInteger)pageIndex;
 - (void)documentViewHoverComment:(NSDictionary*)comment atWindowPoint:(NSPoint)windowPoint;
 - (void)documentViewEndHoverComment;
@@ -368,12 +474,17 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSPanel* _hoverPanel;
     NSTextField* _hoverLabel;
     NSInteger _hoverTabIndex;
+    NSInteger _draggedTabIndex;
+    NSPoint _dragStartPoint;
+    BOOL _draggingTab;
+    BOOL _mouseDownInsideTab;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
     self = [super initWithFrame:frameRect];
     if (self) {
         _hoverTabIndex = -1;
+        _draggedTabIndex = -1;
     }
     return self;
 }
@@ -389,6 +500,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (BOOL)acceptsFirstMouse:(NSEvent*)event {
     (void)event;
     return YES;
+}
+
+- (BOOL)mouseDownCanMoveWindow {
+    return NO;
 }
 
 - (CGFloat)tabWidth {
@@ -609,6 +724,79 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return NSMakeRect(floor(NSMaxX(tabRect) - 26.0), floor(NSMidY(tabRect) - diameter / 2.0), diameter, diameter);
 }
 
+- (NSRect)dragHandleRectForTabRect:(NSRect)tabRect {
+    return NSMakeRect(NSMinX(tabRect) + 8.0, floor(NSMidY(tabRect) - 8.0), kTabDragHandleWidth, 16.0);
+}
+
+- (NSInteger)dragDestinationIndexForPoint:(NSPoint)point {
+    NSArray<NSNumber*>* visibleIndexes = [self visibleTabIndexes];
+    if (!visibleIndexes.count) return -1;
+
+    NSInteger targetIndex = _draggedTabIndex;
+    for (NSNumber* indexNumber in visibleIndexes) {
+        NSInteger index = indexNumber.integerValue;
+        if (index == _draggedTabIndex) continue;
+        NSRect tabRect = [self rectForTabAtIndex:index];
+        if (NSIsEmptyRect(tabRect)) continue;
+        if (index < _draggedTabIndex && point.x < NSMidX(tabRect)) {
+            targetIndex = index;
+            break;
+        }
+        if (index > _draggedTabIndex && point.x > NSMidX(tabRect)) targetIndex = index;
+    }
+    return targetIndex;
+}
+
+- (BOOL)containsTabOrControlAtPoint:(NSPoint)point {
+    if (NSPointInRect(point, [self plusRect])) return YES;
+    NSRect overflowRect = [self overflowRect];
+    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, overflowRect)) return YES;
+    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
+        NSRect tabRect = [self rectForTabAtIndex:i];
+        if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, tabRect)) return YES;
+    }
+    return NO;
+}
+
+- (void)trackTabMouseUntilMouseUp {
+    NSEventMask mask = NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp;
+    while (YES) {
+        NSEvent* nextEvent = [self.window nextEventMatchingMask:mask
+                                                      untilDate:NSDate.distantFuture
+                                                         inMode:NSEventTrackingRunLoopMode
+                                                        dequeue:YES];
+        if (!nextEvent) break;
+        if (nextEvent.type == NSEventTypeLeftMouseDragged) {
+            [self mouseDragged:nextEvent];
+            continue;
+        }
+        if (nextEvent.type == NSEventTypeLeftMouseUp) {
+            [self mouseUp:nextEvent];
+            break;
+        }
+    }
+}
+
+- (void)drawDragHandleInRect:(NSRect)handleRect selected:(BOOL)selected enabled:(BOOL)enabled {
+    NSColor* color = selected ? [NSColor.labelColor colorWithAlphaComponent:0.58]
+                              : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.62];
+    if (!enabled) color = [color colorWithAlphaComponent:0.45];
+    [color setFill];
+
+    CGFloat dotSize = 2.0;
+    CGFloat gapX = 4.0;
+    CGFloat gapY = 4.0;
+    CGFloat startX = floor(NSMidX(handleRect) - dotSize - gapX / 2.0);
+    CGFloat startY = floor(NSMidY(handleRect) - dotSize - gapY / 2.0);
+    for (NSInteger column = 0; column < 2; ++column) {
+        for (NSInteger row = 0; row < 2; ++row) {
+            NSRect dot =
+                NSMakeRect(startX + column * (dotSize + gapX), startY + row * (dotSize + gapY), dotSize, dotSize);
+            [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
+        }
+    }
+}
+
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
     [[NSColor clearColor] setFill];
@@ -657,7 +845,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         NSString* title = [self titleForTabAtIndex:i];
         NSDictionary* titleAttrs = selected || missing ? attrs : dimAttrs;
         CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
-        CGFloat titleInset = 32.0;
+        NSRect handleRect = [self dragHandleRectForTabRect:tabRect];
+        [self drawDragHandleInRect:handleRect selected:selected enabled:!missing];
+
+        CGFloat titleInset = 34.0;
         NSRect titleRect = NSMakeRect(NSMinX(tabRect) + titleInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
                                       MAX(1.0, NSWidth(tabRect) - titleInset * 2.0), titleHeight + 2);
         [title drawWithRect:titleRect
@@ -761,6 +952,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 - (void)mouseDown:(NSEvent*)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    _draggedTabIndex = -1;
+    _draggingTab = NO;
+    _mouseDownInsideTab = NO;
+
     if (NSPointInRect(point, [self plusRect])) {
         [self.reader newTabRequested:self];
         return;
@@ -776,16 +971,63 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         NSRect tabRect = [self rectForTabAtIndex:i];
         if (NSIsEmptyRect(tabRect)) continue;
         if (!NSPointInRect(point, tabRect)) continue;
+        _mouseDownInsideTab = YES;
         NSRect closeRect = NSInsetRect([self closeCircleRectForTabRect:tabRect], -5.0, -5.0);
-        if (NSPointInRect(point, closeRect))
+        if (NSPointInRect(point, closeRect)) {
             [self.reader closeTabAtIndex:i];
-        else
+            [self trackTabMouseUntilMouseUp];
+        } else if (NSPointInRect(point, [self dragHandleRectForTabRect:tabRect])) {
+            _draggedTabIndex = i;
+            _dragStartPoint = point;
+            [self hideHoverPanel];
+            [self trackTabMouseUntilMouseUp];
+        } else {
             [self.reader selectTabAtIndex:i];
+            [self trackTabMouseUntilMouseUp];
+        }
         return;
     }
 
     [self hideHoverPanel];
+    self.window.movable = YES;
     [self.window performWindowDragWithEvent:event];
+    self.window.movable = NO;
+}
+
+- (void)mouseDragged:(NSEvent*)event {
+    // Implementation note: browser-style tear-off needs tab/session ownership outside a single SumatraMacDelegate
+    // so a tab can move with document state, render caches, and history between windows. This view only reorders
+    // in-window.
+    if (_draggedTabIndex < 0) {
+        if (_mouseDownInsideTab) return;
+        self.window.movable = YES;
+        [self.window performWindowDragWithEvent:event];
+        self.window.movable = NO;
+        return;
+    }
+
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    CGFloat dx = point.x - _dragStartPoint.x;
+    CGFloat dy = point.y - _dragStartPoint.y;
+    if (!_draggingTab && hypot(dx, dy) < 3.0) return;
+    _draggingTab = YES;
+    [self hideHoverPanel];
+
+    NSInteger targetIndex = [self dragDestinationIndexForPoint:point];
+    if (targetIndex >= 0 && targetIndex != _draggedTabIndex) {
+        [self.reader moveTabFromIndex:_draggedTabIndex toIndex:targetIndex];
+        _draggedTabIndex = targetIndex;
+    }
+}
+
+- (void)mouseUp:(NSEvent*)event {
+    (void)event;
+    NSInteger clickedTabIndex = _draggedTabIndex;
+    BOOL dragged = _draggingTab;
+    _draggedTabIndex = -1;
+    _draggingTab = NO;
+    _mouseDownInsideTab = NO;
+    if (!dragged && clickedTabIndex >= 0) [self.reader selectTabAtIndex:clickedTabIndex];
 }
 
 - (void)mouseMoved:(NSEvent*)event {
@@ -811,7 +1053,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (void)mouseDown:(NSEvent*)event {
+    self.window.movable = YES;
     [self.window performWindowDragWithEvent:event];
+    self.window.movable = NO;
 }
 
 @end
@@ -1004,6 +1248,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 @implementation SPDFDropView
 
+- (BOOL)mouseDownCanMoveWindow {
+    return NO;
+}
+
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
     (void)sender;
     return NSDragOperationCopy;
@@ -1082,6 +1330,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 @end
 
+@implementation SPDFWindow
+
+- (void)sendEvent:(NSEvent*)event {
+    if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
+    if (self.reader && [self.reader handlePresentationEvent:event]) return;
+    [super sendEvent:event];
+}
+
+@end
+
 @implementation SPDFScrollView {
     CGFloat _wheelAccumulator;
 }
@@ -1113,6 +1371,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (void)keyDown:(NSEvent*)event {
+    if (self.reader && [self.reader handlePresentationEvent:event]) return;
     if (self.reader && [self.reader documentArrowKeyDown:event]) return;
     [super keyDown:event];
 }
@@ -1162,6 +1421,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (BOOL)acceptsFirstResponder {
+    return YES;
+}
+
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+    (void)event;
     return YES;
 }
 
@@ -1487,7 +1751,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [super mouseDown:event];
         return;
     }
-    if ([self.reader documentViewHandlePresentationMouseDown:event]) return;
+    if ([self.reader handlePresentationEvent:event]) return;
     if (event.modifierFlags & NSEventModifierFlagControl) {
         [self.reader showContextMenuForDocumentView:self event:event];
         return;
@@ -1526,6 +1790,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (void)keyDown:(NSEvent*)event {
+    if (self.reader && [self.reader handlePresentationEvent:event]) return;
     if (self.reader && [self.reader documentArrowKeyDown:event]) return;
     [super keyDown:event];
 }
@@ -1632,7 +1897,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 - (void)rightMouseDown:(NSEvent*)event {
     _rightMouseMoved = NO;
-    if (self.reader && [self.reader documentViewHandlePresentationMouseDown:event]) {
+    if (self.reader && [self.reader handlePresentationEvent:event]) {
         _rightMouseMoved = YES;
         return;
     }
@@ -1690,8 +1955,6 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     CGFloat _dragOffsetFromVisibleTop;
     CGFloat _dragThumbTop;
     CGFloat _dragLastMouseY;
-    CGFloat _dragSmoothedScale;
-    CGFloat _dragAccelerationBlend;
     NSTimeInterval _dragLastTimestamp;
 }
 
@@ -1895,7 +2158,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (CGFloat)precisionViewportBaseDragScale {
-    return spdf_clamp_cg(20.0 / MAX(1.0, (CGFloat)self.pages.count), 0.35, 0.85);
+    return spdf_clamp_cg(20.0 / MAX(1.0, (CGFloat)self.pages.count), 0.28, 0.78);
 }
 
 - (NSTimeInterval)precisionViewportDragDeltaTimeForTimestamp:(NSTimeInterval)timestamp {
@@ -1904,20 +2167,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return spdf_clamp_cg(deltaT, 1.0 / 240.0, 1.0 / 20.0);
 }
 
-- (CGFloat)precisionViewportDragScaleForDeltaY:(CGFloat)deltaY timestamp:(NSTimeInterval)timestamp {
+- (CGFloat)precisionViewportCatchUpBlendForDeltaY:(CGFloat)deltaY
+                                    distanceToRaw:(CGFloat)distanceToRaw
+                                        timestamp:(NSTimeInterval)timestamp {
     if (![self shouldUsePrecisionViewportDrag]) return 1.0;
 
-    CGFloat baseScale = [self precisionViewportBaseDragScale];
     NSTimeInterval deltaT = [self precisionViewportDragDeltaTimeForTimestamp:timestamp];
     CGFloat speed = fabs(deltaY) / deltaT;
-    CGFloat targetBlend = spdf_clamp_cg((speed - 80.0) / (720.0 - 80.0), 0.0, 1.0);
-    targetBlend = targetBlend * targetBlend * targetBlend * (targetBlend * (targetBlend * 6.0 - 15.0) + 10.0);
-    if (_dragSmoothedScale <= 0.0) _dragSmoothedScale = baseScale;
-
-    CGFloat smoothing = 1.0 - exp(-deltaT / 0.12);
-    _dragAccelerationBlend += (targetBlend - _dragAccelerationBlend) * smoothing;
-    _dragSmoothedScale = baseScale + (1.0 - baseScale) * _dragAccelerationBlend;
-    return _dragSmoothedScale;
+    CGFloat velocityBlend = spdf_smoothstep_cg((speed - 70.0) / (360.0 - 70.0));
+    CGFloat distanceBlend = spdf_smoothstep_cg((distanceToRaw - 6.0) / (24.0 - 6.0));
+    return MAX(velocityBlend, distanceBlend);
 }
 
 - (BOOL)documentPointForEvent:(NSEvent*)event documentPoint:(NSPoint*)documentPointOut {
@@ -2081,20 +2340,24 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
             _dragThumbTop = minTop;
             _dragLastMouseY = point.y;
             _dragLastTimestamp = event.timestamp;
-            [self.reader minimapViewDidRequestScrollToFraction:0.0];
+            [self.reader minimapViewDidRequestViewportTopFraction:0.0];
             return;
         }
         if (rawTop >= maxTop) {
             _dragThumbTop = maxTop;
             _dragLastMouseY = point.y;
             _dragLastTimestamp = event.timestamp;
-            [self.reader minimapViewDidRequestScrollToFraction:1.0];
+            [self.reader minimapViewDidRequestViewportTopFraction:1.0];
             return;
         }
 
         CGFloat deltaY = point.y - _dragLastMouseY;
-        CGFloat dragScale = [self precisionViewportDragScaleForDeltaY:deltaY timestamp:event.timestamp];
-        _dragThumbTop = spdf_clamp_cg(_dragThumbTop + deltaY * dragScale, minTop, maxTop);
+        CGFloat baseScale = [self precisionViewportBaseDragScale];
+        CGFloat precisionTop = _dragThumbTop + deltaY * baseScale;
+        CGFloat catchUpBlend = [self precisionViewportCatchUpBlendForDeltaY:deltaY
+                                                              distanceToRaw:fabs(rawTop - precisionTop)
+                                                                  timestamp:event.timestamp];
+        _dragThumbTop = spdf_clamp_cg(precisionTop + (rawTop - precisionTop) * catchUpBlend, minTop, maxTop);
 
         _dragLastMouseY = point.y;
         _dragLastTimestamp = event.timestamp;
@@ -2129,8 +2392,6 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _dragOffsetFromVisibleTop = _draggingVisibleRect ? point.y - NSMinY(drawnVisibleRect) : 0.0;
     _dragThumbTop = _draggingVisibleRect ? NSMinY(drawnVisibleRect) : 0.0;
     _dragLastMouseY = point.y;
-    _dragSmoothedScale = [self shouldUsePrecisionViewportDrag] ? [self precisionViewportBaseDragScale] : 1.0;
-    _dragAccelerationBlend = 0.0;
     _dragLastTimestamp = event.timestamp;
     if (!_draggingVisibleRect) [self sendScrollRequestForEvent:event];
 }
@@ -2164,8 +2425,6 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _dragOffsetFromVisibleTop = 0.0;
     _dragThumbTop = 0.0;
     _dragLastMouseY = 0.0;
-    _dragSmoothedScale = 0.0;
-    _dragAccelerationBlend = 0.0;
     _dragLastTimestamp = 0.0;
 }
 
@@ -2266,6 +2525,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSView* _toolbarSpacer;
     NSButton* _toolbarOverflowButton;
     NSMenu* _toolbarOverflowMenu;
+    NSMenu* _recentlyOpenedMenu;
     NSTextField* _statusLabel;
     NSSegmentedControl* _sidebarModeControl;
     NSPanel* _palettePanel;
@@ -2276,12 +2536,24 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSProgressIndicator* _ocrInstallProgress;
     NSTextView* _ocrInstallLog;
     NSTask* _ocrInstallTask;
+    NSPanel* _translationInstallPanel;
+    NSTextField* _translationInstallTitleLabel;
+    NSProgressIndicator* _translationInstallProgress;
+    NSTextView* _translationInstallLog;
+    NSTask* _translationInstallTask;
+    NSPanel* _translationProgressPanel;
+    NSTextField* _translationProgressTitleLabel;
+    NSTextField* _translationProgressDetailLabel;
+    NSProgressIndicator* _translationProgressIndicator;
+    NSButton* _translationProgressCancelButton;
+    NSTask* _translationTask;
     NSPanel* _commentPanel;
     NSTextField* _commentLabel;
     NSMutableArray<NSDictionary*>* _paletteResults;
     NSInteger _paletteMode;
     NSUInteger _paletteSearchGeneration;
     id _paletteEventMonitor;
+    id _presentationEventMonitor;
     NSOperationQueue* _renderQueue;
     NSOperationQueue* _preloadQueue;
     NSOperationQueue* _findQueue;
@@ -2296,6 +2568,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSMutableArray<SPDFRenderedPage*>* _renderedPages;
     NSMutableArray<SPDFDocumentTab*>* _tabs;
     NSMutableArray<NSDictionary*>* _favorites;
+    NSMutableArray<NSString*>* _recentlyOpenedPaths;
+    NSMutableArray<NSString*>* _closedDocumentPaths;
     NSDictionary* _paletteFavoritePendingDelete;
     NSMutableDictionary<NSNumber*, NSArray<NSValue*>*>* _findHighlights;
     NSMutableArray<NSDictionary*>* _findMatches;
@@ -2313,6 +2587,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSPoint _contextPagePoint;
     NSInteger _contextCommentIndex;
     NSString* _commentAuthor;
+    NSString* _translationSourceLanguage;
+    NSString* _translationTargetLanguage;
     CGFloat _zoom;
     CGFloat _rememberedCustomZoom;
     SPDFFitMode _fitMode;
@@ -2337,6 +2613,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL _ocrInstallRunning;
     BOOL _translationRunning;
     BOOL _translationInstallRunning;
+    BOOL _translationCancelRequested;
+    BOOL _tabStripCapturingMouse;
     NSArray<NSDictionary*>* _pendingTranslationItems;
     BOOL _restoringSidebarLayout;
     BOOL _allowSidebarWidthPersistence;
@@ -2370,10 +2648,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _sidebarWidth = kDefaultSidebarWidth;
     _minimapWidth = kDefaultMinimapWidth;
     _findRegexMultiline = YES;
+    _translationSourceLanguage = @"zh";
+    _translationTargetLanguage = @"en";
     _sidebarItems = [NSMutableArray array];
     _renderedPages = [NSMutableArray array];
     _tabs = [NSMutableArray array];
     _favorites = [NSMutableArray array];
+    _recentlyOpenedPaths = [NSMutableArray array];
+    _closedDocumentPaths = [NSMutableArray array];
     _paletteFavoritePendingDelete = nil;
     _findHighlights = [NSMutableDictionary dictionary];
     _findMatches = [NSMutableArray array];
@@ -2433,6 +2715,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 - (void)applicationWillTerminate:(NSNotification*)notification {
     (void)notification;
+    [self removePresentationEventMonitor];
+    [_translationInstallTask terminate];
+    [_translationTask terminate];
     [_renderQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
     [_preloadQueue cancelAllOperations];
@@ -2492,7 +2777,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     (void)notification;
     dispatch_async(dispatch_get_main_queue(), ^{
       [self updateTabStripFrame];
-      if (self->_presentationMode && self->_doc) [self renderDocumentAndScrollToPage:self->_pageIndex alignTop:YES];
+      if (self->_presentationMode && self->_doc) {
+          [self renderDocumentAndScrollToPage:self->_pageIndex alignTop:YES];
+          [self->_window makeFirstResponder:self->_pageView];
+      }
     });
 }
 
@@ -2542,6 +2830,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         NSNumber* minimapWidth = settings[@"minimapWidth"];
         NSDictionary* windowSize = settings[@"windowSize"];
         NSString* commentAuthor = settings[@"commentAuthor"];
+        NSString* translateSource = settings[@"translateSourceLanguage"];
+        NSString* translateTarget = settings[@"translateTargetLanguage"];
+        NSArray* recentlyOpened = settings[@"recentlyOpened"];
         if (fit) _fitMode = (SPDFFitMode)MAX(0, MIN(4, fit.integerValue));
         if (view) _viewMode = (SPDFViewMode)MAX(0, MIN(1, view.integerValue));
         if (sidebar) _sidebarPreferredVisible = sidebar.boolValue;
@@ -2554,6 +2845,26 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                 NSScreen.mainScreen);
         }
         if ([commentAuthor isKindOfClass:NSString.class]) _commentAuthor = [commentAuthor copy];
+        if ([translateSource isKindOfClass:NSString.class] && translateSource.length)
+            _translationSourceLanguage = [self trimmedLanguageCode:translateSource];
+        if ([translateTarget isKindOfClass:NSString.class] && translateTarget.length)
+            _translationTargetLanguage = [self trimmedLanguageCode:translateTarget];
+        if ([recentlyOpened isKindOfClass:NSArray.class]) {
+            for (NSString* path in recentlyOpened) {
+                if (![path isKindOfClass:NSString.class] || path.length == 0) continue;
+                NSString* standardized = path.stringByStandardizingPath;
+                BOOL duplicate = NO;
+                for (NSString* existingPath in _recentlyOpenedPaths) {
+                    if ([existingPath.stringByStandardizingPath isEqualToString:standardized]) {
+                        duplicate = YES;
+                        break;
+                    }
+                }
+                if (duplicate) continue;
+                [_recentlyOpenedPaths addObject:path];
+                if (_recentlyOpenedPaths.count >= kRecentDocumentLimit) break;
+            }
+        }
     }
 
     NSArray* favorites = [self jsonObjectFromFile:@"favorites.json"];
@@ -2626,10 +2937,54 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         @"sidebarWidth" : @(sidebarWidth),
         @"minimapWidth" : @(_minimapWidth),
         @"windowSize" : @{@"width" : @(windowContentSize.width), @"height" : @(windowContentSize.height)},
-        @"commentAuthor" : _commentAuthor ?: @""
+        @"commentAuthor" : _commentAuthor ?: @"",
+        @"translateSourceLanguage" : _translationSourceLanguage ?: @"zh",
+        @"translateTargetLanguage" : _translationTargetLanguage ?: @"en",
+        @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
     }
                    toFile:@"settings.json"];
     [self writeJSONObject:_favorites toFile:@"favorites.json"];
+}
+
+- (void)rebuildRecentlyOpenedMenu {
+    if (!_recentlyOpenedMenu) return;
+    [_recentlyOpenedMenu removeAllItems];
+    if (_recentlyOpenedPaths.count == 0) {
+        NSMenuItem* empty = [[NSMenuItem alloc] initWithTitle:@"No Recent Documents" action:nil keyEquivalent:@""];
+        empty.enabled = NO;
+        [_recentlyOpenedMenu addItem:empty];
+        return;
+    }
+    NSUInteger count = MIN((NSUInteger)kRecentDocumentLimit, _recentlyOpenedPaths.count);
+    for (NSUInteger i = 0; i < count; i++) {
+        NSString* path = _recentlyOpenedPaths[i];
+        NSString* title =
+            [NSString stringWithFormat:@"%lu) %@", (unsigned long)(i + 1), spdf_display_name_for_path(path)];
+        NSMenuItem* item =
+            [[NSMenuItem alloc] initWithTitle:title action:@selector(openRecentDocument:) keyEquivalent:@""];
+        item.representedObject = path;
+        item.toolTip = path;
+        [_recentlyOpenedMenu addItem:item];
+    }
+}
+
+- (void)rememberRecentlyOpenedPath:(NSString*)path {
+    if (path.length == 0) return;
+    NSString* standardized = path.stringByStandardizingPath;
+    for (NSInteger i = (NSInteger)_recentlyOpenedPaths.count - 1; i >= 0; --i) {
+        NSString* existingPath = _recentlyOpenedPaths[(NSUInteger)i];
+        if ([existingPath.stringByStandardizingPath isEqualToString:standardized])
+            [_recentlyOpenedPaths removeObjectAtIndex:(NSUInteger)i];
+    }
+    [_recentlyOpenedPaths insertObject:[path copy] atIndex:0];
+    while (_recentlyOpenedPaths.count > kRecentDocumentLimit) [_recentlyOpenedPaths removeLastObject];
+    [self rebuildRecentlyOpenedMenu];
+}
+
+- (void)rememberClosedDocumentPath:(NSString*)path {
+    if (path.length == 0) return;
+    [_closedDocumentPaths addObject:[path copy]];
+    while (_closedDocumentPaths.count > kRecentDocumentLimit) [_closedDocumentPaths removeObjectAtIndex:0];
 }
 
 - (void)buildMenu {
@@ -2647,6 +3002,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [mainMenu addItem:fileItem];
     NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
     [fileMenu addItemWithTitle:@"Open..." action:@selector(openDocument:) keyEquivalent:@"o"];
+    NSMenuItem* reopenClosed = [fileMenu addItemWithTitle:@"Reopen Last Closed"
+                                                   action:@selector(reopenLastClosedDocument:)
+                                            keyEquivalent:@"t"];
+    reopenClosed.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    NSMenuItem* recentItem = [[NSMenuItem alloc] initWithTitle:@"Recently Opened" action:nil keyEquivalent:@""];
+    _recentlyOpenedMenu = [[NSMenu alloc] initWithTitle:@"Recently Opened"];
+    recentItem.submenu = _recentlyOpenedMenu;
+    [fileMenu addItem:recentItem];
+    [self rebuildRecentlyOpenedMenu];
+    [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Open in Adobe Acrobat Reader"
                         action:@selector(openInExternalReader:)
                  keyEquivalent:@""];
@@ -2655,7 +3020,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Print..." action:@selector(printDocument:) keyEquivalent:@"p"];
     [fileMenu addItemWithTitle:@"OCR Document..." action:@selector(ocrDocument:) keyEquivalent:@""];
-    [fileMenu addItemWithTitle:@"Translate Document..." action:@selector(translateDocument:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Translate..." action:@selector(translateDocument:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@""];
     fileItem.submenu = fileMenu;
 
@@ -2815,7 +3180,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                  state:NSControlStateValueOff
                                enabled:hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"]];
     if ([hiddenViews containsObject:_translateButton])
-        [self addOverflowItemWithTitle:@"Translate Document..."
+        [self addOverflowItemWithTitle:@"Translate..."
                                 action:@selector(translateDocument:)
                                   menu:menu
                                  state:NSControlStateValueOff
@@ -2938,17 +3303,20 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSRect frame =
         NSMakeRect(floor(NSMidX(visibleFrame) - contentSize.width / 2.0),
                    floor(NSMidY(visibleFrame) - contentSize.height / 2.0), contentSize.width, contentSize.height);
-    _window = [[NSWindow alloc] initWithContentRect:frame
-                                          styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                                                    NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
-                                            backing:NSBackingStoreBuffered
-                                              defer:NO];
+    _window = [[SPDFWindow alloc] initWithContentRect:frame
+                                            styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                                      NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
+                                              backing:NSBackingStoreBuffered
+                                                defer:NO];
+    ((SPDFWindow*)_window).reader = self;
     _window.delegate = self;
     _window.title = @"SumatraPDF";
     _window.minSize = NSMakeSize(kMinWindowWidth, kMinWindowHeight);
     _window.titleVisibility = NSWindowTitleHidden;
     _window.titlebarAppearsTransparent = YES;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
+    _window.movable = NO;
+    _window.movableByWindowBackground = NO;
 
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
     content.reader = self;
@@ -3034,8 +3402,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                                  forOrientation:NSLayoutConstraintOrientationHorizontal];
     _ocrButton = [self buttonWithTitle:@"OCR" action:@selector(ocrDocument:)];
     _ocrButton.toolTip = @"Run OCR on this PDF";
-    _translateButton = [self buttonWithTitle:@"Translate" action:@selector(translateDocument:)];
+    _translateButton = [self buttonWithTitle:@"" action:@selector(translateDocument:)];
+    _translateButton.image = spdf_translate_toolbar_image();
+    _translateButton.imagePosition = NSImageOnly;
     _translateButton.toolTip = @"Translate selected text or the document";
+    _translateButton.accessibilityLabel = @"Translate Document";
+    [_translateButton.widthAnchor constraintEqualToConstant:32].active = YES;
+    [_translateButton setContentHuggingPriority:NSLayoutPriorityRequired
+                                 forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [_translateButton setContentCompressionResistancePriority:NSLayoutPriorityRequired
+                                               forOrientation:NSLayoutConstraintOrientationHorizontal];
     _findPrevButton = [self buttonWithTitle:@"<" action:@selector(findPrevious:)];
     _findNextButton = [self buttonWithTitle:@">" action:@selector(findNext:)];
     _minimapToggleButton =
@@ -3694,9 +4070,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
 }
 
-- (void)scrollDocumentClipViewToOrigin:(NSPoint)origin notify:(BOOL)notify {
+- (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify {
     NSClipView* clipView = _pageScrollView.contentView;
-    origin = [self clampedDocumentScrollOrigin:origin];
+    origin = pageIndex >= 0 ? [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex]
+                            : [self clampedDocumentScrollOrigin:origin];
     _updatingFromScroll = YES;
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
       context.duration = 0.0;
@@ -3710,6 +4087,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [self documentScrollPositionChanged];
         [self updateMinimap];
     }
+}
+
+- (void)scrollDocumentClipViewToOrigin:(NSPoint)origin notify:(BOOL)notify {
+    [self scrollDocumentClipViewToOrigin:origin pageIndexHint:-1 notify:notify];
 }
 
 - (void)scrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop {
@@ -3962,6 +4343,30 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
 }
 
+- (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction {
+    if (!_doc || _renderedPages.count == 0) return;
+    yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
+
+    NSClipView* clipView = _pageScrollView.contentView;
+    CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+    NSPoint origin = clipView.bounds.origin;
+    origin.y = yFraction * maxY;
+
+    NSInteger pageIndex = [_pageView
+        pageIndexForVisibleRect:NSMakeRect(origin.x, origin.y, NSWidth(clipView.bounds), NSHeight(clipView.bounds))];
+    pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
+    if (_viewMode == SPDFViewModeSingle && pageIndex != _pageIndex) {
+        _pageIndex = pageIndex;
+        _pageView.currentPageIndex = _pageIndex;
+        [self renderPageIfNeededAtIndex:_pageIndex];
+        [self updateControls];
+        [self selectCurrentSidebarRow];
+    }
+
+    [self scrollDocumentClipViewToOrigin:origin pageIndexHint:pageIndex notify:YES];
+    [self rememberActiveTabState];
+}
+
 - (void)minimapViewDidRequestScrollToPage:(NSInteger)pageIndex yFractionInPage:(CGFloat)yFraction {
     [self minimapViewDidRequestCenterOnPage:pageIndex xFractionInPage:0.5 yFractionInPage:yFraction];
 }
@@ -4099,6 +4504,39 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     }
     _tabStrip.reservedLeadingInset = leadingInset;
     [_tabStrip setNeedsDisplay:YES];
+}
+
+- (BOOL)handleTabStripMouseEvent:(NSEvent*)event {
+    if (!_tabStrip || !_window || _presentationMode) return NO;
+
+    NSEventType type = event.type;
+    if (type == NSEventTypeLeftMouseDown) {
+        if (_tabStripHeightConstraint.constant <= 0.0) return NO;
+        NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
+        if (!NSPointInRect(point, _tabStrip.bounds)) return NO;
+
+        _tabStripCapturingMouse = [_tabStrip containsTabOrControlAtPoint:point];
+        if (_tabStripCapturingMouse) _window.movable = NO;
+        [_tabStrip mouseDown:event];
+        if (_tabStripCapturingMouse) {
+            _tabStripCapturingMouse = NO;
+            _window.movable = NO;
+        }
+        return YES;
+    }
+
+    if (!_tabStripCapturingMouse) return NO;
+    if (type == NSEventTypeLeftMouseDragged) {
+        [_tabStrip mouseDragged:event];
+        return YES;
+    }
+    if (type == NSEventTypeLeftMouseUp) {
+        _tabStripCapturingMouse = NO;
+        _window.movable = NO;
+        [_tabStrip mouseUp:event];
+        return YES;
+    }
+    return NO;
 }
 
 - (void)preloadInactiveTabs {
@@ -4541,6 +4979,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [self closeTabAtIndex:_selectedTabIndex];
         return;
     }
+    NSString* closedPath = [_path copy];
+    [self rememberClosedDocumentPath:closedPath];
     spdf_free_outline(&_outline);
     spdf_free_comments(&_comments);
     spdf_close(_doc);
@@ -4572,6 +5012,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSInteger existing = [self indexOfTabForPath:path];
     if (existing >= 0) {
         [self selectTabAtIndex:existing];
+        if (_doc && _path.length > 0) {
+            [self rememberRecentlyOpenedPath:_path];
+            [self savePersistentState];
+        }
         return;
     }
 
@@ -4590,6 +5034,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [_tabs addObject:tab];
     _selectedTabIndex = (NSInteger)_tabs.count - 1;
     [self loadSelectedTab];
+    if (_doc && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
     [self savePersistentState];
 }
 
@@ -4605,6 +5050,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (void)closeTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
     BOOL closingActive = index == _selectedTabIndex;
+    NSString* closedPath = [_tabs[(NSUInteger)index].path copy];
+    [self rememberClosedDocumentPath:closedPath];
     [_tabs removeObjectAtIndex:(NSUInteger)index];
     if (!closingActive && index < _selectedTabIndex) _selectedTabIndex--;
 
@@ -4645,8 +5092,43 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     }
 }
 
+- (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex {
+    NSInteger count = (NSInteger)_tabs.count;
+    if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count || fromIndex == toIndex) return;
+
+    SPDFDocumentTab* tab = _tabs[(NSUInteger)fromIndex];
+    [_tabs removeObjectAtIndex:(NSUInteger)fromIndex];
+    [_tabs insertObject:tab atIndex:(NSUInteger)toIndex];
+
+    if (_selectedTabIndex == fromIndex) {
+        _selectedTabIndex = toIndex;
+    } else if (fromIndex < _selectedTabIndex && _selectedTabIndex <= toIndex) {
+        _selectedTabIndex--;
+    } else if (toIndex <= _selectedTabIndex && _selectedTabIndex < fromIndex) {
+        _selectedTabIndex++;
+    }
+
+    [self updateTabStrip];
+    [self savePersistentState];
+}
+
 - (void)newTabRequested:(id)sender {
     [self openDocument:sender];
+}
+
+- (void)openRecentDocument:(id)sender {
+    if (![sender isKindOfClass:NSMenuItem.class]) return;
+    NSString* path = ((NSMenuItem*)sender).representedObject;
+    if (![path isKindOfClass:NSString.class] || path.length == 0) return;
+    [self openPath:path];
+}
+
+- (void)reopenLastClosedDocument:(id)sender {
+    (void)sender;
+    NSString* path = _closedDocumentPaths.lastObject;
+    if (!path.length) return;
+    [_closedDocumentPaths removeLastObject];
+    [self openPath:path];
 }
 
 - (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard {
@@ -5458,6 +5940,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return NO;
 }
 
+- (BOOL)handlePresentationEvent:(NSEvent*)event {
+    if (!_presentationMode || !_doc || !event) return NO;
+    if (event.type == NSEventTypeKeyDown) return [self documentArrowKeyDown:event];
+    if (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown)
+        return [self documentViewHandlePresentationMouseDown:event];
+    return NO;
+}
+
 - (BOOL)documentViewInPresentationMode {
     return _presentationMode;
 }
@@ -5493,36 +5983,64 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_%@.pdf", stem, suffix]];
 }
 
+- (void)populateTranslationLanguagePopup:(NSPopUpButton*)popup selectedCode:(NSString*)selectedCode {
+    [popup removeAllItems];
+    NSString* selected = [self trimmedLanguageCode:selectedCode];
+    BOOL selectedExists = NO;
+    for (NSDictionary<NSString*, NSString*>* language in spdf_translation_languages()) {
+        NSString* code = language[@"code"] ?: @"";
+        NSString* name = language[@"name"] ?: code;
+        [popup addItemWithTitle:[NSString stringWithFormat:@"%@ (%@)", name, code]];
+        popup.lastItem.representedObject = code;
+        if ([code isEqualToString:selected]) selectedExists = YES;
+    }
+    if (selected.length && !selectedExists) {
+        [popup addItemWithTitle:[NSString stringWithFormat:@"Custom (%@)", selected]];
+        popup.lastItem.representedObject = selected;
+    }
+    NSInteger index = 0;
+    for (NSInteger i = 0; i < popup.numberOfItems; ++i) {
+        NSString* code = popup.itemArray[(NSUInteger)i].representedObject;
+        if ([code isKindOfClass:NSString.class] && [code isEqualToString:selected]) {
+            index = i;
+            break;
+        }
+    }
+    [popup selectItemAtIndex:index];
+}
+
+- (NSString*)selectedTranslationLanguageCodeFromPopup:(NSPopUpButton*)popup fallback:(NSString*)fallback {
+    NSString* code = popup.selectedItem.representedObject;
+    if (![code isKindOfClass:NSString.class] || !code.length) code = fallback;
+    return [self trimmedLanguageCode:code];
+}
+
 - (NSDictionary*)promptForTranslationOptionsUsingSelection:(BOOL)usingSelection {
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = usingSelection ? @"Translate Selection" : @"Translate Document";
-    alert.informativeText = @"Offline Argos Translate will create a translated PDF next to the original document.";
+    alert.informativeText =
+        @"Choose an offline Argos language package. Missing packages can be downloaded automatically.";
     [alert addButtonWithTitle:@"Translate"];
     [alert addButtonWithTitle:@"Cancel"];
 
-    NSView* accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 74)];
+    NSView* accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 390, 78)];
     NSTextField* sourceLabel = [NSTextField labelWithString:@"From"];
-    sourceLabel.frame = NSMakeRect(0, 45, 72, 22);
-    NSTextField* sourceField = [[NSTextField alloc] initWithFrame:NSMakeRect(84, 42, 96, 24)];
-    sourceField.placeholderString = @"zh";
-    sourceField.stringValue =
-        [NSUserDefaults.standardUserDefaults stringForKey:@"SPDFTranslateSourceLanguage"] ?: @"zh";
+    sourceLabel.frame = NSMakeRect(0, 48, 72, 22);
+    NSPopUpButton* sourcePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(84, 44, 250, 26) pullsDown:NO];
+    [self populateTranslationLanguagePopup:sourcePopup selectedCode:_translationSourceLanguage ?: @"zh"];
     NSTextField* targetLabel = [NSTextField labelWithString:@"To"];
-    targetLabel.frame = NSMakeRect(0, 12, 72, 22);
-    NSTextField* targetField = [[NSTextField alloc] initWithFrame:NSMakeRect(84, 9, 96, 24)];
-    targetField.placeholderString = @"en";
-    targetField.stringValue =
-        [NSUserDefaults.standardUserDefaults stringForKey:@"SPDFTranslateTargetLanguage"] ?: @"en";
-    for (NSView* view in @[ sourceLabel, sourceField, targetLabel, targetField ]) [accessory addSubview:view];
+    targetLabel.frame = NSMakeRect(0, 14, 72, 22);
+    NSPopUpButton* targetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(84, 10, 250, 26) pullsDown:NO];
+    [self populateTranslationLanguagePopup:targetPopup selectedCode:_translationTargetLanguage ?: @"en"];
+    for (NSView* view in @[ sourceLabel, sourcePopup, targetLabel, targetPopup ]) [accessory addSubview:view];
     alert.accessoryView = accessory;
 
     if ([alert runModal] != NSAlertFirstButtonReturn) return nil;
 
-    NSString* source = [self trimmedLanguageCode:sourceField.stringValue];
-    NSString* target = [self trimmedLanguageCode:targetField.stringValue];
+    NSString* source = [self selectedTranslationLanguageCodeFromPopup:sourcePopup fallback:@"zh"];
+    NSString* target = [self selectedTranslationLanguageCodeFromPopup:targetPopup fallback:@"en"];
     if (!source.length || !target.length) {
-        [self showError:@"Translation needs language codes"
-                 detail:@"Enter source and target language codes for Argos."];
+        [self showError:@"Translation needs language codes" detail:@"Choose source and target languages for Argos."];
         return nil;
     }
     if ([source isEqualToString:target]) {
@@ -5530,8 +6048,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         return nil;
     }
 
-    [NSUserDefaults.standardUserDefaults setObject:source forKey:@"SPDFTranslateSourceLanguage"];
-    [NSUserDefaults.standardUserDefaults setObject:target forKey:@"SPDFTranslateTargetLanguage"];
+    _translationSourceLanguage = source;
+    _translationTargetLanguage = target;
+    [self savePersistentState];
     return @{@"source" : source, @"target" : target};
 }
 
@@ -5645,7 +6164,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         lines[i].bounds.x1 = (float)NSMaxX(rect);
         lines[i].bounds.y1 = (float)NSMaxY(rect);
         lines[i].font_size = [item[@"font"] floatValue];
-        lines[i].opaque_background = SPDF_TRANSLATION_BACKGROUND_AUTO;
+        lines[i].opaque_background = SPDF_TRANSLATION_BACKGROUND_OPAQUE;
         lines[i].text = mappedText[i].UTF8String;
     }
 
@@ -6679,6 +7198,28 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return (_window.styleMask & NSWindowStyleMaskFullScreen) != 0;
 }
 
+- (void)installPresentationEventMonitor {
+    if (_presentationEventMonitor) return;
+    __weak SumatraMacDelegate* weakSelf = self;
+    _presentationEventMonitor = [NSEvent
+        addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskKeyDown
+                                     handler:^NSEvent*(NSEvent* event) {
+                                       SumatraMacDelegate* strongSelf = weakSelf;
+                                       if (!strongSelf || !strongSelf->_presentationMode || !strongSelf->_doc)
+                                           return event;
+
+                                       if ([strongSelf handlePresentationEvent:event]) return nil;
+
+                                       return event;
+                                     }];
+}
+
+- (void)removePresentationEventMonitor {
+    if (!_presentationEventMonitor) return;
+    [NSEvent removeMonitor:_presentationEventMonitor];
+    _presentationEventMonitor = nil;
+}
+
 - (void)applyPresentationChrome {
     BOOL presentation = _presentationMode;
     _tabStrip.hidden = presentation;
@@ -6719,6 +7260,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self applyPresentationChrome];
     [self rebuildSidebar];
     [self setMinimapActuallyVisible:NO];
+    [self installPresentationEventMonitor];
     [_window makeFirstResponder:_pageView];
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
     if (_presentationEnteredFullScreen) [_window toggleFullScreen:sender];
@@ -6730,6 +7272,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL shouldExitFullScreen = exitFullScreen && _presentationEnteredFullScreen && [self windowIsFullScreen];
     _presentationMode = NO;
     _presentationEnteredFullScreen = NO;
+    [self removePresentationEventMonitor];
     _sidebarPreferredVisible = _presentationPreviousSidebarPreferredVisible;
     _minimapPreferredVisible = _presentationPreviousMinimapPreferredVisible;
     _viewMode = _presentationPreviousViewMode;
@@ -6800,18 +7343,281 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
            @"export "
            @"PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/"
            @"bin:/usr/sbin:/sbin:$PATH\"\n"
-           @"if command -v argos-translate >/dev/null 2>&1; then exit 0; fi\n"
+           @"echo 'Checking for Argos Translate...'\n"
+           @"if command -v argos-translate >/dev/null 2>&1 && command -v argospm >/dev/null 2>&1; then "
+           @"echo 'Argos Translate is already installed.'; exit 0; fi\n"
            @"if command -v pipx >/dev/null 2>&1; then PIPX=$(command -v pipx); "
-           @"elif command -v brew >/dev/null 2>&1; then brew install pipx; "
+           @"elif command -v brew >/dev/null 2>&1; then echo 'Installing pipx with Homebrew...'; brew install pipx; "
            @"PIPX=$(command -v pipx); "
            @"else PIPX=\"\"; fi\n"
-           @"if [ -n \"$PIPX\" ]; then \"$PIPX\" install --include-deps "
-           @"argostranslate || "
-           @"\"$PIPX\" upgrade argostranslate; "
-           @"elif command -v python3 >/dev/null 2>&1; then python3 -m pip "
-           @"install --user argostranslate; "
+           @"if [ -n \"$PIPX\" ]; then echo 'Installing or upgrading argostranslate with pipx...'; "
+           @"\"$PIPX\" install --include-deps argostranslate || \"$PIPX\" upgrade argostranslate; "
+           @"elif command -v python3 >/dev/null 2>&1; then echo 'Installing argostranslate with pip...'; python3 -m "
+           @"pip "
+           @"install --user --upgrade argostranslate; "
            @"else echo 'Python 3, pipx, or Homebrew is required to install Argos "
-           @"Translate.'; exit 1; fi\n";
+           @"Translate.'; exit 1; fi\n"
+           @"command -v argos-translate >/dev/null 2>&1\n"
+           @"command -v argospm >/dev/null 2>&1\n"
+           @"echo 'Argos Translate installed.'\n";
+}
+
+- (void)showTranslationProgressWithTitle:(NSString*)title totalUnits:(double)totalUnits {
+    if (!_translationProgressPanel) {
+        _translationProgressPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 460, 156)
+                                                               styleMask:NSWindowStyleMaskTitled
+                                                                 backing:NSBackingStoreBuffered
+                                                                   defer:NO];
+        _translationProgressPanel.releasedWhenClosed = NO;
+
+        NSView* content = [[NSView alloc] initWithFrame:_translationProgressPanel.contentView.bounds];
+        content.translatesAutoresizingMaskIntoConstraints = NO;
+        _translationProgressPanel.contentView = content;
+
+        _translationProgressTitleLabel = [NSTextField labelWithString:@""];
+        _translationProgressTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        _translationProgressTitleLabel.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+        [content addSubview:_translationProgressTitleLabel];
+
+        _translationProgressDetailLabel = [NSTextField labelWithString:@""];
+        _translationProgressDetailLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        _translationProgressDetailLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        [content addSubview:_translationProgressDetailLabel];
+
+        _translationProgressIndicator = [[NSProgressIndicator alloc] init];
+        _translationProgressIndicator.translatesAutoresizingMaskIntoConstraints = NO;
+        _translationProgressIndicator.style = NSProgressIndicatorStyleBar;
+        _translationProgressIndicator.indeterminate = NO;
+        _translationProgressIndicator.minValue = 0.0;
+        [content addSubview:_translationProgressIndicator];
+
+        _translationProgressCancelButton =
+            [NSButton buttonWithTitle:@"Cancel" target:self action:@selector(cancelTranslation:)];
+        _translationProgressCancelButton.translatesAutoresizingMaskIntoConstraints = NO;
+        [content addSubview:_translationProgressCancelButton];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [_translationProgressTitleLabel.topAnchor constraintEqualToAnchor:content.topAnchor constant:16],
+            [_translationProgressTitleLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+            [_translationProgressTitleLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+            [_translationProgressDetailLabel.topAnchor
+                constraintEqualToAnchor:_translationProgressTitleLabel.bottomAnchor
+                               constant:8],
+            [_translationProgressDetailLabel.leadingAnchor
+                constraintEqualToAnchor:_translationProgressTitleLabel.leadingAnchor],
+            [_translationProgressDetailLabel.trailingAnchor
+                constraintEqualToAnchor:_translationProgressTitleLabel.trailingAnchor],
+            [_translationProgressIndicator.topAnchor
+                constraintEqualToAnchor:_translationProgressDetailLabel.bottomAnchor
+                               constant:14],
+            [_translationProgressIndicator.leadingAnchor
+                constraintEqualToAnchor:_translationProgressTitleLabel.leadingAnchor],
+            [_translationProgressIndicator.trailingAnchor
+                constraintEqualToAnchor:_translationProgressTitleLabel.trailingAnchor],
+            [_translationProgressCancelButton.topAnchor
+                constraintEqualToAnchor:_translationProgressIndicator.bottomAnchor
+                               constant:16],
+            [_translationProgressCancelButton.trailingAnchor
+                constraintEqualToAnchor:_translationProgressTitleLabel.trailingAnchor]
+        ]];
+    }
+
+    _translationProgressPanel.title = @"Translating";
+    _translationProgressTitleLabel.stringValue = title.length ? title : @"Translating with Argos";
+    _translationProgressDetailLabel.stringValue = @"Preparing text...";
+    _translationProgressIndicator.indeterminate = totalUnits <= 0.0;
+    _translationProgressIndicator.minValue = 0.0;
+    _translationProgressIndicator.maxValue = MAX(1.0, totalUnits);
+    _translationProgressIndicator.doubleValue = 0.0;
+    _translationProgressCancelButton.enabled = YES;
+    if (_translationProgressIndicator.indeterminate)
+        [_translationProgressIndicator startAnimation:nil];
+    else
+        [_translationProgressIndicator stopAnimation:nil];
+    [_translationProgressPanel center];
+    [_translationProgressPanel makeKeyAndOrderFront:nil];
+}
+
+- (void)updateTranslationProgress:(double)value detail:(NSString*)detail {
+    if (!_translationProgressPanel) return;
+    if (!_translationProgressIndicator.indeterminate)
+        _translationProgressIndicator.doubleValue =
+            spdf_clamp_cg(value, _translationProgressIndicator.minValue, _translationProgressIndicator.maxValue);
+    if (detail.length) {
+        _translationProgressDetailLabel.stringValue = detail;
+        _statusLabel.stringValue = detail;
+    }
+}
+
+- (void)finishTranslationProgressWithDetail:(NSString*)detail keepVisible:(BOOL)keepVisible {
+    @synchronized(self) {
+        _translationTask = nil;
+    }
+    [_translationProgressIndicator stopAnimation:nil];
+    _translationProgressCancelButton.enabled = NO;
+    if (detail.length) _translationProgressDetailLabel.stringValue = detail;
+    if (!keepVisible) [_translationProgressPanel orderOut:nil];
+}
+
+- (void)cancelTranslation:(id)sender {
+    (void)sender;
+    _translationCancelRequested = YES;
+    _translationProgressCancelButton.enabled = NO;
+    _translationProgressDetailLabel.stringValue = @"Canceling translation...";
+    _statusLabel.stringValue = @"Canceling translation...";
+    @synchronized(self) {
+        [_translationTask terminate];
+    }
+}
+
+- (void)appendTranslationInstallLog:(NSString*)text {
+    if (!_translationInstallLog || text.length == 0) return;
+    NSTextStorage* storage = _translationInstallLog.textStorage;
+    NSDictionary* attrs = @{
+        NSForegroundColorAttributeName : NSColor.labelColor,
+        NSFontAttributeName : _translationInstallLog.font
+            ?: [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular]
+    };
+    [storage appendAttributedString:[[NSAttributedString alloc] initWithString:text attributes:attrs]];
+    [_translationInstallLog scrollRangeToVisible:NSMakeRange(storage.length, 0)];
+}
+
+- (void)showTranslationInstallPanelWithTitle:(NSString*)title heading:(NSString*)heading {
+    if (!_translationInstallPanel) {
+        _translationInstallPanel =
+            [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 640, 360)
+                                       styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                                         backing:NSBackingStoreBuffered
+                                           defer:NO];
+        _translationInstallPanel.releasedWhenClosed = NO;
+
+        NSView* content = [[NSView alloc] initWithFrame:_translationInstallPanel.contentView.bounds];
+        content.translatesAutoresizingMaskIntoConstraints = NO;
+        _translationInstallPanel.contentView = content;
+
+        _translationInstallTitleLabel = [NSTextField labelWithString:@""];
+        _translationInstallTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        _translationInstallTitleLabel.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+        [content addSubview:_translationInstallTitleLabel];
+
+        _translationInstallProgress = [[NSProgressIndicator alloc] init];
+        _translationInstallProgress.translatesAutoresizingMaskIntoConstraints = NO;
+        _translationInstallProgress.indeterminate = YES;
+        _translationInstallProgress.style = NSProgressIndicatorStyleBar;
+        [content addSubview:_translationInstallProgress];
+
+        NSScrollView* scroll = [[NSScrollView alloc] init];
+        scroll.translatesAutoresizingMaskIntoConstraints = NO;
+        scroll.hasVerticalScroller = YES;
+        [content addSubview:scroll];
+
+        _translationInstallLog = [[NSTextView alloc] init];
+        _translationInstallLog.editable = NO;
+        _translationInstallLog.selectable = YES;
+        _translationInstallLog.font = [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
+        _translationInstallLog.drawsBackground = YES;
+        _translationInstallLog.backgroundColor = NSColor.textBackgroundColor;
+        _translationInstallLog.textColor = NSColor.labelColor;
+        scroll.documentView = _translationInstallLog;
+
+        [NSLayoutConstraint activateConstraints:@[
+            [_translationInstallTitleLabel.topAnchor constraintEqualToAnchor:content.topAnchor constant:14],
+            [_translationInstallTitleLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
+            [_translationInstallTitleLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
+            [_translationInstallProgress.topAnchor constraintEqualToAnchor:_translationInstallTitleLabel.bottomAnchor
+                                                                  constant:10],
+            [_translationInstallProgress.leadingAnchor
+                constraintEqualToAnchor:_translationInstallTitleLabel.leadingAnchor],
+            [_translationInstallProgress.trailingAnchor
+                constraintEqualToAnchor:_translationInstallTitleLabel.trailingAnchor],
+            [scroll.topAnchor constraintEqualToAnchor:_translationInstallProgress.bottomAnchor constant:12],
+            [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
+            [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
+            [scroll.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-14]
+        ]];
+    }
+
+    _translationInstallPanel.title = title.length ? title : @"Installing Translation Support";
+    _translationInstallTitleLabel.stringValue = heading.length ? heading : @"Installing Argos Translate";
+    [_translationInstallPanel center];
+    [_translationInstallPanel makeKeyAndOrderFront:nil];
+    [_translationInstallProgress startAnimation:nil];
+}
+
+- (void)runTranslationInstallTask:(NSTask*)task
+                            title:(NSString*)title
+                          heading:(NSString*)heading
+                       initialLog:(NSString*)initialLog
+                       completion:(void (^)(NSTask* finishedTask, NSString* output))completion {
+    if (_translationInstallRunning) {
+        [_translationInstallPanel makeKeyAndOrderFront:nil];
+        return;
+    }
+
+    _translationInstallRunning = YES;
+    _translateButton.enabled = NO;
+    _statusLabel.stringValue = title.length ? title : @"Installing translation support...";
+    [self showTranslationInstallPanelWithTitle:title heading:heading];
+    _translationInstallLog.string = @"";
+    [self appendTranslationInstallLog:initialLog.length ? initialLog : @"Preparing translation installer...\n"];
+
+    NSPipe* pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    _translationInstallTask = task;
+    __block NSMutableData* outputData = [NSMutableData data];
+    void (^completionCopy)(NSTask*, NSString*) = [completion copy];
+    __weak SumatraMacDelegate* weakSelf = self;
+
+    pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
+      NSData* chunk = handle.availableData;
+      if (chunk.length == 0) {
+          handle.readabilityHandler = nil;
+          return;
+      }
+      @synchronized(outputData) {
+          [outputData appendData:chunk];
+      }
+      NSString* text = [[NSString alloc] initWithData:chunk encoding:NSUTF8StringEncoding] ?: @"";
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [weakSelf appendTranslationInstallLog:text];
+      });
+    };
+
+    task.terminationHandler = ^(NSTask* finishedTask) {
+      pipe.fileHandleForReading.readabilityHandler = nil;
+      NSData* tail = pipe.fileHandleForReading.readDataToEndOfFile;
+      if (tail.length > 0) {
+          @synchronized(outputData) {
+              [outputData appendData:tail];
+          }
+      }
+      NSData* data = nil;
+      @synchronized(outputData) {
+          data = [outputData copy];
+      }
+      NSString* output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+      dispatch_async(dispatch_get_main_queue(), ^{
+        SumatraMacDelegate* strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_translationInstallRunning = NO;
+        strongSelf->_translationInstallTask = nil;
+        [strongSelf->_translationInstallProgress stopAnimation:nil];
+        strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+        if (completionCopy) completionCopy(finishedTask, output);
+      });
+    };
+
+    NSError* launchError = nil;
+    if (![task launchAndReturnError:&launchError]) {
+        _translationInstallRunning = NO;
+        _translationInstallTask = nil;
+        [_translationInstallProgress stopAnimation:nil];
+        _translateButton.enabled = _doc != NULL && !_translationRunning;
+        NSString* detail = launchError.localizedDescription ?: @"Could not start installer.";
+        [self appendTranslationInstallLog:[NSString stringWithFormat:@"\n%@\n", detail]];
+        _statusLabel.stringValue = @"Translation installer could not start.";
+    }
 }
 
 - (void)runArgosPackageInstallFromLanguage:(NSString*)sourceLanguage
@@ -6840,68 +7646,38 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     alert.alertStyle = NSAlertStyleInformational;
     if ([alert runModal] != NSAlertFirstButtonReturn) return;
 
-    _translationInstallRunning = YES;
-    _translateButton.enabled = NO;
-    _statusLabel.stringValue = @"Installing Argos language package...";
-
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:packageTool];
     task.arguments = @[ @"install", packageName ];
-    NSPipe* pipe = [NSPipe pipe];
-    task.standardOutput = pipe;
-    task.standardError = pipe;
-    __block NSMutableData* outputData = [NSMutableData data];
-    pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
-      NSData* chunk = handle.availableData;
-      if (chunk.length > 0) {
-          @synchronized(outputData) {
-              [outputData appendData:chunk];
-          }
-      } else {
-          handle.readabilityHandler = nil;
-      }
-    };
 
     __weak SumatraMacDelegate* weakSelf = self;
-    task.terminationHandler = ^(NSTask* finishedTask) {
-      pipe.fileHandleForReading.readabilityHandler = nil;
-      NSData* tail = pipe.fileHandleForReading.readDataToEndOfFile;
-      if (tail.length > 0) {
-          @synchronized(outputData) {
-              [outputData appendData:tail];
-          }
-      }
-      NSData* data = nil;
-      @synchronized(outputData) {
-          data = [outputData copy];
-      }
-      NSString* output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
-      dispatch_async(dispatch_get_main_queue(), ^{
-        SumatraMacDelegate* strongSelf = weakSelf;
-        if (!strongSelf) return;
-        strongSelf->_translationInstallRunning = NO;
-        strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationRunning;
-        if (finishedTask.terminationStatus == 0) {
-            [strongSelf runArgosTranslationWithTool:[strongSelf argosToolPath]
-                                         sourceText:sourceText
-                                     sourceLanguage:sourceLanguage
-                                     targetLanguage:targetLanguage
-                                         outputPath:outputPath
-                                   offeredInstaller:YES];
-        } else {
-            NSString* detail = output.length > 1200 ? [output substringToIndex:1200] : output;
-            [strongSelf showError:@"Could not install Argos language package" detail:detail ?: @""];
-            strongSelf->_statusLabel.stringValue = @"Translation package installation failed.";
-        }
-      });
-    };
-
-    NSError* launchError = nil;
-    if (![task launchAndReturnError:&launchError]) {
-        _translationInstallRunning = NO;
-        _translateButton.enabled = _doc != NULL && !_translationRunning;
-        [self showError:@"Could not start argospm" detail:launchError.localizedDescription ?: @""];
-    }
+    [self runTranslationInstallTask:task
+                              title:@"Installing Translation Package"
+                            heading:[NSString stringWithFormat:@"Installing %@", packageName]
+                         initialLog:[NSString stringWithFormat:@"Running argospm install %@...\n", packageName]
+                         completion:^(NSTask* finishedTask, NSString* output) {
+                           SumatraMacDelegate* strongSelf = weakSelf;
+                           if (!strongSelf) return;
+                           strongSelf->_translationInstallRunning = NO;
+                           strongSelf->_translateButton.enabled =
+                               strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+                           if (finishedTask.terminationStatus == 0) {
+                               [strongSelf appendTranslationInstallLog:@"\nArgos language package installed.\n"];
+                               [strongSelf->_translationInstallPanel orderOut:nil];
+                               [strongSelf runArgosTranslationWithTool:[strongSelf argosToolPath]
+                                                            sourceText:sourceText
+                                                        sourceLanguage:sourceLanguage
+                                                        targetLanguage:targetLanguage
+                                                            outputPath:outputPath
+                                                      offeredInstaller:YES];
+                           } else {
+                               (void)output;
+                               [strongSelf appendTranslationInstallLog:
+                                               @"\nArgos language package installation failed. The log above can be "
+                                               @"selected and copied.\n"];
+                               strongSelf->_statusLabel.stringValue = @"Translation package installation failed.";
+                           }
+                         }];
 }
 
 - (BOOL)runArgosToolSynchronously:(NSString*)tool
@@ -6912,6 +7688,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                             error:(NSString**)errorOut {
     if (outputOut) *outputOut = nil;
     if (errorOut) *errorOut = nil;
+    if (_translationCancelRequested) {
+        if (errorOut) *errorOut = @"Translation canceled.";
+        return NO;
+    }
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:tool];
     task.arguments = @[ @"--from-lang", sourceLanguage, @"--to-lang", targetLanguage ];
@@ -6926,6 +7706,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         if (errorOut) *errorOut = launchError.localizedDescription ?: @"Could not start Argos Translate.";
         return NO;
     }
+    @synchronized(self) {
+        _translationTask = task;
+    }
 
     NSData* inputData = [input dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
     @try {
@@ -6937,7 +7720,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
     NSData* outputData = [outputPipe.fileHandleForReading readDataToEndOfFile];
     [task waitUntilExit];
+    @synchronized(self) {
+        if (_translationTask == task) _translationTask = nil;
+    }
     NSString* output = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding] ?: @"";
+    if (_translationCancelRequested) {
+        if (errorOut) *errorOut = @"Translation canceled.";
+        return NO;
+    }
     if (task.terminationStatus != 0) {
         if (errorOut) *errorOut = output.length ? output : @"Argos Translate exited with an error.";
         return NO;
@@ -6961,10 +7751,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     }
 
     _translationRunning = YES;
+    _translationCancelRequested = NO;
     _translateButton.enabled = NO;
     _statusLabel.stringValue = @"Translating with Argos...";
 
     NSArray<NSDictionary*>* items = [_pendingTranslationItems copy] ?: @[];
+    NSUInteger totalUnits = MAX((NSUInteger)1, items.count);
+    [self showTranslationProgressWithTitle:@"Translating with Argos" totalUnits:(double)totalUnits];
+    [self updateTranslationProgress:0.0 detail:@"Preparing translation..."];
     NSArray<NSString*>* sourceLines =
         [sourceText componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
     __weak SumatraMacDelegate* weakSelf = self;
@@ -6975,6 +7769,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
       if (items.count <= 1) {
           NSString* translated = nil;
+          dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf updateTranslationProgress:0.0 detail:@"Translating selected text..."];
+          });
           if (![self runArgosToolSynchronously:tool
                                 sourceLanguage:sourceLanguage
                                 targetLanguage:targetLanguage
@@ -6984,12 +7781,28 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
               translated = nil;
           }
           if (translated) translatedLines[0] = translated;
+          if (!failure.length) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf updateTranslationProgress:1.0 detail:@"Writing translated PDF..."];
+              });
+          }
       } else {
           NSUInteger start = 0;
+          NSUInteger translatedCount = 0;
           while (start < items.count && !failure.length) {
+              if (self->_translationCancelRequested) {
+                  failure = @"Translation canceled.";
+                  break;
+              }
               NSInteger page = [items[start][@"page"] integerValue];
               NSUInteger end = start + 1;
               while (end < items.count && [items[end][@"page"] integerValue] == page) end++;
+              dispatch_async(dispatch_get_main_queue(), ^{
+                NSString* detail =
+                    [NSString stringWithFormat:@"Translating page %ld (%lu of %lu text blocks)...", (long)page + 1,
+                                               (unsigned long)translatedCount, (unsigned long)items.count];
+                [weakSelf updateTranslationProgress:(double)translatedCount detail:detail];
+              });
 
               NSMutableString* pageInput = [NSMutableString string];
               for (NSUInteger i = start; i < end; ++i) {
@@ -7005,6 +7818,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                              input:pageInput
                                             output:&translated
                                              error:&failure]) {
+                  if (failure.length && ![failure isEqualToString:@"Translation canceled."])
+                      failure = [NSString stringWithFormat:@"Page %ld: %@", (long)page + 1, failure];
                   break;
               }
               NSArray<NSString*>* pageOutput =
@@ -7024,6 +7839,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                   }
                   translatedLines[end - 1] = tail;
               }
+              translatedCount = end;
+              dispatch_async(dispatch_get_main_queue(), ^{
+                NSString* detail =
+                    [NSString stringWithFormat:@"Translated page %ld (%lu of %lu text blocks)...", (long)page + 1,
+                                               (unsigned long)translatedCount, (unsigned long)items.count];
+                [weakSelf updateTranslationProgress:(double)translatedCount detail:detail];
+              });
               start = end;
           }
       }
@@ -7035,6 +7857,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         strongSelf->_translationRunning = NO;
         strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationInstallRunning;
         if (failure.length) {
+            [strongSelf finishTranslationProgressWithDetail:failure keepVisible:NO];
+            if ([failure isEqualToString:@"Translation canceled."]) {
+                strongSelf->_statusLabel.stringValue = @"Translation canceled.";
+                return;
+            }
             if (!offeredInstaller) {
                 [strongSelf runArgosPackageInstallFromLanguage:sourceLanguage
                                                     toLanguage:targetLanguage
@@ -7055,10 +7882,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                          outputPath:outputPath
                                               error:&writeError]) {
             [strongSelf showError:@"Could not save translation" detail:writeError.localizedDescription ?: @""];
+            [strongSelf finishTranslationProgressWithDetail:@"Could not save translated PDF." keepVisible:NO];
             strongSelf->_statusLabel.stringValue = @"Translation was not saved.";
             return;
         }
 
+        [strongSelf finishTranslationProgressWithDetail:@"Translation complete." keepVisible:NO];
         [strongSelf openPath:outputPath];
         strongSelf->_statusLabel.stringValue =
             [NSString stringWithFormat:@"Translation saved: %@", outputPath.lastPathComponent];
@@ -7082,69 +7911,39 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     alert.alertStyle = NSAlertStyleInformational;
     if ([alert runModal] != NSAlertFirstButtonReturn) return;
 
-    _translationInstallRunning = YES;
-    _translateButton.enabled = NO;
-    _statusLabel.stringValue = @"Installing Argos Translate...";
-
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
     task.arguments = @[ @"-lc", [self argosInstallScript] ];
-    NSPipe* pipe = [NSPipe pipe];
-    task.standardOutput = pipe;
-    task.standardError = pipe;
-    __block NSMutableData* outputData = [NSMutableData data];
-    pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
-      NSData* chunk = handle.availableData;
-      if (chunk.length > 0) {
-          @synchronized(outputData) {
-              [outputData appendData:chunk];
-          }
-      } else {
-          handle.readabilityHandler = nil;
-      }
-    };
 
     __weak SumatraMacDelegate* weakSelf = self;
-    task.terminationHandler = ^(NSTask* finishedTask) {
-      pipe.fileHandleForReading.readabilityHandler = nil;
-      NSData* tail = pipe.fileHandleForReading.readDataToEndOfFile;
-      if (tail.length > 0) {
-          @synchronized(outputData) {
-              [outputData appendData:tail];
-          }
-      }
-      NSData* data = nil;
-      @synchronized(outputData) {
-          data = [outputData copy];
-      }
-      NSString* output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
-      dispatch_async(dispatch_get_main_queue(), ^{
-        SumatraMacDelegate* strongSelf = weakSelf;
-        if (!strongSelf) return;
-        strongSelf->_translationInstallRunning = NO;
-        strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationRunning;
-        NSString* tool = [strongSelf argosToolPath];
-        if (finishedTask.terminationStatus == 0 && tool.length) {
-            [strongSelf runArgosTranslationWithTool:tool
-                                         sourceText:sourceText
-                                     sourceLanguage:sourceLanguage
-                                     targetLanguage:targetLanguage
-                                         outputPath:outputPath
-                                   offeredInstaller:NO];
-        } else {
-            NSString* detail = output.length > 1200 ? [output substringToIndex:1200] : output;
-            [strongSelf showError:@"Could not install Argos Translate" detail:detail ?: @""];
-            strongSelf->_statusLabel.stringValue = @"Argos installation failed.";
-        }
-      });
-    };
-
-    NSError* error = nil;
-    if (![task launchAndReturnError:&error]) {
-        _translationInstallRunning = NO;
-        _translateButton.enabled = _doc != NULL && !_translationRunning;
-        [self showError:@"Could not start Argos installer" detail:error.localizedDescription ?: @""];
-    }
+    [self runTranslationInstallTask:task
+                              title:@"Installing Translation Support"
+                            heading:@"Installing Argos Translate"
+                         initialLog:@"Preparing Argos Translate installer...\n"
+                         completion:^(NSTask* finishedTask, NSString* output) {
+                           (void)output;
+                           SumatraMacDelegate* strongSelf = weakSelf;
+                           if (!strongSelf) return;
+                           strongSelf->_translationInstallRunning = NO;
+                           strongSelf->_translateButton.enabled =
+                               strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+                           NSString* tool = [strongSelf argosToolPath];
+                           if (finishedTask.terminationStatus == 0 && tool.length) {
+                               [strongSelf appendTranslationInstallLog:@"\nArgos Translate installed.\n"];
+                               [strongSelf->_translationInstallPanel orderOut:nil];
+                               [strongSelf runArgosTranslationWithTool:tool
+                                                            sourceText:sourceText
+                                                        sourceLanguage:sourceLanguage
+                                                        targetLanguage:targetLanguage
+                                                            outputPath:outputPath
+                                                      offeredInstaller:NO];
+                           } else {
+                               [strongSelf appendTranslationInstallLog:
+                                               @"\nArgos Translate installation failed. The log above can be selected "
+                                               @"and copied.\n"];
+                               strongSelf->_statusLabel.stringValue = @"Argos installation failed.";
+                           }
+                         }];
 }
 
 - (void)translateDocument:(id)sender {
@@ -7153,7 +7952,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         NSBeep();
         return;
     }
-    if (_translationRunning || _translationInstallRunning) {
+    if (_translationInstallRunning) {
+        [_translationInstallPanel makeKeyAndOrderFront:nil];
+        _statusLabel.stringValue = @"Translation installer is already running.";
+        return;
+    }
+    if (_translationRunning) {
         _statusLabel.stringValue = @"Translation is already running.";
         return;
     }
@@ -7991,8 +8795,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL hasDoc = _doc != NULL;
     if (action == @selector(openDocument:) || action == @selector(toggleFullScreen:) ||
         action == @selector(showFavoritesPalette:) || action == @selector(showFindPalette:) ||
-        action == @selector(focusFind:) || action == @selector(setCommentAuthor:))
+        action == @selector(focusFind:) || action == @selector(setCommentAuthor:) ||
+        action == @selector(openRecentDocument:))
         return YES;
+    if (action == @selector(reopenLastClosedDocument:)) return _closedDocumentPaths.count > 0;
     if (action == @selector(toggleSidebar:)) {
         menuItem.title = _sidebarVisible ? @"Hide Side Panel" : @"Show Side Panel";
         menuItem.state = _sidebarVisible ? NSControlStateValueOn : NSControlStateValueOff;

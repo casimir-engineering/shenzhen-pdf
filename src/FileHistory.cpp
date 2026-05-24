@@ -289,6 +289,9 @@ void RememberRecentlyClosedDocument(const char* path) {
         return;
     }
     gClosedDocuments.Append(path);
+    while (gClosedDocuments.Size() > kFileHistoryMaxRecent) {
+        gClosedDocuments.RemoveAt(0);
+    }
 }
 
 char* PopRecentlyClosedDocument() {
