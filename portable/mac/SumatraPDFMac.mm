@@ -33,6 +33,7 @@ static const NSInteger kRenderedImageKeepRadius = 12;
 static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
+static NSPasteboardType const SPDFTabDragPasteboardType = @"org.sumatrapdfreader.SumatraPDF.tab";
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
 #define SPDF_MAC_TRANSLATION_CORE_READY 0
@@ -220,6 +221,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 @class SumatraMacDelegate;
 
+static NSMutableArray<SumatraMacDelegate*>* gSPDFWindowControllers;
+static BOOL gSPDFTerminatingAllWindows;
+
 @interface SPDFRenderedPage : NSObject
 @property(nonatomic) NSInteger pageIndex;
 @property(nonatomic) CGFloat pageWidth;
@@ -274,6 +278,80 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 @end
 
+static SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
+    SPDFDocumentTab* copy = [[SPDFDocumentTab alloc] init];
+    copy.path = source.path;
+    copy.title = source.title;
+    copy.pageIndex = source.pageIndex;
+    copy.zoom = source.zoom;
+    copy.customZoom = source.customZoom;
+    copy.fitMode = source.fitMode;
+    copy.viewMode = source.viewMode;
+    copy.scrollOrigin = source.scrollOrigin;
+    copy.hasScrollOrigin = source.hasScrollOrigin;
+    copy.searchText = source.searchText;
+    copy.searchRegex = source.searchRegex;
+    copy.searchRegexMultiline = source.searchRegexMultiline;
+    copy.findMatchIndex = source.findMatchIndex;
+    copy.missingFile = source.missingFile;
+    copy.missingMessage = source.missingMessage;
+    return copy;
+}
+
+static NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWindowNumber) {
+    if (!tab) return @{};
+    return @{
+        @"path" : tab.path ?: @"",
+        @"title" : tab.title ?: @"",
+        @"page" : @(tab.pageIndex),
+        @"zoom" : @(tab.zoom),
+        @"customZoom" : @(tab.customZoom),
+        @"fitMode" : @(tab.fitMode),
+        @"viewMode" : @(tab.viewMode),
+        @"scrollX" : @(tab.scrollOrigin.x),
+        @"scrollY" : @(tab.scrollOrigin.y),
+        @"hasScrollOrigin" : @(tab.hasScrollOrigin),
+        @"searchText" : tab.searchText ?: @"",
+        @"searchRegex" : @(tab.searchRegex),
+        @"searchRegexMultiline" : @(tab.searchRegexMultiline),
+        @"findMatchIndex" : @(tab.findMatchIndex),
+        @"sourcePID" : @(NSProcessInfo.processInfo.processIdentifier),
+        @"sourceWindow" : @(sourceWindowNumber)
+    };
+}
+
+static SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
+    if (![item isKindOfClass:NSDictionary.class]) return nil;
+    NSString* path = item[@"path"];
+    if (![path isKindOfClass:NSString.class] || path.length == 0) return nil;
+    SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
+    tab.path = path;
+    if ([item[@"title"] isKindOfClass:NSString.class]) tab.title = item[@"title"];
+    tab.pageIndex = MAX(0, [item[@"page"] integerValue]);
+    tab.zoom = [item[@"zoom"] doubleValue] > 0 ? [item[@"zoom"] doubleValue] : 1.0;
+    tab.customZoom = [item[@"customZoom"] doubleValue] > 0 ? [item[@"customZoom"] doubleValue] : tab.zoom;
+    tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
+    tab.viewMode = (SPDFViewMode)MAX(0, MIN(1, [item[@"viewMode"] integerValue]));
+    tab.scrollOrigin = NSMakePoint([item[@"scrollX"] doubleValue], [item[@"scrollY"] doubleValue]);
+    tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue] || item[@"scrollX"] != nil || item[@"scrollY"] != nil;
+    if ([item[@"searchText"] isKindOfClass:NSString.class]) tab.searchText = item[@"searchText"];
+    tab.searchRegex = [item[@"searchRegex"] boolValue];
+    tab.searchRegexMultiline = item[@"searchRegexMultiline"] ? [item[@"searchRegexMultiline"] boolValue] : YES;
+    tab.findMatchIndex = item[@"findMatchIndex"] ? [item[@"findMatchIndex"] integerValue] : -1;
+    return tab;
+}
+
+static NSString* spdf_json_string_from_object(id object) {
+    NSData* data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];
+    return data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+}
+
+static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
+    NSData* data = [string dataUsingEncoding:NSUTF8StringEncoding];
+    id object = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    return [object isKindOfClass:NSDictionary.class] ? object : nil;
+}
+
 @interface SPDFWorkerDocument : NSObject
 @property(nonatomic) spdf_document* document;
 @property(nonatomic, copy) NSString* path;
@@ -287,7 +365,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 @end
 
-@interface SPDFTabStripView : NSView
+@interface SPDFTabStripView : NSView <NSDraggingSource, NSDraggingDestination>
 @property(nonatomic, weak) SumatraMacDelegate* reader;
 @property(nonatomic, copy) NSArray<SPDFDocumentTab*>* tabs;
 @property(nonatomic) NSInteger selectedIndex;
@@ -322,6 +400,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @end
 
 @interface SPDFWindow : NSWindow
+@property(nonatomic, weak) SumatraMacDelegate* reader;
+@end
+
+@interface SPDFPresentationOverlayView : NSView
 @property(nonatomic, weak) SumatraMacDelegate* reader;
 @end
 
@@ -374,6 +456,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                                           NSTextFieldDelegate,
                                           NSMenuItemValidation>
 @property(nonatomic, copy) NSString* initialPath;
+@property(nonatomic) BOOL detachedTabLaunch;
 - (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event;
 - (BOOL)zoomWithScrollWheelEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)zoomWithMagnifyEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
@@ -389,10 +472,15 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (BOOL)documentViewInPresentationMode;
 - (void)copySelection:(id)sender;
 - (void)translateDocument:(id)sender;
+- (SPDFDocumentTab*)tabSnapshotForDragAtIndex:(NSInteger)index;
+- (void)insertDraggedTab:(SPDFDocumentTab*)tab atIndex:(NSInteger)index;
 - (void)selectTabAtIndex:(NSInteger)index;
 - (void)closeTabAtIndex:(NSInteger)index;
 - (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex;
+- (void)detachTabAtIndex:(NSInteger)index;
 - (void)newTabRequested:(id)sender;
+- (void)previousPage:(id)sender;
+- (void)nextPage:(id)sender;
 - (void)openRecentDocument:(id)sender;
 - (void)reopenLastClosedDocument:(id)sender;
 - (void)focusFind:(id)sender;
@@ -473,14 +561,57 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
                             preferredRenderPage:(NSInteger)preferredRenderPage;
 @end
 
+@implementation SPDFPresentationOverlayView
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+- (BOOL)acceptsFirstResponder {
+    return YES;
+}
+
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+    (void)event;
+    return YES;
+}
+
+- (NSView*)hitTest:(NSPoint)point {
+    return self.hidden ? nil : self;
+}
+
+- (void)mouseDown:(NSEvent*)event {
+    if (self.reader && [self.reader handlePresentationEvent:event]) return;
+    [super mouseDown:event];
+}
+
+- (void)rightMouseDown:(NSEvent*)event {
+    if (self.reader && [self.reader handlePresentationEvent:event]) return;
+    [super rightMouseDown:event];
+}
+
+- (void)otherMouseDown:(NSEvent*)event {
+    if (self.reader && [self.reader handlePresentationEvent:event]) return;
+    [super otherMouseDown:event];
+}
+
+- (void)keyDown:(NSEvent*)event {
+    if (self.reader && [self.reader handlePresentationEvent:event]) return;
+    [super keyDown:event];
+}
+
+@end
+
 @implementation SPDFTabStripView {
     NSTrackingArea* _trackingArea;
     NSPanel* _hoverPanel;
     NSTextField* _hoverLabel;
     NSInteger _hoverTabIndex;
     NSInteger _draggedTabIndex;
+    NSInteger _dragSessionTabIndex;
     NSPoint _dragStartPoint;
     BOOL _draggingTab;
+    BOOL _detachedTabDrag;
     BOOL _mouseDownInsideTab;
 }
 
@@ -489,6 +620,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     if (self) {
         _hoverTabIndex = -1;
         _draggedTabIndex = -1;
+        _dragSessionTabIndex = -1;
+        [self registerForDraggedTypes:@[ SPDFTabDragPasteboardType ]];
     }
     return self;
 }
@@ -751,6 +884,19 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return targetIndex;
 }
 
+- (NSInteger)dropIndexForPoint:(NSPoint)point {
+    NSArray<NSNumber*>* visibleIndexes = [self visibleTabIndexes];
+    if (!visibleIndexes.count) return (NSInteger)self.tabs.count;
+
+    for (NSNumber* indexNumber in visibleIndexes) {
+        NSInteger index = indexNumber.integerValue;
+        NSRect tabRect = [self rectForTabAtIndex:index];
+        if (NSIsEmptyRect(tabRect)) continue;
+        if (point.x < NSMidX(tabRect)) return index;
+    }
+    return MIN((NSInteger)self.tabs.count, visibleIndexes.lastObject.integerValue + 1);
+}
+
 - (BOOL)containsTabOrControlAtPoint:(NSPoint)point {
     if (NSPointInRect(point, [self plusRect])) return YES;
     NSRect overflowRect = [self overflowRect];
@@ -954,10 +1100,100 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self.reader selectTabAtIndex:indexNumber.integerValue];
 }
 
+- (void)startTabDragSessionWithEvent:(NSEvent*)event {
+    if (_draggedTabIndex < 0 || _draggedTabIndex >= (NSInteger)self.tabs.count) return;
+    SPDFDocumentTab* snapshot = [self.reader tabSnapshotForDragAtIndex:_draggedTabIndex];
+    if (!snapshot.path.length) return;
+
+    NSDictionary* payload = spdf_dictionary_from_tab(snapshot, self.window.windowNumber);
+    NSString* json = spdf_json_string_from_object(payload);
+    if (!json.length) return;
+
+    NSPasteboardItem* item = [[NSPasteboardItem alloc] init];
+    [item setString:json forType:SPDFTabDragPasteboardType];
+    NSDraggingItem* dragItem = [[NSDraggingItem alloc] initWithPasteboardWriter:item];
+    NSRect tabRect = [self rectForTabAtIndex:_draggedTabIndex];
+    NSImage* image = [[NSImage alloc] initWithSize:tabRect.size];
+    [image lockFocus];
+    [[NSColor.controlAccentColor colorWithAlphaComponent:0.22] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0, 0, NSWidth(tabRect), NSHeight(tabRect)) xRadius:7 yRadius:7]
+        fill];
+    NSString* title = [self titleForTabAtIndex:_draggedTabIndex];
+    NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
+    style.alignment = NSTextAlignmentCenter;
+    style.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    NSDictionary* attrs = @{
+        NSFontAttributeName : [NSFont systemFontOfSize:12 weight:NSFontWeightRegular],
+        NSForegroundColorAttributeName : NSColor.labelColor,
+        NSParagraphStyleAttributeName : style
+    };
+    [title drawWithRect:NSInsetRect(NSMakeRect(0, 0, NSWidth(tabRect), NSHeight(tabRect)), 18, 7)
+                options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
+             attributes:attrs];
+    [image unlockFocus];
+    [dragItem setDraggingFrame:tabRect contents:image];
+
+    _dragSessionTabIndex = _draggedTabIndex;
+    _detachedTabDrag = YES;
+    [self beginDraggingSessionWithItems:@[ dragItem ] event:event source:self];
+}
+
+- (NSDragOperation)draggingSession:(NSDraggingSession*)session
+    sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+    (void)session;
+    (void)context;
+    return NSDragOperationMove;
+}
+
+- (void)draggingSession:(NSDraggingSession*)session
+           endedAtPoint:(NSPoint)screenPoint
+              operation:(NSDragOperation)operation {
+    (void)session;
+    (void)screenPoint;
+    NSInteger index = _dragSessionTabIndex;
+    _dragSessionTabIndex = -1;
+    if (index < 0) return;
+    if (operation == NSDragOperationMove) {
+        [self.reader closeTabAtIndex:index];
+    } else if (operation == NSDragOperationNone) {
+        [self.reader detachTabAtIndex:index];
+    }
+}
+
+- (BOOL)ignoreDraggedTabFromSender:(id<NSDraggingInfo>)sender {
+    NSString* json = [sender.draggingPasteboard stringForType:SPDFTabDragPasteboardType];
+    NSDictionary* payload = spdf_json_dictionary_from_string(json);
+    NSNumber* sourcePID = [payload[@"sourcePID"] isKindOfClass:NSNumber.class] ? payload[@"sourcePID"] : nil;
+    NSNumber* sourceWindow = [payload[@"sourceWindow"] isKindOfClass:NSNumber.class] ? payload[@"sourceWindow"] : nil;
+    if (!sourceWindow) return NO;
+    if (sourcePID && sourcePID.integerValue != NSProcessInfo.processInfo.processIdentifier) return NO;
+    return sourceWindow.integerValue == self.window.windowNumber;
+}
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    if (![sender.draggingPasteboard availableTypeFromArray:@[ SPDFTabDragPasteboardType ]]) return NSDragOperationNone;
+    return [self ignoreDraggedTabFromSender:sender] ? NSDragOperationNone : NSDragOperationMove;
+}
+
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
+    return [self draggingEntered:sender];
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    if ([self ignoreDraggedTabFromSender:sender]) return NO;
+    NSString* json = [sender.draggingPasteboard stringForType:SPDFTabDragPasteboardType];
+    SPDFDocumentTab* tab = spdf_tab_from_dictionary(spdf_json_dictionary_from_string(json));
+    if (!tab.path.length) return NO;
+    NSPoint point = [self convertPoint:sender.draggingLocation fromView:nil];
+    [self.reader insertDraggedTab:tab atIndex:[self dropIndexForPoint:point]];
+    return YES;
+}
+
 - (void)mouseDown:(NSEvent*)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     _draggedTabIndex = -1;
     _draggingTab = NO;
+    _detachedTabDrag = NO;
     _mouseDownInsideTab = NO;
 
     if (NSPointInRect(point, [self plusRect])) {
@@ -999,9 +1235,6 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (void)mouseDragged:(NSEvent*)event {
-    // Implementation note: browser-style tear-off needs tab/session ownership outside a single SumatraMacDelegate
-    // so a tab can move with document state, render caches, and history between windows. This view only reorders
-    // in-window.
     if (_draggedTabIndex < 0) {
         if (_mouseDownInsideTab) return;
         self.window.movable = YES;
@@ -1017,6 +1250,13 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _draggingTab = YES;
     [self hideHoverPanel];
 
+    BOOL outsideTabStrip = point.y < -24.0 || point.y > NSHeight(self.bounds) + 24.0;
+    if (!_detachedTabDrag && (outsideTabStrip || fabs(dy) > 48.0)) {
+        [self startTabDragSessionWithEvent:event];
+        return;
+    }
+    if (_detachedTabDrag) return;
+
     NSInteger targetIndex = [self dragDestinationIndexForPoint:point];
     if (targetIndex >= 0 && targetIndex != _draggedTabIndex) {
         [self.reader moveTabFromIndex:_draggedTabIndex toIndex:targetIndex];
@@ -1030,7 +1270,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL dragged = _draggingTab;
     _draggedTabIndex = -1;
     _draggingTab = NO;
+    BOOL detached = _detachedTabDrag;
+    _detachedTabDrag = NO;
     _mouseDownInsideTab = NO;
+    if (detached) return;
     if (!dragged && clickedTabIndex >= 0) [self.reader selectTabAtIndex:clickedTabIndex];
 }
 
@@ -1336,6 +1579,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 @implementation SPDFWindow
 
+- (BOOL)canBecomeKeyWindow {
+    return YES;
+}
+
+- (BOOL)canBecomeMainWindow {
+    return YES;
+}
+
 - (void)sendEvent:(NSEvent*)event {
     if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
@@ -1358,9 +1609,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         CGFloat threshold = event.hasPreciseScrollingDeltas ? 0.75 : 0.50;
         if (fabs(_wheelAccumulator) >= threshold) {
             if (_wheelAccumulator < 0)
-                [NSApp sendAction:@selector(nextPage:) to:nil from:self];
+                [self.reader nextPage:self];
             else
-                [NSApp sendAction:@selector(previousPage:) to:nil from:self];
+                [self.reader previousPage:self];
             _wheelAccumulator = 0;
         }
         return;
@@ -2501,6 +2752,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     SPDFMinimapView* _minimapView;
     SPDFMinimapDividerView* _minimapDividerView;
     SPDFFindMarkerScroller* _markerScroller;
+    SPDFPresentationOverlayView* _presentationOverlayView;
     NSLayoutConstraint* _minimapWidthConstraint;
     NSLayoutConstraint* _minimapDividerWidthConstraint;
     NSLayoutConstraint* _pageScrollToMinimapConstraint;
@@ -2610,6 +2862,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL _minimapVisible;
     BOOL _presentationMode;
     BOOL _presentationEnteredFullScreen;
+    BOOL _presentationUsingBorderlessWindow;
+    NSRect _presentationPreviousWindowFrame;
+    NSWindowStyleMask _presentationPreviousWindowStyleMask;
+    NSInteger _presentationPreviousWindowLevel;
+    NSWindowCollectionBehavior _presentationPreviousCollectionBehavior;
+    NSWindowTitleVisibility _presentationPreviousTitleVisibility;
+    BOOL _presentationPreviousTitlebarAppearsTransparent;
+    BOOL _presentationPreviousMovable;
+    BOOL _presentationPreviousMovableByWindowBackground;
+    BOOL _presentationPreviousHasShadow;
     SPDFViewMode _presentationPreviousViewMode;
     SPDFFitMode _presentationPreviousFitMode;
     BOOL _presentationPreviousSidebarPreferredVisible;
@@ -2619,6 +2881,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL _translationInstallRunning;
     BOOL _translationCancelRequested;
     BOOL _tabStripCapturingMouse;
+    BOOL _terminateOnlyThisProcess;
     NSArray<NSDictionary*>* _pendingTranslationItems;
     BOOL _restoringSidebarLayout;
     BOOL _allowSidebarWidthPersistence;
@@ -2645,8 +2908,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _minimapVisible = YES;
     _presentationMode = NO;
     _presentationEnteredFullScreen = NO;
+    _presentationUsingBorderlessWindow = NO;
     _translationRunning = NO;
     _translationInstallRunning = NO;
+    _terminateOnlyThisProcess = NO;
     _restoringSidebarLayout = NO;
     _allowSidebarWidthPersistence = NO;
     _sidebarWidth = kDefaultSidebarWidth;
@@ -2686,6 +2951,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _findQueue.qualityOfService = NSQualityOfServiceUserInitiated;
 
     [self loadPersistentState];
+    if (!gSPDFWindowControllers) gSPDFWindowControllers = [NSMutableArray array];
+    if (![gSPDFWindowControllers containsObject:self]) [gSPDFWindowControllers addObject:self];
 
     [self buildMenu];
     [self buildWindow];
@@ -2717,6 +2984,19 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return YES;
 }
 
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
+    (void)sender;
+    if (!_terminateOnlyThisProcess && !gSPDFTerminatingAllWindows) {
+        gSPDFTerminatingAllWindows = YES;
+        NSString* bundleID = NSBundle.mainBundle.bundleIdentifier;
+        pid_t currentPID = NSProcessInfo.processInfo.processIdentifier;
+        for (NSRunningApplication* app in [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleID]) {
+            if (app.processIdentifier != currentPID) [app terminate];
+        }
+    }
+    return NSTerminateNow;
+}
+
 - (void)applicationWillTerminate:(NSNotification*)notification {
     (void)notification;
     [self removePresentationEventMonitor];
@@ -2731,6 +3011,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     spdf_free_outline(&_outline);
     spdf_free_comments(&_comments);
     spdf_close(_doc);
+}
+
+- (BOOL)windowShouldClose:(NSWindow*)sender {
+    (void)sender;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [NSApp terminate:self];
+    });
+    return YES;
 }
 
 - (BOOL)application:(NSApplication*)sender openFile:(NSString*)filename {
@@ -2783,7 +3071,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
       [self updateTabStripFrame];
       if (self->_presentationMode && self->_doc) {
           [self renderDocumentAndScrollToPage:self->_pageIndex alignTop:YES];
-          [self->_window makeFirstResponder:self->_pageView];
+          [self->_window makeFirstResponder:self->_presentationOverlayView ?: self->_pageView];
       }
     });
 }
@@ -2874,6 +3162,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSArray* favorites = [self jsonObjectFromFile:@"favorites.json"];
     if ([favorites isKindOfClass:NSArray.class]) [_favorites addObjectsFromArray:favorites];
 
+    if (self.detachedTabLaunch) return;
+
     NSDictionary* session = [self jsonObjectFromFile:@"session.json"];
     NSArray* tabs = [session isKindOfClass:NSDictionary.class] ? session[@"tabs"] : nil;
     if ([tabs isKindOfClass:NSArray.class]) {
@@ -2909,28 +3199,30 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     }
     windowContentSize = spdf_sane_window_content_size(windowContentSize, _window.screen ?: NSScreen.mainScreen);
 
-    NSMutableArray* tabs = [NSMutableArray array];
-    for (SPDFDocumentTab* tab in _tabs) {
-        if (!tab.path.length) continue;
-        [tabs addObject:@{
-            @"path" : tab.path,
-            @"title" : spdf_display_name_for_path(tab.path),
-            @"page" : @(tab.pageIndex),
-            @"zoom" : @(tab.zoom),
-            @"customZoom" : @(tab.customZoom),
-            @"fitMode" : @(tab.fitMode),
-            @"viewMode" : @(tab.viewMode),
-            @"scrollX" : @(tab.scrollOrigin.x),
-            @"scrollY" : @(tab.scrollOrigin.y),
-            @"hasScrollOrigin" : @(tab.hasScrollOrigin),
-            @"searchText" : tab.searchText ?: @"",
-            @"searchRegex" : @(tab.searchRegex),
-            @"searchRegexMultiline" : @(tab.searchRegexMultiline),
-            @"findMatchIndex" : @(tab.findMatchIndex)
-        }];
+    if (!self.detachedTabLaunch) {
+        NSMutableArray* tabs = [NSMutableArray array];
+        for (SPDFDocumentTab* tab in _tabs) {
+            if (!tab.path.length) continue;
+            [tabs addObject:@{
+                @"path" : tab.path,
+                @"title" : spdf_display_name_for_path(tab.path),
+                @"page" : @(tab.pageIndex),
+                @"zoom" : @(tab.zoom),
+                @"customZoom" : @(tab.customZoom),
+                @"fitMode" : @(tab.fitMode),
+                @"viewMode" : @(tab.viewMode),
+                @"scrollX" : @(tab.scrollOrigin.x),
+                @"scrollY" : @(tab.scrollOrigin.y),
+                @"hasScrollOrigin" : @(tab.hasScrollOrigin),
+                @"searchText" : tab.searchText ?: @"",
+                @"searchRegex" : @(tab.searchRegex),
+                @"searchRegexMultiline" : @(tab.searchRegexMultiline),
+                @"findMatchIndex" : @(tab.findMatchIndex)
+            }];
+        }
+        [self writeJSONObject:@{@"version" : @1, @"selectedTab" : @(MAX(0, _selectedTabIndex)), @"tabs" : tabs}
+                       toFile:@"session.json"];
     }
-    [self writeJSONObject:@{@"version" : @1, @"selectedTab" : @(MAX(0, _selectedTabIndex)), @"tabs" : tabs}
-                   toFile:@"session.json"];
     CGFloat sidebarWidth = spdf_sane_sidebar_width(_sidebarWidth, _splitView ? NSWidth(_splitView.bounds) : 0);
     [self writeJSONObject:@{
         @"version" : @1,
@@ -3031,14 +3323,18 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     NSMenuItem* goItem = [[NSMenuItem alloc] initWithTitle:@"Go To" action:nil keyEquivalent:@""];
     [mainMenu addItem:goItem];
     NSMenu* goMenu = [[NSMenu alloc] initWithTitle:@"Go To"];
-    [goMenu addItemWithTitle:@"First Page"
-                      action:@selector(firstPage:)
-               keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSHomeFunctionKey)]];
-    [goMenu addItemWithTitle:@"Previous Page" action:@selector(previousPage:) keyEquivalent:@"["];
-    [goMenu addItemWithTitle:@"Next Page" action:@selector(nextPage:) keyEquivalent:@"]"];
-    [goMenu addItemWithTitle:@"Last Page"
-                      action:@selector(lastPage:)
-               keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSEndFunctionKey)]];
+    NSMenuItem* firstPageItem =
+        [goMenu addItemWithTitle:@"First Page"
+                          action:@selector(firstPage:)
+                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSHomeFunctionKey)]];
+    NSMenuItem* previousPageItem =
+        [goMenu addItemWithTitle:@"Previous Page" action:@selector(previousPage:) keyEquivalent:@"["];
+    NSMenuItem* nextPageItem = [goMenu addItemWithTitle:@"Next Page" action:@selector(nextPage:) keyEquivalent:@"]"];
+    NSMenuItem* lastPageItem =
+        [goMenu addItemWithTitle:@"Last Page"
+                          action:@selector(lastPage:)
+                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSEndFunctionKey)]];
+    for (NSMenuItem* item in @[ firstPageItem, previousPageItem, nextPageItem, lastPageItem ]) item.target = self;
     [goMenu addItem:[NSMenuItem separatorItem]];
     [goMenu addItemWithTitle:@"Go To Page..." action:@selector(focusPageField:) keyEquivalent:@"l"];
     goItem.submenu = goMenu;
@@ -5132,6 +5428,29 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self savePersistentState];
 }
 
+- (SPDFDocumentTab*)tabSnapshotForDragAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)_tabs.count) return nil;
+    [self rememberActiveTabState];
+    return spdf_copy_document_tab(_tabs[(NSUInteger)index]);
+}
+
+- (void)insertDraggedTab:(SPDFDocumentTab*)tab atIndex:(NSInteger)index {
+    if (!tab.path.length) return;
+    NSInteger existing = [self indexOfTabForPath:tab.path];
+    if (existing >= 0) {
+        [self selectTabAtIndex:existing];
+        return;
+    }
+    tab.title = tab.title.length ? tab.title : spdf_display_name_for_path(tab.path);
+    [self rememberActiveTabState];
+    index = MAX(0, MIN(index, (NSInteger)_tabs.count));
+    [_tabs insertObject:tab atIndex:(NSUInteger)index];
+    _selectedTabIndex = index;
+    [self loadSelectedTab];
+    if (_doc && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
+    [self savePersistentState];
+}
+
 - (void)selectTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tabs.count || (index == _selectedTabIndex && _doc)) return;
     [self clearToolbarFieldFocusForTabSwitch];
@@ -5173,6 +5492,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [self updateControls];
         [self clearToolbarFieldFocusForTabSwitch];
         [self savePersistentState];
+        if (self.detachedTabLaunch) {
+            _terminateOnlyThisProcess = YES;
+            [NSApp terminate:self];
+        }
         return;
     }
 
@@ -5204,6 +5527,32 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
     [self updateTabStrip];
     [self savePersistentState];
+}
+
+- (void)detachTabAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)_tabs.count) return;
+
+    [self rememberActiveTabState];
+    SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
+    NSString* path = [tab.path copy];
+    if (path.length == 0) return;
+
+    NSString* executable = NSBundle.mainBundle.executablePath ?: NSProcessInfo.processInfo.arguments.firstObject;
+    if (executable.length == 0) return;
+
+    NSTask* task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:executable];
+    task.arguments = @[ @"--detached-tab", path ];
+    task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+    task.standardError = [NSFileHandle fileHandleWithNullDevice];
+
+    NSError* error = nil;
+    if (![task launchAndReturnError:&error]) {
+        [self showError:@"Could not detach tab" detail:error.localizedDescription ?: @"Launch failed"];
+        return;
+    }
+
+    [self closeTabAtIndex:index];
 }
 
 - (void)newTabRequested:(id)sender {
@@ -5525,14 +5874,32 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     BOOL right = event.keyCode == 124;
     BOOL down = event.keyCode == 125;
     BOOL up = event.keyCode == 126;
-    if (_presentationMode && space) {
+    BOOL home = event.keyCode == 115;
+    BOOL end = event.keyCode == 119;
+    BOOL pageUp = event.keyCode == 116;
+    BOOL pageDown = event.keyCode == 121;
+    BOOL returnKey = event.keyCode == 36 || event.keyCode == 76;
+    BOOL deleteKey = event.keyCode == 51;
+    if (_presentationMode && home) {
+        [self firstPage:nil];
+        return YES;
+    }
+    if (_presentationMode && end) {
+        [self lastPage:nil];
+        return YES;
+    }
+    if (_presentationMode && (space || returnKey)) {
         [self nextPage:nil];
         return YES;
     }
-    if (!left && !right && !down && !up) return NO;
+    if (_presentationMode && deleteKey) {
+        [self previousPage:nil];
+        return YES;
+    }
+    if (!left && !right && !down && !up && !pageUp && !pageDown) return NO;
 
     if (_presentationMode || _viewMode == SPDFViewModeSingle) {
-        if (left || up)
+        if (left || up || pageUp)
             [self previousPage:nil];
         else
             [self nextPage:nil];
@@ -6024,7 +6391,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 - (BOOL)documentViewHandlePresentationMouseDown:(NSEvent*)event {
     if (!_presentationMode || !_doc) return NO;
-    if (event.type == NSEventTypeRightMouseDown) {
+    BOOL controlLeftClick =
+        event.type == NSEventTypeLeftMouseDown && (event.modifierFlags & NSEventModifierFlagControl) != 0;
+    if (event.type == NSEventTypeRightMouseDown || controlLeftClick) {
         [self previousPage:nil];
         return YES;
     }
@@ -6032,15 +6401,30 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
         [self nextPage:nil];
         return YES;
     }
+    if (event.type == NSEventTypeOtherMouseDown) {
+        if (event.buttonNumber == 1)
+            [self nextPage:nil];
+        else
+            [self previousPage:nil];
+        return YES;
+    }
     return NO;
 }
 
 - (BOOL)handlePresentationEvent:(NSEvent*)event {
     if (!_presentationMode || !_doc || !event) return NO;
-    if (event.type == NSEventTypeKeyDown) return [self documentArrowKeyDown:event];
-    if (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown)
-        return [self documentViewHandlePresentationMouseDown:event];
-    return NO;
+    BOOL handled = NO;
+    if (event.type == NSEventTypeKeyDown)
+        handled = [self documentArrowKeyDown:event];
+    else if (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown ||
+             event.type == NSEventTypeOtherMouseDown)
+        handled = [self documentViewHandlePresentationMouseDown:event];
+    else if (event.type == NSEventTypeSystemDefined) {
+        [self nextPage:nil];
+        handled = YES;
+    }
+    if (handled) [_window makeFirstResponder:_presentationOverlayView ?: _pageView];
+    return handled;
 }
 
 - (BOOL)documentViewInPresentationMode {
@@ -7113,23 +7497,25 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 - (void)previousPage:(id)sender {
     (void)sender;
     if (_doc && _pageIndex > 0)
-        [self goToPage:_pageIndex - 1 preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
+        [self goToPage:_pageIndex - 1 preserveSinglePagePosition:!_presentationMode && _viewMode == SPDFViewModeSingle];
 }
 
 - (void)nextPage:(id)sender {
     (void)sender;
     if (_doc && _pageIndex + 1 < spdf_page_count(_doc))
-        [self goToPage:_pageIndex + 1 preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
+        [self goToPage:_pageIndex + 1 preserveSinglePagePosition:!_presentationMode && _viewMode == SPDFViewModeSingle];
 }
 
 - (void)firstPage:(id)sender {
     (void)sender;
-    if (_doc) [self goToPage:0 preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
+    if (_doc) [self goToPage:0 preserveSinglePagePosition:!_presentationMode && _viewMode == SPDFViewModeSingle];
 }
 
 - (void)lastPage:(id)sender {
     (void)sender;
-    if (_doc) [self goToPage:spdf_page_count(_doc) - 1 preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
+    if (_doc)
+        [self goToPage:spdf_page_count(_doc) - 1
+            preserveSinglePagePosition:!_presentationMode && _viewMode == SPDFViewModeSingle];
 }
 
 - (void)focusPageField:(id)sender {
@@ -7293,15 +7679,74 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     return (_window.styleMask & NSWindowStyleMaskFullScreen) != 0;
 }
 
+- (NSRect)presentationScreenFrame {
+    NSScreen* screen = _window.screen ?: NSScreen.mainScreen;
+    return screen ? screen.frame : _window.frame;
+}
+
+- (void)enterPresentationWindowChrome {
+    if (_presentationUsingBorderlessWindow || !_window) return;
+
+    _presentationPreviousWindowFrame = _window.frame;
+    _presentationPreviousWindowStyleMask = _window.styleMask;
+    _presentationPreviousWindowLevel = _window.level;
+    _presentationPreviousCollectionBehavior = _window.collectionBehavior;
+    _presentationPreviousTitleVisibility = _window.titleVisibility;
+    _presentationPreviousTitlebarAppearsTransparent = _window.titlebarAppearsTransparent;
+    _presentationPreviousMovable = _window.movable;
+    _presentationPreviousMovableByWindowBackground = _window.movableByWindowBackground;
+    _presentationPreviousHasShadow = _window.hasShadow;
+
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
+      context.duration = 0.0;
+      _window.styleMask = NSWindowStyleMaskBorderless;
+      _window.titleVisibility = NSWindowTitleHidden;
+      _window.titlebarAppearsTransparent = YES;
+      _window.movable = NO;
+      _window.movableByWindowBackground = NO;
+      _window.hasShadow = NO;
+      _window.level = NSPopUpMenuWindowLevel;
+      _window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                   NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary;
+      [_window setFrame:[self presentationScreenFrame] display:YES animate:NO];
+    }];
+    [_window makeKeyAndOrderFront:nil];
+    [_window makeMainWindow];
+    [NSApp activateIgnoringOtherApps:YES];
+    _presentationUsingBorderlessWindow = YES;
+}
+
+- (void)restorePresentationWindowChrome {
+    if (!_presentationUsingBorderlessWindow || !_window) return;
+
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
+      context.duration = 0.0;
+      _window.level = _presentationPreviousWindowLevel;
+      _window.collectionBehavior = _presentationPreviousCollectionBehavior;
+      _window.styleMask = _presentationPreviousWindowStyleMask;
+      _window.titleVisibility = _presentationPreviousTitleVisibility;
+      _window.titlebarAppearsTransparent = _presentationPreviousTitlebarAppearsTransparent;
+      _window.movable = _presentationPreviousMovable;
+      _window.movableByWindowBackground = _presentationPreviousMovableByWindowBackground;
+      _window.hasShadow = _presentationPreviousHasShadow;
+      [_window setFrame:_presentationPreviousWindowFrame display:YES animate:NO];
+    }];
+    _presentationUsingBorderlessWindow = NO;
+    [_window makeKeyAndOrderFront:nil];
+    [_window makeMainWindow];
+}
+
 - (void)installPresentationEventMonitor {
     if (_presentationEventMonitor) return;
     __weak SumatraMacDelegate* weakSelf = self;
     _presentationEventMonitor = [NSEvent
-        addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskKeyDown
+        addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown |
+                                             NSEventMaskOtherMouseDown | NSEventMaskKeyDown | NSEventMaskSystemDefined
                                      handler:^NSEvent*(NSEvent* event) {
                                        SumatraMacDelegate* strongSelf = weakSelf;
                                        if (!strongSelf || !strongSelf->_presentationMode || !strongSelf->_doc)
                                            return event;
+                                       if (event.window && event.window != strongSelf->_window) return event;
 
                                        if ([strongSelf handlePresentationEvent:event]) return nil;
 
@@ -7325,15 +7770,33 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     if (presentation) {
         _pageScrollView.hasVerticalScroller = NO;
         _pageScrollView.verticalScroller = nil;
+        if (!_presentationOverlayView) {
+            _presentationOverlayView = [[SPDFPresentationOverlayView alloc] initWithFrame:_window.contentView.bounds];
+            _presentationOverlayView.reader = self;
+            _presentationOverlayView.translatesAutoresizingMaskIntoConstraints = NO;
+            _presentationOverlayView.wantsLayer = YES;
+            _presentationOverlayView.layer.backgroundColor = NSColor.clearColor.CGColor;
+            [_window.contentView addSubview:_presentationOverlayView positioned:NSWindowAbove relativeTo:nil];
+            [NSLayoutConstraint activateConstraints:@[
+                [_presentationOverlayView.leadingAnchor constraintEqualToAnchor:_window.contentView.leadingAnchor],
+                [_presentationOverlayView.trailingAnchor constraintEqualToAnchor:_window.contentView.trailingAnchor],
+                [_presentationOverlayView.topAnchor constraintEqualToAnchor:_window.contentView.topAnchor],
+                [_presentationOverlayView.bottomAnchor constraintEqualToAnchor:_window.contentView.bottomAnchor],
+            ]];
+        }
+        _presentationOverlayView.hidden = NO;
     } else {
         _pageScrollView.verticalScroller = _markerScroller;
         _pageScrollView.hasVerticalScroller = YES;
         _markerScroller.hidden = NO;
+        [_presentationOverlayView removeFromSuperview];
+        _presentationOverlayView = nil;
     }
     _pageScrollView.autohidesScrollers = presentation;
     _pageScrollView.backgroundColor = presentation ? NSColor.blackColor : NSColor.windowBackgroundColor;
     _pageScrollView.contentView.backgroundColor = presentation ? NSColor.blackColor : NSColor.windowBackgroundColor;
     [_window.contentView layoutSubtreeIfNeeded];
+    if (presentation && _presentationOverlayView) [_window makeFirstResponder:_presentationOverlayView];
 }
 
 - (void)enterPresentationMode:(id)sender {
@@ -7343,9 +7806,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _presentationPreviousFitMode = _fitMode;
     _presentationPreviousSidebarPreferredVisible = _sidebarPreferredVisible;
     _presentationPreviousMinimapPreferredVisible = _minimapPreferredVisible;
-    _presentationEnteredFullScreen = ![self windowIsFullScreen];
+    _presentationEnteredFullScreen = NO;
     _presentationMode = YES;
 
+    [self enterPresentationWindowChrome];
     _sidebarPreferredVisible = NO;
     _minimapPreferredVisible = NO;
     _viewMode = SPDFViewModeSingle;
@@ -7356,9 +7820,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     [self rebuildSidebar];
     [self setMinimapActuallyVisible:NO];
     [self installPresentationEventMonitor];
-    [_window makeFirstResponder:_pageView];
+    [_window makeFirstResponder:_presentationOverlayView ?: _pageView];
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
-    if (_presentationEnteredFullScreen) [_window toggleFullScreen:sender];
 }
 
 - (void)leavePresentationModeAndExitFullScreen:(BOOL)exitFullScreen sender:(id)sender {
@@ -7375,6 +7838,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     _pageView.viewMode = _viewMode;
     _pageView.currentPageIndex = _pageIndex;
     [self applyPresentationChrome];
+    [self restorePresentationWindowChrome];
     [self rebuildSidebar];
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
     if (_doc) [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
@@ -7390,7 +7854,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 }
 
 - (void)toggleFullScreen:(id)sender {
-    [_window toggleFullScreen:sender];
+    if (_presentationMode)
+        [self leavePresentationModeAndExitFullScreen:YES sender:sender];
+    else if (_doc)
+        [self enterPresentationMode:sender];
+    else
+        [_window toggleFullScreen:sender];
 }
 
 - (NSString*)ocrToolPath {
@@ -8977,6 +9446,10 @@ int main(int argc, const char* argv[]) {
 
         SumatraMacDelegate* delegate = [[SumatraMacDelegate alloc] init];
         for (int i = 1; i < argc; ++i) {
+            if (strcmp(argv[i], "--detached-tab") == 0) {
+                delegate.detachedTabLaunch = YES;
+                continue;
+            }
             if (argv[i][0] != '-') {
                 delegate.initialPath = [NSString stringWithUTF8String:argv[i]];
                 break;

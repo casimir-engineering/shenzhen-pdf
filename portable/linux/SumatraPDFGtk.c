@@ -6,10 +6,12 @@
 #include "sumatra_pdf_core.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define MAX_CONFIG_JSON_BYTES (2 * 1024 * 1024)
 #define MAX_SESSION_TABS 64
@@ -177,6 +179,7 @@ typedef struct app_state {
     gboolean updating_overflow_controls;
     gboolean translate_running;
     gboolean translate_install_running;
+    gboolean detached_tab_launch;
     gboolean window_fullscreen;
     gboolean panning;
     gboolean selecting;
@@ -309,6 +312,7 @@ static void update_find_controls(app_state* state);
 static void update_toolbar_overflow_menu_state(app_state* state);
 static void update_tab_strip(app_state* state);
 static void save_active_tab_state(app_state* state);
+static void close_tab_at_index(app_state* state, int index);
 static void select_tab(app_state* state, int index);
 static const char* current_search_text(app_state* state);
 static void set_regex_multiline_widget_active(GtkWidget* widget, gboolean active);
@@ -919,6 +923,7 @@ static const char* current_search_text(app_state* state) {
 }
 
 static void save_session(app_state* state) {
+    if (state->detached_tab_launch) return;
     save_active_tab_state(state);
 
     GString* json = g_string_new("{\n");
@@ -2468,6 +2473,11 @@ static void close_document_view(app_state* state) {
 static void tab_close_clicked(GtkButton* button, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     int index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "tab-index")) - 1;
+    if (!state) return;
+    close_tab_at_index(state, index);
+}
+
+static void close_tab_at_index(app_state* state, int index) {
     gboolean was_selected;
     char* closed_path;
 
@@ -2492,6 +2502,47 @@ static void tab_close_clicked(GtkButton* button, gpointer user_data) {
         update_tab_strip(state);
     }
     save_session(state);
+}
+
+static char* current_executable_path(void) {
+    char path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (len > 0) {
+        path[len] = '\0';
+        return g_strdup(path);
+    }
+    return g_strdup(g_get_prgname() ? g_get_prgname() : "sumatrapdf");
+}
+
+static gboolean detach_tab(app_state* state, int index) {
+    gchar* exe;
+    gchar** envp;
+    gchar* argv[3];
+    GError* error = NULL;
+    gboolean launched;
+
+    if (!state || index < 0 || index >= state->tab_count || !state->tabs[index].path || !*state->tabs[index].path)
+        return FALSE;
+
+    save_active_tab_state(state);
+    exe = current_executable_path();
+    argv[0] = exe;
+    argv[1] = state->tabs[index].path;
+    argv[2] = NULL;
+    envp = g_get_environ();
+    envp = g_environ_setenv(envp, "SUMATRA_DETACHED_TAB", "1", TRUE);
+    launched = g_spawn_async(NULL, argv, envp, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &error);
+    g_strfreev(envp);
+    if (!launched) {
+        if (state->status)
+            gtk_label_set_text(GTK_LABEL(state->status), error ? error->message : "Could not detach tab");
+        if (error) g_error_free(error);
+        g_free(exe);
+        return FALSE;
+    }
+    g_free(exe);
+    close_tab_at_index(state, index);
+    return TRUE;
 }
 
 static void move_tab(app_state* state, int from_index, int to_index) {
@@ -2609,7 +2660,10 @@ static gboolean tab_handle_button_release(GtkWidget* widget, GdkEventButton* eve
 
     if (!state || event->button != 1 || state->tab_drag_index < 0) return FALSE;
     gtk_grab_remove(widget);
-    if (gtk_widget_translate_coordinates(widget, state->tab_bar, (gint)event->x, (gint)event->y, &bar_x, &bar_y)) {
+    if (state->tab_dragging && fabs(event->y_root - state->tab_drag_start_y) > 48.0) {
+        detach_tab(state, state->tab_drag_index);
+    } else if (gtk_widget_translate_coordinates(widget, state->tab_bar, (gint)event->x, (gint)event->y, &bar_x,
+                                                &bar_y)) {
         target = tab_index_for_bar_x(state, (double)bar_x, state->tab_drag_index);
         move_tab(state, state->tab_drag_index, target);
     } else if (!state->tab_dragging) {
@@ -6594,11 +6648,23 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
             next_clicked(NULL, state);
             return TRUE;
         }
-        if (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Up) {
+        if (event->keyval == GDK_KEY_Home) {
+            state->page_index = 0;
+            render_current_page(state, TRUE);
+            update_controls(state);
+            return TRUE;
+        }
+        if (event->keyval == GDK_KEY_End) {
+            state->page_index = MAX(0, spdf_page_count(state->doc) - 1);
+            render_current_page(state, TRUE);
+            update_controls(state);
+            return TRUE;
+        }
+        if (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Up || event->keyval == GDK_KEY_Page_Up) {
             previous_clicked(NULL, state);
             return TRUE;
         }
-        if (event->keyval == GDK_KEY_Right || event->keyval == GDK_KEY_Down) {
+        if (event->keyval == GDK_KEY_Right || event->keyval == GDK_KEY_Down || event->keyval == GDK_KEY_Page_Down) {
             next_clicked(NULL, state);
             return TRUE;
         }
@@ -7318,18 +7384,21 @@ int main(int argc, char** argv) {
     state.selected_tab = -1;
     state.restore_selected_tab = -1;
     state.favorite_pending_delete = -1;
+    state.detached_tab_launch = g_strcmp0(g_getenv("SUMATRA_DETACHED_TAB"), "1") == 0;
     state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, MIN(2, g_get_num_processors())), FALSE, NULL);
     init_config_paths(&state);
     load_settings(&state);
-    load_session(&state);
+    if (!state.detached_tab_launch) load_session(&state);
     load_favorites(&state);
-    GtkApplication* app = gtk_application_new("org.sumatrapdfreader.SumatraPDF", G_APPLICATION_HANDLES_OPEN);
+    GtkApplication* app =
+        gtk_application_new("org.sumatrapdfreader.SumatraPDF",
+                            G_APPLICATION_HANDLES_OPEN | (state.detached_tab_launch ? G_APPLICATION_NON_UNIQUE : 0));
     g_signal_connect(app, "activate", G_CALLBACK(activate), &state);
     g_signal_connect(app, "open", G_CALLBACK(open_files), &state);
     status = g_application_run(G_APPLICATION(app), argc, argv);
 
     save_settings(&state);
-    save_session(&state);
+    if (!state.detached_tab_launch) save_session(&state);
     if (state.find_debounce_id) g_source_remove(state.find_debounce_id);
     if (state.sidebar_metadata_idle_id) g_source_remove(state.sidebar_metadata_idle_id);
     if (state.background_render_idle_id) g_source_remove(state.background_render_idle_id);
