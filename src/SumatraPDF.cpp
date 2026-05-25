@@ -5246,6 +5246,34 @@ static WCHAR SingleCharLowerW(WCHAR c) {
     return buf[0];
 }
 
+static bool StartFindFromTypedChar(MainWindow* win, WPARAM key) {
+    if (IsCtrlPressed() || IsAltPressed() || !win->IsDocLoaded() || !win->AsFixed() || !NeedsFindUI(win)) {
+        return false;
+    }
+    if (!gGlobalPrefs->showToolbar || win->isFullScreen || win->presentation) {
+        return false;
+    }
+    if (HwndIsFocused(win->hwndFindEdit) || HwndIsFocused(win->hwndPageEdit)) {
+        return false;
+    }
+    if (win->tocFilterEdit && HwndIsFocused(win->tocFilterEdit->hwnd)) {
+        return false;
+    }
+    if (key < 0x20 || key == 0x7f) {
+        return false;
+    }
+
+    WCHAR typed[2] = {(WCHAR)key, 0};
+    TempStr typedUtf8 = ToUtf8Temp(typed);
+    AbortFinding(win, false);
+    HwndSetText(win->hwndFindEdit, typedUtf8);
+    HwndSetFocus(win->hwndFindEdit);
+    Edit_SetSel(win->hwndFindEdit, 1, 1);
+    Edit_SetModify(win->hwndFindEdit, TRUE);
+    FindTextOnThread(win, TextSearch::Direction::Forward, false);
+    return true;
+}
+
 static void OnFrameKeyEsc(MainWindow* win) {
     if (AbortFinding(win, true)) {
         return;
@@ -5452,6 +5480,10 @@ static void FrameOnChar(MainWindow* win, WPARAM key, LPARAM info = 0) {
     }
 
     if (!win->IsDocLoaded()) {
+        return;
+    }
+
+    if (StartFindFromTypedChar(win, key)) {
         return;
     }
 

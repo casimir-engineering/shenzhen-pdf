@@ -134,6 +134,14 @@ static NSImage* spdf_translate_toolbar_image() {
     static NSImage* image = nil;
     if (image) return image;
 
+    if (@available(macOS 11.0, *)) {
+        image = [NSImage imageWithSystemSymbolName:@"translate" accessibilityDescription:@"Translate"];
+        if (image) {
+            [image setTemplate:YES];
+            return image;
+        }
+    }
+
     image = [[NSImage alloc] initWithSize:NSMakeSize(18.0, 18.0)];
     [image lockFocus];
     CGContextRef ctx = NSGraphicsContext.currentContext.CGContext;
@@ -145,50 +153,38 @@ static NSImage* spdf_translate_toolbar_image() {
     CGContextSetLineJoin(ctx, kCGLineJoinRound);
     CGContextSetStrokeColorWithColor(ctx, NSColor.blackColor.CGColor);
 
-    CGPathRef topCard = CGPathCreateWithRoundedRect(CGRectMake(1.2, 1.2, 13.6, 13.6), 2.2, 2.2, NULL);
-    CGContextAddPath(ctx, topCard);
-    CGContextStrokePath(ctx);
-    CGPathRelease(topCard);
-
-    CGPathRef lowerCard = CGPathCreateWithRoundedRect(CGRectMake(9.2, 9.2, 13.6, 13.6), 2.2, 2.2, NULL);
-    CGContextAddPath(ctx, lowerCard);
-    CGContextStrokePath(ctx);
-    CGPathRelease(lowerCard);
-
+    CGContextSetLineWidth(ctx, 2.1);
     CGContextBeginPath(ctx);
-    CGContextMoveToPoint(ctx, 4.0, 5.0);
-    CGContextAddLineToPoint(ctx, 12.0, 5.0);
-    CGContextMoveToPoint(ctx, 8.0, 3.0);
-    CGContextAddLineToPoint(ctx, 8.0, 5.0);
-    CGContextMoveToPoint(ctx, 5.8, 6.2);
-    CGContextAddQuadCurveToPoint(ctx, 7.9, 9.4, 10.2, 6.2);
-    CGContextMoveToPoint(ctx, 7.0, 8.0);
-    CGContextAddLineToPoint(ctx, 9.7, 10.7);
+    CGContextMoveToPoint(ctx, 5.2, 17.8);
+    CGContextAddLineToPoint(ctx, 8.0, 7.2);
+    CGContextAddLineToPoint(ctx, 10.8, 17.8);
+    CGContextMoveToPoint(ctx, 6.2, 14.0);
+    CGContextAddLineToPoint(ctx, 9.8, 14.0);
     CGContextStrokePath(ctx);
 
     CGContextBeginPath(ctx);
-    CGContextMoveToPoint(ctx, 12.6, 20.0);
-    CGContextAddLineToPoint(ctx, 16.0, 11.8);
-    CGContextAddLineToPoint(ctx, 19.4, 20.0);
-    CGContextMoveToPoint(ctx, 14.0, 17.0);
-    CGContextAddLineToPoint(ctx, 18.0, 17.0);
+    CGContextMoveToPoint(ctx, 13.5, 5.3);
+    CGContextAddLineToPoint(ctx, 21.2, 5.3);
+    CGContextMoveToPoint(ctx, 17.4, 3.0);
+    CGContextAddLineToPoint(ctx, 17.4, 5.3);
+    CGContextMoveToPoint(ctx, 15.1, 7.0);
+    CGContextAddQuadCurveToPoint(ctx, 17.4, 10.7, 20.0, 7.0);
+    CGContextMoveToPoint(ctx, 16.5, 8.8);
+    CGContextAddLineToPoint(ctx, 19.8, 12.2);
     CGContextStrokePath(ctx);
 
+    CGContextSetLineWidth(ctx, 1.7);
     CGContextBeginPath(ctx);
-    CGContextMoveToPoint(ctx, 15.9, 1.5);
-    CGContextAddLineToPoint(ctx, 18.0, 1.5);
-    CGContextAddQuadCurveToPoint(ctx, 20.5, 1.5, 20.5, 4.0);
-    CGContextAddLineToPoint(ctx, 20.5, 6.2);
-    CGContextMoveToPoint(ctx, 18.0, 5.0);
-    CGContextAddLineToPoint(ctx, 20.5, 7.5);
-    CGContextAddLineToPoint(ctx, 23.0, 5.0);
-    CGContextMoveToPoint(ctx, 8.1, 22.5);
-    CGContextAddLineToPoint(ctx, 6.0, 22.5);
-    CGContextAddQuadCurveToPoint(ctx, 3.5, 22.5, 3.5, 20.0);
-    CGContextAddLineToPoint(ctx, 3.5, 17.8);
-    CGContextMoveToPoint(ctx, 6.0, 19.0);
-    CGContextAddLineToPoint(ctx, 3.5, 16.5);
-    CGContextAddLineToPoint(ctx, 1.0, 19.0);
+    CGContextMoveToPoint(ctx, 14.7, 15.8);
+    CGContextAddLineToPoint(ctx, 18.7, 15.8);
+    CGContextAddLineToPoint(ctx, 17.0, 14.1);
+    CGContextMoveToPoint(ctx, 18.7, 15.8);
+    CGContextAddLineToPoint(ctx, 17.0, 17.5);
+    CGContextMoveToPoint(ctx, 9.3, 8.1);
+    CGContextAddLineToPoint(ctx, 5.3, 8.1);
+    CGContextAddLineToPoint(ctx, 7.0, 6.4);
+    CGContextMoveToPoint(ctx, 5.3, 8.1);
+    CGContextAddLineToPoint(ctx, 7.0, 9.8);
     CGContextStrokePath(ctx);
     CGContextRestoreGState(ctx);
 
@@ -571,6 +567,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)deleteComment:(id)sender;
 - (NSNumber*)commentIndexForSidebarRow:(NSInteger)row;
 - (BOOL)documentArrowKeyDown:(NSEvent*)event;
+- (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
+- (void)goToAdjacentPagePreservingRelativePosition:(NSInteger)delta;
 - (void)installPresentationEventMonitor;
 - (void)removePresentationEventMonitor;
 - (void)writeSessionStateForCurrentWindow;
@@ -1725,6 +1723,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)keyDown:(NSEvent*)event {
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
     if (self.reader && [self.reader documentArrowKeyDown:event]) return;
+    if (self.reader && [self.reader documentTypeToSearchKeyDown:event]) return;
     [super keyDown:event];
 }
 
@@ -2144,6 +2143,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)keyDown:(NSEvent*)event {
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
     if (self.reader && [self.reader documentArrowKeyDown:event]) return;
+    if (self.reader && [self.reader documentTypeToSearchKeyDown:event]) return;
     [super keyDown:event];
 }
 
@@ -2881,6 +2881,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSMenu* _recentlyOpenedMenu;
     NSTextField* _statusLabel;
     NSSegmentedControl* _sidebarModeControl;
+    NSSearchField* _sidebarFilterField;
     NSPanel* _palettePanel;
     NSSearchField* _paletteSearchField;
     NSButton* _paletteAllDocsCheckbox;
@@ -2919,6 +2920,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     spdf_outline _outline;
     spdf_comments _comments;
     NSMutableArray<NSDictionary*>* _sidebarItems;
+    NSString* _chapterFilterText;
+    NSString* _commentFilterText;
     NSMutableArray<SPDFRenderedPage*>* _renderedPages;
     NSMutableArray<SPDFDocumentTab*>* _tabs;
     NSMutableArray<NSDictionary*>* _favorites;
@@ -2985,6 +2988,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     BOOL _tabStripCapturingMouse;
     BOOL _terminateOnlyThisProcess;
     BOOL _suppressSessionWriteOnTerminate;
+    BOOL _updatingSidebarFilterField;
     NSArray<NSDictionary*>* _pendingTranslationItems;
     BOOL _restoringSidebarLayout;
     BOOL _allowSidebarWidthPersistence;
@@ -3027,6 +3031,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _findRegexMultiline = YES;
     _translationSourceLanguage = @"zh";
     _translationTargetLanguage = @"en";
+    _chapterFilterText = @"";
+    _commentFilterText = @"";
     _sidebarItems = [NSMutableArray array];
     _renderedPages = [NSMutableArray array];
     _tabs = [NSMutableArray array];
@@ -4047,6 +4053,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _sidebarModeControl.translatesAutoresizingMaskIntoConstraints = NO;
     [_sidebarContainer addSubview:_sidebarModeControl];
 
+    _sidebarFilterField = [[NSSearchField alloc] init];
+    _sidebarFilterField.placeholderString = @"Filter Chapters";
+    _sidebarFilterField.delegate = self;
+    _sidebarFilterField.translatesAutoresizingMaskIntoConstraints = NO;
+    [_sidebarContainer addSubview:_sidebarFilterField];
+
     NSScrollView* sidebarScroll = [[NSScrollView alloc] init];
     sidebarScroll.hasVerticalScroller = YES;
     sidebarScroll.translatesAutoresizingMaskIntoConstraints = NO;
@@ -4079,7 +4091,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [_sidebarModeControl.topAnchor constraintEqualToAnchor:_sidebarContainer.topAnchor constant:8],
         [_sidebarModeControl.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor constant:8],
         [_sidebarModeControl.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-8],
-        [sidebarScroll.topAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor constant:8],
+        [_sidebarFilterField.topAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor constant:8],
+        [_sidebarFilterField.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor constant:8],
+        [_sidebarFilterField.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-8],
+        [sidebarScroll.topAnchor constraintEqualToAnchor:_sidebarFilterField.bottomAnchor constant:8],
         [sidebarScroll.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor],
         [sidebarScroll.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor],
         [sidebarScroll.bottomAnchor constraintEqualToAnchor:_sidebarContainer.bottomAnchor]
@@ -5187,6 +5202,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
         if (![_tabStrip containsTabOrControlAtPoint:point]) {
             _tabStripCapturingMouse = NO;
+            [_window performWindowDragWithEvent:event];
             return YES;
         }
         _tabStripCapturingMouse = YES;
@@ -5266,6 +5282,39 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }];
 }
 
+- (void)loadOutlineForCurrentDocumentAsync {
+    if (!_path.length) return;
+    NSString* path = [_path copy];
+    NSUInteger generation = _renderGeneration;
+    [_preloadQueue addOperationWithBlock:^{
+      @autoreleasepool {
+          spdf_outline* outline = (spdf_outline*)calloc(1, sizeof(spdf_outline));
+          if (!outline) return;
+          char err[1024];
+          spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+          BOOL ok = doc && spdf_load_outline(doc, outline, err, sizeof(err));
+          if (doc) spdf_close(doc);
+          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            if (generation != self->_renderGeneration || ![self->_path isEqualToString:path]) {
+                spdf_free_outline(outline);
+                free(outline);
+                return;
+            }
+            spdf_free_outline(&self->_outline);
+            if (ok) {
+                self->_outline = *outline;
+                free(outline);
+            } else {
+                memset(&self->_outline, 0, sizeof(self->_outline));
+                spdf_free_outline(outline);
+                free(outline);
+            }
+            [self rebuildSidebar];
+          }];
+      }
+    }];
+}
+
 - (void)schedulePostFirstPaintWorkForGeneration:(NSUInteger)generation
                                            path:(NSString*)path
                             savedFindMatchIndex:(NSInteger)savedFindMatchIndex
@@ -5278,8 +5327,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                      dispatch_get_main_queue(), ^{
                        if (generation != self->_renderGeneration || ![self->_path isEqualToString:path]) return;
                        [self enqueueNearbyPageRendersForGeneration:generation preferredPage:preferredRenderPage];
-                       [self preloadInactiveTabs];
+                       [self loadOutlineForCurrentDocumentAsync];
                        [self loadCommentsForCurrentDocumentAsync];
+                       [self preloadInactiveTabs];
                        if (restoreSearch && self->_searchField.stringValue.length > 0) {
                            self->_pendingFindPreferredMatchIndex = savedFindMatchIndex;
                            self->_pendingFindPreferredPage = -1;
@@ -5540,6 +5590,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [_queuedRenderPages removeAllObjects];
         spdf_free_outline(&_outline);
         spdf_free_comments(&_comments);
+        memset(&_outline, 0, sizeof(_outline));
+        memset(&_comments, 0, sizeof(_comments));
         spdf_close(_doc);
         _doc = NULL;
         _path = [path copy];
@@ -5573,6 +5625,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     spdf_free_outline(&_outline);
     spdf_free_comments(&_comments);
+    memset(&_outline, 0, sizeof(_outline));
+    memset(&_comments, 0, sizeof(_comments));
     spdf_close(_doc);
     _doc = newDoc;
     _path = [path copy];
@@ -5606,10 +5660,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _pageScrollView.hasVerticalScroller = !_presentationMode;
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
     tab.title = spdf_display_name_for_path(_path);
-
-    char outlineErr[1024];
-    if (_doc && !spdf_load_outline(_doc, &_outline, outlineErr, sizeof(outlineErr)))
-        _statusLabel.stringValue = [NSString stringWithFormat:@"Opened, but outline was not available: %s", outlineErr];
 
     [self rebuildSidebar];
     [self updateTabStrip];
@@ -5653,6 +5703,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self rememberClosedDocumentPath:closedPath];
     spdf_free_outline(&_outline);
     spdf_free_comments(&_comments);
+    memset(&_outline, 0, sizeof(_outline));
+    memset(&_comments, 0, sizeof(_comments));
     spdf_close(_doc);
     _doc = NULL;
     _path = nil;
@@ -5754,6 +5806,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         _selectedTabIndex = -1;
         spdf_free_outline(&_outline);
         spdf_free_comments(&_comments);
+        memset(&_outline, 0, sizeof(_outline));
+        memset(&_comments, 0, sizeof(_comments));
         spdf_close(_doc);
         _doc = NULL;
         _path = nil;
@@ -6051,6 +6105,35 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         _sidebarWidth = spdf_sane_sidebar_width(width, NSWidth(_splitView.bounds));
 }
 
+- (NSString*)sidebarFilterTextForCurrentMode {
+    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments) return _commentFilterText ?: @"";
+    return _chapterFilterText ?: @"";
+}
+
+- (void)setSidebarFilterTextForCurrentMode:(NSString*)filter {
+    filter = filter ?: @"";
+    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments)
+        _commentFilterText = [filter copy];
+    else
+        _chapterFilterText = [filter copy];
+}
+
+- (void)syncSidebarFilterField {
+    if (!_sidebarFilterField) return;
+    BOOL comments = _sidebarModeControl.selectedSegment == SPDFSidebarModeComments;
+    _updatingSidebarFilterField = YES;
+    _sidebarFilterField.placeholderString = comments ? @"Filter Comments" : @"Filter Chapters";
+    _sidebarFilterField.stringValue = [self sidebarFilterTextForCurrentMode];
+    _updatingSidebarFilterField = NO;
+}
+
+- (BOOL)sidebarSearchText:(NSString*)text matchesFilter:(NSString*)filter {
+    if (filter.length == 0) return YES;
+    if (text.length == 0) return NO;
+    return [text rangeOfString:filter options:NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch].location !=
+           NSNotFound;
+}
+
 - (void)rebuildSidebar {
     [_sidebarItems removeAllObjects];
     BOOL hasChapters = _outline.count > 0;
@@ -6066,6 +6149,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     else if (!hasChapters && !hasComments)
         _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
 
+    [self syncSidebarFilterField];
+    NSString* filter = [self sidebarFilterTextForCurrentMode];
     if (hasSidebar) {
         if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments && hasComments) {
             for (int i = 0; i < _comments.count; ++i) {
@@ -6075,6 +6160,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                 NSString* text = item.text && *item.text ? [NSString stringWithUTF8String:item.text] : @"";
                 NSString* title = text.length ? text : type;
                 if (author.length) title = [NSString stringWithFormat:@"%@: %@", author, title];
+                NSString* haystack = [NSString
+                    stringWithFormat:@"%@ %@ %@ p.%d", title ?: @"", author ?: @"", type ?: @"", item.page_index + 1];
+                if (![self sidebarSearchText:haystack matchesFilter:filter]) continue;
                 CGFloat width = item.bounds.x1 - item.bounds.x0;
                 CGFloat height = item.bounds.y1 - item.bounds.y0;
                 NSMutableDictionary* sidebarItem = [@{
@@ -6094,6 +6182,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             for (int i = 0; i < _outline.count; ++i) {
                 spdf_outline_item item = _outline.items[i];
                 NSString* title = item.title ? [NSString stringWithUTF8String:item.title] : @"Untitled";
+                if (![self sidebarSearchText:title matchesFilter:filter]) continue;
                 [_sidebarItems addObject:@{
                     @"title" : title ?: @"Untitled",
                     @"page" : @(item.page_index),
@@ -6112,7 +6201,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)sidebarModeChanged:(id)sender {
     (void)sender;
+    [self syncSidebarFilterField];
     [self rebuildSidebar];
+}
+
+- (void)goToAdjacentPagePreservingRelativePosition:(NSInteger)delta {
+    if (!_doc || delta == 0) return;
+    NSInteger pageCount = spdf_page_count(_doc);
+    if (pageCount <= 0) return;
+    NSInteger target = MAX(0, MIN(_pageIndex + delta, pageCount - 1));
+    if (target == _pageIndex) return;
+    [self goToPage:target preserveSinglePagePosition:YES];
 }
 
 - (void)clipViewBoundsChanged:(NSNotification*)notification {
@@ -6170,6 +6269,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     BOOL pageDown = event.keyCode == 121;
     BOOL returnKey = event.keyCode == 36 || event.keyCode == 76;
     BOOL deleteKey = event.keyCode == 51;
+    BOOL shift = (flags & NSEventModifierFlagShift) != 0;
     if (_presentationMode && home) {
         [self firstPage:nil];
         return YES;
@@ -6188,6 +6288,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     if (!left && !right && !down && !up && !pageUp && !pageDown) return NO;
 
+    if (!_presentationMode && _viewMode == SPDFViewModeContinuous && shift && (left || right || up || down)) {
+        [self goToAdjacentPagePreservingRelativePosition:(left || up) ? -1 : 1];
+        return YES;
+    }
+
     if (_presentationMode || _viewMode == SPDFViewModeSingle) {
         if (left || up || pageUp)
             [self previousPage:nil];
@@ -6205,6 +6310,33 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (right) origin.x += lineStep;
     [self scrollDocumentClipViewToOrigin:origin notify:YES];
     [self rememberActiveTabState];
+    return YES;
+}
+
+- (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event {
+    if (!_doc || _presentationMode || !_searchField) return NO;
+    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption |
+                 NSEventModifierFlagFunction))
+        return NO;
+
+    id firstResponder = _window.firstResponder;
+    if ([firstResponder isKindOfClass:[NSTextView class]] || firstResponder == _searchField ||
+        firstResponder == _pageField || firstResponder == _paletteSearchField || firstResponder == _sidebarFilterField)
+        return NO;
+
+    NSString* typed = event.characters ?: @"";
+    if (typed.length == 0) return NO;
+    NSCharacterSet* controls = NSCharacterSet.controlCharacterSet;
+    for (NSUInteger i = 0; i < typed.length; ++i) {
+        if ([controls characterIsMember:[typed characterAtIndex:i]]) return NO;
+    }
+
+    [_window makeFirstResponder:_searchField];
+    _searchField.stringValue = typed;
+    NSText* editor = _searchField.currentEditor;
+    if (editor) [editor setSelectedRange:NSMakeRange(typed.length, 0)];
+    [self startFindForCurrentQueryResetSavedIndex:YES revealMatch:YES];
     return YES;
 }
 
@@ -9377,6 +9509,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)controlTextDidChange:(NSNotification*)notification {
     if (notification.object == _searchField) {
         [self startFindForCurrentQuery];
+    } else if (notification.object == _sidebarFilterField) {
+        if (_updatingSidebarFilterField) return;
+        [self setSidebarFilterTextForCurrentMode:_sidebarFilterField.stringValue ?: @""];
+        [self rebuildSidebar];
     } else if (notification.object == _paletteSearchField) {
         _paletteFavoritePendingDelete = nil;
         [self refreshPaletteResults];

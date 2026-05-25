@@ -114,6 +114,7 @@ typedef struct app_state {
     GtkWidget* main_paned;
     GtkWidget* sidebar_container;
     GtkWidget* sidebar_tabs;
+    GtkWidget* sidebar_filter_entry;
     GtkWidget* sidebar;
     GtkWidget* comments_sidebar;
     GtkWidget* page_entry;
@@ -138,6 +139,8 @@ typedef struct app_state {
     char* config_dir;
     char* settings_path;
     char* session_path;
+    char* chapter_filter_text;
+    char* comment_filter_text;
     char* session_lock_path;
     char* favorites_path;
     char* window_session_id;
@@ -188,6 +191,7 @@ typedef struct app_state {
     gboolean suppress_find_changed;
     gboolean switching_tabs;
     gboolean updating_sidebar_menu;
+    gboolean updating_sidebar_filter;
     gboolean updating_minimap_control;
     gboolean updating_marker_strip_control;
     gboolean updating_presentation_menu;
@@ -296,8 +300,11 @@ typedef struct page_point_scroll_request {
     int page_index;
     double x;
     double y;
+    double x_fraction;
+    double y_fraction;
     gboolean has_point;
     gboolean preserve_horizontal;
+    gboolean use_fraction;
 } page_point_scroll_request;
 
 typedef struct horizontal_clamp_request {
@@ -1817,8 +1824,43 @@ static GtkWidget* add_sidebar_row(GtkWidget* list, const char* text, int page_in
     return row;
 }
 
+static gboolean sidebar_filter_matches(const char* text, const char* filter) {
+    gboolean found;
+    char* folded_text;
+    char* folded_filter;
+
+    if (!filter || !*filter) return TRUE;
+    if (!text || !*text) return FALSE;
+    folded_text = g_utf8_casefold(text, -1);
+    folded_filter = g_utf8_casefold(filter, -1);
+    found = folded_text && folded_filter && strstr(folded_text, folded_filter) != NULL;
+    g_free(folded_text);
+    g_free(folded_filter);
+    return found;
+}
+
+static const char* sidebar_filter_for_current_page(app_state* state, int page_num) {
+    if (!state) return "";
+    return page_num == 1 ? (state->comment_filter_text ? state->comment_filter_text : "")
+                         : (state->chapter_filter_text ? state->chapter_filter_text : "");
+}
+
+static void sync_sidebar_filter_entry(app_state* state) {
+    int page_num;
+
+    if (!state || !state->sidebar_filter_entry || !state->sidebar_tabs) return;
+    page_num = gtk_notebook_get_current_page(GTK_NOTEBOOK(state->sidebar_tabs));
+    state->updating_sidebar_filter = TRUE;
+    gtk_entry_set_placeholder_text(GTK_ENTRY(state->sidebar_filter_entry),
+                                   page_num == 1 ? "Filter Comments" : "Filter Chapters");
+    gtk_entry_set_text(GTK_ENTRY(state->sidebar_filter_entry), sidebar_filter_for_current_page(state, page_num));
+    state->updating_sidebar_filter = FALSE;
+}
+
 static void rebuild_sidebar(app_state* state) {
     int requested_page = 0;
+    const char* chapter_filter;
+    const char* comment_filter;
     if (!state || !state->sidebar_container || !state->sidebar_tabs || !state->sidebar || !state->comments_sidebar) {
         update_sidebar_menu_items(state);
         return;
@@ -1834,20 +1876,28 @@ static void rebuild_sidebar(app_state* state) {
     }
 
     if (state->sidebar_tabs) requested_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(state->sidebar_tabs));
+    chapter_filter = state->chapter_filter_text ? state->chapter_filter_text : "";
+    comment_filter = state->comment_filter_text ? state->comment_filter_text : "";
 
     for (int i = 0; i < state->outline.count; ++i) {
         spdf_outline_item item = state->outline.items[i];
-        add_sidebar_row(state->sidebar, item.title ? item.title : "Untitled", item.page_index, item.level);
+        const char* title = item.title ? item.title : "Untitled";
+        if (!sidebar_filter_matches(title, chapter_filter)) continue;
+        add_sidebar_row(state->sidebar, title, item.page_index, item.level);
     }
 
     for (int i = 0; i < state->comments.count; ++i) {
         spdf_comment_item item = state->comments.items[i];
         char text[512];
+        char haystack[640];
         const char* body = item.text && *item.text ? item.text : (item.type && *item.type ? item.type : "Comment");
         if (item.author && *item.author)
             snprintf(text, sizeof(text), "%s: %s", item.author, body);
         else
             snprintf(text, sizeof(text), "%s", body);
+        snprintf(haystack, sizeof(haystack), "%s %s %s p.%d", text, item.author ? item.author : "",
+                 item.type ? item.type : "", item.page_index + 1);
+        if (!sidebar_filter_matches(haystack, comment_filter)) continue;
         GtkWidget* row = add_sidebar_row(state->comments_sidebar, text, item.page_index, 0);
         if (item.index >= 0) g_object_set_data(G_OBJECT(row), "comment-index", GINT_TO_POINTER(item.index + 1));
     }
@@ -1859,6 +1909,7 @@ static void rebuild_sidebar(app_state* state) {
     else if (state->comments.count == 0 || requested_page < 0)
         requested_page = 0;
     gtk_notebook_set_current_page(GTK_NOTEBOOK(state->sidebar_tabs), requested_page);
+    sync_sidebar_filter_entry(state);
     gtk_widget_show_all(state->sidebar_container);
     update_sidebar_menu_items(state);
 }
@@ -2513,13 +2564,19 @@ static gboolean scroll_to_page_point_idle(gpointer data) {
         double page_x = 0.0;
         double page_y = 0.0;
         double page_width = 0.0;
+        double page_height = 0.0;
         double target_h;
         double target_v;
         double h_page = gtk_adjustment_get_page_size(hadj);
         double v_page = gtk_adjustment_get_page_size(vadj);
 
-        if (page_widget_geometry(state, request->page_index, &page_x, &page_y, &page_width, NULL)) {
-            if (request->preserve_horizontal) {
+        if (page_widget_geometry(state, request->page_index, &page_x, &page_y, &page_width, &page_height)) {
+            if (request->use_fraction) {
+                double max_h = MAX(0.0, page_width - h_page);
+                double max_v = MAX(0.0, page_height - v_page);
+                target_h = page_x + MAX(0.0, MIN(request->x_fraction, 1.0)) * max_h;
+                target_v = page_y + MAX(0.0, MIN(request->y_fraction, 1.0)) * max_v;
+            } else if (request->preserve_horizontal) {
                 target_h = gtk_adjustment_get_value(hadj);
             } else if (request->has_point) {
                 target_h = page_x + request->x * state->zoom - h_page * 0.5;
@@ -2569,6 +2626,19 @@ static void scroll_to_page_point_preserving_horizontal(app_state* state, int pag
     request->y = y;
     request->has_point = TRUE;
     request->preserve_horizontal = TRUE;
+    g_idle_add(scroll_to_page_point_idle, request);
+}
+
+static void scroll_to_page_fraction(app_state* state, int page_index, double x_fraction, double y_fraction) {
+    page_point_scroll_request* request;
+    if (!state || !state->scroll) return;
+    request = g_new0(page_point_scroll_request, 1);
+    request->state = state;
+    request->generation = state->render_generation;
+    request->page_index = page_index;
+    request->x_fraction = x_fraction;
+    request->y_fraction = y_fraction;
+    request->use_fraction = TRUE;
     g_idle_add(scroll_to_page_point_idle, request);
 }
 
@@ -3498,6 +3568,41 @@ static void next_clicked(GtkButton* button, gpointer user_data) {
     }
 }
 
+static gboolean go_to_adjacent_page_preserving_view(app_state* state, int delta) {
+    int page_count;
+    int target_page;
+    double page_x = 0.0;
+    double page_y = 0.0;
+    double page_width = 0.0;
+    double page_height = 0.0;
+    double x_fraction = 0.0;
+    double y_fraction = 0.0;
+    GtkAdjustment* hadj;
+    GtkAdjustment* vadj;
+
+    if (!state || !state->doc || !state->scroll || delta == 0) return FALSE;
+    page_count = spdf_page_count(state->doc);
+    if (page_count <= 0) return FALSE;
+    target_page = MAX(0, MIN(state->page_index + delta, page_count - 1));
+    if (target_page == state->page_index) return TRUE;
+
+    hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    if (page_widget_geometry(state, state->page_index, &page_x, &page_y, &page_width, &page_height)) {
+        double max_h = MAX(1.0, page_width - gtk_adjustment_get_page_size(hadj));
+        double max_v = MAX(1.0, page_height - gtk_adjustment_get_page_size(vadj));
+        x_fraction = MAX(0.0, MIN((gtk_adjustment_get_value(hadj) - page_x) / max_h, 1.0));
+        y_fraction = MAX(0.0, MIN((gtk_adjustment_get_value(vadj) - page_y) / max_v, 1.0));
+    }
+
+    state->page_index = target_page;
+    clear_page_entry_focus(state);
+    render_current_page(state, FALSE);
+    scroll_to_page_fraction(state, state->page_index, x_fraction, y_fraction);
+    save_session(state);
+    return TRUE;
+}
+
 static void zoom_in_clicked(GtkButton* button, gpointer user_data) {
     (void)button;
     app_state* state = (app_state*)user_data;
@@ -3684,7 +3789,25 @@ static void sidebar_page_switched(GtkNotebook* notebook, GtkWidget* page, guint 
     (void)notebook;
     (void)page;
     (void)page_num;
-    update_sidebar_menu_items((app_state*)user_data);
+    app_state* state = (app_state*)user_data;
+    sync_sidebar_filter_entry(state);
+    update_sidebar_menu_items(state);
+}
+
+static void sidebar_filter_changed(GtkEntry* entry, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    int page_num;
+
+    if (!state || state->updating_sidebar_filter) return;
+    page_num = state->sidebar_tabs ? gtk_notebook_get_current_page(GTK_NOTEBOOK(state->sidebar_tabs)) : 0;
+    if (page_num == 1) {
+        g_free(state->comment_filter_text);
+        state->comment_filter_text = g_strdup(gtk_entry_get_text(entry));
+    } else {
+        g_free(state->chapter_filter_text);
+        state->chapter_filter_text = g_strdup(gtk_entry_get_text(entry));
+    }
+    rebuild_sidebar(state);
 }
 
 static void paned_position_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
@@ -6705,53 +6828,35 @@ static gboolean translate_icon_draw(GtkWidget* widget, cairo_t* cr, gpointer use
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
 
-    cairo_new_sub_path(cr);
-    cairo_arc(cr, 3.4, 3.4, 2.2, G_PI, G_PI * 1.5);
-    cairo_arc(cr, 12.6, 3.4, 2.2, G_PI * 1.5, G_PI * 2.0);
-    cairo_arc(cr, 12.6, 12.6, 2.2, 0.0, G_PI * 0.5);
-    cairo_arc(cr, 3.4, 12.6, 2.2, G_PI * 0.5, G_PI);
-    cairo_close_path(cr);
+    cairo_set_line_width(cr, 2.1);
+    cairo_move_to(cr, 5.2, 17.8);
+    cairo_line_to(cr, 8.0, 7.2);
+    cairo_line_to(cr, 10.8, 17.8);
+    cairo_move_to(cr, 6.2, 14.0);
+    cairo_line_to(cr, 9.8, 14.0);
     cairo_stroke(cr);
 
-    cairo_new_sub_path(cr);
-    cairo_arc(cr, 11.4, 11.4, 2.2, G_PI, G_PI * 1.5);
-    cairo_arc(cr, 20.6, 11.4, 2.2, G_PI * 1.5, G_PI * 2.0);
-    cairo_arc(cr, 20.6, 20.6, 2.2, 0.0, G_PI * 0.5);
-    cairo_arc(cr, 11.4, 20.6, 2.2, G_PI * 0.5, G_PI);
-    cairo_close_path(cr);
+    cairo_move_to(cr, 13.5, 5.3);
+    cairo_line_to(cr, 21.2, 5.3);
+    cairo_move_to(cr, 17.4, 3.0);
+    cairo_line_to(cr, 17.4, 5.3);
+    cairo_move_to(cr, 15.1, 7.0);
+    cairo_curve_to(cr, 16.1, 9.5, 18.6, 9.5, 20.0, 7.0);
+    cairo_move_to(cr, 16.5, 8.8);
+    cairo_line_to(cr, 19.8, 12.2);
     cairo_stroke(cr);
 
-    cairo_move_to(cr, 4.0, 5.0);
-    cairo_line_to(cr, 12.0, 5.0);
-    cairo_move_to(cr, 8.0, 3.0);
-    cairo_line_to(cr, 8.0, 5.0);
-    cairo_move_to(cr, 5.8, 6.2);
-    cairo_curve_to(cr, 6.8, 8.5, 8.8, 8.5, 10.2, 6.2);
-    cairo_move_to(cr, 7.0, 8.0);
-    cairo_line_to(cr, 9.7, 10.7);
-    cairo_stroke(cr);
-
-    cairo_move_to(cr, 12.6, 20.0);
-    cairo_line_to(cr, 16.0, 11.8);
-    cairo_line_to(cr, 19.4, 20.0);
-    cairo_move_to(cr, 14.0, 17.0);
-    cairo_line_to(cr, 18.0, 17.0);
-    cairo_stroke(cr);
-
-    cairo_move_to(cr, 15.9, 1.5);
-    cairo_line_to(cr, 18.0, 1.5);
-    cairo_curve_to(cr, 19.6, 1.5, 20.5, 2.4, 20.5, 4.0);
-    cairo_line_to(cr, 20.5, 6.2);
-    cairo_move_to(cr, 18.0, 5.0);
-    cairo_line_to(cr, 20.5, 7.5);
-    cairo_line_to(cr, 23.0, 5.0);
-    cairo_move_to(cr, 8.1, 22.5);
-    cairo_line_to(cr, 6.0, 22.5);
-    cairo_curve_to(cr, 4.4, 22.5, 3.5, 21.6, 3.5, 20.0);
-    cairo_line_to(cr, 3.5, 17.8);
-    cairo_move_to(cr, 6.0, 19.0);
-    cairo_line_to(cr, 3.5, 16.5);
-    cairo_line_to(cr, 1.0, 19.0);
+    cairo_set_line_width(cr, 1.7);
+    cairo_move_to(cr, 14.7, 15.8);
+    cairo_line_to(cr, 18.7, 15.8);
+    cairo_line_to(cr, 17.0, 14.1);
+    cairo_move_to(cr, 18.7, 15.8);
+    cairo_line_to(cr, 17.0, 17.5);
+    cairo_move_to(cr, 9.3, 8.1);
+    cairo_line_to(cr, 5.3, 8.1);
+    cairo_line_to(cr, 7.0, 6.4);
+    cairo_move_to(cr, 5.3, 8.1);
+    cairo_line_to(cr, 7.0, 9.8);
     cairo_stroke(cr);
     cairo_restore(cr);
     return FALSE;
@@ -7220,6 +7325,7 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
     app_state* state = (app_state*)user_data;
     gboolean ctrl = (event->state & GDK_CONTROL_MASK) != 0;
     gboolean shift = (event->state & GDK_SHIFT_MASK) != 0;
+    gboolean text_modifier = (event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_SUPER_MASK | GDK_META_MASK)) != 0;
     GtkWidget* focus = state->window ? gtk_window_get_focus(GTK_WINDOW(state->window)) : NULL;
     (void)widget;
 
@@ -7278,6 +7384,20 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
         }
     }
 
+    if (!text_modifier && !state->presentation_mode && state->doc && !(focus && GTK_IS_EDITABLE(focus))) {
+        gunichar ch = gdk_keyval_to_unicode(event->keyval);
+        if (ch >= 0x20 && ch != 0x7f) {
+            char typed[8] = {0};
+            g_unichar_to_utf8(ch, typed);
+            set_search_entry_text(state, typed);
+            gtk_widget_grab_focus(state->search_entry);
+            gtk_editable_set_position(GTK_EDITABLE(state->search_entry), -1);
+            start_find_for_current_query(state, -1, -1, TRUE, FALSE);
+            save_session(state);
+            return TRUE;
+        }
+    }
+
     if (ctrl || !state->doc || (focus && GTK_IS_EDITABLE(focus))) return FALSE;
     if (state->presentation_mode && (event->keyval == GDK_KEY_space || event->keyval == GDK_KEY_KP_Space)) {
         next_clicked(NULL, state);
@@ -7291,6 +7411,11 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
             else
                 next_clicked(NULL, state);
             return TRUE;
+        }
+
+        if (shift) {
+            int delta = (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Up) ? -1 : 1;
+            return go_to_adjacent_page_preserving_view(state, delta);
         }
 
         GtkAdjustment* adjustment = (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_Right)
@@ -7872,8 +7997,11 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     state->main_paned = paned;
     gtk_box_pack_start(GTK_BOX(root), paned, TRUE, TRUE, 0);
-    state->sidebar_container = gtk_notebook_new();
-    state->sidebar_tabs = state->sidebar_container;
+    state->sidebar_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    state->sidebar_filter_entry = gtk_search_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(state->sidebar_filter_entry), "Filter Chapters");
+    gtk_box_pack_start(GTK_BOX(state->sidebar_container), state->sidebar_filter_entry, FALSE, FALSE, 4);
+    state->sidebar_tabs = gtk_notebook_new();
     gtk_widget_set_size_request(state->sidebar_container, 180, -1);
     state->sidebar = gtk_list_box_new();
     state->comments_sidebar = gtk_list_box_new();
@@ -7884,6 +8012,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_container_add(GTK_CONTAINER(comments_scroll), state->comments_sidebar);
     gtk_notebook_append_page(GTK_NOTEBOOK(state->sidebar_tabs), chapters_scroll, gtk_label_new("Chapters"));
     gtk_notebook_append_page(GTK_NOTEBOOK(state->sidebar_tabs), comments_scroll, gtk_label_new("Comments"));
+    gtk_box_pack_start(GTK_BOX(state->sidebar_container), state->sidebar_tabs, TRUE, TRUE, 0);
     gtk_paned_pack1(GTK_PANED(paned), state->sidebar_container, FALSE, FALSE);
 
     GtkWidget* document_view = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -7982,6 +8111,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(state->comments_sidebar, "row-selected", G_CALLBACK(sidebar_row_selected), state);
     g_signal_connect(state->comments_sidebar, "button-press-event", G_CALLBACK(comments_sidebar_button_press), state);
     g_signal_connect(state->sidebar_tabs, "switch-page", G_CALLBACK(sidebar_page_switched), state);
+    g_signal_connect(state->sidebar_filter_entry, "search-changed", G_CALLBACK(sidebar_filter_changed), state);
     g_signal_connect(state->main_paned, "notify::position", G_CALLBACK(paned_position_changed), state);
     g_signal_connect(page_box, "scroll-event", G_CALLBACK(page_scroll_event), state);
     g_signal_connect(page_box, "key-press-event", G_CALLBACK(key_press), state);
