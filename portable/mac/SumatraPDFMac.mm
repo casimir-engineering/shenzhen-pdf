@@ -679,6 +679,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSInteger _dragTargetTabIndex;
     CGFloat _dragPointerOffsetX;
     CGFloat _dragCurrentX;
+    NSPoint _lastHoverPoint;
+    BOOL _hasLastHoverPoint;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -837,6 +839,25 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [_hoverPanel orderOut:nil];
 }
 
+- (void)updateHoverForPoint:(NSPoint)point {
+    NSInteger hovered = -1;
+    _lastHoverPoint = point;
+    _hasLastHoverPoint = YES;
+    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
+        NSRect tabRect = [self rectForTabAtIndex:i];
+        if (NSWidth(tabRect) < 40.0) continue;
+        if (NSPointInRect(point, tabRect)) {
+            hovered = i;
+            break;
+        }
+    }
+    if (hovered == _hoverTabIndex) return;
+    if (hovered >= 0)
+        [self showHoverPanelForTabAtIndex:hovered];
+    else
+        [self hideHoverPanel];
+}
+
 - (void)showHoverPanelForTabAtIndex:(NSInteger)index {
     NSString* title = [self titleForTabAtIndex:index];
     if (!title.length || !self.window) {
@@ -896,27 +917,16 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)updateHoverForEvent:(NSEvent*)event {
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    NSInteger hovered = -1;
-    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
-        NSRect tabRect = [self rectForTabAtIndex:i];
-        if (NSWidth(tabRect) < 40.0) continue;
-        if (NSPointInRect(point, tabRect)) {
-            hovered = i;
-            break;
-        }
-    }
-    if (hovered == _hoverTabIndex) return;
-    if (hovered >= 0)
-        [self showHoverPanelForTabAtIndex:hovered];
-    else
-        [self hideHoverPanel];
+    [self updateHoverForPoint:[self convertPoint:event.locationInWindow fromView:nil]];
 }
 
 - (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs {
     _tabs = [tabs copy];
     [self setNeedsDisplay:YES];
-    [self hideHoverPanel];
+    if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint, self.bounds))
+        [self updateHoverForPoint:_lastHoverPoint];
+    else
+        [self hideHoverPanel];
 }
 
 - (void)setSelectedIndex:(NSInteger)selectedIndex {
@@ -993,25 +1003,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, tabRect)) return YES;
     }
     return NO;
-}
-
-- (void)trackTabMouseUntilMouseUp {
-    NSEventMask mask = NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp;
-    while (YES) {
-        NSEvent* nextEvent = [self.window nextEventMatchingMask:mask
-                                                      untilDate:NSDate.distantFuture
-                                                         inMode:NSEventTrackingRunLoopMode
-                                                        dequeue:YES];
-        if (!nextEvent) break;
-        if (nextEvent.type == NSEventTypeLeftMouseDragged) {
-            [self mouseDragged:nextEvent];
-            continue;
-        }
-        if (nextEvent.type == NSEventTypeLeftMouseUp) {
-            [self mouseUp:nextEvent];
-            break;
-        }
-    }
 }
 
 - (BOOL)isVisuallyReorderingTabs {
@@ -1327,11 +1318,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSRect closeRect = NSInsetRect([self closeCircleRectForTabRect:tabRect], -5.0, -5.0);
         if (NSPointInRect(point, closeRect)) {
             [self.reader closeTabAtIndex:i];
-            [self trackTabMouseUntilMouseUp];
         } else {
             [self.reader selectTabAtIndex:i];
             [self beginTabTrackingAtIndex:i point:point tabRect:tabRect];
-            [self trackTabMouseUntilMouseUp];
         }
         return;
     }
@@ -1351,7 +1340,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _draggingTab = YES;
     [self hideHoverPanel];
 
-    BOOL outsideTabStrip = point.y < -24.0 || point.y > NSHeight(self.bounds) + 24.0;
+    BOOL outsideTabStrip = point.y < -24.0 || point.y > NSHeight(self.bounds) + 24.0 ||
+                           point.x < [self leftInset] - 18.0 || point.x > NSMaxX([self plusRect]) + 18.0;
     if (!_detachedTabDrag && (outsideTabStrip || fabs(dy) > 48.0)) {
         [self startTabDragSessionWithEvent:event];
         return;
@@ -5189,13 +5179,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
         if (!NSPointInRect(point, _tabStrip.bounds)) return NO;
 
-        _tabStripCapturingMouse = [_tabStrip containsTabOrControlAtPoint:point];
-        if (_tabStripCapturingMouse) _window.movable = NO;
-        [_tabStrip mouseDown:event];
-        if (_tabStripCapturingMouse) {
+        if (![_tabStrip containsTabOrControlAtPoint:point]) {
             _tabStripCapturingMouse = NO;
-            _window.movable = NO;
+            return YES;
         }
+        _tabStripCapturingMouse = YES;
+        _window.movable = NO;
+        [_tabStrip mouseDown:event];
         return YES;
     }
 
