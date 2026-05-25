@@ -1337,17 +1337,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
 
     [self hideHoverPanel];
-    self.window.movable = YES;
-    [self.window performWindowDragWithEvent:event];
-    self.window.movable = NO;
 }
 
 - (void)mouseDragged:(NSEvent*)event {
     if (_draggedTabIndex < 0) {
-        if (_mouseDownInsideTab) return;
-        self.window.movable = YES;
-        [self.window performWindowDragWithEvent:event];
-        self.window.movable = NO;
         return;
     }
 

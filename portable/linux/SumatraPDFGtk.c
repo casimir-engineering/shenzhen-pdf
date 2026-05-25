@@ -1,19 +1,27 @@
 #include <gtk/gtk.h>
 #include <cairo-pdf.h>
 #include <gio/gio.h>
+#include <glib-unix.h>
 #include <glib/gstdio.h>
 
 #include "sumatra_pdf_core.h"
 
 #include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <math.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #define MAX_CONFIG_JSON_BYTES (2 * 1024 * 1024)
+#define MAX_SESSION_WINDOWS 16
 #define MAX_SESSION_TABS 64
 #define MAX_FAVORITES 4096
 #define MAX_RECENT_DOCUMENTS 10
@@ -34,6 +42,7 @@
 #define MINIMAP_WIDTH 112
 #define MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD 20
 #define MINIMAP_PRECISE_PAGE_LIMIT 2000
+#define SUMATRA_TAB_MIME_TYPE "application/x-sumatrapdf-tab+json"
 
 typedef struct favorite_item {
     char* path;
@@ -129,7 +138,13 @@ typedef struct app_state {
     char* config_dir;
     char* settings_path;
     char* session_path;
+    char* session_lock_path;
     char* favorites_path;
+    char* window_session_id;
+    char* restore_window_id;
+    char** pending_restore_window_ids;
+    int pending_restore_window_count;
+    int pending_restore_window_capacity;
     char* search_text;
     char* comment_author;
     char* translate_source_language;
@@ -180,12 +195,16 @@ typedef struct app_state {
     gboolean translate_running;
     gboolean translate_install_running;
     gboolean detached_tab_launch;
+    gboolean suppress_session_write_on_quit;
     gboolean window_fullscreen;
+    gboolean has_window_position;
     gboolean panning;
     gboolean selecting;
     gboolean minimap_dragging;
     gboolean minimap_dragging_visible_rect;
     gboolean tab_dragging;
+    gboolean tab_external_dragging;
+    gboolean tab_drag_reordered;
     gboolean clamping_horizontal;
     gboolean suppress_restore_once;
     double pan_start_x;
@@ -200,6 +219,8 @@ typedef struct app_state {
     double tab_drag_start_y;
     double presentation_prev_zoom;
     int presentation_prev_fit_mode_id;
+    int window_x;
+    int window_y;
     int window_width;
     int window_height;
     GtkPolicyType presentation_prev_hpolicy;
@@ -213,6 +234,7 @@ typedef struct app_state {
     int context_page_index;
     int context_comment_index;
     int tab_drag_index;
+    int tab_external_drag_index;
     double context_page_x;
     double context_page_y;
     GThreadPool* render_pool;
@@ -314,6 +336,9 @@ static void update_tab_strip(app_state* state);
 static void save_active_tab_state(app_state* state);
 static void close_tab_at_index(app_state* state, int index);
 static void select_tab(app_state* state, int index);
+static char* current_executable_path(void);
+static gboolean other_sumatra_processes_running(void);
+static void terminate_other_sumatra_processes(void);
 static const char* current_search_text(app_state* state);
 static void set_regex_multiline_widget_active(GtkWidget* widget, gboolean active);
 static void set_presentation_mode(app_state* state, gboolean enable);
@@ -542,6 +567,20 @@ static char* json_get_array_contents(const char* json, const char* key) {
     return g_strndup(start + 1, (gsize)(end - start - 1));
 }
 
+static char* json_get_object_contents(const char* json, const char* key) {
+    char* pos = json_find_key(json, key);
+    char* start;
+    char* end;
+    if (!pos) return NULL;
+    pos = strchr(pos + strlen(key) + 2, ':');
+    if (!pos) return NULL;
+    start = strchr(pos, '{');
+    if (!start) return NULL;
+    end = json_find_matching(start, '{', '}');
+    if (!end) return NULL;
+    return g_strndup(start + 1, (gsize)(end - start - 1));
+}
+
 static gboolean read_limited_text_file(const char* path, char** contents, gsize* len) {
     GStatBuf st;
     gboolean ok;
@@ -582,6 +621,7 @@ static void init_config_paths(app_state* state) {
     state->config_dir = g_build_filename(g_get_user_config_dir(), "sumatrapdf", NULL);
     state->settings_path = g_build_filename(state->config_dir, "settings.json", NULL);
     state->session_path = g_build_filename(state->config_dir, "session.json", NULL);
+    state->session_lock_path = g_build_filename(state->config_dir, "session.lock", NULL);
     state->favorites_path = g_build_filename(state->config_dir, "favorites.json", NULL);
     g_mkdir_with_parents(state->config_dir, 0700);
 }
@@ -798,8 +838,8 @@ static void reopen_last_closed_document(app_state* state) {
     g_free(path);
 }
 
-static int append_document_tab(app_state* state, const char* path, const char* title, int page_index, double zoom,
-                               int fit_mode_id, gboolean continuous_mode, const char* search_text,
+static int insert_document_tab(app_state* state, int insert_index, const char* path, const char* title, int page_index,
+                               double zoom, int fit_mode_id, gboolean continuous_mode, const char* search_text,
                                gboolean search_regex, gboolean search_regex_multiline, int find_match_index) {
     if (state->tab_count == state->tab_capacity) {
         int capacity = state->tab_capacity ? state->tab_capacity * 2 : 4;
@@ -808,7 +848,15 @@ static int append_document_tab(app_state* state, const char* path, const char* t
         state->tab_capacity = capacity;
     }
 
-    document_tab* tab = &state->tabs[state->tab_count];
+    insert_index = MAX(0, MIN(insert_index, state->tab_count));
+    if (insert_index < state->tab_count) {
+        memmove(&state->tabs[insert_index + 1], &state->tabs[insert_index],
+                (gsize)(state->tab_count - insert_index) * sizeof(document_tab));
+        memset(&state->tabs[insert_index], 0, sizeof(document_tab));
+        if (state->selected_tab >= insert_index) state->selected_tab++;
+    }
+
+    document_tab* tab = &state->tabs[insert_index];
     tab->path = g_strdup(path ? path : "");
     tab->title = title && *title ? g_strdup(title) : display_name_for_path(path ? path : "");
     tab->page_index = MAX(0, page_index);
@@ -819,7 +867,15 @@ static int append_document_tab(app_state* state, const char* path, const char* t
     tab->search_regex = search_regex;
     tab->search_regex_multiline = search_regex_multiline;
     tab->find_match_index = find_match_index;
-    return state->tab_count++;
+    state->tab_count++;
+    return insert_index;
+}
+
+static int append_document_tab(app_state* state, const char* path, const char* title, int page_index, double zoom,
+                               int fit_mode_id, gboolean continuous_mode, const char* search_text,
+                               gboolean search_regex, gboolean search_regex_multiline, int find_match_index) {
+    return insert_document_tab(state, state->tab_count, path, title, page_index, zoom, fit_mode_id, continuous_mode,
+                               search_text, search_regex, search_regex_multiline, find_match_index);
 }
 
 static void set_tab_title(document_tab* tab, const char* title, const char* path) {
@@ -922,13 +978,72 @@ static const char* current_search_text(app_state* state) {
     return state->restore_search_text ? state->restore_search_text : "";
 }
 
-static void save_session(app_state* state) {
-    if (state->detached_tab_launch) return;
-    save_active_tab_state(state);
+static void ensure_window_session_id(app_state* state) {
+    if (state->window_session_id && *state->window_session_id) return;
+    if (state->restore_window_id && *state->restore_window_id) {
+        state->window_session_id = g_strdup(state->restore_window_id);
+        return;
+    }
+    state->window_session_id = g_strdup_printf("gtk-%ld-%lld", (long)getpid(), (long long)g_get_real_time());
+}
 
-    GString* json = g_string_new("{\n");
-    g_string_append_printf(json, "  \"selectedTab\": %d,\n", state->selected_tab);
-    g_string_append(json, "  \"tabs\": [\n");
+static int lock_session_store(app_state* state) {
+    int fd;
+    if (!state || !state->session_lock_path) return -1;
+    fd = open(state->session_lock_path, O_CREAT | O_RDWR, 0600);
+    if (fd >= 0) flock(fd, LOCK_EX);
+    return fd;
+}
+
+static void unlock_session_store(int fd) {
+    if (fd < 0) return;
+    flock(fd, LOCK_UN);
+    close(fd);
+}
+
+static void append_pending_restore_window_id(app_state* state, const char* id) {
+    if (!state || !id || !*id || state->pending_restore_window_count >= MAX_SESSION_WINDOWS) return;
+    if (state->pending_restore_window_count == state->pending_restore_window_capacity) {
+        int capacity = state->pending_restore_window_capacity ? state->pending_restore_window_capacity * 2 : 4;
+        capacity = MIN(capacity, MAX_SESSION_WINDOWS);
+        state->pending_restore_window_ids =
+            g_realloc(state->pending_restore_window_ids, (gsize)capacity * sizeof(char*));
+        state->pending_restore_window_capacity = capacity;
+    }
+    state->pending_restore_window_ids[state->pending_restore_window_count++] = g_strdup(id);
+}
+
+static void clear_pending_restore_window_ids(app_state* state) {
+    if (!state) return;
+    for (int i = 0; i < state->pending_restore_window_count; ++i) g_free(state->pending_restore_window_ids[i]);
+    g_free(state->pending_restore_window_ids);
+    state->pending_restore_window_ids = NULL;
+    state->pending_restore_window_count = 0;
+    state->pending_restore_window_capacity = 0;
+}
+
+static char* session_window_object_for_current_state(app_state* state) {
+    GString* json;
+    int x = state->window_x;
+    int y = state->window_y;
+    int width = clamp_int(state->window_width > 0 ? state->window_width : DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH,
+                          MAX_WINDOW_WIDTH);
+    int height = clamp_int(state->window_height > 0 ? state->window_height : DEFAULT_WINDOW_HEIGHT, MIN_WINDOW_HEIGHT,
+                           MAX_WINDOW_HEIGHT);
+
+    ensure_window_session_id(state);
+    save_active_tab_state(state);
+    if (state->window) {
+        gtk_window_get_size(GTK_WINDOW(state->window), &width, &height);
+        gtk_window_get_position(GTK_WINDOW(state->window), &x, &y);
+    }
+
+    char* id = json_escape(state->window_session_id);
+    json = g_string_new("");
+    g_string_append_printf(
+        json, "{ \"id\": \"%s\", \"frame\": { \"x\": %d, \"y\": %d, \"width\": %d, \"height\": %d }, ", id, x, y,
+        clamp_int(width, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH), clamp_int(height, MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT));
+    g_string_append_printf(json, "\"selectedTab\": %d, \"tabs\": [\n", state->selected_tab);
     for (int i = 0; i < state->tab_count; ++i) {
         document_tab* tab = &state->tabs[i];
         char* path = json_escape(tab->path ? tab->path : "");
@@ -946,10 +1061,113 @@ static void save_session(app_state* state) {
         g_free(title);
         g_free(path);
     }
-    g_string_append(json, "  ]\n");
-    g_string_append(json, "}\n");
-    write_text_file(state->session_path, json->str);
-    g_string_free(json, TRUE);
+    g_string_append(json, "  ] }");
+    g_free(id);
+    return g_string_free(json, FALSE);
+}
+
+static gboolean for_each_session_window(const char* json, gboolean (*callback)(const char*, const char*, gpointer),
+                                        gpointer user_data) {
+    char* windows;
+    char* pos;
+    gboolean any = FALSE;
+
+    if (!json || !callback) return FALSE;
+    windows = json_get_array_contents(json, "windows");
+    if (!windows) return FALSE;
+    pos = windows;
+    while ((pos = strchr(pos, '{')) != NULL) {
+        char* end = json_find_matching(pos, '{', '}');
+        char* object;
+        char* id;
+        gboolean keep_going;
+        if (!end) break;
+        object = g_strndup(pos, (gsize)(end - pos + 1));
+        id = json_get_string(object, "id");
+        any = TRUE;
+        keep_going = callback(id ? id : "", object, user_data);
+        g_free(id);
+        g_free(object);
+        if (!keep_going) break;
+        pos = end + 1;
+    }
+    g_free(windows);
+    return any;
+}
+
+typedef struct session_write_context {
+    GString* windows_json;
+    const char* skip_id;
+    gboolean wrote_any;
+} session_write_context;
+
+static gboolean append_existing_session_window(const char* id, const char* object, gpointer user_data) {
+    session_write_context* context = (session_write_context*)user_data;
+    if (context->skip_id && *context->skip_id && g_strcmp0(id, context->skip_id) == 0) return TRUE;
+    if (context->wrote_any) g_string_append(context->windows_json, ",\n");
+    g_string_append(context->windows_json, object);
+    context->wrote_any = TRUE;
+    return TRUE;
+}
+
+static void write_session(app_state* state) {
+    char* existing = NULL;
+    gsize len = 0;
+    char* current;
+    GString* out;
+    session_write_context context;
+    int lock_fd;
+
+    if (!state || state->suppress_session_write_on_quit) return;
+    ensure_window_session_id(state);
+    lock_fd = lock_session_store(state);
+    read_limited_text_file(state->session_path, &existing, &len);
+    current = session_window_object_for_current_state(state);
+    context.windows_json = g_string_new("");
+    context.skip_id = state->window_session_id;
+    context.wrote_any = FALSE;
+    for_each_session_window(existing, append_existing_session_window, &context);
+    if (context.wrote_any) g_string_append(context.windows_json, ",\n");
+    g_string_append(context.windows_json, current);
+
+    out = g_string_new("{\n  \"version\": 2,\n  \"windows\": [\n");
+    g_string_append(out, context.windows_json->str);
+    g_string_append(out, "\n  ]\n}\n");
+    write_text_file(state->session_path, out->str);
+    g_string_free(out, TRUE);
+    g_string_free(context.windows_json, TRUE);
+    g_free(current);
+    g_free(existing);
+    unlock_session_store(lock_fd);
+}
+
+static void save_session(app_state* state) {
+    if (state->suppress_session_write_on_quit) return;
+    write_session(state);
+}
+
+static void remove_current_window_session(app_state* state) {
+    char* existing = NULL;
+    gsize len = 0;
+    GString* out;
+    session_write_context context;
+    int lock_fd;
+
+    if (!state || !state->window_session_id || !*state->window_session_id) return;
+    lock_fd = lock_session_store(state);
+    read_limited_text_file(state->session_path, &existing, &len);
+    context.windows_json = g_string_new("");
+    context.skip_id = state->window_session_id;
+    context.wrote_any = FALSE;
+    for_each_session_window(existing, append_existing_session_window, &context);
+    out = g_string_new("{\n  \"version\": 2,\n  \"windows\": [\n");
+    g_string_append(out, context.windows_json->str);
+    g_string_append(out, "\n  ]\n}\n");
+    write_text_file(state->session_path, out->str);
+    g_string_free(out, TRUE);
+    g_string_free(context.windows_json, TRUE);
+    g_free(existing);
+    unlock_session_store(lock_fd);
 }
 
 static void save_favorites(app_state* state) {
@@ -1038,51 +1256,86 @@ static void load_settings(app_state* state) {
     g_free(json);
 }
 
-static void load_session(app_state* state) {
-    char* json = NULL;
-    gsize len = 0;
-    if (!read_limited_text_file(state->session_path, &json, &len)) return;
+static void load_tabs_from_session_object(app_state* state, const char* object) {
+    char* tabs = json_get_array_contents(object, "tabs");
+    char* frame = json_get_object_contents(object, "frame");
+    char* pos;
 
+    if (frame) {
+        state->window_x = json_get_int(frame, "x", state->window_x);
+        state->window_y = json_get_int(frame, "y", state->window_y);
+        state->window_width =
+            clamp_int(json_get_int(frame, "width", state->window_width), MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH);
+        state->window_height =
+            clamp_int(json_get_int(frame, "height", state->window_height), MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT);
+        state->has_window_position = TRUE;
+        g_free(frame);
+    }
+
+    if (!tabs) return;
+    state->restore_selected_tab = json_get_int(object, "selectedTab", 0);
+    pos = tabs;
+    while ((pos = strchr(pos, '{')) != NULL && state->tab_count < MAX_SESSION_TABS) {
+        char* end = json_find_matching(pos, '{', '}');
+        char* tab_object;
+        char* path;
+        char* title;
+        char* search_text;
+        if (!end) break;
+        tab_object = g_strndup(pos, (gsize)(end - pos + 1));
+        path = json_get_string(tab_object, "path");
+        title = json_get_string(tab_object, "title");
+        search_text = json_get_string(tab_object, "searchText");
+        if (path && *path)
+            append_document_tab(state, path, title, MAX(0, json_get_int(tab_object, "page", 1) - 1),
+                                json_get_double(tab_object, "zoom", state->zoom),
+                                json_get_int(tab_object, "fitMode", state->fit_mode_id),
+                                json_get_bool(tab_object, "continuous", state->continuous_mode), search_text,
+                                json_get_bool(tab_object, "searchRegex", state->search_regex),
+                                json_get_bool(tab_object, "searchRegexMultiline", state->search_regex_multiline),
+                                json_get_int(tab_object, "findMatchIndex", -1));
+        g_free(search_text);
+        g_free(title);
+        g_free(path);
+        g_free(tab_object);
+        pos = end + 1;
+    }
+    g_free(tabs);
+}
+
+typedef struct session_load_context {
+    app_state* state;
+    gboolean loaded;
+    int window_index;
+} session_load_context;
+
+static gboolean load_matching_or_first_window(const char* id, const char* object, gpointer user_data) {
+    session_load_context* context = (session_load_context*)user_data;
+    app_state* state = context->state;
+    gboolean is_match = FALSE;
+
+    if (state->restore_window_id && *state->restore_window_id)
+        is_match = g_strcmp0(id, state->restore_window_id) == 0;
+    else
+        is_match = context->window_index == 0;
+
+    if (is_match && !context->loaded) {
+        g_free(state->window_session_id);
+        state->window_session_id = g_strdup(id && *id ? id : NULL);
+        load_tabs_from_session_object(state, object);
+        context->loaded = TRUE;
+    } else if (!state->restore_window_id && id && *id) {
+        append_pending_restore_window_id(state, id);
+    }
+
+    context->window_index++;
+    return TRUE;
+}
+
+static void load_legacy_session(app_state* state, const char* json) {
     char* tabs = json_get_array_contents(json, "tabs");
     if (tabs) {
-        char* pos = tabs;
-        state->restore_selected_tab = json_get_int(json, "selectedTab", 0);
-        while ((pos = strchr(pos, '{')) != NULL && state->tab_count < MAX_SESSION_TABS) {
-            char* end = json_find_matching(pos, '{', '}');
-            char* object;
-            char* path;
-            char* title;
-            char* search_text;
-            int page_index;
-            double zoom;
-            int fit_mode_id;
-            gboolean continuous_mode;
-            gboolean search_regex;
-            gboolean search_regex_multiline;
-            int find_match_index;
-            if (!end) break;
-            object = g_strndup(pos, (gsize)(end - pos + 1));
-            path = json_get_string(object, "path");
-            title = json_get_string(object, "title");
-            search_text = json_get_string(object, "searchText");
-            page_index = MAX(0, json_get_int(object, "page", 1) - 1);
-            zoom = json_get_double(object, "zoom", state->zoom);
-            fit_mode_id = json_get_int(object, "fitMode", state->fit_mode_id);
-            continuous_mode = json_get_bool(object, "continuous", state->continuous_mode);
-            search_regex = json_get_bool(object, "searchRegex", state->search_regex);
-            search_regex_multiline = json_get_bool(object, "searchRegexMultiline", state->search_regex_multiline);
-            find_match_index = json_get_int(object, "findMatchIndex", -1);
-            if (path && *path)
-                append_document_tab(state, path, title, page_index, zoom, fit_mode_id, continuous_mode, search_text,
-                                    search_regex, search_regex_multiline, find_match_index);
-            g_free(search_text);
-            g_free(title);
-            g_free(path);
-            g_free(object);
-            pos = end + 1;
-        }
-        g_free(tabs);
-        g_free(json);
+        load_tabs_from_session_object(state, json);
         return;
     }
 
@@ -1100,7 +1353,30 @@ static void load_session(app_state* state) {
                             state->search_regex_multiline, state->restore_find_match_index);
         state->restore_selected_tab = 0;
     }
+    g_free(tabs);
+}
+
+static void load_session(app_state* state) {
+    char* json = NULL;
+    gsize len = 0;
+    session_load_context context;
+    int lock_fd;
+
+    if (!state) return;
+    lock_fd = lock_session_store(state);
+    if (!read_limited_text_file(state->session_path, &json, &len)) {
+        unlock_session_store(lock_fd);
+        return;
+    }
+
+    context.state = state;
+    context.loaded = FALSE;
+    context.window_index = 0;
+    if (!for_each_session_window(json, load_matching_or_first_window, &context)) load_legacy_session(state, json);
+    if (!state->window_session_id || !*state->window_session_id) ensure_window_session_id(state);
+
     g_free(json);
+    unlock_session_store(lock_fd);
 }
 
 static void load_favorites(app_state* state) {
@@ -2497,7 +2773,14 @@ static void close_tab_at_index(app_state* state, int index) {
 
     if (was_selected) {
         close_document_view(state);
-        if (state->tab_count > 0) select_tab(state, MIN(index, state->tab_count - 1));
+        if (state->tab_count > 0) {
+            select_tab(state, MIN(index, state->tab_count - 1));
+        } else if (other_sumatra_processes_running()) {
+            remove_current_window_session(state);
+            state->suppress_session_write_on_quit = TRUE;
+            if (state->app) g_application_quit(G_APPLICATION(state->app));
+            return;
+        }
     } else {
         update_tab_strip(state);
     }
@@ -2512,6 +2795,90 @@ static char* current_executable_path(void) {
         return g_strdup(path);
     }
     return g_strdup(g_get_prgname() ? g_get_prgname() : "sumatrapdf");
+}
+
+static gboolean process_matches_current_executable(pid_t pid, const char* current_exe) {
+    char link_path[64];
+    char exe_path[PATH_MAX];
+    ssize_t len;
+
+    if (pid <= 0 || pid == getpid() || !current_exe || !*current_exe) return FALSE;
+    snprintf(link_path, sizeof(link_path), "/proc/%ld/exe", (long)pid);
+    len = readlink(link_path, exe_path, sizeof(exe_path) - 1);
+    if (len <= 0) return FALSE;
+    exe_path[len] = '\0';
+    return g_strcmp0(exe_path, current_exe) == 0;
+}
+
+static gboolean other_sumatra_processes_running(void) {
+    char* current_exe = current_executable_path();
+    DIR* proc = opendir("/proc");
+    struct dirent* entry;
+    gboolean found = FALSE;
+
+    if (!proc) {
+        g_free(current_exe);
+        return FALSE;
+    }
+    while ((entry = readdir(proc)) != NULL) {
+        char* endptr = NULL;
+        long pid = strtol(entry->d_name, &endptr, 10);
+        if (!endptr || *endptr || pid <= 0) continue;
+        if (process_matches_current_executable((pid_t)pid, current_exe)) {
+            found = TRUE;
+            break;
+        }
+    }
+    closedir(proc);
+    g_free(current_exe);
+    return found;
+}
+
+static void terminate_other_sumatra_processes(void) {
+    char* current_exe = current_executable_path();
+    DIR* proc = opendir("/proc");
+    struct dirent* entry;
+
+    if (!proc) {
+        g_free(current_exe);
+        return;
+    }
+    while ((entry = readdir(proc)) != NULL) {
+        char* endptr = NULL;
+        long pid = strtol(entry->d_name, &endptr, 10);
+        if (!endptr || *endptr || pid <= 0) continue;
+        if (process_matches_current_executable((pid_t)pid, current_exe)) kill((pid_t)pid, SIGTERM);
+    }
+    closedir(proc);
+    g_free(current_exe);
+}
+
+static void spawn_pending_restored_windows(app_state* state) {
+    char* exe;
+
+    if (!state || state->detached_tab_launch || state->restore_window_id || state->pending_restore_window_count == 0)
+        return;
+
+    exe = current_executable_path();
+    for (int i = 0; i < state->pending_restore_window_count; ++i) {
+        gchar** envp;
+        gchar* argv[2];
+        GError* error = NULL;
+        const char* id = state->pending_restore_window_ids[i];
+
+        if (!id || !*id) continue;
+        argv[0] = exe;
+        argv[1] = NULL;
+        envp = g_get_environ();
+        envp = g_environ_setenv(envp, "SUMATRA_RESTORE_WINDOW", id, TRUE);
+        if (!g_spawn_async(NULL, argv, envp, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &error) && error) {
+            if (state->status) gtk_label_set_text(GTK_LABEL(state->status), error->message);
+            g_error_free(error);
+        }
+        g_strfreev(envp);
+    }
+    g_free(exe);
+    clear_pending_restore_window_ids(state);
 }
 
 static gboolean detach_tab(app_state* state, int index) {
@@ -2545,13 +2912,39 @@ static gboolean detach_tab(app_state* state, int index) {
     return TRUE;
 }
 
-static void move_tab(app_state* state, int from_index, int to_index) {
+static void refresh_tab_strip_indices(app_state* state) {
+    GList* children;
+    int index = 0;
+
+    if (!state || !state->tab_bar) return;
+    children = gtk_container_get_children(GTK_CONTAINER(state->tab_bar));
+    for (GList* it = children; it; it = it->next, ++index) {
+        GtkWidget* frame = GTK_WIDGET(it->data);
+        GList* frame_children;
+
+        g_object_set_data(G_OBJECT(frame), "tab-index", GINT_TO_POINTER(index + 1));
+        frame_children = gtk_container_get_children(GTK_CONTAINER(frame));
+        for (GList* child = frame_children; child; child = child->next)
+            g_object_set_data(G_OBJECT(child->data), "tab-index", GINT_TO_POINTER(index + 1));
+        g_list_free(frame_children);
+    }
+    g_list_free(children);
+}
+
+static void move_tab(app_state* state, int from_index, int to_index, gboolean rebuild, gboolean persist) {
     document_tab moving;
     int count;
+    GtkWidget* moved_child = NULL;
 
     if (!state || from_index < 0 || to_index < 0 || from_index == to_index) return;
     count = state->tab_count;
     if (from_index >= count || to_index >= count) return;
+
+    if (!rebuild && state->tab_bar) {
+        GList* children = gtk_container_get_children(GTK_CONTAINER(state->tab_bar));
+        moved_child = GTK_WIDGET(g_list_nth_data(children, from_index));
+        g_list_free(children);
+    }
 
     moving = state->tabs[from_index];
     if (from_index < to_index) {
@@ -2570,8 +2963,13 @@ static void move_tab(app_state* state, int from_index, int to_index) {
     else if (to_index <= state->selected_tab && state->selected_tab < from_index)
         state->selected_tab++;
 
-    update_tab_strip(state);
-    save_session(state);
+    if (rebuild) {
+        update_tab_strip(state);
+    } else if (moved_child) {
+        gtk_box_reorder_child(GTK_BOX(state->tab_bar), moved_child, to_index);
+        refresh_tab_strip_indices(state);
+    }
+    if (persist) save_session(state);
 }
 
 static gboolean tab_handle_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data) {
@@ -2623,6 +3021,171 @@ static int tab_index_for_bar_x(app_state* state, double x, int fallback_index) {
     return target;
 }
 
+static int tab_insert_index_for_bar_x(app_state* state, double x) {
+    GList* children;
+    int target;
+
+    if (!state || !state->tab_bar) return 0;
+    target = state->tab_count;
+    children = gtk_container_get_children(GTK_CONTAINER(state->tab_bar));
+    for (GList* it = children; it; it = it->next) {
+        GtkWidget* child = GTK_WIDGET(it->data);
+        GtkAllocation allocation;
+        int child_index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "tab-index")) - 1;
+        if (child_index < 0) continue;
+        gtk_widget_get_allocation(child, &allocation);
+        if (x < allocation.x + allocation.width * 0.5) {
+            target = child_index;
+            break;
+        }
+        target = child_index + 1;
+    }
+    g_list_free(children);
+    return MAX(0, MIN(target, state->tab_count));
+}
+
+static char* tab_drag_json_for_index(app_state* state, int index) {
+    document_tab* tab;
+    char* path;
+    char* title;
+    char* search;
+    GString* json;
+
+    if (!state || index < 0 || index >= state->tab_count) return NULL;
+    save_active_tab_state(state);
+    tab = &state->tabs[index];
+    if (!tab->path || !*tab->path) return NULL;
+
+    path = json_escape(tab->path);
+    title = json_escape(tab->title ? tab->title : "");
+    search = json_escape(tab->search_text ? tab->search_text : "");
+    json = g_string_new("{");
+    g_string_append_printf(json, "\"path\":\"%s\",", path);
+    g_string_append_printf(json, "\"title\":\"%s\",", title);
+    g_string_append_printf(json, "\"page\":%d,", tab->page_index);
+    g_string_append_printf(json, "\"zoom\":%.4f,", tab->zoom);
+    g_string_append_printf(json, "\"fitMode\":%d,", tab->fit_mode_id);
+    g_string_append_printf(json, "\"continuous\":%s,", tab->continuous_mode ? "true" : "false");
+    g_string_append_printf(json, "\"searchText\":\"%s\",", search);
+    g_string_append_printf(json, "\"searchRegex\":%s,", tab->search_regex ? "true" : "false");
+    g_string_append_printf(json, "\"searchRegexMultiline\":%s,", tab->search_regex_multiline ? "true" : "false");
+    g_string_append_printf(json, "\"findMatchIndex\":%d,", tab->find_match_index);
+    g_string_append_printf(json, "\"sourcePid\":%ld", (long)getpid());
+    g_string_append_c(json, '}');
+    g_free(path);
+    g_free(title);
+    g_free(search);
+    return g_string_free(json, FALSE);
+}
+
+static void start_external_tab_drag(GtkWidget* widget, GdkEventMotion* event, app_state* state) {
+    GtkTargetEntry targets[] = {{(gchar*)SUMATRA_TAB_MIME_TYPE, 0, 0}};
+    GtkTargetList* target_list;
+
+    if (!state || state->tab_external_dragging || state->tab_drag_index < 0) return;
+    state->tab_external_dragging = TRUE;
+    state->tab_external_drag_index = state->tab_drag_index;
+    gtk_grab_remove(widget);
+    target_list = gtk_target_list_new(targets, 1);
+    gtk_drag_begin_with_coordinates(widget, target_list, GDK_ACTION_MOVE, 1, (GdkEvent*)event, -1, -1);
+    gtk_target_list_unref(target_list);
+}
+
+static void tab_handle_drag_data_get(GtkWidget* widget, GdkDragContext* context, GtkSelectionData* selection_data,
+                                     guint info, guint time, gpointer user_data) {
+    (void)widget;
+    (void)context;
+    (void)info;
+    (void)time;
+    app_state* state = (app_state*)user_data;
+    char* json = tab_drag_json_for_index(state, state ? state->tab_external_drag_index : -1);
+    if (!json) return;
+    gtk_selection_data_set(selection_data, gtk_selection_data_get_target(selection_data), 8, (const guchar*)json,
+                           (gint)strlen(json));
+    g_free(json);
+}
+
+static void tab_handle_drag_data_delete(GtkWidget* widget, GdkDragContext* context, gpointer user_data) {
+    (void)widget;
+    (void)context;
+    app_state* state = (app_state*)user_data;
+    int index = state ? state->tab_external_drag_index : -1;
+    if (state && index >= 0 && index < state->tab_count) close_tab_at_index(state, index);
+    if (state) state->tab_external_drag_index = -1;
+}
+
+static void tab_handle_drag_end(GtkWidget* widget, GdkDragContext* context, gpointer user_data) {
+    (void)widget;
+    app_state* state = (app_state*)user_data;
+    int index = state ? state->tab_external_drag_index : -1;
+    GdkDragAction action = context ? gdk_drag_context_get_selected_action(context) : 0;
+    if (state && index >= 0 && index < state->tab_count && action == 0) detach_tab(state, index);
+    if (state) {
+        state->tab_drag_index = -1;
+        state->tab_external_drag_index = -1;
+        state->tab_dragging = FALSE;
+        state->tab_external_dragging = FALSE;
+        state->tab_drag_reordered = FALSE;
+    }
+}
+
+static void tab_drag_data_received(GtkWidget* widget, GdkDragContext* context, gint x, gint y, GtkSelectionData* data,
+                                   guint info, guint time, gpointer user_data) {
+    (void)widget;
+    (void)y;
+    (void)info;
+    app_state* state = (app_state*)user_data;
+    const guchar* raw = gtk_selection_data_get_data(data);
+    gint len = gtk_selection_data_get_length(data);
+    char* json;
+    char* path;
+    char* title;
+    char* search_text;
+    int existing;
+    int insert_index;
+
+    if (!state || !raw || len <= 0) {
+        gtk_drag_finish(context, FALSE, FALSE, time);
+        return;
+    }
+
+    json = g_strndup((const char*)raw, (gsize)len);
+    path = json_get_string(json, "path");
+    if (!path || !*path) {
+        g_free(path);
+        g_free(json);
+        gtk_drag_finish(context, FALSE, FALSE, time);
+        return;
+    }
+
+    existing = find_tab_by_path(state, path);
+    if (existing >= 0) {
+        select_tab(state, existing);
+        g_free(path);
+        g_free(json);
+        gtk_drag_finish(context, TRUE, TRUE, time);
+        return;
+    }
+
+    save_active_tab_state(state);
+    title = json_get_string(json, "title");
+    search_text = json_get_string(json, "searchText");
+    insert_index = tab_insert_index_for_bar_x(state, (double)x);
+    insert_index = insert_document_tab(
+        state, insert_index, path, title, json_get_int(json, "page", 0), json_get_double(json, "zoom", 1.0),
+        json_get_int(json, "fitMode", 2), json_get_bool(json, "continuous", TRUE), search_text ? search_text : "",
+        json_get_bool(json, "searchRegex", FALSE), json_get_bool(json, "searchRegexMultiline", TRUE),
+        json_get_int(json, "findMatchIndex", -1));
+    update_tab_strip(state);
+    select_tab(state, insert_index);
+    save_session(state);
+    g_free(search_text);
+    g_free(title);
+    g_free(path);
+    g_free(json);
+    gtk_drag_finish(context, TRUE, TRUE, time);
+}
+
 static gboolean tab_handle_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     int index;
@@ -2632,6 +3195,9 @@ static gboolean tab_handle_button_press(GtkWidget* widget, GdkEventButton* event
     if (index < 0 || index >= state->tab_count) return FALSE;
     state->tab_drag_index = index;
     state->tab_dragging = FALSE;
+    state->tab_external_dragging = FALSE;
+    state->tab_drag_reordered = FALSE;
+    state->tab_external_drag_index = -1;
     state->tab_drag_start_x = event->x_root;
     state->tab_drag_start_y = event->y_root;
     gtk_grab_add(widget);
@@ -2640,15 +3206,29 @@ static gboolean tab_handle_button_press(GtkWidget* widget, GdkEventButton* event
 
 static gboolean tab_handle_motion(GtkWidget* widget, GdkEventMotion* event, gpointer user_data) {
     app_state* state = (app_state*)user_data;
+    gint bar_x = 0;
+    gint bar_y = 0;
+    int target;
     double dx;
     double dy;
 
-    (void)widget;
     if (!state || state->tab_drag_index < 0) return FALSE;
     dx = event->x_root - state->tab_drag_start_x;
     dy = event->y_root - state->tab_drag_start_y;
     if (!state->tab_dragging && hypot(dx, dy) < 3.0) return TRUE;
     state->tab_dragging = TRUE;
+    if (fabs(dy) > 48.0) {
+        start_external_tab_drag(widget, event, state);
+        return TRUE;
+    }
+    if (gtk_widget_translate_coordinates(widget, state->tab_bar, (gint)event->x, (gint)event->y, &bar_x, &bar_y)) {
+        target = tab_index_for_bar_x(state, (double)bar_x, state->tab_drag_index);
+        if (target != state->tab_drag_index) {
+            move_tab(state, state->tab_drag_index, target, FALSE, FALSE);
+            state->tab_drag_index = target;
+            state->tab_drag_reordered = TRUE;
+        }
+    }
     return TRUE;
 }
 
@@ -2660,17 +3240,21 @@ static gboolean tab_handle_button_release(GtkWidget* widget, GdkEventButton* eve
 
     if (!state || event->button != 1 || state->tab_drag_index < 0) return FALSE;
     gtk_grab_remove(widget);
+    if (state->tab_external_dragging) return TRUE;
     if (state->tab_dragging && fabs(event->y_root - state->tab_drag_start_y) > 48.0) {
         detach_tab(state, state->tab_drag_index);
+    } else if (state->tab_drag_reordered) {
+        save_session(state);
     } else if (gtk_widget_translate_coordinates(widget, state->tab_bar, (gint)event->x, (gint)event->y, &bar_x,
                                                 &bar_y)) {
         target = tab_index_for_bar_x(state, (double)bar_x, state->tab_drag_index);
-        move_tab(state, state->tab_drag_index, target);
+        move_tab(state, state->tab_drag_index, target, TRUE, TRUE);
     } else if (!state->tab_dragging) {
         select_tab(state, state->tab_drag_index);
     }
     state->tab_drag_index = -1;
     state->tab_dragging = FALSE;
+    state->tab_drag_reordered = FALSE;
     return TRUE;
 }
 
@@ -2690,7 +3274,7 @@ static void update_tab_strip(app_state* state) {
         GtkWidget* close = gtk_button_new_with_label("x");
         char* tooltip = g_strdup(tab->path && *tab->path ? tab->path : tab->title);
 
-        gtk_widget_set_tooltip_text(handle, "Drag to reorder tab");
+        gtk_widget_set_tooltip_text(handle, "Drag to reorder, detach, or reattach tab");
         gtk_widget_set_tooltip_text(button, tooltip);
         gtk_widget_set_tooltip_text(close, "Close tab");
         gtk_widget_set_size_request(handle, 24, 28);
@@ -2707,6 +3291,9 @@ static void update_tab_strip(app_state* state) {
         g_signal_connect(handle, "button-press-event", G_CALLBACK(tab_handle_button_press), state);
         g_signal_connect(handle, "motion-notify-event", G_CALLBACK(tab_handle_motion), state);
         g_signal_connect(handle, "button-release-event", G_CALLBACK(tab_handle_button_release), state);
+        g_signal_connect(handle, "drag-data-get", G_CALLBACK(tab_handle_drag_data_get), state);
+        g_signal_connect(handle, "drag-data-delete", G_CALLBACK(tab_handle_drag_data_delete), state);
+        g_signal_connect(handle, "drag-end", G_CALLBACK(tab_handle_drag_end), state);
         gtk_widget_add_events(handle, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK);
         g_signal_connect(button, "clicked", G_CALLBACK(tab_button_clicked), state);
         g_signal_connect(close, "clicked", G_CALLBACK(tab_close_clicked), state);
@@ -4046,6 +4633,27 @@ static void open_in_browser(GtkWidget* widget, gpointer user_data) {
     }
     if (!gtk_show_uri_on_window(GTK_WINDOW(state->window), uri, GDK_CURRENT_TIME, &error)) {
         show_error(GTK_WINDOW(state->window), "Could not open in default browser", error ? error->message : "");
+        if (error) g_error_free(error);
+    }
+    g_free(uri);
+}
+
+static void open_settings_file(GtkWidget* widget, gpointer user_data) {
+    (void)widget;
+    app_state* state = (app_state*)user_data;
+    GError* error = NULL;
+    char* uri;
+
+    if (!state || !state->settings_path) return;
+    save_settings(state);
+    uri = g_filename_to_uri(state->settings_path, NULL, &error);
+    if (!uri) {
+        show_error(GTK_WINDOW(state->window), "Could not build settings file URI", error ? error->message : "");
+        if (error) g_error_free(error);
+        return;
+    }
+    if (!gtk_show_uri_on_window(GTK_WINDOW(state->window), uri, GDK_CURRENT_TIME, &error)) {
+        show_error(GTK_WINDOW(state->window), "Could not open settings.json", error ? error->message : "");
         if (error) g_error_free(error);
     }
     g_free(uri);
@@ -6774,6 +7382,7 @@ static gboolean presentation_button_press(GtkWidget* widget, GdkEventButton* eve
     app_state* state = (app_state*)user_data;
 
     if (state->presentation_mode && state->doc) {
+        if (state->scroll) gtk_widget_grab_focus(state->scroll);
         if (event->button == 1) {
             next_clicked(NULL, state);
             return TRUE;
@@ -6949,6 +7558,10 @@ static gboolean window_configure_event(GtkWidget* widget, GdkEventConfigure* eve
     } else if (!state->window_fullscreen) {
         state->window_width = clamp_int(event->width, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH);
         state->window_height = clamp_int(event->height, MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT);
+        if (state->window) {
+            gtk_window_get_position(GTK_WINDOW(state->window), &state->window_x, &state->window_y);
+            state->has_window_position = TRUE;
+        }
     }
     return FALSE;
 }
@@ -6957,7 +7570,57 @@ static gboolean window_state_event(GtkWidget* widget, GdkEventWindowState* event
     app_state* state = (app_state*)user_data;
     (void)widget;
     state->window_fullscreen = (event->new_window_state & GDK_WINDOW_STATE_FULLSCREEN) != 0;
-    if (state->presentation_mode && state->window_fullscreen && state->doc) g_idle_add(presentation_render_idle, state);
+    if (state->presentation_mode && state->window_fullscreen && state->doc) {
+        gtk_widget_grab_focus(state->scroll);
+        g_idle_add(presentation_render_idle, state);
+    }
+    return FALSE;
+}
+
+static gboolean window_focus_in_event(GtkWidget* widget, GdkEventFocus* event, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    (void)widget;
+    (void)event;
+    if (state->presentation_mode && state->scroll) gtk_widget_grab_focus(state->scroll);
+    return FALSE;
+}
+
+static gboolean window_delete_event(GtkWidget* widget, GdkEvent* event, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    (void)widget;
+    (void)event;
+    if (state) {
+        save_settings(state);
+        save_session(state);
+        terminate_other_sumatra_processes();
+    }
+    return FALSE;
+}
+
+static void quit_requested(GtkWidget* widget, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    (void)widget;
+    if (!state) return;
+    save_settings(state);
+    save_session(state);
+    terminate_other_sumatra_processes();
+    if (state->app) g_application_quit(G_APPLICATION(state->app));
+}
+
+static gboolean terminate_signal(gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    if (state) {
+        save_settings(state);
+        save_session(state);
+        if (state->app) g_application_quit(G_APPLICATION(state->app));
+    }
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean command_line_has_documents(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] && argv[i][0] != '-') return TRUE;
+    }
     return FALSE;
 }
 
@@ -6967,11 +7630,12 @@ static void activate(GtkApplication* app, gpointer user_data) {
     if (state->zoom <= 0.0) state->zoom = 1.0;
 
     state->window = gtk_application_window_new(app);
-    gtk_widget_add_events(state->window, GDK_BUTTON_PRESS_MASK | GDK_KEY_PRESS_MASK);
+    gtk_widget_add_events(state->window, GDK_BUTTON_PRESS_MASK | GDK_KEY_PRESS_MASK | GDK_FOCUS_CHANGE_MASK);
     gtk_window_set_title(GTK_WINDOW(state->window), "SumatraPDF");
     gtk_window_set_default_size(GTK_WINDOW(state->window),
                                 clamp_int(state->window_width, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH),
                                 clamp_int(state->window_height, MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT));
+    if (state->has_window_position) gtk_window_move(GTK_WINDOW(state->window), state->window_x, state->window_y);
 
     GtkWidget* root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(state->window), root);
@@ -6994,11 +7658,17 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* set_comment_author = gtk_menu_item_new_with_mnemonic("Set _Author for Comments...");
     state->translate_menu_item = gtk_menu_item_new_with_mnemonic("_Translate...");
     state->search_regex_multiline_item = gtk_check_menu_item_new_with_mnemonic("Regex _Multiline");
+    GtkWidget* settings_menu = gtk_menu_new();
+    GtkWidget* settings = gtk_menu_item_new_with_mnemonic("_Settings");
+    GtkWidget* options_menu = gtk_menu_item_new_with_mnemonic("_Options...");
+    GtkWidget* advanced_options_menu = gtk_menu_item_new_with_mnemonic("_Advanced Options...");
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
     state->show_sidebar_item = gtk_check_menu_item_new_with_mnemonic("Show Side _Panel");
     state->show_minimap_item = gtk_check_menu_item_new_with_mnemonic("Show _Minimap");
     state->presentation_item = gtk_check_menu_item_new_with_mnemonic("_Presentation Mode");
+    gtk_widget_add_accelerator(options_menu, "activate", accel_group, GDK_KEY_comma, GDK_CONTROL_MASK,
+                               GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_F5, 0, GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->reopen_closed_menu_item, "activate", accel_group, GDK_KEY_t,
                                GDK_CONTROL_MASK | GDK_SHIFT_MASK, GTK_ACCEL_VISIBLE);
@@ -7026,6 +7696,10 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), state->search_regex_multiline_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), edit);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(settings), settings_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), options_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), advanced_options_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), settings);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_sidebar_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_minimap_item);
@@ -7041,6 +7715,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_set_margin_top(state->tab_strip, 4);
     gtk_widget_set_margin_bottom(state->tab_strip, 0);
     state->tab_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    GtkTargetEntry tab_drop_targets[] = {{(gchar*)SUMATRA_TAB_MIME_TYPE, 0, 0}};
+    gtk_drag_dest_set(state->tab_bar, GTK_DEST_DEFAULT_ALL, tab_drop_targets, 1, GDK_ACTION_MOVE);
+    g_signal_connect(state->tab_bar, "drag-data-received", G_CALLBACK(tab_drag_data_received), state);
     gtk_widget_set_hexpand(state->tab_bar, TRUE);
     state->new_tab_button = gtk_button_new_with_label("+");
     gtk_widget_set_tooltip_text(state->new_tab_button, "Open document in a new tab");
@@ -7226,8 +7903,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_add_events(state->minimap,
                           GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK | GDK_SCROLL_MASK);
     GtkWidget* page_box = gtk_event_box_new();
+    gtk_widget_set_can_focus(page_box, TRUE);
     gtk_widget_add_events(page_box, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK |
-                                        GDK_LEAVE_NOTIFY_MASK | GDK_SCROLL_MASK);
+                                        GDK_LEAVE_NOTIFY_MASK | GDK_SCROLL_MASK | GDK_KEY_PRESS_MASK);
     gtk_event_box_set_visible_window(GTK_EVENT_BOX(page_box), FALSE);
     gtk_widget_set_hexpand(page_box, TRUE);
     gtk_widget_set_vexpand(page_box, TRUE);
@@ -7257,10 +7935,12 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(set_comment_author, "activate", G_CALLBACK(set_comment_author_clicked), state);
     g_signal_connect(state->translate_menu_item, "activate", G_CALLBACK(translate_clicked), state);
     g_signal_connect(state->search_regex_multiline_item, "toggled", G_CALLBACK(find_regex_multiline_toggled), state);
+    g_signal_connect(options_menu, "activate", G_CALLBACK(open_settings_file), state);
+    g_signal_connect(advanced_options_menu, "activate", G_CALLBACK(open_settings_file), state);
     g_signal_connect(state->show_sidebar_item, "toggled", G_CALLBACK(show_sidebar_toggled), state);
     g_signal_connect(state->show_minimap_item, "toggled", G_CALLBACK(show_minimap_toggled), state);
     g_signal_connect(state->presentation_item, "toggled", G_CALLBACK(presentation_toggled), state);
-    g_signal_connect_swapped(quit_menu, "activate", G_CALLBACK(g_application_quit), app);
+    g_signal_connect(quit_menu, "activate", G_CALLBACK(quit_requested), state);
     g_signal_connect(prev, "clicked", G_CALLBACK(previous_clicked), state);
     g_signal_connect(next, "clicked", G_CALLBACK(next_clicked), state);
     g_signal_connect(state->side_panel_button, "notify::active", G_CALLBACK(side_panel_switch_changed), state);
@@ -7304,6 +7984,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(state->sidebar_tabs, "switch-page", G_CALLBACK(sidebar_page_switched), state);
     g_signal_connect(state->main_paned, "notify::position", G_CALLBACK(paned_position_changed), state);
     g_signal_connect(page_box, "scroll-event", G_CALLBACK(page_scroll_event), state);
+    g_signal_connect(page_box, "key-press-event", G_CALLBACK(key_press), state);
     g_signal_connect(page_box, "button-press-event", G_CALLBACK(page_button_press), state);
     g_signal_connect(page_box, "motion-notify-event", G_CALLBACK(page_motion), state);
     g_signal_connect(page_box, "leave-notify-event", G_CALLBACK(page_leave), state);
@@ -7316,6 +7997,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(state->window, "notify::scale-factor", G_CALLBACK(window_scale_factor_changed), state);
     g_signal_connect(state->window, "configure-event", G_CALLBACK(window_configure_event), state);
     g_signal_connect(state->window, "window-state-event", G_CALLBACK(window_state_event), state);
+    g_signal_connect(state->window, "focus-in-event", G_CALLBACK(window_focus_in_event), state);
+    g_signal_connect(state->window, "delete-event", G_CALLBACK(window_delete_event), state);
 
     GtkTargetEntry drop_targets[] = {{"text/uri-list", 0, 0}};
     gtk_drag_dest_set(state->window, GTK_DEST_DEFAULT_ALL, drop_targets, 1, GDK_ACTION_COPY);
@@ -7329,6 +8012,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
         state->suppress_restore_once = FALSE;
     } else {
         state->startup_restore_idle_id = g_idle_add_full(G_PRIORITY_LOW, startup_restore_idle, state, NULL);
+        spawn_pending_restored_windows(state);
     }
 }
 
@@ -7356,6 +8040,9 @@ static void open_files(GtkApplication* app, GFile** files, gint n_files, const g
 int main(int argc, char** argv) {
     app_state state;
     int status;
+    gboolean has_startup_documents;
+    guint sigterm_id;
+    guint sigint_id;
 
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
         g_print("SumatraPDF portable gtk 0.5\n");
@@ -7381,24 +8068,32 @@ int main(int argc, char** argv) {
     state.context_page_index = -1;
     state.context_comment_index = -1;
     state.tab_drag_index = -1;
+    state.tab_external_drag_index = -1;
     state.selected_tab = -1;
     state.restore_selected_tab = -1;
     state.favorite_pending_delete = -1;
     state.detached_tab_launch = g_strcmp0(g_getenv("SUMATRA_DETACHED_TAB"), "1") == 0;
+    state.restore_window_id = g_strdup(g_getenv("SUMATRA_RESTORE_WINDOW"));
     state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, MIN(2, g_get_num_processors())), FALSE, NULL);
     init_config_paths(&state);
     load_settings(&state);
-    if (!state.detached_tab_launch) load_session(&state);
+    has_startup_documents = command_line_has_documents(argc, argv) && !state.restore_window_id;
+    if (!state.detached_tab_launch && !has_startup_documents) load_session(&state);
     load_favorites(&state);
-    GtkApplication* app =
-        gtk_application_new("org.sumatrapdfreader.SumatraPDF",
-                            G_APPLICATION_HANDLES_OPEN | (state.detached_tab_launch ? G_APPLICATION_NON_UNIQUE : 0));
+    GtkApplication* app = gtk_application_new(
+        "org.sumatrapdfreader.SumatraPDF",
+        G_APPLICATION_HANDLES_OPEN |
+            ((state.detached_tab_launch || state.restore_window_id) ? G_APPLICATION_NON_UNIQUE : 0));
     g_signal_connect(app, "activate", G_CALLBACK(activate), &state);
     g_signal_connect(app, "open", G_CALLBACK(open_files), &state);
+    sigterm_id = g_unix_signal_add(SIGTERM, terminate_signal, &state);
+    sigint_id = g_unix_signal_add(SIGINT, terminate_signal, &state);
     status = g_application_run(G_APPLICATION(app), argc, argv);
 
     save_settings(&state);
-    if (!state.detached_tab_launch) save_session(&state);
+    save_session(&state);
+    if (sigterm_id) g_source_remove(sigterm_id);
+    if (sigint_id) g_source_remove(sigint_id);
     if (state.find_debounce_id) g_source_remove(state.find_debounce_id);
     if (state.sidebar_metadata_idle_id) g_source_remove(state.sidebar_metadata_idle_id);
     if (state.background_render_idle_id) g_source_remove(state.background_render_idle_id);
@@ -7413,7 +8108,11 @@ int main(int argc, char** argv) {
     g_free(state.config_dir);
     g_free(state.settings_path);
     g_free(state.session_path);
+    g_free(state.session_lock_path);
     g_free(state.favorites_path);
+    g_free(state.window_session_id);
+    g_free(state.restore_window_id);
+    clear_pending_restore_window_ids(&state);
     g_free(state.restore_path);
     g_free(state.restore_search_text);
     g_free(state.search_text);
