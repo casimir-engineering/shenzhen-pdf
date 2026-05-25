@@ -4,9 +4,12 @@
 #include "sumatra_pdf_core.h"
 
 #include <math.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 static const CGFloat kPageMargin = 44.0;
 static const CGFloat kPageGap = 26.0;
@@ -18,7 +21,6 @@ static const CGFloat kTabGap = 6.0;
 static const CGFloat kTabMinVisibleWidth = 112.0;
 static const CGFloat kTabMaxWidth = 320.0;
 static const CGFloat kTabControlWidth = 32.0;
-static const CGFloat kTabDragHandleWidth = 18.0;
 static const CGFloat kMinWindowWidth = 560.0;
 static const CGFloat kMinWindowHeight = 380.0;
 static const CGFloat kDefaultMinimapWidth = 110.0;
@@ -341,6 +343,49 @@ static SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     return tab;
 }
 
+static NSDictionary* spdf_dictionary_from_window_frame(NSRect frame) {
+    return @{
+        @"x" : @(NSMinX(frame)),
+        @"y" : @(NSMinY(frame)),
+        @"width" : @(NSWidth(frame)),
+        @"height" : @(NSHeight(frame))
+    };
+}
+
+static BOOL spdf_window_frame_from_dictionary(NSDictionary* item, NSRect* frame) {
+    if (![item isKindOfClass:NSDictionary.class]) return NO;
+    CGFloat width = [item[@"width"] doubleValue];
+    CGFloat height = [item[@"height"] doubleValue];
+    if (width < kMinWindowWidth || height < kMinWindowHeight) return NO;
+    if (frame) *frame = NSMakeRect([item[@"x"] doubleValue], [item[@"y"] doubleValue], width, height);
+    return YES;
+}
+
+static NSRect spdf_sane_window_frame(NSRect frame, NSScreen* fallbackScreen) {
+    NSScreen* bestScreen = nil;
+    CGFloat bestArea = 0;
+    for (NSScreen* screen in NSScreen.screens) {
+        NSRect intersection = NSIntersectionRect(frame, screen.visibleFrame);
+        CGFloat area = NSWidth(intersection) * NSHeight(intersection);
+        if (area > bestArea) {
+            bestArea = area;
+            bestScreen = screen;
+        }
+    }
+    NSScreen* screen = bestScreen ?: fallbackScreen ?: NSScreen.mainScreen;
+    NSRect visible = screen.visibleFrame;
+    frame.size.width = MAX(kMinWindowWidth, MIN(NSWidth(frame), NSWidth(visible)));
+    frame.size.height = MAX(kMinWindowHeight, MIN(NSHeight(frame), NSHeight(visible)));
+    if (bestArea < 80.0 * 80.0) {
+        frame.origin.x = floor(NSMidX(visible) - NSWidth(frame) / 2.0);
+        frame.origin.y = floor(NSMidY(visible) - NSHeight(frame) / 2.0);
+    } else {
+        frame.origin.x = MIN(MAX(NSMinX(frame), NSMinX(visible)), NSMaxX(visible) - NSWidth(frame));
+        frame.origin.y = MIN(MAX(NSMinY(frame), NSMinY(visible)), NSMaxY(visible) - NSHeight(frame));
+    }
+    return frame;
+}
+
 static NSString* spdf_json_string_from_object(id object) {
     NSData* data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];
     return data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
@@ -456,6 +501,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                           NSTextFieldDelegate,
                                           NSMenuItemValidation>
 @property(nonatomic, copy) NSString* initialPath;
+@property(nonatomic, copy) NSString* restoreWindowID;
 @property(nonatomic) BOOL detachedTabLaunch;
 - (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event;
 - (BOOL)zoomWithScrollWheelEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
@@ -468,6 +514,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
 - (BOOL)documentViewHandlePresentationMouseDown:(NSEvent*)event;
 - (BOOL)handlePresentationEvent:(NSEvent*)event;
+- (NSInteger)presentationMouseActionForEvent:(NSEvent*)event;
 - (BOOL)handleTabStripMouseEvent:(NSEvent*)event;
 - (BOOL)documentViewInPresentationMode;
 - (void)copySelection:(id)sender;
@@ -526,6 +573,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (BOOL)documentArrowKeyDown:(NSEvent*)event;
 - (void)installPresentationEventMonitor;
 - (void)removePresentationEventMonitor;
+- (void)writeSessionStateForCurrentWindow;
+- (void)removeSessionStateForCurrentWindow;
+- (void)spawnPendingRestoredWindowsIfNeeded;
 - (NSArray<NSDictionary*>*)commentAnnotationsForPage:(NSInteger)pageIndex;
 - (void)documentViewHoverComment:(NSDictionary*)comment atWindowPoint:(NSPoint)windowPoint;
 - (void)documentViewEndHoverComment;
@@ -595,6 +645,18 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [super otherMouseDown:event];
 }
 
+- (void)mouseUp:(NSEvent*)event {
+    [super mouseUp:event];
+}
+
+- (void)rightMouseUp:(NSEvent*)event {
+    [super rightMouseUp:event];
+}
+
+- (void)otherMouseUp:(NSEvent*)event {
+    [super otherMouseUp:event];
+}
+
 - (void)keyDown:(NSEvent*)event {
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
     [super keyDown:event];
@@ -613,6 +675,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     BOOL _draggingTab;
     BOOL _detachedTabDrag;
     BOOL _mouseDownInsideTab;
+    NSInteger _dragSourceTabIndex;
+    NSInteger _dragTargetTabIndex;
+    CGFloat _dragPointerOffsetX;
+    CGFloat _dragCurrentX;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -621,6 +687,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         _hoverTabIndex = -1;
         _draggedTabIndex = -1;
         _dragSessionTabIndex = -1;
+        _dragSourceTabIndex = -1;
+        _dragTargetTabIndex = -1;
         [self registerForDraggedTypes:@[ SPDFTabDragPasteboardType ]];
     }
     return self;
@@ -756,11 +824,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
     if (_trackingArea) [self removeTrackingArea:_trackingArea];
-    _trackingArea = [[NSTrackingArea alloc]
-        initWithRect:self.bounds
-             options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveInKeyWindow
-               owner:self
-            userInfo:nil];
+    _trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds
+                                                 options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved |
+                                                         NSTrackingActiveAlways | NSTrackingInVisibleRect
+                                                   owner:self
+                                                userInfo:nil];
     [self addTrackingArea:_trackingArea];
 }
 
@@ -861,25 +929,44 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return NSMakeRect(floor(NSMaxX(tabRect) - 26.0), floor(NSMidY(tabRect) - diameter / 2.0), diameter, diameter);
 }
 
-- (NSRect)dragHandleRectForTabRect:(NSRect)tabRect {
-    return NSMakeRect(NSMinX(tabRect) + 8.0, floor(NSMidY(tabRect) - 8.0), kTabDragHandleWidth, 16.0);
+- (void)beginTabTrackingAtIndex:(NSInteger)index point:(NSPoint)point tabRect:(NSRect)tabRect {
+    _draggedTabIndex = index;
+    _dragSourceTabIndex = index;
+    _dragTargetTabIndex = index;
+    _dragStartPoint = point;
+    _dragPointerOffsetX = point.x - NSMinX(tabRect);
+    _dragCurrentX = NSMinX(tabRect);
+    [self hideHoverPanel];
+}
+
+- (void)resetTabDragTracking {
+    _draggedTabIndex = -1;
+    _dragSourceTabIndex = -1;
+    _dragTargetTabIndex = -1;
+    _draggingTab = NO;
+    _detachedTabDrag = NO;
+    _mouseDownInsideTab = NO;
+    _dragPointerOffsetX = 0;
+    _dragCurrentX = 0;
+    [self setNeedsDisplay:YES];
 }
 
 - (NSInteger)dragDestinationIndexForPoint:(NSPoint)point {
     NSArray<NSNumber*>* visibleIndexes = [self visibleTabIndexes];
     if (!visibleIndexes.count) return -1;
 
-    NSInteger targetIndex = _draggedTabIndex;
+    NSInteger sourceIndex = _dragSourceTabIndex >= 0 ? _dragSourceTabIndex : _draggedTabIndex;
+    NSInteger targetIndex = sourceIndex;
     for (NSNumber* indexNumber in visibleIndexes) {
         NSInteger index = indexNumber.integerValue;
-        if (index == _draggedTabIndex) continue;
+        if (index == sourceIndex) continue;
         NSRect tabRect = [self rectForTabAtIndex:index];
         if (NSIsEmptyRect(tabRect)) continue;
-        if (index < _draggedTabIndex && point.x < NSMidX(tabRect)) {
+        if (index < sourceIndex && point.x < NSMidX(tabRect)) {
             targetIndex = index;
             break;
         }
-        if (index > _draggedTabIndex && point.x > NSMidX(tabRect)) targetIndex = index;
+        if (index > sourceIndex && point.x > NSMidX(tabRect)) targetIndex = index;
     }
     return targetIndex;
 }
@@ -927,24 +1014,91 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
 }
 
-- (void)drawDragHandleInRect:(NSRect)handleRect selected:(BOOL)selected enabled:(BOOL)enabled {
-    NSColor* color = selected ? [NSColor.labelColor colorWithAlphaComponent:0.58]
-                              : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.62];
-    if (!enabled) color = [color colorWithAlphaComponent:0.45];
-    [color setFill];
+- (BOOL)isVisuallyReorderingTabs {
+    return _draggingTab && !_detachedTabDrag && _dragSourceTabIndex >= 0 &&
+           _dragSourceTabIndex < (NSInteger)self.tabs.count && _dragTargetTabIndex >= 0;
+}
 
-    CGFloat dotSize = 2.0;
-    CGFloat gapX = 4.0;
-    CGFloat gapY = 4.0;
-    CGFloat startX = floor(NSMidX(handleRect) - dotSize - gapX / 2.0);
-    CGFloat startY = floor(NSMidY(handleRect) - dotSize - gapY / 2.0);
-    for (NSInteger column = 0; column < 2; ++column) {
-        for (NSInteger row = 0; row < 2; ++row) {
-            NSRect dot =
-                NSMakeRect(startX + column * (dotSize + gapX), startY + row * (dotSize + gapY), dotSize, dotSize);
-            [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
-        }
+- (NSRect)visualRectForTabAtIndex:(NSInteger)index {
+    NSRect baseRect = [self rectForTabAtIndex:index];
+    if (NSIsEmptyRect(baseRect) || ![self isVisuallyReorderingTabs]) return baseRect;
+
+    NSInteger source = _dragSourceTabIndex;
+    NSInteger target = _dragTargetTabIndex;
+    if (index == source) {
+        CGFloat width = NSWidth(baseRect);
+        CGFloat minX = [self leftInset];
+        CGFloat maxX = MAX(minX, [self tabAreaRightWithOverflow:[self hasOverflowTabs]] - width);
+        return NSMakeRect(floor(MAX(minX, MIN(_dragCurrentX, maxX))), NSMinY(baseRect), width, NSHeight(baseRect));
     }
+
+    if (source < target && index > source && index <= target) {
+        NSRect shifted = [self rectForTabAtIndex:index - 1];
+        if (!NSIsEmptyRect(shifted)) return shifted;
+    } else if (target < source && index >= target && index < source) {
+        NSRect shifted = [self rectForTabAtIndex:index + 1];
+        if (!NSIsEmptyRect(shifted)) return shifted;
+    }
+    return baseRect;
+}
+
+- (void)drawTabAtIndex:(NSInteger)index
+                inRect:(NSRect)tabRect
+            attributes:(NSDictionary*)attrs
+         dimAttributes:(NSDictionary*)dimAttrs {
+    if (index < 0 || index >= (NSInteger)self.tabs.count || NSWidth(tabRect) < 40.0) return;
+
+    BOOL selected = index == self.selectedIndex;
+    SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
+    BOOL missing = tab.missingFile;
+    NSColor* fill;
+    NSColor* stroke = nil;
+    if (missing) {
+        fill = [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.36 : 0.22];
+        stroke = [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.95 : 0.65];
+    } else if (selected) {
+        fill = [NSColor.controlAccentColor colorWithAlphaComponent:0.34];
+        stroke = [NSColor.controlAccentColor colorWithAlphaComponent:0.95];
+    } else {
+        fill = NSColor.controlBackgroundColor;
+    }
+    NSBezierPath* tabPath = [NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:7 yRadius:7];
+    [fill setFill];
+    [tabPath fill];
+    if (stroke) {
+        [stroke setStroke];
+        tabPath.lineWidth = selected ? 1.4 : 1.0;
+        [tabPath stroke];
+    }
+
+    NSString* title = [self titleForTabAtIndex:index];
+    NSDictionary* titleAttrs = selected || missing ? attrs : dimAttrs;
+    CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
+    CGFloat leftInset = 12.0;
+    CGFloat rightInset = 34.0;
+    NSRect titleRect = NSMakeRect(NSMinX(tabRect) + leftInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
+                                  MAX(1.0, NSWidth(tabRect) - leftInset - rightInset), titleHeight + 2);
+    [title drawWithRect:titleRect
+                options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
+             attributes:titleAttrs];
+
+    NSRect closeRect = [self closeCircleRectForTabRect:tabRect];
+    NSBezierPath* closeCircle = [NSBezierPath bezierPathWithOvalInRect:closeRect];
+    NSColor* closeFill = selected ? [NSColor.labelColor colorWithAlphaComponent:0.16]
+                                  : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.13];
+    [closeFill setFill];
+    [closeCircle fill];
+
+    NSColor* closeStroke = selected ? [NSColor.labelColor colorWithAlphaComponent:0.76]
+                                    : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.82];
+    [closeStroke setStroke];
+    NSBezierPath* closeX = [NSBezierPath bezierPath];
+    closeX.lineWidth = 1.35;
+    [closeX moveToPoint:NSMakePoint(NSMidX(closeRect) - 3.2, NSMidY(closeRect) - 3.2)];
+    [closeX lineToPoint:NSMakePoint(NSMidX(closeRect) + 3.2, NSMidY(closeRect) + 3.2)];
+    [closeX moveToPoint:NSMakePoint(NSMidX(closeRect) + 3.2, NSMidY(closeRect) - 3.2)];
+    [closeX lineToPoint:NSMakePoint(NSMidX(closeRect) - 3.2, NSMidY(closeRect) + 3.2)];
+    [closeX stroke];
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
@@ -966,62 +1120,16 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSParagraphStyleAttributeName : tabTitleStyle
     };
 
+    NSInteger draggedIndex = [self isVisuallyReorderingTabs] ? _dragSourceTabIndex : -1;
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
-        NSRect tabRect = [self rectForTabAtIndex:i];
-        if (NSWidth(tabRect) < 40.0) continue;
-        BOOL selected = i == self.selectedIndex;
-        SPDFDocumentTab* tab = self.tabs[(NSUInteger)i];
-        BOOL missing = tab.missingFile;
-        NSColor* fill;
-        NSColor* stroke = nil;
-        if (missing) {
-            fill = [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.36 : 0.22];
-            stroke = [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.95 : 0.65];
-        } else if (selected) {
-            fill = [NSColor.controlAccentColor colorWithAlphaComponent:0.34];
-            stroke = [NSColor.controlAccentColor colorWithAlphaComponent:0.95];
-        } else {
-            fill = NSColor.controlBackgroundColor;
-        }
-        NSBezierPath* tabPath = [NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:7 yRadius:7];
-        [fill setFill];
-        [tabPath fill];
-        if (stroke) {
-            [stroke setStroke];
-            tabPath.lineWidth = selected ? 1.4 : 1.0;
-            [tabPath stroke];
-        }
-
-        NSString* title = [self titleForTabAtIndex:i];
-        NSDictionary* titleAttrs = selected || missing ? attrs : dimAttrs;
-        CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
-        NSRect handleRect = [self dragHandleRectForTabRect:tabRect];
-        [self drawDragHandleInRect:handleRect selected:selected enabled:!missing];
-
-        CGFloat titleInset = 34.0;
-        NSRect titleRect = NSMakeRect(NSMinX(tabRect) + titleInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
-                                      MAX(1.0, NSWidth(tabRect) - titleInset * 2.0), titleHeight + 2);
-        [title drawWithRect:titleRect
-                    options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
-                 attributes:titleAttrs];
-
-        NSRect closeRect = [self closeCircleRectForTabRect:tabRect];
-        NSBezierPath* closeCircle = [NSBezierPath bezierPathWithOvalInRect:closeRect];
-        NSColor* closeFill = selected ? [NSColor.labelColor colorWithAlphaComponent:0.16]
-                                      : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.13];
-        [closeFill setFill];
-        [closeCircle fill];
-
-        NSColor* closeStroke = selected ? [NSColor.labelColor colorWithAlphaComponent:0.76]
-                                        : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.82];
-        [closeStroke setStroke];
-        NSBezierPath* closeX = [NSBezierPath bezierPath];
-        closeX.lineWidth = 1.35;
-        [closeX moveToPoint:NSMakePoint(NSMidX(closeRect) - 3.2, NSMidY(closeRect) - 3.2)];
-        [closeX lineToPoint:NSMakePoint(NSMidX(closeRect) + 3.2, NSMidY(closeRect) + 3.2)];
-        [closeX moveToPoint:NSMakePoint(NSMidX(closeRect) + 3.2, NSMidY(closeRect) - 3.2)];
-        [closeX lineToPoint:NSMakePoint(NSMidX(closeRect) - 3.2, NSMidY(closeRect) + 3.2)];
-        [closeX stroke];
+        if (i == draggedIndex) continue;
+        [self drawTabAtIndex:i inRect:[self visualRectForTabAtIndex:i] attributes:attrs dimAttributes:dimAttrs];
+    }
+    if (draggedIndex >= 0) {
+        [self drawTabAtIndex:draggedIndex
+                      inRect:[self visualRectForTabAtIndex:draggedIndex]
+                  attributes:attrs
+               dimAttributes:dimAttrs];
     }
 
     NSRect overflowRect = [self overflowRect];
@@ -1135,6 +1243,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     _dragSessionTabIndex = _draggedTabIndex;
     _detachedTabDrag = YES;
+    [self setNeedsDisplay:YES];
     [self beginDraggingSessionWithItems:@[ dragItem ] event:event source:self];
 }
 
@@ -1152,6 +1261,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     (void)screenPoint;
     NSInteger index = _dragSessionTabIndex;
     _dragSessionTabIndex = -1;
+    [self resetTabDragTracking];
     if (index < 0) return;
     if (operation == NSDragOperationMove) {
         [self.reader closeTabAtIndex:index];
@@ -1192,6 +1302,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)mouseDown:(NSEvent*)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     _draggedTabIndex = -1;
+    _dragSourceTabIndex = -1;
+    _dragTargetTabIndex = -1;
     _draggingTab = NO;
     _detachedTabDrag = NO;
     _mouseDownInsideTab = NO;
@@ -1216,13 +1328,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (NSPointInRect(point, closeRect)) {
             [self.reader closeTabAtIndex:i];
             [self trackTabMouseUntilMouseUp];
-        } else if (NSPointInRect(point, [self dragHandleRectForTabRect:tabRect])) {
-            _draggedTabIndex = i;
-            _dragStartPoint = point;
-            [self hideHoverPanel];
-            [self trackTabMouseUntilMouseUp];
         } else {
             [self.reader selectTabAtIndex:i];
+            [self beginTabTrackingAtIndex:i point:point tabRect:tabRect];
             [self trackTabMouseUntilMouseUp];
         }
         return;
@@ -1257,27 +1365,33 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     if (_detachedTabDrag) return;
 
+    _dragCurrentX = point.x - _dragPointerOffsetX;
     NSInteger targetIndex = [self dragDestinationIndexForPoint:point];
-    if (targetIndex >= 0 && targetIndex != _draggedTabIndex) {
-        [self.reader moveTabFromIndex:_draggedTabIndex toIndex:targetIndex];
-        _draggedTabIndex = targetIndex;
-    }
+    if (targetIndex >= 0) _dragTargetTabIndex = targetIndex;
+    [self setNeedsDisplay:YES];
 }
 
 - (void)mouseUp:(NSEvent*)event {
     (void)event;
-    NSInteger clickedTabIndex = _draggedTabIndex;
+    NSInteger clickedTabIndex = _dragSourceTabIndex >= 0 ? _dragSourceTabIndex : _draggedTabIndex;
+    NSInteger targetIndex = _dragTargetTabIndex;
     BOOL dragged = _draggingTab;
-    _draggedTabIndex = -1;
-    _draggingTab = NO;
     BOOL detached = _detachedTabDrag;
-    _detachedTabDrag = NO;
-    _mouseDownInsideTab = NO;
+    [self resetTabDragTracking];
     if (detached) return;
-    if (!dragged && clickedTabIndex >= 0) [self.reader selectTabAtIndex:clickedTabIndex];
+    if (dragged && clickedTabIndex >= 0 && targetIndex >= 0 && clickedTabIndex != targetIndex) {
+        [self.reader moveTabFromIndex:clickedTabIndex toIndex:targetIndex];
+        [self.reader selectTabAtIndex:targetIndex];
+    } else if (!dragged && clickedTabIndex >= 0) {
+        [self.reader selectTabAtIndex:clickedTabIndex];
+    }
 }
 
 - (void)mouseMoved:(NSEvent*)event {
+    [self updateHoverForEvent:event];
+}
+
+- (void)mouseEntered:(NSEvent*)event {
     [self updateHoverForEvent:event];
 }
 
@@ -2810,6 +2924,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSUInteger _paletteSearchGeneration;
     id _paletteEventMonitor;
     id _presentationEventMonitor;
+    id _presentationGlobalEventMonitor;
     NSOperationQueue* _renderQueue;
     NSOperationQueue* _preloadQueue;
     NSOperationQueue* _findQueue;
@@ -2872,6 +2987,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     BOOL _presentationPreviousMovable;
     BOOL _presentationPreviousMovableByWindowBackground;
     BOOL _presentationPreviousHasShadow;
+    NSTimeInterval _lastPresentationEventTimestamp;
+    NSEventType _lastPresentationEventType;
+    NSInteger _lastPresentationEventKeyCode;
+    NSInteger _lastPresentationEventButtonNumber;
     SPDFViewMode _presentationPreviousViewMode;
     SPDFFitMode _presentationPreviousFitMode;
     BOOL _presentationPreviousSidebarPreferredVisible;
@@ -2882,12 +3001,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     BOOL _translationCancelRequested;
     BOOL _tabStripCapturingMouse;
     BOOL _terminateOnlyThisProcess;
+    BOOL _suppressSessionWriteOnTerminate;
     NSArray<NSDictionary*>* _pendingTranslationItems;
     BOOL _restoringSidebarLayout;
     BOOL _allowSidebarWidthPersistence;
     CGFloat _sidebarWidth;
     CGFloat _minimapWidth;
     NSSize _restoredWindowContentSize;
+    NSRect _restoredWindowFrame;
+    BOOL _hasRestoredWindowFrame;
+    NSString* _windowSessionID;
+    NSMutableArray<NSString*>* _pendingRestoreWindowIDs;
     NSInteger _pendingFindPreferredPage;
     NSInteger _pendingFindPreferredMatchIndex;
 }
@@ -2912,6 +3036,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _translationRunning = NO;
     _translationInstallRunning = NO;
     _terminateOnlyThisProcess = NO;
+    _suppressSessionWriteOnTerminate = NO;
     _restoringSidebarLayout = NO;
     _allowSidebarWidthPersistence = NO;
     _sidebarWidth = kDefaultSidebarWidth;
@@ -2931,8 +3056,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _findMatchIndex = -1;
     _paletteResults = [NSMutableArray array];
     _pendingOpenPaths = [NSMutableArray array];
+    _pendingRestoreWindowIDs = [NSMutableArray array];
     _queuedRenderPages = [NSMutableSet set];
     _selectedTabIndex = -1;
+    _windowSessionID = NSUUID.UUID.UUIDString;
     _pendingFindPreferredPage = -1;
     _pendingFindPreferredMatchIndex = -1;
 
@@ -2977,6 +3104,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     } else {
         [self showEmptyDocumentViewWithMessage:@"Open a document"];
     }
+    [self spawnPendingRestoredWindowsIfNeeded];
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
@@ -2986,13 +3114,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
     (void)sender;
+    if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
     if (!_terminateOnlyThisProcess && !gSPDFTerminatingAllWindows) {
         gSPDFTerminatingAllWindows = YES;
-        NSString* bundleID = NSBundle.mainBundle.bundleIdentifier;
-        pid_t currentPID = NSProcessInfo.processInfo.processIdentifier;
-        for (NSRunningApplication* app in [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleID]) {
-            if (app.processIdentifier != currentPID) [app terminate];
-        }
+        for (NSRunningApplication* app in [self otherRunningSumatraApplications]) [app terminate];
     }
     return NSTerminateNow;
 }
@@ -3014,11 +3139,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
-    (void)sender;
+    if (sender != _window) return YES;
+    [self rememberActiveTabState];
+    [self writeSessionStateForCurrentWindow];
+    [self savePersistentState];
+    _terminateOnlyThisProcess = NO;
     dispatch_async(dispatch_get_main_queue(), ^{
       [NSApp terminate:self];
     });
-    return YES;
+    return NO;
 }
 
 - (BOOL)application:(NSApplication*)sender openFile:(NSString*)filename {
@@ -3162,32 +3291,203 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSArray* favorites = [self jsonObjectFromFile:@"favorites.json"];
     if ([favorites isKindOfClass:NSArray.class]) [_favorites addObjectsFromArray:favorites];
 
-    if (self.detachedTabLaunch) return;
+    if (self.detachedTabLaunch || self.initialPath.length > 0) return;
 
-    NSDictionary* session = [self jsonObjectFromFile:@"session.json"];
-    NSArray* tabs = [session isKindOfClass:NSDictionary.class] ? session[@"tabs"] : nil;
-    if ([tabs isKindOfClass:NSArray.class]) {
-        for (NSDictionary* item in tabs) {
-            if (![item isKindOfClass:NSDictionary.class]) continue;
-            NSString* path = item[@"path"];
-            if (![path isKindOfClass:NSString.class] || path.length == 0) continue;
-            SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
-            tab.path = path;
-            tab.title = spdf_display_name_for_path(path);
-            tab.pageIndex = [item[@"page"] integerValue];
-            tab.zoom = [item[@"zoom"] doubleValue] > 0 ? [item[@"zoom"] doubleValue] : 1.0;
-            tab.customZoom = [item[@"customZoom"] doubleValue] > 0 ? [item[@"customZoom"] doubleValue] : tab.zoom;
-            tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
-            tab.viewMode = (SPDFViewMode)MAX(0, MIN(1, [item[@"viewMode"] integerValue]));
-            tab.scrollOrigin = NSMakePoint([item[@"scrollX"] doubleValue], [item[@"scrollY"] doubleValue]);
-            tab.hasScrollOrigin = item[@"scrollX"] != nil || item[@"scrollY"] != nil;
-            if ([item[@"searchText"] isKindOfClass:NSString.class]) tab.searchText = item[@"searchText"];
-            tab.searchRegex = item[@"searchRegex"] ? [item[@"searchRegex"] boolValue] : NO;
-            tab.searchRegexMultiline = item[@"searchRegexMultiline"] ? [item[@"searchRegexMultiline"] boolValue] : YES;
-            tab.findMatchIndex = item[@"findMatchIndex"] ? [item[@"findMatchIndex"] integerValue] : -1;
-            [_tabs addObject:tab];
+    NSMutableDictionary* session =
+        [self normalizedMultiWindowSessionFromObject:[self jsonObjectFromFile:@"session.json"]];
+    NSArray* windows = session[@"windows"];
+    NSDictionary* windowState = nil;
+    if (self.restoreWindowID.length > 0) {
+        for (NSDictionary* candidate in windows) {
+            if ([candidate[@"id"] isEqualToString:self.restoreWindowID]) {
+                windowState = candidate;
+                break;
+            }
         }
-        _selectedTabIndex = MIN(MAX(0, [session[@"selectedTab"] integerValue]), MAX(0, (NSInteger)_tabs.count - 1));
+    } else {
+        windowState = windows.firstObject;
+        for (NSUInteger i = 1; i < windows.count; i++) {
+            NSString* windowID = [windows[i][@"id"] isKindOfClass:NSString.class] ? windows[i][@"id"] : nil;
+            if (windowID.length > 0) [_pendingRestoreWindowIDs addObject:windowID];
+        }
+    }
+    if (windowState)
+        [self loadSessionWindowState:windowState];
+    else if (self.restoreWindowID.length > 0)
+        _windowSessionID = [self.restoreWindowID copy];
+}
+
+- (NSMutableDictionary*)normalizedMultiWindowSessionFromObject:(id)object {
+    NSMutableArray* windows = [NSMutableArray array];
+    if ([object isKindOfClass:NSDictionary.class]) {
+        NSDictionary* dictionary = object;
+        NSArray* storedWindows = dictionary[@"windows"];
+        if ([storedWindows isKindOfClass:NSArray.class]) {
+            for (NSDictionary* window in storedWindows) {
+                if (![window isKindOfClass:NSDictionary.class]) continue;
+                NSMutableDictionary* copy = [window mutableCopy];
+                NSString* windowID = [copy[@"id"] isKindOfClass:NSString.class] ? copy[@"id"] : nil;
+                if (windowID.length == 0) copy[@"id"] = NSUUID.UUID.UUIDString;
+                NSArray* tabs = [copy[@"tabs"] isKindOfClass:NSArray.class] ? copy[@"tabs"] : @[];
+                copy[@"tabs"] = tabs;
+                [windows addObject:copy];
+            }
+        } else if ([dictionary[@"tabs"] isKindOfClass:NSArray.class]) {
+            NSMutableDictionary* migrated = [@{
+                @"id" : NSUUID.UUID.UUIDString,
+                @"selectedTab" : dictionary[@"selectedTab"] ?: @0,
+                @"tabs" : dictionary[@"tabs"]
+            } mutableCopy];
+            [windows addObject:migrated];
+        }
+    }
+    return [@{@"version" : @2, @"windows" : windows} mutableCopy];
+}
+
+- (void)loadSessionWindowState:(NSDictionary*)windowState {
+    if (![windowState isKindOfClass:NSDictionary.class]) return;
+    NSString* windowID = [windowState[@"id"] isKindOfClass:NSString.class] ? windowState[@"id"] : nil;
+    if (windowID.length > 0) _windowSessionID = [windowID copy];
+    NSRect frame;
+    if (spdf_window_frame_from_dictionary(windowState[@"frame"], &frame)) {
+        _restoredWindowFrame = spdf_sane_window_frame(frame, NSScreen.mainScreen);
+        _hasRestoredWindowFrame = YES;
+        _restoredWindowContentSize = _restoredWindowFrame.size;
+    }
+
+    NSArray* tabs = [windowState[@"tabs"] isKindOfClass:NSArray.class] ? windowState[@"tabs"] : @[];
+    [_tabs removeAllObjects];
+    for (NSDictionary* item in tabs) {
+        SPDFDocumentTab* tab = spdf_tab_from_dictionary(item);
+        if (!tab) continue;
+        if (!tab.title.length) tab.title = spdf_display_name_for_path(tab.path);
+        [_tabs addObject:tab];
+    }
+    if (_tabs.count > 0)
+        _selectedTabIndex = MIN(MAX(0, [windowState[@"selectedTab"] integerValue]), MAX(0, (NSInteger)_tabs.count - 1));
+    else
+        _selectedTabIndex = -1;
+}
+
+- (NSMutableDictionary*)currentWindowSessionDictionary {
+    NSMutableArray* tabs = [NSMutableArray array];
+    for (SPDFDocumentTab* tab in _tabs) {
+        if (!tab.path.length) continue;
+        [tabs addObject:@{
+            @"path" : tab.path,
+            @"title" : tab.title.length ? tab.title : spdf_display_name_for_path(tab.path),
+            @"page" : @(tab.pageIndex),
+            @"zoom" : @(tab.zoom),
+            @"customZoom" : @(tab.customZoom),
+            @"fitMode" : @(tab.fitMode),
+            @"viewMode" : @(tab.viewMode),
+            @"scrollX" : @(tab.scrollOrigin.x),
+            @"scrollY" : @(tab.scrollOrigin.y),
+            @"hasScrollOrigin" : @(tab.hasScrollOrigin),
+            @"searchText" : tab.searchText ?: @"",
+            @"searchRegex" : @(tab.searchRegex),
+            @"searchRegexMultiline" : @(tab.searchRegexMultiline),
+            @"findMatchIndex" : @(tab.findMatchIndex)
+        }];
+    }
+
+    NSRect frame = _window ? _window.frame : _restoredWindowFrame;
+    if (_presentationMode && _presentationUsingBorderlessWindow) frame = _presentationPreviousWindowFrame;
+    if (NSIsEmptyRect(frame)) {
+        NSSize contentSize =
+            NSEqualSizes(_restoredWindowContentSize, NSZeroSize) ? NSMakeSize(1120, 800) : _restoredWindowContentSize;
+        NSRect visible = NSScreen.mainScreen.visibleFrame;
+        frame = NSMakeRect(floor(NSMidX(visible) - contentSize.width / 2.0),
+                           floor(NSMidY(visible) - contentSize.height / 2.0), contentSize.width, contentSize.height);
+    }
+    frame = spdf_sane_window_frame(frame, _window.screen ?: NSScreen.mainScreen);
+    if (!_windowSessionID.length) _windowSessionID = NSUUID.UUID.UUIDString;
+    return [@{
+        @"id" : _windowSessionID,
+        @"frame" : spdf_dictionary_from_window_frame(frame),
+        @"selectedTab" : @(_selectedTabIndex),
+        @"tabs" : tabs
+    } mutableCopy];
+}
+
+- (void)withLockedSessionStore:(void (^)(NSMutableDictionary* session))block {
+    if (!block) return;
+    NSString* lockPath = [self pathForStateFile:@"session.lock"];
+    int fd = open(lockPath.fileSystemRepresentation, O_CREAT | O_RDWR, 0600);
+    if (fd >= 0) flock(fd, LOCK_EX);
+    NSMutableDictionary* session =
+        [self normalizedMultiWindowSessionFromObject:[self jsonObjectFromFile:@"session.json"]];
+    block(session);
+    [self writeJSONObject:session toFile:@"session.json"];
+    if (fd >= 0) {
+        flock(fd, LOCK_UN);
+        close(fd);
+    }
+}
+
+- (void)writeSessionStateForCurrentWindow {
+    if (_suppressSessionWriteOnTerminate) return;
+    [self rememberActiveTabState];
+    NSMutableDictionary* currentWindow = [self currentWindowSessionDictionary];
+    [self withLockedSessionStore:^(NSMutableDictionary* session) {
+      NSMutableArray* windows = [session[@"windows"] isKindOfClass:NSMutableArray.class] ? session[@"windows"] : nil;
+      if (!windows) {
+          windows = [NSMutableArray array];
+          session[@"windows"] = windows;
+      }
+      NSUInteger existing = NSNotFound;
+      for (NSUInteger i = 0; i < windows.count; i++) {
+          if ([windows[i][@"id"] isEqualToString:self->_windowSessionID]) {
+              existing = i;
+              break;
+          }
+      }
+      if (existing == NSNotFound)
+          [windows addObject:currentWindow];
+      else
+          windows[existing] = currentWindow;
+    }];
+}
+
+- (void)removeSessionStateForCurrentWindow {
+    if (!_windowSessionID.length) return;
+    [self withLockedSessionStore:^(NSMutableDictionary* session) {
+      NSMutableArray* windows = [session[@"windows"] isKindOfClass:NSMutableArray.class] ? session[@"windows"] : nil;
+      if (!windows) return;
+      for (NSInteger i = (NSInteger)windows.count - 1; i >= 0; i--) {
+          if ([windows[(NSUInteger)i][@"id"] isEqualToString:self->_windowSessionID])
+              [windows removeObjectAtIndex:(NSUInteger)i];
+      }
+    }];
+}
+
+- (NSArray<NSRunningApplication*>*)otherRunningSumatraApplications {
+    NSString* bundleID = NSBundle.mainBundle.bundleIdentifier;
+    pid_t currentPID = NSProcessInfo.processInfo.processIdentifier;
+    NSMutableArray<NSRunningApplication*>* apps = [NSMutableArray array];
+    for (NSRunningApplication* app in [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleID]) {
+        if (app.processIdentifier != currentPID) [apps addObject:app];
+    }
+    return apps;
+}
+
+- (void)spawnPendingRestoredWindowsIfNeeded {
+    if (self.detachedTabLaunch || self.restoreWindowID.length > 0 || self.initialPath.length > 0 ||
+        _pendingOpenPath.length > 0 || _pendingOpenPaths.count > 0 || _pendingRestoreWindowIDs.count == 0)
+        return;
+
+    NSString* executable = NSBundle.mainBundle.executablePath ?: NSProcessInfo.processInfo.arguments.firstObject;
+    if (executable.length == 0) return;
+    NSArray<NSString*>* ids = [_pendingRestoreWindowIDs copy];
+    [_pendingRestoreWindowIDs removeAllObjects];
+    for (NSString* windowID in ids) {
+        if (windowID.length == 0 || [windowID isEqualToString:_windowSessionID]) continue;
+        NSTask* task = [[NSTask alloc] init];
+        task.executableURL = [NSURL fileURLWithPath:executable];
+        task.arguments = @[ @"--restore-window", windowID ];
+        task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+        task.standardError = [NSFileHandle fileHandleWithNullDevice];
+        [task launchAndReturnError:nil];
     }
 }
 
@@ -3199,30 +3499,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     windowContentSize = spdf_sane_window_content_size(windowContentSize, _window.screen ?: NSScreen.mainScreen);
 
-    if (!self.detachedTabLaunch) {
-        NSMutableArray* tabs = [NSMutableArray array];
-        for (SPDFDocumentTab* tab in _tabs) {
-            if (!tab.path.length) continue;
-            [tabs addObject:@{
-                @"path" : tab.path,
-                @"title" : spdf_display_name_for_path(tab.path),
-                @"page" : @(tab.pageIndex),
-                @"zoom" : @(tab.zoom),
-                @"customZoom" : @(tab.customZoom),
-                @"fitMode" : @(tab.fitMode),
-                @"viewMode" : @(tab.viewMode),
-                @"scrollX" : @(tab.scrollOrigin.x),
-                @"scrollY" : @(tab.scrollOrigin.y),
-                @"hasScrollOrigin" : @(tab.hasScrollOrigin),
-                @"searchText" : tab.searchText ?: @"",
-                @"searchRegex" : @(tab.searchRegex),
-                @"searchRegexMultiline" : @(tab.searchRegexMultiline),
-                @"findMatchIndex" : @(tab.findMatchIndex)
-            }];
-        }
-        [self writeJSONObject:@{@"version" : @1, @"selectedTab" : @(MAX(0, _selectedTabIndex)), @"tabs" : tabs}
-                       toFile:@"session.json"];
-    }
+    if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
     CGFloat sidebarWidth = spdf_sane_sidebar_width(_sidebarWidth, _splitView ? NSWidth(_splitView.bounds) : 0);
     [self writeJSONObject:@{
         @"version" : @1,
@@ -3414,8 +3691,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSMenuItem* settingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings" action:nil keyEquivalent:@""];
     [mainMenu addItem:settingsItem];
     NSMenu* settingsMenu = [[NSMenu alloc] initWithTitle:@"Settings"];
-    [settingsMenu addItemWithTitle:@"Options..." action:@selector(unimplementedMenuItem:) keyEquivalent:@","];
-    [settingsMenu addItemWithTitle:@"Advanced Options..." action:@selector(unimplementedMenuItem:) keyEquivalent:@""];
+    [settingsMenu addItemWithTitle:@"Options..." action:@selector(openSettingsFile:) keyEquivalent:@","];
+    [settingsMenu addItemWithTitle:@"Advanced Options..." action:@selector(openSettingsFile:) keyEquivalent:@""];
     settingsItem.submenu = settingsMenu;
 
     NSApp.mainMenu = mainMenu;
@@ -3600,9 +3877,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSSize contentSize = NSEqualSizes(restoredSize, NSZeroSize) ? NSMakeSize(1120, 800) : restoredSize;
     _restoredWindowContentSize = contentSize;
     NSRect visibleFrame = screen.visibleFrame;
-    NSRect frame =
-        NSMakeRect(floor(NSMidX(visibleFrame) - contentSize.width / 2.0),
-                   floor(NSMidY(visibleFrame) - contentSize.height / 2.0), contentSize.width, contentSize.height);
+    NSRect frame = _hasRestoredWindowFrame ? spdf_sane_window_frame(_restoredWindowFrame, screen)
+                                           : NSMakeRect(floor(NSMidX(visibleFrame) - contentSize.width / 2.0),
+                                                        floor(NSMidY(visibleFrame) - contentSize.height / 2.0),
+                                                        contentSize.width, contentSize.height);
     _window = [[SPDFWindow alloc] initWithContentRect:frame
                                             styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                                       NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
@@ -4896,11 +5174,24 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [_tabStrip setNeedsDisplay:YES];
 }
 
+- (BOOL)eventHitsStandardWindowButton:(NSEvent*)event {
+    if (!_window || !event) return NO;
+    for (NSNumber* buttonType in @[ @(NSWindowCloseButton), @(NSWindowMiniaturizeButton), @(NSWindowZoomButton) ]) {
+        NSButton* button = [_window standardWindowButton:(NSWindowButton)buttonType.integerValue];
+        if (!button || button.hidden || !button.enabled) continue;
+        NSRect buttonRect = [button convertRect:button.bounds toView:nil];
+        buttonRect = NSInsetRect(buttonRect, -8.0, -8.0);
+        if (NSPointInRect(event.locationInWindow, buttonRect)) return YES;
+    }
+    return NO;
+}
+
 - (BOOL)handleTabStripMouseEvent:(NSEvent*)event {
     if (!_tabStrip || !_window || _presentationMode) return NO;
 
     NSEventType type = event.type;
     if (type == NSEventTypeLeftMouseDown) {
+        if ([self eventHitsStandardWindowButton:event]) return NO;
         if (_tabStripHeightConstraint.constant <= 0.0) return NO;
         NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
         if (!NSPointInRect(point, _tabStrip.bounds)) return NO;
@@ -5469,6 +5760,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (!closingActive && index < _selectedTabIndex) _selectedTabIndex--;
 
     if (_tabs.count == 0) {
+        BOOL shouldCloseThisWindow = [self otherRunningSumatraApplications].count > 0;
         [self clearToolbarFieldFocusForTabSwitch];
         _selectedTabIndex = -1;
         spdf_free_outline(&_outline);
@@ -5485,6 +5777,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         _renderGeneration++;
         [_renderedPages removeAllObjects];
         [self rebuildSidebar];
+        if (shouldCloseThisWindow) {
+            [self removeSessionStateForCurrentWindow];
+            _suppressSessionWriteOnTerminate = YES;
+            _terminateOnlyThisProcess = YES;
+            dispatch_async(dispatch_get_main_queue(), ^{
+              [NSApp terminate:self];
+            });
+            return;
+        }
         [self showEmptyDocumentViewWithMessage:@"Open a document"];
         _window.title = @"SumatraPDF";
         _statusLabel.stringValue = @"Ready";
@@ -5492,10 +5793,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self updateControls];
         [self clearToolbarFieldFocusForTabSwitch];
         [self savePersistentState];
-        if (self.detachedTabLaunch) {
-            _terminateOnlyThisProcess = YES;
-            [NSApp terminate:self];
-        }
         return;
     }
 
@@ -5838,6 +6135,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)documentScrollPositionChanged {
     if (_suppressScrollCallbacks) return;
     if (_renderedPages.count == 0) {
+        [self updateMinimap];
+        return;
+    }
+    if (_presentationMode) {
         [self updateMinimap];
         return;
     }
@@ -6391,39 +6692,63 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (BOOL)documentViewHandlePresentationMouseDown:(NSEvent*)event {
     if (!_presentationMode || !_doc) return NO;
-    BOOL controlLeftClick =
-        event.type == NSEventTypeLeftMouseDown && (event.modifierFlags & NSEventModifierFlagControl) != 0;
-    if (event.type == NSEventTypeRightMouseDown || controlLeftClick) {
+    NSInteger action = [self presentationMouseActionForEvent:event];
+    if (action < 0) {
         [self previousPage:nil];
         return YES;
     }
-    if (event.type == NSEventTypeLeftMouseDown) {
+    if (action > 0) {
         [self nextPage:nil];
-        return YES;
-    }
-    if (event.type == NSEventTypeOtherMouseDown) {
-        if (event.buttonNumber == 1)
-            [self nextPage:nil];
-        else
-            [self previousPage:nil];
         return YES;
     }
     return NO;
 }
 
+- (NSInteger)presentationMouseActionForEvent:(NSEvent*)event {
+    if (!event) return 0;
+    if (event.type == NSEventTypeLeftMouseDown) {
+        return (event.modifierFlags & NSEventModifierFlagControl) != 0 ? -1 : 1;
+    }
+    if (event.type == NSEventTypeRightMouseDown) return -1;
+    if (event.type == NSEventTypeOtherMouseDown) {
+        // AppKit uses 0/1 for left/right; "other" buttons start at 2. Treat middle/forward buttons
+        // as next, while common back-side buttons go previous.
+        return event.buttonNumber == 3 ? -1 : 1;
+    }
+    return 0;
+}
+
 - (BOOL)handlePresentationEvent:(NSEvent*)event {
     if (!_presentationMode || !_doc || !event) return NO;
+    NSInteger keyCode = event.type == NSEventTypeKeyDown ? event.keyCode : -1;
+    BOOL mouseEvent = event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown ||
+                      event.type == NSEventTypeOtherMouseDown;
+    NSInteger buttonNumber = mouseEvent ? event.buttonNumber : -1;
+    if (_lastPresentationEventType == event.type && _lastPresentationEventKeyCode == keyCode &&
+        _lastPresentationEventButtonNumber == buttonNumber &&
+        fabs(event.timestamp - _lastPresentationEventTimestamp) < 0.03) {
+        return YES;
+    }
+
     BOOL handled = NO;
     if (event.type == NSEventTypeKeyDown)
         handled = [self documentArrowKeyDown:event];
-    else if (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown ||
-             event.type == NSEventTypeOtherMouseDown)
+    else if (mouseEvent) {
+        [NSApp activateIgnoringOtherApps:YES];
+        [_window makeKeyWindow];
+        [_window makeMainWindow];
         handled = [self documentViewHandlePresentationMouseDown:event];
-    else if (event.type == NSEventTypeSystemDefined) {
+    } else if (event.type == NSEventTypeSystemDefined) {
         [self nextPage:nil];
         handled = YES;
     }
-    if (handled) [_window makeFirstResponder:_presentationOverlayView ?: _pageView];
+    if (handled) {
+        _lastPresentationEventType = event.type;
+        _lastPresentationEventKeyCode = keyCode;
+        _lastPresentationEventButtonNumber = buttonNumber;
+        _lastPresentationEventTimestamp = event.timestamp;
+        [_window makeFirstResponder:_presentationOverlayView ?: _pageView];
+    }
     return handled;
 }
 
@@ -7737,27 +8062,47 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)installPresentationEventMonitor {
-    if (_presentationEventMonitor) return;
+    if (_presentationEventMonitor && _presentationGlobalEventMonitor) return;
     __weak SumatraMacDelegate* weakSelf = self;
-    _presentationEventMonitor = [NSEvent
-        addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown |
-                                             NSEventMaskOtherMouseDown | NSEventMaskKeyDown | NSEventMaskSystemDefined
-                                     handler:^NSEvent*(NSEvent* event) {
-                                       SumatraMacDelegate* strongSelf = weakSelf;
-                                       if (!strongSelf || !strongSelf->_presentationMode || !strongSelf->_doc)
+    NSEventMask mask = NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown |
+                       NSEventMaskKeyDown | NSEventMaskSystemDefined;
+    if (!_presentationEventMonitor) {
+        _presentationEventMonitor = [NSEvent
+            addLocalMonitorForEventsMatchingMask:mask
+                                         handler:^NSEvent*(NSEvent* event) {
+                                           SumatraMacDelegate* strongSelf = weakSelf;
+                                           if (!strongSelf || !strongSelf->_presentationMode || !strongSelf->_doc)
+                                               return event;
+                                           if (event.window && event.window != strongSelf->_window) return event;
+
+                                           if ([strongSelf handlePresentationEvent:event]) return nil;
+
                                            return event;
-                                       if (event.window && event.window != strongSelf->_window) return event;
-
-                                       if ([strongSelf handlePresentationEvent:event]) return nil;
-
-                                       return event;
-                                     }];
+                                         }];
+    }
+    if (!_presentationGlobalEventMonitor) {
+        _presentationGlobalEventMonitor = [NSEvent
+            addGlobalMonitorForEventsMatchingMask:mask
+                                          handler:^(NSEvent* event) {
+                                            SumatraMacDelegate* strongSelf = weakSelf;
+                                            if (!strongSelf || !strongSelf->_presentationMode || !strongSelf->_doc)
+                                                return;
+                                            dispatch_async(dispatch_get_main_queue(), ^{
+                                              [strongSelf handlePresentationEvent:event];
+                                            });
+                                          }];
+    }
 }
 
 - (void)removePresentationEventMonitor {
-    if (!_presentationEventMonitor) return;
-    [NSEvent removeMonitor:_presentationEventMonitor];
-    _presentationEventMonitor = nil;
+    if (_presentationEventMonitor) {
+        [NSEvent removeMonitor:_presentationEventMonitor];
+        _presentationEventMonitor = nil;
+    }
+    if (_presentationGlobalEventMonitor) {
+        [NSEvent removeMonitor:_presentationGlobalEventMonitor];
+        _presentationGlobalEventMonitor = nil;
+    }
 }
 
 - (void)applyPresentationChrome {
@@ -7808,6 +8153,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _presentationPreviousMinimapPreferredVisible = _minimapPreferredVisible;
     _presentationEnteredFullScreen = NO;
     _presentationMode = YES;
+    _lastPresentationEventTimestamp = 0;
+    _lastPresentationEventType = (NSEventType)0;
+    _lastPresentationEventKeyCode = -1;
+    _lastPresentationEventButtonNumber = -1;
 
     [self enterPresentationWindowChrome];
     _sidebarPreferredVisible = NO;
@@ -7820,6 +8169,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self rebuildSidebar];
     [self setMinimapActuallyVisible:NO];
     [self installPresentationEventMonitor];
+    [NSApp activateIgnoringOtherApps:YES];
+    [_window orderFrontRegardless];
+    [_window makeKeyWindow];
+    [_window makeMainWindow];
     [_window makeFirstResponder:_presentationOverlayView ?: _pageView];
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
 }
@@ -9012,6 +9365,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _statusLabel.stringValue = @"This SumatraPDF command is listed but not implemented yet.";
 }
 
+- (void)openSettingsFile:(id)sender {
+    (void)sender;
+    [self savePersistentState];
+    NSString* path = [self pathForStateFile:@"settings.json"];
+    NSURL* url = [NSURL fileURLWithPath:path];
+    if (![NSWorkspace.sharedWorkspace openURL:url]) {
+        NSBeep();
+        _statusLabel.stringValue = @"Could not open settings.json.";
+    }
+}
+
 - (void)findNext:(id)sender {
     (void)sender;
     [self findFromCurrentForward:YES];
@@ -9361,7 +9725,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (action == @selector(openDocument:) || action == @selector(toggleFullScreen:) ||
         action == @selector(showFavoritesPalette:) || action == @selector(showFindPalette:) ||
         action == @selector(focusFind:) || action == @selector(setCommentAuthor:) ||
-        action == @selector(openRecentDocument:))
+        action == @selector(openRecentDocument:) || action == @selector(openSettingsFile:))
         return YES;
     if (action == @selector(reopenLastClosedDocument:)) return _closedDocumentPaths.count > 0;
     if (action == @selector(toggleSidebar:)) {
@@ -9448,6 +9812,10 @@ int main(int argc, const char* argv[]) {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--detached-tab") == 0) {
                 delegate.detachedTabLaunch = YES;
+                continue;
+            }
+            if (strcmp(argv[i], "--restore-window") == 0 && i + 1 < argc) {
+                delegate.restoreWindowID = [NSString stringWithUTF8String:argv[++i]];
                 continue;
             }
             if (argv[i][0] != '-') {
