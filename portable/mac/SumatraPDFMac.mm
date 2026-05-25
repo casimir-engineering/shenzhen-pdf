@@ -4851,6 +4851,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _pageIndex = pageIndex;
     _pageView.currentPageIndex = _pageIndex;
     [self clearPageFieldFocus];
+    if (_presentationMode &&
+        (_fitMode == SPDFFitModeWidth || _fitMode == SPDFFitModeHeight || _fitMode == SPDFFitModePage)) {
+        [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
+        [self persistActiveState];
+        return;
+    }
     [self renderPageIfNeededAtIndex:_pageIndex];
     [self resizeDocumentView];
     if (preserveSinglePagePosition)
@@ -6721,9 +6727,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [_window makeKeyWindow];
         [_window makeMainWindow];
         handled = [self documentViewHandlePresentationMouseDown:event];
-    } else if (event.type == NSEventTypeSystemDefined) {
-        [self nextPage:nil];
-        handled = YES;
     }
     if (handled) {
         _lastPresentationEventType = event.type;
@@ -8045,10 +8048,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)installPresentationEventMonitor {
-    if (_presentationEventMonitor && _presentationGlobalEventMonitor) return;
+    if (_presentationEventMonitor) return;
     __weak SumatraMacDelegate* weakSelf = self;
-    NSEventMask mask = NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown |
-                       NSEventMaskKeyDown | NSEventMaskSystemDefined;
+    NSEventMask mask = NSEventMaskKeyDown;
     if (!_presentationEventMonitor) {
         _presentationEventMonitor = [NSEvent
             addLocalMonitorForEventsMatchingMask:mask
@@ -8062,18 +8064,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
                                            return event;
                                          }];
-    }
-    if (!_presentationGlobalEventMonitor) {
-        _presentationGlobalEventMonitor = [NSEvent
-            addGlobalMonitorForEventsMatchingMask:mask
-                                          handler:^(NSEvent* event) {
-                                            SumatraMacDelegate* strongSelf = weakSelf;
-                                            if (!strongSelf || !strongSelf->_presentationMode || !strongSelf->_doc)
-                                                return;
-                                            dispatch_async(dispatch_get_main_queue(), ^{
-                                              [strongSelf handlePresentationEvent:event];
-                                            });
-                                          }];
     }
 }
 
