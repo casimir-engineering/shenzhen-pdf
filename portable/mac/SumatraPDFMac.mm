@@ -5254,65 +5254,46 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)loadCommentsForCurrentDocumentAsync {
-    if (!_path.length) return;
-    NSString* path = [_path copy];
-    [_preloadQueue addOperationWithBlock:^{
-      @autoreleasepool {
-          spdf_comments* comments = (spdf_comments*)calloc(1, sizeof(spdf_comments));
-          if (!comments) return;
-          char err[1024];
-          spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
-          if (doc) {
-              if (!spdf_load_comments(doc, comments, err, sizeof(err))) spdf_free_comments(comments);
-              spdf_close(doc);
-          }
-          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-            if ([self->_path.stringByStandardizingPath isEqualToString:path.stringByStandardizingPath]) {
-                spdf_free_comments(&self->_comments);
-                self->_comments = *comments;
-                free(comments);
-                [self rebuildSidebar];
-                [self->_pageView setNeedsDisplay:YES];
-            } else {
-                spdf_free_comments(comments);
-                free(comments);
-            }
-          }];
+    if (!_doc || !_path.length) return;
+    NSString* path = [_path.stringByStandardizingPath copy];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!self->_doc || ![self->_path.stringByStandardizingPath isEqualToString:path]) return;
+
+      spdf_comments comments;
+      char err[1024];
+      BOOL ok = spdf_load_comments(self->_doc, &comments, err, sizeof(err));
+
+      spdf_free_comments(&self->_comments);
+      if (ok) {
+          self->_comments = comments;
+      } else {
+          spdf_free_comments(&comments);
+          memset(&self->_comments, 0, sizeof(self->_comments));
       }
-    }];
+      [self rebuildSidebar];
+      [self->_pageView setNeedsDisplay:YES];
+    });
 }
 
 - (void)loadOutlineForCurrentDocumentAsync {
-    if (!_path.length) return;
-    NSString* path = [_path copy];
-    NSUInteger generation = _renderGeneration;
-    [_preloadQueue addOperationWithBlock:^{
-      @autoreleasepool {
-          spdf_outline* outline = (spdf_outline*)calloc(1, sizeof(spdf_outline));
-          if (!outline) return;
-          char err[1024];
-          spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
-          BOOL ok = doc && spdf_load_outline(doc, outline, err, sizeof(err));
-          if (doc) spdf_close(doc);
-          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-            if (generation != self->_renderGeneration || ![self->_path isEqualToString:path]) {
-                spdf_free_outline(outline);
-                free(outline);
-                return;
-            }
-            spdf_free_outline(&self->_outline);
-            if (ok) {
-                self->_outline = *outline;
-                free(outline);
-            } else {
-                memset(&self->_outline, 0, sizeof(self->_outline));
-                spdf_free_outline(outline);
-                free(outline);
-            }
-            [self rebuildSidebar];
-          }];
+    if (!_doc || !_path.length) return;
+    NSString* path = [_path.stringByStandardizingPath copy];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!self->_doc || ![self->_path.stringByStandardizingPath isEqualToString:path]) return;
+
+      spdf_outline outline;
+      char err[1024];
+      BOOL ok = spdf_load_outline(self->_doc, &outline, err, sizeof(err));
+
+      spdf_free_outline(&self->_outline);
+      if (ok) {
+          self->_outline = outline;
+      } else {
+          spdf_free_outline(&outline);
+          memset(&self->_outline, 0, sizeof(self->_outline));
       }
-    }];
+      [self rebuildSidebar];
+    });
 }
 
 - (void)schedulePostFirstPaintWorkForGeneration:(NSUInteger)generation
@@ -8702,6 +8683,40 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                          }];
 }
 
+static BOOL SPDFIsArgosDiagnosticLine(NSString* line, BOOL previousLineWasDiagnostic) {
+    NSString* trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([trimmed rangeOfString:@"WARNING: Language "].location != NSNotFound &&
+        [trimmed rangeOfString:@" package "].location != NSNotFound &&
+        [trimmed rangeOfString:@" expects "].location != NSNotFound) {
+        return YES;
+    }
+    if (previousLineWasDiagnostic &&
+        ([trimmed isEqualToString:@"added"] || [trimmed hasPrefix:@"which has been added"])) {
+        return YES;
+    }
+    return NO;
+}
+
+static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
+    if (!output.length) return output ?: @"";
+    NSArray<NSString*>* lines = [output componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    NSMutableArray<NSString*>* kept = [NSMutableArray arrayWithCapacity:lines.count];
+    BOOL previousLineWasDiagnostic = NO;
+    BOOL removedAny = NO;
+    for (NSString* line in lines) {
+        BOOL diagnostic = SPDFIsArgosDiagnosticLine(line, previousLineWasDiagnostic);
+        if (diagnostic) {
+            previousLineWasDiagnostic = YES;
+            removedAny = YES;
+            continue;
+        }
+        previousLineWasDiagnostic = NO;
+        [kept addObject:line];
+    }
+    if (!removedAny) return output;
+    return [kept componentsJoinedByString:@"\n"];
+}
+
 - (BOOL)runArgosToolSynchronously:(NSString*)tool
                    sourceLanguage:(NSString*)sourceLanguage
                    targetLanguage:(NSString*)targetLanguage
@@ -8719,9 +8734,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     task.arguments = @[ @"--from-lang", sourceLanguage, @"--to-lang", targetLanguage ];
     NSPipe* inputPipe = [NSPipe pipe];
     NSPipe* outputPipe = [NSPipe pipe];
+    NSPipe* errorPipe = [NSPipe pipe];
     task.standardInput = inputPipe;
     task.standardOutput = outputPipe;
-    task.standardError = outputPipe;
+    task.standardError = errorPipe;
 
     NSError* launchError = nil;
     if (![task launchAndReturnError:&launchError]) {
@@ -8740,20 +8756,31 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     [inputPipe.fileHandleForWriting closeFile];
 
+    __block NSData* errorData = nil;
+    dispatch_group_t readGroup = dispatch_group_create();
+    dispatch_group_enter(readGroup);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+      errorData = [errorPipe.fileHandleForReading readDataToEndOfFile];
+      dispatch_group_leave(readGroup);
+    });
     NSData* outputData = [outputPipe.fileHandleForReading readDataToEndOfFile];
     [task waitUntilExit];
+    dispatch_group_wait(readGroup, DISPATCH_TIME_FOREVER);
     @synchronized(self) {
         if (_translationTask == task) _translationTask = nil;
     }
     NSString* output = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding] ?: @"";
+    NSString* errorOutput = [[NSString alloc] initWithData:errorData encoding:NSUTF8StringEncoding] ?: @"";
     if (_translationCancelRequested) {
         if (errorOut) *errorOut = @"Translation canceled.";
         return NO;
     }
     if (task.terminationStatus != 0) {
-        if (errorOut) *errorOut = output.length ? output : @"Argos Translate exited with an error.";
+        NSString* failure = errorOutput.length ? errorOutput : output;
+        if (errorOut) *errorOut = failure.length ? failure : @"Argos Translate exited with an error.";
         return NO;
     }
+    output = SPDFStringByRemovingArgosDiagnostics(output);
     if (outputOut) *outputOut = output;
     return YES;
 }

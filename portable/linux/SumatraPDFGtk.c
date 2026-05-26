@@ -5812,6 +5812,50 @@ static gboolean subprocess_capture_utf8(char** argv, const char* input, char** o
     return subprocess_capture_utf8_with_cancel(argv, input, output_out, error_out, NULL, error);
 }
 
+static gboolean is_argos_diagnostic_line(const char* line, gboolean previous_line_was_diagnostic) {
+    char* trimmed;
+    gboolean diagnostic;
+
+    if (!line) return FALSE;
+    trimmed = g_strdup(line);
+    g_strstrip(trimmed);
+    diagnostic = strstr(trimmed, "WARNING: Language ") && strstr(trimmed, " package ") && strstr(trimmed, " expects ");
+    if (!diagnostic && previous_line_was_diagnostic)
+        diagnostic = strcmp(trimmed, "added") == 0 || g_str_has_prefix(trimmed, "which has been added");
+    g_free(trimmed);
+    return diagnostic;
+}
+
+static char* strip_argos_diagnostic_lines(const char* text) {
+    char** lines;
+    GString* cleaned;
+    gboolean previous_line_was_diagnostic = FALSE;
+    gboolean removed_any = FALSE;
+    gboolean first_kept = TRUE;
+
+    if (!text) return g_strdup("");
+    lines = g_strsplit(text, "\n", -1);
+    cleaned = g_string_new("");
+    for (int i = 0; lines && lines[i]; ++i) {
+        gboolean diagnostic = is_argos_diagnostic_line(lines[i], previous_line_was_diagnostic);
+        if (diagnostic) {
+            previous_line_was_diagnostic = TRUE;
+            removed_any = TRUE;
+            continue;
+        }
+        previous_line_was_diagnostic = FALSE;
+        if (!first_kept) g_string_append_c(cleaned, '\n');
+        g_string_append(cleaned, lines[i]);
+        first_kept = FALSE;
+    }
+    g_strfreev(lines);
+    if (!removed_any) {
+        g_string_free(cleaned, TRUE);
+        return g_strdup(text);
+    }
+    return g_string_free(cleaned, FALSE);
+}
+
 static gboolean translate_progress_update_idle(gpointer data) {
     translate_progress_update* update = (translate_progress_update*)data;
 
@@ -6243,6 +6287,11 @@ static gpointer translate_worker(gpointer data) {
                 g_strfreev(source_lines);
                 goto done;
             }
+            {
+                char* cleaned = strip_argos_diagnostic_lines(page_translated);
+                g_free(page_translated);
+                page_translated = cleaned;
+            }
             char** page_output = g_strsplit(page_translated, "\n", -1);
             for (int i = start; i < end; ++i) {
                 int local = i - start;
@@ -6274,6 +6323,11 @@ static gpointer translate_worker(gpointer data) {
                 error_text ? error_text : (process_text ? process_text : "Argos Translate exited with an error."));
         }
         goto done;
+    }
+    if (translated) {
+        char* cleaned = strip_argos_diagnostic_lines(translated);
+        g_free(translated);
+        translated = cleaned;
     }
 
     queue_translate_progress(task, 0.93, "Writing translated PDF...");
