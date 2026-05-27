@@ -515,6 +515,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (BOOL)documentViewInPresentationMode;
 - (void)copySelection:(id)sender;
 - (void)translateDocument:(id)sender;
+- (void)rotateClockwise:(id)sender;
+- (void)rotateAnticlockwise:(id)sender;
 - (SPDFDocumentTab*)tabSnapshotForDragAtIndex:(NSInteger)index;
 - (void)insertDraggedTab:(SPDFDocumentTab*)tab atIndex:(NSInteger)index;
 - (void)selectTabAtIndex:(NSInteger)index;
@@ -3643,8 +3645,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [viewMenu addItemWithTitle:@"Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
     fullScreen.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    [viewMenu addItemWithTitle:@"Rotate Left" action:@selector(unimplementedMenuItem:) keyEquivalent:@""];
-    [viewMenu addItemWithTitle:@"Rotate Right" action:@selector(unimplementedMenuItem:) keyEquivalent:@""];
+    NSMenuItem* rotateClockwise =
+        [viewMenu addItemWithTitle:@"Rotate Clockwise" action:@selector(rotateClockwise:) keyEquivalent:@"r"];
+    rotateClockwise.target = self;
+    rotateClockwise.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    NSMenuItem* rotateAnticlockwise =
+        [viewMenu addItemWithTitle:@"Rotate Anticlockwise" action:@selector(rotateAnticlockwise:) keyEquivalent:@"r"];
+    rotateAnticlockwise.target = self;
+    rotateAnticlockwise.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     viewItem.submenu = viewMenu;
 
     NSMenuItem* editItem = [[NSMenuItem alloc] initWithTitle:@"Edit" action:nil keyEquivalent:@""];
@@ -8520,6 +8528,22 @@ static NSString* SPDFLastMeaningfulOCRLine(NSString* text) {
     return @"";
 }
 
+static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
+    if (!detail.length) return @"OCRmyPDF exited with an error.";
+    if ([detail rangeOfString:@"--redo-ocr"].location != NSNotFound &&
+        [detail rangeOfString:@"not compatible"].location != NSNotFound) {
+        return @"OCRmyPDF could not redo OCR on this PDF.\n\n"
+               @"This document already contains selectable text, and this OCRmyPDF version cannot combine redo OCR "
+               @"with cleanup operations for it. OCR is probably not needed for text-only or vector-text PDFs.";
+    }
+    if ([detail rangeOfString:@"Traceback"].location != NSNotFound) {
+        return @"OCRmyPDF crashed while processing this PDF.\n\n"
+               @"This looks like an OCRmyPDF compatibility error rather than a SumatraPDF error. Try updating "
+               @"OCRmyPDF and Tesseract, or run OCRmyPDF from Terminal for the full traceback.";
+    }
+    return detail;
+}
+
 - (void)showOCRProgressWithDetail:(NSString*)detail {
     if (!_ocrProgressPanel) {
         _ocrProgressPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 460, 132)
@@ -9305,6 +9329,45 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     return candidate;
 }
 
+- (void)rotateCurrentPageByDegrees:(int)degrees {
+    if (!_doc || !_path.length || ![_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
+        NSBeep();
+        return;
+    }
+
+    NSInteger pageIndex = _pageIndex;
+    char err[1024];
+    BOOL ok = spdf_rotate_page(_doc, (int)pageIndex, degrees, err, sizeof(err));
+    if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
+    if (!ok) {
+        [self loadSelectedTab];
+        [self showError:@"Could not rotate page" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+        return;
+    }
+
+    [_renderQueue cancelAllOperations];
+    [_queuedRenderPages removeAllObjects];
+    _renderGeneration++;
+    spdf_close(_doc);
+    _doc = NULL;
+    if (_selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count) {
+        SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
+        tab.pageIndex = pageIndex;
+    }
+    [self loadSelectedTab];
+    _statusLabel.stringValue = degrees > 0 ? @"Page rotated clockwise." : @"Page rotated anticlockwise.";
+}
+
+- (void)rotateClockwise:(id)sender {
+    (void)sender;
+    [self rotateCurrentPageByDegrees:90];
+}
+
+- (void)rotateAnticlockwise:(id)sender {
+    (void)sender;
+    [self rotateCurrentPageByDegrees:-90];
+}
+
 - (void)ocrDocument:(id)sender {
     (void)sender;
     if (!_doc || !_path.length || ![_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
@@ -9360,9 +9423,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         stringByAppendingPathComponent:[NSString stringWithFormat:@".%@.ocr-%@.pdf", originalPath.lastPathComponent,
                                                                   NSUUID.UUID.UUIDString]];
     NSInteger jobs = MAX(1, NSProcessInfo.processInfo.activeProcessorCount);
-    NSMutableArray<NSString*>* args = [@[
-        @"--jobs", [NSString stringWithFormat:@"%ld", (long)jobs], @"--rotate-pages", @"--deskew", @"--optimize", @"1"
-    ] mutableCopy];
+    NSMutableArray<NSString*>* args =
+        [@[ @"--jobs", [NSString stringWithFormat:@"%ld", (long)jobs], @"--rotate-pages", @"--optimize", @"1" ]
+            mutableCopy];
+    if (hasText <= 0) [args addObject:@"--deskew"];
     [args addObject:hasText > 0 ? @"--redo-ocr" : @"--skip-text"];
     [args addObject:originalPath];
     [args addObject:tmp];
@@ -9420,7 +9484,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         if (finishedTask.terminationStatus != 0) {
             [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
             [strongSelf finishOCRProgressWithDetail:@"OCR failed."];
-            NSString* detail = output.length > 1200 ? [output substringToIndex:1200] : output;
+            NSString* detail = SPDFHumanReadableOCRFailure(output);
+            if (detail.length > 1200) detail = [detail substringToIndex:1200];
             [strongSelf showError:@"OCR failed" detail:detail.length ? detail : @"OCRmyPDF exited with an error."];
             strongSelf->_statusLabel.stringValue = @"OCR failed.";
             return;
@@ -10020,6 +10085,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     if (action == @selector(addComment:)) return hasDoc && (_selectedText.length > 0 || _contextPageIndex >= 0);
     if (action == @selector(editComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(deleteComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
+    if (action == @selector(rotateClockwise:) || action == @selector(rotateAnticlockwise:))
+        return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(ocrDocument:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(translateDocument:)) return hasDoc && !_translationRunning && !_translationInstallRunning;

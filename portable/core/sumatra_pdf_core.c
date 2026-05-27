@@ -1564,6 +1564,49 @@ static void set_comment_text_and_author(fz_context* ctx, pdf_annot* annot, pdf_o
     pdf_update_annot(ctx, annot);
 }
 
+static int normalize_page_rotation(int degrees) {
+    int normalized = degrees % 360;
+    int quarter;
+
+    if (normalized < 0) normalized += 360;
+    quarter = (normalized + 45) / 90;
+    return (quarter % 4) * 90;
+}
+
+int spdf_rotate_page(spdf_document* doc, int page_index, int degrees, char* err, size_t err_len) {
+    pdf_document* pdf = NULL;
+    pdf_obj* page_obj = NULL;
+
+    set_error(err, err_len, "");
+    if (!doc || page_index < 0 || page_index >= doc->page_count) {
+        set_error(err, err_len, "Page index is out of range.");
+        return 0;
+    }
+
+    fz_try(doc->ctx) {
+        int current_rotation;
+        int next_rotation;
+
+        pdf = pdf_specifics(doc->ctx, doc->doc);
+        if (!pdf) fz_throw(doc->ctx, FZ_ERROR_FORMAT, "Only PDF pages can be rotated and saved.");
+
+        page_obj = pdf_lookup_page_obj(doc->ctx, pdf, page_index);
+        if (!page_obj) fz_throw(doc->ctx, FZ_ERROR_FORMAT, "Could not find the PDF page object.");
+
+        current_rotation = normalize_page_rotation(pdf_dict_get_inheritable_int(doc->ctx, page_obj, PDF_NAME(Rotate)));
+        next_rotation = normalize_page_rotation(current_rotation + degrees);
+        pdf_dict_put_int(doc->ctx, page_obj, PDF_NAME(Rotate), next_rotation);
+        pdf_dirty_obj(doc->ctx, page_obj);
+        if (doc->page_sizes) doc->page_sizes[page_index].valid = 0;
+    }
+    fz_catch(doc->ctx) {
+        set_error(err, err_len, fz_caught_message(doc->ctx));
+        return 0;
+    }
+
+    return 1;
+}
+
 static char* create_temp_save_path(fz_context* ctx, const char* path) {
     static const char temp_name[] = ".sumatra-save-XXXXXX";
     const char* slash = strrchr(path, '/');

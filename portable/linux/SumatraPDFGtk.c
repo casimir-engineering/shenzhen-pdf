@@ -82,6 +82,8 @@ typedef struct app_state {
     GtkWidget* show_in_folder;
     GtkWidget* recently_opened_menu;
     GtkWidget* reopen_closed_menu_item;
+    GtkWidget* rotate_clockwise_item;
+    GtkWidget* rotate_anticlockwise_item;
     GtkWidget* show_sidebar_item;
     GtkWidget* show_minimap_item;
     GtkWidget* presentation_item;
@@ -1682,6 +1684,12 @@ static void update_controls(app_state* state) {
     if (state->open_in_browser) gtk_widget_set_sensitive(state->open_in_browser, state->doc != NULL);
     if (state->show_in_folder)
         gtk_widget_set_sensitive(state->show_in_folder, state->doc != NULL && state->path != NULL);
+    if (state->rotate_clockwise_item)
+        gtk_widget_set_sensitive(state->rotate_clockwise_item,
+                                 state->doc != NULL && path_has_pdf_extension(state->path));
+    if (state->rotate_anticlockwise_item)
+        gtk_widget_set_sensitive(state->rotate_anticlockwise_item,
+                                 state->doc != NULL && path_has_pdf_extension(state->path));
     if (state->translate_menu_item)
         gtk_widget_set_sensitive(state->translate_menu_item,
                                  state->doc != NULL && path_has_pdf_extension(state->path) &&
@@ -5325,6 +5333,47 @@ static void delete_comment_clicked(GtkMenuItem* item, gpointer user_data) {
     refresh_comments_after_edit(state, "Comment deleted.", "Comment deleted, but comments could not refresh.");
 }
 
+static void rotate_current_page(app_state* state, int degrees) {
+    char err[1024];
+    char* path;
+    int page_index;
+    gboolean ok = FALSE;
+
+    if (!state || !state->doc || !state->path || !path_has_pdf_extension(state->path)) return;
+
+    err[0] = '\0';
+    page_index = state->page_index;
+    path = g_strdup(state->path);
+    ok = spdf_rotate_page(state->doc, page_index, degrees, err, sizeof(err));
+    if (!ok) {
+        show_error(GTK_WINDOW(state->window), "Could not rotate page", err[0] ? err : "Unknown error");
+        g_free(path);
+        return;
+    }
+    ok = spdf_save_document(state->doc, state->path, err, sizeof(err));
+    if (!ok) {
+        open_path_at_page(state, path, page_index);
+        show_error(GTK_WINDOW(state->window), "Could not rotate page", err[0] ? err : "Unknown error");
+        g_free(path);
+        return;
+    }
+
+    open_path_at_page(state, path, page_index);
+    gtk_label_set_text(GTK_LABEL(state->status),
+                       degrees > 0 ? "Page rotated clockwise." : "Page rotated anticlockwise.");
+    g_free(path);
+}
+
+static void rotate_clockwise_clicked(GtkMenuItem* item, gpointer user_data) {
+    (void)item;
+    rotate_current_page((app_state*)user_data, 90);
+}
+
+static void rotate_anticlockwise_clicked(GtkMenuItem* item, gpointer user_data) {
+    (void)item;
+    rotate_current_page((app_state*)user_data, -90);
+}
+
 static gboolean comments_sidebar_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     GtkListBoxRow* row;
@@ -5433,6 +5482,26 @@ static gboolean pulse_ocr_progress(gpointer data) {
     if (!GPOINTER_TO_INT(g_object_get_data(G_OBJECT(progress), "ocr-running"))) return G_SOURCE_REMOVE;
     gtk_progress_bar_pulse(progress);
     return G_SOURCE_CONTINUE;
+}
+
+static char* ocr_failure_message(const char* detail) {
+    if (!detail || !*detail) return g_strdup("OCRmyPDF exited with an error.");
+
+    if (strstr(detail, "--redo-ocr") && strstr(detail, "not compatible")) {
+        return g_strdup(
+            "OCRmyPDF rejected --redo-ocr for this PDF or OCRmyPDF version.\n\n"
+            "The PDF already has text, and this OCRmyPDF build cannot redo OCR on it. "
+            "Try updating OCRmyPDF, or run OCR on a copy without existing text.");
+    }
+
+    if (strstr(detail, "Traceback (most recent call last)") || strstr(detail, "Traceback")) {
+        return g_strdup(
+            "OCRmyPDF crashed while processing this PDF.\n\n"
+            "This looks like an OCRmyPDF compatibility error. Try updating OCRmyPDF and "
+            "Tesseract, or run OCRmyPDF from a terminal to see the full traceback.");
+    }
+
+    return g_strdup(detail);
 }
 
 static gboolean ocr_finished_idle(gpointer data) {
@@ -5617,9 +5686,19 @@ static gpointer ocr_worker(gpointer data) {
     gboolean ok;
 
     snprintf(jobs, sizeof(jobs), "%u", MAX(1u, g_get_num_processors()));
-    gchar* argv[] = {task->tool, "--jobs",       jobs, "--rotate-pages",
-                     "--deskew", "--optimize",   "1",  task->has_text ? "--redo-ocr" : "--skip-text",
-                     task->path, task->tmp_path, NULL};
+    gchar* argv[12];
+    int arg = 0;
+    argv[arg++] = task->tool;
+    argv[arg++] = "--jobs";
+    argv[arg++] = jobs;
+    argv[arg++] = "--rotate-pages";
+    argv[arg++] = "--optimize";
+    argv[arg++] = "1";
+    if (!task->has_text) argv[arg++] = "--deskew";
+    argv[arg++] = task->has_text ? "--redo-ocr" : "--skip-text";
+    argv[arg++] = task->path;
+    argv[arg++] = task->tmp_path;
+    argv[arg++] = NULL;
 
     ok = g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, &stdout_text, &stderr_text, &status, &error);
     result->state = task->state;
@@ -5632,8 +5711,9 @@ static gpointer ocr_worker(gpointer data) {
         result->message = g_strdup("OCR complete.");
     } else {
         const char* detail =
-            error && error->message ? error->message : (stderr_text && *stderr_text ? stderr_text : stdout_text);
-        result->message = g_strdup(detail ? detail : "OCRmyPDF exited with an error.");
+            stderr_text && *stderr_text ? stderr_text : (stdout_text && *stdout_text ? stdout_text : NULL);
+        if (!detail && error && error->message) detail = error->message;
+        result->message = ocr_failure_message(detail);
         g_remove(task->tmp_path);
         if (error) g_error_free(error);
     }
@@ -7467,6 +7547,11 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
         show_favorites_dialog(state);
         return TRUE;
     }
+    if (ctrl && (event->keyval == GDK_KEY_r || event->keyval == GDK_KEY_R)) {
+        if (!state->doc || !path_has_pdf_extension(state->path)) return FALSE;
+        rotate_current_page(state, shift ? -90 : 90);
+        return TRUE;
+    }
     if (ctrl && shift && (event->keyval == GDK_KEY_t || event->keyval == GDK_KEY_T)) {
         if (state->closed_count == 0) return FALSE;
         reopen_last_closed_document(state);
@@ -7902,6 +7987,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* edit_menu = gtk_menu_new();
     GtkWidget* edit = gtk_menu_item_new_with_mnemonic("_Edit");
     GtkWidget* set_comment_author = gtk_menu_item_new_with_mnemonic("Set _Author for Comments...");
+    state->rotate_clockwise_item = gtk_menu_item_new_with_mnemonic("Rotate _Clockwise");
+    state->rotate_anticlockwise_item = gtk_menu_item_new_with_mnemonic("Rotate _Anticlockwise");
     state->translate_menu_item = gtk_menu_item_new_with_mnemonic("_Translate...");
     state->search_regex_multiline_item = gtk_check_menu_item_new_with_mnemonic("Regex _Multiline");
     GtkWidget* settings_menu = gtk_menu_new();
@@ -7918,7 +8005,13 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_F5, 0, GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->reopen_closed_menu_item, "activate", accel_group, GDK_KEY_t,
                                GDK_CONTROL_MASK | GDK_SHIFT_MASK, GTK_ACCEL_VISIBLE);
+    gtk_widget_add_accelerator(state->rotate_clockwise_item, "activate", accel_group, GDK_KEY_r, GDK_CONTROL_MASK,
+                               GTK_ACCEL_VISIBLE);
+    gtk_widget_add_accelerator(state->rotate_anticlockwise_item, "activate", accel_group, GDK_KEY_r,
+                               GDK_CONTROL_MASK | GDK_SHIFT_MASK, GTK_ACCEL_VISIBLE);
     gtk_widget_set_sensitive(state->reopen_closed_menu_item, state->closed_count > 0);
+    gtk_widget_set_sensitive(state->rotate_clockwise_item, FALSE);
+    gtk_widget_set_sensitive(state->rotate_anticlockwise_item, FALSE);
     g_object_unref(accel_group);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_sidebar_item), state->show_sidebar);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(state->show_minimap_item), state->show_minimap);
@@ -7949,6 +8042,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_sidebar_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_minimap_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), gtk_separator_menu_item_new());
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->rotate_clockwise_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->rotate_anticlockwise_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->presentation_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), view);
@@ -8183,6 +8279,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(state->open_in_browser, "activate", G_CALLBACK(open_in_browser), state);
     g_signal_connect(state->show_in_folder, "activate", G_CALLBACK(show_in_folder), state);
     g_signal_connect(set_comment_author, "activate", G_CALLBACK(set_comment_author_clicked), state);
+    g_signal_connect(state->rotate_clockwise_item, "activate", G_CALLBACK(rotate_clockwise_clicked), state);
+    g_signal_connect(state->rotate_anticlockwise_item, "activate", G_CALLBACK(rotate_anticlockwise_clicked), state);
     g_signal_connect(state->translate_menu_item, "activate", G_CALLBACK(translate_clicked), state);
     g_signal_connect(state->search_regex_multiline_item, "toggled", G_CALLBACK(find_regex_multiline_toggled), state);
     g_signal_connect(options_menu, "activate", G_CALLBACK(open_settings_file), state);
