@@ -2890,6 +2890,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSProgressIndicator* _ocrInstallProgress;
     NSTextView* _ocrInstallLog;
     NSTask* _ocrInstallTask;
+    NSPanel* _ocrProgressPanel;
+    NSTextField* _ocrProgressTitleLabel;
+    NSTextField* _ocrProgressDetailLabel;
+    NSProgressIndicator* _ocrProgressIndicator;
     NSPanel* _translationInstallPanel;
     NSTextField* _translationInstallTitleLabel;
     NSProgressIndicator* _translationInstallProgress;
@@ -8302,15 +8306,19 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (NSString*)ocrToolPath {
-    return [self
-        executablePathForTool:@"ocrmypdf"
-                   candidates:@[ @"/opt/homebrew/bin/ocrmypdf", @"/usr/local/bin/ocrmypdf", @"/usr/bin/ocrmypdf" ]];
+    return [self executablePathForTool:@"ocrmypdf"
+                            candidates:@[
+                                @"/opt/homebrew/bin/ocrmypdf", @"/usr/local/bin/ocrmypdf", @"/opt/local/bin/ocrmypdf",
+                                @"/usr/bin/ocrmypdf"
+                            ]];
 }
 
 - (NSString*)tesseractToolPath {
-    return [self
-        executablePathForTool:@"tesseract"
-                   candidates:@[ @"/opt/homebrew/bin/tesseract", @"/usr/local/bin/tesseract", @"/usr/bin/tesseract" ]];
+    return [self executablePathForTool:@"tesseract"
+                            candidates:@[
+                                @"/opt/homebrew/bin/tesseract", @"/usr/local/bin/tesseract",
+                                @"/opt/local/bin/tesseract", @"/usr/bin/tesseract"
+                            ]];
 }
 
 - (NSString*)argosToolPath {
@@ -8328,7 +8336,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (NSString*)executablePathForTool:(NSString*)tool candidates:(NSArray<NSString*>*)candidates {
     NSFileManager* fm = NSFileManager.defaultManager;
-    for (NSString* path in candidates) {
+    NSString* userPath =
+        [[NSHomeDirectory() stringByAppendingPathComponent:@".local/bin"] stringByAppendingPathComponent:tool];
+    NSMutableArray<NSString*>* allCandidates = [candidates mutableCopy] ?: [NSMutableArray array];
+    [allCandidates addObject:userPath];
+    for (NSString* path in allCandidates) {
         if ([fm isExecutableFileAtPath:path]) return path;
     }
 
@@ -8339,6 +8351,31 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if ([fm isExecutableFileAtPath:path]) return path;
     }
     return nil;
+}
+
+- (NSDictionary<NSString*, NSString*>*)taskEnvironmentWithToolPaths:(NSArray<NSString*>*)toolPaths {
+    NSMutableDictionary<NSString*, NSString*>* env = [NSProcessInfo.processInfo.environment mutableCopy];
+    NSMutableArray<NSString*>* dirs = [NSMutableArray array];
+    void (^addDir)(NSString*) = ^(NSString* dir) {
+      if (!dir.length) return;
+      if (![dirs containsObject:dir]) [dirs addObject:dir];
+    };
+
+    for (NSString* toolPath in toolPaths) addDir(toolPath.stringByDeletingLastPathComponent);
+    addDir([NSHomeDirectory() stringByAppendingPathComponent:@".local/bin"]);
+    addDir(@"/opt/homebrew/bin");
+    addDir(@"/opt/homebrew/sbin");
+    addDir(@"/usr/local/bin");
+    addDir(@"/usr/local/sbin");
+    addDir(@"/opt/local/bin");
+    addDir(@"/usr/bin");
+    addDir(@"/bin");
+    addDir(@"/usr/sbin");
+    addDir(@"/sbin");
+
+    for (NSString* dir in [env[@"PATH"] componentsSeparatedByString:@":"]) addDir(dir);
+    env[@"PATH"] = [dirs componentsJoinedByString:@":"];
+    return env;
 }
 
 - (NSString*)argosInstallScript {
@@ -8471,6 +8508,77 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     @synchronized(self) {
         [_translationTask terminate];
     }
+}
+
+static NSString* SPDFLastMeaningfulOCRLine(NSString* text) {
+    if (!text.length) return @"";
+    NSArray<NSString*>* lines = [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    for (NSString* line in lines.reverseObjectEnumerator) {
+        NSString* trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (trimmed.length > 0) return trimmed;
+    }
+    return @"";
+}
+
+- (void)showOCRProgressWithDetail:(NSString*)detail {
+    if (!_ocrProgressPanel) {
+        _ocrProgressPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 460, 132)
+                                                       styleMask:NSWindowStyleMaskTitled
+                                                         backing:NSBackingStoreBuffered
+                                                           defer:NO];
+        _ocrProgressPanel.releasedWhenClosed = NO;
+
+        NSView* content = [[NSView alloc] initWithFrame:_ocrProgressPanel.contentView.bounds];
+        content.translatesAutoresizingMaskIntoConstraints = NO;
+        _ocrProgressPanel.contentView = content;
+
+        _ocrProgressTitleLabel = [NSTextField labelWithString:@""];
+        _ocrProgressTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        _ocrProgressTitleLabel.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+        [content addSubview:_ocrProgressTitleLabel];
+
+        _ocrProgressDetailLabel = [NSTextField labelWithString:@""];
+        _ocrProgressDetailLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        _ocrProgressDetailLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        [content addSubview:_ocrProgressDetailLabel];
+
+        _ocrProgressIndicator = [[NSProgressIndicator alloc] init];
+        _ocrProgressIndicator.translatesAutoresizingMaskIntoConstraints = NO;
+        _ocrProgressIndicator.style = NSProgressIndicatorStyleBar;
+        _ocrProgressIndicator.indeterminate = YES;
+        [content addSubview:_ocrProgressIndicator];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [_ocrProgressTitleLabel.topAnchor constraintEqualToAnchor:content.topAnchor constant:16],
+            [_ocrProgressTitleLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:18],
+            [_ocrProgressTitleLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-18],
+            [_ocrProgressDetailLabel.topAnchor constraintEqualToAnchor:_ocrProgressTitleLabel.bottomAnchor constant:8],
+            [_ocrProgressDetailLabel.leadingAnchor constraintEqualToAnchor:_ocrProgressTitleLabel.leadingAnchor],
+            [_ocrProgressDetailLabel.trailingAnchor constraintEqualToAnchor:_ocrProgressTitleLabel.trailingAnchor],
+            [_ocrProgressIndicator.topAnchor constraintEqualToAnchor:_ocrProgressDetailLabel.bottomAnchor constant:14],
+            [_ocrProgressIndicator.leadingAnchor constraintEqualToAnchor:_ocrProgressTitleLabel.leadingAnchor],
+            [_ocrProgressIndicator.trailingAnchor constraintEqualToAnchor:_ocrProgressTitleLabel.trailingAnchor]
+        ]];
+    }
+
+    _ocrProgressPanel.title = @"OCR";
+    _ocrProgressTitleLabel.stringValue = @"Running OCR";
+    _ocrProgressDetailLabel.stringValue = detail.length ? detail : @"Preparing OCR...";
+    [_ocrProgressIndicator startAnimation:nil];
+    [_ocrProgressPanel center];
+    [_ocrProgressPanel makeKeyAndOrderFront:nil];
+}
+
+- (void)updateOCRProgressDetail:(NSString*)detail {
+    if (!_ocrProgressPanel || !detail.length) return;
+    _ocrProgressDetailLabel.stringValue = detail;
+    _statusLabel.stringValue = detail;
+}
+
+- (void)finishOCRProgressWithDetail:(NSString*)detail {
+    [_ocrProgressIndicator stopAnimation:nil];
+    if (detail.length) _ocrProgressDetailLabel.stringValue = detail;
+    [_ocrProgressPanel orderOut:nil];
 }
 
 - (void)appendTranslationInstallLog:(NSString*)text {
@@ -9260,27 +9368,37 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     [args addObject:tmp];
 
     _ocrButton.enabled = NO;
-    _statusLabel.stringValue = [NSString stringWithFormat:@"OCR running with %ld workers...", (long)jobs];
+    NSString* runningDetail = [NSString stringWithFormat:@"OCR running with %ld workers...", (long)jobs];
+    _statusLabel.stringValue = runningDetail;
+    [self showOCRProgressWithDetail:runningDetail];
 
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:tool];
     task.arguments = args;
+    task.environment = [self taskEnvironmentWithToolPaths:@[ tool, tesseract ]];
     NSPipe* pipe = [NSPipe pipe];
     task.standardOutput = pipe;
     task.standardError = pipe;
     __block NSMutableData* outputData = [NSMutableData data];
+    __weak SumatraMacDelegate* weakSelf = self;
     pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
       NSData* chunk = handle.availableData;
       if (chunk.length > 0) {
           @synchronized(outputData) {
               [outputData appendData:chunk];
           }
+          NSString* chunkText = [[NSString alloc] initWithData:chunk encoding:NSUTF8StringEncoding] ?: @"";
+          NSString* detail = SPDFLastMeaningfulOCRLine(chunkText);
+          if (detail.length) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf updateOCRProgressDetail:detail];
+              });
+          }
       } else {
           handle.readabilityHandler = nil;
       }
     };
 
-    __weak SumatraMacDelegate* weakSelf = self;
     task.terminationHandler = ^(NSTask* finishedTask) {
       pipe.fileHandleForReading.readabilityHandler = nil;
       NSData* tail = pipe.fileHandleForReading.readDataToEndOfFile;
@@ -9301,6 +9419,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
             strongSelf->_doc != NULL && [strongSelf->_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
         if (finishedTask.terminationStatus != 0) {
             [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
+            [strongSelf finishOCRProgressWithDetail:@"OCR failed."];
             NSString* detail = output.length > 1200 ? [output substringToIndex:1200] : output;
             [strongSelf showError:@"OCR failed" detail:detail.length ? detail : @"OCRmyPDF exited with an error."];
             strongSelf->_statusLabel.stringValue = @"OCR failed.";
@@ -9320,6 +9439,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                                                     options:0
                                            resultingItemURL:&resultingURL
                                                       error:&moveError]) {
+            [strongSelf finishOCRProgressWithDetail:@"Could not save OCR output."];
             [strongSelf showError:@"Could not save OCR output" detail:moveError.localizedDescription ?: @""];
             strongSelf->_statusLabel.stringValue = @"OCR output was not installed.";
             return;
@@ -9335,12 +9455,14 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                 [NSString stringWithFormat:@"OCR complete. Backup: %@", backupPath.lastPathComponent];
         else
             strongSelf->_statusLabel.stringValue = @"OCR complete.";
+        [strongSelf finishOCRProgressWithDetail:strongSelf->_statusLabel.stringValue];
       });
     };
 
     NSError* launchError = nil;
     if (![task launchAndReturnError:&launchError]) {
         _ocrButton.enabled = YES;
+        [self finishOCRProgressWithDetail:@"Could not start OCR."];
         [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
         [self showError:@"Could not start OCR" detail:launchError.localizedDescription ?: @""];
     }
@@ -9559,8 +9681,9 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         }
         if (commandSelector == @selector(insertNewline:) ||
             commandSelector == @selector(insertNewlineIgnoringFieldEditor:)) {
-            if (_findMatchIndex >= 0 && _findMatchIndex < (NSInteger)_findMatches.count)
-                [self jumpToFindMatchAtIndex:_findMatchIndex];
+            BOOL shift = (NSApp.currentEvent.modifierFlags & NSEventModifierFlagShift) != 0;
+            if (_findMatches.count > 0)
+                [self findFromCurrentForward:!shift];
             else
                 [self startFindForCurrentQuery];
             return YES;

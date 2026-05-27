@@ -4119,6 +4119,16 @@ static gboolean find_search_key_press(GtkWidget* widget, GdkEventKey* event, gpo
     (void)widget;
     app_state* state = (app_state*)user_data;
 
+    if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter || event->keyval == GDK_KEY_ISO_Enter) {
+        if ((event->state & GDK_SHIFT_MASK) != 0) {
+            if (state->find_match_count > 0)
+                find_step(state, FALSE);
+            else
+                start_find_for_current_query(state, -1, -1, TRUE, FALSE);
+            return TRUE;
+        }
+        return FALSE;
+    }
     if (event->keyval != GDK_KEY_Escape) return FALSE;
     if (current_search_text(state)[0] != '\0') {
         set_search_entry_text(state, "");
@@ -5353,6 +5363,8 @@ typedef struct ocr_task {
     char* tool;
     char* path;
     char* tmp_path;
+    GtkWidget* dialog;
+    GtkWidget* progress;
     int page_index;
     gboolean has_text;
 } ocr_task;
@@ -5360,6 +5372,8 @@ typedef struct ocr_task {
 typedef struct ocr_result {
     app_state* state;
     char* path;
+    GtkWidget* dialog;
+    GtkWidget* progress;
     int page_index;
     gboolean success;
     char* message;
@@ -5407,9 +5421,28 @@ static char* backup_path_for_pdf(const char* path) {
     return candidate;
 }
 
+static gboolean block_dialog_delete(GtkWidget* widget, GdkEvent* event, gpointer user_data) {
+    (void)widget;
+    (void)event;
+    (void)user_data;
+    return TRUE;
+}
+
+static gboolean pulse_ocr_progress(gpointer data) {
+    GtkProgressBar* progress = GTK_PROGRESS_BAR(data);
+    if (!GPOINTER_TO_INT(g_object_get_data(G_OBJECT(progress), "ocr-running"))) return G_SOURCE_REMOVE;
+    gtk_progress_bar_pulse(progress);
+    return G_SOURCE_CONTINUE;
+}
+
 static gboolean ocr_finished_idle(gpointer data) {
     ocr_result* result = (ocr_result*)data;
     app_state* state = result->state;
+    if (result->progress) {
+        g_object_set_data(G_OBJECT(result->progress), "ocr-running", GINT_TO_POINTER(FALSE));
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(result->progress), result->success ? 1.0 : 0.0);
+    }
+    if (result->dialog) gtk_widget_destroy(result->dialog);
     if (state->ocr_button)
         gtk_widget_set_sensitive(state->ocr_button, state->doc != NULL && path_has_pdf_extension(state->path));
     if (result->success) {
@@ -5419,17 +5452,12 @@ static gboolean ocr_finished_idle(gpointer data) {
         show_error(GTK_WINDOW(state->window), "OCR failed", result->message ? result->message : "");
         gtk_label_set_text(GTK_LABEL(state->status), "OCR failed.");
     }
+    if (result->dialog) g_object_unref(result->dialog);
+    if (result->progress) g_object_unref(result->progress);
     g_free(result->path);
     g_free(result->message);
     g_free(result);
     return G_SOURCE_REMOVE;
-}
-
-static gboolean block_dialog_delete(GtkWidget* widget, GdkEvent* event, gpointer user_data) {
-    (void)widget;
-    (void)event;
-    (void)user_data;
-    return TRUE;
 }
 
 static gboolean pulse_install_progress(gpointer data) {
@@ -5596,6 +5624,8 @@ static gpointer ocr_worker(gpointer data) {
     ok = g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, &stdout_text, &stderr_text, &status, &error);
     result->state = task->state;
     result->path = g_strdup(task->path);
+    result->dialog = task->dialog;
+    result->progress = task->progress;
     result->page_index = task->page_index;
     if (ok && g_spawn_check_wait_status(status, &error) && g_rename(task->tmp_path, task->path) == 0) {
         result->success = TRUE;
@@ -5630,6 +5660,11 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
     char* base;
     char* tmp_path;
     ocr_task* task;
+    GtkWidget* progress_dialog;
+    GtkWidget* content;
+    GtkWidget* title;
+    GtkWidget* detail;
+    GtkWidget* progress;
 
     if (!state->doc || !state->path || !path_has_pdf_extension(state->path)) return;
     tool = g_find_program_in_path("ocrmypdf");
@@ -5694,11 +5729,43 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
     char* tmp_name = g_strdup_printf(".%s.ocr-%u.pdf", base, g_random_int());
     tmp_path = g_build_filename(dir, tmp_name, NULL);
     g_free(tmp_name);
+
+    progress_dialog = gtk_dialog_new();
+    content = gtk_dialog_get_content_area(GTK_DIALOG(progress_dialog));
+    title = gtk_label_new("Running OCR");
+    detail = gtk_label_new("OCR running...");
+    progress = gtk_progress_bar_new();
+    gtk_window_set_title(GTK_WINDOW(progress_dialog), "OCR");
+    gtk_window_set_transient_for(GTK_WINDOW(progress_dialog), GTK_WINDOW(state->window));
+    gtk_window_set_modal(GTK_WINDOW(progress_dialog), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(progress_dialog), 460, 132);
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+    gtk_label_set_xalign(GTK_LABEL(detail), 0.0);
+    gtk_widget_set_margin_start(title, 10);
+    gtk_widget_set_margin_end(title, 10);
+    gtk_widget_set_margin_top(title, 12);
+    gtk_widget_set_margin_bottom(title, 6);
+    gtk_widget_set_margin_start(detail, 10);
+    gtk_widget_set_margin_end(detail, 10);
+    gtk_widget_set_margin_bottom(detail, 10);
+    gtk_widget_set_margin_start(progress, 10);
+    gtk_widget_set_margin_end(progress, 10);
+    gtk_widget_set_margin_bottom(progress, 12);
+    gtk_container_add(GTK_CONTAINER(content), title);
+    gtk_container_add(GTK_CONTAINER(content), detail);
+    gtk_container_add(GTK_CONTAINER(content), progress);
+    g_signal_connect(progress_dialog, "delete-event", G_CALLBACK(block_dialog_delete), NULL);
+    gtk_widget_show_all(progress_dialog);
+    g_object_set_data(G_OBJECT(progress), "ocr-running", GINT_TO_POINTER(TRUE));
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 120, pulse_ocr_progress, g_object_ref(progress), g_object_unref);
+
     task = g_new0(ocr_task, 1);
     task->state = state;
     task->tool = tool;
     task->path = g_strdup(state->path);
     task->tmp_path = tmp_path;
+    task->dialog = g_object_ref(progress_dialog);
+    task->progress = g_object_ref(progress);
     task->page_index = state->page_index;
     task->has_text = has_text > 0;
     gtk_widget_set_sensitive(state->ocr_button, FALSE);
