@@ -148,6 +148,7 @@ typedef struct app_state {
     char* comment_filter_text;
     char* session_lock_path;
     char* favorites_path;
+    char* documents_path;
     char* window_session_id;
     char* restore_window_id;
     char** pending_restore_window_ids;
@@ -644,6 +645,7 @@ static void init_config_paths(app_state* state) {
     state->session_path = g_build_filename(state->config_dir, "session.json", NULL);
     state->session_lock_path = g_build_filename(state->config_dir, "session.lock", NULL);
     state->favorites_path = g_build_filename(state->config_dir, "favorites.json", NULL);
+    state->documents_path = g_build_filename(state->config_dir, "documents.json", NULL);
     g_mkdir_with_parents(state->config_dir, 0700);
 }
 
@@ -2273,8 +2275,8 @@ static void show_missing_document(app_state* state, const char* path) {
 }
 
 static void configure_page_image(app_state* state, GtkWidget* image) {
-    int horizontal_margin = state->presentation_mode ? 0 : 22;
-    int vertical_margin = state->presentation_mode ? 0 : 13;
+    int horizontal_margin = (state->presentation_mode || state->fit_mode_id == 2 || state->fit_mode_id == 4) ? 0 : 22;
+    int vertical_margin = (state->presentation_mode || state->fit_mode_id == 3 || state->fit_mode_id == 4) ? 0 : 13;
     gtk_widget_set_margin_start(image, horizontal_margin);
     gtk_widget_set_margin_end(image, horizontal_margin);
     gtk_widget_set_margin_top(image, vertical_margin);
@@ -3506,8 +3508,10 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
     if (state->fit_mode_id > 0) {
         GtkAllocation allocation;
         gtk_widget_get_allocation(state->scroll, &allocation);
-        double horizontal_padding = state->presentation_mode ? 0.0 : 44.0;
-        double vertical_padding = state->presentation_mode ? 0.0 : 26.0;
+        double horizontal_padding =
+            (state->presentation_mode || state->fit_mode_id == 2 || state->fit_mode_id == 4) ? 0.0 : 44.0;
+        double vertical_padding =
+            (state->presentation_mode || state->fit_mode_id == 3 || state->fit_mode_id == 4) ? 0.0 : 26.0;
         double width_zoom = page_width > 0 ? (allocation.width - horizontal_padding) / page_width : state->zoom;
         double height_zoom = page_height > 0 ? (allocation.height - vertical_padding) / page_height : state->zoom;
         if (state->fit_mode_id == 1)
@@ -4894,25 +4898,46 @@ static void open_in_browser(GtkWidget* widget, gpointer user_data) {
     g_free(uri);
 }
 
-static void open_settings_file(GtkWidget* widget, gpointer user_data) {
-    (void)widget;
+static const char* state_json_path_for_name(app_state* state, const char* name) {
+    if (!state || !name) return NULL;
+    if (strcmp(name, "settings.json") == 0) return state->settings_path;
+    if (strcmp(name, "session.json") == 0) return state->session_path;
+    if (strcmp(name, "documents.json") == 0) return state->documents_path;
+    if (strcmp(name, "favorites.json") == 0) return state->favorites_path;
+    return state->settings_path;
+}
+
+static void open_state_json_file(GtkWidget* widget, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     GError* error = NULL;
+    const char* name = widget ? (const char*)g_object_get_data(G_OBJECT(widget), "state-json-name") : NULL;
+    const char* path;
     char* uri;
 
-    if (!state || !state->settings_path) return;
+    if (!name || !*name) name = "settings.json";
+    path = state_json_path_for_name(state, name);
+    if (!state || !path) return;
     save_settings(state);
-    uri = g_filename_to_uri(state->settings_path, NULL, &error);
+    if (!g_file_test(path, G_FILE_TEST_EXISTS))
+        write_text_file(path, strcmp(name, "favorites.json") == 0 ? "[]\n" : "{}\n");
+    uri = g_filename_to_uri(path, NULL, &error);
     if (!uri) {
         show_error(GTK_WINDOW(state->window), "Could not build settings file URI", error ? error->message : "");
         if (error) g_error_free(error);
         return;
     }
     if (!gtk_show_uri_on_window(GTK_WINDOW(state->window), uri, GDK_CURRENT_TIME, &error)) {
-        show_error(GTK_WINDOW(state->window), "Could not open settings.json", error ? error->message : "");
+        char* title = g_strdup_printf("Could not open %s", name);
+        show_error(GTK_WINDOW(state->window), title, error ? error->message : "");
+        g_free(title);
         if (error) g_error_free(error);
     }
     g_free(uri);
+}
+
+static void open_settings_file(GtkWidget* widget, gpointer user_data) {
+    if (widget) g_object_set_data(G_OBJECT(widget), "state-json-name", "settings.json");
+    open_state_json_file(widget, user_data);
 }
 
 static GtkWidget* shortcut_help_row(const char* shortcut, const char* action) {
@@ -8195,8 +8220,10 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->search_regex_multiline_item = gtk_check_menu_item_new_with_mnemonic("Regex _Multiline");
     GtkWidget* settings_menu = gtk_menu_new();
     GtkWidget* settings = gtk_menu_item_new_with_mnemonic("_Settings");
-    GtkWidget* options_menu = gtk_menu_item_new_with_mnemonic("_Options...");
-    GtkWidget* advanced_options_menu = gtk_menu_item_new_with_mnemonic("_Advanced Options...");
+    GtkWidget* settings_json_menu = gtk_menu_item_new_with_mnemonic("Open _settings.json...");
+    GtkWidget* session_json_menu = gtk_menu_item_new_with_mnemonic("Open _session.json...");
+    GtkWidget* documents_json_menu = gtk_menu_item_new_with_mnemonic("Open _documents.json...");
+    GtkWidget* favorites_json_menu = gtk_menu_item_new_with_mnemonic("Open _favorites.json...");
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
     GtkWidget* fit_width_item = gtk_menu_item_new_with_mnemonic("Fit _Width");
@@ -8208,7 +8235,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* help_menu = gtk_menu_new();
     GtkWidget* help = gtk_menu_item_new_with_mnemonic("_Help");
     state->shortcut_help_item = gtk_menu_item_new_with_mnemonic("_Keyboard Shortcuts");
-    gtk_widget_add_accelerator(options_menu, "activate", accel_group, GDK_KEY_comma, GDK_CONTROL_MASK,
+    gtk_widget_add_accelerator(settings_json_menu, "activate", accel_group, GDK_KEY_comma, GDK_CONTROL_MASK,
                                GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_F5, 0, GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->reopen_closed_menu_item, "activate", accel_group, GDK_KEY_t,
@@ -8249,8 +8276,14 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), state->search_regex_multiline_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), edit);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(settings), settings_menu);
-    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), options_menu);
-    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), advanced_options_menu);
+    g_object_set_data(G_OBJECT(settings_json_menu), "state-json-name", "settings.json");
+    g_object_set_data(G_OBJECT(session_json_menu), "state-json-name", "session.json");
+    g_object_set_data(G_OBJECT(documents_json_menu), "state-json-name", "documents.json");
+    g_object_set_data(G_OBJECT(favorites_json_menu), "state-json-name", "favorites.json");
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), settings_json_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), session_json_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), documents_json_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), favorites_json_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), settings);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
     g_object_set_data(G_OBJECT(fit_width_item), "sumatra-fit-mode", GINT_TO_POINTER(2));
@@ -8509,8 +8542,10 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(fit_width_item, "activate", G_CALLBACK(fit_mode_menu_clicked), state);
     g_signal_connect(fit_height_item, "activate", G_CALLBACK(fit_mode_menu_clicked), state);
     g_signal_connect(fit_page_item, "activate", G_CALLBACK(fit_mode_menu_clicked), state);
-    g_signal_connect(options_menu, "activate", G_CALLBACK(open_settings_file), state);
-    g_signal_connect(advanced_options_menu, "activate", G_CALLBACK(open_settings_file), state);
+    g_signal_connect(settings_json_menu, "activate", G_CALLBACK(open_state_json_file), state);
+    g_signal_connect(session_json_menu, "activate", G_CALLBACK(open_state_json_file), state);
+    g_signal_connect(documents_json_menu, "activate", G_CALLBACK(open_state_json_file), state);
+    g_signal_connect(favorites_json_menu, "activate", G_CALLBACK(open_state_json_file), state);
     g_signal_connect(state->show_sidebar_item, "toggled", G_CALLBACK(show_sidebar_toggled), state);
     g_signal_connect(state->show_minimap_item, "toggled", G_CALLBACK(show_minimap_toggled), state);
     g_signal_connect(state->presentation_item, "toggled", G_CALLBACK(presentation_toggled), state);
@@ -8690,6 +8725,7 @@ int main(int argc, char** argv) {
     g_free(state.session_path);
     g_free(state.session_lock_path);
     g_free(state.favorites_path);
+    g_free(state.documents_path);
     g_free(state.window_session_id);
     g_free(state.restore_window_id);
     clear_pending_restore_window_ids(&state);
