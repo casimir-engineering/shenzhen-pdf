@@ -58,6 +58,8 @@ typedef struct document_tab {
     double zoom;
     int fit_mode_id;
     gboolean continuous_mode;
+    gboolean show_sidebar;
+    gboolean show_minimap;
     char* search_text;
     gboolean search_regex;
     gboolean search_regex_multiline;
@@ -127,6 +129,7 @@ typedef struct app_state {
     GtkWidget* search_regex_check;
     GtkWidget* search_regex_multiline_check;
     GtkWidget* search_regex_multiline_item;
+    GtkWidget* shortcut_help_item;
     GtkWidget* find_prev_button;
     GtkWidget* find_next_button;
     GtkWidget* find_count_label;
@@ -185,6 +188,7 @@ typedef struct app_state {
     gboolean show_sidebar;
     gboolean show_minimap;
     gboolean show_find_markers;
+    gboolean show_shortcut_help_on_launch;
     gboolean presentation_mode;
     gboolean presentation_prev_continuous_mode;
     gboolean presentation_prev_show_sidebar;
@@ -208,6 +212,8 @@ typedef struct app_state {
     gboolean selecting;
     gboolean minimap_dragging;
     gboolean minimap_dragging_visible_rect;
+    gboolean minimap_press_pending;
+    gboolean minimap_drag_moved;
     gboolean tab_dragging;
     gboolean tab_external_dragging;
     gboolean tab_drag_reordered;
@@ -221,6 +227,8 @@ typedef struct app_state {
     double minimap_drag_thumb_top;
     double minimap_drag_last_y;
     double minimap_drag_last_time;
+    double minimap_press_x;
+    double minimap_press_y;
     double tab_drag_start_x;
     double tab_drag_start_y;
     double presentation_prev_zoom;
@@ -250,6 +258,7 @@ typedef struct app_state {
     guint sidebar_metadata_idle_id;
     guint background_render_idle_id;
     guint startup_restore_idle_id;
+    guint startup_shortcut_help_idle_id;
     guint deferred_find_idle_id;
     gboolean defer_find_until_idle;
 } app_state;
@@ -345,6 +354,9 @@ static void update_tab_strip(app_state* state);
 static void save_active_tab_state(app_state* state);
 static void close_tab_at_index(app_state* state, int index);
 static void select_tab(app_state* state, int index);
+static void show_shortcut_help_dialog(app_state* state, gboolean from_launch);
+static int queue_background_pages_near_current(app_state* state, int limit);
+static void schedule_background_render(app_state* state);
 static char* current_executable_path(void);
 static gboolean other_sumatra_processes_running(void);
 static void terminate_other_sumatra_processes(void);
@@ -872,6 +884,8 @@ static int insert_document_tab(app_state* state, int insert_index, const char* p
     tab->zoom = zoom > 0.0 ? zoom : 1.0;
     tab->fit_mode_id = fit_mode_id >= 0 && fit_mode_id <= 4 ? fit_mode_id : 2;
     tab->continuous_mode = continuous_mode;
+    tab->show_sidebar = state->show_sidebar;
+    tab->show_minimap = state->show_minimap;
     tab->search_text = dup_limited_utf8(search_text ? search_text : "", MAX_FIND_QUERY_BYTES);
     tab->search_regex = search_regex;
     tab->search_regex_multiline = search_regex_multiline;
@@ -932,6 +946,8 @@ static void save_active_tab_state(app_state* state) {
     tab->zoom = state->presentation_mode ? state->presentation_prev_zoom : state->zoom;
     tab->fit_mode_id = state->presentation_mode ? state->presentation_prev_fit_mode_id : state->fit_mode_id;
     tab->continuous_mode = state->presentation_mode ? state->presentation_prev_continuous_mode : state->continuous_mode;
+    tab->show_sidebar = state->presentation_mode ? state->presentation_prev_show_sidebar : state->show_sidebar;
+    tab->show_minimap = state->show_minimap;
     g_free(tab->search_text);
     tab->search_text = g_strdup(current_search_text(state));
     tab->search_regex = state->search_regex;
@@ -957,6 +973,8 @@ static void save_settings(app_state* state) {
         (state->presentation_mode ? state->presentation_prev_show_sidebar : state->show_sidebar) ? "true" : "false");
     g_string_append_printf(json, "  \"showMinimap\": %s,\n", state->show_minimap ? "true" : "false");
     g_string_append_printf(json, "  \"showFindMarkers\": %s,\n", state->show_find_markers ? "true" : "false");
+    g_string_append_printf(json, "  \"showShortcutHelpOnLaunch\": %s,\n",
+                           state->show_shortcut_help_on_launch ? "true" : "false");
     g_string_append_printf(json, "  \"sidebarWidth\": %d,\n", state->sidebar_width);
     g_string_append_printf(json, "  \"windowWidth\": %d,\n",
                            clamp_int(state->window_width > 0 ? state->window_width : DEFAULT_WINDOW_WIDTH,
@@ -1060,10 +1078,12 @@ static char* session_window_object_for_current_state(app_state* state) {
         char* search = json_escape(tab->search_text ? tab->search_text : "");
         g_string_append_printf(json,
                                "    { \"path\": \"%s\", \"title\": \"%s\", \"page\": %d, \"zoom\": %.4f, "
-                               "\"fitMode\": %d, \"continuous\": %s, \"searchText\": \"%s\", "
+                               "\"fitMode\": %d, \"continuous\": %s, \"showSidebar\": %s, \"showMinimap\": %s, "
+                               "\"searchText\": \"%s\", "
                                "\"searchRegex\": %s, \"searchRegexMultiline\": %s, \"findMatchIndex\": %d }%s\n",
                                path, title, tab->page_index + 1, tab->zoom, tab->fit_mode_id,
-                               tab->continuous_mode ? "true" : "false", search, tab->search_regex ? "true" : "false",
+                               tab->continuous_mode ? "true" : "false", tab->show_sidebar ? "true" : "false",
+                               tab->show_minimap ? "true" : "false", search, tab->search_regex ? "true" : "false",
                                tab->search_regex_multiline ? "true" : "false", tab->find_match_index,
                                i + 1 == state->tab_count ? "" : ",");
         g_free(search);
@@ -1212,6 +1232,8 @@ static void load_settings(app_state* state) {
     state->show_sidebar = json_get_bool(json, "showSidebar", state->show_sidebar);
     state->show_minimap = json_get_bool(json, "showMinimap", state->show_minimap);
     state->show_find_markers = json_get_bool(json, "showFindMarkers", state->show_find_markers);
+    state->show_shortcut_help_on_launch =
+        json_get_bool(json, "showShortcutHelpOnLaunch", state->show_shortcut_help_on_launch);
     state->sidebar_width = MAX(140, MIN(560, json_get_int(json, "sidebarWidth", state->sidebar_width)));
     state->window_width =
         clamp_int(json_get_int(json, "windowWidth", state->window_width), MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH);
@@ -1295,14 +1317,18 @@ static void load_tabs_from_session_object(app_state* state, const char* object) 
         path = json_get_string(tab_object, "path");
         title = json_get_string(tab_object, "title");
         search_text = json_get_string(tab_object, "searchText");
-        if (path && *path)
-            append_document_tab(state, path, title, MAX(0, json_get_int(tab_object, "page", 1) - 1),
-                                json_get_double(tab_object, "zoom", state->zoom),
-                                json_get_int(tab_object, "fitMode", state->fit_mode_id),
-                                json_get_bool(tab_object, "continuous", state->continuous_mode), search_text,
-                                json_get_bool(tab_object, "searchRegex", state->search_regex),
-                                json_get_bool(tab_object, "searchRegexMultiline", state->search_regex_multiline),
-                                json_get_int(tab_object, "findMatchIndex", -1));
+        if (path && *path) {
+            int index =
+                append_document_tab(state, path, title, MAX(0, json_get_int(tab_object, "page", 1) - 1),
+                                    json_get_double(tab_object, "zoom", state->zoom),
+                                    json_get_int(tab_object, "fitMode", state->fit_mode_id),
+                                    json_get_bool(tab_object, "continuous", state->continuous_mode), search_text,
+                                    json_get_bool(tab_object, "searchRegex", state->search_regex),
+                                    json_get_bool(tab_object, "searchRegexMultiline", state->search_regex_multiline),
+                                    json_get_int(tab_object, "findMatchIndex", -1));
+            state->tabs[index].show_sidebar = json_get_bool(tab_object, "showSidebar", state->show_sidebar);
+            state->tabs[index].show_minimap = json_get_bool(tab_object, "showMinimap", state->show_minimap);
+        }
         g_free(search_text);
         g_free(title);
         g_free(path);
@@ -1733,7 +1759,13 @@ static void clear_find_results(app_state* state) {
     state->find_match_capacity = 0;
     state->find_match_index = -1;
     if (state->find_markers) gtk_widget_queue_draw(state->find_markers);
-    if (state->minimap) gtk_widget_queue_draw(state->minimap);
+    if (state->minimap) {
+        if (gtk_widget_get_visible(state->minimap)) {
+            queue_background_pages_near_current(state, BACKGROUND_RENDER_BATCH_LIMIT);
+            schedule_background_render(state);
+        }
+        gtk_widget_queue_draw(state->minimap);
+    }
 }
 
 static gboolean append_find_match(app_state* state, int page_index, spdf_rect rect, gboolean has_rect) {
@@ -1770,7 +1802,13 @@ static void update_find_controls(app_state* state) {
                                                         state->show_find_markers && !state->presentation_mode);
         gtk_widget_queue_draw(state->find_markers);
     }
-    if (state->minimap) gtk_widget_queue_draw(state->minimap);
+    if (state->minimap) {
+        if (gtk_widget_get_visible(state->minimap)) {
+            queue_background_pages_near_current(state, BACKGROUND_RENDER_BATCH_LIMIT);
+            schedule_background_render(state);
+        }
+        gtk_widget_queue_draw(state->minimap);
+    }
     if (state->marker_strip_button && !state->updating_marker_strip_control) {
         state->updating_marker_strip_control = TRUE;
         gtk_switch_set_active(GTK_SWITCH(state->marker_strip_button), state->show_find_markers);
@@ -1954,6 +1992,10 @@ static void update_minimap_controls(app_state* state) {
     if (state->minimap) {
         gtk_widget_set_visible(state->minimap, visible);
         gtk_widget_queue_draw(state->minimap);
+    }
+    if (visible) {
+        queue_background_pages_near_current(state, BACKGROUND_RENDER_BATCH_LIMIT);
+        schedule_background_render(state);
     }
     if (state->updating_minimap_control) return;
     state->updating_minimap_control = TRUE;
@@ -2653,6 +2695,7 @@ static void scroll_to_page_fraction(app_state* state, int page_index, double x_f
 static void open_path_at_page(app_state* state, const char* path, int page_index) {
     char err[1024];
     spdf_document* doc;
+    gboolean loaded_sidebar_metadata = FALSE;
 
     if (!path || !g_file_test(path, G_FILE_TEST_EXISTS)) {
         show_missing_document(state, path);
@@ -2677,9 +2720,14 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
     gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
     state->document_generation++;
+    if (state->switching_tabs && state->show_sidebar) {
+        spdf_load_outline(state->doc, &state->outline, err, sizeof(err));
+        spdf_load_comments(state->doc, &state->comments, err, sizeof(err));
+        loaded_sidebar_metadata = TRUE;
+    }
     rebuild_sidebar(state);
     render_current_page(state, TRUE);
-    schedule_deferred_sidebar_load(state);
+    if (!loaded_sidebar_metadata) schedule_deferred_sidebar_load(state);
     if (!state->switching_tabs) {
         save_active_tab_state(state);
         update_tab_strip(state);
@@ -3144,6 +3192,8 @@ static char* tab_drag_json_for_index(app_state* state, int index) {
     g_string_append_printf(json, "\"zoom\":%.4f,", tab->zoom);
     g_string_append_printf(json, "\"fitMode\":%d,", tab->fit_mode_id);
     g_string_append_printf(json, "\"continuous\":%s,", tab->continuous_mode ? "true" : "false");
+    g_string_append_printf(json, "\"showSidebar\":%s,", tab->show_sidebar ? "true" : "false");
+    g_string_append_printf(json, "\"showMinimap\":%s,", tab->show_minimap ? "true" : "false");
     g_string_append_printf(json, "\"searchText\":\"%s\",", search);
     g_string_append_printf(json, "\"searchRegex\":%s,", tab->search_regex ? "true" : "false");
     g_string_append_printf(json, "\"searchRegexMultiline\":%s,", tab->search_regex_multiline ? "true" : "false");
@@ -3254,6 +3304,8 @@ static void tab_drag_data_received(GtkWidget* widget, GdkDragContext* context, g
         json_get_int(json, "fitMode", 2), json_get_bool(json, "continuous", TRUE), search_text ? search_text : "",
         json_get_bool(json, "searchRegex", FALSE), json_get_bool(json, "searchRegexMultiline", TRUE),
         json_get_int(json, "findMatchIndex", -1));
+    state->tabs[insert_index].show_sidebar = json_get_bool(json, "showSidebar", state->show_sidebar);
+    state->tabs[insert_index].show_minimap = json_get_bool(json, "showMinimap", state->show_minimap);
     update_tab_strip(state);
     select_tab(state, insert_index);
     save_session(state);
@@ -3404,8 +3456,12 @@ static void select_tab(app_state* state, int index) {
     state->zoom = tab->zoom > 0.0 ? tab->zoom : 1.0;
     state->fit_mode_id = tab->fit_mode_id >= 0 && tab->fit_mode_id <= 4 ? tab->fit_mode_id : 2;
     state->continuous_mode = tab->continuous_mode;
+    state->show_sidebar = tab->show_sidebar;
+    state->show_minimap = tab->show_minimap;
     state->search_regex = tab->search_regex;
     state->search_regex_multiline = tab->search_regex_multiline;
+    if (state->sidebar_container && !state->show_sidebar) gtk_widget_hide(state->sidebar_container);
+    update_minimap_controls(state);
     set_search_entry_text(state, tab->search_text ? tab->search_text : "");
     if (state->fit_mode) gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
     if (state->continuous) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
@@ -3450,9 +3506,10 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
     if (state->fit_mode_id > 0) {
         GtkAllocation allocation;
         gtk_widget_get_allocation(state->scroll, &allocation);
-        double fit_padding = state->presentation_mode ? 0.0 : 54.0;
-        double width_zoom = page_width > 0 ? (allocation.width - fit_padding) / page_width : state->zoom;
-        double height_zoom = page_height > 0 ? (allocation.height - fit_padding) / page_height : state->zoom;
+        double horizontal_padding = state->presentation_mode ? 0.0 : 44.0;
+        double vertical_padding = state->presentation_mode ? 0.0 : 26.0;
+        double width_zoom = page_width > 0 ? (allocation.width - horizontal_padding) / page_width : state->zoom;
+        double height_zoom = page_height > 0 ? (allocation.height - vertical_padding) / page_height : state->zoom;
         if (state->fit_mode_id == 1)
             state->zoom = 1.0;
         else if (state->fit_mode_id == 2 && allocation.width > 80 && page_width > 0)
@@ -3666,7 +3723,9 @@ static void show_sidebar_toggled(GtkCheckMenuItem* item, gpointer user_data) {
     }
     state->show_sidebar = gtk_check_menu_item_get_active(item);
     rebuild_sidebar(state);
+    save_active_tab_state(state);
     save_settings(state);
+    save_session(state);
 }
 
 static void side_panel_switch_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
@@ -3681,7 +3740,9 @@ static void side_panel_switch_changed(GObject* object, GParamSpec* pspec, gpoint
     }
     state->show_sidebar = gtk_switch_get_active(GTK_SWITCH(object));
     rebuild_sidebar(state);
+    save_active_tab_state(state);
     save_settings(state);
+    save_session(state);
 }
 
 static void show_minimap_toggled(GtkCheckMenuItem* item, gpointer user_data) {
@@ -3693,7 +3754,9 @@ static void show_minimap_toggled(GtkCheckMenuItem* item, gpointer user_data) {
     }
     state->show_minimap = gtk_check_menu_item_get_active(item);
     update_minimap_controls(state);
+    save_active_tab_state(state);
     save_settings(state);
+    save_session(state);
 }
 
 static void minimap_switch_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
@@ -3706,7 +3769,9 @@ static void minimap_switch_changed(GObject* object, GParamSpec* pspec, gpointer 
     }
     state->show_minimap = gtk_switch_get_active(GTK_SWITCH(object));
     update_minimap_controls(state);
+    save_active_tab_state(state);
     save_settings(state);
+    save_session(state);
 }
 
 static void marker_strip_switch_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
@@ -4099,7 +4164,9 @@ static void overflow_minimap_toggled(GtkCheckMenuItem* item, gpointer user_data)
     }
     state->show_minimap = gtk_check_menu_item_get_active(item);
     update_minimap_controls(state);
+    save_active_tab_state(state);
     save_settings(state);
+    save_session(state);
 }
 
 static void overflow_side_panel_toggled(GtkCheckMenuItem* item, gpointer user_data) {
@@ -4113,13 +4180,22 @@ static void overflow_side_panel_toggled(GtkCheckMenuItem* item, gpointer user_da
     }
     state->show_sidebar = gtk_check_menu_item_get_active(item);
     rebuild_sidebar(state);
+    save_active_tab_state(state);
     save_settings(state);
+    save_session(state);
 }
 
 static void overflow_fit_mode_toggled(GtkCheckMenuItem* item, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     int fit_mode = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "sumatra-fit-mode"));
     if (state->updating_overflow_controls || !gtk_check_menu_item_get_active(item) || !state->fit_mode) return;
+    gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), fit_mode);
+}
+
+static void fit_mode_menu_clicked(GtkMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    int fit_mode = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "sumatra-fit-mode"));
+    if (!state || !state->fit_mode) return;
     gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), fit_mode);
 }
 
@@ -4553,6 +4629,31 @@ static void minimap_scroll_to_y(app_state* state, GtkWidget* widget, double widg
     }
 }
 
+static void minimap_click_to_page_point(app_state* state, GtkWidget* widget, double widget_x, double widget_y) {
+    minimap_layout layout;
+
+    if (!state || !state->doc || !state->scroll || !minimap_measure(state, widget, &layout)) return;
+    for (int i = 0; i < layout.page_count; ++i) {
+        double x;
+        double y;
+        double width;
+        double height;
+        double x_fraction;
+        double y_fraction;
+        minimap_page_rect(state, &layout, i, &x, &y, &width, &height);
+        if (widget_y < y || widget_y > y + height) continue;
+        x_fraction = clamp_double((widget_x - x) / MAX(1.0, width), 0.0, 1.0);
+        y_fraction = clamp_double((widget_y - y) / MAX(1.0, height), 0.0, 1.0);
+        if (state->page_index != i) {
+            state->page_index = i;
+            render_current_page(state, FALSE);
+        }
+        scroll_to_page_fraction(state, i, x_fraction, y_fraction);
+        save_session(state);
+        return;
+    }
+}
+
 static void minimap_scroll_to_top_fraction(app_state* state, GtkWidget* widget, double fraction) {
     minimap_layout layout;
     double unscrolled_y;
@@ -4677,8 +4778,12 @@ static gboolean minimap_button_press(GtkWidget* widget, GdkEventButton* event, g
     double vh;
 
     if (!state->doc || event->button != 1) return FALSE;
-    state->minimap_dragging = TRUE;
+    state->minimap_dragging = FALSE;
     state->minimap_dragging_visible_rect = FALSE;
+    state->minimap_press_pending = TRUE;
+    state->minimap_drag_moved = FALSE;
+    state->minimap_press_x = event->x;
+    state->minimap_press_y = event->y;
     if (minimap_measure(state, widget, &layout)) {
         minimap_visible_rect(state, &layout, &vx, &vy, &vw, &vh);
         if (event->x >= vx && event->x <= vx + vw && event->y >= vy && event->y <= vy + vh) {
@@ -4687,11 +4792,7 @@ static gboolean minimap_button_press(GtkWidget* widget, GdkEventButton* event, g
             state->minimap_drag_thumb_top = vy;
             state->minimap_drag_last_y = event->y;
             state->minimap_drag_last_time = minimap_event_time_seconds(event->time);
-        } else {
-            minimap_scroll_to_y(state, widget, event->y);
         }
-    } else {
-        minimap_scroll_to_y(state, widget, event->y);
     }
     if (state->scroll) gtk_widget_grab_focus(state->scroll);
     return TRUE;
@@ -4699,7 +4800,15 @@ static gboolean minimap_button_press(GtkWidget* widget, GdkEventButton* event, g
 
 static gboolean minimap_motion(GtkWidget* widget, GdkEventMotion* event, gpointer user_data) {
     app_state* state = (app_state*)user_data;
-    if (!state->minimap_dragging) return FALSE;
+    if (!state->minimap_press_pending && !state->minimap_dragging) return FALSE;
+    if (!state->minimap_dragging) {
+        if (!gtk_drag_check_threshold(widget, (gint)state->minimap_press_x, (gint)state->minimap_press_y,
+                                      (gint)event->x, (gint)event->y))
+            return TRUE;
+        state->minimap_dragging = TRUE;
+        state->minimap_drag_moved = TRUE;
+        state->minimap_press_pending = FALSE;
+    }
     if (state->minimap_dragging_visible_rect)
         minimap_drag_visible_rect_to_y(state, widget, event->y, event->time);
     else
@@ -4711,12 +4820,18 @@ static gboolean minimap_button_release(GtkWidget* widget, GdkEventButton* event,
     app_state* state = (app_state*)user_data;
     (void)widget;
     if (event->button == 1) {
+        if (state->minimap_press_pending && !state->minimap_drag_moved && !state->minimap_dragging_visible_rect)
+            minimap_click_to_page_point(state, widget, event->x, event->y);
         state->minimap_dragging = FALSE;
         state->minimap_dragging_visible_rect = FALSE;
+        state->minimap_press_pending = FALSE;
+        state->minimap_drag_moved = FALSE;
         state->minimap_drag_offset_top = 0.0;
         state->minimap_drag_thumb_top = 0.0;
         state->minimap_drag_last_y = 0.0;
         state->minimap_drag_last_time = 0.0;
+        state->minimap_press_x = 0.0;
+        state->minimap_press_y = 0.0;
         return TRUE;
     }
     return FALSE;
@@ -4798,6 +4913,93 @@ static void open_settings_file(GtkWidget* widget, gpointer user_data) {
         if (error) g_error_free(error);
     }
     g_free(uri);
+}
+
+static GtkWidget* shortcut_help_row(const char* shortcut, const char* action) {
+    GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget* key = gtk_label_new(shortcut);
+    GtkWidget* label = gtk_label_new(action);
+
+    gtk_widget_set_margin_start(row, 10);
+    gtk_widget_set_margin_end(row, 10);
+    gtk_widget_set_margin_top(row, 4);
+    gtk_widget_set_margin_bottom(row, 4);
+    gtk_widget_set_size_request(key, 150, -1);
+    gtk_label_set_xalign(GTK_LABEL(key), 0.0);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(key), "dim-label");
+    gtk_box_pack_start(GTK_BOX(row), key, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), label, TRUE, TRUE, 0);
+    return row;
+}
+
+static void show_shortcut_help_dialog(app_state* state, gboolean from_launch) {
+    GtkWidget* dialog;
+    GtkWidget* content;
+    GtkWidget* title;
+    GtkWidget* grid;
+    GtkWidget* checkbox;
+    gboolean do_not_show;
+
+    if (!state || !state->window) return;
+
+    dialog = gtk_dialog_new_with_buttons("Keyboard Shortcuts", GTK_WINDOW(state->window), GTK_DIALOG_MODAL, "_Close",
+                                         GTK_RESPONSE_CLOSE, NULL);
+    content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    title = gtk_label_new("Keyboard Shortcuts");
+    grid = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    checkbox = gtk_check_button_new_with_label("Do not show again");
+
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 420, 360);
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+    gtk_widget_set_margin_start(title, 10);
+    gtk_widget_set_margin_end(title, 10);
+    gtk_widget_set_margin_top(title, 10);
+    gtk_widget_set_margin_bottom(title, 6);
+    gtk_widget_set_margin_start(checkbox, 10);
+    gtk_widget_set_margin_end(checkbox, 10);
+    gtk_widget_set_margin_top(checkbox, 8);
+    gtk_widget_set_margin_bottom(checkbox, 8);
+
+    gtk_box_pack_start(GTK_BOX(grid), shortcut_help_row("Ctrl+O", "Open a document"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(grid), shortcut_help_row("Ctrl+F", "Find in the current document"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(grid), shortcut_help_row("Ctrl+K", "Open favorites and document search"), FALSE, FALSE,
+                       0);
+    gtk_box_pack_start(GTK_BOX(grid), shortcut_help_row("Ctrl+B", "Add the current page to favorites"), FALSE, FALSE,
+                       0);
+    gtk_box_pack_start(GTK_BOX(grid), shortcut_help_row("Ctrl+Shift+T", "Reopen the last closed tab"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(grid), shortcut_help_row("F1", "Show this shortcut help"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(grid), shortcut_help_row("F5", "Enter presentation mode"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(grid), shortcut_help_row("Esc", "Exit presentation mode"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(grid), shortcut_help_row("Arrow keys", "Move through pages or scroll"), FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(content), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), grid, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(content), checkbox, FALSE, FALSE, 0);
+    gtk_widget_show_all(dialog);
+    gtk_dialog_run(GTK_DIALOG(dialog));
+
+    do_not_show = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(checkbox));
+    if (do_not_show && state->show_shortcut_help_on_launch) {
+        state->show_shortcut_help_on_launch = FALSE;
+        save_settings(state);
+    } else if (from_launch && !do_not_show && !state->show_shortcut_help_on_launch) {
+        state->show_shortcut_help_on_launch = TRUE;
+        save_settings(state);
+    }
+    gtk_widget_destroy(dialog);
+}
+
+static void shortcut_help_clicked(GtkMenuItem* item, gpointer user_data) {
+    (void)item;
+    show_shortcut_help_dialog((app_state*)user_data, FALSE);
+}
+
+static gboolean startup_shortcut_help_idle(gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    state->startup_shortcut_help_idle_id = 0;
+    if (state->show_shortcut_help_on_launch) show_shortcut_help_dialog(state, TRUE);
+    return G_SOURCE_REMOVE;
 }
 
 static gboolean reveal_file_with_file_manager(const char* uri) {
@@ -7997,14 +8199,25 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* advanced_options_menu = gtk_menu_item_new_with_mnemonic("_Advanced Options...");
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = gtk_menu_item_new_with_mnemonic("_View");
+    GtkWidget* fit_width_item = gtk_menu_item_new_with_mnemonic("Fit _Width");
+    GtkWidget* fit_height_item = gtk_menu_item_new_with_mnemonic("Fit _Height");
+    GtkWidget* fit_page_item = gtk_menu_item_new_with_mnemonic("Fit _Page");
     state->show_sidebar_item = gtk_check_menu_item_new_with_mnemonic("Show Side _Panel");
     state->show_minimap_item = gtk_check_menu_item_new_with_mnemonic("Show _Minimap");
     state->presentation_item = gtk_check_menu_item_new_with_mnemonic("_Presentation Mode");
+    GtkWidget* help_menu = gtk_menu_new();
+    GtkWidget* help = gtk_menu_item_new_with_mnemonic("_Help");
+    state->shortcut_help_item = gtk_menu_item_new_with_mnemonic("_Keyboard Shortcuts");
     gtk_widget_add_accelerator(options_menu, "activate", accel_group, GDK_KEY_comma, GDK_CONTROL_MASK,
                                GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_F5, 0, GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->reopen_closed_menu_item, "activate", accel_group, GDK_KEY_t,
                                GDK_CONTROL_MASK | GDK_SHIFT_MASK, GTK_ACCEL_VISIBLE);
+    gtk_widget_add_accelerator(state->shortcut_help_item, "activate", accel_group, GDK_KEY_F1, 0, GTK_ACCEL_VISIBLE);
+    gtk_widget_add_accelerator(fit_width_item, "activate", accel_group, GDK_KEY_1, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
+    gtk_widget_add_accelerator(fit_height_item, "activate", accel_group, GDK_KEY_2, GDK_CONTROL_MASK,
+                               GTK_ACCEL_VISIBLE);
+    gtk_widget_add_accelerator(fit_page_item, "activate", accel_group, GDK_KEY_9, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->rotate_clockwise_item, "activate", accel_group, GDK_KEY_r, GDK_CONTROL_MASK,
                                GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->rotate_anticlockwise_item, "activate", accel_group, GDK_KEY_r,
@@ -8040,6 +8253,13 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), advanced_options_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), settings);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
+    g_object_set_data(G_OBJECT(fit_width_item), "sumatra-fit-mode", GINT_TO_POINTER(2));
+    g_object_set_data(G_OBJECT(fit_height_item), "sumatra-fit-mode", GINT_TO_POINTER(3));
+    g_object_set_data(G_OBJECT(fit_page_item), "sumatra-fit-mode", GINT_TO_POINTER(4));
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), fit_width_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), fit_height_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), fit_page_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_sidebar_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->show_minimap_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), gtk_separator_menu_item_new());
@@ -8048,6 +8268,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), state->presentation_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), view);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(help), help_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(help_menu), state->shortcut_help_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), help);
     gtk_box_pack_start(GTK_BOX(root), menubar, FALSE, FALSE, 0);
     state->menubar = menubar;
 
@@ -8283,11 +8506,15 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(state->rotate_anticlockwise_item, "activate", G_CALLBACK(rotate_anticlockwise_clicked), state);
     g_signal_connect(state->translate_menu_item, "activate", G_CALLBACK(translate_clicked), state);
     g_signal_connect(state->search_regex_multiline_item, "toggled", G_CALLBACK(find_regex_multiline_toggled), state);
+    g_signal_connect(fit_width_item, "activate", G_CALLBACK(fit_mode_menu_clicked), state);
+    g_signal_connect(fit_height_item, "activate", G_CALLBACK(fit_mode_menu_clicked), state);
+    g_signal_connect(fit_page_item, "activate", G_CALLBACK(fit_mode_menu_clicked), state);
     g_signal_connect(options_menu, "activate", G_CALLBACK(open_settings_file), state);
     g_signal_connect(advanced_options_menu, "activate", G_CALLBACK(open_settings_file), state);
     g_signal_connect(state->show_sidebar_item, "toggled", G_CALLBACK(show_sidebar_toggled), state);
     g_signal_connect(state->show_minimap_item, "toggled", G_CALLBACK(show_minimap_toggled), state);
     g_signal_connect(state->presentation_item, "toggled", G_CALLBACK(presentation_toggled), state);
+    g_signal_connect(state->shortcut_help_item, "activate", G_CALLBACK(shortcut_help_clicked), state);
     g_signal_connect(quit_menu, "activate", G_CALLBACK(quit_requested), state);
     g_signal_connect(prev, "clicked", G_CALLBACK(previous_clicked), state);
     g_signal_connect(next, "clicked", G_CALLBACK(next_clicked), state);
@@ -8363,6 +8590,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
         state->startup_restore_idle_id = g_idle_add_full(G_PRIORITY_LOW, startup_restore_idle, state, NULL);
         spawn_pending_restored_windows(state);
     }
+    if (state->show_shortcut_help_on_launch)
+        state->startup_shortcut_help_idle_id = g_idle_add_full(G_PRIORITY_LOW, startup_shortcut_help_idle, state, NULL);
 }
 
 static void open_files(GtkApplication* app, GFile** files, gint n_files, const gchar* hint, gpointer user_data) {
@@ -8405,6 +8634,7 @@ int main(int argc, char** argv) {
     state.show_sidebar = TRUE;
     state.show_minimap = TRUE;
     state.show_find_markers = TRUE;
+    state.show_shortcut_help_on_launch = TRUE;
     state.search_regex_multiline = TRUE;
     state.translate_source_language = g_strdup("zh");
     state.translate_target_language = g_strdup("en");
@@ -8447,6 +8677,7 @@ int main(int argc, char** argv) {
     if (state.sidebar_metadata_idle_id) g_source_remove(state.sidebar_metadata_idle_id);
     if (state.background_render_idle_id) g_source_remove(state.background_render_idle_id);
     if (state.startup_restore_idle_id) g_source_remove(state.startup_restore_idle_id);
+    if (state.startup_shortcut_help_idle_id) g_source_remove(state.startup_shortcut_help_idle_id);
     if (state.deferred_find_idle_id) g_source_remove(state.deferred_find_idle_id);
     state.render_generation++;
     if (state.render_pool) g_thread_pool_free(state.render_pool, TRUE, TRUE);

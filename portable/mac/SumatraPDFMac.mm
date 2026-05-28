@@ -252,6 +252,8 @@ static BOOL gSPDFTerminatingAllWindows;
 @property(nonatomic) BOOL searchRegex;
 @property(nonatomic) BOOL searchRegexMultiline;
 @property(nonatomic) NSInteger findMatchIndex;
+@property(nonatomic) BOOL showSidebar;
+@property(nonatomic) BOOL showMinimap;
 @property(nonatomic) BOOL missingFile;
 @property(nonatomic, copy) NSString* missingMessage;
 @end
@@ -269,6 +271,8 @@ static BOOL gSPDFTerminatingAllWindows;
         _searchText = @"";
         _searchRegexMultiline = YES;
         _findMatchIndex = -1;
+        _showSidebar = YES;
+        _showMinimap = YES;
         _missingMessage = @"";
     }
     return self;
@@ -291,6 +295,8 @@ static SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     copy.searchRegex = source.searchRegex;
     copy.searchRegexMultiline = source.searchRegexMultiline;
     copy.findMatchIndex = source.findMatchIndex;
+    copy.showSidebar = source.showSidebar;
+    copy.showMinimap = source.showMinimap;
     copy.missingFile = source.missingFile;
     copy.missingMessage = source.missingMessage;
     return copy;
@@ -313,6 +319,8 @@ static NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger so
         @"searchRegex" : @(tab.searchRegex),
         @"searchRegexMultiline" : @(tab.searchRegexMultiline),
         @"findMatchIndex" : @(tab.findMatchIndex),
+        @"showSidebar" : @(tab.showSidebar),
+        @"showMinimap" : @(tab.showMinimap),
         @"sourcePID" : @(NSProcessInfo.processInfo.processIdentifier),
         @"sourceWindow" : @(sourceWindowNumber)
     };
@@ -336,6 +344,8 @@ static SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     tab.searchRegex = [item[@"searchRegex"] boolValue];
     tab.searchRegexMultiline = item[@"searchRegexMultiline"] ? [item[@"searchRegexMultiline"] boolValue] : YES;
     tab.findMatchIndex = item[@"findMatchIndex"] ? [item[@"findMatchIndex"] integerValue] : -1;
+    tab.showSidebar = item[@"showSidebar"] ? [item[@"showSidebar"] boolValue] : YES;
+    tab.showMinimap = item[@"showMinimap"] ? [item[@"showMinimap"] boolValue] : YES;
     return tab;
 }
 
@@ -532,6 +542,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)showFindPalette:(id)sender;
 - (void)toggleFindRegex:(id)sender;
 - (void)toggleFindRegexMultiline:(id)sender;
+- (void)showShortcutHelp:(id)sender;
+- (void)closeShortcutHelp:(id)sender;
+- (void)disableLaunchShortcutHelp:(id)sender;
 - (void)paletteMoveSelection:(NSInteger)delta;
 - (void)closePalette:(id)sender;
 - (void)activatePaletteSelection:(id)sender;
@@ -946,7 +959,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _dragStartPoint = point;
     _dragPointerOffsetX = point.x - NSMinX(tabRect);
     _dragCurrentX = NSMinX(tabRect);
-    [self hideHoverPanel];
 }
 
 - (void)resetTabDragTracking {
@@ -2305,6 +2317,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 @implementation SPDFMinimapView {
     BOOL _draggingVisibleRect;
+    BOOL _pressPending;
+    BOOL _dragMoved;
+    NSPoint _pressPoint;
     NSPoint _dragOffsetFromVisibleCenter;
     CGFloat _dragOffsetFromVisibleTop;
     CGFloat _dragThumbTop;
@@ -2501,6 +2516,31 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         documentPoint = [self documentPointForUnscrolledMiniPoint:unscrolledPoint scale:scale gap:gap];
     }
     return documentPoint;
+}
+
+- (BOOL)pageHitForMiniPoint:(NSPoint)point
+                      scale:(CGFloat)scale
+                        gap:(CGFloat)gap
+                 contentTop:(CGFloat)contentTop
+                  pageIndex:(NSInteger*)pageIndexOut
+            xFractionInPage:(CGFloat*)xFractionOut
+            yFractionInPage:(CGFloat*)yFractionOut {
+    NSPoint unscrolledPoint = NSMakePoint(point.x, point.y - contentTop);
+    for (SPDFRenderedPage* page in self.pages) {
+        NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
+        if (NSIsEmptyRect(miniRect)) continue;
+        if (unscrolledPoint.y >= NSMinY(miniRect) && unscrolledPoint.y <= NSMaxY(miniRect)) {
+            if (pageIndexOut) *pageIndexOut = page.pageIndex;
+            if (xFractionOut)
+                *xFractionOut =
+                    spdf_clamp_cg((unscrolledPoint.x - NSMinX(miniRect)) / MAX(1.0, NSWidth(miniRect)), 0.0, 1.0);
+            if (yFractionOut)
+                *yFractionOut =
+                    spdf_clamp_cg((unscrolledPoint.y - NSMinY(miniRect)) / MAX(1.0, NSHeight(miniRect)), 0.0, 1.0);
+            return YES;
+        }
+    }
+    return NO;
 }
 
 - (NSRect)draggableVisibleRectForRect:(NSRect)visibleRect {
@@ -2727,6 +2767,29 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self.reader minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
 }
 
+- (void)sendClickRequestForEvent:(NSEvent*)event {
+    CGFloat scale = 1.0;
+    CGFloat gap = 4.0;
+    CGFloat contentTop = 8.0;
+    CGFloat contentHeight = 0;
+    if (![self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL])
+        return;
+
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger pageIndex = -1;
+    CGFloat xFraction = 0.5;
+    CGFloat yFraction = 0.0;
+    if ([self pageHitForMiniPoint:point
+                            scale:scale
+                              gap:gap
+                       contentTop:contentTop
+                        pageIndex:&pageIndex
+                  xFractionInPage:&xFraction
+                  yFractionInPage:&yFraction]) {
+        [self.reader minimapViewDidRequestCenterOnPage:pageIndex xFractionInPage:xFraction yFractionInPage:yFraction];
+    }
+}
+
 - (void)mouseDown:(NSEvent*)event {
     CGFloat scale = 1.0;
     CGFloat gap = 4.0;
@@ -2739,6 +2802,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     NSRect drawnVisibleRect = [self draggableVisibleRectForRect:visibleRect];
+    _pressPending = YES;
+    _dragMoved = NO;
+    _pressPoint = point;
     _draggingVisibleRect = NSPointInRect(point, drawnVisibleRect);
     _dragOffsetFromVisibleCenter =
         _draggingVisibleRect ? NSMakePoint(point.x - NSMidX(drawnVisibleRect), point.y - NSMidY(drawnVisibleRect))
@@ -2747,10 +2813,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _dragThumbTop = _draggingVisibleRect ? NSMinY(drawnVisibleRect) : 0.0;
     _dragLastMouseY = point.y;
     _dragLastTimestamp = event.timestamp;
-    if (!_draggingVisibleRect) [self sendScrollRequestForEvent:event];
 }
 
 - (void)mouseDragged:(NSEvent*)event {
+    if (_pressPending && !_dragMoved) {
+        NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+        if (hypot(point.x - _pressPoint.x, point.y - _pressPoint.y) < 3.0) return;
+        _dragMoved = YES;
+        _pressPending = NO;
+    }
     [self sendScrollRequestForEvent:event];
 }
 
@@ -2773,8 +2844,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)mouseUp:(NSEvent*)event {
-    (void)event;
+    if (_pressPending && !_dragMoved) [self sendClickRequestForEvent:event];
     _draggingVisibleRect = NO;
+    _pressPending = NO;
+    _dragMoved = NO;
+    _pressPoint = NSZeroPoint;
     _dragOffsetFromVisibleCenter = NSZeroPoint;
     _dragOffsetFromVisibleTop = 0.0;
     _dragThumbTop = 0.0;
@@ -2909,6 +2983,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSTask* _translationTask;
     NSPanel* _commentPanel;
     NSTextField* _commentLabel;
+    NSPanel* _shortcutHelpPanel;
     NSMutableArray<NSDictionary*>* _paletteResults;
     NSInteger _paletteMode;
     NSUInteger _paletteSearchGeneration;
@@ -2991,6 +3066,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     BOOL _translationRunning;
     BOOL _translationInstallRunning;
     BOOL _translationCancelRequested;
+    BOOL _showShortcutHelpOnLaunch;
     BOOL _tabStripCapturingMouse;
     BOOL _terminateOnlyThisProcess;
     BOOL _suppressSessionWriteOnTerminate;
@@ -3028,6 +3104,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _presentationUsingBorderlessWindow = NO;
     _translationRunning = NO;
     _translationInstallRunning = NO;
+    _showShortcutHelpOnLaunch = YES;
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
     _restoringSidebarLayout = NO;
@@ -3100,6 +3177,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self showEmptyDocumentViewWithMessage:@"Open a document"];
     }
     [self spawnPendingRestoredWindowsIfNeeded];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0) [self showShortcutHelp:nil];
+    });
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
@@ -3244,6 +3324,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSNumber* minimap = settings[@"showMinimap"];
         NSNumber* sidebarWidth = settings[@"sidebarWidth"];
         NSNumber* minimapWidth = settings[@"minimapWidth"];
+        NSNumber* showShortcutHelp = settings[@"showShortcutHelpOnLaunch"];
         NSDictionary* windowSize = settings[@"windowSize"];
         NSString* commentAuthor = settings[@"commentAuthor"];
         NSString* translateSource = settings[@"translateSourceLanguage"];
@@ -3255,6 +3336,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (minimap) _minimapPreferredVisible = minimap.boolValue;
         if (sidebarWidth) _sidebarWidth = spdf_sane_sidebar_width(sidebarWidth.doubleValue, 0);
         if (minimapWidth) _minimapWidth = spdf_clamp_cg(minimapWidth.doubleValue, 72.0, 260.0);
+        if (showShortcutHelp) _showShortcutHelpOnLaunch = showShortcutHelp.boolValue;
         if ([windowSize isKindOfClass:NSDictionary.class]) {
             _restoredWindowContentSize = spdf_sane_window_content_size(
                 NSMakeSize([windowSize[@"width"] doubleValue], [windowSize[@"height"] doubleValue]),
@@ -3382,7 +3464,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             @"searchText" : tab.searchText ?: @"",
             @"searchRegex" : @(tab.searchRegex),
             @"searchRegexMultiline" : @(tab.searchRegexMultiline),
-            @"findMatchIndex" : @(tab.findMatchIndex)
+            @"findMatchIndex" : @(tab.findMatchIndex),
+            @"showSidebar" : @(tab.showSidebar),
+            @"showMinimap" : @(tab.showMinimap)
         }];
     }
 
@@ -3508,6 +3592,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         @"commentAuthor" : _commentAuthor ?: @"",
         @"translateSourceLanguage" : _translationSourceLanguage ?: @"zh",
         @"translateTargetLanguage" : _translationTargetLanguage ?: @"en",
+        @"showShortcutHelpOnLaunch" : @(_showShortcutHelpOnLaunch),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
     }
                    toFile:@"settings.json"];
@@ -3553,6 +3638,135 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (path.length == 0) return;
     [_closedDocumentPaths addObject:[path copy]];
     while (_closedDocumentPaths.count > kRecentDocumentLimit) [_closedDocumentPaths removeObjectAtIndex:0];
+}
+
+- (NSString*)shortcutHelpText {
+    return @"A few shortcuts make SumatraPDF faster.\n\n"
+           @"Search\n"
+           @"Type anywhere - start searching the current document\n"
+           @"Cmd+F - find in the current document\n"
+           @"Enter - next search result while Find is focused\n"
+           @"Shift+Enter - previous search result while Find is focused\n"
+           @"Cmd+G - find next\n"
+           @"Cmd+Shift+G - find previous\n\n"
+           @"Command And Favorites\n"
+           @"Cmd+K - favorites and open-document search\n"
+           @"Cmd+B - favorite current page\n"
+           @"Cmd+Shift+B - favorite current document\n\n"
+           @"Pages And View\n"
+           @"[ / ] - previous or next page\n"
+           @"Home / End - first or last page\n"
+           @"Cmd+L - go to page\n"
+           @"Arrow keys - scroll or change pages\n"
+           @"Shift+Arrow - previous or next page in continuous mode\n"
+           @"Cmd++ / Cmd+- - zoom in or out\n"
+           @"Cmd+0 - 100%\n"
+           @"Cmd+1 - fit width\n"
+           @"Cmd+2 - fit height\n"
+           @"Cmd+9 - fit page\n\n"
+           @"Tabs And Tools\n"
+           @"Drag tabs - reorder or detach\n"
+           @"Cmd+Shift+T - reopen last closed document\n"
+           @"Cmd+R - rotate page clockwise\n"
+           @"Cmd+Shift+R - rotate page anticlockwise\n"
+           @"F5 - presentation mode\n"
+           @"Esc - leave presentation mode\n\n"
+           @"Panels\n"
+           @"View > Show Side Panel - chapters and comments\n"
+           @"View > Show Minimap - document preview and search markers\n\n"
+           @"You can reopen this window from Help at any time.";
+}
+
+- (void)showShortcutHelp:(id)sender {
+    (void)sender;
+    if (_shortcutHelpPanel && _shortcutHelpPanel.visible) {
+        [_shortcutHelpPanel makeKeyAndOrderFront:nil];
+        return;
+    }
+
+    NSRect frame = NSMakeRect(0, 0, 560, 520);
+    if (!_shortcutHelpPanel) {
+        _shortcutHelpPanel = [[NSPanel alloc] initWithContentRect:frame
+                                                        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                                                          backing:NSBackingStoreBuffered
+                                                            defer:NO];
+        _shortcutHelpPanel.title = @"Keyboard Shortcuts";
+        _shortcutHelpPanel.releasedWhenClosed = NO;
+        _shortcutHelpPanel.minSize = NSMakeSize(440, 380);
+
+        NSView* content = [[NSView alloc] initWithFrame:frame];
+        content.translatesAutoresizingMaskIntoConstraints = NO;
+        _shortcutHelpPanel.contentView = content;
+
+        NSTextField* title = [NSTextField labelWithString:@"Welcome to SumatraPDF"];
+        title.translatesAutoresizingMaskIntoConstraints = NO;
+        title.font = [NSFont systemFontOfSize:20 weight:NSFontWeightSemibold];
+        [content addSubview:title];
+
+        NSTextField* subtitle = [NSTextField labelWithString:@"You can start typing any time in a document to search."];
+        subtitle.translatesAutoresizingMaskIntoConstraints = NO;
+        subtitle.textColor = NSColor.secondaryLabelColor;
+        subtitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightRegular];
+        [content addSubview:subtitle];
+
+        NSScrollView* scrollView = [[NSScrollView alloc] init];
+        scrollView.translatesAutoresizingMaskIntoConstraints = NO;
+        scrollView.hasVerticalScroller = YES;
+        scrollView.borderType = NSNoBorder;
+        [content addSubview:scrollView];
+
+        NSTextView* textView = [[NSTextView alloc] init];
+        textView.editable = NO;
+        textView.selectable = YES;
+        textView.drawsBackground = NO;
+        textView.textContainerInset = NSMakeSize(0, 6);
+        textView.font = [NSFont systemFontOfSize:13 weight:NSFontWeightRegular];
+        textView.string = [self shortcutHelpText];
+        scrollView.documentView = textView;
+
+        NSButton* closeButton = [NSButton buttonWithTitle:@"Close" target:self action:@selector(closeShortcutHelp:)];
+        closeButton.translatesAutoresizingMaskIntoConstraints = NO;
+        closeButton.bezelStyle = NSBezelStyleRounded;
+        [content addSubview:closeButton];
+
+        NSButton* doNotShowButton =
+            [NSButton buttonWithTitle:@"Do not show again" target:self action:@selector(disableLaunchShortcutHelp:)];
+        doNotShowButton.translatesAutoresizingMaskIntoConstraints = NO;
+        doNotShowButton.bezelStyle = NSBezelStyleRounded;
+        [content addSubview:doNotShowButton];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [title.topAnchor constraintEqualToAnchor:content.topAnchor constant:20],
+            [title.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24],
+            [title.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24],
+            [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:6],
+            [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
+            [subtitle.trailingAnchor constraintEqualToAnchor:title.trailingAnchor],
+            [scrollView.topAnchor constraintEqualToAnchor:subtitle.bottomAnchor constant:16],
+            [scrollView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24],
+            [scrollView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24],
+            [scrollView.bottomAnchor constraintEqualToAnchor:closeButton.topAnchor constant:-16],
+            [closeButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24],
+            [closeButton.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-18],
+            [doNotShowButton.trailingAnchor constraintEqualToAnchor:closeButton.leadingAnchor constant:-10],
+            [doNotShowButton.centerYAnchor constraintEqualToAnchor:closeButton.centerYAnchor]
+        ]];
+    }
+
+    [_shortcutHelpPanel center];
+    [_shortcutHelpPanel makeKeyAndOrderFront:nil];
+}
+
+- (void)closeShortcutHelp:(id)sender {
+    (void)sender;
+    [_shortcutHelpPanel orderOut:nil];
+}
+
+- (void)disableLaunchShortcutHelp:(id)sender {
+    (void)sender;
+    _showShortcutHelpOnLaunch = NO;
+    [self savePersistentState];
+    [_shortcutHelpPanel orderOut:nil];
 }
 
 - (void)buildMenu {
@@ -3614,13 +3828,16 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSMenuItem* zoomItem = [[NSMenuItem alloc] initWithTitle:@"Zoom" action:nil keyEquivalent:@""];
     [mainMenu addItem:zoomItem];
     NSMenu* zoomMenu = [[NSMenu alloc] initWithTitle:@"Zoom"];
-    [zoomMenu addItemWithTitle:@"Zoom In" action:@selector(zoomIn:) keyEquivalent:@"+"];
-    [zoomMenu addItemWithTitle:@"Zoom Out" action:@selector(zoomOut:) keyEquivalent:@"-"];
-    [zoomMenu addItemWithTitle:@"100%" action:@selector(actualSize:) keyEquivalent:@"0"];
+    NSMenuItem* zoomIn = [zoomMenu addItemWithTitle:@"Zoom In" action:@selector(zoomIn:) keyEquivalent:@"+"];
+    NSMenuItem* zoomOut = [zoomMenu addItemWithTitle:@"Zoom Out" action:@selector(zoomOut:) keyEquivalent:@"-"];
+    NSMenuItem* actualSize = [zoomMenu addItemWithTitle:@"100%" action:@selector(actualSize:) keyEquivalent:@"0"];
     [zoomMenu addItem:[NSMenuItem separatorItem]];
-    [zoomMenu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@"9"];
-    [zoomMenu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@"1"];
-    [zoomMenu addItemWithTitle:@"Fit Height" action:@selector(fitHeight:) keyEquivalent:@"2"];
+    NSMenuItem* zoomFitPage = [zoomMenu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@"9"];
+    NSMenuItem* zoomFitWidth = [zoomMenu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@"1"];
+    NSMenuItem* zoomFitHeight =
+        [zoomMenu addItemWithTitle:@"Fit Height" action:@selector(fitHeight:) keyEquivalent:@"2"];
+    for (NSMenuItem* item in @[ zoomIn, zoomOut, actualSize, zoomFitPage, zoomFitWidth, zoomFitHeight ])
+        item.target = self;
     zoomItem.submenu = zoomMenu;
 
     NSMenuItem* viewItem = [[NSMenuItem alloc] initWithTitle:@"View" action:nil keyEquivalent:@""];
@@ -3628,6 +3845,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
     [viewMenu addItemWithTitle:@"Single Page" action:@selector(setSinglePageMode:) keyEquivalent:@"4"];
     [viewMenu addItemWithTitle:@"Continuous" action:@selector(setContinuousMode:) keyEquivalent:@"5"];
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* viewFitWidth = [viewMenu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@""];
+    NSMenuItem* viewFitHeight =
+        [viewMenu addItemWithTitle:@"Fit Height" action:@selector(fitHeight:) keyEquivalent:@""];
+    NSMenuItem* viewFitPage = [viewMenu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@""];
+    for (NSMenuItem* item in @[ viewFitWidth, viewFitHeight, viewFitPage ]) item.target = self;
     [viewMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem* sidePanelItem =
         [viewMenu addItemWithTitle:@"Show Side Panel" action:@selector(toggleSidebar:) keyEquivalent:@""];
@@ -3695,6 +3918,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [settingsMenu addItemWithTitle:@"Options..." action:@selector(openSettingsFile:) keyEquivalent:@","];
     [settingsMenu addItemWithTitle:@"Advanced Options..." action:@selector(openSettingsFile:) keyEquivalent:@""];
     settingsItem.submenu = settingsMenu;
+
+    NSMenuItem* helpItem = [[NSMenuItem alloc] initWithTitle:@"Help" action:nil keyEquivalent:@""];
+    [mainMenu addItem:helpItem];
+    NSMenu* helpMenu = [[NSMenu alloc] initWithTitle:@"Help"];
+    NSMenuItem* shortcuts =
+        [helpMenu addItemWithTitle:@"Keyboard Shortcuts"
+                            action:@selector(showShortcutHelp:)
+                     keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSF1FunctionKey)]];
+    shortcuts.target = self;
+    shortcuts.keyEquivalentModifierMask = 0;
+    helpItem.submenu = helpMenu;
 
     NSApp.mainMenu = mainMenu;
 }
@@ -4228,9 +4462,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         return _zoom;
 
     NSSize clipSize = [self documentClipSizeForLayout];
-    CGFloat pageMargin = _presentationMode ? 0.0 : kPageMargin;
-    CGFloat widthZoom = (clipSize.width - pageMargin * 1.7) / pageWidth;
-    CGFloat heightZoom = (clipSize.height - pageMargin) / pageHeight;
+    CGFloat horizontalPadding = _presentationMode ? 0.0 : kPageMargin;
+    CGFloat verticalPadding = _presentationMode ? 0.0 : kPageMargin;
+    CGFloat widthZoom = (clipSize.width - horizontalPadding) / pageWidth;
+    CGFloat heightZoom = (clipSize.height - verticalPadding) / pageHeight;
     if (fitMode == SPDFFitModeWidth) return MAX(kMinZoom, MIN(kMaxZoom, widthZoom));
     if (fitMode == SPDFFitModeHeight) return MAX(kMinZoom, MIN(kMaxZoom, heightZoom));
     return MAX(kMinZoom, MIN(kMaxZoom, MIN(widthZoom, heightZoom)));
@@ -5149,6 +5384,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     tab.customZoom = _rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom;
     tab.fitMode = _fitMode;
     tab.viewMode = _viewMode;
+    tab.showSidebar = _sidebarPreferredVisible;
+    tab.showMinimap = _minimapPreferredVisible;
     tab.scrollOrigin =
         [self normalizedDocumentScrollOrigin:_pageScrollView.contentView.bounds.origin forPageIndex:_pageIndex];
     tab.hasScrollOrigin = YES;
@@ -5589,6 +5826,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         _doc = NULL;
         _path = [path copy];
         _pageIndex = 0;
+        _sidebarPreferredVisible = tab.showSidebar;
+        _minimapPreferredVisible = tab.showMinimap;
         _highlightPageIndex = -1;
         _selectionPageIndex = -1;
         _selectedText = nil;
@@ -5636,6 +5875,27 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : _zoom;
     _fitMode = tab.fitMode;
     _viewMode = tab.viewMode;
+    _sidebarPreferredVisible = tab.showSidebar;
+    _minimapPreferredVisible = tab.showMinimap;
+
+    char metadataErr[1024];
+    spdf_outline loadedOutline;
+    memset(&loadedOutline, 0, sizeof(loadedOutline));
+    if (spdf_load_outline(_doc, &loadedOutline, metadataErr, sizeof(metadataErr))) {
+        _outline = loadedOutline;
+    } else {
+        spdf_free_outline(&loadedOutline);
+        memset(&_outline, 0, sizeof(_outline));
+    }
+    spdf_comments loadedComments;
+    memset(&loadedComments, 0, sizeof(loadedComments));
+    if (spdf_load_comments(_doc, &loadedComments, metadataErr, sizeof(metadataErr))) {
+        _comments = loadedComments;
+    } else {
+        spdf_free_comments(&loadedComments);
+        memset(&_comments, 0, sizeof(_comments));
+    }
+
     _statusLabel.stringValue = @"Opening...";
     NSClipView* clipView = _pageScrollView.contentView;
     BOOL previousHidden = _pageScrollView.hidden;
@@ -5746,6 +6006,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     tab.searchRegex = NO;
     tab.searchRegexMultiline = YES;
     tab.findMatchIndex = -1;
+    tab.showSidebar = _sidebarPreferredVisible;
+    tab.showMinimap = _minimapPreferredVisible;
     [_tabs addObject:tab];
     _selectedTabIndex = (NSInteger)_tabs.count - 1;
     [self loadSelectedTab];
@@ -6045,6 +6307,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [_documentContainer layoutSubtreeIfNeeded];
     if (_doc) [self resizeDocumentView];
     [self updateMinimap];
+    if (actualVisible && _doc) {
+        [self renderPageIfNeededAtIndex:_pageIndex];
+        [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
+    }
     [self syncToolbarState];
 }
 
@@ -10049,7 +10315,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     if (action == @selector(openDocument:) || action == @selector(toggleFullScreen:) ||
         action == @selector(showFavoritesPalette:) || action == @selector(showFindPalette:) ||
         action == @selector(focusFind:) || action == @selector(setCommentAuthor:) ||
-        action == @selector(openRecentDocument:) || action == @selector(openSettingsFile:))
+        action == @selector(openRecentDocument:) || action == @selector(openSettingsFile:) ||
+        action == @selector(showShortcutHelp:))
         return YES;
     if (action == @selector(reopenLastClosedDocument:)) return _closedDocumentPaths.count > 0;
     if (action == @selector(toggleSidebar:)) {
