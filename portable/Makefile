@@ -42,7 +42,8 @@ endif
 all: mac-app
 
 mupdf-libs:
-	@test -f "$(MUPDF_BUILD)/libmupdf.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no
+	@test -f "$(MUPDF_BUILD)/libmupdf.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no libs
+	@test -f "$(MUPDF_BUILD)/libmupdf-pkcs7.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no "$(MUPDF_BUILD)/libmupdf-pkcs7.a"
 
 $(BUILD):
 	mkdir -p "$(BUILD)"
@@ -52,7 +53,7 @@ $(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) Makefile | $(BUILD)
 
 mac-app: $(MAC_BIN)
 
-$(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist
+$(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(MAC_APP)/Contents/Frameworks" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
@@ -71,6 +72,12 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist
 	cp ../gfx/ShenzhenPDF-256x256x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_256x256@2x.png"
 	sips -z 512 512 ../gfx/ShenzhenPDF-256x256x32.png --out "$(BUILD)/ShenzhenPDF.iconset/icon_512x512.png" >/dev/null
 	sips -z 1024 1024 ../gfx/ShenzhenPDF-256x256x32.png --out "$(BUILD)/ShenzhenPDF.iconset/icon_512x512@2x.png" >/dev/null
+	rm -rf "$(BUILD)/Assets.xcassets"
+	mkdir -p "$(BUILD)/Assets.xcassets/AppIcon.appiconset"
+	cp mac/Assets.xcassets/Contents.json "$(BUILD)/Assets.xcassets/"
+	cp mac/Assets.xcassets/AppIcon.appiconset/Contents.json "$(BUILD)/Assets.xcassets/AppIcon.appiconset/"
+	cp "$(BUILD)/ShenzhenPDF.iconset"/*.png "$(BUILD)/Assets.xcassets/AppIcon.appiconset/"
+	xcrun actool "$(BUILD)/Assets.xcassets" --compile "$(MAC_APP)/Contents/Resources" --platform macosx --minimum-deployment-target 12.0 --app-icon AppIcon --output-partial-info-plist "$(BUILD)/actool-partial.plist"
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
 	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework UniformTypeIdentifiers -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -q 'libcrypto.3.dylib'; then \
@@ -81,7 +88,19 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist
 	@if [ -n "$(MAC_PROVISIONING_PROFILE)" ]; then \
 		cp "$(MAC_PROVISIONING_PROFILE)" "$(MAC_APP)/Contents/embedded.provisionprofile"; \
 	fi
-	$(MAC_CODESIGN_APP)
+	@if [ -n "$(MAC_PROVISIONING_PROFILE)" ] && echo "$(MAC_CODESIGN_EXTRA)" | grep -q "TestFlight.entitlements"; then \
+		mkdir -p "$(BUILD)"; \
+		cp mac/TestFlight.entitlements "$(BUILD)/TestFlight-signing.entitlements"; \
+		security cms -D -i "$(MAC_PROVISIONING_PROFILE)" -o "$(BUILD)/provision.plist"; \
+		/usr/libexec/PlistBuddy -x -c "Print Entitlements" "$(BUILD)/provision.plist" > "$(BUILD)/profile-entitlements.plist"; \
+		/usr/libexec/PlistBuddy -c "Merge $(BUILD)/profile-entitlements.plist" "$(BUILD)/TestFlight-signing.entitlements"; \
+		if [ -f "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib" ]; then \
+			codesign --force --timestamp --options runtime --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
+		fi; \
+		codesign --force --timestamp --options runtime --entitlements "$(BUILD)/TestFlight-signing.entitlements" --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_APP)"; \
+	else \
+		$(MAC_CODESIGN_APP); \
+	fi
 
 dmg: mac-app
 	hdiutil create -volname "Shenzhen PDF" -srcfolder "$(MAC_APP)" -ov -format UDZO "$(MAC_DMG)"
