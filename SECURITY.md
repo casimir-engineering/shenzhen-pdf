@@ -2,10 +2,11 @@
 
 ## Supported Versions
 
-We only support master / latest pre-release version for security reports.
+Security fixes are targeted at the latest Shenzhen PDF pre-release and the
+current development branch.
 
-If the issue doesn't reproduce in latest pre-release then it was already fixed.
+## Reporting A Vulnerability
 
-## Reporting a Vulnerability
-
-To report a vulnerability send an e-mail to kkowalczyk@gmail.com
+Use GitHub private vulnerability reporting if it is enabled on the published
+repository. If it is not enabled, contact the project maintainers through the
+repository issue tracker and ask for a private disclosure channel.

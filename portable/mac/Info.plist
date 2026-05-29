@@ -6,17 +6,17 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>SumatraPDF</string>
+    <string>Shenzhen PDF</string>
     <key>CFBundleExecutable</key>
-    <string>SumatraPDF</string>
+    <string>ShenzhenPDF</string>
     <key>CFBundleIconFile</key>
-    <string>SumatraPDF</string>
+    <string>ShenzhenPDF</string>
     <key>CFBundleIdentifier</key>
-    <string>org.sumatrapdfreader.SumatraPDF</string>
+    <string>org.shenzhenpdf.ShenzhenPDF</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>SumatraPDF</string>
+    <string>ShenzhenPDF</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -40,7 +40,7 @@
                 <string>epub</string>
             </array>
             <key>CFBundleTypeIconFile</key>
-            <string>SumatraPDF</string>
+            <string>ShenzhenPDF</string>
             <key>CFBundleTypeName</key>
             <string>Document</string>
             <key>CFBundleTypeRole</key>

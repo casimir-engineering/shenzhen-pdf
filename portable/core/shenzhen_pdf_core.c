@@ -1,4 +1,4 @@
-#include "sumatra_pdf_core.h"
+#include "shenzhen_pdf_core.h"
 
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
@@ -1608,7 +1608,7 @@ int spdf_rotate_page(spdf_document* doc, int page_index, int degrees, char* err,
 }
 
 static char* create_temp_save_path(fz_context* ctx, const char* path) {
-    static const char temp_name[] = ".sumatra-save-XXXXXX";
+    static const char temp_name[] = ".shenzhenpdf-save-XXXXXX";
     const char* slash = strrchr(path, '/');
     size_t dir_len = slash ? (size_t)(slash - path + 1) : 0;
     size_t temp_name_len = strlen(temp_name);

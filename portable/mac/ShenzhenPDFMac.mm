@@ -1,7 +1,10 @@
 #import <Cocoa/Cocoa.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-#include "sumatra_pdf_core.h"
+#import "SPDFMacSupport.h"
+#import "SPDFMacUIHelpers.h"
+
+#include "shenzhen_pdf_core.h"
 
 #include <math.h>
 #include <fcntl.h>
@@ -35,7 +38,7 @@ static const NSInteger kRenderedImageKeepRadius = 12;
 static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
-static NSPasteboardType const SPDFTabDragPasteboardType = @"org.sumatrapdfreader.SumatraPDF.tab";
+static NSPasteboardType const SPDFTabDragPasteboardType = @"org.shenzhenpdf.ShenzhenPDF.tab";
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
 #define SPDF_MAC_TRANSLATION_CORE_READY 0
@@ -76,158 +79,6 @@ static NSSize spdf_sane_window_content_size(NSSize size, NSScreen* screen) {
                       spdf_clamp_cg(size.height, kMinWindowHeight, maxHeight));
 }
 
-static NSArray<UTType*>* spdf_document_content_types() {
-    NSMutableArray<UTType*>* types = [NSMutableArray arrayWithObject:UTTypePDF];
-    for (NSString* extension in @[ @"xps", @"cbz", @"epub" ]) {
-        UTType* type = [UTType typeWithFilenameExtension:extension];
-        if (type) [types addObject:type];
-    }
-    return types;
-}
-
-static NSString* spdf_display_label_without_extension(NSString* label) {
-    if (!label.length) return @"";
-    NSArray<NSString*>* extensions = @[ @".pdf", @".xps", @".cbz", @".epub" ];
-    for (NSString* ext in extensions) {
-        NSRange range = [label rangeOfString:ext options:NSCaseInsensitiveSearch | NSBackwardsSearch];
-        if (range.location == NSNotFound) continue;
-        NSUInteger end = range.location + range.length;
-        BOOL atEnd = end == label.length;
-        BOOL beforeSuffix = !atEnd && ([[NSCharacterSet whitespaceAndNewlineCharacterSet]
-                                           characterIsMember:[label characterAtIndex:end]] ||
-                                       [label characterAtIndex:end] == '-');
-        if (atEnd || beforeSuffix) return [label stringByReplacingCharactersInRange:range withString:@""];
-    }
-    return label;
-}
-
-static NSString* spdf_display_name_for_path(NSString* path) {
-    NSString* name = path.lastPathComponent;
-    return spdf_display_label_without_extension(name);
-}
-
-static NSString* spdf_display_path_without_extension(NSString* path) {
-    if (!path.length) return @"";
-    NSString* stem = path.stringByDeletingPathExtension;
-    return stem.length && ![stem isEqualToString:path] ? stem : path;
-}
-
-static NSArray<NSDictionary<NSString*, NSString*>*>* spdf_translation_languages() {
-    static NSArray<NSDictionary<NSString*, NSString*>*>* languages = nil;
-    if (languages) return languages;
-    languages = @[
-        @{@"code" : @"zh", @"name" : @"Chinese (Simplified)"}, @{@"code" : @"en", @"name" : @"English"},
-        @{@"code" : @"fr", @"name" : @"French"}, @{@"code" : @"de", @"name" : @"German"},
-        @{@"code" : @"es", @"name" : @"Spanish"}, @{@"code" : @"it", @"name" : @"Italian"},
-        @{@"code" : @"pt", @"name" : @"Portuguese"}, @{@"code" : @"ru", @"name" : @"Russian"},
-        @{@"code" : @"ja", @"name" : @"Japanese"}, @{@"code" : @"ko", @"name" : @"Korean"},
-        @{@"code" : @"ar", @"name" : @"Arabic"}, @{@"code" : @"hi", @"name" : @"Hindi"},
-        @{@"code" : @"nl", @"name" : @"Dutch"}, @{@"code" : @"pl", @"name" : @"Polish"},
-        @{@"code" : @"tr", @"name" : @"Turkish"}, @{@"code" : @"vi", @"name" : @"Vietnamese"},
-        @{@"code" : @"id", @"name" : @"Indonesian"}, @{@"code" : @"uk", @"name" : @"Ukrainian"},
-        @{@"code" : @"cs", @"name" : @"Czech"}
-    ];
-    return languages;
-}
-
-static NSImage* spdf_translate_toolbar_image() {
-    static NSImage* image = nil;
-    if (image) return image;
-
-    if (@available(macOS 11.0, *)) {
-        image = [NSImage imageWithSystemSymbolName:@"translate" accessibilityDescription:@"Translate"];
-        if (image) {
-            [image setTemplate:YES];
-            return image;
-        }
-    }
-
-    image = [[NSImage alloc] initWithSize:NSMakeSize(18.0, 18.0)];
-    [image lockFocus];
-    CGContextRef ctx = NSGraphicsContext.currentContext.CGContext;
-    CGContextSaveGState(ctx);
-    CGContextTranslateCTM(ctx, 0.0, 18.0);
-    CGContextScaleCTM(ctx, 18.0 / 24.0, -18.0 / 24.0);
-    CGContextSetLineWidth(ctx, 1.9);
-    CGContextSetLineCap(ctx, kCGLineCapRound);
-    CGContextSetLineJoin(ctx, kCGLineJoinRound);
-    CGContextSetStrokeColorWithColor(ctx, NSColor.blackColor.CGColor);
-
-    CGContextSetLineWidth(ctx, 2.1);
-    CGContextBeginPath(ctx);
-    CGContextMoveToPoint(ctx, 5.2, 17.8);
-    CGContextAddLineToPoint(ctx, 8.0, 7.2);
-    CGContextAddLineToPoint(ctx, 10.8, 17.8);
-    CGContextMoveToPoint(ctx, 6.2, 14.0);
-    CGContextAddLineToPoint(ctx, 9.8, 14.0);
-    CGContextStrokePath(ctx);
-
-    CGContextBeginPath(ctx);
-    CGContextMoveToPoint(ctx, 13.5, 5.3);
-    CGContextAddLineToPoint(ctx, 21.2, 5.3);
-    CGContextMoveToPoint(ctx, 17.4, 3.0);
-    CGContextAddLineToPoint(ctx, 17.4, 5.3);
-    CGContextMoveToPoint(ctx, 15.1, 7.0);
-    CGContextAddQuadCurveToPoint(ctx, 17.4, 10.7, 20.0, 7.0);
-    CGContextMoveToPoint(ctx, 16.5, 8.8);
-    CGContextAddLineToPoint(ctx, 19.8, 12.2);
-    CGContextStrokePath(ctx);
-
-    CGContextSetLineWidth(ctx, 1.7);
-    CGContextBeginPath(ctx);
-    CGContextMoveToPoint(ctx, 14.7, 15.8);
-    CGContextAddLineToPoint(ctx, 18.7, 15.8);
-    CGContextAddLineToPoint(ctx, 17.0, 14.1);
-    CGContextMoveToPoint(ctx, 18.7, 15.8);
-    CGContextAddLineToPoint(ctx, 17.0, 17.5);
-    CGContextMoveToPoint(ctx, 9.3, 8.1);
-    CGContextAddLineToPoint(ctx, 5.3, 8.1);
-    CGContextAddLineToPoint(ctx, 7.0, 6.4);
-    CGContextMoveToPoint(ctx, 5.3, 8.1);
-    CGContextAddLineToPoint(ctx, 7.0, 9.8);
-    CGContextStrokePath(ctx);
-    CGContextRestoreGState(ctx);
-
-    [image unlockFocus];
-    [image setTemplate:YES];
-    return image;
-}
-
-static NSImage* spdf_ocr_toolbar_image() {
-    static NSImage* image = nil;
-    if (image) return image;
-
-    if (@available(macOS 11.0, *)) {
-        image = [NSImage imageWithSystemSymbolName:@"doc.text.viewfinder" accessibilityDescription:@"OCR"];
-        if (!image) image = [NSImage imageWithSystemSymbolName:@"text.viewfinder" accessibilityDescription:@"OCR"];
-        if (image) {
-            [image setTemplate:YES];
-            return image;
-        }
-    }
-
-    image = [[NSImage alloc] initWithSize:NSMakeSize(18.0, 18.0)];
-    [image lockFocus];
-    CGContextRef ctx = NSGraphicsContext.currentContext.CGContext;
-    CGContextSetLineWidth(ctx, 1.8);
-    CGContextSetStrokeColorWithColor(ctx, NSColor.blackColor.CGColor);
-    CGContextStrokeRect(ctx, CGRectMake(2.5, 3.0, 13.0, 12.0));
-    CGContextMoveToPoint(ctx, 5.0, 7.0);
-    CGContextAddLineToPoint(ctx, 13.0, 7.0);
-    CGContextMoveToPoint(ctx, 5.0, 10.0);
-    CGContextAddLineToPoint(ctx, 13.0, 10.0);
-    CGContextStrokePath(ctx);
-    [image unlockFocus];
-    [image setTemplate:YES];
-    return image;
-}
-
-static BOOL spdf_is_allowed_external_url(NSURL* url) {
-    NSString* scheme = url.scheme.lowercaseString;
-    return [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] ||
-           [scheme isEqualToString:@"mailto"] || [scheme isEqualToString:@"file"];
-}
-
 typedef NS_ENUM(NSInteger, SPDFFitMode) {
     SPDFFitModeCustom = 0,
     SPDFFitModeActual,
@@ -246,9 +97,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     SPDFSidebarModeComments = 1
 };
 
-@class SumatraMacDelegate;
+@class ShenzhenMacDelegate;
 
-static NSMutableArray<SumatraMacDelegate*>* gSPDFWindowControllers;
+static NSMutableArray<ShenzhenMacDelegate*>* gSPDFWindowControllers;
 static BOOL gSPDFTerminatingAllWindows;
 
 @interface SPDFRenderedPage : NSObject
@@ -446,56 +297,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 @end
 
 @interface SPDFTabStripView : NSView <NSDraggingSource, NSDraggingDestination>
-@property(nonatomic, weak) SumatraMacDelegate* reader;
+@property(nonatomic, weak) ShenzhenMacDelegate* reader;
 @property(nonatomic, copy) NSArray<SPDFDocumentTab*>* tabs;
 @property(nonatomic) NSInteger selectedIndex;
 @property(nonatomic) CGFloat reservedLeadingInset;
 - (BOOL)containsTabOrControlAtPoint:(NSPoint)point;
-@end
-
-@interface SPDFPaletteSearchField : NSSearchField
-@property(nonatomic, weak) SumatraMacDelegate* reader;
-@end
-
-@interface SPDFToolbarStackView : NSStackView
-@end
-
-@interface SPDFToolbarToggleButton : NSButton
-@property(nonatomic) BOOL active;
-@end
-
-@interface SPDFToolbarMenuButton : NSButton
-@end
-
-@interface SPDFDropView : NSView <NSDraggingDestination>
-@property(nonatomic, weak) SumatraMacDelegate* reader;
-@end
-
-@interface SPDFMinimapDividerView : NSView
-@property(nonatomic, weak) SumatraMacDelegate* reader;
-@end
-
-@interface SPDFScrollView : NSScrollView
-@property(nonatomic, weak) SumatraMacDelegate* reader;
-@end
-
-@interface SPDFWindow : NSWindow
-@property(nonatomic, weak) SumatraMacDelegate* reader;
-@end
-
-@interface SPDFShortcutHelpPanel : NSPanel
-@end
-
-@interface SPDFPresentationOverlayView : NSView
-@property(nonatomic, weak) SumatraMacDelegate* reader;
-@end
-
-@interface SPDFSidebarTableView : NSTableView
-@property(nonatomic, weak) SumatraMacDelegate* reader;
-@end
-
-@interface SPDFFindMarkerScroller : NSScroller
-@property(nonatomic, weak) SumatraMacDelegate* reader;
 @end
 
 @interface SPDFDocumentView : NSView <NSDraggingDestination>
@@ -510,7 +316,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 @property(nonatomic) CGFloat activeFindAlpha;
 @property(nonatomic) BOOL presentationMode;
 @property(nonatomic, copy) NSString* emptyMessage;
-@property(nonatomic, weak) SumatraMacDelegate* reader;
+@property(nonatomic, weak) ShenzhenMacDelegate* reader;
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize;
 - (NSRect)rectForPageAtIndex:(NSInteger)pageIndex;
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect;
@@ -527,18 +333,19 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 @property(nonatomic) CGFloat documentScale;
 @property(nonatomic) SPDFViewMode viewMode;
 @property(nonatomic) NSInteger currentPageIndex;
-@property(nonatomic, weak) SumatraMacDelegate* reader;
+@property(nonatomic, weak) ShenzhenMacDelegate* reader;
 - (NSArray<NSNumber*>*)visiblePageIndexes;
 @end
 
-@interface SumatraMacDelegate : NSObject <NSApplicationDelegate,
-                                          NSWindowDelegate,
-                                          NSSplitViewDelegate,
-                                          NSTableViewDataSource,
-                                          NSTableViewDelegate,
-                                          NSSearchFieldDelegate,
-                                          NSTextFieldDelegate,
-                                          NSMenuItemValidation>
+@interface ShenzhenMacDelegate : NSObject <NSApplicationDelegate,
+                                           NSWindowDelegate,
+                                           NSSplitViewDelegate,
+                                           NSTableViewDataSource,
+                                           NSTableViewDelegate,
+                                           NSSearchFieldDelegate,
+                                           NSTextFieldDelegate,
+                                           NSMenuItemValidation,
+                                           SPDFMacUIReader>
 @property(nonatomic, copy) NSString* initialPath;
 @property(nonatomic, copy) NSString* restoreWindowID;
 @property(nonatomic) BOOL detachedTabLaunch;
@@ -665,59 +472,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                             savedFindMatchIndex:(NSInteger)savedFindMatchIndex
                                   restoreSearch:(BOOL)restoreSearch
                             preferredRenderPage:(NSInteger)preferredRenderPage;
-@end
-
-@implementation SPDFPresentationOverlayView
-
-- (BOOL)isFlipped {
-    return YES;
-}
-
-- (BOOL)acceptsFirstResponder {
-    return YES;
-}
-
-- (BOOL)acceptsFirstMouse:(NSEvent*)event {
-    (void)event;
-    return YES;
-}
-
-- (NSView*)hitTest:(NSPoint)point {
-    return self.hidden ? nil : self;
-}
-
-- (void)mouseDown:(NSEvent*)event {
-    if (self.reader && [self.reader handlePresentationEvent:event]) return;
-    [super mouseDown:event];
-}
-
-- (void)rightMouseDown:(NSEvent*)event {
-    if (self.reader && [self.reader handlePresentationEvent:event]) return;
-    [super rightMouseDown:event];
-}
-
-- (void)otherMouseDown:(NSEvent*)event {
-    if (self.reader && [self.reader handlePresentationEvent:event]) return;
-    [super otherMouseDown:event];
-}
-
-- (void)mouseUp:(NSEvent*)event {
-    [super mouseUp:event];
-}
-
-- (void)rightMouseUp:(NSEvent*)event {
-    [super rightMouseUp:event];
-}
-
-- (void)otherMouseUp:(NSEvent*)event {
-    [super otherMouseUp:event];
-}
-
-- (void)keyDown:(NSEvent*)event {
-    if (self.reader && [self.reader handlePresentationEvent:event]) return;
-    [super keyDown:event];
-}
-
 @end
 
 @implementation SPDFTabStripView {
@@ -1436,386 +1190,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)mouseExited:(NSEvent*)event {
     (void)event;
     [self hideHoverPanel];
-}
-
-@end
-
-@implementation SPDFToolbarStackView
-
-- (BOOL)acceptsFirstMouse:(NSEvent*)event {
-    (void)event;
-    return YES;
-}
-
-- (BOOL)mouseDownCanMoveWindow {
-    return YES;
-}
-
-- (void)mouseDown:(NSEvent*)event {
-    self.window.movable = YES;
-    [self.window performWindowDragWithEvent:event];
-    self.window.movable = NO;
-}
-
-@end
-
-@implementation SPDFToolbarToggleButton
-
-- (instancetype)initWithTitle:(NSString*)title target:(id)target action:(SEL)action {
-    self = [super initWithFrame:NSZeroRect];
-    if (self) {
-        self.title = title;
-        self.target = target;
-        self.action = action;
-        self.bordered = NO;
-        self.bezelStyle = NSBezelStyleRegularSquare;
-        self.translatesAutoresizingMaskIntoConstraints = NO;
-        self.focusRingType = NSFocusRingTypeNone;
-        [self setButtonType:NSButtonTypeMomentaryChange];
-        [self setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
-                                       forOrientation:NSLayoutConstraintOrientationHorizontal];
-    }
-    return self;
-}
-
-- (BOOL)acceptsFirstMouse:(NSEvent*)event {
-    (void)event;
-    return YES;
-}
-
-- (NSSize)intrinsicContentSize {
-    NSDictionary* attrs = @{NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightLight]};
-    CGFloat titleWidth = ceil([self.title sizeWithAttributes:attrs].width);
-    return NSMakeSize(titleWidth + 50.0, 28.0);
-}
-
-- (void)setActive:(BOOL)active {
-    if (_active == active) return;
-    _active = active;
-    self.accessibilityValue = active ? @"On" : @"Off";
-    [self setNeedsDisplay:YES];
-}
-
-- (void)setEnabled:(BOOL)enabled {
-    [super setEnabled:enabled];
-    [self setNeedsDisplay:YES];
-}
-
-- (void)setTitle:(NSString*)title {
-    [super setTitle:title];
-    [self invalidateIntrinsicContentSize];
-    [self setNeedsDisplay:YES];
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-    (void)dirtyRect;
-    NSRect bounds = NSInsetRect(self.bounds, 1.0, 2.0);
-    BOOL enabled = self.enabled;
-    BOOL pressed = self.highlighted;
-    CGFloat alpha = enabled ? 1.0 : 0.44;
-
-    if (pressed) {
-        NSColor* pressFill = [NSColor.labelColor colorWithAlphaComponent:0.08 * alpha];
-        [pressFill setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:7.0 yRadius:7.0] fill];
-    }
-
-    NSFont* font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightLight];
-    NSMutableParagraphStyle* paragraph = [[NSMutableParagraphStyle alloc] init];
-    paragraph.lineBreakMode = NSLineBreakByTruncatingTail;
-    paragraph.alignment = NSTextAlignmentLeft;
-    NSDictionary* attrs = @{
-        NSFontAttributeName : font,
-        NSForegroundColorAttributeName : [NSColor.labelColor colorWithAlphaComponent:alpha],
-        NSParagraphStyleAttributeName : paragraph
-    };
-
-    CGFloat switchWidth = 32.0;
-    CGFloat switchHeight = 18.0;
-    NSRect switchRect = NSMakeRect(floor(NSMaxX(bounds) - switchWidth - 5.0),
-                                   floor(NSMidY(bounds) - switchHeight / 2.0), switchWidth, switchHeight);
-    NSRect titleRect = NSMakeRect(NSMinX(bounds) + 5.0, floor(NSMidY(bounds) - 8.0),
-                                  MAX(1.0, NSMinX(switchRect) - NSMinX(bounds) - 10.0), 17.0);
-    [self.title drawWithRect:titleRect
-                     options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
-                  attributes:attrs];
-
-    NSColor* trackFill = self.active ? [NSColor.whiteColor colorWithAlphaComponent:(enabled ? 0.94 : 0.38)]
-                                     : [NSColor.secondaryLabelColor colorWithAlphaComponent:(enabled ? 0.22 : 0.12)];
-    NSBezierPath* track =
-        [NSBezierPath bezierPathWithRoundedRect:switchRect xRadius:switchHeight / 2.0 yRadius:switchHeight / 2.0];
-    [trackFill setFill];
-    [track fill];
-    [[NSColor.separatorColor colorWithAlphaComponent:enabled ? 0.55 : 0.24] setStroke];
-    track.lineWidth = 1.0;
-    [track stroke];
-
-    CGFloat knobSize = 14.0;
-    CGFloat knobX = self.active ? NSMaxX(switchRect) - knobSize - 2.0 : NSMinX(switchRect) + 2.0;
-    NSRect knobRect = NSMakeRect(floor(knobX), floor(NSMidY(switchRect) - knobSize / 2.0), knobSize, knobSize);
-    NSColor* knobFill = self.active ? [NSColor colorWithCalibratedWhite:0.14 alpha:1.0]
-                                    : [NSColor.whiteColor colorWithAlphaComponent:0.96];
-    if (!enabled) knobFill = [knobFill colorWithAlphaComponent:0.72];
-    [knobFill setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:knobRect] fill];
-    [[NSColor.shadowColor colorWithAlphaComponent:enabled ? 0.18 : 0.08] setStroke];
-    [[NSBezierPath bezierPathWithOvalInRect:knobRect] stroke];
-}
-
-@end
-
-@implementation SPDFToolbarMenuButton
-
-- (instancetype)initWithFrame:(NSRect)frame {
-    self = [super initWithFrame:frame];
-    if (self) {
-        self.bordered = NO;
-        self.bezelStyle = NSBezelStyleRegularSquare;
-        self.translatesAutoresizingMaskIntoConstraints = NO;
-        self.focusRingType = NSFocusRingTypeNone;
-        [self setButtonType:NSButtonTypeMomentaryChange];
-        [self setContentCompressionResistancePriority:NSLayoutPriorityRequired
-                                       forOrientation:NSLayoutConstraintOrientationHorizontal];
-    }
-    return self;
-}
-
-- (BOOL)acceptsFirstMouse:(NSEvent*)event {
-    (void)event;
-    return YES;
-}
-
-- (NSSize)intrinsicContentSize {
-    return NSMakeSize(30.0, 28.0);
-}
-
-- (void)setEnabled:(BOOL)enabled {
-    [super setEnabled:enabled];
-    [self setNeedsDisplay:YES];
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-    (void)dirtyRect;
-    NSRect bounds = NSInsetRect(self.bounds, 1.0, 2.0);
-    CGFloat alpha = self.enabled ? 1.0 : 0.42;
-    NSColor* fill = self.highlighted ? [NSColor.labelColor colorWithAlphaComponent:0.13 * alpha]
-                                     : [NSColor.labelColor colorWithAlphaComponent:0.06 * alpha];
-    [fill setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:8.0 yRadius:8.0] fill];
-
-    [[NSColor.separatorColor colorWithAlphaComponent:0.30 * alpha] setStroke];
-    NSBezierPath* outline = [NSBezierPath bezierPathWithRoundedRect:bounds xRadius:8.0 yRadius:8.0];
-    outline.lineWidth = 1.0;
-    [outline stroke];
-
-    [[NSColor.labelColor colorWithAlphaComponent:0.78 * alpha] setFill];
-    CGFloat dotSize = 3.0;
-    CGFloat gap = 3.0;
-    CGFloat x = floor(NSMidX(bounds) - dotSize / 2.0);
-    CGFloat startY = floor(NSMidY(bounds) - dotSize * 1.5 - gap);
-    for (NSInteger i = 0; i < 3; ++i) {
-        NSRect dot = NSMakeRect(x, startY + (dotSize + gap) * i, dotSize, dotSize);
-        [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
-    }
-}
-
-@end
-
-@implementation SPDFPaletteSearchField
-
-- (void)keyDown:(NSEvent*)event {
-    if (event.keyCode == 53) {
-        [self.reader closePalette:self];
-        return;
-    }
-    if (event.keyCode == 125) {
-        [self.reader paletteMoveSelection:1];
-        return;
-    }
-    if (event.keyCode == 126) {
-        [self.reader paletteMoveSelection:-1];
-        return;
-    }
-    if (event.keyCode == 36 || event.keyCode == 76) {
-        [self.reader activatePaletteSelection:self];
-        return;
-    }
-    [super keyDown:event];
-}
-
-@end
-
-@implementation SPDFDropView
-
-- (BOOL)mouseDownCanMoveWindow {
-    return NO;
-}
-
-- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
-    (void)sender;
-    return NSDragOperationCopy;
-}
-
-- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
-    return [self.reader openFilesFromPasteboard:sender.draggingPasteboard];
-}
-
-@end
-
-@implementation SPDFMinimapDividerView {
-    CGFloat _lastWindowX;
-}
-
-- (BOOL)isFlipped {
-    return YES;
-}
-
-- (void)resetCursorRects {
-    [self addCursorRect:self.bounds cursor:NSCursor.resizeLeftRightCursor];
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-    (void)dirtyRect;
-    [NSColor.windowBackgroundColor setFill];
-    NSRectFill(self.bounds);
-    [[NSColor separatorColor] setFill];
-    NSRectFill(NSMakeRect(floor(NSWidth(self.bounds) / 2.0), 0.0, 1.0, NSHeight(self.bounds)));
-}
-
-- (void)mouseDown:(NSEvent*)event {
-    _lastWindowX = event.locationInWindow.x;
-    [self.reader clearFindFieldFocus];
-}
-
-- (void)mouseDragged:(NSEvent*)event {
-    CGFloat x = event.locationInWindow.x;
-    [self.reader minimapDividerDraggedByDeltaX:x - _lastWindowX];
-    _lastWindowX = x;
-}
-
-- (void)mouseUp:(NSEvent*)event {
-    (void)event;
-    [self.reader minimapDividerDidFinishDragging];
-}
-
-@end
-
-@implementation SPDFFindMarkerScroller
-
-- (void)drawKnobSlotInRect:(NSRect)slotRect highlight:(BOOL)flag {
-    [super drawKnobSlotInRect:slotRect highlight:flag];
-    if (!self.reader || NSHeight(slotRect) <= 2.0) return;
-
-    NSArray<NSDictionary*>* markers = [self.reader findScrollbarMarkers];
-    if (markers.count == 0) return;
-
-    CGFloat minY = NSMinY(slotRect) + 2.0;
-    CGFloat maxY = NSMaxY(slotRect) - 2.0;
-    CGFloat lastY = -1000.0;
-    for (NSDictionary* marker in markers) {
-        CGFloat fraction = spdf_clamp_cg([marker[@"fraction"] doubleValue], 0.0, 1.0);
-        CGFloat y = self.isFlipped ? floor(minY + fraction * MAX(1.0, maxY - minY))
-                                   : floor(maxY - fraction * MAX(1.0, maxY - minY));
-        if (fabs(y - lastY) < 1.5 && ![marker[@"active"] boolValue]) continue;
-        BOOL active = [marker[@"active"] boolValue];
-        NSColor* color = active ? [NSColor colorWithCalibratedRed:1.0 green:0.38 blue:0.08 alpha:0.95]
-                                : [NSColor colorWithCalibratedRed:1.0 green:0.86 blue:0.12 alpha:0.82];
-        [color setFill];
-        NSRect line = NSMakeRect(NSMinX(slotRect) + 2.0, y, MAX(2.0, NSWidth(slotRect) - 4.0), active ? 2.0 : 1.0);
-        NSRectFillUsingOperation(line, NSCompositingOperationSourceOver);
-        lastY = y;
-    }
-}
-
-@end
-
-@implementation SPDFWindow
-
-- (BOOL)canBecomeKeyWindow {
-    return YES;
-}
-
-- (BOOL)canBecomeMainWindow {
-    return YES;
-}
-
-- (void)sendEvent:(NSEvent*)event {
-    if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
-    if (self.reader && [self.reader handlePresentationEvent:event]) return;
-    [super sendEvent:event];
-}
-
-@end
-
-@implementation SPDFShortcutHelpPanel
-
-- (BOOL)canBecomeKeyWindow {
-    return YES;
-}
-
-- (BOOL)canBecomeMainWindow {
-    return YES;
-}
-
-@end
-
-@implementation SPDFScrollView {
-    CGFloat _wheelAccumulator;
-}
-
-- (void)scrollWheel:(NSEvent*)event {
-    if (self.reader && [self.reader zoomWithScrollWheelEvent:event centeredAtWindowPoint:event.locationInWindow])
-        return;
-
-    if (self.reader && [self.reader scrollViewShouldTurnWheelIntoPageChange:event]) {
-        CGFloat delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY;
-        _wheelAccumulator += delta;
-        CGFloat threshold = event.hasPreciseScrollingDeltas ? 0.75 : 0.50;
-        if (fabs(_wheelAccumulator) >= threshold) {
-            if (_wheelAccumulator < 0)
-                [self.reader nextPage:self];
-            else
-                [self.reader previousPage:self];
-            _wheelAccumulator = 0;
-        }
-        return;
-    }
-
-    [super scrollWheel:event];
-    if (self.reader) [self.reader documentScrollPositionChanged];
-}
-
-- (void)magnifyWithEvent:(NSEvent*)event {
-    if (self.reader) [self.reader zoomWithMagnifyEvent:event centeredAtWindowPoint:event.locationInWindow];
-}
-
-- (void)keyDown:(NSEvent*)event {
-    if (self.reader && [self.reader handlePresentationEvent:event]) return;
-    if (self.reader && [self.reader documentArrowKeyDown:event]) return;
-    if (self.reader && [self.reader documentTypeToSearchKeyDown:event]) return;
-    [super keyDown:event];
-}
-
-@end
-
-@implementation SPDFSidebarTableView
-
-- (NSMenu*)menuForEvent:(NSEvent*)event {
-    if (!self.reader) return [super menuForEvent:event];
-
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    NSInteger row = [self rowAtPoint:point];
-    NSNumber* commentIndex = [self.reader commentIndexForSidebarRow:row];
-    if (!commentIndex) return nil;
-
-    NSMenu* menu = [super menuForEvent:event];
-    for (NSMenuItem* item in menu.itemArray) {
-        if (item.action == @selector(editComment:) || item.action == @selector(deleteComment:)) {
-            item.target = self.reader;
-            item.representedObject = commentIndex;
-        }
-    }
-    return menu;
 }
 
 @end
@@ -2988,7 +2362,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 @end
 
-@implementation SumatraMacDelegate {
+@implementation ShenzhenMacDelegate {
     NSWindow* _window;
     SPDFTabStripView* _tabStrip;
     SPDFToolbarStackView* _toolbar;
@@ -3220,15 +2594,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     NSInteger cpuCount = MAX(2, NSProcessInfo.processInfo.activeProcessorCount);
     _renderQueue = [[NSOperationQueue alloc] init];
-    _renderQueue.name = @"SumatraPDF page renderer";
+    _renderQueue.name = @"Shenzhen PDF page renderer";
     _renderQueue.maxConcurrentOperationCount = MIN(2, cpuCount);
     _renderQueue.qualityOfService = NSQualityOfServiceUserInitiated;
     _preloadQueue = [[NSOperationQueue alloc] init];
-    _preloadQueue.name = @"SumatraPDF tab preloader";
+    _preloadQueue.name = @"Shenzhen PDF tab preloader";
     _preloadQueue.maxConcurrentOperationCount = 1;
     _preloadQueue.qualityOfService = NSQualityOfServiceUtility;
     _findQueue = [[NSOperationQueue alloc] init];
-    _findQueue.name = @"SumatraPDF document find";
+    _findQueue.name = @"Shenzhen PDF document find";
     _findQueue.maxConcurrentOperationCount = 1;
     _findQueue.qualityOfService = NSQualityOfServiceUserInitiated;
 
@@ -3275,7 +2649,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
     if (!_terminateOnlyThisProcess && !gSPDFTerminatingAllWindows) {
         gSPDFTerminatingAllWindows = YES;
-        for (NSRunningApplication* app in [self otherRunningSumatraApplications]) [app terminate];
+        for (NSRunningApplication* app in [self otherRunningShenzhenApplications]) [app terminate];
     }
     return NSTerminateNow;
 }
@@ -3376,7 +2750,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSURL* base =
         [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask]
             .firstObject;
-    NSString* dir = [base.path stringByAppendingPathComponent:@"SumatraPDF"];
+    NSString* dir = [base.path stringByAppendingPathComponent:@"ShenzhenPDF"];
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir;
 }
@@ -3655,7 +3029,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }];
 }
 
-- (NSArray<NSRunningApplication*>*)otherRunningSumatraApplications {
+- (NSArray<NSRunningApplication*>*)otherRunningShenzhenApplications {
     NSString* bundleID = NSBundle.mainBundle.bundleIdentifier;
     pid_t currentPID = NSProcessInfo.processInfo.processIdentifier;
     NSMutableArray<NSRunningApplication*>* apps = [NSMutableArray array];
@@ -3987,10 +3361,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     NSMenuItem* appItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
     [mainMenu addItem:appItem];
-    NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"SumatraPDF"];
-    [appMenu addItemWithTitle:@"About SumatraPDF" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"Shenzhen PDF"];
+    [appMenu addItemWithTitle:@"About Shenzhen PDF" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
-    [appMenu addItemWithTitle:@"Quit SumatraPDF" action:@selector(terminate:) keyEquivalent:@"q"];
+    [appMenu addItemWithTitle:@"Quit Shenzhen PDF" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
 
     NSMenuItem* fileItem = [[NSMenuItem alloc] initWithTitle:@"File" action:nil keyEquivalent:@""];
@@ -4348,7 +3722,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                                 defer:NO];
     ((SPDFWindow*)_window).reader = self;
     _window.delegate = self;
-    _window.title = @"SumatraPDF";
+    _window.title = @"Shenzhen PDF";
     _window.minSize = NSMakeSize(kMinWindowWidth, kMinWindowHeight);
     _window.titleVisibility = NSWindowTitleHidden;
     _window.titlebarAppearsTransparent = YES;
@@ -4806,14 +4180,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (!path.length) return NULL;
 
     NSMutableDictionary* threadDictionary = NSThread.currentThread.threadDictionary;
-    SPDFWorkerDocument* holder = threadDictionary[@"SumatraPDFWorkerDocument"];
+    SPDFWorkerDocument* holder = threadDictionary[@"ShenzhenPDFWorkerDocument"];
     if (holder && [holder.path isEqualToString:path] && holder.document) return holder.document;
 
     holder = [[SPDFWorkerDocument alloc] init];
     holder.path = path;
     holder.document = spdf_open(path.fileSystemRepresentation, err, errLen);
     if (!holder.document) return NULL;
-    threadDictionary[@"SumatraPDFWorkerDocument"] = holder;
+    threadDictionary[@"ShenzhenPDFWorkerDocument"] = holder;
     return holder.document;
 }
 
@@ -6106,7 +5480,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self replaceDocumentViewForTabSwitch];
         [self rebuildSidebar];
         [self showEmptyDocumentViewWithMessage:message];
-        _window.title = [NSString stringWithFormat:@"%@ - %@ - SumatraPDF", spdf_display_name_for_path(path), message];
+        _window.title =
+            [NSString stringWithFormat:@"%@ - %@ - Shenzhen PDF", spdf_display_name_for_path(path), message];
         _statusLabel.stringValue = [message stringByAppendingString:@"."];
         [self updateTabStrip];
         [self updateControls];
@@ -6237,7 +5612,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self clearFindResults];
     _renderGeneration++;
     [_renderedPages removeAllObjects];
-    _window.title = @"SumatraPDF";
+    _window.title = @"Shenzhen PDF";
     _statusLabel.stringValue = @"Ready";
     [self rebuildSidebar];
     [self showEmptyDocumentViewWithMessage:@"Open a document"];
@@ -6323,7 +5698,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (!closingActive && index < _selectedTabIndex) _selectedTabIndex--;
 
     if (_tabs.count == 0) {
-        BOOL shouldCloseThisWindow = [self otherRunningSumatraApplications].count > 0;
+        BOOL shouldCloseThisWindow = [self otherRunningShenzhenApplications].count > 0;
         [self clearToolbarFieldFocusForTabSwitch];
         _selectedTabIndex = -1;
         spdf_free_outline(&_outline);
@@ -6352,7 +5727,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             return;
         }
         [self showEmptyDocumentViewWithMessage:@"Open a document"];
-        _window.title = @"SumatraPDF";
+        _window.title = @"Shenzhen PDF";
         _statusLabel.stringValue = @"Ready";
         [self updateTabStrip];
         [self updateControls];
@@ -6943,7 +6318,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (hasDoc) {
         NSString* displayName =
             _path.length ? spdf_display_name_for_path(_path) : [NSString stringWithUTF8String:spdf_title(_doc)];
-        _window.title = [NSString stringWithFormat:@"%@ - SumatraPDF", displayName];
+        _window.title = [NSString stringWithFormat:@"%@ - Shenzhen PDF", displayName];
         NSString* mode = _viewMode == SPDFViewModeContinuous ? @"Continuous" : @"Single page";
         _statusLabel.stringValue =
             [NSString stringWithFormat:@"Page %ld of %ld    Zoom %.0f%%    %@", (long)_pageIndex + 1, (long)pageCount,
@@ -7648,7 +7023,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (!ok && errorOut) {
         NSString* detail = [NSString stringWithUTF8String:err[0] ? err : "Could not save translated PDF."];
         *errorOut =
-            [NSError errorWithDomain:@"SumatraPDFTranslation"
+            [NSError errorWithDomain:@"ShenzhenPDFTranslation"
                                 code:1
                             userInfo:@{NSLocalizedDescriptionKey : detail ?: @"Could not save translated PDF."}];
     }
@@ -8405,12 +7780,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)installPaletteEventMonitor {
     if (_paletteEventMonitor) return;
-    __weak SumatraMacDelegate* weakSelf = self;
+    __weak ShenzhenMacDelegate* weakSelf = self;
     _paletteEventMonitor =
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown |
                                                       NSEventMaskOtherMouseDown | NSEventMaskKeyDown
                                               handler:^NSEvent*(NSEvent* event) {
-                                                SumatraMacDelegate* strongSelf = weakSelf;
+                                                ShenzhenMacDelegate* strongSelf = weakSelf;
                                                 if (strongSelf && strongSelf->_palettePanel.visible) {
                                                     if (event.type == NSEventTypeKeyDown &&
                                                         event.window == strongSelf->_palettePanel) {
@@ -8734,13 +8109,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)installPresentationEventMonitor {
     if (_presentationEventMonitor) return;
-    __weak SumatraMacDelegate* weakSelf = self;
+    __weak ShenzhenMacDelegate* weakSelf = self;
     NSEventMask mask = NSEventMaskKeyDown;
     if (!_presentationEventMonitor) {
         _presentationEventMonitor = [NSEvent
             addLocalMonitorForEventsMatchingMask:mask
                                          handler:^NSEvent*(NSEvent* event) {
-                                           SumatraMacDelegate* strongSelf = weakSelf;
+                                           ShenzhenMacDelegate* strongSelf = weakSelf;
                                            if (!strongSelf || !strongSelf->_presentationMode || !strongSelf->_doc)
                                                return event;
                                            if (event.window && event.window != strongSelf->_window) return event;
@@ -9098,7 +8473,7 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
     }
     if ([detail rangeOfString:@"Traceback"].location != NSNotFound) {
         return @"OCRmyPDF crashed while processing this PDF.\n\n"
-               @"This looks like an OCRmyPDF compatibility error rather than a SumatraPDF error. Try updating "
+               @"This looks like an OCRmyPDF compatibility error rather than a Shenzhen PDF error. Try updating "
                @"OCRmyPDF and Tesseract, or run OCRmyPDF from Terminal for the full traceback.";
     }
     return detail;
@@ -9262,7 +8637,7 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
     _translationInstallTask = task;
     __block NSMutableData* outputData = [NSMutableData data];
     void (^completionCopy)(NSTask*, NSString*) = [completion copy];
-    __weak SumatraMacDelegate* weakSelf = self;
+    __weak ShenzhenMacDelegate* weakSelf = self;
 
     pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
       NSData* chunk = handle.availableData;
@@ -9293,7 +8668,7 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
       }
       NSString* output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
       dispatch_async(dispatch_get_main_queue(), ^{
-        SumatraMacDelegate* strongSelf = weakSelf;
+        ShenzhenMacDelegate* strongSelf = weakSelf;
         if (!strongSelf) return;
         strongSelf->_translationInstallRunning = NO;
         strongSelf->_translationInstallTask = nil;
@@ -9333,7 +8708,7 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
     alert.messageText = @"Install Argos language package?";
     alert.informativeText = [NSString stringWithFormat:
                                           @"The offline %@ to %@ package may be "
-                                          @"missing. SumatraPDF can ask argospm to "
+                                          @"missing. Shenzhen PDF can ask argospm to "
                                           @"install %@, then continue translation.",
                                           sourceLanguage, targetLanguage, packageName];
     [alert addButtonWithTitle:@"Install"];
@@ -9345,13 +8720,13 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
     task.executableURL = [NSURL fileURLWithPath:packageTool];
     task.arguments = @[ @"install", packageName ];
 
-    __weak SumatraMacDelegate* weakSelf = self;
+    __weak ShenzhenMacDelegate* weakSelf = self;
     [self runTranslationInstallTask:task
                               title:@"Installing Translation Package"
                             heading:[NSString stringWithFormat:@"Installing %@", packageName]
                          initialLog:[NSString stringWithFormat:@"Running argospm install %@...\n", packageName]
                          completion:^(NSTask* finishedTask, NSString* output) {
-                           SumatraMacDelegate* strongSelf = weakSelf;
+                           ShenzhenMacDelegate* strongSelf = weakSelf;
                            if (!strongSelf) return;
                            strongSelf->_translationInstallRunning = NO;
                            strongSelf->_translateButton.enabled =
@@ -9502,7 +8877,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     [self updateTranslationProgress:0.0 detail:@"Preparing translation..."];
     NSArray<NSString*>* sourceLines =
         [sourceText componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
-    __weak SumatraMacDelegate* weakSelf = self;
+    __weak ShenzhenMacDelegate* weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       NSMutableArray<NSString*>* translatedLines = [NSMutableArray arrayWithCapacity:MAX((NSUInteger)1, items.count)];
       for (NSUInteger i = 0; i < MAX((NSUInteger)1, items.count); ++i) [translatedLines addObject:@""];
@@ -9593,7 +8968,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 
       NSString* output = failure.length ? @"" : [translatedLines componentsJoinedByString:@"\n"];
       dispatch_async(dispatch_get_main_queue(), ^{
-        SumatraMacDelegate* strongSelf = weakSelf;
+        ShenzhenMacDelegate* strongSelf = weakSelf;
         if (!strongSelf) return;
         strongSelf->_translationRunning = NO;
         strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationInstallRunning;
@@ -9645,7 +9020,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = @"Install Argos Translate?";
     alert.informativeText =
-        @"SumatraPDF uses Argos Translate locally for offline translation. "
+        @"Shenzhen PDF uses Argos Translate locally for offline translation. "
         @"Install it, then continue translation.";
     [alert addButtonWithTitle:@"Install"];
     [alert addButtonWithTitle:@"Cancel"];
@@ -9656,14 +9031,14 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
     task.arguments = @[ @"-lc", [self argosInstallScript] ];
 
-    __weak SumatraMacDelegate* weakSelf = self;
+    __weak ShenzhenMacDelegate* weakSelf = self;
     [self runTranslationInstallTask:task
                               title:@"Installing Translation Support"
                             heading:@"Installing Argos Translate"
                          initialLog:@"Preparing Argos Translate installer...\n"
                          completion:^(NSTask* finishedTask, NSString* output) {
                            (void)output;
-                           SumatraMacDelegate* strongSelf = weakSelf;
+                           ShenzhenMacDelegate* strongSelf = weakSelf;
                            if (!strongSelf) return;
                            strongSelf->_translationInstallRunning = NO;
                            strongSelf->_translateButton.enabled =
@@ -9749,7 +9124,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         content.translatesAutoresizingMaskIntoConstraints = NO;
         _ocrInstallPanel.contentView = content;
 
-        NSTextField* title = [NSTextField labelWithString:@"Installing OCRmyPDF and Tesseract"];
+        NSTextField* title = [NSTextField labelWithString:@"Installing OCRmyPDF, Tesseract, and language data"];
         title.translatesAutoresizingMaskIntoConstraints = NO;
         title.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
         [content addSubview:title];
@@ -9767,6 +9142,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 
         _ocrInstallLog = [[NSTextView alloc] init];
         _ocrInstallLog.editable = NO;
+        _ocrInstallLog.selectable = YES;
         _ocrInstallLog.font = [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
         _ocrInstallLog.drawsBackground = YES;
         _ocrInstallLog.backgroundColor = NSColor.textBackgroundColor;
@@ -9792,23 +9168,132 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     [_ocrInstallProgress startAnimation:nil];
 }
 
-- (NSString*)ocrInstallScript {
-    return @"set -e\n"
-           @"export PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"\n"
-           @"export NONINTERACTIVE=1\n"
-           @"if command -v brew >/dev/null 2>&1; then BREW=$(command -v brew); "
-           @"elif [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
-           @"elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; "
-           @"else echo 'Homebrew not found. Installing Homebrew...'; "
-           @"/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"; "
-           @"if [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
-           @"elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; "
-           @"else echo 'Homebrew installation did not produce a brew executable.'; exit 1; fi; fi\n"
-           @"echo \"Using $BREW\"\n"
-           @"\"$BREW\" install ocrmypdf tesseract\n";
+- (NSDictionary<NSString*, NSString*>*)promptForOCRLanguage {
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Choose OCR language";
+    alert.informativeText = @"Choose the language data Tesseract should use for this PDF.";
+    [alert addButtonWithTitle:@"Run OCR"];
+    [alert addButtonWithTitle:@"Cancel"];
+    alert.alertStyle = NSAlertStyleInformational;
+
+    NSPopUpButton* popup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 320, 28) pullsDown:NO];
+    for (NSDictionary<NSString*, NSString*>* language in spdf_ocr_languages()) {
+        [popup addItemWithTitle:language[@"name"]];
+        popup.lastItem.representedObject = language;
+    }
+    alert.accessoryView = popup;
+    if ([alert runModal] != NSAlertFirstButtonReturn) return nil;
+    NSDictionary<NSString*, NSString*>* selected = popup.selectedItem.representedObject;
+    return selected[@"code"].length ? selected : nil;
 }
 
-- (void)installOCRAndRunAfterwards {
+- (NSString*)customTessdataParentPath {
+    return [[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/ShenzhenPDF"]
+        stringByAppendingPathComponent:@"tesseract"];
+}
+
+- (BOOL)customTessdataHasOCRLanguage:(NSString*)language {
+    NSString* tessdataDir = [[self customTessdataParentPath] stringByAppendingPathComponent:@"tessdata"];
+    for (NSString* component in spdf_ocr_language_components(language)) {
+        NSString* traineddata =
+            [tessdataDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.traineddata", component]];
+        if (![NSFileManager.defaultManager fileExistsAtPath:traineddata]) return NO;
+    }
+    return spdf_ocr_language_components(language).count > 0;
+}
+
+- (BOOL)tesseractPath:(NSString*)tesseract hasOCRLanguage:(NSString*)language {
+    NSArray<NSString*>* required = spdf_ocr_language_components(language);
+    if (required.count == 0) return NO;
+
+    NSTask* task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:tesseract];
+    task.arguments = @[ @"--list-langs" ];
+    task.environment = [self taskEnvironmentWithToolPaths:@[ tesseract ]];
+    NSPipe* pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    NSError* error = nil;
+    if ([task launchAndReturnError:&error]) {
+        [task waitUntilExit];
+        NSData* data = pipe.fileHandleForReading.readDataToEndOfFile;
+        NSString* output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+        NSMutableSet<NSString*>* available = [NSMutableSet set];
+        for (NSString* line in [output componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+            NSString* trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if (trimmed.length) [available addObject:trimmed];
+        }
+        BOOL hasAll = YES;
+        for (NSString* component in required) {
+            if (![available containsObject:component]) {
+                hasAll = NO;
+                break;
+            }
+        }
+        if (hasAll) return YES;
+    }
+
+    return [self customTessdataHasOCRLanguage:language];
+}
+
+- (NSDictionary<NSString*, NSString*>*)ocrTaskEnvironmentWithTool:(NSString*)tool
+                                                        tesseract:(NSString*)tesseract
+                                                         language:(NSString*)language {
+    NSMutableDictionary<NSString*, NSString*>* env =
+        [[self taskEnvironmentWithToolPaths:@[ tool ?: @"", tesseract ?: @"" ]] mutableCopy];
+    if ([self customTessdataHasOCRLanguage:language]) env[@"TESSDATA_PREFIX"] = [self customTessdataParentPath];
+    return env;
+}
+
+- (NSString*)ocrInstallScriptForLanguage:(NSString*)language {
+    NSString* languageList = [spdf_ocr_language_components(language) componentsJoinedByString:@" "];
+    return [NSString stringWithFormat:
+                         @"set -e\n"
+                          "export PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"\n"
+                          "export NONINTERACTIVE=1\n"
+                          "OCR_LANGS=\"%@\"\n"
+                          "BREW=\"\"\n"
+                          "if command -v brew >/dev/null 2>&1; then BREW=$(command -v brew); "
+                          "elif [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
+                          "elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; fi\n"
+                          "if ! command -v ocrmypdf >/dev/null 2>&1 || ! command -v tesseract >/dev/null 2>&1; "
+                          "then "
+                          "if [ -z \"$BREW\" ]; then echo 'Homebrew not found. Installing Homebrew...'; "
+                          "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/"
+                          "install.sh)\"; "
+                          "if [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
+                          "elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; "
+                          "else echo 'Homebrew installation did not produce a brew executable.'; exit 1; fi; fi; "
+                          "echo \"Using $BREW\"; \"$BREW\" install ocrmypdf tesseract; "
+                          "else echo 'OCRmyPDF and Tesseract are already installed.'; fi\n"
+                          "if [ -n \"$BREW\" ] && printf '%%s\\n' \"$OCR_LANGS\" | grep -qv '^eng$'; then "
+                          "echo 'Installing Tesseract language data...'; \"$BREW\" install tesseract-lang || true; "
+                          "fi\n"
+                          "TESS_PARENT=\"$HOME/Library/Application Support/ShenzhenPDF/tesseract\"\n"
+                          "mkdir -p \"$TESS_PARENT/tessdata\"\n"
+                          "download_lang() {\n"
+                          "  lang=\"$1\"\n"
+                          "  url=\"https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/$lang."
+                          "traineddata\"\n"
+                          "  dest=\"$TESS_PARENT/tessdata/$lang.traineddata\"\n"
+                          "  echo \"Downloading $lang traineddata...\"\n"
+                          "  if command -v curl >/dev/null 2>&1; then curl -LfsS \"$url\" -o \"$dest\"; "
+                          "elif command -v wget >/dev/null 2>&1; then wget -q \"$url\" -O \"$dest\"; "
+                          "else echo 'curl or wget is required to download OCR language data.'; return 1; fi\n"
+                          "}\n"
+                          "for lang in $OCR_LANGS; do\n"
+                          "  if command -v tesseract >/dev/null 2>&1 && tesseract --list-langs 2>/dev/null | "
+                          "grep -qx \"$lang\"; then echo \"Tesseract language $lang is installed.\"; "
+                          "elif [ -f \"$TESS_PARENT/tessdata/$lang.traineddata\" ]; then "
+                          "echo \"Bundled Shenzhen PDF language $lang is installed.\"; "
+                          "else download_lang \"$lang\"; fi\n"
+                          "done\n"
+                          "command -v ocrmypdf >/dev/null 2>&1\n"
+                          "command -v tesseract >/dev/null 2>&1\n",
+                         languageList];
+}
+
+- (void)installOCRAndRunAfterwardsWithLanguage:(NSString*)language displayName:(NSString*)displayName {
     if (_ocrInstallRunning) {
         [_ocrInstallPanel makeKeyAndOrderFront:nil];
         return;
@@ -9818,17 +9303,17 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     _ocrButton.enabled = NO;
     [self showOCRInstallPanel];
     _ocrInstallLog.string = @"";
-    [self appendOCRInstallLog:@"Preparing OCR installer...\n"];
+    [self appendOCRInstallLog:[NSString stringWithFormat:@"Preparing OCR installer for %@...\n", displayName]];
 
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
-    task.arguments = @[ @"-lc", [self ocrInstallScript] ];
+    task.arguments = @[ @"-lc", [self ocrInstallScriptForLanguage:language] ];
     NSPipe* pipe = [NSPipe pipe];
     task.standardOutput = pipe;
     task.standardError = pipe;
     _ocrInstallTask = task;
 
-    __weak SumatraMacDelegate* weakSelf = self;
+    __weak ShenzhenMacDelegate* weakSelf = self;
     pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
       NSData* chunk = handle.availableData;
       if (chunk.length == 0) {
@@ -9844,21 +9329,25 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     task.terminationHandler = ^(NSTask* finishedTask) {
       pipe.fileHandleForReading.readabilityHandler = nil;
       dispatch_async(dispatch_get_main_queue(), ^{
-        SumatraMacDelegate* strongSelf = weakSelf;
+        ShenzhenMacDelegate* strongSelf = weakSelf;
         if (!strongSelf) return;
         strongSelf->_ocrInstallRunning = NO;
         strongSelf->_ocrInstallTask = nil;
         [strongSelf->_ocrInstallProgress stopAnimation:nil];
         strongSelf->_ocrButton.enabled =
             strongSelf->_doc != NULL && [strongSelf->_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
-        if (finishedTask.terminationStatus == 0 && [strongSelf ocrToolPath].length &&
-            [strongSelf tesseractToolPath].length) {
+        NSString* tool = [strongSelf ocrToolPath];
+        NSString* tesseract = [strongSelf tesseractToolPath];
+        if (finishedTask.terminationStatus == 0 && tool.length && tesseract.length &&
+            [strongSelf tesseractPath:tesseract hasOCRLanguage:language]) {
             [strongSelf appendOCRInstallLog:@"\nOCR tools installed.\n"];
             [strongSelf->_ocrInstallPanel orderOut:nil];
-            [strongSelf ocrDocument:nil];
+            [strongSelf runOCRWithLanguage:language displayName:displayName];
         } else {
             [strongSelf
-                appendOCRInstallLog:@"\nOCR installation failed. The log above has the package manager output.\n"];
+                appendOCRInstallLog:
+                    @"\nOCR installation failed or the selected language data is still missing. The log above can "
+                     "be selected and copied.\n"];
             strongSelf->_statusLabel.stringValue = @"OCR installation failed.";
         }
       });
@@ -9930,6 +9419,12 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 
 - (void)ocrDocument:(id)sender {
     (void)sender;
+    NSDictionary<NSString*, NSString*>* language = [self promptForOCRLanguage];
+    if (!language) return;
+    [self runOCRWithLanguage:language[@"code"] displayName:language[@"name"]];
+}
+
+- (void)runOCRWithLanguage:(NSString*)language displayName:(NSString*)displayName {
     if (!_doc || !_path.length || ![_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
         NSBeep();
         return;
@@ -9937,16 +9432,20 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 
     NSString* tool = [self ocrToolPath];
     NSString* tesseract = [self tesseractToolPath];
-    if (!tool.length || !tesseract.length) {
+    BOOL languageReady = tesseract.length && [self tesseractPath:tesseract hasOCRLanguage:language];
+    if (!tool.length || !tesseract.length || !languageReady) {
         NSAlert* alert = [[NSAlert alloc] init];
-        alert.messageText = @"Install OCR support?";
+        alert.messageText = !tool.length || !tesseract.length ? @"Install OCR support?" : @"Install OCR language data?";
         alert.informativeText =
-            @"SumatraPDF can install OCRmyPDF and Tesseract, then continue OCR automatically when "
-            @"installation finishes.";
+            [NSString stringWithFormat:
+                          @"Shenzhen PDF can install OCRmyPDF, Tesseract, and the %@ traineddata, then continue OCR "
+                          @"automatically when installation finishes.",
+                          displayName.length ? displayName : language];
         [alert addButtonWithTitle:@"Install"];
         [alert addButtonWithTitle:@"Cancel"];
         alert.alertStyle = NSAlertStyleInformational;
-        if ([alert runModal] == NSAlertFirstButtonReturn) [self installOCRAndRunAfterwards];
+        if ([alert runModal] == NSAlertFirstButtonReturn)
+            [self installOCRAndRunAfterwardsWithLanguage:language displayName:displayName];
         return;
     }
 
@@ -9962,7 +9461,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     if (hasText > 0) {
         NSAlert* alert = [[NSAlert alloc] init];
         alert.messageText = @"This PDF already contains selectable text.";
-        alert.informativeText = @"SumatraPDF will make a backup of the original file before OCR replaces it.";
+        alert.informativeText = @"Shenzhen PDF will make a backup of the original file before OCR replaces it.";
         [alert addButtonWithTitle:@"OCR and Backup"];
         [alert addButtonWithTitle:@"Cancel"];
         alert.alertStyle = NSAlertStyleWarning;
@@ -9986,25 +9485,27 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     NSMutableArray<NSString*>* args =
         [@[ @"--jobs", [NSString stringWithFormat:@"%ld", (long)jobs], @"--rotate-pages", @"--optimize", @"1" ]
             mutableCopy];
+    [args addObjectsFromArray:@[ @"-l", language ]];
     if (hasText <= 0) [args addObject:@"--deskew"];
     [args addObject:hasText > 0 ? @"--redo-ocr" : @"--skip-text"];
     [args addObject:originalPath];
     [args addObject:tmp];
 
     _ocrButton.enabled = NO;
-    NSString* runningDetail = [NSString stringWithFormat:@"OCR running with %ld workers...", (long)jobs];
+    NSString* runningDetail =
+        [NSString stringWithFormat:@"OCR running (%@) with %ld workers...", displayName ?: language, (long)jobs];
     _statusLabel.stringValue = runningDetail;
     [self showOCRProgressWithDetail:runningDetail];
 
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:tool];
     task.arguments = args;
-    task.environment = [self taskEnvironmentWithToolPaths:@[ tool, tesseract ]];
+    task.environment = [self ocrTaskEnvironmentWithTool:tool tesseract:tesseract language:language];
     NSPipe* pipe = [NSPipe pipe];
     task.standardOutput = pipe;
     task.standardError = pipe;
     __block NSMutableData* outputData = [NSMutableData data];
-    __weak SumatraMacDelegate* weakSelf = self;
+    __weak ShenzhenMacDelegate* weakSelf = self;
     pipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
       NSData* chunk = handle.availableData;
       if (chunk.length > 0) {
@@ -10037,7 +9538,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
       }
       NSString* output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
       dispatch_async(dispatch_get_main_queue(), ^{
-        SumatraMacDelegate* strongSelf = weakSelf;
+        ShenzhenMacDelegate* strongSelf = weakSelf;
         if (!strongSelf) return;
         strongSelf->_ocrButton.enabled =
             strongSelf->_doc != NULL && [strongSelf->_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
@@ -10241,7 +9742,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 - (void)unimplementedMenuItem:(id)sender {
     (void)sender;
     NSBeep();
-    _statusLabel.stringValue = @"This SumatraPDF command is listed but not implemented yet.";
+    _statusLabel.stringValue = @"This Shenzhen PDF command is listed but not implemented yet.";
 }
 
 - (void)openSettingsFile:(id)sender {
@@ -10772,7 +10273,7 @@ int main(int argc, const char* argv[]) {
     @autoreleasepool {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("SumatraPDF portable mac 0.5\n");
+                printf("Shenzhen PDF portable mac 0.5\n");
                 return 0;
             }
         }
@@ -10780,7 +10281,7 @@ int main(int argc, const char* argv[]) {
         NSApplication* app = [NSApplication sharedApplication];
         app.activationPolicy = NSApplicationActivationPolicyRegular;
 
-        SumatraMacDelegate* delegate = [[SumatraMacDelegate alloc] init];
+        ShenzhenMacDelegate* delegate = [[ShenzhenMacDelegate alloc] init];
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--detached-tab") == 0) {
                 delegate.detachedTabLaunch = YES;

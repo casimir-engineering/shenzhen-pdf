@@ -1,32 +1,47 @@
-# SumatraPDF Mac/Linux Porting Incompatibilities
+# Portable Frontend Notes
 
-This port avoids Win32 emulation. The existing SumatraPDF document behavior is recovered by isolating the reusable reader concepts behind a portable core, then binding that core to native frontends.
+Shenzhen PDF keeps document handling behind a small portable core and lets each
+desktop platform provide a native frontend. The goal is feature parity without
+forcing macOS or Linux through a Windows UI abstraction.
 
-## Decomposition
+## Shared Core Boundary
 
-| Windows dependency | Where it shows up | Replacement path |
-| --- | --- | --- |
-| `WinMain`, window class registration, COM/common-control startup | `src/SumatraStartup.cpp`, global app setup | Native app bootstrap per platform: AppKit `NSApplication` on macOS, `GtkApplication` on Linux. |
-| `HWND`, `HMENU`, `HDC`, `HBITMAP`, `HFONT`, GDI/GDI+ painting | `src/SumatraPDF.cpp`, `src/*Win*.cpp`, `src/utils/wingui/*` | Portable document/render core returns RGBA pixel buffers; frontends draw with AppKit/GTK image widgets and native controls. |
-| Win32 message loop and `WM_*` input | Main window/canvas/sidebar handlers | Native event callbacks: Objective-C target/actions and GTK signals. |
-| Native Windows toolbar/rebar/status/sidebar widgets | Toolbar, tabs, favorites, book view | AppKit and GTK layouts with equivalent controls: Open, prev/next, page entry, zoom, fit width, search, pages/sidebar. |
-| Windows file dialogs and shell integration | Open/recent/open-with handlers | `NSOpenPanel` and Finder document types on macOS; `GtkFileChooserDialog` on Linux. |
-| Windows text/search UI and accelerators | Find bar, menu accelerators | Shared `spdf_search_page*` API backed by MuPDF text search; platform menu shortcuts call native actions. |
-| Win32 bitmap rendering contract | `RenderedBitmap`, render cache, canvas paint | `spdf_bitmap` RGBA buffer. The UI layer owns presentation, scrolling, and zoom policy. |
-| Windows synchronization/threading primitives | Cache/render scheduling | Native frontends now render the active page first and queue surrounding pages on platform worker queues. A reusable render cache is still needed. |
-| `IStream`, Windows path and shell helpers | File loading and utility layer | UTF-8 file paths in the portable core; platform frontends translate native file URLs/paths into UTF-8. |
-| Windows-only secondary features: DDE, UI Automation, DWM dark mode, CHM/OLE/WebView2, Windows printing | Ancillary integrations | Keep out of the portable core. Re-add only behind platform interfaces when native equivalents exist. |
+The `portable/core` API owns the platform-neutral PDF work:
 
-## Current Portable Slice
+- open/close documents from UTF-8 paths;
+- page count, title, page sizes, and rotation;
+- RGBA page rendering through MuPDF;
+- text extraction, text search, and hit rectangles;
+- outlines, markup comments, and annotation metadata;
+- save-back operations needed by OCR, rotation, comments, and translation.
 
-- `portable/core` wraps MuPDF for open/count/title/page-size/render/search/outline with no Windows headers.
-- `portable/mac` is a native AppKit app bundle target.
-- `portable/linux` is a GTK frontend source over the same core.
-- `portable/Makefile` builds the macOS `.app`, `.dmg`, installer copy, and a Linux GTK binary target.
-- Both native frontends prioritize the current page first and use background workers to fill surrounding pages.
+Anything that depends on a platform event loop, menu system, window handle,
+file picker, shell integration, printing panel, or text input widget stays in
+the frontend.
 
-## Next Compatibility Layers
+## Native Frontends
 
-- Add a portable render cache so large PDFs can reuse rendered pages across zoom/view changes.
-- Add platform adapters for settings, recent files, keyboard maps, printing, and annotations.
-- Gradually move reusable logic from `DisplayModel`, command routing, tab history, and favorites into portable C++ modules once their Win32 handle types are replaced by neutral structs.
+macOS uses AppKit:
+
+- `NSApplication`, `NSWindow`, `NSView`, native menus, sheets, and panels;
+- AppKit event handling for trackpad, mouse, keyboard, tab dragging, and
+  presentation mode;
+- Apple-style app bundle, Info.plist, signing, DMG, and TestFlight packaging.
+
+Linux uses GTK:
+
+- `GtkApplication`, GTK widgets/signals, and GLib worker dispatch;
+- XDG-ish config paths and desktop file metadata;
+- GTK file dialogs, shell/browser handoff, and Linux package metadata.
+
+Windows remains the C++/Win32 target until a dedicated portable Windows frontend
+is split out. Keep required attribution intact while that code is retained.
+
+## Portability Rules
+
+- Keep Windows, AppKit, and GTK types out of `portable/core`.
+- Store user data in readable JSON files with matching schemas across platforms.
+- Render the current page first, then fill visible-neighbor pages in background
+  workers.
+- Preserve the same keyboard model and document state fields on every platform.
+- Add native integrations only behind platform-specific code paths.

@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Install SumatraPDF for macOS without Apple Developer notarization by building it
+Install Shenzhen PDF for macOS without Apple Developer notarization by building it
 locally on this Mac.
 
 Usage:
@@ -27,8 +27,8 @@ if [[ -n "$script_path" && -f "$script_path" ]]; then
   repo_root="$(cd "$(dirname "$script_path")/.." && pwd)"
 fi
 
-repo_url="${1:-${SUMATRA_MAC_REPO_URL:-}}"
-repo_ref="${2:-${SUMATRA_MAC_REPO_REF:-}}"
+repo_url="${1:-${SHENZHENPDF_REPO_URL:-}}"
+repo_ref="${2:-${SHENZHENPDF_REPO_REF:-}}"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
@@ -45,15 +45,15 @@ if [[ -z "$repo_root" || ! -f "$repo_root/portable/Makefile" ]]; then
     exit 2
   fi
 
-  cleanup_dir="$(mktemp -d "${TMPDIR:-/tmp}/sumatra-build.XXXXXX")"
+  cleanup_dir="$(mktemp -d "${TMPDIR:-/tmp}/shenzhenpdf-build.XXXXXX")"
   trap '[[ -n "$cleanup_dir" ]] && rm -rf "$cleanup_dir"' EXIT
   clone_args=(clone --depth 1)
   if [[ -n "$repo_ref" ]]; then
     clone_args+=(--branch "$repo_ref")
   fi
-  clone_args+=("$repo_url" "$cleanup_dir/SumatraPDF")
+  clone_args+=("$repo_url" "$cleanup_dir/ShenzhenPDF")
   git "${clone_args[@]}"
-  repo_root="$cleanup_dir/SumatraPDF"
+  repo_root="$cleanup_dir/ShenzhenPDF"
 fi
 
 if ! xcrun --find clang >/dev/null 2>&1; then
@@ -83,8 +83,8 @@ make -C "$repo_root/portable" install MAC_SIGN_IDENTITY=-
 
 # Defensive cleanup if the source archive or enclosing folder was downloaded
 # through a quarantine-aware app before this script built the app locally.
-xattr -dr com.apple.quarantine "/Applications/SumatraPDF.app" 2>/dev/null || true
+xattr -dr com.apple.quarantine "/Applications/ShenzhenPDF.app" 2>/dev/null || true
 
 echo
-echo "Installed /Applications/SumatraPDF.app"
-echo "Open it from Finder or run: open /Applications/SumatraPDF.app"
+echo "Installed /Applications/ShenzhenPDF.app"
+echo "Open it from Finder or run: open /Applications/ShenzhenPDF.app"

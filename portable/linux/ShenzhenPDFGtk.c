@@ -4,7 +4,7 @@
 #include <glib-unix.h>
 #include <glib/gstdio.h>
 
-#include "sumatra_pdf_core.h"
+#include "shenzhen_pdf_core.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -42,7 +42,7 @@
 #define MINIMAP_WIDTH 112
 #define MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD 20
 #define MINIMAP_PRECISE_PAGE_LIMIT 2000
-#define SUMATRA_TAB_MIME_TYPE "application/x-sumatrapdf-tab+json"
+#define SHENZHENPDF_TAB_MIME_TYPE "application/x-shenzhenpdf-tab+json"
 
 typedef struct favorite_item {
     char* path;
@@ -359,8 +359,8 @@ static void show_shortcut_help_dialog(app_state* state, gboolean from_launch);
 static int queue_background_pages_near_current(app_state* state, int limit);
 static void schedule_background_render(app_state* state);
 static char* current_executable_path(void);
-static gboolean other_sumatra_processes_running(void);
-static void terminate_other_sumatra_processes(void);
+static gboolean other_shenzhen_processes_running(void);
+static void terminate_other_shenzhen_processes(void);
 static const char* current_search_text(app_state* state);
 static void set_regex_multiline_widget_active(GtkWidget* widget, gboolean active);
 static void set_presentation_mode(app_state* state, gboolean enable);
@@ -640,7 +640,7 @@ static gboolean find_query_too_long(const char* text) {
 }
 
 static void init_config_paths(app_state* state) {
-    state->config_dir = g_build_filename(g_get_user_config_dir(), "sumatrapdf", NULL);
+    state->config_dir = g_build_filename(g_get_user_config_dir(), "shenzhenpdf", NULL);
     state->settings_path = g_build_filename(state->config_dir, "settings.json", NULL);
     state->session_path = g_build_filename(state->config_dir, "session.json", NULL);
     state->session_lock_path = g_build_filename(state->config_dir, "session.lock", NULL);
@@ -775,7 +775,7 @@ static void free_path_list(char** paths, int* count) {
 
 static void open_recent_menu_item(GtkWidget* widget, gpointer user_data) {
     app_state* state = (app_state*)user_data;
-    const char* path = (const char*)g_object_get_data(G_OBJECT(widget), "sumatra-recent-path");
+    const char* path = (const char*)g_object_get_data(G_OBJECT(widget), "shenzhen-recent-path");
     if (path && *path) open_path(state, path);
 }
 
@@ -797,7 +797,7 @@ static void update_recent_menu(app_state* state) {
             char* label = g_strdup_printf("%d) %s", i + 1, name && *name ? name : state->recent_paths[i]);
             GtkWidget* item = gtk_menu_item_new_with_label(label);
             gtk_widget_set_tooltip_text(item, state->recent_paths[i]);
-            g_object_set_data_full(G_OBJECT(item), "sumatra-recent-path", g_strdup(state->recent_paths[i]), g_free);
+            g_object_set_data_full(G_OBJECT(item), "shenzhen-recent-path", g_strdup(state->recent_paths[i]), g_free);
             g_signal_connect(item, "activate", G_CALLBACK(open_recent_menu_item), state);
             gtk_menu_shell_append(GTK_MENU_SHELL(state->recently_opened_menu), item);
             g_free(label);
@@ -1749,7 +1749,7 @@ static void update_controls(app_state* state) {
              state->zoom * 100.0);
     gtk_label_set_text(GTK_LABEL(state->status), text);
     char* title = display_label_without_extension(spdf_title(state->doc));
-    gtk_window_set_title(GTK_WINDOW(state->window), title && *title ? title : "SumatraPDF");
+    gtk_window_set_title(GTK_WINDOW(state->window), title && *title ? title : "Shenzhen PDF");
     g_free(title);
     schedule_horizontal_clamp(state);
 }
@@ -2261,7 +2261,7 @@ static void show_missing_document(app_state* state, const char* path) {
     rebuild_sidebar(state);
     show_empty_view_message(state, "File moved or deleted", path ? path : "");
     title = display_name_for_path(path ? path : "");
-    window_title = g_strdup_printf("%s - Missing - SumatraPDF", title && *title ? title : "Missing file");
+    window_title = g_strdup_printf("%s - Missing - Shenzhen PDF", title && *title ? title : "Missing file");
     gtk_window_set_title(GTK_WINDOW(state->window), window_title);
     gtk_label_set_text(GTK_LABEL(state->status), "File moved or deleted.");
     update_controls(state);
@@ -2903,7 +2903,7 @@ static void close_tab_at_index(app_state* state, int index) {
         close_document_view(state);
         if (state->tab_count > 0) {
             select_tab(state, MIN(index, state->tab_count - 1));
-        } else if (other_sumatra_processes_running()) {
+        } else if (other_shenzhen_processes_running()) {
             remove_current_window_session(state);
             state->suppress_session_write_on_quit = TRUE;
             if (state->app) g_application_quit(G_APPLICATION(state->app));
@@ -2922,7 +2922,7 @@ static char* current_executable_path(void) {
         path[len] = '\0';
         return g_strdup(path);
     }
-    return g_strdup(g_get_prgname() ? g_get_prgname() : "sumatrapdf");
+    return g_strdup(g_get_prgname() ? g_get_prgname() : "shenzhenpdf");
 }
 
 static gboolean process_matches_current_executable(pid_t pid, const char* current_exe) {
@@ -2938,7 +2938,7 @@ static gboolean process_matches_current_executable(pid_t pid, const char* curren
     return g_strcmp0(exe_path, current_exe) == 0;
 }
 
-static gboolean other_sumatra_processes_running(void) {
+static gboolean other_shenzhen_processes_running(void) {
     char* current_exe = current_executable_path();
     DIR* proc = opendir("/proc");
     struct dirent* entry;
@@ -2962,7 +2962,7 @@ static gboolean other_sumatra_processes_running(void) {
     return found;
 }
 
-static void terminate_other_sumatra_processes(void) {
+static void terminate_other_shenzhen_processes(void) {
     char* current_exe = current_executable_path();
     DIR* proc = opendir("/proc");
     struct dirent* entry;
@@ -2998,7 +2998,7 @@ static void spawn_pending_restored_windows(app_state* state) {
         argv[0] = exe;
         argv[1] = NULL;
         envp = g_get_environ();
-        envp = g_environ_setenv(envp, "SUMATRA_RESTORE_WINDOW", id, TRUE);
+        envp = g_environ_setenv(envp, "SHENZHENPDF_RESTORE_WINDOW", id, TRUE);
         if (!g_spawn_async(NULL, argv, envp, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &error) && error) {
             if (state->status) gtk_label_set_text(GTK_LABEL(state->status), error->message);
             g_error_free(error);
@@ -3025,7 +3025,7 @@ static gboolean detach_tab(app_state* state, int index) {
     argv[1] = state->tabs[index].path;
     argv[2] = NULL;
     envp = g_get_environ();
-    envp = g_environ_setenv(envp, "SUMATRA_DETACHED_TAB", "1", TRUE);
+    envp = g_environ_setenv(envp, "SHENZHENPDF_DETACHED_TAB", "1", TRUE);
     launched = g_spawn_async(NULL, argv, envp, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &error);
     g_strfreev(envp);
     if (!launched) {
@@ -3209,7 +3209,7 @@ static char* tab_drag_json_for_index(app_state* state, int index) {
 }
 
 static void start_external_tab_drag(GtkWidget* widget, GdkEventMotion* event, app_state* state) {
-    GtkTargetEntry targets[] = {{(gchar*)SUMATRA_TAB_MIME_TYPE, 0, 0}};
+    GtkTargetEntry targets[] = {{(gchar*)SHENZHENPDF_TAB_MIME_TYPE, 0, 0}};
     GtkTargetList* target_list;
 
     if (!state || state->tab_external_dragging || state->tab_drag_index < 0) return;
@@ -4191,14 +4191,14 @@ static void overflow_side_panel_toggled(GtkCheckMenuItem* item, gpointer user_da
 
 static void overflow_fit_mode_toggled(GtkCheckMenuItem* item, gpointer user_data) {
     app_state* state = (app_state*)user_data;
-    int fit_mode = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "sumatra-fit-mode"));
+    int fit_mode = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "shenzhen-fit-mode"));
     if (state->updating_overflow_controls || !gtk_check_menu_item_get_active(item) || !state->fit_mode) return;
     gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), fit_mode);
 }
 
 static void fit_mode_menu_clicked(GtkMenuItem* item, gpointer user_data) {
     app_state* state = (app_state*)user_data;
-    int fit_mode = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "sumatra-fit-mode"));
+    int fit_mode = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "shenzhen-fit-mode"));
     if (!state || !state->fit_mode) return;
     gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), fit_mode);
 }
@@ -5639,6 +5639,9 @@ typedef struct ocr_task {
     char* tool;
     char* path;
     char* tmp_path;
+    char* language;
+    char* language_label;
+    char* tessdata_parent;
     GtkWidget* dialog;
     GtkWidget* progress;
     int page_index;
@@ -5656,6 +5659,7 @@ typedef struct ocr_result {
 } ocr_result;
 
 static void ocr_clicked(GtkButton* button, gpointer user_data);
+static void start_ocr_for_language(app_state* state, const char* language, const char* language_label);
 static void translate_clicked(GtkButton* button, gpointer user_data);
 
 typedef struct ocr_install_task {
@@ -5664,6 +5668,8 @@ typedef struct ocr_install_task {
     GtkWidget* progress;
     GtkWidget* log;
     char* script;
+    char* language;
+    char* language_label;
 } ocr_install_task;
 
 typedef struct ocr_install_result {
@@ -5673,7 +5679,152 @@ typedef struct ocr_install_result {
     GtkWidget* log;
     gboolean success;
     char* output;
+    char* language;
+    char* language_label;
 } ocr_install_result;
+
+typedef struct ocr_language_option {
+    const char* code;
+    const char* label;
+} ocr_language_option;
+
+static const ocr_language_option OCR_LANGUAGE_OPTIONS[] = {
+    {"chi_sim+eng", "Chinese Simplified + English"},
+    {"chi_sim", "Chinese Simplified"},
+    {"chi_tra+eng", "Chinese Traditional + English"},
+    {"chi_tra", "Chinese Traditional"},
+    {"eng", "English"},
+};
+
+static char** ocr_language_components(const char* language) {
+    return g_strsplit(language && *language ? language : "eng", "+", -1);
+}
+
+static gboolean ocr_language_uses_extra_traineddata(const char* language) {
+    gboolean extra = FALSE;
+    char** parts = ocr_language_components(language);
+    for (int i = 0; parts && parts[i]; i++) {
+        if (g_strcmp0(parts[i], "eng") != 0) {
+            extra = TRUE;
+            break;
+        }
+    }
+    g_strfreev(parts);
+    return extra;
+}
+
+static char* ocr_language_shell_list(const char* language) {
+    char** parts = ocr_language_components(language);
+    char* joined = g_strjoinv(" ", parts);
+    g_strfreev(parts);
+    return joined;
+}
+
+static char* custom_tessdata_parent_path(void) {
+    return g_build_filename(g_get_user_data_dir(), "shenzhenpdf", "tesseract", NULL);
+}
+
+static gboolean tessdata_parent_has_language(const char* parent, const char* language) {
+    gboolean has_all = TRUE;
+    char** parts = ocr_language_components(language);
+    if (!parts || !parts[0]) has_all = FALSE;
+    for (int i = 0; has_all && parts[i]; i++) {
+        char* filename = g_strdup_printf("%s.traineddata", parts[i]);
+        char* path = g_build_filename(parent, "tessdata", filename, NULL);
+        has_all = g_file_test(path, G_FILE_TEST_IS_REGULAR);
+        g_free(path);
+        g_free(filename);
+    }
+    g_strfreev(parts);
+    return has_all;
+}
+
+static gboolean list_output_has_ocr_language(const char* output, const char* language) {
+    gboolean has_all = TRUE;
+    char** parts = ocr_language_components(language);
+    if (!parts || !parts[0]) has_all = FALSE;
+    for (int i = 0; has_all && parts[i]; i++) {
+        gboolean found = FALSE;
+        char** lines = g_strsplit(output ? output : "", "\n", -1);
+        for (int j = 0; lines && lines[j]; j++) {
+            char* trimmed = g_strstrip(lines[j]);
+            if (g_strcmp0(trimmed, parts[i]) == 0) {
+                found = TRUE;
+                break;
+            }
+        }
+        g_strfreev(lines);
+        has_all = found;
+    }
+    g_strfreev(parts);
+    return has_all;
+}
+
+static gboolean tesseract_has_ocr_language(const char* language) {
+    char* tesseract = g_find_program_in_path("tesseract");
+    char* stdout_text = NULL;
+    char* stderr_text = NULL;
+    gboolean has_language = FALSE;
+    if (tesseract) {
+        gchar* argv[] = {tesseract, "--list-langs", NULL};
+        if (g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, &stdout_text, &stderr_text, NULL, NULL)) {
+            GString* output = g_string_new("");
+            if (stdout_text) g_string_append(output, stdout_text);
+            if (stderr_text) g_string_append(output, stderr_text);
+            has_language = list_output_has_ocr_language(output->str, language);
+            g_string_free(output, TRUE);
+        }
+    }
+    if (!has_language) {
+        char* parent = custom_tessdata_parent_path();
+        has_language = tessdata_parent_has_language(parent, language);
+        g_free(parent);
+    }
+    g_free(stdout_text);
+    g_free(stderr_text);
+    g_free(tesseract);
+    return has_language;
+}
+
+static char* tessdata_parent_for_ocr_language(const char* language) {
+    char* parent = custom_tessdata_parent_path();
+    if (tessdata_parent_has_language(parent, language)) return parent;
+    g_free(parent);
+    return NULL;
+}
+
+static gboolean prompt_for_ocr_language(app_state* state, char** language_out, char** label_out) {
+    GtkWidget* dialog =
+        gtk_dialog_new_with_buttons("OCR language", GTK_WINDOW(state->window), GTK_DIALOG_MODAL, "_Run OCR",
+                                    GTK_RESPONSE_ACCEPT, "_Cancel", GTK_RESPONSE_CANCEL, NULL);
+    GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget* label = gtk_label_new("Choose the language data Tesseract should use for this PDF.");
+    GtkWidget* combo = gtk_combo_box_text_new();
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_widget_set_margin_start(label, 12);
+    gtk_widget_set_margin_end(label, 12);
+    gtk_widget_set_margin_top(label, 12);
+    gtk_widget_set_margin_bottom(label, 8);
+    gtk_widget_set_margin_start(combo, 12);
+    gtk_widget_set_margin_end(combo, 12);
+    gtk_widget_set_margin_bottom(combo, 12);
+    for (guint i = 0; i < G_N_ELEMENTS(OCR_LANGUAGE_OPTIONS); i++) {
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), OCR_LANGUAGE_OPTIONS[i].code,
+                                  OCR_LANGUAGE_OPTIONS[i].label);
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(combo), 0);
+    gtk_box_pack_start(GTK_BOX(content), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), combo, FALSE, FALSE, 0);
+    gtk_widget_show_all(dialog);
+    int response = gtk_dialog_run(GTK_DIALOG(dialog));
+    if (response == GTK_RESPONSE_ACCEPT) {
+        const char* active_id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(combo));
+        *language_out = g_strdup(active_id ? active_id : "eng");
+        *label_out = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo));
+    }
+    gtk_widget_destroy(dialog);
+    return response == GTK_RESPONSE_ACCEPT && *language_out && *label_out;
+}
 
 static char* backup_path_for_pdf(const char* path) {
     char* dir = g_path_get_dirname(path);
@@ -5763,26 +5914,67 @@ static gboolean pulse_install_progress(gpointer data) {
     return G_SOURCE_CONTINUE;
 }
 
-static char* ocr_install_script(void) {
-    return g_strdup(
+static char* ocr_install_script(const char* language) {
+    char* language_list = ocr_language_shell_list(language);
+    char* quoted_languages = g_shell_quote(language_list);
+    gboolean extra = ocr_language_uses_extra_traineddata(language);
+    char* script = g_strdup_printf(
         "set -e\n"
-        "if command -v ocrmypdf >/dev/null 2>&1 && command -v tesseract >/dev/null 2>&1; then exit 0; fi\n"
-        "if ! command -v pkexec >/dev/null 2>&1; then echo 'pkexec is required for graphical package installation.'; "
-        "exit 1; fi\n"
-        "if command -v apt-get >/dev/null 2>&1; then\n"
-        "  pkexec /bin/sh -c 'apt-get update && apt-get install -y ocrmypdf tesseract-ocr'\n"
-        "elif command -v dnf >/dev/null 2>&1; then\n"
-        "  pkexec dnf install -y ocrmypdf tesseract\n"
-        "elif command -v pacman >/dev/null 2>&1; then\n"
-        "  pkexec pacman -S --needed --noconfirm ocrmypdf tesseract\n"
-        "elif command -v zypper >/dev/null 2>&1; then\n"
-        "  pkexec zypper --non-interactive install ocrmypdf tesseract-ocr\n"
-        "else\n"
-        "  echo 'No supported package manager found (apt, dnf, pacman, zypper).'\n"
-        "  exit 1\n"
+        "OCR_LANGS=%s\n"
+        "DATA_HOME=\"${XDG_DATA_HOME:-$HOME/.local/share}\"\n"
+        "TESS_PARENT=\"$DATA_HOME/shenzhenpdf/tesseract\"\n"
+        "mkdir -p \"$TESS_PARENT/tessdata\"\n"
+        "if ! command -v ocrmypdf >/dev/null 2>&1 || ! command -v tesseract >/dev/null 2>&1; then\n"
+        "  if ! command -v pkexec >/dev/null 2>&1; then echo 'pkexec is required to install OCR packages.'; exit 1; "
         "fi\n"
+        "  if command -v apt-get >/dev/null 2>&1; then\n"
+        "    pkexec /bin/sh -c 'apt-get update && apt-get install -y ocrmypdf tesseract-ocr'\n"
+        "  elif command -v dnf >/dev/null 2>&1; then\n"
+        "    pkexec dnf install -y ocrmypdf tesseract\n"
+        "  elif command -v pacman >/dev/null 2>&1; then\n"
+        "    pkexec pacman -S --needed --noconfirm ocrmypdf tesseract\n"
+        "  elif command -v zypper >/dev/null 2>&1; then\n"
+        "    pkexec zypper --non-interactive install ocrmypdf tesseract-ocr\n"
+        "  else\n"
+        "    echo 'No supported package manager found (apt, dnf, pacman, zypper).'\n"
+        "    exit 1\n"
+        "  fi\n"
+        "fi\n"
+        "if [ \"%d\" = \"1\" ] && command -v pkexec >/dev/null 2>&1; then\n"
+        "  if command -v apt-get >/dev/null 2>&1; then\n"
+        "    pkexec /bin/sh -c 'apt-get update && apt-get install -y tesseract-ocr-chi-sim tesseract-ocr-chi-tra' || "
+        "true\n"
+        "  elif command -v dnf >/dev/null 2>&1; then\n"
+        "    pkexec dnf install -y tesseract-langpack-chi_sim tesseract-langpack-chi_tra || true\n"
+        "  elif command -v pacman >/dev/null 2>&1; then\n"
+        "    pkexec pacman -S --needed --noconfirm tesseract-data-chi_sim tesseract-data-chi_tra || true\n"
+        "  elif command -v zypper >/dev/null 2>&1; then\n"
+        "    pkexec zypper --non-interactive install tesseract-ocr-traineddata-chinese_simplified "
+        "tesseract-ocr-traineddata-chinese_traditional || true\n"
+        "  fi\n"
+        "fi\n"
+        "download_lang() {\n"
+        "  lang=\"$1\"\n"
+        "  url=\"https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/$lang.traineddata\"\n"
+        "  dest=\"$TESS_PARENT/tessdata/$lang.traineddata\"\n"
+        "  echo \"Downloading $lang traineddata...\"\n"
+        "  if command -v curl >/dev/null 2>&1; then curl -LfsS \"$url\" -o \"$dest\"; "
+        "elif command -v wget >/dev/null 2>&1; then wget -q \"$url\" -O \"$dest\"; "
+        "else echo 'curl or wget is required to download OCR language data.'; return 1; fi\n"
+        "}\n"
+        "for lang in $OCR_LANGS; do\n"
+        "  if command -v tesseract >/dev/null 2>&1 && tesseract --list-langs 2>/dev/null | grep -qx \"$lang\"; then "
+        "echo \"Tesseract language $lang is installed.\"; "
+        "elif [ -f \"$TESS_PARENT/tessdata/$lang.traineddata\" ]; then "
+        "echo \"Bundled Shenzhen PDF language $lang is installed.\"; "
+        "else download_lang \"$lang\"; fi\n"
+        "done\n"
         "command -v ocrmypdf >/dev/null 2>&1\n"
-        "command -v tesseract >/dev/null 2>&1\n");
+        "command -v tesseract >/dev/null 2>&1\n",
+        quoted_languages, extra ? 1 : 0);
+    g_free(language_list);
+    g_free(quoted_languages);
+    return script;
 }
 
 static void append_install_log(GtkWidget* log, const char* text) {
@@ -5803,14 +5995,16 @@ static gboolean ocr_install_finished_idle(gpointer data) {
 
     tool = g_find_program_in_path("ocrmypdf");
     tesseract = g_find_program_in_path("tesseract");
-    if (result->success && tool && tesseract) {
+    if (result->success && tool && tesseract && tesseract_has_ocr_language(result->language)) {
         gtk_widget_destroy(result->dialog);
         if (result->state->ocr_button)
             gtk_widget_set_sensitive(result->state->ocr_button,
                                      result->state->doc != NULL && path_has_pdf_extension(result->state->path));
-        ocr_clicked(GTK_BUTTON(result->state->ocr_button), result->state);
+        start_ocr_for_language(result->state, result->language, result->language_label);
     } else {
-        append_install_log(result->log, "\nOCR installation failed. The package manager output is shown above.\n");
+        append_install_log(result->log,
+                           "\nOCR installation failed or the selected language data is still missing. The package "
+                           "manager output is shown above.\n");
         if (result->state->ocr_button)
             gtk_widget_set_sensitive(result->state->ocr_button,
                                      result->state->doc != NULL && path_has_pdf_extension(result->state->path));
@@ -5823,6 +6017,8 @@ static gboolean ocr_install_finished_idle(gpointer data) {
     g_object_unref(result->progress);
     g_object_unref(result->log);
     g_free(result->output);
+    g_free(result->language);
+    g_free(result->language_label);
     g_free(result);
     return G_SOURCE_REMOVE;
 }
@@ -5849,6 +6045,8 @@ static gpointer ocr_install_worker(gpointer data) {
     result->log = task->log;
     result->success = ok && g_spawn_check_wait_status(status, &error);
     result->output = g_string_free(output, FALSE);
+    result->language = task->language;
+    result->language_label = task->language_label;
 
     if (error) g_error_free(error);
     g_free(stdout_text);
@@ -5859,10 +6057,10 @@ static gpointer ocr_install_worker(gpointer data) {
     return NULL;
 }
 
-static void install_ocr_then_run(app_state* state) {
+static void install_ocr_then_run(app_state* state, const char* language, const char* language_label) {
     GtkWidget* dialog = gtk_dialog_new();
     GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget* title = gtk_label_new("Installing OCRmyPDF and Tesseract");
+    GtkWidget* title = gtk_label_new("Installing OCRmyPDF, Tesseract, and language data");
     GtkWidget* progress = gtk_progress_bar_new();
     GtkWidget* scroll = gtk_scrolled_window_new(NULL, NULL);
     GtkWidget* log = gtk_text_view_new();
@@ -5887,7 +6085,9 @@ static void install_ocr_then_run(app_state* state) {
     gtk_box_pack_start(GTK_BOX(content), progress, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 0);
     g_signal_connect(dialog, "delete-event", G_CALLBACK(block_dialog_delete), NULL);
-    append_install_log(log, "Preparing OCR installer...\n");
+    char* message = g_strdup_printf("Preparing OCR installer for %s...\n", language_label);
+    append_install_log(log, message);
+    g_free(message);
     gtk_widget_show_all(dialog);
     g_object_set_data(G_OBJECT(progress), "ocr-install-running", GINT_TO_POINTER(TRUE));
     g_timeout_add_full(G_PRIORITY_DEFAULT, 120, pulse_install_progress, g_object_ref(progress), g_object_unref);
@@ -5898,7 +6098,9 @@ static void install_ocr_then_run(app_state* state) {
     task->dialog = g_object_ref(dialog);
     task->progress = g_object_ref(progress);
     task->log = g_object_ref(log);
-    task->script = ocr_install_script();
+    task->script = ocr_install_script(language);
+    task->language = g_strdup(language);
+    task->language_label = g_strdup(language_label);
     g_thread_unref(g_thread_new("install-ocr", ocr_install_worker, task));
 }
 
@@ -5913,7 +6115,8 @@ static gpointer ocr_worker(gpointer data) {
     gboolean ok;
 
     snprintf(jobs, sizeof(jobs), "%u", MAX(1u, g_get_num_processors()));
-    gchar* argv[12];
+    gchar* argv[15];
+    gchar** envp = NULL;
     int arg = 0;
     argv[arg++] = task->tool;
     argv[arg++] = "--jobs";
@@ -5921,13 +6124,19 @@ static gpointer ocr_worker(gpointer data) {
     argv[arg++] = "--rotate-pages";
     argv[arg++] = "--optimize";
     argv[arg++] = "1";
+    argv[arg++] = "-l";
+    argv[arg++] = task->language;
     if (!task->has_text) argv[arg++] = "--deskew";
     argv[arg++] = task->has_text ? "--redo-ocr" : "--skip-text";
     argv[arg++] = task->path;
     argv[arg++] = task->tmp_path;
     argv[arg++] = NULL;
 
-    ok = g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, &stdout_text, &stderr_text, &status, &error);
+    if (task->tessdata_parent) {
+        envp = g_get_environ();
+        envp = g_environ_setenv(envp, "TESSDATA_PREFIX", task->tessdata_parent, TRUE);
+    }
+    ok = g_spawn_sync(NULL, argv, envp, G_SPAWN_DEFAULT, NULL, NULL, &stdout_text, &stderr_text, &status, &error);
     result->state = task->state;
     result->path = g_strdup(task->path);
     result->dialog = task->dialog;
@@ -5950,6 +6159,10 @@ static gpointer ocr_worker(gpointer data) {
     g_free(task->tool);
     g_free(task->path);
     g_free(task->tmp_path);
+    g_free(task->language);
+    g_free(task->language_label);
+    g_free(task->tessdata_parent);
+    g_strfreev(envp);
     g_free(task);
     g_idle_add(ocr_finished_idle, result);
     return NULL;
@@ -5958,6 +6171,15 @@ static gpointer ocr_worker(gpointer data) {
 static void ocr_clicked(GtkButton* button, gpointer user_data) {
     (void)button;
     app_state* state = (app_state*)user_data;
+    char* language = NULL;
+    char* language_label = NULL;
+    if (!prompt_for_ocr_language(state, &language, &language_label)) return;
+    start_ocr_for_language(state, language, language_label);
+    g_free(language);
+    g_free(language_label);
+}
+
+static void start_ocr_for_language(app_state* state, const char* language, const char* language_label) {
     char err[1024];
     int has_text;
     char* tool;
@@ -5976,19 +6198,23 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
     if (!state->doc || !state->path || !path_has_pdf_extension(state->path)) return;
     tool = g_find_program_in_path("ocrmypdf");
     tesseract = g_find_program_in_path("tesseract");
-    if (!tool || !tesseract) {
-        GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(state->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION,
-                                                   GTK_BUTTONS_NONE, "Install OCR support?");
-        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
-                                                 "SumatraPDF can install OCRmyPDF and Tesseract, then continue OCR "
-                                                 "automatically when installation finishes.");
+    gboolean language_ready = tesseract && tesseract_has_ocr_language(language);
+    if (!tool || !tesseract || !language_ready) {
+        GtkWidget* dialog =
+            gtk_message_dialog_new(GTK_WINDOW(state->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE,
+                                   !tool || !tesseract ? "Install OCR support?" : "Install OCR language data?");
+        gtk_message_dialog_format_secondary_text(
+            GTK_MESSAGE_DIALOG(dialog),
+            "Shenzhen PDF can install OCRmyPDF, Tesseract, and the %s traineddata, "
+            "then continue OCR automatically when installation finishes.",
+            language_label ? language_label : language);
         gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_Install", GTK_RESPONSE_ACCEPT, "_Cancel", GTK_RESPONSE_CANCEL,
                                NULL);
         int response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         g_free(tool);
         g_free(tesseract);
-        if (response == GTK_RESPONSE_ACCEPT) install_ocr_then_run(state);
+        if (response == GTK_RESPONSE_ACCEPT) install_ocr_then_run(state, language, language_label);
         return;
     }
     g_free(tesseract);
@@ -6004,7 +6230,7 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
         GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(state->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING,
                                                    GTK_BUTTONS_NONE, "This PDF already contains selectable text.");
         gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
-                                                 "SumatraPDF will make a backup before OCR replaces it.");
+                                                 "Shenzhen PDF will make a backup before OCR replaces it.");
         gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_OCR and Backup", GTK_RESPONSE_ACCEPT, "_Cancel",
                                GTK_RESPONSE_CANCEL, NULL);
         int response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -6040,7 +6266,8 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
     progress_dialog = gtk_dialog_new();
     content = gtk_dialog_get_content_area(GTK_DIALOG(progress_dialog));
     title = gtk_label_new("Running OCR");
-    detail = gtk_label_new("OCR running...");
+    char* running = g_strdup_printf("OCR running (%s)...", language_label ? language_label : language);
+    detail = gtk_label_new(running);
     progress = gtk_progress_bar_new();
     gtk_window_set_title(GTK_WINDOW(progress_dialog), "OCR");
     gtk_window_set_transient_for(GTK_WINDOW(progress_dialog), GTK_WINDOW(state->window));
@@ -6071,13 +6298,17 @@ static void ocr_clicked(GtkButton* button, gpointer user_data) {
     task->tool = tool;
     task->path = g_strdup(state->path);
     task->tmp_path = tmp_path;
+    task->language = g_strdup(language);
+    task->language_label = g_strdup(language_label);
+    task->tessdata_parent = tessdata_parent_for_ocr_language(language);
     task->dialog = g_object_ref(progress_dialog);
     task->progress = g_object_ref(progress);
     task->page_index = state->page_index;
     task->has_text = has_text > 0;
     gtk_widget_set_sensitive(state->ocr_button, FALSE);
-    gtk_label_set_text(GTK_LABEL(state->status), "OCR running...");
+    gtk_label_set_text(GTK_LABEL(state->status), running);
     g_thread_unref(g_thread_new("ocrmypdf", ocr_worker, task));
+    g_free(running);
     g_free(base);
     g_free(dir);
     g_free(backup);
@@ -7023,7 +7254,7 @@ static void translate_clicked(GtkButton* button, gpointer user_data) {
         GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(state->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION,
                                                    GTK_BUTTONS_NONE, "Install translation support?");
         gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
-                                                 "SumatraPDF can install Argos Translate, then continue the "
+                                                 "Shenzhen PDF can install Argos Translate, then continue the "
                                                  "translation flow when installation finishes.");
         gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_Install", GTK_RESPONSE_ACCEPT, "_Cancel", GTK_RESPONSE_CANCEL,
                                NULL);
@@ -7149,11 +7380,11 @@ static void install_palette_css(void) {
     if (installed) return;
     provider = gtk_css_provider_new();
     gtk_css_provider_load_from_data(provider,
-                                    ".sumatra-palette-header {"
+                                    ".shenzhen-palette-header {"
                                     "  background-color: alpha(@theme_selected_bg_color, 0.16);"
                                     "  border-radius: 6px;"
                                     "}"
-                                    ".sumatra-palette-delete-confirm {"
+                                    ".shenzhen-palette-delete-confirm {"
                                     "  color: #b00020;"
                                     "}",
                                     -1, NULL);
@@ -7170,41 +7401,41 @@ static void install_toolbar_css(void) {
     if (installed) return;
     provider = gtk_css_provider_new();
     gtk_css_provider_load_from_data(provider,
-                                    ".sumatra-toolbar-switch-control {"
+                                    ".shenzhen-toolbar-switch-control {"
                                     "  padding: 1px 4px;"
                                     "  border-radius: 8px;"
                                     "}"
-                                    ".sumatra-toolbar label,"
-                                    ".sumatra-toolbar button,"
-                                    ".sumatra-toolbar checkbutton {"
+                                    ".shenzhen-toolbar label,"
+                                    ".shenzhen-toolbar button,"
+                                    ".shenzhen-toolbar checkbutton {"
                                     "  font-weight: normal;"
                                     "}"
-                                    ".sumatra-toolbar-overflow {"
+                                    ".shenzhen-toolbar-overflow {"
                                     "  padding: 0 4px;"
                                     "  border-radius: 8px;"
                                     "  min-width: 30px;"
                                     "}"
-                                    ".sumatra-toolbar-switch-control:disabled {"
+                                    ".shenzhen-toolbar-switch-control:disabled {"
                                     "  color: alpha(@theme_fg_color, 0.45);"
                                     "}"
-                                    "switch.sumatra-toolbar-switch {"
+                                    "switch.shenzhen-toolbar-switch {"
                                     "  min-width: 34px;"
                                     "  min-height: 18px;"
                                     "  border-radius: 10px;"
                                     "  background-color: alpha(@theme_fg_color, 0.20);"
                                     "  border: 1px solid alpha(@theme_fg_color, 0.24);"
                                     "}"
-                                    "switch.sumatra-toolbar-switch:checked {"
+                                    "switch.shenzhen-toolbar-switch:checked {"
                                     "  background-color: rgba(255, 255, 255, 0.94);"
                                     "  border-color: rgba(255, 255, 255, 0.74);"
                                     "}"
-                                    "switch.sumatra-toolbar-switch slider {"
+                                    "switch.shenzhen-toolbar-switch slider {"
                                     "  min-width: 14px;"
                                     "  min-height: 14px;"
                                     "  border-radius: 8px;"
                                     "  background-color: rgba(255, 255, 255, 0.96);"
                                     "}"
-                                    "switch.sumatra-toolbar-switch:checked slider {"
+                                    "switch.shenzhen-toolbar-switch:checked slider {"
                                     "  background-color: rgba(0, 0, 0, 0.86);"
                                     "}",
                                     -1, NULL);
@@ -7295,8 +7526,8 @@ static GtkWidget* toolbar_switch_control_new(const char* title, GtkWidget** swit
     GtkWidget* label = gtk_label_new(title);
     GtkWidget* toggle = gtk_switch_new();
 
-    gtk_style_context_add_class(gtk_widget_get_style_context(box), "sumatra-toolbar-switch-control");
-    gtk_style_context_add_class(gtk_widget_get_style_context(toggle), "sumatra-toolbar-switch");
+    gtk_style_context_add_class(gtk_widget_get_style_context(box), "shenzhen-toolbar-switch-control");
+    gtk_style_context_add_class(gtk_widget_get_style_context(toggle), "shenzhen-toolbar-switch");
     gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(toggle, GTK_ALIGN_CENTER);
@@ -7309,8 +7540,8 @@ static GtkWidget* toolbar_switch_control_new(const char* title, GtkWidget** swit
 static void toolbar_pack_item(GtkWidget* toolbar, GtkWidget* item, int overflow_priority, GtkWidget* mirror_item) {
     gtk_box_pack_start(GTK_BOX(toolbar), item, FALSE, FALSE, 0);
     if (overflow_priority > 0)
-        g_object_set_data(G_OBJECT(item), "sumatra-overflow-priority", GINT_TO_POINTER(overflow_priority));
-    if (mirror_item) g_object_set_data(G_OBJECT(item), "sumatra-overflow-mirror", mirror_item);
+        g_object_set_data(G_OBJECT(item), "shenzhen-overflow-priority", GINT_TO_POINTER(overflow_priority));
+    if (mirror_item) g_object_set_data(G_OBJECT(item), "shenzhen-overflow-mirror", mirror_item);
 }
 
 static int widget_preferred_width(GtkWidget* widget) {
@@ -7372,8 +7603,8 @@ static void update_toolbar_overflow_menu_state(app_state* state) {
 static int compare_toolbar_items_by_priority(const void* a, const void* b) {
     GtkWidget* widget_a = *(GtkWidget* const*)a;
     GtkWidget* widget_b = *(GtkWidget* const*)b;
-    int priority_a = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget_a), "sumatra-overflow-priority"));
-    int priority_b = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget_b), "sumatra-overflow-priority"));
+    int priority_a = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget_a), "shenzhen-overflow-priority"));
+    int priority_b = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget_b), "shenzhen-overflow-priority"));
     return priority_b - priority_a;
 }
 
@@ -7396,8 +7627,8 @@ static void toolbar_size_allocate(GtkWidget* toolbar, GtkAllocation* allocation,
     for (GList* it = children; it; it = it->next) {
         GtkWidget* child = GTK_WIDGET(it->data);
         if (child == state->toolbar_overflow_button) continue;
-        if (g_object_get_data(G_OBJECT(child), "sumatra-overflow-hidden")) {
-            g_object_set_data(G_OBJECT(child), "sumatra-overflow-hidden", NULL);
+        if (g_object_get_data(G_OBJECT(child), "shenzhen-overflow-hidden")) {
+            g_object_set_data(G_OBJECT(child), "shenzhen-overflow-hidden", NULL);
             gtk_widget_show(child);
         }
     }
@@ -7407,7 +7638,7 @@ static void toolbar_size_allocate(GtkWidget* toolbar, GtkAllocation* allocation,
         GtkWidget* child = GTK_WIDGET(it->data);
         int priority;
         if (child == state->toolbar_overflow_button || !gtk_widget_get_visible(child)) continue;
-        priority = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "sumatra-overflow-priority"));
+        priority = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "shenzhen-overflow-priority"));
         total_width += widget_preferred_width(child);
         visible_count++;
         if (priority > 0) candidates[candidate_count++] = child;
@@ -7420,9 +7651,9 @@ static void toolbar_size_allocate(GtkWidget* toolbar, GtkAllocation* allocation,
         qsort(candidates, (size_t)candidate_count, sizeof(GtkWidget*), compare_toolbar_items_by_priority);
         for (int i = 0; i < candidate_count && total_width > allocation->width; ++i) {
             GtkWidget* child = candidates[i];
-            GtkWidget* mirror = GTK_WIDGET(g_object_get_data(G_OBJECT(child), "sumatra-overflow-mirror"));
+            GtkWidget* mirror = GTK_WIDGET(g_object_get_data(G_OBJECT(child), "shenzhen-overflow-mirror"));
             total_width -= widget_preferred_width(child) + spacing;
-            g_object_set_data(G_OBJECT(child), "sumatra-overflow-hidden", GINT_TO_POINTER(TRUE));
+            g_object_set_data(G_OBJECT(child), "shenzhen-overflow-hidden", GINT_TO_POINTER(TRUE));
             gtk_widget_hide(child);
             if (mirror) gtk_widget_show(mirror);
             hidden_count++;
@@ -7430,9 +7661,9 @@ static void toolbar_size_allocate(GtkWidget* toolbar, GtkAllocation* allocation,
     }
 
     for (int i = 0; i < candidate_count; ++i) {
-        GtkWidget* mirror = GTK_WIDGET(g_object_get_data(G_OBJECT(candidates[i]), "sumatra-overflow-mirror"));
+        GtkWidget* mirror = GTK_WIDGET(g_object_get_data(G_OBJECT(candidates[i]), "shenzhen-overflow-mirror"));
         if (!mirror) continue;
-        if (g_object_get_data(G_OBJECT(candidates[i]), "sumatra-overflow-hidden"))
+        if (g_object_get_data(G_OBJECT(candidates[i]), "shenzhen-overflow-hidden"))
             gtk_widget_show(mirror);
         else
             gtk_widget_hide(mirror);
@@ -7456,7 +7687,7 @@ static void add_palette_header(GtkListBox* list, const char* text) {
 
     gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
     gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
-    gtk_style_context_add_class(gtk_widget_get_style_context(capsule), "sumatra-palette-header");
+    gtk_style_context_add_class(gtk_widget_get_style_context(capsule), "shenzhen-palette-header");
     gtk_label_set_xalign(GTK_LABEL(label), 0.0);
     gtk_widget_set_margin_start(capsule, 8);
     gtk_widget_set_margin_end(capsule, 8);
@@ -7515,7 +7746,7 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
         gtk_widget_set_margin_bottom(label, 1);
         gtk_widget_set_size_request(button, armed ? 118 : 30, 28);
         gtk_widget_set_tooltip_text(button, armed ? "Click again to delete this favorite" : "Delete favorite");
-        if (armed) gtk_style_context_add_class(gtk_widget_get_style_context(button), "sumatra-palette-delete-confirm");
+        if (armed) gtk_style_context_add_class(gtk_widget_get_style_context(button), "shenzhen-palette-delete-confirm");
         g_object_set_data(G_OBJECT(button), "favorite-index", GINT_TO_POINTER(i + 1));
         g_object_set_data(G_OBJECT(button), "favorites-list", list);
         g_signal_connect(button, "clicked", G_CALLBACK(favorites_delete_clicked), state);
@@ -8150,7 +8381,7 @@ static gboolean window_delete_event(GtkWidget* widget, GdkEvent* event, gpointer
     if (state) {
         save_settings(state);
         save_session(state);
-        terminate_other_sumatra_processes();
+        terminate_other_shenzhen_processes();
     }
     return FALSE;
 }
@@ -8161,7 +8392,7 @@ static void quit_requested(GtkWidget* widget, gpointer user_data) {
     if (!state) return;
     save_settings(state);
     save_session(state);
-    terminate_other_sumatra_processes();
+    terminate_other_shenzhen_processes();
     if (state->app) g_application_quit(G_APPLICATION(state->app));
 }
 
@@ -8189,7 +8420,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
 
     state->window = gtk_application_window_new(app);
     gtk_widget_add_events(state->window, GDK_BUTTON_PRESS_MASK | GDK_KEY_PRESS_MASK | GDK_FOCUS_CHANGE_MASK);
-    gtk_window_set_title(GTK_WINDOW(state->window), "SumatraPDF");
+    gtk_window_set_title(GTK_WINDOW(state->window), "Shenzhen PDF");
     gtk_window_set_default_size(GTK_WINDOW(state->window),
                                 clamp_int(state->window_width, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH),
                                 clamp_int(state->window_height, MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT));
@@ -8286,9 +8517,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), favorites_json_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), settings);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
-    g_object_set_data(G_OBJECT(fit_width_item), "sumatra-fit-mode", GINT_TO_POINTER(2));
-    g_object_set_data(G_OBJECT(fit_height_item), "sumatra-fit-mode", GINT_TO_POINTER(3));
-    g_object_set_data(G_OBJECT(fit_page_item), "sumatra-fit-mode", GINT_TO_POINTER(4));
+    g_object_set_data(G_OBJECT(fit_width_item), "shenzhen-fit-mode", GINT_TO_POINTER(2));
+    g_object_set_data(G_OBJECT(fit_height_item), "shenzhen-fit-mode", GINT_TO_POINTER(3));
+    g_object_set_data(G_OBJECT(fit_page_item), "shenzhen-fit-mode", GINT_TO_POINTER(4));
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), fit_width_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), fit_height_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(view_menu), fit_page_item);
@@ -8313,7 +8544,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_set_margin_top(state->tab_strip, 4);
     gtk_widget_set_margin_bottom(state->tab_strip, 0);
     state->tab_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-    GtkTargetEntry tab_drop_targets[] = {{(gchar*)SUMATRA_TAB_MIME_TYPE, 0, 0}};
+    GtkTargetEntry tab_drop_targets[] = {{(gchar*)SHENZHENPDF_TAB_MIME_TYPE, 0, 0}};
     gtk_drag_dest_set(state->tab_bar, GTK_DEST_DEFAULT_ALL, tab_drop_targets, 1, GDK_ACTION_MOVE);
     g_signal_connect(state->tab_bar, "drag-data-received", G_CALLBACK(tab_drag_data_received), state);
     gtk_widget_set_hexpand(state->tab_bar, TRUE);
@@ -8331,7 +8562,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_set_margin_end(toolbar, 8);
     gtk_widget_set_margin_top(toolbar, 6);
     gtk_widget_set_margin_bottom(toolbar, 6);
-    gtk_style_context_add_class(gtk_widget_get_style_context(toolbar), "sumatra-toolbar");
+    gtk_style_context_add_class(gtk_widget_get_style_context(toolbar), "shenzhen-toolbar");
     gtk_box_pack_start(GTK_BOX(root), toolbar, FALSE, FALSE, 0);
     state->toolbar = toolbar;
 
@@ -8409,7 +8640,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_set_no_show_all(state->toolbar_overflow_button, TRUE);
     gtk_widget_set_size_request(state->toolbar_overflow_button, 30, 26);
     gtk_style_context_add_class(gtk_widget_get_style_context(state->toolbar_overflow_button),
-                                "sumatra-toolbar-overflow");
+                                "shenzhen-toolbar-overflow");
     state->toolbar_overflow_menu = gtk_menu_new();
     gtk_menu_button_set_popup(GTK_MENU_BUTTON(state->toolbar_overflow_button), state->toolbar_overflow_menu);
     state->overflow_side_panel_item = gtk_check_menu_item_new_with_label("Side panel");
@@ -8426,7 +8657,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     for (int i = 0; i < 5; ++i) {
         state->overflow_fit_mode_items[i] = gtk_radio_menu_item_new_with_label(fit_group, fit_labels[i]);
         fit_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(state->overflow_fit_mode_items[i]));
-        g_object_set_data(G_OBJECT(state->overflow_fit_mode_items[i]), "sumatra-fit-mode", GINT_TO_POINTER(i));
+        g_object_set_data(G_OBJECT(state->overflow_fit_mode_items[i]), "shenzhen-fit-mode", GINT_TO_POINTER(i));
         gtk_menu_shell_append(GTK_MENU_SHELL(overflow_fit_menu), state->overflow_fit_mode_items[i]);
     }
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(overflow_fit), overflow_fit_menu);
@@ -8658,7 +8889,7 @@ int main(int argc, char** argv) {
     guint sigint_id;
 
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
-        g_print("SumatraPDF portable gtk 0.5\n");
+        g_print("Shenzhen PDF portable gtk 0.5\n");
         return 0;
     }
 
@@ -8686,8 +8917,8 @@ int main(int argc, char** argv) {
     state.selected_tab = -1;
     state.restore_selected_tab = -1;
     state.favorite_pending_delete = -1;
-    state.detached_tab_launch = g_strcmp0(g_getenv("SUMATRA_DETACHED_TAB"), "1") == 0;
-    state.restore_window_id = g_strdup(g_getenv("SUMATRA_RESTORE_WINDOW"));
+    state.detached_tab_launch = g_strcmp0(g_getenv("SHENZHENPDF_DETACHED_TAB"), "1") == 0;
+    state.restore_window_id = g_strdup(g_getenv("SHENZHENPDF_RESTORE_WINDOW"));
     state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, MIN(2, g_get_num_processors())), FALSE, NULL);
     init_config_paths(&state);
     load_settings(&state);
@@ -8695,7 +8926,7 @@ int main(int argc, char** argv) {
     if (!state.detached_tab_launch && !has_startup_documents) load_session(&state);
     load_favorites(&state);
     GtkApplication* app = gtk_application_new(
-        "org.sumatrapdfreader.SumatraPDF",
+        "org.shenzhenpdf.ShenzhenPDF",
         G_APPLICATION_HANDLES_OPEN |
             ((state.detached_tab_launch || state.restore_window_id) ? G_APPLICATION_NON_UNIQUE : 0));
     g_signal_connect(app, "activate", G_CALLBACK(activate), &state);

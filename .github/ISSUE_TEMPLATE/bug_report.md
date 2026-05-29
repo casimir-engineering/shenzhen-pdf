@@ -7,7 +7,7 @@ assignees: ''
 
 ---
 
-**SumatraPDF version**
+**Shenzhen PDF version**
 - Version [e.g. 3.5.2, pre-release]
 
 **Describe the bug**

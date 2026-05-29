@@ -13,12 +13,12 @@ Your Apple Developer account holder must create:
   5. A 3rd Party Mac Developer Installer certificate.
 
 Example:
-  MAC_BUNDLE_ID=com.example.sumatrapdf \
+  MAC_BUNDLE_ID=com.example.shenzhenpdf \
   MAC_VERSION=0.5.0 \
   MAC_BUILD=6 \
   MAC_APPSTORE_IDENTITY="Apple Distribution: Friend Name (TEAMID1234)" \
   MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Friend Name (TEAMID1234)" \
-  MAC_PROVISIONING_PROFILE="$HOME/Downloads/SumatraPDF_AppStore.provisionprofile" \
+  MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
   ./portable/build-mac-testflight.sh
 
 Set OPEN_TRANSPORTER=1 to open the resulting .pkg in Apple's Transporter app.
@@ -33,7 +33,7 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 
-: "${MAC_BUNDLE_ID:=org.sumatrapdfreader.SumatraPDF}"
+: "${MAC_BUNDLE_ID:=org.shenzhenpdf.ShenzhenPDF}"
 : "${MAC_VERSION:=0.5.0}"
 : "${MAC_BUILD:=6}"
 : "${OPEN_TRANSPORTER:=0}"
@@ -70,7 +70,7 @@ make -C "$repo_root/portable" testflight-pkg \
   MAC_INSTALLER_IDENTITY="$MAC_INSTALLER_IDENTITY" \
   MAC_PROVISIONING_PROFILE="$MAC_PROVISIONING_PROFILE"
 
-pkg="$repo_root/dist/SumatraPDF-testflight-$MAC_VERSION-$MAC_BUILD.pkg"
+pkg="$repo_root/dist/ShenzhenPDF-testflight-$MAC_VERSION-$MAC_BUILD.pkg"
 echo
 echo "TestFlight package is ready:"
 echo "  $pkg"

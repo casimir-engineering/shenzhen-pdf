@@ -1,5 +1,5 @@
-#ifndef SUMATRA_PDF_CORE_H
-#define SUMATRA_PDF_CORE_H
+#ifndef SHENZHEN_PDF_CORE_H
+#define SHENZHEN_PDF_CORE_H
 
 #include <stddef.h>
 
