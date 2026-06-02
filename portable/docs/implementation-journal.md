@@ -8,9 +8,9 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 
 1. Refactor the 10k-line `.mm` file and keep an eagle view of oversized files.
    - Status: Partially complete, not done.
-   - Changed: extracted Mac models, tab strip, document view, minimap, and print view into dedicated files under `portable/mac/`.
-   - Current line counts: `portable/mac/ShenzhenPDFMac.mm` is 8,388 lines; extracted files are 103-749 lines. `portable/linux/ShenzhenPDFGtk.c` is 8,934 lines after one helper extraction.
-   - Gap: the Mac and Linux monoliths are still too large. Next refactors should split session/window lifecycle, rendering/cache orchestration, shortcut/menu construction, sidebar/comments, and Linux minimap/session code.
+   - Changed: extracted Mac models, tab strip, document view, minimap, print view, and shortcut-help delegate behavior into dedicated files under `portable/mac/`.
+   - Current line counts: `portable/mac/ShenzhenPDFMac.mm` is 7,845 lines; extracted files are 103-749 lines, plus `SPDFMacDelegatePrivate.h` at 330 lines and `ShenzhenMacDelegate+ShortcutHelp.mm` at 234 lines. `portable/linux/ShenzhenPDFGtk.c` is 8,934 lines after one helper extraction.
+   - Gap: the Mac and Linux monoliths are still too large. Next refactors should split session/window lifecycle, rendering/cache orchestration, palette/favorites, sidebar/comments, and Linux minimap/session code.
 
 2. Closing the last document in a non-last window should close that window, not show “no file loaded.”
    - Status: Implemented for the current Mac multi-process window architecture; manual multi-Space QA still needed.
