@@ -26,6 +26,7 @@ MAC_CODESIGN_EXTRA ?=
 MAC_PROVISIONING_PROFILE ?=
 NOTARY_PROFILE ?=
 PORTABLE_OPTFLAGS ?= -O2 -DNDEBUG
+LINUX_SRCS := linux/ShenzhenPDFGtk.c linux/ShenzhenPDFGtkDisplay.c
 
 ifeq ($(MAC_SIGN_IDENTITY),-)
 MAC_CODESIGN_NESTED = if [ -f "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib" ]; then codesign --force --sign - "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; fi
@@ -43,7 +44,7 @@ all: mac-app
 
 mupdf-libs:
 	@test -f "$(MUPDF_BUILD)/libmupdf.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no libs
-	@test -f "$(MUPDF_BUILD)/libmupdf-pkcs7.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no "$(MUPDF_BUILD)/libmupdf-pkcs7.a"
+	@test -f "$(MUPDF_BUILD)/libmupdf-pkcs7.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no "build/release/libmupdf-pkcs7.a"
 
 $(BUILD):
 	mkdir -p "$(BUILD)"
@@ -77,8 +78,13 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/As
 	cp mac/Assets.xcassets/Contents.json "$(BUILD)/Assets.xcassets/"
 	cp mac/Assets.xcassets/AppIcon.appiconset/Contents.json "$(BUILD)/Assets.xcassets/AppIcon.appiconset/"
 	cp "$(BUILD)/ShenzhenPDF.iconset"/*.png "$(BUILD)/Assets.xcassets/AppIcon.appiconset/"
-	xcrun actool "$(BUILD)/Assets.xcassets" --compile "$(MAC_APP)/Contents/Resources" --platform macosx --minimum-deployment-target 12.0 --app-icon AppIcon --output-partial-info-plist "$(BUILD)/actool-partial.plist"
-	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
+	if xcrun --find actool >/dev/null 2>&1; then \
+		xcrun actool "$(BUILD)/Assets.xcassets" --compile "$(MAC_APP)/Contents/Resources" --platform macosx --minimum-deployment-target 12.0 --app-icon AppIcon --output-partial-info-plist "$(BUILD)/actool-partial.plist"; \
+	else \
+		echo "warning: actool not found; using .icns app icon fallback"; \
+	fi
+	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
+	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
 	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework UniformTypeIdentifiers -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -q 'libcrypto.3.dylib'; then \
 		cp "$(OPENSSL_LIBCRYPTO)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
@@ -172,7 +178,7 @@ install: mac-app
 	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/ShenzhenPDF.app"
 
 linux: mupdf-libs | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk+-3.0) "$(CORE_SRC)" linux/ShenzhenPDFGtk.c $(MUPDF_LIBS) $$(pkg-config --libs gtk+-3.0 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk"
+	$(CC) $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk+-3.0) "$(CORE_SRC)" $(LINUX_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk+-3.0 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk"
 
 clean:
 	rm -rf "$(BUILD)" "$(MAC_APP)" "$(MAC_DMG)" "$(MAC_TESTFLIGHT_PKG)"

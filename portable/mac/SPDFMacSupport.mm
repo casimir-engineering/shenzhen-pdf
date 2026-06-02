@@ -36,6 +36,98 @@ NSString* spdf_display_path_without_extension(NSString* path) {
     return stem.length && ![stem isEqualToString:path] ? stem : path;
 }
 
+static NSArray<NSString*>* spdf_display_components_for_path(NSString* path) {
+    if (!path.length) return @[];
+    NSMutableArray<NSString*>* components = [NSMutableArray array];
+    for (NSString* component in path.stringByStandardizingPath.pathComponents) {
+        if (!component.length || [component isEqualToString:@"/"]) continue;
+        [components addObject:component];
+    }
+    if (components.count == 0) return @[];
+    NSString* last = spdf_display_label_without_extension(components.lastObject);
+    if (last.length) components[components.count - 1] = last;
+    return components;
+}
+
+static NSString* spdf_display_candidate_for_components(NSArray<NSString*>* components, NSUInteger tailLength,
+                                                       NSUInteger leadingCount) {
+    if (components.count == 0) return @"";
+    tailLength = MIN(tailLength, components.count);
+    NSUInteger start = components.count - tailLength;
+    NSArray<NSString*>* tail = [components subarrayWithRange:NSMakeRange(start, tailLength)];
+    if (tail.count <= 2) return [tail componentsJoinedByString:@"/"];
+
+    NSUInteger visibleLeading = MIN(leadingCount, tail.count - 2);
+    NSArray<NSString*>* leading = [tail subarrayWithRange:NSMakeRange(0, visibleLeading)];
+    NSString* prefix = [leading componentsJoinedByString:@"/"];
+    return [NSString stringWithFormat:@"%@/.../%@", prefix, tail.lastObject];
+}
+
+static BOOL spdf_candidates_are_unique(NSArray<NSString*>* candidates) {
+    NSMutableSet<NSString*>* seen = [NSMutableSet setWithCapacity:candidates.count];
+    for (NSString* candidate in candidates) {
+        NSString* key = candidate.lowercaseString ?: @"";
+        if ([seen containsObject:key]) return NO;
+        [seen addObject:key];
+    }
+    return YES;
+}
+
+NSArray<NSString*>* spdf_disambiguated_display_names_for_paths(NSArray<NSString*>* paths) {
+    if (paths.count == 0) return @[];
+
+    NSMutableArray<NSArray<NSString*>*>* componentsByIndex = [NSMutableArray arrayWithCapacity:paths.count];
+    NSMutableArray<NSString*>* result = [NSMutableArray arrayWithCapacity:paths.count];
+    NSMutableDictionary<NSString*, NSMutableArray<NSNumber*>*>* groups = [NSMutableDictionary dictionary];
+    for (NSUInteger i = 0; i < paths.count; ++i) {
+        NSArray<NSString*>* components = spdf_display_components_for_path(paths[i]);
+        NSString* base = components.lastObject ?: spdf_display_name_for_path(paths[i]);
+        if (!base.length) base = @"";
+        [componentsByIndex addObject:components ?: @[]];
+        [result addObject:base];
+        NSString* key = base.lowercaseString ?: @"";
+        if (!groups[key]) groups[key] = [NSMutableArray array];
+        [groups[key] addObject:@(i)];
+    }
+
+    for (NSString* key in groups) {
+        NSArray<NSNumber*>* indexes = groups[key];
+        if (indexes.count <= 1) continue;
+
+        NSUInteger maxTail = 1;
+        for (NSNumber* number in indexes) {
+            maxTail = MAX(maxTail, componentsByIndex[number.unsignedIntegerValue].count);
+        }
+
+        BOOL resolved = NO;
+        for (NSUInteger tailLength = 2; tailLength <= maxTail && !resolved; ++tailLength) {
+            NSUInteger maxLeading = tailLength <= 2 ? 1 : tailLength - 2;
+            for (NSUInteger leadingCount = 1; leadingCount <= maxLeading; ++leadingCount) {
+                NSMutableArray<NSString*>* candidates = [NSMutableArray arrayWithCapacity:indexes.count];
+                for (NSNumber* number in indexes) {
+                    NSArray<NSString*>* components = componentsByIndex[number.unsignedIntegerValue];
+                    [candidates addObject:spdf_display_candidate_for_components(components, tailLength, leadingCount)];
+                }
+                if (!spdf_candidates_are_unique(candidates)) continue;
+                for (NSUInteger i = 0; i < indexes.count; ++i) {
+                    result[indexes[i].unsignedIntegerValue] = candidates[i];
+                }
+                resolved = YES;
+                break;
+            }
+        }
+
+        if (!resolved) {
+            for (NSNumber* number in indexes) {
+                NSString* fullPath = spdf_display_path_without_extension(paths[number.unsignedIntegerValue]);
+                result[number.unsignedIntegerValue] = fullPath.length ? fullPath : result[number.unsignedIntegerValue];
+            }
+        }
+    }
+
+    return result;
+}
+
 NSArray<NSDictionary<NSString*, NSString*>*>* spdf_translation_languages(void) {
     static NSArray<NSDictionary<NSString*, NSString*>*>* languages = nil;
     if (languages) return languages;
