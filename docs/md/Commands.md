@@ -142,7 +142,7 @@ CmdFavoriteToggle,,Toggle Favorites,
 
 ```commands
 Command IDs,Keyboard shortcuts,Command Palette,Notes
-CmdTogglePresentationMode,"Ctrl + L, Shift + F11, F5",View: Presentation Mode,
+CmdTogglePresentationMode,"Ctrl + Shift + F, Ctrl + L, Shift + F11, F5",View: Presentation Mode,
 CmdPresentationBlackBackground,.,Presentation Black Background,
 CmdPresentationWhiteBackground,w,Presentation White Background,
 ```

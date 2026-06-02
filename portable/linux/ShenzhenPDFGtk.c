@@ -4,6 +4,7 @@
 #include <glib-unix.h>
 #include <glib/gstdio.h>
 
+#include "ShenzhenPDFGtkDisplay.h"
 #include "shenzhen_pdf_core.h"
 
 #include <ctype.h>
@@ -686,44 +687,19 @@ static void remove_favorite_item(app_state* state, int index) {
     state->favorite_count--;
 }
 
-static void strip_known_document_extension(char* text) {
-    static const char* exts[] = {".pdf", ".xps", ".cbz", ".epub"};
-    if (!text) return;
+static char* disambiguated_tab_title(app_state* state, int index) {
+    spdf_gtk_tab_title* tabs;
+    char* title;
 
-    for (gsize i = 0; i < G_N_ELEMENTS(exts); ++i) {
-        gsize ext_len = strlen(exts[i]);
-        char* match = NULL;
-        for (char* cursor = text; *cursor; ++cursor) {
-            if (g_ascii_strncasecmp(cursor, exts[i], ext_len) == 0) match = cursor;
-        }
-        if (!match) continue;
-        char next = match[ext_len];
-        if (next == '\0' || g_ascii_isspace(next) || next == '-') {
-            memmove(match, match + ext_len, strlen(match + ext_len) + 1);
-            return;
-        }
+    if (!state || index < 0 || index >= state->tab_count) return g_strdup("");
+    tabs = g_new0(spdf_gtk_tab_title, state->tab_count);
+    for (int i = 0; i < state->tab_count; ++i) {
+        tabs[i].path = state->tabs[i].path;
+        tabs[i].title = state->tabs[i].title;
     }
-}
-
-static char* display_name_for_path(const char* path) {
-    char* name = g_path_get_basename(path ? path : "");
-    strip_known_document_extension(name);
-    return name;
-}
-
-static char* display_label_without_extension(const char* label) {
-    char* text = g_strdup(label ? label : "");
-    strip_known_document_extension(text);
-    return text;
-}
-
-static char* display_path_without_extension(const char* path) {
-    char* text = g_strdup(path ? path : "");
-    char* slash = strrchr(text, G_DIR_SEPARATOR);
-    char* base = slash ? slash + 1 : text;
-    char* dot = strrchr(base, '.');
-    if (dot && dot > base) *dot = '\0';
-    return text;
+    title = spdf_gtk_disambiguated_tab_title(tabs, state->tab_count, index);
+    g_free(tabs);
+    return title;
 }
 
 static void add_favorite_item(app_state* state, const char* path, const char* title, int page_index,
@@ -736,9 +712,9 @@ static void add_favorite_item(app_state* state, const char* path, const char* ti
     }
     state->favorites[state->favorite_count].path = g_strdup(path);
     if (title && *title) {
-        state->favorites[state->favorite_count].title = display_label_without_extension(title);
+        state->favorites[state->favorite_count].title = spdf_gtk_display_label_without_extension(title);
     } else {
-        state->favorites[state->favorite_count].title = display_name_for_path(path);
+        state->favorites[state->favorite_count].title = spdf_gtk_display_name_for_path(path);
     }
     state->favorites[state->favorite_count].page_index = page_index;
     state->favorites[state->favorite_count].document = document;
@@ -793,7 +769,7 @@ static void update_recent_menu(app_state* state) {
         gtk_menu_shell_append(GTK_MENU_SHELL(state->recently_opened_menu), empty);
     } else {
         for (int i = 0; i < state->recent_count && i < MAX_RECENT_DOCUMENTS; ++i) {
-            char* name = display_name_for_path(state->recent_paths[i]);
+            char* name = spdf_gtk_display_name_for_path(state->recent_paths[i]);
             char* label = g_strdup_printf("%d) %s", i + 1, name && *name ? name : state->recent_paths[i]);
             GtkWidget* item = gtk_menu_item_new_with_label(label);
             gtk_widget_set_tooltip_text(item, state->recent_paths[i]);
@@ -881,7 +857,7 @@ static int insert_document_tab(app_state* state, int insert_index, const char* p
 
     document_tab* tab = &state->tabs[insert_index];
     tab->path = g_strdup(path ? path : "");
-    tab->title = title && *title ? g_strdup(title) : display_name_for_path(path ? path : "");
+    tab->title = title && *title ? g_strdup(title) : spdf_gtk_display_name_for_path(path ? path : "");
     tab->page_index = MAX(0, page_index);
     tab->zoom = zoom > 0.0 ? zoom : 1.0;
     tab->fit_mode_id = fit_mode_id >= 0 && fit_mode_id <= 4 ? fit_mode_id : 2;
@@ -906,9 +882,9 @@ static int append_document_tab(app_state* state, const char* path, const char* t
 static void set_tab_title(document_tab* tab, const char* title, const char* path) {
     char* fallback;
     if (!tab) return;
-    fallback = display_name_for_path(path ? path : tab->path);
+    fallback = spdf_gtk_display_name_for_path(path ? path : tab->path);
     g_free(tab->title);
-    tab->title = title && *title ? display_label_without_extension(title) : fallback;
+    tab->title = title && *title ? spdf_gtk_display_label_without_extension(title) : fallback;
     if (title && *title) g_free(fallback);
 }
 
@@ -1748,7 +1724,7 @@ static void update_controls(app_state* state) {
     snprintf(text, sizeof(text), "Page %d of %d    Zoom %.0f%%", state->page_index + 1, page_count,
              state->zoom * 100.0);
     gtk_label_set_text(GTK_LABEL(state->status), text);
-    char* title = display_label_without_extension(spdf_title(state->doc));
+    char* title = spdf_gtk_display_label_without_extension(spdf_title(state->doc));
     gtk_window_set_title(GTK_WINDOW(state->window), title && *title ? title : "Shenzhen PDF");
     g_free(title);
     schedule_horizontal_clamp(state);
@@ -2260,7 +2236,7 @@ static void show_missing_document(app_state* state, const char* path) {
     state->page_index = 0;
     rebuild_sidebar(state);
     show_empty_view_message(state, "File moved or deleted", path ? path : "");
-    title = display_name_for_path(path ? path : "");
+    title = spdf_gtk_display_name_for_path(path ? path : "");
     window_title = g_strdup_printf("%s - Missing - Shenzhen PDF", title && *title ? title : "Missing file");
     gtk_window_set_title(GTK_WINDOW(state->window), window_title);
     gtk_label_set_text(GTK_LABEL(state->status), "File moved or deleted.");
@@ -2764,7 +2740,7 @@ static void open_path_in_tab_at_page(app_state* state, const char* path, int pag
     if (state->tab_count == 0 ||
         (state->selected_tab >= 0 && state->selected_tab < state->tab_count && state->tabs[state->selected_tab].path &&
          state->tabs[state->selected_tab].path[0] != '\0')) {
-        char* title = display_name_for_path(path);
+        char* title = spdf_gtk_display_name_for_path(path);
         int index = append_document_tab(state, path, title, page_index, state->zoom, state->fit_mode_id,
                                         state->continuous_mode, "", FALSE, state->search_regex_multiline, -1);
         g_free(title);
@@ -3402,7 +3378,8 @@ static void update_tab_strip(app_state* state) {
         GtkWidget* frame = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         GtkWidget* handle = gtk_event_box_new();
         GtkWidget* handle_icon = gtk_drawing_area_new();
-        GtkWidget* button = gtk_button_new_with_label(tab->title && *tab->title ? tab->title : "Untitled");
+        char* tab_label = disambiguated_tab_title(state, i);
+        GtkWidget* button = gtk_button_new_with_label(tab_label && *tab_label ? tab_label : "Untitled");
         GtkWidget* close = gtk_button_new_with_label("x");
         char* tooltip = g_strdup(tab->path && *tab->path ? tab->path : tab->title);
 
@@ -3434,6 +3411,7 @@ static void update_tab_strip(app_state* state) {
         gtk_box_pack_start(GTK_BOX(frame), close, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(state->tab_bar), frame, FALSE, FALSE, 0);
         g_free(tooltip);
+        g_free(tab_label);
     }
 
     gtk_widget_show_all(state->tab_bar);
@@ -4535,10 +4513,6 @@ static gboolean minimap_should_use_precision_drag(minimap_layout* layout) {
     return layout && layout->page_count >= MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD;
 }
 
-static double minimap_precision_drag_base_scale(int page_count) {
-    return clamp_double(20.0 / MAX(1, page_count), 0.28, 0.78);
-}
-
 static double minimap_event_time_seconds(guint32 event_time) {
     if (event_time > 0) return (double)event_time / 1000.0;
     return (double)g_get_monotonic_time() / 1000000.0;
@@ -4547,21 +4521,15 @@ static double minimap_event_time_seconds(guint32 event_time) {
 static double minimap_drag_delta_time(app_state* state, double event_time) {
     double delta = event_time - state->minimap_drag_last_time;
     if (!isfinite(delta) || delta <= 0.0) delta = 1.0 / 60.0;
-    return clamp_double(delta, 1.0 / 240.0, 1.0 / 20.0);
+    return clamp_double(delta, 1.0 / 240.0, 1.0 / 15.0);
 }
 
-static double minimap_precision_catchup_blend(app_state* state, double delta_y, double distance_to_raw,
-                                              double event_time) {
-    double delta_t;
-    double speed;
-    double velocity_blend;
-    double distance_blend;
-
-    delta_t = minimap_drag_delta_time(state, event_time);
-    speed = fabs(delta_y) / delta_t;
-    velocity_blend = smoothstep_double((speed - 70.0) / (360.0 - 70.0));
-    distance_blend = smoothstep_double((distance_to_raw - 6.0) / (24.0 - 6.0));
-    return MAX(velocity_blend, distance_blend);
+static double minimap_long_document_drag_scale(app_state* state, int page_count, double delta_y, double event_time) {
+    double delta_t = minimap_drag_delta_time(state, event_time);
+    double speed = fabs(delta_y) / delta_t;
+    double acceleration = smoothstep_double((speed - 180.0) / (900.0 - 180.0));
+    double page_scale = clamp_double(20.0 / MAX(1, page_count), 0.30, 0.72);
+    return page_scale + acceleration * (1.0 - page_scale);
 }
 
 static void minimap_scroll_to_y(app_state* state, GtkWidget* widget, double widget_y) {
@@ -4723,12 +4691,10 @@ static void minimap_drag_visible_rect_to_y(app_state* state, GtkWidget* widget, 
     double min_top;
     double max_top;
     double thumb_height;
-    double raw_top;
     double delta_y;
     double event_time_seconds;
-    double precision_top;
-    double catchup_blend;
-    double center_y;
+    double drag_scale;
+    double fraction;
 
     if (!state || !state->doc || !state->scroll || !minimap_measure(state, widget, &layout)) return;
     if (!state->minimap_dragging_visible_rect || !minimap_should_use_precision_drag(&layout)) {
@@ -4743,34 +4709,17 @@ static void minimap_drag_visible_rect_to_y(app_state* state, GtkWidget* widget, 
     thumb_height = MIN(vh, MAX(1.0, layout.height - 2.0));
     min_top = 1.0;
     max_top = MAX(min_top, layout.height - thumb_height - 1.0);
-    raw_top = widget_y - state->minimap_drag_offset_top;
 
     event_time_seconds = minimap_event_time_seconds(event_time);
-    if (raw_top <= min_top) {
-        state->minimap_drag_thumb_top = min_top;
-        state->minimap_drag_last_y = widget_y;
-        state->minimap_drag_last_time = event_time_seconds;
-        minimap_scroll_to_top_fraction(state, widget, 0.0);
-        return;
-    }
-    if (raw_top >= max_top) {
-        state->minimap_drag_thumb_top = max_top;
-        state->minimap_drag_last_y = widget_y;
-        state->minimap_drag_last_time = event_time_seconds;
-        minimap_scroll_to_top_fraction(state, widget, 1.0);
-        return;
-    }
-
     delta_y = widget_y - state->minimap_drag_last_y;
-    precision_top = state->minimap_drag_thumb_top + delta_y * minimap_precision_drag_base_scale(layout.page_count);
-    catchup_blend = minimap_precision_catchup_blend(state, delta_y, fabs(raw_top - precision_top), event_time_seconds);
+    drag_scale = minimap_long_document_drag_scale(state, layout.page_count, delta_y, event_time_seconds);
     state->minimap_drag_thumb_top =
-        clamp_double(precision_top + (raw_top - precision_top) * catchup_blend, min_top, max_top);
+        clamp_double(state->minimap_drag_thumb_top + delta_y * drag_scale, min_top, max_top);
     state->minimap_drag_last_y = widget_y;
     state->minimap_drag_last_time = event_time_seconds;
 
-    center_y = state->minimap_drag_thumb_top + thumb_height * 0.5;
-    minimap_scroll_to_y(state, widget, center_y);
+    fraction = max_top <= min_top ? 0.0 : (state->minimap_drag_thumb_top - min_top) / (max_top - min_top);
+    minimap_scroll_to_top_fraction(state, widget, fraction);
 }
 
 static gboolean minimap_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
@@ -7344,7 +7293,7 @@ static void add_current_favorite(app_state* state, gboolean document) {
     char* display_title;
 
     if (!state->doc || !state->path) return;
-    display_title = display_label_without_extension(spdf_title(state->doc));
+    display_title = spdf_gtk_display_label_without_extension(spdf_title(state->doc));
     if (document)
         snprintf(title, sizeof(title), "%s", display_title);
     else
@@ -7725,8 +7674,9 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
         GtkWidget* label;
         gboolean armed = state->favorite_pending_delete == i;
         if (!favorite_matches(&state->favorites[i], filter)) continue;
-        title = display_label_without_extension(state->favorites[i].title ? state->favorites[i].title : "Favorite");
-        path = display_path_without_extension(state->favorites[i].path ? state->favorites[i].path : "");
+        title = spdf_gtk_display_label_without_extension(state->favorites[i].title ? state->favorites[i].title
+                                                                                   : "Favorite");
+        path = spdf_gtk_display_path_without_extension(state->favorites[i].path ? state->favorites[i].path : "");
         snprintf(text, sizeof(text), "%s%s\n%s", title, state->favorites[i].document ? "" : " (page favorite)", path);
         g_free(title);
         g_free(path);
@@ -7777,8 +7727,8 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
             }
             if (!doc) continue;
 
-            display_path = tab->title && *tab->title ? display_label_without_extension(tab->title)
-                                                     : display_path_without_extension(tab->path);
+            display_path = tab->title && *tab->title ? spdf_gtk_display_label_without_extension(tab->title)
+                                                     : spdf_gtk_display_path_without_extension(tab->path);
             for (int page = 0; page < spdf_page_count(doc) && searched_pages < MAX_PALETTE_SEARCH_PAGES; ++page) {
                 int hits = spdf_search_page(doc, page, filter, err, sizeof(err));
                 searched_pages++;
@@ -7994,6 +7944,10 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
     }
     if (!ctrl && event->keyval == GDK_KEY_F5) {
         set_presentation_mode(state, TRUE);
+        return state->doc != NULL;
+    }
+    if (ctrl && shift && (event->keyval == GDK_KEY_f || event->keyval == GDK_KEY_F)) {
+        set_presentation_mode(state, !state->presentation_mode);
         return state->doc != NULL;
     }
     if (ctrl && (event->keyval == GDK_KEY_f || event->keyval == GDK_KEY_F)) {
@@ -8469,6 +8423,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_widget_add_accelerator(settings_json_menu, "activate", accel_group, GDK_KEY_comma, GDK_CONTROL_MASK,
                                GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_F5, 0, GTK_ACCEL_VISIBLE);
+    gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_f,
+                               GDK_CONTROL_MASK | GDK_SHIFT_MASK, GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->reopen_closed_menu_item, "activate", accel_group, GDK_KEY_t,
                                GDK_CONTROL_MASK | GDK_SHIFT_MASK, GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->shortcut_help_item, "activate", accel_group, GDK_KEY_F1, 0, GTK_ACCEL_VISIBLE);

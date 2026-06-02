@@ -1,5 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
+@class SPDFDocumentTab;
+
 @protocol SPDFMacUIReader <NSObject>
 - (BOOL)handlePresentationEvent:(NSEvent*)event;
 - (BOOL)handleTabStripMouseEvent:(NSEvent*)event;
@@ -11,13 +13,37 @@
 - (void)documentScrollPositionChanged;
 - (BOOL)documentArrowKeyDown:(NSEvent*)event;
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
+- (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
+- (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
+- (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
+- (BOOL)documentViewInPresentationMode;
+- (NSArray<NSDictionary*>*)commentAnnotationsForPage:(NSInteger)pageIndex;
+- (void)documentViewHoverComment:(NSDictionary*)comment atWindowPoint:(NSPoint)windowPoint;
+- (void)documentViewEndHoverComment;
+- (void)showContextMenuForDocumentView:(NSView*)view event:(NSEvent*)event;
+- (void)copySelection:(id)sender;
 - (void)closePalette:(id)sender;
 - (void)paletteMoveSelection:(NSInteger)delta;
 - (void)activatePaletteSelection:(id)sender;
 - (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard;
+- (SPDFDocumentTab*)tabSnapshotForDragAtIndex:(NSInteger)index;
+- (void)insertDraggedTab:(SPDFDocumentTab*)tab atIndex:(NSInteger)index;
+- (void)selectTabAtIndex:(NSInteger)index;
+- (void)closeTabAtIndex:(NSInteger)index;
+- (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex;
+- (void)detachTabAtIndex:(NSInteger)index;
+- (void)newTabRequested:(id)sender;
 - (void)clearFindFieldFocus;
 - (void)minimapDividerDraggedByDeltaX:(CGFloat)deltaX;
 - (void)minimapDividerDidFinishDragging;
+- (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction;
+- (void)minimapViewDidRequestCenterAtDocumentPoint:(NSPoint)documentPoint;
+- (void)minimapViewDidRequestCenterOnPage:(NSInteger)pageIndex
+                          xFractionInPage:(CGFloat)xFraction
+                          yFractionInPage:(CGFloat)yFraction;
+- (void)minimapViewDidReceiveScrollWheel:(NSEvent*)event;
+- (void)minimapViewDidReceiveZoomScrollWheel:(NSEvent*)event documentPoint:(NSPoint)documentPoint;
+- (void)minimapViewDidReceiveMagnify:(NSEvent*)event documentPoint:(NSPoint)documentPoint;
 - (NSArray<NSDictionary*>*)findScrollbarMarkers;
 - (NSNumber*)commentIndexForSidebarRow:(NSInteger)row;
 - (void)editComment:(id)sender;

@@ -38,15 +38,111 @@
 
 #include "utils/Log.h"
 
+static TempStr TabBaseTitleNoExtTemp(WindowTab* tab) {
+    if (!tab || !tab->filePath) {
+        return str::DupTemp("");
+    }
+    return path::GetPathNoExtTemp(path::GetBaseNameTemp(tab->filePath));
+}
+
+static TempStr ParentComponentAtDepthTemp(const char* path, int depthFromParent) {
+    if (!path || depthFromParent < 1) {
+        return str::DupTemp("");
+    }
+    TempStr dir = path::GetDirTemp(path);
+    TempStr component = str::DupTemp("");
+    for (int i = 0; i < depthFromParent && !str::IsEmpty(dir); i++) {
+        component = path::GetBaseNameTemp(dir);
+        dir = path::GetDirTemp(dir);
+    }
+    return component ? component : str::DupTemp("");
+}
+
+static bool HasDuplicateTabBaseTitle(MainWindow* win, WindowTab* tab) {
+    if (!win || !tab || tab->type != WindowTab::Type::Document || !tab->filePath) {
+        return false;
+    }
+    TempStr title = TabBaseTitleNoExtTemp(tab);
+    for (WindowTab* other : win->Tabs()) {
+        if (other == tab || !other || other->type != WindowTab::Type::Document || !other->filePath) {
+            continue;
+        }
+        TempStr otherTitle = TabBaseTitleNoExtTemp(other);
+        if (str::EqI(title, otherTitle)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool IsParentComponentUniqueForDuplicateBase(MainWindow* win, WindowTab* tab, int depthFromParent) {
+    TempStr title = TabBaseTitleNoExtTemp(tab);
+    TempStr component = ParentComponentAtDepthTemp(tab->filePath, depthFromParent);
+    if (str::IsEmpty(component)) {
+        return false;
+    }
+    for (WindowTab* other : win->Tabs()) {
+        if (other == tab || !other || other->type != WindowTab::Type::Document || !other->filePath) {
+            continue;
+        }
+        TempStr otherTitle = TabBaseTitleNoExtTemp(other);
+        if (!str::EqI(title, otherTitle)) {
+            continue;
+        }
+        TempStr otherComponent = ParentComponentAtDepthTemp(other->filePath, depthFromParent);
+        if (str::EqI(component, otherComponent)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static TempStr DisplayTabTitleTemp(MainWindow* win, WindowTab* tab) {
+    if (!tab) {
+        return str::DupTemp("");
+    }
+    if (tab->type == WindowTab::Type::About) {
+        return str::DupTemp("Home");
+    }
+    if (tab->type != WindowTab::Type::Document || !tab->filePath) {
+        return str::DupTemp("");
+    }
+    if (gGlobalPrefs->fullPathInTitle || !HasDuplicateTabBaseTitle(win, tab)) {
+        return str::DupTemp(tab->GetTabTitle());
+    }
+
+    TempStr baseTitle = TabBaseTitleNoExtTemp(tab);
+    for (int depth = 1; depth <= 12; depth++) {
+        if (!IsParentComponentUniqueForDuplicateBase(win, tab, depth)) {
+            continue;
+        }
+        TempStr component = ParentComponentAtDepthTemp(tab->filePath, depth);
+        if (depth == 1) {
+            return str::JoinTemp(component, "/", baseTitle);
+        }
+        return str::JoinTemp(component, "/.../", baseTitle);
+    }
+    return path::GetPathNoExtTemp(tab->filePath);
+}
+
 static void UpdateTabTitle(WindowTab* tab) {
     if (!tab) {
         return;
     }
     MainWindow* win = tab->win;
     int idx = win->GetTabIdx(tab);
-    const char* title = tab->GetTabTitle();
+    const char* title = DisplayTabTitleTemp(win, tab);
     const char* tooltip = tab->filePath;
     win->tabsCtrl->SetTextAndTooltip(idx, title, tooltip);
+}
+
+static void UpdateTabTitles(MainWindow* win) {
+    if (!win || !win->tabsCtrl) {
+        return;
+    }
+    for (WindowTab* tab : win->Tabs()) {
+        UpdateTabTitle(tab);
+    }
 }
 
 int GetTabbarHeight(HWND hwnd, float factor) {
@@ -104,6 +200,7 @@ void RemoveTab(WindowTab* tab) {
         win->currentTabTemp = nullptr;
     }
     UpdateTabWidth(win);
+    UpdateTabTitles(win);
 
     int nTabs = win->TabCount();
     if (nTabs < 1) {
@@ -620,6 +717,7 @@ WindowTab* AddTabToWindow(MainWindow* win, WindowTab* tab) {
     ReportIf(insertedIdx == -1);
     tabs->SetSelected(insertedIdx);
     UpdateTabWidth(win);
+    UpdateTabTitles(win);
     return tab;
 }
 
@@ -638,7 +736,7 @@ void TabsOnChangedDoc(MainWindow* win) {
         ReportDebugIf(tabIdx != selectedIdx);
     }
     VerifyWindowTab(win, tab);
-    UpdateTabTitle(tab);
+    UpdateTabTitles(win);
 }
 
 // Called when we're closing an entire window (quitting)

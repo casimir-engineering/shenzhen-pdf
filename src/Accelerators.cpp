@@ -264,6 +264,7 @@ ACCEL gBuiltInAccelerators[] = {
     {FVIRTKEY, VK_F6, CmdMoveFrameFocus},
     {FVIRTKEY, VK_F8, CmdToggleToolbar},
     {FVIRTKEY, VK_F9, CmdToggleMenuBar},
+    {FSHIFT | FCONTROL | FVIRTKEY, 'F', CmdTogglePresentationMode},
     {FCONTROL | FVIRTKEY, 'L', CmdTogglePresentationMode},
     {FVIRTKEY, VK_F5, CmdTogglePresentationMode},
     {FSHIFT | FVIRTKEY, VK_F11, CmdTogglePresentationMode},

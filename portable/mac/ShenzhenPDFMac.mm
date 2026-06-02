@@ -1,7 +1,12 @@
 #import <Cocoa/Cocoa.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+#import "SPDFMacDocumentView.h"
+#import "SPDFMacModels.h"
+#import "SPDFMacMinimapView.h"
+#import "SPDFMacPrintView.h"
 #import "SPDFMacSupport.h"
+#import "SPDFMacTabStripView.h"
 #import "SPDFMacUIHelpers.h"
 
 #include "shenzhen_pdf_core.h"
@@ -18,12 +23,7 @@ static const CGFloat kPageMargin = 44.0;
 static const CGFloat kPageGap = 26.0;
 static const CGFloat kMinZoom = 0.10;
 static const CGFloat kMaxZoom = 8.00;
-static const CGFloat kSelectionOverlayAlpha = 0.20;
 static const CGFloat kTabStripHeight = 42.0;
-static const CGFloat kTabGap = 6.0;
-static const CGFloat kTabMinVisibleWidth = 112.0;
-static const CGFloat kTabMaxWidth = 320.0;
-static const CGFloat kTabControlWidth = 32.0;
 static const CGFloat kMinWindowWidth = 560.0;
 static const CGFloat kMinWindowHeight = 380.0;
 static const CGFloat kDefaultMinimapWidth = 110.0;
@@ -38,7 +38,6 @@ static const NSInteger kRenderedImageKeepRadius = 12;
 static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
-static NSPasteboardType const SPDFTabDragPasteboardType = @"org.shenzhenpdf.ShenzhenPDF.tab";
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
 #define SPDF_MAC_TRANSLATION_CORE_READY 0
@@ -79,155 +78,10 @@ static NSSize spdf_sane_window_content_size(NSSize size, NSScreen* screen) {
                       spdf_clamp_cg(size.height, kMinWindowHeight, maxHeight));
 }
 
-typedef NS_ENUM(NSInteger, SPDFFitMode) {
-    SPDFFitModeCustom = 0,
-    SPDFFitModeActual,
-    SPDFFitModeWidth,
-    SPDFFitModeHeight,
-    SPDFFitModePage
-};
-
-typedef NS_ENUM(NSInteger, SPDFViewMode) {
-    SPDFViewModeSingle = 0,
-    SPDFViewModeContinuous
-};
-
-typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
-    SPDFSidebarModeChapters = 0,
-    SPDFSidebarModeComments = 1
-};
-
 @class ShenzhenMacDelegate;
 
 static NSMutableArray<ShenzhenMacDelegate*>* gSPDFWindowControllers;
 static BOOL gSPDFTerminatingAllWindows;
-
-@interface SPDFRenderedPage : NSObject
-@property(nonatomic) NSInteger pageIndex;
-@property(nonatomic) CGFloat pageWidth;
-@property(nonatomic) CGFloat pageHeight;
-@property(nonatomic) CGFloat imagePointWidth;
-@property(nonatomic) CGFloat imagePointHeight;
-@property(nonatomic) CGFloat imageZoom;
-@property(nonatomic) CGFloat imageScale;
-@property(nonatomic, strong) NSImage* image;
-@property(nonatomic, copy) NSArray<NSValue*>* highlights;
-@property(nonatomic, copy) NSArray<NSValue*>* selectionRects;
-@end
-
-@implementation SPDFRenderedPage
-@end
-
-@interface SPDFDocumentTab : NSObject
-@property(nonatomic, copy) NSString* path;
-@property(nonatomic, copy) NSString* title;
-@property(nonatomic) NSInteger pageIndex;
-@property(nonatomic) CGFloat zoom;
-@property(nonatomic) CGFloat customZoom;
-@property(nonatomic) SPDFFitMode fitMode;
-@property(nonatomic) SPDFViewMode viewMode;
-@property(nonatomic) NSPoint scrollOrigin;
-@property(nonatomic) BOOL hasScrollOrigin;
-@property(nonatomic, copy) NSString* searchText;
-@property(nonatomic) BOOL searchRegex;
-@property(nonatomic) BOOL searchRegexMultiline;
-@property(nonatomic) NSInteger findMatchIndex;
-@property(nonatomic) BOOL showSidebar;
-@property(nonatomic) BOOL showMinimap;
-@property(nonatomic) BOOL missingFile;
-@property(nonatomic, copy) NSString* missingMessage;
-@end
-
-@implementation SPDFDocumentTab
-
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        _pageIndex = 0;
-        _zoom = 1.0;
-        _customZoom = 1.0;
-        _fitMode = SPDFFitModeWidth;
-        _viewMode = SPDFViewModeContinuous;
-        _searchText = @"";
-        _searchRegexMultiline = YES;
-        _findMatchIndex = -1;
-        _showSidebar = YES;
-        _showMinimap = YES;
-        _missingMessage = @"";
-    }
-    return self;
-}
-
-@end
-
-static SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
-    SPDFDocumentTab* copy = [[SPDFDocumentTab alloc] init];
-    copy.path = source.path;
-    copy.title = source.title;
-    copy.pageIndex = source.pageIndex;
-    copy.zoom = source.zoom;
-    copy.customZoom = source.customZoom;
-    copy.fitMode = source.fitMode;
-    copy.viewMode = source.viewMode;
-    copy.scrollOrigin = source.scrollOrigin;
-    copy.hasScrollOrigin = source.hasScrollOrigin;
-    copy.searchText = source.searchText;
-    copy.searchRegex = source.searchRegex;
-    copy.searchRegexMultiline = source.searchRegexMultiline;
-    copy.findMatchIndex = source.findMatchIndex;
-    copy.showSidebar = source.showSidebar;
-    copy.showMinimap = source.showMinimap;
-    copy.missingFile = source.missingFile;
-    copy.missingMessage = source.missingMessage;
-    return copy;
-}
-
-static NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWindowNumber) {
-    if (!tab) return @{};
-    return @{
-        @"path" : tab.path ?: @"",
-        @"title" : tab.title ?: @"",
-        @"page" : @(tab.pageIndex),
-        @"zoom" : @(tab.zoom),
-        @"customZoom" : @(tab.customZoom),
-        @"fitMode" : @(tab.fitMode),
-        @"viewMode" : @(tab.viewMode),
-        @"scrollX" : @(tab.scrollOrigin.x),
-        @"scrollY" : @(tab.scrollOrigin.y),
-        @"hasScrollOrigin" : @(tab.hasScrollOrigin),
-        @"searchText" : tab.searchText ?: @"",
-        @"searchRegex" : @(tab.searchRegex),
-        @"searchRegexMultiline" : @(tab.searchRegexMultiline),
-        @"findMatchIndex" : @(tab.findMatchIndex),
-        @"showSidebar" : @(tab.showSidebar),
-        @"showMinimap" : @(tab.showMinimap),
-        @"sourcePID" : @(NSProcessInfo.processInfo.processIdentifier),
-        @"sourceWindow" : @(sourceWindowNumber)
-    };
-}
-
-static SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
-    if (![item isKindOfClass:NSDictionary.class]) return nil;
-    NSString* path = item[@"path"];
-    if (![path isKindOfClass:NSString.class] || path.length == 0) return nil;
-    SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
-    tab.path = path;
-    if ([item[@"title"] isKindOfClass:NSString.class]) tab.title = item[@"title"];
-    tab.pageIndex = MAX(0, [item[@"page"] integerValue]);
-    tab.zoom = [item[@"zoom"] doubleValue] > 0 ? [item[@"zoom"] doubleValue] : 1.0;
-    tab.customZoom = [item[@"customZoom"] doubleValue] > 0 ? [item[@"customZoom"] doubleValue] : tab.zoom;
-    tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
-    tab.viewMode = (SPDFViewMode)MAX(0, MIN(1, [item[@"viewMode"] integerValue]));
-    tab.scrollOrigin = NSMakePoint([item[@"scrollX"] doubleValue], [item[@"scrollY"] doubleValue]);
-    tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue] || item[@"scrollX"] != nil || item[@"scrollY"] != nil;
-    if ([item[@"searchText"] isKindOfClass:NSString.class]) tab.searchText = item[@"searchText"];
-    tab.searchRegex = [item[@"searchRegex"] boolValue];
-    tab.searchRegexMultiline = item[@"searchRegexMultiline"] ? [item[@"searchRegexMultiline"] boolValue] : YES;
-    tab.findMatchIndex = item[@"findMatchIndex"] ? [item[@"findMatchIndex"] integerValue] : -1;
-    tab.showSidebar = item[@"showSidebar"] ? [item[@"showSidebar"] boolValue] : YES;
-    tab.showMinimap = item[@"showMinimap"] ? [item[@"showMinimap"] boolValue] : YES;
-    return tab;
-}
 
 static NSDictionary* spdf_dictionary_from_window_frame(NSRect frame) {
     return @{
@@ -282,60 +136,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     id object = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
     return [object isKindOfClass:NSDictionary.class] ? object : nil;
 }
-
-@interface SPDFWorkerDocument : NSObject
-@property(nonatomic) spdf_document* document;
-@property(nonatomic, copy) NSString* path;
-@end
-
-@implementation SPDFWorkerDocument
-
-- (void)dealloc {
-    spdf_close(_document);
-}
-
-@end
-
-@interface SPDFTabStripView : NSView <NSDraggingSource, NSDraggingDestination>
-@property(nonatomic, weak) ShenzhenMacDelegate* reader;
-@property(nonatomic, copy) NSArray<SPDFDocumentTab*>* tabs;
-@property(nonatomic) NSInteger selectedIndex;
-@property(nonatomic) CGFloat reservedLeadingInset;
-- (BOOL)containsTabOrControlAtPoint:(NSPoint)point;
-@end
-
-@interface SPDFDocumentView : NSView <NSDraggingDestination>
-@property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
-@property(nonatomic) NSInteger currentPageIndex;
-@property(nonatomic) CGFloat zoom;
-@property(nonatomic) SPDFViewMode viewMode;
-@property(nonatomic) CGFloat viewportWidthHint;
-@property(nonatomic) CGFloat backingScale;
-@property(nonatomic) NSInteger activeFindPageIndex;
-@property(nonatomic) NSRect activeFindRect;
-@property(nonatomic) CGFloat activeFindAlpha;
-@property(nonatomic) BOOL presentationMode;
-@property(nonatomic, copy) NSString* emptyMessage;
-@property(nonatomic, weak) ShenzhenMacDelegate* reader;
-- (NSSize)documentSizeForClipSize:(NSSize)clipSize;
-- (NSRect)rectForPageAtIndex:(NSInteger)pageIndex;
-- (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect;
-- (BOOL)point:(NSPoint)point fallsInPage:(NSInteger*)pageIndex pagePoint:(NSPoint*)pagePoint;
-- (void)cancelTransientInteraction;
-@end
-
-@interface SPDFMinimapView : NSView
-@property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
-@property(nonatomic, copy) NSArray<NSValue*>* documentPageRects;
-@property(nonatomic) NSRect documentVisibleRect;
-@property(nonatomic) CGFloat documentWidth;
-@property(nonatomic) CGFloat documentHeight;
-@property(nonatomic) CGFloat documentScale;
-@property(nonatomic) SPDFViewMode viewMode;
-@property(nonatomic) NSInteger currentPageIndex;
-@property(nonatomic, weak) ShenzhenMacDelegate* reader;
-- (NSArray<NSNumber*>*)visiblePageIndexes;
-@end
 
 @interface ShenzhenMacDelegate : NSObject <NSApplicationDelegate,
                                            NSWindowDelegate,
@@ -436,6 +236,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)removePresentationEventMonitor;
 - (void)writeSessionStateForCurrentWindow;
 - (void)removeSessionStateForCurrentWindow;
+- (BOOL)hasOtherShenzhenWindows;
+- (void)activateWindowForExternalOpen;
 - (void)spawnPendingRestoredWindowsIfNeeded;
 - (NSArray<NSDictionary*>*)commentAnnotationsForPage:(NSInteger)pageIndex;
 - (void)documentViewHoverComment:(NSDictionary*)comment atWindowPoint:(NSPoint)windowPoint;
@@ -472,1894 +274,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                             savedFindMatchIndex:(NSInteger)savedFindMatchIndex
                                   restoreSearch:(BOOL)restoreSearch
                             preferredRenderPage:(NSInteger)preferredRenderPage;
-@end
-
-@implementation SPDFTabStripView {
-    NSTrackingArea* _trackingArea;
-    NSPanel* _hoverPanel;
-    NSTextField* _hoverLabel;
-    NSInteger _hoverTabIndex;
-    NSInteger _draggedTabIndex;
-    NSInteger _dragSessionTabIndex;
-    NSPoint _dragStartPoint;
-    BOOL _draggingTab;
-    BOOL _detachedTabDrag;
-    BOOL _mouseDownInsideTab;
-    NSInteger _dragSourceTabIndex;
-    NSInteger _dragTargetTabIndex;
-    CGFloat _dragPointerOffsetX;
-    CGFloat _dragCurrentX;
-    NSPoint _lastHoverPoint;
-    BOOL _hasLastHoverPoint;
-}
-
-- (instancetype)initWithFrame:(NSRect)frameRect {
-    self = [super initWithFrame:frameRect];
-    if (self) {
-        _hoverTabIndex = -1;
-        _draggedTabIndex = -1;
-        _dragSessionTabIndex = -1;
-        _dragSourceTabIndex = -1;
-        _dragTargetTabIndex = -1;
-        [self registerForDraggedTypes:@[ SPDFTabDragPasteboardType ]];
-    }
-    return self;
-}
-
-- (void)dealloc {
-    [_hoverPanel orderOut:nil];
-}
-
-- (BOOL)isFlipped {
-    return NO;
-}
-
-- (BOOL)acceptsFirstMouse:(NSEvent*)event {
-    (void)event;
-    return YES;
-}
-
-- (BOOL)mouseDownCanMoveWindow {
-    return NO;
-}
-
-- (CGFloat)tabWidth {
-    NSInteger count = MAX(1, (NSInteger)[self visibleTabIndexes].count);
-    CGFloat available = [self tabAreaWidthWithOverflow:[self hasOverflowTabs]] - (count - 1) * kTabGap;
-    if (available <= 0) return kTabMinVisibleWidth;
-    return MAX(1.0, MIN(kTabMaxWidth, floor(available / count)));
-}
-
-- (CGFloat)leftInset {
-    return MAX(16.0, self.reservedLeadingInset > 0 ? self.reservedLeadingInset : 138.0);
-}
-
-- (NSRect)plusRect {
-    CGFloat x = MAX([self leftInset] + kTabControlWidth + 16.0, NSWidth(self.bounds) - 42);
-    x = MIN(x, MAX([self leftInset] + kTabControlWidth + 16.0, NSWidth(self.bounds) - 40));
-    return NSMakeRect(x, 7, kTabControlWidth, 28);
-}
-
-- (NSRect)overflowRectAssumingVisible {
-    CGFloat x = NSMinX([self plusRect]) - kTabControlWidth - kTabGap;
-    x = MAX([self leftInset], x);
-    return NSMakeRect(x, 7, kTabControlWidth, 28);
-}
-
-- (CGFloat)tabAreaRightWithOverflow:(BOOL)overflow {
-    return overflow ? NSMinX([self overflowRectAssumingVisible]) - 8.0 : NSMinX([self plusRect]) - 10.0;
-}
-
-- (CGFloat)tabAreaWidthWithOverflow:(BOOL)overflow {
-    return MAX(0.0, [self tabAreaRightWithOverflow:overflow] - [self leftInset]);
-}
-
-- (NSInteger)selectedIndexForLayout {
-    NSInteger count = (NSInteger)self.tabs.count;
-    if (count <= 0) return -1;
-    if (self.selectedIndex < 0) return 0;
-    return MIN(self.selectedIndex, count - 1);
-}
-
-- (NSInteger)visibleTabCapacityWithOverflow:(BOOL)overflow {
-    NSInteger count = (NSInteger)self.tabs.count;
-    if (count <= 0) return 0;
-
-    CGFloat areaWidth = [self tabAreaWidthWithOverflow:overflow];
-    if (areaWidth <= 0) return 1;
-
-    NSInteger capacity = (NSInteger)floor((areaWidth + kTabGap) / (kTabMinVisibleWidth + kTabGap));
-    return MAX(1, MIN(count, capacity));
-}
-
-- (BOOL)hasOverflowTabs {
-    NSInteger count = (NSInteger)self.tabs.count;
-    if (count <= 1) return NO;
-    return [self visibleTabCapacityWithOverflow:NO] < count;
-}
-
-- (NSArray<NSNumber*>*)visibleTabIndexes {
-    NSInteger count = (NSInteger)self.tabs.count;
-    if (count <= 0) return @[];
-
-    BOOL overflow = [self hasOverflowTabs];
-    NSInteger visibleCount = overflow ? [self visibleTabCapacityWithOverflow:YES] : count;
-    visibleCount = MAX(1, MIN(count, visibleCount));
-
-    NSInteger selected = [self selectedIndexForLayout];
-    NSInteger start = overflow ? selected - (visibleCount - 1) / 2 : 0;
-    start = MAX(0, MIN(start, count - visibleCount));
-
-    NSMutableArray<NSNumber*>* indexes = [NSMutableArray arrayWithCapacity:(NSUInteger)visibleCount];
-    for (NSInteger i = 0; i < visibleCount; ++i) {
-        [indexes addObject:@(start + i)];
-    }
-    return indexes;
-}
-
-- (NSArray<NSNumber*>*)hiddenTabIndexes {
-    if (![self hasOverflowTabs]) return @[];
-
-    NSMutableIndexSet* visibleIndexes = [NSMutableIndexSet indexSet];
-    for (NSNumber* index in [self visibleTabIndexes]) {
-        [visibleIndexes addIndex:(NSUInteger)index.integerValue];
-    }
-
-    NSMutableArray<NSNumber*>* hiddenIndexes = [NSMutableArray array];
-    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
-        if (![visibleIndexes containsIndex:(NSUInteger)i]) [hiddenIndexes addObject:@(i)];
-    }
-    return hiddenIndexes;
-}
-
-- (NSRect)overflowRect {
-    return [self hasOverflowTabs] ? [self overflowRectAssumingVisible] : NSZeroRect;
-}
-
-- (NSRect)rectForTabAtIndex:(NSInteger)index {
-    NSArray<NSNumber*>* visibleIndexes = [self visibleTabIndexes];
-    NSUInteger visiblePosition = [visibleIndexes indexOfObject:@(index)];
-    if (visiblePosition == NSNotFound) return NSZeroRect;
-
-    CGFloat x = [self leftInset] + (CGFloat)visiblePosition * ([self tabWidth] + kTabGap);
-    CGFloat maxRight = [self tabAreaRightWithOverflow:[self hasOverflowTabs]];
-    CGFloat width = MIN([self tabWidth], maxRight - x);
-    return NSMakeRect(x, 7, width, 28);
-}
-
-- (NSString*)titleForTabAtIndex:(NSInteger)index {
-    if (index < 0 || index >= (NSInteger)self.tabs.count) return @"";
-    SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
-    return tab.path.length ? spdf_display_name_for_path(tab.path) : spdf_display_label_without_extension(tab.title);
-}
-
-- (void)updateTrackingAreas {
-    [super updateTrackingAreas];
-    if (_trackingArea) [self removeTrackingArea:_trackingArea];
-    _trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds
-                                                 options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved |
-                                                         NSTrackingActiveAlways | NSTrackingInVisibleRect
-                                                   owner:self
-                                                userInfo:nil];
-    [self addTrackingArea:_trackingArea];
-}
-
-- (void)hideHoverPanel {
-    _hoverTabIndex = -1;
-    [_hoverPanel orderOut:nil];
-}
-
-- (void)updateHoverForPoint:(NSPoint)point {
-    NSInteger hovered = -1;
-    _lastHoverPoint = point;
-    _hasLastHoverPoint = YES;
-    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
-        NSRect tabRect = [self rectForTabAtIndex:i];
-        if (NSWidth(tabRect) < 40.0) continue;
-        if (NSPointInRect(point, tabRect)) {
-            hovered = i;
-            break;
-        }
-    }
-    if (hovered == _hoverTabIndex) return;
-    if (hovered >= 0)
-        [self showHoverPanelForTabAtIndex:hovered];
-    else
-        [self hideHoverPanel];
-}
-
-- (void)showHoverPanelForTabAtIndex:(NSInteger)index {
-    NSString* title = [self titleForTabAtIndex:index];
-    if (!title.length || !self.window) {
-        [self hideHoverPanel];
-        return;
-    }
-
-    NSRect tabRect = [self rectForTabAtIndex:index];
-    if (NSWidth(tabRect) <= 0) {
-        [self hideHoverPanel];
-        return;
-    }
-
-    if (!_hoverPanel) {
-        _hoverPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 240, 26)
-                                                 styleMask:NSWindowStyleMaskBorderless
-                                                   backing:NSBackingStoreBuffered
-                                                     defer:NO];
-        _hoverPanel.releasedWhenClosed = NO;
-        _hoverPanel.hidesOnDeactivate = YES;
-        _hoverPanel.hasShadow = YES;
-        _hoverPanel.opaque = NO;
-        _hoverPanel.backgroundColor = NSColor.clearColor;
-
-        NSVisualEffectView* bubble = [[NSVisualEffectView alloc] initWithFrame:_hoverPanel.contentView.bounds];
-        bubble.translatesAutoresizingMaskIntoConstraints = NO;
-        bubble.material = NSVisualEffectMaterialPopover;
-        bubble.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-        bubble.state = NSVisualEffectStateActive;
-        bubble.wantsLayer = YES;
-        bubble.layer.cornerRadius = 8.0;
-        bubble.layer.masksToBounds = YES;
-        _hoverPanel.contentView = bubble;
-
-        _hoverLabel = [NSTextField labelWithString:@""];
-        _hoverLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        _hoverLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
-        _hoverLabel.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium];
-        [bubble addSubview:_hoverLabel];
-        [NSLayoutConstraint activateConstraints:@[
-            [_hoverLabel.leadingAnchor constraintEqualToAnchor:bubble.leadingAnchor constant:10],
-            [_hoverLabel.trailingAnchor constraintEqualToAnchor:bubble.trailingAnchor constant:-10],
-            [_hoverLabel.centerYAnchor constraintEqualToAnchor:bubble.centerYAnchor]
-        ]];
-    }
-
-    _hoverLabel.stringValue = title;
-    CGFloat width =
-        MIN(420.0, MAX(96.0, [title sizeWithAttributes:@{NSFontAttributeName : _hoverLabel.font}].width + 24));
-    NSRect tabScreenRect = [self.window convertRectToScreen:[self convertRect:tabRect toView:nil]];
-    NSRect frame =
-        NSMakeRect(floor(NSMidX(tabScreenRect) - width / 2.0), floor(NSMinY(tabScreenRect) - 31.0), width, 26.0);
-    [_hoverPanel setFrame:frame display:NO];
-    if (_hoverPanel.parentWindow != self.window) [self.window addChildWindow:_hoverPanel ordered:NSWindowAbove];
-    [_hoverPanel orderFront:nil];
-    _hoverTabIndex = index;
-}
-
-- (void)updateHoverForEvent:(NSEvent*)event {
-    [self updateHoverForPoint:[self convertPoint:event.locationInWindow fromView:nil]];
-}
-
-- (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs {
-    _tabs = [tabs copy];
-    [self setNeedsDisplay:YES];
-    if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint, self.bounds))
-        [self updateHoverForPoint:_lastHoverPoint];
-    else
-        [self hideHoverPanel];
-}
-
-- (void)setSelectedIndex:(NSInteger)selectedIndex {
-    _selectedIndex = selectedIndex;
-    [self setNeedsDisplay:YES];
-}
-
-- (NSRect)closeCircleRectForTabRect:(NSRect)tabRect {
-    CGFloat diameter = 16.0;
-    return NSMakeRect(floor(NSMaxX(tabRect) - 26.0), floor(NSMidY(tabRect) - diameter / 2.0), diameter, diameter);
-}
-
-- (void)beginTabTrackingAtIndex:(NSInteger)index point:(NSPoint)point tabRect:(NSRect)tabRect {
-    _draggedTabIndex = index;
-    _dragSourceTabIndex = index;
-    _dragTargetTabIndex = index;
-    _dragStartPoint = point;
-    _dragPointerOffsetX = point.x - NSMinX(tabRect);
-    _dragCurrentX = NSMinX(tabRect);
-}
-
-- (void)resetTabDragTracking {
-    _draggedTabIndex = -1;
-    _dragSourceTabIndex = -1;
-    _dragTargetTabIndex = -1;
-    _draggingTab = NO;
-    _detachedTabDrag = NO;
-    _mouseDownInsideTab = NO;
-    _dragPointerOffsetX = 0;
-    _dragCurrentX = 0;
-    [self setNeedsDisplay:YES];
-}
-
-- (NSInteger)dragDestinationIndexForPoint:(NSPoint)point {
-    NSArray<NSNumber*>* visibleIndexes = [self visibleTabIndexes];
-    if (!visibleIndexes.count) return -1;
-
-    NSInteger sourceIndex = _dragSourceTabIndex >= 0 ? _dragSourceTabIndex : _draggedTabIndex;
-    NSInteger targetIndex = sourceIndex;
-    for (NSNumber* indexNumber in visibleIndexes) {
-        NSInteger index = indexNumber.integerValue;
-        if (index == sourceIndex) continue;
-        NSRect tabRect = [self rectForTabAtIndex:index];
-        if (NSIsEmptyRect(tabRect)) continue;
-        if (index < sourceIndex && point.x < NSMidX(tabRect)) {
-            targetIndex = index;
-            break;
-        }
-        if (index > sourceIndex && point.x > NSMidX(tabRect)) targetIndex = index;
-    }
-    return targetIndex;
-}
-
-- (NSInteger)dropIndexForPoint:(NSPoint)point {
-    NSArray<NSNumber*>* visibleIndexes = [self visibleTabIndexes];
-    if (!visibleIndexes.count) return (NSInteger)self.tabs.count;
-
-    for (NSNumber* indexNumber in visibleIndexes) {
-        NSInteger index = indexNumber.integerValue;
-        NSRect tabRect = [self rectForTabAtIndex:index];
-        if (NSIsEmptyRect(tabRect)) continue;
-        if (point.x < NSMidX(tabRect)) return index;
-    }
-    return MIN((NSInteger)self.tabs.count, visibleIndexes.lastObject.integerValue + 1);
-}
-
-- (BOOL)containsTabOrControlAtPoint:(NSPoint)point {
-    if (NSPointInRect(point, [self plusRect])) return YES;
-    NSRect overflowRect = [self overflowRect];
-    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, overflowRect)) return YES;
-    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
-        NSRect tabRect = [self rectForTabAtIndex:i];
-        if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, tabRect)) return YES;
-    }
-    return NO;
-}
-
-- (BOOL)isVisuallyReorderingTabs {
-    return _draggingTab && !_detachedTabDrag && _dragSourceTabIndex >= 0 &&
-           _dragSourceTabIndex < (NSInteger)self.tabs.count && _dragTargetTabIndex >= 0;
-}
-
-- (NSRect)visualRectForTabAtIndex:(NSInteger)index {
-    NSRect baseRect = [self rectForTabAtIndex:index];
-    if (NSIsEmptyRect(baseRect) || ![self isVisuallyReorderingTabs]) return baseRect;
-
-    NSInteger source = _dragSourceTabIndex;
-    NSInteger target = _dragTargetTabIndex;
-    if (index == source) {
-        CGFloat width = NSWidth(baseRect);
-        CGFloat minX = [self leftInset];
-        CGFloat maxX = MAX(minX, [self tabAreaRightWithOverflow:[self hasOverflowTabs]] - width);
-        return NSMakeRect(floor(MAX(minX, MIN(_dragCurrentX, maxX))), NSMinY(baseRect), width, NSHeight(baseRect));
-    }
-
-    if (source < target && index > source && index <= target) {
-        NSRect shifted = [self rectForTabAtIndex:index - 1];
-        if (!NSIsEmptyRect(shifted)) return shifted;
-    } else if (target < source && index >= target && index < source) {
-        NSRect shifted = [self rectForTabAtIndex:index + 1];
-        if (!NSIsEmptyRect(shifted)) return shifted;
-    }
-    return baseRect;
-}
-
-- (void)drawTabAtIndex:(NSInteger)index
-                inRect:(NSRect)tabRect
-            attributes:(NSDictionary*)attrs
-         dimAttributes:(NSDictionary*)dimAttrs {
-    if (index < 0 || index >= (NSInteger)self.tabs.count || NSWidth(tabRect) < 40.0) return;
-
-    BOOL selected = index == self.selectedIndex;
-    SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
-    BOOL missing = tab.missingFile;
-    NSColor* fill;
-    NSColor* stroke = nil;
-    if (missing) {
-        fill = [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.36 : 0.22];
-        stroke = [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.95 : 0.65];
-    } else if (selected) {
-        fill = [NSColor.controlAccentColor colorWithAlphaComponent:0.34];
-        stroke = [NSColor.controlAccentColor colorWithAlphaComponent:0.95];
-    } else {
-        fill = NSColor.controlBackgroundColor;
-    }
-    NSBezierPath* tabPath = [NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:7 yRadius:7];
-    [fill setFill];
-    [tabPath fill];
-    if (stroke) {
-        [stroke setStroke];
-        tabPath.lineWidth = selected ? 1.4 : 1.0;
-        [tabPath stroke];
-    }
-
-    NSString* title = [self titleForTabAtIndex:index];
-    NSDictionary* titleAttrs = selected || missing ? attrs : dimAttrs;
-    CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
-    CGFloat leftInset = 12.0;
-    CGFloat rightInset = 34.0;
-    NSRect titleRect = NSMakeRect(NSMinX(tabRect) + leftInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
-                                  MAX(1.0, NSWidth(tabRect) - leftInset - rightInset), titleHeight + 2);
-    [title drawWithRect:titleRect
-                options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
-             attributes:titleAttrs];
-
-    NSRect closeRect = [self closeCircleRectForTabRect:tabRect];
-    NSBezierPath* closeCircle = [NSBezierPath bezierPathWithOvalInRect:closeRect];
-    NSColor* closeFill = selected ? [NSColor.labelColor colorWithAlphaComponent:0.16]
-                                  : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.13];
-    [closeFill setFill];
-    [closeCircle fill];
-
-    NSColor* closeStroke = selected ? [NSColor.labelColor colorWithAlphaComponent:0.76]
-                                    : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.82];
-    [closeStroke setStroke];
-    NSBezierPath* closeX = [NSBezierPath bezierPath];
-    closeX.lineWidth = 1.35;
-    [closeX moveToPoint:NSMakePoint(NSMidX(closeRect) - 3.2, NSMidY(closeRect) - 3.2)];
-    [closeX lineToPoint:NSMakePoint(NSMidX(closeRect) + 3.2, NSMidY(closeRect) + 3.2)];
-    [closeX moveToPoint:NSMakePoint(NSMidX(closeRect) + 3.2, NSMidY(closeRect) - 3.2)];
-    [closeX lineToPoint:NSMakePoint(NSMidX(closeRect) - 3.2, NSMidY(closeRect) + 3.2)];
-    [closeX stroke];
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-    (void)dirtyRect;
-    [[NSColor clearColor] setFill];
-    NSRectFill(self.bounds);
-
-    NSMutableParagraphStyle* tabTitleStyle = [[NSMutableParagraphStyle alloc] init];
-    tabTitleStyle.alignment = NSTextAlignmentCenter;
-    tabTitleStyle.lineBreakMode = NSLineBreakByTruncatingMiddle;
-    NSDictionary* attrs = @{
-        NSFontAttributeName : [NSFont systemFontOfSize:12 weight:NSFontWeightRegular],
-        NSForegroundColorAttributeName : NSColor.labelColor,
-        NSParagraphStyleAttributeName : tabTitleStyle
-    };
-    NSDictionary* dimAttrs = @{
-        NSFontAttributeName : [NSFont systemFontOfSize:12],
-        NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
-        NSParagraphStyleAttributeName : tabTitleStyle
-    };
-
-    NSInteger draggedIndex = [self isVisuallyReorderingTabs] ? _dragSourceTabIndex : -1;
-    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
-        if (i == draggedIndex) continue;
-        [self drawTabAtIndex:i inRect:[self visualRectForTabAtIndex:i] attributes:attrs dimAttributes:dimAttrs];
-    }
-    if (draggedIndex >= 0) {
-        [self drawTabAtIndex:draggedIndex
-                      inRect:[self visualRectForTabAtIndex:draggedIndex]
-                  attributes:attrs
-               dimAttributes:dimAttrs];
-    }
-
-    NSRect overflowRect = [self overflowRect];
-    if (!NSIsEmptyRect(overflowRect)) {
-        [NSColor.controlBackgroundColor setFill];
-        NSBezierPath* overflowPath = [NSBezierPath bezierPathWithRoundedRect:overflowRect xRadius:9 yRadius:9];
-        [overflowPath fill];
-        [[NSColor.separatorColor colorWithAlphaComponent:0.45] setStroke];
-        overflowPath.lineWidth = 1.0;
-        [overflowPath stroke];
-
-        [[NSColor.labelColor colorWithAlphaComponent:0.78] setFill];
-        CGFloat dotDiameter = 3.0;
-        CGFloat dotGap = 3.0;
-        CGFloat x = floor(NSMidX(overflowRect) - dotDiameter / 2.0);
-        CGFloat startY = floor(NSMidY(overflowRect) - dotDiameter * 1.5 - dotGap);
-        for (NSInteger i = 0; i < 3; ++i) {
-            NSRect dot = NSMakeRect(x, startY + (dotDiameter + dotGap) * i, dotDiameter, dotDiameter);
-            [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
-        }
-    }
-
-    NSRect plusRect = [self plusRect];
-    [NSColor.controlBackgroundColor setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:plusRect xRadius:9 yRadius:9] fill];
-    NSDictionary* plusAttrs = @{
-        NSFontAttributeName : [NSFont systemFontOfSize:16 weight:NSFontWeightRegular],
-        NSForegroundColorAttributeName : NSColor.labelColor
-    };
-    NSSize plusSize = [@"+" sizeWithAttributes:plusAttrs];
-    [@"+" drawAtPoint:NSMakePoint(floor(NSMidX(plusRect) - plusSize.width / 2.0),
-                                  floor(NSMidY(plusRect) - plusSize.height / 2.0))
-        withAttributes:plusAttrs];
-}
-
-- (void)showOverflowMenuWithEvent:(NSEvent*)event {
-    NSArray<NSNumber*>* hiddenIndexes = [self hiddenTabIndexes];
-    if (!hiddenIndexes.count) return;
-
-    [self hideHoverPanel];
-
-    NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Hidden Tabs"];
-    for (NSNumber* indexNumber in hiddenIndexes) {
-        NSInteger index = indexNumber.integerValue;
-        NSString* title = [self titleForTabAtIndex:index];
-        if (!title.length) title = @"Untitled";
-
-        NSMenuItem* item =
-            [[NSMenuItem alloc] initWithTitle:title action:@selector(overflowTabMenuItemSelected:) keyEquivalent:@""];
-        item.target = self;
-        item.representedObject = indexNumber;
-        item.state = index == self.selectedIndex ? NSControlStateValueOn : NSControlStateValueOff;
-        [menu addItem:item];
-    }
-
-    NSRect overflowRect = [self overflowRect];
-    NSEvent* menuEvent = event;
-    if (!menuEvent) {
-        NSPoint windowPoint = [self convertPoint:NSMakePoint(NSMinX(overflowRect), NSMinY(overflowRect)) toView:nil];
-        menuEvent = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
-                                       location:windowPoint
-                                  modifierFlags:0
-                                      timestamp:NSProcessInfo.processInfo.systemUptime
-                                   windowNumber:self.window.windowNumber
-                                        context:nil
-                                    eventNumber:0
-                                     clickCount:1
-                                       pressure:1.0];
-    }
-    [NSMenu popUpContextMenu:menu withEvent:menuEvent forView:self];
-}
-
-- (void)overflowTabMenuItemSelected:(NSMenuItem*)sender {
-    NSNumber* indexNumber = [sender.representedObject isKindOfClass:NSNumber.class] ? sender.representedObject : nil;
-    if (!indexNumber) return;
-    [self.reader selectTabAtIndex:indexNumber.integerValue];
-}
-
-- (void)startTabDragSessionWithEvent:(NSEvent*)event {
-    if (_draggedTabIndex < 0 || _draggedTabIndex >= (NSInteger)self.tabs.count) return;
-    SPDFDocumentTab* snapshot = [self.reader tabSnapshotForDragAtIndex:_draggedTabIndex];
-    if (!snapshot.path.length) return;
-
-    NSDictionary* payload = spdf_dictionary_from_tab(snapshot, self.window.windowNumber);
-    NSString* json = spdf_json_string_from_object(payload);
-    if (!json.length) return;
-
-    NSPasteboardItem* item = [[NSPasteboardItem alloc] init];
-    [item setString:json forType:SPDFTabDragPasteboardType];
-    NSDraggingItem* dragItem = [[NSDraggingItem alloc] initWithPasteboardWriter:item];
-    NSRect tabRect = [self rectForTabAtIndex:_draggedTabIndex];
-    NSImage* image = [[NSImage alloc] initWithSize:tabRect.size];
-    [image lockFocus];
-    [[NSColor.controlAccentColor colorWithAlphaComponent:0.22] setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0, 0, NSWidth(tabRect), NSHeight(tabRect)) xRadius:7 yRadius:7]
-        fill];
-    NSString* title = [self titleForTabAtIndex:_draggedTabIndex];
-    NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
-    style.alignment = NSTextAlignmentCenter;
-    style.lineBreakMode = NSLineBreakByTruncatingMiddle;
-    NSDictionary* attrs = @{
-        NSFontAttributeName : [NSFont systemFontOfSize:12 weight:NSFontWeightRegular],
-        NSForegroundColorAttributeName : NSColor.labelColor,
-        NSParagraphStyleAttributeName : style
-    };
-    [title drawWithRect:NSInsetRect(NSMakeRect(0, 0, NSWidth(tabRect), NSHeight(tabRect)), 18, 7)
-                options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
-             attributes:attrs];
-    [image unlockFocus];
-    [dragItem setDraggingFrame:tabRect contents:image];
-
-    _dragSessionTabIndex = _draggedTabIndex;
-    _detachedTabDrag = YES;
-    [self setNeedsDisplay:YES];
-    [self beginDraggingSessionWithItems:@[ dragItem ] event:event source:self];
-}
-
-- (NSDragOperation)draggingSession:(NSDraggingSession*)session
-    sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
-    (void)session;
-    (void)context;
-    return NSDragOperationMove;
-}
-
-- (void)draggingSession:(NSDraggingSession*)session
-           endedAtPoint:(NSPoint)screenPoint
-              operation:(NSDragOperation)operation {
-    (void)session;
-    (void)screenPoint;
-    NSInteger index = _dragSessionTabIndex;
-    _dragSessionTabIndex = -1;
-    [self resetTabDragTracking];
-    if (index < 0) return;
-    if (operation == NSDragOperationMove) {
-        [self.reader closeTabAtIndex:index];
-    } else if (operation == NSDragOperationNone) {
-        [self.reader detachTabAtIndex:index];
-    }
-}
-
-- (BOOL)ignoreDraggedTabFromSender:(id<NSDraggingInfo>)sender {
-    NSString* json = [sender.draggingPasteboard stringForType:SPDFTabDragPasteboardType];
-    NSDictionary* payload = spdf_json_dictionary_from_string(json);
-    NSNumber* sourcePID = [payload[@"sourcePID"] isKindOfClass:NSNumber.class] ? payload[@"sourcePID"] : nil;
-    NSNumber* sourceWindow = [payload[@"sourceWindow"] isKindOfClass:NSNumber.class] ? payload[@"sourceWindow"] : nil;
-    if (!sourceWindow) return NO;
-    if (sourcePID && sourcePID.integerValue != NSProcessInfo.processInfo.processIdentifier) return NO;
-    return sourceWindow.integerValue == self.window.windowNumber;
-}
-
-- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
-    if (![sender.draggingPasteboard availableTypeFromArray:@[ SPDFTabDragPasteboardType ]]) return NSDragOperationNone;
-    return [self ignoreDraggedTabFromSender:sender] ? NSDragOperationNone : NSDragOperationMove;
-}
-
-- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
-    return [self draggingEntered:sender];
-}
-
-- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
-    if ([self ignoreDraggedTabFromSender:sender]) return NO;
-    NSString* json = [sender.draggingPasteboard stringForType:SPDFTabDragPasteboardType];
-    SPDFDocumentTab* tab = spdf_tab_from_dictionary(spdf_json_dictionary_from_string(json));
-    if (!tab.path.length) return NO;
-    NSPoint point = [self convertPoint:sender.draggingLocation fromView:nil];
-    [self.reader insertDraggedTab:tab atIndex:[self dropIndexForPoint:point]];
-    return YES;
-}
-
-- (void)mouseDown:(NSEvent*)event {
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    _draggedTabIndex = -1;
-    _dragSourceTabIndex = -1;
-    _dragTargetTabIndex = -1;
-    _draggingTab = NO;
-    _detachedTabDrag = NO;
-    _mouseDownInsideTab = NO;
-
-    if (NSPointInRect(point, [self plusRect])) {
-        [self.reader newTabRequested:self];
-        return;
-    }
-
-    NSRect overflowRect = [self overflowRect];
-    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, overflowRect)) {
-        [self showOverflowMenuWithEvent:event];
-        return;
-    }
-
-    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
-        NSRect tabRect = [self rectForTabAtIndex:i];
-        if (NSIsEmptyRect(tabRect)) continue;
-        if (!NSPointInRect(point, tabRect)) continue;
-        _mouseDownInsideTab = YES;
-        NSRect closeRect = NSInsetRect([self closeCircleRectForTabRect:tabRect], -5.0, -5.0);
-        if (NSPointInRect(point, closeRect)) {
-            [self.reader closeTabAtIndex:i];
-        } else {
-            [self.reader selectTabAtIndex:i];
-            [self beginTabTrackingAtIndex:i point:point tabRect:tabRect];
-        }
-        return;
-    }
-
-    [self hideHoverPanel];
-}
-
-- (void)mouseDragged:(NSEvent*)event {
-    if (_draggedTabIndex < 0) {
-        return;
-    }
-
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    CGFloat dx = point.x - _dragStartPoint.x;
-    CGFloat dy = point.y - _dragStartPoint.y;
-    if (!_draggingTab && hypot(dx, dy) < 3.0) return;
-    _draggingTab = YES;
-    [self hideHoverPanel];
-
-    BOOL outsideTabStrip = point.y < -24.0 || point.y > NSHeight(self.bounds) + 24.0 ||
-                           point.x < [self leftInset] - 18.0 || point.x > NSMaxX([self plusRect]) + 18.0;
-    if (!_detachedTabDrag && (outsideTabStrip || fabs(dy) > 48.0)) {
-        [self startTabDragSessionWithEvent:event];
-        return;
-    }
-    if (_detachedTabDrag) return;
-
-    _dragCurrentX = point.x - _dragPointerOffsetX;
-    NSInteger targetIndex = [self dragDestinationIndexForPoint:point];
-    if (targetIndex >= 0) _dragTargetTabIndex = targetIndex;
-    [self setNeedsDisplay:YES];
-}
-
-- (void)mouseUp:(NSEvent*)event {
-    (void)event;
-    NSInteger clickedTabIndex = _dragSourceTabIndex >= 0 ? _dragSourceTabIndex : _draggedTabIndex;
-    NSInteger targetIndex = _dragTargetTabIndex;
-    BOOL dragged = _draggingTab;
-    BOOL detached = _detachedTabDrag;
-    [self resetTabDragTracking];
-    if (detached) return;
-    if (dragged && clickedTabIndex >= 0 && targetIndex >= 0 && clickedTabIndex != targetIndex) {
-        [self.reader moveTabFromIndex:clickedTabIndex toIndex:targetIndex];
-        [self.reader selectTabAtIndex:targetIndex];
-    } else if (!dragged && clickedTabIndex >= 0) {
-        [self.reader selectTabAtIndex:clickedTabIndex];
-    }
-}
-
-- (void)mouseMoved:(NSEvent*)event {
-    [self updateHoverForEvent:event];
-}
-
-- (void)mouseEntered:(NSEvent*)event {
-    [self updateHoverForEvent:event];
-}
-
-- (void)mouseExited:(NSEvent*)event {
-    (void)event;
-    [self hideHoverPanel];
-}
-
-@end
-
-@implementation SPDFDocumentView {
-    BOOL _isPanning;
-    BOOL _isSelecting;
-    BOOL _rightMouseMoved;
-    NSPoint _panStartInWindow;
-    NSPoint _panStartOrigin;
-    NSPoint _lastPanPoint;
-    NSTimeInterval _lastPanTime;
-    NSPoint _panVelocity;
-    NSTimer* _inertiaTimer;
-    NSInteger _selectionPageIndex;
-    NSPoint _selectionStart;
-    NSTrackingArea* _trackingArea;
-    NSDictionary* _hoveredComment;
-}
-
-- (BOOL)isFlipped {
-    return YES;
-}
-
-- (BOOL)acceptsFirstResponder {
-    return YES;
-}
-
-- (BOOL)acceptsFirstMouse:(NSEvent*)event {
-    (void)event;
-    return YES;
-}
-
-- (void)copy:(id)sender {
-    [self.reader copySelection:sender];
-}
-
-- (void)updateTrackingAreas {
-    [super updateTrackingAreas];
-    if (_trackingArea) [self removeTrackingArea:_trackingArea];
-    _trackingArea = [[NSTrackingArea alloc]
-        initWithRect:self.bounds
-             options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveInKeyWindow
-               owner:self
-            userInfo:nil];
-    [self addTrackingArea:_trackingArea];
-}
-
-- (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
-    _pages = [pages copy];
-    [self setNeedsDisplay:YES];
-}
-
-- (CGFloat)effectiveBackingScale {
-    CGFloat scale = self.backingScale;
-    if (scale <= 0) scale = self.window.backingScaleFactor;
-    if (scale <= 0) scale = NSScreen.mainScreen.backingScaleFactor;
-    return scale > 0 ? scale : 1.0;
-}
-
-- (CGFloat)pixelSnappedLength:(CGFloat)length {
-    CGFloat scale = [self effectiveBackingScale];
-    return ceil(length * scale - 0.001) / scale;
-}
-
-- (CGFloat)pixelSnappedOrigin:(CGFloat)origin {
-    CGFloat scale = [self effectiveBackingScale];
-    return floor(origin * scale + 0.001) / scale;
-}
-
-- (NSSize)viewSizeForPage:(SPDFRenderedPage*)page {
-    if (page.image && page.imagePointWidth > 0 && page.imagePointHeight > 0 &&
-        fabs(page.imageZoom - self.zoom) < 0.0001)
-        return NSMakeSize(page.imagePointWidth, page.imagePointHeight);
-    return NSMakeSize([self pixelSnappedLength:page.pageWidth * self.zoom],
-                      [self pixelSnappedLength:page.pageHeight * self.zoom]);
-}
-
-- (NSRect)convertPageRect:(NSRect)rect toViewRectInPageRect:(NSRect)pageRect page:(SPDFRenderedPage*)page {
-    CGFloat scaleX = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
-    CGFloat scaleY = NSHeight(pageRect) / MAX(1.0, page.pageHeight);
-    rect.origin.x = pageRect.origin.x + rect.origin.x * scaleX;
-    rect.origin.y = pageRect.origin.y + rect.origin.y * scaleY;
-    rect.size.width *= scaleX;
-    rect.size.height *= scaleY;
-    return rect;
-}
-
-- (NSPoint)convertViewPoint:(NSPoint)point toPagePointInPageRect:(NSRect)pageRect page:(SPDFRenderedPage*)page {
-    CGFloat scaleX = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
-    CGFloat scaleY = NSHeight(pageRect) / MAX(1.0, page.pageHeight);
-    return NSMakePoint((point.x - pageRect.origin.x) / MAX(0.001, scaleX),
-                       (point.y - pageRect.origin.y) / MAX(0.001, scaleY));
-}
-
-- (CGFloat)widestPage {
-    CGFloat widest = 0;
-    for (SPDFRenderedPage* page in self.pages) widest = MAX(widest, [self viewSizeForPage:page].width);
-    return widest;
-}
-
-- (CGFloat)viewportWidth {
-    CGFloat width = self.viewportWidthHint > 1.0 ? self.viewportWidthHint : NSWidth(self.bounds);
-    NSScrollView* scrollView = self.enclosingScrollView;
-    if (scrollView) width = MAX(width, scrollView.contentSize.width);
-    return width;
-}
-
-- (CGFloat)continuousDocumentHeight {
-    if (self.pages.count == 0) return 0.0;
-
-    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
-    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
-    CGFloat height = pageMargin / 2.0;
-    for (SPDFRenderedPage* page in self.pages) height += [self viewSizeForPage:page].height + pageGap;
-    height += pageMargin / 2.0;
-    return height;
-}
-
-- (NSSize)documentSizeForClipSize:(NSSize)clipSize {
-    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
-    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
-    CGFloat widestPage = [self widestPage];
-    CGFloat width = widestPage >= clipSize.width - 0.5 ? MAX(clipSize.width, widestPage)
-                                                       : MAX(clipSize.width, widestPage + pageMargin);
-    CGFloat height = pageMargin;
-
-    if (self.pages.count == 0) return NSMakeSize(MAX(clipSize.width, 600), MAX(clipSize.height, 500));
-
-    if (self.presentationMode && self.viewMode == SPDFViewModeSingle)
-        return NSMakeSize(clipSize.width, clipSize.height);
-
-    if (self.viewMode == SPDFViewModeSingle) {
-        height = [self continuousDocumentHeight];
-    } else {
-        height = pageMargin / 2.0;
-        for (SPDFRenderedPage* page in self.pages) {
-            CGFloat pageHeight = [self viewSizeForPage:page].height;
-            height += pageHeight + pageGap;
-        }
-        height += pageMargin / 2.0;
-    }
-
-    return NSMakeSize(width, MAX(height, clipSize.height));
-}
-
-- (NSRect)rectForPageAtIndex:(NSInteger)pageIndex {
-    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return NSZeroRect;
-
-    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
-    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
-    CGFloat y = pageMargin / 2.0;
-    for (NSInteger i = 0; i < pageIndex; ++i) {
-        SPDFRenderedPage* prev = self.pages[(NSUInteger)i];
-        y += [self viewSizeForPage:prev].height + pageGap;
-    }
-
-    SPDFRenderedPage* page = self.pages[(NSUInteger)pageIndex];
-    NSSize pageSize = [self viewSizeForPage:page];
-    CGFloat width = pageSize.width;
-    CGFloat height = pageSize.height;
-    CGFloat viewportWidth = [self viewportWidth];
-    CGFloat x = floor((viewportWidth - width) / 2.0);
-    CGFloat minX = width >= viewportWidth - 0.5 ? 0.0 : pageMargin / 2.0;
-    if (self.presentationMode && self.viewMode == SPDFViewModeSingle) {
-        CGFloat centeredY = floor((NSHeight(self.bounds) - height) / 2.0);
-        return NSMakeRect(MAX(0.0, [self pixelSnappedOrigin:x]), MAX(0.0, [self pixelSnappedOrigin:centeredY]), width,
-                          height);
-    }
-    return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), [self pixelSnappedOrigin:y], width, height);
-}
-
-- (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
-    if (self.pages.count == 0) return 0;
-
-    NSInteger bestPage = self.currentPageIndex;
-    CGFloat bestOverlap = -1;
-    CGFloat visibleMidY = NSMidY(visibleRect);
-    CGFloat closestDistance = CGFLOAT_MAX;
-    for (SPDFRenderedPage* page in self.pages) {
-        NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
-        CGFloat overlap = NSHeight(NSIntersectionRect(visibleRect, pageRect));
-        if (overlap > bestOverlap) {
-            bestOverlap = overlap;
-            bestPage = page.pageIndex;
-        }
-        if (overlap <= 0.0) {
-            CGFloat distance =
-                visibleMidY < NSMinY(pageRect) ? NSMinY(pageRect) - visibleMidY : visibleMidY - NSMaxY(pageRect);
-            if (distance < closestDistance) {
-                closestDistance = distance;
-                if (bestOverlap <= 0.0) bestPage = page.pageIndex;
-            }
-        }
-    }
-    return bestPage;
-}
-
-- (void)drawPage:(SPDFRenderedPage*)page inRect:(NSRect)pageRect {
-    NSShadow* shadow = [[NSShadow alloc] init];
-    shadow.shadowBlurRadius = 12.0;
-    shadow.shadowOffset = NSMakeSize(0.0, -2.0);
-    shadow.shadowColor = [NSColor colorWithCalibratedWhite:0.0 alpha:0.28];
-
-    [NSGraphicsContext saveGraphicsState];
-    if (!self.presentationMode) [shadow set];
-    [[NSColor whiteColor] setFill];
-    NSRectFill(pageRect);
-    [NSGraphicsContext restoreGraphicsState];
-
-    if (page.image) {
-        BOOL exactSize = fabs(NSWidth(pageRect) - page.imagePointWidth) < 0.01 &&
-                         fabs(NSHeight(pageRect) - page.imagePointHeight) < 0.01;
-        NSGraphicsContext* context = NSGraphicsContext.currentContext;
-        NSImageInterpolation oldInterpolation = context.imageInterpolation;
-        NSImageInterpolation interpolation = exactSize ? NSImageInterpolationNone : NSImageInterpolationHigh;
-        context.imageInterpolation = interpolation;
-        [page.image drawInRect:pageRect
-                      fromRect:NSZeroRect
-                     operation:NSCompositingOperationSourceOver
-                      fraction:1.0
-                respectFlipped:YES
-                         hints:@{NSImageHintInterpolation : @(interpolation)}];
-        context.imageInterpolation = oldInterpolation;
-    }
-
-    if (page.highlights.count > 0 && self.zoom > 0) {
-        [[NSColor colorWithCalibratedRed:1.0 green:0.84 blue:0.12 alpha:0.38] setFill];
-        for (NSValue* value in page.highlights) {
-            NSRect r = [self convertPageRect:[value rectValue] toViewRectInPageRect:pageRect page:page];
-            [[NSBezierPath bezierPathWithRoundedRect:r xRadius:2.0 yRadius:2.0] fill];
-        }
-    }
-
-    if (self.activeFindAlpha > 0 && page.pageIndex == self.activeFindPageIndex && self.zoom > 0) {
-        NSRect r = [self convertPageRect:self.activeFindRect toViewRectInPageRect:pageRect page:page];
-        r = NSInsetRect(r, -2.0, -2.0);
-        [[NSColor colorWithCalibratedRed:0.94 green:0.03 blue:0.02 alpha:self.activeFindAlpha] setStroke];
-        NSBezierPath* path = [NSBezierPath bezierPathWithRect:r];
-        path.lineWidth = 1.2;
-        [path stroke];
-    }
-
-    if (page.selectionRects.count > 0 && self.zoom > 0) {
-        [[NSColor colorWithCalibratedRed:0.40 green:0.62 blue:0.86 alpha:kSelectionOverlayAlpha] setFill];
-        for (NSValue* value in page.selectionRects) {
-            NSRect r = [self convertPageRect:[value rectValue] toViewRectInPageRect:pageRect page:page];
-            NSRectFillUsingOperation(r, NSCompositingOperationSourceOver);
-        }
-    }
-
-    NSArray<NSDictionary*>* comments = [self.reader commentAnnotationsForPage:page.pageIndex];
-    if (comments.count > 0 && self.zoom > 0) {
-        [[NSColor colorWithCalibratedRed:1.0 green:0.76 blue:0.10 alpha:0.16] setFill];
-        [[NSColor colorWithCalibratedRed:0.92 green:0.52 blue:0.0 alpha:0.95] setStroke];
-        for (NSDictionary* comment in comments) {
-            NSRect r = [self convertPageRect:[comment[@"bounds"] rectValue] toViewRectInPageRect:pageRect page:page];
-            r = NSInsetRect(r, -2.0, -2.0);
-            NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r xRadius:3.0 yRadius:3.0];
-            [path fill];
-            path.lineWidth = 1.2;
-            [path stroke];
-        }
-    }
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-    [(self.presentationMode ? NSColor.blackColor : NSColor.windowBackgroundColor) setFill];
-    NSRectFill(self.bounds);
-
-    if (self.pages.count == 0) {
-        NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
-        style.alignment = NSTextAlignmentCenter;
-        NSDictionary* attrs = @{
-            NSForegroundColorAttributeName : [NSColor secondaryLabelColor],
-            NSFontAttributeName : [NSFont systemFontOfSize:16 weight:NSFontWeightMedium],
-            NSParagraphStyleAttributeName : style
-        };
-        NSString* message = self.emptyMessage.length ? self.emptyMessage : @"Open a document";
-        NSRect textRect =
-            NSMakeRect(32.0, MAX(72.0, NSMidY(self.bounds) - 18.0), MAX(1.0, NSWidth(self.bounds) - 64.0), 44.0);
-        [message drawWithRect:textRect
-                      options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
-                   attributes:attrs];
-        return;
-    }
-
-    if (self.viewMode == SPDFViewModeSingle) {
-        NSInteger index = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
-        SPDFRenderedPage* page = self.pages[(NSUInteger)index];
-        NSRect pageRect = [self rectForPageAtIndex:index];
-        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect];
-        return;
-    }
-
-    for (SPDFRenderedPage* page in self.pages) {
-        NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
-        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect];
-    }
-}
-
-- (BOOL)point:(NSPoint)point fallsInPage:(NSInteger*)pageIndex pagePoint:(NSPoint*)pagePoint {
-    if (self.viewMode == SPDFViewModeSingle && self.pages.count > 0) {
-        NSInteger index = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
-        NSRect pageRect = [self rectForPageAtIndex:index];
-        if (NSPointInRect(point, pageRect)) {
-            if (pageIndex) *pageIndex = index;
-            if (pagePoint)
-                *pagePoint =
-                    [self convertViewPoint:point toPagePointInPageRect:pageRect page:self.pages[(NSUInteger)index]];
-            return YES;
-        }
-        return NO;
-    }
-
-    for (SPDFRenderedPage* page in self.pages) {
-        NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
-        if (NSPointInRect(point, pageRect)) {
-            if (pageIndex) *pageIndex = page.pageIndex;
-            if (pagePoint) *pagePoint = [self convertViewPoint:point toPagePointInPageRect:pageRect page:page];
-            return YES;
-        }
-    }
-    return NO;
-}
-
-- (void)updateHoveredCommentForEvent:(NSEvent*)event {
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    NSPoint pagePoint = NSZeroPoint;
-    NSInteger pageIndex = -1;
-    NSDictionary* hitComment = nil;
-    if ([self point:point fallsInPage:&pageIndex pagePoint:&pagePoint]) {
-        for (NSDictionary* comment in [self.reader commentAnnotationsForPage:pageIndex]) {
-            NSRect bounds = [comment[@"bounds"] rectValue];
-            if (NSPointInRect(pagePoint, NSInsetRect(bounds, -3.0, -3.0))) {
-                hitComment = comment;
-                break;
-            }
-        }
-    }
-
-    if (hitComment == _hoveredComment || [hitComment isEqualToDictionary:_hoveredComment]) {
-        if (hitComment) [self.reader documentViewHoverComment:hitComment atWindowPoint:event.locationInWindow];
-        return;
-    }
-
-    _hoveredComment = hitComment;
-    if (hitComment)
-        [self.reader documentViewHoverComment:hitComment atWindowPoint:event.locationInWindow];
-    else
-        [self.reader documentViewEndHoverComment];
-}
-
-- (void)mouseDown:(NSEvent*)event {
-    [self.reader clearFindFieldFocus];
-    if (!self.reader) {
-        [super mouseDown:event];
-        return;
-    }
-    if ([self.reader handlePresentationEvent:event]) return;
-    if (event.modifierFlags & NSEventModifierFlagControl) {
-        [self.reader showContextMenuForDocumentView:self event:event];
-        return;
-    }
-
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    NSPoint pagePoint = NSZeroPoint;
-    NSInteger pageIndex = -1;
-    if ([self point:point fallsInPage:&pageIndex pagePoint:&pagePoint]) {
-        if ([self.reader documentViewOpenLinkAtPageIndex:pageIndex pagePoint:pagePoint]) return;
-        _isSelecting = YES;
-        _selectionPageIndex = pageIndex;
-        _selectionStart = pagePoint;
-        [self.reader documentViewSelectionChangedOnPage:pageIndex from:pagePoint to:pagePoint];
-    } else {
-        [super mouseDown:event];
-    }
-}
-
-- (void)mouseMoved:(NSEvent*)event {
-    [self updateHoveredCommentForEvent:event];
-    if (!self.reader) return;
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    NSPoint pagePoint = NSZeroPoint;
-    NSInteger pageIndex = -1;
-    BOOL hasLink = [self point:point fallsInPage:&pageIndex pagePoint:&pagePoint] &&
-                   [self.reader documentViewHasLinkAtPageIndex:pageIndex pagePoint:pagePoint];
-    [(hasLink ? NSCursor.pointingHandCursor : NSCursor.arrowCursor) set];
-}
-
-- (void)mouseExited:(NSEvent*)event {
-    (void)event;
-    _hoveredComment = nil;
-    [self.reader documentViewEndHoverComment];
-    [NSCursor.arrowCursor set];
-}
-
-- (void)keyDown:(NSEvent*)event {
-    if (self.reader && [self.reader handlePresentationEvent:event]) return;
-    if (self.reader && [self.reader documentArrowKeyDown:event]) return;
-    if (self.reader && [self.reader documentTypeToSearchKeyDown:event]) return;
-    [super keyDown:event];
-}
-
-- (void)mouseDragged:(NSEvent*)event {
-    [self.reader clearFindFieldFocus];
-    if (!_isSelecting) {
-        [super mouseDragged:event];
-        return;
-    }
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    NSRect pageRect = [self rectForPageAtIndex:_selectionPageIndex];
-    if (NSIsEmptyRect(pageRect)) return;
-    SPDFRenderedPage* page = self.pages[(NSUInteger)_selectionPageIndex];
-    NSPoint pagePoint = [self convertViewPoint:point toPagePointInPageRect:pageRect page:page];
-    [self.reader documentViewSelectionChangedOnPage:_selectionPageIndex from:_selectionStart to:pagePoint];
-}
-
-- (void)mouseUp:(NSEvent*)event {
-    (void)event;
-    _isSelecting = NO;
-}
-
-- (void)beginPanWithEvent:(NSEvent*)event {
-    [self.reader clearFindFieldFocus];
-    NSScrollView* scrollView = self.enclosingScrollView;
-    if (!scrollView) return;
-    [_inertiaTimer invalidate];
-    _inertiaTimer = nil;
-    _isPanning = YES;
-    _panStartInWindow = event.locationInWindow;
-    _panStartOrigin = scrollView.contentView.bounds.origin;
-    _lastPanPoint = event.locationInWindow;
-    _lastPanTime = event.timestamp;
-    _panVelocity = NSZeroPoint;
-    [[NSCursor closedHandCursor] set];
-}
-
-- (void)continuePanWithEvent:(NSEvent*)event {
-    if (!_isPanning) return;
-
-    NSScrollView* scrollView = self.enclosingScrollView;
-    NSClipView* clipView = scrollView.contentView;
-    NSPoint current = event.locationInWindow;
-    NSPoint delta = NSMakePoint(current.x - _panStartInWindow.x, current.y - _panStartInWindow.y);
-    NSPoint origin = NSMakePoint(_panStartOrigin.x - delta.x, _panStartOrigin.y + delta.y);
-    NSTimeInterval dt = MAX(0.001, event.timestamp - _lastPanTime);
-    _panVelocity = NSMakePoint((current.x - _lastPanPoint.x) / dt, (current.y - _lastPanPoint.y) / dt);
-    _lastPanPoint = current;
-    _lastPanTime = event.timestamp;
-    origin.x = MAX(0, MIN(origin.x, MAX(0, NSWidth(self.bounds) - NSWidth(clipView.bounds))));
-    origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(self.bounds) - NSHeight(clipView.bounds))));
-    [clipView scrollToPoint:origin];
-    [scrollView reflectScrolledClipView:clipView];
-}
-
-- (void)stepPanInertia:(NSTimer*)timer {
-    NSScrollView* scrollView = self.enclosingScrollView;
-    NSClipView* clipView = scrollView.contentView;
-    if (!scrollView || !clipView) {
-        [timer invalidate];
-        _inertiaTimer = nil;
-        return;
-    }
-
-    NSPoint origin = clipView.bounds.origin;
-    origin.x -= _panVelocity.x / 60.0;
-    origin.y += _panVelocity.y / 60.0;
-    origin.x = MAX(0, MIN(origin.x, MAX(0, NSWidth(self.bounds) - NSWidth(clipView.bounds))));
-    origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(self.bounds) - NSHeight(clipView.bounds))));
-    [clipView scrollToPoint:origin];
-    [scrollView reflectScrolledClipView:clipView];
-
-    _panVelocity.x *= 0.90;
-    _panVelocity.y *= 0.90;
-    if (hypot(_panVelocity.x, _panVelocity.y) < 12.0) {
-        [timer invalidate];
-        _inertiaTimer = nil;
-    }
-}
-
-- (void)endPan {
-    _isPanning = NO;
-    [[NSCursor arrowCursor] set];
-    if (hypot(_panVelocity.x, _panVelocity.y) > 90.0) {
-        [_inertiaTimer invalidate];
-        _inertiaTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0
-                                                         target:self
-                                                       selector:@selector(stepPanInertia:)
-                                                       userInfo:nil
-                                                        repeats:YES];
-    }
-}
-
-- (void)cancelTransientInteraction {
-    [_inertiaTimer invalidate];
-    _inertiaTimer = nil;
-    _isPanning = NO;
-    _isSelecting = NO;
-    _rightMouseMoved = NO;
-    _panVelocity = NSZeroPoint;
-    _selectionPageIndex = -1;
-}
-
-- (void)rightMouseDown:(NSEvent*)event {
-    _rightMouseMoved = NO;
-    if (self.reader && [self.reader handlePresentationEvent:event]) {
-        _rightMouseMoved = YES;
-        return;
-    }
-    if (event.modifierFlags & NSEventModifierFlagCommand) return;
-    [self beginPanWithEvent:event];
-}
-
-- (void)rightMouseDragged:(NSEvent*)event {
-    _rightMouseMoved = YES;
-    if (_isPanning) [self continuePanWithEvent:event];
-}
-
-- (void)rightMouseUp:(NSEvent*)event {
-    if (self.reader && [self.reader documentViewInPresentationMode]) return;
-    BOOL forceMenu = (event.modifierFlags & NSEventModifierFlagCommand) != 0;
-    if (forceMenu || !_rightMouseMoved) [self.reader showContextMenuForDocumentView:self event:event];
-    if (_isPanning) [self endPan];
-}
-
-- (void)otherMouseDown:(NSEvent*)event {
-    if (event.buttonNumber == 2)
-        [self beginPanWithEvent:event];
-    else
-        [super otherMouseDown:event];
-}
-
-- (void)otherMouseDragged:(NSEvent*)event {
-    if (_isPanning)
-        [self continuePanWithEvent:event];
-    else
-        [super otherMouseDragged:event];
-}
-
-- (void)otherMouseUp:(NSEvent*)event {
-    if (_isPanning)
-        [self endPan];
-    else
-        [super otherMouseUp:event];
-}
-
-- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
-    (void)sender;
-    return NSDragOperationCopy;
-}
-
-- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
-    return [self.reader openFilesFromPasteboard:sender.draggingPasteboard];
-}
-
-@end
-
-@implementation SPDFMinimapView {
-    BOOL _draggingVisibleRect;
-    BOOL _pressPending;
-    BOOL _dragMoved;
-    NSPoint _pressPoint;
-    NSPoint _dragOffsetFromVisibleCenter;
-    CGFloat _dragOffsetFromVisibleTop;
-    CGFloat _dragThumbTop;
-    CGFloat _dragLastMouseY;
-    NSTimeInterval _dragLastTimestamp;
-}
-
-- (BOOL)isFlipped {
-    return YES;
-}
-
-- (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
-    _pages = [pages copy];
-    [self setNeedsDisplay:YES];
-}
-
-- (CGFloat)widestPage {
-    CGFloat widest = 0;
-    for (SPDFRenderedPage* page in self.pages) widest = MAX(widest, page.pageWidth);
-    return widest;
-}
-
-- (CGFloat)scrollFraction {
-    CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
-    CGFloat maxScroll = MAX(1.0, self.documentHeight - visibleHeight);
-    return spdf_clamp_cg(NSMinY(self.documentVisibleRect) / maxScroll, 0.0, 1.0);
-}
-
-- (NSRect)miniRectForPage:(SPDFRenderedPage*)targetPage scale:(CGFloat)scale gap:(CGFloat)gap {
-    CGFloat y = 0;
-    for (SPDFRenderedPage* page in self.pages) {
-        CGFloat pageWidth = MAX(1.0, page.pageWidth * scale);
-        CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
-        if (page == targetPage || page.pageIndex == targetPage.pageIndex) {
-            return NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
-        }
-        y += pageHeight + gap;
-    }
-    return NSZeroRect;
-}
-
-- (NSRect)documentRectForPage:(SPDFRenderedPage*)targetPage {
-    if (targetPage.pageIndex >= 0 && targetPage.pageIndex < (NSInteger)self.documentPageRects.count) {
-        NSRect rect = [self.documentPageRects[(NSUInteger)targetPage.pageIndex] rectValue];
-        if (!NSIsEmptyRect(rect)) return rect;
-    }
-
-    CGFloat documentScale = MAX(0.01, self.documentScale);
-    CGFloat documentWidth = MAX(1.0, self.documentWidth);
-    CGFloat y = kPageMargin / 2.0;
-
-    for (SPDFRenderedPage* page in self.pages) {
-        if (page.pageIndex >= targetPage.pageIndex) break;
-        y += page.pageHeight * documentScale + kPageGap;
-    }
-
-    CGFloat width = MAX(1.0, targetPage.pageWidth * documentScale);
-    CGFloat height = MAX(1.0, targetPage.pageHeight * documentScale);
-    CGFloat x = floor((documentWidth - width) / 2.0);
-    return NSMakeRect(MAX(kPageMargin / 2.0, x), y, width, height);
-}
-
-- (NSRect)miniRectForDocumentIntersection:(NSRect)intersection
-                             documentRect:(NSRect)documentRect
-                                 miniRect:(NSRect)miniRect {
-    if (NSIsEmptyRect(intersection) || NSIsEmptyRect(documentRect) || NSIsEmptyRect(miniRect)) return NSZeroRect;
-
-    CGFloat x0 = spdf_clamp_cg((NSMinX(intersection) - NSMinX(documentRect)) / NSWidth(documentRect), 0.0, 1.0);
-    CGFloat x1 = spdf_clamp_cg((NSMaxX(intersection) - NSMinX(documentRect)) / NSWidth(documentRect), 0.0, 1.0);
-    CGFloat y0 = spdf_clamp_cg((NSMinY(intersection) - NSMinY(documentRect)) / NSHeight(documentRect), 0.0, 1.0);
-    CGFloat y1 = spdf_clamp_cg((NSMaxY(intersection) - NSMinY(documentRect)) / NSHeight(documentRect), 0.0, 1.0);
-
-    return NSMakeRect(NSMinX(miniRect) + x0 * NSWidth(miniRect), NSMinY(miniRect) + y0 * NSHeight(miniRect),
-                      MAX(1.0, (x1 - x0) * NSWidth(miniRect)), MAX(1.0, (y1 - y0) * NSHeight(miniRect)));
-}
-
-- (NSRect)unscrolledVisibleRectForScale:(CGFloat)scale gap:(CGFloat)gap contentHeight:(CGFloat)contentHeight {
-    if (self.pages.count == 0 || contentHeight <= 0) return NSZeroRect;
-
-    if (self.documentHeight > 1.0) {
-        NSRect visible = NSZeroRect;
-        BOOL hasVisiblePage = NO;
-        for (SPDFRenderedPage* page in self.pages) {
-            NSRect documentRect = [self documentRectForPage:page];
-            NSRect intersection = NSIntersectionRect(self.documentVisibleRect, documentRect);
-            if (NSIsEmptyRect(intersection)) continue;
-
-            NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
-            NSRect miniVisible =
-                [self miniRectForDocumentIntersection:intersection documentRect:documentRect miniRect:miniRect];
-            if (NSIsEmptyRect(miniVisible)) continue;
-
-            visible = hasVisiblePage ? NSUnionRect(visible, miniVisible) : miniVisible;
-            hasVisiblePage = YES;
-        }
-        if (hasVisiblePage) return NSInsetRect(visible, -2.0, -2.0);
-    }
-
-    CGFloat heightFraction =
-        spdf_clamp_cg(NSHeight(self.documentVisibleRect) / MAX(1.0, self.documentHeight), 0.02, 1.0);
-    CGFloat height = MAX(10.0, heightFraction * contentHeight);
-    CGFloat top = [self scrollFraction] * MAX(0.0, contentHeight - height);
-    if (top + height > contentHeight) top = MAX(0.0, contentHeight - height);
-    return NSMakeRect(5.0, top, NSWidth(self.bounds) - 10.0, height);
-}
-
-- (BOOL)layoutScale:(CGFloat*)scaleOut
-                gap:(CGFloat*)gapOut
-         contentTop:(CGFloat*)topOut
-      contentHeight:(CGFloat*)heightOut
-        visibleRect:(NSRect*)visibleOut {
-    if (self.pages.count == 0 || NSWidth(self.bounds) < 16 || NSHeight(self.bounds) < 16) return NO;
-
-    CGFloat widest = [self widestPage];
-    if (widest <= 0) return NO;
-
-    CGFloat scale = (NSWidth(self.bounds) - 18.0) / widest;
-    CGFloat gap = 4.0;
-    CGFloat contentHeight = 0;
-    for (SPDFRenderedPage* page in self.pages) contentHeight += page.pageHeight * scale;
-    contentHeight += gap * MAX(0, (NSInteger)self.pages.count - 1);
-    CGFloat available = MAX(1.0, NSHeight(self.bounds) - 16.0);
-    NSRect visible = [self unscrolledVisibleRectForScale:scale gap:gap contentHeight:contentHeight];
-    CGFloat offset = 0;
-    if (contentHeight > available) {
-        CGFloat maxOffset = contentHeight - available;
-        offset = [self scrollFraction] * maxOffset;
-    }
-
-    CGFloat contentTop =
-        contentHeight < available ? floor((NSHeight(self.bounds) - contentHeight) / 2.0) : 8.0 - offset;
-    visible.origin.y += contentTop;
-    if (scaleOut) *scaleOut = scale;
-    if (gapOut) *gapOut = gap;
-    if (topOut) *topOut = contentTop;
-    if (heightOut) *heightOut = contentHeight;
-    if (visibleOut) *visibleOut = visible;
-    return YES;
-}
-
-- (CGFloat)contentTopForDocumentCenterY:(CGFloat)documentY contentHeight:(CGFloat)contentHeight {
-    CGFloat available = MAX(1.0, NSHeight(self.bounds) - 16.0);
-    if (contentHeight < available) return floor((NSHeight(self.bounds) - contentHeight) / 2.0);
-
-    CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
-    CGFloat maxScroll = MAX(1.0, self.documentHeight - visibleHeight);
-    CGFloat originY = spdf_clamp_cg(documentY - visibleHeight * 0.5, 0.0, maxScroll);
-    CGFloat offset = (originY / maxScroll) * (contentHeight - available);
-    return 8.0 - offset;
-}
-
-- (NSPoint)documentPointForUnscrolledMiniPoint:(NSPoint)point scale:(CGFloat)scale gap:(CGFloat)gap {
-    CGFloat y = 0;
-    for (SPDFRenderedPage* page in self.pages) {
-        NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
-        NSRect documentRect = [self documentRectForPage:page];
-        if (NSIsEmptyRect(miniRect) || NSIsEmptyRect(documentRect)) {
-            y += MAX(1.0, page.pageHeight * scale) + gap;
-            continue;
-        }
-
-        if (point.y >= NSMinY(miniRect) && point.y <= NSMaxY(miniRect)) {
-            CGFloat xFraction = spdf_clamp_cg((point.x - NSMinX(miniRect)) / MAX(1.0, NSWidth(miniRect)), 0.0, 1.0);
-            CGFloat yFraction = spdf_clamp_cg((point.y - NSMinY(miniRect)) / MAX(1.0, NSHeight(miniRect)), 0.0, 1.0);
-            return NSMakePoint(NSMinX(documentRect) + xFraction * NSWidth(documentRect),
-                               NSMinY(documentRect) + yFraction * NSHeight(documentRect));
-        }
-
-        CGFloat gapStart = NSMaxY(miniRect);
-        CGFloat gapEnd = gapStart + gap;
-        if (point.y > gapStart && point.y < gapEnd) {
-            CGFloat xFraction = spdf_clamp_cg((point.x - NSMinX(miniRect)) / MAX(1.0, NSWidth(miniRect)), 0.0, 1.0);
-            CGFloat gapFraction = spdf_clamp_cg((point.y - gapStart) / MAX(1.0, gap), 0.0, 1.0);
-            return NSMakePoint(NSMinX(documentRect) + xFraction * NSWidth(documentRect),
-                               NSMaxY(documentRect) + gapFraction * kPageGap);
-        }
-        y += MAX(1.0, page.pageHeight * scale) + gap;
-    }
-
-    CGFloat yFraction = spdf_clamp_cg(point.y / MAX(1.0, y), 0.0, 1.0);
-    return NSMakePoint(NSMidX(self.documentVisibleRect), yFraction * self.documentHeight);
-}
-
-- (NSPoint)documentPointForMinimapCenterPoint:(NSPoint)point
-                                        scale:(CGFloat)scale
-                                          gap:(CGFloat)gap
-                                contentHeight:(CGFloat)contentHeight
-                                   contentTop:(CGFloat)contentTop {
-    NSPoint documentPoint =
-        [self documentPointForUnscrolledMiniPoint:NSMakePoint(point.x, point.y - contentTop) scale:scale gap:gap];
-    for (NSInteger i = 0; i < 8; ++i) {
-        CGFloat projectedTop = [self contentTopForDocumentCenterY:documentPoint.y contentHeight:contentHeight];
-        NSPoint unscrolledPoint = NSMakePoint(point.x, point.y - projectedTop);
-        documentPoint = [self documentPointForUnscrolledMiniPoint:unscrolledPoint scale:scale gap:gap];
-    }
-    return documentPoint;
-}
-
-- (BOOL)pageHitForMiniPoint:(NSPoint)point
-                      scale:(CGFloat)scale
-                        gap:(CGFloat)gap
-                 contentTop:(CGFloat)contentTop
-                  pageIndex:(NSInteger*)pageIndexOut
-            xFractionInPage:(CGFloat*)xFractionOut
-            yFractionInPage:(CGFloat*)yFractionOut {
-    NSPoint unscrolledPoint = NSMakePoint(point.x, point.y - contentTop);
-    for (SPDFRenderedPage* page in self.pages) {
-        NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
-        if (NSIsEmptyRect(miniRect)) continue;
-        if (unscrolledPoint.y >= NSMinY(miniRect) && unscrolledPoint.y <= NSMaxY(miniRect)) {
-            if (pageIndexOut) *pageIndexOut = page.pageIndex;
-            if (xFractionOut)
-                *xFractionOut =
-                    spdf_clamp_cg((unscrolledPoint.x - NSMinX(miniRect)) / MAX(1.0, NSWidth(miniRect)), 0.0, 1.0);
-            if (yFractionOut)
-                *yFractionOut =
-                    spdf_clamp_cg((unscrolledPoint.y - NSMinY(miniRect)) / MAX(1.0, NSHeight(miniRect)), 0.0, 1.0);
-            return YES;
-        }
-    }
-    return NO;
-}
-
-- (NSRect)draggableVisibleRectForRect:(NSRect)visibleRect {
-    return NSIntersectionRect(visibleRect, NSInsetRect(self.bounds, 1.0, 1.0));
-}
-
-- (BOOL)shouldUsePrecisionViewportDrag {
-    return self.pages.count >= 20;
-}
-
-- (CGFloat)precisionViewportBaseDragScale {
-    return spdf_clamp_cg(20.0 / MAX(1.0, (CGFloat)self.pages.count), 0.28, 0.78);
-}
-
-- (NSTimeInterval)precisionViewportDragDeltaTimeForTimestamp:(NSTimeInterval)timestamp {
-    NSTimeInterval deltaT = timestamp - _dragLastTimestamp;
-    if (!isfinite(deltaT) || deltaT <= 0.0) deltaT = 1.0 / 60.0;
-    return spdf_clamp_cg(deltaT, 1.0 / 240.0, 1.0 / 20.0);
-}
-
-- (CGFloat)precisionViewportCatchUpBlendForDeltaY:(CGFloat)deltaY
-                                    distanceToRaw:(CGFloat)distanceToRaw
-                                        timestamp:(NSTimeInterval)timestamp {
-    if (![self shouldUsePrecisionViewportDrag]) return 1.0;
-
-    NSTimeInterval deltaT = [self precisionViewportDragDeltaTimeForTimestamp:timestamp];
-    CGFloat speed = fabs(deltaY) / deltaT;
-    CGFloat velocityBlend = spdf_smoothstep_cg((speed - 70.0) / (360.0 - 70.0));
-    CGFloat distanceBlend = spdf_smoothstep_cg((distanceToRaw - 6.0) / (24.0 - 6.0));
-    return MAX(velocityBlend, distanceBlend);
-}
-
-- (BOOL)documentPointForEvent:(NSEvent*)event documentPoint:(NSPoint*)documentPointOut {
-    CGFloat scale = 1.0;
-    CGFloat gap = 4.0;
-    CGFloat contentTop = 8.0;
-    CGFloat contentHeight = 0;
-    if (![self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL])
-        return NO;
-
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    if (documentPointOut)
-        *documentPointOut = [self documentPointForMinimapCenterPoint:point
-                                                               scale:scale
-                                                                 gap:gap
-                                                       contentHeight:contentHeight
-                                                          contentTop:contentTop];
-    return YES;
-}
-
-- (void)drawPlaceholderInRect:(NSRect)rect {
-    if (NSHeight(rect) < 6.0 || NSWidth(rect) < 10.0) return;
-    [[NSColor colorWithCalibratedWhite:0.76 alpha:0.34] setFill];
-    NSInteger lines = (NSInteger)spdf_clamp_cg(floor(NSHeight(rect) / 7.0), 2.0, 16.0);
-    CGFloat y = NSMinY(rect) + MAX(2.0, NSHeight(rect) * 0.08);
-    CGFloat lineHeight = MAX(1.0, NSHeight(rect) * 0.018);
-    for (NSInteger i = 0; i < lines; ++i) {
-        CGFloat widthFactor = (i % 5 == 4) ? 0.56 : 0.78;
-        NSRect line = NSMakeRect(NSMinX(rect) + NSWidth(rect) * 0.12, y, NSWidth(rect) * widthFactor, lineHeight);
-        NSRectFillUsingOperation(line, NSCompositingOperationSourceOver);
-        y += MAX(3.0, NSHeight(rect) / (CGFloat)(lines + 2));
-        if (y > NSMaxY(rect) - 2.0) break;
-    }
-}
-
-- (void)drawRects:(NSArray<NSValue*>*)rects
-         pageRect:(NSRect)pageRect
-            scale:(CGFloat)scale
-            color:(NSColor*)color
-        minHeight:(CGFloat)minHeight {
-    if (rects.count == 0) return;
-    [color setFill];
-    for (NSValue* value in rects) {
-        NSRect r = [value rectValue];
-        r.origin.x = NSMinX(pageRect) + r.origin.x * scale;
-        r.origin.y = NSMinY(pageRect) + r.origin.y * scale;
-        r.size.width = MAX(1.0, r.size.width * scale);
-        r.size.height = MAX(minHeight, r.size.height * scale);
-        NSRectFillUsingOperation(NSIntersectionRect(r, pageRect), NSCompositingOperationSourceOver);
-    }
-}
-
-- (void)drawSearchRects:(NSArray<NSValue*>*)rects pageRect:(NSRect)pageRect scale:(CGFloat)scale {
-    if (rects.count == 0) return;
-    for (NSValue* value in rects) {
-        NSRect r = [value rectValue];
-        r.origin.x = NSMinX(pageRect) + r.origin.x * scale;
-        r.origin.y = NSMinY(pageRect) + r.origin.y * scale;
-        r.size.width = MAX(2.0, r.size.width * scale);
-        r.size.height = MAX(3.0, r.size.height * scale);
-        CGFloat cx = NSMidX(r);
-        CGFloat cy = NSMidY(r);
-        r.size.width *= 2.0;
-        r.origin.x = cx - NSWidth(r) / 2.0;
-        r.origin.y = cy - NSHeight(r) / 2.0;
-        r = NSIntersectionRect(r, NSInsetRect(pageRect, -1.0, -1.0));
-        if (NSIsEmptyRect(r)) continue;
-        [[NSColor colorWithCalibratedRed:1.0 green:0.86 blue:0.06 alpha:0.88] setFill];
-        NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r xRadius:1.5 yRadius:1.5];
-        [path fill];
-        [[NSColor colorWithCalibratedRed:0.88 green:0.08 blue:0.03 alpha:0.96] setStroke];
-        path.lineWidth = 1.1;
-        [path stroke];
-    }
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-    (void)dirtyRect;
-    [NSColor.windowBackgroundColor setFill];
-    NSRectFill(self.bounds);
-    [NSColor.separatorColor setFill];
-    NSRectFill(NSMakeRect(0, 0, 1, NSHeight(self.bounds)));
-
-    CGFloat scale = 1.0;
-    CGFloat gap = 4.0;
-    CGFloat contentTop = 8.0;
-    CGFloat contentHeight = 0;
-    NSRect visibleRect = NSZeroRect;
-    if (!
-        [self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:&visibleRect])
-        return;
-
-    CGFloat y = contentTop;
-    BOOL drawImages = self.pages.count <= 400;
-    for (SPDFRenderedPage* page in self.pages) {
-        CGFloat pageWidth = page.pageWidth * scale;
-        CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
-        NSRect pageRect = NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
-        if (NSHeight(pageRect) >= 1.0 && NSIntersectsRect(pageRect, self.bounds)) {
-            [[NSColor whiteColor] setFill];
-            NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
-            if (drawImages && page.image && NSHeight(pageRect) >= 5.0) {
-                [page.image drawInRect:pageRect
-                              fromRect:NSZeroRect
-                             operation:NSCompositingOperationSourceOver
-                              fraction:1.0
-                        respectFlipped:YES
-                                 hints:@{NSImageHintInterpolation : @(NSImageInterpolationLow)}];
-            } else {
-                [self drawPlaceholderInRect:pageRect];
-            }
-            [self drawSearchRects:page.highlights pageRect:pageRect scale:scale];
-            [self drawRects:page.selectionRects
-                   pageRect:pageRect
-                      scale:scale
-                      color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
-                  minHeight:1.0];
-            if (page.pageIndex == self.currentPageIndex) {
-                [[NSColor controlAccentColor] setStroke];
-                NSBezierPath* path = [NSBezierPath bezierPathWithRect:NSInsetRect(pageRect, -1, -1)];
-                path.lineWidth = 1.5;
-                [path stroke];
-            }
-        }
-        y += pageHeight + gap;
-    }
-
-    if (contentHeight > 1.0) {
-        visibleRect = NSIntersectionRect(visibleRect, NSInsetRect(self.bounds, 1.0, 1.0));
-        if (NSWidth(visibleRect) > 1.0 && NSHeight(visibleRect) > 1.0) {
-            [[NSColor colorWithCalibratedRed:0.18 green:0.55 blue:0.92 alpha:0.18] setFill];
-            [[NSBezierPath bezierPathWithRoundedRect:visibleRect xRadius:4 yRadius:4] fill];
-            [[NSColor controlAccentColor] setStroke];
-            NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:visibleRect xRadius:4 yRadius:4];
-            path.lineWidth = 1.2;
-            [path stroke];
-        }
-    }
-}
-
-- (NSArray<NSNumber*>*)visiblePageIndexes {
-    CGFloat scale = 1.0;
-    CGFloat gap = 4.0;
-    CGFloat contentTop = 8.0;
-    CGFloat contentHeight = 0;
-    if (![self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL])
-        return @[];
-
-    NSMutableArray<NSNumber*>* indexes = [NSMutableArray array];
-    for (SPDFRenderedPage* page in self.pages) {
-        NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
-        miniRect.origin.y += contentTop;
-        if (NSIntersectsRect(miniRect, self.bounds)) [indexes addObject:@(page.pageIndex)];
-    }
-    return indexes;
-}
-
-- (void)sendScrollRequestForEvent:(NSEvent*)event {
-    CGFloat scale = 1.0;
-    CGFloat gap = 4.0;
-    CGFloat contentTop = 8.0;
-    CGFloat contentHeight = 0;
-    NSRect visibleRect = NSZeroRect;
-    if (!
-        [self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:&visibleRect])
-        return;
-
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    if (_draggingVisibleRect && [self shouldUsePrecisionViewportDrag]) {
-        NSRect track = NSInsetRect(self.bounds, 1.0, 1.0);
-        NSRect drawnVisibleRect = [self draggableVisibleRectForRect:visibleRect];
-        CGFloat thumbHeight = MIN(NSHeight(drawnVisibleRect), NSHeight(track));
-        CGFloat minTop = NSMinY(track);
-        CGFloat maxTop = MAX(minTop, NSMaxY(track) - thumbHeight);
-        CGFloat rawTop = point.y - _dragOffsetFromVisibleTop;
-
-        if (rawTop <= minTop) {
-            _dragThumbTop = minTop;
-            _dragLastMouseY = point.y;
-            _dragLastTimestamp = event.timestamp;
-            [self.reader minimapViewDidRequestViewportTopFraction:0.0];
-            return;
-        }
-        if (rawTop >= maxTop) {
-            _dragThumbTop = maxTop;
-            _dragLastMouseY = point.y;
-            _dragLastTimestamp = event.timestamp;
-            [self.reader minimapViewDidRequestViewportTopFraction:1.0];
-            return;
-        }
-
-        CGFloat deltaY = point.y - _dragLastMouseY;
-        CGFloat baseScale = [self precisionViewportBaseDragScale];
-        CGFloat precisionTop = _dragThumbTop + deltaY * baseScale;
-        CGFloat catchUpBlend = [self precisionViewportCatchUpBlendForDeltaY:deltaY
-                                                              distanceToRaw:fabs(rawTop - precisionTop)
-                                                                  timestamp:event.timestamp];
-        _dragThumbTop = spdf_clamp_cg(precisionTop + (rawTop - precisionTop) * catchUpBlend, minTop, maxTop);
-
-        _dragLastMouseY = point.y;
-        _dragLastTimestamp = event.timestamp;
-        point = NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, _dragThumbTop + thumbHeight * 0.5);
-    } else if (_draggingVisibleRect) {
-        point = NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, point.y - _dragOffsetFromVisibleCenter.y);
-    }
-    NSPoint documentPoint = [self documentPointForMinimapCenterPoint:point
-                                                               scale:scale
-                                                                 gap:gap
-                                                       contentHeight:contentHeight
-                                                          contentTop:contentTop];
-    [self.reader minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
-}
-
-- (void)sendClickRequestForEvent:(NSEvent*)event {
-    CGFloat scale = 1.0;
-    CGFloat gap = 4.0;
-    CGFloat contentTop = 8.0;
-    CGFloat contentHeight = 0;
-    if (![self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL])
-        return;
-
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    NSInteger pageIndex = -1;
-    CGFloat xFraction = 0.5;
-    CGFloat yFraction = 0.0;
-    if ([self pageHitForMiniPoint:point
-                            scale:scale
-                              gap:gap
-                       contentTop:contentTop
-                        pageIndex:&pageIndex
-                  xFractionInPage:&xFraction
-                  yFractionInPage:&yFraction]) {
-        [self.reader minimapViewDidRequestCenterOnPage:pageIndex xFractionInPage:xFraction yFractionInPage:yFraction];
-    }
-}
-
-- (void)mouseDown:(NSEvent*)event {
-    CGFloat scale = 1.0;
-    CGFloat gap = 4.0;
-    CGFloat contentTop = 8.0;
-    CGFloat contentHeight = 0;
-    NSRect visibleRect = NSZeroRect;
-    if (!
-        [self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:&visibleRect])
-        return;
-
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    NSRect drawnVisibleRect = [self draggableVisibleRectForRect:visibleRect];
-    _pressPending = YES;
-    _dragMoved = NO;
-    _pressPoint = point;
-    _draggingVisibleRect = NSPointInRect(point, drawnVisibleRect);
-    _dragOffsetFromVisibleCenter =
-        _draggingVisibleRect ? NSMakePoint(point.x - NSMidX(drawnVisibleRect), point.y - NSMidY(drawnVisibleRect))
-                             : NSZeroPoint;
-    _dragOffsetFromVisibleTop = _draggingVisibleRect ? point.y - NSMinY(drawnVisibleRect) : 0.0;
-    _dragThumbTop = _draggingVisibleRect ? NSMinY(drawnVisibleRect) : 0.0;
-    _dragLastMouseY = point.y;
-    _dragLastTimestamp = event.timestamp;
-}
-
-- (void)mouseDragged:(NSEvent*)event {
-    if (_pressPending && !_dragMoved) {
-        NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-        if (hypot(point.x - _pressPoint.x, point.y - _pressPoint.y) < 3.0) return;
-        _dragMoved = YES;
-        _pressPending = NO;
-    }
-    [self sendScrollRequestForEvent:event];
-}
-
-- (void)scrollWheel:(NSEvent*)event {
-    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
-        NSPoint documentPoint = NSZeroPoint;
-        if ([self documentPointForEvent:event documentPoint:&documentPoint])
-            [self.reader minimapViewDidReceiveZoomScrollWheel:event documentPoint:documentPoint];
-        return;
-    }
-
-    [self.reader minimapViewDidReceiveScrollWheel:event];
-}
-
-- (void)magnifyWithEvent:(NSEvent*)event {
-    NSPoint documentPoint = NSZeroPoint;
-    if ([self documentPointForEvent:event documentPoint:&documentPoint])
-        [self.reader minimapViewDidReceiveMagnify:event documentPoint:documentPoint];
-}
-
-- (void)mouseUp:(NSEvent*)event {
-    if (_pressPending && !_dragMoved) [self sendClickRequestForEvent:event];
-    _draggingVisibleRect = NO;
-    _pressPending = NO;
-    _dragMoved = NO;
-    _pressPoint = NSZeroPoint;
-    _dragOffsetFromVisibleCenter = NSZeroPoint;
-    _dragOffsetFromVisibleTop = 0.0;
-    _dragThumbTop = 0.0;
-    _dragLastMouseY = 0.0;
-    _dragLastTimestamp = 0.0;
-}
-
-@end
-
-@interface SPDFPrintView : NSView
-@property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
-@end
-
-@implementation SPDFPrintView
-
-- (BOOL)isFlipped {
-    return YES;
-}
-
-- (BOOL)knowsPageRange:(NSRangePointer)range {
-    range->location = 1;
-    range->length = self.pages.count;
-    return YES;
-}
-
-- (NSRect)rectForPage:(NSInteger)page {
-    NSPrintInfo* info = NSPrintOperation.currentOperation.printInfo;
-    NSSize paper = info.paperSize;
-    return NSMakeRect(0, (page - 1) * paper.height, paper.width, paper.height);
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-    NSPrintInfo* info = NSPrintOperation.currentOperation.printInfo;
-    NSSize paper = info.paperSize;
-    NSInteger pageNumber = MAX(1, (NSInteger)floor(dirtyRect.origin.y / paper.height) + 1);
-    NSInteger pageIndex = pageNumber - 1;
-    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return;
-
-    NSRect pageRect = [self rectForPage:pageNumber];
-    [[NSColor whiteColor] setFill];
-    NSRectFill(pageRect);
-
-    SPDFRenderedPage* page = self.pages[(NSUInteger)pageIndex];
-    if (!page.image) return;
-
-    NSRect imageable = info.imageablePageBounds;
-    imageable.origin.x += pageRect.origin.x;
-    imageable.origin.y += pageRect.origin.y;
-    CGFloat scale = MIN(NSWidth(imageable) / page.image.size.width, NSHeight(imageable) / page.image.size.height);
-    NSSize drawSize = NSMakeSize(page.image.size.width * scale, page.image.size.height * scale);
-    NSRect drawRect =
-        NSMakeRect(imageable.origin.x + (NSWidth(imageable) - drawSize.width) / 2.0,
-                   imageable.origin.y + (NSHeight(imageable) - drawSize.height) / 2.0, drawSize.width, drawSize.height);
-    [page.image drawInRect:drawRect
-                  fromRect:NSZeroRect
-                 operation:NSCompositingOperationSourceOver
-                  fraction:1.0
-            respectFlipped:YES
-                     hints:@{NSImageHintInterpolation : @(NSImageInterpolationHigh)}];
-}
-
 @end
 
 @implementation ShenzhenMacDelegate {
@@ -2673,9 +587,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (BOOL)windowShouldClose:(NSWindow*)sender {
     if (sender != _window) return YES;
     [self rememberActiveTabState];
-    [self writeSessionStateForCurrentWindow];
+    [self removeSessionStateForCurrentWindow];
+    _suppressSessionWriteOnTerminate = YES;
     [self savePersistentState];
-    _terminateOnlyThisProcess = NO;
+    _terminateOnlyThisProcess = [self hasOtherShenzhenWindows];
     dispatch_async(dispatch_get_main_queue(), ^{
       [NSApp terminate:self];
     });
@@ -2690,6 +605,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         return YES;
     }
     [self openPath:filename];
+    [self activateWindowForExternalOpen];
     return YES;
 }
 
@@ -2701,6 +617,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             [_pendingOpenPaths addObjectsFromArray:filenames];
         } else {
             for (NSString* filename in filenames) [self openPath:filename];
+            [self activateWindowForExternalOpen];
         }
     }
     [NSApp replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
@@ -2747,9 +664,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (NSString*)supportDirectory {
-    NSURL* base =
-        [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask]
-            .firstObject;
+    NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                       inDomains:NSUserDomainMask]
+                      .firstObject;
     NSString* dir = [base.path stringByAppendingPathComponent:@"ShenzhenPDF"];
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir;
@@ -3039,6 +956,21 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return apps;
 }
 
+- (BOOL)hasOtherShenzhenWindows {
+    for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
+        if (controller != self && controller->_window && controller->_window.visible) return YES;
+    }
+    return [self otherRunningShenzhenApplications].count > 0;
+}
+
+- (void)activateWindowForExternalOpen {
+    if (!_window) return;
+    [NSApp activateIgnoringOtherApps:YES];
+    [_window orderFrontRegardless];
+    [_window makeKeyAndOrderFront:nil];
+    [_window makeMainWindow];
+}
+
 - (void)spawnPendingRestoredWindowsIfNeeded {
     if (self.detachedTabLaunch || self.restoreWindowID.length > 0 || self.initialPath.length > 0 ||
         _pendingOpenPath.length > 0 || _pendingOpenPaths.count > 0 || _pendingRestoreWindowIDs.count == 0)
@@ -3101,8 +1033,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSString* path = _recentlyOpenedPaths[i];
         NSString* title =
             [NSString stringWithFormat:@"%lu) %@", (unsigned long)(i + 1), spdf_display_name_for_path(path)];
-        NSMenuItem* item =
-            [[NSMenuItem alloc] initWithTitle:title action:@selector(openRecentDocument:) keyEquivalent:@""];
+        NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title
+                                                      action:@selector(openRecentDocument:)
+                                               keyEquivalent:@""];
         item.representedObject = path;
         item.toolTip = path;
         [_recentlyOpenedMenu addItem:item];
@@ -3171,7 +1104,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                 @{@"title" : @"Reopen last closed document", @"keys" : @[ @"Cmd", @"Shift", @"T" ]},
                 @{@"title" : @"Rotate page clockwise", @"keys" : @[ @"Cmd", @"R" ]},
                 @{@"title" : @"Rotate page anticlockwise", @"keys" : @[ @"Cmd", @"Shift", @"R" ]},
-                @{@"title" : @"Presentation mode", @"keys" : @[ @"F5" ]},
+                @{@"title" : @"Presentation mode", @"keys" : @[ @"F5", @"Cmd", @"Shift", @"F" ]},
                 @{@"title" : @"Leave presentation mode", @"keys" : @[ @"Esc" ]}
             ]
         },
@@ -3304,8 +1237,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [_shortcutHelpTable addTableColumn:column];
         scrollView.documentView = _shortcutHelpTable;
 
-        _shortcutHelpDisableButton =
-            [NSButton buttonWithTitle:@"Do not show again" target:self action:@selector(disableLaunchShortcutHelp:)];
+        _shortcutHelpDisableButton = [NSButton buttonWithTitle:@"Do not show again"
+                                                        target:self
+                                                        action:@selector(disableLaunchShortcutHelp:)];
         _shortcutHelpDisableButton.translatesAutoresizingMaskIntoConstraints = NO;
         _shortcutHelpDisableButton.bezelStyle = NSBezelStyleRounded;
         [content addSubview:_shortcutHelpDisableButton];
@@ -3400,8 +1334,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [goMenu addItemWithTitle:@"First Page"
                           action:@selector(firstPage:)
                    keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSHomeFunctionKey)]];
-    NSMenuItem* previousPageItem =
-        [goMenu addItemWithTitle:@"Previous Page" action:@selector(previousPage:) keyEquivalent:@"["];
+    NSMenuItem* previousPageItem = [goMenu addItemWithTitle:@"Previous Page"
+                                                     action:@selector(previousPage:)
+                                              keyEquivalent:@"["];
     NSMenuItem* nextPageItem = [goMenu addItemWithTitle:@"Next Page" action:@selector(nextPage:) keyEquivalent:@"]"];
     NSMenuItem* lastPageItem =
         [goMenu addItemWithTitle:@"Last Page"
@@ -3421,8 +1356,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [zoomMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem* zoomFitPage = [zoomMenu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@"9"];
     NSMenuItem* zoomFitWidth = [zoomMenu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@"1"];
-    NSMenuItem* zoomFitHeight =
-        [zoomMenu addItemWithTitle:@"Fit Height" action:@selector(fitHeight:) keyEquivalent:@"2"];
+    NSMenuItem* zoomFitHeight = [zoomMenu addItemWithTitle:@"Fit Height"
+                                                    action:@selector(fitHeight:)
+                                             keyEquivalent:@"2"];
     for (NSMenuItem* item in @[ zoomIn, zoomOut, actualSize, zoomFitPage, zoomFitWidth, zoomFitHeight ])
         item.target = self;
     zoomItem.submenu = zoomMenu;
@@ -3434,16 +1370,19 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [viewMenu addItemWithTitle:@"Continuous" action:@selector(setContinuousMode:) keyEquivalent:@"5"];
     [viewMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem* viewFitWidth = [viewMenu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@""];
-    NSMenuItem* viewFitHeight =
-        [viewMenu addItemWithTitle:@"Fit Height" action:@selector(fitHeight:) keyEquivalent:@""];
+    NSMenuItem* viewFitHeight = [viewMenu addItemWithTitle:@"Fit Height"
+                                                    action:@selector(fitHeight:)
+                                             keyEquivalent:@""];
     NSMenuItem* viewFitPage = [viewMenu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@""];
     for (NSMenuItem* item in @[ viewFitWidth, viewFitHeight, viewFitPage ]) item.target = self;
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* sidePanelItem =
-        [viewMenu addItemWithTitle:@"Show Side Panel" action:@selector(toggleSidebar:) keyEquivalent:@""];
+    NSMenuItem* sidePanelItem = [viewMenu addItemWithTitle:@"Show Side Panel"
+                                                    action:@selector(toggleSidebar:)
+                                             keyEquivalent:@""];
     sidePanelItem.target = self;
-    NSMenuItem* minimapItem =
-        [viewMenu addItemWithTitle:@"Show Minimap" action:@selector(toggleMinimap:) keyEquivalent:@""];
+    NSMenuItem* minimapItem = [viewMenu addItemWithTitle:@"Show Minimap"
+                                                  action:@selector(toggleMinimap:)
+                                           keyEquivalent:@""];
     minimapItem.target = self;
     NSMenuItem* presentation =
         [viewMenu addItemWithTitle:@"Presentation Mode"
@@ -3451,19 +1390,77 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                      keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSF5FunctionKey)]];
     presentation.target = self;
     presentation.keyEquivalentModifierMask = 0;
-    NSMenuItem* fullScreen =
-        [viewMenu addItemWithTitle:@"Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
+    NSMenuItem* presentationAlternate = [viewMenu addItemWithTitle:@"Presentation Mode"
+                                                            action:@selector(togglePresentation:)
+                                                     keyEquivalent:@"f"];
+    presentationAlternate.target = self;
+    presentationAlternate.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    NSMenuItem* fullScreen = [viewMenu addItemWithTitle:@"Full Screen"
+                                                 action:@selector(toggleFullScreen:)
+                                          keyEquivalent:@"f"];
     fullScreen.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* rotateClockwise =
-        [viewMenu addItemWithTitle:@"Rotate Clockwise" action:@selector(rotateClockwise:) keyEquivalent:@"r"];
+    NSMenuItem* rotateClockwise = [viewMenu addItemWithTitle:@"Rotate Clockwise"
+                                                      action:@selector(rotateClockwise:)
+                                               keyEquivalent:@"r"];
     rotateClockwise.target = self;
     rotateClockwise.keyEquivalentModifierMask = NSEventModifierFlagCommand;
-    NSMenuItem* rotateAnticlockwise =
-        [viewMenu addItemWithTitle:@"Rotate Anticlockwise" action:@selector(rotateAnticlockwise:) keyEquivalent:@"r"];
+    NSMenuItem* rotateAnticlockwise = [viewMenu addItemWithTitle:@"Rotate Anticlockwise"
+                                                          action:@selector(rotateAnticlockwise:)
+                                                   keyEquivalent:@"r"];
     rotateAnticlockwise.target = self;
     rotateAnticlockwise.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     viewItem.submenu = viewMenu;
+
+    NSMenuItem* windowItem = [[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""];
+    [mainMenu addItem:windowItem];
+    NSMenu* windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+    NSMenuItem* minimizeItem = [windowMenu addItemWithTitle:@"Minimize"
+                                                     action:@selector(performMiniaturize:)
+                                              keyEquivalent:@"m"];
+    minimizeItem.target = _window;
+    NSMenuItem* zoomItemWindow = [windowMenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
+    zoomItemWindow.target = _window;
+    [windowMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* fillItem = [windowMenu addItemWithTitle:@"Fill" action:@selector(fillWindow:) keyEquivalent:@"f"];
+    fillItem.target = self;
+    fillItem.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagFunction;
+    NSMenuItem* centerItem = [windowMenu addItemWithTitle:@"Center"
+                                                   action:@selector(centerWindowInScreen:)
+                                            keyEquivalent:@"c"];
+    centerItem.target = self;
+    centerItem.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagFunction;
+    NSMenuItem* moveResizeItem = [[NSMenuItem alloc] initWithTitle:@"Move & Resize" action:nil keyEquivalent:@""];
+    NSMenu* moveResizeMenu = [[NSMenu alloc] initWithTitle:@"Move & Resize"];
+    NSMenuItem* leftHalf = [moveResizeMenu
+        addItemWithTitle:@"Left"
+                  action:@selector(moveWindowToLeftHalf:)
+           keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSLeftArrowFunctionKey)]];
+    NSMenuItem* rightHalf = [moveResizeMenu
+        addItemWithTitle:@"Right"
+                  action:@selector(moveWindowToRightHalf:)
+           keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSRightArrowFunctionKey)]];
+    NSMenuItem* topHalf =
+        [moveResizeMenu addItemWithTitle:@"Top"
+                                  action:@selector(moveWindowToTopHalf:)
+                           keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSUpArrowFunctionKey)]];
+    NSMenuItem* bottomHalf = [moveResizeMenu
+        addItemWithTitle:@"Bottom"
+                  action:@selector(moveWindowToBottomHalf:)
+           keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSDownArrowFunctionKey)]];
+    for (NSMenuItem* item in @[ leftHalf, rightHalf, topHalf, bottomHalf ]) {
+        item.target = self;
+        item.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagFunction;
+    }
+    moveResizeItem.submenu = moveResizeMenu;
+    [windowMenu addItem:moveResizeItem];
+    [windowMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* bringAllToFront = [windowMenu addItemWithTitle:@"Bring All to Front"
+                                                        action:@selector(arrangeInFront:)
+                                                 keyEquivalent:@""];
+    bringAllToFront.target = NSApp;
+    windowItem.submenu = windowMenu;
+    [NSApp setWindowsMenu:windowMenu];
 
     NSMenuItem* editItem = [[NSMenuItem alloc] initWithTitle:@"Edit" action:nil keyEquivalent:@""];
     [mainMenu addItem:editItem];
@@ -3477,8 +1474,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Find" action:@selector(focusFind:) keyEquivalent:@"f"];
     [editMenu addItemWithTitle:@"Find Next" action:@selector(findNext:) keyEquivalent:@"g"];
-    NSMenuItem* prevFind =
-        [editMenu addItemWithTitle:@"Find Previous" action:@selector(findPrevious:) keyEquivalent:@"G"];
+    NSMenuItem* prevFind = [editMenu addItemWithTitle:@"Find Previous"
+                                               action:@selector(findPrevious:)
+                                        keyEquivalent:@"G"];
     prevFind.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Regex Multiline" action:@selector(toggleFindRegexMultiline:) keyEquivalent:@""];
@@ -3754,8 +1752,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     _prevButton = [self buttonWithTitle:@"<" action:@selector(previousPage:)];
     _nextButton = [self buttonWithTitle:@">" action:@selector(nextPage:)];
-    _sidebarToggleButton =
-        [[SPDFToolbarToggleButton alloc] initWithTitle:@"Side Panel" target:self action:@selector(toggleSidebar:)];
+    _sidebarToggleButton = [[SPDFToolbarToggleButton alloc] initWithTitle:@"Side Panel"
+                                                                   target:self
+                                                                   action:@selector(toggleSidebar:)];
     _sidebarToggleButton.toolTip = @"Show or hide the side panel";
     _pageField = [[NSTextField alloc] init];
     _pageField.translatesAutoresizingMaskIntoConstraints = NO;
@@ -3843,8 +1842,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                                forOrientation:NSLayoutConstraintOrientationHorizontal];
     _findPrevButton = [self buttonWithTitle:@"<" action:@selector(findPrevious:)];
     _findNextButton = [self buttonWithTitle:@">" action:@selector(findNext:)];
-    _minimapToggleButton =
-        [[SPDFToolbarToggleButton alloc] initWithTitle:@"Map" target:self action:@selector(toggleMinimap:)];
+    _minimapToggleButton = [[SPDFToolbarToggleButton alloc] initWithTitle:@"Map"
+                                                                   target:self
+                                                                   action:@selector(toggleMinimap:)];
     _minimapToggleButton.toolTip = @"Show or hide the minimap";
     _findCountLabel = [NSTextField labelWithString:@""];
     _findCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -3936,11 +1936,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _sidebarTable.action = @selector(activateSidebarRow:);
     _sidebarTable.doubleAction = @selector(activateSidebarRow:);
     NSMenu* sidebarMenu = [[NSMenu alloc] initWithTitle:@""];
-    NSMenuItem* sidebarEditComment =
-        [sidebarMenu addItemWithTitle:@"Edit Comment..." action:@selector(editComment:) keyEquivalent:@""];
+    NSMenuItem* sidebarEditComment = [sidebarMenu addItemWithTitle:@"Edit Comment..."
+                                                            action:@selector(editComment:)
+                                                     keyEquivalent:@""];
     sidebarEditComment.target = self;
-    NSMenuItem* sidebarDeleteComment =
-        [sidebarMenu addItemWithTitle:@"Delete Comment..." action:@selector(deleteComment:) keyEquivalent:@""];
+    NSMenuItem* sidebarDeleteComment = [sidebarMenu addItemWithTitle:@"Delete Comment..."
+                                                              action:@selector(deleteComment:)
+                                                       keyEquivalent:@""];
     sidebarDeleteComment.target = self;
     _sidebarTable.menu = sidebarMenu;
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"title"];
@@ -4461,25 +2463,26 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [pages addObject:page];
     }
 
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
-      context.duration = 0.0;
-      context.allowsImplicitAnimation = NO;
-      self->_renderedPages = pages;
-      self->_pageView.pages = self->_renderedPages;
-      self->_pageView.currentPageIndex = self->_pageIndex;
-      self->_pageView.zoom = self->_zoom;
-      self->_pageView.viewMode = self->_viewMode;
-      self->_pageView.backingScale = [self backingScale];
-      [self applySearchHighlightsToCurrentPage];
-      [self resizeDocumentView];
-      if (restoreOrigin)
-          [self scrollDocumentClipViewToOrigin:[self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
-                                                                       forPageIndex:pageIndex]
-                                        notify:NO];
-      else
-          [self scrollToPage:pageIndex alignTop:alignTop];
-    }
-                        completionHandler:nil];
+    [NSAnimationContext
+        runAnimationGroup:^(NSAnimationContext* context) {
+          context.duration = 0.0;
+          context.allowsImplicitAnimation = NO;
+          self->_renderedPages = pages;
+          self->_pageView.pages = self->_renderedPages;
+          self->_pageView.currentPageIndex = self->_pageIndex;
+          self->_pageView.zoom = self->_zoom;
+          self->_pageView.viewMode = self->_viewMode;
+          self->_pageView.backingScale = [self backingScale];
+          [self applySearchHighlightsToCurrentPage];
+          [self resizeDocumentView];
+          if (restoreOrigin)
+              [self scrollDocumentClipViewToOrigin:[self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
+                                                                           forPageIndex:pageIndex]
+                                            notify:NO];
+          else
+              [self scrollToPage:pageIndex alignTop:alignTop];
+        }
+        completionHandler:nil];
     NSInteger renderCenterPage = pageIndex;
     if (restoreOrigin) {
         renderCenterPage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
@@ -4626,13 +2629,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     origin = pageIndex >= 0 ? [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex]
                             : [self clampedDocumentScrollOrigin:origin];
     _updatingFromScroll = YES;
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
-      context.duration = 0.0;
-      context.allowsImplicitAnimation = NO;
-      [clipView setBoundsOrigin:origin];
-      [self->_pageScrollView reflectScrolledClipView:clipView];
-    }
-                        completionHandler:nil];
+    [NSAnimationContext
+        runAnimationGroup:^(NSAnimationContext* context) {
+          context.duration = 0.0;
+          context.allowsImplicitAnimation = NO;
+          [clipView setBoundsOrigin:origin];
+          [self->_pageScrollView reflectScrolledClipView:clipView];
+        }
+        completionHandler:nil];
     _updatingFromScroll = NO;
     if (notify) {
         [self documentScrollPositionChanged];
@@ -4680,23 +2684,25 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                             path:(NSString*)path {
     if (!_doc || generation != _renderGeneration || ![_path isEqualToString:path]) return;
 
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
-      context.duration = 0.0;
-      context.allowsImplicitAnimation = NO;
-      [self->_window.contentView layoutSubtreeIfNeeded];
-      [self->_documentContainer layoutSubtreeIfNeeded];
-      [self->_pageScrollView layoutSubtreeIfNeeded];
-      [self resizeDocumentView];
-      if (restoreOrigin) {
-          NSPoint origin = [self normalizedDocumentScrollOrigin:restoreOrigin.pointValue forPageIndex:self->_pageIndex];
-          [self scrollDocumentClipViewToOrigin:origin notify:NO];
-      } else {
-          [self scrollToPage:self->_pageIndex alignTop:alignTop];
-      }
-      [self->_pageView setNeedsDisplay:YES];
-      [self->_pageScrollView displayIfNeeded];
-    }
-                        completionHandler:nil];
+    [NSAnimationContext
+        runAnimationGroup:^(NSAnimationContext* context) {
+          context.duration = 0.0;
+          context.allowsImplicitAnimation = NO;
+          [self->_window.contentView layoutSubtreeIfNeeded];
+          [self->_documentContainer layoutSubtreeIfNeeded];
+          [self->_pageScrollView layoutSubtreeIfNeeded];
+          [self resizeDocumentView];
+          if (restoreOrigin) {
+              NSPoint origin = [self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
+                                                       forPageIndex:self->_pageIndex];
+              [self scrollDocumentClipViewToOrigin:origin notify:NO];
+          } else {
+              [self scrollToPage:self->_pageIndex alignTop:alignTop];
+          }
+          [self->_pageView setNeedsDisplay:YES];
+          [self->_pageScrollView displayIfNeeded];
+        }
+        completionHandler:nil];
     [self documentScrollPositionChanged];
     [self updateMinimap];
     if (!_suppressScrollCallbacks) [self rememberActiveTabState];
@@ -4962,8 +2968,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
     xFraction = spdf_clamp_cg(xFraction, 0.0, 1.0);
     yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
-    NSPoint documentPoint =
-        [self continuousDocumentPointForPage:pageIndex xFractionInPage:xFraction yFractionInPage:yFraction];
+    NSPoint documentPoint = [self continuousDocumentPointForPage:pageIndex
+                                                 xFractionInPage:xFraction
+                                                 yFractionInPage:yFraction];
     if (_viewMode == SPDFViewModeContinuous) {
         [self minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
         return;
@@ -5026,8 +3033,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     tab.showSidebar = _sidebarPreferredVisible;
     tab.showMinimap = _minimapPreferredVisible;
     [self saveDocumentStateForTab:tab];
-    tab.scrollOrigin =
-        [self normalizedDocumentScrollOrigin:_pageScrollView.contentView.bounds.origin forPageIndex:_pageIndex];
+    tab.scrollOrigin = [self normalizedDocumentScrollOrigin:_pageScrollView.contentView.bounds.origin
+                                               forPageIndex:_pageIndex];
     tab.hasScrollOrigin = YES;
     [self rememberActiveTabFindState];
 }
@@ -5044,6 +3051,23 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if ([tabPath isEqualToString:standardized]) return i;
     }
     return -1;
+}
+
+- (NSArray<NSString*>*)openTabPaths {
+    NSMutableArray<NSString*>* paths = [NSMutableArray arrayWithCapacity:_tabs.count];
+    for (SPDFDocumentTab* tab in _tabs) [paths addObject:tab.path ?: @""];
+    return paths;
+}
+
+- (NSString*)displayNameForPathConsideringOpenTabs:(NSString*)path {
+    if (!path.length) return @"";
+    NSString* standardized = path.stringByStandardizingPath;
+    NSArray<NSString*>* paths = [self openTabPaths];
+    NSArray<NSString*>* names = spdf_disambiguated_display_names_for_paths(paths);
+    for (NSUInteger i = 0; i < paths.count && i < names.count; ++i) {
+        if ([paths[i].stringByStandardizingPath isEqualToString:standardized] && names[i].length) return names[i];
+    }
+    return spdf_display_name_for_path(path);
 }
 
 - (void)updateTabStrip {
@@ -5480,8 +3504,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self replaceDocumentViewForTabSwitch];
         [self rebuildSidebar];
         [self showEmptyDocumentViewWithMessage:message];
-        _window.title =
-            [NSString stringWithFormat:@"%@ - %@ - Shenzhen PDF", spdf_display_name_for_path(path), message];
+        _window.title = [NSString
+            stringWithFormat:@"%@ - %@ - Shenzhen PDF", [self displayNameForPathConsideringOpenTabs:path], message];
         _statusLabel.stringValue = [message stringByAppendingString:@"."];
         [self updateTabStrip];
         [self updateControls];
@@ -5698,7 +3722,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (!closingActive && index < _selectedTabIndex) _selectedTabIndex--;
 
     if (_tabs.count == 0) {
-        BOOL shouldCloseThisWindow = [self otherRunningShenzhenApplications].count > 0;
+        BOOL shouldCloseThisWindow = [self hasOtherShenzhenWindows];
         [self clearToolbarFieldFocusForTabSwitch];
         _selectedTabIndex = -1;
         spdf_free_outline(&_outline);
@@ -5812,8 +3836,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard {
-    NSArray<NSURL*>* urls =
-        [pasteboard readObjectsForClasses:@[ [NSURL class] ] options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
+    NSArray<NSURL*>* urls = [pasteboard readObjectsForClasses:@[ [NSURL class] ]
+                                                      options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
     BOOL opened = NO;
     for (NSURL* url in urls) {
         NSString* ext = url.pathExtension.lowercaseString;
@@ -6316,8 +4340,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self syncToolbarState];
 
     if (hasDoc) {
-        NSString* displayName =
-            _path.length ? spdf_display_name_for_path(_path) : [NSString stringWithUTF8String:spdf_title(_doc)];
+        NSString* displayName = _path.length ? [self displayNameForPathConsideringOpenTabs:_path]
+                                             : [NSString stringWithUTF8String:spdf_title(_doc)];
         _window.title = [NSString stringWithFormat:@"%@ - Shenzhen PDF", displayName];
         NSString* mode = _viewMode == SPDFViewModeContinuous ? @"Continuous" : @"Single page";
         _statusLabel.stringValue =
@@ -7230,8 +5254,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSString* author =
         item->author && *item->author ? [NSString stringWithUTF8String:item->author] : [self currentCommentAuthor];
     NSString* text = item->text && *item->text ? [NSString stringWithUTF8String:item->text] : @"";
-    NSDictionary* result =
-        [self promptForCommentEditorWithTitle:@"Edit Comment" buttonTitle:@"Save" author:author text:text];
+    NSDictionary* result = [self promptForCommentEditorWithTitle:@"Edit Comment"
+                                                     buttonTitle:@"Save"
+                                                          author:author
+                                                            text:text];
     if (!result) return;
 
     _commentAuthor = result[@"author"] ?: @"";
@@ -8057,6 +6083,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)enterPresentationWindowChrome {
     if (_presentationUsingBorderlessWindow || !_window) return;
+    if ([self windowIsFullScreen]) {
+        [_window makeKeyAndOrderFront:nil];
+        [_window makeMainWindow];
+        [NSApp activateIgnoringOtherApps:YES];
+        return;
+    }
 
     _presentationPreviousWindowFrame = _window.frame;
     _presentationPreviousWindowStyleMask = _window.styleMask;
@@ -8242,10 +6274,65 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)toggleFullScreen:(id)sender {
     if (_presentationMode)
         [self leavePresentationModeAndExitFullScreen:YES sender:sender];
-    else if (_doc)
-        [self enterPresentationMode:sender];
     else
         [_window toggleFullScreen:sender];
+}
+
+- (NSRect)visibleFrameForWindowActions {
+    NSScreen* screen = _window.screen ?: NSScreen.mainScreen;
+    return screen ? screen.visibleFrame : NSMakeRect(0, 0, 1120, 800);
+}
+
+- (void)setWindowFrameForWindowAction:(NSRect)frame {
+    if (!_window || _presentationMode || [self windowIsFullScreen]) return;
+    [_window setFrame:frame display:YES animate:YES];
+    [self savePersistentState];
+}
+
+- (void)fillWindow:(id)sender {
+    (void)sender;
+    [self setWindowFrameForWindowAction:[self visibleFrameForWindowActions]];
+}
+
+- (void)centerWindowInScreen:(id)sender {
+    (void)sender;
+    if (!_window || _presentationMode || [self windowIsFullScreen]) return;
+    NSRect visible = [self visibleFrameForWindowActions];
+    NSRect frame = _window.frame;
+    frame.size.width = MIN(NSWidth(frame), NSWidth(visible));
+    frame.size.height = MIN(NSHeight(frame), NSHeight(visible));
+    frame.origin.x = floor(NSMidX(visible) - NSWidth(frame) * 0.5);
+    frame.origin.y = floor(NSMidY(visible) - NSHeight(frame) * 0.5);
+    [self setWindowFrameForWindowAction:frame];
+}
+
+- (void)moveWindowToLeftHalf:(id)sender {
+    (void)sender;
+    NSRect visible = [self visibleFrameForWindowActions];
+    [self setWindowFrameForWindowAction:NSMakeRect(NSMinX(visible), NSMinY(visible), floor(NSWidth(visible) * 0.5),
+                                                   NSHeight(visible))];
+}
+
+- (void)moveWindowToRightHalf:(id)sender {
+    (void)sender;
+    NSRect visible = [self visibleFrameForWindowActions];
+    CGFloat width = floor(NSWidth(visible) * 0.5);
+    [self setWindowFrameForWindowAction:NSMakeRect(NSMaxX(visible) - width, NSMinY(visible), width, NSHeight(visible))];
+}
+
+- (void)moveWindowToTopHalf:(id)sender {
+    (void)sender;
+    NSRect visible = [self visibleFrameForWindowActions];
+    CGFloat height = floor(NSHeight(visible) * 0.5);
+    [self
+        setWindowFrameForWindowAction:NSMakeRect(NSMinX(visible), NSMaxY(visible) - height, NSWidth(visible), height)];
+}
+
+- (void)moveWindowToBottomHalf:(id)sender {
+    (void)sender;
+    NSRect visible = [self visibleFrameForWindowActions];
+    CGFloat height = floor(NSHeight(visible) * 0.5);
+    [self setWindowFrameForWindowAction:NSMakeRect(NSMinX(visible), NSMinY(visible), NSWidth(visible), height)];
 }
 
 - (NSString*)ocrToolPath {
@@ -8374,8 +6461,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         _translationProgressIndicator.minValue = 0.0;
         [content addSubview:_translationProgressIndicator];
 
-        _translationProgressCancelButton =
-            [NSButton buttonWithTitle:@"Cancel" target:self action:@selector(cancelTranslation:)];
+        _translationProgressCancelButton = [NSButton buttonWithTitle:@"Cancel"
+                                                              target:self
+                                                              action:@selector(cancelTranslation:)];
         _translationProgressCancelButton.translatesAutoresizingMaskIntoConstraints = NO;
         [content addSubview:_translationProgressCancelButton];
 
@@ -8697,20 +6785,18 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
     NSString* packageTool = [self argospmToolPath];
     if (!packageTool.length) {
         [self showError:@"Argos package manager not found"
-                 detail:
-                     @"Install Argos Translate and the required offline "
-                     @"language package, then try again."];
+                 detail:@"Install Argos Translate and the required offline "
+                        @"language package, then try again."];
         return;
     }
 
     NSString* packageName = [NSString stringWithFormat:@"translate-%@_%@", sourceLanguage, targetLanguage];
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = @"Install Argos language package?";
-    alert.informativeText = [NSString stringWithFormat:
-                                          @"The offline %@ to %@ package may be "
-                                          @"missing. Shenzhen PDF can ask argospm to "
-                                          @"install %@, then continue translation.",
-                                          sourceLanguage, targetLanguage, packageName];
+    alert.informativeText = [NSString stringWithFormat:@"The offline %@ to %@ package may be "
+                                                       @"missing. Shenzhen PDF can ask argospm to "
+                                                       @"install %@, then continue translation.",
+                                                       sourceLanguage, targetLanguage, packageName];
     [alert addButtonWithTitle:@"Install"];
     [alert addButtonWithTitle:@"Cancel"];
     alert.alertStyle = NSAlertStyleInformational;
@@ -9019,9 +7105,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = @"Install Argos Translate?";
-    alert.informativeText =
-        @"Shenzhen PDF uses Argos Translate locally for offline translation. "
-        @"Install it, then continue translation.";
+    alert.informativeText = @"Shenzhen PDF uses Argos Translate locally for offline translation. "
+                            @"Install it, then continue translation.";
     [alert addButtonWithTitle:@"Install"];
     [alert addButtonWithTitle:@"Cancel"];
     alert.alertStyle = NSAlertStyleInformational;
@@ -9247,8 +7332,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 
 - (NSString*)ocrInstallScriptForLanguage:(NSString*)language {
     NSString* languageList = [spdf_ocr_language_components(language) componentsJoinedByString:@" "];
-    return [NSString stringWithFormat:
-                         @"set -e\n"
+    return [NSString
+        stringWithFormat:@"set -e\n"
                           "export PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"\n"
                           "export NONINTERACTIVE=1\n"
                           "OCR_LANGS=\"%@\"\n"
@@ -9436,11 +7521,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     if (!tool.length || !tesseract.length || !languageReady) {
         NSAlert* alert = [[NSAlert alloc] init];
         alert.messageText = !tool.length || !tesseract.length ? @"Install OCR support?" : @"Install OCR language data?";
-        alert.informativeText =
-            [NSString stringWithFormat:
-                          @"Shenzhen PDF can install OCRmyPDF, Tesseract, and the %@ traineddata, then continue OCR "
-                          @"automatically when installation finishes.",
-                          displayName.length ? displayName : language];
+        alert.informativeText = [NSString
+            stringWithFormat:@"Shenzhen PDF can install OCRmyPDF, Tesseract, and the %@ traineddata, then continue OCR "
+                             @"automatically when installation finishes.",
+                             displayName.length ? displayName : language];
         [alert addButtonWithTitle:@"Install"];
         [alert addButtonWithTitle:@"Cancel"];
         alert.alertStyle = NSAlertStyleInformational;
@@ -9601,19 +7685,6 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         return;
     }
 
-    char err[1024];
-    for (NSInteger i = 0; i < (NSInteger)_renderedPages.count; ++i) {
-        if (!_renderedPages[(NSUInteger)i].image) {
-            SPDFRenderedPage* page = [self renderedPageAtIndex:i error:err errorLength:sizeof(err)];
-            if (!page) {
-                [self showError:@"Could not prepare print job"
-                         detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
-                return;
-            }
-            [_renderedPages replaceObjectAtIndex:(NSUInteger)i withObject:page];
-        }
-    }
-
     NSPrintInfo* info = [NSPrintInfo.sharedPrintInfo copy];
     info.horizontalPagination = NSPrintingPaginationModeClip;
     info.verticalPagination = NSPrintingPaginationModeClip;
@@ -9621,9 +7692,13 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     info.verticallyCentered = YES;
 
     NSSize paper = info.paperSize;
-    SPDFPrintView* printView = [[SPDFPrintView alloc]
-        initWithFrame:NSMakeRect(0, 0, paper.width, paper.height * MAX(1, (NSInteger)_renderedPages.count))];
-    printView.pages = _renderedPages;
+    NSInteger pageCount = spdf_page_count(_doc);
+    SPDFPrintView* printView =
+        [[SPDFPrintView alloc] initWithFrame:NSMakeRect(0, 0, paper.width, paper.height * MAX(1, pageCount))];
+    printView.document = _doc;
+    printView.pageCount = pageCount;
+    printView.targetDPI = 1200.0;
+    printView.fallbackPages = _renderedPages;
 
     NSPrintOperation* operation = [NSPrintOperation printOperationWithView:printView printInfo:info];
     operation.showsPrintPanel = YES;
@@ -9708,19 +7783,22 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(copySelection:) keyEquivalent:@""];
     copy.enabled = _selectedText.length > 0;
     if (_contextCommentIndex >= 0) {
-        NSMenuItem* editComment =
-            [menu addItemWithTitle:@"Edit Comment..." action:@selector(editComment:) keyEquivalent:@""];
+        NSMenuItem* editComment = [menu addItemWithTitle:@"Edit Comment..."
+                                                  action:@selector(editComment:)
+                                           keyEquivalent:@""];
         editComment.target = self;
         editComment.representedObject = @(_contextCommentIndex);
-        NSMenuItem* deleteComment =
-            [menu addItemWithTitle:@"Delete Comment..." action:@selector(deleteComment:) keyEquivalent:@""];
+        NSMenuItem* deleteComment = [menu addItemWithTitle:@"Delete Comment..."
+                                                    action:@selector(deleteComment:)
+                                             keyEquivalent:@""];
         deleteComment.target = self;
         deleteComment.representedObject = @(_contextCommentIndex);
     }
     NSMenuItem* addComment = [menu addItemWithTitle:@"Add Comment..." action:@selector(addComment:) keyEquivalent:@""];
     addComment.enabled = _doc != NULL && (_selectedText.length > 0 || _contextPageIndex >= 0);
-    NSMenuItem* copyImage =
-        [menu addItemWithTitle:@"Copy Page Image" action:@selector(copyCurrentPageImage:) keyEquivalent:@""];
+    NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
+                                            action:@selector(copyCurrentPageImage:)
+                                     keyEquivalent:@""];
     copyImage.enabled = _doc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
                         _renderedPages[(NSUInteger)_pageIndex].image != nil;
     [menu addItem:[NSMenuItem separatorItem]];
@@ -9729,11 +7807,13 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     [menu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@""];
     [menu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@""];
     [menu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* favorite =
-        [menu addItemWithTitle:@"Favorite Page" action:@selector(favoriteCurrentPage:) keyEquivalent:@""];
+    NSMenuItem* favorite = [menu addItemWithTitle:@"Favorite Page"
+                                           action:@selector(favoriteCurrentPage:)
+                                    keyEquivalent:@""];
     favorite.enabled = _doc != NULL;
-    NSMenuItem* showInFolder =
-        [menu addItemWithTitle:@"Show in Folder" action:@selector(showInFolder:) keyEquivalent:@""];
+    NSMenuItem* showInFolder = [menu addItemWithTitle:@"Show in Folder"
+                                               action:@selector(showInFolder:)
+                                        keyEquivalent:@""];
     showInFolder.enabled = _doc != NULL && _path.length > 0;
     [menu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@""];
     [NSMenu popUpContextMenu:menu withEvent:event forView:view];
@@ -10007,8 +8087,9 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                 cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 620, 44)];
                 cell.identifier = @"PaletteFavoriteCell";
 
-                deleteButton =
-                    [NSButton buttonWithTitle:@"" target:self action:@selector(paletteFavoriteDeleteClicked:)];
+                deleteButton = [NSButton buttonWithTitle:@""
+                                                  target:self
+                                                  action:@selector(paletteFavoriteDeleteClicked:)];
                 deleteButton.translatesAutoresizingMaskIntoConstraints = NO;
                 deleteButton.identifier = @"favoriteDelete";
                 deleteButton.bezelStyle = NSBezelStyleRounded;
@@ -10065,8 +8146,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                 NSFontAttributeName : [NSFont systemFontOfSize:armed ? 11.0 : 17.0
                                                         weight:armed ? NSFontWeightSemibold : NSFontWeightRegular]
             };
-            deleteButton.attributedTitle =
-                [[NSAttributedString alloc] initWithString:deleteTitle attributes:attributes];
+            deleteButton.attributedTitle = [[NSAttributedString alloc] initWithString:deleteTitle
+                                                                           attributes:attributes];
             deleteButton.bordered = YES;
             deleteButton.bezelStyle = NSBezelStyleRounded;
             deleteButton.toolTip = armed ? @"Click again to delete this favorite" : @"Delete favorite";
@@ -10198,6 +8279,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         action == @selector(openStateJSONFile:) || action == @selector(revealSettingsFolder:) ||
         action == @selector(showShortcutHelp:))
         return YES;
+    if (action == @selector(fillWindow:) || action == @selector(centerWindowInScreen:) ||
+        action == @selector(moveWindowToLeftHalf:) || action == @selector(moveWindowToRightHalf:) ||
+        action == @selector(moveWindowToTopHalf:) || action == @selector(moveWindowToBottomHalf:))
+        return !_presentationMode && ![self windowIsFullScreen];
     if (action == @selector(reopenLastClosedDocument:)) return _closedDocumentPaths.count > 0;
     if (action == @selector(toggleSidebar:)) {
         menuItem.title = _sidebarVisible ? @"Hide Side Panel" : @"Show Side Panel";

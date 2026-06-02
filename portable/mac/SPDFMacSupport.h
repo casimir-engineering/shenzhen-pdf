@@ -5,6 +5,7 @@ NSArray<UTType*>* spdf_document_content_types(void);
 NSString* spdf_display_label_without_extension(NSString* label);
 NSString* spdf_display_name_for_path(NSString* path);
 NSString* spdf_display_path_without_extension(NSString* path);
+NSArray<NSString*>* spdf_disambiguated_display_names_for_paths(NSArray<NSString*>* paths);
 NSArray<NSDictionary<NSString*, NSString*>*>* spdf_translation_languages(void);
 NSArray<NSDictionary<NSString*, NSString*>*>* spdf_ocr_languages(void);
 NSArray<NSString*>* spdf_ocr_language_components(NSString* language);
