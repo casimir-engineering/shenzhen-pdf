@@ -1,6 +1,6 @@
 # Implementation Journal
 
-Date: 2026-06-02
+Date: 2026-06-03
 
 Scope: prompt-linked implementation journal for the current working tree. This records what was changed, what was tested, and what is still not complete.
 
@@ -9,7 +9,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 1. Refactor the 10k-line `.mm` file and keep an eagle view of oversized files.
    - Status: Partially complete, not done.
    - Changed: extracted Mac models, tab strip, document view, minimap, print view, and shortcut-help delegate behavior into dedicated files under `portable/mac/`.
-   - Current line counts: `portable/mac/ShenzhenPDFMac.mm` is 7,917 lines; extracted files are 103-749 lines, plus `SPDFMacDelegatePrivate.h` at 332 lines and `ShenzhenMacDelegate+ShortcutHelp.mm` at 234 lines. `portable/linux/ShenzhenPDFGtk.c` is 8,934 lines after one helper extraction.
+   - Current line counts: `portable/mac/ShenzhenPDFMac.mm` is 7,970 lines; extracted Mac files are 99-749 lines except `SPDFMacMinimapView.mm` at 621 lines, plus `SPDFMacDelegatePrivate.h` at 336 lines and `ShenzhenMacDelegate+ShortcutHelp.mm` at 234 lines. `portable/linux/ShenzhenPDFGtk.c` is 8,986 lines after one helper extraction.
    - Gap: the Mac and Linux monoliths are still too large. Next refactors should split session/window lifecycle, rendering/cache orchestration, palette/favorites, sidebar/comments, and Linux minimap/session code.
 
 2. Closing the last document in a non-last window should close that window, not show “no file loaded.”
@@ -34,6 +34,8 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 6. Long landscape PDFs over 20 pages should use simpler speed-based minimap/scroll behavior.
    - Status: Implemented for Mac and Linux minimap dragging; manual large-PDF QA still needed.
    - Changed: long-document drag now scales by document length and pointer speed rather than the old catch-up blend.
+   - Changed: fixed the long-document precision-drag regression by preserving horizontal viewport dragging on Mac and Linux, stabilizing the long-document minimap thumb near the bottom, and deferring heavy Mac page/session updates until mouse-up.
+   - Changed: Linux precision drag now matches the prompt wording and Mac behavior by activating only for documents with more than 20 pages.
 
 7. Opening a PDF from Finder while the app is in another workspace should switch to the app.
    - Status: Implemented in Mac source; manual Spaces QA still needed.
@@ -69,6 +71,9 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 - Mac syntax: `clang++ -std=c++17 -fobjc-arc -Icore -I../mupdf/include -fsyntax-only mac/*.mm` passed.
 - Mac build: `make -C portable mac-app` passed after fixing the MuPDF PKCS7 target and adding a local `.icns` fallback when `actool` is missing.
 - Mac install/smoke: installed to `/Applications/ShenzhenPDF.app`, codesign verification passed, and launched the app with `/Users/raph/Downloads/Bear Sunny Technologies Inc for Blackstar.pdf`.
+- Mac long-document minimap regression: temporary Objective-C++ harness against `SPDFMinimapView` verified a 35-page horizontal viewport drag uses the long-document viewport callback, changes `documentCenterX` from `885.11` to `991.49`, avoids the normal center-drag callback, and sends one finish callback.
+- Mac installed long-document smoke: launched `/Applications/ShenzhenPDF.app` with the 117-page `/Users/raph/Downloads/HRO catalogue韩荣新目录.pdf`, verified the ShenzhenPDF process started, then quit cleanly.
+- Mac app uniqueness: after install and smoke, `find` and Spotlight metadata both report only `/Applications/ShenzhenPDF.app` for the ShenzhenPDF bundle id/name.
 - Mac session JSON cleanup: moved current state files to `~/Library/Application Support/ShenzhenPDF/backup-20260603-110422-finder-final` before the latest Finder-style session tests.
 - Mac additive Finder-open correction: moved current state files to `~/Library/Application Support/ShenzhenPDF/backup-20260603-122509-additive-final`, verified cold Finder-open restores Bear plus adds/selects the clicked PDF, corrupt clicked PDF preserves Bear only, already-running Finder-open adds/selects, and the installed `/Applications/ShenzhenPDF.app` passes the Bear-plus-clicked-PDF case.
 - Linux syntax: `cc -Icore -I../mupdf/include $(pkg-config --cflags gtk+-3.0) -fsyntax-only linux/ShenzhenPDFGtkDisplay.c linux/ShenzhenPDFGtk.c` passed.

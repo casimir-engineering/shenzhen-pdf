@@ -96,6 +96,31 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
                       MAX(1.0, (x1 - x0) * NSWidth(miniRect)), MAX(1.0, (y1 - y0) * NSHeight(miniRect)));
 }
 
+- (BOOL)shouldUseLongDocumentViewportDrag {
+    return self.pages.count > kLongDocumentDragPageThreshold;
+}
+
+- (CGFloat)longDocumentViewportDragThumbHeightForContentHeight:(CGFloat)contentHeight track:(NSRect)track {
+    CGFloat heightFraction =
+        spdf_clamp_cg(NSHeight(self.documentVisibleRect) / MAX(1.0, self.documentHeight), 0.02, 1.0);
+    return MIN(MAX(10.0, heightFraction * MAX(1.0, contentHeight)), NSHeight(track));
+}
+
+- (NSRect)stableLongDocumentVisibleRectFromExactRect:(NSRect)exactRect contentHeight:(CGFloat)contentHeight {
+    NSRect track = NSInsetRect(self.bounds, 1.0, 1.0);
+    CGFloat thumbHeight = [self longDocumentViewportDragThumbHeightForContentHeight:contentHeight track:track];
+    CGFloat top = [self scrollFraction] * MAX(0.0, contentHeight - thumbHeight);
+    if (top + thumbHeight > contentHeight) top = MAX(0.0, contentHeight - thumbHeight);
+
+    if (NSIsEmptyRect(exactRect) || NSWidth(exactRect) <= 1.0) {
+        exactRect.origin.x = 5.0;
+        exactRect.size.width = NSWidth(self.bounds) - 10.0;
+    }
+    exactRect.origin.y = top;
+    exactRect.size.height = thumbHeight;
+    return exactRect;
+}
+
 - (NSRect)unscrolledVisibleRectForScale:(CGFloat)scale gap:(CGFloat)gap contentHeight:(CGFloat)contentHeight {
     if (self.pages.count == 0 || contentHeight <= 0) return NSZeroRect;
 
@@ -116,7 +141,12 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
             visible = hasVisiblePage ? NSUnionRect(visible, miniVisible) : miniVisible;
             hasVisiblePage = YES;
         }
-        if (hasVisiblePage) return NSInsetRect(visible, -2.0, -2.0);
+        if (hasVisiblePage) {
+            NSRect exactVisible = NSInsetRect(visible, -2.0, -2.0);
+            return [self shouldUseLongDocumentViewportDrag]
+                       ? [self stableLongDocumentVisibleRectFromExactRect:exactVisible contentHeight:contentHeight]
+                       : exactVisible;
+        }
     }
 
     CGFloat heightFraction =
@@ -249,10 +279,6 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     return NSIntersectionRect(visibleRect, NSInsetRect(self.bounds, 1.0, 1.0));
 }
 
-- (BOOL)shouldUseLongDocumentViewportDrag {
-    return self.pages.count > kLongDocumentDragPageThreshold;
-}
-
 - (NSTimeInterval)dragDeltaTimeForTimestamp:(NSTimeInterval)timestamp {
     NSTimeInterval deltaT = timestamp - _dragLastTimestamp;
     if (!isfinite(deltaT) || deltaT <= 0.0) deltaT = 1.0 / 60.0;
@@ -269,11 +295,16 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     return pageScale + acceleration * (1.0 - pageScale);
 }
 
-- (BOOL)sendLongDocumentViewportDragForPoint:(NSPoint)point event:(NSEvent*)event visibleRect:(NSRect)visibleRect {
+- (BOOL)sendLongDocumentViewportDragForPoint:(NSPoint)point
+                                       event:(NSEvent*)event
+                                       scale:(CGFloat)scale
+                                         gap:(CGFloat)gap
+                               contentHeight:(CGFloat)contentHeight
+                                  contentTop:(CGFloat)contentTop {
     if (!_draggingVisibleRect || ![self shouldUseLongDocumentViewportDrag]) return NO;
 
     NSRect track = NSInsetRect(self.bounds, 1.0, 1.0);
-    CGFloat thumbHeight = MIN(NSHeight([self draggableVisibleRectForRect:visibleRect]), NSHeight(track));
+    CGFloat thumbHeight = [self longDocumentViewportDragThumbHeightForContentHeight:contentHeight track:track];
     CGFloat minTop = NSMinY(track);
     CGFloat maxTop = MAX(minTop, NSMaxY(track) - thumbHeight);
     CGFloat deltaY = point.y - _dragLastMouseY;
@@ -283,7 +314,15 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     _dragLastTimestamp = event.timestamp;
 
     CGFloat fraction = maxTop <= minTop ? 0.0 : (_dragThumbTop - minTop) / (maxTop - minTop);
-    [self.reader minimapViewDidRequestViewportTopFraction:fraction];
+    NSPoint horizontalCenterPoint =
+        NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, _dragThumbTop + thumbHeight * 0.5);
+    NSPoint documentPoint = [self documentPointForMinimapCenterPoint:horizontalCenterPoint
+                                                               scale:scale
+                                                                 gap:gap
+                                                       contentHeight:contentHeight
+                                                          contentTop:contentTop];
+    if (!isfinite(documentPoint.x)) documentPoint.x = NSMidX(self.documentVisibleRect);
+    [self.reader minimapViewDidRequestViewportTopFraction:fraction documentCenterX:documentPoint.x];
     return YES;
 }
 
@@ -459,7 +498,13 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
         return;
 
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    if ([self sendLongDocumentViewportDragForPoint:point event:event visibleRect:visibleRect]) return;
+    if ([self sendLongDocumentViewportDragForPoint:point
+                                             event:event
+                                             scale:scale
+                                               gap:gap
+                                     contentHeight:contentHeight
+                                        contentTop:contentTop])
+        return;
     if (_draggingVisibleRect) {
         point = NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, point.y - _dragOffsetFromVisibleCenter.y);
     }
@@ -518,6 +563,13 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
                              : NSZeroPoint;
     _dragOffsetFromVisibleTop = _draggingVisibleRect ? point.y - NSMinY(drawnVisibleRect) : 0.0;
     _dragThumbTop = _draggingVisibleRect ? NSMinY(drawnVisibleRect) : 0.0;
+    if (_draggingVisibleRect && [self shouldUseLongDocumentViewportDrag]) {
+        NSRect track = NSInsetRect(self.bounds, 1.0, 1.0);
+        CGFloat thumbHeight = [self longDocumentViewportDragThumbHeightForContentHeight:contentHeight track:track];
+        CGFloat minTop = NSMinY(track);
+        CGFloat maxTop = MAX(minTop, NSMaxY(track) - thumbHeight);
+        _dragThumbTop = minTop + [self scrollFraction] * (maxTop - minTop);
+    }
     _dragLastMouseY = point.y;
     _dragLastTimestamp = event.timestamp;
 }
@@ -551,6 +603,8 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 }
 
 - (void)mouseUp:(NSEvent*)event {
+    BOOL didFinishLongDocumentViewportDrag =
+        _draggingVisibleRect && _dragMoved && [self shouldUseLongDocumentViewportDrag];
     if (_pressPending && !_dragMoved) [self sendClickRequestForEvent:event];
     _draggingVisibleRect = NO;
     _pressPending = NO;
@@ -561,6 +615,7 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     _dragThumbTop = 0.0;
     _dragLastMouseY = 0.0;
     _dragLastTimestamp = 0.0;
+    if (didFinishLongDocumentViewportDrag) [self.reader minimapViewDidFinishViewportDrag];
 }
 
 @end

@@ -146,6 +146,7 @@
     BOOL _updatingSelection;
     BOOL _updatingFromScroll;
     BOOL _suppressScrollCallbacks;
+    BOOL _minimapPrecisionViewportDragActive;
     BOOL _sidebarPreferredVisible;
     BOOL _sidebarVisible;
     BOOL _minimapPreferredVisible;
@@ -248,6 +249,7 @@
                         restoreOrigin:(NSValue*)restoreOrigin;
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin notify:(BOOL)notify;
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify;
+- (void)scrollDocumentClipViewToDocumentOrigin:(NSPoint)origin notify:(BOOL)notify;
 - (NSPoint)normalizedDocumentScrollOrigin:(NSPoint)origin forPageIndex:(NSInteger)pageIndex;
 - (void)stabilizeDocumentLayoutWithRestoreOrigin:(NSValue*)restoreOrigin
                                         alignTop:(BOOL)alignTop
@@ -255,6 +257,8 @@
                                             path:(NSString*)path;
 - (void)minimapViewDidRequestScrollToFraction:(CGFloat)yFraction;
 - (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction;
+- (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction documentCenterX:(CGFloat)documentCenterX;
+- (void)minimapViewDidFinishViewportDrag;
 - (void)minimapViewDidRequestScrollToPage:(NSInteger)pageIndex yFractionInPage:(CGFloat)yFraction;
 - (void)minimapViewDidRequestCenterAtDocumentPoint:(NSPoint)documentPoint;
 - (void)minimapViewDidRequestCenterOnPage:(NSInteger)pageIndex

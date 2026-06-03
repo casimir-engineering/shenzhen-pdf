@@ -225,6 +225,7 @@ typedef struct app_state {
     double pan_start_y;
     double pan_start_h;
     double pan_start_v;
+    double minimap_drag_offset_center_x;
     double minimap_drag_offset_top;
     double minimap_drag_thumb_top;
     double minimap_drag_last_y;
@@ -4380,6 +4381,19 @@ static void minimap_page_rect(app_state* state, minimap_layout* layout, int page
     if (height) *height = page_height;
 }
 
+static double minimap_precision_visible_thumb_height(app_state* state, minimap_layout* layout) {
+    GtkAdjustment* vadj;
+    double thumb_height = 12.0;
+
+    if (!state || !layout) return thumb_height;
+    vadj = state->scroll ? gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll)) : NULL;
+    if (state->continuous_mode && vadj) {
+        double upper = MAX(1.0, gtk_adjustment_get_upper(vadj));
+        thumb_height = MAX(10.0, gtk_adjustment_get_page_size(vadj) / upper * layout->content_height);
+    }
+    return MIN(MAX(1.0, thumb_height), MAX(1.0, layout->height - 2.0));
+}
+
 static void minimap_draw_placeholder(cairo_t* cr, double x, double y, double width, double height) {
     int lines;
     double line_y;
@@ -4409,10 +4423,15 @@ static void minimap_visible_rect(app_state* state, minimap_layout* layout, doubl
     if (!state || !state->scroll) return;
     vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
     if (state->continuous_mode && vadj) {
-        double upper = MAX(1.0, gtk_adjustment_get_upper(vadj));
-        rh = MAX(10.0, gtk_adjustment_get_page_size(vadj) / upper * layout->content_height);
-        rh = MIN(layout->height - 2.0, rh);
-        ry = layout->content_top + minimap_scroll_fraction(state) * MAX(0.0, layout->content_height - rh);
+        if (layout->page_count > MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD) {
+            rh = minimap_precision_visible_thumb_height(state, layout);
+            ry = 1.0 + minimap_scroll_fraction(state) * MAX(0.0, layout->height - rh - 2.0);
+        } else {
+            double upper = MAX(1.0, gtk_adjustment_get_upper(vadj));
+            rh = MAX(10.0, gtk_adjustment_get_page_size(vadj) / upper * layout->content_height);
+            rh = MIN(layout->height - 2.0, rh);
+            ry = layout->content_top + minimap_scroll_fraction(state) * MAX(0.0, layout->content_height - rh);
+        }
     } else {
         double page_x;
         double page_y;
@@ -4510,7 +4529,7 @@ static gboolean minimap_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data)
 }
 
 static gboolean minimap_should_use_precision_drag(minimap_layout* layout) {
-    return layout && layout->page_count >= MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD;
+    return layout && layout->page_count > MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD;
 }
 
 static double minimap_event_time_seconds(guint32 event_time) {
@@ -4530,6 +4549,25 @@ static double minimap_long_document_drag_scale(app_state* state, int page_count,
     double acceleration = smoothstep_double((speed - 180.0) / (900.0 - 180.0));
     double page_scale = clamp_double(20.0 / MAX(1, page_count), 0.30, 0.72);
     return page_scale + acceleration * (1.0 - page_scale);
+}
+
+static gboolean minimap_document_center_x_for_widget_x(app_state* state, minimap_layout* layout, double widget_x,
+                                                       double* document_center_x) {
+    double mini_x;
+    double mini_width;
+    double page_x;
+    double page_width;
+    double x_fraction;
+
+    if (!state || !layout || !document_center_x) return FALSE;
+    minimap_page_rect(state, layout, state->page_index, &mini_x, NULL, &mini_width, NULL);
+    if (mini_width <= 1.0 || !page_widget_geometry(state, state->page_index, &page_x, NULL, &page_width, NULL) ||
+        page_width <= 1.0)
+        return FALSE;
+
+    x_fraction = clamp_double((widget_x - state->minimap_drag_offset_center_x - mini_x) / mini_width, 0.0, 1.0);
+    *document_center_x = page_x + x_fraction * page_width;
+    return TRUE;
 }
 
 static void minimap_scroll_to_y(app_state* state, GtkWidget* widget, double widget_y) {
@@ -4626,7 +4664,8 @@ static void minimap_click_to_page_point(app_state* state, GtkWidget* widget, dou
     }
 }
 
-static void minimap_scroll_to_top_fraction(app_state* state, GtkWidget* widget, double fraction) {
+static void minimap_scroll_to_top_fraction(app_state* state, GtkWidget* widget, double fraction,
+                                           double document_center_x, gboolean has_document_center_x) {
     minimap_layout layout;
     double unscrolled_y;
 
@@ -4634,9 +4673,17 @@ static void minimap_scroll_to_top_fraction(app_state* state, GtkWidget* widget, 
     fraction = clamp_double(fraction, 0.0, 1.0);
 
     if (state->continuous_mode) {
+        GtkAdjustment* hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
         GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
         double max_value = MAX(0.0, gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj));
         gtk_adjustment_set_value(vadj, fraction * max_value);
+        if (has_document_center_x && hadj) {
+            double lower = gtk_adjustment_get_lower(hadj);
+            double page_size = gtk_adjustment_get_page_size(hadj);
+            double max_h = MAX(lower, gtk_adjustment_get_upper(hadj) - page_size);
+            double target = document_center_x - page_size * 0.5;
+            gtk_adjustment_set_value(hadj, clamp_double(target, lower, max_h));
+        }
         gtk_widget_queue_draw(widget);
         return;
     }
@@ -4682,12 +4729,9 @@ static void minimap_scroll_to_top_fraction(app_state* state, GtkWidget* widget, 
     }
 }
 
-static void minimap_drag_visible_rect_to_y(app_state* state, GtkWidget* widget, double widget_y, guint32 event_time) {
+static void minimap_drag_visible_rect_to_point(app_state* state, GtkWidget* widget, double widget_x, double widget_y,
+                                               guint32 event_time) {
     minimap_layout layout;
-    double vx;
-    double vy;
-    double vw;
-    double vh;
     double min_top;
     double max_top;
     double thumb_height;
@@ -4695,6 +4739,8 @@ static void minimap_drag_visible_rect_to_y(app_state* state, GtkWidget* widget, 
     double event_time_seconds;
     double drag_scale;
     double fraction;
+    double document_center_x = 0.0;
+    gboolean has_document_center_x = FALSE;
 
     if (!state || !state->doc || !state->scroll || !minimap_measure(state, widget, &layout)) return;
     if (!state->minimap_dragging_visible_rect || !minimap_should_use_precision_drag(&layout)) {
@@ -4702,11 +4748,7 @@ static void minimap_drag_visible_rect_to_y(app_state* state, GtkWidget* widget, 
         return;
     }
 
-    minimap_visible_rect(state, &layout, &vx, &vy, &vw, &vh);
-    (void)vx;
-    (void)vy;
-    (void)vw;
-    thumb_height = MIN(vh, MAX(1.0, layout.height - 2.0));
+    thumb_height = minimap_precision_visible_thumb_height(state, &layout);
     min_top = 1.0;
     max_top = MAX(min_top, layout.height - thumb_height - 1.0);
 
@@ -4719,7 +4761,8 @@ static void minimap_drag_visible_rect_to_y(app_state* state, GtkWidget* widget, 
     state->minimap_drag_last_time = event_time_seconds;
 
     fraction = max_top <= min_top ? 0.0 : (state->minimap_drag_thumb_top - min_top) / (max_top - min_top);
-    minimap_scroll_to_top_fraction(state, widget, fraction);
+    has_document_center_x = minimap_document_center_x_for_widget_x(state, &layout, widget_x, &document_center_x);
+    minimap_scroll_to_top_fraction(state, widget, fraction, document_center_x, has_document_center_x);
 }
 
 static gboolean minimap_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
@@ -4735,14 +4778,22 @@ static gboolean minimap_button_press(GtkWidget* widget, GdkEventButton* event, g
     state->minimap_dragging_visible_rect = FALSE;
     state->minimap_press_pending = TRUE;
     state->minimap_drag_moved = FALSE;
+    state->minimap_drag_offset_center_x = 0.0;
     state->minimap_press_x = event->x;
     state->minimap_press_y = event->y;
     if (minimap_measure(state, widget, &layout)) {
         minimap_visible_rect(state, &layout, &vx, &vy, &vw, &vh);
         if (event->x >= vx && event->x <= vx + vw && event->y >= vy && event->y <= vy + vh) {
             state->minimap_dragging_visible_rect = TRUE;
+            state->minimap_drag_offset_center_x = event->x - (vx + vw * 0.5);
             state->minimap_drag_offset_top = event->y - vy;
             state->minimap_drag_thumb_top = vy;
+            if (minimap_should_use_precision_drag(&layout)) {
+                double thumb_height = minimap_precision_visible_thumb_height(state, &layout);
+                double min_top = 1.0;
+                double max_top = MAX(min_top, layout.height - thumb_height - 1.0);
+                state->minimap_drag_thumb_top = min_top + minimap_scroll_fraction(state) * MAX(0.0, max_top - min_top);
+            }
             state->minimap_drag_last_y = event->y;
             state->minimap_drag_last_time = minimap_event_time_seconds(event->time);
         }
@@ -4763,7 +4814,7 @@ static gboolean minimap_motion(GtkWidget* widget, GdkEventMotion* event, gpointe
         state->minimap_press_pending = FALSE;
     }
     if (state->minimap_dragging_visible_rect)
-        minimap_drag_visible_rect_to_y(state, widget, event->y, event->time);
+        minimap_drag_visible_rect_to_point(state, widget, event->x, event->y, event->time);
     else
         minimap_scroll_to_y(state, widget, event->y);
     return TRUE;
@@ -4779,6 +4830,7 @@ static gboolean minimap_button_release(GtkWidget* widget, GdkEventButton* event,
         state->minimap_dragging_visible_rect = FALSE;
         state->minimap_press_pending = FALSE;
         state->minimap_drag_moved = FALSE;
+        state->minimap_drag_offset_center_x = 0.0;
         state->minimap_drag_offset_top = 0.0;
         state->minimap_drag_thumb_top = 0.0;
         state->minimap_drag_last_y = 0.0;
