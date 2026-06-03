@@ -1,5 +1,7 @@
 #import <Cocoa/Cocoa.h>
+#import <PDFKit/PDFKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <objc/runtime.h>
 
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacDocumentView.h"
@@ -157,11 +159,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _presentationMode = NO;
     _presentationEnteredFullScreen = NO;
     _presentationUsingBorderlessWindow = NO;
+    _pendingWindowArrangementAction = NULL;
     _translationRunning = NO;
     _translationInstallRunning = NO;
     _showShortcutHelpOnLaunch = YES;
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
+    _suppressViewportRerender = NO;
+    _liveZooming = NO;
     _restoringSidebarLayout = NO;
     _allowSidebarWidthPersistence = NO;
     _sidebarWidth = kDefaultSidebarWidth;
@@ -181,6 +186,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _paletteFavoritePendingDelete = nil;
     _findHighlights = [NSMutableDictionary dictionary];
     _findMatches = [NSMutableArray array];
+    _preloadingPaths = [NSMutableSet set];
+    _preloadTokens = [NSMutableDictionary dictionary];
     _findMatchIndex = -1;
     _paletteResults = [NSMutableArray array];
     _shortcutHelpRows = [NSMutableArray array];
@@ -199,7 +206,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _renderQueue.qualityOfService = NSQualityOfServiceUserInitiated;
     _preloadQueue = [[NSOperationQueue alloc] init];
     _preloadQueue.name = @"Shenzhen PDF tab preloader";
-    _preloadQueue.maxConcurrentOperationCount = 1;
+    _preloadQueue.maxConcurrentOperationCount = MAX(1, MIN(2, (NSInteger)floor((double)cpuCount * 0.60)));
     _preloadQueue.qualityOfService = NSQualityOfServiceUtility;
     _findQueue = [[NSOperationQueue alloc] init];
     _findQueue.name = @"Shenzhen PDF document find";
@@ -228,7 +235,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (self.initialPath.length > 0) [startupPaths addObject:self.initialPath];
     if (startupPaths.count > 0) {
         NSArray<NSString*>* pathsToOpen = [self openableDocumentPathsFromPaths:startupPaths showErrors:YES];
-        for (NSString* path in pathsToOpen) [self openPath:path];
+        [self openPaths:pathsToOpen];
     } else if (_tabs.count > 0) {
         [self selectTabAtIndex:MAX(0, _selectedTabIndex)];
     } else {
@@ -266,9 +273,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [_findQueue cancelAllOperations];
     [self rememberActiveTabState];
     [self savePersistentState];
-    spdf_free_outline(&_outline);
-    spdf_free_comments(&_comments);
-    spdf_close(_doc);
+    [self clearActiveMetadata];
+    [self closeActiveDocumentIfUnowned];
 }
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
@@ -309,7 +315,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             [_pendingOpenPaths addObjectsFromArray:filenames];
         } else {
             NSArray<NSString*>* pathsToOpen = [self openableDocumentPathsFromPaths:filenames showErrors:YES];
-            for (NSString* filename in pathsToOpen) [self openPath:filename];
+            [self openPaths:pathsToOpen];
             [self activateWindowForExternalOpen];
         }
     }
@@ -353,6 +359,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self leavePresentationModeAndExitFullScreen:NO sender:nil];
     dispatch_async(dispatch_get_main_queue(), ^{
       [self updateTabStripFrame];
+      [self drainPendingWindowArrangementAction];
     });
 }
 
@@ -657,22 +664,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (BOOL)canOpenDocumentAtPath:(NSString*)path showError:(BOOL)showError {
     if (path.length == 0) return NO;
-    BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:path];
-    if (!fileExists) {
+    BOOL isDirectory = NO;
+    BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory];
+    if (!fileExists || isDirectory) {
         if (showError) [self showError:@"File moved or deleted" detail:path];
         return NO;
     }
-
-    char err[1024];
-    spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
-    if (!doc) {
-        if (showError)
-            [self showError:@"Could not open document"
-                     detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
-        return NO;
-    }
-
-    spdf_close(doc);
     return YES;
 }
 
@@ -951,39 +948,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSMenuItem* zoomItemWindow = [windowMenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
     zoomItemWindow.target = _window;
     [windowMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* fillItem = [windowMenu addItemWithTitle:@"Fill" action:@selector(fillWindow:) keyEquivalent:@"f"];
-    fillItem.target = self;
-    fillItem.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagFunction;
-    NSMenuItem* centerItem = [windowMenu addItemWithTitle:@"Center"
-                                                   action:@selector(centerWindowInScreen:)
-                                            keyEquivalent:@"c"];
-    centerItem.target = self;
-    centerItem.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagFunction;
-    NSMenuItem* moveResizeItem = [[NSMenuItem alloc] initWithTitle:@"Move & Resize" action:nil keyEquivalent:@""];
-    NSMenu* moveResizeMenu = [[NSMenu alloc] initWithTitle:@"Move & Resize"];
-    NSMenuItem* leftHalf = [moveResizeMenu
-        addItemWithTitle:@"Left"
-                  action:@selector(moveWindowToLeftHalf:)
-           keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSLeftArrowFunctionKey)]];
-    NSMenuItem* rightHalf = [moveResizeMenu
-        addItemWithTitle:@"Right"
-                  action:@selector(moveWindowToRightHalf:)
-           keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSRightArrowFunctionKey)]];
-    NSMenuItem* topHalf =
-        [moveResizeMenu addItemWithTitle:@"Top"
-                                  action:@selector(moveWindowToTopHalf:)
-                           keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSUpArrowFunctionKey)]];
-    NSMenuItem* bottomHalf = [moveResizeMenu
-        addItemWithTitle:@"Bottom"
-                  action:@selector(moveWindowToBottomHalf:)
-           keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSDownArrowFunctionKey)]];
-    for (NSMenuItem* item in @[ leftHalf, rightHalf, topHalf, bottomHalf ]) {
-        item.target = self;
-        item.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagFunction;
-    }
-    moveResizeItem.submenu = moveResizeMenu;
-    [windowMenu addItem:moveResizeItem];
-    [windowMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem* bringAllToFront = [windowMenu addItemWithTitle:@"Bring All to Front"
                                                         action:@selector(arrangeInFront:)
                                                  keyEquivalent:@""];
@@ -1254,7 +1218,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _window.titleVisibility = NSWindowTitleHidden;
     _window.titlebarAppearsTransparent = YES;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
-    _window.movable = NO;
+    _window.movable = YES;
     _window.movableByWindowBackground = NO;
 
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
@@ -1608,9 +1572,24 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         pageHeight <= 0)
         return _zoom;
 
-    NSSize clipSize = [self documentClipSizeForLayout];
-    CGFloat widthZoom = clipSize.width / pageWidth;
-    CGFloat heightZoom = clipSize.height / pageHeight;
+    return [self zoomForFitMode:fitMode
+                       pageSize:NSMakeSize(pageWidth, pageHeight)
+                       clipSize:[self documentClipSizeForLayout]
+                   fallbackZoom:_zoom];
+}
+
+- (CGFloat)zoomForFitMode:(SPDFFitMode)fitMode
+                 pageSize:(NSSize)pageSize
+                 clipSize:(NSSize)clipSize
+             fallbackZoom:(CGFloat)fallbackZoom {
+    fallbackZoom = fallbackZoom > 0 ? fallbackZoom : 1.0;
+    if (fitMode == SPDFFitModeCustom) return MAX(kMinZoom, MIN(kMaxZoom, fallbackZoom));
+    if (fitMode == SPDFFitModeActual) return 1.0;
+    if (pageSize.width <= 0.0 || pageSize.height <= 0.0 || clipSize.width <= 0.0 || clipSize.height <= 0.0)
+        return MAX(kMinZoom, MIN(kMaxZoom, fallbackZoom));
+
+    CGFloat widthZoom = clipSize.width / pageSize.width;
+    CGFloat heightZoom = clipSize.height / pageSize.height;
     if (fitMode == SPDFFitModeWidth) return MAX(kMinZoom, MIN(kMaxZoom, widthZoom));
     if (fitMode == SPDFFitModeHeight) return MAX(kMinZoom, MIN(kMaxZoom, heightZoom));
     return MAX(kMinZoom, MIN(kMaxZoom, MIN(widthZoom, heightZoom)));
@@ -1744,6 +1723,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return NSOperationQueuePriorityLow;
 }
 
+- (BOOL)renderedPageImage:(SPDFRenderedPage*)page matchesZoom:(CGFloat)zoom displayScale:(CGFloat)displayScale {
+    if (!page.image) return NO;
+    return fabs(page.imageZoom - zoom) <= 0.001 && fabs(page.imageScale - displayScale) <= 0.001;
+}
+
 - (void)scheduleNearbyPageRendersAfterFirstPaintForGeneration:(NSUInteger)generation
                                                 preferredPage:(NSInteger)preferredPage {
     NSString* path = [_path copy];
@@ -1769,7 +1753,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     for (NSNumber* number in pageIndexes) {
         NSInteger index = number.integerValue;
         if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
-        if (_renderedPages[(NSUInteger)index].image) continue;
+        if ([self renderedPageImage:_renderedPages[(NSUInteger)index] matchesZoom:zoom displayScale:displayScale])
+            continue;
         if ([_queuedRenderPages containsObject:number]) continue;
         [_queuedRenderPages addObject:number];
 
@@ -1822,6 +1807,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                     [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:index]];
                     [self updateMinimap];
                 }
+                [self cacheActiveRenderedPagesForSelectedTab];
                 [self evictDistantRenderedPageImages];
               }];
           }
@@ -1855,7 +1841,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)renderPageIfNeededAtIndex:(NSInteger)pageIndex {
     if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
     SPDFRenderedPage* existing = _renderedPages[(NSUInteger)pageIndex];
-    if (existing.image) return;
+    if ([self renderedPageImage:existing matchesZoom:_zoom displayScale:[self backingScale]]) return;
 
     char err[1024];
     SPDFRenderedPage* page = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
@@ -1867,6 +1853,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     page.selectionRects = existing.selectionRects ?: @[];
     [_renderedPages replaceObjectAtIndex:(NSUInteger)pageIndex withObject:page];
     _pageView.pages = _renderedPages;
+    [self cacheActiveRenderedPagesForSelectedTab];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];
 }
@@ -1997,6 +1984,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
           context.duration = 0.0;
           context.allowsImplicitAnimation = NO;
           self->_renderedPages = pages;
+          [self cacheActiveRenderedPagesForSelectedTab];
           self->_pageView.pages = self->_renderedPages;
           self->_pageView.currentPageIndex = self->_pageIndex;
           self->_pageView.zoom = self->_zoom;
@@ -2475,7 +2463,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _minimapView.documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
     _minimapView.documentScale = MAX(0.01, _zoom);
     [_minimapView setNeedsDisplay:YES];
-    [self enqueueVisibleMinimapPageRenders];
+    if (!_liveZooming) [self enqueueVisibleMinimapPageRenders];
 }
 
 - (void)invalidateFindMarkers {
@@ -2695,6 +2683,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     tab.viewMode = _viewMode;
     tab.showSidebar = _sidebarPreferredVisible;
     tab.showMinimap = _minimapPreferredVisible;
+    [self cacheActiveRenderedPagesForSelectedTab];
     [self saveDocumentStateForTab:tab];
     tab.scrollOrigin = [self normalizedDocumentScrollOrigin:_pageScrollView.contentView.bounds.origin
                                                forPageIndex:_pageIndex];
@@ -2720,6 +2709,178 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSMutableArray<NSString*>* paths = [NSMutableArray arrayWithCapacity:_tabs.count];
     for (SPDFDocumentTab* tab in _tabs) [paths addObject:tab.path ?: @""];
     return paths;
+}
+
+- (SPDFDocumentTab*)selectedTab {
+    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return nil;
+    return _tabs[(NSUInteger)_selectedTabIndex];
+}
+
+- (NSDictionary*)fileAttributesForPath:(NSString*)path {
+    if (!path.length) return nil;
+    return [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+}
+
+- (void)recordFileAttributes:(NSDictionary*)attributes forTab:(SPDFDocumentTab*)tab {
+    tab.cachedModificationDate = attributes[NSFileModificationDate];
+    tab.cachedFileSize = [attributes[NSFileSize] unsignedLongLongValue];
+}
+
+- (BOOL)fileAttributes:(NSDictionary*)lhs matchFileAttributes:(NSDictionary*)rhs {
+    if (!lhs || !rhs) return NO;
+    NSDate* lhsModificationDate = lhs[NSFileModificationDate];
+    NSDate* rhsModificationDate = rhs[NSFileModificationDate];
+    unsigned long long lhsFileSize = [lhs[NSFileSize] unsignedLongLongValue];
+    unsigned long long rhsFileSize = [rhs[NSFileSize] unsignedLongLongValue];
+    return lhsModificationDate && [lhsModificationDate isEqualToDate:rhsModificationDate] && lhsFileSize == rhsFileSize;
+}
+
+- (BOOL)tab:(SPDFDocumentTab*)tab cacheMatchesFileAttributes:(NSDictionary*)attributes {
+    if (!tab.cachedDocument || !attributes) return NO;
+    NSDate* modificationDate = attributes[NSFileModificationDate];
+    unsigned long long fileSize = [attributes[NSFileSize] unsignedLongLongValue];
+    return tab.cachedModificationDate && [tab.cachedModificationDate isEqualToDate:modificationDate] &&
+           tab.cachedFileSize == fileSize;
+}
+
+- (BOOL)ensureCachedRenderedPagesForTab:(SPDFDocumentTab*)tab preferredPage:(NSInteger)preferredPage {
+    if (!tab.cachedDocument) return NO;
+    NSInteger pageCount = spdf_page_count(tab.cachedDocument);
+    if (pageCount <= 0) return NO;
+    if (tab.cachedRenderedPages.count == (NSUInteger)pageCount) return YES;
+
+    preferredPage = MAX(0, MIN(preferredPage, pageCount - 1));
+    char err[256];
+    float fallbackWidth = 1.0;
+    float fallbackHeight = 1.0;
+    spdf_page_size(tab.cachedDocument, (int)preferredPage, &fallbackWidth, &fallbackHeight, err, sizeof(err));
+    NSMutableArray<SPDFRenderedPage*>* pages = [NSMutableArray arrayWithCapacity:(NSUInteger)pageCount];
+    for (NSInteger pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
+        SPDFRenderedPage* page = [self placeholderPageAtIndex:pageIndex
+                                                     document:tab.cachedDocument
+                                                fallbackWidth:MAX(1.0f, fallbackWidth)
+                                               fallbackHeight:MAX(1.0f, fallbackHeight)];
+        if (!page) return NO;
+        [pages addObject:page];
+    }
+    tab.cachedRenderedPages = pages;
+    return YES;
+}
+
+- (void)cacheActiveRenderedPagesForSelectedTab {
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (!tab || tab.cachedDocument != _doc ||
+        ![_path.stringByStandardizingPath isEqualToString:tab.path.stringByStandardizingPath])
+        return;
+    tab.cachedRenderedPages = _renderedPages;
+}
+
+- (void)clearActiveMetadata {
+    if (!_activeMetadataBorrowed) {
+        spdf_free_outline(&_outline);
+        spdf_free_comments(&_comments);
+    }
+    memset(&_outline, 0, sizeof(_outline));
+    memset(&_comments, 0, sizeof(_comments));
+    _activeMetadataBorrowed = NO;
+    _activeMetadataTab = nil;
+}
+
+- (void)adoptCachedMetadataForTab:(SPDFDocumentTab*)tab {
+    [self clearActiveMetadata];
+    if (!tab) return;
+    if (tab.cachedOutlineLoaded) _outline = tab.cachedOutline;
+    if (tab.cachedCommentsLoaded) _comments = tab.cachedComments;
+    _activeMetadataBorrowed = YES;
+    _activeMetadataTab = tab;
+}
+
+- (void)discardCachedRuntimeForTab:(SPDFDocumentTab*)tab {
+    if (!tab) return;
+    if (_activeMetadataTab == tab) [self clearActiveMetadata];
+    if (_doc == tab.cachedDocument) _doc = NULL;
+    [tab clearCachedRuntime];
+}
+
+- (void)closeActiveDocumentIfUnowned {
+    if (!_doc) return;
+    for (SPDFDocumentTab* tab in _tabs) {
+        if (tab.cachedDocument == _doc) {
+            _doc = NULL;
+            return;
+        }
+    }
+    spdf_close(_doc);
+    _doc = NULL;
+}
+
+- (void)cancelInactiveTabPreloads {
+    [_preloadQueue cancelAllOperations];
+    [_preloadingPaths removeAllObjects];
+    [_preloadTokens removeAllObjects];
+}
+
+- (BOOL)preloadToken:(NSString*)token isCurrentForPath:(NSString*)standardizedPath {
+    return token.length > 0 && [(_preloadTokens[standardizedPath] ?: @"") isEqualToString:token];
+}
+
+- (void)finishPreloadForPath:(NSString*)standardizedPath token:(NSString*)token {
+    if (![self preloadToken:token isCurrentForPath:standardizedPath]) return;
+    [_preloadTokens removeObjectForKey:standardizedPath];
+    [_preloadingPaths removeObject:standardizedPath];
+}
+
+- (void)prepareSelectedTabViewState:(SPDFDocumentTab*)tab path:(NSString*)path {
+    _path = [path copy];
+    _highlightPageIndex = -1;
+    _selectionPageIndex = -1;
+    _selectedText = nil;
+    _searchField.stringValue = tab.searchText ?: @"";
+    _findRegexCheckbox.state = tab.searchRegex ? NSControlStateValueOn : NSControlStateValueOff;
+    _findRegexMultiline = tab.searchRegexMultiline;
+    _sidebarPreferredVisible = tab.showSidebar;
+    _minimapPreferredVisible = tab.showMinimap;
+    [self clearFindResults];
+}
+
+- (void)showUnavailableSelectedTab:(SPDFDocumentTab*)tab
+                              path:(NSString*)path
+                           message:(NSString*)message
+                     showOpenError:(BOOL)showOpenError
+                             error:(const char*)err {
+    [self discardCachedRuntimeForTab:tab];
+    _doc = NULL;
+    [self clearActiveMetadata];
+    [self prepareSelectedTabViewState:tab path:path];
+    _pageIndex = 0;
+    _renderGeneration++;
+    [_renderedPages removeAllObjects];
+    [self replaceDocumentViewForTabSwitch];
+    [self rebuildSidebar];
+    [self showEmptyDocumentViewWithMessage:message];
+    _window.title = [NSString
+        stringWithFormat:@"%@ - %@ - Shenzhen PDF", [self displayNameForPathConsideringOpenTabs:path], message];
+    _statusLabel.stringValue = [message stringByAppendingString:@"."];
+    [self updateTabStrip];
+    [self updateControls];
+    [self clearToolbarFieldFocusForTabSwitch];
+    [self savePersistentState];
+    if (showOpenError) {
+        [self showError:@"Could not open document"
+                 detail:[NSString stringWithUTF8String:err && *err ? err : "Unknown error"]];
+    }
+}
+
+- (SPDFDocumentTab*)tabForStandardizedPath:(NSString*)standardizedPath index:(NSInteger*)indexOut {
+    for (NSInteger i = 0; i < (NSInteger)_tabs.count; ++i) {
+        SPDFDocumentTab* tab = _tabs[(NSUInteger)i];
+        if ([tab.path.stringByStandardizingPath isEqualToString:standardizedPath]) {
+            if (indexOut) *indexOut = i;
+            return tab;
+        }
+    }
+    if (indexOut) *indexOut = -1;
+    return nil;
 }
 
 - (NSString*)displayNameForPathConsideringOpenTabs:(NSString*)path {
@@ -2794,7 +2955,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     if (type == NSEventTypeLeftMouseUp) {
         _tabStripCapturingMouse = NO;
-        _window.movable = NO;
+        _window.movable = YES;
         [_tabStrip mouseUp:event];
         return YES;
     }
@@ -2802,74 +2963,268 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)preloadInactiveTabs {
-    [_preloadQueue cancelAllOperations];
     for (NSInteger i = 0; i < (NSInteger)_tabs.count; ++i) {
         if (i == _selectedTabIndex) continue;
-        NSString* path = [_tabs[(NSUInteger)i].path copy];
+        SPDFDocumentTab* tab = _tabs[(NSUInteger)i];
+        NSString* path = [tab.path copy];
         if (!path.length) continue;
+        NSString* standardized = [path.stringByStandardizingPath copy];
+        if ([_preloadingPaths containsObject:standardized]) continue;
+
+        NSDictionary* attributes = [self fileAttributesForPath:path];
+        if (!attributes) {
+            [self discardCachedRuntimeForTab:tab];
+            tab.missingFile = YES;
+            tab.missingMessage = @"File moved or deleted";
+            continue;
+        }
+        if ([self tab:tab cacheMatchesFileAttributes:attributes]) {
+            tab.missingFile = NO;
+            tab.missingMessage = @"";
+            continue;
+        }
+
+        [_preloadingPaths addObject:standardized];
+        NSString* preloadToken = NSUUID.UUID.UUIDString;
+        _preloadTokens[standardized] = preloadToken;
+        NSInteger preferredPage = MAX(0, tab.pageIndex);
+        SPDFFitMode fitMode = tab.fitMode;
+        CGFloat fallbackZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
+        NSSize clipSize = [self documentClipSizeForLayout];
+        CGFloat displayScale = [self backingScale];
+
         [_preloadQueue addOperationWithBlock:^{
           @autoreleasepool {
-              char err[512];
+              NSDictionary* operationAttributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+              if (!operationAttributes) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
+                    [self finishPreloadForPath:standardized token:preloadToken];
+                    NSInteger tabIndex = -1;
+                    SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
+                    if (!currentTab || tabIndex == self->_selectedTabIndex) return;
+                    [self discardCachedRuntimeForTab:currentTab];
+                    currentTab.missingFile = YES;
+                    currentTab.missingMessage = @"File moved or deleted";
+                    [self updateTabStrip];
+                  }];
+                  return;
+              }
+
+              char err[1024];
               spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+              if (!doc) {
+                  NSString* message = @"Could not open document";
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
+                    [self finishPreloadForPath:standardized token:preloadToken];
+                    NSInteger tabIndex = -1;
+                    SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
+                    if (!currentTab || tabIndex == self->_selectedTabIndex) return;
+                    [self discardCachedRuntimeForTab:currentTab];
+                    currentTab.missingFile = NO;
+                    currentTab.missingMessage = message;
+                    [self updateTabStrip];
+                  }];
+                  return;
+              }
+
+              NSInteger pageCount = spdf_page_count(doc);
+              if (pageCount <= 0) {
+                  spdf_close(doc);
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
+                    [self finishPreloadForPath:standardized token:preloadToken];
+                    NSInteger tabIndex = -1;
+                    SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
+                    if (!currentTab || tabIndex == self->_selectedTabIndex) return;
+                    [self discardCachedRuntimeForTab:currentTab];
+                    currentTab.missingFile = NO;
+                    currentTab.missingMessage = @"Could not open document";
+                    [self updateTabStrip];
+                  }];
+                  return;
+              }
+
+              NSInteger pageIndex = MAX(0, MIN(preferredPage, pageCount - 1));
+              float pageWidth = 0;
+              float pageHeight = 0;
+              spdf_page_size(doc, (int)pageIndex, &pageWidth, &pageHeight, err, sizeof(err));
+              CGFloat fallbackWidth = pageWidth > 0 ? pageWidth : 1.0;
+              CGFloat fallbackHeight = pageHeight > 0 ? pageHeight : 1.0;
+              NSMutableArray<SPDFRenderedPage*>* pages = [NSMutableArray arrayWithCapacity:(NSUInteger)pageCount];
+              for (NSInteger page = 0; page < pageCount; ++page) {
+                  SPDFRenderedPage* renderedPage = [self placeholderPageAtIndex:page
+                                                                       document:doc
+                                                                  fallbackWidth:fallbackWidth
+                                                                 fallbackHeight:fallbackHeight];
+                  if (!renderedPage) {
+                      spdf_close(doc);
+                      [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                        if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
+                        [self finishPreloadForPath:standardized token:preloadToken];
+                        [self updateTabStrip];
+                      }];
+                      return;
+                  }
+                  [pages addObject:renderedPage];
+              }
+
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                NSString* standardized = path.stringByStandardizingPath;
-                BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:path];
-                for (SPDFDocumentTab* tab in self->_tabs) {
-                    if (![tab.path.stringByStandardizingPath isEqualToString:standardized]) continue;
-                    tab.missingFile = doc == NULL && !fileExists;
-                    tab.missingMessage =
-                        doc ? @"" : (fileExists ? @"Could not open document" : @"File moved or deleted");
-                    break;
+                if (![self preloadToken:preloadToken isCurrentForPath:standardized]) {
+                    spdf_close(doc);
+                    return;
                 }
+                NSInteger tabIndex = -1;
+                SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
+                if (!currentTab || tabIndex == self->_selectedTabIndex) {
+                    [self finishPreloadForPath:standardized token:preloadToken];
+                    spdf_close(doc);
+                    return;
+                }
+                NSDictionary* latestAttributes = [self fileAttributesForPath:currentTab.path];
+                if (![self fileAttributes:operationAttributes matchFileAttributes:latestAttributes]) {
+                    [self finishPreloadForPath:standardized token:preloadToken];
+                    spdf_close(doc);
+                    return;
+                }
+                [self discardCachedRuntimeForTab:currentTab];
+                currentTab.cachedDocument = doc;
+                currentTab.cachedRenderedPages = pages;
+                [self recordFileAttributes:operationAttributes forTab:currentTab];
+                currentTab.missingFile = NO;
+                currentTab.missingMessage = @"";
+                currentTab.title = spdf_display_name_for_path(currentTab.path);
                 [self updateTabStrip];
               }];
-              if (doc) spdf_close(doc);
+
+              spdf_document* renderDoc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+              if (!renderDoc) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    if ([self preloadToken:preloadToken isCurrentForPath:standardized])
+                        [self finishPreloadForPath:standardized token:preloadToken];
+                  }];
+                  return;
+              }
+              CGFloat zoom = [self zoomForFitMode:fitMode
+                                         pageSize:NSMakeSize(pageWidth, pageHeight)
+                                         clipSize:clipSize
+                                     fallbackZoom:fallbackZoom];
+              SPDFRenderedPage* preferredRenderedPage = [self renderedPageAtIndex:pageIndex
+                                                                         document:renderDoc
+                                                                             zoom:zoom
+                                                                     displayScale:displayScale
+                                                                            error:err
+                                                                      errorLength:sizeof(err)];
+              spdf_close(renderDoc);
+              [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
+                [self finishPreloadForPath:standardized token:preloadToken];
+                if (!preferredRenderedPage) return;
+                NSInteger tabIndex = -1;
+                SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
+                if (!currentTab || tabIndex == self->_selectedTabIndex ||
+                    ![self tab:currentTab cacheMatchesFileAttributes:[self fileAttributesForPath:currentTab.path]])
+                    return;
+                if (pageIndex < 0 || pageIndex >= (NSInteger)currentTab.cachedRenderedPages.count) return;
+                SPDFRenderedPage* old = currentTab.cachedRenderedPages[(NSUInteger)pageIndex];
+                preferredRenderedPage.highlights = old.highlights ?: @[];
+                preferredRenderedPage.selectionRects = old.selectionRects ?: @[];
+                [currentTab.cachedRenderedPages replaceObjectAtIndex:(NSUInteger)pageIndex
+                                                          withObject:preferredRenderedPage];
+              }];
           }
         }];
     }
+    [self updateTabStrip];
 }
 
 - (void)loadCommentsForCurrentDocumentAsync {
     if (!_doc || !_path.length) return;
-    NSString* path = [_path.stringByStandardizingPath copy];
-    dispatch_async(dispatch_get_main_queue(), ^{
-      if (!self->_doc || ![self->_path.stringByStandardizingPath isEqualToString:path]) return;
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (tab.cachedCommentsLoaded) {
+        [self adoptCachedMetadataForTab:tab];
+        [self rebuildSidebar];
+        [_pageView setNeedsDisplay:YES];
+        return;
+    }
 
-      spdf_comments comments;
-      char err[1024];
-      BOOL ok = spdf_load_comments(self->_doc, &comments, err, sizeof(err));
+    NSString* path = [_path copy];
+    NSString* standardizedPath = [_path.stringByStandardizingPath copy];
+    NSUInteger generation = _renderGeneration;
+    [_preloadQueue addOperationWithBlock:^{
+      @autoreleasepool {
+          __block spdf_comments comments;
+          memset(&comments, 0, sizeof(comments));
+          char err[1024];
+          spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+          BOOL ok = doc && spdf_load_comments(doc, &comments, err, sizeof(err));
+          if (doc) spdf_close(doc);
 
-      spdf_free_comments(&self->_comments);
-      if (ok) {
-          self->_comments = comments;
-      } else {
-          spdf_free_comments(&comments);
-          memset(&self->_comments, 0, sizeof(self->_comments));
+          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            SPDFDocumentTab* currentTab = [self selectedTab];
+            if (generation != self->_renderGeneration || !self->_doc ||
+                ![self->_path.stringByStandardizingPath isEqualToString:standardizedPath] || currentTab != tab) {
+                spdf_free_comments(&comments);
+                return;
+            }
+            if (ok) {
+                [tab replaceCachedComments:comments loaded:YES];
+            } else {
+                spdf_free_comments(&comments);
+                spdf_comments emptyComments;
+                memset(&emptyComments, 0, sizeof(emptyComments));
+                [tab replaceCachedComments:emptyComments loaded:YES];
+            }
+            [self adoptCachedMetadataForTab:tab];
+            [self rebuildSidebar];
+            [self->_pageView setNeedsDisplay:YES];
+          }];
       }
-      [self rebuildSidebar];
-      [self->_pageView setNeedsDisplay:YES];
-    });
+    }];
 }
 
 - (void)loadOutlineForCurrentDocumentAsync {
     if (!_doc || !_path.length) return;
-    NSString* path = [_path.stringByStandardizingPath copy];
-    dispatch_async(dispatch_get_main_queue(), ^{
-      if (!self->_doc || ![self->_path.stringByStandardizingPath isEqualToString:path]) return;
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (tab.cachedOutlineLoaded) {
+        [self adoptCachedMetadataForTab:tab];
+        [self rebuildSidebar];
+        return;
+    }
 
-      spdf_outline outline;
-      char err[1024];
-      BOOL ok = spdf_load_outline(self->_doc, &outline, err, sizeof(err));
+    NSString* path = [_path copy];
+    NSString* standardizedPath = [_path.stringByStandardizingPath copy];
+    NSUInteger generation = _renderGeneration;
+    [_preloadQueue addOperationWithBlock:^{
+      @autoreleasepool {
+          __block spdf_outline outline;
+          memset(&outline, 0, sizeof(outline));
+          char err[1024];
+          spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+          BOOL ok = doc && spdf_load_outline(doc, &outline, err, sizeof(err));
+          if (doc) spdf_close(doc);
 
-      spdf_free_outline(&self->_outline);
-      if (ok) {
-          self->_outline = outline;
-      } else {
-          spdf_free_outline(&outline);
-          memset(&self->_outline, 0, sizeof(self->_outline));
+          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            SPDFDocumentTab* currentTab = [self selectedTab];
+            if (generation != self->_renderGeneration || !self->_doc ||
+                ![self->_path.stringByStandardizingPath isEqualToString:standardizedPath] || currentTab != tab) {
+                spdf_free_outline(&outline);
+                return;
+            }
+            if (ok) {
+                [tab replaceCachedOutline:outline loaded:YES];
+            } else {
+                spdf_free_outline(&outline);
+                spdf_outline emptyOutline;
+                memset(&emptyOutline, 0, sizeof(emptyOutline));
+                [tab replaceCachedOutline:emptyOutline loaded:YES];
+            }
+            [self adoptCachedMetadataForTab:tab];
+            [self rebuildSidebar];
+          }];
       }
-      [self rebuildSidebar];
-    });
+    }];
 }
 
 - (void)schedulePostFirstPaintWorkForGeneration:(NSUInteger)generation
@@ -3098,6 +3453,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)finishLiveZoom:(NSTimer*)timer {
     (void)timer;
     _zoomFinishTimer = nil;
+    _liveZooming = NO;
     if (_doc) {
         [self renderDocumentPreservingScrollPosition];
         [self persistActiveState];
@@ -3107,8 +3463,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)beginLiveZoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint {
     if (!_doc || factor <= 0) return;
     _fitMode = SPDFFitModeCustom;
-    [self setZoomWithoutRendering:_zoom * factor centeredAtWindowPoint:windowPoint];
+    _liveZooming = YES;
     [_zoomFinishTimer invalidate];
+    [self setZoomWithoutRendering:_zoom * factor centeredAtWindowPoint:windowPoint];
     _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:0.18
                                                         target:self
                                                       selector:@selector(finishLiveZoom:)
@@ -3126,103 +3483,142 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if ([panel runModal] == NSModalResponseOK) [self openPath:panel.URL.path];
 }
 
+- (void)activateCachedSelectedTab:(SPDFDocumentTab*)tab
+                             path:(NSString*)path
+                       attributes:(NSDictionary*)attributes
+              savedFindMatchIndex:(NSInteger)savedFindMatchIndex {
+    _doc = tab.cachedDocument;
+    if (!_doc || ![self ensureCachedRenderedPagesForTab:tab preferredPage:tab.pageIndex]) return;
+
+    tab.missingFile = NO;
+    tab.missingMessage = @"";
+    [self recordFileAttributes:attributes forTab:tab];
+    [self prepareSelectedTabViewState:tab path:path];
+    [self adoptCachedMetadataForTab:tab];
+    _pageIndex = MAX(0, MIN(tab.pageIndex, spdf_page_count(_doc) - 1));
+    _fitMode = tab.fitMode;
+    _viewMode = tab.viewMode;
+    _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
+    _zoom = [self zoomForFitMode:_fitMode pageIndex:_pageIndex];
+    _renderGeneration++;
+
+    _renderedPages = tab.cachedRenderedPages;
+    _pageScrollView.hidden = NO;
+    _pageView.emptyMessage = @"Open a document";
+    _pageView.pages = _renderedPages;
+    _pageView.currentPageIndex = _pageIndex;
+    _pageView.zoom = _zoom;
+    _pageView.viewMode = _viewMode;
+    _pageView.backingScale = [self backingScale];
+    if (_presentationMode)
+        _pageScrollView.verticalScroller = nil;
+    else if (_pageScrollView.verticalScroller != _markerScroller)
+        _pageScrollView.verticalScroller = _markerScroller;
+    _pageScrollView.hasVerticalScroller = !_presentationMode;
+    BOOL previousSuppressViewportRerender = _suppressViewportRerender;
+    _suppressViewportRerender = YES;
+    [self setMinimapActuallyVisible:_minimapPreferredVisible];
+    tab.title = spdf_display_name_for_path(_path);
+
+    [self rebuildSidebar];
+    _suppressViewportRerender = previousSuppressViewportRerender;
+    [self updateTabStrip];
+    [self savePersistentState];
+
+    NSClipView* clipView = _pageScrollView.contentView;
+    BOOL previousPostsBoundsChangedNotifications = clipView.postsBoundsChangedNotifications;
+    BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
+    _suppressScrollCallbacks = YES;
+    clipView.postsBoundsChangedNotifications = NO;
+    NSValue* restoreOrigin = tab.hasScrollOrigin ? [NSValue valueWithPoint:tab.scrollOrigin] : nil;
+    NSUInteger layoutGeneration = _renderGeneration;
+    NSString* layoutPath = [_path copy];
+
+    [NSAnimationContext
+        runAnimationGroup:^(NSAnimationContext* context) {
+          context.duration = 0.0;
+          context.allowsImplicitAnimation = NO;
+          [self->_window.contentView layoutSubtreeIfNeeded];
+          [self->_documentContainer layoutSubtreeIfNeeded];
+          [self resizeDocumentView];
+          if (restoreOrigin)
+              [self scrollDocumentClipViewToOrigin:[self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
+                                                                           forPageIndex:self->_pageIndex]
+                                            notify:NO];
+          else
+              [self scrollToPage:self->_pageIndex alignTop:YES];
+          [self->_pageView setNeedsDisplay:YES];
+        }
+        completionHandler:nil];
+
+    clipView.postsBoundsChangedNotifications = previousPostsBoundsChangedNotifications;
+    _suppressScrollCallbacks = previousSuppressScrollCallbacks;
+    [self documentScrollPositionChanged];
+    [self syncToolbarState];
+    [self updateControls];
+    [self selectCurrentSidebarRow];
+    [self updateMinimap];
+    [self enqueuePageRendersForGeneration:layoutGeneration
+                              pageIndexes:@[ @(_pageIndex) ]
+                            preferredPage:_pageIndex
+                        forceHighPriority:YES];
+    [self schedulePostFirstPaintWorkForGeneration:layoutGeneration
+                                             path:layoutPath
+                              savedFindMatchIndex:savedFindMatchIndex
+                                    restoreSearch:_searchField.stringValue.length > 0
+                              preferredRenderPage:_pageIndex];
+    [self clearToolbarFieldFocusForTabSwitch];
+}
+
 - (void)loadSelectedTab {
     if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return;
     [self clearToolbarFieldFocusForTabSwitch];
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
     if (!tab.path.length) return;
-    NSString* path = tab.path;
+    NSString* path = [tab.path copy];
     NSInteger savedFindMatchIndex = tab.findMatchIndex;
     [_renderQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
 
+    [self closeActiveDocumentIfUnowned];
+    NSDictionary* attributes = [self fileAttributesForPath:path];
+    if (!attributes) {
+        tab.missingFile = YES;
+        tab.missingMessage = @"File moved or deleted";
+        [self showUnavailableSelectedTab:tab path:path message:tab.missingMessage showOpenError:NO error:NULL];
+        return;
+    }
+
+    if ([self tab:tab cacheMatchesFileAttributes:attributes]) {
+        [self activateCachedSelectedTab:tab path:path attributes:attributes savedFindMatchIndex:savedFindMatchIndex];
+        return;
+    }
+
+    [self discardCachedRuntimeForTab:tab];
+    [self clearActiveMetadata];
+
     char err[1024];
     spdf_document* newDoc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
     if (!newDoc) {
-        BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:path];
-        NSString* message = fileExists ? @"Could not open document" : @"File moved or deleted";
-        tab.missingFile = !fileExists;
+        NSString* message = @"Could not open document";
+        tab.missingFile = NO;
         tab.missingMessage = message;
-        [_renderQueue cancelAllOperations];
-        [_queuedRenderPages removeAllObjects];
-        spdf_free_outline(&_outline);
-        spdf_free_comments(&_comments);
-        memset(&_outline, 0, sizeof(_outline));
-        memset(&_comments, 0, sizeof(_comments));
-        spdf_close(_doc);
-        _doc = NULL;
-        _path = [path copy];
-        _pageIndex = 0;
-        _sidebarPreferredVisible = tab.showSidebar;
-        _minimapPreferredVisible = tab.showMinimap;
-        _highlightPageIndex = -1;
-        _selectionPageIndex = -1;
-        _selectedText = nil;
-        _searchField.stringValue = tab.searchText ?: @"";
-        _findRegexCheckbox.state = tab.searchRegex ? NSControlStateValueOn : NSControlStateValueOff;
-        _findRegexMultiline = tab.searchRegexMultiline;
-        [self clearFindResults];
-        _renderGeneration++;
-        [_renderedPages removeAllObjects];
-        [self replaceDocumentViewForTabSwitch];
-        [self rebuildSidebar];
-        [self showEmptyDocumentViewWithMessage:message];
-        _window.title = [NSString
-            stringWithFormat:@"%@ - %@ - Shenzhen PDF", [self displayNameForPathConsideringOpenTabs:path], message];
-        _statusLabel.stringValue = [message stringByAppendingString:@"."];
-        [self updateTabStrip];
-        [self updateControls];
-        [self clearToolbarFieldFocusForTabSwitch];
-        [self savePersistentState];
-        if (fileExists)
-            [self showError:@"Could not open document"
-                     detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+        [self showUnavailableSelectedTab:tab path:path message:message showOpenError:YES error:err];
         return;
     }
 
     tab.missingFile = NO;
     tab.missingMessage = @"";
-
-    spdf_free_outline(&_outline);
-    spdf_free_comments(&_comments);
-    memset(&_outline, 0, sizeof(_outline));
-    memset(&_comments, 0, sizeof(_comments));
-    spdf_close(_doc);
+    tab.cachedDocument = newDoc;
+    [self recordFileAttributes:attributes forTab:tab];
     _doc = newDoc;
-    _path = [path copy];
+    [self prepareSelectedTabViewState:tab path:path];
     _pageIndex = MAX(0, MIN(tab.pageIndex, spdf_page_count(_doc) - 1));
-    _highlightPageIndex = -1;
-    _selectionPageIndex = -1;
-    _selectedText = nil;
-    _searchField.stringValue = tab.searchText ?: @"";
-    _findRegexCheckbox.state = tab.searchRegex ? NSControlStateValueOn : NSControlStateValueOff;
-    _findRegexMultiline = tab.searchRegexMultiline;
-    [self clearFindResults];
     _renderGeneration++;
-    _zoom = tab.zoom > 0 ? tab.zoom : 1.0;
-    _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : _zoom;
+    _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
     _fitMode = tab.fitMode;
     _viewMode = tab.viewMode;
-    _sidebarPreferredVisible = tab.showSidebar;
-    _minimapPreferredVisible = tab.showMinimap;
-
-    char metadataErr[1024];
-    spdf_outline loadedOutline;
-    memset(&loadedOutline, 0, sizeof(loadedOutline));
-    if (spdf_load_outline(_doc, &loadedOutline, metadataErr, sizeof(metadataErr))) {
-        _outline = loadedOutline;
-    } else {
-        spdf_free_outline(&loadedOutline);
-        memset(&_outline, 0, sizeof(_outline));
-    }
-    spdf_comments loadedComments;
-    memset(&loadedComments, 0, sizeof(loadedComments));
-    if (spdf_load_comments(_doc, &loadedComments, metadataErr, sizeof(metadataErr))) {
-        _comments = loadedComments;
-    } else {
-        spdf_free_comments(&loadedComments);
-        memset(&_comments, 0, sizeof(_comments));
-    }
+    _zoom = [self zoomForFitMode:_fitMode pageIndex:_pageIndex];
 
     _statusLabel.stringValue = @"Opening...";
     NSClipView* clipView = _pageScrollView.contentView;
@@ -3282,12 +3678,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     NSString* closedPath = [_path copy];
     [self rememberClosedDocumentPath:closedPath];
-    spdf_free_outline(&_outline);
-    spdf_free_comments(&_comments);
-    memset(&_outline, 0, sizeof(_outline));
-    memset(&_comments, 0, sizeof(_comments));
-    spdf_close(_doc);
-    _doc = NULL;
+    [self cancelInactiveTabPreloads];
+    [self clearActiveMetadata];
+    [self closeActiveDocumentIfUnowned];
     _path = nil;
     _pageIndex = 0;
     _highlightPageIndex = -1;
@@ -3306,23 +3699,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self updateControls];
 }
 
-- (void)openPath:(NSString*)path {
-    if (!_uiReady || !_window) {
-        _pendingOpenPath = [path copy];
-        return;
-    }
-
-    NSInteger existing = [self indexOfTabForPath:path];
-    if (existing >= 0) {
-        [self selectTabAtIndex:existing];
-        if (_doc && _path.length > 0) {
-            [self rememberRecentlyOpenedPath:_path];
-            [self savePersistentState];
-        }
-        return;
-    }
-
-    [self rememberActiveTabState];
+- (SPDFDocumentTab*)newTabForPath:(NSString*)path {
     SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
     tab.path = [path copy];
     tab.title = spdf_display_name_for_path(path);
@@ -3337,11 +3714,48 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     tab.showSidebar = YES;
     tab.showMinimap = YES;
     [self applyStoredDocumentStateToTab:tab];
-    [_tabs addObject:tab];
-    _selectedTabIndex = (NSInteger)_tabs.count - 1;
-    [self loadSelectedTab];
-    if (_doc && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
-    [self savePersistentState];
+    return tab;
+}
+
+- (void)openPaths:(NSArray<NSString*>*)paths {
+    if (!_uiReady || !_window) {
+        if (paths.count > 0) _pendingOpenPath = [paths.firstObject copy];
+        for (NSString* path in paths) {
+            if (path.length && ![_pendingOpenPaths containsObject:path]) [_pendingOpenPaths addObject:path];
+        }
+        return;
+    }
+
+    if (paths.count == 0) return;
+    [self rememberActiveTabState];
+    NSInteger targetIndex = -1;
+    for (NSString* path in paths) {
+        if (![path isKindOfClass:NSString.class] || path.length == 0) continue;
+        NSInteger existing = [self indexOfTabForPath:path];
+        if (existing >= 0) {
+            targetIndex = existing;
+            continue;
+        }
+        SPDFDocumentTab* tab = [self newTabForPath:path];
+        [_tabs addObject:tab];
+        targetIndex = (NSInteger)_tabs.count - 1;
+    }
+
+    if (targetIndex >= 0) {
+        if (targetIndex == _selectedTabIndex && _doc) {
+            if (_path.length > 0) [self rememberRecentlyOpenedPath:_path];
+            [self savePersistentState];
+            return;
+        }
+        [self selectTabAtIndex:targetIndex];
+        if (_doc && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
+        [self savePersistentState];
+    }
+}
+
+- (void)openPath:(NSString*)path {
+    if (!path.length) return;
+    [self openPaths:@[ path ]];
 }
 
 - (SPDFDocumentTab*)tabSnapshotForDragAtIndex:(NSInteger)index {
@@ -3379,8 +3793,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)closeTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
     BOOL closingActive = index == _selectedTabIndex;
-    NSString* closedPath = [_tabs[(NSUInteger)index].path copy];
+    SPDFDocumentTab* closingTab = _tabs[(NSUInteger)index];
+    NSString* closedPath = [closingTab.path copy];
     [self rememberClosedDocumentPath:closedPath];
+    [_preloadingPaths removeObject:closedPath.stringByStandardizingPath];
+    [_preloadTokens removeObjectForKey:closedPath.stringByStandardizingPath];
+    [self discardCachedRuntimeForTab:closingTab];
     [_tabs removeObjectAtIndex:(NSUInteger)index];
     if (!closingActive && index < _selectedTabIndex) _selectedTabIndex--;
 
@@ -3388,12 +3806,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         BOOL shouldCloseThisWindow = [self hasOtherShenzhenWindows];
         [self clearToolbarFieldFocusForTabSwitch];
         _selectedTabIndex = -1;
-        spdf_free_outline(&_outline);
-        spdf_free_comments(&_comments);
-        memset(&_outline, 0, sizeof(_outline));
-        memset(&_comments, 0, sizeof(_comments));
-        spdf_close(_doc);
-        _doc = NULL;
+        [self cancelInactiveTabPreloads];
+        [self clearActiveMetadata];
+        [self closeActiveDocumentIfUnowned];
         _path = nil;
         _pageIndex = 0;
         _selectedText = nil;
@@ -3501,16 +3916,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard {
     NSArray<NSURL*>* urls = [pasteboard readObjectsForClasses:@[ [NSURL class] ]
                                                       options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
-    BOOL opened = NO;
+    NSMutableArray<NSString*>* paths = [NSMutableArray array];
     for (NSURL* url in urls) {
         NSString* ext = url.pathExtension.lowercaseString;
         if ([ext isEqualToString:@"pdf"] || [ext isEqualToString:@"xps"] || [ext isEqualToString:@"cbz"] ||
             [ext isEqualToString:@"epub"]) {
-            [self openPath:url.path];
-            opened = YES;
+            [paths addObject:url.path];
         }
     }
-    return opened;
+    if (paths.count == 0) return NO;
+    [self openPaths:paths];
+    return YES;
 }
 
 - (SPDFDocumentView*)newDocumentView {
@@ -3637,7 +4053,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self relayoutDocumentForViewportChange];
     [self updateMinimap];
     if (actualVisible && _doc) {
-        [self renderPageIfNeededAtIndex:_pageIndex];
+        if (!_suppressViewportRerender) [self renderPageIfNeededAtIndex:_pageIndex];
         [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
     }
     [self syncToolbarState];
@@ -3947,7 +4363,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self resizeDocumentView];
         return;
     }
-    if ([self isAutoFitMode:_fitMode] && _renderedPages.count > 0) {
+    if (!_suppressViewportRerender && [self isAutoFitMode:_fitMode] && _renderedPages.count > 0) {
         NSPoint relativePosition = [self relativeScrollPositionForCurrentPage];
         [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
         [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition];
@@ -5945,6 +6361,84 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [_window toggleFullScreen:sender];
 }
 
+- (void)performWindowArrangementAction:(SEL)action sender:(id)sender {
+    if (action == @selector(fillWindow:))
+        [self fillWindow:sender];
+    else if (action == @selector(centerWindowInScreen:))
+        [self centerWindowInScreen:sender];
+    else if (action == @selector(moveWindowToLeftHalf:))
+        [self moveWindowToLeftHalf:sender];
+    else if (action == @selector(moveWindowToRightHalf:))
+        [self moveWindowToRightHalf:sender];
+    else if (action == @selector(moveWindowToTopHalf:))
+        [self moveWindowToTopHalf:sender];
+    else if (action == @selector(moveWindowToBottomHalf:))
+        [self moveWindowToBottomHalf:sender];
+}
+
+- (void)drainPendingWindowArrangementAction {
+    if (_pendingWindowArrangementAction == NULL || [self windowIsFullScreen]) return;
+    SEL action = _pendingWindowArrangementAction;
+    _pendingWindowArrangementAction = NULL;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!self->_window || self->_presentationMode || [self windowIsFullScreen]) return;
+      [self performWindowArrangementAction:action sender:nil];
+    });
+}
+
+- (BOOL)deferWindowArrangementActionIfNeeded:(SEL)action sender:(id)sender {
+    if (!_window || _presentationMode) return YES;
+    if (![self windowIsFullScreen]) return NO;
+
+    BOOL alreadyWaitingForExit = _pendingWindowArrangementAction != NULL;
+    _pendingWindowArrangementAction = action;
+    if (!alreadyWaitingForExit) [_window toggleFullScreen:sender];
+    return YES;
+}
+
+- (BOOL)handleWindowArrangementShortcutEvent:(NSEvent*)event {
+    if (!_window || _presentationMode || ![self windowIsFullScreen]) return NO;
+    if (event.type != NSEventTypeKeyDown) return NO;
+
+    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+    NSEventModifierFlags required = NSEventModifierFlagControl | NSEventModifierFlagFunction;
+    if ((flags & required) != required) return NO;
+    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagOption | NSEventModifierFlagShift)) return NO;
+
+    SEL action = NULL;
+    NSString* characters = event.charactersIgnoringModifiers ?: event.characters ?: @"";
+    if (characters.length > 0) {
+        unichar key = [characters characterAtIndex:0];
+        if (key == 'f' || key == 'F')
+            action = @selector(fillWindow:);
+        else if (key == 'c' || key == 'C')
+            action = @selector(centerWindowInScreen:);
+        else if (key == NSLeftArrowFunctionKey)
+            action = @selector(moveWindowToLeftHalf:);
+        else if (key == NSRightArrowFunctionKey)
+            action = @selector(moveWindowToRightHalf:);
+        else if (key == NSUpArrowFunctionKey)
+            action = @selector(moveWindowToTopHalf:);
+        else if (key == NSDownArrowFunctionKey)
+            action = @selector(moveWindowToBottomHalf:);
+    }
+
+    if (action == NULL) {
+        if (event.keyCode == 123)
+            action = @selector(moveWindowToLeftHalf:);
+        else if (event.keyCode == 124)
+            action = @selector(moveWindowToRightHalf:);
+        else if (event.keyCode == 126)
+            action = @selector(moveWindowToTopHalf:);
+        else if (event.keyCode == 125)
+            action = @selector(moveWindowToBottomHalf:);
+    }
+
+    if (action == NULL) return NO;
+    [self performWindowArrangementAction:action sender:nil];
+    return YES;
+}
+
 - (NSRect)visibleFrameForWindowActions {
     NSScreen* screen = _window.screen ?: NSScreen.mainScreen;
     return screen ? screen.visibleFrame : NSMakeRect(0, 0, 1120, 800);
@@ -5957,13 +6451,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)fillWindow:(id)sender {
-    (void)sender;
+    if ([self deferWindowArrangementActionIfNeeded:_cmd sender:sender]) return;
     [self setWindowFrameForWindowAction:[self visibleFrameForWindowActions]];
 }
 
 - (void)centerWindowInScreen:(id)sender {
-    (void)sender;
-    if (!_window || _presentationMode || [self windowIsFullScreen]) return;
+    if ([self deferWindowArrangementActionIfNeeded:_cmd sender:sender]) return;
     NSRect visible = [self visibleFrameForWindowActions];
     NSRect frame = _window.frame;
     frame.size.width = MIN(NSWidth(frame), NSWidth(visible));
@@ -5974,21 +6467,21 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)moveWindowToLeftHalf:(id)sender {
-    (void)sender;
+    if ([self deferWindowArrangementActionIfNeeded:_cmd sender:sender]) return;
     NSRect visible = [self visibleFrameForWindowActions];
     [self setWindowFrameForWindowAction:NSMakeRect(NSMinX(visible), NSMinY(visible), floor(NSWidth(visible) * 0.5),
                                                    NSHeight(visible))];
 }
 
 - (void)moveWindowToRightHalf:(id)sender {
-    (void)sender;
+    if ([self deferWindowArrangementActionIfNeeded:_cmd sender:sender]) return;
     NSRect visible = [self visibleFrameForWindowActions];
     CGFloat width = floor(NSWidth(visible) * 0.5);
     [self setWindowFrameForWindowAction:NSMakeRect(NSMaxX(visible) - width, NSMinY(visible), width, NSHeight(visible))];
 }
 
 - (void)moveWindowToTopHalf:(id)sender {
-    (void)sender;
+    if ([self deferWindowArrangementActionIfNeeded:_cmd sender:sender]) return;
     NSRect visible = [self visibleFrameForWindowActions];
     CGFloat height = floor(NSHeight(visible) * 0.5);
     [self
@@ -5996,7 +6489,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)moveWindowToBottomHalf:(id)sender {
-    (void)sender;
+    if ([self deferWindowArrangementActionIfNeeded:_cmd sender:sender]) return;
     NSRect visible = [self visibleFrameForWindowActions];
     CGFloat height = floor(NSHeight(visible) * 0.5);
     [self setWindowFrameForWindowAction:NSMakeRect(NSMinX(visible), NSMinY(visible), NSWidth(visible), height)];
@@ -7141,6 +7634,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     BOOL ok = spdf_rotate_page(_doc, (int)pageIndex, degrees, err, sizeof(err));
     if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
     if (!ok) {
+        [self discardCachedRuntimeForTab:[self selectedTab]];
         [self loadSelectedTab];
         [self showError:@"Could not rotate page" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
         return;
@@ -7149,11 +7643,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     [_renderQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
     _renderGeneration++;
-    spdf_close(_doc);
-    _doc = NULL;
     if (_selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count) {
         SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
         tab.pageIndex = pageIndex;
+        [self discardCachedRuntimeForTab:tab];
     }
     [self loadSelectedTab];
     _statusLabel.stringValue = degrees > 0 ? @"Page rotated clockwise." : @"Page rotated anticlockwise.";
@@ -7306,8 +7799,9 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         [strongSelf->_renderQueue cancelAllOperations];
         [strongSelf->_queuedRenderPages removeAllObjects];
         strongSelf->_renderGeneration++;
-        spdf_close(strongSelf->_doc);
-        strongSelf->_doc = NULL;
+        [strongSelf discardCachedRuntimeForTab:[strongSelf selectedTab]];
+        [strongSelf clearActiveMetadata];
+        [strongSelf closeActiveDocumentIfUnowned];
         NSError* moveError = nil;
         NSURL* resultingURL = nil;
         if (![NSFileManager.defaultManager replaceItemAtURL:[NSURL fileURLWithPath:originalPath]
@@ -7319,6 +7813,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
             [strongSelf finishOCRProgressWithDetail:@"Could not save OCR output."];
             [strongSelf showError:@"Could not save OCR output" detail:moveError.localizedDescription ?: @""];
             strongSelf->_statusLabel.stringValue = @"OCR output was not installed.";
+            [strongSelf loadSelectedTab];
             return;
         }
 
@@ -7357,6 +7852,31 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     info.verticalPagination = NSPrintingPaginationModeClip;
     info.horizontallyCentered = YES;
     info.verticallyCentered = YES;
+
+    if ([_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
+        NSURL* url = [NSURL fileURLWithPath:_path];
+        PDFDocument* pdfDocument = [[PDFDocument alloc] initWithURL:url];
+        if (pdfDocument && pdfDocument.pageCount > 0) {
+            if (!pdfDocument.allowsPrinting) {
+                [self showError:@"Printing is not allowed" detail:@"This PDF's permissions do not allow printing."];
+                return;
+            }
+
+            NSPrintOperation* pdfOperation = [pdfDocument printOperationForPrintInfo:info
+                                                                         scalingMode:kPDFPrintPageScaleToFit
+                                                                          autoRotate:YES];
+            if (pdfOperation) {
+                objc_setAssociatedObject(pdfOperation, @selector(printDocument:), pdfDocument,
+                                         OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                pdfOperation.jobTitle = _path.lastPathComponent ?: @"Shenzhen PDF";
+                pdfOperation.showsPrintPanel = YES;
+                pdfOperation.showsProgressPanel = YES;
+                [pdfOperation runOperationModalForWindow:_window delegate:nil didRunSelector:NULL contextInfo:NULL];
+                [self evictDistantRenderedPageImages];
+                return;
+            }
+        }
+    }
 
     NSSize paper = info.paperSize;
     NSInteger pageCount = spdf_page_count(_doc);
@@ -7949,7 +8469,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     if (action == @selector(fillWindow:) || action == @selector(centerWindowInScreen:) ||
         action == @selector(moveWindowToLeftHalf:) || action == @selector(moveWindowToRightHalf:) ||
         action == @selector(moveWindowToTopHalf:) || action == @selector(moveWindowToBottomHalf:))
-        return !_presentationMode && ![self windowIsFullScreen];
+        return _window != nil && !_presentationMode;
     if (action == @selector(reopenLastClosedDocument:)) return _closedDocumentPaths.count > 0;
     if (action == @selector(toggleSidebar:)) {
         menuItem.title = _sidebarVisible ? @"Hide Side Panel" : @"Show Side Panel";

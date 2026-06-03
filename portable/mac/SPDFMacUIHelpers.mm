@@ -70,9 +70,10 @@ static CGFloat spdf_ui_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValu
 }
 
 - (void)mouseDown:(NSEvent*)event {
+    BOOL wasMovable = self.window.movable;
     self.window.movable = YES;
     [self.window performWindowDragWithEvent:event];
-    self.window.movable = NO;
+    self.window.movable = wasMovable;
 }
 
 @end
@@ -160,8 +161,9 @@ static CGFloat spdf_ui_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValu
 
     NSColor* trackFill = self.active ? [NSColor.whiteColor colorWithAlphaComponent:(enabled ? 0.94 : 0.38)]
                                      : [NSColor.secondaryLabelColor colorWithAlphaComponent:(enabled ? 0.22 : 0.12)];
-    NSBezierPath* track =
-        [NSBezierPath bezierPathWithRoundedRect:switchRect xRadius:switchHeight / 2.0 yRadius:switchHeight / 2.0];
+    NSBezierPath* track = [NSBezierPath bezierPathWithRoundedRect:switchRect
+                                                          xRadius:switchHeight / 2.0
+                                                          yRadius:switchHeight / 2.0];
     [trackFill setFill];
     [track fill];
     [[NSColor.separatorColor colorWithAlphaComponent:enabled ? 0.55 : 0.24] setStroke];
@@ -360,6 +362,7 @@ static CGFloat spdf_ui_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValu
 - (void)sendEvent:(NSEvent*)event {
     if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
+    if (self.reader && [self.reader handleWindowArrangementShortcutEvent:event]) return;
     [super sendEvent:event];
 }
 

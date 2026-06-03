@@ -107,6 +107,8 @@
     spdf_document* _doc;
     spdf_outline _outline;
     spdf_comments _comments;
+    BOOL _activeMetadataBorrowed;
+    SPDFDocumentTab* _activeMetadataTab;
     NSMutableArray<NSDictionary*>* _sidebarItems;
     NSString* _chapterFilterText;
     NSString* _commentFilterText;
@@ -119,6 +121,8 @@
     NSDictionary* _paletteFavoritePendingDelete;
     NSMutableDictionary<NSNumber*, NSArray<NSValue*>*>* _findHighlights;
     NSMutableArray<NSDictionary*>* _findMatches;
+    NSMutableSet<NSString*>* _preloadingPaths;
+    NSMutableDictionary<NSString*, NSString*>* _preloadTokens;
     NSUInteger _findGeneration;
     BOOL _findSearchInProgress;
     NSString* _path;
@@ -146,6 +150,8 @@
     BOOL _updatingSelection;
     BOOL _updatingFromScroll;
     BOOL _suppressScrollCallbacks;
+    BOOL _suppressViewportRerender;
+    BOOL _liveZooming;
     BOOL _minimapPrecisionViewportDragActive;
     BOOL _sidebarPreferredVisible;
     BOOL _sidebarVisible;
@@ -163,6 +169,7 @@
     BOOL _presentationPreviousMovable;
     BOOL _presentationPreviousMovableByWindowBackground;
     BOOL _presentationPreviousHasShadow;
+    SEL _pendingWindowArrangementAction;
     NSTimeInterval _lastPresentationEventTimestamp;
     NSEventType _lastPresentationEventType;
     NSInteger _lastPresentationEventKeyCode;
@@ -223,6 +230,11 @@
 - (void)newTabRequested:(id)sender;
 - (void)previousPage:(id)sender;
 - (void)nextPage:(id)sender;
+- (void)performWindowArrangementAction:(SEL)action sender:(id)sender;
+- (void)drainPendingWindowArrangementAction;
+- (BOOL)deferWindowArrangementActionIfNeeded:(SEL)action sender:(id)sender;
+- (void)openPath:(NSString*)path;
+- (void)openPaths:(NSArray<NSString*>*)paths;
 - (void)openRecentDocument:(id)sender;
 - (void)reopenLastClosedDocument:(id)sender;
 - (void)focusFind:(id)sender;
@@ -240,6 +252,14 @@
 - (void)paletteFavoriteDeleteClicked:(id)sender;
 - (SPDFDocumentView*)newDocumentView;
 - (void)replaceDocumentViewForTabSwitch;
+- (SPDFDocumentTab*)selectedTab;
+- (void)clearActiveMetadata;
+- (void)adoptCachedMetadataForTab:(SPDFDocumentTab*)tab;
+- (void)discardCachedRuntimeForTab:(SPDFDocumentTab*)tab;
+- (void)closeActiveDocumentIfUnowned;
+- (void)cancelInactiveTabPreloads;
+- (BOOL)preloadToken:(NSString*)token isCurrentForPath:(NSString*)standardizedPath;
+- (void)finishPreloadForPath:(NSString*)standardizedPath token:(NSString*)token;
 - (void)updateFindControls;
 - (void)updateMinimap;
 - (void)showEmptyDocumentViewWithMessage:(NSString*)message;
@@ -247,6 +267,11 @@
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex
                              alignTop:(BOOL)alignTop
                         restoreOrigin:(NSValue*)restoreOrigin;
+- (CGFloat)zoomForFitMode:(SPDFFitMode)fitMode pageIndex:(NSInteger)pageIndex;
+- (CGFloat)zoomForFitMode:(SPDFFitMode)fitMode
+                 pageSize:(NSSize)pageSize
+                 clipSize:(NSSize)clipSize
+             fallbackZoom:(CGFloat)fallbackZoom;
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin notify:(BOOL)notify;
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify;
 - (void)scrollDocumentClipViewToDocumentOrigin:(NSPoint)origin notify:(BOOL)notify;

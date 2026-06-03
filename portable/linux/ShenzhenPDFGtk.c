@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -57,6 +58,10 @@ typedef struct favorite_item {
 typedef struct document_tab {
     char* path;
     char* title;
+    spdf_document* cached_doc;
+    gint64 cached_doc_mtime;
+    gint64 cached_doc_size;
+    gboolean cached_doc_file_state_valid;
     int page_index;
     double zoom;
     int fit_mode_id;
@@ -729,8 +734,66 @@ static document_tab* active_tab(app_state* state) {
     return &state->tabs[state->selected_tab];
 }
 
+static gboolean file_state_for_path(const char* path, gint64* mtime, gint64* size) {
+    GStatBuf st;
+
+    if (!path || !*path || g_stat(path, &st) != 0) return FALSE;
+    if (mtime) *mtime = (gint64)st.st_mtime;
+    if (size) *size = (gint64)st.st_size;
+    return TRUE;
+}
+
+static void clear_cached_document(document_tab* tab) {
+    if (!tab) return;
+    spdf_close(tab->cached_doc);
+    tab->cached_doc = NULL;
+    tab->cached_doc_mtime = 0;
+    tab->cached_doc_size = 0;
+    tab->cached_doc_file_state_valid = FALSE;
+}
+
+static void record_tab_document_file_state(document_tab* tab, gint64 mtime, gint64 size) {
+    if (!tab) return;
+    tab->cached_doc_mtime = mtime;
+    tab->cached_doc_size = size;
+    tab->cached_doc_file_state_valid = TRUE;
+}
+
+static gboolean cached_document_matches_file_state(document_tab* tab, gint64 mtime, gint64 size) {
+    return tab && tab->cached_doc && tab->cached_doc_file_state_valid && tab->cached_doc_mtime == mtime &&
+           tab->cached_doc_size == size;
+}
+
+static gboolean active_document_belongs_to_tab(app_state* state, document_tab* tab) {
+    if (!state || !tab || !state->doc || !state->path || !tab->path) return FALSE;
+    return g_strcmp0(state->path, tab->path) == 0;
+}
+
+static void close_active_document(app_state* state) {
+    if (!state || !state->doc) return;
+    spdf_close(state->doc);
+    state->doc = NULL;
+}
+
+static void park_active_document(app_state* state) {
+    document_tab* tab = active_tab(state);
+
+    if (!state || !state->doc) return;
+    if (active_document_belongs_to_tab(state, tab) && tab->cached_doc_file_state_valid) {
+        gint64 mtime = tab->cached_doc_mtime;
+        gint64 size = tab->cached_doc_size;
+        clear_cached_document(tab);
+        tab->cached_doc = state->doc;
+        record_tab_document_file_state(tab, mtime, size);
+        state->doc = NULL;
+        return;
+    }
+    close_active_document(state);
+}
+
 static void free_document_tab(document_tab* tab) {
     if (!tab) return;
+    clear_cached_document(tab);
     g_free(tab->path);
     g_free(tab->title);
     g_free(tab->search_text);
@@ -2223,13 +2286,14 @@ static void show_empty_view_message(app_state* state, const char* message, const
 static void show_missing_document(app_state* state, const char* path) {
     char* title;
     char* window_title;
+    document_tab* tab = active_tab(state);
 
     if (state->presentation_mode) set_presentation_mode(state, FALSE);
     cancel_deferred_sidebar_load(state);
     spdf_free_outline(&state->outline);
     spdf_free_comments(&state->comments);
-    spdf_close(state->doc);
-    state->doc = NULL;
+    close_active_document(state);
+    clear_cached_document(tab);
     state->document_generation++;
     clear_find_results(state);
     clear_text_selection(state);
@@ -2243,6 +2307,40 @@ static void show_missing_document(app_state* state, const char* path) {
     window_title = g_strdup_printf("%s - Missing - Shenzhen PDF", title && *title ? title : "Missing file");
     gtk_window_set_title(GTK_WINDOW(state->window), window_title);
     gtk_label_set_text(GTK_LABEL(state->status), "File moved or deleted.");
+    update_controls(state);
+    if (!state->switching_tabs) {
+        save_active_tab_state(state);
+        update_tab_strip(state);
+        save_session(state);
+    }
+    g_free(window_title);
+    g_free(title);
+}
+
+static void show_failed_open_document(app_state* state, const char* path, const char* detail) {
+    char* title;
+    char* window_title;
+    document_tab* tab = active_tab(state);
+
+    if (state->presentation_mode) set_presentation_mode(state, FALSE);
+    cancel_deferred_sidebar_load(state);
+    spdf_free_outline(&state->outline);
+    spdf_free_comments(&state->comments);
+    close_active_document(state);
+    clear_cached_document(tab);
+    state->document_generation++;
+    clear_find_results(state);
+    clear_text_selection(state);
+    if (state->find_markers) gtk_widget_hide(state->find_markers);
+    free(state->path);
+    state->path = strdup(path ? path : "");
+    state->page_index = 0;
+    rebuild_sidebar(state);
+    show_empty_view_message(state, "Could not open document", detail ? detail : "");
+    title = spdf_gtk_display_name_for_path(path ? path : "");
+    window_title = g_strdup_printf("%s - Error - Shenzhen PDF", title && *title ? title : "Unreadable file");
+    gtk_window_set_title(GTK_WINDOW(state->window), window_title);
+    gtk_label_set_text(GTK_LABEL(state->status), "Could not open document.");
     update_controls(state);
     if (!state->switching_tabs) {
         save_active_tab_state(state);
@@ -2673,35 +2771,25 @@ static void scroll_to_page_fraction(app_state* state, int page_index, double x_f
     g_idle_add(scroll_to_page_point_idle, request);
 }
 
-static void open_path_at_page(app_state* state, const char* path, int page_index) {
-    char err[1024];
-    spdf_document* doc;
+static void attach_document_to_view(app_state* state, const char* path, spdf_document* doc, int page_index,
+                                    gint64 mtime, gint64 size) {
     gboolean loaded_sidebar_metadata = FALSE;
-
-    if (!path || !g_file_test(path, G_FILE_TEST_EXISTS)) {
-        show_missing_document(state, path);
-        return;
-    }
-
-    doc = spdf_open(path, err, sizeof(err));
-    if (!doc) {
-        show_error(GTK_WINDOW(state->window), "Could not open document", err);
-        return;
-    }
+    document_tab* tab = active_tab(state);
 
     spdf_free_outline(&state->outline);
     spdf_free_comments(&state->comments);
-    spdf_close(state->doc);
     state->doc = doc;
+    record_tab_document_file_state(tab, mtime, size);
     clear_empty_view_message(state);
     clear_text_selection(state);
     free(state->path);
-    state->path = strdup(path);
+    state->path = strdup(path ? path : "");
     state->page_index = MAX(0, MIN(page_index, spdf_page_count(state->doc) - 1));
     gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
     state->document_generation++;
     if (state->switching_tabs && state->show_sidebar) {
+        char err[1024];
         spdf_load_outline(state->doc, &state->outline, err, sizeof(err));
         spdf_load_comments(state->doc, &state->comments, err, sizeof(err));
         loaded_sidebar_metadata = TRUE;
@@ -2714,6 +2802,50 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
         update_tab_strip(state);
         save_session(state);
     }
+}
+
+static gboolean activate_cached_tab_document(app_state* state, document_tab* tab, int page_index) {
+    gint64 mtime;
+    gint64 size;
+
+    if (!tab || !tab->cached_doc) return FALSE;
+    if (!file_state_for_path(tab->path, &mtime, &size)) {
+        show_missing_document(state, tab->path);
+        return TRUE;
+    }
+    if (!cached_document_matches_file_state(tab, mtime, size)) {
+        clear_cached_document(tab);
+        return FALSE;
+    }
+
+    state->doc = tab->cached_doc;
+    tab->cached_doc = NULL;
+    attach_document_to_view(state, tab->path, state->doc, page_index, mtime, size);
+    return TRUE;
+}
+
+static void open_path_at_page(app_state* state, const char* path, int page_index) {
+    char err[1024];
+    spdf_document* doc;
+    gint64 mtime;
+    gint64 size;
+    document_tab* tab = active_tab(state);
+
+    if (!file_state_for_path(path, &mtime, &size)) {
+        show_missing_document(state, path);
+        return;
+    }
+
+    doc = spdf_open(path, err, sizeof(err));
+    if (!doc) {
+        show_error(GTK_WINDOW(state->window), "Could not open document", err);
+        show_failed_open_document(state, path, err);
+        return;
+    }
+
+    clear_cached_document(tab);
+    close_active_document(state);
+    attach_document_to_view(state, path, doc, page_index, mtime, size);
 }
 
 static void open_path_in_tab_at_page(app_state* state, const char* path, int page_index, gboolean clear_search) {
@@ -2740,6 +2872,7 @@ static void open_path_in_tab_at_page(app_state* state, const char* path, int pag
     }
 
     save_active_tab_state(state);
+    park_active_document(state);
     if (state->tab_count == 0 ||
         (state->selected_tab >= 0 && state->selected_tab < state->tab_count && state->tabs[state->selected_tab].path &&
          state->tabs[state->selected_tab].path[0] != '\0')) {
@@ -2839,8 +2972,7 @@ static void close_document_view(app_state* state) {
     if (state->presentation_mode) set_presentation_mode(state, FALSE);
     spdf_free_outline(&state->outline);
     spdf_free_comments(&state->comments);
-    spdf_close(state->doc);
-    state->doc = NULL;
+    close_active_document(state);
     state->document_generation++;
     free(state->path);
     state->path = NULL;
@@ -3430,6 +3562,7 @@ static void select_tab(app_state* state, int index) {
     if (index == state->selected_tab && state->doc) return;
 
     save_active_tab_state(state);
+    park_active_document(state);
     state->selected_tab = index;
     tab = active_tab(state);
     search_text = g_strdup(tab->search_text ? tab->search_text : "");
@@ -3454,7 +3587,8 @@ static void select_tab(app_state* state, int index) {
     set_regex_multiline_widget_active(state->search_regex_multiline_item, state->search_regex_multiline);
     clear_find_results(state);
     update_tab_strip(state);
-    open_path_at_page(state, tab->path, preferred_page_index);
+    if (!activate_cached_tab_document(state, tab, preferred_page_index))
+        open_path_at_page(state, tab->path, preferred_page_index);
     state->switching_tabs = FALSE;
     if (search_text && *search_text) {
         if (state->defer_find_until_idle)
@@ -7767,14 +7901,25 @@ static void rebuild_favorites_list(GtkListBox* list, app_state* state, const cha
             document_tab* tab = &state->tabs[tab_index];
             spdf_document* doc = NULL;
             gboolean borrowed_doc = FALSE;
+            gint64 mtime;
+            gint64 size;
             char* display_path;
-            if (!tab->path || !*tab->path || !g_file_test(tab->path, G_FILE_TEST_EXISTS)) continue;
+            if (!tab->path || !*tab->path || !file_state_for_path(tab->path, &mtime, &size)) continue;
 
             if (tab_index == state->selected_tab && state->doc) {
                 doc = state->doc;
                 borrowed_doc = TRUE;
+            } else if (cached_document_matches_file_state(tab, mtime, size)) {
+                doc = tab->cached_doc;
+                borrowed_doc = TRUE;
             } else {
+                clear_cached_document(tab);
                 doc = spdf_open(tab->path, err, sizeof(err));
+                if (doc) {
+                    tab->cached_doc = doc;
+                    record_tab_document_file_state(tab, mtime, size);
+                    borrowed_doc = TRUE;
+                }
             }
             if (!doc) continue;
 

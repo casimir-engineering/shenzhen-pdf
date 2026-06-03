@@ -51,6 +51,17 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) BOOL showMinimap;
 @property(nonatomic) BOOL missingFile;
 @property(nonatomic, copy) NSString* missingMessage;
+@property(nonatomic) spdf_document* cachedDocument;
+@property(nonatomic, strong) NSMutableArray<SPDFRenderedPage*>* cachedRenderedPages;
+@property(nonatomic, strong) NSDate* cachedModificationDate;
+@property(nonatomic) unsigned long long cachedFileSize;
+@property(nonatomic) spdf_outline cachedOutline;
+@property(nonatomic) spdf_comments cachedComments;
+@property(nonatomic) BOOL cachedOutlineLoaded;
+@property(nonatomic) BOOL cachedCommentsLoaded;
+- (void)clearCachedRuntime;
+- (void)replaceCachedOutline:(spdf_outline)outline loaded:(BOOL)loaded;
+- (void)replaceCachedComments:(spdf_comments)comments loaded:(BOOL)loaded;
 @end
 
 @interface SPDFWorkerDocument : NSObject

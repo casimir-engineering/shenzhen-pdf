@@ -23,6 +23,43 @@
     return self;
 }
 
+- (void)setCachedDocument:(spdf_document*)cachedDocument {
+    if (_cachedDocument == cachedDocument) return;
+    spdf_close(_cachedDocument);
+    _cachedDocument = cachedDocument;
+}
+
+- (void)clearCachedRuntime {
+    self.cachedDocument = NULL;
+    self.cachedRenderedPages = nil;
+    self.cachedModificationDate = nil;
+    self.cachedFileSize = 0;
+    spdf_free_outline(&_cachedOutline);
+    spdf_free_comments(&_cachedComments);
+    memset(&_cachedOutline, 0, sizeof(_cachedOutline));
+    memset(&_cachedComments, 0, sizeof(_cachedComments));
+    self.cachedOutlineLoaded = NO;
+    self.cachedCommentsLoaded = NO;
+}
+
+- (void)replaceCachedOutline:(spdf_outline)outline loaded:(BOOL)loaded {
+    spdf_free_outline(&_cachedOutline);
+    _cachedOutline = outline;
+    _cachedOutlineLoaded = loaded;
+}
+
+- (void)replaceCachedComments:(spdf_comments)comments loaded:(BOOL)loaded {
+    spdf_free_comments(&_cachedComments);
+    _cachedComments = comments;
+    _cachedCommentsLoaded = loaded;
+}
+
+- (void)dealloc {
+    spdf_close(_cachedDocument);
+    spdf_free_outline(&_cachedOutline);
+    spdf_free_comments(&_cachedComments);
+}
+
 @end
 
 SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
