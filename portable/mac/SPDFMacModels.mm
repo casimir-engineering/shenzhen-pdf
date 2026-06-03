@@ -11,7 +11,7 @@
         _pageIndex = 0;
         _zoom = 1.0;
         _customZoom = 1.0;
-        _fitMode = SPDFFitModeWidth;
+        _fitMode = SPDFFitModePage;
         _viewMode = SPDFViewModeContinuous;
         _searchText = @"";
         _searchRegexMultiline = YES;
@@ -118,7 +118,7 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     tab.pageIndex = MAX(0, [item[@"page"] integerValue]);
     tab.zoom = [item[@"zoom"] doubleValue] > 0 ? [item[@"zoom"] doubleValue] : 1.0;
     tab.customZoom = [item[@"customZoom"] doubleValue] > 0 ? [item[@"customZoom"] doubleValue] : tab.zoom;
-    tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
+    if (item[@"fitMode"]) tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
     tab.viewMode = (SPDFViewMode)MAX(0, MIN(1, [item[@"viewMode"] integerValue]));
     tab.scrollOrigin = NSMakePoint([item[@"scrollX"] doubleValue], [item[@"scrollY"] doubleValue]);
     tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue] || item[@"scrollX"] != nil || item[@"scrollY"] != nil;

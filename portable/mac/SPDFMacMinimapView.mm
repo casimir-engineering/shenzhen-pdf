@@ -6,7 +6,7 @@ static const CGFloat kPageMargin = 44.0;
 static const CGFloat kPageGap = 26.0;
 static const NSInteger kLongDocumentDragPageThreshold = 20;
 static const CGFloat kLongDocumentDragFineSpeed = 180.0;
-static const CGFloat kLongDocumentDragFullSpeed = 560.0;
+static const CGFloat kLongDocumentDragFullSpeed = 300.0;
 
 static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));

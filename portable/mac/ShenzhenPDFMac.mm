@@ -146,7 +146,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     (void)notification;
     _zoom = 1.0;
     _rememberedCustomZoom = 1.0;
-    _fitMode = SPDFFitModeWidth;
+    _fitMode = SPDFFitModePage;
     _viewMode = SPDFViewModeContinuous;
     _highlightPageIndex = -1;
     _selectionPageIndex = -1;
