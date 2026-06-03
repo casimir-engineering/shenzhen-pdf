@@ -43,6 +43,8 @@
 #define MINIMAP_WIDTH 112
 #define MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD 20
 #define MINIMAP_PRECISE_PAGE_LIMIT 2000
+#define MINIMAP_DRAG_FINE_SPEED 180.0
+#define MINIMAP_DRAG_FULL_SPEED 560.0
 #define SHENZHENPDF_TAB_MIME_TYPE "application/x-shenzhenpdf-tab+json"
 
 typedef struct favorite_item {
@@ -4541,7 +4543,8 @@ static double minimap_drag_delta_time(app_state* state, double event_time) {
 static double minimap_long_document_drag_scale(app_state* state, int page_count, double delta_y, double event_time) {
     double delta_t = minimap_drag_delta_time(state, event_time);
     double speed = fabs(delta_y) / delta_t;
-    double acceleration = smoothstep_double((speed - 180.0) / (900.0 - 180.0));
+    double acceleration =
+        smoothstep_double((speed - MINIMAP_DRAG_FINE_SPEED) / (MINIMAP_DRAG_FULL_SPEED - MINIMAP_DRAG_FINE_SPEED));
     double page_scale = clamp_double(20.0 / MAX(1, page_count), 0.30, 0.72);
     return page_scale + acceleration * (1.0 - page_scale);
 }

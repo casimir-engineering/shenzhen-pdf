@@ -5,6 +5,8 @@
 static const CGFloat kPageMargin = 44.0;
 static const CGFloat kPageGap = 26.0;
 static const NSInteger kLongDocumentDragPageThreshold = 20;
+static const CGFloat kLongDocumentDragFineSpeed = 180.0;
+static const CGFloat kLongDocumentDragFullSpeed = 560.0;
 
 static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));
@@ -270,7 +272,8 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 
     NSTimeInterval deltaT = [self dragDeltaTimeForTimestamp:timestamp];
     CGFloat speed = fabs(deltaY) / deltaT;
-    CGFloat acceleration = spdf_smoothstep_cg((speed - 180.0) / (900.0 - 180.0));
+    CGFloat acceleration = spdf_smoothstep_cg((speed - kLongDocumentDragFineSpeed) /
+                                              (kLongDocumentDragFullSpeed - kLongDocumentDragFineSpeed));
     CGFloat pageScale = spdf_clamp_cg(20.0 / MAX(1.0, (CGFloat)self.pages.count), 0.30, 0.72);
     return pageScale + acceleration * (1.0 - pageScale);
 }
