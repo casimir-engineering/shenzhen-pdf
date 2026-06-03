@@ -9,7 +9,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 1. Refactor the 10k-line `.mm` file and keep an eagle view of oversized files.
    - Status: Partially complete, not done.
    - Changed: extracted Mac models, tab strip, document view, minimap, print view, and shortcut-help delegate behavior into dedicated files under `portable/mac/`.
-   - Current line counts: `portable/mac/ShenzhenPDFMac.mm` is 7,845 lines; extracted files are 103-749 lines, plus `SPDFMacDelegatePrivate.h` at 330 lines and `ShenzhenMacDelegate+ShortcutHelp.mm` at 234 lines. `portable/linux/ShenzhenPDFGtk.c` is 8,934 lines after one helper extraction.
+   - Current line counts: `portable/mac/ShenzhenPDFMac.mm` is 7,987 lines; extracted files are 103-749 lines, plus `SPDFMacDelegatePrivate.h` at 337 lines and `ShenzhenMacDelegate+ShortcutHelp.mm` at 234 lines. `portable/linux/ShenzhenPDFGtk.c` is 8,934 lines after one helper extraction.
    - Gap: the Mac and Linux monoliths are still too large. Next refactors should split session/window lifecycle, rendering/cache orchestration, palette/favorites, sidebar/comments, and Linux minimap/session code.
 
 2. Closing the last document in a non-last window should close that window, not show “no file loaded.”
@@ -42,11 +42,15 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 8. Relaunching should restore split windows promptly in one workspace.
    - Status: Partially treated, not solved.
    - Changed: closing a window removes only that window’s session and suppresses stale rewrite-on-terminate.
+   - Changed: direct launch restores stored tabs, but launching with an explicit PDF now skips or discards the restored session so stale documents do not merge into the file-open request. Empty windows and tabs without paths are pruned from `session.json`.
+   - Changed: replacement launches validate the clicked PDFs before clearing stored windows, so a corrupt external PDF cannot erase a good previous session.
+   - Tested: backed up and cleaned `~/Library/Application Support/ShenzhenPDF/*.json`, then verified clean direct launch, restore-after-quit, cold Finder-style PDF launch replacing the prior session, empty first-window pruning, corrupt external-open preservation, and already-running Finder-open adding to the visible restored session.
    - Gap: session restore still spawns restored windows as separate processes with `--restore-window`. A full fix should migrate to one-process multi-window controllers.
 
 9. Support default Mac move/resize window shortcuts.
    - Status: Implemented in Mac source; manual menu shortcut QA still needed.
    - Changed: added a Window menu with Minimize, Zoom, Fill, Center, Move & Resize halves, and Bring All to Front.
+   - Changed: mirrored Fill, Center, and half-window actions under View > Move & Resize Window so they are visible from the menu the user checked.
 
 10. Improve Mac print quality to high DPI.
    - Status: Implemented in Mac source; print-to-PDF visual QA still needed.
@@ -64,6 +68,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 - Mac syntax: `clang++ -std=c++17 -fobjc-arc -Icore -I../mupdf/include -fsyntax-only mac/*.mm` passed.
 - Mac build: `make -C portable mac-app` passed after fixing the MuPDF PKCS7 target and adding a local `.icns` fallback when `actool` is missing.
 - Mac install/smoke: installed to `~/Applications`, codesign verification passed, and launched the app with `/Users/raph/Downloads/Bear Sunny Technologies Inc for Blackstar.pdf`.
+- Mac session JSON cleanup: moved current state files to `~/Library/Application Support/ShenzhenPDF/backup-20260603-110422-finder-final` before the latest Finder-style session tests.
 - Linux syntax: `cc -Icore -I../mupdf/include $(pkg-config --cflags gtk+-3.0) -fsyntax-only linux/ShenzhenPDFGtkDisplay.c linux/ShenzhenPDFGtk.c` passed.
 - Linux build: `make -C portable linux` passed.
 - Windows build: `bun ./cmd/build.ts` failed on this macOS machine because Visual Studio 2026 `msbuild.exe` is not available in PATH.
