@@ -9,7 +9,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 1. Refactor the 10k-line `.mm` file and keep an eagle view of oversized files.
    - Status: Partially complete, not done.
    - Changed: extracted Mac models, tab strip, document view, minimap, print view, and shortcut-help delegate behavior into dedicated files under `portable/mac/`.
-   - Current line counts: `portable/mac/ShenzhenPDFMac.mm` is 8,055 lines; extracted Mac files are 99-749 lines except `SPDFMacMinimapView.mm` at 604 lines and `SPDFMacDocumentView.mm` at 577 lines, plus `SPDFMacDelegatePrivate.h` at 336 lines and `ShenzhenMacDelegate+ShortcutHelp.mm` at 234 lines. `portable/linux/ShenzhenPDFGtk.c` is 8,985 lines after one helper extraction.
+   - Current line counts: `portable/mac/ShenzhenPDFMac.mm` is 8,502 lines; extracted Mac files are 99-749 lines except `SPDFMacMinimapView.mm` at 604 lines and `SPDFMacDocumentView.mm` at 578 lines, plus `SPDFMacDelegatePrivate.h` at 357 lines and `ShenzhenMacDelegate+ShortcutHelp.mm` at 234 lines. `portable/linux/ShenzhenPDFGtk.c` is 9,130 lines after one helper extraction.
    - Gap: the Mac and Linux monoliths are still too large. Next refactors should split session/window lifecycle, rendering/cache orchestration, palette/favorites, sidebar/comments, and Linux minimap/session code.
 
 2. Closing the last document in a non-last window should close that window, not show “no file loaded.”
@@ -39,6 +39,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: fixed the follow-up minimap overlay regression by drawing the real viewport/page-intersection rectangle again while keeping the stabilized long-document drag math internal.
    - Changed: tuned the long-document drag acceleration curve on Mac and Linux to keep fine adjustment below 180 px/s unchanged while reaching 1:1 speed at 560 px/s instead of 900 px/s.
    - Changed: fixed the follow-up non-continuous regression: Mac single-page mode sizes to the current page instead of the continuous document, so page 1 centers like later pages; Mac minimap uses synthetic full-document coordinates so only the current page's visible slice is highlighted; Linux single-page mode now vertically centers the page box outside continuous mode.
+   - Changed: fixed the follow-up Mothership non-continuous page-change regression by making single-page visible-page detection return the current page instead of re-scanning overlapping single-page rects; fixed minimap churn while zooming by suppressing thumbnail render queueing during live zoom and rendering once after zoom settles.
 
 7. Opening a PDF from Finder while the app is in another workspace should switch to the app.
    - Status: Implemented in Mac source; manual Spaces QA still needed.
@@ -54,18 +55,31 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Gap: session restore still spawns restored windows as separate processes with `--restore-window`. A full fix should migrate to one-process multi-window controllers.
 
 9. Support default Mac move/resize window shortcuts.
-   - Status: Implemented in Mac source; manual menu shortcut QA still needed.
-   - Changed: added a Window menu with Minimize, Zoom, Fill, Center, Move & Resize halves, and Bring All to Front.
+   - Status: Implemented in Mac source; installed-app menu shortcut QA still needed.
+   - Changed: the main Mac window now remains movable outside presentation/fullscreen mode, which lets AppKit enable its native Fill, Center, Move & Resize, Full Screen Tile, quarter, arrange, display, and default shortcut handling.
+   - Changed: tab-strip and toolbar drag paths now restore the movable state instead of leaving the window non-movable after interaction.
+   - Changed: removed the duplicate custom Window-menu Fill/Center/Move & Resize shortcut entries so they no longer conflict with macOS' native Window menu.
+   - Changed: added a green-button fullscreen fallback for Control+Fn/Globe+F/C/arrow arrangement shortcuts: the app exits native fullscreen, waits for AppKit's exit callback, then applies the requested Fill, Center, or half-screen frame.
    - Changed: mirrored Fill, Center, and half-window actions under View > Move & Resize Window so they are visible from the menu the user checked.
 
 10. Improve Mac print quality to high DPI.
    - Status: Implemented in Mac source; print-to-PDF visual QA still needed.
+   - Changed: PDF files now use PDFKit's native document print operation first, so the original PDF page content is passed to the macOS printing pipeline instead of being pre-rasterized by the app.
+   - Changed: PDF print permissions are respected before printing; fallback raster printing remains for non-PDF formats and PDFKit failure cases.
    - Changed: printing now uses `SPDFPrintView` to render pages directly from `spdf_document` at a 1200 DPI target with fallback to lower render zoom and then cached pages.
 
 11. Install and prepare for TestFlight.
    - Status: Local user install completed; TestFlight signing is blocked by missing Apple assets.
    - Installed: `/Applications/ShenzhenPDF.app`.
+   - Changed: removed the Mac document-type icon override so Finder/Quick Look can show PDF document previews instead of forcing the Shenzhen PDF app logo on every registered PDF/XPS/CBZ/EPUB file.
    - Gap: TestFlight readiness fails for missing Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, provisioning profile, and Transporter.
+
+12. Tab switching/loading should not reload every PDF on every tab change.
+   - Status: Implemented for Mac and Linux; Windows audited as already using persistent per-tab controllers.
+   - Changed: Mac tabs now keep resident document/render caches with file mtime/size validation, reuse cached tabs on selection, avoid canceling all inactive preload work on tab switch, and move outline/comment loading off the tab-switch path into cached background work.
+   - Changed: Mac inactive preloading is multi-threaded but capped to at most two utility operations, publishes a reusable geometry/document cache before preferred-page rastering, and checks file attributes before reusing the cache.
+   - Changed: Linux parks/restores per-tab documents with mtime/size validation so tab selection does not reopen the document when unchanged.
+   - Gap: manual stress QA is still needed on many-tab sessions and on Windows because this macOS machine cannot run the Windows app.
 
 ## Validation
 
@@ -80,6 +94,11 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 - Mac non-continuous minimap overlay regression: temporary Objective-C++ harness against `SPDFMinimapView` verified synthetic single-page minimap geometry highlights only the current page and scales a partial visible page slice to the expected overlay height.
 - Mac installed long-document smoke: launched `/Applications/ShenzhenPDF.app` with the 117-page `/Users/raph/Downloads/HRO catalogue韩荣新目录.pdf`, verified the ShenzhenPDF process started, then quit cleanly.
 - Mac installed non-continuous regression smoke: installed `/Applications/ShenzhenPDF.app`, launched `/Users/raph/Downloads/Bear Sunny Technologies Inc for Blackstar.pdf`, verified the ShenzhenPDF process started, then quit cleanly.
+- Mac installed Mothership non-continuous regression smoke: rebuilt and installed `/Applications/ShenzhenPDF.app`, launched `/Users/raph/Library/CloudStorage/GoogleDrive-raph@blackstar.inc/Shared drives/Blackstar SZ/Mothership/Hardware version 1 - h1/Electronics/Electronics version 1 - e1/ICD Doc/26.6.1.1 - mothership block diagram.drawio.pdf`, verified the ShenzhenPDF process started, and captured `/tmp/shenzhenpdf-single-page-fix.png`.
+- Mac tab-loading regression smoke: rebuilt and installed `/Applications/ShenzhenPDF.app`, launched Bear Sunny plus BladeMaster, inspected `~/Library/Application Support/ShenzhenPDF/session.json` for multiple tabs, and verified only `/Applications/ShenzhenPDF.app` exists.
+- Mac Finder document icon preview correction: rebuilt and installed `/Applications/ShenzhenPDF.app`, verified the installed `Info.plist` no longer has `CFBundleTypeIconFile` for document types, re-registered LaunchServices, reset Quick Look cache, and restarted Finder.
+- Mac green-button fullscreen window movement fallback: rebuilt and installed `/Applications/ShenzhenPDF.app`, verified an app-owned Left Half command exits native fullscreen and applies a half-width frame, and the user confirmed the fullscreen shortcut path works.
+- Mac PDF vector printing smoke: built and installed `/Applications/ShenzhenPDF.app`, verified the installed binary links PDFKit, and ran a PDFKit print-to-PDF smoke on Bear Sunny that produced 35 pages with font/text operators (`fonts=146`, `text_ops=3721`) rather than a purely raster page image.
 - Mac app uniqueness: after install and smoke, `find` and Spotlight metadata both report only `/Applications/ShenzhenPDF.app` for the ShenzhenPDF bundle id/name.
 - Mac session JSON cleanup: moved current state files to `~/Library/Application Support/ShenzhenPDF/backup-20260603-110422-finder-final` before the latest Finder-style session tests.
 - Mac additive Finder-open correction: moved current state files to `~/Library/Application Support/ShenzhenPDF/backup-20260603-122509-additive-final`, verified cold Finder-open restores Bear plus adds/selects the clicked PDF, corrupt clicked PDF preserves Bear only, already-running Finder-open adds/selects, and the installed `/Applications/ShenzhenPDF.app` passes the Bear-plus-clicked-PDF case.

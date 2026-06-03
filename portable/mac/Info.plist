@@ -47,8 +47,6 @@
                 <string>cbz</string>
                 <string>epub</string>
             </array>
-            <key>CFBundleTypeIconFile</key>
-            <string>ShenzhenPDF</string>
             <key>CFBundleTypeName</key>
             <string>Document</string>
             <key>CFBundleTypeRole</key>

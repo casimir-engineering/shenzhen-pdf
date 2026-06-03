@@ -191,6 +191,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
     if (self.pages.count == 0) return 0;
+    if (self.viewMode == SPDFViewModeSingle) return [self boundedPageIndex:self.currentPageIndex];
 
     NSInteger bestPage = self.currentPageIndex;
     CGFloat bestOverlap = -1;

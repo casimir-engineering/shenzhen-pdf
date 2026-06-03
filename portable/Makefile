@@ -85,7 +85,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/As
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
-	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework UniformTypeIdentifiers -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -q 'libcrypto.3.dylib'; then \
 		cp "$(OPENSSL_LIBCRYPTO)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
 		crypto_path=$$(otool -L "$(MAC_BIN)" | awk '/libcrypto.3.dylib/ { print $$1; exit }'); \

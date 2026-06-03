@@ -4,6 +4,7 @@
 
 @protocol SPDFMacUIReader <NSObject>
 - (BOOL)handlePresentationEvent:(NSEvent*)event;
+- (BOOL)handleWindowArrangementShortcutEvent:(NSEvent*)event;
 - (BOOL)handleTabStripMouseEvent:(NSEvent*)event;
 - (BOOL)zoomWithScrollWheelEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)zoomWithMagnifyEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;

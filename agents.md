@@ -14,7 +14,7 @@ To debug run: `windbgx -Q -o -g ./out/dbg64/SumatraPDF.exe`
 
 After making a change to .cpp, .c or .h file (and before running build.ts), run clang-format on those files to reformat them in place
 
-Commit when necessary after a meaningful, tested change set is ready. Do not commit half-finished work.
+Always commit after each meaningful, tested change set is ready. Do not wait for a separate explicit commit request. Do not commit half-finished work.
 
 ## Adding a new advanced setting
 
