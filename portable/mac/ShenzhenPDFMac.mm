@@ -162,6 +162,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _showShortcutHelpOnLaunch = YES;
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
+    _sessionRestoredFromLaunch = NO;
+    _replaceLaunchSessionOnInitialExternalOpen = NO;
     _restoringSidebarLayout = NO;
     _allowSidebarWidthPersistence = NO;
     _sidebarWidth = kDefaultSidebarWidth;
@@ -207,6 +209,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _findQueue.qualityOfService = NSQualityOfServiceUserInitiated;
 
     [self loadPersistentState];
+    if (_tabs.count > 0 && self.restoreWindowID.length == 0 && self.initialPath.length == 0 &&
+        !self.detachedTabLaunch) {
+        _sessionRestoredFromLaunch = YES;
+        _replaceLaunchSessionOnInitialExternalOpen = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+          self->_replaceLaunchSessionOnInitialExternalOpen = NO;
+        });
+    }
     if (!gSPDFWindowControllers) gSPDFWindowControllers = [NSMutableArray array];
     if (![gSPDFWindowControllers containsObject:self]) [gSPDFWindowControllers addObject:self];
 
@@ -227,7 +237,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     if (self.initialPath.length > 0) [startupPaths addObject:self.initialPath];
     if (startupPaths.count > 0) {
-        for (NSString* path in startupPaths) [self openPath:path];
+        NSArray<NSString*>* pathsToOpen = startupPaths;
+        if (self.restoreWindowID.length == 0 && !self.detachedTabLaunch) {
+            pathsToOpen = [self openableDocumentPathsFromPaths:startupPaths showErrors:YES];
+            if (pathsToOpen.count > 0) {
+                [self clearStoredSessionWindows];
+                [_pendingRestoreWindowIDs removeAllObjects];
+                _sessionRestoredFromLaunch = NO;
+                _replaceLaunchSessionOnInitialExternalOpen = NO;
+            }
+        }
+        for (NSString* path in pathsToOpen) [self openPath:path];
     } else if (_tabs.count > 0) {
         [self selectTabAtIndex:MAX(0, _selectedTabIndex)];
     } else {
@@ -290,6 +310,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (filename.length && ![_pendingOpenPaths containsObject:filename]) [_pendingOpenPaths addObject:filename];
         return YES;
     }
+    if ([self shouldDiscardLaunchRestoredSessionForExternalOpen] && ![self canOpenDocumentAtPath:filename
+                                                                                       showError:YES]) {
+        [self activateWindowForExternalOpen];
+        return YES;
+    }
+    [self discardLaunchRestoredSessionForExternalOpenIfNeeded];
     [self openPath:filename];
     [self activateWindowForExternalOpen];
     return YES;
@@ -302,7 +328,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             _pendingOpenPath = [filenames.firstObject copy];
             [_pendingOpenPaths addObjectsFromArray:filenames];
         } else {
-            for (NSString* filename in filenames) [self openPath:filename];
+            NSArray<NSString*>* pathsToOpen = filenames;
+            if ([self shouldDiscardLaunchRestoredSessionForExternalOpen]) {
+                pathsToOpen = [self openableDocumentPathsFromPaths:filenames showErrors:YES];
+                if (pathsToOpen.count == 0) {
+                    [self activateWindowForExternalOpen];
+                    [NSApp replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
+                    return;
+                }
+            }
+            [self discardLaunchRestoredSessionForExternalOpenIfNeeded];
+            for (NSString* filename in pathsToOpen) [self openPath:filename];
             [self activateWindowForExternalOpen];
         }
     }
@@ -430,7 +466,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     else
         _documentStates = [NSMutableDictionary dictionary];
 
-    if (self.detachedTabLaunch || self.initialPath.length > 0) return;
+    if (self.detachedTabLaunch || self.initialPath.length > 0 || _pendingOpenPath.length > 0 ||
+        _pendingOpenPaths.count > 0)
+        return;
 
     NSMutableDictionary* session =
         [self normalizedMultiWindowSessionFromObject:[self jsonObjectFromFile:@"session.json"]];
@@ -467,16 +505,28 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                 NSMutableDictionary* copy = [window mutableCopy];
                 NSString* windowID = [copy[@"id"] isKindOfClass:NSString.class] ? copy[@"id"] : nil;
                 if (windowID.length == 0) copy[@"id"] = NSUUID.UUID.UUIDString;
-                NSArray* tabs = [copy[@"tabs"] isKindOfClass:NSArray.class] ? copy[@"tabs"] : @[];
+                NSArray* rawTabs = [copy[@"tabs"] isKindOfClass:NSArray.class] ? copy[@"tabs"] : @[];
+                NSMutableArray* tabs = [NSMutableArray array];
+                for (NSDictionary* tab in rawTabs) {
+                    if (![tab isKindOfClass:NSDictionary.class]) continue;
+                    NSString* path = [tab[@"path"] isKindOfClass:NSString.class] ? tab[@"path"] : nil;
+                    if (path.length > 0) [tabs addObject:tab];
+                }
+                if (tabs.count == 0) continue;
                 copy[@"tabs"] = tabs;
                 [windows addObject:copy];
             }
         } else if ([dictionary[@"tabs"] isKindOfClass:NSArray.class]) {
-            NSMutableDictionary* migrated = [@{
-                @"id" : NSUUID.UUID.UUIDString,
-                @"selectedTab" : dictionary[@"selectedTab"] ?: @0,
-                @"tabs" : dictionary[@"tabs"]
-            } mutableCopy];
+            NSMutableArray* tabs = [NSMutableArray array];
+            for (NSDictionary* tab in dictionary[@"tabs"]) {
+                if (![tab isKindOfClass:NSDictionary.class]) continue;
+                NSString* path = [tab[@"path"] isKindOfClass:NSString.class] ? tab[@"path"] : nil;
+                if (path.length > 0) [tabs addObject:tab];
+            }
+            if (tabs.count == 0) return [@{@"version" : @2, @"windows" : windows} mutableCopy];
+            NSMutableDictionary* migrated =
+                [@{@"id" : NSUUID.UUID.UUIDString, @"selectedTab" : dictionary[@"selectedTab"] ?: @0, @"tabs" : tabs}
+                    mutableCopy];
             [windows addObject:migrated];
         }
     }
@@ -599,6 +649,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)writeSessionStateForCurrentWindow {
     if (_suppressSessionWriteOnTerminate) return;
     [self rememberActiveTabState];
+    if (_tabs.count == 0) {
+        [self removeSessionStateForCurrentWindow];
+        return;
+    }
     NSMutableDictionary* currentWindow = [self currentWindowSessionDictionary];
     [self withLockedSessionStore:^(NSMutableDictionary* session) {
       NSMutableArray* windows = [session[@"windows"] isKindOfClass:NSMutableArray.class] ? session[@"windows"] : nil;
@@ -632,6 +686,46 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }];
 }
 
+- (void)clearStoredSessionWindows {
+    [self withLockedSessionStore:^(NSMutableDictionary* session) {
+      session[@"windows"] = [NSMutableArray array];
+    }];
+}
+
+- (BOOL)canOpenDocumentAtPath:(NSString*)path showError:(BOOL)showError {
+    if (path.length == 0) return NO;
+    BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:path];
+    if (!fileExists) {
+        if (showError) [self showError:@"File moved or deleted" detail:path];
+        return NO;
+    }
+
+    char err[1024];
+    spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+    if (!doc) {
+        if (showError)
+            [self showError:@"Could not open document"
+                     detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+        return NO;
+    }
+
+    spdf_close(doc);
+    return YES;
+}
+
+- (NSArray<NSString*>*)openableDocumentPathsFromPaths:(NSArray<NSString*>*)paths showErrors:(BOOL)showErrors {
+    NSMutableArray<NSString*>* openable = [NSMutableArray array];
+    for (NSString* path in paths) {
+        if (![path isKindOfClass:NSString.class] || path.length == 0) continue;
+        if ([self canOpenDocumentAtPath:path showError:showErrors]) [openable addObject:path];
+    }
+    return openable;
+}
+
+- (BOOL)shouldDiscardLaunchRestoredSessionForExternalOpen {
+    return _replaceLaunchSessionOnInitialExternalOpen && _sessionRestoredFromLaunch;
+}
+
 - (NSArray<NSRunningApplication*>*)otherRunningShenzhenApplications {
     NSString* bundleID = NSBundle.mainBundle.bundleIdentifier;
     pid_t currentPID = NSProcessInfo.processInfo.processIdentifier;
@@ -647,6 +741,33 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (controller != self && controller->_window && controller->_window.visible) return YES;
     }
     return [self otherRunningShenzhenApplications].count > 0;
+}
+
+- (void)discardLaunchRestoredSessionForExternalOpenIfNeeded {
+    if (!_replaceLaunchSessionOnInitialExternalOpen || !_sessionRestoredFromLaunch) return;
+
+    _replaceLaunchSessionOnInitialExternalOpen = NO;
+    _sessionRestoredFromLaunch = NO;
+    [self clearStoredSessionWindows];
+    [_pendingRestoreWindowIDs removeAllObjects];
+    [_renderQueue cancelAllOperations];
+    [_queuedRenderPages removeAllObjects];
+    spdf_free_outline(&_outline);
+    spdf_free_comments(&_comments);
+    memset(&_outline, 0, sizeof(_outline));
+    memset(&_comments, 0, sizeof(_comments));
+    spdf_close(_doc);
+    _doc = NULL;
+    _path = nil;
+    _pageIndex = 0;
+    _highlightPageIndex = -1;
+    _selectionPageIndex = -1;
+    _selectedText = nil;
+    _selectedTabIndex = -1;
+    [_tabs removeAllObjects];
+    [_renderedPages removeAllObjects];
+    [self clearFindResults];
+    [self updateTabStrip];
 }
 
 - (void)activateWindowForExternalOpen {
@@ -841,6 +962,27 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                                   action:@selector(toggleMinimap:)
                                            keyEquivalent:@""];
     minimapItem.target = self;
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* viewMoveResizeItem = [[NSMenuItem alloc] initWithTitle:@"Move & Resize Window"
+                                                                action:nil
+                                                         keyEquivalent:@""];
+    NSMenu* viewMoveResizeMenu = [[NSMenu alloc] initWithTitle:@"Move & Resize Window"];
+    NSArray<NSDictionary*>* viewMoveResizeActions = @[
+        @{@"title" : @"Fill", @"action" : NSStringFromSelector(@selector(fillWindow:))},
+        @{@"title" : @"Center", @"action" : NSStringFromSelector(@selector(centerWindowInScreen:))},
+        @{@"title" : @"Left Half", @"action" : NSStringFromSelector(@selector(moveWindowToLeftHalf:))},
+        @{@"title" : @"Right Half", @"action" : NSStringFromSelector(@selector(moveWindowToRightHalf:))},
+        @{@"title" : @"Top Half", @"action" : NSStringFromSelector(@selector(moveWindowToTopHalf:))},
+        @{@"title" : @"Bottom Half", @"action" : NSStringFromSelector(@selector(moveWindowToBottomHalf:))}
+    ];
+    for (NSDictionary* itemInfo in viewMoveResizeActions) {
+        NSMenuItem* item = [viewMoveResizeMenu addItemWithTitle:itemInfo[@"title"]
+                                                         action:NSSelectorFromString(itemInfo[@"action"])
+                                                  keyEquivalent:@""];
+        item.target = self;
+    }
+    viewMoveResizeItem.submenu = viewMoveResizeMenu;
+    [viewMenu addItem:viewMoveResizeItem];
     NSMenuItem* presentation =
         [viewMenu addItemWithTitle:@"Presentation Mode"
                             action:@selector(togglePresentation:)

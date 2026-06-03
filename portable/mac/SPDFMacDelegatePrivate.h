@@ -179,6 +179,8 @@
     BOOL _terminateOnlyThisProcess;
     BOOL _suppressSessionWriteOnTerminate;
     BOOL _updatingSidebarFilterField;
+    BOOL _sessionRestoredFromLaunch;
+    BOOL _replaceLaunchSessionOnInitialExternalOpen;
     NSArray<NSDictionary*>* _pendingTranslationItems;
     BOOL _restoringSidebarLayout;
     BOOL _allowSidebarWidthPersistence;
@@ -276,7 +278,12 @@
 - (void)removePresentationEventMonitor;
 - (void)writeSessionStateForCurrentWindow;
 - (void)removeSessionStateForCurrentWindow;
+- (void)clearStoredSessionWindows;
 - (void)savePersistentState;
+- (BOOL)canOpenDocumentAtPath:(NSString*)path showError:(BOOL)showError;
+- (NSArray<NSString*>*)openableDocumentPathsFromPaths:(NSArray<NSString*>*)paths showErrors:(BOOL)showErrors;
+- (BOOL)shouldDiscardLaunchRestoredSessionForExternalOpen;
+- (void)discardLaunchRestoredSessionForExternalOpenIfNeeded;
 - (BOOL)hasOtherShenzhenWindows;
 - (void)activateWindowForExternalOpen;
 - (void)spawnPendingRestoredWindowsIfNeeded;
