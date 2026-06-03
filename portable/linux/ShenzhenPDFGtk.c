@@ -4423,15 +4423,10 @@ static void minimap_visible_rect(app_state* state, minimap_layout* layout, doubl
     if (!state || !state->scroll) return;
     vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
     if (state->continuous_mode && vadj) {
-        if (layout->page_count > MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD) {
-            rh = minimap_precision_visible_thumb_height(state, layout);
-            ry = 1.0 + minimap_scroll_fraction(state) * MAX(0.0, layout->height - rh - 2.0);
-        } else {
-            double upper = MAX(1.0, gtk_adjustment_get_upper(vadj));
-            rh = MAX(10.0, gtk_adjustment_get_page_size(vadj) / upper * layout->content_height);
-            rh = MIN(layout->height - 2.0, rh);
-            ry = layout->content_top + minimap_scroll_fraction(state) * MAX(0.0, layout->content_height - rh);
-        }
+        double upper = MAX(1.0, gtk_adjustment_get_upper(vadj));
+        rh = MAX(10.0, gtk_adjustment_get_page_size(vadj) / upper * layout->content_height);
+        rh = MIN(layout->height - 2.0, rh);
+        ry = layout->content_top + minimap_scroll_fraction(state) * MAX(0.0, layout->content_height - rh);
     } else {
         double page_x;
         double page_y;

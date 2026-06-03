@@ -106,21 +106,6 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     return MIN(MAX(10.0, heightFraction * MAX(1.0, contentHeight)), NSHeight(track));
 }
 
-- (NSRect)stableLongDocumentVisibleRectFromExactRect:(NSRect)exactRect contentHeight:(CGFloat)contentHeight {
-    NSRect track = NSInsetRect(self.bounds, 1.0, 1.0);
-    CGFloat thumbHeight = [self longDocumentViewportDragThumbHeightForContentHeight:contentHeight track:track];
-    CGFloat top = [self scrollFraction] * MAX(0.0, contentHeight - thumbHeight);
-    if (top + thumbHeight > contentHeight) top = MAX(0.0, contentHeight - thumbHeight);
-
-    if (NSIsEmptyRect(exactRect) || NSWidth(exactRect) <= 1.0) {
-        exactRect.origin.x = 5.0;
-        exactRect.size.width = NSWidth(self.bounds) - 10.0;
-    }
-    exactRect.origin.y = top;
-    exactRect.size.height = thumbHeight;
-    return exactRect;
-}
-
 - (NSRect)unscrolledVisibleRectForScale:(CGFloat)scale gap:(CGFloat)gap contentHeight:(CGFloat)contentHeight {
     if (self.pages.count == 0 || contentHeight <= 0) return NSZeroRect;
 
@@ -141,12 +126,7 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
             visible = hasVisiblePage ? NSUnionRect(visible, miniVisible) : miniVisible;
             hasVisiblePage = YES;
         }
-        if (hasVisiblePage) {
-            NSRect exactVisible = NSInsetRect(visible, -2.0, -2.0);
-            return [self shouldUseLongDocumentViewportDrag]
-                       ? [self stableLongDocumentVisibleRectFromExactRect:exactVisible contentHeight:contentHeight]
-                       : exactVisible;
-        }
+        if (hasVisiblePage) return NSInsetRect(visible, -2.0, -2.0);
     }
 
     CGFloat heightFraction =

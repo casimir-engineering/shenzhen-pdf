@@ -36,6 +36,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: long-document drag now scales by document length and pointer speed rather than the old catch-up blend.
    - Changed: fixed the long-document precision-drag regression by preserving horizontal viewport dragging on Mac and Linux, stabilizing the long-document minimap thumb near the bottom, and deferring heavy Mac page/session updates until mouse-up.
    - Changed: Linux precision drag now matches the prompt wording and Mac behavior by activating only for documents with more than 20 pages.
+   - Changed: fixed the follow-up minimap overlay regression by drawing the real viewport/page-intersection rectangle again while keeping the stabilized long-document drag math internal.
 
 7. Opening a PDF from Finder while the app is in another workspace should switch to the app.
    - Status: Implemented in Mac source; manual Spaces QA still needed.
@@ -72,6 +73,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 - Mac build: `make -C portable mac-app` passed after fixing the MuPDF PKCS7 target and adding a local `.icns` fallback when `actool` is missing.
 - Mac install/smoke: installed to `/Applications/ShenzhenPDF.app`, codesign verification passed, and launched the app with `/Users/raph/Downloads/Bear Sunny Technologies Inc for Blackstar.pdf`.
 - Mac long-document minimap regression: temporary Objective-C++ harness against `SPDFMinimapView` verified a 35-page horizontal viewport drag uses the long-document viewport callback, changes `documentCenterX` from `885.11` to `991.49`, avoids the normal center-drag callback, and sends one finish callback.
+- Mac long-document minimap overlay regression: temporary Objective-C++ harness against `SPDFMinimapView` verified the displayed overlay matches page-intersection geometry (`y=6.00`, `h=95.61`) instead of the synthetic drag thumb.
 - Mac installed long-document smoke: launched `/Applications/ShenzhenPDF.app` with the 117-page `/Users/raph/Downloads/HRO catalogue韩荣新目录.pdf`, verified the ShenzhenPDF process started, then quit cleanly.
 - Mac app uniqueness: after install and smoke, `find` and Spotlight metadata both report only `/Applications/ShenzhenPDF.app` for the ShenzhenPDF bundle id/name.
 - Mac session JSON cleanup: moved current state files to `~/Library/Application Support/ShenzhenPDF/backup-20260603-110422-finder-final` before the latest Finder-style session tests.
