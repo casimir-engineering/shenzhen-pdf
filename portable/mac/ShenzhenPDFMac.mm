@@ -2335,15 +2335,63 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (CGFloat)continuousDocumentHeightForMinimap {
+    if (_viewMode == SPDFViewModeSingle) {
+        CGFloat height = kPageMargin / 2.0;
+        for (SPDFRenderedPage* page in _renderedPages ?: @[]) height += MAX(1.0, page.pageHeight * _zoom) + kPageGap;
+        height += kPageMargin / 2.0;
+        return MAX(1.0, height);
+    }
     return MAX(1.0, NSHeight(_pageView.bounds));
+}
+
+- (CGFloat)continuousDocumentWidthForMinimap {
+    if (_viewMode == SPDFViewModeSingle) {
+        CGFloat widest = 0.0;
+        for (SPDFRenderedPage* page in _renderedPages ?: @[]) widest = MAX(widest, page.pageWidth * _zoom);
+        return MAX(1.0, MAX(NSWidth(_pageView.bounds), widest + kPageMargin));
+    }
+    return MAX(1.0, NSWidth(_pageView.bounds));
 }
 
 - (NSRect)continuousDocumentRectForPageAtIndex:(NSInteger)pageIndex {
     if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count || !_pageView) return NSZeroRect;
+    if (_viewMode == SPDFViewModeSingle) {
+        CGFloat y = kPageMargin / 2.0;
+        for (NSInteger i = 0; i < pageIndex; ++i) {
+            SPDFRenderedPage* prev = _renderedPages[(NSUInteger)i];
+            y += MAX(1.0, prev.pageHeight * _zoom) + kPageGap;
+        }
+
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
+        CGFloat width = MAX(1.0, page.pageWidth * _zoom);
+        CGFloat height = MAX(1.0, page.pageHeight * _zoom);
+        CGFloat documentWidth = [self continuousDocumentWidthForMinimap];
+        CGFloat x = floor((documentWidth - width) / 2.0);
+        return NSMakeRect(MAX(kPageMargin / 2.0, x), y, width, height);
+    }
     return [_pageView rectForPageAtIndex:pageIndex];
 }
 
 - (NSRect)continuousDocumentVisibleRectForMinimap {
+    if (_viewMode == SPDFViewModeSingle) {
+        if (_renderedPages.count == 0) return NSZeroRect;
+        NSInteger pageIndex = MAX(0, MIN(_pageIndex, (NSInteger)_renderedPages.count - 1));
+        NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
+        NSRect visibleRect = _pageScrollView.contentView.bounds;
+        NSRect intersection = NSIntersectionRect(visibleRect, pageRect);
+        NSRect minimapPageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
+        if (NSIsEmptyRect(minimapPageRect)) return NSZeroRect;
+        if (NSIsEmptyRect(intersection)) return minimapPageRect;
+
+        CGFloat x0 = spdf_clamp_cg((NSMinX(intersection) - NSMinX(pageRect)) / MAX(1.0, NSWidth(pageRect)), 0.0, 1.0);
+        CGFloat x1 = spdf_clamp_cg((NSMaxX(intersection) - NSMinX(pageRect)) / MAX(1.0, NSWidth(pageRect)), 0.0, 1.0);
+        CGFloat y0 = spdf_clamp_cg((NSMinY(intersection) - NSMinY(pageRect)) / MAX(1.0, NSHeight(pageRect)), 0.0, 1.0);
+        CGFloat y1 = spdf_clamp_cg((NSMaxY(intersection) - NSMinY(pageRect)) / MAX(1.0, NSHeight(pageRect)), 0.0, 1.0);
+        return NSMakeRect(NSMinX(minimapPageRect) + x0 * NSWidth(minimapPageRect),
+                          NSMinY(minimapPageRect) + y0 * NSHeight(minimapPageRect),
+                          MAX(1.0, (x1 - x0) * NSWidth(minimapPageRect)),
+                          MAX(1.0, (y1 - y0) * NSHeight(minimapPageRect)));
+    }
     return _pageScrollView.contentView.bounds;
 }
 
@@ -2423,7 +2471,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _minimapView.currentPageIndex = _pageIndex;
     _minimapView.viewMode = _viewMode;
     _minimapView.documentVisibleRect = [self continuousDocumentVisibleRectForMinimap];
-    _minimapView.documentWidth = MAX(1.0, NSWidth(_pageView.bounds));
+    _minimapView.documentWidth = [self continuousDocumentWidthForMinimap];
     _minimapView.documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
     _minimapView.documentScale = MAX(0.01, _zoom);
     [_minimapView setNeedsDisplay:YES];
@@ -2474,6 +2522,22 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction documentCenterX:(CGFloat)documentCenterX {
     if (!_doc || _renderedPages.count == 0) return;
     yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
+
+    if (_viewMode == SPDFViewModeSingle) {
+        NSRect visibleRect = [self continuousDocumentVisibleRectForMinimap];
+        CGFloat documentHeight = [self continuousDocumentHeightForMinimap];
+        CGFloat documentTop = yFraction * MAX(0.0, documentHeight - NSHeight(visibleRect));
+        CGFloat pageFraction = 0.0;
+        NSInteger pageIndex = [self pageIndexForContinuousDocumentY:documentTop + NSHeight(visibleRect) * 0.5
+                                                       pageFraction:&pageFraction];
+        NSRect pageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
+        CGFloat xFraction =
+            !NSIsEmptyRect(pageRect) && isfinite(documentCenterX)
+                ? spdf_clamp_cg((documentCenterX - NSMinX(pageRect)) / MAX(1.0, NSWidth(pageRect)), 0.0, 1.0)
+                : 0.5;
+        [self minimapViewDidRequestCenterOnPage:pageIndex xFractionInPage:xFraction yFractionInPage:pageFraction];
+        return;
+    }
 
     NSClipView* clipView = _pageScrollView.contentView;
     CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
@@ -2565,6 +2629,27 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (NSPoint)pageViewPointForMinimapDocumentPoint:(NSPoint)documentPoint {
+    if (_viewMode == SPDFViewModeSingle) {
+        CGFloat yFraction = 0.0;
+        NSInteger pageIndex = [self pageIndexForContinuousDocumentY:documentPoint.y pageFraction:&yFraction];
+        if (pageIndex != _pageIndex) {
+            _pageIndex = pageIndex;
+            _pageView.currentPageIndex = _pageIndex;
+            [self renderPageIfNeededAtIndex:_pageIndex];
+            [self resizeDocumentView];
+            [self updateControls];
+            [self selectCurrentSidebarRow];
+        }
+
+        NSRect minimapPageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
+        NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
+        if (!NSIsEmptyRect(minimapPageRect) && !NSIsEmptyRect(pageRect)) {
+            CGFloat xFraction = spdf_clamp_cg(
+                (documentPoint.x - NSMinX(minimapPageRect)) / MAX(1.0, NSWidth(minimapPageRect)), 0.0, 1.0);
+            return NSMakePoint(NSMinX(pageRect) + xFraction * NSWidth(pageRect),
+                               NSMinY(pageRect) + spdf_clamp_cg(yFraction, 0.0, 1.0) * NSHeight(pageRect));
+        }
+    }
     return documentPoint;
 }
 

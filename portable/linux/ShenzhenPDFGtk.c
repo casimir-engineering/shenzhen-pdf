@@ -3508,10 +3508,11 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
     state->render_generation++;
     cancel_background_render(state);
     state->render_error_shown = FALSE;
+    gboolean center_single_page = state->presentation_mode || !state->continuous_mode;
     gtk_widget_set_halign(state->page_box, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(state->page_box, state->presentation_mode ? GTK_ALIGN_CENTER : GTK_ALIGN_START);
+    gtk_widget_set_valign(state->page_box, center_single_page ? GTK_ALIGN_CENTER : GTK_ALIGN_START);
     gtk_widget_set_hexpand(state->page_box, FALSE);
-    gtk_widget_set_vexpand(state->page_box, state->presentation_mode);
+    gtk_widget_set_vexpand(state->page_box, center_single_page);
     clear_page_box(state);
     page_count = spdf_page_count(state->doc);
     start_page = state->continuous_mode ? 0 : state->page_index;
