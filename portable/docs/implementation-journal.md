@@ -44,6 +44,10 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Tested: installed `/Applications/ShenzhenPDF.app`, cleaned app JSON state with a timestamped backup, opened the Bear Sunny PDF, switched to Single Page with Cmd+4, dragged the document scrollbar from page 2 to page 20, and verified the page jumped directly while remaining centered; Cmd+5 still returns to Continuous mode.
    - Changed: made Fit Page the default zoom for fresh Mac, Linux, and Windows/Sumatra startup state; made long-document minimap viewport dragging more aggressive by keeping fine adjustment at 180 px/s but reaching 1:1 speed at 300 px/s instead of 560 px/s.
    - Tested: built and installed the Mac app, backed up and cleaned app JSON state, opened the Bear Sunny PDF from a fresh state, and verified both Zoom and View menus mark Fit Page by default; built the Linux GTK target successfully; attempted the Windows build on macOS and it failed because VS 2026/msbuild.exe is unavailable in this shell.
+   - Changed: ensured fresh Mac tabs opened through Finder/external-open paths start in Fit Page instead of inheriting the active tab's current zoom.
+   - Changed: restored the Mac toolbar zoom popup's dynamic custom-zoom row: a remembered non-100% zoom appears above the fixed 100% row and remains available after choosing Fit Page, Fit Width, or Fit Height.
+   - Changed: added a Mac tab right-click menu with Show in Folder and Copy; Copy places the tab's file URL on the pasteboard so Finder-style paste copies the PDF file.
+   - Tested: rebuilt and installed `/Applications/ShenzhenPDF.app`; user confirmed the custom zoom popup behavior works in the installed app.
 
 7. Opening a PDF from Finder while the app is in another workspace should switch to the app.
    - Status: Implemented in Mac source; manual Spaces QA still needed.

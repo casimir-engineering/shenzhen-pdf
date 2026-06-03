@@ -313,6 +313,7 @@
 - (BOOL)hasOtherShenzhenWindows;
 - (void)activateWindowForExternalOpen;
 - (void)spawnPendingRestoredWindowsIfNeeded;
+- (void)showPathInFolder:(NSString*)path;
 - (NSArray<NSDictionary*>*)commentAnnotationsForPage:(NSInteger)pageIndex;
 - (void)documentViewHoverComment:(NSDictionary*)comment atWindowPoint:(NSPoint)windowPoint;
 - (void)documentViewEndHoverComment;

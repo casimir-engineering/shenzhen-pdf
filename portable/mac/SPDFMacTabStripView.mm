@@ -174,6 +174,14 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     return NSMakeRect(x, 7, width, 28);
 }
 
+- (NSInteger)tabIndexAtPoint:(NSPoint)point {
+    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
+        NSRect tabRect = [self rectForTabAtIndex:i];
+        if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, tabRect)) return i;
+    }
+    return -1;
+}
+
 - (NSString*)titleForTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)self.tabs.count) return @"";
     SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
@@ -562,6 +570,18 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     [self.reader selectTabAtIndex:indexNumber.integerValue];
 }
 
+- (void)tabContextShowInFolder:(NSMenuItem*)sender {
+    NSNumber* indexNumber = [sender.representedObject isKindOfClass:NSNumber.class] ? sender.representedObject : nil;
+    if (!indexNumber) return;
+    [self.reader showTabInFolderAtIndex:indexNumber.integerValue];
+}
+
+- (void)tabContextCopyFile:(NSMenuItem*)sender {
+    NSNumber* indexNumber = [sender.representedObject isKindOfClass:NSNumber.class] ? sender.representedObject : nil;
+    if (!indexNumber) return;
+    [self.reader copyTabFileToPasteboardAtIndex:indexNumber.integerValue];
+}
+
 - (void)startTabDragSessionWithEvent:(NSEvent*)event {
     if (_draggedTabIndex < 0 || _draggedTabIndex >= (NSInteger)self.tabs.count) return;
     SPDFDocumentTab* snapshot = [self.reader tabSnapshotForDragAtIndex:_draggedTabIndex];
@@ -689,6 +709,28 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     }
 
     [self hideHoverPanel];
+}
+
+- (void)rightMouseDown:(NSEvent*)event {
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger tabIndex = [self tabIndexAtPoint:point];
+    if (tabIndex < 0) {
+        [super rightMouseDown:event];
+        return;
+    }
+
+    [self hideHoverPanel];
+    NSNumber* indexNumber = @(tabIndex);
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Tab"];
+    NSMenuItem* showInFolder = [menu addItemWithTitle:@"Show in Folder"
+                                               action:@selector(tabContextShowInFolder:)
+                                        keyEquivalent:@""];
+    showInFolder.target = self;
+    showInFolder.representedObject = indexNumber;
+    NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(tabContextCopyFile:) keyEquivalent:@""];
+    copy.target = self;
+    copy.representedObject = indexNumber;
+    [NSMenu popUpContextMenu:menu withEvent:event forView:self];
 }
 
 - (void)mouseDragged:(NSEvent*)event {
