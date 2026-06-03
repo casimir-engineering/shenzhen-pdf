@@ -1828,16 +1828,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                         forceHighPriority:NO];
 }
 
-- (void)enqueueVisibleMinimapPageRenders {
-    if (!_minimapVisible || !_doc || _renderedPages.count == 0) return;
-    NSArray<NSNumber*>* visiblePages = [_minimapView visiblePageIndexes];
-    if (visiblePages.count == 0) return;
-    [self enqueuePageRendersForGeneration:_renderGeneration
-                              pageIndexes:visiblePages
-                            preferredPage:_pageIndex
-                        forceHighPriority:YES];
-}
-
 - (void)renderPageIfNeededAtIndex:(NSInteger)pageIndex {
     if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
     SPDFRenderedPage* existing = _renderedPages[(NSUInteger)pageIndex];
@@ -2504,7 +2494,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _minimapView.documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
     _minimapView.documentScale = MAX(0.01, _zoom);
     [_minimapView setNeedsDisplay:YES];
-    if (!_liveZooming) [self enqueueVisibleMinimapPageRenders];
 }
 
 - (void)invalidateFindMarkers {
@@ -2972,6 +2961,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (!_tabStrip || !_window || _presentationMode) return NO;
 
     NSEventType type = event.type;
+    if (type == NSEventTypeRightMouseDown) {
+        if (_tabStripHeightConstraint.constant <= 0.0) return NO;
+        NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
+        if (!NSPointInRect(point, _tabStrip.bounds)) return NO;
+        [_tabStrip rightMouseDown:event];
+        return YES;
+    }
+
     if (type == NSEventTypeLeftMouseDown) {
         if ([self eventHitsStandardWindowButton:event]) return NO;
         if (_tabStripHeightConstraint.constant <= 0.0) return NO;
