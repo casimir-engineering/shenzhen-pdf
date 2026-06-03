@@ -37,6 +37,8 @@
 - (void)minimapDividerDraggedByDeltaX:(CGFloat)deltaX;
 - (void)minimapDividerDidFinishDragging;
 - (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction;
+- (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction documentCenterX:(CGFloat)documentCenterX;
+- (void)minimapViewDidFinishViewportDrag;
 - (void)minimapViewDidRequestCenterAtDocumentPoint:(NSPoint)documentPoint;
 - (void)minimapViewDidRequestCenterOnPage:(NSInteger)pageIndex
                           xFractionInPage:(CGFloat)xFraction

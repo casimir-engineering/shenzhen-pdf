@@ -2092,6 +2092,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _pageView.currentPageIndex = 0;
     _pageView.activeFindPageIndex = -1;
     _pageView.activeFindAlpha = 0.0;
+    _minimapPrecisionViewportDragActive = NO;
     _pageView.pages = @[];
     [self setMinimapActuallyVisible:NO];
     [self resizeDocumentView];
@@ -2135,6 +2136,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
 }
 
+- (NSPoint)clampedDocumentBoundsScrollOrigin:(NSPoint)origin {
+    NSClipView* clipView = _pageScrollView.contentView;
+    origin.x = spdf_clamp_cg(origin.x, 0.0, MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds)));
+    origin.y = spdf_clamp_cg(origin.y, 0.0, MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds)));
+    return origin;
+}
+
 - (NSPoint)normalizedDocumentScrollOrigin:(NSPoint)origin forPageIndex:(NSInteger)pageIndex {
     if (_renderedPages.count == 0) return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
 
@@ -2167,6 +2175,28 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         }
         completionHandler:nil];
     _updatingFromScroll = NO;
+    if (notify) {
+        [self documentScrollPositionChanged];
+        [self updateMinimap];
+    }
+}
+
+- (void)scrollDocumentClipViewToDocumentOrigin:(NSPoint)origin notify:(BOOL)notify {
+    NSClipView* clipView = _pageScrollView.contentView;
+    origin = [self clampedDocumentBoundsScrollOrigin:origin];
+    BOOL wasSuppressingScrollCallbacks = _suppressScrollCallbacks;
+    if (!notify) _suppressScrollCallbacks = YES;
+    _updatingFromScroll = YES;
+    [NSAnimationContext
+        runAnimationGroup:^(NSAnimationContext* context) {
+          context.duration = 0.0;
+          context.allowsImplicitAnimation = NO;
+          [clipView setBoundsOrigin:origin];
+          [self->_pageScrollView reflectScrolledClipView:clipView];
+        }
+        completionHandler:nil];
+    _updatingFromScroll = NO;
+    _suppressScrollCallbacks = wasSuppressingScrollCallbacks;
     if (notify) {
         [self documentScrollPositionChanged];
         [self updateMinimap];
@@ -2437,12 +2467,18 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction {
+    [self minimapViewDidRequestViewportTopFraction:yFraction
+                                   documentCenterX:NSMidX([self continuousDocumentVisibleRectForMinimap])];
+}
+
+- (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction documentCenterX:(CGFloat)documentCenterX {
     if (!_doc || _renderedPages.count == 0) return;
     yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
 
     NSClipView* clipView = _pageScrollView.contentView;
     CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
     NSPoint origin = clipView.bounds.origin;
+    if (isfinite(documentCenterX)) origin.x = documentCenterX - NSWidth(clipView.bounds) * 0.5;
     origin.y = yFraction * maxY;
 
     NSInteger pageIndex = [_pageView
@@ -2456,7 +2492,20 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self selectCurrentSidebarRow];
     }
 
-    [self scrollDocumentClipViewToOrigin:origin pageIndexHint:pageIndex notify:YES];
+    if (_viewMode == SPDFViewModeContinuous) {
+        _minimapPrecisionViewportDragActive = YES;
+        [self scrollDocumentClipViewToDocumentOrigin:origin notify:NO];
+        [self updateMinimap];
+    } else {
+        [self scrollDocumentClipViewToOrigin:origin pageIndexHint:pageIndex notify:YES];
+        [self rememberActiveTabState];
+    }
+}
+
+- (void)minimapViewDidFinishViewportDrag {
+    _minimapPrecisionViewportDragActive = NO;
+    if (!_doc || _renderedPages.count == 0) return;
+    [self documentScrollPositionChanged];
     [self rememberActiveTabState];
 }
 
@@ -3677,6 +3726,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)documentScrollPositionChanged {
     if (_suppressScrollCallbacks) return;
     if (_renderedPages.count == 0) {
+        [self updateMinimap];
+        return;
+    }
+    if (_minimapPrecisionViewportDragActive) {
         [self updateMinimap];
         return;
     }
