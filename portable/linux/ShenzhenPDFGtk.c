@@ -45,7 +45,7 @@
 #define MINIMAP_PRECISION_DRAG_PAGE_THRESHOLD 20
 #define MINIMAP_PRECISE_PAGE_LIMIT 2000
 #define MINIMAP_DRAG_FINE_SPEED 180.0
-#define MINIMAP_DRAG_FULL_SPEED 560.0
+#define MINIMAP_DRAG_FULL_SPEED 300.0
 #define SHENZHENPDF_TAB_MIME_TYPE "application/x-shenzhenpdf-tab+json"
 
 typedef struct favorite_item {
@@ -926,7 +926,7 @@ static int insert_document_tab(app_state* state, int insert_index, const char* p
     tab->title = title && *title ? g_strdup(title) : spdf_gtk_display_name_for_path(path ? path : "");
     tab->page_index = MAX(0, page_index);
     tab->zoom = zoom > 0.0 ? zoom : 1.0;
-    tab->fit_mode_id = fit_mode_id >= 0 && fit_mode_id <= 4 ? fit_mode_id : 2;
+    tab->fit_mode_id = fit_mode_id >= 0 && fit_mode_id <= 4 ? fit_mode_id : 4;
     tab->continuous_mode = continuous_mode;
     tab->show_sidebar = state->show_sidebar;
     tab->show_minimap = state->show_minimap;
@@ -1269,7 +1269,7 @@ static void load_settings(app_state* state) {
     gsize len = 0;
     if (!read_limited_text_file(state->settings_path, &json, &len)) return;
     state->fit_mode_id = json_get_int(json, "fitMode", state->fit_mode_id);
-    if (state->fit_mode_id < 0 || state->fit_mode_id > 4) state->fit_mode_id = 2;
+    if (state->fit_mode_id < 0 || state->fit_mode_id > 4) state->fit_mode_id = 4;
     state->zoom = json_get_double(json, "zoom", state->zoom);
     state->zoom = MAX(0.10, MIN(8.0, state->zoom));
     state->continuous_mode = json_get_bool(json, "continuous", state->continuous_mode);
@@ -3414,7 +3414,7 @@ static void tab_drag_data_received(GtkWidget* widget, GdkDragContext* context, g
     insert_index = tab_insert_index_for_bar_x(state, (double)x);
     insert_index = insert_document_tab(
         state, insert_index, path, title, json_get_int(json, "page", 0), json_get_double(json, "zoom", 1.0),
-        json_get_int(json, "fitMode", 2), json_get_bool(json, "continuous", TRUE), search_text ? search_text : "",
+        json_get_int(json, "fitMode", 4), json_get_bool(json, "continuous", TRUE), search_text ? search_text : "",
         json_get_bool(json, "searchRegex", FALSE), json_get_bool(json, "searchRegexMultiline", TRUE),
         json_get_int(json, "findMatchIndex", -1));
     state->tabs[insert_index].show_sidebar = json_get_bool(json, "showSidebar", state->show_sidebar);
@@ -3570,7 +3570,7 @@ static void select_tab(app_state* state, int index) {
     preferred_page_index = tab->page_index;
     state->switching_tabs = TRUE;
     state->zoom = tab->zoom > 0.0 ? tab->zoom : 1.0;
-    state->fit_mode_id = tab->fit_mode_id >= 0 && tab->fit_mode_id <= 4 ? tab->fit_mode_id : 2;
+    state->fit_mode_id = tab->fit_mode_id >= 0 && tab->fit_mode_id <= 4 ? tab->fit_mode_id : 4;
     state->continuous_mode = tab->continuous_mode;
     state->show_sidebar = tab->show_sidebar;
     state->show_minimap = tab->show_minimap;
@@ -9047,7 +9047,7 @@ int main(int argc, char** argv) {
 
     memset(&state, 0, sizeof(state));
     state.zoom = 1.0;
-    state.fit_mode_id = 2;
+    state.fit_mode_id = 4;
     state.continuous_mode = TRUE;
     state.show_sidebar = TRUE;
     state.show_minimap = TRUE;

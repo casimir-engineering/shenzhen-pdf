@@ -431,10 +431,10 @@ static bool SetupPluginMode(Flags& i) {
     gGlobalPrefs->showToc = false;
     if (DisplayMode::Automatic == gGlobalPrefs->defaultDisplayModeEnum) {
         // if the user hasn't changed the default display mode,
-        // display documents as single page/continuous/fit width
+        // display documents as single page/continuous/fit page
         // (similar to Adobe Reader, Google Chrome and how browsers display HTML)
         gGlobalPrefs->defaultDisplayModeEnum = DisplayMode::Continuous;
-        gGlobalPrefs->defaultZoomFloat = kZoomFitWidth;
+        gGlobalPrefs->defaultZoomFloat = kZoomFitPage;
     }
     // use fixed page UI for all document types (so that the context menu always
     // contains all plugin specific entries and the main window is never closed)
