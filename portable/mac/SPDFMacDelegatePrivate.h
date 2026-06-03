@@ -276,6 +276,8 @@
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify;
 - (void)scrollDocumentClipViewToDocumentOrigin:(NSPoint)origin notify:(BOOL)notify;
 - (NSPoint)normalizedDocumentScrollOrigin:(NSPoint)origin forPageIndex:(NSInteger)pageIndex;
+- (CGFloat)singlePageDocumentScrollOriginYForPageIndex:(NSInteger)pageIndex;
+- (BOOL)normalizeSinglePageScrollPositionFromUserScroll;
 - (void)stabilizeDocumentLayoutWithRestoreOrigin:(NSValue*)restoreOrigin
                                         alignTop:(BOOL)alignTop
                                       generation:(NSUInteger)generation

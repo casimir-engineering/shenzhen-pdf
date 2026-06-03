@@ -2105,8 +2105,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                 origin.x = 0.0;
             else
                 origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMaxX(pageRect) - visibleWidth);
-            if (_viewMode == SPDFViewModeSingle && NSHeight(pageRect) <= NSHeight(clipView.bounds) + 0.5)
-                origin.y = NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5;
         }
     }
     origin.x = spdf_clamp_cg(origin.x, 0.0, MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds)));
@@ -2139,6 +2137,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
     if (NSIsEmptyRect(pageRect)) return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
 
+    if (_viewMode == SPDFViewModeSingle) origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
+
     CGFloat visibleWidth = NSWidth(clipView.bounds);
     if (NSWidth(pageRect) <= visibleWidth + 0.5) {
         origin.x = 0.0;
@@ -2147,6 +2147,48 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
 
     return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
+}
+
+- (CGFloat)singlePageDocumentScrollOriginYForPageIndex:(NSInteger)pageIndex {
+    if (_renderedPages.count == 0) return 0.0;
+    pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
+    NSClipView* clipView = _pageScrollView.contentView;
+    NSRect pageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
+    if (NSIsEmptyRect(pageRect)) return 0.0;
+    CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+    CGFloat y = NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5;
+    return spdf_clamp_cg(y, 0.0, maxY);
+}
+
+- (BOOL)normalizeSinglePageScrollPositionFromUserScroll {
+    if (_presentationMode || _viewMode != SPDFViewModeSingle || _updatingFromScroll || _renderedPages.count == 0)
+        return NO;
+
+    NSClipView* clipView = _pageScrollView.contentView;
+    NSRect visibleRect = clipView.bounds;
+    NSInteger visiblePage = [_pageView pageIndexForVisibleRect:visibleRect];
+    visiblePage = MAX(0, MIN(visiblePage, (NSInteger)_renderedPages.count - 1));
+    BOOL pageChanged = visiblePage != _pageIndex;
+    if (pageChanged) {
+        _pageIndex = visiblePage;
+        _pageView.currentPageIndex = _pageIndex;
+        [self clearPageFieldFocus];
+        [self renderPageIfNeededAtIndex:_pageIndex];
+        [self resizeDocumentView];
+        visibleRect = clipView.bounds;
+        [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
+        [self updateControls];
+        [self selectCurrentSidebarRow];
+    }
+
+    NSPoint snappedOrigin = [self normalizedDocumentScrollOrigin:visibleRect.origin forPageIndex:_pageIndex];
+    if (fabs(snappedOrigin.x - NSMinX(visibleRect)) > 0.5 || fabs(snappedOrigin.y - NSMinY(visibleRect)) > 0.5)
+        [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
+
+    [_pageView setNeedsDisplay:YES];
+    [self updateMinimap];
+    [self evictDistantRenderedPageImages];
+    return YES;
 }
 
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify {
@@ -2203,21 +2245,21 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSClipView* clipView = _pageScrollView.contentView;
         CGFloat x = NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5 ? 0.0 : MAX(0, pageRect.origin.x - 12.0);
         CGFloat y = MAX(0, pageRect.origin.y - 12);
-        if (_viewMode == SPDFViewModeSingle && NSHeight(pageRect) <= NSHeight(clipView.bounds) + 0.5)
-            y = NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5;
+        if (_viewMode == SPDFViewModeSingle) y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
         NSPoint point = NSMakePoint(x, y);
         [self scrollDocumentClipViewToOrigin:point notify:NO];
     } else {
         NSClipView* clipView = _pageScrollView.contentView;
         NSRect visible = clipView.bounds;
         NSPoint origin = visible.origin;
+        if (_viewMode == SPDFViewModeSingle) origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
         if (NSMinX(pageRect) < NSMinX(visible))
             origin.x = NSMinX(pageRect) - 12.0;
         else if (NSMaxX(pageRect) > NSMaxX(visible))
             origin.x = NSMaxX(pageRect) - NSWidth(visible) + 12.0;
-        if (NSMinY(pageRect) < NSMinY(visible))
+        if (_viewMode != SPDFViewModeSingle && NSMinY(pageRect) < NSMinY(visible))
             origin.y = NSMinY(pageRect) - 12.0;
-        else if (NSMaxY(pageRect) > NSMaxY(visible))
+        else if (_viewMode != SPDFViewModeSingle && NSMaxY(pageRect) > NSMaxY(visible))
             origin.y = NSMaxY(pageRect) - NSHeight(visible) + 12.0;
         [self scrollDocumentClipViewToOrigin:origin notify:NO];
     }
@@ -2286,8 +2328,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSPoint origin = NSMakePoint(NSMinX(pageRect) + spdf_clamp_cg(relativePosition.x, 0.0, 1.0) * maxInPageX,
                                  NSMinY(pageRect) + spdf_clamp_cg(relativePosition.y, 0.0, 1.0) * maxInPageY);
     if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5) origin.x = 0.0;
-    if (_viewMode == SPDFViewModeSingle && NSHeight(pageRect) <= NSHeight(clipView.bounds) + 0.5)
-        origin.y = NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5;
+    if (_viewMode == SPDFViewModeSingle) origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
 
@@ -2440,8 +2481,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     else
         origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMinX(pageRect) + maxInPageX);
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
-    if (_viewMode == SPDFViewModeSingle && NSHeight(pageRect) <= NSHeight(clipView.bounds) + 0.5)
-        origin.y = NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5;
+    if (_viewMode == SPDFViewModeSingle)
+        origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
     else
         origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
@@ -4238,6 +4279,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self updateMinimap];
         return;
     }
+    if ([self normalizeSinglePageScrollPositionFromUserScroll]) return;
     if (!_updatingFromScroll) {
         NSInteger visiblePage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
         if (visiblePage != _pageIndex) {
