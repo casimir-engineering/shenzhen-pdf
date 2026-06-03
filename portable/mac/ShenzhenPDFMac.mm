@@ -293,10 +293,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (BOOL)windowShouldClose:(NSWindow*)sender {
     if (sender != _window) return YES;
     [self rememberActiveTabState];
-    [self removeSessionStateForCurrentWindow];
-    _suppressSessionWriteOnTerminate = YES;
+    BOOL hasOtherWindows = [self hasOtherShenzhenWindows];
+    _terminateOnlyThisProcess = hasOtherWindows;
+    if (hasOtherWindows) {
+        [self removeSessionStateForCurrentWindow];
+        _suppressSessionWriteOnTerminate = YES;
+    } else {
+        _suppressSessionWriteOnTerminate = NO;
+    }
     [self savePersistentState];
-    _terminateOnlyThisProcess = [self hasOtherShenzhenWindows];
     dispatch_async(dispatch_get_main_queue(), ^{
       [NSApp terminate:self];
     });
