@@ -37,6 +37,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: fixed the long-document precision-drag regression by preserving horizontal viewport dragging on Mac and Linux, stabilizing the long-document minimap thumb near the bottom, and deferring heavy Mac page/session updates until mouse-up.
    - Changed: Linux precision drag now matches the prompt wording and Mac behavior by activating only for documents with more than 20 pages.
    - Changed: fixed the follow-up minimap overlay regression by drawing the real viewport/page-intersection rectangle again while keeping the stabilized long-document drag math internal.
+   - Changed: tuned the long-document drag acceleration curve on Mac and Linux to keep fine adjustment below 180 px/s unchanged while reaching 1:1 speed at 560 px/s instead of 900 px/s.
 
 7. Opening a PDF from Finder while the app is in another workspace should switch to the app.
    - Status: Implemented in Mac source; manual Spaces QA still needed.
@@ -63,7 +64,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 11. Install and prepare for TestFlight.
    - Status: Local user install completed; TestFlight signing is blocked by missing Apple assets.
    - Installed: `/Applications/ShenzhenPDF.app`.
-   - Gap: replacing `/Applications/ShenzhenPDF.app` failed because the existing app is root-owned and passwordless sudo is unavailable. TestFlight readiness fails for missing Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, provisioning profile, and Transporter.
+   - Gap: TestFlight readiness fails for missing Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, provisioning profile, and Transporter.
 
 ## Validation
 
