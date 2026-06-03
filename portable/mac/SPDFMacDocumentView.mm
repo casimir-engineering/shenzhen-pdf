@@ -121,6 +121,22 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     return height;
 }
 
+- (NSRect)singlePageDocumentSlotForPageAtIndex:(NSInteger)pageIndex {
+    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return NSZeroRect;
+
+    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
+    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
+    CGFloat documentWidth = MAX(NSWidth(self.bounds), [self widestPage] + pageMargin);
+    SPDFRenderedPage* page = self.pages[(NSUInteger)pageIndex];
+    NSSize pageSize = [self viewSizeForPage:page];
+    CGFloat y = pageMargin / 2.0;
+    for (NSInteger i = 0; i < pageIndex; ++i) y += [self viewSizeForPage:self.pages[(NSUInteger)i]].height + pageGap;
+    CGFloat x = floor((documentWidth - pageSize.width) / 2.0);
+    CGFloat minX = pageSize.width >= documentWidth - 0.5 ? 0.0 : pageMargin / 2.0;
+    return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), [self pixelSnappedOrigin:y], pageSize.width,
+                      pageSize.height);
+}
+
 - (NSInteger)boundedPageIndex:(NSInteger)pageIndex {
     if (self.pages.count == 0) return 0;
     return MAX(0, MIN(pageIndex, (NSInteger)self.pages.count - 1));
@@ -130,7 +146,8 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     NSSize pageSize = [self viewSizeForPage:page];
     CGFloat width = pageSize.width >= clipSize.width - 0.5 ? MAX(clipSize.width, pageSize.width)
                                                            : MAX(clipSize.width, pageSize.width + kPageMargin);
-    CGFloat height = MAX(clipSize.height, pageSize.height + kPageMargin);
+    CGFloat height = self.pages.count > 1 ? [self continuousDocumentHeight] : pageSize.height + kPageMargin;
+    height = MAX(clipSize.height, height);
     return NSMakeSize(width, height);
 }
 
@@ -174,8 +191,12 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     CGFloat x = floor((viewportWidth - width) / 2.0);
     CGFloat minX = width >= viewportWidth - 0.5 ? 0.0 : pageMargin / 2.0;
     if (self.viewMode == SPDFViewModeSingle) {
-        CGFloat centeredY = floor((NSHeight(self.bounds) - height) / 2.0);
+        NSClipView* clipView = self.enclosingScrollView.contentView;
+        NSRect visibleRect =
+            clipView ? clipView.bounds : NSMakeRect(0.0, 0.0, NSWidth(self.bounds), NSHeight(self.bounds));
+        CGFloat centeredY = NSMinY(visibleRect) + floor((NSHeight(visibleRect) - height) / 2.0);
         CGFloat minY = self.presentationMode ? 0.0 : kPageMargin / 2.0;
+        if (self.pages.count > 1) minY = -CGFLOAT_MAX;
         return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), MAX(minY, [self pixelSnappedOrigin:centeredY]), width,
                           height);
     }
@@ -191,17 +212,22 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
     if (self.pages.count == 0) return 0;
-    if (self.viewMode == SPDFViewModeSingle) return [self boundedPageIndex:self.currentPageIndex];
 
     NSInteger bestPage = self.currentPageIndex;
     CGFloat bestOverlap = -1;
     CGFloat visibleMidY = NSMidY(visibleRect);
+    CGFloat bestCenterDistance = CGFLOAT_MAX;
     CGFloat closestDistance = CGFLOAT_MAX;
     for (SPDFRenderedPage* page in self.pages) {
-        NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
+        NSRect pageRect = self.viewMode == SPDFViewModeSingle
+                              ? [self singlePageDocumentSlotForPageAtIndex:page.pageIndex]
+                              : [self rectForPageAtIndex:page.pageIndex];
         CGFloat overlap = NSHeight(NSIntersectionRect(visibleRect, pageRect));
-        if (overlap > bestOverlap) {
+        CGFloat centerDistance = fabs(NSMidY(pageRect) - visibleMidY);
+        if (overlap > bestOverlap + 0.5 ||
+            (overlap > 0.0 && fabs(overlap - bestOverlap) <= 0.5 && centerDistance < bestCenterDistance)) {
             bestOverlap = overlap;
+            bestCenterDistance = centerDistance;
             bestPage = page.pageIndex;
         }
         if (overlap <= 0.0) {
