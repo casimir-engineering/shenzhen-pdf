@@ -31,6 +31,8 @@
 - (void)insertDraggedTab:(SPDFDocumentTab*)tab atIndex:(NSInteger)index;
 - (void)selectTabAtIndex:(NSInteger)index;
 - (void)closeTabAtIndex:(NSInteger)index;
+- (void)showTabInFolderAtIndex:(NSInteger)index;
+- (void)copyTabFileToPasteboardAtIndex:(NSInteger)index;
 - (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex;
 - (void)detachTabAtIndex:(NSInteger)index;
 - (void)newTabRequested:(id)sender;

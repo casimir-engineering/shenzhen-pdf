@@ -1264,7 +1264,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     _fitModePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     NSArray<NSDictionary*>* fitItems = @[
-        @{@"title" : @"100%", @"mode" : @(SPDFFitModeCustom)}, @{@"title" : @"100%", @"mode" : @(SPDFFitModeActual)},
+        @{@"title" : @"100%", @"mode" : @(SPDFFitModeActual)},
         @{@"title" : @"Fit Width", @"mode" : @(SPDFFitModeWidth)},
         @{@"title" : @"Fit Height", @"mode" : @(SPDFFitModeHeight)},
         @{@"title" : @"Fit Page", @"mode" : @(SPDFFitModePage)}
@@ -3744,9 +3744,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
     tab.path = [path copy];
     tab.title = spdf_display_name_for_path(path);
-    tab.zoom = _zoom > 0 ? _zoom : 1.0;
-    tab.customZoom = _rememberedCustomZoom > 0 ? _rememberedCustomZoom : tab.zoom;
-    tab.fitMode = _fitMode;
+    tab.zoom = 1.0;
+    tab.customZoom = 1.0;
+    tab.fitMode = SPDFFitModePage;
     tab.viewMode = _viewMode;
     tab.searchText = @"";
     tab.searchRegex = NO;
@@ -3887,6 +3887,36 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self preloadInactiveTabs];
         [self savePersistentState];
     }
+}
+
+- (void)showTabInFolderAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)_tabs.count) {
+        NSBeep();
+        return;
+    }
+    SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
+    [self showPathInFolder:tab.path];
+}
+
+- (void)copyTabFileToPasteboardAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)_tabs.count) {
+        NSBeep();
+        return;
+    }
+    SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
+    if (!tab.path.length) {
+        NSBeep();
+        return;
+    }
+
+    NSURL* fileURL = [NSURL fileURLWithPath:tab.path];
+    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
+    [pasteboard clearContents];
+    if (![pasteboard writeObjects:@[ fileURL ]]) {
+        NSBeep();
+        return;
+    }
+    _statusLabel.stringValue = @"File copied.";
 }
 
 - (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex {
@@ -4417,16 +4447,28 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (NSMenuItem*)fitModePopupItemForMode:(SPDFFitMode)mode {
     for (NSMenuItem* item in _fitModePopup.itemArray)
         if (item.tag == mode) return item;
-    NSInteger index = (NSInteger)mode;
-    return index >= 0 && index < (NSInteger)_fitModePopup.numberOfItems ? [_fitModePopup itemAtIndex:index] : nil;
+    return nil;
 }
 
 - (void)syncToolbarState {
     CGFloat customZoom =
         _fitMode == SPDFFitModeCustom ? _zoom : (_rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom);
     NSString* zoomTitle = [NSString stringWithFormat:@"%.0f%%", customZoom * 100.0];
-    [self fitModePopupItemForMode:SPDFFitModeCustom].title = zoomTitle;
-    [self fitModePopupItemForMode:SPDFFitModeActual].title = @"100%";
+    BOOL showCustomZoom = _fitMode == SPDFFitModeCustom || fabs(customZoom - 1.0) > 0.0049;
+    NSMenuItem* customItem = [self fitModePopupItemForMode:SPDFFitModeCustom];
+    if (showCustomZoom) {
+        if (!customItem) {
+            [_fitModePopup insertItemWithTitle:zoomTitle atIndex:0];
+            customItem = [_fitModePopup itemAtIndex:0];
+            customItem.tag = SPDFFitModeCustom;
+        }
+        customItem.title = zoomTitle;
+    } else if (customItem) {
+        NSInteger customIndex = [_fitModePopup indexOfItem:customItem];
+        if (customIndex >= 0) [_fitModePopup removeItemAtIndex:customIndex];
+    }
+    NSMenuItem* actualItem = [self fitModePopupItemForMode:SPDFFitModeActual];
+    if (actualItem) actualItem.title = @"100%";
     NSMenuItem* selectedFitItem = [self fitModePopupItemForMode:_fitMode];
     if (selectedFitItem) [_fitModePopup selectItem:selectedFitItem];
     _continuousButton.state = _viewMode == SPDFViewModeContinuous ? NSControlStateValueOn : NSControlStateValueOff;
@@ -7971,6 +8013,16 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
 }
 
+- (void)showPathInFolder:(NSString*)path {
+    if (!path.length) {
+        NSBeep();
+        return;
+    }
+
+    NSURL* fileURL = [NSURL fileURLWithPath:path];
+    [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ fileURL ]];
+}
+
 - (void)showInFolder:(id)sender {
     (void)sender;
     if (!_doc || !_path.length) {
@@ -7978,8 +8030,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         return;
     }
 
-    NSURL* fileURL = [NSURL fileURLWithPath:_path];
-    [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ fileURL ]];
+    [self showPathInFolder:_path];
 }
 
 - (void)copyCurrentPageImage:(id)sender {
