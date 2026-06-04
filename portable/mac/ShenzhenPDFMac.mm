@@ -48,6 +48,7 @@ static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
 static const NSTimeInterval kDocumentPanLiveCropRenderInterval = 0.05;
 static const NSTimeInterval kLiveZoomFinishDelay = 0.28;
 static const NSTimeInterval kLiveZoomStateSaveDelay = 0.20;
+static const NSTimeInterval kLiveZoomControlUpdateInterval = 0.05;
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
 #define SPDF_MAC_TRANSLATION_CORE_READY 0
@@ -2251,7 +2252,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return NSMakeRect(x0, y0, x1 - x0, y1 - y0);
 }
 
-- (void)renderVisiblePageCropsForCurrentViewportWithDisplayScale:(CGFloat)displayScale {
+- (void)renderVisiblePageCropsForCurrentViewportWithDisplayScale:(CGFloat)displayScale
+                                 allowFullPageRenderAllowedPages:(BOOL)allowFullPageRenderAllowedPages {
     if (!_doc || !_pageScrollView || !_pageView || _renderedPages.count == 0) return;
     displayScale = MAX(0.5, displayScale);
     CGFloat backingScale = [self backingScale];
@@ -2264,7 +2266,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) continue;
         SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
         if ([self renderedPageImage:page matchesZoom:_zoom displayScale:backingScale]) continue;
-        if ([self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:backingScale]) continue;
+        if (!allowFullPageRenderAllowedPages && [self fullPageRenderAllowedForPage:page
+                                                                              zoom:_zoom
+                                                                      displayScale:backingScale])
+            continue;
 
         NSRect cropRect = [self visiblePageCropRectForPageIndex:pageIndex extraViewMargin:margin];
         cropRect = [self pixelSnappedPageCropRect:cropRect page:page zoom:_zoom displayScale:displayScale];
@@ -2297,8 +2302,16 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
 }
 
+- (void)renderVisiblePageCropsForCurrentViewportAfterLiveZoom {
+    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]
+                                   allowFullPageRenderAllowedPages:YES];
+    [self setCurrentViewportNeedsDisplay];
+    [_pageView displayIfNeeded];
+}
+
 - (void)renderVisiblePageCropsForCurrentViewportIfNeeded {
-    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]];
+    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]
+                                   allowFullPageRenderAllowedPages:NO];
 }
 
 - (void)renderLiveDocumentPanViewportCropIfDue {
@@ -2306,7 +2319,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
     if (now - _lastDocumentPanLiveCropRenderTime < kDocumentPanLiveCropRenderInterval) return;
     _lastDocumentPanLiveCropRenderTime = now;
-    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:1.0];
+    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:1.0 allowFullPageRenderAllowedPages:NO];
     [_pageView setNeedsDisplay:YES];
     [_pageView displayIfNeeded];
 }
@@ -2579,6 +2592,49 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
     [self invalidateFindMarkers];
+}
+
+- (BOOL)resizeDocumentViewForLiveZoom {
+    if (!_doc) {
+        [self resizeDocumentView];
+        return NO;
+    }
+
+    NSClipView* clipView = _pageScrollView.contentView;
+    NSSize clipSize = clipView.bounds.size;
+    if (clipSize.width <= 1.0 || clipSize.height <= 1.0) clipSize = [self documentClipSizeForLayout];
+
+    _pageView.viewportWidthHint = MAX(1.0, clipSize.width);
+    _pageView.backingScale = [self backingScale];
+
+    NSSize size = [_pageView documentSizeForClipSize:clipSize];
+    BOOL needsHorizontalScroller = size.width > clipSize.width + 0.5;
+    if (_pageScrollView.hasHorizontalScroller != needsHorizontalScroller) {
+        [self resizeDocumentView];
+        return NO;
+    }
+    if (!needsHorizontalScroller) size.width = MAX(size.width, clipSize.width);
+
+    NSRect frame = NSMakeRect(0.0, 0.0, size.width, size.height);
+    if (!NSEqualRects(_pageView.frame, frame)) [_pageView setFrame:frame];
+    if (!needsHorizontalScroller && fabs(NSMinX(clipView.bounds)) > 0.01) {
+        NSPoint origin = clipView.bounds.origin;
+        origin.x = 0.0;
+        BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
+        _suppressScrollCallbacks = YES;
+        [clipView setBoundsOrigin:origin];
+        [_pageScrollView reflectScrolledClipView:clipView];
+        _suppressScrollCallbacks = previousSuppressScrollCallbacks;
+    }
+    return YES;
+}
+
+- (void)setCurrentViewportNeedsDisplay {
+    NSRect visibleRect = _pageScrollView.contentView.bounds;
+    if (NSWidth(visibleRect) > 0.0 && NSHeight(visibleRect) > 0.0)
+        [_pageView setNeedsDisplayInRect:visibleRect];
+    else
+        [_pageView setNeedsDisplay:YES];
 }
 
 - (void)showEmptyDocumentViewWithMessage:(NSString*)message {
@@ -4017,17 +4073,34 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)setZoomWithoutRendering:(CGFloat)newZoom centeredAtWindowPoint:(NSPoint)windowPoint {
     if (!_doc) return;
     CGFloat oldZoom = _zoom > 0 ? _zoom : 1.0;
+    CGFloat clampedZoom = MAX(kMinZoom, MIN(kMaxZoom, newZoom));
+    if (fabs(clampedZoom - oldZoom) < 0.0001) return;
+
     SPDFPageAnchor anchor = [self pageAnchorForWindowPoint:windowPoint];
-    _zoom = MAX(kMinZoom, MIN(kMaxZoom, newZoom));
+    _zoom = clampedZoom;
     _rememberedCustomZoom = _zoom;
-    if (fabs(_zoom - oldZoom) < 0.0001) return;
     _pageView.backingScale = [self backingScale];
     _pageView.zoom = _zoom;
-    [self resizeDocumentView];
+    if (_liveZooming)
+        [self resizeDocumentViewForLiveZoom];
+    else
+        [self resizeDocumentView];
+    BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
+    if (_liveZooming) _suppressScrollCallbacks = YES;
     [self scrollToPageAnchor:anchor notify:NO];
-    [self syncToolbarState];
-    [self updateControls];
-    [_pageView setNeedsDisplay:YES];
+    _suppressScrollCallbacks = previousSuppressScrollCallbacks;
+
+    BOOL shouldRefreshControls = !_liveZooming;
+    if (_liveZooming) {
+        NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+        shouldRefreshControls = now - _lastLiveZoomControlUpdateTime >= kLiveZoomControlUpdateInterval;
+        if (shouldRefreshControls) _lastLiveZoomControlUpdateTime = now;
+    }
+    if (shouldRefreshControls) {
+        [self syncToolbarState];
+        [self updateControls];
+    }
+    [self setCurrentViewportNeedsDisplay];
 }
 
 - (void)renderDocumentPreservingScrollPosition {
@@ -4043,9 +4116,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (sequence != _liveZoomSequence) return;
     _liveZooming = NO;
     if (_doc) {
-        [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
+        [self resizeDocumentView];
+        [self syncToolbarState];
+        [self updateControls];
+        [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
+        [self renderVisiblePageCropsForCurrentViewportAfterLiveZoom];
+        [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:YES];
         [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
-        [_pageView setNeedsDisplay:YES];
         [self updateMinimap];
         [self rememberActiveTabState];
         NSString* path = [_path copy];
@@ -4061,6 +4138,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)beginLiveZoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint {
     if (!_doc || factor <= 0) return;
+    CGFloat targetZoom = MAX(kMinZoom, MIN(kMaxZoom, _zoom * factor));
+    if (fabs(targetZoom - _zoom) < 0.0001) return;
     _fitMode = SPDFFitModeCustom;
     if (!_liveZooming) {
         [_renderQueue cancelAllOperations];
@@ -4068,11 +4147,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [_queuedRenderPages removeAllObjects];
         [_queuedRenderOperations removeAllObjects];
         [_queuedMinimapThumbnailPages removeAllObjects];
+        _lastLiveZoomControlUpdateTime = 0.0;
     }
     _liveZooming = YES;
     _liveZoomSequence++;
     [_zoomFinishTimer invalidate];
-    [self setZoomWithoutRendering:_zoom * factor centeredAtWindowPoint:windowPoint];
+    [self setZoomWithoutRendering:targetZoom centeredAtWindowPoint:windowPoint];
     _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:kLiveZoomFinishDelay
                                                         target:self
                                                       selector:@selector(finishLiveZoom:)
@@ -4883,6 +4963,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (_suppressScrollCallbacks) return;
     if (_renderedPages.count == 0) {
         [self updateMinimap];
+        return;
+    }
+    if (_liveZooming) {
+        [self setCurrentViewportNeedsDisplay];
         return;
     }
     if (_minimapPrecisionViewportDragActive) {

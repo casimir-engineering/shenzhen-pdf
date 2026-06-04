@@ -332,7 +332,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
 - (void)drawRect:(NSRect)dirtyRect {
     [(self.presentationMode ? NSColor.blackColor : NSColor.windowBackgroundColor) setFill];
-    NSRectFill(self.bounds);
+    NSRectFill(dirtyRect);
 
     if (self.pages.count == 0) {
         NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
