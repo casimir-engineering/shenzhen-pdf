@@ -155,6 +155,7 @@
     BOOL _suppressScrollCallbacks;
     BOOL _suppressViewportRerender;
     BOOL _liveZooming;
+    BOOL _documentViewPanActive;
     BOOL _minimapPrecisionViewportDragActive;
     BOOL _sidebarPreferredVisible;
     BOOL _sidebarVisible;
@@ -217,6 +218,9 @@
 - (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
+- (void)documentViewDidBeginPan;
+- (void)documentViewDidFinishPanMotion;
+- (void)cancelDocumentTransientInteraction;
 - (BOOL)documentViewHandlePresentationMouseDown:(NSEvent*)event;
 - (BOOL)handlePresentationEvent:(NSEvent*)event;
 - (NSInteger)presentationMouseActionForEvent:(NSEvent*)event;
