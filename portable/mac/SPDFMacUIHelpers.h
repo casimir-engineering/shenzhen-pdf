@@ -64,6 +64,13 @@
 @interface SPDFToolbarStackView : NSStackView
 @end
 
+@interface SPDFToolbarDragView : NSView
+@end
+
+@interface SPDFToolbarDragLabel : NSTextField
++ (instancetype)labelWithString:(NSString*)stringValue;
+@end
+
 @interface SPDFToolbarToggleButton : NSButton
 @property(nonatomic) BOOL active;
 - (instancetype)initWithTitle:(NSString*)title target:(id)target action:(SEL)action;
