@@ -1311,7 +1311,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _window.titleVisibility = NSWindowTitleHidden;
     _window.titlebarAppearsTransparent = YES;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
-    _window.movable = NO;
+    _window.movable = YES;
     _window.movableByWindowBackground = NO;
 
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
@@ -3542,7 +3542,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     if (type == NSEventTypeLeftMouseUp) {
         _tabStripCapturingMouse = NO;
-        _window.movable = NO;
+        _window.movable = YES;
         [_tabStrip mouseUp:event];
         return YES;
     }
