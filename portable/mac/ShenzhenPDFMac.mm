@@ -3444,28 +3444,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return NO;
 }
 
-- (BOOL)toolbarHitViewAllowsWindowDrag:(NSView*)hitView {
-    if (!hitView || hitView == _toolbar || hitView == _toolbarSpacer || hitView == _ocrSeparator) return YES;
-
-    for (NSView* view = hitView; view && view != _toolbar; view = view.superview) {
-        if ([view isKindOfClass:NSButton.class] || [view isKindOfClass:NSPopUpButton.class] ||
-            [view isKindOfClass:NSSearchField.class])
-            return NO;
-        if ([view isKindOfClass:NSTextField.class]) {
-            NSTextField* field = (NSTextField*)view;
-            return !field.editable && !field.selectable;
-        }
-    }
-    return YES;
-}
-
-- (BOOL)eventHitsToolbarWindowDragRegion:(NSEvent*)event {
-    if (!_toolbar || _toolbar.hidden || _toolbarHeightConstraint.constant <= 0.0) return NO;
-    NSPoint point = [_toolbar convertPoint:event.locationInWindow fromView:nil];
-    if (!NSPointInRect(point, _toolbar.bounds)) return NO;
-    return [self toolbarHitViewAllowsWindowDrag:[_toolbar hitTest:point]];
-}
-
 - (void)performTopChromeWindowDragWithEvent:(NSEvent*)event {
     [self dismissTabHoverPanel];
     BOOL wasMovable = _window.movable;
@@ -3504,10 +3482,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                 [_tabStrip mouseDown:event];
                 return YES;
             }
-        }
-        if ([self eventHitsToolbarWindowDragRegion:event]) {
-            [self performTopChromeWindowDragWithEvent:event];
-            return YES;
         }
         return NO;
     }

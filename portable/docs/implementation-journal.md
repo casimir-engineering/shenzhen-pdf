@@ -106,7 +106,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: Mac scroll/minimap-drag/zoom paths render those oversized viewport crops while the mouse is still down, and distant crop images are counted in the render cache so moving through a giant page does not keep unbounded bitmaps.
    - Changed: Mac document panning now suppresses high-resolution oversized crop rerenders during drag/inertia and refreshes the crop once the pan motion settles, fixing max-zoom drag FPS without dropping the final full-resolution viewport.
    - Changed: Mac tab/document switches now cancel active document pan inertia so motion from one tab cannot carry into the next tab.
-   - Changed: Mac passive toolbar areas, labels, and spacers now use the same first-click window drag path as the tab strip, so an inactive window can be dragged immediately from the whole top chrome.
+   - Changed: Mac empty tab-strip chrome keeps its first-click window drag path, while toolbar controls and tabs keep normal click/drag handling.
    - Changed: Mac render queue concurrency now follows the earlier 60% CPU cap, and minimap-drag visible pages promote already-queued background operations instead of waiting behind older low-priority renders.
    - Changed: Linux `attach_document_to_view` always schedules the existing deferred sidebar metadata load instead of synchronously loading outline/comments before tab-switch paint.
    - Gap: next performance round should move Mac and Linux first-page rastering off the launch/tab-switch foreground path and build exact long-document geometry lazily.
