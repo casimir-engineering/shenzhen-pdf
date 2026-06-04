@@ -1309,7 +1309,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _window.titleVisibility = NSWindowTitleHidden;
     _window.titlebarAppearsTransparent = YES;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
-    _window.movable = YES;
+    _window.movable = NO;
     _window.movableByWindowBackground = NO;
 
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
@@ -3531,7 +3531,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     if (type == NSEventTypeLeftMouseUp) {
         _tabStripCapturingMouse = NO;
-        _window.movable = YES;
+        _window.movable = NO;
         [_tabStrip mouseUp:event];
         return YES;
     }
@@ -4879,7 +4879,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             [self selectCurrentSidebarRow];
         }
     }
-    if (!_documentViewPanActive) [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    if (_documentViewPanActive)
+        [self renderLiveDocumentPanViewportCropIfDue];
+    else
+        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];
 }
