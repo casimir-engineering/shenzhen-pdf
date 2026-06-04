@@ -78,6 +78,58 @@ static CGFloat spdf_ui_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValu
 
 @end
 
+@implementation SPDFToolbarDragView
+
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+    (void)event;
+    return YES;
+}
+
+- (BOOL)mouseDownCanMoveWindow {
+    return YES;
+}
+
+- (void)mouseDown:(NSEvent*)event {
+    BOOL wasMovable = self.window.movable;
+    self.window.movable = YES;
+    [self.window performWindowDragWithEvent:event];
+    self.window.movable = wasMovable;
+}
+
+@end
+
+@implementation SPDFToolbarDragLabel
+
++ (instancetype)labelWithString:(NSString*)stringValue {
+    SPDFToolbarDragLabel* label = [[self alloc] initWithFrame:NSZeroRect];
+    label.stringValue = stringValue ?: @"";
+    label.bezeled = NO;
+    label.bordered = NO;
+    label.drawsBackground = NO;
+    label.editable = NO;
+    label.selectable = NO;
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    return label;
+}
+
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+    (void)event;
+    return YES;
+}
+
+- (BOOL)mouseDownCanMoveWindow {
+    return YES;
+}
+
+- (void)mouseDown:(NSEvent*)event {
+    BOOL wasMovable = self.window.movable;
+    self.window.movable = YES;
+    [self.window performWindowDragWithEvent:event];
+    self.window.movable = wasMovable;
+}
+
+@end
+
 @implementation SPDFToolbarToggleButton
 
 - (instancetype)initWithTitle:(NSString*)title target:(id)target action:(SEL)action {

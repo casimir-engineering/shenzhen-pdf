@@ -1335,7 +1335,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _pageField.target = self;
     _pageField.action = @selector(pageFieldChanged:);
     [_pageField.widthAnchor constraintEqualToConstant:50].active = YES;
-    _pageCountLabel = [NSTextField labelWithString:@"/ 0"];
+    _pageCountLabel = [SPDFToolbarDragLabel labelWithString:@"/ 0"];
     _pageCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _zoomOutButton = [self buttonWithTitle:@"-" action:@selector(zoomOut:)];
     _zoomInButton = [self buttonWithTitle:@"+" action:@selector(zoomIn:)];
@@ -1417,7 +1417,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                                                    target:self
                                                                    action:@selector(toggleMinimap:)];
     _minimapToggleButton.toolTip = @"Show or hide the minimap";
-    _findCountLabel = [NSTextField labelWithString:@""];
+    _findCountLabel = [SPDFToolbarDragLabel labelWithString:@""];
     _findCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _findCountLabel.alignment = NSTextAlignmentCenter;
     _findCountLabel.textColor = NSColor.secondaryLabelColor;
@@ -1436,7 +1436,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _toolbarOverflowButton.action = @selector(showToolbarOverflowMenu:);
     _toolbarOverflowButton.toolTip = @"More toolbar actions";
     [_toolbarOverflowButton.widthAnchor constraintEqualToConstant:30].active = YES;
-    _toolbarSpacer = [[NSView alloc] initWithFrame:NSZeroRect];
+    _toolbarSpacer = [[SPDFToolbarDragView alloc] initWithFrame:NSZeroRect];
     _toolbarSpacer.translatesAutoresizingMaskIntoConstraints = NO;
     [_toolbarSpacer setContentHuggingPriority:NSLayoutPriorityDefaultLow + 1
                                forOrientation:NSLayoutConstraintOrientationHorizontal];
