@@ -2133,7 +2133,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     CGFloat displayScale = [self backingScale];
     if ([self renderedPageImage:existing matchesZoom:_zoom displayScale:displayScale]) return;
     if (![self fullPageRenderAllowedForPage:existing zoom:_zoom displayScale:displayScale]) {
-        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+        if (!_documentViewPanActive) [self renderVisiblePageCropsForCurrentViewportIfNeeded];
         [_pageView setNeedsDisplayInRect:[_pageView rectForPageAtIndex:pageIndex]];
         [self updateMinimap];
         [self evictDistantRenderedPageImages];
@@ -2654,7 +2654,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
 
     [_pageView setNeedsDisplay:YES];
-    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    if (!_documentViewPanActive) [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];
     return YES;
@@ -3444,6 +3444,36 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return NO;
 }
 
+- (BOOL)toolbarHitViewAllowsWindowDrag:(NSView*)hitView {
+    if (!hitView || hitView == _toolbar || hitView == _toolbarSpacer || hitView == _ocrSeparator) return YES;
+
+    for (NSView* view = hitView; view && view != _toolbar; view = view.superview) {
+        if ([view isKindOfClass:NSButton.class] || [view isKindOfClass:NSPopUpButton.class] ||
+            [view isKindOfClass:NSSearchField.class])
+            return NO;
+        if ([view isKindOfClass:NSTextField.class]) {
+            NSTextField* field = (NSTextField*)view;
+            return !field.editable && !field.selectable;
+        }
+    }
+    return YES;
+}
+
+- (BOOL)eventHitsToolbarWindowDragRegion:(NSEvent*)event {
+    if (!_toolbar || _toolbar.hidden || _toolbarHeightConstraint.constant <= 0.0) return NO;
+    NSPoint point = [_toolbar convertPoint:event.locationInWindow fromView:nil];
+    if (!NSPointInRect(point, _toolbar.bounds)) return NO;
+    return [self toolbarHitViewAllowsWindowDrag:[_toolbar hitTest:point]];
+}
+
+- (void)performTopChromeWindowDragWithEvent:(NSEvent*)event {
+    [self dismissTabHoverPanel];
+    BOOL wasMovable = _window.movable;
+    _window.movable = YES;
+    [_window performWindowDragWithEvent:event];
+    _window.movable = wasMovable;
+}
+
 - (BOOL)handleTabStripMouseEvent:(NSEvent*)event {
     if (!_tabStrip || !_window || _presentationMode) return NO;
 
@@ -3461,20 +3491,25 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             [self dismissTabHoverPanel];
             return NO;
         }
-        if (_tabStripHeightConstraint.constant <= 0.0) return NO;
-        NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
-        if (!NSPointInRect(point, _tabStrip.bounds)) return NO;
-
-        if (![_tabStrip containsTabOrControlAtPoint:point]) {
-            [self dismissTabHoverPanel];
-            _tabStripCapturingMouse = NO;
-            [_window performWindowDragWithEvent:event];
+        if (_tabStripHeightConstraint.constant > 0.0) {
+            NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
+            if (NSPointInRect(point, _tabStrip.bounds)) {
+                if (![_tabStrip containsTabOrControlAtPoint:point]) {
+                    _tabStripCapturingMouse = NO;
+                    [self performTopChromeWindowDragWithEvent:event];
+                    return YES;
+                }
+                _tabStripCapturingMouse = YES;
+                _window.movable = NO;
+                [_tabStrip mouseDown:event];
+                return YES;
+            }
+        }
+        if ([self eventHitsToolbarWindowDragRegion:event]) {
+            [self performTopChromeWindowDragWithEvent:event];
             return YES;
         }
-        _tabStripCapturingMouse = YES;
-        _window.movable = NO;
-        [_tabStrip mouseDown:event];
-        return YES;
+        return NO;
     }
 
     if (!_tabStripCapturingMouse) return NO;
@@ -4101,6 +4136,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)loadSelectedTab {
     if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return;
+    [self cancelDocumentTransientInteraction];
     [self clearToolbarFieldFocusForTabSwitch];
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
     if (!tab.path.length) return;
@@ -4204,6 +4240,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)closeDocument:(id)sender {
     (void)sender;
+    [self cancelDocumentTransientInteraction];
     if (_selectedTabIndex >= 0) {
         [self closeTabAtIndex:_selectedTabIndex];
         return;
@@ -4332,6 +4369,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)closeTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
     BOOL closingActive = index == _selectedTabIndex;
+    if (closingActive) [self cancelDocumentTransientInteraction];
     SPDFDocumentTab* closingTab = _tabs[(NSUInteger)index];
     NSString* closedPath = [closingTab.path copy];
     [self rememberClosedDocumentPath:closedPath];
@@ -4829,7 +4867,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             [self selectCurrentSidebarRow];
         }
     }
-    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    if (!_documentViewPanActive) [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];
 }
@@ -5366,6 +5404,25 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _pageView.pages = _renderedPages;
     [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
+}
+
+- (void)documentViewDidBeginPan {
+    _documentViewPanActive = YES;
+}
+
+- (void)documentViewDidFinishPanMotion {
+    if (!_documentViewPanActive) return;
+    _documentViewPanActive = NO;
+    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    [_pageView setNeedsDisplay:YES];
+    [self updateMinimap];
+    [self evictDistantRenderedPageImages];
+    if (!_suppressScrollCallbacks) [self rememberActiveTabState];
+}
+
+- (void)cancelDocumentTransientInteraction {
+    _documentViewPanActive = NO;
+    [_pageView cancelTransientInteraction];
 }
 
 - (void)copySelection:(id)sender {

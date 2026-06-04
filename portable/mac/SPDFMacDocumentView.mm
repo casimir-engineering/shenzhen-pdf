@@ -502,6 +502,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     _lastPanTime = event.timestamp;
     _panVelocity = NSZeroPoint;
     [[NSCursor closedHandCursor] set];
+    [self.reader documentViewDidBeginPan];
 }
 
 - (void)continuePanWithEvent:(NSEvent*)event {
@@ -528,6 +529,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     if (!scrollView || !clipView) {
         [timer invalidate];
         _inertiaTimer = nil;
+        [self.reader documentViewDidFinishPanMotion];
         return;
     }
 
@@ -544,6 +546,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     if (hypot(_panVelocity.x, _panVelocity.y) < 12.0) {
         [timer invalidate];
         _inertiaTimer = nil;
+        [self.reader documentViewDidFinishPanMotion];
     }
 }
 
@@ -557,6 +560,8 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
                                                        selector:@selector(stepPanInertia:)
                                                        userInfo:nil
                                                         repeats:YES];
+    } else {
+        [self.reader documentViewDidFinishPanMotion];
     }
 }
 
@@ -568,6 +573,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     _rightMouseMoved = NO;
     _panVelocity = NSZeroPoint;
     _selectionPageIndex = -1;
+    [[NSCursor arrowCursor] set];
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
