@@ -4,6 +4,13 @@ static CGFloat spdf_ui_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValu
     return MAX(minValue, MIN(maxValue, value));
 }
 
+void spdf_activate_window_for_view(NSView* view) {
+    NSWindow* window = view.window;
+    if (!window) return;
+    if (!NSApp.active) [NSApp activateIgnoringOtherApps:YES];
+    if (!window.keyWindow) [window makeKeyAndOrderFront:nil];
+}
+
 @implementation SPDFPresentationOverlayView
 
 - (BOOL)isFlipped {

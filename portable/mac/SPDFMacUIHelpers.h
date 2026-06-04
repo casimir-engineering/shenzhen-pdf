@@ -2,6 +2,8 @@
 
 @class SPDFDocumentTab;
 
+void spdf_activate_window_for_view(NSView* view);
+
 @protocol SPDFMacUIReader <NSObject>
 - (BOOL)handlePresentationEvent:(NSEvent*)event;
 - (BOOL)handleWindowArrangementShortcutEvent:(NSEvent*)event;
