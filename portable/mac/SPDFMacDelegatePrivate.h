@@ -150,6 +150,7 @@
     NSUInteger _renderGeneration;
     NSTimer* _zoomFinishTimer;
     NSUInteger _liveZoomSequence;
+    NSTimeInterval _lastLiveZoomControlUpdateTime;
     BOOL _uiReady;
     BOOL _updatingSelection;
     BOOL _updatingFromScroll;
@@ -332,7 +333,9 @@
                              displayScale:(CGFloat)displayScale;
 - (BOOL)fullPageRenderAllowedForPage:(SPDFRenderedPage*)page zoom:(CGFloat)zoom displayScale:(CGFloat)displayScale;
 - (NSRect)visiblePageCropRectForPageIndex:(NSInteger)pageIndex extraViewMargin:(CGFloat)extraViewMargin;
-- (void)renderVisiblePageCropsForCurrentViewportWithDisplayScale:(CGFloat)displayScale;
+- (void)renderVisiblePageCropsForCurrentViewportWithDisplayScale:(CGFloat)displayScale
+                                 allowFullPageRenderAllowedPages:(BOOL)allowFullPageRenderAllowedPages;
+- (void)renderVisiblePageCropsForCurrentViewportAfterLiveZoom;
 - (void)renderVisiblePageCropsForCurrentViewportIfNeeded;
 - (void)renderLiveDocumentPanViewportCropIfDue;
 - (NSUInteger)estimatedRenderedImageByteCostForPage:(SPDFRenderedPage*)page
