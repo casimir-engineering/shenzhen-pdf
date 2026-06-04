@@ -385,12 +385,12 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (BOOL)containsTabOrControlAtPoint:(NSPoint)point {
-    if (NSPointInRect(point, [self plusRect])) return YES;
+    if (NSPointInRect(point, NSInsetRect([self plusRect], -3.0, -4.0))) return YES;
     NSRect overflowRect = [self overflowRect];
-    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, overflowRect)) return YES;
+    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, NSInsetRect(overflowRect, -3.0, -4.0))) return YES;
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
-        if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, tabRect)) return YES;
+        if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, NSInsetRect(tabRect, -4.0, -5.0))) return YES;
     }
     return NO;
 }

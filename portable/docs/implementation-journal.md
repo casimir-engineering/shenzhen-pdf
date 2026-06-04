@@ -112,6 +112,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: Mac toolbar page controls now place previous/next to the right of the page field/count, zoom controls now place -/+ to the right of the zoom popup, and zoom overflow keeps the popup plus +/- together.
    - Changed: Mac zoom popup keeps the 100% entry anchored and inserts the custom zoom value after it when distinct, preserving the quick return-to-custom behavior without hiding 100%.
    - Changed: Mac tab strip now captures the whole tab-strip mouse sequence and the main window is no longer titlebar-movable by default; passive toolbar drag views temporarily opt into window dragging, protecting tab reorder and drag-out gestures from native titlebar drag.
+   - Changed: Mac empty space in the tab row explicitly drags the window again, while expanded tab/control hit zones keep tab reordering and drag-out from being mistaken for window drag.
    - Changed: Mac tab state now writes the latest normalized scroll origin before saving document state JSON.
    - Changed: Mac render queue concurrency now follows the earlier 60% CPU cap, and minimap-drag visible pages promote already-queued background operations instead of waiting behind older low-priority renders.
    - Changed: Linux `attach_document_to_view` always schedules the existing deferred sidebar metadata load instead of synchronously loading outline/comments before tab-switch paint.

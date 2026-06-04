@@ -3511,12 +3511,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (_tabStripHeightConstraint.constant > 0.0) {
             NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
             if (NSPointInRect(point, _tabStrip.bounds)) {
-                _tabStripCapturingMouse = YES;
-                _window.movable = NO;
                 if ([_tabStrip containsTabOrControlAtPoint:point]) {
+                    _tabStripCapturingMouse = YES;
+                    _window.movable = NO;
                     [_tabStrip mouseDown:event];
                 } else {
+                    _tabStripCapturingMouse = NO;
                     [self dismissTabHoverPanel];
+                    [self performTopChromeWindowDragWithEvent:event];
                 }
                 return YES;
             }
