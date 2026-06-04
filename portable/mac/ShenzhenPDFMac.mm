@@ -2261,7 +2261,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) continue;
         SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
         if ([self renderedPageImage:page matchesZoom:_zoom displayScale:backingScale]) continue;
-        if (!_liveZooming && [self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:backingScale]) continue;
+        if ([self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:backingScale]) continue;
 
         NSRect cropRect = [self visiblePageCropRectForPageIndex:pageIndex extraViewMargin:margin];
         cropRect = [self pixelSnappedPageCropRect:cropRect page:page zoom:_zoom displayScale:displayScale];
@@ -2691,7 +2691,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     [_pageView setNeedsDisplay:YES];
     if (_liveZooming)
-        [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:1.0];
+        [_pageView setNeedsDisplay:YES];
     else if (_documentViewPanActive)
         [self renderLiveDocumentPanViewportCropIfDue];
     else
@@ -4020,7 +4020,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self scrollToPageAnchor:anchor notify:NO];
     [self syncToolbarState];
     [self updateControls];
-    [self documentScrollPositionChanged];
+    [_pageView setNeedsDisplay:YES];
+    [self updateMinimap];
 }
 
 - (void)renderDocumentPreservingScrollPosition {
@@ -4884,7 +4885,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         }
     }
     if (_liveZooming)
-        [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:1.0];
+        [_pageView setNeedsDisplay:YES];
     else if (_documentViewPanActive)
         [self renderLiveDocumentPanViewportCropIfDue];
     else
