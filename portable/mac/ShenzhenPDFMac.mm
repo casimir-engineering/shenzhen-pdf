@@ -1116,23 +1116,97 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)showAboutPanel:(id)sender {
     (void)sender;
-    NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
-    style.alignment = NSTextAlignmentCenter;
-    style.lineSpacing = 4.0;
-    NSDictionary* attrs = @{
-        NSForegroundColorAttributeName : NSColor.labelColor,
-        NSFontAttributeName : [NSFont systemFontOfSize:12.0],
-        NSParagraphStyleAttributeName : style,
-    };
-    NSString* about = @"Shenzhen PDF is an Open Source app in the spirit of Sumatra PDF, created by Raphaël Casimir, "
-                       "published by Intuition R&T.";
-    NSAttributedString* credits = [[NSAttributedString alloc] initWithString:about attributes:attrs];
-    [NSApp orderFrontStandardAboutPanelWithOptions:@{
-        NSAboutPanelOptionApplicationName : @"Shenzhen PDF",
-        NSAboutPanelOptionApplicationVersion : [self displayVersion],
-        NSAboutPanelOptionVersion : @"",
-        NSAboutPanelOptionCredits : credits,
-    }];
+    if (!_aboutPanel) {
+        _aboutPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0.0, 0.0, 440.0, 238.0)
+                                                 styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                                                   backing:NSBackingStoreBuffered
+                                                     defer:NO];
+        _aboutPanel.title = @"About Shenzhen PDF";
+        _aboutPanel.releasedWhenClosed = NO;
+        _aboutPanel.floatingPanel = YES;
+        _aboutPanel.hidesOnDeactivate = YES;
+        _aboutPanel.level = NSModalPanelWindowLevel;
+        _aboutPanel.collectionBehavior =
+            NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;
+
+        NSView* content = [[NSView alloc] initWithFrame:_aboutPanel.contentView.bounds];
+        content.translatesAutoresizingMaskIntoConstraints = NO;
+        _aboutPanel.contentView = content;
+
+        NSImageView* iconView = [[NSImageView alloc] initWithFrame:NSZeroRect];
+        iconView.image = NSApp.applicationIconImage;
+        iconView.imageScaling = NSImageScaleProportionallyUpOrDown;
+        iconView.translatesAutoresizingMaskIntoConstraints = NO;
+
+        NSTextField* titleLabel = [NSTextField labelWithString:@"Shenzhen PDF"];
+        titleLabel.font = [NSFont systemFontOfSize:22.0 weight:NSFontWeightSemibold];
+        titleLabel.alignment = NSTextAlignmentCenter;
+
+        NSTextField* versionLabel =
+            [NSTextField labelWithString:[NSString stringWithFormat:@"Version %@", [self displayVersion]]];
+        versionLabel.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightRegular];
+        versionLabel.textColor = NSColor.secondaryLabelColor;
+        versionLabel.alignment = NSTextAlignmentCenter;
+
+        NSTextField* aboutLabel =
+            [NSTextField wrappingLabelWithString:@"Shenzhen PDF is an Open Source app in the spirit of Sumatra PDF, "
+                                                 @"created by Raphaël Casimir, published by Intuition R&T."];
+        aboutLabel.font = [NSFont systemFontOfSize:12.5];
+        aboutLabel.alignment = NSTextAlignmentCenter;
+
+        NSButton* okButton = [NSButton buttonWithTitle:@"OK" target:_aboutPanel action:@selector(orderOut:)];
+        okButton.bezelStyle = NSBezelStyleRounded;
+        okButton.keyEquivalent = @"\r";
+        okButton.translatesAutoresizingMaskIntoConstraints = NO;
+
+        for (NSView* view in @[ iconView, titleLabel, versionLabel, aboutLabel, okButton ]) {
+            view.translatesAutoresizingMaskIntoConstraints = NO;
+            [content addSubview:view];
+        }
+
+        [NSLayoutConstraint activateConstraints:@[
+            [iconView.topAnchor constraintEqualToAnchor:content.topAnchor constant:22.0],
+            [iconView.centerXAnchor constraintEqualToAnchor:content.centerXAnchor],
+            [iconView.widthAnchor constraintEqualToConstant:56.0],
+            [iconView.heightAnchor constraintEqualToConstant:56.0],
+
+            [titleLabel.topAnchor constraintEqualToAnchor:iconView.bottomAnchor constant:10.0],
+            [titleLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
+            [titleLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+
+            [versionLabel.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:4.0],
+            [versionLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
+            [versionLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+
+            [aboutLabel.topAnchor constraintEqualToAnchor:versionLabel.bottomAnchor constant:14.0],
+            [aboutLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:34.0],
+            [aboutLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-34.0],
+
+            [okButton.topAnchor constraintGreaterThanOrEqualToAnchor:aboutLabel.bottomAnchor constant:18.0],
+            [okButton.centerXAnchor constraintEqualToAnchor:content.centerXAnchor],
+            [okButton.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-18.0],
+            [okButton.widthAnchor constraintEqualToConstant:86.0],
+        ]];
+    }
+
+    if (_aboutPanel.parentWindow != _window) {
+        [_aboutPanel.parentWindow removeChildWindow:_aboutPanel];
+        if (_window) [_window addChildWindow:_aboutPanel ordered:NSWindowAbove];
+    }
+
+    if (_window) {
+        NSRect windowFrame = _window.frame;
+        NSRect panelFrame = _aboutPanel.frame;
+        panelFrame.origin.x = NSMidX(windowFrame) - NSWidth(panelFrame) * 0.5;
+        panelFrame.origin.y = NSMidY(windowFrame) - NSHeight(panelFrame) * 0.5;
+        [_aboutPanel setFrame:panelFrame display:NO];
+    } else {
+        [_aboutPanel center];
+    }
+
+    [NSApp activateIgnoringOtherApps:YES];
+    [_aboutPanel orderFrontRegardless];
+    [_aboutPanel makeKeyAndOrderFront:nil];
 }
 
 - (NSButton*)buttonWithTitle:(NSString*)title action:(SEL)action {

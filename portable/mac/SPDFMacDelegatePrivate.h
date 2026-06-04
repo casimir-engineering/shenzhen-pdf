@@ -86,6 +86,7 @@
     NSTask* _translationTask;
     NSPanel* _commentPanel;
     NSTextField* _commentLabel;
+    NSPanel* _aboutPanel;
     NSPanel* _shortcutHelpPanel;
     NSSearchField* _shortcutHelpSearchField;
     NSTableView* _shortcutHelpTable;
