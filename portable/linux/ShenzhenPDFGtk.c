@@ -170,6 +170,7 @@ typedef struct app_state {
     favorite_item* favorites;
     int favorite_count;
     int favorite_capacity;
+    gboolean favorites_loaded;
     int favorite_pending_delete;
     char* recent_paths[MAX_RECENT_DOCUMENTS];
     int recent_count;
@@ -352,6 +353,7 @@ static void open_path_at_page(app_state* state, const char* path, int page_index
 static void open_path(app_state* state, const char* path);
 static void remember_recent_path(app_state* state, const char* path);
 static void reopen_last_closed_document(app_state* state);
+static void ensure_favorites_loaded(app_state* state);
 static void start_find_for_current_query(app_state* state, int preferred_index, int preferred_page,
                                          gboolean reveal_match, gboolean preserve_scroll);
 static void update_controls(app_state* state);
@@ -682,9 +684,11 @@ static void free_favorites(app_state* state) {
     state->favorites = NULL;
     state->favorite_count = 0;
     state->favorite_capacity = 0;
+    state->favorites_loaded = FALSE;
 }
 
 static void remove_favorite_item(app_state* state, int index) {
+    ensure_favorites_loaded(state);
     if (index < 0 || index >= state->favorite_count) return;
     g_free(state->favorites[index].path);
     g_free(state->favorites[index].title);
@@ -713,6 +717,7 @@ static char* disambiguated_tab_title(app_state* state, int index) {
 static void add_favorite_item(app_state* state, const char* path, const char* title, int page_index,
                               gboolean document) {
     if (!path || !*path) return;
+    ensure_favorites_loaded(state);
     if (state->favorite_count == state->favorite_capacity) {
         int capacity = state->favorite_capacity ? state->favorite_capacity * 2 : 16;
         state->favorites = g_realloc(state->favorites, (gsize)capacity * sizeof(favorite_item));
@@ -1244,7 +1249,9 @@ static void remove_current_window_session(app_state* state) {
 }
 
 static void save_favorites(app_state* state) {
-    GString* json = g_string_new("{\n  \"favorites\": [\n");
+    GString* json;
+    ensure_favorites_loaded(state);
+    json = g_string_new("{\n  \"favorites\": [\n");
     for (int i = 0; i < state->favorite_count; ++i) {
         char* path = json_escape(state->favorites[i].path);
         char* title = json_escape(state->favorites[i].title);
@@ -1462,6 +1469,8 @@ static void load_favorites(app_state* state) {
     char* json = NULL;
     char* pos;
     gsize len = 0;
+    if (!state || state->favorites_loaded) return;
+    state->favorites_loaded = TRUE;
     if (!read_limited_text_file(state->favorites_path, &json, &len)) return;
     pos = json;
     while ((pos = strstr(pos, "\"path\"")) != NULL && state->favorite_count < MAX_FAVORITES) {
@@ -1484,6 +1493,11 @@ static void load_favorites(app_state* state) {
         pos = end + 1;
     }
     g_free(json);
+}
+
+static void ensure_favorites_loaded(app_state* state) {
+    if (!state || state->favorites_loaded) return;
+    load_favorites(state);
 }
 
 static void free_pixbuf_pixels(guchar* pixels, gpointer data) {
@@ -5045,6 +5059,7 @@ static void open_state_json_file(GtkWidget* widget, gpointer user_data) {
     path = state_json_path_for_name(state, name);
     if (!state || !path) return;
     save_settings(state);
+    if (strcmp(name, "favorites.json") == 0) ensure_favorites_loaded(state);
     if (!g_file_test(path, G_FILE_TEST_EXISTS))
         write_text_file(path, strcmp(name, "favorites.json") == 0 ? "[]\n" : "{}\n");
     uri = g_filename_to_uri(path, NULL, &error);
@@ -7836,6 +7851,7 @@ static void favorites_delete_clicked(GtkButton* button, gpointer user_data);
 
 static void rebuild_favorites_list(GtkListBox* list, app_state* state, const char* filter) {
     GList* children = gtk_container_get_children(GTK_CONTAINER(list));
+    ensure_favorites_loaded(state);
     for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
     g_list_free(children);
 
@@ -8009,6 +8025,7 @@ static void favorites_delete_clicked(GtkButton* button, gpointer user_data) {
     const char* filter;
     GtkListBoxRow* row;
 
+    ensure_favorites_loaded(state);
     if (!list || index < 0 || index >= state->favorite_count) return;
     filter = favorites_current_filter(list);
     if (state->favorite_pending_delete == index) {
@@ -8062,6 +8079,7 @@ static void favorites_row_activated(GtkListBox* list, GtkListBoxRow* row, gpoint
     app_state* state = (app_state*)user_data;
     GtkWidget* dialog = GTK_WIDGET(g_object_get_data(G_OBJECT(list), "favorites-dialog"));
     int index;
+    ensure_favorites_loaded(state);
     if (!row) return;
     int search_page = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "search-page"));
     if (search_page > 0) {
@@ -8093,6 +8111,7 @@ static void show_favorites_dialog(app_state* state) {
     GtkWidget* scroll = gtk_scrolled_window_new(NULL, NULL);
     GtkWidget* list = gtk_list_box_new();
 
+    ensure_favorites_loaded(state);
     gtk_window_set_default_size(GTK_WINDOW(dialog), 560, 420);
     gtk_entry_set_placeholder_text(GTK_ENTRY(search), "Favorites and open documents");
     state->favorite_pending_delete = -1;
@@ -9069,7 +9088,6 @@ int main(int argc, char** argv) {
     load_settings(&state);
     has_startup_documents = command_line_has_documents(argc, argv) && !state.restore_window_id;
     if (!state.detached_tab_launch && !has_startup_documents) load_session(&state);
-    load_favorites(&state);
     GtkApplication* app = gtk_application_new(
         "com.intuition.shenzhenpdf",
         G_APPLICATION_HANDLES_OPEN |
