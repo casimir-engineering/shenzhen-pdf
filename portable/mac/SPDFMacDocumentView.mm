@@ -522,6 +522,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(self.bounds) - NSHeight(clipView.bounds))));
     [clipView scrollToPoint:origin];
     [scrollView reflectScrolledClipView:clipView];
+    [self.reader documentScrollPositionChanged];
 }
 
 - (void)stepPanInertia:(NSTimer*)timer {
@@ -541,6 +542,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(self.bounds) - NSHeight(clipView.bounds))));
     [clipView scrollToPoint:origin];
     [scrollView reflectScrolledClipView:clipView];
+    [self.reader documentScrollPositionChanged];
 
     _panVelocity.x *= 0.90;
     _panVelocity.y *= 0.90;
