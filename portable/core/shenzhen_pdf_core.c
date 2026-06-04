@@ -328,6 +328,130 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
     return 1;
 }
 
+int spdf_render_page_region_rgba(spdf_document* doc, int page_index, float zoom, spdf_rect region, spdf_bitmap* out,
+                                 char* err, size_t err_len) {
+    fz_page* page = NULL;
+    fz_pixmap* pix = NULL;
+    fz_device* dev = NULL;
+    unsigned char* dst = NULL;
+    unsigned char* src;
+    fz_rect bounds;
+    fz_rect crop;
+    fz_rect transformed;
+    fz_irect bbox;
+    fz_matrix ctm;
+    size_t byte_count;
+    float page_width;
+    float page_height;
+    int width;
+    int height;
+    int stride;
+    int comps;
+    int alpha;
+    int src_stride;
+    int y;
+    int x;
+
+    set_error(err, err_len, "");
+    if (!out) {
+        set_error(err, err_len, "No render output was supplied.");
+        return 0;
+    }
+    memset(out, 0, sizeof(*out));
+
+    if (!doc || page_index < 0 || page_index >= doc->page_count) {
+        set_error(err, err_len, "Page index is out of range.");
+        return 0;
+    }
+    if (!isfinite(zoom)) {
+        set_error(err, err_len, "Zoom level is invalid.");
+        return 0;
+    }
+    if (zoom <= 0.01f) zoom = 0.01f;
+    if (!spdf_page_size(doc, page_index, &page_width, &page_height, err, err_len)) return 0;
+
+    region.x0 = fmaxf(0.0f, fminf(region.x0, page_width));
+    region.x1 = fmaxf(0.0f, fminf(region.x1, page_width));
+    region.y0 = fmaxf(0.0f, fminf(region.y0, page_height));
+    region.y1 = fmaxf(0.0f, fminf(region.y1, page_height));
+    if (region.x1 <= region.x0 || region.y1 <= region.y0) {
+        set_error(err, err_len, "Render region is empty.");
+        return 0;
+    }
+    if (!render_page_size_allowed(region.x1 - region.x0, region.y1 - region.y0, zoom, err, err_len)) return 0;
+
+    fz_var(page);
+    fz_var(pix);
+    fz_var(dev);
+    fz_var(dst);
+
+    fz_try(doc->ctx) {
+        page = fz_load_page(doc->ctx, doc->doc, page_index);
+        bounds = fz_bound_page(doc->ctx, page);
+        crop.x0 = bounds.x0 + region.x0;
+        crop.y0 = bounds.y0 + region.y0;
+        crop.x1 = bounds.x0 + region.x1;
+        crop.y1 = bounds.y0 + region.y1;
+
+        ctm = fz_scale(zoom, zoom);
+        transformed = fz_transform_rect(crop, ctm);
+        bbox = fz_round_rect(transformed);
+        pix = fz_new_pixmap_with_bbox(doc->ctx, fz_device_rgb(doc->ctx), bbox, NULL, 0);
+        fz_clear_pixmap_with_value(doc->ctx, pix, 0xFF);
+        dev = fz_new_draw_device(doc->ctx, fz_identity, pix);
+        fz_run_page(doc->ctx, page, dev, ctm, NULL);
+        fz_close_device(doc->ctx, dev);
+        fz_drop_device(doc->ctx, dev);
+        dev = NULL;
+
+        width = fz_pixmap_width(doc->ctx, pix);
+        height = fz_pixmap_height(doc->ctx, pix);
+        comps = fz_pixmap_components(doc->ctx, pix);
+        alpha = fz_pixmap_alpha(doc->ctx, pix);
+        src_stride = fz_pixmap_stride(doc->ctx, pix);
+        src = fz_pixmap_samples(doc->ctx, pix);
+        if (!src ||
+            !render_pixmap_allocation_size(width, height, comps, src_stride, &stride, &byte_count, err, err_len))
+            fz_throw(doc->ctx, FZ_ERROR_FORMAT, "%s", err && *err ? err : "Rendered page is too large.");
+
+        dst = (unsigned char*)malloc(byte_count);
+        if (!dst) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
+
+        for (y = 0; y < height; ++y) {
+            const unsigned char* row = src + (size_t)y * (size_t)src_stride;
+            unsigned char* out_row = dst + (size_t)y * (size_t)stride;
+            for (x = 0; x < width; ++x) {
+                const unsigned char* px = row + (size_t)x * (size_t)comps;
+                unsigned char* opx = out_row + (size_t)x * 4;
+                opx[0] = comps > 0 ? px[0] : 255;
+                opx[1] = comps > 1 ? px[1] : opx[0];
+                opx[2] = comps > 2 ? px[2] : opx[0];
+                opx[3] = alpha ? px[comps - 1] : 255;
+            }
+        }
+
+        fz_drop_pixmap(doc->ctx, pix);
+        pix = NULL;
+        fz_drop_page(doc->ctx, page);
+        page = NULL;
+
+        out->width = width;
+        out->height = height;
+        out->stride = stride;
+        out->rgba = dst;
+    }
+    fz_catch(doc->ctx) {
+        set_error(err, err_len, fz_caught_message(doc->ctx));
+        free(dst);
+        if (dev) fz_drop_device(doc->ctx, dev);
+        if (pix) fz_drop_pixmap(doc->ctx, pix);
+        if (page) fz_drop_page(doc->ctx, page);
+        return 0;
+    }
+
+    return 1;
+}
+
 void spdf_free_bitmap(spdf_bitmap* bitmap) {
     if (!bitmap) return;
     free(bitmap->rgba);

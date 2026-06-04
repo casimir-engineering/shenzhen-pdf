@@ -254,6 +254,8 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     NSRectFill(pageRect);
     [NSGraphicsContext restoreGraphicsState];
 
+    BOOL hasExactFullPageImage = page.image && fabs(page.imageZoom - self.zoom) <= 0.001 &&
+                                 fabs(page.imageScale - [self effectiveBackingScale]) <= 0.001;
     NSImage* image = page.image ?: page.minimapImage;
     if (image) {
         BOOL drawingExactImage = page.image == image;
@@ -270,6 +272,23 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
             respectFlipped:YES
                      hints:@{NSImageHintInterpolation : @(interpolation)}];
         context.imageInterpolation = oldInterpolation;
+    }
+
+    if (!hasExactFullPageImage && page.viewportImage && fabs(page.viewportImageZoom - self.zoom) <= 0.001 &&
+        fabs(page.viewportImageScale - [self effectiveBackingScale]) <= 0.001) {
+        NSRect cropRect = [self convertPageRect:page.viewportImagePageRect toViewRectInPageRect:pageRect page:page];
+        if (!NSIsEmptyRect(cropRect)) {
+            NSGraphicsContext* context = NSGraphicsContext.currentContext;
+            NSImageInterpolation oldInterpolation = context.imageInterpolation;
+            context.imageInterpolation = NSImageInterpolationHigh;
+            [page.viewportImage drawInRect:cropRect
+                                  fromRect:NSZeroRect
+                                 operation:NSCompositingOperationSourceOver
+                                  fraction:1.0
+                            respectFlipped:YES
+                                     hints:@{NSImageHintInterpolation : @(NSImageInterpolationHigh)}];
+            context.imageInterpolation = oldInterpolation;
+        }
     }
 
     if (page.highlights.count > 0 && self.zoom > 0) {
