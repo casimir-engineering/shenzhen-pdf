@@ -20,6 +20,19 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     NSPoint _selectionStart;
     NSTrackingArea* _trackingArea;
     NSDictionary* _hoveredComment;
+    BOOL _layoutCacheValid;
+    NSArray<SPDFRenderedPage*>* _layoutPages;
+    NSArray<NSValue*>* _layoutPageSizes;
+    NSArray<NSValue*>* _layoutContinuousPageRects;
+    NSArray<NSValue*>* _layoutSinglePageSlots;
+    NSSize _layoutBoundsSize;
+    CGFloat _layoutViewportWidth;
+    CGFloat _layoutEffectiveBackingScale;
+    CGFloat _layoutZoom;
+    SPDFViewMode _layoutViewMode;
+    BOOL _layoutPresentationMode;
+    CGFloat _layoutWidestPage;
+    CGFloat _layoutContinuousDocumentHeight;
 }
 
 - (BOOL)isFlipped {
@@ -52,7 +65,50 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
 - (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
     _pages = [pages copy];
+    [self invalidateLayoutCache];
     [self setNeedsDisplay:YES];
+}
+
+- (void)setZoom:(CGFloat)zoom {
+    if (_zoom == zoom) return;
+    _zoom = zoom;
+    [self invalidateLayoutCache];
+}
+
+- (void)setViewMode:(SPDFViewMode)viewMode {
+    if (_viewMode == viewMode) return;
+    _viewMode = viewMode;
+    [self invalidateLayoutCache];
+}
+
+- (void)setViewportWidthHint:(CGFloat)viewportWidthHint {
+    if (_viewportWidthHint == viewportWidthHint) return;
+    _viewportWidthHint = viewportWidthHint;
+    [self invalidateLayoutCache];
+}
+
+- (void)setBackingScale:(CGFloat)backingScale {
+    if (_backingScale == backingScale) return;
+    _backingScale = backingScale;
+    [self invalidateLayoutCache];
+}
+
+- (void)setPresentationMode:(BOOL)presentationMode {
+    if (_presentationMode == presentationMode) return;
+    _presentationMode = presentationMode;
+    [self invalidateLayoutCache];
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+    NSSize oldSize = self.frame.size;
+    [super setFrameSize:newSize];
+    if (!NSEqualSizes(oldSize, newSize)) [self invalidateLayoutCache];
+}
+
+- (void)setBoundsSize:(NSSize)newSize {
+    NSSize oldSize = self.bounds.size;
+    [super setBoundsSize:newSize];
+    if (!NSEqualSizes(oldSize, newSize)) [self invalidateLayoutCache];
 }
 
 - (CGFloat)effectiveBackingScale {
@@ -80,6 +136,91 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
                       [self pixelSnappedLength:page.pageHeight * self.zoom]);
 }
 
+- (void)invalidateLayoutCache {
+    _layoutCacheValid = NO;
+    _layoutPages = nil;
+    _layoutPageSizes = nil;
+    _layoutContinuousPageRects = nil;
+    _layoutSinglePageSlots = nil;
+}
+
+- (CGFloat)viewportWidth {
+    CGFloat width = self.viewportWidthHint > 1.0 ? self.viewportWidthHint : NSWidth(self.bounds);
+    NSScrollView* scrollView = self.enclosingScrollView;
+    if (scrollView) width = MAX(width, scrollView.contentSize.width);
+    return width;
+}
+
+- (void)ensureLayoutCache {
+    CGFloat viewportWidth = [self viewportWidth];
+    CGFloat effectiveBackingScale = [self effectiveBackingScale];
+    NSSize boundsSize = self.bounds.size;
+    if (_layoutCacheValid && _layoutPages == self.pages && _layoutZoom == self.zoom &&
+        _layoutViewMode == self.viewMode && _layoutPresentationMode == self.presentationMode &&
+        _layoutViewportWidth == viewportWidth && _layoutEffectiveBackingScale == effectiveBackingScale &&
+        NSEqualSizes(_layoutBoundsSize, boundsSize))
+        return;
+
+    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
+    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
+    NSMutableArray<NSValue*>* pageSizes = [NSMutableArray arrayWithCapacity:self.pages.count];
+    NSMutableArray<NSValue*>* continuousRects = [NSMutableArray arrayWithCapacity:self.pages.count];
+    NSMutableArray<NSValue*>* singlePageSlots = [NSMutableArray arrayWithCapacity:self.pages.count];
+
+    CGFloat widestPage = 0.0;
+    for (SPDFRenderedPage* page in self.pages) {
+        NSSize pageSize = [self viewSizeForPage:page];
+        [pageSizes addObject:[NSValue valueWithSize:pageSize]];
+        widestPage = MAX(widestPage, pageSize.width);
+    }
+
+    CGFloat continuousY = pageMargin / 2.0;
+    CGFloat singleSlotY = pageMargin / 2.0;
+    CGFloat singleDocumentWidth = MAX(NSWidth(self.bounds), widestPage + pageMargin);
+    for (NSUInteger i = 0; i < self.pages.count; ++i) {
+        NSSize pageSize = [pageSizes[i] sizeValue];
+        CGFloat x = floor((viewportWidth - pageSize.width) / 2.0);
+        CGFloat minX = pageSize.width >= viewportWidth - 0.5 ? 0.0 : pageMargin / 2.0;
+        NSRect continuousRect = NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]),
+                                           [self pixelSnappedOrigin:continuousY], pageSize.width, pageSize.height);
+        [continuousRects addObject:[NSValue valueWithRect:continuousRect]];
+        continuousY += pageSize.height + pageGap;
+
+        CGFloat slotX = floor((singleDocumentWidth - pageSize.width) / 2.0);
+        CGFloat slotMinX = pageSize.width >= singleDocumentWidth - 0.5 ? 0.0 : pageMargin / 2.0;
+        NSRect slotRect = NSMakeRect(MAX(slotMinX, [self pixelSnappedOrigin:slotX]),
+                                     [self pixelSnappedOrigin:singleSlotY], pageSize.width, pageSize.height);
+        [singlePageSlots addObject:[NSValue valueWithRect:slotRect]];
+        singleSlotY += pageSize.height + pageGap;
+    }
+
+    _layoutPages = self.pages;
+    _layoutPageSizes = pageSizes;
+    _layoutContinuousPageRects = continuousRects;
+    _layoutSinglePageSlots = singlePageSlots;
+    _layoutBoundsSize = boundsSize;
+    _layoutViewportWidth = viewportWidth;
+    _layoutEffectiveBackingScale = effectiveBackingScale;
+    _layoutZoom = self.zoom;
+    _layoutViewMode = self.viewMode;
+    _layoutPresentationMode = self.presentationMode;
+    _layoutWidestPage = widestPage;
+    _layoutContinuousDocumentHeight = self.pages.count == 0 ? 0.0 : continuousY + pageMargin / 2.0;
+    _layoutCacheValid = YES;
+}
+
+- (NSSize)cachedViewSizeForPageAtIndex:(NSInteger)pageIndex {
+    [self ensureLayoutCache];
+    if (pageIndex < 0 || pageIndex >= (NSInteger)_layoutPageSizes.count) return NSZeroSize;
+    return [_layoutPageSizes[(NSUInteger)pageIndex] sizeValue];
+}
+
+- (NSRect)continuousRectForPageAtIndex:(NSInteger)pageIndex {
+    [self ensureLayoutCache];
+    if (pageIndex < 0 || pageIndex >= (NSInteger)_layoutContinuousPageRects.count) return NSZeroRect;
+    return [_layoutContinuousPageRects[(NSUInteger)pageIndex] rectValue];
+}
+
 - (NSRect)convertPageRect:(NSRect)rect toViewRectInPageRect:(NSRect)pageRect page:(SPDFRenderedPage*)page {
     CGFloat scaleX = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
     CGFloat scaleY = NSHeight(pageRect) / MAX(1.0, page.pageHeight);
@@ -98,43 +239,19 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 }
 
 - (CGFloat)widestPage {
-    CGFloat widest = 0;
-    for (SPDFRenderedPage* page in self.pages) widest = MAX(widest, [self viewSizeForPage:page].width);
-    return widest;
-}
-
-- (CGFloat)viewportWidth {
-    CGFloat width = self.viewportWidthHint > 1.0 ? self.viewportWidthHint : NSWidth(self.bounds);
-    NSScrollView* scrollView = self.enclosingScrollView;
-    if (scrollView) width = MAX(width, scrollView.contentSize.width);
-    return width;
+    [self ensureLayoutCache];
+    return _layoutWidestPage;
 }
 
 - (CGFloat)continuousDocumentHeight {
-    if (self.pages.count == 0) return 0.0;
-
-    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
-    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
-    CGFloat height = pageMargin / 2.0;
-    for (SPDFRenderedPage* page in self.pages) height += [self viewSizeForPage:page].height + pageGap;
-    height += pageMargin / 2.0;
-    return height;
+    [self ensureLayoutCache];
+    return _layoutContinuousDocumentHeight;
 }
 
 - (NSRect)singlePageDocumentSlotForPageAtIndex:(NSInteger)pageIndex {
-    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return NSZeroRect;
-
-    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
-    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
-    CGFloat documentWidth = MAX(NSWidth(self.bounds), [self widestPage] + pageMargin);
-    SPDFRenderedPage* page = self.pages[(NSUInteger)pageIndex];
-    NSSize pageSize = [self viewSizeForPage:page];
-    CGFloat y = pageMargin / 2.0;
-    for (NSInteger i = 0; i < pageIndex; ++i) y += [self viewSizeForPage:self.pages[(NSUInteger)i]].height + pageGap;
-    CGFloat x = floor((documentWidth - pageSize.width) / 2.0);
-    CGFloat minX = pageSize.width >= documentWidth - 0.5 ? 0.0 : pageMargin / 2.0;
-    return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), [self pixelSnappedOrigin:y], pageSize.width,
-                      pageSize.height);
+    [self ensureLayoutCache];
+    if (pageIndex < 0 || pageIndex >= (NSInteger)_layoutSinglePageSlots.count) return NSZeroRect;
+    return [_layoutSinglePageSlots[(NSUInteger)pageIndex] rectValue];
 }
 
 - (NSInteger)boundedPageIndex:(NSInteger)pageIndex {
@@ -143,7 +260,14 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 }
 
 - (NSSize)singlePageDocumentSizeForClipSize:(NSSize)clipSize page:(SPDFRenderedPage*)page {
-    NSSize pageSize = [self viewSizeForPage:page];
+    NSSize pageSize = NSZeroSize;
+    if (page) {
+        NSInteger pageIndex = page.pageIndex;
+        if (pageIndex >= 0 && pageIndex < (NSInteger)self.pages.count && self.pages[(NSUInteger)pageIndex] == page)
+            pageSize = [self cachedViewSizeForPageAtIndex:pageIndex];
+        else
+            pageSize = [self viewSizeForPage:page];
+    }
     CGFloat width = pageSize.width >= clipSize.width - 0.5 ? MAX(clipSize.width, pageSize.width)
                                                            : MAX(clipSize.width, pageSize.width + kPageMargin);
     CGFloat height = self.pages.count > 1 ? [self continuousDocumentHeight] : pageSize.height + kPageMargin;
@@ -153,7 +277,6 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize {
     CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
-    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
     CGFloat widestPage = [self widestPage];
     CGFloat width = widestPage >= clipSize.width - 0.5 ? MAX(clipSize.width, widestPage)
                                                        : MAX(clipSize.width, widestPage + pageMargin);
@@ -168,12 +291,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
         NSInteger pageIndex = [self boundedPageIndex:self.currentPageIndex];
         return [self singlePageDocumentSizeForClipSize:clipSize page:self.pages[(NSUInteger)pageIndex]];
     } else {
-        height = pageMargin / 2.0;
-        for (SPDFRenderedPage* page in self.pages) {
-            CGFloat pageHeight = [self viewSizeForPage:page].height;
-            height += pageHeight + pageGap;
-        }
-        height += pageMargin / 2.0;
+        height = [self continuousDocumentHeight];
     }
 
     return NSMakeSize(width, MAX(height, clipSize.height));
@@ -181,33 +299,22 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
 - (NSRect)rectForPageAtIndex:(NSInteger)pageIndex {
     if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return NSZeroRect;
+    if (self.viewMode != SPDFViewModeSingle) return [self continuousRectForPageAtIndex:pageIndex];
 
     CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
-    SPDFRenderedPage* page = self.pages[(NSUInteger)pageIndex];
-    NSSize pageSize = [self viewSizeForPage:page];
+    NSSize pageSize = [self cachedViewSizeForPageAtIndex:pageIndex];
     CGFloat width = pageSize.width;
     CGFloat height = pageSize.height;
     CGFloat viewportWidth = [self viewportWidth];
     CGFloat x = floor((viewportWidth - width) / 2.0);
     CGFloat minX = width >= viewportWidth - 0.5 ? 0.0 : pageMargin / 2.0;
-    if (self.viewMode == SPDFViewModeSingle) {
-        NSClipView* clipView = self.enclosingScrollView.contentView;
-        NSRect visibleRect =
-            clipView ? clipView.bounds : NSMakeRect(0.0, 0.0, NSWidth(self.bounds), NSHeight(self.bounds));
-        CGFloat centeredY = NSMinY(visibleRect) + floor((NSHeight(visibleRect) - height) / 2.0);
-        CGFloat minY = self.presentationMode ? 0.0 : kPageMargin / 2.0;
-        if (self.pages.count > 1) minY = -CGFLOAT_MAX;
-        return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), MAX(minY, [self pixelSnappedOrigin:centeredY]), width,
-                          height);
-    }
-
-    CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
-    CGFloat y = pageMargin / 2.0;
-    for (NSInteger i = 0; i < pageIndex; ++i) {
-        SPDFRenderedPage* prev = self.pages[(NSUInteger)i];
-        y += [self viewSizeForPage:prev].height + pageGap;
-    }
-    return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), [self pixelSnappedOrigin:y], width, height);
+    NSClipView* clipView = self.enclosingScrollView.contentView;
+    NSRect visibleRect = clipView ? clipView.bounds : NSMakeRect(0.0, 0.0, NSWidth(self.bounds), NSHeight(self.bounds));
+    CGFloat centeredY = NSMinY(visibleRect) + floor((NSHeight(visibleRect) - height) / 2.0);
+    CGFloat minY = self.presentationMode ? 0.0 : kPageMargin / 2.0;
+    if (self.pages.count > 1) minY = -CGFLOAT_MAX;
+    return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), MAX(minY, [self pixelSnappedOrigin:centeredY]), width,
+                      height);
 }
 
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
