@@ -8,7 +8,7 @@ static const CGFloat kTabGap = 6.0;
 static const CGFloat kTabMinVisibleWidth = 112.0;
 static const CGFloat kTabMaxWidth = 320.0;
 static const CGFloat kTabControlWidth = 32.0;
-static NSPasteboardType const SPDFTabDragPasteboardType = @"org.shenzhenpdf.ShenzhenPDF.tab";
+static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzhenpdf.tab";
 
 static NSString* spdf_tab_strip_json_string_from_object(id object) {
     NSData* data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];

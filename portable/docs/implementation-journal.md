@@ -83,6 +83,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Status: Local user install completed; TestFlight signing is blocked by missing Apple assets.
    - Installed: `/Applications/ShenzhenPDF.app`.
    - Changed: removed the Mac document-type icon override so Finder/Quick Look can show PDF document previews instead of forcing the Shenzhen PDF app logo on every registered PDF/XPS/CBZ/EPUB file.
+   - Changed: set the canonical bundle/app id to `com.intuition.shenzhenpdf`, switched macOS defaults to date-style version `26.6.4-1`, updated TestFlight docs/scripts/package naming, removed the copyright line from the bundle metadata, and added About-panel publisher copy: "Shenzhen PDF is an Open Source app in the spirit of Sumatra PDF, created by Raphaël Casimir, published by Intuition R&T."
    - Gap: TestFlight readiness fails for missing Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, provisioning profile, and Transporter.
 
 12. Tab switching/loading should not reload every PDF on every tab change.
