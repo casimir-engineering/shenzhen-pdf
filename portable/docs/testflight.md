@@ -7,8 +7,7 @@ membership and can publish the macOS beta through App Store Connect.
 
 In Apple Developer and App Store Connect:
 
-1. Create an explicit macOS Bundle ID, for example
-   `com.example.shenzhenpdf`.
+1. Create an explicit macOS Bundle ID: `com.intuition.shenzhenpdf`.
 2. Create an App Store Connect macOS app record using that Bundle ID.
 3. Create a Mac App Store distribution provisioning profile for the Bundle ID.
 4. Install an Apple Distribution certificate in Keychain.
@@ -21,9 +20,9 @@ The Bundle ID in App Store Connect must match `MAC_BUNDLE_ID` exactly.
 From the repository root:
 
 ```sh
-MAC_BUNDLE_ID=com.example.shenzhenpdf \
-MAC_VERSION=0.5.0 \
-MAC_BUILD=6 \
+MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
+MAC_VERSION=26.6.4 \
+MAC_BUILD=1 \
 MAC_APPSTORE_IDENTITY="Apple Distribution: Friend Name (TEAMID1234)" \
 MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Friend Name (TEAMID1234)" \
 MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
@@ -33,7 +32,7 @@ MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile"
 The script creates:
 
 ```text
-dist/ShenzhenPDF-testflight-0.5.0-6.pkg
+dist/ShenzhenPDF-testflight-26.6.4-1.pkg
 ```
 
 To open the package in Apple's Transporter app automatically:

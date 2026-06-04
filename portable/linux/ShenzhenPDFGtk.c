@@ -9071,7 +9071,7 @@ int main(int argc, char** argv) {
     if (!state.detached_tab_launch && !has_startup_documents) load_session(&state);
     load_favorites(&state);
     GtkApplication* app = gtk_application_new(
-        "org.shenzhenpdf.ShenzhenPDF",
+        "com.intuition.shenzhenpdf",
         G_APPLICATION_HANDLES_OPEN |
             ((state.detached_tab_launch || state.restore_window_id) ? G_APPLICATION_NON_UNIQUE : 0));
     g_signal_connect(app, "activate", G_CALLBACK(activate), &state);

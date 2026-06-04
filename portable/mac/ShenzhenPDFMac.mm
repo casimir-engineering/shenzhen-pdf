@@ -883,7 +883,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSMenuItem* appItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
     [mainMenu addItem:appItem];
     NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"Shenzhen PDF"];
-    [appMenu addItemWithTitle:@"About Shenzhen PDF" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"About Shenzhen PDF" action:@selector(showAboutPanel:) keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit Shenzhen PDF" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
@@ -1103,6 +1103,36 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     helpItem.submenu = helpMenu;
 
     NSApp.mainMenu = mainMenu;
+}
+
+- (NSString*)displayVersion {
+    NSDictionary* info = NSBundle.mainBundle.infoDictionary;
+    NSString* version = info[@"CFBundleShortVersionString"];
+    NSString* build = info[(NSString*)kCFBundleVersionKey];
+    if (version.length == 0) version = @"26.6.4";
+    if (build.length == 0) build = @"1";
+    return [NSString stringWithFormat:@"%@-%@", version, build];
+}
+
+- (void)showAboutPanel:(id)sender {
+    (void)sender;
+    NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
+    style.alignment = NSTextAlignmentCenter;
+    style.lineSpacing = 4.0;
+    NSDictionary* attrs = @{
+        NSForegroundColorAttributeName : NSColor.labelColor,
+        NSFontAttributeName : [NSFont systemFontOfSize:12.0],
+        NSParagraphStyleAttributeName : style,
+    };
+    NSString* about = @"Shenzhen PDF is an Open Source app in the spirit of Sumatra PDF, created by Raphaël Casimir, "
+                       "published by Intuition R&T.";
+    NSAttributedString* credits = [[NSAttributedString alloc] initWithString:about attributes:attrs];
+    [NSApp orderFrontStandardAboutPanelWithOptions:@{
+        NSAboutPanelOptionApplicationName : @"Shenzhen PDF",
+        NSAboutPanelOptionApplicationVersion : [self displayVersion],
+        NSAboutPanelOptionVersion : @"",
+        NSAboutPanelOptionCredits : credits,
+    }];
 }
 
 - (NSButton*)buttonWithTitle:(NSString*)title action:(SEL)action {
@@ -9356,7 +9386,7 @@ int main(int argc, const char* argv[]) {
     @autoreleasepool {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 0.5\n");
+                printf("Shenzhen PDF portable mac 26.6.4-1\n");
                 return 0;
             }
         }
