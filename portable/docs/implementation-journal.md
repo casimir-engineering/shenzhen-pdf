@@ -116,6 +116,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: Mac empty space in the tab row explicitly drags the window again, while expanded tab/control hit zones keep tab reordering and drag-out from being mistaken for window drag.
    - Changed: Mac tab state now writes the latest normalized scroll origin before saving document state JSON.
    - Changed: Mac render queue concurrency now follows the earlier 60% CPU cap, and minimap-drag visible pages promote already-queued background operations instead of waiting behind older low-priority renders.
+   - Changed: Mac live zoom no longer runs a synchronous full-document render from the zoom-finish timer; it cancels stale queued page/minimap work when a zoom gesture starts, prevents old-zoom render operations from applying after the zoom changes, suppresses full minimap rebuilds while live zoom is active, and queues visible pages once zoom settles. The user validated that this fixed the reported quick zoom-in then zoom-out input-loss regression.
    - Changed: Linux `attach_document_to_view` always schedules the existing deferred sidebar metadata load instead of synchronously loading outline/comments before tab-switch paint.
    - TODO: investigate rare Mac tab switches where restored document position appears influenced by the previous tab's viewport even after the scroll-origin save-order fix.
    - Gap: next performance round should move Mac and Linux first-page rastering off the launch/tab-switch foreground path and build exact long-document geometry lazily.

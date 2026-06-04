@@ -46,6 +46,8 @@ static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
 static const NSTimeInterval kDocumentPanLiveCropRenderInterval = 0.05;
+static const NSTimeInterval kLiveZoomFinishDelay = 0.28;
+static const NSTimeInterval kLiveZoomStateSaveDelay = 0.20;
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
 #define SPDF_MAC_TRANSLATION_CORE_READY 0
@@ -1977,7 +1979,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                 [self->_queuedRenderPages removeObject:number];
                 [self->_queuedRenderOperations removeObjectForKey:number];
                 if (generation != self->_renderGeneration || !self->_doc ||
-                    index >= (NSInteger)self->_renderedPages.count)
+                    index >= (NSInteger)self->_renderedPages.count || fabs(zoom - self->_zoom) > 0.001 ||
+                    fabs(displayScale - [self backingScale]) > 0.001)
                     return;
                 SPDFRenderedPage* old = self->_renderedPages[(NSUInteger)index];
                 page.highlights = self->_findHighlights[@(index)] ?: old.highlights ?: @[];
@@ -3003,6 +3006,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)updateMinimap {
     if (!_minimapView) return;
+    if (_liveZooming) {
+        [_minimapView setNeedsDisplay:YES];
+        return;
+    }
     NSMutableArray<NSValue*>* pageRects = [NSMutableArray arrayWithCapacity:_renderedPages.count];
     for (SPDFRenderedPage* page in _renderedPages ?: @[])
         [pageRects addObject:[NSValue valueWithRect:[self continuousDocumentRectForPageAtIndex:page.pageIndex]]];
@@ -4021,7 +4028,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self syncToolbarState];
     [self updateControls];
     [_pageView setNeedsDisplay:YES];
-    [self updateMinimap];
 }
 
 - (void)renderDocumentPreservingScrollPosition {
@@ -4032,25 +4038,45 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (void)finishLiveZoom:(NSTimer*)timer {
-    (void)timer;
+    NSUInteger sequence = [timer.userInfo unsignedIntegerValue];
     _zoomFinishTimer = nil;
+    if (sequence != _liveZoomSequence) return;
     _liveZooming = NO;
     if (_doc) {
-        [self renderDocumentPreservingScrollPosition];
-        [self persistActiveState];
+        [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
+        [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
+        [_pageView setNeedsDisplay:YES];
+        [self updateMinimap];
+        [self rememberActiveTabState];
+        NSString* path = [_path copy];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLiveZoomStateSaveDelay * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+                         if (sequence != self->_liveZoomSequence || self->_liveZooming || !self->_doc ||
+                             ![self->_path isEqualToString:path])
+                             return;
+                         [self savePersistentState];
+                       });
     }
 }
 
 - (void)beginLiveZoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint {
     if (!_doc || factor <= 0) return;
     _fitMode = SPDFFitModeCustom;
+    if (!_liveZooming) {
+        [_renderQueue cancelAllOperations];
+        [_minimapQueue cancelAllOperations];
+        [_queuedRenderPages removeAllObjects];
+        [_queuedRenderOperations removeAllObjects];
+        [_queuedMinimapThumbnailPages removeAllObjects];
+    }
     _liveZooming = YES;
+    _liveZoomSequence++;
     [_zoomFinishTimer invalidate];
     [self setZoomWithoutRendering:_zoom * factor centeredAtWindowPoint:windowPoint];
-    _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:0.18
+    _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:kLiveZoomFinishDelay
                                                         target:self
                                                       selector:@selector(finishLiveZoom:)
-                                                      userInfo:nil
+                                                      userInfo:@(_liveZoomSequence)
                                                        repeats:NO];
 }
 
