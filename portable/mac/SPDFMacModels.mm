@@ -121,7 +121,10 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     if (item[@"fitMode"]) tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
     tab.viewMode = (SPDFViewMode)MAX(0, MIN(1, [item[@"viewMode"] integerValue]));
     tab.scrollOrigin = NSMakePoint([item[@"scrollX"] doubleValue], [item[@"scrollY"] doubleValue]);
-    tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue] || item[@"scrollX"] != nil || item[@"scrollY"] != nil;
+    if (item[@"hasScrollOrigin"] != nil)
+        tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue];
+    else
+        tab.hasScrollOrigin = item[@"scrollX"] != nil || item[@"scrollY"] != nil;
     if ([item[@"searchText"] isKindOfClass:NSString.class]) tab.searchText = item[@"searchText"];
     tab.searchRegex = [item[@"searchRegex"] boolValue];
     tab.searchRegexMultiline = item[@"searchRegexMultiline"] ? [item[@"searchRegexMultiline"] boolValue] : YES;

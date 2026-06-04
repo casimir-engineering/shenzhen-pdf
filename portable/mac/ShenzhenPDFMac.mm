@@ -4130,7 +4130,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self rebuildSidebar];
     _suppressViewportRerender = previousSuppressViewportRerender;
     [self updateTabStrip];
-    [self savePersistentState];
 
     NSClipView* clipView = _pageScrollView.contentView;
     BOOL previousPostsBoundsChangedNotifications = clipView.postsBoundsChangedNotifications;
@@ -4175,6 +4174,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                     restoreSearch:_searchField.stringValue.length > 0
                               preferredRenderPage:_pageIndex];
     [self clearToolbarFieldFocusForTabSwitch];
+    [self savePersistentState];
 }
 
 - (void)loadSelectedTab {
@@ -4246,12 +4246,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     else if (_pageScrollView.verticalScroller != _markerScroller)
         _pageScrollView.verticalScroller = _markerScroller;
     _pageScrollView.hasVerticalScroller = !_presentationMode;
+    BOOL previousSuppressViewportRerender = _suppressViewportRerender;
+    _suppressViewportRerender = YES;
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
     tab.title = spdf_display_name_for_path(_path);
 
     [self rebuildSidebar];
     [self updateTabStrip];
-    [self savePersistentState];
+    _suppressViewportRerender = previousSuppressViewportRerender;
     NSValue* restoreOrigin = tab.hasScrollOrigin ? [NSValue valueWithPoint:tab.scrollOrigin] : nil;
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES restoreOrigin:restoreOrigin];
     NSUInteger layoutGeneration = _renderGeneration;
@@ -4279,6 +4281,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                     restoreSearch:_searchField.stringValue.length > 0
                               preferredRenderPage:_pageIndex];
     [self clearToolbarFieldFocusForTabSwitch];
+    [self savePersistentState];
 }
 
 - (void)closeDocument:(id)sender {
@@ -5476,6 +5479,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)cancelDocumentTransientInteraction {
     _documentViewPanActive = NO;
     _lastDocumentPanLiveCropRenderTime = 0.0;
+    [_zoomFinishTimer invalidate];
+    _zoomFinishTimer = nil;
+    _liveZoomSequence++;
+    _liveZooming = NO;
     [_pageView cancelTransientInteraction];
 }
 
