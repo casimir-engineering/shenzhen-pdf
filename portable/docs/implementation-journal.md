@@ -48,7 +48,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: restored the Mac toolbar zoom popup's dynamic custom-zoom row: a remembered non-100% zoom appears above the fixed 100% row and remains available after choosing Fit Page, Fit Width, or Fit Height.
    - Changed: added a Mac tab right-click menu with Show in Folder and Copy; Copy places the tab's file URL on the pasteboard so Finder-style paste copies the PDF file.
    - Tested: rebuilt and installed `/Applications/ShenzhenPDF.app`; user confirmed the custom zoom popup behavior works in the installed app.
-   - Changed: stopped the Mac minimap from queuing high-priority full-resolution page renders for minimap-visible placeholders; the minimap now reuses pages already rendered for the document view and otherwise keeps placeholders instead of making document-open feel like every page is loading.
+   - Changed: stopped the Mac minimap from queuing high-priority full-resolution page renders for minimap-visible placeholders; the minimap now reuses document-view pages when available and fills visible map pages through a separate low-resolution utility thumbnail queue, so the right rail does not stay as blank placeholders and does not block main-page rendering.
    - Changed: routed right-click tab events through the custom titlebar event bridge so the tab context menu appears reliably in the titlebar tab strip.
    - Tested: rebuilt and installed `/Applications/ShenzhenPDF.app`; confirmed there is still exactly one ShenzhenPDF app in `/Applications`; built the Linux GTK target successfully and verified GTK minimap already uses placeholder drawing rather than minimap-triggered full-size renders.
 
@@ -92,6 +92,20 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: Linux parks/restores per-tab documents with mtime/size validation so tab selection does not reopen the document when unchanged.
    - Gap: manual stress QA is still needed on many-tab sessions and on Windows because this macOS machine cannot run the Windows app.
 
+13. First launch should feel instant, and tab hover titles must not stick.
+   - Status: First low-risk optimization round implemented for Mac and Linux; deeper async first-page rendering remains future work.
+   - Plan: paint the Mac window shell before document/session restore, coalesce state writes during startup/open bursts, avoid activating helper restore windows, hide tab hover panels from lifecycle paths that can bypass mouse tracking, and defer Linux sidebar metadata scans out of the attach path.
+   - Changed: Mac startup document/session work now runs one main-queue turn after the window is ordered, so the shell can paint before MuPDF open/render starts.
+   - Changed: Mac `openPaths` and startup restore batch persistent-state saves, collapsing repeated synchronous JSON/session writes into one final write.
+   - Changed: Mac restored helper windows no longer force app activation on launch.
+   - Changed: Mac tab hover panels are dismissed when the tab strip is hidden/detached, app/window focus changes, the window resizes/miniaturizes/fullscreens, presentation chrome hides tabs, or tab-strip events become window chrome actions.
+   - Changed: Mac minimap thumbnails now render on a separate utility queue so launch/tab-switch visible-page renders are not blocked by the map filling itself.
+   - Changed: Mac long-document minimap dragging now explicitly queues high-priority renders for the pages visible in the main viewport while the mouse is still down, forces a tracking-loop repaint, and draws available minimap thumbnails as temporary page previews until full-resolution renders arrive.
+   - Changed: Mac now estimates full rendered-page memory at the current zoom; cheap views such as HRO at 37% Retina (~2.08 MB/page, ~244 MB total) and Bear at 37% Retina (~1.08 MB/page, ~38 MB total) pre-render and keep the whole document warm, while expensive zooms such as HRO at 100% Retina (~15.2 MB/page, ~1.78 GB total) keep the bounded cache.
+   - Changed: Mac render queue concurrency now follows the earlier 60% CPU cap, and minimap-drag visible pages promote already-queued background operations instead of waiting behind older low-priority renders.
+   - Changed: Linux `attach_document_to_view` always schedules the existing deferred sidebar metadata load instead of synchronously loading outline/comments before tab-switch paint.
+   - Gap: next performance round should move Mac and Linux first-page rastering off the launch/tab-switch foreground path and build exact long-document geometry lazily.
+
 ## Validation
 
 - Formatting: ran clang-format on touched C/C++/Linux files. Mac ObjC files required an explicit ObjC style because the repo `.clang-format` only declares `Language: Cpp`.
@@ -111,9 +125,11 @@ Scope: prompt-linked implementation journal for the current working tree. This r
 - Mac green-button fullscreen window movement fallback: rebuilt and installed `/Applications/ShenzhenPDF.app`, verified an app-owned Left Half command exits native fullscreen and applies a half-width frame, and the user confirmed the fullscreen shortcut path works.
 - Mac PDF vector printing smoke: built and installed `/Applications/ShenzhenPDF.app`, verified the installed binary links PDFKit, and ran a PDFKit print-to-PDF smoke on Bear Sunny that produced 35 pages with font/text operators (`fonts=146`, `text_ops=3721`) rather than a purely raster page image.
 - Mac app uniqueness: after install and smoke, `find` and Spotlight metadata both report only `/Applications/ShenzhenPDF.app` for the ShenzhenPDF bundle id/name.
+- Mac launch-performance/hover round: rebuilt and installed `/Applications/ShenzhenPDF.app`, verified codesign, checked `ShenzhenPDF --version`, launched the installed app with `/Users/raph/Downloads/Bear Sunny Technologies Inc for Blackstar.pdf`, verified the process started, then quit cleanly.
 - Mac session JSON cleanup: moved current state files to `~/Library/Application Support/ShenzhenPDF/backup-20260603-110422-finder-final` before the latest Finder-style session tests.
 - Mac additive Finder-open correction: moved current state files to `~/Library/Application Support/ShenzhenPDF/backup-20260603-122509-additive-final`, verified cold Finder-open restores Bear plus adds/selects the clicked PDF, corrupt clicked PDF preserves Bear only, already-running Finder-open adds/selects, and the installed `/Applications/ShenzhenPDF.app` passes the Bear-plus-clicked-PDF case.
 - Linux syntax: `cc -Icore -I../mupdf/include $(pkg-config --cflags gtk+-3.0) -fsyntax-only linux/ShenzhenPDFGtkDisplay.c linux/ShenzhenPDFGtk.c` passed.
 - Linux build: `make -C portable linux` passed.
+- Linux launch-performance round: `portable/build/ShenzhenPDF-gtk --version` returned `Shenzhen PDF portable gtk 0.5` after the deferred-sidebar metadata change.
 - Windows build: `bun ./cmd/build.ts` failed on this macOS machine because Visual Studio 2026 `msbuild.exe` is not available in PATH.
 - TestFlight readiness: `portable/check-testflight-ready.sh` reports build tools and OpenSSL OK, but Apple signing/provisioning/Transporter are missing.

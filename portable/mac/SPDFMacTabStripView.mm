@@ -21,6 +21,10 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     return [object isKindOfClass:NSDictionary.class] ? object : nil;
 }
 
+@interface SPDFTabStripView ()
+- (void)hideHoverPanel;
+@end
+
 @implementation SPDFTabStripView {
     NSTrackingArea* _trackingArea;
     NSPanel* _hoverPanel;
@@ -54,7 +58,12 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (void)dealloc {
-    [_hoverPanel orderOut:nil];
+    [self hideHoverPanel];
+}
+
+- (void)viewWillMoveToWindow:(NSWindow*)newWindow {
+    if (!newWindow) [self hideHoverPanel];
+    [super viewWillMoveToWindow:newWindow];
 }
 
 - (BOOL)isFlipped {
@@ -68,6 +77,11 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 
 - (BOOL)mouseDownCanMoveWindow {
     return NO;
+}
+
+- (void)setHidden:(BOOL)hidden {
+    if (hidden) [self hideHoverPanel];
+    [super setHidden:hidden];
 }
 
 - (CGFloat)tabWidth {
@@ -207,7 +221,13 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 
 - (void)hideHoverPanel {
     _hoverTabIndex = -1;
+    _hasLastHoverPoint = NO;
+    if (_hoverPanel.parentWindow) [_hoverPanel.parentWindow removeChildWindow:_hoverPanel];
     [_hoverPanel orderOut:nil];
+}
+
+- (void)dismissHoverPanel {
+    [self hideHoverPanel];
 }
 
 - (void)updateHoverForPoint:(NSPoint)point {
@@ -715,6 +735,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     NSInteger tabIndex = [self tabIndexAtPoint:point];
     if (tabIndex < 0) {
+        [self hideHoverPanel];
         [super rightMouseDown:event];
         return;
     }
