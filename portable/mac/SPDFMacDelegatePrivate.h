@@ -149,6 +149,7 @@
     NSInteger _selectedTabIndex;
     NSUInteger _renderGeneration;
     NSTimer* _zoomFinishTimer;
+    NSUInteger _liveZoomSequence;
     BOOL _uiReady;
     BOOL _updatingSelection;
     BOOL _updatingFromScroll;
