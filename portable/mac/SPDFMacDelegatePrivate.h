@@ -320,6 +320,13 @@
                                                    preferredPage:(NSInteger*)preferredPageOut;
 - (void)queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:(BOOL)forceHighPriority;
 - (void)syncCurrentPageFromVisibleViewportQueueRenders:(BOOL)queueRenders forceHighPriority:(BOOL)forceHighPriority;
+- (CGFloat)renderDisplayScaleForPageWidth:(CGFloat)pageWidth
+                               pageHeight:(CGFloat)pageHeight
+                                     zoom:(CGFloat)zoom
+                             displayScale:(CGFloat)displayScale;
+- (BOOL)fullPageRenderAllowedForPage:(SPDFRenderedPage*)page zoom:(CGFloat)zoom displayScale:(CGFloat)displayScale;
+- (NSRect)visiblePageCropRectForPageIndex:(NSInteger)pageIndex extraViewMargin:(CGFloat)extraViewMargin;
+- (void)renderVisiblePageCropsForCurrentViewportIfNeeded;
 - (NSUInteger)estimatedRenderedImageByteCostForPage:(SPDFRenderedPage*)page
                                                zoom:(CGFloat)zoom
                                        displayScale:(CGFloat)displayScale;

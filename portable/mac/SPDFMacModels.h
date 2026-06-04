@@ -32,6 +32,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) CGFloat minimapImageZoom;
 @property(nonatomic) CGFloat minimapImageScale;
 @property(nonatomic, strong) NSImage* minimapImage;
+@property(nonatomic) NSRect viewportImagePageRect;
+@property(nonatomic) CGFloat viewportImageZoom;
+@property(nonatomic) CGFloat viewportImageScale;
+@property(nonatomic, strong) NSImage* viewportImage;
 @property(nonatomic, copy) NSArray<NSValue*>* highlights;
 @property(nonatomic, copy) NSArray<NSValue*>* selectionRects;
 @end

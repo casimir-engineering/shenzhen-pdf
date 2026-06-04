@@ -97,6 +97,8 @@ const char* spdf_title(spdf_document* doc);
 int spdf_page_size(spdf_document* doc, int page_index, float* width, float* height, char* err, size_t err_len);
 
 int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_bitmap* out, char* err, size_t err_len);
+int spdf_render_page_region_rgba(spdf_document* doc, int page_index, float zoom, spdf_rect region, spdf_bitmap* out,
+                                 char* err, size_t err_len);
 void spdf_free_bitmap(spdf_bitmap* bitmap);
 
 int spdf_search_page(spdf_document* doc, int page_index, const char* needle, char* err, size_t err_len);

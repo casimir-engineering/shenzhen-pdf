@@ -40,6 +40,8 @@ static const NSInteger kRecentDocumentLimit = 10;
 static const NSInteger kRenderedImageKeepRadius = 12;
 static const NSUInteger kRenderedImageKeepAllTotalByteLimit = (NSUInteger)512 * 1024 * 1024;
 static const NSUInteger kRenderedImageKeepAllPerPageByteLimit = (NSUInteger)(2.5 * 1024 * 1024);
+static const CGFloat kMaxRenderedPageBitmapDimension = 32760.0;
+static const NSUInteger kMaxRenderedPageBitmapByteLimit = (NSUInteger)512 * 1024 * 1024;
 static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
@@ -358,8 +360,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self restoreSidebarWidth];
     if (_doc && (_fitMode == SPDFFitModeWidth || _fitMode == SPDFFitModeHeight || _fitMode == SPDFFitModePage))
         [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
-    else
+    else {
         [self resizeDocumentView];
+        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+        [_pageView setNeedsDisplay:YES];
+    }
     [self savePersistentState];
 }
 
@@ -1678,8 +1683,20 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     float pageHeight = 0;
     if (!spdf_page_size(doc, (int)pageIndex, &pageWidth, &pageHeight, err, errLen)) return nil;
 
+    displayScale = displayScale > 0 ? displayScale : 1.0;
+    CGFloat requestedDisplayScale = displayScale;
+    CGFloat renderDisplayScale = [self renderDisplayScaleForPageWidth:pageWidth
+                                                           pageHeight:pageHeight
+                                                                 zoom:zoom
+                                                         displayScale:requestedDisplayScale];
+    if (renderDisplayScale <= 0.0) {
+        if (err && errLen > 0) snprintf(err, errLen, "%s", "Rendered page would be too large.");
+        return nil;
+    }
+
     spdf_bitmap bitmap;
-    if (!spdf_render_page_rgba(doc, (int)pageIndex, (float)(zoom * displayScale), &bitmap, err, errLen)) return nil;
+    if (!spdf_render_page_rgba(doc, (int)pageIndex, (float)(zoom * renderDisplayScale), &bitmap, err, errLen))
+        return nil;
 
     NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
                                                                     pixelsWide:bitmap.width
@@ -1698,8 +1715,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     memcpy(rep.bitmapData, bitmap.rgba, (size_t)bitmap.stride * (size_t)bitmap.height);
 
-    displayScale = displayScale > 0 ? displayScale : 1.0;
-    NSSize pointSize = NSMakeSize((CGFloat)bitmap.width / displayScale, (CGFloat)bitmap.height / displayScale);
+    NSSize pointSize = NSMakeSize((CGFloat)pageWidth * zoom, (CGFloat)pageHeight * zoom);
+    if (!isfinite(pointSize.width) || !isfinite(pointSize.height) || pointSize.width <= 0.0 || pointSize.height <= 0.0)
+        pointSize = NSMakeSize((CGFloat)bitmap.width / MAX(0.01, renderDisplayScale),
+                               (CGFloat)bitmap.height / MAX(0.01, renderDisplayScale));
     rep.size = pointSize;
     NSImage* image = [[NSImage alloc] initWithSize:pointSize];
     if (!image) {
@@ -1717,11 +1736,58 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     page.imagePointWidth = pointSize.width;
     page.imagePointHeight = pointSize.height;
     page.imageZoom = zoom;
-    page.imageScale = displayScale;
+    page.imageScale = requestedDisplayScale;
     page.image = image;
     page.highlights = @[];
     page.selectionRects = @[];
     return page;
+}
+
+- (NSImage*)renderedPageCropImageAtIndex:(NSInteger)pageIndex
+                                document:(spdf_document*)doc
+                                    zoom:(CGFloat)zoom
+                            displayScale:(CGFloat)displayScale
+                            pageCropRect:(NSRect)pageCropRect
+                                   error:(char*)err
+                             errorLength:(size_t)errLen {
+    if (NSIsEmptyRect(pageCropRect)) return nil;
+    spdf_rect crop;
+    crop.x0 = (float)NSMinX(pageCropRect);
+    crop.y0 = (float)NSMinY(pageCropRect);
+    crop.x1 = (float)NSMaxX(pageCropRect);
+    crop.y1 = (float)NSMaxY(pageCropRect);
+
+    spdf_bitmap bitmap;
+    if (!spdf_render_page_region_rgba(doc, (int)pageIndex, (float)(zoom * displayScale), crop, &bitmap, err, errLen))
+        return nil;
+
+    NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                                                    pixelsWide:bitmap.width
+                                                                    pixelsHigh:bitmap.height
+                                                                 bitsPerSample:8
+                                                               samplesPerPixel:4
+                                                                      hasAlpha:YES
+                                                                      isPlanar:NO
+                                                                colorSpaceName:NSDeviceRGBColorSpace
+                                                                   bytesPerRow:bitmap.stride
+                                                                  bitsPerPixel:32];
+    if (!rep || !rep.bitmapData) {
+        spdf_free_bitmap(&bitmap);
+        if (err && errLen > 0) snprintf(err, errLen, "%s", "Could not allocate page crop bitmap.");
+        return nil;
+    }
+    memcpy(rep.bitmapData, bitmap.rgba, (size_t)bitmap.stride * (size_t)bitmap.height);
+    spdf_free_bitmap(&bitmap);
+
+    NSSize pointSize = NSMakeSize(NSWidth(pageCropRect) * zoom, NSHeight(pageCropRect) * zoom);
+    rep.size = pointSize;
+    NSImage* image = [[NSImage alloc] initWithSize:pointSize];
+    if (!image) {
+        if (err && errLen > 0) snprintf(err, errLen, "%s", "Could not allocate page crop image.");
+        return nil;
+    }
+    [image addRepresentation:rep];
+    return image;
 }
 
 - (SPDFRenderedPage*)renderedPageAtIndex:(NSInteger)pageIndex error:(char*)err errorLength:(size_t)errLen {
@@ -1848,8 +1914,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     for (NSNumber* number in pageIndexes) {
         NSInteger index = number.integerValue;
         if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
-        if ([self renderedPageImage:_renderedPages[(NSUInteger)index] matchesZoom:zoom displayScale:displayScale])
-            continue;
+        SPDFRenderedPage* existing = _renderedPages[(NSUInteger)index];
+        if ([self renderedPageImage:existing matchesZoom:zoom displayScale:displayScale]) continue;
+        if (![self fullPageRenderAllowedForPage:existing zoom:zoom displayScale:displayScale]) continue;
         NSOperation* queuedOperation = _queuedRenderOperations[number];
         if (queuedOperation) {
             if (forceHighPriority) {
@@ -2063,7 +2130,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)renderPageIfNeededAtIndex:(NSInteger)pageIndex {
     if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return;
     SPDFRenderedPage* existing = _renderedPages[(NSUInteger)pageIndex];
-    if ([self renderedPageImage:existing matchesZoom:_zoom displayScale:[self backingScale]]) return;
+    CGFloat displayScale = [self backingScale];
+    if ([self renderedPageImage:existing matchesZoom:_zoom displayScale:displayScale]) return;
+    if (![self fullPageRenderAllowedForPage:existing zoom:_zoom displayScale:displayScale]) {
+        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+        [_pageView setNeedsDisplayInRect:[_pageView rectForPageAtIndex:pageIndex]];
+        [self updateMinimap];
+        [self evictDistantRenderedPageImages];
+        return;
+    }
 
     char err[1024];
     SPDFRenderedPage* page = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
@@ -2081,10 +2156,137 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self evictDistantRenderedPageImages];
 }
 
+- (CGFloat)renderDisplayScaleForPageWidth:(CGFloat)pageWidth
+                               pageHeight:(CGFloat)pageHeight
+                                     zoom:(CGFloat)zoom
+                             displayScale:(CGFloat)displayScale {
+    displayScale = displayScale > 0.0 ? displayScale : 1.0;
+    if (pageWidth <= 0.0 || pageHeight <= 0.0 || zoom <= 0.0) return 0.0;
+
+    double requestedEffectiveZoom = (double)zoom * (double)displayScale;
+    double scaledWidth = ceil((double)pageWidth * requestedEffectiveZoom) + 2.0;
+    double scaledHeight = ceil((double)pageHeight * requestedEffectiveZoom) + 2.0;
+    double bytes = scaledWidth * scaledHeight * 4.0;
+    if (!isfinite(scaledWidth) || !isfinite(scaledHeight) || !isfinite(bytes) ||
+        scaledWidth > (double)kMaxRenderedPageBitmapDimension ||
+        scaledHeight > (double)kMaxRenderedPageBitmapDimension || bytes > (double)kMaxRenderedPageBitmapByteLimit)
+        return 0.0;
+    return displayScale;
+}
+
+- (BOOL)fullPageRenderAllowedForPage:(SPDFRenderedPage*)page zoom:(CGFloat)zoom displayScale:(CGFloat)displayScale {
+    if (!page) return NO;
+    return [self renderDisplayScaleForPageWidth:page.pageWidth
+                                     pageHeight:page.pageHeight
+                                           zoom:zoom
+                                   displayScale:displayScale] > 0.0;
+}
+
+- (BOOL)viewportImage:(SPDFRenderedPage*)page
+    coversPageCropRect:(NSRect)cropRect
+                  zoom:(CGFloat)zoom
+          displayScale:(CGFloat)displayScale {
+    if (!page.viewportImage) return NO;
+    if (fabs(page.viewportImageZoom - zoom) > 0.001 || fabs(page.viewportImageScale - displayScale) > 0.001) return NO;
+    return NSContainsRect(NSInsetRect(page.viewportImagePageRect, -1.0, -1.0), cropRect);
+}
+
+- (NSRect)visiblePageCropRectForPageIndex:(NSInteger)pageIndex extraViewMargin:(CGFloat)extraViewMargin {
+    if (!_pageScrollView || !_pageView || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count)
+        return NSZeroRect;
+    SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
+    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
+    if (NSIsEmptyRect(pageRect)) return NSZeroRect;
+
+    NSRect visibleRect = _pageScrollView.contentView.bounds;
+    visibleRect = NSInsetRect(visibleRect, -MAX(0.0, extraViewMargin), -MAX(0.0, extraViewMargin));
+    NSRect intersection = NSIntersectionRect(visibleRect, pageRect);
+    if (NSIsEmptyRect(intersection)) return NSZeroRect;
+
+    CGFloat scaleX = page.pageWidth / MAX(1.0, NSWidth(pageRect));
+    CGFloat scaleY = page.pageHeight / MAX(1.0, NSHeight(pageRect));
+    NSRect crop = NSMakeRect((NSMinX(intersection) - NSMinX(pageRect)) * scaleX,
+                             (NSMinY(intersection) - NSMinY(pageRect)) * scaleY, NSWidth(intersection) * scaleX,
+                             NSHeight(intersection) * scaleY);
+    crop.origin.x = MAX(0.0, MIN(crop.origin.x, page.pageWidth));
+    crop.origin.y = MAX(0.0, MIN(crop.origin.y, page.pageHeight));
+    crop.size.width = MAX(0.0, MIN(NSWidth(crop), page.pageWidth - NSMinX(crop)));
+    crop.size.height = MAX(0.0, MIN(NSHeight(crop), page.pageHeight - NSMinY(crop)));
+    return crop;
+}
+
+- (NSRect)pixelSnappedPageCropRect:(NSRect)cropRect
+                              page:(SPDFRenderedPage*)page
+                              zoom:(CGFloat)zoom
+                      displayScale:(CGFloat)displayScale {
+    if (!page || NSIsEmptyRect(cropRect) || zoom <= 0.0 || displayScale <= 0.0) return NSZeroRect;
+    CGFloat renderScale = MAX(0.01, zoom * displayScale);
+    CGFloat x0 = floor(NSMinX(cropRect) * renderScale) / renderScale;
+    CGFloat y0 = floor(NSMinY(cropRect) * renderScale) / renderScale;
+    CGFloat x1 = ceil(NSMaxX(cropRect) * renderScale) / renderScale;
+    CGFloat y1 = ceil(NSMaxY(cropRect) * renderScale) / renderScale;
+    x0 = MAX(0.0, MIN(x0, page.pageWidth));
+    y0 = MAX(0.0, MIN(y0, page.pageHeight));
+    x1 = MAX(x0, MIN(x1, page.pageWidth));
+    y1 = MAX(y0, MIN(y1, page.pageHeight));
+    return NSMakeRect(x0, y0, x1 - x0, y1 - y0);
+}
+
+- (void)renderVisiblePageCropsForCurrentViewportIfNeeded {
+    if (!_doc || !_pageScrollView || !_pageView || _renderedPages.count == 0) return;
+    CGFloat displayScale = [self backingScale];
+    CGFloat margin =
+        MAX(NSWidth(_pageScrollView.contentView.bounds), NSHeight(_pageScrollView.contentView.bounds)) * 0.35;
+    NSInteger preferredPage = -1;
+    NSArray<NSNumber*>* pageIndexes = [self visibleDocumentPageIndexesWithExtraRadius:0 preferredPage:&preferredPage];
+    for (NSNumber* number in pageIndexes) {
+        NSInteger pageIndex = number.integerValue;
+        if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
+        if ([self renderedPageImage:page matchesZoom:_zoom displayScale:displayScale]) continue;
+        if ([self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:displayScale]) continue;
+
+        NSRect cropRect = [self visiblePageCropRectForPageIndex:pageIndex extraViewMargin:margin];
+        cropRect = [self pixelSnappedPageCropRect:cropRect page:page zoom:_zoom displayScale:displayScale];
+        if (NSIsEmptyRect(cropRect)) continue;
+        if ([self viewportImage:page coversPageCropRect:cropRect zoom:_zoom displayScale:displayScale]) continue;
+
+        char err[512];
+        NSImage* image = [self renderedPageCropImageAtIndex:pageIndex
+                                                   document:_doc
+                                                       zoom:_zoom
+                                               displayScale:displayScale
+                                               pageCropRect:cropRect
+                                                      error:err
+                                                errorLength:sizeof(err)];
+        if (!image) {
+            _statusLabel.stringValue =
+                [NSString stringWithFormat:@"Could not render page crop %ld", (long)pageIndex + 1];
+            continue;
+        }
+        page.viewportImage = image;
+        page.viewportImagePageRect = cropRect;
+        page.viewportImageZoom = _zoom;
+        page.viewportImageScale = displayScale;
+        [_pageView setNeedsDisplayInRect:[_pageView rectForPageAtIndex:pageIndex]];
+    }
+}
+
 - (NSUInteger)renderedImageByteCost:(SPDFRenderedPage*)page {
     if (!page.image || page.imagePointWidth <= 0.0 || page.imagePointHeight <= 0.0) return 0;
     CGFloat scale = page.imageScale > 0.0 ? page.imageScale : [self backingScale];
     double pixels = ceil(page.imagePointWidth * scale) * ceil(page.imagePointHeight * scale);
+    if (!isfinite(pixels) || pixels <= 0.0) return 0;
+    double bytes = pixels * 4.0;
+    if (bytes > (double)NSUIntegerMax) return NSUIntegerMax;
+    return (NSUInteger)bytes;
+}
+
+- (NSUInteger)renderedViewportImageByteCost:(SPDFRenderedPage*)page {
+    if (!page.viewportImage || NSIsEmptyRect(page.viewportImagePageRect) || page.viewportImageZoom <= 0.0) return 0;
+    CGFloat scale = page.viewportImageScale > 0.0 ? page.viewportImageScale : [self backingScale];
+    double pixels = ceil(NSWidth(page.viewportImagePageRect) * page.viewportImageZoom * scale) *
+                    ceil(NSHeight(page.viewportImagePageRect) * page.viewportImageZoom * scale);
     if (!isfinite(pixels) || pixels <= 0.0) return 0;
     double bytes = pixels * 4.0;
     if (bytes > (double)NSUIntegerMax) return NSUIntegerMax;
@@ -2135,7 +2337,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if ([self shouldKeepFullRenderedDocumentAtCurrentZoom]) return;
 
     NSUInteger totalBytes = 0;
-    for (SPDFRenderedPage* page in _renderedPages) totalBytes += [self renderedImageByteCost:page];
+    for (SPDFRenderedPage* page in _renderedPages)
+        totalBytes += [self renderedImageByteCost:page] + [self renderedViewportImageByteCost:page];
     if (totalBytes <= kRenderedImageSoftByteLimit) return;
 
     NSMutableSet<NSNumber*>* keep = [NSMutableSet set];
@@ -2154,7 +2357,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSNumber* indexNumber = @(i);
         if ([keep containsObject:indexNumber]) continue;
         SPDFRenderedPage* page = _renderedPages[(NSUInteger)i];
-        NSUInteger bytes = [self renderedImageByteCost:page];
+        NSUInteger bytes = [self renderedImageByteCost:page] + [self renderedViewportImageByteCost:page];
         if (bytes == 0) continue;
         NSInteger distance = labs(i - _pageIndex);
         [candidates addObject:@{@"index" : indexNumber, @"distance" : @(distance), @"bytes" : @(bytes)}];
@@ -2176,13 +2379,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSInteger index = [candidate[@"index"] integerValue];
         if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
         SPDFRenderedPage* page = _renderedPages[(NSUInteger)index];
-        NSUInteger bytes = [self renderedImageByteCost:page];
+        NSUInteger bytes = [self renderedImageByteCost:page] + [self renderedViewportImageByteCost:page];
         if (bytes == 0) continue;
         page.image = nil;
         page.imagePointWidth = 0.0;
         page.imagePointHeight = 0.0;
         page.imageZoom = 0.0;
         page.imageScale = 0.0;
+        page.viewportImage = nil;
+        page.viewportImagePageRect = NSZeroRect;
+        page.viewportImageZoom = 0.0;
+        page.viewportImageScale = 0.0;
         totalBytes = bytes > totalBytes ? 0 : totalBytes - bytes;
         evicted = YES;
     }
@@ -2218,8 +2425,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
     SPDFRenderedPage* preferredPage = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
     if (!preferredPage) {
-        [self showError:@"Could not render page" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
-        return;
+        _statusLabel.stringValue = strstr(err, "too large")
+                                       ? @""
+                                       : [NSString stringWithFormat:@"Could not render page %ld", (long)pageIndex + 1];
+        preferredPage = [self placeholderPageAtIndex:pageIndex document:_doc fallbackWidth:612.0 fallbackHeight:792.0];
     }
     for (NSInteger i = 0; i < pageCount; ++i) {
         SPDFRenderedPage* page = nil;
@@ -2231,8 +2440,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                   fallbackWidth:preferredPage.pageWidth
                                  fallbackHeight:preferredPage.pageHeight];
         if (!page) {
-            [self showError:@"Could not render page"
-                     detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+            _statusLabel.stringValue = [NSString stringWithFormat:@"Could not prepare page %ld", (long)i + 1];
             return;
         }
         [pages addObject:page];
@@ -2266,6 +2474,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         _pageView.currentPageIndex = _pageIndex;
         [self renderPageIfNeededAtIndex:_pageIndex];
     }
+    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
 
     [self syncToolbarState];
     [self updateControls];
@@ -2445,6 +2654,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
 
     [_pageView setNeedsDisplay:YES];
+    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];
     return YES;
@@ -2547,6 +2757,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
           } else {
               [self scrollToPage:self->_pageIndex alignTop:alignTop];
           }
+          [self renderVisiblePageCropsForCurrentViewportIfNeeded];
           [self->_pageView setNeedsDisplay:YES];
           [self->_pageScrollView displayIfNeeded];
         }
@@ -2848,11 +3059,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         _minimapPrecisionViewportDragActive = YES;
         [self scrollDocumentClipViewToDocumentOrigin:origin notify:NO];
         [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
+        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
         [_pageView setNeedsDisplay:YES];
         [_pageView displayIfNeeded];
         [self updateMinimap];
     } else {
         [self scrollDocumentClipViewToOrigin:origin pageIndexHint:pageIndex notify:YES];
+        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+        [_pageView setNeedsDisplay:YES];
         [self rememberActiveTabState];
     }
 }
@@ -4421,6 +4635,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _minimapWidthConstraint.constant = _minimapWidth;
     [_documentContainer layoutSubtreeIfNeeded];
     [self resizeDocumentView];
+    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
 }
 
@@ -4587,6 +4803,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     if (_minimapPrecisionViewportDragActive) {
         [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
+        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
         [_pageView setNeedsDisplay:YES];
         [_pageView displayIfNeeded];
         [self updateMinimap];
@@ -4612,6 +4829,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             [self selectCurrentSidebarRow];
         }
     }
+    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];
 }
@@ -4729,6 +4947,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         return;
     }
     [self resizeDocumentView];
+    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    [_pageView setNeedsDisplay:YES];
 }
 
 - (NSMenuItem*)fitModePopupItemForMode:(SPDFFitMode)mode {
@@ -5045,6 +5265,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (matchAlreadyVisible) origin.x = NSMinX(visibleRect);
     }
     [self scrollDocumentClipViewToOrigin:origin notify:NO];
+    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
 }
 
