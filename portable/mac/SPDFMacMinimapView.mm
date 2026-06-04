@@ -411,13 +411,14 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
         if (NSHeight(pageRect) >= 1.0 && NSIntersectsRect(pageRect, self.bounds)) {
             [[NSColor whiteColor] setFill];
             NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
-            if (drawImages && page.image && NSHeight(pageRect) >= 5.0) {
-                [page.image drawInRect:pageRect
-                              fromRect:NSZeroRect
-                             operation:NSCompositingOperationSourceOver
-                              fraction:1.0
-                        respectFlipped:YES
-                                 hints:@{NSImageHintInterpolation : @(NSImageInterpolationLow)}];
+            NSImage* image = page.image ?: page.minimapImage;
+            if (drawImages && image && NSHeight(pageRect) >= 5.0) {
+                [image drawInRect:pageRect
+                          fromRect:NSZeroRect
+                         operation:NSCompositingOperationSourceOver
+                          fraction:1.0
+                    respectFlipped:YES
+                             hints:@{NSImageHintInterpolation : @(NSImageInterpolationLow)}];
             } else {
                 [self drawPlaceholderInRect:pageRect];
             }

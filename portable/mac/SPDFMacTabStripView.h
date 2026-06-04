@@ -9,4 +9,5 @@
 @property(nonatomic) NSInteger selectedIndex;
 @property(nonatomic) CGFloat reservedLeadingInset;
 - (BOOL)containsTabOrControlAtPoint:(NSPoint)point;
+- (void)dismissHoverPanel;
 @end

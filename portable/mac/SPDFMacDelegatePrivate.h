@@ -98,9 +98,12 @@
     id _presentationEventMonitor;
     id _presentationGlobalEventMonitor;
     NSOperationQueue* _renderQueue;
+    NSOperationQueue* _minimapQueue;
     NSOperationQueue* _preloadQueue;
     NSOperationQueue* _findQueue;
     NSMutableSet<NSNumber*>* _queuedRenderPages;
+    NSMutableDictionary<NSNumber*, NSOperation*>* _queuedRenderOperations;
+    NSMutableSet<NSNumber*>* _queuedMinimapThumbnailPages;
     NSTimer* _findFlashTimer;
     NSTimeInterval _findFlashStartTime;
 
@@ -186,6 +189,8 @@
     BOOL _tabStripCapturingMouse;
     BOOL _terminateOnlyThisProcess;
     BOOL _suppressSessionWriteOnTerminate;
+    BOOL _suspendPersistentStateSaves;
+    BOOL _needsDeferredPersistentStateSave;
     BOOL _updatingSidebarFilterField;
     NSArray<NSDictionary*>* _pendingTranslationItems;
     BOOL _restoringSidebarLayout;
@@ -308,6 +313,18 @@
 - (void)writeSessionStateForCurrentWindow;
 - (void)removeSessionStateForCurrentWindow;
 - (void)savePersistentState;
+- (void)performStartupDocumentWork;
+- (void)performWithBatchedPersistentStateSaves:(void (^)(void))block;
+- (void)dismissTabHoverPanel;
+- (NSArray<NSNumber*>*)visibleDocumentPageIndexesWithExtraRadius:(NSInteger)radius
+                                                   preferredPage:(NSInteger*)preferredPageOut;
+- (void)queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:(BOOL)forceHighPriority;
+- (void)syncCurrentPageFromVisibleViewportQueueRenders:(BOOL)queueRenders forceHighPriority:(BOOL)forceHighPriority;
+- (NSUInteger)estimatedRenderedImageByteCostForPage:(SPDFRenderedPage*)page
+                                               zoom:(CGFloat)zoom
+                                       displayScale:(CGFloat)displayScale;
+- (BOOL)shouldKeepFullRenderedDocumentAtCurrentZoom;
+- (NSInteger)backgroundRenderBatchSizeForCurrentZoom;
 - (BOOL)canOpenDocumentAtPath:(NSString*)path showError:(BOOL)showError;
 - (NSArray<NSString*>*)openableDocumentPathsFromPaths:(NSArray<NSString*>*)paths showErrors:(BOOL)showErrors;
 - (BOOL)hasOtherShenzhenWindows;

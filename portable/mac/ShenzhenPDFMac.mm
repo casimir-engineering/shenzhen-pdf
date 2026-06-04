@@ -38,6 +38,8 @@ static const CGFloat kMinimapDividerWidth = 5.0;
 static const NSInteger kBackgroundRenderBatchSize = 8;
 static const NSInteger kRecentDocumentLimit = 10;
 static const NSInteger kRenderedImageKeepRadius = 12;
+static const NSUInteger kRenderedImageKeepAllTotalByteLimit = (NSUInteger)512 * 1024 * 1024;
+static const NSUInteger kRenderedImageKeepAllPerPageByteLimit = (NSUInteger)(2.5 * 1024 * 1024);
 static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
@@ -165,6 +167,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _showShortcutHelpOnLaunch = YES;
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
+    _suspendPersistentStateSaves = NO;
+    _needsDeferredPersistentStateSave = NO;
     _suppressViewportRerender = NO;
     _liveZooming = NO;
     _restoringSidebarLayout = NO;
@@ -194,6 +198,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _pendingOpenPaths = [NSMutableArray array];
     _pendingRestoreWindowIDs = [NSMutableArray array];
     _queuedRenderPages = [NSMutableSet set];
+    _queuedRenderOperations = [NSMutableDictionary dictionary];
+    _queuedMinimapThumbnailPages = [NSMutableSet set];
     _selectedTabIndex = -1;
     _windowSessionID = NSUUID.UUID.UUIDString;
     _pendingFindPreferredPage = -1;
@@ -202,8 +208,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSInteger cpuCount = MAX(2, NSProcessInfo.processInfo.activeProcessorCount);
     _renderQueue = [[NSOperationQueue alloc] init];
     _renderQueue.name = @"Shenzhen PDF page renderer";
-    _renderQueue.maxConcurrentOperationCount = MIN(2, cpuCount);
+    _renderQueue.maxConcurrentOperationCount = MAX(2, MIN(cpuCount, (NSInteger)ceil((double)cpuCount * 0.60)));
     _renderQueue.qualityOfService = NSQualityOfServiceUserInitiated;
+    _minimapQueue = [[NSOperationQueue alloc] init];
+    _minimapQueue.name = @"Shenzhen PDF minimap thumbnails";
+    _minimapQueue.maxConcurrentOperationCount = MAX(1, MIN(2, (NSInteger)floor((double)cpuCount * 0.25)));
+    _minimapQueue.qualityOfService = NSQualityOfServiceUtility;
     _preloadQueue = [[NSOperationQueue alloc] init];
     _preloadQueue.name = @"Shenzhen PDF tab preloader";
     _preloadQueue.maxConcurrentOperationCount = MAX(1, MIN(2, (NSInteger)floor((double)cpuCount * 0.60)));
@@ -221,18 +231,29 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self buildWindow];
     _uiReady = YES;
     [_window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
+    if (self.restoreWindowID.length == 0) [NSApp activateIgnoringOtherApps:YES];
     dispatch_async(dispatch_get_main_queue(), ^{
       self->_allowSidebarWidthPersistence = YES;
       [self restoreSidebarWidth];
     });
 
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self performWithBatchedPersistentStateSaves:^{
+        [self performStartupDocumentWork];
+      }];
+      if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0) [self showShortcutHelp:nil];
+    });
+}
+
+- (void)performStartupDocumentWork {
     NSMutableArray<NSString*>* startupPaths = [NSMutableArray array];
     if (_pendingOpenPath.length > 0) [startupPaths addObject:_pendingOpenPath];
     for (NSString* path in _pendingOpenPaths) {
         if (path.length > 0 && ![startupPaths containsObject:path]) [startupPaths addObject:path];
     }
     if (self.initialPath.length > 0) [startupPaths addObject:self.initialPath];
+    _pendingOpenPath = nil;
+    [_pendingOpenPaths removeAllObjects];
     if (startupPaths.count > 0) {
         NSArray<NSString*>* pathsToOpen = [self openableDocumentPathsFromPaths:startupPaths showErrors:YES];
         [self openPaths:pathsToOpen];
@@ -242,9 +263,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self showEmptyDocumentViewWithMessage:@"Open a document"];
     }
     [self spawnPendingRestoredWindowsIfNeeded];
-    dispatch_async(dispatch_get_main_queue(), ^{
-      if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0) [self showShortcutHelp:nil];
-    });
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
@@ -264,11 +282,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)applicationWillTerminate:(NSNotification*)notification {
     (void)notification;
+    [self dismissTabHoverPanel];
     [self removePresentationEventMonitor];
     [_translationInstallTask terminate];
     [_translationTask terminate];
     [_renderQueue cancelAllOperations];
+    [_minimapQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
+    [_queuedRenderOperations removeAllObjects];
+    [_queuedMinimapThumbnailPages removeAllObjects];
     [_preloadQueue cancelAllOperations];
     [_findQueue cancelAllOperations];
     [self rememberActiveTabState];
@@ -277,8 +299,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self closeActiveDocumentIfUnowned];
 }
 
+- (void)applicationDidResignActive:(NSNotification*)notification {
+    (void)notification;
+    [self dismissTabHoverPanel];
+}
+
 - (BOOL)windowShouldClose:(NSWindow*)sender {
     if (sender != _window) return YES;
+    [self dismissTabHoverPanel];
     [self rememberActiveTabState];
     BOOL hasOtherWindows = [self hasOtherShenzhenWindows];
     _terminateOnlyThisProcess = hasOtherWindows;
@@ -324,6 +352,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)windowDidResize:(NSNotification*)notification {
     (void)notification;
+    [self dismissTabHoverPanel];
     [self updateTabStripFrame];
     [self updateToolbarOverflow];
     [self restoreSidebarWidth];
@@ -336,14 +365,31 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)windowDidChangeBackingProperties:(NSNotification*)notification {
     (void)notification;
+    [self dismissTabHoverPanel];
     if (_doc)
         [self renderDocumentPreservingScrollPosition];
     else
         [self resizeDocumentView];
 }
 
+- (void)windowDidResignKey:(NSNotification*)notification {
+    (void)notification;
+    [self dismissTabHoverPanel];
+}
+
+- (void)windowWillMiniaturize:(NSNotification*)notification {
+    (void)notification;
+    [self dismissTabHoverPanel];
+}
+
+- (void)windowWillEnterFullScreen:(NSNotification*)notification {
+    (void)notification;
+    [self dismissTabHoverPanel];
+}
+
 - (void)windowDidEnterFullScreen:(NSNotification*)notification {
     (void)notification;
+    [self dismissTabHoverPanel];
     dispatch_async(dispatch_get_main_queue(), ^{
       [self updateTabStripFrame];
       if (self->_presentationMode && self->_doc) {
@@ -353,8 +399,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     });
 }
 
+- (void)windowWillExitFullScreen:(NSNotification*)notification {
+    (void)notification;
+    [self dismissTabHoverPanel];
+}
+
 - (void)windowDidExitFullScreen:(NSNotification*)notification {
     (void)notification;
+    [self dismissTabHoverPanel];
     if (_presentationMode && _presentationEnteredFullScreen)
         [self leavePresentationModeAndExitFullScreen:NO sender:nil];
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -707,6 +759,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [_window makeMainWindow];
 }
 
+- (void)dismissTabHoverPanel {
+    [_tabStrip dismissHoverPanel];
+}
+
 - (void)spawnPendingRestoredWindowsIfNeeded {
     if (self.detachedTabLaunch || self.restoreWindowID.length > 0 || _pendingRestoreWindowIDs.count == 0) return;
 
@@ -725,7 +781,24 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
 }
 
+- (void)performWithBatchedPersistentStateSaves:(void (^)(void))block {
+    if (!block) return;
+    BOOL wasSuspended = _suspendPersistentStateSaves;
+    _suspendPersistentStateSaves = YES;
+    block();
+    _suspendPersistentStateSaves = wasSuspended;
+    if (!wasSuspended && _needsDeferredPersistentStateSave) {
+        _needsDeferredPersistentStateSave = NO;
+        [self savePersistentState];
+    }
+}
+
 - (void)savePersistentState {
+    if (_suspendPersistentStateSaves) {
+        _needsDeferredPersistentStateSave = YES;
+        return;
+    }
+
     NSSize windowContentSize = _restoredWindowContentSize;
     if (_window && !_window.miniaturized && !_presentationMode && !(_window.styleMask & NSWindowStyleMaskFullScreen)) {
         windowContentSize = [_window contentRectForFrameRect:_window.frame].size;
@@ -1728,6 +1801,28 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return fabs(page.imageZoom - zoom) <= 0.001 && fabs(page.imageScale - displayScale) <= 0.001;
 }
 
+- (BOOL)minimapThumbnailImage:(SPDFRenderedPage*)page matchesZoom:(CGFloat)zoom displayScale:(CGFloat)displayScale {
+    if (!page.minimapImage) return NO;
+    return fabs(page.minimapImageZoom - zoom) <= 0.01 && fabs(page.minimapImageScale - displayScale) <= 0.01;
+}
+
+- (void)copyMinimapThumbnailFromPage:(SPDFRenderedPage*)source toPage:(SPDFRenderedPage*)destination {
+    if (!source || !destination) return;
+    destination.minimapImage = source.minimapImage;
+    destination.minimapImageZoom = source.minimapImageZoom;
+    destination.minimapImageScale = source.minimapImageScale;
+}
+
+- (CGFloat)minimapThumbnailZoom {
+    if (!_minimapView || _renderedPages.count == 0) return 0.0;
+    CGFloat widest = 0.0;
+    for (SPDFRenderedPage* page in _renderedPages) widest = MAX(widest, page.pageWidth);
+    if (widest <= 0.0) return 0.0;
+    CGFloat width = NSWidth(_minimapView.bounds);
+    if (width <= 16.0) width = _minimapWidth;
+    return MAX(0.01, MIN(0.5, (MAX(16.0, width) - 18.0) / widest));
+}
+
 - (void)scheduleNearbyPageRendersAfterFirstPaintForGeneration:(NSUInteger)generation
                                                 preferredPage:(NSInteger)preferredPage {
     NSString* path = [_path copy];
@@ -1755,7 +1850,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
         if ([self renderedPageImage:_renderedPages[(NSUInteger)index] matchesZoom:zoom displayScale:displayScale])
             continue;
-        if ([_queuedRenderPages containsObject:number]) continue;
+        NSOperation* queuedOperation = _queuedRenderOperations[number];
+        if (queuedOperation) {
+            if (forceHighPriority) {
+                queuedOperation.queuePriority = NSOperationQueuePriorityVeryHigh;
+                queuedOperation.qualityOfService = NSQualityOfServiceUserInitiated;
+            }
+            continue;
+        }
         [_queuedRenderPages addObject:number];
 
         NSInteger distance = labs(index - preferredPage);
@@ -1764,6 +1866,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
               if (generation != self->_renderGeneration) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedRenderPages removeObject:number];
+                    [self->_queuedRenderOperations removeObjectForKey:number];
                   }];
                   return;
               }
@@ -1772,6 +1875,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedRenderPages removeObject:number];
+                    [self->_queuedRenderOperations removeObjectForKey:number];
                   }];
                   return;
               }
@@ -1784,18 +1888,21 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
               if (!page) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedRenderPages removeObject:number];
+                    [self->_queuedRenderOperations removeObjectForKey:number];
                   }];
                   return;
               }
 
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                 [self->_queuedRenderPages removeObject:number];
+                [self->_queuedRenderOperations removeObjectForKey:number];
                 if (generation != self->_renderGeneration || !self->_doc ||
                     index >= (NSInteger)self->_renderedPages.count)
                     return;
                 SPDFRenderedPage* old = self->_renderedPages[(NSUInteger)index];
                 page.highlights = self->_findHighlights[@(index)] ?: old.highlights ?: @[];
                 page.selectionRects = old.selectionRects ?: @[];
+                [self copyMinimapThumbnailFromPage:old toPage:page];
                 BOOL geometryChanged =
                     fabs(old.pageWidth - page.pageWidth) > 0.01 || fabs(old.pageHeight - page.pageHeight) > 0.01;
                 [self->_renderedPages replaceObjectAtIndex:(NSUInteger)index withObject:page];
@@ -1814,6 +1921,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         }];
         operation.queuePriority =
             forceHighPriority ? NSOperationQueuePriorityVeryHigh : [self queuePriorityForRenderDistance:distance];
+        operation.qualityOfService = forceHighPriority ? NSQualityOfServiceUserInitiated : NSQualityOfServiceUtility;
+        _queuedRenderOperations[number] = operation;
         [_renderQueue addOperation:operation];
     }
 }
@@ -1821,11 +1930,134 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)enqueueNearbyPageRendersForGeneration:(NSUInteger)generation preferredPage:(NSInteger)preferredPage {
     NSArray<NSNumber*>* order = [self pageRenderOrderForCount:(NSInteger)_renderedPages.count
                                                 preferredPage:preferredPage
-                                                     maxPages:kBackgroundRenderBatchSize];
+                                                     maxPages:[self backgroundRenderBatchSizeForCurrentZoom]];
     [self enqueuePageRendersForGeneration:generation
                               pageIndexes:order
                             preferredPage:preferredPage
                         forceHighPriority:NO];
+}
+
+- (void)enqueueVisibleMinimapThumbnailRenders {
+    if (!_minimapVisible || !_doc || !_path.length || _renderedPages.count == 0 || _liveZooming) return;
+    NSArray<NSNumber*>* visiblePages = [_minimapView visiblePageIndexes];
+    if (visiblePages.count == 0) return;
+
+    NSString* path = [_path copy];
+    NSUInteger generation = _renderGeneration;
+    CGFloat thumbnailZoom = [self minimapThumbnailZoom];
+    CGFloat displayScale = [self backingScale];
+    if (thumbnailZoom <= 0.0 || displayScale <= 0.0) return;
+
+    for (NSNumber* number in visiblePages) {
+        NSInteger index = number.integerValue;
+        if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* existing = _renderedPages[(NSUInteger)index];
+        if ([self minimapThumbnailImage:existing matchesZoom:thumbnailZoom displayScale:displayScale]) continue;
+        if ([_queuedMinimapThumbnailPages containsObject:number]) continue;
+        [_queuedMinimapThumbnailPages addObject:number];
+
+        NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+          @autoreleasepool {
+              if (generation != self->_renderGeneration) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    [self->_queuedMinimapThumbnailPages removeObject:number];
+                  }];
+                  return;
+              }
+              char err[512];
+              spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+              if (!workerDoc) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    [self->_queuedMinimapThumbnailPages removeObject:number];
+                  }];
+                  return;
+              }
+              SPDFRenderedPage* thumbnailPage = [self renderedPageAtIndex:index
+                                                                 document:workerDoc
+                                                                     zoom:thumbnailZoom
+                                                             displayScale:displayScale
+                                                                    error:err
+                                                              errorLength:sizeof(err)];
+              [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                [self->_queuedMinimapThumbnailPages removeObject:number];
+                if (generation != self->_renderGeneration || !self->_doc || ![self->_path isEqualToString:path] ||
+                    index >= (NSInteger)self->_renderedPages.count || !thumbnailPage.image)
+                    return;
+                SPDFRenderedPage* page = self->_renderedPages[(NSUInteger)index];
+                if ([self minimapThumbnailImage:page matchesZoom:thumbnailZoom displayScale:displayScale]) return;
+                page.minimapImage = thumbnailPage.image;
+                page.minimapImageZoom = thumbnailZoom;
+                page.minimapImageScale = displayScale;
+                [self->_minimapView setNeedsDisplay:YES];
+              }];
+          }
+        }];
+        operation.queuePriority = NSOperationQueuePriorityNormal;
+        operation.qualityOfService = NSQualityOfServiceUtility;
+        [_minimapQueue addOperation:operation];
+    }
+}
+
+- (NSArray<NSNumber*>*)visibleDocumentPageIndexesWithExtraRadius:(NSInteger)radius
+                                                   preferredPage:(NSInteger*)preferredPageOut {
+    NSInteger preferredPage = -1;
+    if (!_pageScrollView || !_pageView || _renderedPages.count == 0) {
+        if (preferredPageOut) *preferredPageOut = preferredPage;
+        return @[];
+    }
+
+    NSRect visibleRect = _pageScrollView.contentView.bounds;
+    preferredPage = [_pageView pageIndexForVisibleRect:visibleRect];
+    preferredPage = MAX(0, MIN(preferredPage, (NSInteger)_renderedPages.count - 1));
+
+    NSMutableOrderedSet<NSNumber*>* indexes = [NSMutableOrderedSet orderedSet];
+    if (_viewMode == SPDFViewModeSingle) {
+        [indexes addObject:@(preferredPage)];
+    } else {
+        for (NSInteger i = 0; i < (NSInteger)_renderedPages.count; ++i) {
+            NSRect pageRect = [_pageView rectForPageAtIndex:i];
+            if (!NSIsEmptyRect(NSIntersectionRect(visibleRect, pageRect))) [indexes addObject:@(i)];
+        }
+        if (indexes.count == 0) [indexes addObject:@(preferredPage)];
+    }
+
+    if (radius > 0) {
+        NSArray<NSNumber*>* visible = indexes.array;
+        for (NSNumber* number in visible) {
+            NSInteger center = number.integerValue;
+            NSInteger first = MAX(0, center - radius);
+            NSInteger last = MIN((NSInteger)_renderedPages.count - 1, center + radius);
+            for (NSInteger i = first; i <= last; ++i) [indexes addObject:@(i)];
+        }
+    }
+
+    if (preferredPageOut) *preferredPageOut = preferredPage;
+    return indexes.array;
+}
+
+- (void)queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:(BOOL)forceHighPriority {
+    if (!_doc || !_path.length || _renderedPages.count == 0) return;
+    NSInteger preferredPage = -1;
+    NSArray<NSNumber*>* pageIndexes = [self visibleDocumentPageIndexesWithExtraRadius:1 preferredPage:&preferredPage];
+    if (pageIndexes.count == 0) return;
+    [self enqueuePageRendersForGeneration:_renderGeneration
+                              pageIndexes:pageIndexes
+                            preferredPage:preferredPage
+                        forceHighPriority:forceHighPriority];
+}
+
+- (void)syncCurrentPageFromVisibleViewportQueueRenders:(BOOL)queueRenders forceHighPriority:(BOOL)forceHighPriority {
+    if (!_pageScrollView || !_pageView || _renderedPages.count == 0) return;
+    NSInteger visiblePage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
+    visiblePage = MAX(0, MIN(visiblePage, (NSInteger)_renderedPages.count - 1));
+    if (visiblePage != _pageIndex) {
+        _pageIndex = visiblePage;
+        _pageView.currentPageIndex = _pageIndex;
+        [self clearPageFieldFocus];
+        [self updateControls];
+        [self selectCurrentSidebarRow];
+    }
+    if (queueRenders) [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:forceHighPriority];
 }
 
 - (void)renderPageIfNeededAtIndex:(NSInteger)pageIndex {
@@ -1841,6 +2073,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     page.highlights = _findHighlights[@(pageIndex)] ?: existing.highlights ?: @[];
     page.selectionRects = existing.selectionRects ?: @[];
+    [self copyMinimapThumbnailFromPage:existing toPage:page];
     [_renderedPages replaceObjectAtIndex:(NSUInteger)pageIndex withObject:page];
     _pageView.pages = _renderedPages;
     [self cacheActiveRenderedPagesForSelectedTab];
@@ -1858,6 +2091,38 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return (NSUInteger)bytes;
 }
 
+- (NSUInteger)estimatedRenderedImageByteCostForPage:(SPDFRenderedPage*)page
+                                               zoom:(CGFloat)zoom
+                                       displayScale:(CGFloat)displayScale {
+    if (!page || page.pageWidth <= 0.0 || page.pageHeight <= 0.0 || zoom <= 0.0) return 0;
+    displayScale = displayScale > 0.0 ? displayScale : [self backingScale];
+    double pixels = ceil(page.pageWidth * zoom * displayScale) * ceil(page.pageHeight * zoom * displayScale);
+    if (!isfinite(pixels) || pixels <= 0.0) return 0;
+    double bytes = pixels * 4.0;
+    if (bytes > (double)NSUIntegerMax) return NSUIntegerMax;
+    return (NSUInteger)bytes;
+}
+
+- (BOOL)shouldKeepFullRenderedDocumentAtCurrentZoom {
+    if (_renderedPages.count == 0) return NO;
+    CGFloat displayScale = [self backingScale];
+    NSUInteger totalBytes = 0;
+    for (SPDFRenderedPage* page in _renderedPages) {
+        NSUInteger bytes = [self estimatedRenderedImageByteCostForPage:page zoom:_zoom displayScale:displayScale];
+        if (bytes == 0 || bytes > kRenderedImageKeepAllPerPageByteLimit) return NO;
+        if (totalBytes > kRenderedImageKeepAllTotalByteLimit ||
+            bytes > kRenderedImageKeepAllTotalByteLimit - totalBytes)
+            return NO;
+        totalBytes += bytes;
+    }
+    return YES;
+}
+
+- (NSInteger)backgroundRenderBatchSizeForCurrentZoom {
+    if ([self shouldKeepFullRenderedDocumentAtCurrentZoom]) return (NSInteger)_renderedPages.count;
+    return kBackgroundRenderBatchSize;
+}
+
 - (void)addKeepRangeToSet:(NSMutableSet<NSNumber*>*)keep center:(NSInteger)center radius:(NSInteger)radius {
     if (center < 0 || _renderedPages.count == 0) return;
     NSInteger first = MAX(0, center - radius);
@@ -1867,6 +2132,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)evictDistantRenderedPageImages {
     if (!_renderedPages.count) return;
+    if ([self shouldKeepFullRenderedDocumentAtCurrentZoom]) return;
 
     NSUInteger totalBytes = 0;
     for (SPDFRenderedPage* page in _renderedPages) totalBytes += [self renderedImageByteCost:page];
@@ -1939,7 +2205,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     [_window.contentView layoutSubtreeIfNeeded];
     [_renderQueue cancelAllOperations];
+    [_minimapQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
+    [_queuedRenderOperations removeAllObjects];
+    [_queuedMinimapThumbnailPages removeAllObjects];
     _renderGeneration++;
     NSUInteger generation = _renderGeneration;
     _zoom = [self zoomForFitMode:_fitMode pageIndex:MAX(0, pageIndex)];
@@ -2494,6 +2763,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _minimapView.documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
     _minimapView.documentScale = MAX(0.01, _zoom);
     [_minimapView setNeedsDisplay:YES];
+    [self enqueueVisibleMinimapThumbnailRenders];
 }
 
 - (void)invalidateFindMarkers {
@@ -2577,6 +2847,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (_viewMode == SPDFViewModeContinuous) {
         _minimapPrecisionViewportDragActive = YES;
         [self scrollDocumentClipViewToDocumentOrigin:origin notify:NO];
+        [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
+        [_pageView setNeedsDisplay:YES];
+        [_pageView displayIfNeeded];
         [self updateMinimap];
     } else {
         [self scrollDocumentClipViewToOrigin:origin pageIndexHint:pageIndex notify:YES];
@@ -2970,12 +3243,16 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
 
     if (type == NSEventTypeLeftMouseDown) {
-        if ([self eventHitsStandardWindowButton:event]) return NO;
+        if ([self eventHitsStandardWindowButton:event]) {
+            [self dismissTabHoverPanel];
+            return NO;
+        }
         if (_tabStripHeightConstraint.constant <= 0.0) return NO;
         NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
         if (!NSPointInRect(point, _tabStrip.bounds)) return NO;
 
         if (![_tabStrip containsTabOrControlAtPoint:point]) {
+            [self dismissTabHoverPanel];
             _tabStripCapturingMouse = NO;
             [_window performWindowDragWithEvent:event];
             return YES;
@@ -3616,7 +3893,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSString* path = [tab.path copy];
     NSInteger savedFindMatchIndex = tab.findMatchIndex;
     [_renderQueue cancelAllOperations];
+    [_minimapQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
+    [_queuedRenderOperations removeAllObjects];
+    [_queuedMinimapThumbnailPages removeAllObjects];
 
     [self closeActiveDocumentIfUnowned];
     NSDictionary* attributes = [self fileAttributesForPath:path];
@@ -3765,6 +4045,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
 
     if (paths.count == 0) return;
+    if (!_suspendPersistentStateSaves) {
+        [self performWithBatchedPersistentStateSaves:^{
+          [self openPaths:paths];
+        }];
+        return;
+    }
+
     [self rememberActiveTabState];
     NSInteger targetIndex = -1;
     for (NSString* path in paths) {
@@ -4299,6 +4586,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         return;
     }
     if (_minimapPrecisionViewportDragActive) {
+        [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
+        [_pageView setNeedsDisplay:YES];
+        [_pageView displayIfNeeded];
         [self updateMinimap];
         return;
     }
@@ -6336,6 +6626,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)applyPresentationChrome {
     BOOL presentation = _presentationMode;
+    [self dismissTabHoverPanel];
     _tabStrip.hidden = presentation;
     _toolbar.hidden = presentation;
     _tabStripHeightConstraint.constant = presentation ? 0.0 : kTabStripHeight;
@@ -7722,7 +8013,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
 
     [_renderQueue cancelAllOperations];
+    [_minimapQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
+    [_queuedRenderOperations removeAllObjects];
+    [_queuedMinimapThumbnailPages removeAllObjects];
     _renderGeneration++;
     if (_selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count) {
         SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
@@ -7878,7 +8172,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         }
 
         [strongSelf->_renderQueue cancelAllOperations];
+        [strongSelf->_minimapQueue cancelAllOperations];
         [strongSelf->_queuedRenderPages removeAllObjects];
+        [strongSelf->_queuedRenderOperations removeAllObjects];
+        [strongSelf->_queuedMinimapThumbnailPages removeAllObjects];
         strongSelf->_renderGeneration++;
         [strongSelf discardCachedRuntimeForTab:[strongSelf selectedTab]];
         [strongSelf clearActiveMetadata];

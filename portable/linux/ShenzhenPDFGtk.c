@@ -2773,7 +2773,6 @@ static void scroll_to_page_fraction(app_state* state, int page_index, double x_f
 
 static void attach_document_to_view(app_state* state, const char* path, spdf_document* doc, int page_index,
                                     gint64 mtime, gint64 size) {
-    gboolean loaded_sidebar_metadata = FALSE;
     document_tab* tab = active_tab(state);
 
     spdf_free_outline(&state->outline);
@@ -2788,15 +2787,9 @@ static void attach_document_to_view(app_state* state, const char* path, spdf_doc
     gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), state->fit_mode_id);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
     state->document_generation++;
-    if (state->switching_tabs && state->show_sidebar) {
-        char err[1024];
-        spdf_load_outline(state->doc, &state->outline, err, sizeof(err));
-        spdf_load_comments(state->doc, &state->comments, err, sizeof(err));
-        loaded_sidebar_metadata = TRUE;
-    }
     rebuild_sidebar(state);
     render_current_page(state, TRUE);
-    if (!loaded_sidebar_metadata) schedule_deferred_sidebar_load(state);
+    schedule_deferred_sidebar_load(state);
     if (!state->switching_tabs) {
         save_active_tab_state(state);
         update_tab_strip(state);

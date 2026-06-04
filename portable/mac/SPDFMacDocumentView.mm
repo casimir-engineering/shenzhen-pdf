@@ -254,19 +254,21 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     NSRectFill(pageRect);
     [NSGraphicsContext restoreGraphicsState];
 
-    if (page.image) {
-        BOOL exactSize = fabs(NSWidth(pageRect) - page.imagePointWidth) < 0.01 &&
+    NSImage* image = page.image ?: page.minimapImage;
+    if (image) {
+        BOOL drawingExactImage = page.image == image;
+        BOOL exactSize = drawingExactImage && fabs(NSWidth(pageRect) - page.imagePointWidth) < 0.01 &&
                          fabs(NSHeight(pageRect) - page.imagePointHeight) < 0.01;
         NSGraphicsContext* context = NSGraphicsContext.currentContext;
         NSImageInterpolation oldInterpolation = context.imageInterpolation;
         NSImageInterpolation interpolation = exactSize ? NSImageInterpolationNone : NSImageInterpolationHigh;
         context.imageInterpolation = interpolation;
-        [page.image drawInRect:pageRect
-                      fromRect:NSZeroRect
-                     operation:NSCompositingOperationSourceOver
-                      fraction:1.0
-                respectFlipped:YES
-                         hints:@{NSImageHintInterpolation : @(interpolation)}];
+        [image drawInRect:pageRect
+                  fromRect:NSZeroRect
+                 operation:NSCompositingOperationSourceOver
+                  fraction:1.0
+            respectFlipped:YES
+                     hints:@{NSImageHintInterpolation : @(interpolation)}];
         context.imageInterpolation = oldInterpolation;
     }
 
