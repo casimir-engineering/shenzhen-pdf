@@ -425,10 +425,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (NSString*)supportDirectory {
-    NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
-                                                       inDomains:NSUserDomainMask]
-                      .firstObject;
-    NSString* dir = [base.path stringByAppendingPathComponent:@"ShenzhenPDF"];
+    static NSString* dir = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+      NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                         inDomains:NSUserDomainMask]
+                        .firstObject;
+      dir = [[base.path stringByAppendingPathComponent:@"ShenzhenPDF"] copy];
+    });
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir;
 }
@@ -447,7 +451,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSData* data = [NSJSONSerialization dataWithJSONObject:object
                                                    options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys
                                                      error:nil];
-    if (data) [data writeToFile:[self pathForStateFile:name] atomically:YES];
+    if (!data) return;
+    NSString* path = [self pathForStateFile:name];
+    if (path.length > 0) {
+        NSData* existing = [NSData dataWithContentsOfFile:path];
+        if (existing && [existing isEqualToData:data]) return;
+    }
+    [data writeToFile:path atomically:YES];
 }
 
 - (void)loadPersistentState {
@@ -668,15 +678,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     } mutableCopy];
 }
 
-- (void)withLockedSessionStore:(void (^)(NSMutableDictionary* session))block {
+- (void)withLockedSessionStore:(BOOL (^)(NSMutableDictionary* session))block {
     if (!block) return;
     NSString* lockPath = [self pathForStateFile:@"session.lock"];
     int fd = open(lockPath.fileSystemRepresentation, O_CREAT | O_RDWR, 0600);
     if (fd >= 0) flock(fd, LOCK_EX);
     NSMutableDictionary* session =
         [self normalizedMultiWindowSessionFromObject:[self jsonObjectFromFile:@"session.json"]];
-    block(session);
-    [self writeJSONObject:session toFile:@"session.json"];
+    BOOL changed = block(session);
+    if (changed) [self writeJSONObject:session toFile:@"session.json"];
     if (fd >= 0) {
         flock(fd, LOCK_UN);
         close(fd);
@@ -691,7 +701,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         return;
     }
     NSMutableDictionary* currentWindow = [self currentWindowSessionDictionary];
-    [self withLockedSessionStore:^(NSMutableDictionary* session) {
+    [self withLockedSessionStore:^BOOL(NSMutableDictionary* session) {
       NSMutableArray* windows = [session[@"windows"] isKindOfClass:NSMutableArray.class] ? session[@"windows"] : nil;
       if (!windows) {
           windows = [NSMutableArray array];
@@ -704,22 +714,30 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
               break;
           }
       }
-      if (existing == NSNotFound)
+      if (existing == NSNotFound) {
           [windows addObject:currentWindow];
-      else
+          return YES;
+      }
+      if ([windows[existing] isEqual:currentWindow])
+          return NO;
+      else {
           windows[existing] = currentWindow;
+          return YES;
+      }
     }];
 }
 
 - (void)removeSessionStateForCurrentWindow {
     if (!_windowSessionID.length) return;
-    [self withLockedSessionStore:^(NSMutableDictionary* session) {
+    [self withLockedSessionStore:^BOOL(NSMutableDictionary* session) {
       NSMutableArray* windows = [session[@"windows"] isKindOfClass:NSMutableArray.class] ? session[@"windows"] : nil;
-      if (!windows) return;
+      if (!windows) return YES;
       for (NSInteger i = (NSInteger)windows.count - 1; i >= 0; i--) {
-          if ([windows[(NSUInteger)i][@"id"] isEqualToString:self->_windowSessionID])
+          if ([windows[(NSUInteger)i][@"id"] isEqualToString:self->_windowSessionID]) {
               [windows removeObjectAtIndex:(NSUInteger)i];
+          }
       }
+      return YES;
     }];
 }
 
