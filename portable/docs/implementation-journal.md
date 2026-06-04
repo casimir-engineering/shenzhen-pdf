@@ -105,10 +105,17 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: Mac oversized high-zoom pages no longer open a blocking "Rendered page would be too large" alert. Whole-page rastering is skipped when the bitmap would exceed the render guard, and the main viewport renders a full-resolution cropped page region instead.
    - Changed: Mac scroll/minimap-drag/zoom paths render those oversized viewport crops while the mouse is still down, and distant crop images are counted in the render cache so moving through a giant page does not keep unbounded bitmaps.
    - Changed: Mac document panning now suppresses high-resolution oversized crop rerenders during drag/inertia and refreshes the crop once the pan motion settles, fixing max-zoom drag FPS without dropping the final full-resolution viewport.
+   - Changed: Mac max-zoom document panning now renders throttled 1x viewport crops during pan/inertia, then refreshes the full backing-scale crop when motion settles, so oversized pages no longer stay at blurry thumbnail quality until inertia dies.
    - Changed: Mac tab/document switches now cancel active document pan inertia so motion from one tab cannot carry into the next tab.
    - Changed: Mac empty tab-strip chrome plus passive toolbar labels/spacer support first-click window drag, while toolbar controls and tabs keep normal click/drag handling.
+   - Changed: Mac document and minimap interactions now explicitly activate their owning window on first-click drag, so dragging an inactive document or minimap both works immediately and focuses the app.
+   - Changed: Mac toolbar page controls now place previous/next to the right of the page field/count, zoom controls now place -/+ to the right of the zoom popup, and zoom overflow keeps the popup plus +/- together.
+   - Changed: Mac zoom popup keeps the 100% entry anchored and inserts the custom zoom value after it when distinct, preserving the quick return-to-custom behavior without hiding 100%.
+   - Changed: Mac tab strip no longer uses empty tab-strip space as window-drag chrome, protecting tab reorder and drag-out gestures.
+   - Changed: Mac tab state now writes the latest normalized scroll origin before saving document state JSON.
    - Changed: Mac render queue concurrency now follows the earlier 60% CPU cap, and minimap-drag visible pages promote already-queued background operations instead of waiting behind older low-priority renders.
    - Changed: Linux `attach_document_to_view` always schedules the existing deferred sidebar metadata load instead of synchronously loading outline/comments before tab-switch paint.
+   - TODO: investigate rare Mac tab switches where restored document position appears influenced by the previous tab's viewport even after the scroll-origin save-order fix.
    - Gap: next performance round should move Mac and Linux first-page rastering off the launch/tab-switch foreground path and build exact long-document geometry lazily.
 
 ## Validation

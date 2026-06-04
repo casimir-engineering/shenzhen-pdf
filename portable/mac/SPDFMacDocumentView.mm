@@ -274,8 +274,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
         context.imageInterpolation = oldInterpolation;
     }
 
-    if (!hasExactFullPageImage && page.viewportImage && fabs(page.viewportImageZoom - self.zoom) <= 0.001 &&
-        fabs(page.viewportImageScale - [self effectiveBackingScale]) <= 0.001) {
+    if (!hasExactFullPageImage && page.viewportImage && fabs(page.viewportImageZoom - self.zoom) <= 0.001) {
         NSRect cropRect = [self convertPageRect:page.viewportImagePageRect toViewRectInPageRect:pageRect page:page];
         if (!NSIsEmptyRect(cropRect)) {
             NSGraphicsContext* context = NSGraphicsContext.currentContext;
@@ -420,6 +419,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 }
 
 - (void)mouseDown:(NSEvent*)event {
+    spdf_activate_window_for_view(self);
     [self.reader clearFindFieldFocus];
     if (!self.reader) {
         [super mouseDown:event];
@@ -490,6 +490,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 }
 
 - (void)beginPanWithEvent:(NSEvent*)event {
+    spdf_activate_window_for_view(self);
     [self.reader clearFindFieldFocus];
     NSScrollView* scrollView = self.enclosingScrollView;
     if (!scrollView) return;
@@ -577,6 +578,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
+    spdf_activate_window_for_view(self);
     _rightMouseMoved = NO;
     if (self.reader && [self.reader handlePresentationEvent:event]) {
         _rightMouseMoved = YES;

@@ -33,6 +33,11 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     return YES;
 }
 
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+    (void)event;
+    return YES;
+}
+
 - (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
     _pages = [pages copy];
     [self setNeedsDisplay:YES];
@@ -524,6 +529,8 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 }
 
 - (void)mouseDown:(NSEvent*)event {
+    spdf_activate_window_for_view(self);
+
     CGFloat scale = 1.0;
     CGFloat gap = 4.0;
     CGFloat contentTop = 8.0;
@@ -569,6 +576,8 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 }
 
 - (void)scrollWheel:(NSEvent*)event {
+    spdf_activate_window_for_view(self);
+
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
         NSPoint documentPoint = NSZeroPoint;
@@ -581,6 +590,8 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 }
 
 - (void)magnifyWithEvent:(NSEvent*)event {
+    spdf_activate_window_for_view(self);
+
     NSPoint documentPoint = NSZeroPoint;
     if ([self documentPointForEvent:event documentPoint:&documentPoint])
         [self.reader minimapViewDidReceiveMagnify:event documentPoint:documentPoint];

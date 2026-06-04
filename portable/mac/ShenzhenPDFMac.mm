@@ -45,6 +45,7 @@ static const NSUInteger kMaxRenderedPageBitmapByteLimit = (NSUInteger)512 * 1024
 static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
+static const NSTimeInterval kDocumentPanLiveCropRenderInterval = 0.08;
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
 #define SPDF_MAC_TRANSLATION_CORE_READY 0
@@ -1193,8 +1194,21 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                   menu:menu
                                  state:_continuousButton.state
                                enabled:hasDoc];
-    if ([hiddenViews containsObject:_fitModePopup]) {
+    if ([hiddenViews containsObject:_fitModePopup] || [hiddenViews containsObject:_zoomOutButton] ||
+        [hiddenViews containsObject:_zoomInButton]) {
         [menu addItem:[NSMenuItem separatorItem]];
+        if ([hiddenViews containsObject:_zoomOutButton])
+            [self addOverflowItemWithTitle:@"Zoom Out"
+                                    action:@selector(zoomOut:)
+                                      menu:menu
+                                     state:NSControlStateValueOff
+                                   enabled:_zoomOutButton.enabled];
+        if ([hiddenViews containsObject:_zoomInButton])
+            [self addOverflowItemWithTitle:@"Zoom In"
+                                    action:@selector(zoomIn:)
+                                      menu:menu
+                                     state:NSControlStateValueOff
+                                   enabled:_zoomInButton.enabled];
         [self addOverflowItemWithTitle:@"Actual Size"
                                 action:@selector(actualSize:)
                                   menu:menu
@@ -1239,8 +1253,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         @[ _findPrevButton, _findNextButton ],
         @[ _findRegexCheckbox ],
         @[ _continuousButton ],
-        @[ _fitModePopup ],
-        @[ _zoomOutButton, _zoomInButton ],
+        @[ _fitModePopup, _zoomOutButton, _zoomInButton ],
     ];
     NSMutableSet<NSView*>* hiddenViews = [NSMutableSet set];
     for (NSArray<NSView*>* group in groups)
@@ -1448,13 +1461,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [_toolbar addArrangedSubview:_ocrButton];
     [_toolbar addArrangedSubview:_translateButton];
     [_toolbar addArrangedSubview:_ocrSeparator];
-    [_toolbar addArrangedSubview:_prevButton];
-    [_toolbar addArrangedSubview:_nextButton];
     [_toolbar addArrangedSubview:_pageField];
     [_toolbar addArrangedSubview:_pageCountLabel];
+    [_toolbar addArrangedSubview:_prevButton];
+    [_toolbar addArrangedSubview:_nextButton];
+    [_toolbar addArrangedSubview:_fitModePopup];
     [_toolbar addArrangedSubview:_zoomOutButton];
     [_toolbar addArrangedSubview:_zoomInButton];
-    [_toolbar addArrangedSubview:_fitModePopup];
     [_toolbar addArrangedSubview:_continuousButton];
     [_toolbar addArrangedSubview:_searchField];
     [_toolbar addArrangedSubview:_findRegexCheckbox];
@@ -2133,7 +2146,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     CGFloat displayScale = [self backingScale];
     if ([self renderedPageImage:existing matchesZoom:_zoom displayScale:displayScale]) return;
     if (![self fullPageRenderAllowedForPage:existing zoom:_zoom displayScale:displayScale]) {
-        if (!_documentViewPanActive) [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+        if (_documentViewPanActive)
+            [self renderLiveDocumentPanViewportCropIfDue];
+        else
+            [self renderVisiblePageCropsForCurrentViewportIfNeeded];
         [_pageView setNeedsDisplayInRect:[_pageView rectForPageAtIndex:pageIndex]];
         [self updateMinimap];
         [self evictDistantRenderedPageImages];
@@ -2232,9 +2248,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return NSMakeRect(x0, y0, x1 - x0, y1 - y0);
 }
 
-- (void)renderVisiblePageCropsForCurrentViewportIfNeeded {
+- (void)renderVisiblePageCropsForCurrentViewportWithDisplayScale:(CGFloat)displayScale {
     if (!_doc || !_pageScrollView || !_pageView || _renderedPages.count == 0) return;
-    CGFloat displayScale = [self backingScale];
+    displayScale = MAX(0.5, displayScale);
+    CGFloat backingScale = [self backingScale];
     CGFloat margin =
         MAX(NSWidth(_pageScrollView.contentView.bounds), NSHeight(_pageScrollView.contentView.bounds)) * 0.35;
     NSInteger preferredPage = -1;
@@ -2243,13 +2260,18 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSInteger pageIndex = number.integerValue;
         if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) continue;
         SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
-        if ([self renderedPageImage:page matchesZoom:_zoom displayScale:displayScale]) continue;
-        if ([self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:displayScale]) continue;
+        if ([self renderedPageImage:page matchesZoom:_zoom displayScale:backingScale]) continue;
+        if ([self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:backingScale]) continue;
 
         NSRect cropRect = [self visiblePageCropRectForPageIndex:pageIndex extraViewMargin:margin];
         cropRect = [self pixelSnappedPageCropRect:cropRect page:page zoom:_zoom displayScale:displayScale];
         if (NSIsEmptyRect(cropRect)) continue;
         if ([self viewportImage:page coversPageCropRect:cropRect zoom:_zoom displayScale:displayScale]) continue;
+        if (displayScale < backingScale && [self viewportImage:page
+                                               coversPageCropRect:cropRect
+                                                             zoom:_zoom
+                                                     displayScale:backingScale])
+            continue;
 
         char err[512];
         NSImage* image = [self renderedPageCropImageAtIndex:pageIndex
@@ -2270,6 +2292,20 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         page.viewportImageScale = displayScale;
         [_pageView setNeedsDisplayInRect:[_pageView rectForPageAtIndex:pageIndex]];
     }
+}
+
+- (void)renderVisiblePageCropsForCurrentViewportIfNeeded {
+    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]];
+}
+
+- (void)renderLiveDocumentPanViewportCropIfDue {
+    if (!_documentViewPanActive) return;
+    NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+    if (now - _lastDocumentPanLiveCropRenderTime < kDocumentPanLiveCropRenderInterval) return;
+    _lastDocumentPanLiveCropRenderTime = now;
+    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:1.0];
+    [_pageView setNeedsDisplay:YES];
+    [_pageView displayIfNeeded];
 }
 
 - (NSUInteger)renderedImageByteCost:(SPDFRenderedPage*)page {
@@ -2654,7 +2690,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
 
     [_pageView setNeedsDisplay:YES];
-    if (!_documentViewPanActive) [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    if (_documentViewPanActive)
+        [self renderLiveDocumentPanViewportCropIfDue];
+    else
+        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];
     return YES;
@@ -3201,11 +3240,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     tab.showSidebar = _sidebarPreferredVisible;
     tab.showMinimap = _minimapPreferredVisible;
     [self cacheActiveRenderedPagesForSelectedTab];
-    [self saveDocumentStateForTab:tab];
     tab.scrollOrigin = [self normalizedDocumentScrollOrigin:_pageScrollView.contentView.bounds.origin
                                                forPageIndex:_pageIndex];
     tab.hasScrollOrigin = YES;
     [self rememberActiveTabFindState];
+    [self saveDocumentStateForTab:tab];
 }
 
 - (void)persistActiveState {
@@ -3474,8 +3513,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             if (NSPointInRect(point, _tabStrip.bounds)) {
                 if (![_tabStrip containsTabOrControlAtPoint:point]) {
                     _tabStripCapturingMouse = NO;
-                    [self performTopChromeWindowDragWithEvent:event];
-                    return YES;
+                    [self dismissTabHoverPanel];
+                    return NO;
                 }
                 _tabStripCapturingMouse = YES;
                 _window.movable = NO;
@@ -4973,12 +5012,16 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     CGFloat customZoom =
         _fitMode == SPDFFitModeCustom ? _zoom : (_rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom);
     NSString* zoomTitle = [NSString stringWithFormat:@"%.0f%%", customZoom * 100.0];
-    BOOL showCustomZoom = _fitMode == SPDFFitModeCustom || fabs(customZoom - 1.0) > 0.0049;
+    BOOL showCustomZoom = fabs(customZoom - 1.0) > 0.0049;
+    NSMenuItem* actualItem = [self fitModePopupItemForMode:SPDFFitModeActual];
+    if (actualItem) actualItem.title = @"100%";
     NSMenuItem* customItem = [self fitModePopupItemForMode:SPDFFitModeCustom];
     if (showCustomZoom) {
         if (!customItem) {
-            [_fitModePopup insertItemWithTitle:zoomTitle atIndex:0];
-            customItem = [_fitModePopup itemAtIndex:0];
+            NSInteger actualIndex = actualItem ? [_fitModePopup indexOfItem:actualItem] : -1;
+            NSInteger insertIndex = actualIndex >= 0 ? actualIndex + 1 : 0;
+            [_fitModePopup insertItemWithTitle:zoomTitle atIndex:insertIndex];
+            customItem = [_fitModePopup itemAtIndex:insertIndex];
             customItem.tag = SPDFFitModeCustom;
         }
         customItem.title = zoomTitle;
@@ -4986,9 +5029,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSInteger customIndex = [_fitModePopup indexOfItem:customItem];
         if (customIndex >= 0) [_fitModePopup removeItemAtIndex:customIndex];
     }
-    NSMenuItem* actualItem = [self fitModePopupItemForMode:SPDFFitModeActual];
-    if (actualItem) actualItem.title = @"100%";
     NSMenuItem* selectedFitItem = [self fitModePopupItemForMode:_fitMode];
+    if (!selectedFitItem && _fitMode == SPDFFitModeCustom) selectedFitItem = actualItem;
     if (selectedFitItem) [_fitModePopup selectItem:selectedFitItem];
     _continuousButton.state = _viewMode == SPDFViewModeContinuous ? NSControlStateValueOn : NSControlStateValueOff;
     [self styleToolbarPanelButton:_sidebarToggleButton
@@ -5382,11 +5424,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)documentViewDidBeginPan {
     _documentViewPanActive = YES;
+    _lastDocumentPanLiveCropRenderTime = 0.0;
 }
 
 - (void)documentViewDidFinishPanMotion {
     if (!_documentViewPanActive) return;
     _documentViewPanActive = NO;
+    _lastDocumentPanLiveCropRenderTime = 0.0;
     [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
@@ -5396,6 +5440,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)cancelDocumentTransientInteraction {
     _documentViewPanActive = NO;
+    _lastDocumentPanLiveCropRenderTime = 0.0;
     [_pageView cancelTransientInteraction];
 }
 

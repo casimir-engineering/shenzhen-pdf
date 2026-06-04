@@ -156,6 +156,7 @@
     BOOL _suppressViewportRerender;
     BOOL _liveZooming;
     BOOL _documentViewPanActive;
+    NSTimeInterval _lastDocumentPanLiveCropRenderTime;
     BOOL _minimapPrecisionViewportDragActive;
     BOOL _sidebarPreferredVisible;
     BOOL _sidebarVisible;
@@ -330,7 +331,9 @@
                              displayScale:(CGFloat)displayScale;
 - (BOOL)fullPageRenderAllowedForPage:(SPDFRenderedPage*)page zoom:(CGFloat)zoom displayScale:(CGFloat)displayScale;
 - (NSRect)visiblePageCropRectForPageIndex:(NSInteger)pageIndex extraViewMargin:(CGFloat)extraViewMargin;
+- (void)renderVisiblePageCropsForCurrentViewportWithDisplayScale:(CGFloat)displayScale;
 - (void)renderVisiblePageCropsForCurrentViewportIfNeeded;
+- (void)renderLiveDocumentPanViewportCropIfDue;
 - (NSUInteger)estimatedRenderedImageByteCostForPage:(SPDFRenderedPage*)page
                                                zoom:(CGFloat)zoom
                                        displayScale:(CGFloat)displayScale;
