@@ -45,7 +45,7 @@ static const NSUInteger kMaxRenderedPageBitmapByteLimit = (NSUInteger)512 * 1024
 static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
-static const NSTimeInterval kDocumentPanLiveCropRenderInterval = 0.08;
+static const NSTimeInterval kDocumentPanLiveCropRenderInterval = 0.05;
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
 #define SPDF_MAC_TRANSLATION_CORE_READY 0
@@ -3511,14 +3511,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (_tabStripHeightConstraint.constant > 0.0) {
             NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
             if (NSPointInRect(point, _tabStrip.bounds)) {
-                if (![_tabStrip containsTabOrControlAtPoint:point]) {
-                    _tabStripCapturingMouse = NO;
-                    [self dismissTabHoverPanel];
-                    return NO;
-                }
                 _tabStripCapturingMouse = YES;
                 _window.movable = NO;
-                [_tabStrip mouseDown:event];
+                if ([_tabStrip containsTabOrControlAtPoint:point]) {
+                    [_tabStrip mouseDown:event];
+                } else {
+                    [self dismissTabHoverPanel];
+                }
                 return YES;
             }
         }
