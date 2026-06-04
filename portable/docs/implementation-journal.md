@@ -125,6 +125,16 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - TODO: investigate rare Mac tab switches where restored document position appears influenced by the previous tab's viewport even after the scroll-origin save-order fix.
    - Gap: next performance round should move Mac and Linux first-page rastering off the launch/tab-switch foreground path and build exact long-document geometry lazily.
 
+14. Prepare `26.6.4-2` launch-performance round without behavior changes.
+   - Status: First strict behavior-preserving Mac reductions implemented.
+   - Constraint: no visual or behavioral changes. Do not change render/loading resolution, first visible document quality, restored documents/tabs, active tab selection, scroll position, sidebar/minimap semantics, or file/session persistence semantics.
+   - Process: reread this journal before decisions; collect read-only agent reports first; classify options as safe/medium/risky; implement only safe changes that remove redundant blocking work or move already-deferred work later without changing user-visible output.
+   - Candidate-safe areas to investigate: redundant synchronous state writes during startup/open, work duplicated between startup restore and tab selection, avoidable post-first-paint background scheduling before the first window visibly settles, and cross-platform equivalents that preserve exact visual behavior.
+   - Changed: `SPDFDocumentView` now caches exact snapped page sizes, widest-page width, continuous page rectangles, continuous document height, and synthetic single-page slots. The cache is invalidated on pages, zoom, view mode, presentation mode, backing scale, viewport width, and view bounds; live single-page centering still reads the current clip-view bounds.
+   - Changed: `SPDFMinimapView` now caches the exact unscrolled mini page rectangles for the current pages, bounds width, scale, and gap. Minimap overlay, drag, hit-test, and click math continue to use the same geometry formulas.
+   - Changed: identical delayed nearby-render schedules for the same delegate, generation, path, and preferred page are coalesced until the delayed request fires; page render order, priority, resolution, and eventual queueing stay unchanged.
+   - Tested: ran explicit ObjC-style clang-format on touched Mac `.mm` edits, `git diff --check`, ObjC++ syntax for `SPDFMacDocumentView.mm`, `SPDFMacMinimapView.mm`, and `ShenzhenPDFMac.mm`, `make -C portable mac-app`, and `./dist/ShenzhenPDF.app/Contents/MacOS/ShenzhenPDF --version`.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

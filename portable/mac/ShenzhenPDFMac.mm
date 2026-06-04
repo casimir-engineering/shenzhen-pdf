@@ -2030,10 +2030,20 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)scheduleNearbyPageRendersAfterFirstPaintForGeneration:(NSUInteger)generation
                                                 preferredPage:(NSInteger)preferredPage {
     NSString* path = [_path copy];
+    static NSMutableSet<NSString*>* scheduledNearbyRenderKeys = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+      scheduledNearbyRenderKeys = [NSMutableSet set];
+    });
+    NSString* key =
+        [NSString stringWithFormat:@"%p:%lu:%ld:%@", self, (unsigned long)generation, (long)preferredPage, path ?: @""];
+    if ([scheduledNearbyRenderKeys containsObject:key]) return;
+    [scheduledNearbyRenderKeys addObject:key];
     dispatch_async(dispatch_get_main_queue(), ^{
       [self->_pageScrollView displayIfNeeded];
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
+                       [scheduledNearbyRenderKeys removeObject:key];
                        if (generation != self->_renderGeneration || ![self->_path isEqualToString:path]) return;
                        [self enqueueNearbyPageRendersForGeneration:generation preferredPage:preferredPage];
                      });

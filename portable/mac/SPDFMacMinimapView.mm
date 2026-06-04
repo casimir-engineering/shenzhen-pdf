@@ -27,6 +27,13 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     CGFloat _dragThumbTop;
     CGFloat _dragLastMouseY;
     NSTimeInterval _dragLastTimestamp;
+    BOOL _miniLayoutCacheValid;
+    NSArray<SPDFRenderedPage*>* _miniLayoutPages;
+    NSArray<NSValue*>* _miniLayoutPageRects;
+    NSDictionary<NSNumber*, NSValue*>* _miniLayoutPageRectsByIndex;
+    CGFloat _miniLayoutScale;
+    CGFloat _miniLayoutGap;
+    CGFloat _miniLayoutBoundsWidth;
 }
 
 - (BOOL)isFlipped {
@@ -40,7 +47,27 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 
 - (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
     _pages = [pages copy];
+    [self invalidateMiniLayoutCache];
     [self setNeedsDisplay:YES];
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+    NSSize oldSize = self.frame.size;
+    [super setFrameSize:newSize];
+    if (!NSEqualSizes(oldSize, newSize)) [self invalidateMiniLayoutCache];
+}
+
+- (void)setBoundsSize:(NSSize)newSize {
+    NSSize oldSize = self.bounds.size;
+    [super setBoundsSize:newSize];
+    if (!NSEqualSizes(oldSize, newSize)) [self invalidateMiniLayoutCache];
+}
+
+- (void)invalidateMiniLayoutCache {
+    _miniLayoutCacheValid = NO;
+    _miniLayoutPages = nil;
+    _miniLayoutPageRects = nil;
+    _miniLayoutPageRectsByIndex = nil;
 }
 
 - (CGFloat)widestPage {
@@ -55,15 +82,46 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     return spdf_clamp_cg(NSMinY(self.documentVisibleRect) / maxScroll, 0.0, 1.0);
 }
 
-- (NSRect)miniRectForPage:(SPDFRenderedPage*)targetPage scale:(CGFloat)scale gap:(CGFloat)gap {
-    CGFloat y = 0;
+- (void)ensureMiniLayoutCacheForScale:(CGFloat)scale gap:(CGFloat)gap {
+    CGFloat boundsWidth = NSWidth(self.bounds);
+    if (_miniLayoutCacheValid && _miniLayoutPages == self.pages && _miniLayoutScale == scale && _miniLayoutGap == gap &&
+        _miniLayoutBoundsWidth == boundsWidth)
+        return;
+
+    NSMutableArray<NSValue*>* pageRects = [NSMutableArray arrayWithCapacity:self.pages.count];
+    NSMutableDictionary<NSNumber*, NSValue*>* pageRectsByIndex = [NSMutableDictionary dictionary];
+    CGFloat y = 0.0;
     for (SPDFRenderedPage* page in self.pages) {
         CGFloat pageWidth = MAX(1.0, page.pageWidth * scale);
         CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
-        if (page == targetPage || page.pageIndex == targetPage.pageIndex) {
-            return NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
-        }
+        NSRect rect = NSMakeRect(floor((boundsWidth - pageWidth) / 2.0), y, pageWidth, pageHeight);
+        NSValue* value = [NSValue valueWithRect:rect];
+        [pageRects addObject:value];
+        NSNumber* pageIndex = @(page.pageIndex);
+        if (!pageRectsByIndex[pageIndex]) pageRectsByIndex[pageIndex] = value;
         y += pageHeight + gap;
+    }
+
+    _miniLayoutPages = self.pages;
+    _miniLayoutPageRects = pageRects;
+    _miniLayoutPageRectsByIndex = pageRectsByIndex;
+    _miniLayoutScale = scale;
+    _miniLayoutGap = gap;
+    _miniLayoutBoundsWidth = boundsWidth;
+    _miniLayoutCacheValid = YES;
+}
+
+- (NSRect)miniRectForPage:(SPDFRenderedPage*)targetPage scale:(CGFloat)scale gap:(CGFloat)gap {
+    [self ensureMiniLayoutCacheForScale:scale gap:gap];
+    NSValue* indexedRect = _miniLayoutPageRectsByIndex[@(targetPage.pageIndex)];
+    if (indexedRect) return indexedRect.rectValue;
+
+    for (SPDFRenderedPage* page in self.pages) {
+        if (page == targetPage || page.pageIndex == targetPage.pageIndex) {
+            NSUInteger index = [self.pages indexOfObjectIdenticalTo:page];
+            if (index != NSNotFound && index < _miniLayoutPageRects.count)
+                return [_miniLayoutPageRects[index] rectValue];
+        }
     }
     return NSZeroRect;
 }
