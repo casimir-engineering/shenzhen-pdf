@@ -3,6 +3,7 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
 
+#import "SPDFMacDefaultReader.h"
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacModels.h"
@@ -47,6 +48,7 @@ static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 *
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
 static const NSTimeInterval kDocumentPanLiveCropRenderInterval = 0.05;
 static const NSTimeInterval kLiveZoomFinishDelay = 0.28;
+static const NSTimeInterval kLiveZoomFinishWhilePanningDelay = 0.12;
 static const NSTimeInterval kLiveZoomStateSaveDelay = 0.20;
 static const NSTimeInterval kLiveZoomControlUpdateInterval = 0.05;
 
@@ -171,6 +173,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _translationRunning = NO;
     _translationInstallRunning = NO;
     _showShortcutHelpOnLaunch = YES;
+    _defaultReaderPromptDismissed = NO;
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
     _suspendPersistentStateSaves = NO;
@@ -181,6 +184,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _allowSidebarWidthPersistence = NO;
     _sidebarWidth = kDefaultSidebarWidth;
     _minimapWidth = kDefaultMinimapWidth;
+    _printScalingMode = SPDFPrintScalingModeFit;
+    _printCustomScale = 1.0;
     _findRegexMultiline = YES;
     _translationSourceLanguage = @"zh";
     _translationTargetLanguage = @"en";
@@ -247,6 +252,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
       [self performWithBatchedPersistentStateSaves:^{
         [self performStartupDocumentWork];
       }];
+      if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
       if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0) [self showShortcutHelp:nil];
     });
 }
@@ -468,6 +474,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         NSNumber* sidebarWidth = settings[@"sidebarWidth"];
         NSNumber* minimapWidth = settings[@"minimapWidth"];
         NSNumber* showShortcutHelp = settings[@"showShortcutHelpOnLaunch"];
+        NSNumber* defaultReaderPromptDismissed = settings[@"defaultReaderPromptDismissed"];
+        NSNumber* printScalingMode = settings[@"printScalingMode"];
+        NSNumber* printCustomScale = settings[@"printCustomScale"];
         NSDictionary* windowSize = settings[@"windowSize"];
         NSString* commentAuthor = settings[@"commentAuthor"];
         NSString* translateSource = settings[@"translateSourceLanguage"];
@@ -478,6 +487,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         if (sidebarWidth) _sidebarWidth = spdf_sane_sidebar_width(sidebarWidth.doubleValue, 0);
         if (minimapWidth) _minimapWidth = spdf_clamp_cg(minimapWidth.doubleValue, 72.0, 260.0);
         if (showShortcutHelp) _showShortcutHelpOnLaunch = showShortcutHelp.boolValue;
+        if (defaultReaderPromptDismissed) _defaultReaderPromptDismissed = defaultReaderPromptDismissed.boolValue;
+        if (printScalingMode) _printScalingMode = (SPDFPrintScalingMode)MAX(0, MIN(2, printScalingMode.integerValue));
+        if (printCustomScale) _printCustomScale = SPDFClampPrintCustomScale(printCustomScale.doubleValue);
         if ([windowSize isKindOfClass:NSDictionary.class]) {
             _restoredWindowContentSize = spdf_sane_window_content_size(
                 NSMakeSize([windowSize[@"width"] doubleValue], [windowSize[@"height"] doubleValue]),
@@ -846,6 +858,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         @"translateSourceLanguage" : _translationSourceLanguage ?: @"zh",
         @"translateTargetLanguage" : _translationTargetLanguage ?: @"en",
         @"showShortcutHelpOnLaunch" : @(_showShortcutHelpOnLaunch),
+        @"defaultReaderPromptDismissed" : @(_defaultReaderPromptDismissed),
+        @"printScalingMode" : @(_printScalingMode),
+        @"printCustomScale" : @(SPDFClampPrintCustomScale(_printCustomScale)),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
     }
                    toFile:@"settings.json"];
@@ -922,6 +937,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Open in Adobe Acrobat Reader"
                         action:@selector(openInExternalReader:)
+                 keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Make Shenzhen PDF Default PDF Reader..."
+                        action:@selector(makeDefaultPDFReader:)
                  keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Show in Folder" action:@selector(showInFolder:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Close" action:@selector(closeDocument:) keyEquivalent:@"w"];
@@ -1127,7 +1145,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.6.4";
+    if (version.length == 0) version = @"26.6.5";
     if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
@@ -2448,12 +2466,89 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)renderLiveDocumentPanViewportCropIfDue {
     if (!_documentViewPanActive) return;
+    if (_documentViewPanCropInFlight) return;
     NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
     if (now - _lastDocumentPanLiveCropRenderTime < kDocumentPanLiveCropRenderInterval) return;
     _lastDocumentPanLiveCropRenderTime = now;
-    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:1.0 allowFullPageRenderAllowedPages:NO];
-    [_pageView setNeedsDisplay:YES];
-    [_pageView displayIfNeeded];
+
+    CGFloat displayScale = 1.0;
+    CGFloat backingScale = [self backingScale];
+    CGFloat margin =
+        MAX(NSWidth(_pageScrollView.contentView.bounds), NSHeight(_pageScrollView.contentView.bounds)) * 0.35;
+    NSInteger preferredPage = -1;
+    NSArray<NSNumber*>* pageIndexes = [self visibleDocumentPageIndexesWithExtraRadius:0 preferredPage:&preferredPage];
+    NSMutableArray<NSDictionary*>* tasks = [NSMutableArray array];
+    for (NSNumber* number in pageIndexes) {
+        NSInteger pageIndex = number.integerValue;
+        if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
+        if ([self renderedPageImage:page matchesZoom:_zoom displayScale:backingScale]) continue;
+        if ([self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:backingScale]) continue;
+
+        NSRect cropRect = [self visiblePageCropRectForPageIndex:pageIndex extraViewMargin:margin];
+        cropRect = [self pixelSnappedPageCropRect:cropRect page:page zoom:_zoom displayScale:displayScale];
+        if (NSIsEmptyRect(cropRect)) continue;
+        if ([self viewportImage:page coversPageCropRect:cropRect zoom:_zoom displayScale:displayScale]) continue;
+        if ([self viewportImage:page coversPageCropRect:cropRect zoom:_zoom displayScale:backingScale]) continue;
+        [tasks addObject:@{@"page" : @(pageIndex), @"crop" : [NSValue valueWithRect:cropRect]}];
+    }
+    if (tasks.count == 0) return;
+
+    _documentViewPanCropInFlight = YES;
+    NSUInteger panGeneration = _documentViewPanCropGeneration;
+    NSUInteger renderGeneration = _renderGeneration;
+    NSString* path = [_path copy];
+    CGFloat zoom = _zoom;
+    NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+      @autoreleasepool {
+          char err[512];
+          spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+          NSMutableArray<NSDictionary*>* results = [NSMutableArray arrayWithCapacity:tasks.count];
+          if (workerDoc) {
+              for (NSDictionary* task in tasks) {
+                  NSInteger pageIndex = [task[@"page"] integerValue];
+                  NSRect cropRect = [task[@"crop"] rectValue];
+                  NSImage* image = [self renderedPageCropImageAtIndex:pageIndex
+                                                             document:workerDoc
+                                                                 zoom:zoom
+                                                         displayScale:displayScale
+                                                         pageCropRect:cropRect
+                                                                error:err
+                                                          errorLength:sizeof(err)];
+                  if (!image) continue;
+                  [results addObject:@{
+                      @"page" : @(pageIndex),
+                      @"crop" : [NSValue valueWithRect:cropRect],
+                      @"image" : image
+                  }];
+              }
+          }
+
+          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            if (panGeneration != self->_documentViewPanCropGeneration || renderGeneration != self->_renderGeneration ||
+                !self->_documentViewPanActive || ![self->_path isEqualToString:path] ||
+                fabs(zoom - self->_zoom) > 0.001) {
+                if (panGeneration == self->_documentViewPanCropGeneration) self->_documentViewPanCropInFlight = NO;
+                return;
+            }
+            self->_documentViewPanCropInFlight = NO;
+            for (NSDictionary* result in results) {
+                NSInteger pageIndex = [result[@"page"] integerValue];
+                if (pageIndex < 0 || pageIndex >= (NSInteger)self->_renderedPages.count) continue;
+                SPDFRenderedPage* page = self->_renderedPages[(NSUInteger)pageIndex];
+                page.viewportImage = result[@"image"];
+                page.viewportImagePageRect = [result[@"crop"] rectValue];
+                page.viewportImageZoom = zoom;
+                page.viewportImageScale = displayScale;
+                [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:pageIndex]];
+            }
+            if (self->_documentViewPanActive) [self renderLiveDocumentPanViewportCropIfDue];
+          }];
+      }
+    }];
+    operation.queuePriority = NSOperationQueuePriorityNormal;
+    operation.qualityOfService = NSQualityOfServiceUtility;
+    [_renderQueue addOperation:operation];
 }
 
 - (NSUInteger)renderedImageByteCost:(SPDFRenderedPage*)page {
@@ -2881,14 +2976,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
 
     [_pageView setNeedsDisplay:YES];
+    BOOL panning = _documentViewPanActive;
     if (_liveZooming)
         [_pageView setNeedsDisplay:YES];
-    else if (_documentViewPanActive)
+    else if (panning)
         [self renderLiveDocumentPanViewportCropIfDue];
     else
         [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
-    [self evictDistantRenderedPageImages];
+    if (!panning) [self evictDistantRenderedPageImages];
     return YES;
 }
 
@@ -4246,13 +4342,26 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSUInteger sequence = [timer.userInfo unsignedIntegerValue];
     _zoomFinishTimer = nil;
     if (sequence != _liveZoomSequence) return;
+    if (_documentViewPanActive) {
+        _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:kLiveZoomFinishWhilePanningDelay
+                                                            target:self
+                                                          selector:@selector(finishLiveZoom:)
+                                                          userInfo:@(sequence)
+                                                           repeats:NO];
+        return;
+    }
     _liveZooming = NO;
     if (_doc) {
+        _documentViewPanCropGeneration++;
+        _documentViewPanCropInFlight = NO;
         [self resizeDocumentView];
         [self syncToolbarState];
         [self updateControls];
         [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
-        [self renderVisiblePageCropsForCurrentViewportAfterLiveZoom];
+        if (_documentViewPanActive)
+            [self setCurrentViewportNeedsDisplay];
+        else
+            [self renderVisiblePageCropsForCurrentViewportAfterLiveZoom];
         [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:YES];
         [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
         [self updateMinimap];
@@ -4273,6 +4382,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     CGFloat targetZoom = MAX(kMinZoom, MIN(kMaxZoom, _zoom * factor));
     if (fabs(targetZoom - _zoom) < 0.0001) return;
     _fitMode = SPDFFitModeCustom;
+    _documentViewPanCropGeneration++;
+    _documentViewPanCropInFlight = NO;
     if (!_liveZooming) {
         [_renderQueue cancelAllOperations];
         [_minimapQueue cancelAllOperations];
@@ -5129,14 +5240,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             [self selectCurrentSidebarRow];
         }
     }
+    BOOL panning = _documentViewPanActive;
     if (_liveZooming)
         [_pageView setNeedsDisplay:YES];
-    else if (_documentViewPanActive)
+    else if (panning)
         [self renderLiveDocumentPanViewportCropIfDue];
     else
         [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
-    [self evictDistantRenderedPageImages];
+    if (!panning) [self evictDistantRenderedPageImages];
 }
 
 - (BOOL)documentArrowKeyDown:(NSEvent*)event {
@@ -5678,14 +5790,27 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)documentViewDidBeginPan {
     _documentViewPanActive = YES;
+    _documentViewPanCropInFlight = NO;
+    _documentViewPanCropGeneration++;
     _lastDocumentPanLiveCropRenderTime = 0.0;
 }
 
 - (void)documentViewDidFinishPanMotion {
     if (!_documentViewPanActive) return;
     _documentViewPanActive = NO;
+    _documentViewPanCropGeneration++;
+    _documentViewPanCropInFlight = NO;
     _lastDocumentPanLiveCropRenderTime = 0.0;
-    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    if (_liveZooming) {
+        [_zoomFinishTimer invalidate];
+        _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:0.02
+                                                            target:self
+                                                          selector:@selector(finishLiveZoom:)
+                                                          userInfo:@(_liveZoomSequence)
+                                                           repeats:NO];
+        [self setCurrentViewportNeedsDisplay];
+    } else
+        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];
@@ -5694,6 +5819,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
 - (void)cancelDocumentTransientInteraction {
     _documentViewPanActive = NO;
+    _documentViewPanCropGeneration++;
+    _documentViewPanCropInFlight = NO;
     _lastDocumentPanLiveCropRenderTime = 0.0;
     [_zoomFinishTimer invalidate];
     _zoomFinishTimer = nil;
@@ -8774,6 +8901,31 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
 }
 
+- (SPDFPrintScalingAccessoryController*)
+    attachPrintScalingAccessoryToOperation:(NSPrintOperation*)operation
+                           updatePrintView:(void (^)(SPDFPrintScalingMode mode, CGFloat customScale))updatePrintView {
+    SPDFPrintScalingAccessoryController* accessory =
+        [[SPDFPrintScalingAccessoryController alloc] initWithScalingMode:_printScalingMode
+                                                             customScale:_printCustomScale];
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    accessory.changeHandler = ^(SPDFPrintScalingMode mode, CGFloat customScale) {
+      if (updatePrintView) updatePrintView(mode, customScale);
+      ShenzhenMacDelegate* strongSelf = weakSelf;
+      if (!strongSelf) return;
+      strongSelf->_printScalingMode = mode;
+      strongSelf->_printCustomScale = customScale;
+      [strongSelf savePersistentState];
+    };
+    if (updatePrintView) updatePrintView(accessory.scalingMode, accessory.customScale);
+    NSPrintPanel* printPanel = operation.printPanel;
+    printPanel.options =
+        printPanel.options | NSPrintPanelShowsPreview | NSPrintPanelShowsPaperSize | NSPrintPanelShowsOrientation;
+    [printPanel addAccessoryController:accessory];
+    objc_setAssociatedObject(operation, @selector(attachPrintScalingAccessoryToOperation:updatePrintView:), accessory,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return accessory;
+}
+
 - (void)printDocument:(id)sender {
     (void)sender;
     if (!_doc) {
@@ -8796,19 +8948,23 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                 return;
             }
 
-            NSPrintOperation* pdfOperation = [pdfDocument printOperationForPrintInfo:info
-                                                                         scalingMode:kPDFPrintPageScaleToFit
-                                                                          autoRotate:YES];
-            if (pdfOperation) {
-                objc_setAssociatedObject(pdfOperation, @selector(printDocument:), pdfDocument,
-                                         OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                pdfOperation.jobTitle = _path.lastPathComponent ?: @"Shenzhen PDF";
-                pdfOperation.showsPrintPanel = YES;
-                pdfOperation.showsProgressPanel = YES;
-                [pdfOperation runOperationModalForWindow:_window delegate:nil didRunSelector:NULL contextInfo:NULL];
-                [self evictDistantRenderedPageImages];
-                return;
-            }
+            NSSize paper = info.paperSize;
+            SPDFPDFKitPrintView* pdfPrintView = [[SPDFPDFKitPrintView alloc]
+                initWithFrame:NSMakeRect(0, 0, paper.width, paper.height * MAX(1, (NSInteger)pdfDocument.pageCount))];
+            pdfPrintView.pdfDocument = pdfDocument;
+            NSPrintOperation* operation = [NSPrintOperation printOperationWithView:pdfPrintView printInfo:info];
+            [self attachPrintScalingAccessoryToOperation:operation
+                                         updatePrintView:^(SPDFPrintScalingMode mode, CGFloat customScale) {
+                                           pdfPrintView.scalingMode = mode;
+                                           pdfPrintView.customScale = customScale;
+                                           [pdfPrintView setNeedsDisplay:YES];
+                                         }];
+            operation.jobTitle = _path.lastPathComponent ?: @"Shenzhen PDF";
+            operation.showsPrintPanel = YES;
+            operation.showsProgressPanel = YES;
+            [operation runOperationModalForWindow:_window delegate:nil didRunSelector:NULL contextInfo:NULL];
+            [self evictDistantRenderedPageImages];
+            return;
         }
     }
 
@@ -8822,6 +8978,13 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     printView.fallbackPages = _renderedPages;
 
     NSPrintOperation* operation = [NSPrintOperation printOperationWithView:printView printInfo:info];
+    [self attachPrintScalingAccessoryToOperation:operation
+                                 updatePrintView:^(SPDFPrintScalingMode mode, CGFloat customScale) {
+                                   printView.scalingMode = mode;
+                                   printView.customScale = customScale;
+                                   [printView setNeedsDisplay:YES];
+                                 }];
+    operation.jobTitle = _path.lastPathComponent ?: @"Shenzhen PDF";
     operation.showsPrintPanel = YES;
     operation.showsProgressPanel = YES;
     [operation runOperationModalForWindow:_window delegate:nil didRunSelector:NULL contextInfo:NULL];
@@ -8839,6 +9002,61 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     alert.messageText = @"Document Properties";
     alert.informativeText = message;
     [alert runModal];
+}
+
+- (void)showDefaultPDFReaderStatus:(NSString*)message detail:(NSString*)detail {
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = message;
+    alert.informativeText = detail ?: @"";
+    alert.alertStyle = NSAlertStyleInformational;
+    [NSApp activateIgnoringOtherApps:YES];
+    [alert runModal];
+}
+
+- (void)promptToMakeDefaultPDFReaderFromLaunch:(BOOL)fromLaunch {
+    if (SPDFMacIsDefaultPDFReader()) {
+        if (fromLaunch) {
+            _defaultReaderPromptDismissed = YES;
+            [self savePersistentState];
+        } else {
+            [self showDefaultPDFReaderStatus:@"Shenzhen PDF is already the default PDF reader." detail:@""];
+        }
+        return;
+    }
+
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Make Shenzhen PDF your default PDF reader?";
+    alert.informativeText = @"PDF files opened from Finder will open in Shenzhen PDF.";
+    alert.alertStyle = NSAlertStyleInformational;
+    [alert addButtonWithTitle:@"Make Default"];
+    [alert addButtonWithTitle:@"Not Now"];
+
+    [NSApp activateIgnoringOtherApps:YES];
+    NSModalResponse response = [alert runModal];
+    if (fromLaunch) {
+        _defaultReaderPromptDismissed = YES;
+        [self savePersistentState];
+    }
+    if (response != NSAlertFirstButtonReturn) return;
+
+    NSError* error = nil;
+    if (SPDFMacMakeDefaultPDFReader(&error)) {
+        [self showDefaultPDFReaderStatus:@"Shenzhen PDF is now the default PDF reader."
+                                  detail:@"Future PDF files opened from Finder should open in Shenzhen PDF."];
+        return;
+    }
+    [self showError:@"Could not set the default PDF reader"
+             detail:error.localizedRecoverySuggestion ?: error.localizedDescription ?: @""];
+}
+
+- (void)promptToMakeDefaultPDFReaderIfNeededOnLaunch {
+    if (_defaultReaderPromptDismissed || self.detachedTabLaunch) return;
+    [self promptToMakeDefaultPDFReaderFromLaunch:YES];
+}
+
+- (void)makeDefaultPDFReader:(id)sender {
+    (void)sender;
+    [self promptToMakeDefaultPDFReaderFromLaunch:NO];
 }
 
 - (void)openInExternalReader:(id)sender {
@@ -9407,7 +9625,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         action == @selector(focusFind:) || action == @selector(setCommentAuthor:) ||
         action == @selector(openRecentDocument:) || action == @selector(openSettingsFile:) ||
         action == @selector(openStateJSONFile:) || action == @selector(revealSettingsFolder:) ||
-        action == @selector(showShortcutHelp:))
+        action == @selector(showShortcutHelp:) || action == @selector(makeDefaultPDFReader:))
         return YES;
     if (action == @selector(fillWindow:) || action == @selector(centerWindowInScreen:) ||
         action == @selector(moveWindowToLeftHalf:) || action == @selector(moveWindowToRightHalf:) ||
@@ -9488,7 +9706,7 @@ int main(int argc, const char* argv[]) {
     @autoreleasepool {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.4-1\n");
+                printf("Shenzhen PDF portable mac 26.6.5-1\n");
                 return 0;
             }
         }

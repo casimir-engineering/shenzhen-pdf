@@ -3,6 +3,7 @@
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacModels.h"
+#import "SPDFMacPrintView.h"
 #import "SPDFMacTabStripView.h"
 #import "SPDFMacUIHelpers.h"
 
@@ -159,6 +160,8 @@
     BOOL _suppressViewportRerender;
     BOOL _liveZooming;
     BOOL _documentViewPanActive;
+    BOOL _documentViewPanCropInFlight;
+    NSUInteger _documentViewPanCropGeneration;
     NSTimeInterval _lastDocumentPanLiveCropRenderTime;
     BOOL _minimapPrecisionViewportDragActive;
     BOOL _sidebarPreferredVisible;
@@ -191,6 +194,7 @@
     BOOL _translationInstallRunning;
     BOOL _translationCancelRequested;
     BOOL _showShortcutHelpOnLaunch;
+    BOOL _defaultReaderPromptDismissed;
     BOOL _tabStripCapturingMouse;
     BOOL _terminateOnlyThisProcess;
     BOOL _suppressSessionWriteOnTerminate;
@@ -202,6 +206,8 @@
     BOOL _allowSidebarWidthPersistence;
     CGFloat _sidebarWidth;
     CGFloat _minimapWidth;
+    SPDFPrintScalingMode _printScalingMode;
+    CGFloat _printCustomScale;
     NSSize _restoredWindowContentSize;
     NSRect _restoredWindowFrame;
     BOOL _hasRestoredWindowFrame;
