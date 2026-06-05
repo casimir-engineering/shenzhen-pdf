@@ -310,11 +310,15 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     CGFloat minX = width >= viewportWidth - 0.5 ? 0.0 : pageMargin / 2.0;
     NSClipView* clipView = self.enclosingScrollView.contentView;
     NSRect visibleRect = clipView ? clipView.bounds : NSMakeRect(0.0, 0.0, NSWidth(self.bounds), NSHeight(self.bounds));
-    CGFloat centeredY = NSMinY(visibleRect) + floor((NSHeight(visibleRect) - height) / 2.0);
     CGFloat minY = self.presentationMode ? 0.0 : kPageMargin / 2.0;
-    if (self.pages.count > 1) minY = -CGFLOAT_MAX;
-    return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), MAX(minY, [self pixelSnappedOrigin:centeredY]), width,
-                      height);
+    CGFloat y = 0.0;
+    if (height <= NSHeight(visibleRect) + 0.5) {
+        y = NSMinY(visibleRect) + floor((NSHeight(visibleRect) - height) / 2.0);
+        if (self.pages.count > 1) minY = -CGFLOAT_MAX;
+    } else {
+        y = NSMinY([self singlePageDocumentSlotForPageAtIndex:pageIndex]);
+    }
+    return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), MAX(minY, [self pixelSnappedOrigin:y]), width, height);
 }
 
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
@@ -543,10 +547,16 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     NSInteger pageIndex = -1;
     if ([self point:point fallsInPage:&pageIndex pagePoint:&pagePoint]) {
         if ([self.reader documentViewOpenLinkAtPageIndex:pageIndex pagePoint:pagePoint]) return;
+        if (self.viewMode == SPDFViewModeSingle) {
+            [self beginPanWithEvent:event];
+            return;
+        }
         _isSelecting = YES;
         _selectionPageIndex = pageIndex;
         _selectionStart = pagePoint;
         [self.reader documentViewSelectionChangedOnPage:pageIndex from:pagePoint to:pagePoint];
+    } else if (self.viewMode == SPDFViewModeSingle && self.pages.count > 0) {
+        [self beginPanWithEvent:event];
     } else {
         [super mouseDown:event];
     }
@@ -579,6 +589,10 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
 - (void)mouseDragged:(NSEvent*)event {
     [self.reader clearFindFieldFocus];
+    if (_isPanning) {
+        [self continuePanWithEvent:event];
+        return;
+    }
     if (!_isSelecting) {
         [super mouseDragged:event];
         return;
@@ -593,6 +607,10 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
 - (void)mouseUp:(NSEvent*)event {
     (void)event;
+    if (_isPanning) {
+        [self endPan];
+        return;
+    }
     _isSelecting = NO;
 }
 
@@ -604,6 +622,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     [_inertiaTimer invalidate];
     _inertiaTimer = nil;
     _isPanning = YES;
+    _isSelecting = NO;
     _panStartInWindow = event.locationInWindow;
     _panStartOrigin = scrollView.contentView.bounds.origin;
     _lastPanPoint = event.locationInWindow;
@@ -663,6 +682,11 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 - (void)endPan {
     _isPanning = NO;
     [[NSCursor arrowCursor] set];
+    if (self.viewMode == SPDFViewModeSingle) {
+        _panVelocity = NSZeroPoint;
+        [self.reader documentViewDidFinishPanMotion];
+        return;
+    }
     if (hypot(_panVelocity.x, _panVelocity.y) > 90.0) {
         [_inertiaTimer invalidate];
         _inertiaTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0

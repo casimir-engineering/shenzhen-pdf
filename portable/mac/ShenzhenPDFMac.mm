@@ -1058,20 +1058,25 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     NSMenuItem* windowItem = [[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""];
     [mainMenu addItem:windowItem];
-    NSMenu* windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
-    NSMenuItem* minimizeItem = [windowMenu addItemWithTitle:@"Minimize"
-                                                     action:@selector(performMiniaturize:)
-                                              keyEquivalent:@"m"];
+    _windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+    _windowMenu.delegate = self;
+    NSMenuItem* minimizeItem = [_windowMenu addItemWithTitle:@"Minimize"
+                                                      action:@selector(performMiniaturize:)
+                                               keyEquivalent:@"m"];
     minimizeItem.target = _window;
-    NSMenuItem* zoomItemWindow = [windowMenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
-    zoomItemWindow.target = _window;
-    [windowMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* bringAllToFront = [windowMenu addItemWithTitle:@"Bring All to Front"
-                                                        action:@selector(arrangeInFront:)
+    NSMenuItem* zoomItemWindow = [_windowMenu addItemWithTitle:@"Zoom"
+                                                        action:@selector(performZoom:)
                                                  keyEquivalent:@""];
+    zoomItemWindow.target = _window;
+    [_windowMenu addItem:[NSMenuItem separatorItem]];
+    [self addWindowArrangementItemsToMenu:_windowMenu includeKeyEquivalents:YES];
+    [_windowMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* bringAllToFront = [_windowMenu addItemWithTitle:@"Bring All to Front"
+                                                         action:@selector(arrangeInFront:)
+                                                  keyEquivalent:@""];
     bringAllToFront.target = NSApp;
-    windowItem.submenu = windowMenu;
-    [NSApp setWindowsMenu:windowMenu];
+    windowItem.submenu = _windowMenu;
+    [NSApp setWindowsMenu:_windowMenu];
 
     NSMenuItem* editItem = [[NSMenuItem alloc] initWithTitle:@"Edit" action:nil keyEquivalent:@""];
     [mainMenu addItem:editItem];
@@ -1294,6 +1299,63 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     item.enabled = enabled;
 }
 
+- (void)addWindowArrangementItemsToMenu:(NSMenu*)menu includeKeyEquivalents:(BOOL)includeKeyEquivalents {
+    NSEventModifierFlags modifiers = NSEventModifierFlagControl | NSEventModifierFlagFunction;
+    NSDictionary* fillInfo = @{
+        @"title" : @"Fill",
+        @"action" : NSStringFromSelector(@selector(fillWindow:)),
+        @"key" : includeKeyEquivalents ? @"f" : @""
+    };
+    NSDictionary* centerInfo = @{
+        @"title" : @"Center",
+        @"action" : NSStringFromSelector(@selector(centerWindowInScreen:)),
+        @"key" : includeKeyEquivalents ? @"c" : @""
+    };
+    for (NSDictionary* itemInfo in @[ fillInfo, centerInfo ]) {
+        NSMenuItem* item = [menu addItemWithTitle:itemInfo[@"title"]
+                                           action:NSSelectorFromString(itemInfo[@"action"])
+                                    keyEquivalent:itemInfo[@"key"]];
+        item.target = self;
+        if (includeKeyEquivalents) item.keyEquivalentModifierMask = modifiers;
+    }
+
+    NSMenuItem* moveResizeItem = [[NSMenuItem alloc] initWithTitle:@"Move & Resize Window"
+                                                            action:nil
+                                                     keyEquivalent:@""];
+    NSMenu* moveResizeMenu = [[NSMenu alloc] initWithTitle:@"Move & Resize Window"];
+    NSArray<NSDictionary*>* moveResizeActions = @[
+        @{
+            @"title" : @"Left Half",
+            @"action" : NSStringFromSelector(@selector(moveWindowToLeftHalf:)),
+            @"key" : includeKeyEquivalents ? [NSString stringWithFormat:@"%C", (unichar)NSLeftArrowFunctionKey] : @""
+        },
+        @{
+            @"title" : @"Right Half",
+            @"action" : NSStringFromSelector(@selector(moveWindowToRightHalf:)),
+            @"key" : includeKeyEquivalents ? [NSString stringWithFormat:@"%C", (unichar)NSRightArrowFunctionKey] : @""
+        },
+        @{
+            @"title" : @"Top Half",
+            @"action" : NSStringFromSelector(@selector(moveWindowToTopHalf:)),
+            @"key" : includeKeyEquivalents ? [NSString stringWithFormat:@"%C", (unichar)NSUpArrowFunctionKey] : @""
+        },
+        @{
+            @"title" : @"Bottom Half",
+            @"action" : NSStringFromSelector(@selector(moveWindowToBottomHalf:)),
+            @"key" : includeKeyEquivalents ? [NSString stringWithFormat:@"%C", (unichar)NSDownArrowFunctionKey] : @""
+        }
+    ];
+    for (NSDictionary* itemInfo in moveResizeActions) {
+        NSMenuItem* item = [moveResizeMenu addItemWithTitle:itemInfo[@"title"]
+                                                     action:NSSelectorFromString(itemInfo[@"action"])
+                                              keyEquivalent:itemInfo[@"key"]];
+        item.target = self;
+        if (includeKeyEquivalents) item.keyEquivalentModifierMask = modifiers;
+    }
+    moveResizeItem.submenu = moveResizeMenu;
+    [menu addItem:moveResizeItem];
+}
+
 - (void)rebuildToolbarOverflowMenuWithHiddenViews:(NSSet<NSView*>*)hiddenViews {
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Toolbar"];
     BOOL hasDoc = _doc != NULL;
@@ -1452,7 +1514,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _window.titleVisibility = NSWindowTitleHidden;
     _window.titlebarAppearsTransparent = YES;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
-    _window.movable = YES;
+    _window.movable = NO;
     _window.movableByWindowBackground = NO;
 
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
@@ -2464,6 +2526,19 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                                    allowFullPageRenderAllowedPages:NO];
 }
 
+- (void)scheduleDocumentPanMaintenance {
+    if (!_documentViewPanActive || _documentViewPanMaintenanceScheduled) return;
+    _documentViewPanMaintenanceScheduled = YES;
+    NSUInteger panGeneration = _documentViewPanCropGeneration;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDocumentPanLiveCropRenderInterval * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                     self->_documentViewPanMaintenanceScheduled = NO;
+                     if (!self->_documentViewPanActive || panGeneration != self->_documentViewPanCropGeneration) return;
+                     [self renderLiveDocumentPanViewportCropIfDue];
+                     [self updateMinimap];
+                   });
+}
+
 - (void)renderLiveDocumentPanViewportCropIfDue {
     if (!_documentViewPanActive) return;
     if (_documentViewPanCropInFlight) return;
@@ -2927,7 +3002,14 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
     if (NSIsEmptyRect(pageRect)) return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
 
-    if (_viewMode == SPDFViewModeSingle) origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
+    if (_viewMode == SPDFViewModeSingle) {
+        CGFloat visibleHeight = NSHeight(clipView.bounds);
+        if (NSHeight(pageRect) <= visibleHeight + 0.5) {
+            origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
+        } else {
+            origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMaxY(pageRect) - visibleHeight);
+        }
+    }
 
     CGFloat visibleWidth = NSWidth(clipView.bounds);
     if (NSWidth(pageRect) <= visibleWidth + 0.5) {
@@ -2977,10 +3059,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 
     [_pageView setNeedsDisplay:YES];
     BOOL panning = _documentViewPanActive;
+    if (panning) {
+        [self scheduleDocumentPanMaintenance];
+        return YES;
+    }
     if (_liveZooming)
         [_pageView setNeedsDisplay:YES];
-    else if (panning)
-        [self renderLiveDocumentPanViewportCropIfDue];
     else
         [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
@@ -3806,7 +3890,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
             if (NSPointInRect(point, _tabStrip.bounds)) {
                 if ([_tabStrip containsTabOrControlAtPoint:point]) {
                     _tabStripCapturingMouse = YES;
-                    _window.movable = NO;
                     [_tabStrip mouseDown:event];
                 } else {
                     _tabStripCapturingMouse = NO;
@@ -3826,7 +3909,6 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
     if (type == NSEventTypeLeftMouseUp) {
         _tabStripCapturingMouse = NO;
-        _window.movable = YES;
         [_tabStrip mouseUp:event];
         return YES;
     }
@@ -4255,6 +4337,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return anchor;
 }
 
+- (SPDFPageAnchor)liveZoomAnchorForWindowPoint:(NSPoint)windowPoint {
+    if (!_liveZoomAnchorValid) return [self pageAnchorForWindowPoint:windowPoint];
+    SPDFPageAnchor anchor;
+    memset(&anchor, 0, sizeof(anchor));
+    anchor.pageIndex = _liveZoomAnchorPageIndex;
+    anchor.pagePoint = _liveZoomAnchorPagePoint;
+    anchor.offsetInViewport = _liveZoomAnchorOffsetInViewport;
+    anchor.valid = YES;
+    return anchor;
+}
+
 - (void)scrollToPageAnchor:(SPDFPageAnchor)anchor notify:(BOOL)notify {
     if (!anchor.valid || anchor.pageIndex < 0 || anchor.pageIndex >= (NSInteger)_renderedPages.count) return;
     NSRect pageRect = [_pageView rectForPageAtIndex:anchor.pageIndex];
@@ -4304,7 +4397,8 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     CGFloat clampedZoom = MAX(kMinZoom, MIN(kMaxZoom, newZoom));
     if (fabs(clampedZoom - oldZoom) < 0.0001) return;
 
-    SPDFPageAnchor anchor = [self pageAnchorForWindowPoint:windowPoint];
+    SPDFPageAnchor anchor =
+        _liveZooming ? [self liveZoomAnchorForWindowPoint:windowPoint] : [self pageAnchorForWindowPoint:windowPoint];
     _zoom = clampedZoom;
     _rememberedCustomZoom = _zoom;
     _pageView.backingScale = [self backingScale];
@@ -4351,6 +4445,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         return;
     }
     _liveZooming = NO;
+    _liveZoomAnchorValid = NO;
     if (_doc) {
         _documentViewPanCropGeneration++;
         _documentViewPanCropInFlight = NO;
@@ -4385,6 +4480,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _documentViewPanCropGeneration++;
     _documentViewPanCropInFlight = NO;
     if (!_liveZooming) {
+        SPDFPageAnchor anchor = [self pageAnchorForWindowPoint:windowPoint];
+        _liveZoomAnchorPageIndex = anchor.pageIndex;
+        _liveZoomAnchorPagePoint = anchor.pagePoint;
+        _liveZoomAnchorOffsetInViewport = anchor.offsetInViewport;
+        _liveZoomAnchorValid = anchor.valid;
         [_renderQueue cancelAllOperations];
         [_minimapQueue cancelAllOperations];
         [_queuedRenderPages removeAllObjects];
@@ -5241,14 +5341,17 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         }
     }
     BOOL panning = _documentViewPanActive;
+    if (panning) {
+        [self setCurrentViewportNeedsDisplay];
+        [self scheduleDocumentPanMaintenance];
+        return;
+    }
     if (_liveZooming)
         [_pageView setNeedsDisplay:YES];
-    else if (panning)
-        [self renderLiveDocumentPanViewportCropIfDue];
     else
         [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
-    if (!panning) [self evictDistantRenderedPageImages];
+    [self evictDistantRenderedPageImages];
 }
 
 - (BOOL)documentArrowKeyDown:(NSEvent*)event {
@@ -5343,8 +5446,9 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event {
-    (void)event;
     if (!_doc) return NO;
+    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) return NO;
     return _viewMode == SPDFViewModeSingle || _fitMode == SPDFFitModeHeight || _fitMode == SPDFFitModePage;
 }
 
@@ -5791,6 +5895,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (void)documentViewDidBeginPan {
     _documentViewPanActive = YES;
     _documentViewPanCropInFlight = NO;
+    _documentViewPanMaintenanceScheduled = NO;
     _documentViewPanCropGeneration++;
     _lastDocumentPanLiveCropRenderTime = 0.0;
 }
@@ -5800,6 +5905,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _documentViewPanActive = NO;
     _documentViewPanCropGeneration++;
     _documentViewPanCropInFlight = NO;
+    _documentViewPanMaintenanceScheduled = NO;
     _lastDocumentPanLiveCropRenderTime = 0.0;
     if (_liveZooming) {
         [_zoomFinishTimer invalidate];
@@ -5821,11 +5927,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     _documentViewPanActive = NO;
     _documentViewPanCropGeneration++;
     _documentViewPanCropInFlight = NO;
+    _documentViewPanMaintenanceScheduled = NO;
     _lastDocumentPanLiveCropRenderTime = 0.0;
     [_zoomFinishTimer invalidate];
     _zoomFinishTimer = nil;
     _liveZoomSequence++;
     _liveZooming = NO;
+    _liveZoomAnchorValid = NO;
     [_pageView cancelTransientInteraction];
 }
 
@@ -6745,17 +6853,30 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     CGFloat contentWidth = 650.0;
     CGFloat chromeHeight = 14.0 + 34.0 + 8.0 + 8.0;
     CGFloat rowsHeight = [self paletteRowsHeight];
-    CGFloat contentHeight = chromeHeight + rowsHeight;
+    CGFloat tablePadding = 18.0;
+    CGFloat idealContentHeight = chromeHeight + rowsHeight + tablePadding;
     CGFloat minContentHeight = chromeHeight + 42.0;
-    CGFloat maxContentHeight = MIN(NSHeight(_window.frame) - 140.0, chromeHeight + 520.0);
+    NSScreen* screen = _window.screen ?: NSScreen.mainScreen;
+    NSRect visibleFrame = screen.visibleFrame;
+    CGFloat maxFrameHeight = floor(NSHeight(visibleFrame) * 0.60);
+    NSRect maxContentRect = [_palettePanel contentRectForFrameRect:NSMakeRect(0, 0, contentWidth, maxFrameHeight)];
+    CGFloat maxContentHeight = NSHeight(maxContentRect);
+    CGFloat contentHeight = idealContentHeight;
     contentHeight = ceil(spdf_clamp_cg(contentHeight, minContentHeight, MAX(minContentHeight, maxContentHeight)));
+    NSScrollView* scrollView = _paletteTable.enclosingScrollView;
+    if (scrollView) scrollView.hasVerticalScroller = idealContentHeight > maxContentHeight + 0.5;
 
     NSRect frame = [_palettePanel frameRectForContentRect:NSMakeRect(0, 0, contentWidth, contentHeight)];
     NSRect windowFrame = _window.frame;
     CGFloat topY = preserveTop && _palettePanel.visible ? NSMaxY(_palettePanel.frame) : NSMaxY(windowFrame) - 88.0;
-    CGFloat minY = NSMinY(windowFrame) + 24.0;
+    CGFloat minY = NSMinY(visibleFrame) + 24.0;
+    CGFloat maxY = NSMaxY(visibleFrame) - 24.0;
+    topY = MIN(topY, maxY);
+    if (topY - NSHeight(frame) < minY) topY = MIN(maxY, minY + NSHeight(frame));
     if (topY - NSHeight(frame) < minY) frame.size.height = MAX(160.0, topY - minY);
     frame.origin.x = floor(NSMidX(windowFrame) - NSWidth(frame) / 2.0);
+    frame.origin.x =
+        spdf_clamp_cg(frame.origin.x, NSMinX(visibleFrame) + 24.0, NSMaxX(visibleFrame) - NSWidth(frame) - 24.0);
     frame.origin.y = floor(topY - NSHeight(frame));
     [_palettePanel setFrame:frame display:_palettePanel.visible animate:NO];
 }
@@ -6799,6 +6920,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     }
 
     [_paletteTable reloadData];
+    if (_paletteResults.count > 0)
+        [_paletteTable
+            noteHeightOfRowsWithIndexesChanged:[NSIndexSet
+                                                   indexSetWithIndexesInRange:NSMakeRange(0, _paletteResults.count)]];
     [self updatePalettePanelFramePreservingTop:_palettePanel.visible];
     [self selectFirstPaletteResult];
 }
@@ -6830,9 +6955,162 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return results;
 }
 
+- (NSDictionary<NSString*, NSString*>*)openDocumentPaletteTitlesByStandardizedPath {
+    NSArray<NSString*>* paths = [self openTabPaths];
+    NSArray<NSString*>* names = spdf_disambiguated_display_names_for_paths(paths);
+    NSMutableDictionary<NSString*, NSString*>* titles = [NSMutableDictionary dictionaryWithCapacity:paths.count];
+    for (NSUInteger i = 0; i < paths.count; ++i) {
+        NSString* path = paths[i];
+        if (!path.length) continue;
+        NSString* title = i < names.count && names[i].length ? names[i] : spdf_display_name_for_path(path);
+        titles[path.stringByStandardizingPath] = title ?: @"";
+    }
+    return titles;
+}
+
+- (NSArray<NSValue*>*)rangesOfPaletteQuery:(NSString*)query inString:(NSString*)text limit:(NSUInteger)limit {
+    if (query.length == 0 || text.length == 0) return @[];
+    NSMutableArray<NSValue*>* ranges = [NSMutableArray array];
+    NSRange searchRange = NSMakeRange(0, text.length);
+    while (searchRange.length > 0 && (limit == 0 || ranges.count < limit)) {
+        NSRange found = [text rangeOfString:query
+                                    options:NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch
+                                      range:searchRange];
+        if (found.location == NSNotFound || found.length == 0) break;
+        [ranges addObject:[NSValue valueWithRange:found]];
+        NSUInteger nextLocation = NSMaxRange(found);
+        if (nextLocation >= text.length) break;
+        searchRange = NSMakeRange(nextLocation, text.length - nextLocation);
+    }
+    return ranges;
+}
+
+- (NSRange)paletteSnippetRangeInLine:(NSString*)line matchRange:(NSRange)matchRange {
+    if (line.length == 0 || matchRange.location == NSNotFound) return NSMakeRange(0, 0);
+
+    NSMutableArray<NSValue*>* words = [NSMutableArray array];
+    [line
+        enumerateSubstringsInRange:NSMakeRange(0, line.length)
+                           options:NSStringEnumerationByWords
+                        usingBlock:^(NSString* substring, NSRange substringRange, NSRange enclosingRange, BOOL* stop) {
+                          (void)substring;
+                          (void)enclosingRange;
+                          (void)stop;
+                          [words addObject:[NSValue valueWithRange:substringRange]];
+                        }];
+
+    NSInteger firstWord = -1;
+    NSInteger lastWord = -1;
+    for (NSInteger i = 0; i < (NSInteger)words.count; ++i) {
+        NSRange wordRange = words[(NSUInteger)i].rangeValue;
+        if (NSIntersectionRange(wordRange, matchRange).length == 0) continue;
+        if (firstWord < 0) firstWord = i;
+        lastWord = i;
+    }
+
+    NSRange snippetRange = NSMakeRange(0, 0);
+    if (firstWord >= 0 && lastWord >= firstWord) {
+        NSInteger startWord = MAX(0, firstWord - 2);
+        NSInteger endWord = MIN((NSInteger)words.count - 1, lastWord + 2);
+        NSRange startRange = words[(NSUInteger)startWord].rangeValue;
+        NSRange endRange = words[(NSUInteger)endWord].rangeValue;
+        snippetRange = NSMakeRange(startRange.location, NSMaxRange(endRange) - startRange.location);
+    } else {
+        NSUInteger start = matchRange.location;
+        NSUInteger end = MIN(line.length, NSMaxRange(matchRange));
+        NSUInteger before = MIN((NSUInteger)24, start);
+        NSUInteger after = MIN((NSUInteger)24, line.length - end);
+        snippetRange = NSMakeRange(start - before, before + matchRange.length + after);
+    }
+
+    NSCharacterSet* trim = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    while (snippetRange.length > 0 && [trim characterIsMember:[line characterAtIndex:snippetRange.location]]) {
+        snippetRange.location++;
+        snippetRange.length--;
+    }
+    while (snippetRange.length > 0 && [trim characterIsMember:[line characterAtIndex:NSMaxRange(snippetRange) - 1]]) {
+        snippetRange.length--;
+    }
+    return snippetRange;
+}
+
+- (NSString*)paletteContextForQuery:(NSString*)query
+                           document:(spdf_document*)doc
+                               page:(NSInteger)page
+                           hitCount:(NSInteger)hitCount {
+    if (!doc || query.length == 0 || hitCount <= 0) return @"";
+
+    NSMutableArray<NSString*>* snippets = [NSMutableArray array];
+    NSInteger observedMatches = 0;
+    char err[512];
+    spdf_text_lines lines;
+    memset(&lines, 0, sizeof(lines));
+    if (!spdf_extract_page_text_lines(doc, (int)page, &lines, err, sizeof(err))) return @"";
+
+    for (int i = 0; i < lines.count; ++i) {
+        if (snippets.count >= 3 && observedMatches >= hitCount) break;
+        const char* rawLine = lines.items[i].text;
+        if (!rawLine || !*rawLine) continue;
+        NSString* line = [NSString stringWithUTF8String:rawLine] ?: @"";
+        if (line.length == 0) continue;
+        for (NSValue* value in [self rangesOfPaletteQuery:query inString:line limit:0]) {
+            observedMatches++;
+            if (snippets.count < 3) {
+                NSRange snippetRange = [self paletteSnippetRangeInLine:line matchRange:value.rangeValue];
+                NSString* snippet = snippetRange.length > 0 ? [line substringWithRange:snippetRange] : line;
+                snippet = [snippet stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                if (snippet.length > 0) [snippets addObject:snippet];
+            }
+            if (snippets.count >= 3 && observedMatches >= hitCount) break;
+        }
+    }
+    spdf_free_text_lines(&lines);
+
+    if (snippets.count == 0) return @"";
+    NSMutableString* context = [[snippets componentsJoinedByString:@" | "] mutableCopy];
+    if (hitCount > (NSInteger)snippets.count) [context appendString:@" ..."];
+    return context;
+}
+
+- (NSAttributedString*)paletteContextAttributedString:(NSString*)context query:(NSString*)query {
+    NSString* text = context ?: @"";
+    NSDictionary* baseAttributes = @{
+        NSFontAttributeName : [NSFont systemFontOfSize:11.0],
+        NSForegroundColorAttributeName : NSColor.secondaryLabelColor
+    };
+    NSMutableAttributedString* attributed = [[NSMutableAttributedString alloc] initWithString:text
+                                                                                   attributes:baseAttributes];
+    NSDictionary* matchAttributes = @{
+        NSFontAttributeName : [NSFont systemFontOfSize:11.0 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName : NSColor.labelColor
+    };
+    for (NSValue* value in [self rangesOfPaletteQuery:query inString:text limit:0])
+        [attributed addAttributes:matchAttributes range:value.rangeValue];
+    return attributed;
+}
+
+- (NSAttributedString*)paletteFindTitleAttributedStringForResult:(NSDictionary*)result {
+    NSString* text = result[@"title"] ?: @"";
+    NSDictionary* baseAttributes =
+        @{NSFontAttributeName : [NSFont systemFontOfSize:13.0], NSForegroundColorAttributeName : NSColor.labelColor};
+    NSMutableAttributedString* attributed = [[NSMutableAttributedString alloc] initWithString:text
+                                                                                   attributes:baseAttributes];
+    NSUInteger boldLength = [result[@"titleBoldLength"] respondsToSelector:@selector(unsignedIntegerValue)]
+                                ? [result[@"titleBoldLength"] unsignedIntegerValue]
+                                : 0;
+    boldLength = MIN(boldLength, text.length);
+    if (boldLength > 0) {
+        [attributed addAttribute:NSFontAttributeName
+                           value:[NSFont boldSystemFontOfSize:13.0]
+                           range:NSMakeRange(0, boldLength)];
+    }
+    return attributed;
+}
+
 - (void)runFindPaletteSearchForQuery:(NSString*)query generation:(NSUInteger)generation searchAll:(BOOL)searchAll {
     NSString* currentPath = [_path copy];
     NSArray<SPDFDocumentTab*>* tabs = [_tabs copy];
+    NSDictionary<NSString*, NSString*>* tabTitles = [self openDocumentPaletteTitlesByStandardizedPath];
     [_preloadQueue addOperationWithBlock:^{
       @autoreleasepool {
           NSMutableArray<NSDictionary*>* results = [NSMutableArray array];
@@ -6856,11 +7134,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                   char err[512];
                   int hits = spdf_search_page(doc, (int)page, query.UTF8String, err, sizeof(err));
                   if (hits > 0) {
+                      NSString* title = tabTitles[path.stringByStandardizingPath] ?: spdf_display_name_for_path(path);
+                      title = title.length ? title : @"Document";
+                      NSString* suffix = [NSString stringWithFormat:@" - page %ld : %d matches", (long)page + 1, hits];
+                      NSString* context = [self paletteContextForQuery:query document:doc page:page hitCount:hits];
                       [results addObject:@{
                           @"kind" : @"find",
-                          @"title" : [NSString
-                              stringWithFormat:@"Page %ld: %d match%@", (long)page + 1, hits, hits == 1 ? @"" : @"es"],
-                          @"subtitle" : [self shortProvenanceForPath:path],
+                          @"title" : [title stringByAppendingString:suffix],
+                          @"titleBoldLength" : @(title.length),
+                          @"subtitle" : context.length ? context : [self shortProvenanceForPath:path],
                           @"path" : path,
                           @"page" : @(page),
                           @"query" : query
@@ -6887,6 +7169,12 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                     addObject:@{@"kind" : @"status", @"title" : @"No open-document matches", @"subtitle" : @""}];
             }
             [self->_paletteTable reloadData];
+            if (self->_paletteResults.count > 0)
+                [self->_paletteTable
+                    noteHeightOfRowsWithIndexesChanged:[NSIndexSet
+                                                           indexSetWithIndexesInRange:NSMakeRange(0,
+                                                                                                  self->_paletteResults
+                                                                                                      .count)]];
             [self updatePalettePanelFramePreservingTop:YES];
             [self restorePaletteSelectionAfterReloadFromRow:selectedRow];
           }];
@@ -7452,7 +7740,7 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 }
 
 - (BOOL)handleWindowArrangementShortcutEvent:(NSEvent*)event {
-    if (!_window || _presentationMode || ![self windowIsFullScreen]) return NO;
+    if (!_window || _presentationMode) return NO;
     if (event.type != NSEventTypeKeyDown) return NO;
 
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
@@ -7492,6 +7780,19 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     if (action == NULL) return NO;
     [self performWindowArrangementAction:action sender:nil];
     return YES;
+}
+
+- (void)menuWillOpen:(NSMenu*)menu {
+    if (menu != _windowMenu || !_window || _windowMenuTemporarilyEnabledMovable) return;
+    _windowMenuPreviousMovable = _window.movable;
+    _window.movable = YES;
+    _windowMenuTemporarilyEnabledMovable = YES;
+}
+
+- (void)menuDidClose:(NSMenu*)menu {
+    if (menu != _windowMenu || !_windowMenuTemporarilyEnabledMovable) return;
+    if (_window) _window.movable = _windowMenuPreviousMovable;
+    _windowMenuTemporarilyEnabledMovable = NO;
 }
 
 - (NSRect)visibleFrameForWindowActions {
@@ -9509,6 +9810,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         }
 
         NSTableCellView* cell = [tableView makeViewWithIdentifier:@"PaletteCell" owner:self];
+        NSTextField* subtitle = nil;
         if (!cell) {
             cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 620, 44)];
             cell.identifier = @"PaletteCell";
@@ -9520,7 +9822,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
             cell.textField = title;
             [cell addSubview:title];
 
-            NSTextField* subtitle = [NSTextField labelWithString:@""];
+            subtitle = [NSTextField labelWithString:@""];
             subtitle.translatesAutoresizingMaskIntoConstraints = NO;
             subtitle.identifier = @"subtitle";
             subtitle.lineBreakMode = NSLineBreakByTruncatingMiddle;
@@ -9538,15 +9840,28 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
             ]];
         }
 
-        cell.textField.stringValue = result[@"title"] ?: @"";
+        BOOL find = [kind isEqualToString:@"find"];
         BOOL status = [kind isEqualToString:@"status"];
-        cell.textField.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-        cell.textField.textColor = status ? NSColor.secondaryLabelColor : NSColor.labelColor;
+        if (find) {
+            cell.textField.attributedStringValue = [self paletteFindTitleAttributedStringForResult:result];
+        } else {
+            cell.textField.stringValue = result[@"title"] ?: @"";
+            cell.textField.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+            cell.textField.textColor = status ? NSColor.secondaryLabelColor : NSColor.labelColor;
+        }
         for (NSView* subview in cell.subviews) {
             if ([subview.identifier isEqualToString:@"subtitle"]) {
-                ((NSTextField*)subview).stringValue = result[@"subtitle"] ?: @"";
-                ((NSTextField*)subview).textColor = NSColor.secondaryLabelColor;
+                subtitle = (NSTextField*)subview;
             }
+        }
+        NSString* subtitleText = result[@"subtitle"] ?: @"";
+        if (find)
+            subtitle.attributedStringValue = [self paletteContextAttributedString:subtitleText
+                                                                            query:result[@"query"] ?: @""];
+        else {
+            subtitle.stringValue = subtitleText;
+            subtitle.font = [NSFont systemFontOfSize:11.0];
+            subtitle.textColor = NSColor.secondaryLabelColor;
         }
         return cell;
     }
