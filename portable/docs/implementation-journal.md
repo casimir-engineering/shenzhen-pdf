@@ -151,6 +151,18 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: updated TestFlight build defaults and handoff docs to produce `ShenzhenPDF-testflight-26.6.5-1.pkg`.
    - Tested: rebuilt and installed `/Applications/ShenzhenPDF.app`; verified CLI version `26.6.5-1`, bundle short version `26.6.5`, bundle build `1`, bundle id `com.intuition.shenzhenpdf`, codesign, `/Applications` uniqueness, `git diff --check`, and Linux build. TestFlight readiness has build tools/OpenSSL/MuPDF OK and still requires Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, provisioning profile, and optionally Transporter.
 
+17. Command palette result display and tab-strip drag regression.
+   - Status: Implemented; pending manual validation before amending the `26.6.5-1` commit.
+   - Changed: open-document text-search results now show `<tab title> - page x : y matches` on the first line, with only the tab title bolded, and keep the second line as compact context snippets with bolded matches.
+   - Changed: Mac tab gestures now use an expanded interaction rect across the tab row height for each visible tab, and the window is non-movable in its resting state so AppKit cannot steal tab gestures as titlebar drags. True empty tab-row space and passive chrome still perform explicit temporary window drags.
+   - Changed: Mac app-owned Window menu arrangement entries and Ctrl+Fn Fill/Center/Half shortcuts now work in normal windows as well as fullscreen; the Window menu temporarily enables window movability while open so macOS can still validate its own native arrangement items, then restores the non-movable resting state when closed.
+   - Changed: Mac single-page mode now treats left-drag as document panning. Pages that fit vertically remain centered and vertical drag/page scroll changes pages; zoomed pages taller than the viewport keep a stable page rect and clamp inside the page so dragging moves through the enlarged document instead of snapping back to center.
+   - Changed: Mac active document panning now keeps gesture ticks lightweight by repainting the viewport immediately while coalescing minimap updates and live crop rendering behind one scheduled maintenance callback. Final full-resolution crop rendering still runs when pan motion finishes.
+   - Changed: Mac single-page/non-continuous drag now disables release inertia entirely so slides do not vibrate after the user lets go.
+   - Changed: Mac scroll-wheel page changes now ignore Command, Control, and Option modified events, while modified wheel zoom events are consumed by the scroll view and immediate post-zoom phase/momentum or very-near follow-up wheel ticks are dropped so zoom gestures cannot also flip/scroll pages.
+   - Changed: Mac live zoom now keeps one stable page anchor for the duration of the wheel/magnify gesture, preventing continuous-mode zoom ticks from drifting the document slightly downward.
+   - Constraint: do not commit/amend until the user manually validates the tab detach/window-drag behavior.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

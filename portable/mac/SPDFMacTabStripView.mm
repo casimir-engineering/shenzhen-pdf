@@ -42,6 +42,8 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     CGFloat _dragCurrentX;
     NSPoint _lastHoverPoint;
     BOOL _hasLastHoverPoint;
+    BOOL _suppressingWindowMovementForTabGesture;
+    BOOL _previousWindowMovableForTabGesture;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -62,7 +64,10 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (void)viewWillMoveToWindow:(NSWindow*)newWindow {
-    if (!newWindow) [self hideHoverPanel];
+    if (!newWindow) {
+        [self restoreWindowMovementForTabGesture];
+        [self hideHoverPanel];
+    }
     [super viewWillMoveToWindow:newWindow];
 }
 
@@ -77,6 +82,19 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 
 - (BOOL)mouseDownCanMoveWindow {
     return NO;
+}
+
+- (void)suppressWindowMovementForTabGesture {
+    if (_suppressingWindowMovementForTabGesture || !self.window) return;
+    _previousWindowMovableForTabGesture = self.window.movable;
+    self.window.movable = NO;
+    _suppressingWindowMovementForTabGesture = YES;
+}
+
+- (void)restoreWindowMovementForTabGesture {
+    if (!_suppressingWindowMovementForTabGesture || !self.window) return;
+    self.window.movable = _previousWindowMovableForTabGesture;
+    _suppressingWindowMovementForTabGesture = NO;
 }
 
 - (void)setHidden:(BOOL)hidden {
@@ -188,10 +206,18 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     return NSMakeRect(x, 7, width, 28);
 }
 
+- (NSRect)interactionRectForTabRect:(NSRect)tabRect {
+    if (NSIsEmptyRect(tabRect)) return NSZeroRect;
+    NSRect rect = NSInsetRect(tabRect, -6.0, -10.0);
+    rect.origin.y = NSMinY(self.bounds);
+    rect.size.height = NSHeight(self.bounds);
+    return rect;
+}
+
 - (NSInteger)tabIndexAtPoint:(NSPoint)point {
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
-        if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, tabRect)) return i;
+        if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, [self interactionRectForTabRect:tabRect])) return i;
     }
     return -1;
 }
@@ -331,6 +357,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (void)beginTabTrackingAtIndex:(NSInteger)index point:(NSPoint)point tabRect:(NSRect)tabRect {
+    [self suppressWindowMovementForTabGesture];
     _draggedTabIndex = index;
     _dragSourceTabIndex = index;
     _dragTargetTabIndex = index;
@@ -348,6 +375,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     _mouseDownInsideTab = NO;
     _dragPointerOffsetX = 0;
     _dragCurrentX = 0;
+    [self restoreWindowMovementForTabGesture];
     [self setNeedsDisplay:YES];
 }
 
@@ -390,7 +418,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, NSInsetRect(overflowRect, -3.0, -4.0))) return YES;
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
-        if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, NSInsetRect(tabRect, -4.0, -5.0))) return YES;
+        if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, [self interactionRectForTabRect:tabRect])) return YES;
     }
     return NO;
 }
@@ -716,7 +744,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
         if (NSIsEmptyRect(tabRect)) continue;
-        if (!NSPointInRect(point, tabRect)) continue;
+        if (!NSPointInRect(point, [self interactionRectForTabRect:tabRect])) continue;
         _mouseDownInsideTab = YES;
         NSRect closeRect = NSInsetRect([self closeCircleRectForTabRect:tabRect], -5.0, -5.0);
         if (NSPointInRect(point, closeRect)) {

@@ -441,11 +441,26 @@ void spdf_activate_window_for_view(NSView* view) {
 
 @implementation SPDFScrollView {
     CGFloat _wheelAccumulator;
+    NSTimeInterval _lastZoomWheelTimestamp;
 }
 
 - (void)scrollWheel:(NSEvent*)event {
-    if (self.reader && [self.reader zoomWithScrollWheelEvent:event centeredAtWindowPoint:event.locationInWindow])
+    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
+        _wheelAccumulator = 0.0;
+        _lastZoomWheelTimestamp = event.timestamp;
+        if (self.reader) [self.reader zoomWithScrollWheelEvent:event centeredAtWindowPoint:event.locationInWindow];
         return;
+    }
+
+    NSTimeInterval timeSinceZoomWheel = event.timestamp - _lastZoomWheelTimestamp;
+    BOOL isZoomWheelContinuation = event.phase != NSEventPhaseNone || event.momentumPhase != NSEventPhaseNone;
+    if (_lastZoomWheelTimestamp > 0.0 && ((isZoomWheelContinuation && timeSinceZoomWheel < 0.65) ||
+                                          (!isZoomWheelContinuation && timeSinceZoomWheel < 0.22))) {
+        _wheelAccumulator = 0.0;
+        if (isZoomWheelContinuation) _lastZoomWheelTimestamp = event.timestamp;
+        return;
+    }
 
     if (self.reader && [self.reader scrollViewShouldTurnWheelIntoPageChange:event]) {
         CGFloat delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY;

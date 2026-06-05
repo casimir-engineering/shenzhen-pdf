@@ -16,10 +16,12 @@
                                            NSTableViewDelegate,
                                            NSSearchFieldDelegate,
                                            NSTextFieldDelegate,
+                                           NSMenuDelegate,
                                            NSMenuItemValidation> {
     NSWindow* _window;
     SPDFTabStripView* _tabStrip;
     SPDFToolbarStackView* _toolbar;
+    NSMenu* _windowMenu;
     NSSplitView* _splitView;
     NSTableView* _sidebarTable;
     NSView* _sidebarContainer;
@@ -152,6 +154,10 @@
     NSUInteger _renderGeneration;
     NSTimer* _zoomFinishTimer;
     NSUInteger _liveZoomSequence;
+    NSInteger _liveZoomAnchorPageIndex;
+    NSPoint _liveZoomAnchorPagePoint;
+    NSPoint _liveZoomAnchorOffsetInViewport;
+    BOOL _liveZoomAnchorValid;
     NSTimeInterval _lastLiveZoomControlUpdateTime;
     BOOL _uiReady;
     BOOL _updatingSelection;
@@ -161,6 +167,7 @@
     BOOL _liveZooming;
     BOOL _documentViewPanActive;
     BOOL _documentViewPanCropInFlight;
+    BOOL _documentViewPanMaintenanceScheduled;
     NSUInteger _documentViewPanCropGeneration;
     NSTimeInterval _lastDocumentPanLiveCropRenderTime;
     BOOL _minimapPrecisionViewportDragActive;
@@ -180,6 +187,8 @@
     BOOL _presentationPreviousMovable;
     BOOL _presentationPreviousMovableByWindowBackground;
     BOOL _presentationPreviousHasShadow;
+    BOOL _windowMenuTemporarilyEnabledMovable;
+    BOOL _windowMenuPreviousMovable;
     SEL _pendingWindowArrangementAction;
     NSTimeInterval _lastPresentationEventTimestamp;
     NSEventType _lastPresentationEventType;
@@ -344,6 +353,7 @@
                                  allowFullPageRenderAllowedPages:(BOOL)allowFullPageRenderAllowedPages;
 - (void)renderVisiblePageCropsForCurrentViewportAfterLiveZoom;
 - (void)renderVisiblePageCropsForCurrentViewportIfNeeded;
+- (void)scheduleDocumentPanMaintenance;
 - (void)renderLiveDocumentPanViewportCropIfDue;
 - (NSUInteger)estimatedRenderedImageByteCostForPage:(SPDFRenderedPage*)page
                                                zoom:(CGFloat)zoom
