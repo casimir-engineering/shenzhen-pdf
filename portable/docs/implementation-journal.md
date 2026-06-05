@@ -133,7 +133,23 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: `SPDFDocumentView` now caches exact snapped page sizes, widest-page width, continuous page rectangles, continuous document height, and synthetic single-page slots. The cache is invalidated on pages, zoom, view mode, presentation mode, backing scale, viewport width, and view bounds; live single-page centering still reads the current clip-view bounds.
    - Changed: `SPDFMinimapView` now caches the exact unscrolled mini page rectangles for the current pages, bounds width, scale, and gap. Minimap overlay, drag, hit-test, and click math continue to use the same geometry formulas.
    - Changed: identical delayed nearby-render schedules for the same delegate, generation, path, and preferred page are coalesced until the delayed request fires; page render order, priority, resolution, and eventual queueing stay unchanged.
+   - Changed: max-zoom document panning no longer renders live viewport crops synchronously on the main drag path. A single generation-guarded utility background crop job updates the preview when ready, stale crop jobs are ignored across new pans/tabs/zooms, live-zoom settle re-arms itself while a pan is active instead of running final layout/render work mid-drag, and image cache eviction is deferred until pan finish.
    - Tested: ran explicit ObjC-style clang-format on touched Mac `.mm` edits, `git diff --check`, ObjC++ syntax for `SPDFMacDocumentView.mm`, `SPDFMacMinimapView.mm`, and `ShenzhenPDFMac.mm`, `make -C portable mac-app`, and `./dist/ShenzhenPDF.app/Contents/MacOS/ShenzhenPDF --version`.
+
+15. First-launch default PDF reader prompt and print scaling controls.
+   - Status: Implemented for Mac; pending manual validation before commit.
+   - Changed: added a first-launch prompt to make Shenzhen PDF the default PDF reader, persisted dismissal in `settings.json`, and added a File menu command to retrigger the same flow at any time.
+   - Changed: added LaunchServices default-reader helpers using the app bundle id and the PDF UTI.
+   - Changed: added print scaling controls as an accessory inside the macOS print panel itself, so the user sees Shenzhen PDF scaling next to the normal printer options and the panel's real page preview. PDF printing uses a PDFKit page-drawing print view for fit, actual-size, and custom scaling; non-PDF/fallback printing keeps the 1200 DPI bitmap renderer and now honors the same scaling modes.
+   - Changed: enabled the system Paper Size and Orientation controls in the macOS print panel. The options are seeded by AppKit from the selected/default printer, and the Shenzhen PDF print views resize their page frame from the current `NSPrintInfo` so the real preview/output follows the selected target sheet.
+   - Constraint: bitmap output remains fallback-only for PDF printing unless PDFKit/native printing cannot be used.
+   - Tested: ran explicit ObjC-style clang-format on touched Mac files, `git diff --check`, `make -C portable mac-app`, `make -C portable install`, `/Applications/ShenzhenPDF.app/Contents/MacOS/ShenzhenPDF --version`, installed app codesign verification, `/Applications` uniqueness check, and `make -C portable linux`.
+
+16. Prepare `26.6.5-1` for TestFlight validation.
+   - Status: Implemented; commit and tag requested by user.
+   - Changed: bumped macOS bundle defaults to App Store-compatible `CFBundleShortVersionString=26.6.5` and `CFBundleVersion=1`, with About/CLI display as `26.6.5-1`.
+   - Changed: updated TestFlight build defaults and handoff docs to produce `ShenzhenPDF-testflight-26.6.5-1.pkg`.
+   - Tested: rebuilt and installed `/Applications/ShenzhenPDF.app`; verified CLI version `26.6.5-1`, bundle short version `26.6.5`, bundle build `1`, bundle id `com.intuition.shenzhenpdf`, codesign, `/Applications` uniqueness, `git diff --check`, and Linux build. TestFlight readiness has build tools/OpenSSL/MuPDF OK and still requires Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, provisioning profile, and optionally Transporter.
 
 ## Validation
 

@@ -14,7 +14,7 @@ MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
 MAC_SRCS := $(sort $(wildcard mac/*.mm))
 MAC_HDRS := $(sort $(wildcard mac/*.h))
 MAC_BUNDLE_ID ?= com.intuition.shenzhenpdf
-MAC_VERSION ?= 26.6.4
+MAC_VERSION ?= 26.6.5
 MAC_BUILD ?= 1
 MAC_TESTFLIGHT_PKG = $(DIST)/ShenzhenPDF-testflight-$(MAC_VERSION)-$(MAC_BUILD).pkg
 OPENSSL_LIBDIR ?= $(shell pkg-config --variable=libdir openssl 2>/dev/null || echo /opt/homebrew/opt/openssl@3/lib)
@@ -85,7 +85,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/As
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
-	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -q 'libcrypto.3.dylib'; then \
 		cp "$(OPENSSL_LIBCRYPTO)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
 		crypto_path=$$(otool -L "$(MAC_BIN)" | awk '/libcrypto.3.dylib/ { print $$1; exit }'); \
