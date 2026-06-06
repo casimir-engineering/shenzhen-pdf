@@ -3849,15 +3849,56 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _activeMetadataTab = tab;
 }
 
+- (void)loadInitialSidebarMetadataForSelectedTabIfNeeded {
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (!_doc || !tab)
+        return;
+
+    BOOL preloadForFirstFrame = !_window.visible && _sidebarPreferredVisible;
+    if (preloadForFirstFrame && !tab.cachedOutlineLoaded) {
+        spdf_outline outline;
+        memset(&outline, 0, sizeof(outline));
+        char err[1024];
+        BOOL ok = spdf_load_outline(_doc, &outline, err, sizeof(err));
+        if (ok) {
+            [tab replaceCachedOutline:outline loaded:YES];
+        } else {
+            spdf_free_outline(&outline);
+            spdf_outline emptyOutline;
+            memset(&emptyOutline, 0, sizeof(emptyOutline));
+            [tab replaceCachedOutline:emptyOutline loaded:YES];
+        }
+    }
+    if (preloadForFirstFrame && !tab.cachedCommentsLoaded) {
+        spdf_comments comments;
+        memset(&comments, 0, sizeof(comments));
+        char err[1024];
+        BOOL ok = spdf_load_comments(_doc, &comments, err, sizeof(err));
+        if (ok) {
+            [tab replaceCachedComments:comments loaded:YES];
+        } else {
+            spdf_free_comments(&comments);
+            spdf_comments emptyComments;
+            memset(&emptyComments, 0, sizeof(emptyComments));
+            [tab replaceCachedComments:emptyComments loaded:YES];
+        }
+    }
+    [self adoptCachedMetadataForTab:tab];
+}
+
 - (void)discardCachedRuntimeForTab:(SPDFDocumentTab*)tab {
-    if (!tab) return;
-    if (_activeMetadataTab == tab) [self clearActiveMetadata];
-    if (_doc == tab.cachedDocument) _doc = NULL;
+    if (!tab)
+        return;
+    if (_activeMetadataTab == tab)
+        [self clearActiveMetadata];
+    if (_doc == tab.cachedDocument)
+        _doc = NULL;
     [tab clearCachedRuntime];
 }
 
 - (void)closeActiveDocumentIfUnowned {
-    if (!_doc) return;
+    if (!_doc)
+        return;
     for (SPDFDocumentTab* tab in _tabs) {
         if (tab.cachedDocument == _doc) {
             _doc = NULL;
@@ -4654,7 +4695,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     tab.missingMessage = @"";
     [self recordFileAttributes:attributes forTab:tab];
     [self prepareSelectedTabViewState:tab path:path];
-    [self adoptCachedMetadataForTab:tab];
+    [self loadInitialSidebarMetadataForSelectedTabIfNeeded];
     _pageIndex = MAX(0, MIN(tab.pageIndex, spdf_page_count(_doc) - 1));
     _fitMode = tab.fitMode;
     _viewMode = tab.viewMode;
@@ -4731,11 +4772,13 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)loadSelectedTab {
-    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return;
+    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count)
+        return;
     [self cancelDocumentTransientInteraction];
     [self clearToolbarFieldFocusForTabSwitch];
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
-    if (!tab.path.length) return;
+    if (!tab.path.length)
+        return;
     NSString* path = [tab.path copy];
     NSInteger savedFindMatchIndex = tab.findMatchIndex;
     [_renderQueue cancelAllOperations];
@@ -4781,6 +4824,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                            modificationDate:spdf_file_modification_date_from_attributes(attributes)];
     _doc = newDoc;
     [self prepareSelectedTabViewState:tab path:path];
+    [self loadInitialSidebarMetadataForSelectedTabIfNeeded];
     _pageIndex = MAX(0, MIN(tab.pageIndex, spdf_page_count(_doc) - 1));
     _renderGeneration++;
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
