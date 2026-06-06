@@ -163,6 +163,12 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: Mac live zoom now keeps one stable page anchor for the duration of the wheel/magnify gesture, preventing continuous-mode zoom ticks from drifting the document slightly downward.
    - Constraint: do not commit/amend until the user manually validates the tab detach/window-drag behavior.
 
+18. `26.6.5-2` launch should be static and faster without visual compromise.
+   - Status: Implementation started; commit step by step after each validated slice.
+   - Constraint: preserve first visible document quality, restored tabs, restored position, sidebar/minimap semantics, tab order, and Finder/session behavior. No low-resolution first paint or visible layout mutation as a launch shortcut.
+   - Changed: Mac startup document/session work now runs before the main window is ordered, so the first visible frame already has the selected tab, document, sidebar, minimap, and restored scroll state applied. Default-reader and shortcut-help prompts remain deferred until after the window is visible.
+   - Next: add the exact page-geometry cache from `portable/docs/launch-performance-strategy.md` so the now-static first frame can also appear faster on restored/recent long PDFs without changing layout.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

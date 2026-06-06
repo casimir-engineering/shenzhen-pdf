@@ -241,19 +241,21 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     [self buildMenu];
     [self buildWindow];
     _uiReady = YES;
-    [_window makeKeyAndOrderFront:nil];
-    if (self.restoreWindowID.length == 0) [NSApp activateIgnoringOtherApps:YES];
-    dispatch_async(dispatch_get_main_queue(), ^{
-      self->_allowSidebarWidthPersistence = YES;
-      [self restoreSidebarWidth];
-    });
 
+    [self performWithBatchedPersistentStateSaves:^{
+      [self performStartupDocumentWork];
+    }];
+    _allowSidebarWidthPersistence = YES;
+    [self restoreSidebarWidth];
+
+    [_window makeKeyAndOrderFront:nil];
+    if (self.restoreWindowID.length == 0)
+        [NSApp activateIgnoringOtherApps:YES];
     dispatch_async(dispatch_get_main_queue(), ^{
-      [self performWithBatchedPersistentStateSaves:^{
-        [self performStartupDocumentWork];
-      }];
-      if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
-      if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0) [self showShortcutHelp:nil];
+      if (self.restoreWindowID.length == 0)
+          [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
+      if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0)
+          [self showShortcutHelp:nil];
     });
 }
 
