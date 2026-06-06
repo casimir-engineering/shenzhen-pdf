@@ -152,6 +152,20 @@ const char* spdf_title(spdf_document* doc) {
     return doc && doc->title ? doc->title : "";
 }
 
+int spdf_set_page_size_cache(spdf_document* doc, int page_index, float width, float height) {
+    spdf_page_size_cache* cached;
+
+    if (!doc || page_index < 0 || page_index >= doc->page_count || !doc->page_sizes || !isfinite(width) ||
+        !isfinite(height) || width <= 0.0f || height <= 0.0f)
+        return 0;
+
+    cached = &doc->page_sizes[page_index];
+    cached->width = width;
+    cached->height = height;
+    cached->valid = 1;
+    return 1;
+}
+
 int spdf_page_size(spdf_document* doc, int page_index, float* width, float* height, char* err, size_t err_len) {
     fz_page* page = NULL;
     spdf_page_size_cache* cached;
