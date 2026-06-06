@@ -51,6 +51,8 @@ static const NSTimeInterval kLiveZoomFinishDelay = 0.28;
 static const NSTimeInterval kLiveZoomFinishWhilePanningDelay = 0.12;
 static const NSTimeInterval kLiveZoomStateSaveDelay = 0.20;
 static const NSTimeInterval kLiveZoomControlUpdateInterval = 0.05;
+static const NSInteger kPageGeometryCacheVersion = 1;
+static const NSTimeInterval kPageGeometryModificationTolerance = 0.001;
 
 #ifndef SPDF_MAC_TRANSLATION_CORE_READY
 #define SPDF_MAC_TRANSLATION_CORE_READY 0
@@ -148,6 +150,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSData* data = [string dataUsingEncoding:NSUTF8StringEncoding];
     id object = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
     return [object isKindOfClass:NSDictionary.class] ? object : nil;
+}
+
+static unsigned long long spdf_file_size_from_attributes(NSDictionary* attributes) {
+    return [attributes[NSFileSize] unsignedLongLongValue];
+}
+
+static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attributes) {
+    NSDate* date = attributes[NSFileModificationDate];
+    return [date isKindOfClass:NSDate.class] ? date : nil;
 }
 
 @implementation ShenzhenMacDelegate
@@ -630,21 +641,122 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     NSDictionary* state = _documentStates[[self documentStateKeyForPath:tab.path]];
     if (![state isKindOfClass:NSDictionary.class]) return;
     if (state[@"showSidebar"] != nil) tab.showSidebar = [state[@"showSidebar"] boolValue];
-    if (state[@"showMinimap"] != nil) tab.showMinimap = [state[@"showMinimap"] boolValue];
+    if (state[@"showMinimap"] != nil)
+        tab.showMinimap = [state[@"showMinimap"] boolValue];
+}
+
+- (NSDictionary*)pageGeometryStateForPath:(NSString*)path {
+    if (!path.length)
+        return nil;
+    NSDictionary* state = _documentStates[[self documentStateKeyForPath:path]];
+    return [state isKindOfClass:NSDictionary.class] ? [state copy] : nil;
+}
+
+- (void)removePageGeometryFromState:(NSMutableDictionary*)state {
+    [state removeObjectForKey:@"geometryVersion"];
+    [state removeObjectForKey:@"geometryFileSize"];
+    [state removeObjectForKey:@"geometryModifiedAt"];
+    [state removeObjectForKey:@"geometryPageCount"];
+    [state removeObjectForKey:@"pageGeometry"];
+}
+
+- (NSDictionary*)pageGeometryDictionaryForTab:(SPDFDocumentTab*)tab {
+    if (!tab.path.length || !tab.cachedDocument)
+        return nil;
+    NSInteger pageCount = spdf_page_count(tab.cachedDocument);
+    if (pageCount <= 0 || tab.cachedRenderedPages.count != (NSUInteger)pageCount)
+        return nil;
+
+    NSDate* modificationDate = tab.cachedModificationDate;
+    unsigned long long fileSize = tab.cachedFileSize;
+    if (!modificationDate || fileSize == 0) {
+        NSDictionary* attributes = [self fileAttributesForPath:tab.path];
+        modificationDate = spdf_file_modification_date_from_attributes(attributes);
+        fileSize = spdf_file_size_from_attributes(attributes);
+    }
+    if (!modificationDate || fileSize == 0)
+        return nil;
+
+    NSMutableArray<NSNumber*>* geometry = [NSMutableArray arrayWithCapacity:(NSUInteger)pageCount * 2];
+    for (NSInteger i = 0; i < pageCount; ++i) {
+        SPDFRenderedPage* page = tab.cachedRenderedPages[(NSUInteger)i];
+        if (page.pageIndex != i || !isfinite(page.pageWidth) || !isfinite(page.pageHeight) || page.pageWidth <= 0.0 ||
+            page.pageHeight <= 0.0)
+            return nil;
+        [geometry addObject:@(page.pageWidth)];
+        [geometry addObject:@(page.pageHeight)];
+    }
+
+    return @{
+        @"geometryVersion" : @(kPageGeometryCacheVersion),
+        @"geometryFileSize" : @(fileSize),
+        @"geometryModifiedAt" : @(modificationDate.timeIntervalSince1970),
+        @"geometryPageCount" : @(pageCount),
+        @"pageGeometry" : geometry
+    };
+}
+
+- (BOOL)primePageGeometryCacheForDocument:(spdf_document*)doc
+                        pageGeometryState:(NSDictionary*)state
+                                 fileSize:(unsigned long long)fileSize
+                         modificationDate:(NSDate*)modificationDate {
+    if (!doc || ![state isKindOfClass:NSDictionary.class] || !modificationDate || fileSize == 0)
+        return NO;
+    if ([state[@"geometryVersion"] integerValue] != kPageGeometryCacheVersion)
+        return NO;
+    if ([state[@"geometryFileSize"] unsignedLongLongValue] != fileSize)
+        return NO;
+
+    double storedModifiedAt = [state[@"geometryModifiedAt"] doubleValue];
+    if (!isfinite(storedModifiedAt) ||
+        fabs(storedModifiedAt - modificationDate.timeIntervalSince1970) > kPageGeometryModificationTolerance)
+        return NO;
+
+    NSInteger pageCount = spdf_page_count(doc);
+    NSArray* geometry = state[@"pageGeometry"];
+    if (pageCount <= 0 || [state[@"geometryPageCount"] integerValue] != pageCount ||
+        ![geometry isKindOfClass:NSArray.class] || geometry.count != (NSUInteger)pageCount * 2)
+        return NO;
+
+    NSMutableArray<NSNumber*>* validated = [NSMutableArray arrayWithCapacity:geometry.count];
+    for (id value in geometry) {
+        if (![value respondsToSelector:@selector(doubleValue)])
+            return NO;
+        double dimension = [value doubleValue];
+        if (!isfinite(dimension) || dimension <= 0.0 || dimension > CGFLOAT_MAX)
+            return NO;
+        [validated addObject:@(dimension)];
+    }
+
+    for (NSInteger i = 0; i < pageCount; ++i) {
+        float width = (float)[validated[(NSUInteger)(i * 2)] doubleValue];
+        float height = (float)[validated[(NSUInteger)(i * 2 + 1)] doubleValue];
+        if (!spdf_set_page_size_cache(doc, (int)i, width, height))
+            return NO;
+    }
+    return YES;
 }
 
 - (void)saveDocumentStateForTab:(SPDFDocumentTab*)tab {
-    if (!tab.path.length) return;
+    if (!tab.path.length)
+        return;
     NSString* key = [self documentStateKeyForPath:tab.path];
-    if (!key.length) return;
+    if (!key.length)
+        return;
     NSMutableDictionary* state = [_documentStates[key] isKindOfClass:NSMutableDictionary.class]
                                      ? _documentStates[key]
                                      : [_documentStates[key] mutableCopy];
-    if (!state) state = [NSMutableDictionary dictionary];
+    if (!state)
+        state = [NSMutableDictionary dictionary];
     state[@"path"] = tab.path;
     state[@"title"] = tab.title.length ? tab.title : spdf_display_name_for_path(tab.path);
     state[@"showSidebar"] = @(tab.showSidebar);
     state[@"showMinimap"] = @(tab.showMinimap);
+    NSDictionary* geometry = [self pageGeometryDictionaryForTab:tab];
+    if (geometry)
+        [state addEntriesFromDictionary:geometry];
+    else if (tab.cachedDocument)
+        [self removePageGeometryFromState:state];
     state[@"updatedAt"] = @((NSInteger)NSDate.date.timeIntervalSince1970);
     _documentStates[key] = state;
 }
@@ -3681,8 +3793,15 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
 - (BOOL)ensureCachedRenderedPagesForTab:(SPDFDocumentTab*)tab preferredPage:(NSInteger)preferredPage {
     if (!tab.cachedDocument) return NO;
     NSInteger pageCount = spdf_page_count(tab.cachedDocument);
-    if (pageCount <= 0) return NO;
-    if (tab.cachedRenderedPages.count == (NSUInteger)pageCount) return YES;
+    if (pageCount <= 0)
+        return NO;
+    if (tab.cachedRenderedPages.count == (NSUInteger)pageCount)
+        return YES;
+
+    [self primePageGeometryCacheForDocument:tab.cachedDocument
+                          pageGeometryState:[self pageGeometryStateForPath:tab.path]
+                                   fileSize:tab.cachedFileSize
+                           modificationDate:tab.cachedModificationDate];
 
     preferredPage = MAX(0, MIN(preferredPage, pageCount - 1));
     char err[256];
@@ -3947,17 +4066,20 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
         CGFloat fallbackZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
         NSSize clipSize = [self documentClipSizeForLayout];
         CGFloat displayScale = [self backingScale];
+        NSDictionary* pageGeometryState = [self pageGeometryStateForPath:path];
 
         [_preloadQueue addOperationWithBlock:^{
           @autoreleasepool {
               NSDictionary* operationAttributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
               if (!operationAttributes) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
+                    if (![self preloadToken:preloadToken isCurrentForPath:standardized])
+                        return;
                     [self finishPreloadForPath:standardized token:preloadToken];
                     NSInteger tabIndex = -1;
                     SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
-                    if (!currentTab || tabIndex == self->_selectedTabIndex) return;
+                    if (!currentTab || tabIndex == self->_selectedTabIndex)
+                        return;
                     [self discardCachedRuntimeForTab:currentTab];
                     currentTab.missingFile = YES;
                     currentTab.missingMessage = @"File moved or deleted";
@@ -3971,11 +4093,13 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
               if (!doc) {
                   NSString* message = @"Could not open document";
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
+                    if (![self preloadToken:preloadToken isCurrentForPath:standardized])
+                        return;
                     [self finishPreloadForPath:standardized token:preloadToken];
                     NSInteger tabIndex = -1;
                     SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
-                    if (!currentTab || tabIndex == self->_selectedTabIndex) return;
+                    if (!currentTab || tabIndex == self->_selectedTabIndex)
+                        return;
                     [self discardCachedRuntimeForTab:currentTab];
                     currentTab.missingFile = NO;
                     currentTab.missingMessage = message;
@@ -3983,6 +4107,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
                   }];
                   return;
               }
+              [self primePageGeometryCacheForDocument:doc
+                                    pageGeometryState:pageGeometryState
+                                             fileSize:spdf_file_size_from_attributes(operationAttributes)
+                                     modificationDate:spdf_file_modification_date_from_attributes(operationAttributes)];
 
               NSInteger pageCount = spdf_page_count(doc);
               if (pageCount <= 0) {
@@ -4647,6 +4775,10 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     tab.missingMessage = @"";
     tab.cachedDocument = newDoc;
     [self recordFileAttributes:attributes forTab:tab];
+    [self primePageGeometryCacheForDocument:newDoc
+                          pageGeometryState:[self pageGeometryStateForPath:path]
+                                   fileSize:spdf_file_size_from_attributes(attributes)
+                           modificationDate:spdf_file_modification_date_from_attributes(attributes)];
     _doc = newDoc;
     [self prepareSelectedTabViewState:tab path:path];
     _pageIndex = MAX(0, MIN(tab.pageIndex, spdf_page_count(_doc) - 1));

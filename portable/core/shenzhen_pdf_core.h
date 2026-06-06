@@ -94,6 +94,7 @@ void spdf_close(spdf_document* doc);
 
 int spdf_page_count(spdf_document* doc);
 const char* spdf_title(spdf_document* doc);
+int spdf_set_page_size_cache(spdf_document* doc, int page_index, float width, float height);
 int spdf_page_size(spdf_document* doc, int page_index, float* width, float* height, char* err, size_t err_len);
 
 int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_bitmap* out, char* err, size_t err_len);
