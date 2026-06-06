@@ -169,6 +169,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: Mac startup document/session work now runs before the main window is ordered, so the first visible frame already has the selected tab, document, sidebar, minimap, and restored scroll state applied. Default-reader and shortcut-help prompts remain deferred until after the window is visible.
    - Changed: added a core page-size cache seeding API and a Mac exact page-geometry cache in `documents.json`. After a document has completed exact all-page layout once, later launches/openings validate file size, modified date, page count, and all page dimensions before seeding MuPDF's in-memory page-size cache, avoiding synchronous load/bounds of every page while preserving exact layout.
    - Changed: Mac launch now loads the selected document's outline/comments before ordering the first window when the sidebar is meant to be visible, so the left panel does not collapse or appear after the first visible frame. Normal tab switching keeps the deferred metadata path.
+   - Changed: Mac single-page/non-continuous live zoom now preserves the active page and live-zoom anchor through the final resize pass, suppressing synthetic scrollbar callbacks so Command-scroll zoom cannot be interpreted as a page-changing scroll.
    - Next: validate launch behavior on restored/recent long PDFs, then consider diagnostics and deeper post-first-paint staging if Preview is still noticeably ahead.
 
 ## Validation
