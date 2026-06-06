@@ -4606,7 +4606,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 - (void)finishLiveZoom:(NSTimer*)timer {
     NSUInteger sequence = [timer.userInfo unsignedIntegerValue];
     _zoomFinishTimer = nil;
-    if (sequence != _liveZoomSequence) return;
+    if (sequence != _liveZoomSequence)
+        return;
     if (_documentViewPanActive) {
         _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:kLiveZoomFinishWhilePanningDelay
                                                             target:self
@@ -4615,15 +4616,37 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                                            repeats:NO];
         return;
     }
+    SPDFPageAnchor finishAnchor;
+    memset(&finishAnchor, 0, sizeof(finishAnchor));
+    if (_liveZoomAnchorValid) {
+        finishAnchor.pageIndex = _liveZoomAnchorPageIndex;
+        finishAnchor.pagePoint = _liveZoomAnchorPagePoint;
+        finishAnchor.offsetInViewport = _liveZoomAnchorOffsetInViewport;
+        finishAnchor.valid = YES;
+    }
+    BOOL singlePageZoom = _viewMode == SPDFViewModeSingle;
+    NSInteger preservedPageIndex = _pageIndex;
     _liveZooming = NO;
     _liveZoomAnchorValid = NO;
     if (_doc) {
         _documentViewPanCropGeneration++;
         _documentViewPanCropInFlight = NO;
+        BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
+        _suppressScrollCallbacks = YES;
         [self resizeDocumentView];
+        if (singlePageZoom && preservedPageIndex >= 0 && preservedPageIndex < (NSInteger)_renderedPages.count) {
+            _pageIndex = preservedPageIndex;
+            _pageView.currentPageIndex = _pageIndex;
+        }
+        if (finishAnchor.valid)
+            [self scrollToPageAnchor:finishAnchor notify:NO];
+        _suppressScrollCallbacks = previousSuppressScrollCallbacks;
         [self syncToolbarState];
         [self updateControls];
-        [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
+        if (singlePageZoom)
+            [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:YES];
+        else
+            [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
         if (_documentViewPanActive)
             [self setCurrentViewportNeedsDisplay];
         else
