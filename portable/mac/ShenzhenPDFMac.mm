@@ -3136,14 +3136,39 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (CGFloat)singlePageDocumentScrollOriginYForPageIndex:(NSInteger)pageIndex {
-    if (_renderedPages.count == 0) return 0.0;
+    if (_renderedPages.count == 0)
+        return 0.0;
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
     NSClipView* clipView = _pageScrollView.contentView;
     NSRect pageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
-    if (NSIsEmptyRect(pageRect)) return 0.0;
+    if (NSIsEmptyRect(pageRect))
+        return 0.0;
     CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
     CGFloat y = NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5;
     return spdf_clamp_cg(y, 0.0, maxY);
+}
+
+- (NSInteger)singlePageTargetPageForUserScrollVisibleRect:(NSRect)visibleRect {
+    NSInteger currentPage = MAX(0, MIN(_pageIndex, (NSInteger)_renderedPages.count - 1));
+    NSRect pageSlot = [self continuousDocumentRectForPageAtIndex:currentPage];
+    if (NSIsEmptyRect(pageSlot))
+        return currentPage;
+
+    CGFloat visibleHeight = NSHeight(visibleRect);
+    CGFloat minOriginY = NSMinY(pageSlot);
+    CGFloat maxOriginY = MAX(minOriginY, NSMaxY(pageSlot) - visibleHeight);
+    if (NSHeight(pageSlot) <= visibleHeight + 0.5) {
+        CGFloat centeredOriginY = [self singlePageDocumentScrollOriginYForPageIndex:currentPage];
+        minOriginY = centeredOriginY;
+        maxOriginY = centeredOriginY;
+    }
+
+    CGFloat threshold = MAX(24.0, visibleHeight / 3.0);
+    if (NSMinY(visibleRect) > maxOriginY + threshold && currentPage + 1 < (NSInteger)_renderedPages.count)
+        return currentPage + 1;
+    if (NSMinY(visibleRect) < minOriginY - threshold && currentPage > 0)
+        return currentPage - 1;
+    return currentPage;
 }
 
 - (BOOL)normalizeSinglePageScrollPositionFromUserScroll {
@@ -3152,7 +3177,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
     NSClipView* clipView = _pageScrollView.contentView;
     NSRect visibleRect = clipView.bounds;
-    NSInteger visiblePage = [_pageView pageIndexForVisibleRect:visibleRect];
+    NSInteger visiblePage = [self singlePageTargetPageForUserScrollVisibleRect:visibleRect];
     visiblePage = MAX(0, MIN(visiblePage, (NSInteger)_renderedPages.count - 1));
     BOOL pageChanged = visiblePage != _pageIndex;
     if (pageChanged) {
@@ -4474,17 +4499,50 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     return NSMakePoint(NSMinX(pageRect) + pagePoint.x * scaleX, NSMinY(pageRect) + pagePoint.y * scaleY);
 }
 
+- (BOOL)continuousPageIsFullyVisibleForZoomAnchor:(NSInteger)pageIndex visibleRect:(NSRect)visibleRect {
+    if (_viewMode != SPDFViewModeContinuous || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count)
+        return NO;
+    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
+    if (NSIsEmptyRect(pageRect))
+        return NO;
+    return NSMinY(pageRect) >= NSMinY(visibleRect) - 0.5 && NSMaxY(pageRect) <= NSMaxY(visibleRect) + 0.5 &&
+           NSHeight(pageRect) <= NSHeight(visibleRect) + 0.5;
+}
+
+- (SPDFPageAnchor)centeredContinuousPageAnchorForPageIndex:(NSInteger)pageIndex visibleRect:(NSRect)visibleRect {
+    SPDFPageAnchor anchor;
+    memset(&anchor, 0, sizeof(anchor));
+    anchor.pageIndex = -1;
+    if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count)
+        return anchor;
+
+    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
+    if (NSIsEmptyRect(pageRect))
+        return anchor;
+    SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
+    NSPoint pageCenter = NSMakePoint(NSMidX(pageRect), NSMidY(pageRect));
+    anchor.pageIndex = pageIndex;
+    anchor.pagePoint = [self pagePointForViewPoint:pageCenter pageRect:pageRect page:page];
+    anchor.offsetInViewport =
+        NSMakePoint(NSMidX(pageRect) - NSMinX(visibleRect), NSMidY(pageRect) - NSMinY(visibleRect));
+    anchor.valid = YES;
+    return anchor;
+}
+
 - (SPDFPageAnchor)pageAnchorForWindowPoint:(NSPoint)windowPoint {
     SPDFPageAnchor anchor;
     memset(&anchor, 0, sizeof(anchor));
     anchor.pageIndex = -1;
-    if (!_doc || _renderedPages.count == 0) return anchor;
+    if (!_doc || _renderedPages.count == 0)
+        return anchor;
 
     NSClipView* clipView = _pageScrollView.contentView;
     NSPoint viewPoint = [_pageView convertPoint:windowPoint fromView:nil];
     NSInteger pageIndex = -1;
     NSPoint pagePoint = NSZeroPoint;
     if ([_pageView point:viewPoint fallsInPage:&pageIndex pagePoint:&pagePoint]) {
+        if ([self continuousPageIsFullyVisibleForZoomAnchor:pageIndex visibleRect:clipView.bounds])
+            return [self centeredContinuousPageAnchorForPageIndex:pageIndex visibleRect:clipView.bounds];
         anchor.pageIndex = pageIndex;
         anchor.pagePoint = pagePoint;
         anchor.offsetInViewport =
@@ -4496,6 +4554,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSRect visible = clipView.bounds;
     pageIndex = _viewMode == SPDFViewModeSingle ? _pageIndex : [_pageView pageIndexForVisibleRect:visible];
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
+    if ([self continuousPageIsFullyVisibleForZoomAnchor:pageIndex visibleRect:visible])
+        return [self centeredContinuousPageAnchorForPageIndex:pageIndex visibleRect:visible];
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
     if (NSIsEmptyRect(pageRect)) return anchor;
     SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
