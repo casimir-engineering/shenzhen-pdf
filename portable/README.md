@@ -26,7 +26,7 @@ Build artifacts:
 ```text
 dist/ShenzhenPDF.app
 dist/ShenzhenPDF-mac-arm64.dmg
-dist/ShenzhenPDF-testflight-26.6.4-1.pkg
+dist/ShenzhenPDF-testflight-26.6.7-1.pkg
 /Applications/ShenzhenPDF.app
 ```
 
@@ -42,7 +42,7 @@ TestFlight packages are signed separately for App Store Connect:
 
 ```sh
 MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
-MAC_VERSION=26.6.4 \
+MAC_VERSION=26.6.7 \
 MAC_BUILD=1 \
 MAC_APPSTORE_IDENTITY="Apple Distribution: Friend Name (TEAMID1234)" \
 MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Friend Name (TEAMID1234)" \

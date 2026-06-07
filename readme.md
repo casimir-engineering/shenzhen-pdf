@@ -100,8 +100,7 @@ The publisher needs an active Apple Developer Program account.
 
 Create once in Apple Developer and App Store Connect:
 
-1. An explicit macOS Bundle ID, for example `org.shenzhenpdf.ShenzhenPDF` or the
-   publisher's reverse-DNS equivalent.
+1. An explicit macOS Bundle ID: `com.intuition.shenzhenpdf`.
 2. An App Store Connect macOS app record using that Bundle ID.
 3. A Mac App Store distribution provisioning profile.
 4. An Apple Distribution certificate.
@@ -110,9 +109,9 @@ Create once in Apple Developer and App Store Connect:
 Build the upload package:
 
 ```sh
-MAC_BUNDLE_ID=org.shenzhenpdf.ShenzhenPDF \
-MAC_VERSION=0.5.0 \
-MAC_BUILD=7 \
+MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
+MAC_VERSION=26.6.7 \
+MAC_BUILD=1 \
 MAC_APPSTORE_IDENTITY="Apple Distribution: Publisher Name (TEAMID1234)" \
 MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Publisher Name (TEAMID1234)" \
 MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
@@ -122,7 +121,7 @@ MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile"
 Expected output:
 
 ```text
-dist/ShenzhenPDF-testflight-0.5.0-7.pkg
+dist/ShenzhenPDF-testflight-26.6.7-1.pkg
 ```
 
 Open in Transporter:
