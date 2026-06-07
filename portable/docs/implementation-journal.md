@@ -181,6 +181,18 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Tested: ran ObjC-style clang-format on the touched Mac fallback lines, `git diff --check`, `make -C portable mac-app`, `make -C portable install`, installed CLI version check, installed bundle id/short-version/build checks, installed app codesign verification, `/Applications` app-name check, `./portable/check-testflight-ready.sh`, `make -C portable linux`, and `portable/build/ShenzhenPDF-gtk --version`.
    - Gap: TestFlight readiness still requires the Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, App Store provisioning profile, and optionally Transporter. A hidden root-owned `/Applications/.ShenzhenPDF.app.old-20260603-122602` backup could not be removed by the unprivileged cleanup command; `/Applications/ShenzhenPDF.app` is the current installed app.
 
+20. Non-continuous drag/page-turn state cleanup.
+   - Status: Implemented; pending manual validation before commit.
+   - Agent findings: stale single-page pan baselines could survive a page snap, wheel-page accumulators could carry sub-threshold deltas or momentum across gestures, pinch zoom did not clear wheel page-turn state, and pending live-zoom timers could restore pre-navigation anchors.
+   - Changed: rebase single-page mouse-drag state after a drag-induced page snap, turn wheel page changes into one-shot gestures that ignore momentum and reset on begin/end/direction/timeout, clear wheel state for pinch zoom, cancel pending live-zoom completion before page navigation or document panning, defer single-page snap-back until pan release unless a page actually changed, and restore continuous-mode left-drag entry into document panning when the document has scrollable content.
+   - Validation target: in non-continuous mode, dragging beyond the threshold should move exactly one slide per drag segment, release should have no inertia/vibration, Cmd/Ctrl zoom should not queue page changes, and dragging immediately after zoom should not feel blocked.
+
+21. Default PDF reader double-click regression.
+   - Status: Implemented; pending user validation before commit.
+   - Root cause: the previous default-reader helper only set LaunchServices' PDF viewer role. Finder's Get Info showed Shenzhen PDF, but the all/editor role used by double-click could remain `com.apple.Preview`.
+   - Changed: declare PDF as its own explicit `com.adobe.pdf` document type, set viewer/editor/all roles through LaunchServices, and fall back to repairing the user's `LSHandlers` row plus refreshing `lsd` when macOS returns success but leaves Preview in the all-role slot.
+   - Tested: reproduced the broken `viewer=Shenzhen, all/editor=Preview` state, ran the helper harness, verified a fresh LaunchServices query reports viewer/editor/all as `com.intuition.shenzhenpdf`, rebuilt/installed `/Applications/ShenzhenPDF.app`, and confirmed `open /Users/raph/Downloads/Bear Sunny Technologies Inc for Blackstar.pdf` opens Shenzhen PDF without launching Preview.app.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

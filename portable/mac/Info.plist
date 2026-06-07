@@ -41,6 +41,21 @@
             <key>CFBundleTypeExtensions</key>
             <array>
                 <string>pdf</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>PDF Document</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.adobe.pdf</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
                 <string>xps</string>
                 <string>cbz</string>
                 <string>epub</string>

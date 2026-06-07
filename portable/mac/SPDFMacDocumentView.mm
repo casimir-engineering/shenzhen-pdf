@@ -547,7 +547,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     NSInteger pageIndex = -1;
     if ([self point:point fallsInPage:&pageIndex pagePoint:&pagePoint]) {
         if ([self.reader documentViewOpenLinkAtPageIndex:pageIndex pagePoint:pagePoint]) return;
-        if (self.viewMode == SPDFViewModeSingle) {
+        if (self.viewMode == SPDFViewModeSingle || [self documentPanIsAvailable]) {
             [self beginPanWithEvent:event];
             return;
         }
@@ -555,11 +555,19 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
         _selectionPageIndex = pageIndex;
         _selectionStart = pagePoint;
         [self.reader documentViewSelectionChangedOnPage:pageIndex from:pagePoint to:pagePoint];
-    } else if (self.viewMode == SPDFViewModeSingle && self.pages.count > 0) {
+    } else if (self.pages.count > 0 && (self.viewMode == SPDFViewModeSingle || [self documentPanIsAvailable])) {
         [self beginPanWithEvent:event];
     } else {
         [super mouseDown:event];
     }
+}
+
+- (BOOL)documentPanIsAvailable {
+    NSScrollView* scrollView = self.enclosingScrollView;
+    NSClipView* clipView = scrollView.contentView;
+    if (!scrollView || !clipView) return NO;
+    return NSWidth(self.bounds) > NSWidth(clipView.bounds) + 0.5 ||
+           NSHeight(self.bounds) > NSHeight(clipView.bounds) + 0.5;
 }
 
 - (void)mouseMoved:(NSEvent*)event {
@@ -646,9 +654,18 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     _lastPanTime = event.timestamp;
     origin.x = MAX(0, MIN(origin.x, MAX(0, NSWidth(self.bounds) - NSWidth(clipView.bounds))));
     origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(self.bounds) - NSHeight(clipView.bounds))));
+    NSInteger pageBefore =
+        self.viewMode == SPDFViewModeSingle ? [self.reader documentViewCurrentPageIndex] : NSNotFound;
     [clipView scrollToPoint:origin];
     [scrollView reflectScrolledClipView:clipView];
     [self.reader documentScrollPositionChanged];
+    if (self.viewMode == SPDFViewModeSingle && [self.reader documentViewCurrentPageIndex] != pageBefore) {
+        _panStartInWindow = current;
+        _panStartOrigin = clipView.bounds.origin;
+        _lastPanPoint = current;
+        _lastPanTime = event.timestamp;
+        _panVelocity = NSZeroPoint;
+    }
 }
 
 - (void)stepPanInertia:(NSTimer*)timer {
