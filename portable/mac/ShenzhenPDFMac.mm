@@ -3194,23 +3194,30 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         [self selectCurrentSidebarRow];
     }
 
-    NSPoint snappedOrigin = [self normalizedDocumentScrollOrigin:visibleRect.origin forPageIndex:_pageIndex];
-    if (fabs(snappedOrigin.x - NSMinX(visibleRect)) > 0.5 || fabs(snappedOrigin.y - NSMinY(visibleRect)) > 0.5)
-        [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
-
     [_pageView setNeedsDisplay:YES];
     BOOL panning = _documentViewPanActive;
+    if (!panning || pageChanged) {
+        NSPoint snappedOrigin = [self normalizedDocumentScrollOrigin:visibleRect.origin forPageIndex:_pageIndex];
+        if (fabs(snappedOrigin.x - NSMinX(visibleRect)) > 0.5 || fabs(snappedOrigin.y - NSMinY(visibleRect)) > 0.5)
+            [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
+    }
     if (panning) {
         [self scheduleDocumentPanMaintenance];
         return YES;
     }
-    if (_liveZooming)
-        [_pageView setNeedsDisplay:YES];
-    else
-        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    if (_liveZooming) [_pageView setNeedsDisplay:YES];
+    else [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
     if (!panning) [self evictDistantRenderedPageImages];
     return YES;
+}
+
+- (void)snapSinglePageScrollPositionAfterPan {
+    if (_presentationMode || _viewMode != SPDFViewModeSingle || _renderedPages.count == 0) return;
+    NSClipView* clipView = _pageScrollView.contentView;
+    NSPoint snappedOrigin = [self normalizedDocumentScrollOrigin:clipView.bounds.origin forPageIndex:_pageIndex];
+    if (fabs(snappedOrigin.x - NSMinX(clipView.bounds)) > 0.5 || fabs(snappedOrigin.y - NSMinY(clipView.bounds)) > 0.5)
+        [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
 }
 
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify {
@@ -3364,6 +3371,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     if (pageCount <= 0) return;
     pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
     NSPoint relativePosition = preserveSinglePagePosition ? [self relativeScrollPositionForCurrentPage] : NSZeroPoint;
+    [self cancelPendingLiveZoomCompletion];
 
     _pageIndex = pageIndex;
     _pageView.currentPageIndex = _pageIndex;
@@ -3679,6 +3687,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         [self minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
         return;
     }
+    [self cancelPendingLiveZoomCompletion];
     _pageIndex = pageIndex;
     _pageView.currentPageIndex = _pageIndex;
     [self renderPageIfNeededAtIndex:_pageIndex];
@@ -3695,6 +3704,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         CGFloat yFraction = 0.0;
         NSInteger pageIndex = [self pageIndexForContinuousDocumentY:documentPoint.y pageFraction:&yFraction];
         if (pageIndex != _pageIndex) {
+            [self cancelPendingLiveZoomCompletion];
             _pageIndex = pageIndex;
             _pageView.currentPageIndex = _pageIndex;
             [self renderPageIfNeededAtIndex:_pageIndex];
@@ -4759,6 +4769,18 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                                        repeats:NO];
 }
 
+- (void)cancelPendingLiveZoomCompletion {
+    if (!_liveZooming && !_zoomFinishTimer) return;
+    [_zoomFinishTimer invalidate];
+    _zoomFinishTimer = nil;
+    _liveZoomSequence++;
+    _liveZooming = NO;
+    _liveZoomAnchorValid = NO;
+    _documentViewPanCropGeneration++;
+    _documentViewPanCropInFlight = NO;
+    _documentViewPanMaintenanceScheduled = NO;
+}
+
 - (void)openDocument:(id)sender {
     (void)sender;
     NSOpenPanel* panel = [NSOpenPanel openPanel];
@@ -5617,6 +5639,10 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [self evictDistantRenderedPageImages];
 }
 
+- (NSInteger)documentViewCurrentPageIndex {
+    return _pageIndex;
+}
+
 - (BOOL)documentArrowKeyDown:(NSEvent*)event {
     if (!_doc) return NO;
     if (_presentationMode && event.keyCode == 53) {
@@ -6156,6 +6182,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)documentViewDidBeginPan {
+    [self cancelPendingLiveZoomCompletion];
     _documentViewPanActive = YES;
     _documentViewPanCropInFlight = NO;
     _documentViewPanMaintenanceScheduled = NO;
@@ -6170,6 +6197,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _documentViewPanCropInFlight = NO;
     _documentViewPanMaintenanceScheduled = NO;
     _lastDocumentPanLiveCropRenderTime = 0.0;
+    [self snapSinglePageScrollPositionAfterPan];
     if (_liveZooming) {
         [_zoomFinishTimer invalidate];
         _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:0.02
@@ -6178,8 +6206,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                                           userInfo:@(_liveZoomSequence)
                                                            repeats:NO];
         [self setCurrentViewportNeedsDisplay];
-    } else
-        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    } else [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];

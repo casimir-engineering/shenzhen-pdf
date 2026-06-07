@@ -14,6 +14,7 @@ void spdf_activate_window_for_view(NSView* view);
 - (void)nextPage:(id)sender;
 - (void)previousPage:(id)sender;
 - (void)documentScrollPositionChanged;
+- (NSInteger)documentViewCurrentPageIndex;
 - (BOOL)documentArrowKeyDown:(NSEvent*)event;
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
 - (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;

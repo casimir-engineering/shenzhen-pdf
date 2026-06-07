@@ -442,45 +442,111 @@ void spdf_activate_window_for_view(NSView* view) {
 @implementation SPDFScrollView {
     CGFloat _wheelAccumulator;
     NSTimeInterval _lastZoomWheelTimestamp;
+    NSTimeInterval _zoomWheelSuppressMomentumUntil;
+    NSTimeInterval _zoomWheelSuppressPhaseLessUntil;
+    NSTimeInterval _lastPageWheelEventTimestamp;
+    NSTimeInterval _lastPageWheelTurnTimestamp;
+    NSInteger _wheelAccumulatorDirection;
+    BOOL _wheelGestureActive;
+    BOOL _wheelPageTurnedInGesture;
+}
+
+- (BOOL)eventPhase:(NSEventPhase)phase contains:(NSEventPhase)flag {
+    return (phase & flag) != 0;
+}
+
+- (void)resetPageWheelGesture {
+    _wheelAccumulator = 0.0;
+    _wheelAccumulatorDirection = 0;
+    _wheelGestureActive = NO;
+    _wheelPageTurnedInGesture = NO;
+    _lastPageWheelEventTimestamp = 0.0;
+}
+
+- (void)markZoomWheelAtTimestamp:(NSTimeInterval)timestamp {
+    [self resetPageWheelGesture];
+    _lastZoomWheelTimestamp = timestamp;
+    _zoomWheelSuppressMomentumUntil = timestamp + 0.65;
+    _zoomWheelSuppressPhaseLessUntil = timestamp + 0.18;
+}
+
+- (BOOL)shouldSuppressResidualZoomWheelEvent:(NSEvent*)event {
+    if (_lastZoomWheelTimestamp <= 0.0) return NO;
+    BOOL phaseBegan = [self eventPhase:event.phase contains:NSEventPhaseBegan] ||
+                      [self eventPhase:event.phase contains:NSEventPhaseMayBegin];
+    if (phaseBegan) return NO;
+    BOOL phaseLess = event.phase == NSEventPhaseNone && event.momentumPhase == NSEventPhaseNone;
+    if (phaseLess) return event.timestamp < _zoomWheelSuppressPhaseLessUntil;
+    return event.timestamp < _zoomWheelSuppressMomentumUntil;
 }
 
 - (void)scrollWheel:(NSEvent*)event {
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
-        _wheelAccumulator = 0.0;
-        _lastZoomWheelTimestamp = event.timestamp;
+        [self markZoomWheelAtTimestamp:event.timestamp];
         if (self.reader) [self.reader zoomWithScrollWheelEvent:event centeredAtWindowPoint:event.locationInWindow];
         return;
     }
 
-    NSTimeInterval timeSinceZoomWheel = event.timestamp - _lastZoomWheelTimestamp;
-    BOOL isZoomWheelContinuation = event.phase != NSEventPhaseNone || event.momentumPhase != NSEventPhaseNone;
-    if (_lastZoomWheelTimestamp > 0.0 && ((isZoomWheelContinuation && timeSinceZoomWheel < 0.65) ||
-                                          (!isZoomWheelContinuation && timeSinceZoomWheel < 0.22))) {
-        _wheelAccumulator = 0.0;
-        if (isZoomWheelContinuation) _lastZoomWheelTimestamp = event.timestamp;
+    if ([self shouldSuppressResidualZoomWheelEvent:event]) {
+        [self resetPageWheelGesture];
         return;
     }
 
     if (self.reader && [self.reader scrollViewShouldTurnWheelIntoPageChange:event]) {
+        BOOL phaseBegan = [self eventPhase:event.phase contains:NSEventPhaseBegan] ||
+                          [self eventPhase:event.phase contains:NSEventPhaseMayBegin];
+        BOOL phaseEnded = [self eventPhase:event.phase contains:NSEventPhaseEnded] ||
+                          [self eventPhase:event.phase contains:NSEventPhaseCancelled];
+        if (phaseBegan) [self resetPageWheelGesture];
+        if (event.momentumPhase != NSEventPhaseNone || phaseEnded) {
+            [self resetPageWheelGesture];
+            return;
+        }
+        if (_lastPageWheelEventTimestamp > 0.0 && event.timestamp - _lastPageWheelEventTimestamp > 0.35)
+            [self resetPageWheelGesture];
+        if (_wheelGestureActive && _wheelPageTurnedInGesture && event.hasPreciseScrollingDeltas) {
+            _lastPageWheelEventTimestamp = event.timestamp;
+            return;
+        }
+        if (!event.hasPreciseScrollingDeltas && _lastPageWheelTurnTimestamp > 0.0 &&
+            event.timestamp - _lastPageWheelTurnTimestamp < 0.18) {
+            _lastPageWheelEventTimestamp = event.timestamp;
+            return;
+        }
+
         CGFloat delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY;
+        if (fabs(delta) < 0.0001) {
+            _lastPageWheelEventTimestamp = event.timestamp;
+            return;
+        }
+        NSInteger direction = delta < 0 ? -1 : 1;
+        if (_wheelAccumulatorDirection != 0 && direction != _wheelAccumulatorDirection) {
+            _wheelAccumulator = 0.0;
+            _wheelPageTurnedInGesture = NO;
+        }
+        _wheelAccumulatorDirection = direction;
+        _wheelGestureActive = YES;
         _wheelAccumulator += delta;
         CGFloat threshold = event.hasPreciseScrollingDeltas ? 0.75 : 0.50;
         if (fabs(_wheelAccumulator) >= threshold) {
-            if (_wheelAccumulator < 0)
-                [self.reader nextPage:self];
-            else
-                [self.reader previousPage:self];
-            _wheelAccumulator = 0;
+            if (_wheelAccumulator < 0) [self.reader nextPage:self];
+            else [self.reader previousPage:self];
+            _wheelAccumulator = 0.0;
+            _wheelPageTurnedInGesture = YES;
+            _lastPageWheelTurnTimestamp = event.timestamp;
         }
+        _lastPageWheelEventTimestamp = event.timestamp;
         return;
     }
 
+    [self resetPageWheelGesture];
     [super scrollWheel:event];
     if (self.reader) [self.reader documentScrollPositionChanged];
 }
 
 - (void)magnifyWithEvent:(NSEvent*)event {
+    [self markZoomWheelAtTimestamp:event.timestamp];
     if (self.reader) [self.reader zoomWithMagnifyEvent:event centeredAtWindowPoint:event.locationInWindow];
 }
 
