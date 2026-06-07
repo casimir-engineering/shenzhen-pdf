@@ -1264,8 +1264,10 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.6.5";
-    if (build.length == 0) build = @"1";
+    if (version.length == 0)
+        version = @"26.6.7";
+    if (build.length == 0)
+        build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
@@ -10282,7 +10284,7 @@ int main(int argc, const char* argv[]) {
     @autoreleasepool {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.5-1\n");
+                printf("Shenzhen PDF portable mac 26.6.7-1\n");
                 return 0;
             }
         }

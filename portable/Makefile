@@ -14,7 +14,7 @@ MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
 MAC_SRCS := $(sort $(wildcard mac/*.mm))
 MAC_HDRS := $(sort $(wildcard mac/*.h))
 MAC_BUNDLE_ID ?= com.intuition.shenzhenpdf
-MAC_VERSION ?= 26.6.5
+MAC_VERSION ?= 26.6.7
 MAC_BUILD ?= 1
 MAC_TESTFLIGHT_PKG = $(DIST)/ShenzhenPDF-testflight-$(MAC_VERSION)-$(MAC_BUILD).pkg
 OPENSSL_LIBDIR ?= $(shell pkg-config --variable=libdir openssl 2>/dev/null || echo /opt/homebrew/opt/openssl@3/lib)

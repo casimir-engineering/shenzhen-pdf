@@ -173,6 +173,14 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: Mac continuous-mode live zoom now uses a centered page anchor when the current page is fully visible, avoiding the slight downward scroll drift while zooming/unzooming at fit-page-like sizes. Mac single-page drag/page-turn detection now uses an explicit one-third-viewport threshold instead of waiting for the synthetic page slot overlap to dominate.
    - Next: validate launch behavior on restored/recent long PDFs, then consider diagnostics and deeper post-first-paint staging if Preview is still noticeably ahead.
 
+19. Prepare `26.6.7-1` for TestFlight validation.
+   - Status: Implemented; commit and tag requested by user.
+   - Changed: bumped macOS bundle defaults to App Store-compatible `CFBundleShortVersionString=26.6.7` and `CFBundleVersion=1`, with About/CLI display as `26.6.7-1`.
+   - Changed: updated TestFlight build defaults and handoff docs to produce `ShenzhenPDF-testflight-26.6.7-1.pkg`.
+   - Constraint: keep previous release journal entries historically intact; only current build defaults and handoff references move to today's version.
+   - Tested: ran ObjC-style clang-format on the touched Mac fallback lines, `git diff --check`, `make -C portable mac-app`, `make -C portable install`, installed CLI version check, installed bundle id/short-version/build checks, installed app codesign verification, `/Applications` app-name check, `./portable/check-testflight-ready.sh`, `make -C portable linux`, and `portable/build/ShenzhenPDF-gtk --version`.
+   - Gap: TestFlight readiness still requires the Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, App Store provisioning profile, and optionally Transporter. A hidden root-owned `/Applications/.ShenzhenPDF.app.old-20260603-122602` backup could not be removed by the unprivileged cleanup command; `/Applications/ShenzhenPDF.app` is the current installed app.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.
