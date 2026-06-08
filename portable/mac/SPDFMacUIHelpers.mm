@@ -480,6 +480,42 @@ void spdf_activate_window_for_view(NSView* view) {
     return event.timestamp < _zoomWheelSuppressMomentumUntil;
 }
 
+- (CGFloat)dampedPreciseScrollDelta:(CGFloat)delta momentum:(BOOL)momentum {
+    CGFloat magnitude = fabs(delta);
+    if (magnitude <= 18.0) return delta;
+
+    CGFloat ratio = 1.0 - MIN((magnitude - 18.0) / 220.0, 1.0) * 0.55;
+    if (momentum) ratio *= 0.72;
+    ratio = MAX(momentum ? 0.30 : 0.45, ratio);
+    return delta * ratio;
+}
+
+- (BOOL)scrollPreciseTrackpadEventWithDamping:(NSEvent*)event {
+    if (!event.hasPreciseScrollingDeltas) return NO;
+    if (!self.documentView || !self.contentView) return NO;
+
+    CGFloat deltaX = [self dampedPreciseScrollDelta:event.scrollingDeltaX
+                                           momentum:event.momentumPhase != NSEventPhaseNone];
+    CGFloat deltaY = [self dampedPreciseScrollDelta:event.scrollingDeltaY
+                                           momentum:event.momentumPhase != NSEventPhaseNone];
+    if (fabs(deltaX) < 0.0001 && fabs(deltaY) < 0.0001) return YES;
+
+    NSClipView* clipView = self.contentView;
+    NSRect visible = clipView.bounds;
+    NSSize documentSize = self.documentView.bounds.size;
+    CGFloat maxX = MAX(0.0, documentSize.width - NSWidth(visible));
+    CGFloat maxY = MAX(0.0, documentSize.height - NSHeight(visible));
+    NSPoint origin = visible.origin;
+    origin.x = spdf_ui_clamp_cg(origin.x - deltaX, 0.0, maxX);
+    origin.y = spdf_ui_clamp_cg(origin.y - deltaY, 0.0, maxY);
+    if (fabs(origin.x - NSMinX(visible)) < 0.0001 && fabs(origin.y - NSMinY(visible)) < 0.0001) return YES;
+
+    [clipView scrollToPoint:origin];
+    [self reflectScrolledClipView:clipView];
+    if (self.reader) [self.reader documentScrollPositionChanged];
+    return YES;
+}
+
 - (void)scrollWheel:(NSEvent*)event {
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
@@ -541,6 +577,7 @@ void spdf_activate_window_for_view(NSView* view) {
     }
 
     [self resetPageWheelGesture];
+    if ([self scrollPreciseTrackpadEventWithDamping:event]) return;
     [super scrollWheel:event];
     if (self.reader) [self.reader documentScrollPositionChanged];
 }

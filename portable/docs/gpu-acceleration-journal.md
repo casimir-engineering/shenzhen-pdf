@@ -6,7 +6,7 @@ Status: read-only exploration complete. No GPU implementation has been started.
 
 ## Source State
 
-- Release anchor: `26.6.7-1` is the current release tag.
+- Release anchor: `26.6.8-1` is the current release tag.
 - The tagged release commit includes the validated Mac tab-drag, zoom-scroll, non-continuous pan, command palette, launch-performance, and zoom/page-turn fixes.
 - This journal intentionally lives after the release tag until the GPU work becomes a new implementation branch.
 
@@ -86,7 +86,7 @@ Status: read-only exploration complete. No GPU implementation has been started.
 ## Proposed Implementation Plan
 
 Phase 0: keep release stable
-- Do not mix GPU experiments into the `26.6.7-1` release tag.
+- Do not mix GPU experiments into the `26.6.8-1` release tag.
 - Create a new branch for profiling/GPU exploration.
 
 Phase 1: measurement

@@ -182,16 +182,82 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Gap: TestFlight readiness still requires the Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, App Store provisioning profile, and optionally Transporter. A hidden root-owned `/Applications/.ShenzhenPDF.app.old-20260603-122602` backup could not be removed by the unprivileged cleanup command; `/Applications/ShenzhenPDF.app` is the current installed app.
 
 20. Non-continuous drag/page-turn state cleanup.
-   - Status: Implemented; pending manual validation before commit.
+   - Status: User validated; committed in `167c0bce0`.
    - Agent findings: stale single-page pan baselines could survive a page snap, wheel-page accumulators could carry sub-threshold deltas or momentum across gestures, pinch zoom did not clear wheel page-turn state, and pending live-zoom timers could restore pre-navigation anchors.
    - Changed: rebase single-page mouse-drag state after a drag-induced page snap, turn wheel page changes into one-shot gestures that ignore momentum and reset on begin/end/direction/timeout, clear wheel state for pinch zoom, cancel pending live-zoom completion before page navigation or document panning, defer single-page snap-back until pan release unless a page actually changed, and restore continuous-mode left-drag entry into document panning when the document has scrollable content.
    - Validation target: in non-continuous mode, dragging beyond the threshold should move exactly one slide per drag segment, release should have no inertia/vibration, Cmd/Ctrl zoom should not queue page changes, and dragging immediately after zoom should not feel blocked.
 
 21. Default PDF reader double-click regression.
-   - Status: Implemented; pending user validation before commit.
+   - Status: Implemented and committed in `167c0bce0`; direct double-click behavior remains a manual Finder validation item.
    - Root cause: the previous default-reader helper only set LaunchServices' PDF viewer role. Finder's Get Info showed Shenzhen PDF, but the all/editor role used by double-click could remain `com.apple.Preview`.
    - Changed: declare PDF as its own explicit `com.adobe.pdf` document type, set viewer/editor/all roles through LaunchServices, and fall back to repairing the user's `LSHandlers` row plus refreshing `lsd` when macOS returns success but leaves Preview in the all-role slot.
    - Tested: reproduced the broken `viewer=Shenzhen, all/editor=Preview` state, ran the helper harness, verified a fresh LaunchServices query reports viewer/editor/all as `com.intuition.shenzhenpdf`, rebuilt/installed `/Applications/ShenzhenPDF.app`, and confirmed `open /Users/raph/Downloads/Bear Sunny Technologies Inc for Blackstar.pdf` opens Shenzhen PDF without launching Preview.app.
+
+22. GNOME-style document search sidebar.
+   - Status: User validated; included in the `26.6.8-1` release commit.
+   - Prompt link: when the user searches, a new sidebar tab like Chapters/Comments should appear, switch to immediately, list contextual search results, and insert visually distinct chapter separators.
+   - Agent findings: product acceptance criteria require current-document-only results, exact-match jumps, non-clickable divider/status rows, result selection syncing with next/previous find navigation, graceful no-result/searching states, and no stale rows after clearing or switching documents.
+   - Changed: Mac sidebar mode now dynamically adds a Search segment only while search state exists, opens/switches the sidebar when a query starts, builds result rows from `_findMatches` with page/match subtitles and extracted text snippets, groups results under chapter dividers, keeps Search selection synced to `_findMatchIndex`, and routes result clicks through `jumpToFindMatchAtIndex:`.
+   - Review fixes: changed divider rows to adaptive left-aligned muted capsule chapter labels that only draw a right-side rule when there is meaningful leftover space, made status/divider rows non-navigable, dynamically clamps sidebar width so three segments fit, keeps result rows single-line truncated instead of wrapped, and bolds literal query matches in result context text.
+   - Validation target: type a search, confirm Search appears and is selected, results show useful single-line snippets grouped by chapter, clicking a result jumps and flashes the exact match, next/previous updates the selected result, no-result/searching rows do not navigate, and clearing search removes Search without breaking Chapters/Comments.
+
+23. Mac window arrangement shortcut regression.
+   - Status: User validated; included in the `26.6.8-1` release commit.
+   - Prompt link: the Window/View menu actions still work, but their keyboard shortcuts regressed, so the keyboard dispatch path needs a test and fix.
+   - Changed: extracted Mac window-arrangement shortcut matching into `SPDFMacWindowShortcuts`, installed a local key monitor so Ctrl+Fn/Globe window shortcuts are handled before AppKit menu-key dispatch can swallow them, accepts missing Fn/NumericPad flags as a fallback outside text editing, and kept the existing `SPDFWindow` send-event fallback.
+   - Changed: added `make -C portable mac-window-shortcut-tests`, covering Ctrl+Fn/Globe Fill/Center, Ctrl+Fn/Globe arrows, Fn-arrow translations to Home/End/PageUp/PageDown, AppKit numeric-pad arrow events, missing-flag fallback events, selector routing, and modified-key rejection.
+   - Validation target: with the installed app focused, Ctrl+Fn/Globe+F fills, Ctrl+Fn/Globe+C centers, Ctrl+Fn/Globe+Left/Right/Up/Down move to halves, and clicking the menu items continues to work.
+
+24. Mac window resize smoothness and corner hit-testing.
+   - Status: User validated; included in the `26.6.8-1` release commit.
+   - Prompt link: resizing lagged badly, and the top-right resize corner often started a window drag instead of a resize.
+   - Changed: live window resize now uses a lightweight relayout path that scales cached page imagery, skips full-resolution crop rendering, avoids minimap thumbnail queueing, avoids repeated persistent-state writes, and performs the full viewport/fit render once when resizing ends.
+   - Changed: top chrome drag now reserves a small 16 px resize zone in the top corners so AppKit can receive corner resize gestures while the rest of the empty top chrome still drags the window.
+   - Validation target: resize the app from corners and edges with Bear Sunny/HRO open; resizing should feel much smoother, top-right corner should consistently resize, and dragging empty tab/chrome space should still move the window.
+
+25. Mac trackpad pan direction stickiness.
+   - Status: User validated; included in the `26.6.8-1` release commit.
+   - Prompt link: two-finger trackpad movement felt directionally sticky compared with Preview, requiring extra movement to switch from horizontal to vertical motion or back.
+   - Changed: disabled AppKit predominant-axis scrolling on the document scroll view and explicitly allowed horizontal/vertical scroll elasticity, so precise trackpad deltas can flow as free 2D panning while existing zoom and non-continuous page-turn handling stays in place.
+   - Validation target: with a zoomed document wider and taller than the viewport, two-finger pan horizontally, vertically, diagonally, and change direction quickly; movement should follow the fingers with much less axis locking.
+
+26. Mac defaults for side panel and map on new documents.
+   - Status: Implemented; included in the `26.6.8-1` release commit.
+   - Prompt link: add General/Settings controls for whether new documents open with the side panel and map visible, defaulting to the current behavior of visible.
+   - Agent finding: global visibility defaults did not exist; current app stores per-tab/session and per-document `showSidebar`/`showMinimap`, and new tabs hardcoded both to `YES` before applying remembered document state.
+   - Changed: added `settings.json` keys `defaultSidebarVisibleForNewDocuments` and `defaultMinimapVisibleForNewDocuments`, both defaulting to `YES`.
+   - Changed: added checkable Settings menu items for “Open New Documents with Side Panel” and “Open New Documents with Map”; toggling saves immediately and affects future tabs only.
+   - Changed: new tabs and legacy session entries without saved visibility use the global defaults first, then existing remembered per-document state still wins.
+   - Validation target: defaults are checked on a clean profile, unchecking one or both writes `settings.json`, newly opened never-seen PDFs follow the chosen defaults, and previously opened PDFs keep their remembered visibility.
+
+27. Mac trackpad fast-swipe acceleration.
+   - Status: User validated; included in the `26.6.8-1` release commit.
+   - Prompt link: after free 2D trackpad panning felt good, fast two-finger swipes accelerated too aggressively to the first/last page.
+   - Changed: precise trackpad scroll events now use a high-speed damping curve in `SPDFScrollView` after zoom/page-turn handling; slow/fine deltas remain effectively unchanged, while large and momentum deltas are compressed before moving the document clip view.
+   - Constraint: mouse-wheel scrolling, Command/Control zoom gestures, and non-continuous page-turn conversion are left on their existing paths.
+   - Validation target: fast two-finger swipes should still coast, but no longer jump violently to the beginning/end; slow two-finger panning should retain the improved Preview-like free movement.
+
+28. Continuous Fit Page scroll behavior.
+   - Status: User validated; included in the `26.6.8-1` release commit.
+   - Prompt link: fitting the page in continuous mode made scrolling act like non-continuous mode, jumping one page at a time.
+   - Root cause: wheel-to-page-turn conversion was keyed on `Fit Height`/`Fit Page` even when `_viewMode` was continuous.
+   - Changed: only single-page view converts wheel/trackpad scrolling into page changes; continuous mode keeps normal continuous scrolling for every zoom/fit mode.
+   - Validation target: in continuous mode, choose Fit Page and scroll with the trackpad/wheel; the document should move continuously instead of stepping page by page. Non-continuous mode should still page-turn as before.
+
+29. Single-page PDF map default.
+   - Status: User validated; included in the `26.6.8-1` release commit.
+   - Prompt link: when a single-page PDF is opened, override the default map display option and hide the map by default, while still allowing the map to be opened manually.
+   - Changed: tabs now track whether minimap visibility came from explicit saved/session state versus a default. After a document loads and page count is known, one-page documents with no explicit minimap preference default to hidden regardless of the global new-document map setting.
+   - Constraint: user/session/document-state choices still win. If the map was explicitly shown for that one-page file, it can persist normally.
+   - Validation target: open a never-seen one-page PDF with the global map default enabled; the map should be hidden. Toggle Map on, reopen or switch away/back, and it should remain allowed/restored.
+
+30. Prepare `26.6.8-1` for TestFlight validation.
+   - Status: Implemented and validated for the `26.6.8-1` release commit.
+   - Prompt link: after validating the recent Mac behavior fixes, update the About/version metadata to today's version, prepare TestFlight, commit, and tag.
+   - Changed: bumped macOS bundle defaults to App Store-compatible `CFBundleShortVersionString=26.6.8` and `CFBundleVersion=1`, with About/CLI display as `26.6.8-1`.
+   - Changed: updated TestFlight helper defaults, package naming docs, and release references to produce `ShenzhenPDF-testflight-26.6.8-1.pkg`.
+   - Tested: rebuilt and installed `/Applications/ShenzhenPDF.app`; verified CLI version `26.6.8-1`, bundle metadata `com.intuition.shenzhenpdf`/`26.6.8`/`1`, local codesign, Objective-C++ syntax, shortcut tests, and diff hygiene.
+   - Gap: TestFlight readiness has build tools/OpenSSL/MuPDF OK but still requires Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, App Store provisioning profile, and optionally Transporter before a signed upload `.pkg` can be produced.
 
 ## Validation
 

@@ -10,14 +10,12 @@ typedef NS_ENUM(NSInteger, SPDFFitMode) {
     SPDFFitModePage
 };
 
-typedef NS_ENUM(NSInteger, SPDFViewMode) {
-    SPDFViewModeSingle = 0,
-    SPDFViewModeContinuous
-};
+typedef NS_ENUM(NSInteger, SPDFViewMode) { SPDFViewModeSingle = 0, SPDFViewModeContinuous };
 
 typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     SPDFSidebarModeChapters = 0,
-    SPDFSidebarModeComments = 1
+    SPDFSidebarModeComments = 1,
+    SPDFSidebarModeSearch = 2
 };
 
 @interface SPDFRenderedPage : NSObject
@@ -56,6 +54,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) NSInteger findMatchIndex;
 @property(nonatomic) BOOL showSidebar;
 @property(nonatomic) BOOL showMinimap;
+@property(nonatomic) BOOL hasMinimapPreference;
 @property(nonatomic) BOOL missingFile;
 @property(nonatomic, copy) NSString* missingMessage;
 @property(nonatomic) spdf_document* cachedDocument;
