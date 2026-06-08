@@ -69,7 +69,7 @@ echo
 
 echo "Suggested build command"
 bundle_id="${MAC_BUNDLE_ID:-com.intuition.shenzhenpdf}"
-version="${MAC_VERSION:-26.6.7}"
+version="${MAC_VERSION:-26.6.8}"
 build="${MAC_BUILD:-1}"
 if [[ -n "$appstore_id" && -n "$installer_id" && -f "$profile" ]]; then
   cat <<EOF

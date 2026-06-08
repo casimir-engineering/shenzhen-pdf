@@ -6,6 +6,7 @@
 #import "SPDFMacPrintView.h"
 #import "SPDFMacTabStripView.h"
 #import "SPDFMacUIHelpers.h"
+#import "SPDFMacWindowShortcuts.h"
 
 #include "shenzhen_pdf_core.h"
 
@@ -99,6 +100,7 @@
     NSInteger _paletteMode;
     NSUInteger _paletteSearchGeneration;
     id _paletteEventMonitor;
+    id _windowArrangementShortcutMonitor;
     id _presentationEventMonitor;
     id _presentationGlobalEventMonitor;
     NSOperationQueue* _renderQueue;
@@ -115,6 +117,7 @@
     spdf_outline _outline;
     spdf_comments _comments;
     BOOL _activeMetadataBorrowed;
+    BOOL _windowLiveResizing;
     SPDFDocumentTab* _activeMetadataTab;
     NSMutableArray<NSDictionary*>* _sidebarItems;
     NSString* _chapterFilterText;
@@ -171,6 +174,8 @@
     NSUInteger _documentViewPanCropGeneration;
     NSTimeInterval _lastDocumentPanLiveCropRenderTime;
     BOOL _minimapPrecisionViewportDragActive;
+    BOOL _defaultSidebarVisibleForNewDocuments;
+    BOOL _defaultMinimapVisibleForNewDocuments;
     BOOL _sidebarPreferredVisible;
     BOOL _sidebarVisible;
     BOOL _minimapPreferredVisible;
@@ -263,6 +268,8 @@
 - (void)performWindowArrangementAction:(SEL)action sender:(id)sender;
 - (void)drainPendingWindowArrangementAction;
 - (BOOL)deferWindowArrangementActionIfNeeded:(SEL)action sender:(id)sender;
+- (void)installWindowArrangementShortcutMonitor;
+- (void)removeWindowArrangementShortcutMonitor;
 - (void)openPath:(NSString*)path;
 - (void)openPaths:(NSArray<NSString*>*)paths;
 - (void)openRecentDocument:(id)sender;
@@ -273,6 +280,8 @@
 - (void)toggleFindRegexMultiline:(id)sender;
 - (void)openStateJSONFile:(id)sender;
 - (void)revealSettingsFolder:(id)sender;
+- (void)toggleDefaultSidebarForNewDocuments:(id)sender;
+- (void)toggleDefaultMinimapForNewDocuments:(id)sender;
 - (NSString*)documentStateKeyForPath:(NSString*)path;
 - (void)applyStoredDocumentStateToTab:(SPDFDocumentTab*)tab;
 - (void)saveDocumentStateForTab:(SPDFDocumentTab*)tab;
@@ -378,6 +387,13 @@
 - (void)clearPageFieldFocus;
 - (void)clearToolbarFieldFocusForTabSwitch;
 - (void)restoreSidebarWidth;
+- (BOOL)hasSearchSidebar;
+- (NSString*)chapterTitleForPage:(NSInteger)pageIndex;
+- (void)rebuildSearchSidebarItems;
+- (void)showSearchSidebarForFind;
+- (NSArray<NSValue*>*)rangesOfPaletteQuery:(NSString*)query inString:(NSString*)text limit:(NSUInteger)limit;
+- (NSRange)paletteSnippetRangeInLine:(NSString*)line matchRange:(NSRange)matchRange;
+- (NSString*)findContextForQuery:(NSString*)query lines:(const spdf_text_lines*)lines matchRect:(NSRect)matchRect;
 - (void)leavePresentationModeAndExitFullScreen:(BOOL)exitFullScreen sender:(id)sender;
 - (void)activateSidebarRow:(id)sender;
 - (void)scrollToPageRect:(NSRect)targetRect pageIndex:(NSInteger)pageIndex;

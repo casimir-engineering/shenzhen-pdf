@@ -33,9 +33,11 @@ static const CGFloat kMinWindowHeight = 380.0;
 static const CGFloat kDefaultMinimapWidth = 110.0;
 static const CGFloat kDefaultSidebarWidth = 240.0;
 static const CGFloat kMinSidebarWidth = 176.0;
+static const CGFloat kSearchSidebarMinWidth = 216.0;
 static const CGFloat kMaxSidebarWidth = 320.0;
 static const CGFloat kSidebarMaxWidthFraction = 0.34;
 static const CGFloat kMinimapDividerWidth = 5.0;
+static const CGFloat kTopChromeResizeCornerSize = 16.0;
 static const NSInteger kBackgroundRenderBatchSize = 8;
 static const NSInteger kRecentDocumentLimit = 10;
 static const NSInteger kRenderedImageKeepRadius = 12;
@@ -173,6 +175,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _selectionPageIndex = -1;
     _contextPageIndex = -1;
     _contextCommentIndex = -1;
+    _defaultSidebarVisibleForNewDocuments = YES;
+    _defaultMinimapVisibleForNewDocuments = YES;
     _sidebarPreferredVisible = YES;
     _sidebarVisible = YES;
     _minimapPreferredVisible = YES;
@@ -251,22 +255,18 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
     [self buildMenu];
     [self buildWindow];
+    [self installWindowArrangementShortcutMonitor];
     _uiReady = YES;
 
-    [self performWithBatchedPersistentStateSaves:^{
-      [self performStartupDocumentWork];
-    }];
+    [self performWithBatchedPersistentStateSaves:^{ [self performStartupDocumentWork]; }];
     _allowSidebarWidthPersistence = YES;
     [self restoreSidebarWidth];
 
     [_window makeKeyAndOrderFront:nil];
-    if (self.restoreWindowID.length == 0)
-        [NSApp activateIgnoringOtherApps:YES];
+    if (self.restoreWindowID.length == 0) [NSApp activateIgnoringOtherApps:YES];
     dispatch_async(dispatch_get_main_queue(), ^{
-      if (self.restoreWindowID.length == 0)
-          [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
-      if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0)
-          [self showShortcutHelp:nil];
+      if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
+      if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0) [self showShortcutHelp:nil];
     });
 }
 
@@ -308,6 +308,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 - (void)applicationWillTerminate:(NSNotification*)notification {
     (void)notification;
     [self dismissTabHoverPanel];
+    [self removeWindowArrangementShortcutMonitor];
     [self removePresentationEventMonitor];
     [_translationInstallTask terminate];
     [_translationTask terminate];
@@ -342,9 +343,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         _suppressSessionWriteOnTerminate = NO;
     }
     [self savePersistentState];
-    dispatch_async(dispatch_get_main_queue(), ^{
-      [NSApp terminate:self];
-    });
+    dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:self]; });
     return NO;
 }
 
@@ -380,24 +379,35 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [self dismissTabHoverPanel];
     [self updateTabStripFrame];
     [self updateToolbarOverflow];
-    [self restoreSidebarWidth];
-    if (_doc && (_fitMode == SPDFFitModeWidth || _fitMode == SPDFFitModeHeight || _fitMode == SPDFFitModePage))
-        [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
-    else {
-        [self resizeDocumentView];
-        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
-        [_pageView setNeedsDisplay:YES];
+    if (_windowLiveResizing) {
+        [self resizeDocumentViewForWindowLiveResize];
+        return;
     }
+    [self restoreSidebarWidth];
+    [self relayoutDocumentForViewportChange];
+    [self savePersistentState];
+}
+
+- (void)windowWillStartLiveResize:(NSNotification*)notification {
+    (void)notification;
+    _windowLiveResizing = YES;
+    [self dismissTabHoverPanel];
+}
+
+- (void)windowDidEndLiveResize:(NSNotification*)notification {
+    (void)notification;
+    if (!_windowLiveResizing) return;
+    _windowLiveResizing = NO;
+    [self restoreSidebarWidth];
+    [self relayoutDocumentForViewportChange];
     [self savePersistentState];
 }
 
 - (void)windowDidChangeBackingProperties:(NSNotification*)notification {
     (void)notification;
     [self dismissTabHoverPanel];
-    if (_doc)
-        [self renderDocumentPreservingScrollPosition];
-    else
-        [self resizeDocumentView];
+    if (_doc) [self renderDocumentPreservingScrollPosition];
+    else [self resizeDocumentView];
 }
 
 - (void)windowDidResignKey:(NSNotification*)notification {
@@ -486,6 +496,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         NSNumber* view = settings[@"viewMode"];
         NSNumber* sidebarWidth = settings[@"sidebarWidth"];
         NSNumber* minimapWidth = settings[@"minimapWidth"];
+        NSNumber* defaultSidebarVisible = settings[@"defaultSidebarVisibleForNewDocuments"];
+        NSNumber* defaultMinimapVisible = settings[@"defaultMinimapVisibleForNewDocuments"];
         NSNumber* showShortcutHelp = settings[@"showShortcutHelpOnLaunch"];
         NSNumber* defaultReaderPromptDismissed = settings[@"defaultReaderPromptDismissed"];
         NSNumber* printScalingMode = settings[@"printScalingMode"];
@@ -499,6 +511,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         if (view) _viewMode = (SPDFViewMode)MAX(0, MIN(1, view.integerValue));
         if (sidebarWidth) _sidebarWidth = spdf_sane_sidebar_width(sidebarWidth.doubleValue, 0);
         if (minimapWidth) _minimapWidth = spdf_clamp_cg(minimapWidth.doubleValue, 72.0, 260.0);
+        if (defaultSidebarVisible) _defaultSidebarVisibleForNewDocuments = defaultSidebarVisible.boolValue;
+        if (defaultMinimapVisible) _defaultMinimapVisibleForNewDocuments = defaultMinimapVisible.boolValue;
         if (showShortcutHelp) _showShortcutHelpOnLaunch = showShortcutHelp.boolValue;
         if (defaultReaderPromptDismissed) _defaultReaderPromptDismissed = defaultReaderPromptDismissed.boolValue;
         if (printScalingMode) _printScalingMode = (SPDFPrintScalingMode)MAX(0, MIN(2, printScalingMode.integerValue));
@@ -535,10 +549,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     if ([favorites isKindOfClass:NSArray.class]) [_favorites addObjectsFromArray:favorites];
 
     NSDictionary* documents = [self jsonObjectFromFile:@"documents.json"];
-    if ([documents isKindOfClass:NSDictionary.class])
-        _documentStates = [documents mutableCopy];
-    else
-        _documentStates = [NSMutableDictionary dictionary];
+    if ([documents isKindOfClass:NSDictionary.class]) _documentStates = [documents mutableCopy];
+    else _documentStates = [NSMutableDictionary dictionary];
 
     if (self.detachedTabLaunch) return;
 
@@ -560,10 +572,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
             if (windowID.length > 0) [_pendingRestoreWindowIDs addObject:windowID];
         }
     }
-    if (windowState)
-        [self loadSessionWindowState:windowState];
-    else if (self.restoreWindowID.length > 0)
-        _windowSessionID = [self.restoreWindowID copy];
+    if (windowState) [self loadSessionWindowState:windowState];
+    else if (self.restoreWindowID.length > 0) _windowSessionID = [self.restoreWindowID copy];
 }
 
 - (NSMutableDictionary*)normalizedMultiWindowSessionFromObject:(id)object {
@@ -622,13 +632,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         SPDFDocumentTab* tab = spdf_tab_from_dictionary(item);
         if (!tab) continue;
         if (!tab.title.length) tab.title = spdf_display_name_for_path(tab.path);
+        if (item[@"showSidebar"] == nil) tab.showSidebar = _defaultSidebarVisibleForNewDocuments;
+        if (item[@"showMinimap"] == nil) tab.showMinimap = _defaultMinimapVisibleForNewDocuments;
         if (item[@"showSidebar"] == nil || item[@"showMinimap"] == nil) [self applyStoredDocumentStateToTab:tab];
         [_tabs addObject:tab];
     }
     if (_tabs.count > 0)
         _selectedTabIndex = MIN(MAX(0, [windowState[@"selectedTab"] integerValue]), MAX(0, (NSInteger)_tabs.count - 1));
-    else
-        _selectedTabIndex = -1;
+    else _selectedTabIndex = -1;
 }
 
 - (NSString*)documentStateKeyForPath:(NSString*)path {
@@ -641,13 +652,19 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSDictionary* state = _documentStates[[self documentStateKeyForPath:tab.path]];
     if (![state isKindOfClass:NSDictionary.class]) return;
     if (state[@"showSidebar"] != nil) tab.showSidebar = [state[@"showSidebar"] boolValue];
-    if (state[@"showMinimap"] != nil)
+    if (state[@"showMinimap"] != nil) {
         tab.showMinimap = [state[@"showMinimap"] boolValue];
+        tab.hasMinimapPreference = YES;
+    }
+}
+
+- (void)applySinglePageMinimapDefaultToTab:(SPDFDocumentTab*)tab pageCount:(NSInteger)pageCount {
+    if (!tab || pageCount != 1 || tab.hasMinimapPreference) return;
+    tab.showMinimap = NO;
 }
 
 - (NSDictionary*)pageGeometryStateForPath:(NSString*)path {
-    if (!path.length)
-        return nil;
+    if (!path.length) return nil;
     NSDictionary* state = _documentStates[[self documentStateKeyForPath:path]];
     return [state isKindOfClass:NSDictionary.class] ? [state copy] : nil;
 }
@@ -661,11 +678,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (NSDictionary*)pageGeometryDictionaryForTab:(SPDFDocumentTab*)tab {
-    if (!tab.path.length || !tab.cachedDocument)
-        return nil;
+    if (!tab.path.length || !tab.cachedDocument) return nil;
     NSInteger pageCount = spdf_page_count(tab.cachedDocument);
-    if (pageCount <= 0 || tab.cachedRenderedPages.count != (NSUInteger)pageCount)
-        return nil;
+    if (pageCount <= 0 || tab.cachedRenderedPages.count != (NSUInteger)pageCount) return nil;
 
     NSDate* modificationDate = tab.cachedModificationDate;
     unsigned long long fileSize = tab.cachedFileSize;
@@ -674,8 +689,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         modificationDate = spdf_file_modification_date_from_attributes(attributes);
         fileSize = spdf_file_size_from_attributes(attributes);
     }
-    if (!modificationDate || fileSize == 0)
-        return nil;
+    if (!modificationDate || fileSize == 0) return nil;
 
     NSMutableArray<NSNumber*>* geometry = [NSMutableArray arrayWithCapacity:(NSUInteger)pageCount * 2];
     for (NSInteger i = 0; i < pageCount; ++i) {
@@ -700,12 +714,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                         pageGeometryState:(NSDictionary*)state
                                  fileSize:(unsigned long long)fileSize
                          modificationDate:(NSDate*)modificationDate {
-    if (!doc || ![state isKindOfClass:NSDictionary.class] || !modificationDate || fileSize == 0)
-        return NO;
-    if ([state[@"geometryVersion"] integerValue] != kPageGeometryCacheVersion)
-        return NO;
-    if ([state[@"geometryFileSize"] unsignedLongLongValue] != fileSize)
-        return NO;
+    if (!doc || ![state isKindOfClass:NSDictionary.class] || !modificationDate || fileSize == 0) return NO;
+    if ([state[@"geometryVersion"] integerValue] != kPageGeometryCacheVersion) return NO;
+    if ([state[@"geometryFileSize"] unsignedLongLongValue] != fileSize) return NO;
 
     double storedModifiedAt = [state[@"geometryModifiedAt"] doubleValue];
     if (!isfinite(storedModifiedAt) ||
@@ -720,43 +731,35 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
     NSMutableArray<NSNumber*>* validated = [NSMutableArray arrayWithCapacity:geometry.count];
     for (id value in geometry) {
-        if (![value respondsToSelector:@selector(doubleValue)])
-            return NO;
+        if (![value respondsToSelector:@selector(doubleValue)]) return NO;
         double dimension = [value doubleValue];
-        if (!isfinite(dimension) || dimension <= 0.0 || dimension > CGFLOAT_MAX)
-            return NO;
+        if (!isfinite(dimension) || dimension <= 0.0 || dimension > CGFLOAT_MAX) return NO;
         [validated addObject:@(dimension)];
     }
 
     for (NSInteger i = 0; i < pageCount; ++i) {
         float width = (float)[validated[(NSUInteger)(i * 2)] doubleValue];
         float height = (float)[validated[(NSUInteger)(i * 2 + 1)] doubleValue];
-        if (!spdf_set_page_size_cache(doc, (int)i, width, height))
-            return NO;
+        if (!spdf_set_page_size_cache(doc, (int)i, width, height)) return NO;
     }
     return YES;
 }
 
 - (void)saveDocumentStateForTab:(SPDFDocumentTab*)tab {
-    if (!tab.path.length)
-        return;
+    if (!tab.path.length) return;
     NSString* key = [self documentStateKeyForPath:tab.path];
-    if (!key.length)
-        return;
+    if (!key.length) return;
     NSMutableDictionary* state = [_documentStates[key] isKindOfClass:NSMutableDictionary.class]
                                      ? _documentStates[key]
                                      : [_documentStates[key] mutableCopy];
-    if (!state)
-        state = [NSMutableDictionary dictionary];
+    if (!state) state = [NSMutableDictionary dictionary];
     state[@"path"] = tab.path;
     state[@"title"] = tab.title.length ? tab.title : spdf_display_name_for_path(tab.path);
     state[@"showSidebar"] = @(tab.showSidebar);
     state[@"showMinimap"] = @(tab.showMinimap);
     NSDictionary* geometry = [self pageGeometryDictionaryForTab:tab];
-    if (geometry)
-        [state addEntriesFromDictionary:geometry];
-    else if (tab.cachedDocument)
-        [self removePageGeometryFromState:state];
+    if (geometry) [state addEntriesFromDictionary:geometry];
+    else if (tab.cachedDocument) [self removePageGeometryFromState:state];
     state[@"updatedAt"] = @((NSInteger)NSDate.date.timeIntervalSince1970);
     _documentStates[key] = state;
 }
@@ -844,8 +847,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
           [windows addObject:currentWindow];
           return YES;
       }
-      if ([windows[existing] isEqual:currentWindow])
-          return NO;
+      if ([windows[existing] isEqual:currentWindow]) return NO;
       else {
           windows[existing] = currentWindow;
           return YES;
@@ -967,6 +969,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         @"viewMode" : @(_viewMode),
         @"sidebarWidth" : @(sidebarWidth),
         @"minimapWidth" : @(_minimapWidth),
+        @"defaultSidebarVisibleForNewDocuments" : @(_defaultSidebarVisibleForNewDocuments),
+        @"defaultMinimapVisibleForNewDocuments" : @(_defaultMinimapVisibleForNewDocuments),
         @"windowSize" : @{@"width" : @(windowContentSize.width), @"height" : @(windowContentSize.height)},
         @"commentAuthor" : _commentAuthor ?: @"",
         @"translateSourceLanguage" : _translationSourceLanguage ?: @"zh",
@@ -1230,6 +1234,15 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSMenuItem* settingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings" action:nil keyEquivalent:@""];
     [mainMenu addItem:settingsItem];
     NSMenu* settingsMenu = [[NSMenu alloc] initWithTitle:@"Settings"];
+    NSMenuItem* defaultSidebarItem = [settingsMenu addItemWithTitle:@"Open New Documents with Side Panel"
+                                                             action:@selector(toggleDefaultSidebarForNewDocuments:)
+                                                      keyEquivalent:@""];
+    defaultSidebarItem.target = self;
+    NSMenuItem* defaultMinimapItem = [settingsMenu addItemWithTitle:@"Open New Documents with Map"
+                                                             action:@selector(toggleDefaultMinimapForNewDocuments:)
+                                                      keyEquivalent:@""];
+    defaultMinimapItem.target = self;
+    [settingsMenu addItem:[NSMenuItem separatorItem]];
     NSArray<NSString*>* stateFiles = @[ @"settings.json", @"session.json", @"documents.json", @"favorites.json" ];
     for (NSString* stateFile in stateFiles) {
         NSMenuItem* stateItem =
@@ -1264,10 +1277,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0)
-        version = @"26.6.7";
-    if (build.length == 0)
-        build = @"1";
+    if (version.length == 0) version = @"26.6.8";
+    if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
@@ -1562,8 +1573,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSPoint point = NSMakePoint(0.0, NSHeight(_toolbarOverflowButton.bounds) + 2.0);
     if (event && event.window == _window)
         [NSMenu popUpContextMenu:_toolbarOverflowMenu withEvent:event forView:_toolbarOverflowButton];
-    else
-        [_toolbarOverflowMenu popUpMenuPositioningItem:nil atLocation:point inView:_toolbarOverflowButton];
+    else [_toolbarOverflowMenu popUpMenuPositioningItem:nil atLocation:point inView:_toolbarOverflowButton];
 }
 
 - (void)updateToolbarOverflow {
@@ -1877,6 +1887,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _pageScrollView.translatesAutoresizingMaskIntoConstraints = NO;
     _pageScrollView.hasVerticalScroller = !_presentationMode;
     _pageScrollView.hasHorizontalScroller = NO;
+    _pageScrollView.usesPredominantAxisScrolling = NO;
+    _pageScrollView.verticalScrollElasticity = NSScrollElasticityAllowed;
+    _pageScrollView.horizontalScrollElasticity = NSScrollElasticityAllowed;
     _pageScrollView.autohidesScrollers = NO;
     _pageScrollView.borderType = NSNoBorder;
     _pageScrollView.drawsBackground = YES;
@@ -2228,9 +2241,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSString* path = [_path copy];
     static NSMutableSet<NSString*>* scheduledNearbyRenderKeys = nil;
     static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-      scheduledNearbyRenderKeys = [NSMutableSet set];
-    });
+    dispatch_once(&onceToken, ^{ scheduledNearbyRenderKeys = [NSMutableSet set]; });
     NSString* key =
         [NSString stringWithFormat:@"%p:%lu:%ld:%@", self, (unsigned long)generation, (long)preferredPage, path ?: @""];
     if ([scheduledNearbyRenderKeys containsObject:key]) return;
@@ -2319,8 +2330,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                     fabs(old.pageWidth - page.pageWidth) > 0.01 || fabs(old.pageHeight - page.pageHeight) > 0.01;
                 [self->_renderedPages replaceObjectAtIndex:(NSUInteger)index withObject:page];
                 [self applySearchHighlightsToCurrentPage];
-                if (geometryChanged)
-                    [self resizeDocumentView];
+                if (geometryChanged) [self resizeDocumentView];
                 else {
                     self->_pageView.pages = self->_renderedPages;
                     [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:index]];
@@ -2371,17 +2381,15 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
           @autoreleasepool {
               if (generation != self->_renderGeneration) {
-                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    [self->_queuedMinimapThumbnailPages removeObject:number];
-                  }];
+                  [[NSOperationQueue mainQueue]
+                      addOperationWithBlock:^{ [self->_queuedMinimapThumbnailPages removeObject:number]; }];
                   return;
               }
               char err[512];
               spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
               if (!workerDoc) {
-                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    [self->_queuedMinimapThumbnailPages removeObject:number];
-                  }];
+                  [[NSOperationQueue mainQueue]
+                      addOperationWithBlock:^{ [self->_queuedMinimapThumbnailPages removeObject:number]; }];
                   return;
               }
               SPDFRenderedPage* thumbnailPage = [self renderedPageAtIndex:index
@@ -2478,10 +2486,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     CGFloat displayScale = [self backingScale];
     if ([self renderedPageImage:existing matchesZoom:_zoom displayScale:displayScale]) return;
     if (![self fullPageRenderAllowedForPage:existing zoom:_zoom displayScale:displayScale]) {
-        if (_documentViewPanActive)
-            [self renderLiveDocumentPanViewportCropIfDue];
-        else
-            [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+        if (_documentViewPanActive) [self renderLiveDocumentPanViewportCropIfDue];
+        else [self renderVisiblePageCropsForCurrentViewportIfNeeded];
         [_pageView setNeedsDisplayInRect:[_pageView rectForPageAtIndex:pageIndex]];
         [self updateMinimap];
         [self evictDistantRenderedPageImages];
@@ -2582,6 +2588,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)renderVisiblePageCropsForCurrentViewportWithDisplayScale:(CGFloat)displayScale
                                  allowFullPageRenderAllowedPages:(BOOL)allowFullPageRenderAllowedPages {
+    if (_windowLiveResizing) return;
     if (!_doc || !_pageScrollView || !_pageView || _renderedPages.count == 0) return;
     displayScale = MAX(0.5, displayScale);
     CGFloat backingScale = [self backingScale];
@@ -2902,8 +2909,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     }
     for (NSInteger i = 0; i < pageCount; ++i) {
         SPDFRenderedPage* page = nil;
-        if (i == pageIndex)
-            page = preferredPage;
+        if (i == pageIndex) page = preferredPage;
         else
             page = [self placeholderPageAtIndex:i
                                        document:_doc
@@ -2933,8 +2939,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
               [self scrollDocumentClipViewToOrigin:[self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
                                                                            forPageIndex:pageIndex]
                                             notify:NO];
-          else
-              [self scrollToPage:pageIndex alignTop:alignTop];
+          else [self scrollToPage:pageIndex alignTop:alignTop];
         }
         completionHandler:nil];
     NSInteger renderCenterPage = pageIndex;
@@ -2983,10 +2988,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         return;
     }
 
-    if (_presentationMode)
-        _pageScrollView.verticalScroller = nil;
-    else if (_pageScrollView.verticalScroller != _markerScroller)
-        _pageScrollView.verticalScroller = _markerScroller;
+    if (_presentationMode) _pageScrollView.verticalScroller = nil;
+    else if (_pageScrollView.verticalScroller != _markerScroller) _pageScrollView.verticalScroller = _markerScroller;
     _pageScrollView.hasVerticalScroller = !_presentationMode;
     NSSize size = [_pageView documentSizeForClipSize:clipSize];
     BOOL needsHorizontalScroller = size.width > clipSize.width + 0.5;
@@ -3010,6 +3013,18 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
     [self invalidateFindMarkers];
+}
+
+- (void)resizeDocumentViewForWindowLiveResize {
+    if (_doc && [self isAutoFitMode:_fitMode]) {
+        CGFloat newZoom = [self zoomForFitMode:_fitMode pageIndex:_pageIndex];
+        if (isfinite(newZoom) && newZoom > 0.0 && fabs(newZoom - _zoom) > 0.0001) {
+            _zoom = newZoom;
+            _pageView.zoom = _zoom;
+        }
+    }
+    [self resizeDocumentView];
+    [_pageView setNeedsDisplay:YES];
 }
 
 - (BOOL)resizeDocumentViewForLiveZoom {
@@ -3049,10 +3064,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)setCurrentViewportNeedsDisplay {
     NSRect visibleRect = _pageScrollView.contentView.bounds;
-    if (NSWidth(visibleRect) > 0.0 && NSHeight(visibleRect) > 0.0)
-        [_pageView setNeedsDisplayInRect:visibleRect];
-    else
-        [_pageView setNeedsDisplay:YES];
+    if (NSWidth(visibleRect) > 0.0 && NSHeight(visibleRect) > 0.0) [_pageView setNeedsDisplayInRect:visibleRect];
+    else [_pageView setNeedsDisplay:YES];
 }
 
 - (void)showEmptyDocumentViewWithMessage:(NSString*)message {
@@ -3082,10 +3095,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
         if (!NSIsEmptyRect(pageRect)) {
             CGFloat visibleWidth = NSWidth(clipView.bounds);
-            if (NSWidth(pageRect) <= visibleWidth + 0.5)
-                origin.x = 0.0;
-            else
-                origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMaxX(pageRect) - visibleWidth);
+            if (NSWidth(pageRect) <= visibleWidth + 0.5) origin.x = 0.0;
+            else origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMaxX(pageRect) - visibleWidth);
         }
     }
     origin.x = spdf_clamp_cg(origin.x, 0.0, MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds)));
@@ -3138,13 +3149,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (CGFloat)singlePageDocumentScrollOriginYForPageIndex:(NSInteger)pageIndex {
-    if (_renderedPages.count == 0)
-        return 0.0;
+    if (_renderedPages.count == 0) return 0.0;
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
     NSClipView* clipView = _pageScrollView.contentView;
     NSRect pageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
-    if (NSIsEmptyRect(pageRect))
-        return 0.0;
+    if (NSIsEmptyRect(pageRect)) return 0.0;
     CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
     CGFloat y = NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5;
     return spdf_clamp_cg(y, 0.0, maxY);
@@ -3153,8 +3162,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 - (NSInteger)singlePageTargetPageForUserScrollVisibleRect:(NSRect)visibleRect {
     NSInteger currentPage = MAX(0, MIN(_pageIndex, (NSInteger)_renderedPages.count - 1));
     NSRect pageSlot = [self continuousDocumentRectForPageAtIndex:currentPage];
-    if (NSIsEmptyRect(pageSlot))
-        return currentPage;
+    if (NSIsEmptyRect(pageSlot)) return currentPage;
 
     CGFloat visibleHeight = NSHeight(visibleRect);
     CGFloat minOriginY = NSMinY(pageSlot);
@@ -3168,8 +3176,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     CGFloat threshold = MAX(24.0, visibleHeight / 3.0);
     if (NSMinY(visibleRect) > maxOriginY + threshold && currentPage + 1 < (NSInteger)_renderedPages.count)
         return currentPage + 1;
-    if (NSMinY(visibleRect) < minOriginY - threshold && currentPage > 0)
-        return currentPage - 1;
+    if (NSMinY(visibleRect) < minOriginY - threshold && currentPage > 0) return currentPage - 1;
     return currentPage;
 }
 
@@ -3282,12 +3289,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         NSRect visible = clipView.bounds;
         NSPoint origin = visible.origin;
         if (_viewMode == SPDFViewModeSingle) origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
-        if (NSMinX(pageRect) < NSMinX(visible))
-            origin.x = NSMinX(pageRect) - 12.0;
-        else if (NSMaxX(pageRect) > NSMaxX(visible))
-            origin.x = NSMaxX(pageRect) - NSWidth(visible) + 12.0;
-        if (_viewMode != SPDFViewModeSingle && NSMinY(pageRect) < NSMinY(visible))
-            origin.y = NSMinY(pageRect) - 12.0;
+        if (NSMinX(pageRect) < NSMinX(visible)) origin.x = NSMinX(pageRect) - 12.0;
+        else if (NSMaxX(pageRect) > NSMaxX(visible)) origin.x = NSMaxX(pageRect) - NSWidth(visible) + 12.0;
+        if (_viewMode != SPDFViewModeSingle && NSMinY(pageRect) < NSMinY(visible)) origin.y = NSMinY(pageRect) - 12.0;
         else if (_viewMode != SPDFViewModeSingle && NSMaxY(pageRect) > NSMaxY(visible))
             origin.y = NSMaxY(pageRect) - NSHeight(visible) + 12.0;
         [self scrollDocumentClipViewToOrigin:origin notify:NO];
@@ -3384,10 +3388,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     }
     [self renderPageIfNeededAtIndex:_pageIndex];
     [self resizeDocumentView];
-    if (preserveSinglePagePosition)
-        [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition];
-    else
-        [self scrollToPage:_pageIndex alignTop:YES];
+    if (preserveSinglePagePosition) [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition];
+    else [self scrollToPage:_pageIndex alignTop:YES];
     [self updateControls];
     [self selectCurrentSidebarRow];
     [_pageView setNeedsDisplay:YES];
@@ -3507,15 +3509,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     CGFloat maxDocumentY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
     NSPoint origin = NSMakePoint(NSMinX(pageRect) + NSWidth(pageRect) * xFraction - NSWidth(clipView.bounds) * 0.5,
                                  NSMinY(pageRect) + NSHeight(pageRect) * yFraction - NSHeight(clipView.bounds) * 0.5);
-    if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5)
-        origin.x = 0.0;
-    else
-        origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMinX(pageRect) + maxInPageX);
+    if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5) origin.x = 0.0;
+    else origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMinX(pageRect) + maxInPageX);
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
-    if (_viewMode == SPDFViewModeSingle)
-        origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
-    else
-        origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
+    if (_viewMode == SPDFViewModeSingle) origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
+    else origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
 
     [self scrollDocumentClipViewToOrigin:origin notify:YES];
@@ -3539,6 +3537,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _minimapView.documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
     _minimapView.documentScale = MAX(0.01, _zoom);
     [_minimapView setNeedsDisplay:YES];
+    if (_windowLiveResizing) return;
     [self enqueueVisibleMinimapThumbnailRenders];
 }
 
@@ -3767,6 +3766,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     tab.viewMode = _viewMode;
     tab.showSidebar = _sidebarPreferredVisible;
     tab.showMinimap = _minimapPreferredVisible;
+    tab.hasMinimapPreference = YES;
     [self cacheActiveRenderedPagesForSelectedTab];
     tab.scrollOrigin = [self normalizedDocumentScrollOrigin:_pageScrollView.contentView.bounds.origin
                                                forPageIndex:_pageIndex];
@@ -3830,10 +3830,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 - (BOOL)ensureCachedRenderedPagesForTab:(SPDFDocumentTab*)tab preferredPage:(NSInteger)preferredPage {
     if (!tab.cachedDocument) return NO;
     NSInteger pageCount = spdf_page_count(tab.cachedDocument);
-    if (pageCount <= 0)
-        return NO;
-    if (tab.cachedRenderedPages.count == (NSUInteger)pageCount)
-        return YES;
+    if (pageCount <= 0) return NO;
+    if (tab.cachedRenderedPages.count == (NSUInteger)pageCount) return YES;
 
     [self primePageGeometryCacheForDocument:tab.cachedDocument
                           pageGeometryState:[self pageGeometryStateForPath:tab.path]
@@ -3888,8 +3886,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)loadInitialSidebarMetadataForSelectedTabIfNeeded {
     SPDFDocumentTab* tab = [self selectedTab];
-    if (!_doc || !tab)
-        return;
+    if (!_doc || !tab) return;
 
     BOOL preloadForFirstFrame = !_window.visible && _sidebarPreferredVisible;
     if (preloadForFirstFrame && !tab.cachedOutlineLoaded) {
@@ -3924,18 +3921,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)discardCachedRuntimeForTab:(SPDFDocumentTab*)tab {
-    if (!tab)
-        return;
-    if (_activeMetadataTab == tab)
-        [self clearActiveMetadata];
-    if (_doc == tab.cachedDocument)
-        _doc = NULL;
+    if (!tab) return;
+    if (_activeMetadataTab == tab) [self clearActiveMetadata];
+    if (_doc == tab.cachedDocument) _doc = NULL;
     [tab clearCachedRuntime];
 }
 
 - (void)closeActiveDocumentIfUnowned {
-    if (!_doc)
-        return;
+    if (!_doc) return;
     for (SPDFDocumentTab* tab in _tabs) {
         if (tab.cachedDocument == _doc) {
             _doc = NULL;
@@ -4059,6 +4052,19 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     return NO;
 }
 
+- (BOOL)eventHitsTopChromeResizeCorner:(NSEvent*)event {
+    if (!_window || !event) return NO;
+    NSView* contentView = _window.contentView;
+    if (!contentView) return NO;
+    NSPoint point = [contentView convertPoint:event.locationInWindow fromView:nil];
+    NSRect bounds = contentView.bounds;
+    CGFloat corner = kTopChromeResizeCornerSize;
+    if (NSWidth(bounds) < corner * 3.0 || NSHeight(bounds) < corner * 3.0) return NO;
+    BOOL nearTop = point.y >= NSMaxY(bounds) - corner && point.y <= NSMaxY(bounds) + 1.0;
+    if (!nearTop) return NO;
+    return point.x <= NSMinX(bounds) + corner || point.x >= NSMaxX(bounds) - corner;
+}
+
 - (void)performTopChromeWindowDragWithEvent:(NSEvent*)event {
     [self dismissTabHoverPanel];
     BOOL wasMovable = _window.movable;
@@ -4080,6 +4086,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     }
 
     if (type == NSEventTypeLeftMouseDown) {
+        if ([self eventHitsTopChromeResizeCorner:event]) return NO;
         if ([self eventHitsStandardWindowButton:event]) {
             [self dismissTabHoverPanel];
             return NO;
@@ -4151,13 +4158,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
               NSDictionary* operationAttributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
               if (!operationAttributes) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    if (![self preloadToken:preloadToken isCurrentForPath:standardized])
-                        return;
+                    if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
                     [self finishPreloadForPath:standardized token:preloadToken];
                     NSInteger tabIndex = -1;
                     SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
-                    if (!currentTab || tabIndex == self->_selectedTabIndex)
-                        return;
+                    if (!currentTab || tabIndex == self->_selectedTabIndex) return;
                     [self discardCachedRuntimeForTab:currentTab];
                     currentTab.missingFile = YES;
                     currentTab.missingMessage = @"File moved or deleted";
@@ -4171,13 +4176,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
               if (!doc) {
                   NSString* message = @"Could not open document";
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    if (![self preloadToken:preloadToken isCurrentForPath:standardized])
-                        return;
+                    if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
                     [self finishPreloadForPath:standardized token:preloadToken];
                     NSInteger tabIndex = -1;
                     SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
-                    if (!currentTab || tabIndex == self->_selectedTabIndex)
-                        return;
+                    if (!currentTab || tabIndex == self->_selectedTabIndex) return;
                     [self discardCachedRuntimeForTab:currentTab];
                     currentTab.missingFile = NO;
                     currentTab.missingMessage = message;
@@ -4512,11 +4515,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (BOOL)continuousPageIsFullyVisibleForZoomAnchor:(NSInteger)pageIndex visibleRect:(NSRect)visibleRect {
-    if (_viewMode != SPDFViewModeContinuous || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count)
-        return NO;
+    if (_viewMode != SPDFViewModeContinuous || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return NO;
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
-    if (NSIsEmptyRect(pageRect))
-        return NO;
+    if (NSIsEmptyRect(pageRect)) return NO;
     return NSMinY(pageRect) >= NSMinY(visibleRect) - 0.5 && NSMaxY(pageRect) <= NSMaxY(visibleRect) + 0.5 &&
            NSHeight(pageRect) <= NSHeight(visibleRect) + 0.5;
 }
@@ -4525,12 +4526,10 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     SPDFPageAnchor anchor;
     memset(&anchor, 0, sizeof(anchor));
     anchor.pageIndex = -1;
-    if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count)
-        return anchor;
+    if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return anchor;
 
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
-    if (NSIsEmptyRect(pageRect))
-        return anchor;
+    if (NSIsEmptyRect(pageRect)) return anchor;
     SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
     NSPoint pageCenter = NSMakePoint(NSMidX(pageRect), NSMidY(pageRect));
     anchor.pageIndex = pageIndex;
@@ -4545,8 +4544,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     SPDFPageAnchor anchor;
     memset(&anchor, 0, sizeof(anchor));
     anchor.pageIndex = -1;
-    if (!_doc || _renderedPages.count == 0)
-        return anchor;
+    if (!_doc || _renderedPages.count == 0) return anchor;
 
     NSClipView* clipView = _pageScrollView.contentView;
     NSPoint viewPoint = [_pageView convertPoint:windowPoint fromView:nil];
@@ -4646,10 +4644,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _rememberedCustomZoom = _zoom;
     _pageView.backingScale = [self backingScale];
     _pageView.zoom = _zoom;
-    if (_liveZooming)
-        [self resizeDocumentViewForLiveZoom];
-    else
-        [self resizeDocumentView];
+    if (_liveZooming) [self resizeDocumentViewForLiveZoom];
+    else [self resizeDocumentView];
     BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
     if (_liveZooming) _suppressScrollCallbacks = YES;
     [self scrollToPageAnchor:anchor notify:NO];
@@ -4678,8 +4674,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 - (void)finishLiveZoom:(NSTimer*)timer {
     NSUInteger sequence = [timer.userInfo unsignedIntegerValue];
     _zoomFinishTimer = nil;
-    if (sequence != _liveZoomSequence)
-        return;
+    if (sequence != _liveZoomSequence) return;
     if (_documentViewPanActive) {
         _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:kLiveZoomFinishWhilePanningDelay
                                                             target:self
@@ -4710,19 +4705,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
             _pageIndex = preservedPageIndex;
             _pageView.currentPageIndex = _pageIndex;
         }
-        if (finishAnchor.valid)
-            [self scrollToPageAnchor:finishAnchor notify:NO];
+        if (finishAnchor.valid) [self scrollToPageAnchor:finishAnchor notify:NO];
         _suppressScrollCallbacks = previousSuppressScrollCallbacks;
         [self syncToolbarState];
         [self updateControls];
-        if (singlePageZoom)
-            [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:YES];
-        else
-            [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
-        if (_documentViewPanActive)
-            [self setCurrentViewportNeedsDisplay];
-        else
-            [self renderVisiblePageCropsForCurrentViewportAfterLiveZoom];
+        if (singlePageZoom) [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:YES];
+        else [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
+        if (_documentViewPanActive) [self setCurrentViewportNeedsDisplay];
+        else [self renderVisiblePageCropsForCurrentViewportAfterLiveZoom];
         [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:YES];
         [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
         [self updateMinimap];
@@ -4801,9 +4791,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     tab.missingFile = NO;
     tab.missingMessage = @"";
     [self recordFileAttributes:attributes forTab:tab];
+    NSInteger pageCount = spdf_page_count(_doc);
+    [self applySinglePageMinimapDefaultToTab:tab pageCount:pageCount];
     [self prepareSelectedTabViewState:tab path:path];
     [self loadInitialSidebarMetadataForSelectedTabIfNeeded];
-    _pageIndex = MAX(0, MIN(tab.pageIndex, spdf_page_count(_doc) - 1));
+    _pageIndex = MAX(0, MIN(tab.pageIndex, pageCount - 1));
     _fitMode = tab.fitMode;
     _viewMode = tab.viewMode;
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
@@ -4818,10 +4810,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _pageView.zoom = _zoom;
     _pageView.viewMode = _viewMode;
     _pageView.backingScale = [self backingScale];
-    if (_presentationMode)
-        _pageScrollView.verticalScroller = nil;
-    else if (_pageScrollView.verticalScroller != _markerScroller)
-        _pageScrollView.verticalScroller = _markerScroller;
+    if (_presentationMode) _pageScrollView.verticalScroller = nil;
+    else if (_pageScrollView.verticalScroller != _markerScroller) _pageScrollView.verticalScroller = _markerScroller;
     _pageScrollView.hasVerticalScroller = !_presentationMode;
     BOOL previousSuppressViewportRerender = _suppressViewportRerender;
     _suppressViewportRerender = YES;
@@ -4852,8 +4842,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
               [self scrollDocumentClipViewToOrigin:[self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
                                                                            forPageIndex:self->_pageIndex]
                                             notify:NO];
-          else
-              [self scrollToPage:self->_pageIndex alignTop:YES];
+          else [self scrollToPage:self->_pageIndex alignTop:YES];
           [self->_pageView setNeedsDisplay:YES];
         }
         completionHandler:nil];
@@ -4879,13 +4868,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)loadSelectedTab {
-    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count)
-        return;
+    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return;
     [self cancelDocumentTransientInteraction];
     [self clearToolbarFieldFocusForTabSwitch];
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
-    if (!tab.path.length)
-        return;
+    if (!tab.path.length) return;
     NSString* path = [tab.path copy];
     NSInteger savedFindMatchIndex = tab.findMatchIndex;
     [_renderQueue cancelAllOperations];
@@ -4930,9 +4917,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                    fileSize:spdf_file_size_from_attributes(attributes)
                            modificationDate:spdf_file_modification_date_from_attributes(attributes)];
     _doc = newDoc;
+    NSInteger pageCount = spdf_page_count(_doc);
+    [self applySinglePageMinimapDefaultToTab:tab pageCount:pageCount];
     [self prepareSelectedTabViewState:tab path:path];
     [self loadInitialSidebarMetadataForSelectedTabIfNeeded];
-    _pageIndex = MAX(0, MIN(tab.pageIndex, spdf_page_count(_doc) - 1));
+    _pageIndex = MAX(0, MIN(tab.pageIndex, pageCount - 1));
     _renderGeneration++;
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
     _fitMode = tab.fitMode;
@@ -4949,10 +4938,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     clipView.postsBoundsChangedNotifications = NO;
     [self replaceDocumentViewForTabSwitch];
     _pageView.emptyMessage = @"Open a document";
-    if (_presentationMode)
-        _pageScrollView.verticalScroller = nil;
-    else if (_pageScrollView.verticalScroller != _markerScroller)
-        _pageScrollView.verticalScroller = _markerScroller;
+    if (_presentationMode) _pageScrollView.verticalScroller = nil;
+    else if (_pageScrollView.verticalScroller != _markerScroller) _pageScrollView.verticalScroller = _markerScroller;
     _pageScrollView.hasVerticalScroller = !_presentationMode;
     BOOL previousSuppressViewportRerender = _suppressViewportRerender;
     _suppressViewportRerender = YES;
@@ -5034,8 +5021,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     tab.searchRegex = NO;
     tab.searchRegexMultiline = YES;
     tab.findMatchIndex = -1;
-    tab.showSidebar = YES;
-    tab.showMinimap = YES;
+    tab.showSidebar = _defaultSidebarVisibleForNewDocuments;
+    tab.showMinimap = _defaultMinimapVisibleForNewDocuments;
     [self applyStoredDocumentStateToTab:tab];
     return tab;
 }
@@ -5051,9 +5038,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
     if (paths.count == 0) return;
     if (!_suspendPersistentStateSaves) {
-        [self performWithBatchedPersistentStateSaves:^{
-          [self openPaths:paths];
-        }];
+        [self performWithBatchedPersistentStateSaves:^{ [self openPaths:paths]; }];
         return;
     }
 
@@ -5154,9 +5139,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
             [self removeSessionStateForCurrentWindow];
             _suppressSessionWriteOnTerminate = YES;
             _terminateOnlyThisProcess = YES;
-            dispatch_async(dispatch_get_main_queue(), ^{
-              [NSApp terminate:self];
-            });
+            dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:self]; });
             return;
         }
         [self showEmptyDocumentViewWithMessage:@"Open a document"];
@@ -5317,24 +5300,40 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [self clearToolbarFieldFocusForTabSwitch];
 }
 
+- (CGFloat)minimumSidebarWidthForCurrentContent {
+    return [self hasSearchSidebar] ? kSearchSidebarMinWidth : kMinSidebarWidth;
+}
+
+- (CGFloat)maximumSidebarWidthForCurrentContent {
+    CGFloat containerWidth = _splitView ? NSWidth(_splitView.bounds) : 0.0;
+    return MAX([self minimumSidebarWidthForCurrentContent], spdf_max_sidebar_width_for_container(containerWidth));
+}
+
 - (CGFloat)clampedSidebarWidth {
-    return spdf_sane_sidebar_width(_sidebarWidth, _splitView ? NSWidth(_splitView.bounds) : 0);
+    CGFloat minWidth = [self minimumSidebarWidthForCurrentContent];
+    CGFloat maxWidth = [self maximumSidebarWidthForCurrentContent];
+    if (!isfinite(_sidebarWidth) || _sidebarWidth < kMinSidebarWidth || _sidebarWidth > kMaxSidebarWidth)
+        return spdf_clamp_cg(kDefaultSidebarWidth, minWidth, maxWidth);
+    return spdf_clamp_cg(_sidebarWidth, minWidth, maxWidth);
 }
 
 - (BOOL)currentSidebarFrameIsPersistable {
     if (!_splitView || !_sidebarContainer) return NO;
     CGFloat width = NSWidth(_sidebarContainer.frame);
-    CGFloat maxWidth = spdf_max_sidebar_width_for_container(NSWidth(_splitView.bounds));
-    return isfinite(width) && width >= kMinSidebarWidth - 1.0 && width <= maxWidth + 1.0;
+    CGFloat minWidth = [self minimumSidebarWidthForCurrentContent];
+    CGFloat maxWidth = [self maximumSidebarWidthForCurrentContent];
+    return isfinite(width) && width >= minWidth - 1.0 && width <= maxWidth + 1.0;
 }
 
 - (void)normalizeSidebarModeControlWidths {
     if (!_sidebarVisible || !_sidebarContainer || !_sidebarModeControl) return;
     CGFloat controlWidth = NSWidth(_sidebarContainer.bounds) - 16.0;
     if (!isfinite(controlWidth) || controlWidth < 160.0) controlWidth = [self clampedSidebarWidth] - 16.0;
-    CGFloat segmentWidth = floor(MAX(78.0, controlWidth / 2.0));
-    [_sidebarModeControl setWidth:segmentWidth forSegment:SPDFSidebarModeChapters];
-    [_sidebarModeControl setWidth:segmentWidth forSegment:SPDFSidebarModeComments];
+    NSInteger segmentCount = MAX(1, _sidebarModeControl.segmentCount);
+    CGFloat minSegmentWidth = segmentCount >= 3 ? 66.0 : 78.0;
+    CGFloat segmentWidth = floor(MAX(minSegmentWidth, controlWidth / (CGFloat)segmentCount));
+    for (NSInteger segment = 0; segment < segmentCount; ++segment)
+        [_sidebarModeControl setWidth:segmentWidth forSegment:segment];
     [_sidebarModeControl invalidateIntrinsicContentSize];
     [_sidebarModeControl setNeedsLayout:YES];
 }
@@ -5443,7 +5442,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                ofSubviewAt:(NSInteger)dividerIndex {
     (void)proposedMinimumPosition;
     (void)dividerIndex;
-    if (splitView == _splitView) return _sidebarVisible ? kMinSidebarWidth : 0.0;
+    if (splitView == _splitView) return _sidebarVisible ? [self minimumSidebarWidthForCurrentContent] : 0.0;
     return proposedMinimumPosition;
 }
 
@@ -5452,7 +5451,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                ofSubviewAt:(NSInteger)dividerIndex {
     (void)proposedMaximumPosition;
     (void)dividerIndex;
-    if (splitView == _splitView) return spdf_max_sidebar_width_for_container(NSWidth(splitView.bounds));
+    if (splitView == _splitView) return [self maximumSidebarWidthForCurrentContent];
     return proposedMaximumPosition;
 }
 
@@ -5472,25 +5471,41 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         _sidebarWidth = spdf_sane_sidebar_width(width, NSWidth(_splitView.bounds));
 }
 
+- (BOOL)hasSearchSidebar {
+    return _doc && (_searchField.stringValue.length > 0 || _findSearchInProgress || _findMatches.count > 0);
+}
+
+- (void)syncSidebarModeControlSegmentsForSearchAvailability:(BOOL)hasSearch {
+    NSInteger segmentCount = hasSearch ? 3 : 2;
+    if (_sidebarModeControl.segmentCount != segmentCount) _sidebarModeControl.segmentCount = segmentCount;
+    [_sidebarModeControl setLabel:@"Chapters" forSegment:SPDFSidebarModeChapters];
+    [_sidebarModeControl setLabel:@"Comments" forSegment:SPDFSidebarModeComments];
+    if (hasSearch) [_sidebarModeControl setLabel:@"Search" forSegment:SPDFSidebarModeSearch];
+    [self normalizeSidebarModeControlWidths];
+}
+
 - (NSString*)sidebarFilterTextForCurrentMode {
+    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch) return @"";
     if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments) return _commentFilterText ?: @"";
     return _chapterFilterText ?: @"";
 }
 
 - (void)setSidebarFilterTextForCurrentMode:(NSString*)filter {
     filter = filter ?: @"";
-    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments)
-        _commentFilterText = [filter copy];
-    else
-        _chapterFilterText = [filter copy];
+    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch) return;
+    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments) _commentFilterText = [filter copy];
+    else _chapterFilterText = [filter copy];
 }
 
 - (void)syncSidebarFilterField {
     if (!_sidebarFilterField) return;
     BOOL comments = _sidebarModeControl.selectedSegment == SPDFSidebarModeComments;
+    BOOL search = _sidebarModeControl.selectedSegment == SPDFSidebarModeSearch;
     _updatingSidebarFilterField = YES;
-    _sidebarFilterField.placeholderString = comments ? @"Filter Comments" : @"Filter Chapters";
+    _sidebarFilterField.placeholderString =
+        search ? @"Search Results" : (comments ? @"Filter Comments" : @"Filter Chapters");
     _sidebarFilterField.stringValue = [self sidebarFilterTextForCurrentMode];
+    _sidebarFilterField.enabled = !search;
     _updatingSidebarFilterField = NO;
 }
 
@@ -5501,25 +5516,99 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
            NSNotFound;
 }
 
+- (NSString*)chapterTitleForPage:(NSInteger)pageIndex {
+    if (_outline.count <= 0) return @"";
+    NSString* title = @"";
+    NSInteger bestPage = -1;
+    NSInteger bestLevel = -1;
+    for (int i = 0; i < _outline.count; ++i) {
+        spdf_outline_item item = _outline.items[i];
+        if (item.page_index < 0 || item.page_index > pageIndex) continue;
+        if (item.page_index < bestPage) continue;
+        NSInteger level = MAX(0, item.level);
+        if (item.page_index == bestPage && level < bestLevel) continue;
+        bestPage = item.page_index;
+        bestLevel = level;
+        title = item.title && *item.title ? [NSString stringWithUTF8String:item.title] : @"Untitled";
+    }
+    return title.length ? title : @"Document";
+}
+
+- (void)rebuildSearchSidebarItems {
+    if (!_doc || ![self hasSearchSidebar]) return;
+    NSString* query = _searchField.stringValue ?: @"";
+    if (_findSearchInProgress && _findMatches.count == 0) {
+        [_sidebarItems addObject:@{
+            @"kind" : @"findStatus",
+            @"page" : @(-1),
+            @"title" : [NSString stringWithFormat:@"Searching for \"%@\"...", query]
+        }];
+        return;
+    }
+    if (_findMatches.count == 0) {
+        NSString* title =
+            query.length ? [NSString stringWithFormat:@"No matches for \"%@\"", query] : @"No search results";
+        [_sidebarItems addObject:@{@"kind" : @"findStatus", @"page" : @(-1), @"title" : title}];
+        return;
+    }
+
+    NSString* previousChapter = nil;
+    for (NSInteger i = 0; i < (NSInteger)_findMatches.count; ++i) {
+        NSDictionary* match = _findMatches[(NSUInteger)i];
+        NSInteger page = [match[@"page"] integerValue];
+        NSString* chapter = [self chapterTitleForPage:page];
+        if (chapter.length > 0 && ![chapter isEqualToString:previousChapter]) {
+            [_sidebarItems addObject:@{@"kind" : @"findDivider", @"title" : chapter, @"page" : @(-1)}];
+            previousChapter = chapter;
+        }
+
+        NSString* context = match[@"context"];
+        if (![context isKindOfClass:NSString.class] || context.length == 0) context = query.length ? query : @"Match";
+        NSString* subtitle = [NSString
+            stringWithFormat:@"Page %ld - match %ld of %ld", (long)page + 1, (long)i + 1, (long)_findMatches.count];
+        [_sidebarItems addObject:@{
+            @"kind" : @"findResult",
+            @"title" : context,
+            @"subtitle" : subtitle,
+            @"query" : query,
+            @"page" : @(page),
+            @"findIndex" : @(i)
+        }];
+    }
+}
+
 - (void)rebuildSidebar {
     [_sidebarItems removeAllObjects];
     BOOL hasChapters = _outline.count > 0;
     BOOL hasComments = _comments.count > 0;
-    BOOL hasSidebar = _doc && (hasChapters || hasComments);
+    BOOL hasSearch = [self hasSearchSidebar];
+    BOOL hasSidebar = _doc && (hasChapters || hasComments || hasSearch);
+
+    [self syncSidebarModeControlSegmentsForSearchAvailability:hasSearch];
+    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && !hasSearch)
+        _sidebarModeControl.selectedSegment =
+            hasChapters ? SPDFSidebarModeChapters : (hasComments ? SPDFSidebarModeComments : SPDFSidebarModeChapters);
+    else if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments && !hasComments)
+        _sidebarModeControl.selectedSegment =
+            hasChapters ? SPDFSidebarModeChapters : (hasSearch ? SPDFSidebarModeSearch : SPDFSidebarModeChapters);
+    else if (_sidebarModeControl.selectedSegment == SPDFSidebarModeChapters && !hasChapters)
+        _sidebarModeControl.selectedSegment =
+            hasComments ? SPDFSidebarModeComments : (hasSearch ? SPDFSidebarModeSearch : SPDFSidebarModeChapters);
+    else if (hasChapters && !hasComments && !hasSearch) _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
+    else if (!hasChapters && hasComments && !hasSearch) _sidebarModeControl.selectedSegment = SPDFSidebarModeComments;
+    else if (!hasChapters && !hasComments && hasSearch) _sidebarModeControl.selectedSegment = SPDFSidebarModeSearch;
+    else if (!hasChapters && !hasComments && !hasSearch) _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
 
     [_sidebarModeControl setEnabled:hasChapters forSegment:SPDFSidebarModeChapters];
     [_sidebarModeControl setEnabled:hasComments forSegment:SPDFSidebarModeComments];
-    if (hasChapters && !hasComments)
-        _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
-    else if (!hasChapters && hasComments)
-        _sidebarModeControl.selectedSegment = SPDFSidebarModeComments;
-    else if (!hasChapters && !hasComments)
-        _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
+    if (hasSearch) [_sidebarModeControl setEnabled:YES forSegment:SPDFSidebarModeSearch];
 
     [self syncSidebarFilterField];
     NSString* filter = [self sidebarFilterTextForCurrentMode];
     if (hasSidebar) {
-        if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments && hasComments) {
+        if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && hasSearch) {
+            [self rebuildSearchSidebarItems];
+        } else if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments && hasComments) {
             for (int i = 0; i < _comments.count; ++i) {
                 spdf_comment_item item = _comments.items[i];
                 NSString* type = item.type && *item.type ? [NSString stringWithUTF8String:item.type] : @"Comment";
@@ -5569,6 +5658,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 - (void)sidebarModeChanged:(id)sender {
     (void)sender;
     [self syncSidebarFilterField];
+    [self rebuildSidebar];
+}
+
+- (void)showSearchSidebarForFind {
+    if (!_doc || ![self hasSearchSidebar]) return;
+    [self syncSidebarModeControlSegmentsForSearchAvailability:YES];
+    _sidebarModeControl.selectedSegment = SPDFSidebarModeSearch;
+    _sidebarPreferredVisible = YES;
     [self rebuildSidebar];
 }
 
@@ -5631,10 +5728,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         [self scheduleDocumentPanMaintenance];
         return;
     }
-    if (_liveZooming)
-        [_pageView setNeedsDisplay:YES];
-    else
-        [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    if (_liveZooming) [_pageView setNeedsDisplay:YES];
+    else [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [self updateMinimap];
     [self evictDistantRenderedPageImages];
 }
@@ -5688,10 +5783,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     }
 
     if (_presentationMode || _viewMode == SPDFViewModeSingle) {
-        if (left || up || pageUp)
-            [self previousPage:nil];
-        else
-            [self nextPage:nil];
+        if (left || up || pageUp) [self previousPage:nil];
+        else [self nextPage:nil];
         return YES;
     }
 
@@ -5738,7 +5831,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     if (!_doc) return NO;
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) return NO;
-    return _viewMode == SPDFViewModeSingle || _fitMode == SPDFFitModeHeight || _fitMode == SPDFFitModePage;
+    return _viewMode == SPDFViewModeSingle;
 }
 
 - (BOOL)isAutoFitMode:(SPDFFitMode)fitMode {
@@ -5842,16 +5935,29 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     if (!_doc || _updatingSelection) return;
     _updatingSelection = YES;
     NSInteger match = -1;
-    for (NSInteger i = 0; i < _sidebarItems.count; ++i) {
-        NSInteger page = [_sidebarItems[(NSUInteger)i][@"page"] integerValue];
-        if (page == _pageIndex) {
-            match = i;
-            break;
+    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && _findMatchIndex >= 0) {
+        for (NSInteger i = 0; i < _sidebarItems.count; ++i) {
+            NSDictionary* item = _sidebarItems[(NSUInteger)i];
+            if (![item[@"kind"] isEqualToString:@"findResult"]) continue;
+            if ([item[@"findIndex"] integerValue] == _findMatchIndex) {
+                match = i;
+                break;
+            }
+        }
+    } else {
+        for (NSInteger i = 0; i < _sidebarItems.count; ++i) {
+            NSInteger page = [_sidebarItems[(NSUInteger)i][@"page"] integerValue];
+            if (page == _pageIndex) {
+                match = i;
+                break;
+            }
         }
     }
     if (match >= 0) {
         [_sidebarTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)match] byExtendingSelection:NO];
         [_sidebarTable scrollRowToVisible:match];
+    } else {
+        [_sidebarTable deselectAll:nil];
     }
     _updatingSelection = NO;
 }
@@ -5899,6 +6005,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _findSearchInProgress = NO;
     [self applySearchHighlightsToCurrentPage];
     [self updateFindControls];
+    [self rebuildSidebar];
 }
 
 - (NSArray<NSValue*>*)highlightRectsForPage:(NSInteger)pageIndex {
@@ -5924,6 +6031,41 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
     [self invalidateFindMarkers];
+}
+
+- (NSString*)findContextForQuery:(NSString*)query lines:(const spdf_text_lines*)lines matchRect:(NSRect)matchRect {
+    if (!lines || lines->count <= 0) return @"";
+
+    NSString* bestLine = @"";
+    CGFloat bestDistance = CGFLOAT_MAX;
+    CGFloat matchCenterY = NSMidY(matchRect);
+    for (int i = 0; i < lines->count; ++i) {
+        const char* rawLine = lines->items[i].text;
+        if (!rawLine || !*rawLine) continue;
+        NSString* line = [NSString stringWithUTF8String:rawLine] ?: @"";
+        line = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (line.length == 0) continue;
+
+        spdf_rect bounds = lines->items[i].bounds;
+        NSRect lineRect = NSMakeRect(bounds.x0, bounds.y0, bounds.x1 - bounds.x0, bounds.y1 - bounds.y0);
+        if (NSIntersectsRect(NSInsetRect(lineRect, -2.0, -2.0), matchRect)) {
+            bestLine = line;
+            break;
+        }
+
+        CGFloat distance = fabs(NSMidY(lineRect) - matchCenterY);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestLine = line;
+        }
+    }
+
+    if (bestLine.length == 0) return @"";
+    NSArray<NSValue*>* ranges = [self rangesOfPaletteQuery:query inString:bestLine limit:1];
+    if (ranges.count == 0) return bestLine;
+    NSRange snippetRange = [self paletteSnippetRangeInLine:bestLine matchRange:ranges[0].rangeValue];
+    NSString* snippet = snippetRange.length > 0 ? [bestLine substringWithRange:snippetRange] : bestLine;
+    return [snippet stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
 - (void)startFindForCurrentQuery {
@@ -5960,6 +6102,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         _pendingFindPreferredPage = -1;
         _pendingFindPreferredMatchIndex = -1;
         _statusLabel.stringValue = @"Ready";
+        [self rebuildSidebar];
         return;
     }
 
@@ -5970,6 +6113,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _pendingFindPreferredMatchIndex = -1;
     _findSearchInProgress = YES;
     [self updateFindControls];
+    [self showSearchSidebarForFind];
     _statusLabel.stringValue = [NSString stringWithFormat:@"Searching for \"%@\"...", query];
     [_findQueue addOperationWithBlock:^{
       @autoreleasepool {
@@ -5983,6 +6127,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                 if (generation != self->_findGeneration) return;
                 self->_findSearchInProgress = NO;
                 [self updateFindControls];
+                [self rebuildSidebar];
               }];
               return;
           }
@@ -6000,11 +6145,20 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
               }
               if (count <= 0) continue;
               NSMutableArray<NSValue*>* values = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+              spdf_text_lines lines;
+              memset(&lines, 0, sizeof(lines));
+              BOOL hasTextLines = spdf_extract_page_text_lines(doc, (int)page, &lines, err, sizeof(err));
               for (int i = 0; i < count; ++i) {
                   NSRect r = NSMakeRect(rects[i].x0, rects[i].y0, rects[i].x1 - rects[i].x0, rects[i].y1 - rects[i].y0);
                   [values addObject:[NSValue valueWithRect:r]];
-                  [matches addObject:@{@"page" : @(page), @"rect" : [NSValue valueWithRect:r]}];
+                  NSString* context = hasTextLines ? [self findContextForQuery:query lines:&lines matchRect:r] : @"";
+                  [matches addObject:@{
+                      @"page" : @(page),
+                      @"rect" : [NSValue valueWithRect:r],
+                      @"context" : context ?: @""
+                  }];
               }
+              if (hasTextLines) spdf_free_text_lines(&lines);
               highlights[@(page)] = values;
           }
           spdf_close(doc);
@@ -6031,14 +6185,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
             [self rememberActiveTabFindState];
             [self applySearchHighlightsToCurrentPage];
             [self updateFindControls];
+            [self rebuildSidebar];
             if (searchError.length > 0) {
                 self->_statusLabel.stringValue = [NSString stringWithFormat:@"Invalid regex/search: %@", searchError];
             } else if (self->_findMatchIndex >= 0) {
                 if (revealMatch) [self jumpToFindMatchAtIndex:self->_findMatchIndex];
                 self->_statusLabel.stringValue =
                     [NSString stringWithFormat:@"%ld matches for \"%@\"", (long)self->_findMatches.count, query];
-            } else
-                self->_statusLabel.stringValue = [NSString stringWithFormat:@"No matches for \"%@\"", query];
+            } else self->_statusLabel.stringValue = [NSString stringWithFormat:@"No matches for \"%@\"", query];
           }];
       }
     }];
@@ -6087,16 +6241,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     (void)timer;
     NSTimeInterval elapsed = NSDate.timeIntervalSinceReferenceDate - _findFlashStartTime;
     CGFloat alpha = 0.0;
-    if (elapsed < 0.10)
-        alpha = (CGFloat)(elapsed / 0.10);
-    else if (elapsed < 0.18)
-        alpha = (CGFloat)(1.0 - (elapsed - 0.10) / 0.08);
-    else if (elapsed < 0.26)
-        alpha = (CGFloat)((elapsed - 0.18) / 0.08);
-    else if (elapsed < 1.26)
-        alpha = 1.0;
-    else if (elapsed < 1.51)
-        alpha = (CGFloat)(1.0 - (elapsed - 1.26) / 0.25);
+    if (elapsed < 0.10) alpha = (CGFloat)(elapsed / 0.10);
+    else if (elapsed < 0.18) alpha = (CGFloat)(1.0 - (elapsed - 0.10) / 0.08);
+    else if (elapsed < 0.26) alpha = (CGFloat)((elapsed - 0.18) / 0.08);
+    else if (elapsed < 1.26) alpha = 1.0;
+    else if (elapsed < 1.51) alpha = (CGFloat)(1.0 - (elapsed - 1.26) / 0.25);
     else {
         [_findFlashTimer invalidate];
         _findFlashTimer = nil;
@@ -6266,10 +6415,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         NSString* uri = [NSString stringWithUTF8String:target.uri];
         NSURL* url = [NSURL URLWithString:uri];
         if ((!url || url.scheme.length == 0) && uri.length > 0) url = [NSURL fileURLWithPath:uri];
-        if (url && spdf_is_allowed_external_url(url))
-            [[NSWorkspace sharedWorkspace] openURL:url];
-        else
-            NSBeep();
+        if (url && spdf_is_allowed_external_url(url)) [[NSWorkspace sharedWorkspace] openURL:url];
+        else NSBeep();
         spdf_free_link_target(&target);
         return YES;
     }
@@ -6282,10 +6429,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         _pageView.currentPageIndex = _pageIndex;
         [self renderPageIfNeededAtIndex:_pageIndex];
         [self resizeDocumentView];
-        if (NSIsEmptyRect(targetRect))
-            [self scrollToPage:_pageIndex alignTop:YES];
-        else
-            [self scrollToPageRect:targetRect pageIndex:_pageIndex];
+        if (NSIsEmptyRect(targetRect)) [self scrollToPage:_pageIndex alignTop:YES];
+        else [self scrollToPageRect:targetRect pageIndex:_pageIndex];
         [self updateControls];
         [self selectCurrentSidebarRow];
         [self persistActiveState];
@@ -6338,8 +6483,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     }
 
     BOOL handled = NO;
-    if (event.type == NSEventTypeKeyDown)
-        handled = [self documentArrowKeyDown:event];
+    if (event.type == NSEventTypeKeyDown) handled = [self documentArrowKeyDown:event];
     else if (mouseEvent) {
         [NSApp activateIgnoringOtherApps:YES];
         [_window makeKeyWindow];
@@ -7452,8 +7596,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                   return [obj[@"kind"] isEqualToString:@"status"];
                 }];
             if (statusRows.count) [self->_paletteResults removeObjectsAtIndexes:statusRows];
-            if (results.count > 0)
-                [self->_paletteResults addObjectsFromArray:results];
+            if (results.count > 0) [self->_paletteResults addObjectsFromArray:results];
             else if (query.length > 0) {
                 [self->_paletteResults
                     addObject:@{@"kind" : @"status", @"title" : @"No open-document matches", @"subtitle" : @""}];
@@ -7700,8 +7843,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     if (_doc) {
         if (selected == SPDFFitModeCustom)
             _zoom = MAX(kMinZoom, MIN(kMaxZoom, _rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom));
-        else
-            [self rememberCurrentZoomForCustomReturn];
+        else [self rememberCurrentZoomForCustomReturn];
         _fitMode = selected;
         [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
         [self persistActiveState];
@@ -7740,15 +7882,13 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)toggleContinuous:(id)sender {
     (void)sender;
-    if (_continuousButton.state == NSControlStateValueOn)
-        [self setContinuousMode:sender];
-    else
-        [self setSinglePageMode:sender];
+    if (_continuousButton.state == NSControlStateValueOn) [self setContinuousMode:sender];
+    else [self setSinglePageMode:sender];
 }
 
 - (void)toggleSidebar:(id)sender {
     (void)sender;
-    BOOL canShowSidebar = _doc && (_outline.count > 0 || _comments.count > 0);
+    BOOL canShowSidebar = _doc && (_outline.count > 0 || _comments.count > 0 || [self hasSearchSidebar]);
     if (!_sidebarVisible && !canShowSidebar) {
         [self syncToolbarState];
         [self updateControls];
@@ -7761,7 +7901,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)toggleSidebarMode:(SPDFSidebarMode)mode {
     if (!_doc) return;
-    BOOL hasItems = mode == SPDFSidebarModeChapters ? _outline.count > 0 : _comments.count > 0;
+    BOOL hasItems = mode == SPDFSidebarModeChapters
+                        ? _outline.count > 0
+                        : (mode == SPDFSidebarModeComments ? _comments.count > 0 : [self hasSearchSidebar]);
     if (!hasItems) return;
     BOOL sameVisibleMode = _sidebarVisible && _sidebarModeControl.selectedSegment == mode;
     _sidebarPreferredVisible = !sameVisibleMode;
@@ -7981,32 +8123,22 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)togglePresentation:(id)sender {
-    if (_presentationMode)
-        [self leavePresentationModeAndExitFullScreen:YES sender:sender];
-    else
-        [self enterPresentationMode:sender];
+    if (_presentationMode) [self leavePresentationModeAndExitFullScreen:YES sender:sender];
+    else [self enterPresentationMode:sender];
 }
 
 - (void)toggleFullScreen:(id)sender {
-    if (_presentationMode)
-        [self leavePresentationModeAndExitFullScreen:YES sender:sender];
-    else
-        [_window toggleFullScreen:sender];
+    if (_presentationMode) [self leavePresentationModeAndExitFullScreen:YES sender:sender];
+    else [_window toggleFullScreen:sender];
 }
 
 - (void)performWindowArrangementAction:(SEL)action sender:(id)sender {
-    if (action == @selector(fillWindow:))
-        [self fillWindow:sender];
-    else if (action == @selector(centerWindowInScreen:))
-        [self centerWindowInScreen:sender];
-    else if (action == @selector(moveWindowToLeftHalf:))
-        [self moveWindowToLeftHalf:sender];
-    else if (action == @selector(moveWindowToRightHalf:))
-        [self moveWindowToRightHalf:sender];
-    else if (action == @selector(moveWindowToTopHalf:))
-        [self moveWindowToTopHalf:sender];
-    else if (action == @selector(moveWindowToBottomHalf:))
-        [self moveWindowToBottomHalf:sender];
+    if (action == @selector(fillWindow:)) [self fillWindow:sender];
+    else if (action == @selector(centerWindowInScreen:)) [self centerWindowInScreen:sender];
+    else if (action == @selector(moveWindowToLeftHalf:)) [self moveWindowToLeftHalf:sender];
+    else if (action == @selector(moveWindowToRightHalf:)) [self moveWindowToRightHalf:sender];
+    else if (action == @selector(moveWindowToTopHalf:)) [self moveWindowToTopHalf:sender];
+    else if (action == @selector(moveWindowToBottomHalf:)) [self moveWindowToBottomHalf:sender];
 }
 
 - (void)drainPendingWindowArrangementAction {
@@ -8029,47 +8161,47 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     return YES;
 }
 
+- (BOOL)firstResponderIsEditingText {
+    if (!_window) return NO;
+    NSResponder* responder = _window.firstResponder;
+    if (!responder) return NO;
+    if ([responder isKindOfClass:NSText.class] || [responder isKindOfClass:NSTextView.class]) return YES;
+    if ([responder isKindOfClass:NSControl.class] && [(NSControl*)responder currentEditor]) return YES;
+    return NO;
+}
+
 - (BOOL)handleWindowArrangementShortcutEvent:(NSEvent*)event {
     if (!_window || _presentationMode) return NO;
-    if (event.type != NSEventTypeKeyDown) return NO;
-
-    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-    NSEventModifierFlags required = NSEventModifierFlagControl | NSEventModifierFlagFunction;
-    if ((flags & required) != required) return NO;
-    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagOption | NSEventModifierFlagShift)) return NO;
-
-    SEL action = NULL;
-    NSString* characters = event.charactersIgnoringModifiers ?: event.characters ?: @"";
-    if (characters.length > 0) {
-        unichar key = [characters characterAtIndex:0];
-        if (key == 'f' || key == 'F')
-            action = @selector(fillWindow:);
-        else if (key == 'c' || key == 'C')
-            action = @selector(centerWindowInScreen:);
-        else if (key == NSLeftArrowFunctionKey)
-            action = @selector(moveWindowToLeftHalf:);
-        else if (key == NSRightArrowFunctionKey)
-            action = @selector(moveWindowToRightHalf:);
-        else if (key == NSUpArrowFunctionKey)
-            action = @selector(moveWindowToTopHalf:);
-        else if (key == NSDownArrowFunctionKey)
-            action = @selector(moveWindowToBottomHalf:);
-    }
-
-    if (action == NULL) {
-        if (event.keyCode == 123)
-            action = @selector(moveWindowToLeftHalf:);
-        else if (event.keyCode == 124)
-            action = @selector(moveWindowToRightHalf:);
-        else if (event.keyCode == 126)
-            action = @selector(moveWindowToTopHalf:);
-        else if (event.keyCode == 125)
-            action = @selector(moveWindowToBottomHalf:);
-    }
+    SPDFWindowArrangementShortcut shortcut = spdf_window_arrangement_shortcut_for_event(event);
+    if (shortcut == SPDFWindowArrangementShortcutNone) return NO;
+    BOOL hasExplicitFunctionModifier =
+        (event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask & NSEventModifierFlagFunction) != 0;
+    if (!hasExplicitFunctionModifier && [self firstResponderIsEditingText]) return NO;
+    SEL action = spdf_window_arrangement_selector_for_shortcut(shortcut);
 
     if (action == NULL) return NO;
     [self performWindowArrangementAction:action sender:nil];
     return YES;
+}
+
+- (void)installWindowArrangementShortcutMonitor {
+    if (_windowArrangementShortcutMonitor) return;
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    _windowArrangementShortcutMonitor = [NSEvent
+        addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                     handler:^NSEvent*(NSEvent* event) {
+                                       ShenzhenMacDelegate* strongSelf = weakSelf;
+                                       if (!strongSelf || !strongSelf->_window) return event;
+                                       if (event.window && event.window != strongSelf->_window) return event;
+                                       if (!event.window && !strongSelf->_window.isKeyWindow) return event;
+                                       return [strongSelf handleWindowArrangementShortcutEvent:event] ? nil : event;
+                                     }];
+}
+
+- (void)removeWindowArrangementShortcutMonitor {
+    if (!_windowArrangementShortcutMonitor) return;
+    [NSEvent removeMonitor:_windowArrangementShortcutMonitor];
+    _windowArrangementShortcutMonitor = nil;
 }
 
 - (void)menuWillOpen:(NSMenu*)menu {
@@ -8307,10 +8439,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _translationProgressIndicator.maxValue = MAX(1.0, totalUnits);
     _translationProgressIndicator.doubleValue = 0.0;
     _translationProgressCancelButton.enabled = YES;
-    if (_translationProgressIndicator.indeterminate)
-        [_translationProgressIndicator startAnimation:nil];
-    else
-        [_translationProgressIndicator stopAnimation:nil];
+    if (_translationProgressIndicator.indeterminate) [_translationProgressIndicator startAnimation:nil];
+    else [_translationProgressIndicator stopAnimation:nil];
     [_translationProgressPanel center];
     [_translationProgressPanel makeKeyAndOrderFront:nil];
 }
@@ -8543,9 +8673,7 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
           [outputData appendData:chunk];
       }
       NSString* text = [[NSString alloc] initWithData:chunk encoding:NSUTF8StringEncoding] ?: @"";
-      dispatch_async(dispatch_get_main_queue(), ^{
-        [weakSelf appendTranslationInstallLog:text];
-      });
+      dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf appendTranslationInstallLog:text]; });
     };
 
     task.terminationHandler = ^(NSTask* finishedTask) {
@@ -8710,9 +8838,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     NSData* inputData = [input dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
     @try {
         [inputPipe.fileHandleForWriting writeData:inputData];
-    } @catch (NSException* exception) {
-        (void)exception;
-    }
+    } @catch (NSException* exception) { (void)exception; }
     [inputPipe.fileHandleForWriting closeFile];
 
     __block NSData* errorData = nil;
@@ -8777,9 +8903,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 
       if (items.count <= 1) {
           NSString* translated = nil;
-          dispatch_async(dispatch_get_main_queue(), ^{
-            [weakSelf updateTranslationProgress:0.0 detail:@"Translating selected text..."];
-          });
+          dispatch_async(dispatch_get_main_queue(),
+                         ^{ [weakSelf updateTranslationProgress:0.0 detail:@"Translating selected text..."]; });
           if (![self runArgosToolSynchronously:tool
                                 sourceLanguage:sourceLanguage
                                 targetLanguage:targetLanguage
@@ -8790,9 +8915,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
           }
           if (translated) translatedLines[0] = translated;
           if (!failure.length) {
-              dispatch_async(dispatch_get_main_queue(), ^{
-                [weakSelf updateTranslationProgress:1.0 detail:@"Writing translated PDF..."];
-              });
+              dispatch_async(dispatch_get_main_queue(),
+                             ^{ [weakSelf updateTranslationProgress:1.0 detail:@"Writing translated PDF..."]; });
           }
       } else {
           NSUInteger start = 0;
@@ -9212,9 +9336,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
           return;
       }
       NSString* text = [[NSString alloc] initWithData:chunk encoding:NSUTF8StringEncoding] ?: @"";
-      dispatch_async(dispatch_get_main_queue(), ^{
-        [weakSelf appendOCRInstallLog:text];
-      });
+      dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf appendOCRInstallLog:text]; });
     };
 
     task.terminationHandler = ^(NSTask* finishedTask) {
@@ -9408,9 +9530,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
           NSString* chunkText = [[NSString alloc] initWithData:chunk encoding:NSUTF8StringEncoding] ?: @"";
           NSString* detail = SPDFLastMeaningfulOCRLine(chunkText);
           if (detail.length) {
-              dispatch_async(dispatch_get_main_queue(), ^{
-                [weakSelf updateOCRProgressDetail:detail];
-              });
+              dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf updateOCRProgressDetail:detail]; });
           }
       } else {
           handle.readabilityHandler = nil;
@@ -9477,8 +9597,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         if (backupPath.length)
             strongSelf->_statusLabel.stringValue =
                 [NSString stringWithFormat:@"OCR complete. Backup: %@", backupPath.lastPathComponent];
-        else
-            strongSelf->_statusLabel.stringValue = @"OCR complete.";
+        else strongSelf->_statusLabel.stringValue = @"OCR complete.";
         [strongSelf finishOCRProgressWithDetail:strongSelf->_statusLabel.stringValue];
       });
     };
@@ -9795,6 +9914,18 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
 }
 
+- (void)toggleDefaultSidebarForNewDocuments:(id)sender {
+    (void)sender;
+    _defaultSidebarVisibleForNewDocuments = !_defaultSidebarVisibleForNewDocuments;
+    [self savePersistentState];
+}
+
+- (void)toggleDefaultMinimapForNewDocuments:(id)sender {
+    (void)sender;
+    _defaultMinimapVisibleForNewDocuments = !_defaultMinimapVisibleForNewDocuments;
+    [self savePersistentState];
+}
+
 - (void)findNext:(id)sender {
     (void)sender;
     [self findFromCurrentForward:YES];
@@ -9813,10 +9944,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         return;
     }
     NSInteger next = _findMatchIndex;
-    if (next < 0)
-        next = forward ? 0 : (NSInteger)_findMatches.count - 1;
-    else
-        next = (next + (forward ? 1 : -1) + (NSInteger)_findMatches.count) % (NSInteger)_findMatches.count;
+    if (next < 0) next = forward ? 0 : (NSInteger)_findMatches.count - 1;
+    else next = (next + (forward ? 1 : -1) + (NSInteger)_findMatches.count) % (NSInteger)_findMatches.count;
     [self jumpToFindMatchAtIndex:next];
 }
 
@@ -9849,10 +9978,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         if (commandSelector == @selector(insertNewline:) ||
             commandSelector == @selector(insertNewlineIgnoringFieldEditor:)) {
             BOOL shift = (NSApp.currentEvent.modifierFlags & NSEventModifierFlagShift) != 0;
-            if (_findMatches.count > 0)
-                [self findFromCurrentForward:!shift];
-            else
-                [self startFindForCurrentQuery];
+            if (_findMatches.count > 0) [self findFromCurrentForward:!shift];
+            else [self startFindForCurrentQuery];
             return YES;
         }
         return NO;
@@ -9897,13 +10024,32 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         NSString* kind = _shortcutHelpRows[(NSUInteger)row][@"kind"];
         return [kind isEqualToString:@"header"] ? 36.0 : 54.0;
     }
-    if (tableView != _paletteTable) return _sidebarTable.rowHeight;
+    if (tableView != _paletteTable) {
+        if (row >= 0 && row < (NSInteger)_sidebarItems.count) {
+            NSString* kind = _sidebarItems[(NSUInteger)row][@"kind"];
+            if ([kind isEqualToString:@"findResult"]) return 46.0;
+            if ([kind isEqualToString:@"findDivider"]) return 30.0;
+            if ([kind isEqualToString:@"findStatus"]) return 36.0;
+        }
+        return _sidebarTable.rowHeight;
+    }
     return [self paletteHeightForRow:row];
 }
 
 - (NSIndexSet*)tableView:(NSTableView*)tableView
     selectionIndexesForProposedSelection:(NSIndexSet*)proposedSelectionIndexes {
     if (tableView == _shortcutHelpTable) return [NSIndexSet indexSet];
+    if (tableView == _sidebarTable) {
+        NSMutableIndexSet* filtered = [NSMutableIndexSet indexSet];
+        [proposedSelectionIndexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL* stop) {
+          (void)stop;
+          if (idx >= self->_sidebarItems.count) return;
+          NSString* kind = self->_sidebarItems[idx][@"kind"];
+          if ([kind isEqualToString:@"findDivider"] || [kind isEqualToString:@"findStatus"]) return;
+          [filtered addIndex:idx];
+        }];
+        return filtered;
+    }
     if (tableView != _paletteTable) return proposedSelectionIndexes;
     NSMutableIndexSet* filtered = [NSMutableIndexSet indexSet];
     [proposedSelectionIndexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL* stop) {
@@ -9915,7 +10061,6 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 }
 
 - (NSView*)tableView:(NSTableView*)tableView viewForTableColumn:(NSTableColumn*)tableColumn row:(NSInteger)row {
-    (void)tableColumn;
     if (tableView == _shortcutHelpTable) {
         if (row < 0 || row >= (NSInteger)_shortcutHelpRows.count) return nil;
         NSDictionary* shortcut = _shortcutHelpRows[(NSUInteger)row];
@@ -9967,9 +10112,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     if (tableView == _paletteTable) {
         NSDictionary* result = _paletteResults[(NSUInteger)row];
         NSString* kind = result[@"kind"];
-        if ([kind isEqualToString:@"separator"]) {
-            return [[NSView alloc] initWithFrame:NSZeroRect];
-        }
+        if ([kind isEqualToString:@"separator"]) { return [[NSView alloc] initWithFrame:NSZeroRect]; }
 
         if ([kind isEqualToString:@"header"]) {
             NSView* view = [tableView makeViewWithIdentifier:@"PaletteHeader" owner:self];
@@ -10140,9 +10283,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
             cell.textField.textColor = status ? NSColor.secondaryLabelColor : NSColor.labelColor;
         }
         for (NSView* subview in cell.subviews) {
-            if ([subview.identifier isEqualToString:@"subtitle"]) {
-                subtitle = (NSTextField*)subview;
-            }
+            if ([subview.identifier isEqualToString:@"subtitle"]) { subtitle = (NSTextField*)subview; }
         }
         NSString* subtitleText = result[@"subtitle"] ?: @"";
         if (find)
@@ -10153,6 +10294,174 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
             subtitle.font = [NSFont systemFontOfSize:11.0];
             subtitle.textColor = NSColor.secondaryLabelColor;
         }
+        return cell;
+    }
+
+    if (row < 0 || row >= (NSInteger)_sidebarItems.count) return nil;
+
+    NSDictionary* item = _sidebarItems[(NSUInteger)row];
+    NSString* kind = item[@"kind"];
+    if ([kind isEqualToString:@"findDivider"]) {
+        NSTableCellView* cell = [tableView makeViewWithIdentifier:@"SidebarFindDividerCell" owner:self];
+        NSView* capsule = nil;
+        NSView* line = nil;
+        NSLayoutConstraint* capsuleWidth = nil;
+        if (!cell) {
+            cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 230, 30)];
+            cell.identifier = @"SidebarFindDividerCell";
+
+            capsule = [[NSView alloc] init];
+            capsule.translatesAutoresizingMaskIntoConstraints = NO;
+            capsule.identifier = @"dividerCapsule";
+            capsule.wantsLayer = YES;
+            capsule.layer.cornerRadius = 8.0;
+            capsule.layer.masksToBounds = YES;
+            [cell addSubview:capsule];
+
+            NSTextField* field = [NSTextField labelWithString:@""];
+            field.translatesAutoresizingMaskIntoConstraints = NO;
+            field.alignment = NSTextAlignmentLeft;
+            field.lineBreakMode = NSLineBreakByTruncatingTail;
+            field.maximumNumberOfLines = 1;
+            field.cell.usesSingleLineMode = YES;
+            [field setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
+                                            forOrientation:NSLayoutConstraintOrientationHorizontal];
+            cell.textField = field;
+            [capsule addSubview:field];
+
+            line = [[NSView alloc] init];
+            line.translatesAutoresizingMaskIntoConstraints = NO;
+            line.identifier = @"dividerLine";
+            line.wantsLayer = YES;
+            [cell addSubview:line];
+
+            capsuleWidth = [capsule.widthAnchor constraintEqualToConstant:120.0];
+            capsuleWidth.identifier = @"dividerCapsuleWidth";
+            [NSLayoutConstraint activateConstraints:@[
+                [capsule.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:8],
+                [capsule.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+                [capsule.heightAnchor constraintEqualToConstant:20.0], capsuleWidth,
+                [field.leadingAnchor constraintEqualToAnchor:capsule.leadingAnchor constant:9],
+                [field.trailingAnchor constraintEqualToAnchor:capsule.trailingAnchor constant:-9],
+                [field.centerYAnchor constraintEqualToAnchor:capsule.centerYAnchor],
+                [line.leadingAnchor constraintEqualToAnchor:capsule.trailingAnchor constant:9],
+                [line.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-8],
+                [line.heightAnchor constraintEqualToConstant:1.0],
+                [line.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor]
+            ]];
+        }
+        for (NSView* subview in cell.subviews) {
+            if ([subview.identifier isEqualToString:@"dividerCapsule"]) capsule = subview;
+            if ([subview.identifier isEqualToString:@"dividerLine"]) line = subview;
+        }
+        for (NSLayoutConstraint* constraint in capsule.constraints) {
+            if ([constraint.identifier isEqualToString:@"dividerCapsuleWidth"]) {
+                capsuleWidth = constraint;
+                break;
+            }
+        }
+        cell.textField.stringValue = item[@"title"] ?: @"";
+        NSFont* dividerFont = [NSFont systemFontOfSize:11.0 weight:NSFontWeightSemibold];
+        cell.textField.font = [[NSFontManager sharedFontManager] convertFont:dividerFont toHaveTrait:NSItalicFontMask];
+        cell.textField.textColor = NSColor.secondaryLabelColor;
+        CGFloat rowWidth = tableColumn ? tableColumn.width : NSWidth(tableView.bounds);
+        if (!isfinite(rowWidth) || rowWidth < 120.0) rowWidth = NSWidth(cell.bounds);
+        if (!isfinite(rowWidth) || rowWidth < 120.0) rowWidth = 230.0;
+        CGFloat contentWidth = MAX(90.0, rowWidth - 16.0);
+        CGFloat titleWidth =
+            [cell.textField.stringValue sizeWithAttributes:@{NSFontAttributeName : cell.textField.font}].width + 18.0;
+        CGFloat meaningfulLineWidth = 34.0;
+        CGFloat maxCompactWidth = contentWidth - 9.0 - meaningfulLineWidth;
+        CGFloat compactWidth = MAX(64.0, MIN(ceil(titleWidth), maxCompactWidth));
+        CGFloat expandedWidth = contentWidth - 9.0;
+        BOOL showLine = maxCompactWidth >= 64.0 && titleWidth <= maxCompactWidth + 0.5;
+        capsuleWidth.constant = floor(showLine ? compactWidth : expandedWidth);
+        line.alphaValue = showLine ? 1.0 : 0.0;
+        NSColor* capsuleColor = [NSColor.secondaryLabelColor colorWithAlphaComponent:0.15];
+        NSColor* lineColor = [NSColor.secondaryLabelColor colorWithAlphaComponent:0.24];
+        capsule.layer.backgroundColor = capsuleColor.CGColor;
+        line.layer.backgroundColor = lineColor.CGColor;
+        return cell;
+    }
+
+    if ([kind isEqualToString:@"findStatus"]) {
+        NSTableCellView* cell = [tableView makeViewWithIdentifier:@"SidebarFindStatusCell" owner:self];
+        if (!cell) {
+            cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 230, 36)];
+            cell.identifier = @"SidebarFindStatusCell";
+            NSTextField* field = [NSTextField labelWithString:@""];
+            field.translatesAutoresizingMaskIntoConstraints = NO;
+            field.alignment = NSTextAlignmentCenter;
+            field.lineBreakMode = NSLineBreakByTruncatingTail;
+            cell.textField = field;
+            [cell addSubview:field];
+            [NSLayoutConstraint activateConstraints:@[
+                [field.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:8],
+                [field.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-8],
+                [field.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor]
+            ]];
+        }
+        cell.textField.stringValue = item[@"title"] ?: @"";
+        cell.textField.font = [NSFont systemFontOfSize:12.0];
+        cell.textField.textColor = NSColor.secondaryLabelColor;
+        return cell;
+    }
+
+    if ([kind isEqualToString:@"findResult"]) {
+        NSTableCellView* cell = [tableView makeViewWithIdentifier:@"SidebarFindResultCell" owner:self];
+        NSTextField* subtitle = nil;
+        if (!cell) {
+            cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 230, 46)];
+            cell.identifier = @"SidebarFindResultCell";
+            NSTextField* title = [NSTextField labelWithString:@""];
+            title.translatesAutoresizingMaskIntoConstraints = NO;
+            title.lineBreakMode = NSLineBreakByTruncatingTail;
+            title.maximumNumberOfLines = 1;
+            title.cell.usesSingleLineMode = YES;
+            title.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium];
+            cell.textField = title;
+            [cell addSubview:title];
+
+            subtitle = [NSTextField labelWithString:@""];
+            subtitle.translatesAutoresizingMaskIntoConstraints = NO;
+            subtitle.identifier = @"subtitle";
+            subtitle.lineBreakMode = NSLineBreakByTruncatingTail;
+            subtitle.maximumNumberOfLines = 1;
+            subtitle.cell.usesSingleLineMode = YES;
+            subtitle.font = [NSFont systemFontOfSize:11.0];
+            subtitle.textColor = NSColor.secondaryLabelColor;
+            [cell addSubview:subtitle];
+
+            [NSLayoutConstraint activateConstraints:@[
+                [title.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:8],
+                [title.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-6],
+                [title.topAnchor constraintEqualToAnchor:cell.topAnchor constant:7],
+                [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
+                [subtitle.trailingAnchor constraintEqualToAnchor:title.trailingAnchor],
+                [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2]
+            ]];
+        }
+        for (NSView* subview in cell.subviews)
+            if ([subview.identifier isEqualToString:@"subtitle"]) subtitle = (NSTextField*)subview;
+        cell.textField.lineBreakMode = NSLineBreakByTruncatingTail;
+        cell.textField.maximumNumberOfLines = 1;
+        cell.textField.cell.usesSingleLineMode = YES;
+        NSString* titleText = item[@"title"] ?: @"";
+        NSDictionary* titleAttributes = @{
+            NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium],
+            NSForegroundColorAttributeName : NSColor.labelColor
+        };
+        NSMutableAttributedString* titleString = [[NSMutableAttributedString alloc] initWithString:titleText
+                                                                                        attributes:titleAttributes];
+        NSDictionary* matchAttributes = @{
+            NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightBold],
+            NSForegroundColorAttributeName : NSColor.labelColor
+        };
+        for (NSValue* value in [self rangesOfPaletteQuery:item[@"query"] ?: @"" inString:titleText limit:0])
+            [titleString addAttributes:matchAttributes range:value.rangeValue];
+        cell.textField.attributedStringValue = titleString;
+        subtitle.stringValue = item[@"subtitle"] ?: @"";
+        subtitle.textColor = NSColor.secondaryLabelColor;
         return cell;
     }
 
@@ -10172,9 +10481,6 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         ]];
     }
 
-    if (row < 0 || row >= (NSInteger)_sidebarItems.count) return nil;
-
-    NSDictionary* item = _sidebarItems[(NSUInteger)row];
     id levelValue = item[@"level"];
     NSInteger level = [levelValue respondsToSelector:@selector(integerValue)] ? [levelValue integerValue] : 0;
     level = MAX(0, MIN(level, 16));
@@ -10203,6 +10509,13 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     NSInteger row = _sidebarTable.clickedRow >= 0 ? _sidebarTable.clickedRow : _sidebarTable.selectedRow;
     if (row < 0 || row >= (NSInteger)_sidebarItems.count) return;
     NSDictionary* item = _sidebarItems[(NSUInteger)row];
+    NSString* kind = item[@"kind"];
+    if ([kind isEqualToString:@"findResult"]) {
+        NSInteger findIndex = [item[@"findIndex"] integerValue];
+        [self jumpToFindMatchAtIndex:findIndex];
+        return;
+    }
+    if ([kind isEqualToString:@"findDivider"] || [kind isEqualToString:@"findStatus"]) return;
     NSInteger page = [item[@"page"] integerValue];
     if (page < 0) return;
 
@@ -10212,7 +10525,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     [self resizeDocumentView];
 
     NSValue* boundsValue = item[@"bounds"];
-    if ([item[@"kind"] isEqualToString:@"comment"] && boundsValue) {
+    if ([kind isEqualToString:@"comment"] && boundsValue) {
         NSRect bounds = [boundsValue rectValue];
         [self scrollToPageRect:bounds pageIndex:_pageIndex];
         [self flashPageRect:bounds pageIndex:_pageIndex];
@@ -10232,6 +10545,14 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         action == @selector(openStateJSONFile:) || action == @selector(revealSettingsFolder:) ||
         action == @selector(showShortcutHelp:) || action == @selector(makeDefaultPDFReader:))
         return YES;
+    if (action == @selector(toggleDefaultSidebarForNewDocuments:)) {
+        menuItem.state = _defaultSidebarVisibleForNewDocuments ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (action == @selector(toggleDefaultMinimapForNewDocuments:)) {
+        menuItem.state = _defaultMinimapVisibleForNewDocuments ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     if (action == @selector(fillWindow:) || action == @selector(centerWindowInScreen:) ||
         action == @selector(moveWindowToLeftHalf:) || action == @selector(moveWindowToRightHalf:) ||
         action == @selector(moveWindowToTopHalf:) || action == @selector(moveWindowToBottomHalf:))
@@ -10311,7 +10632,7 @@ int main(int argc, const char* argv[]) {
     @autoreleasepool {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.7-1\n");
+                printf("Shenzhen PDF portable mac 26.6.8-1\n");
                 return 0;
             }
         }

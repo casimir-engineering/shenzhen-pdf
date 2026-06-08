@@ -79,6 +79,7 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     copy.findMatchIndex = source.findMatchIndex;
     copy.showSidebar = source.showSidebar;
     copy.showMinimap = source.showMinimap;
+    copy.hasMinimapPreference = source.hasMinimapPreference;
     copy.missingFile = source.missingFile;
     copy.missingMessage = source.missingMessage;
     return copy;
@@ -121,16 +122,15 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     if (item[@"fitMode"]) tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
     tab.viewMode = (SPDFViewMode)MAX(0, MIN(1, [item[@"viewMode"] integerValue]));
     tab.scrollOrigin = NSMakePoint([item[@"scrollX"] doubleValue], [item[@"scrollY"] doubleValue]);
-    if (item[@"hasScrollOrigin"] != nil)
-        tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue];
-    else
-        tab.hasScrollOrigin = item[@"scrollX"] != nil || item[@"scrollY"] != nil;
+    if (item[@"hasScrollOrigin"] != nil) tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue];
+    else tab.hasScrollOrigin = item[@"scrollX"] != nil || item[@"scrollY"] != nil;
     if ([item[@"searchText"] isKindOfClass:NSString.class]) tab.searchText = item[@"searchText"];
     tab.searchRegex = [item[@"searchRegex"] boolValue];
     tab.searchRegexMultiline = item[@"searchRegexMultiline"] ? [item[@"searchRegexMultiline"] boolValue] : YES;
     tab.findMatchIndex = item[@"findMatchIndex"] ? [item[@"findMatchIndex"] integerValue] : -1;
     tab.showSidebar = item[@"showSidebar"] ? [item[@"showSidebar"] boolValue] : YES;
     tab.showMinimap = item[@"showMinimap"] ? [item[@"showMinimap"] boolValue] : YES;
+    tab.hasMinimapPreference = item[@"showMinimap"] != nil;
     return tab;
 }
 
