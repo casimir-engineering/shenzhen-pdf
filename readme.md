@@ -137,7 +137,7 @@ Build the upload package:
 ```sh
 MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
 MAC_VERSION=26.6.8 \
-MAC_BUILD=1 \
+MAC_BUILD=2 \
 MAC_APPSTORE_IDENTITY="Apple Distribution: Publisher Name (TEAMID1234)" \
 MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Publisher Name (TEAMID1234)" \
 MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
@@ -147,7 +147,7 @@ MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile"
 Expected output:
 
 ```text
-dist/ShenzhenPDF-testflight-26.6.8-1.pkg
+dist/ShenzhenPDF-testflight-26.6.8-2.pkg
 ```
 
 Open in Transporter:

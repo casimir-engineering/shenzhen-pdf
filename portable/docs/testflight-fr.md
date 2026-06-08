@@ -116,7 +116,7 @@ Le script affiche la commande exacte si tout est prêt.
 ```sh
 MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
 MAC_VERSION=26.6.8 \
-MAC_BUILD=1 \
+MAC_BUILD=2 \
 MAC_APPSTORE_IDENTITY="Apple Distribution: INTUITION Robotique & Technologies (66LJ4BV7Q3)" \
 MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: INTUITION Robotique & Technologies (66LJ4BV7Q3)" \
 MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
@@ -127,7 +127,7 @@ OPEN_TRANSPORTER=1 \
 Résultat :
 
 ```text
-dist/ShenzhenPDF-testflight-26.6.8-1.pkg
+dist/ShenzhenPDF-testflight-26.6.8-2.pkg
 ```
 
 **Règle importante :** `MAC_BUILD` doit augmenter à chaque upload (1, 2, 3…).

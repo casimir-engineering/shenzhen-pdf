@@ -259,6 +259,19 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Tested: rebuilt and installed `/Applications/ShenzhenPDF.app`; verified CLI version `26.6.8-1`, bundle metadata `com.intuition.shenzhenpdf`/`26.6.8`/`1`, local codesign, Objective-C++ syntax, shortcut tests, and diff hygiene.
    - Gap: TestFlight readiness has build tools/OpenSSL/MuPDF OK but still requires Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, App Store provisioning profile, and optionally Transporter before a signed upload `.pkg` can be produced.
 
+31. Prepare `26.6.8-2` post-zoom responsiveness release.
+   - Status: Implemented; commit and tag pending.
+   - Prompt link: after live zoom became fluent, the user reported an unacceptable 2-500 ms freeze immediately after zooming, plus a missing minimap viewport preview during zoom. README should also be refreshed to showcase the reader before TestFlight prep.
+   - Agent prompt rewrite: priority is immediate post-zoom pan/scroll responsiveness while preserving the fluent zoom/pan strategy; minimap during-zoom viewport preview is desirable only if it does not reintroduce stutter.
+   - Changed: live-zoom settle no longer renders the crisp backing-scale viewport crop synchronously on the main thread. It queues a high-priority async viewport crop, invalidates stale crop results when newer movement or sync rendering happens, and gives throttled requests a delayed retry so the latest viewport is not lost.
+   - Changed: minimap updates now refresh lightweight geometry and viewport state during live zoom while still skipping minimap thumbnail/render work until zoom settles.
+   - Changed: README and portable README were rewritten to describe Shenzhen PDF's core reader features, macOS/Linux portable frontends, search/minimap/OCR/translation/windowing polish, current boundaries, and TestFlight handoff.
+   - Changed: bumped macOS bundle build to App Store-compatible `CFBundleVersion=2`, keeping `CFBundleShortVersionString=26.6.8`, with About/CLI display as `26.6.8-2`.
+   - Changed: updated TestFlight helper defaults and docs to produce `ShenzhenPDF-testflight-26.6.8-2.pkg`.
+   - Reviewed: agent review found and the implementation fixed stale async crop application, dropped throttled crop requests, full-page render priority ahead of viewport crops, in-flight stale crop loops, live-zoom minimap O(n^2) geometry work, and pan-begin crop invalidation.
+   - Tested: rebuilt and installed `/Applications/ShenzhenPDF.app`; verified CLI version `26.6.8-2`, bundle metadata `com.intuition.shenzhenpdf`/`26.6.8`/`2`, local codesign, Objective-C++ syntax, shortcut tests, and diff hygiene.
+   - Gap: TestFlight readiness has build tools/OpenSSL/MuPDF OK but still requires Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, App Store provisioning profile, and optionally Transporter before a signed upload `.pkg` can be produced.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.
