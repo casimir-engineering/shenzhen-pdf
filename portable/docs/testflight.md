@@ -22,7 +22,7 @@ From the repository root:
 ```sh
 MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
 MAC_VERSION=26.6.8 \
-MAC_BUILD=1 \
+MAC_BUILD=2 \
 MAC_APPSTORE_IDENTITY="Apple Distribution: Friend Name (TEAMID1234)" \
 MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Friend Name (TEAMID1234)" \
 MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
@@ -32,7 +32,7 @@ MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile"
 The script creates:
 
 ```text
-dist/ShenzhenPDF-testflight-26.6.8-1.pkg
+dist/ShenzhenPDF-testflight-26.6.8-2.pkg
 ```
 
 To open the package in Apple's Transporter app automatically:

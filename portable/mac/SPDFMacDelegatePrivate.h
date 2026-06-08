@@ -173,6 +173,12 @@
     BOOL _documentViewPanMaintenanceScheduled;
     NSUInteger _documentViewPanCropGeneration;
     NSTimeInterval _lastDocumentPanLiveCropRenderTime;
+    NSUInteger _asyncViewportCropRenderGeneration;
+    NSTimeInterval _lastAsyncViewportCropRenderQueueTime;
+    NSTimeInterval _deferViewportCropRenderUntil;
+    BOOL _asyncViewportCropRetryScheduled;
+    CGFloat _pendingAsyncViewportCropDisplayScale;
+    BOOL _pendingAsyncViewportCropAllowFullPageRenderAllowedPages;
     BOOL _minimapPrecisionViewportDragActive;
     BOOL _defaultSidebarVisibleForNewDocuments;
     BOOL _defaultMinimapVisibleForNewDocuments;

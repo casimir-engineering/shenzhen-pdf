@@ -53,6 +53,8 @@ static const NSTimeInterval kLiveZoomFinishDelay = 0.28;
 static const NSTimeInterval kLiveZoomFinishWhilePanningDelay = 0.12;
 static const NSTimeInterval kLiveZoomStateSaveDelay = 0.20;
 static const NSTimeInterval kLiveZoomControlUpdateInterval = 0.05;
+static const NSTimeInterval kPostLiveZoomAsyncCropGrace = 0.45;
+static const NSTimeInterval kAsyncViewportCropQueueInterval = 0.04;
 static const NSInteger kPageGeometryCacheVersion = 1;
 static const NSTimeInterval kPageGeometryModificationTolerance = 0.001;
 
@@ -2638,15 +2640,137 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)renderVisiblePageCropsForCurrentViewportAfterLiveZoom {
-    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]
-                                   allowFullPageRenderAllowedPages:YES];
+    [self enqueueVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]
+                                    allowFullPageRenderAllowedPages:YES];
     [self setCurrentViewportNeedsDisplay];
-    [_pageView displayIfNeeded];
 }
 
 - (void)renderVisiblePageCropsForCurrentViewportIfNeeded {
+    if (NSDate.timeIntervalSinceReferenceDate < _deferViewportCropRenderUntil) {
+        [self enqueueVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]
+                                        allowFullPageRenderAllowedPages:NO];
+        [self setCurrentViewportNeedsDisplay];
+        return;
+    }
+    _asyncViewportCropRenderGeneration++;
     [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]
                                    allowFullPageRenderAllowedPages:NO];
+}
+
+- (void)scheduleAsyncViewportCropRetry {
+    if (_asyncViewportCropRetryScheduled) return;
+    _asyncViewportCropRetryScheduled = YES;
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAsyncViewportCropQueueInterval * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{
+          self->_asyncViewportCropRetryScheduled = NO;
+          if (!self->_doc || self->_liveZooming) return;
+          [self enqueueVisiblePageCropsForCurrentViewportWithDisplayScale:self->_pendingAsyncViewportCropDisplayScale
+                                          allowFullPageRenderAllowedPages:
+                                              self->_pendingAsyncViewportCropAllowFullPageRenderAllowedPages];
+        });
+}
+
+- (void)enqueueVisiblePageCropsForCurrentViewportWithDisplayScale:(CGFloat)displayScale
+                                  allowFullPageRenderAllowedPages:(BOOL)allowFullPageRenderAllowedPages {
+    if (_windowLiveResizing) return;
+    if (!_doc || !_path.length || !_pageScrollView || !_pageView || _renderedPages.count == 0) return;
+
+    NSUInteger asyncCropGeneration = ++_asyncViewportCropRenderGeneration;
+    NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
+    _pendingAsyncViewportCropDisplayScale = displayScale;
+    _pendingAsyncViewportCropAllowFullPageRenderAllowedPages = allowFullPageRenderAllowedPages;
+    if (now - _lastAsyncViewportCropRenderQueueTime < kAsyncViewportCropQueueInterval) {
+        [self scheduleAsyncViewportCropRetry];
+        return;
+    }
+    _lastAsyncViewportCropRenderQueueTime = now;
+
+    displayScale = MAX(0.5, displayScale);
+    CGFloat backingScale = [self backingScale];
+    CGFloat margin =
+        MAX(NSWidth(_pageScrollView.contentView.bounds), NSHeight(_pageScrollView.contentView.bounds)) * 0.35;
+    NSInteger preferredPage = -1;
+    NSArray<NSNumber*>* pageIndexes = [self visibleDocumentPageIndexesWithExtraRadius:0 preferredPage:&preferredPage];
+    NSMutableArray<NSDictionary*>* tasks = [NSMutableArray array];
+    for (NSNumber* number in pageIndexes) {
+        NSInteger pageIndex = number.integerValue;
+        if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
+        if ([self renderedPageImage:page matchesZoom:_zoom displayScale:backingScale]) continue;
+        if (!allowFullPageRenderAllowedPages && [self fullPageRenderAllowedForPage:page
+                                                                              zoom:_zoom
+                                                                      displayScale:backingScale])
+            continue;
+
+        NSRect cropRect = [self visiblePageCropRectForPageIndex:pageIndex extraViewMargin:margin];
+        cropRect = [self pixelSnappedPageCropRect:cropRect page:page zoom:_zoom displayScale:displayScale];
+        if (NSIsEmptyRect(cropRect)) continue;
+        if ([self viewportImage:page coversPageCropRect:cropRect zoom:_zoom displayScale:displayScale]) continue;
+        if (displayScale < backingScale && [self viewportImage:page
+                                               coversPageCropRect:cropRect
+                                                             zoom:_zoom
+                                                     displayScale:backingScale])
+            continue;
+        [tasks addObject:@{@"page" : @(pageIndex), @"crop" : [NSValue valueWithRect:cropRect]}];
+    }
+    if (tasks.count == 0) return;
+
+    NSUInteger renderGeneration = _renderGeneration;
+    NSUInteger panGeneration = _documentViewPanCropGeneration;
+    NSString* path = [_path copy];
+    CGFloat zoom = _zoom;
+    NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+      @autoreleasepool {
+          char err[512];
+          spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+          if (!workerDoc) return;
+
+          NSMutableArray<NSDictionary*>* results = [NSMutableArray arrayWithCapacity:tasks.count];
+          for (NSDictionary* task in tasks) {
+              if (asyncCropGeneration != self->_asyncViewportCropRenderGeneration) break;
+              NSInteger pageIndex = [task[@"page"] integerValue];
+              NSRect cropRect = [task[@"crop"] rectValue];
+              NSImage* image = [self renderedPageCropImageAtIndex:pageIndex
+                                                         document:workerDoc
+                                                             zoom:zoom
+                                                     displayScale:displayScale
+                                                     pageCropRect:cropRect
+                                                            error:err
+                                                      errorLength:sizeof(err)];
+              if (!image) continue;
+              [results addObject:@{
+                  @"page" : @(pageIndex),
+                  @"crop" : [NSValue valueWithRect:cropRect],
+                  @"image" : image
+              }];
+          }
+
+          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            if (asyncCropGeneration != self->_asyncViewportCropRenderGeneration ||
+                renderGeneration != self->_renderGeneration || panGeneration != self->_documentViewPanCropGeneration ||
+                self->_liveZooming || self->_documentViewPanActive || !self->_doc ||
+                ![self->_path isEqualToString:path] || fabs(zoom - self->_zoom) > 0.001 ||
+                fabs(displayScale - [self backingScale]) > 0.001)
+                return;
+            for (NSDictionary* result in results) {
+                NSInteger pageIndex = [result[@"page"] integerValue];
+                if (pageIndex < 0 || pageIndex >= (NSInteger)self->_renderedPages.count) continue;
+                SPDFRenderedPage* page = self->_renderedPages[(NSUInteger)pageIndex];
+                page.viewportImage = result[@"image"];
+                page.viewportImagePageRect = [result[@"crop"] rectValue];
+                page.viewportImageZoom = zoom;
+                page.viewportImageScale = displayScale;
+                [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:pageIndex]];
+            }
+            [self updateMinimap];
+            [self evictDistantRenderedPageImages];
+          }];
+      }
+    }];
+    operation.queuePriority = NSOperationQueuePriorityVeryHigh;
+    operation.qualityOfService = NSQualityOfServiceUserInitiated;
+    [_renderQueue addOperation:operation];
 }
 
 - (void)scheduleDocumentPanMaintenance {
@@ -3521,7 +3645,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)updateMinimap {
     if (!_minimapView) return;
-    if (_liveZooming) {
+    BOOL liveZooming = _liveZooming;
+    if (liveZooming) {
+        _minimapView.currentPageIndex = _pageIndex;
+        _minimapView.viewMode = _viewMode;
+        _minimapView.documentVisibleRect = [self continuousDocumentVisibleRectForMinimap];
+        _minimapView.documentWidth = [self continuousDocumentWidthForMinimap];
+        _minimapView.documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
+        _minimapView.documentScale = MAX(0.01, _zoom);
         [_minimapView setNeedsDisplay:YES];
         return;
     }
@@ -4662,6 +4793,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         [self updateControls];
     }
     [self setCurrentViewportNeedsDisplay];
+    [self updateMinimap];
 }
 
 - (void)renderDocumentPreservingScrollPosition {
@@ -4698,6 +4830,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     if (_doc) {
         _documentViewPanCropGeneration++;
         _documentViewPanCropInFlight = NO;
+        _deferViewportCropRenderUntil = NSDate.timeIntervalSinceReferenceDate + kPostLiveZoomAsyncCropGrace;
         BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
         _suppressScrollCallbacks = YES;
         [self resizeDocumentView];
@@ -4709,8 +4842,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         _suppressScrollCallbacks = previousSuppressScrollCallbacks;
         [self syncToolbarState];
         [self updateControls];
-        if (singlePageZoom) [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:YES];
-        else [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
+        if (!singlePageZoom) [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
         if (_documentViewPanActive) [self setCurrentViewportNeedsDisplay];
         else [self renderVisiblePageCropsForCurrentViewportAfterLiveZoom];
         [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:YES];
@@ -4735,6 +4867,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _fitMode = SPDFFitModeCustom;
     _documentViewPanCropGeneration++;
     _documentViewPanCropInFlight = NO;
+    _asyncViewportCropRenderGeneration++;
+    _deferViewportCropRenderUntil = 0.0;
     if (!_liveZooming) {
         SPDFPageAnchor anchor = [self pageAnchorForWindowPoint:windowPoint];
         _liveZoomAnchorPageIndex = anchor.pageIndex;
@@ -4769,6 +4903,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _documentViewPanCropGeneration++;
     _documentViewPanCropInFlight = NO;
     _documentViewPanMaintenanceScheduled = NO;
+    _asyncViewportCropRenderGeneration++;
+    _deferViewportCropRenderUntil = 0.0;
 }
 
 - (void)openDocument:(id)sender {
@@ -5692,6 +5828,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     }
     if (_liveZooming) {
         [self setCurrentViewportNeedsDisplay];
+        [self updateMinimap];
         return;
     }
     if (_minimapPrecisionViewportDragActive) {
@@ -6332,6 +6469,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)documentViewDidBeginPan {
     [self cancelPendingLiveZoomCompletion];
+    _asyncViewportCropRenderGeneration++;
+    _deferViewportCropRenderUntil = 0.0;
     _documentViewPanActive = YES;
     _documentViewPanCropInFlight = NO;
     _documentViewPanMaintenanceScheduled = NO;
@@ -6373,6 +6512,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _liveZoomSequence++;
     _liveZooming = NO;
     _liveZoomAnchorValid = NO;
+    _asyncViewportCropRenderGeneration++;
+    _deferViewportCropRenderUntil = 0.0;
     [_pageView cancelTransientInteraction];
 }
 
@@ -10632,7 +10773,7 @@ int main(int argc, const char* argv[]) {
     @autoreleasepool {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.8-1\n");
+                printf("Shenzhen PDF portable mac 26.6.8-2\n");
                 return 0;
             }
         }
