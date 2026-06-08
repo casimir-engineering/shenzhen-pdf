@@ -1,11 +1,13 @@
 # Shenzhen PDF
 
-Shenzhen PDF is a fast native PDF reader for macOS, Linux, and Windows.
+Shenzhen PDF is a fast native document reader for macOS, Linux, and Windows,
+with a portable MuPDF-backed core and frontends that keep the interface compact.
+It follows the lightweight reader philosophy that made SumatraPDF pleasant to
+use: open documents quickly, stay out of the way, make navigation/search fast,
+and avoid heavy library-management chrome.
 
-The project follows the same lightweight reader philosophy that made SumatraPDF
-pleasant to use: open instantly, keep the interface compact, make search and
-navigation quick, and avoid heavy document-management chrome. Shenzhen PDF is a
-separate project and is not affiliated with the SumatraPDF project.
+Shenzhen PDF is a separate project and is not affiliated with the SumatraPDF
+project.
 
 ## Screenshots
 
@@ -13,24 +15,44 @@ separate project and is not affiliated with the SumatraPDF project.
 
 ![Search highlights with match count and minimap markers](docs/images/portable/macos-search-highlights.png)
 
-## Highlights
+## What Stands Out
 
-- Native macOS AppKit frontend with slim tabs, draggable/detachable tabs,
-  restored multi-window sessions, side panels, minimap, OCR, local translation,
-  comments, favorites, recent files, and presentation mode.
-- Native Linux GTK frontend sharing the portable MuPDF-backed core and matching
-  the macOS data formats.
-- Windows C++/Win32 build kept in-tree so all three desktop platforms can evolve
-  together.
-- Human-readable JSON for settings, sessions, document state, favorites, and
-  recent documents.
-- Current-page-first rendering with background preloading around the active page.
-- In-document search, regex search, match counters, keyboard navigation,
-  minimap result markers, and per-document search memory.
+- Native portable frontends for macOS and Linux. The macOS app is built with
+  AppKit, the Linux app is built with GTK, and both share the portable document
+  core instead of emulating Win32.
+- Fast reader workflow: current-page-first rendering, background preloading,
+  persistent per-tab document caches, remembered scroll/zoom state, restored
+  sessions, recent files, favorites, and compact tabbed windows.
+- Search that behaves like a reading tool: match counts, keyboard navigation,
+  regex mode, highlighted results, minimap markers, per-document search memory,
+  and a macOS Search sidebar that groups contextual results by chapter.
+- A right-side document map with viewport dragging, page separators, search
+  markers, remembered visibility/width, and special handling for long documents.
 - OCR via OCRmyPDF/Tesseract with language selection, Chinese traineddata
-  support, source backups, and progress feedback.
-- Offline translation via Argos Translate, with optional language package
+  support, progress feedback, source backups, save-back behavior, and reload
+  after processing.
+- Offline translation via Argos Translate, including optional language package
   installation and translated PDFs saved next to the original.
+- Reader polish on macOS: draggable/detachable tabs, multi-window session
+  restore, presentation mode, native window arrangement shortcuts, smoother
+  resizing, Preview-like trackpad panning, default-PDF-reader flow, and high
+  quality PDF printing through the macOS print pipeline.
+- Human-readable JSON state for settings, sessions, document state, favorites,
+  and recent documents.
+
+## Current Boundaries
+
+- The macOS portable frontend is the most polished and recently validated path.
+  The Linux GTK frontend shares the same core and data formats, but some of the
+  latest behavior work is macOS-specific.
+- The Windows C++/Win32 codebase remains in-tree and buildable in a Windows
+  Visual Studio environment. Executable/resource branding should still be
+  completed and verified before publishing Windows binaries under the Shenzhen
+  PDF name.
+- TestFlight packaging has a handoff script and checklist, but upload-ready
+  packages require the publisher's Apple Distribution certificate, 3rd Party Mac
+  Developer Installer certificate, App Store provisioning profile, and optionally
+  Transporter.
 
 ## Build
 
@@ -63,7 +85,7 @@ dist/ShenzhenPDF-mac-arm64.dmg
 ```
 
 Local development builds are ad-hoc signed. Public downloads must be Developer
-ID signed and notarized; TestFlight builds use the App Store signing path below.
+ID signed and notarized. TestFlight builds use the App Store signing path below.
 
 ### Linux
 
@@ -89,12 +111,16 @@ make -C portable linux
 bun ./cmd/build.ts
 ```
 
-The Windows source tree is currently retained from the existing C++/Win32
-codebase. Its executable/resource renaming should be completed and verified in a
-Windows build environment before publishing Windows binaries under the Shenzhen
-PDF name.
+This creates:
 
-## TestFlight Preparation
+```text
+./out/dbg64/SumatraPDF.exe
+```
+
+Run the Windows build from an environment where the Visual Studio command-line
+tools are available in `PATH`.
+
+## TestFlight Handoff
 
 The publisher needs an active Apple Developer Program account.
 
@@ -159,7 +185,7 @@ recent.json
 
 ## Repository Layout
 
-- `portable/core/`: shared portable document/render/search/OCR-facing core.
+- `portable/core/`: shared document, render, search, OCR-facing, and save core.
 - `portable/mac/`: native macOS AppKit application.
 - `portable/linux/`: native Linux GTK application.
 - `src/`: Windows C++/Win32 application code.
