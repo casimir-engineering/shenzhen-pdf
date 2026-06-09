@@ -345,6 +345,24 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
     return NO;
 }
 
+- (void)scrollWheel:(NSEvent*)event {
+    CGFloat deltaX = event.scrollingDeltaX != 0.0 ? event.scrollingDeltaX : event.deltaX;
+    CGFloat deltaY = event.scrollingDeltaY != 0.0 ? event.scrollingDeltaY : event.deltaY;
+    NSText* editor = self.currentEditor;
+    if (editor && fabs(deltaX) > fabs(deltaY) && fabs(deltaX) > 0.01) {
+        NSString* string = editor.string ?: @"";
+        NSRange selectedRange = editor.selectedRange;
+        NSInteger step = MAX(1, MIN(18, (NSInteger)ceil(fabs(deltaX) / 3.0)));
+        NSUInteger location = selectedRange.location;
+        if (deltaX > 0.0) location = MIN(string.length, location + (NSUInteger)step);
+        else location = location > (NSUInteger)step ? location - (NSUInteger)step : 0;
+        [editor setSelectedRange:NSMakeRange(location, 0)];
+        [editor scrollRangeToVisible:NSMakeRange(location, 0)];
+        return;
+    }
+    [super scrollWheel:event];
+}
+
 @end
 
 @implementation SPDFDropView
@@ -398,6 +416,44 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
 - (void)mouseUp:(NSEvent*)event {
     (void)event;
     [self.reader minimapDividerDidFinishDragging];
+}
+
+@end
+
+@implementation SPDFSidebarDividerView {
+    CGFloat _lastWindowX;
+}
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+- (void)resetCursorRects {
+    [self addCursorRect:self.bounds cursor:NSCursor.resizeLeftRightCursor];
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    [NSColor.windowBackgroundColor setFill];
+    NSRectFill(self.bounds);
+    [[NSColor separatorColor] setFill];
+    NSRectFill(NSMakeRect(floor(NSWidth(self.bounds) / 2.0), 0.0, 1.0, NSHeight(self.bounds)));
+}
+
+- (void)mouseDown:(NSEvent*)event {
+    _lastWindowX = event.locationInWindow.x;
+    [self.reader clearFindFieldFocus];
+}
+
+- (void)mouseDragged:(NSEvent*)event {
+    CGFloat x = event.locationInWindow.x;
+    [self.reader sidebarDividerDraggedByDeltaX:x - _lastWindowX];
+    _lastWindowX = x;
+}
+
+- (void)mouseUp:(NSEvent*)event {
+    (void)event;
+    [self.reader sidebarDividerDidFinishDragging];
 }
 
 @end
