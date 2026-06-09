@@ -297,7 +297,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Validation target: dragging over selectable text should select/copy text; dragging blank slide/page areas should still move the document where panning is available.
 
 35. Save As fallback for protected PDFs.
-   - Status: Implemented for validation; not committed.
+   - Status: Implemented, installed, and ready for user validation.
    - Prompt link: Cmd/Ctrl+S should expose Save As, File should include Save As, and operations that need to write back to a read-only or temporary PDF should offer Save As instead of failing.
    - Changed: macOS adds File > Save As... on Cmd+S and saves the active PDF through `NSSavePanel`, then updates the tab path, cached document state, recent documents, and persistent state.
    - Changed: macOS preflights PDF mutations before rotate, OCR, translation, and comment add/edit/delete. If the current PDF is in a temp folder or the file/folder is not writable, Shenzhen PDF asks for a writable copy and continues only if Save As succeeds.
@@ -391,6 +391,16 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: the toolbar Find field now uses `SPDFFindSearchField`, a tiny subclass that accepts first mouse and cannot become a window-drag region.
    - Changed: document arrow navigation and window-arrangement shortcuts now always yield while any text field/editor is active, and window-arrangement menu key equivalents validate disabled during text editing.
    - Validation target: menu bar should show text-only top menu names; inside opened menus icons should remain. Paste a Find query longer than the field, then verify mouse clicks and Left/Right, Option-Left/Right, Command-Left/Right, and Fn/Home/End-style navigation move within the field without scrolling pages or moving/resizing the window.
+
+47. Selected-text browser search and editable selection translation.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: add a Preview-like selected-text Search in Browser action, and add local selection translation without asking language first; remember languages, show source/target dropdowns, editable input/output, and retranslate on demand.
+   - Agent prompt rewrite: selected text should gain context actions that are lazy, fast, and non-blocking: macOS should use the system/default browser search route rather than hardcoded Google, and translation should reuse the existing local Argos backend only when invoked.
+   - Finding: the portable Mac app already stores selected text in `_selectedText` and already has Argos Translate support for document/selection-to-PDF translation with persisted source/target language codes.
+   - Changed: the document context menu now shows `Translate "<selection>"` and `Search Web for "<selection>"` above Copy when text is selected. Search uses macOS `x-web-search://?...`, avoiding a hardcoded Google search URL.
+   - Changed: selection translation now opens a lazy `Translate Selection` panel from the context menu or existing Translate command when text is selected. It has source/target dropdowns, editable input and output text, a Translate button, and remembered language choices. Opening the panel immediately translates the selected text; clicking Translate later replaces any edited output with a fresh local translation of the current input.
+   - Changed: selection translation runs Argos on a background queue and reuses the existing installer/package prompts only after the user invokes translation, so launch and render paths do not initialize translation tooling.
+   - Validation target: select text, right-click, verify Search Web opens browser search; verify Translate opens the panel, immediately translates with last languages, allows editing input/output, persists changed language dropdowns, and retranslation replaces output without blocking app launch.
 
 ## Validation
 
