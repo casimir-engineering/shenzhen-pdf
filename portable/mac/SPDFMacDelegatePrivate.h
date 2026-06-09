@@ -27,6 +27,7 @@
     NSTableView* _sidebarTable;
     NSView* _sidebarContainer;
     NSView* _documentContainer;
+    SPDFSidebarDividerView* _sidebarDividerView;
     SPDFScrollView* _pageScrollView;
     SPDFDocumentView* _pageView;
     SPDFMinimapView* _minimapView;
@@ -153,6 +154,7 @@
     NSInteger _findMatchIndex;
     NSInteger _selectionPageIndex;
     NSString* _selectedText;
+    BOOL _collapseWhitespaceWhenCopyingText;
     NSInteger _contextPageIndex;
     NSPoint _contextPagePoint;
     NSInteger _contextCommentIndex;
@@ -178,6 +180,8 @@
     BOOL _suppressScrollCallbacks;
     BOOL _suppressViewportRerender;
     BOOL _liveZooming;
+    BOOL _liveZoomQueuesPaused;
+    BOOL _liveZoomMinimapUpdateScheduled;
     BOOL _documentViewPanActive;
     BOOL _documentViewPanCropInFlight;
     BOOL _documentViewPanMaintenanceScheduled;
@@ -299,6 +303,7 @@
 - (void)showFindPalette:(id)sender;
 - (void)toggleFindRegex:(id)sender;
 - (void)toggleFindRegexMultiline:(id)sender;
+- (void)toggleCollapseWhitespaceWhenCopyingText:(id)sender;
 - (void)openStateJSONFile:(id)sender;
 - (void)revealSettingsFolder:(id)sender;
 - (void)toggleDefaultSidebarForNewDocuments:(id)sender;
@@ -386,8 +391,7 @@
 - (void)renderVisiblePageCropsForCurrentViewportAfterLiveZoom;
 - (void)schedulePostLiveZoomViewportRenderForSequence:(NSUInteger)sequence
                                                  path:(NSString*)path
-                                     renderGeneration:(NSUInteger)renderGeneration
-                                   movementGeneration:(NSUInteger)movementGeneration;
+                                     renderGeneration:(NSUInteger)renderGeneration;
 - (void)renderVisiblePageCropsForCurrentViewportIfNeeded;
 - (void)scheduleDocumentPanMaintenance;
 - (void)renderLiveDocumentPanViewportCropIfDue;
@@ -406,6 +410,8 @@
 - (void)documentViewHoverComment:(NSDictionary*)comment atWindowPoint:(NSPoint)windowPoint;
 - (void)documentViewEndHoverComment;
 - (void)setMinimapActuallyVisible:(BOOL)visible;
+- (void)sidebarDividerDraggedByDeltaX:(CGFloat)deltaX;
+- (void)sidebarDividerDidFinishDragging;
 - (void)minimapDividerDraggedByDeltaX:(CGFloat)deltaX;
 - (void)minimapDividerDidFinishDragging;
 - (void)clearFindFieldFocus;

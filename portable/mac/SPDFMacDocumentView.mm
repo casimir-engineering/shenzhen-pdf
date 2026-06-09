@@ -384,7 +384,9 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
         context.imageInterpolation = oldInterpolation;
     }
 
-    if (!hasExactFullPageImage && page.viewportImage) {
+    BOOL hasCurrentViewportImage = page.viewportImage && fabs(page.viewportImageZoom - self.zoom) <= 0.001 &&
+                                   fabs(page.viewportImageScale - [self effectiveBackingScale]) <= 0.001;
+    if (!hasExactFullPageImage && hasCurrentViewportImage) {
         NSRect cropRect = [self convertPageRect:page.viewportImagePageRect toViewRectInPageRect:pageRect page:page];
         if (!NSIsEmptyRect(cropRect)) {
             NSGraphicsContext* context = NSGraphicsContext.currentContext;

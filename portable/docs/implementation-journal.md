@@ -402,6 +402,31 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: selection translation runs Argos on a background queue and reuses the existing installer/package prompts only after the user invokes translation, so launch and render paths do not initialize translation tooling.
    - Validation target: select text, right-click, verify Search Web opens browser search; verify Translate opens the panel, immediately translates with last languages, allows editing input/output, persists changed language dropdowns, and retranslation replaces output without blocking app launch.
 
+48. Post-zoom crisp render guarantee.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: after some zoom/unzoom cycles, the page can stay blurry forever; when it does render at high zoom, unzoom becomes laggy.
+   - Agent finding: the delayed post-live-zoom crop render was gated on `_viewportMovementGeneration`, so ordinary viewport settling could cancel the only crisp fallback without scheduling another one. The same callback rendered MuPDF page crops synchronously on the main thread, which explains the high-zoom unzoom hitch.
+   - Changed: the post-live-zoom render no longer treats viewport movement as a cancellation reason. It still validates live-zoom sequence, render generation, path, document presence, and current zoom before applying results.
+   - Changed: post-live-zoom viewport crops now render on the page render queue with user-initiated priority and apply back on the main thread only if they still match the current document and zoom. If a document pan is active when the callback fires, it reschedules instead of dropping the crisp pass.
+   - Changed: document drawing now prefers the minimap fallback over stale full-page images during zoom transitions and draws viewport crop images only when their zoom matches the current zoom, preventing old high-zoom crops from being scaled during unzoom.
+   - Validation target: repeatedly zoom in/out quickly around high zoom on Bear Sunny and long landscape documents; the viewport should never remain permanently blurry, and unzoom should not hitch when the crisp crop arrives.
+
+49. Copy-selected-text newline normalization.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: do the same replace-newline-with-space text trick when copying selected text, and make it toggleable in the Edit menu with the default on.
+   - Changed: document text copy now uses the same whitespace-collapsing helper as selection translation/search when `Replace Line Breaks When Copying Text` is enabled. This affects only `copySelection:`; normal macOS text-field copy remains untouched.
+   - Changed: the toggle is checkable in the Edit menu, defaults on for fresh settings, and persists in `settings.json` as `collapseWhitespaceWhenCopyingText`.
+   - Validation target: select multiline PDF text and copy; with the Edit-menu toggle on, pasted text should be one whitespace-normalized line. Turn it off and copy again; pasted text should preserve the original selected line breaks.
+
+50. Find-field horizontal navigation and zoom render de-regression.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: long Find-field text still cannot be navigated horizontally; zoom/unzoom can still leave pages blurry forever and create massive lag when unzooming.
+   - Changed: the toolbar Find search field is explicitly single-line, scrollable, non-wrapping, and handles horizontal trackpad scrolling locally by moving/scrolling the field editor through the query instead of letting the event fall through to document scrolling.
+   - Changed: live zoom now clears queued render work immediately instead of suspending and carrying stale background work. Queued full-page renders also check the live-zoom sequence before starting expensive work.
+   - Changed: post-zoom visible viewport crops are scheduled before full-page/nearby background renders, and those background renders are delayed briefly so the crisp visible crop is not stuck behind stale high-zoom work.
+   - Changed: drawing again uses the previous full-page image as the live fallback instead of dropping straight to the minimap image, while stale viewport crops are still ignored when their zoom/scale no longer matches.
+   - Validation target: enter a long Find query and verify horizontal trackpad movement/arrows can navigate it. Repeatedly zoom in/out at high zoom; the visible page should crisp up without getting stuck behind background renders, and fast unzoom should not hitch behind stale high-zoom work.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

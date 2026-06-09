@@ -44,6 +44,8 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName);
 - (void)detachTabAtIndex:(NSInteger)index;
 - (void)newTabRequested:(id)sender;
 - (void)clearFindFieldFocus;
+- (void)sidebarDividerDraggedByDeltaX:(CGFloat)deltaX;
+- (void)sidebarDividerDidFinishDragging;
 - (void)minimapDividerDraggedByDeltaX:(CGFloat)deltaX;
 - (void)minimapDividerDidFinishDragging;
 - (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction;
@@ -92,6 +94,10 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName);
 @end
 
 @interface SPDFMinimapDividerView : NSView
+@property(nonatomic, weak) id<SPDFMacUIReader> reader;
+@end
+
+@interface SPDFSidebarDividerView : NSView
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
 @end
 
