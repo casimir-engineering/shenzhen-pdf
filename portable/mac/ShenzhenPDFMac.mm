@@ -113,11 +113,13 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
     if (action == @selector(makeDefaultPDFReader:)) return @"checkmark.seal";
     if (action == @selector(showInFolder:)) return @"folder";
     if (action == @selector(copyCurrentDocumentPath:)) return @"doc.text";
+    if (action == @selector(searchSelectedTextInBrowser:)) return @"safari";
     if (action == @selector(saveDocumentAs:)) return @"square.and.arrow.down";
     if (action == @selector(closeDocument:)) return @"xmark.circle";
     if (action == @selector(printDocument:)) return @"printer";
     if (action == @selector(ocrDocument:)) return @"text.viewfinder";
-    if (action == @selector(translateDocument:)) return @"translate";
+    if (action == @selector(translateDocument:) || action == @selector(showSelectionTranslationPanel:))
+        return @"translate";
     if (action == @selector(showProperties:)) return @"info.circle";
     if (action == @selector(firstPage:)) return @"arrow.left.to.line";
     if (action == @selector(previousPage:)) return @"chevron.left";
@@ -285,6 +287,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _pendingWindowArrangementAction = NULL;
     _translationRunning = NO;
     _translationInstallRunning = NO;
+    _selectionTranslationGeneration = 0;
     _showShortcutHelpOnLaunch = YES;
     _defaultReaderPromptDismissed = NO;
     _terminateOnlyThisProcess = NO;
@@ -6754,6 +6757,407 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _statusLabel.stringValue = @"Selected text copied.";
 }
 
+- (NSString*)trimmedSelectedTextForCommand {
+    return [_selectedText ?: @"" stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+- (NSString*)shortSelectedTextForMenuTitle {
+    NSString* raw = [self trimmedSelectedTextForCommand];
+    NSString* text = [raw stringByReplacingOccurrencesOfString:@"\\s+"
+                                                    withString:@" "
+                                                       options:NSRegularExpressionSearch
+                                                         range:NSMakeRange(0, raw.length)];
+    if (text.length <= 42) return text;
+    return [[text substringToIndex:39] stringByAppendingString:@"..."];
+}
+
+- (void)searchSelectedTextInBrowser:(id)sender {
+    (void)sender;
+    NSString* query = [self trimmedSelectedTextForCommand];
+    if (query.length == 0) {
+        NSBeep();
+        return;
+    }
+
+    NSMutableCharacterSet* allowed = [NSCharacterSet.URLQueryAllowedCharacterSet mutableCopy];
+    [allowed removeCharactersInString:@"&=+?#"];
+    NSString* encoded = [query stringByAddingPercentEncodingWithAllowedCharacters:allowed];
+    if (encoded.length == 0) {
+        NSBeep();
+        return;
+    }
+
+    NSURL* url = [NSURL URLWithString:[@"x-web-search://?" stringByAppendingString:encoded]];
+    if (!url || ![NSWorkspace.sharedWorkspace openURL:url]) {
+        [self showError:@"Could not search the selected text"
+                 detail:@"macOS did not accept the system web-search request."];
+        return;
+    }
+    _statusLabel.stringValue = @"Opened selected text in browser search.";
+}
+
+- (NSTextView*)translationTextViewEditable:(BOOL)editable {
+    NSTextView* textView = [[NSTextView alloc] initWithFrame:NSZeroRect];
+    textView.font = [NSFont systemFontOfSize:13.0];
+    textView.editable = editable;
+    textView.selectable = YES;
+    textView.verticallyResizable = YES;
+    textView.horizontallyResizable = NO;
+    textView.textContainer.widthTracksTextView = YES;
+    textView.autoresizingMask = NSViewWidthSizable;
+    return textView;
+}
+
+- (NSScrollView*)scrollViewForTranslationTextView:(NSTextView**)textViewOut editable:(BOOL)editable {
+    NSScrollView* scroll = [[NSScrollView alloc] init];
+    scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    scroll.hasVerticalScroller = YES;
+    scroll.hasHorizontalScroller = NO;
+    scroll.borderType = NSBezelBorder;
+    NSTextView* textView = [self translationTextViewEditable:editable];
+    scroll.documentView = textView;
+    if (textViewOut) *textViewOut = textView;
+    return scroll;
+}
+
+- (void)buildSelectionTranslationPanelIfNeeded {
+    if (_selectionTranslationPanel) return;
+
+    _selectionTranslationPanel = [[NSPanel alloc]
+        initWithContentRect:NSMakeRect(0, 0, 680, 540)
+                  styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    _selectionTranslationPanel.title = @"Translate Selection";
+    _selectionTranslationPanel.releasedWhenClosed = NO;
+
+    NSView* content = [[NSView alloc] initWithFrame:_selectionTranslationPanel.contentView.bounds];
+    content.translatesAutoresizingMaskIntoConstraints = NO;
+    _selectionTranslationPanel.contentView = content;
+
+    NSTextField* fromLabel = [NSTextField labelWithString:@"From"];
+    fromLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:fromLabel];
+    _selectionTranslationSourcePopup = [[NSPopUpButton alloc] init];
+    _selectionTranslationSourcePopup.translatesAutoresizingMaskIntoConstraints = NO;
+    _selectionTranslationSourcePopup.target = self;
+    _selectionTranslationSourcePopup.action = @selector(selectionTranslationLanguageChanged:);
+    [content addSubview:_selectionTranslationSourcePopup];
+
+    NSTextField* toLabel = [NSTextField labelWithString:@"To"];
+    toLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:toLabel];
+    _selectionTranslationTargetPopup = [[NSPopUpButton alloc] init];
+    _selectionTranslationTargetPopup.translatesAutoresizingMaskIntoConstraints = NO;
+    _selectionTranslationTargetPopup.target = self;
+    _selectionTranslationTargetPopup.action = @selector(selectionTranslationLanguageChanged:);
+    [content addSubview:_selectionTranslationTargetPopup];
+
+    _selectionTranslationButton = [NSButton buttonWithTitle:@"Translate"
+                                                     target:self
+                                                     action:@selector(runSelectionTranslationFromPanel:)];
+    _selectionTranslationButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:_selectionTranslationButton];
+
+    NSTextField* inputLabel = [NSTextField labelWithString:@"Input"];
+    inputLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    inputLabel.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightSemibold];
+    [content addSubview:inputLabel];
+    NSTextView* inputTextView = nil;
+    NSScrollView* inputScroll = [self scrollViewForTranslationTextView:&inputTextView editable:YES];
+    _selectionTranslationInputView = inputTextView;
+    [content addSubview:inputScroll];
+
+    NSTextField* outputLabel = [NSTextField labelWithString:@"Translation"];
+    outputLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    outputLabel.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightSemibold];
+    [content addSubview:outputLabel];
+    NSTextView* outputTextView = nil;
+    NSScrollView* outputScroll = [self scrollViewForTranslationTextView:&outputTextView editable:YES];
+    _selectionTranslationOutputView = outputTextView;
+    [content addSubview:outputScroll];
+
+    _selectionTranslationStatusLabel = [NSTextField labelWithString:@""];
+    _selectionTranslationStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _selectionTranslationStatusLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [content addSubview:_selectionTranslationStatusLabel];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [fromLabel.topAnchor constraintEqualToAnchor:content.topAnchor constant:14],
+        [fromLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:16],
+        [_selectionTranslationSourcePopup.centerYAnchor constraintEqualToAnchor:fromLabel.centerYAnchor],
+        [_selectionTranslationSourcePopup.leadingAnchor constraintEqualToAnchor:fromLabel.trailingAnchor constant:8],
+        [_selectionTranslationSourcePopup.widthAnchor constraintEqualToConstant:190],
+        [toLabel.centerYAnchor constraintEqualToAnchor:fromLabel.centerYAnchor],
+        [toLabel.leadingAnchor constraintEqualToAnchor:_selectionTranslationSourcePopup.trailingAnchor constant:16],
+        [_selectionTranslationTargetPopup.centerYAnchor constraintEqualToAnchor:fromLabel.centerYAnchor],
+        [_selectionTranslationTargetPopup.leadingAnchor constraintEqualToAnchor:toLabel.trailingAnchor constant:8],
+        [_selectionTranslationTargetPopup.widthAnchor constraintEqualToConstant:190],
+        [_selectionTranslationButton.centerYAnchor constraintEqualToAnchor:fromLabel.centerYAnchor],
+        [_selectionTranslationButton.leadingAnchor
+            constraintGreaterThanOrEqualToAnchor:_selectionTranslationTargetPopup.trailingAnchor
+                                        constant:12],
+        [_selectionTranslationButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-16],
+        [inputLabel.topAnchor constraintEqualToAnchor:fromLabel.bottomAnchor constant:16],
+        [inputLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:16],
+        [inputLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-16],
+        [inputScroll.topAnchor constraintEqualToAnchor:inputLabel.bottomAnchor constant:6],
+        [inputScroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:16],
+        [inputScroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-16],
+        [inputScroll.heightAnchor constraintGreaterThanOrEqualToConstant:150],
+        [outputLabel.topAnchor constraintEqualToAnchor:inputScroll.bottomAnchor constant:12],
+        [outputLabel.leadingAnchor constraintEqualToAnchor:inputLabel.leadingAnchor],
+        [outputLabel.trailingAnchor constraintEqualToAnchor:inputLabel.trailingAnchor],
+        [outputScroll.topAnchor constraintEqualToAnchor:outputLabel.bottomAnchor constant:6],
+        [outputScroll.leadingAnchor constraintEqualToAnchor:inputScroll.leadingAnchor],
+        [outputScroll.trailingAnchor constraintEqualToAnchor:inputScroll.trailingAnchor],
+        [outputScroll.heightAnchor constraintEqualToAnchor:inputScroll.heightAnchor],
+        [_selectionTranslationStatusLabel.topAnchor constraintEqualToAnchor:outputScroll.bottomAnchor constant:10],
+        [_selectionTranslationStatusLabel.leadingAnchor constraintEqualToAnchor:inputScroll.leadingAnchor],
+        [_selectionTranslationStatusLabel.trailingAnchor constraintEqualToAnchor:inputScroll.trailingAnchor],
+        [_selectionTranslationStatusLabel.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-14]
+    ]];
+}
+
+- (void)syncSelectionTranslationLanguagePopups {
+    [self populateTranslationLanguagePopup:_selectionTranslationSourcePopup
+                              selectedCode:_translationSourceLanguage ?: @"zh"];
+    [self populateTranslationLanguagePopup:_selectionTranslationTargetPopup
+                              selectedCode:_translationTargetLanguage ?: @"en"];
+}
+
+- (void)selectionTranslationLanguageChanged:(id)sender {
+    (void)sender;
+    _translationSourceLanguage = [self selectedTranslationLanguageCodeFromPopup:_selectionTranslationSourcePopup
+                                                                       fallback:@"zh"];
+    _translationTargetLanguage = [self selectedTranslationLanguageCodeFromPopup:_selectionTranslationTargetPopup
+                                                                       fallback:@"en"];
+    [self savePersistentState];
+}
+
+- (void)showSelectionTranslationPanel:(id)sender {
+    (void)sender;
+    NSString* selected = [self trimmedSelectedTextForCommand];
+    if (selected.length == 0) {
+        NSBeep();
+        return;
+    }
+
+    [self buildSelectionTranslationPanelIfNeeded];
+    [self syncSelectionTranslationLanguagePopups];
+    _selectionTranslationInputView.string = selected;
+    _selectionTranslationOutputView.string = @"";
+    _selectionTranslationStatusLabel.stringValue = @"Preparing translation...";
+    _selectionTranslationButton.enabled = !_translationRunning && !_translationInstallRunning;
+    [_selectionTranslationPanel center];
+    [_selectionTranslationPanel makeKeyAndOrderFront:nil];
+    [_selectionTranslationPanel makeFirstResponder:_selectionTranslationInputView];
+    [self runSelectionTranslationFromPanel:nil];
+}
+
+- (void)finishSelectionTranslationWithGeneration:(NSUInteger)generation
+                                          output:(NSString*)output
+                                           error:(NSString*)error {
+    if (generation != _selectionTranslationGeneration) return;
+    _translationRunning = NO;
+    _translationCancelRequested = NO;
+    _selectionTranslationButton.enabled = YES;
+    _translateButton.enabled = _doc != NULL && !_translationInstallRunning;
+    if (error.length) {
+        _selectionTranslationStatusLabel.stringValue = error;
+        _statusLabel.stringValue = @"Selection translation failed.";
+        return;
+    }
+    _selectionTranslationOutputView.string = output ?: @"";
+    _selectionTranslationStatusLabel.stringValue = @"Translation complete.";
+    _statusLabel.stringValue = @"Selection translated.";
+}
+
+- (void)runSelectionTranslationWithText:(NSString*)text
+                         sourceLanguage:(NSString*)sourceLanguage
+                         targetLanguage:(NSString*)targetLanguage
+                       offeredInstaller:(BOOL)offeredInstaller {
+    NSUInteger generation = ++_selectionTranslationGeneration;
+    NSString* tool = [self argosToolPath];
+    if (!tool.length) {
+        [self promptToInstallArgosAndContinueSelectionText:text
+                                            sourceLanguage:sourceLanguage
+                                            targetLanguage:targetLanguage];
+        return;
+    }
+
+    _translationRunning = YES;
+    _translationCancelRequested = NO;
+    _selectionTranslationButton.enabled = NO;
+    _translateButton.enabled = NO;
+    _selectionTranslationStatusLabel.stringValue = @"Translating locally with Argos...";
+    _statusLabel.stringValue = @"Translating selection...";
+
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      NSString* translated = nil;
+      NSString* failure = nil;
+      BOOL ok = [self runArgosToolSynchronously:tool
+                                 sourceLanguage:sourceLanguage
+                                 targetLanguage:targetLanguage
+                                          input:text
+                                         output:&translated
+                                          error:&failure];
+      dispatch_async(dispatch_get_main_queue(), ^{
+        ShenzhenMacDelegate* strongSelf = weakSelf;
+        if (!strongSelf || generation != strongSelf->_selectionTranslationGeneration) return;
+        if (!ok) {
+            strongSelf->_translationRunning = NO;
+            strongSelf->_selectionTranslationButton.enabled = YES;
+            strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationInstallRunning;
+            if (!offeredInstaller && failure.length) {
+                [strongSelf runArgosPackageInstallForSelectionFromLanguage:sourceLanguage
+                                                                toLanguage:targetLanguage
+                                                                      text:text];
+                return;
+            }
+            [strongSelf finishSelectionTranslationWithGeneration:generation
+                                                          output:nil
+                                                           error:failure.length ? failure : @"Translation failed."];
+            return;
+        }
+        [strongSelf finishSelectionTranslationWithGeneration:generation output:translated ?: @"" error:nil];
+      });
+    });
+}
+
+- (void)runSelectionTranslationFromPanel:(id)sender {
+    (void)sender;
+    [self selectionTranslationLanguageChanged:nil];
+    NSString* source = _translationSourceLanguage ?: @"zh";
+    NSString* target = _translationTargetLanguage ?: @"en";
+    NSString* text = [_selectionTranslationInputView.string ?: @""
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (text.length == 0) {
+        _selectionTranslationStatusLabel.stringValue = @"Input text is empty.";
+        NSBeep();
+        return;
+    }
+    if ([source isEqualToString:target]) {
+        _selectionTranslationStatusLabel.stringValue = @"Choose different source and target languages.";
+        NSBeep();
+        return;
+    }
+    if (_translationRunning || _translationInstallRunning) {
+        _selectionTranslationStatusLabel.stringValue = @"A translation task is already running.";
+        return;
+    }
+    _selectionTranslationOutputView.string = @"";
+    [self runSelectionTranslationWithText:text sourceLanguage:source targetLanguage:target offeredInstaller:NO];
+}
+
+- (void)promptToInstallArgosAndContinueSelectionText:(NSString*)text
+                                      sourceLanguage:(NSString*)sourceLanguage
+                                      targetLanguage:(NSString*)targetLanguage {
+    if (_translationInstallRunning) return;
+
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Install Argos Translate?";
+    alert.informativeText = @"Shenzhen PDF uses Argos Translate locally for offline selection translation. "
+                            @"Install it, then continue translation.";
+    [alert addButtonWithTitle:@"Install"];
+    [alert addButtonWithTitle:@"Cancel"];
+    alert.alertStyle = NSAlertStyleInformational;
+    if ([alert runModal] != NSAlertFirstButtonReturn) {
+        _selectionTranslationStatusLabel.stringValue = @"Argos Translate is required for local translation.";
+        return;
+    }
+
+    NSTask* task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
+    task.arguments = @[ @"-lc", [self argosInstallScript] ];
+
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    [self runTranslationInstallTask:task
+                              title:@"Installing Translation Support"
+                            heading:@"Installing Argos Translate"
+                         initialLog:@"Preparing Argos Translate installer...\n"
+                         completion:^(NSTask* finishedTask, NSString* output) {
+                           (void)output;
+                           ShenzhenMacDelegate* strongSelf = weakSelf;
+                           if (!strongSelf) return;
+                           strongSelf->_translationInstallRunning = NO;
+                           strongSelf->_translateButton.enabled =
+                               strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+                           if (finishedTask.terminationStatus == 0 && [strongSelf argosToolPath].length) {
+                               [strongSelf appendTranslationInstallLog:@"\nArgos Translate installed.\n"];
+                               [strongSelf->_translationInstallPanel orderOut:nil];
+                               [strongSelf runSelectionTranslationWithText:text
+                                                            sourceLanguage:sourceLanguage
+                                                            targetLanguage:targetLanguage
+                                                          offeredInstaller:NO];
+                           } else {
+                               [strongSelf appendTranslationInstallLog:
+                                               @"\nArgos Translate installation failed. The log above can be selected "
+                                               @"and copied.\n"];
+                               strongSelf->_selectionTranslationStatusLabel.stringValue = @"Argos installation failed.";
+                           }
+                         }];
+}
+
+- (void)runArgosPackageInstallForSelectionFromLanguage:(NSString*)sourceLanguage
+                                            toLanguage:(NSString*)targetLanguage
+                                                  text:(NSString*)text {
+    NSString* packageTool = [self argospmToolPath];
+    if (!packageTool.length) {
+        [self finishSelectionTranslationWithGeneration:_selectionTranslationGeneration
+                                                output:nil
+                                                 error:@"Argos package manager was not found."];
+        return;
+    }
+
+    NSString* packageName = [NSString stringWithFormat:@"translate-%@_%@", sourceLanguage, targetLanguage];
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Install Argos language package?";
+    alert.informativeText = [NSString stringWithFormat:@"The offline %@ to %@ package may be missing. Shenzhen PDF can "
+                                                       @"ask argospm to install %@, then continue translation.",
+                                                       sourceLanguage, targetLanguage, packageName];
+    [alert addButtonWithTitle:@"Install"];
+    [alert addButtonWithTitle:@"Cancel"];
+    alert.alertStyle = NSAlertStyleInformational;
+    if ([alert runModal] != NSAlertFirstButtonReturn) {
+        _selectionTranslationStatusLabel.stringValue = @"Translation package is required.";
+        return;
+    }
+
+    NSTask* task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:packageTool];
+    task.arguments = @[ @"install", packageName ];
+
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    [self runTranslationInstallTask:task
+                              title:@"Installing Translation Package"
+                            heading:[NSString stringWithFormat:@"Installing %@", packageName]
+                         initialLog:[NSString stringWithFormat:@"Running argospm install %@...\n", packageName]
+                         completion:^(NSTask* finishedTask, NSString* output) {
+                           (void)output;
+                           ShenzhenMacDelegate* strongSelf = weakSelf;
+                           if (!strongSelf) return;
+                           strongSelf->_translationInstallRunning = NO;
+                           strongSelf->_translateButton.enabled =
+                               strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+                           if (finishedTask.terminationStatus == 0) {
+                               [strongSelf appendTranslationInstallLog:@"\nArgos language package installed.\n"];
+                               [strongSelf->_translationInstallPanel orderOut:nil];
+                               [strongSelf runSelectionTranslationWithText:text
+                                                            sourceLanguage:sourceLanguage
+                                                            targetLanguage:targetLanguage
+                                                          offeredInstaller:YES];
+                           } else {
+                               [strongSelf appendTranslationInstallLog:
+                                               @"\nArgos language package installation failed. The log above can be "
+                                               @"selected and copied.\n"];
+                               strongSelf->_selectionTranslationStatusLabel.stringValue =
+                                   @"Translation package installation failed.";
+                           }
+                         }];
+}
+
 - (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint {
     if (!_doc) return NO;
 
@@ -9450,6 +9854,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         NSBeep();
         return;
     }
+    if ([self trimmedSelectedTextForCommand].length > 0) {
+        [self showSelectionTranslationPanel:sender];
+        return;
+    }
     if (![self ensureActivePDFCanBeModifiedForOperation:@"translation"]) return;
     if (_translationInstallRunning) {
         [_translationInstallPanel makeKeyAndOrderFront:nil];
@@ -10335,6 +10743,24 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
 
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
+    if (_selectedText.length > 0) {
+        NSString* preview = [self shortSelectedTextForMenuTitle];
+        NSMenuItem* translateSelection =
+            [menu addItemWithTitle:preview.length ? [NSString stringWithFormat:@"Translate \"%@\"", preview]
+                                                  : @"Translate Selection"
+                            action:@selector(showSelectionTranslationPanel:)
+                     keyEquivalent:@""];
+        translateSelection.target = self;
+        translateSelection.enabled = !_translationRunning && !_translationInstallRunning;
+        NSMenuItem* webSearch =
+            [menu addItemWithTitle:preview.length ? [NSString stringWithFormat:@"Search Web for \"%@\"", preview]
+                                                  : @"Search Web"
+                            action:@selector(searchSelectedTextInBrowser:)
+                     keyEquivalent:@""];
+        webSearch.target = self;
+        webSearch.enabled = YES;
+        [menu addItem:[NSMenuItem separatorItem]];
+    }
     NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(copySelection:) keyEquivalent:@""];
     copy.enabled = _selectedText.length > 0;
     if (_contextCommentIndex >= 0) {
@@ -11104,6 +11530,9 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         menuItem.state = _findRegexMultiline ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
+    if (action == @selector(searchSelectedTextInBrowser:)) return _selectedText.length > 0;
+    if (action == @selector(showSelectionTranslationPanel:))
+        return _selectedText.length > 0 && !_translationRunning && !_translationInstallRunning;
     if (action == @selector(copySelection:)) return _selectedText.length > 0;
     if (action == @selector(addComment:)) return hasDoc && (_selectedText.length > 0 || _contextPageIndex >= 0);
     if (action == @selector(editComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;

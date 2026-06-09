@@ -90,6 +90,13 @@
     NSTextField* _translationProgressDetailLabel;
     NSProgressIndicator* _translationProgressIndicator;
     NSButton* _translationProgressCancelButton;
+    NSPanel* _selectionTranslationPanel;
+    NSPopUpButton* _selectionTranslationSourcePopup;
+    NSPopUpButton* _selectionTranslationTargetPopup;
+    NSTextView* _selectionTranslationInputView;
+    NSTextView* _selectionTranslationOutputView;
+    NSTextField* _selectionTranslationStatusLabel;
+    NSButton* _selectionTranslationButton;
     NSTask* _translationTask;
     NSPanel* _commentPanel;
     NSTextField* _commentLabel;
@@ -211,6 +218,7 @@
     BOOL _translationRunning;
     BOOL _translationInstallRunning;
     BOOL _translationCancelRequested;
+    NSUInteger _selectionTranslationGeneration;
     BOOL _showShortcutHelpOnLaunch;
     BOOL _defaultReaderPromptDismissed;
     BOOL _tabStripCapturingMouse;
@@ -257,6 +265,9 @@
 - (BOOL)handleTabStripMouseEvent:(NSEvent*)event;
 - (BOOL)documentViewInPresentationMode;
 - (void)copySelection:(id)sender;
+- (void)searchSelectedTextInBrowser:(id)sender;
+- (void)showSelectionTranslationPanel:(id)sender;
+- (void)runSelectionTranslationFromPanel:(id)sender;
 - (void)copyCurrentDocumentPath:(id)sender;
 - (void)saveDocumentAs:(id)sender;
 - (BOOL)saveActiveDocumentAsWithPanelTitle:(NSString*)panelTitle statusMessage:(NSString*)statusMessage;
