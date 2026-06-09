@@ -366,9 +366,12 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
     BOOL hasExactFullPageImage = page.image && fabs(page.imageZoom - self.zoom) <= 0.001 &&
                                  fabs(page.imageScale - [self effectiveBackingScale]) <= 0.001;
-    NSImage* image = page.image ?: page.minimapImage;
+    NSImage* image = nil;
+    if (hasExactFullPageImage) image = page.image;
+    else if (self.liveZooming) image = page.minimapImage;
+    else image = page.image ?: page.minimapImage;
     if (image) {
-        BOOL drawingExactImage = page.image == image;
+        BOOL drawingExactImage = hasExactFullPageImage && page.image == image;
         BOOL exactSize = drawingExactImage && fabs(NSWidth(pageRect) - page.imagePointWidth) < 0.01 &&
                          fabs(NSHeight(pageRect) - page.imagePointHeight) < 0.01;
         NSGraphicsContext* context = NSGraphicsContext.currentContext;

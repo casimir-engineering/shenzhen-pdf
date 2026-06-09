@@ -14,6 +14,7 @@
 @property(nonatomic) NSRect activeFindRect;
 @property(nonatomic) CGFloat activeFindAlpha;
 @property(nonatomic) BOOL presentationMode;
+@property(nonatomic) BOOL liveZooming;
 @property(nonatomic, copy) NSString* emptyMessage;
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize;

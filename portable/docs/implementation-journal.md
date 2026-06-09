@@ -427,6 +427,13 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: drawing again uses the previous full-page image as the live fallback instead of dropping straight to the minimap image, while stale viewport crops are still ignored when their zoom/scale no longer matches.
    - Validation target: enter a long Find query and verify horizontal trackpad movement/arrows can navigate it. Repeatedly zoom in/out at high zoom; the visible page should crisp up without getting stuck behind background renders, and fast unzoom should not hitch behind stale high-zoom work.
 
+51. High-zoom unzoom lag fallback.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: when zoomed in, unzoom still has extreme lag.
+   - Finding: the live unzoom path could still draw a stale high-resolution full-page bitmap as the fallback after the zoom value changed. Scaling that large image every live-zoom frame can dominate the UI thread.
+   - Changed: `SPDFDocumentView` now knows when live zoom is active. During live zoom it draws exact full-page images normally, but if the full-page image is stale it uses the lightweight minimap fallback instead of scaling the stale high-resolution page image. Once zoom settles, the async crisp viewport crop/background render path resumes as before.
+   - Validation target: zoom deeply into a page and immediately unzoom; the gesture should stay responsive instead of hitching on stale high-zoom bitmap scaling.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

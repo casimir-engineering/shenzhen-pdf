@@ -3309,6 +3309,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
           self->_pageView.zoom = self->_zoom;
           self->_pageView.viewMode = self->_viewMode;
           self->_pageView.backingScale = [self backingScale];
+          self->_pageView.liveZooming = NO;
           [self applySearchHighlightsToCurrentPage];
           [self resizeDocumentView];
           if (restoreOrigin)
@@ -5034,6 +5035,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _rememberedCustomZoom = _zoom;
     _pageView.backingScale = [self backingScale];
     _pageView.zoom = _zoom;
+    _pageView.liveZooming = _liveZooming;
     if (_liveZooming) [self resizeDocumentViewForLiveZoom];
     else [self resizeDocumentView];
     BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
@@ -5087,6 +5089,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSInteger preservedPageIndex = _pageIndex;
     _liveZooming = NO;
     _liveZoomAnchorValid = NO;
+    _pageView.liveZooming = NO;
     [self resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:YES];
     if (_doc) {
         _documentViewPanCropGeneration++;
@@ -5147,6 +5150,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         _lastLiveZoomControlUpdateTime = 0.0;
     }
     _liveZooming = YES;
+    _pageView.liveZooming = YES;
     _liveZoomSequence++;
     [_zoomFinishTimer invalidate];
     [self setZoomWithoutRendering:targetZoom centeredAtWindowPoint:windowPoint];
@@ -5164,6 +5168,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _liveZoomSequence++;
     _liveZooming = NO;
     _liveZoomAnchorValid = NO;
+    _pageView.liveZooming = NO;
     [self resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:YES];
     _liveZoomMinimapUpdateScheduled = NO;
     _documentViewPanCropGeneration++;
@@ -7002,6 +7007,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _liveZoomSequence++;
     _liveZooming = NO;
     _liveZoomAnchorValid = NO;
+    _pageView.liveZooming = NO;
     [self resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:YES];
     _liveZoomMinimapUpdateScheduled = NO;
     [_pageView cancelTransientInteraction];
