@@ -73,6 +73,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @interface SPDFWorkerDocument : NSObject
 @property(nonatomic) spdf_document* document;
 @property(nonatomic, copy) NSString* path;
+@property(nonatomic, copy) NSString* cacheKey;
 @end
 
 SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source);

@@ -65,6 +65,9 @@
     NSTextField* _statusLabel;
     NSSegmentedControl* _sidebarModeControl;
     NSSearchField* _sidebarFilterField;
+    NSLayoutConstraint* _sidebarFilterTopConstraint;
+    NSLayoutConstraint* _sidebarScrollBelowFilterConstraint;
+    NSLayoutConstraint* _sidebarScrollBelowModeConstraint;
     NSPanel* _palettePanel;
     NSSearchField* _paletteSearchField;
     NSButton* _paletteAllDocsCheckbox;
@@ -173,12 +176,7 @@
     BOOL _documentViewPanMaintenanceScheduled;
     NSUInteger _documentViewPanCropGeneration;
     NSTimeInterval _lastDocumentPanLiveCropRenderTime;
-    NSUInteger _asyncViewportCropRenderGeneration;
-    NSTimeInterval _lastAsyncViewportCropRenderQueueTime;
-    NSTimeInterval _deferViewportCropRenderUntil;
-    BOOL _asyncViewportCropRetryScheduled;
-    CGFloat _pendingAsyncViewportCropDisplayScale;
-    BOOL _pendingAsyncViewportCropAllowFullPageRenderAllowedPages;
+    NSUInteger _viewportMovementGeneration;
     BOOL _minimapPrecisionViewportDragActive;
     BOOL _defaultSidebarVisibleForNewDocuments;
     BOOL _defaultMinimapVisibleForNewDocuments;
@@ -249,7 +247,7 @@
 - (NSInteger)documentViewCurrentPageIndex;
 - (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
-- (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
+- (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
 - (void)documentViewDidBeginPan;
 - (void)documentViewDidFinishPanMotion;
 - (void)cancelDocumentTransientInteraction;
@@ -259,6 +257,11 @@
 - (BOOL)handleTabStripMouseEvent:(NSEvent*)event;
 - (BOOL)documentViewInPresentationMode;
 - (void)copySelection:(id)sender;
+- (void)copyCurrentDocumentPath:(id)sender;
+- (void)saveDocumentAs:(id)sender;
+- (BOOL)saveActiveDocumentAsWithPanelTitle:(NSString*)panelTitle statusMessage:(NSString*)statusMessage;
+- (BOOL)ensureActivePDFCanBeModifiedForOperation:(NSString*)operationName;
+- (NSInteger)selectableTextStateForPDFAtPath:(NSString*)path errorMessage:(NSString**)errorMessage;
 - (void)translateDocument:(id)sender;
 - (void)rotateClockwise:(id)sender;
 - (void)rotateAnticlockwise:(id)sender;
@@ -266,6 +269,7 @@
 - (void)insertDraggedTab:(SPDFDocumentTab*)tab atIndex:(NSInteger)index;
 - (void)selectTabAtIndex:(NSInteger)index;
 - (void)closeTabAtIndex:(NSInteger)index;
+- (void)copyTabPathToPasteboardAtIndex:(NSInteger)index;
 - (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex;
 - (void)detachTabAtIndex:(NSInteger)index;
 - (void)newTabRequested:(id)sender;
@@ -369,6 +373,10 @@
 - (void)renderVisiblePageCropsForCurrentViewportWithDisplayScale:(CGFloat)displayScale
                                  allowFullPageRenderAllowedPages:(BOOL)allowFullPageRenderAllowedPages;
 - (void)renderVisiblePageCropsForCurrentViewportAfterLiveZoom;
+- (void)schedulePostLiveZoomViewportRenderForSequence:(NSUInteger)sequence
+                                                 path:(NSString*)path
+                                     renderGeneration:(NSUInteger)renderGeneration
+                                   movementGeneration:(NSUInteger)movementGeneration;
 - (void)renderVisiblePageCropsForCurrentViewportIfNeeded;
 - (void)scheduleDocumentPanMaintenance;
 - (void)renderLiveDocumentPanViewportCropIfDue;

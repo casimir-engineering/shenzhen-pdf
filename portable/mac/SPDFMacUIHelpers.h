@@ -3,6 +3,7 @@
 @class SPDFDocumentTab;
 
 void spdf_activate_window_for_view(NSView* view);
+void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName);
 
 @protocol SPDFMacUIReader <NSObject>
 - (BOOL)handlePresentationEvent:(NSEvent*)event;
@@ -19,7 +20,7 @@ void spdf_activate_window_for_view(NSView* view);
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
 - (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
-- (void)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
+- (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
 - (void)documentViewDidBeginPan;
 - (void)documentViewDidFinishPanMotion;
 - (BOOL)documentViewInPresentationMode;
@@ -38,6 +39,7 @@ void spdf_activate_window_for_view(NSView* view);
 - (void)closeTabAtIndex:(NSInteger)index;
 - (void)showTabInFolderAtIndex:(NSInteger)index;
 - (void)copyTabFileToPasteboardAtIndex:(NSInteger)index;
+- (void)copyTabPathToPasteboardAtIndex:(NSInteger)index;
 - (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex;
 - (void)detachTabAtIndex:(NSInteger)index;
 - (void)newTabRequested:(id)sender;
@@ -62,6 +64,9 @@ void spdf_activate_window_for_view(NSView* view);
 
 @interface SPDFPaletteSearchField : NSSearchField
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
+@end
+
+@interface SPDFFindSearchField : NSSearchField
 @end
 
 @interface SPDFToolbarStackView : NSStackView

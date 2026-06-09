@@ -170,9 +170,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     start = MAX(0, MIN(start, count - visibleCount));
 
     NSMutableArray<NSNumber*>* indexes = [NSMutableArray arrayWithCapacity:(NSUInteger)visibleCount];
-    for (NSInteger i = 0; i < visibleCount; ++i) {
-        [indexes addObject:@(start + i)];
-    }
+    for (NSInteger i = 0; i < visibleCount; ++i) { [indexes addObject:@(start + i)]; }
     return indexes;
 }
 
@@ -180,9 +178,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     if (![self hasOverflowTabs]) return @[];
 
     NSMutableIndexSet* visibleIndexes = [NSMutableIndexSet indexSet];
-    for (NSNumber* index in [self visibleTabIndexes]) {
-        [visibleIndexes addIndex:(NSUInteger)index.integerValue];
-    }
+    for (NSNumber* index in [self visibleTabIndexes]) { [visibleIndexes addIndex:(NSUInteger)index.integerValue]; }
 
     NSMutableArray<NSNumber*>* hiddenIndexes = [NSMutableArray array];
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
@@ -269,10 +265,8 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
         }
     }
     if (hovered == _hoverTabIndex) return;
-    if (hovered >= 0)
-        [self showHoverPanelForTabAtIndex:hovered];
-    else
-        [self hideHoverPanel];
+    if (hovered >= 0) [self showHoverPanelForTabAtIndex:hovered];
+    else [self hideHoverPanel];
 }
 
 - (void)showHoverPanelForTabAtIndex:(NSInteger)index {
@@ -340,10 +334,8 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 - (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs {
     _tabs = [tabs copy];
     [self setNeedsDisplay:YES];
-    if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint, self.bounds))
-        [self updateHoverForPoint:_lastHoverPoint];
-    else
-        [self hideHoverPanel];
+    if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint, self.bounds)) [self updateHoverForPoint:_lastHoverPoint];
+    else [self hideHoverPanel];
 }
 
 - (void)setSelectedIndex:(NSInteger)selectedIndex {
@@ -592,6 +584,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
         item.target = self;
         item.representedObject = indexNumber;
         item.state = index == self.selectedIndex ? NSControlStateValueOn : NSControlStateValueOff;
+        spdf_set_menu_item_system_symbol(item, @"doc.text");
         [menu addItem:item];
     }
 
@@ -628,6 +621,12 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     NSNumber* indexNumber = [sender.representedObject isKindOfClass:NSNumber.class] ? sender.representedObject : nil;
     if (!indexNumber) return;
     [self.reader copyTabFileToPasteboardAtIndex:indexNumber.integerValue];
+}
+
+- (void)tabContextCopyPath:(NSMenuItem*)sender {
+    NSNumber* indexNumber = [sender.representedObject isKindOfClass:NSNumber.class] ? sender.representedObject : nil;
+    if (!indexNumber) return;
+    [self.reader copyTabPathToPasteboardAtIndex:indexNumber.integerValue];
 }
 
 - (void)startTabDragSessionWithEvent:(NSEvent*)event {
@@ -779,13 +778,17 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(tabContextCopyFile:) keyEquivalent:@""];
     copy.target = self;
     copy.representedObject = indexNumber;
+    NSMenuItem* copyPath = [menu addItemWithTitle:@"Copy Path" action:@selector(tabContextCopyPath:) keyEquivalent:@""];
+    copyPath.target = self;
+    copyPath.representedObject = indexNumber;
+    spdf_set_menu_item_system_symbol(showInFolder, @"folder");
+    spdf_set_menu_item_system_symbol(copy, @"doc.on.doc");
+    spdf_set_menu_item_system_symbol(copyPath, @"doc.text");
     [NSMenu popUpContextMenu:menu withEvent:event forView:self];
 }
 
 - (void)mouseDragged:(NSEvent*)event {
-    if (_draggedTabIndex < 0) {
-        return;
-    }
+    if (_draggedTabIndex < 0) { return; }
 
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     CGFloat dx = point.x - _dragStartPoint.x;

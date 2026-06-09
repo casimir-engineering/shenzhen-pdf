@@ -11,6 +11,16 @@ void spdf_activate_window_for_view(NSView* view) {
     if (!window.keyWindow) [window makeKeyAndOrderFront:nil];
 }
 
+void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
+    if (!item || symbolName.length == 0) return;
+    if (@available(macOS 11.0, *)) {
+        NSImage* image = [NSImage imageWithSystemSymbolName:symbolName accessibilityDescription:item.title];
+        if (!image) return;
+        [image setTemplate:YES];
+        item.image = image;
+    }
+}
+
 @implementation SPDFPresentationOverlayView
 
 - (BOOL)isFlipped {
@@ -320,6 +330,19 @@ void spdf_activate_window_for_view(NSView* view) {
         return;
     }
     [super keyDown:event];
+}
+
+@end
+
+@implementation SPDFFindSearchField
+
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+    (void)event;
+    return YES;
+}
+
+- (BOOL)mouseDownCanMoveWindow {
+    return NO;
 }
 
 @end
