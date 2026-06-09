@@ -260,7 +260,7 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Gap: TestFlight readiness has build tools/OpenSSL/MuPDF OK but still requires Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, App Store provisioning profile, and optionally Transporter before a signed upload `.pkg` can be produced.
 
 31. Prepare `26.6.8-2` post-zoom responsiveness release.
-   - Status: Implemented; commit and tag pending.
+   - Status: Implemented; committed and tagged as `26.6.8-2`.
    - Prompt link: after live zoom became fluent, the user reported an unacceptable 2-500 ms freeze immediately after zooming, plus a missing minimap viewport preview during zoom. README should also be refreshed to showcase the reader before TestFlight prep.
    - Agent prompt rewrite: priority is immediate post-zoom pan/scroll responsiveness while preserving the fluent zoom/pan strategy; minimap during-zoom viewport preview is desirable only if it does not reintroduce stutter.
    - Changed: live-zoom settle no longer renders the crisp backing-scale viewport crop synchronously on the main thread. It queues a high-priority async viewport crop, invalidates stale crop results when newer movement or sync rendering happens, and gives throttled requests a delayed retry so the latest viewport is not lost.
@@ -271,6 +271,126 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Reviewed: agent review found and the implementation fixed stale async crop application, dropped throttled crop requests, full-page render priority ahead of viewport crops, in-flight stale crop loops, live-zoom minimap O(n^2) geometry work, and pan-begin crop invalidation.
    - Tested: rebuilt and installed `/Applications/ShenzhenPDF.app`; verified CLI version `26.6.8-2`, bundle metadata `com.intuition.shenzhenpdf`/`26.6.8`/`2`, local codesign, Objective-C++ syntax, shortcut tests, and diff hygiene.
    - Gap: TestFlight readiness has build tools/OpenSSL/MuPDF OK but still requires Apple Distribution certificate, 3rd Party Mac Developer Installer certificate, App Store provisioning profile, and optionally Transporter before a signed upload `.pkg` can be produced.
+
+32. High-zoom drag regression after `26.6.8-2`.
+   - Status: Implemented for manual validation; not committed.
+   - Prompt link: moving inside the document became laggy at relatively high zoom; check whether it is better to revert the latest async crop changes and keep only a zoom-to-drag transition fix.
+   - Finding: the async post-zoom viewport crop queue added in `26.6.8-2` is the likely regression source because it can compete with high-zoom pan rendering on the shared render queue right when the user starts dragging.
+   - Changed: removed the async viewport-crop queue, retry throttle, and grace window, restoring the `26.6.8-1` synchronous crop path for normal pan/minimap behavior.
+   - Changed: replaced the immediate post-zoom crisp crop with a short delayed render guarded by document path, render generation, live-zoom sequence, and viewport-movement generation. If the user begins dragging or trackpad-scrolling after zoom, the delayed crop cancels instead of stealing responsiveness.
+   - Kept: lightweight minimap viewport updates during live zoom, since they avoid thumbnail work and were not tied to the high-zoom drag lag.
+   - Validation target: at high zoom, dragging inside Bear Sunny and the long document should feel like the validated `26.6.8-1` movement path. Zoom-to-drag should no longer freeze; if dragging starts immediately after zoom, the crisp crop may wait until movement settles.
+
+33. Search sidebar panel cleanup.
+   - Status: Implemented for manual validation; not committed.
+   - Prompt link: the Search sidebar tab should not show the redundant disabled “Search Results” filter box, and the “No matches...” empty state should be visually centered.
+   - Changed: the sidebar filter field is now hidden only while the Search segment is active, and the results scroll view moves directly below the segmented control. Chapters and Comments keep their existing filter field behavior.
+   - Changed: search status rows use the visible search-results height so the centered label is actually centered in the panel, not in a short table row at the top.
+   - Validation target: search with no matches should show no in-panel search box and center the “No matches for ...” text in the available Search panel area.
+
+34. Restore text selection priority over page drag.
+   - Status: Implemented for manual validation; not committed.
+   - Prompt link: text became unselectable because primary left-drag on the PDF page started document panning instead of text selection.
+   - Finding: the Mac document view was checking “can this document pan?” before starting selection, so any zoomed or single-page document swallowed left-drag selection.
+   - Changed: primary left-drag on a page now starts as text selection. If the drag moves past a small threshold and still selects no text, the interaction falls back to document panning from the original mouse-down point.
+   - Preserved: page-margin/blank-page dragging, right-drag, middle/other-button drag, trackpad panning, and single-page pan/page-turn behavior remain available.
+   - Validation target: dragging over selectable text should select/copy text; dragging blank slide/page areas should still move the document where panning is available.
+
+35. Save As fallback for protected PDFs.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: Cmd/Ctrl+S should expose Save As, File should include Save As, and operations that need to write back to a read-only or temporary PDF should offer Save As instead of failing.
+   - Changed: macOS adds File > Save As... on Cmd+S and saves the active PDF through `NSSavePanel`, then updates the tab path, cached document state, recent documents, and persistent state.
+   - Changed: macOS preflights PDF mutations before rotate, OCR, translation, and comment add/edit/delete. If the current PDF is in a temp folder or the file/folder is not writable, Shenzhen PDF asks for a writable copy and continues only if Save As succeeds.
+   - Changed: Linux mirrors File > Save As... on Ctrl+S, saves through a GTK save dialog, retargets the active tab to the saved PDF in place, and preflights rotate, OCR, translation, and comment add/edit/delete with the same writable/non-temp requirement.
+   - Validation target: open a PDF from `/tmp` or a read-only folder, run rotate/OCR/translate/comment edit, and verify the Save As prompt appears before the operation writes back.
+
+36. Stop left-click panning and stabilize trackpad live-zoom minimap preview.
+   - Status: Partially reverted for manual validation; not committed.
+   - Prompt link: after zoom-to-drag responsiveness improved, trackpad zoom still felt slightly laggy, the minimap viewport preview drifted during zoom, and left-click still dragged when clicking between text.
+   - Changed: primary left-drag on the document surface is selection-only. It no longer falls back to document panning on blank text gaps or page whitespace. Right/middle-button panning and trackpad scrolling remain separate paths.
+   - Reverted: the live-zoom minimap page-rect refresh and center-anchored trackpad pinch were rolled back after they made the drag/zoom behavior worse. Trackpad magnify again uses the event window point, and live zoom no longer rebuilds minimap page geometry mid-gesture.
+   - Validation target: drag between words/lines with left click should select or do nothing, never pan; trackpad zoom/drag should return to the previously better feel without the new minimap drift.
+
+37. Restore OCR output integrity.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: OCR appears to run successfully, but after completion no selectable text is produced in the document.
+   - Finding: direct OCRmyPDF runs on controlled no-text PDFs do produce selectable text, so the app boundary needed to stop trusting process success as document success.
+   - Changed: macOS and Linux now run the image-only path without `--skip-text`, validate the produced PDF with the core text extractor before replacing the original, and leave the original file unchanged if validation fails.
+   - Changed: if an image-only PDF still validates as no-text after the normal OCR pass, the app retries once with OCRmyPDF's forced image OCR mode, then validates again before installing the result.
+   - Validation target: OCR a no-text scanned/image PDF; after the app reports completion, text selection/search should work in the reloaded document. If OCRmyPDF completes but produces no selectable text, Shenzhen PDF should show an error instead of replacing the original.
+
+38. Revert last drag/zoom tweak.
+   - Status: Implemented for manual validation; not committed.
+   - Prompt link: the last modification to the drag/zoom issue made the behavior worse and should be reverted.
+   - Changed: removed the trackpad pinch center-anchor helper and restored `magnifyWithEvent:` to pass `event.locationInWindow`.
+   - Changed: removed the live-zoom minimap page-rectangle rebuild added in the previous tweak; during live zoom the minimap updates only the lightweight viewport fields as before.
+   - Preserved: OCR output validation, Save As fallback work, and text-selection-only left-click behavior were left intact.
+   - Validation target: compare trackpad zoom/drag against the previous better feel; the new worsening drift/stickiness should be gone.
+
+39. Stabilize page rotation reload state.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: page rotation reloads incorrectly, the displayed page state does not always match the saved PDF, and sometimes a second page rotates; only the current page shown in the page counter should turn.
+   - Finding: the core rotation function rotates exactly one page object in a controlled `qpdf` smoke test, but macOS render worker threads cached opened PDFs by path only, so after saving a rotation they could continue rendering the pre-rotation file.
+   - Finding: after a rotation save, the selected tab kept its old absolute scroll origin. Because rotation changes page geometry, reload could land on a neighboring page, so a repeated rotate could affect a different page than the one the user meant.
+   - Changed: macOS worker PDF caches are keyed by standardized path, file size, and modification date, forcing render workers to reopen a changed PDF after rotation/OCR/Save As-style writes.
+   - Changed: macOS rotation reads the current page from the visible page counter, cancels transient pan/zoom state, clears the tab scroll origin, and reloads explicitly to that page index after saving.
+   - Validation target: rotate page N, verify the app reloads still on page N, only page N changes in the saved PDF, and a second rotation without changing the page rotates page N again rather than a neighbor.
+
+40. Passive inactive-window scrolling and zooming.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: if the mouse is over the app and the app is not focused, scrolling and zooming should work without focusing the app until a click is detected.
+   - Finding: the main document scroll view already handled wheel and magnify events without calling the window activation helper, but the minimap wheel and magnify handlers activated the app before forwarding scroll/zoom.
+   - Changed: minimap scroll-wheel zoom, minimap pinch zoom, and minimap wheel scrolling now forward passive events without activating the app. Minimap click/drag still activates through `mouseDown`, preserving the current click behavior.
+   - Validation target: make another app active, hover the document and minimap in Shenzhen PDF, scroll and pinch/Cmd-scroll; the document should move/zoom while Shenzhen PDF remains inactive until an actual click.
+
+41. Copy Path menu commands and menu icons.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: add Copy Path to the document right-click menu and tab right-click menu, and try to put relevant system icons in front of menu options, including top menus.
+   - Changed: macOS File, document context, and tab context menus now expose Copy Path, copying the active/tab PDF path as plain text while keeping the existing tab Copy command as a file pasteboard copy.
+   - Changed: macOS menu items receive SF Symbol icons by action/title across top-level menus and context menus where symbols are available on the host system.
+   - Changed: Linux File and document context menus expose Copy Path, Linux tab right-click now exposes Show in Folder and Copy Path, and icon-capable GTK menu items use standard theme icon names where the desktop renders menu icons.
+   - Validation target: Copy Path from File, document right-click, and tab right-click should place the exact document path on the clipboard; existing Copy should still copy the PDF file object on macOS tabs; menu icons should appear where the OS/theme allows them.
+
+42. Restore live-zoom minimap viewport geometry only.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: zoom now feels like the previous acceptable behavior, but the minimap viewport behavior should keep the earlier good fix.
+   - Finding: after reverting the worsening zoom-anchor changes, live zoom still updated the minimap visible rectangle and scale but no longer refreshed the per-page document rectangles used to project that viewport onto the minimap. That left the blue viewport overlay calculated against stale page geometry during zoom.
+   - Changed: live zoom now refreshes only `documentPageRects` for the minimap before drawing the viewport overlay. It still avoids resetting minimap pages and skips thumbnail rendering while zooming, so the zoom gesture behavior and thumbnail performance strategy remain unchanged.
+   - Validation target: during fast zoom in/out, the minimap viewport should stay aligned with the actual visible document area without reintroducing the previous trackpad zoom/drag regression.
+
+43. Search sidebar layout polish.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: no-match text is still not centered, search result text should align with the beginning of the “Chapters” segment label, chapter pills should extend farther right, and result text should truncate with ellipses according to panel width.
+   - Changed: search result rows and chapter divider pills use a dedicated left edge, matching the segmented-control text line more closely than the generic sidebar row inset.
+   - Changed: the sidebar table column now tracks the visible scroll-view width on rebuild and sidebar resize, so result titles/subtitles truncate against the current panel width.
+   - Changed: empty/search-status rows refresh their height and reset scroll position when search results disappear, so the “No matches...” message centers in the visible Search panel instead of inheriting the previous result-list scroll offset.
+   - Changed: chapter divider pills expand to the available row width when there is no room for a useful trailing line; highlighted result titles carry a truncating paragraph style so they end with ellipses instead of clipping or wrapping.
+   - Validation target: search for no matches and verify the message is visually centered; search for matches and verify divider pills/results start at the same left edge as the “Chapters” label and truncate cleanly while resizing the side panel.
+
+44. Live minimap FPS after accurate viewport geometry.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: the minimap viewport position is now accurate, but the minimap itself runs around 5 fps while the rest of the app remains smooth.
+   - Finding: the accurate live-zoom path recalculates the viewport overlay correctly, but each minimap repaint still redraws every visible thumbnail, highlight, selection, and current-page border before drawing the blue viewport rectangle.
+   - Changed: `SPDFMinimapView` now builds a bounded offscreen thumbnail-strip cache during live viewport updates and reuses it while the accurate viewport overlay moves. Normal minimap redraws still invalidate the cache, so search highlights, selections, page changes, and newly rendered thumbnails do not stay stale outside the live path.
+   - Changed: the controller enables this cache only while `_liveZooming` is true. The existing accurate `documentPageRects` and `documentVisibleRect` updates remain unchanged.
+   - Validation target: zoom/drag a long document with the minimap open; the blue viewport should remain aligned with the visible document area while the minimap updates fluidly, without changing normal thumbnail resolution after zoom settles.
+
+45. Side-panel resize hit target.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: the side panel resize click target is too small and nearly impossible to grab; the minimap divider was already correct and should not be changed.
+   - Changed: the left side-panel `NSSplitView` now advertises an 18 pt effective divider hit rectangle while keeping the thin visual divider and all existing sidebar width constraints.
+   - Preserved: the minimap divider remains the separate `SPDFMinimapDividerView` with its existing width and drag behavior unchanged.
+   - Validation target: with the side panel open, grabbing near the vertical split between sidebar and document should resize reliably; the minimap divider should feel exactly as before.
+
+46. Restore top-menu text and protect Find-field navigation.
+   - Status: Implemented for validation; not committed.
+   - Prompt link: top menu names should be plain text; icons belong only inside menu contents. Long Find-field text should be navigable with arrow keys and mouse like a standard macOS text field.
+   - Finding: the menu icon helper was applied to `NSApp.mainMenu` itself, so it decorated the top-level menu bar items. It should instead recurse into each top-level submenu.
+   - Finding: an explorer agent confirmed the main Find field is a stock `NSSearchField`; the likely shortcut conflict was the window-arrangement key path bypassing the text-editing guard when Function-style arrows were pressed.
+   - Changed: top-level menu bar items are no longer assigned SF Symbol icons. Icons still apply inside File/View/Window/etc. menus and nested menu contents.
+   - Changed: the toolbar Find field now uses `SPDFFindSearchField`, a tiny subclass that accepts first mouse and cannot become a window-drag region.
+   - Changed: document arrow navigation and window-arrangement shortcuts now always yield while any text field/editor is active, and window-arrangement menu key equivalents validate disabled during text editing.
+   - Validation target: menu bar should show text-only top menu names; inside opened menus icons should remain. Paste a Find query longer than the field, then verify mouse clicks and Left/Right, Option-Left/Right, Command-Left/Right, and Fn/Home/End-style navigation move within the field without scrolling pages or moving/resizing the window.
 
 ## Validation
 

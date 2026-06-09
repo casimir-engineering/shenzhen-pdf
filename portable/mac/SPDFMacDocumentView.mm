@@ -265,8 +265,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
         NSInteger pageIndex = page.pageIndex;
         if (pageIndex >= 0 && pageIndex < (NSInteger)self.pages.count && self.pages[(NSUInteger)pageIndex] == page)
             pageSize = [self cachedViewSizeForPageAtIndex:pageIndex];
-        else
-            pageSize = [self viewSizeForPage:page];
+        else pageSize = [self viewSizeForPage:page];
     }
     CGFloat width = pageSize.width >= clipSize.width - 0.5 ? MAX(clipSize.width, pageSize.width)
                                                            : MAX(clipSize.width, pageSize.width + kPageMargin);
@@ -523,10 +522,8 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     }
 
     _hoveredComment = hitComment;
-    if (hitComment)
-        [self.reader documentViewHoverComment:hitComment atWindowPoint:event.locationInWindow];
-    else
-        [self.reader documentViewEndHoverComment];
+    if (hitComment) [self.reader documentViewHoverComment:hitComment atWindowPoint:event.locationInWindow];
+    else [self.reader documentViewEndHoverComment];
 }
 
 - (void)mouseDown:(NSEvent*)event {
@@ -547,27 +544,13 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     NSInteger pageIndex = -1;
     if ([self point:point fallsInPage:&pageIndex pagePoint:&pagePoint]) {
         if ([self.reader documentViewOpenLinkAtPageIndex:pageIndex pagePoint:pagePoint]) return;
-        if (self.viewMode == SPDFViewModeSingle || [self documentPanIsAvailable]) {
-            [self beginPanWithEvent:event];
-            return;
-        }
         _isSelecting = YES;
         _selectionPageIndex = pageIndex;
         _selectionStart = pagePoint;
         [self.reader documentViewSelectionChangedOnPage:pageIndex from:pagePoint to:pagePoint];
-    } else if (self.pages.count > 0 && (self.viewMode == SPDFViewModeSingle || [self documentPanIsAvailable])) {
-        [self beginPanWithEvent:event];
     } else {
         [super mouseDown:event];
     }
-}
-
-- (BOOL)documentPanIsAvailable {
-    NSScrollView* scrollView = self.enclosingScrollView;
-    NSClipView* clipView = scrollView.contentView;
-    if (!scrollView || !clipView) return NO;
-    return NSWidth(self.bounds) > NSWidth(clipView.bounds) + 0.5 ||
-           NSHeight(self.bounds) > NSHeight(clipView.bounds) + 0.5;
 }
 
 - (void)mouseMoved:(NSEvent*)event {
@@ -623,6 +606,10 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 }
 
 - (void)beginPanWithEvent:(NSEvent*)event {
+    [self beginPanWithWindowPoint:event.locationInWindow timestamp:event.timestamp];
+}
+
+- (void)beginPanWithWindowPoint:(NSPoint)windowPoint timestamp:(NSTimeInterval)timestamp {
     spdf_activate_window_for_view(self);
     [self.reader clearFindFieldFocus];
     NSScrollView* scrollView = self.enclosingScrollView;
@@ -631,10 +618,10 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     _inertiaTimer = nil;
     _isPanning = YES;
     _isSelecting = NO;
-    _panStartInWindow = event.locationInWindow;
+    _panStartInWindow = windowPoint;
     _panStartOrigin = scrollView.contentView.bounds.origin;
-    _lastPanPoint = event.locationInWindow;
-    _lastPanTime = event.timestamp;
+    _lastPanPoint = windowPoint;
+    _lastPanTime = timestamp;
     _panVelocity = NSZeroPoint;
     [[NSCursor closedHandCursor] set];
     [self.reader documentViewDidBeginPan];
@@ -751,24 +738,18 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 }
 
 - (void)otherMouseDown:(NSEvent*)event {
-    if (event.buttonNumber == 2)
-        [self beginPanWithEvent:event];
-    else
-        [super otherMouseDown:event];
+    if (event.buttonNumber == 2) [self beginPanWithEvent:event];
+    else [super otherMouseDown:event];
 }
 
 - (void)otherMouseDragged:(NSEvent*)event {
-    if (_isPanning)
-        [self continuePanWithEvent:event];
-    else
-        [super otherMouseDragged:event];
+    if (_isPanning) [self continuePanWithEvent:event];
+    else [super otherMouseDragged:event];
 }
 
 - (void)otherMouseUp:(NSEvent*)event {
-    if (_isPanning)
-        [self endPan];
-    else
-        [super otherMouseUp:event];
+    if (_isPanning) [self endPan];
+    else [super otherMouseUp:event];
 }
 
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {

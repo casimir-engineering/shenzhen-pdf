@@ -7,6 +7,8 @@ static const CGFloat kPageGap = 26.0;
 static const NSInteger kLongDocumentDragPageThreshold = 20;
 static const CGFloat kLongDocumentDragFineSpeed = 180.0;
 static const CGFloat kLongDocumentDragFullSpeed = 300.0;
+static const CGFloat kLiveContentCacheMaxPixels = 12000000.0;
+static const CGFloat kLiveContentCacheMaxHeight = 48000.0;
 
 static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));
@@ -34,6 +36,14 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     CGFloat _miniLayoutScale;
     CGFloat _miniLayoutGap;
     CGFloat _miniLayoutBoundsWidth;
+    NSImage* _contentImageCache;
+    NSArray<SPDFRenderedPage*>* _contentImageCachePages;
+    CGFloat _contentImageCacheScale;
+    CGFloat _contentImageCacheGap;
+    CGFloat _contentImageCacheHeight;
+    CGFloat _contentImageCacheBoundsWidth;
+    NSInteger _contentImageCacheCurrentPageIndex;
+    BOOL _contentImageCacheDrawImages;
 }
 
 - (BOOL)isFlipped {
@@ -48,19 +58,26 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 - (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
     _pages = [pages copy];
     [self invalidateMiniLayoutCache];
+    [self invalidateContentImageCache];
     [self setNeedsDisplay:YES];
 }
 
 - (void)setFrameSize:(NSSize)newSize {
     NSSize oldSize = self.frame.size;
     [super setFrameSize:newSize];
-    if (!NSEqualSizes(oldSize, newSize)) [self invalidateMiniLayoutCache];
+    if (!NSEqualSizes(oldSize, newSize)) {
+        [self invalidateMiniLayoutCache];
+        [self invalidateContentImageCache];
+    }
 }
 
 - (void)setBoundsSize:(NSSize)newSize {
     NSSize oldSize = self.bounds.size;
     [super setBoundsSize:newSize];
-    if (!NSEqualSizes(oldSize, newSize)) [self invalidateMiniLayoutCache];
+    if (!NSEqualSizes(oldSize, newSize)) {
+        [self invalidateMiniLayoutCache];
+        [self invalidateContentImageCache];
+    }
 }
 
 - (void)invalidateMiniLayoutCache {
@@ -68,6 +85,11 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     _miniLayoutPages = nil;
     _miniLayoutPageRects = nil;
     _miniLayoutPageRectsByIndex = nil;
+}
+
+- (void)invalidateContentImageCache {
+    _contentImageCache = nil;
+    _contentImageCachePages = nil;
 }
 
 - (CGFloat)widestPage {
@@ -446,32 +468,17 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     }
 }
 
-- (void)drawRect:(NSRect)dirtyRect {
-    (void)dirtyRect;
-    [NSColor.windowBackgroundColor setFill];
-    NSRectFill(self.bounds);
-    [NSColor.separatorColor setFill];
-    NSRectFill(NSMakeRect(0, 0, 1, NSHeight(self.bounds)));
-
-    CGFloat scale = 1.0;
-    CGFloat gap = 4.0;
-    CGFloat contentTop = 8.0;
-    CGFloat contentHeight = 0;
-    NSRect visibleRect = NSZeroRect;
-    if (![self layoutScale:&scale
-                       gap:&gap
-                contentTop:&contentTop
-             contentHeight:&contentHeight
-               visibleRect:&visibleRect])
-        return;
-
+- (void)drawPageContentAtContentTop:(CGFloat)contentTop
+                              scale:(CGFloat)scale
+                                gap:(CGFloat)gap
+                         drawImages:(BOOL)drawImages
+                           clipRect:(NSRect)clipRect {
     CGFloat y = contentTop;
-    BOOL drawImages = self.pages.count <= 400;
     for (SPDFRenderedPage* page in self.pages) {
         CGFloat pageWidth = page.pageWidth * scale;
         CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
         NSRect pageRect = NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
-        if (NSHeight(pageRect) >= 1.0 && NSIntersectsRect(pageRect, self.bounds)) {
+        if (NSHeight(pageRect) >= 1.0 && NSIntersectsRect(pageRect, clipRect)) {
             [[NSColor whiteColor] setFill];
             NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
             NSImage* image = page.image ?: page.minimapImage;
@@ -500,6 +507,95 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
         }
         y += pageHeight + gap;
     }
+}
+
+- (BOOL)contentImageCacheMatchesScale:(CGFloat)scale
+                                  gap:(CGFloat)gap
+                        contentHeight:(CGFloat)contentHeight
+                           drawImages:(BOOL)drawImages {
+    return _contentImageCache && _contentImageCachePages == self.pages && _contentImageCacheScale == scale &&
+           _contentImageCacheGap == gap && _contentImageCacheHeight == contentHeight &&
+           _contentImageCacheBoundsWidth == NSWidth(self.bounds) &&
+           _contentImageCacheCurrentPageIndex == self.currentPageIndex && _contentImageCacheDrawImages == drawImages;
+}
+
+- (BOOL)rebuildContentImageCacheForScale:(CGFloat)scale
+                                     gap:(CGFloat)gap
+                           contentHeight:(CGFloat)contentHeight
+                              drawImages:(BOOL)drawImages {
+    CGFloat width = NSWidth(self.bounds);
+    CGFloat height = ceil(MAX(1.0, contentHeight));
+    if (width < 1.0 || height < 1.0) return NO;
+    if (height > kLiveContentCacheMaxHeight || width * height > kLiveContentCacheMaxPixels) return NO;
+
+    NSImage* image = [[NSImage alloc] initWithSize:NSMakeSize(width, height)];
+    [image lockFocusFlipped:YES];
+    [[NSColor clearColor] setFill];
+    NSRectFill(NSMakeRect(0, 0, width, height));
+    [self drawPageContentAtContentTop:0.0
+                                scale:scale
+                                  gap:gap
+                           drawImages:drawImages
+                             clipRect:NSMakeRect(0, 0, width, height)];
+    [image unlockFocus];
+
+    _contentImageCache = image;
+    _contentImageCachePages = self.pages;
+    _contentImageCacheScale = scale;
+    _contentImageCacheGap = gap;
+    _contentImageCacheHeight = contentHeight;
+    _contentImageCacheBoundsWidth = width;
+    _contentImageCacheCurrentPageIndex = self.currentPageIndex;
+    _contentImageCacheDrawImages = drawImages;
+    return YES;
+}
+
+- (BOOL)drawCachedPageContentAtContentTop:(CGFloat)contentTop
+                                    scale:(CGFloat)scale
+                                      gap:(CGFloat)gap
+                            contentHeight:(CGFloat)contentHeight
+                               drawImages:(BOOL)drawImages {
+    if (![self contentImageCacheMatchesScale:scale gap:gap contentHeight:contentHeight drawImages:drawImages] &&
+        ![self rebuildContentImageCacheForScale:scale gap:gap contentHeight:contentHeight drawImages:drawImages])
+        return NO;
+
+    [_contentImageCache drawInRect:NSMakeRect(0, contentTop, NSWidth(self.bounds), ceil(MAX(1.0, contentHeight)))
+                          fromRect:NSZeroRect
+                         operation:NSCompositingOperationSourceOver
+                          fraction:1.0
+                    respectFlipped:YES
+                             hints:@{NSImageHintInterpolation : @(NSImageInterpolationLow)}];
+    return YES;
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    [NSColor.windowBackgroundColor setFill];
+    NSRectFill(self.bounds);
+    [NSColor.separatorColor setFill];
+    NSRectFill(NSMakeRect(0, 0, 1, NSHeight(self.bounds)));
+
+    CGFloat scale = 1.0;
+    CGFloat gap = 4.0;
+    CGFloat contentTop = 8.0;
+    CGFloat contentHeight = 0;
+    NSRect visibleRect = NSZeroRect;
+    if (![self layoutScale:&scale
+                       gap:&gap
+                contentTop:&contentTop
+             contentHeight:&contentHeight
+               visibleRect:&visibleRect])
+        return;
+
+    BOOL drawImages = self.pages.count <= 400;
+    BOOL drewCachedContent = self.liveViewportOnly && [self drawCachedPageContentAtContentTop:contentTop
+                                                                                        scale:scale
+                                                                                          gap:gap
+                                                                                contentHeight:contentHeight
+                                                                                   drawImages:drawImages];
+    if (!drewCachedContent)
+        [self drawPageContentAtContentTop:contentTop scale:scale gap:gap drawImages:drawImages clipRect:self.bounds];
+    if (!self.liveViewportOnly) [self invalidateContentImageCache];
 
     if (contentHeight > 1.0) {
         visibleRect = NSIntersectionRect(visibleRect, NSInsetRect(self.bounds, 1.0, 1.0));
@@ -634,8 +730,6 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 }
 
 - (void)scrollWheel:(NSEvent*)event {
-    spdf_activate_window_for_view(self);
-
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
         NSPoint documentPoint = NSZeroPoint;
@@ -648,8 +742,6 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 }
 
 - (void)magnifyWithEvent:(NSEvent*)event {
-    spdf_activate_window_for_view(self);
-
     NSPoint documentPoint = NSZeroPoint;
     if ([self documentPointForEvent:event documentPoint:&documentPoint])
         [self.reader minimapViewDidReceiveMagnify:event documentPoint:documentPoint];
