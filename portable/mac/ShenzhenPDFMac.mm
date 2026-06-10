@@ -414,7 +414,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSInteger cpuCount = MAX(2, NSProcessInfo.processInfo.activeProcessorCount);
     _renderQueue = [[NSOperationQueue alloc] init];
     _renderQueue.name = @"Shenzhen PDF page renderer";
-    _renderQueue.maxConcurrentOperationCount = MAX(2, MIN(cpuCount, (NSInteger)ceil((double)cpuCount * 0.60)));
+    // More than a few concurrent page renders saturates memory bandwidth and
+    // visibly stalls main-thread input even though the work is off-main.
+    _renderQueue.maxConcurrentOperationCount = MAX(2, MIN((NSInteger)3, cpuCount - 1));
     _renderQueue.qualityOfService = NSQualityOfServiceUserInitiated;
     _zoomSeedRenderQueue = [[NSOperationQueue alloc] init];
     _zoomSeedRenderQueue.name = @"Shenzhen PDF zoom seed renderer";
@@ -500,9 +502,30 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 // Synthetic live-zoom gesture driver for profiling (SPDF_ZOOM_SELFTEST=1).
+// Page-navigation stress: rapid page changes while renders are in flight.
+- (void)runZoomSelfTestNavigationSteps:(NSInteger)steps forward:(BOOL)forward {
+    if (steps <= 0) {
+        if (forward) {
+            [self runZoomSelfTestNavigationSteps:14 forward:NO];
+        } else {
+            spdf_zoom_profile_log(@"SELFTEST navigation done");
+            spdf_zoom_profile_log(@"SELFTEST done");
+        }
+        return;
+    }
+    double t0 = spdf_zoom_profile_now_ms();
+    if (forward) [self nextPage:nil];
+    else [self previousPage:nil];
+    double elapsed = spdf_zoom_profile_now_ms() - t0;
+    if (elapsed > 8.0) spdf_zoom_profile_log(@"SELFTEST pageNav %@ took %.1fms", forward ? @"next" : @"prev", elapsed);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(),
+                   ^{ [self runZoomSelfTestNavigationSteps:steps - 1 forward:forward]; });
+}
+
 - (void)runZoomSelfTestPhases:(NSArray<NSDictionary*>*)phases index:(NSUInteger)index {
     if (index >= phases.count) {
-        spdf_zoom_profile_log(@"SELFTEST done");
+        spdf_zoom_profile_log(@"SELFTEST navigation start zoom=%.3f page=%ld", _zoom, (long)_pageIndex);
+        [self runZoomSelfTestNavigationSteps:14 forward:YES];
         return;
     }
     NSDictionary* phase = phases[index];
@@ -3217,20 +3240,13 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         return;
     }
 
-    char err[1024];
-    SPDFRenderedPage* page = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
-    if (!page) {
-        _statusLabel.stringValue = [NSString stringWithFormat:@"Could not render page %ld", (long)pageIndex + 1];
-        return;
-    }
-    page.highlights = _findHighlights[@(pageIndex)] ?: existing.highlights ?: @[];
-    page.selectionRects = existing.selectionRects ?: @[];
-    [self copyMinimapThumbnailFromPage:existing toPage:page];
-    [_renderedPages replaceObjectAtIndex:(NSUInteger)pageIndex withObject:page];
-    _pageView.pages = _renderedPages;
-    [self cacheActiveRenderedPagesForSelectedTab];
-    [self updateMinimap];
-    [self evictDistantRenderedPageImages];
+    // Never render synchronously here: this runs from scroll/page-navigation
+    // callbacks, and an inline full-page render blocks input for 50-500ms.
+    // Resident stale/base imagery keeps drawing until the async render lands.
+    [self enqueuePageRendersForGeneration:_renderGeneration
+                              pageIndexes:@[ @(pageIndex) ]
+                            preferredPage:pageIndex
+                        forceHighPriority:YES];
 }
 
 - (CGFloat)renderDisplayScaleForPageWidth:(CGFloat)pageWidth
