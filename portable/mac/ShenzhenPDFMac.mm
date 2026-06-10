@@ -50,12 +50,19 @@ static const CGFloat kMaxRenderedPageBitmapDimension = 32760.0;
 static const NSUInteger kMaxRenderedPageBitmapByteLimit = (NSUInteger)512 * 1024 * 1024;
 static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
+static const CGFloat kBaseZoomCacheZoom = 1.0;
+static const CGFloat kBaseZoomCacheDisplayScale = 1.0;
+static const NSUInteger kBaseZoomCacheMaxPageBytes = (NSUInteger)24 * 1024 * 1024;
+static const NSUInteger kBaseZoomCacheTotalByteLimit = (NSUInteger)512 * 1024 * 1024;
+static const CGFloat kHighQualityZoomCacheZoom = 2.0;
+static const NSUInteger kHighQualityZoomCacheMaxPageBytes = (NSUInteger)96 * 1024 * 1024;
+static const NSUInteger kHighQualityZoomCacheTotalByteLimit = (NSUInteger)384 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
 static const NSTimeInterval kDocumentPanLiveCropRenderInterval = 0.05;
 static const NSTimeInterval kLiveZoomFinishDelay = 0.28;
 static const NSTimeInterval kLiveZoomFinishWhilePanningDelay = 0.12;
 static const NSTimeInterval kLiveZoomStateSaveDelay = 0.20;
-static const NSTimeInterval kLiveZoomControlUpdateInterval = 0.05;
+static const NSTimeInterval kLiveZoomMinimapUpdateInterval = 1.0 / 60.0;
 static const NSTimeInterval kPostLiveZoomCrispRenderDelay = 0.02;
 static const NSTimeInterval kPostLiveZoomBackgroundRenderDelay = 0.18;
 static const NSInteger kPageGeometryCacheVersion = 1;
@@ -360,6 +367,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _liveZooming = NO;
     _liveZoomQueuesPaused = NO;
     _liveZoomMinimapUpdateScheduled = NO;
+    _visibleCropRenderSequence = 0;
     _restoringSidebarLayout = NO;
     _allowSidebarWidthPersistence = NO;
     _sidebarWidth = kDefaultSidebarWidth;
@@ -390,6 +398,10 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _pendingRestoreWindowIDs = [NSMutableArray array];
     _queuedRenderPages = [NSMutableSet set];
     _queuedRenderOperations = [NSMutableDictionary dictionary];
+    _queuedBaseRenderPages = [NSMutableSet set];
+    _queuedBaseRenderOperations = [NSMutableDictionary dictionary];
+    _queuedHighQualityRenderPages = [NSMutableSet set];
+    _queuedHighQualityRenderOperations = [NSMutableDictionary dictionary];
     _queuedMinimapThumbnailPages = [NSMutableSet set];
     _selectedTabIndex = -1;
     _windowSessionID = NSUUID.UUID.UUIDString;
@@ -401,6 +413,18 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _renderQueue.name = @"Shenzhen PDF page renderer";
     _renderQueue.maxConcurrentOperationCount = MAX(2, MIN(cpuCount, (NSInteger)ceil((double)cpuCount * 0.60)));
     _renderQueue.qualityOfService = NSQualityOfServiceUserInitiated;
+    _zoomSeedRenderQueue = [[NSOperationQueue alloc] init];
+    _zoomSeedRenderQueue.name = @"Shenzhen PDF zoom seed renderer";
+    _zoomSeedRenderQueue.maxConcurrentOperationCount = 1;
+    _zoomSeedRenderQueue.qualityOfService = NSQualityOfServiceUtility;
+    _cacheRenderQueue = [[NSOperationQueue alloc] init];
+    _cacheRenderQueue.name = @"Shenzhen PDF zoom cache warmer";
+    _cacheRenderQueue.maxConcurrentOperationCount = 1;
+    _cacheRenderQueue.qualityOfService = NSQualityOfServiceUtility;
+    _backgroundRenderQueue = [[NSOperationQueue alloc] init];
+    _backgroundRenderQueue.name = @"Shenzhen PDF background page renderer";
+    _backgroundRenderQueue.maxConcurrentOperationCount = 1;
+    _backgroundRenderQueue.qualityOfService = NSQualityOfServiceUtility;
     _minimapQueue = [[NSOperationQueue alloc] init];
     _minimapQueue.name = @"Shenzhen PDF minimap thumbnails";
     _minimapQueue.maxConcurrentOperationCount = MAX(1, MIN(2, (NSInteger)floor((double)cpuCount * 0.25)));
@@ -478,6 +502,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [_translationInstallTask terminate];
     [_translationTask terminate];
     [_renderQueue cancelAllOperations];
+    [self cancelCacheRenderOperations];
     [_minimapQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
     [_queuedRenderOperations removeAllObjects];
@@ -2434,6 +2459,365 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     destination.minimapImage = source.minimapImage;
     destination.minimapImageZoom = source.minimapImageZoom;
     destination.minimapImageScale = source.minimapImageScale;
+    destination.baseImage = source.baseImage;
+    destination.baseImagePointWidth = source.baseImagePointWidth;
+    destination.baseImagePointHeight = source.baseImagePointHeight;
+    destination.baseImageZoom = source.baseImageZoom;
+    destination.baseImageScale = source.baseImageScale;
+    destination.highQualityImage = source.highQualityImage;
+    destination.highQualityImagePointWidth = source.highQualityImagePointWidth;
+    destination.highQualityImagePointHeight = source.highQualityImagePointHeight;
+    destination.highQualityImageZoom = source.highQualityImageZoom;
+    destination.highQualityImageScale = source.highQualityImageScale;
+}
+
+- (NSArray<NSNumber*>*)pageNeighborhoodIndexesAroundPage:(NSInteger)pageIndex {
+    if (_renderedPages.count == 0) return @[];
+    pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
+    NSMutableArray<NSNumber*>* indexes = [NSMutableArray arrayWithCapacity:3];
+    if (pageIndex > 0) [indexes addObject:@(pageIndex - 1)];
+    [indexes addObject:@(pageIndex)];
+    if (pageIndex + 1 < (NSInteger)_renderedPages.count) [indexes addObject:@(pageIndex + 1)];
+    return indexes;
+}
+
+- (NSArray<NSNumber*>*)currentPageNeighborhoodIndexes {
+    return [self pageNeighborhoodIndexesAroundPage:_pageIndex];
+}
+
+- (void)addPageNeighborhoodAroundPage:(NSInteger)pageIndex toOrderedSet:(NSMutableOrderedSet<NSNumber*>*)set {
+    if (!set || pageIndex < 0 || _renderedPages.count == 0) return;
+    for (NSNumber* number in [self pageNeighborhoodIndexesAroundPage:pageIndex]) [set addObject:number];
+}
+
+- (NSArray<NSNumber*>*)liveZoomSeedPageIndexesForAnchorPage:(NSInteger)anchorPageIndex {
+    NSMutableOrderedSet<NSNumber*>* indexes = [NSMutableOrderedSet orderedSet];
+    [self addPageNeighborhoodAroundPage:anchorPageIndex toOrderedSet:indexes];
+    [self addPageNeighborhoodAroundPage:_pageIndex toOrderedSet:indexes];
+    [self addPageNeighborhoodAroundPage:_pageView.currentPageIndex toOrderedSet:indexes];
+    NSInteger preferredPage = -1;
+    for (NSNumber* visiblePage in [self visibleDocumentPageIndexesWithExtraRadius:1 preferredPage:&preferredPage])
+        [indexes addObject:visiblePage];
+    [self addPageNeighborhoodAroundPage:preferredPage toOrderedSet:indexes];
+    return indexes.array;
+}
+
+- (void)clearLiveZoomSeeds {
+    for (SPDFRenderedPage* page in _renderedPages ?: @[]) {
+        page.zoomSeedImage = nil;
+        page.zoomSeedPageRect = NSZeroRect;
+        page.zoomSeedZoom = 0.0;
+        page.zoomSeedScale = 0.0;
+    }
+}
+
+- (void)setZoomSeedForPage:(SPDFRenderedPage*)page
+                     image:(NSImage*)image
+                  pageRect:(NSRect)pageRect
+                      zoom:(CGFloat)zoom
+              displayScale:(CGFloat)displayScale {
+    if (!page || !image || NSIsEmptyRect(pageRect)) return;
+    page.zoomSeedImage = image;
+    page.zoomSeedPageRect = pageRect;
+    page.zoomSeedZoom = zoom;
+    page.zoomSeedScale = displayScale;
+}
+
+- (void)prepareLiveZoomSeedsForPageIndexes:(NSArray<NSNumber*>*)pageIndexes {
+    for (NSNumber* number in pageIndexes) {
+        NSInteger pageIndex = number.integerValue;
+        if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
+        page.zoomSeedImage = nil;
+        page.zoomSeedPageRect = NSZeroRect;
+        page.zoomSeedZoom = 0.0;
+        page.zoomSeedScale = 0.0;
+    }
+    CGFloat backingScale = [self backingScale];
+    for (NSNumber* number in pageIndexes) {
+        NSInteger pageIndex = number.integerValue;
+        if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
+        NSRect fullPageRect = NSMakeRect(0.0, 0.0, page.pageWidth, page.pageHeight);
+        if (page.highQualityImage && [self renderedHighQualityImageByteCost:page] <= kHighQualityZoomCacheMaxPageBytes) {
+            [self setZoomSeedForPage:page
+                                image:page.highQualityImage
+                             pageRect:fullPageRect
+                                 zoom:page.highQualityImageZoom
+                         displayScale:page.highQualityImageScale];
+        } else if ([self renderedPageImage:page matchesZoom:_zoom displayScale:backingScale]) {
+            [self setZoomSeedForPage:page image:page.image pageRect:fullPageRect zoom:page.imageZoom displayScale:page.imageScale];
+        } else if (page.viewportImage && !NSIsEmptyRect(page.viewportImagePageRect) &&
+                   fabs(page.viewportImageZoom - _zoom) <= 0.001) {
+            [self setZoomSeedForPage:page
+                                image:page.viewportImage
+                             pageRect:page.viewportImagePageRect
+                                 zoom:page.viewportImageZoom
+                         displayScale:page.viewportImageScale];
+        } else if (page.image && [self renderedImageByteCost:page] <= kRenderedImageTargetByteLimit / 2) {
+            [self setZoomSeedForPage:page image:page.image pageRect:fullPageRect zoom:page.imageZoom displayScale:page.imageScale];
+        } else if (page.baseImage) {
+            [self setZoomSeedForPage:page
+                                image:page.baseImage
+                             pageRect:fullPageRect
+                                 zoom:page.baseImageZoom
+                         displayScale:page.baseImageScale];
+        }
+    }
+}
+
+- (BOOL)basePageImage:(SPDFRenderedPage*)page matchesDisplayScale:(CGFloat)displayScale {
+    if (!page.baseImage) return NO;
+    return fabs(page.baseImageZoom - kBaseZoomCacheZoom) <= 0.001 &&
+           fabs(page.baseImageScale - displayScale) <= 0.001;
+}
+
+- (CGFloat)highQualityZoomCacheDisplayScale {
+    return MAX(1.0, [self backingScale]);
+}
+
+- (BOOL)highQualityPageImage:(SPDFRenderedPage*)page matchesZoom:(CGFloat)zoom displayScale:(CGFloat)displayScale {
+    if (!page.highQualityImage) return NO;
+    return fabs(page.highQualityImageZoom - zoom) <= 0.001 && fabs(page.highQualityImageScale - displayScale) <= 0.001;
+}
+
+- (void)enqueueCurrentPageNeighborhoodRendersForGeneration:(NSUInteger)generation
+                                             preferredPage:(NSInteger)preferredPage
+                                         forceHighPriority:(BOOL)forceHighPriority {
+    NSArray<NSNumber*>* pages = [self pageNeighborhoodIndexesAroundPage:preferredPage];
+    [self enqueuePageRendersForGeneration:generation
+                              pageIndexes:pages
+                            preferredPage:preferredPage
+                        forceHighPriority:forceHighPriority];
+}
+
+- (void)enqueueBaseZoomCacheForPageIndexes:(NSArray<NSNumber*>*)pageIndexes
+                          renderGeneration:(NSUInteger)generation
+                              preferredPage:(NSInteger)preferredPage
+                               seedPriority:(BOOL)seedPriority {
+    if (!_doc || !_path.length || pageIndexes.count == 0) return;
+
+    NSString* path = [_path copy];
+    CGFloat displayScale = kBaseZoomCacheDisplayScale;
+    NSUInteger scheduledBytes = 0;
+    for (SPDFRenderedPage* page in _renderedPages) scheduledBytes += [self renderedBaseImageByteCost:page];
+
+    for (NSNumber* number in pageIndexes) {
+        NSInteger index = number.integerValue;
+        if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* existing = _renderedPages[(NSUInteger)index];
+        if ([self basePageImage:existing matchesDisplayScale:displayScale]) continue;
+        if (![self fullPageRenderAllowedForPage:existing zoom:kBaseZoomCacheZoom displayScale:displayScale]) continue;
+        NSUInteger estimatedBytes = [self estimatedRenderedImageByteCostForPage:existing
+                                                                           zoom:kBaseZoomCacheZoom
+                                                                   displayScale:displayScale];
+        if (estimatedBytes == 0 || estimatedBytes > kBaseZoomCacheMaxPageBytes) continue;
+        if (scheduledBytes > kBaseZoomCacheTotalByteLimit ||
+            estimatedBytes > kBaseZoomCacheTotalByteLimit - scheduledBytes)
+            continue;
+        NSOperation* queuedOperation = _queuedBaseRenderOperations[number];
+        if (queuedOperation) {
+            if (seedPriority && !queuedOperation.isExecuting) {
+                [queuedOperation cancel];
+                [_queuedBaseRenderPages removeObject:number];
+                [_queuedBaseRenderOperations removeObjectForKey:number];
+            } else {
+                if (seedPriority) {
+                    queuedOperation.queuePriority = NSOperationQueuePriorityVeryHigh;
+                    queuedOperation.qualityOfService = NSQualityOfServiceUtility;
+                }
+                continue;
+            }
+        }
+
+        scheduledBytes += estimatedBytes;
+        [_queuedBaseRenderPages addObject:number];
+        NSInteger distance = labs(index - preferredPage);
+        NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+          @autoreleasepool {
+              if (generation != self->_renderGeneration || self->_liveZooming) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    [self->_queuedBaseRenderPages removeObject:number];
+                    [self->_queuedBaseRenderOperations removeObjectForKey:number];
+                  }];
+                  return;
+              }
+              char err[1024];
+              spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+              if (!workerDoc) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    [self->_queuedBaseRenderPages removeObject:number];
+                    [self->_queuedBaseRenderOperations removeObjectForKey:number];
+                  }];
+                  return;
+              }
+              if (self->_liveZooming) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    [self->_queuedBaseRenderPages removeObject:number];
+                    [self->_queuedBaseRenderOperations removeObjectForKey:number];
+                  }];
+                  return;
+              }
+              SPDFRenderedPage* rendered = [self renderedPageAtIndex:(NSInteger)index
+                                                            document:workerDoc
+                                                                zoom:kBaseZoomCacheZoom
+                                                        displayScale:displayScale
+                                                               error:err
+                                                         errorLength:sizeof(err)];
+              [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                [self->_queuedBaseRenderPages removeObject:number];
+                [self->_queuedBaseRenderOperations removeObjectForKey:number];
+                if (!rendered || generation != self->_renderGeneration || !self->_doc ||
+                    index >= (NSInteger)self->_renderedPages.count || ![self->_path isEqualToString:path])
+                    return;
+                SPDFRenderedPage* page = self->_renderedPages[(NSUInteger)index];
+                page.baseImage = rendered.image;
+                page.baseImagePointWidth = rendered.imagePointWidth;
+                page.baseImagePointHeight = rendered.imagePointHeight;
+                page.baseImageZoom = kBaseZoomCacheZoom;
+                page.baseImageScale = displayScale;
+                if (self->_liveZooming && labs(index - self->_pageIndex) <= 1 && !page.zoomSeedImage) {
+                    [self setZoomSeedForPage:page
+                                        image:page.baseImage
+                                     pageRect:NSMakeRect(0.0, 0.0, page.pageWidth, page.pageHeight)
+                                         zoom:page.baseImageZoom
+                                 displayScale:page.baseImageScale];
+                    [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:index]];
+                }
+                if (!self->_liveZooming) {
+                    [self cacheActiveRenderedPagesForSelectedTab];
+                    [self evictDistantRenderedPageImages];
+                }
+              }];
+          }
+        }];
+        operation.queuePriority =
+            seedPriority ? NSOperationQueuePriorityVeryHigh
+                         : (distance <= 1 ? NSOperationQueuePriorityHigh : NSOperationQueuePriorityLow);
+        operation.qualityOfService = NSQualityOfServiceUtility;
+        _queuedBaseRenderOperations[number] = operation;
+        [(seedPriority ? _zoomSeedRenderQueue : _cacheRenderQueue) addOperation:operation];
+    }
+}
+
+- (void)enqueueFocusedDocumentBaseCacheForGeneration:(NSUInteger)generation preferredPage:(NSInteger)preferredPage {
+    NSArray<NSNumber*>* order = [self pageRenderOrderForCount:(NSInteger)_renderedPages.count
+                                                preferredPage:preferredPage
+                                                     maxPages:(NSInteger)_renderedPages.count];
+    [self enqueueBaseZoomCacheForPageIndexes:order
+                            renderGeneration:generation
+                                preferredPage:preferredPage
+                                 seedPriority:NO];
+}
+
+- (void)enqueueZoomSeedCachesForGeneration:(NSUInteger)generation
+                             preferredPage:(NSInteger)preferredPage
+                          includeWholeBase:(BOOL)includeWholeBase {
+    NSArray<NSNumber*>* pages = [self pageNeighborhoodIndexesAroundPage:preferredPage];
+    [self enqueueHighQualityZoomCacheForPageIndexes:pages
+                                   renderGeneration:generation
+                                   liveZoomSequence:_liveZoomSequence
+                                      preferredPage:preferredPage];
+    [self enqueueBaseZoomCacheForPageIndexes:pages
+                            renderGeneration:generation
+                                preferredPage:preferredPage
+                                 seedPriority:YES];
+    if (includeWholeBase) [self enqueueFocusedDocumentBaseCacheForGeneration:generation preferredPage:preferredPage];
+}
+
+- (void)enqueueHighQualityZoomCacheForPageIndexes:(NSArray<NSNumber*>*)pageIndexes
+                                 renderGeneration:(NSUInteger)generation
+                                    liveZoomSequence:(NSUInteger)liveZoomSequence
+                                      preferredPage:(NSInteger)preferredPage {
+    (void)liveZoomSequence;
+    if (!_doc || !_path.length || pageIndexes.count == 0) return;
+
+    NSString* path = [_path copy];
+    CGFloat zoom = kHighQualityZoomCacheZoom;
+    CGFloat displayScale = [self highQualityZoomCacheDisplayScale];
+    for (NSNumber* number in pageIndexes) {
+        NSInteger index = number.integerValue;
+        if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* existing = _renderedPages[(NSUInteger)index];
+        if ([self highQualityPageImage:existing matchesZoom:zoom displayScale:displayScale]) continue;
+        if (![self fullPageRenderAllowedForPage:existing zoom:zoom displayScale:displayScale]) continue;
+        if ([self estimatedRenderedImageByteCostForPage:existing zoom:zoom displayScale:displayScale] >
+            kHighQualityZoomCacheMaxPageBytes)
+            continue;
+        NSOperation* queuedOperation = _queuedHighQualityRenderOperations[number];
+        if (queuedOperation) {
+            queuedOperation.queuePriority =
+                index == preferredPage ? NSOperationQueuePriorityVeryHigh : NSOperationQueuePriorityHigh;
+            queuedOperation.qualityOfService = NSQualityOfServiceUtility;
+            continue;
+        }
+
+        [_queuedHighQualityRenderPages addObject:number];
+        NSInteger distance = labs(index - preferredPage);
+        NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+          @autoreleasepool {
+              if (generation != self->_renderGeneration || self->_liveZooming) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    [self->_queuedHighQualityRenderPages removeObject:number];
+                    [self->_queuedHighQualityRenderOperations removeObjectForKey:number];
+                  }];
+                  return;
+              }
+              char err[1024];
+              spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+              if (!workerDoc) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    [self->_queuedHighQualityRenderPages removeObject:number];
+                    [self->_queuedHighQualityRenderOperations removeObjectForKey:number];
+                  }];
+                  return;
+              }
+              if (self->_liveZooming) {
+                  [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    [self->_queuedHighQualityRenderPages removeObject:number];
+                    [self->_queuedHighQualityRenderOperations removeObjectForKey:number];
+                  }];
+                  return;
+              }
+              SPDFRenderedPage* rendered = [self renderedPageAtIndex:index
+                                                            document:workerDoc
+                                                                zoom:zoom
+                                                        displayScale:displayScale
+                                                               error:err
+                                                         errorLength:sizeof(err)];
+              [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                [self->_queuedHighQualityRenderPages removeObject:number];
+                [self->_queuedHighQualityRenderOperations removeObjectForKey:number];
+                if (!rendered || generation != self->_renderGeneration || !self->_doc ||
+                    index >= (NSInteger)self->_renderedPages.count || ![self->_path isEqualToString:path] ||
+                    fabs(displayScale - [self highQualityZoomCacheDisplayScale]) > 0.001)
+                    return;
+                SPDFRenderedPage* page = self->_renderedPages[(NSUInteger)index];
+                page.highQualityImage = rendered.image;
+                page.highQualityImagePointWidth = rendered.imagePointWidth;
+                page.highQualityImagePointHeight = rendered.imagePointHeight;
+                page.highQualityImageZoom = zoom;
+                page.highQualityImageScale = displayScale;
+                if (self->_liveZooming && labs(index - self->_pageIndex) <= 1) {
+                    [self setZoomSeedForPage:page
+                                        image:page.highQualityImage
+                                     pageRect:NSMakeRect(0.0, 0.0, page.pageWidth, page.pageHeight)
+                                         zoom:page.highQualityImageZoom
+                                 displayScale:page.highQualityImageScale];
+                    [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:index]];
+                }
+                if (!self->_liveZooming) {
+                    [self cacheActiveRenderedPagesForSelectedTab];
+                    [self evictDistantRenderedPageImages];
+                }
+              }];
+          }
+        }];
+        operation.queuePriority = distance == 0 ? NSOperationQueuePriorityVeryHigh : NSOperationQueuePriorityHigh;
+        operation.qualityOfService = NSQualityOfServiceUtility;
+        _queuedHighQualityRenderOperations[number] = operation;
+        [_zoomSeedRenderQueue addOperation:operation];
+    }
 }
 
 - (CGFloat)minimapThumbnailZoom {
@@ -2462,6 +2846,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                      dispatch_get_main_queue(), ^{
                        [scheduledNearbyRenderKeys removeObject:key];
                        if (generation != self->_renderGeneration || ![self->_path isEqualToString:path]) return;
+                       [self enqueueZoomSeedCachesForGeneration:generation
+                                                  preferredPage:preferredPage
+                                               includeWholeBase:YES];
                        [self enqueueNearbyPageRendersForGeneration:generation preferredPage:preferredPage];
                      });
     });
@@ -2556,7 +2943,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
             forceHighPriority ? NSOperationQueuePriorityVeryHigh : [self queuePriorityForRenderDistance:distance];
         operation.qualityOfService = forceHighPriority ? NSQualityOfServiceUserInitiated : NSQualityOfServiceUtility;
         _queuedRenderOperations[number] = operation;
-        [_renderQueue addOperation:operation];
+        [(forceHighPriority ? _renderQueue : _backgroundRenderQueue) addOperation:operation];
     }
 }
 
@@ -2899,18 +3286,29 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSArray<NSDictionary*>* tasks =
         [self visiblePageCropRenderTasksForDisplayScale:displayScale
                         allowFullPageRenderAllowedPages:allowFullPageRenderAllowedPages];
-    if (tasks.count == 0) return;
+    if (tasks.count == 0) {
+        if (!_liveZooming) {
+            _pageView.liveZooming = NO;
+            [self clearLiveZoomSeeds];
+        }
+        return;
+    }
 
     CGFloat zoom = _zoom;
+    NSUInteger cropRenderSequence = ++_visibleCropRenderSequence;
     NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
       @autoreleasepool {
-          if (sequence != self->_liveZoomSequence || renderGeneration != self->_renderGeneration) return;
+          if (sequence != self->_liveZoomSequence || renderGeneration != self->_renderGeneration ||
+              cropRenderSequence != self->_visibleCropRenderSequence)
+              return;
           char err[512];
           spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
           NSMutableArray<NSDictionary*>* results = [NSMutableArray arrayWithCapacity:tasks.count];
           if (workerDoc) {
               for (NSDictionary* task in tasks) {
-                  if (sequence != self->_liveZoomSequence || renderGeneration != self->_renderGeneration) return;
+                  if (sequence != self->_liveZoomSequence || renderGeneration != self->_renderGeneration ||
+                      cropRenderSequence != self->_visibleCropRenderSequence)
+                      return;
                   NSInteger pageIndex = [task[@"page"] integerValue];
                   NSRect cropRect = [task[@"crop"] rectValue];
                   NSImage* image = [self renderedPageCropImageAtIndex:pageIndex
@@ -2931,7 +3329,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
           [[NSOperationQueue mainQueue] addOperationWithBlock:^{
             if (sequence != self->_liveZoomSequence || renderGeneration != self->_renderGeneration ||
-                self->_liveZooming || !self->_doc || ![self->_path isEqualToString:path] ||
+                cropRenderSequence != self->_visibleCropRenderSequence || self->_liveZooming || !self->_doc ||
+                ![self->_path isEqualToString:path] ||
                 fabs(zoom - self->_zoom) > 0.001 || fabs(displayScale - [self backingScale]) > 0.001)
                 return;
             for (NSDictionary* result in results) {
@@ -2943,6 +3342,10 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                 page.viewportImageZoom = zoom;
                 page.viewportImageScale = displayScale;
                 [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:pageIndex]];
+            }
+            if (!self->_liveZooming) {
+                self->_pageView.liveZooming = NO;
+                [self clearLiveZoomSeeds];
             }
             [self setCurrentViewportNeedsDisplay];
             [self evictDistantRenderedPageImages];
@@ -2979,37 +3382,72 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)renderVisiblePageCropsForCurrentViewportIfNeeded {
-    [self renderVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]
-                                   allowFullPageRenderAllowedPages:NO];
+    if (!_doc || !_path.length) return;
+    [self queueVisiblePageCropsForCurrentViewportWithDisplayScale:[self backingScale]
+                                  allowFullPageRenderAllowedPages:NO
+                                                         sequence:_liveZoomSequence
+                                                             path:[_path copy]
+                                                 renderGeneration:_renderGeneration];
+}
+
+- (void)cancelCacheRenderOperations {
+    [_zoomSeedRenderQueue cancelAllOperations];
+    [_cacheRenderQueue cancelAllOperations];
+    [_backgroundRenderQueue cancelAllOperations];
+    for (NSOperation* operation in _queuedBaseRenderOperations.objectEnumerator) [operation cancel];
+    for (NSOperation* operation in _queuedHighQualityRenderOperations.objectEnumerator) [operation cancel];
+    [_queuedBaseRenderPages removeAllObjects];
+    [_queuedBaseRenderOperations removeAllObjects];
+    [_queuedHighQualityRenderPages removeAllObjects];
+    [_queuedHighQualityRenderOperations removeAllObjects];
 }
 
 - (void)pauseBackgroundRenderQueuesForLiveZoom {
     if (_liveZoomQueuesPaused) return;
     _liveZoomQueuesPaused = YES;
+    _renderQueue.suspended = YES;
+    _zoomSeedRenderQueue.suspended = YES;
+    _cacheRenderQueue.suspended = YES;
+    _backgroundRenderQueue.suspended = YES;
+    _minimapQueue.suspended = YES;
     [_renderQueue cancelAllOperations];
+    [_zoomSeedRenderQueue cancelAllOperations];
+    [_cacheRenderQueue cancelAllOperations];
+    [_backgroundRenderQueue cancelAllOperations];
+    _visibleCropRenderSequence++;
+    for (NSOperation* operation in _queuedRenderOperations.objectEnumerator) [operation cancel];
+    for (NSOperation* operation in _queuedBaseRenderOperations.objectEnumerator) [operation cancel];
+    for (NSOperation* operation in _queuedHighQualityRenderOperations.objectEnumerator) [operation cancel];
     [_minimapQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
     [_queuedRenderOperations removeAllObjects];
+    [_queuedBaseRenderPages removeAllObjects];
+    [_queuedBaseRenderOperations removeAllObjects];
+    [_queuedHighQualityRenderPages removeAllObjects];
+    [_queuedHighQualityRenderOperations removeAllObjects];
     [_queuedMinimapThumbnailPages removeAllObjects];
-    _renderQueue.suspended = NO;
-    _minimapQueue.suspended = NO;
 }
 
 - (void)resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:(BOOL)cancelQueuedWork {
     BOOL wasPaused = _liveZoomQueuesPaused;
     if (!wasPaused) {
         _renderQueue.suspended = NO;
+        _zoomSeedRenderQueue.suspended = NO;
+        _cacheRenderQueue.suspended = NO;
+        _backgroundRenderQueue.suspended = NO;
         _minimapQueue.suspended = NO;
         return;
     }
     if (cancelQueuedWork) {
-        [_renderQueue cancelAllOperations];
-        [_minimapQueue cancelAllOperations];
+        _visibleCropRenderSequence++;
         [_queuedRenderPages removeAllObjects];
         [_queuedRenderOperations removeAllObjects];
         [_queuedMinimapThumbnailPages removeAllObjects];
     }
     _renderQueue.suspended = NO;
+    _zoomSeedRenderQueue.suspended = NO;
+    _cacheRenderQueue.suspended = NO;
+    _backgroundRenderQueue.suspended = NO;
     _minimapQueue.suspended = NO;
     _liveZoomQueuesPaused = NO;
 }
@@ -3017,9 +3455,10 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 - (void)scheduleLiveZoomMinimapUpdate {
     if (_liveZoomMinimapUpdateScheduled) return;
     _liveZoomMinimapUpdateScheduled = YES;
-    dispatch_async(dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLiveZoomMinimapUpdateInterval * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
       self->_liveZoomMinimapUpdateScheduled = NO;
-      if (!self->_doc) return;
+      if (!self->_doc || !self->_liveZooming) return;
       [self updateMinimap];
     });
 }
@@ -3145,6 +3584,27 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     return (NSUInteger)bytes;
 }
 
+- (NSUInteger)renderedBaseImageByteCost:(SPDFRenderedPage*)page {
+    if (!page.baseImage || page.baseImagePointWidth <= 0.0 || page.baseImagePointHeight <= 0.0) return 0;
+    CGFloat scale = page.baseImageScale > 0.0 ? page.baseImageScale : kBaseZoomCacheDisplayScale;
+    double pixels = ceil(page.baseImagePointWidth * scale) * ceil(page.baseImagePointHeight * scale);
+    if (!isfinite(pixels) || pixels <= 0.0) return 0;
+    double bytes = pixels * 4.0;
+    if (bytes > (double)NSUIntegerMax) return NSUIntegerMax;
+    return (NSUInteger)bytes;
+}
+
+- (NSUInteger)renderedHighQualityImageByteCost:(SPDFRenderedPage*)page {
+    if (!page.highQualityImage || page.highQualityImagePointWidth <= 0.0 || page.highQualityImagePointHeight <= 0.0)
+        return 0;
+    CGFloat scale = page.highQualityImageScale > 0.0 ? page.highQualityImageScale : [self highQualityZoomCacheDisplayScale];
+    double pixels = ceil(page.highQualityImagePointWidth * scale) * ceil(page.highQualityImagePointHeight * scale);
+    if (!isfinite(pixels) || pixels <= 0.0) return 0;
+    double bytes = pixels * 4.0;
+    if (bytes > (double)NSUIntegerMax) return NSUIntegerMax;
+    return (NSUInteger)bytes;
+}
+
 - (NSUInteger)estimatedRenderedImageByteCostForPage:(SPDFRenderedPage*)page
                                                zoom:(CGFloat)zoom
                                        displayScale:(CGFloat)displayScale {
@@ -3191,7 +3651,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSUInteger totalBytes = 0;
     for (SPDFRenderedPage* page in _renderedPages)
         totalBytes += [self renderedImageByteCost:page] + [self renderedViewportImageByteCost:page];
-    if (totalBytes <= kRenderedImageSoftByteLimit) return;
+    BOOL shouldEvictRenderedImages = totalBytes > kRenderedImageSoftByteLimit;
 
     NSMutableSet<NSNumber*>* keep = [NSMutableSet set];
     [self addKeepRangeToSet:keep center:_pageIndex radius:kRenderedImageKeepRadius];
@@ -3199,7 +3659,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [self addKeepRangeToSet:keep center:_pageView.activeFindPageIndex radius:1];
     [self addKeepRangeToSet:keep center:_selectionPageIndex radius:1];
     [self addKeepRangeToSet:keep center:_highlightPageIndex radius:1];
+    NSInteger preferredPage = -1;
+    for (NSNumber* visiblePage in [self visibleDocumentPageIndexesWithExtraRadius:1 preferredPage:&preferredPage])
+        [keep addObject:visiblePage];
     for (NSNumber* queuedPage in _queuedRenderPages) [keep addObject:queuedPage];
+    for (NSNumber* queuedPage in _queuedHighQualityRenderPages) [keep addObject:queuedPage];
     if (_minimapVisible) {
         for (NSNumber* visibleMinimapPage in [_minimapView visiblePageIndexes]) [keep addObject:visibleMinimapPage];
     }
@@ -3227,12 +3691,15 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
     BOOL evicted = NO;
     for (NSDictionary* candidate in candidates) {
+        if (!shouldEvictRenderedImages) break;
         if (totalBytes <= kRenderedImageTargetByteLimit) break;
         NSInteger index = [candidate[@"index"] integerValue];
         if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
         SPDFRenderedPage* page = _renderedPages[(NSUInteger)index];
         NSUInteger bytes = [self renderedImageByteCost:page] + [self renderedViewportImageByteCost:page];
         if (bytes == 0) continue;
+        NSImage* evictedPageImage = page.image;
+        NSImage* evictedViewportImage = page.viewportImage;
         page.image = nil;
         page.imagePointWidth = 0.0;
         page.imagePointHeight = 0.0;
@@ -3242,6 +3709,13 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         page.viewportImagePageRect = NSZeroRect;
         page.viewportImageZoom = 0.0;
         page.viewportImageScale = 0.0;
+        if ((evictedPageImage && page.zoomSeedImage == evictedPageImage) ||
+            (evictedViewportImage && page.zoomSeedImage == evictedViewportImage)) {
+            page.zoomSeedImage = nil;
+            page.zoomSeedPageRect = NSZeroRect;
+            page.zoomSeedZoom = 0.0;
+            page.zoomSeedScale = 0.0;
+        }
         totalBytes = bytes > totalBytes ? 0 : totalBytes - bytes;
         evicted = YES;
     }
@@ -3251,6 +3725,103 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         [_pageView setNeedsDisplay:YES];
         [self updateMinimap];
     }
+
+    NSUInteger highQualityBytes = 0;
+    for (SPDFRenderedPage* page in _renderedPages) highQualityBytes += [self renderedHighQualityImageByteCost:page];
+    if (highQualityBytes > kHighQualityZoomCacheTotalByteLimit) {
+        NSMutableArray<NSDictionary*>* highQualityCandidates = [NSMutableArray array];
+        for (NSInteger i = 0; i < (NSInteger)_renderedPages.count; ++i) {
+            NSNumber* indexNumber = @(i);
+            if ([keep containsObject:indexNumber] || [_queuedHighQualityRenderPages containsObject:indexNumber])
+                continue;
+            SPDFRenderedPage* page = _renderedPages[(NSUInteger)i];
+            NSUInteger bytes = [self renderedHighQualityImageByteCost:page];
+            if (bytes == 0) continue;
+            NSInteger distance = labs(i - _pageIndex);
+            [highQualityCandidates addObject:@{@"index" : indexNumber, @"distance" : @(distance), @"bytes" : @(bytes)}];
+        }
+        [highQualityCandidates sortUsingComparator:^NSComparisonResult(NSDictionary* a, NSDictionary* b) {
+          NSInteger distanceA = [a[@"distance"] integerValue];
+          NSInteger distanceB = [b[@"distance"] integerValue];
+          if (distanceA != distanceB) return distanceA > distanceB ? NSOrderedAscending : NSOrderedDescending;
+          NSUInteger bytesA = [a[@"bytes"] unsignedIntegerValue];
+          NSUInteger bytesB = [b[@"bytes"] unsignedIntegerValue];
+          if (bytesA == bytesB) return NSOrderedSame;
+          return bytesA > bytesB ? NSOrderedAscending : NSOrderedDescending;
+        }];
+        BOOL evictedHighQuality = NO;
+        for (NSDictionary* candidate in highQualityCandidates) {
+            if (highQualityBytes <= kHighQualityZoomCacheTotalByteLimit) break;
+            NSInteger index = [candidate[@"index"] integerValue];
+            if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
+            SPDFRenderedPage* page = _renderedPages[(NSUInteger)index];
+            NSUInteger bytes = [self renderedHighQualityImageByteCost:page];
+            if (bytes == 0) continue;
+            NSImage* evictedHighQualityImage = page.highQualityImage;
+            page.highQualityImage = nil;
+            page.highQualityImagePointWidth = 0.0;
+            page.highQualityImagePointHeight = 0.0;
+            page.highQualityImageZoom = 0.0;
+            page.highQualityImageScale = 0.0;
+            if (evictedHighQualityImage && page.zoomSeedImage == evictedHighQualityImage) {
+                page.zoomSeedImage = nil;
+                page.zoomSeedPageRect = NSZeroRect;
+                page.zoomSeedZoom = 0.0;
+                page.zoomSeedScale = 0.0;
+            }
+            highQualityBytes = bytes > highQualityBytes ? 0 : highQualityBytes - bytes;
+            evictedHighQuality = YES;
+        }
+        if (evictedHighQuality) [self cacheActiveRenderedPagesForSelectedTab];
+    }
+
+    NSUInteger baseBytes = 0;
+    for (SPDFRenderedPage* page in _renderedPages) baseBytes += [self renderedBaseImageByteCost:page];
+    if (baseBytes <= kBaseZoomCacheTotalByteLimit) return;
+
+    NSMutableArray<NSDictionary*>* baseCandidates = [NSMutableArray array];
+    for (NSInteger i = 0; i < (NSInteger)_renderedPages.count; ++i) {
+        NSNumber* indexNumber = @(i);
+        if ([keep containsObject:indexNumber] || [_queuedBaseRenderPages containsObject:indexNumber]) continue;
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)i];
+        NSUInteger bytes = [self renderedBaseImageByteCost:page];
+        if (bytes == 0) continue;
+        NSInteger distance = labs(i - _pageIndex);
+        [baseCandidates addObject:@{@"index" : indexNumber, @"distance" : @(distance), @"bytes" : @(bytes)}];
+    }
+    [baseCandidates sortUsingComparator:^NSComparisonResult(NSDictionary* a, NSDictionary* b) {
+      NSInteger distanceA = [a[@"distance"] integerValue];
+      NSInteger distanceB = [b[@"distance"] integerValue];
+      if (distanceA != distanceB) return distanceA > distanceB ? NSOrderedAscending : NSOrderedDescending;
+      NSUInteger bytesA = [a[@"bytes"] unsignedIntegerValue];
+      NSUInteger bytesB = [b[@"bytes"] unsignedIntegerValue];
+      if (bytesA == bytesB) return NSOrderedSame;
+      return bytesA > bytesB ? NSOrderedAscending : NSOrderedDescending;
+    }];
+    BOOL evictedBase = NO;
+    for (NSDictionary* candidate in baseCandidates) {
+        if (baseBytes <= kBaseZoomCacheTotalByteLimit) break;
+        NSInteger index = [candidate[@"index"] integerValue];
+        if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
+        SPDFRenderedPage* page = _renderedPages[(NSUInteger)index];
+        NSUInteger bytes = [self renderedBaseImageByteCost:page];
+        if (bytes == 0) continue;
+        NSImage* evictedBaseImage = page.baseImage;
+        page.baseImage = nil;
+        page.baseImagePointWidth = 0.0;
+        page.baseImagePointHeight = 0.0;
+        page.baseImageZoom = 0.0;
+        page.baseImageScale = 0.0;
+        if (page.zoomSeedImage == evictedBaseImage) {
+            page.zoomSeedImage = nil;
+            page.zoomSeedPageRect = NSZeroRect;
+            page.zoomSeedZoom = 0.0;
+            page.zoomSeedScale = 0.0;
+        }
+        baseBytes = bytes > baseBytes ? 0 : baseBytes - bytes;
+        evictedBase = YES;
+    }
+    if (evictedBase) [self cacheActiveRenderedPagesForSelectedTab];
 }
 
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop {
@@ -3265,10 +3836,12 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [self resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:YES];
     [_window.contentView layoutSubtreeIfNeeded];
     [_renderQueue cancelAllOperations];
+    [self cancelCacheRenderOperations];
     [_minimapQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
     [_queuedRenderOperations removeAllObjects];
     [_queuedMinimapThumbnailPages removeAllObjects];
+    _visibleCropRenderSequence++;
     _renderGeneration++;
     NSUInteger generation = _renderGeneration;
     _zoom = [self zoomForFitMode:_fitMode pageIndex:MAX(0, pageIndex)];
@@ -3310,6 +3883,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
           self->_pageView.viewMode = self->_viewMode;
           self->_pageView.backingScale = [self backingScale];
           self->_pageView.liveZooming = NO;
+          [self clearLiveZoomSeeds];
           [self applySearchHighlightsToCurrentPage];
           [self resizeDocumentView];
           if (restoreOrigin)
@@ -3573,7 +4147,10 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         [self renderPageIfNeededAtIndex:_pageIndex];
         [self resizeDocumentView];
         visibleRect = clipView.bounds;
-        [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
+        [self enqueueZoomSeedCachesForGeneration:_renderGeneration preferredPage:_pageIndex includeWholeBase:NO];
+        [self enqueueCurrentPageNeighborhoodRendersForGeneration:_renderGeneration
+                                                   preferredPage:_pageIndex
+                                               forceHighPriority:NO];
         [self updateControls];
         [self selectCurrentSidebarRow];
     }
@@ -4793,6 +5370,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
                        if (generation != self->_renderGeneration || ![self->_path isEqualToString:path]) return;
+                       [self enqueueZoomSeedCachesForGeneration:generation
+                                                  preferredPage:preferredRenderPage
+                                               includeWholeBase:YES];
                        [self enqueueNearbyPageRendersForGeneration:generation preferredPage:preferredRenderPage];
                        [self loadOutlineForCurrentDocumentAsync];
                        [self loadCommentsForCurrentDocumentAsync];
@@ -5007,20 +5587,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)zoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint {
     if (!_doc || factor <= 0) return;
-
-    SPDFPageAnchor anchor = [self pageAnchorForWindowPoint:windowPoint];
-    CGFloat oldZoom = _zoom;
-
-    _fitMode = SPDFFitModeCustom;
-    _zoom = MAX(kMinZoom, MIN(kMaxZoom, _zoom * factor));
-    if (fabs(_zoom - oldZoom) < 0.0001) return;
-    _rememberedCustomZoom = _zoom;
-
-    [self renderDocumentAndScrollToPage:_pageIndex
-                               alignTop:NO
-                          restoreOrigin:[NSValue valueWithPoint:_pageScrollView.contentView.bounds.origin]];
-    [self scrollToPageAnchor:anchor notify:YES];
-    [self persistActiveState];
+    [self beginLiveZoomByFactor:factor centeredAtWindowPoint:windowPoint];
 }
 
 - (void)setZoomWithoutRendering:(CGFloat)newZoom centeredAtWindowPoint:(NSPoint)windowPoint {
@@ -5043,13 +5610,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [self scrollToPageAnchor:anchor notify:NO];
     _suppressScrollCallbacks = previousSuppressScrollCallbacks;
 
-    BOOL shouldRefreshControls = !_liveZooming;
-    if (_liveZooming) {
-        NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
-        shouldRefreshControls = now - _lastLiveZoomControlUpdateTime >= kLiveZoomControlUpdateInterval;
-        if (shouldRefreshControls) _lastLiveZoomControlUpdateTime = now;
-    }
-    if (shouldRefreshControls) {
+    if (!_liveZooming) {
         [self syncToolbarState];
         [self updateControls];
     }
@@ -5089,7 +5650,6 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSInteger preservedPageIndex = _pageIndex;
     _liveZooming = NO;
     _liveZoomAnchorValid = NO;
-    _pageView.liveZooming = NO;
     [self resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:YES];
     if (_doc) {
         _documentViewPanCropGeneration++;
@@ -5120,8 +5680,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                          if (sequence != self->_liveZoomSequence || postZoomRenderGeneration != self->_renderGeneration ||
                              self->_liveZooming || !self->_doc || ![self->_path isEqualToString:path])
                              return;
-                         [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:NO];
-                         [self enqueueNearbyPageRendersForGeneration:self->_renderGeneration preferredPage:self->_pageIndex];
+                         [self enqueueZoomSeedCachesForGeneration:self->_renderGeneration
+                                                    preferredPage:self->_pageIndex
+                                                 includeWholeBase:NO];
+                         NSArray<NSNumber*>* pages = [self currentPageNeighborhoodIndexes];
+                         [self enqueuePageRendersForGeneration:self->_renderGeneration
+                                                   pageIndexes:pages
+                                                 preferredPage:self->_pageIndex
+                                             forceHighPriority:NO];
                        });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kLiveZoomStateSaveDelay * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
@@ -5130,6 +5696,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                              return;
                          [self savePersistentState];
                        });
+    } else {
+        _pageView.liveZooming = NO;
+        [self clearLiveZoomSeeds];
     }
 }
 
@@ -5140,18 +5709,24 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _fitMode = SPDFFitModeCustom;
     _documentViewPanCropGeneration++;
     _documentViewPanCropInFlight = NO;
-    if (!_liveZooming) {
+    BOOL wasLiveZooming = _liveZooming;
+    if (!wasLiveZooming) {
+        _liveZoomSequence++;
+        _liveZooming = YES;
+        _pageView.liveZooming = YES;
+        [self pauseBackgroundRenderQueuesForLiveZoom];
         SPDFPageAnchor anchor = [self pageAnchorForWindowPoint:windowPoint];
         _liveZoomAnchorPageIndex = anchor.pageIndex;
         _liveZoomAnchorPagePoint = anchor.pagePoint;
         _liveZoomAnchorOffsetInViewport = anchor.offsetInViewport;
         _liveZoomAnchorValid = anchor.valid;
-        [self pauseBackgroundRenderQueuesForLiveZoom];
-        _lastLiveZoomControlUpdateTime = 0.0;
+        NSArray<NSNumber*>* seedPages = [self liveZoomSeedPageIndexesForAnchorPage:anchor.pageIndex];
+        [self prepareLiveZoomSeedsForPageIndexes:seedPages];
+    } else {
+        _liveZoomSequence++;
+        _liveZooming = YES;
+        _pageView.liveZooming = YES;
     }
-    _liveZooming = YES;
-    _pageView.liveZooming = YES;
-    _liveZoomSequence++;
     [_zoomFinishTimer invalidate];
     [self setZoomWithoutRendering:targetZoom centeredAtWindowPoint:windowPoint];
     _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:kLiveZoomFinishDelay
@@ -5169,6 +5744,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _liveZooming = NO;
     _liveZoomAnchorValid = NO;
     _pageView.liveZooming = NO;
+    [self clearLiveZoomSeeds];
     [self resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:YES];
     _liveZoomMinimapUpdateScheduled = NO;
     _documentViewPanCropGeneration++;
@@ -5406,6 +5982,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSString* path = [tab.path copy];
     NSInteger savedFindMatchIndex = tab.findMatchIndex;
     [_renderQueue cancelAllOperations];
+    [self cancelCacheRenderOperations];
     [_minimapQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
     [_queuedRenderOperations removeAllObjects];
@@ -5972,6 +6549,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [self updateMinimap];
     if (actualVisible && _doc) {
         if (!_suppressViewportRerender) [self renderPageIfNeededAtIndex:_pageIndex];
+        [self enqueueZoomSeedCachesForGeneration:_renderGeneration preferredPage:_pageIndex includeWholeBase:NO];
         [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
     }
     [self syncToolbarState];
@@ -6347,7 +6925,10 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                 [self renderPageIfNeededAtIndex:_pageIndex];
                 [_pageView setNeedsDisplay:YES];
             }
-            [self enqueueNearbyPageRendersForGeneration:_renderGeneration preferredPage:_pageIndex];
+            [self enqueueZoomSeedCachesForGeneration:_renderGeneration preferredPage:_pageIndex includeWholeBase:NO];
+            [self enqueueCurrentPageNeighborhoodRendersForGeneration:_renderGeneration
+                                                       preferredPage:_pageIndex
+                                                   forceHighPriority:NO];
             [self updateControls];
             [self selectCurrentSidebarRow];
         }
@@ -6963,7 +7544,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)documentViewDidBeginPan {
-    [self cancelPendingLiveZoomCompletion];
+    if (!_liveZooming) [self cancelPendingLiveZoomCompletion];
     _viewportMovementGeneration++;
     _documentViewPanActive = YES;
     _documentViewPanCropInFlight = NO;
@@ -7008,6 +7589,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _liveZooming = NO;
     _liveZoomAnchorValid = NO;
     _pageView.liveZooming = NO;
+    [self clearLiveZoomSeeds];
     [self resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:YES];
     _liveZoomMinimapUpdateScheduled = NO;
     [_pageView cancelTransientInteraction];
@@ -10469,6 +11051,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
 
     [_renderQueue cancelAllOperations];
+    [self cancelCacheRenderOperations];
     [_minimapQueue cancelAllOperations];
     [_queuedRenderPages removeAllObjects];
     [_queuedRenderOperations removeAllObjects];
@@ -10657,6 +11240,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         }
 
         [strongSelf->_renderQueue cancelAllOperations];
+        [strongSelf cancelCacheRenderOperations];
         [strongSelf->_minimapQueue cancelAllOperations];
         [strongSelf->_queuedRenderPages removeAllObjects];
         [strongSelf->_queuedRenderOperations removeAllObjects];

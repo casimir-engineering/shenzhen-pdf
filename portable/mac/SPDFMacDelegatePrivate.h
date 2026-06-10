@@ -115,11 +115,18 @@
     id _presentationEventMonitor;
     id _presentationGlobalEventMonitor;
     NSOperationQueue* _renderQueue;
+    NSOperationQueue* _zoomSeedRenderQueue;
+    NSOperationQueue* _cacheRenderQueue;
+    NSOperationQueue* _backgroundRenderQueue;
     NSOperationQueue* _minimapQueue;
     NSOperationQueue* _preloadQueue;
     NSOperationQueue* _findQueue;
     NSMutableSet<NSNumber*>* _queuedRenderPages;
     NSMutableDictionary<NSNumber*, NSOperation*>* _queuedRenderOperations;
+    NSMutableSet<NSNumber*>* _queuedBaseRenderPages;
+    NSMutableDictionary<NSNumber*, NSOperation*>* _queuedBaseRenderOperations;
+    NSMutableSet<NSNumber*>* _queuedHighQualityRenderPages;
+    NSMutableDictionary<NSNumber*, NSOperation*>* _queuedHighQualityRenderOperations;
     NSMutableSet<NSNumber*>* _queuedMinimapThumbnailPages;
     NSTimer* _findFlashTimer;
     NSTimeInterval _findFlashStartTime;
@@ -173,7 +180,6 @@
     NSPoint _liveZoomAnchorPagePoint;
     NSPoint _liveZoomAnchorOffsetInViewport;
     BOOL _liveZoomAnchorValid;
-    NSTimeInterval _lastLiveZoomControlUpdateTime;
     BOOL _uiReady;
     BOOL _updatingSelection;
     BOOL _updatingFromScroll;
@@ -186,6 +192,7 @@
     BOOL _documentViewPanCropInFlight;
     BOOL _documentViewPanMaintenanceScheduled;
     NSUInteger _documentViewPanCropGeneration;
+    NSUInteger _visibleCropRenderSequence;
     NSTimeInterval _lastDocumentPanLiveCropRenderTime;
     NSUInteger _viewportMovementGeneration;
     BOOL _minimapPrecisionViewportDragActive;
@@ -393,11 +400,14 @@
                                                  path:(NSString*)path
                                      renderGeneration:(NSUInteger)renderGeneration;
 - (void)renderVisiblePageCropsForCurrentViewportIfNeeded;
+- (void)cancelCacheRenderOperations;
 - (void)scheduleDocumentPanMaintenance;
 - (void)renderLiveDocumentPanViewportCropIfDue;
 - (NSUInteger)estimatedRenderedImageByteCostForPage:(SPDFRenderedPage*)page
                                                zoom:(CGFloat)zoom
                                        displayScale:(CGFloat)displayScale;
+- (NSUInteger)renderedBaseImageByteCost:(SPDFRenderedPage*)page;
+- (NSUInteger)renderedHighQualityImageByteCost:(SPDFRenderedPage*)page;
 - (BOOL)shouldKeepFullRenderedDocumentAtCurrentZoom;
 - (NSInteger)backgroundRenderBatchSizeForCurrentZoom;
 - (BOOL)canOpenDocumentAtPath:(NSString*)path showError:(BOOL)showError;
@@ -442,6 +452,14 @@
 - (NSString*)currentCommentAuthor;
 - (void)normalizeSidebarModeControlWidths;
 - (void)enqueueNearbyPageRendersForGeneration:(NSUInteger)generation preferredPage:(NSInteger)preferredPage;
+- (void)enqueueFocusedDocumentBaseCacheForGeneration:(NSUInteger)generation preferredPage:(NSInteger)preferredPage;
+- (void)enqueueZoomSeedCachesForGeneration:(NSUInteger)generation
+                             preferredPage:(NSInteger)preferredPage
+                          includeWholeBase:(BOOL)includeWholeBase;
+- (void)enqueueHighQualityZoomCacheForPageIndexes:(NSArray<NSNumber*>*)pageIndexes
+                                 renderGeneration:(NSUInteger)generation
+                                 liveZoomSequence:(NSUInteger)liveZoomSequence
+                                    preferredPage:(NSInteger)preferredPage;
 - (void)evictDistantRenderedPageImages;
 - (void)scheduleNearbyPageRendersAfterFirstPaintForGeneration:(NSUInteger)generation
                                                 preferredPage:(NSInteger)preferredPage;
