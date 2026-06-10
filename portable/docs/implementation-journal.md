@@ -501,6 +501,14 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Result: self-test on Bear Sunny and Camera Module shows no main-thread stalls during any gesture phase (previously 82-384ms at gesture start), minimap draws 5-22ms (previously 83-133ms), and no render above 35MB after deep zoom.
    - Validation target: trackpad pinch and Cmd/Ctrl-scroll zoom/unzoom, especially starting from fully zoomed in right after a previous zoom settled; the first input should track immediately with no initial hiccup.
 
+60. Navigation renders moved fully off the main thread.
+   - Status: Implemented; validated with the profiler self-test navigation phase.
+   - Prompt link: when it renders it still misses input and feels buggy; rendering must be a background process that never hampers navigation.
+   - Finding: `renderPageIfNeededAtIndex:` rendered the full page synchronously on the main thread (50-500ms depending on zoom) and is called from `documentScrollPositionChanged`, `goToPage:`, minimap drag callbacks, find-match jumps, link activation, and sidebar activation — every navigation gesture could block on an inline render. The foreground render queue also allowed up to 60% of cores of concurrent page renders, enough memory-bandwidth pressure to stall main-thread input even with all work off-main.
+   - Changed: `renderPageIfNeededAtIndex:` now enqueues the page through the existing async high-priority render path (same adoption semantics: highlights, selection, minimap copy, eviction) and keeps drawing resident stale/base imagery until the render lands. The viewport-crop fallback for over-cap pages is unchanged. `_renderQueue` concurrency is capped at 3.
+   - Self-test: added a navigation stress phase (`SPDF_ZOOM_SELFTEST=1`): 28 rapid next/previous page turns at 50ms cadence right after the zoom phases. Bear Sunny and Camera Module both show zero main-thread stalls and zero main-thread renders during navigation; the only synchronous render left is the intentional first-paint render in `renderDocumentAndScrollToPage:` at document open/full relayout.
+   - Validation target: scroll and page through documents while pages are still rendering (e.g., right after changing zoom); input should never pause, with stale imagery sharpening as async renders land.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.
