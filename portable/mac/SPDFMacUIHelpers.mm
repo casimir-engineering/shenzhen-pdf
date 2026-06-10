@@ -497,10 +497,29 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
     return YES;
 }
 
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event {
+    if (event.type != NSEventTypeMagnify || self.keyWindow) return NO;
+
+    NSView* contentView = self.contentView;
+    if (!contentView) return NO;
+
+    NSPoint contentPoint = [contentView convertPoint:event.locationInWindow fromView:nil];
+    NSView* hitView = [contentView hitTest:contentPoint];
+    Class minimapClass = NSClassFromString(@"SPDFMinimapView");
+    for (NSView* view = hitView; view; view = view.superview) {
+        if ([view isKindOfClass:SPDFScrollView.class] || (minimapClass && [view isKindOfClass:minimapClass])) {
+            [view magnifyWithEvent:event];
+            return YES;
+        }
+    }
+    return NO;
+}
+
 - (void)sendEvent:(NSEvent*)event {
     if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
     if (self.reader && [self.reader handleWindowArrangementShortcutEvent:event]) return;
+    if ([self routeInactiveMagnifyEvent:event]) return;
     [super sendEvent:event];
 }
 
