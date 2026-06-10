@@ -491,6 +491,16 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Changed: cache workers now exit if they wake up after live zoom has started, and the zoom-seed queue is capped to one utility-priority worker. This keeps 100%/200% warming in the background while making input responsiveness higher priority than cache freshness.
    - Validation target: trigger short rapid zoom/unzoom gestures immediately after opening and after repeated zoom cycles. The first input should move the page immediately, with no new render stealing the start of the gesture.
 
+59. Measured zoom gesture-start stutter fix (giant renders and minimap strip).
+   - Status: Implemented; validated with the built-in profiler self-test.
+   - Prompt link: starting zoom or unzoom still stutters before the movement begins, especially from fully zoomed in; performance is great after that.
+   - Method: added an env-gated profiler (`SPDF_ZOOM_PROFILE=1`) that logs slow document/minimap draws, every core render with size and duration, and main-thread stalls over 50ms, plus a synthetic gesture driver (`SPDF_ZOOM_SELFTEST=1`) that replays zoom-in/unzoom phases through the real `beginLiveZoomByFactor:` path. Event handling measured sub-millisecond; the stutter was elsewhere.
+   - Finding 1: after a gesture settled at high zoom, the post-zoom neighborhood full-page renders were allowed up to the old 512MB per-page cap. At zoom 8 that meant 15357x8640 (506MB, 2.4s) renders; starting the next gesture while one was in flight stalled the main thread ~380ms (memory-bandwidth contention), which is exactly the "stutter before the movement starts, especially from fully zoomed in".
+   - Finding 2: the minimap strip drew `page.image ?: page.minimapImage`, preferring full-resolution page bitmaps over thumbnails. Rebuilding the live-zoom content cache on the first gesture frame cold-decoded dozens of large bitmaps (83-133ms on the main thread), stuttering gesture start at any zoom level.
+   - Changed: `kMaxRenderedPageBitmapByteLimit` lowered 512MB -> 96MB; beyond it the existing viewport-crop path keeps the visible region crisp, so deep-zoom full-page giants are never rendered. The minimap now prefers `minimapImage` thumbnails and falls back to `page.image` only when no thumbnail exists.
+   - Result: self-test on Bear Sunny and Camera Module shows no main-thread stalls during any gesture phase (previously 82-384ms at gesture start), minimap draws 5-22ms (previously 83-133ms), and no render above 35MB after deep zoom.
+   - Validation target: trackpad pinch and Cmd/Ctrl-scroll zoom/unzoom, especially starting from fully zoomed in right after a previous zoom settled; the first input should track immediately with no initial hiccup.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

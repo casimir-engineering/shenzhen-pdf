@@ -13,3 +13,7 @@ BOOL spdf_ocr_language_uses_extra_traineddata(NSString* language);
 NSImage* spdf_translate_toolbar_image(void);
 NSImage* spdf_ocr_toolbar_image(void);
 BOOL spdf_is_allowed_external_url(NSURL* url);
+
+BOOL spdf_zoom_profile_enabled(void);
+double spdf_zoom_profile_now_ms(void);
+void spdf_zoom_profile_log(NSString* format, ...) NS_FORMAT_FUNCTION(1, 2);
