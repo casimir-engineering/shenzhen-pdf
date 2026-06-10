@@ -261,6 +261,7 @@
 - (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event;
 - (BOOL)zoomWithScrollWheelEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)zoomWithMagnifyEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
+- (void)zoomWithMagnifyDelta:(CGFloat)delta centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)zoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)beginLiveZoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)cancelPendingLiveZoomCompletion;
@@ -368,6 +369,7 @@
 - (void)minimapViewDidReceiveScrollWheel:(NSEvent*)event;
 - (void)minimapViewDidReceiveZoomScrollWheel:(NSEvent*)event documentPoint:(NSPoint)documentPoint;
 - (void)minimapViewDidReceiveMagnify:(NSEvent*)event documentPoint:(NSPoint)documentPoint;
+- (void)minimapViewDidReceiveMagnifyDelta:(CGFloat)delta documentPoint:(NSPoint)documentPoint;
 - (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard;
 - (void)showContextMenuForDocumentView:(NSView*)view event:(NSEvent*)event;
 - (void)setCommentAuthor:(id)sender;

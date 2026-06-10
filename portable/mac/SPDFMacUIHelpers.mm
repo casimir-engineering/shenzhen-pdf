@@ -1,4 +1,5 @@
 #import "SPDFMacUIHelpers.h"
+#import "SPDFMacSupport.h"
 
 static CGFloat spdf_ui_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));
@@ -22,7 +23,9 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
 }
 
 @interface SPDFScrollView (SPDFInactiveMagnifyRouting)
-- (void)spdf_magnifyWithEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
+- (void)spdf_magnifyWithEvent:(NSEvent*)event
+                magnification:(CGFloat)magnification
+        centeredAtWindowPoint:(NSPoint)windowPoint;
 @end
 
 @interface NSView (SPDFInactiveMinimapMagnifyRouting)
@@ -39,8 +42,8 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
 @end
 
 @interface SPDFWindow ()
-- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event windowPoint:(NSPoint)windowPoint;
-- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event screenPoint:(NSPoint)screenPoint;
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event windowPoint:(NSPoint)windowPoint magnification:(CGFloat)magnification;
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event screenPoint:(NSPoint)screenPoint magnification:(CGFloat)magnification;
 @end
 
 static NSHashTable<SPDFWindow*>* spdf_inactive_magnify_windows(void) {
@@ -61,37 +64,92 @@ static SPDFWindow* spdf_magnify_window_under_screen_point(NSPoint screenPoint) {
     return nil;
 }
 
+// Magnify NSEvents observed through a global monitor are rebuilt by AppKit from the other app's gesture
+// CGEvents: `magnification` is filled with the gesture's CUMULATIVE zoom (CGEvent gesture field 113) and
+// `phase` is left at NSEventPhaseNone, unlike responder-chain events which carry per-event deltas. This
+// converts consecutive cumulative values back into the per-event deltas the zoom code expects. Gesture
+// boundaries are detected via phase when present, otherwise via the gap between event timestamps; the
+// first event after a boundary only establishes the baseline (its own delta is unknown and tiny).
+static const NSTimeInterval kSPDFInactiveMagnifyGestureGapSeconds = 0.3;
+
+static CGFloat spdf_global_magnify_delta(NSEvent* event) {
+    static BOOL gestureActive = NO;
+    static CGFloat lastCumulative = 0.0;
+    static NSTimeInterval lastTimestamp = 0.0;
+
+    CGFloat cumulative = event.magnification;
+    NSEventPhase phase = event.phase;
+
+    if (phase & (NSEventPhaseEnded | NSEventPhaseCancelled)) {
+        CGFloat delta = gestureActive ? cumulative - lastCumulative : 0.0;
+        gestureActive = NO;
+        lastCumulative = 0.0;
+        return delta;
+    }
+    // The other app's stream also contains legacy magnify CGEvents whose gesture payload does not survive
+    // the monitor conversion (magnification reads 0); ignore them so they cannot corrupt the baseline.
+    if (cumulative == 0.0 && phase == NSEventPhaseNone) return 0.0;
+
+    BOOL gestureBreak = (phase & NSEventPhaseBegan) || !gestureActive ||
+                        event.timestamp - lastTimestamp > kSPDFInactiveMagnifyGestureGapSeconds;
+    CGFloat delta = gestureBreak ? 0.0 : cumulative - lastCumulative;
+    gestureActive = YES;
+    lastCumulative = cumulative;
+    lastTimestamp = event.timestamp;
+    return delta;
+}
+
 static void spdf_install_inactive_magnify_monitor(void) {
     static dispatch_once_t onceToken;
     static id spdf_global_magnify_monitor = nil;
     static id spdf_local_magnify_monitor = nil;
     dispatch_once(&onceToken, ^{
       // Another app is active: its event stream receives the pinch, so the magnify events are only observable
-      // through a global monitor (global monitors never see events delivered to this app).
-      spdf_global_magnify_monitor =
-          [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMagnify
-                                                 handler:^(NSEvent* event) {
-                                                   NSPoint screenPoint = NSEvent.mouseLocation;
-                                                   SPDFWindow* window =
-                                                       spdf_magnify_window_under_screen_point(screenPoint);
-                                                   if (!window || window.keyWindow) return;
-                                                   [window routeInactiveMagnifyEvent:event screenPoint:screenPoint];
-                                                 }];
+      // through a global monitor (global monitors never see events delivered to this app). These events carry
+      // cumulative magnification, so they are converted to per-event deltas before routing. When this app is
+      // active its own event stream (local monitor / responder chain) is authoritative and the global
+      // observation is ignored, so no event can ever be applied through two paths.
+      spdf_global_magnify_monitor = [NSEvent
+          addGlobalMonitorForEventsMatchingMask:NSEventMaskMagnify
+                                        handler:^(NSEvent* event) {
+                                          if (NSApp.active) return;
+                                          NSPoint screenPoint = NSEvent.mouseLocation;
+                                          SPDFWindow* window = spdf_magnify_window_under_screen_point(screenPoint);
+                                          if (!window || window.keyWindow) return;
+                                          CGFloat delta = spdf_global_magnify_delta(event);
+                                          if (spdf_zoom_profile_enabled()) {
+                                              spdf_zoom_profile_log(@"inactiveMagnify path=global phase=%lu raw=%.4f "
+                                                                    @"delta=%.4f",
+                                                                    (unsigned long)event.phase,
+                                                                    (double)event.magnification, (double)delta);
+                                          }
+                                          if (delta == 0.0) return;
+                                          [window routeInactiveMagnifyEvent:event
+                                                                screenPoint:screenPoint
+                                                              magnification:delta];
+                                        }];
       // This app is active: AppKit routes magnify events to the key window even when the cursor hovers another
       // ShenzhenPDF window, so reroute them to the window under the cursor and swallow the event. When the
       // cursor is over the key window itself the event is returned unchanged so the regular responder-chain
-      // magnifyWithEvent: path handles it exactly once.
-      spdf_local_magnify_monitor =
-          [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMagnify
-                                                handler:^NSEvent*(NSEvent* event) {
-                                                  NSPoint screenPoint = NSEvent.mouseLocation;
-                                                  SPDFWindow* window =
-                                                      spdf_magnify_window_under_screen_point(screenPoint);
-                                                  if (!window || window.keyWindow) return event;
-                                                  if ([window routeInactiveMagnifyEvent:event screenPoint:screenPoint])
-                                                      return nil;
-                                                  return event;
-                                                }];
+      // magnifyWithEvent: path handles it exactly once. These are first-class AppKit events whose
+      // magnification is already a per-event delta.
+      spdf_local_magnify_monitor = [NSEvent
+          addLocalMonitorForEventsMatchingMask:NSEventMaskMagnify
+                                       handler:^NSEvent*(NSEvent* event) {
+                                         NSPoint screenPoint = NSEvent.mouseLocation;
+                                         SPDFWindow* window = spdf_magnify_window_under_screen_point(screenPoint);
+                                         if (!window || window.keyWindow) return event;
+                                         if (spdf_zoom_profile_enabled()) {
+                                             spdf_zoom_profile_log(@"inactiveMagnify path=local phase=%lu raw=%.4f",
+                                                                   (unsigned long)event.phase,
+                                                                   (double)event.magnification);
+                                         }
+                                         if ([window routeInactiveMagnifyEvent:event
+                                                                   screenPoint:screenPoint
+                                                                 magnification:event.magnification])
+                                             return nil;
+                                         return event;
+                                       }];
       (void)spdf_global_magnify_monitor;
       (void)spdf_local_magnify_monitor;
     });
@@ -598,8 +656,16 @@ static void spdf_install_inactive_magnify_monitor(void) {
     return YES;
 }
 
-- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event windowPoint:(NSPoint)windowPoint {
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event windowPoint:(NSPoint)windowPoint magnification:(CGFloat)magnification {
     if (event.type != NSEventTypeMagnify || self.keyWindow || !self.visible || self.miniaturized) return NO;
+
+    // Defensive: a genuine pinch never produces per-event deltas anywhere near this large, so anything
+    // bigger is a misdecoded monitor event; swallow it instead of slamming the zoom.
+    if (fabs(magnification) > 0.5) {
+        if (spdf_zoom_profile_enabled())
+            spdf_zoom_profile_log(@"inactiveMagnify dropped out-of-range delta=%.4f", (double)magnification);
+        return YES;
+    }
 
     NSView* contentView = self.contentView;
     if (!contentView) return NO;
@@ -611,7 +677,9 @@ static void spdf_install_inactive_magnify_monitor(void) {
     Class minimapClass = NSClassFromString(@"SPDFMinimapView");
     for (NSView* view = hitView; view; view = view.superview) {
         if ([view isKindOfClass:SPDFScrollView.class]) {
-            [(SPDFScrollView*)view spdf_magnifyWithEvent:event centeredAtWindowPoint:windowPoint];
+            [(SPDFScrollView*)view spdf_magnifyWithEvent:event
+                                           magnification:magnification
+                                   centeredAtWindowPoint:windowPoint];
             return YES;
         }
 
@@ -636,22 +704,30 @@ static void spdf_install_inactive_magnify_monitor(void) {
                                                                   contentTop:contentTop];
             id<SPDFMacUIReader> reader = [view valueForKey:@"reader"];
             if (!reader) return NO;
-            [reader minimapViewDidReceiveMagnify:event documentPoint:documentPoint];
+            [reader minimapViewDidReceiveMagnifyDelta:magnification documentPoint:documentPoint];
             return YES;
         }
     }
     return NO;
 }
 
-- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event screenPoint:(NSPoint)screenPoint {
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event screenPoint:(NSPoint)screenPoint magnification:(CGFloat)magnification {
     if (event.type != NSEventTypeMagnify || self.keyWindow || !self.visible || self.miniaturized) return NO;
     if (!NSPointInRect(screenPoint, self.frame)) return NO;
-    return [self routeInactiveMagnifyEvent:event windowPoint:[self convertPointFromScreen:screenPoint]];
+    return [self routeInactiveMagnifyEvent:event
+                               windowPoint:[self convertPointFromScreen:screenPoint]
+                             magnification:magnification];
 }
 
 - (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event {
     if (event.type != NSEventTypeMagnify || self.keyWindow) return NO;
-    return [self routeInactiveMagnifyEvent:event windowPoint:event.locationInWindow];
+    // Events that reach sendEvent: were dispatched to this window by AppKit itself, so their
+    // magnification is already a per-event delta.
+    if (spdf_zoom_profile_enabled()) {
+        spdf_zoom_profile_log(@"inactiveMagnify path=sendEvent phase=%lu raw=%.4f", (unsigned long)event.phase,
+                              (double)event.magnification);
+    }
+    return [self routeInactiveMagnifyEvent:event windowPoint:event.locationInWindow magnification:event.magnification];
 }
 
 - (void)sendEvent:(NSEvent*)event {
@@ -824,9 +900,11 @@ static void spdf_install_inactive_magnify_monitor(void) {
     if (self.reader) [self.reader zoomWithMagnifyEvent:event centeredAtWindowPoint:event.locationInWindow];
 }
 
-- (void)spdf_magnifyWithEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint {
+- (void)spdf_magnifyWithEvent:(NSEvent*)event
+                magnification:(CGFloat)magnification
+        centeredAtWindowPoint:(NSPoint)windowPoint {
     [self markZoomWheelAtTimestamp:event.timestamp];
-    if (self.reader) [self.reader zoomWithMagnifyEvent:event centeredAtWindowPoint:windowPoint];
+    if (self.reader) [self.reader zoomWithMagnifyDelta:magnification centeredAtWindowPoint:windowPoint];
 }
 
 - (void)keyDown:(NSEvent*)event {
