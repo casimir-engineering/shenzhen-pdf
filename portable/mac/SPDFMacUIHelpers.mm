@@ -21,6 +21,57 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
     }
 }
 
+@interface SPDFScrollView (SPDFInactiveMagnifyRouting)
+- (void)spdf_magnifyWithEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
+@end
+
+@interface NSView (SPDFInactiveMinimapMagnifyRouting)
+- (BOOL)layoutScale:(CGFloat*)scaleOut
+                gap:(CGFloat*)gapOut
+         contentTop:(CGFloat*)contentTopOut
+      contentHeight:(CGFloat*)contentHeightOut
+        visibleRect:(NSRect*)visibleRectOut;
+- (NSPoint)documentPointForMinimapCenterPoint:(NSPoint)point
+                                        scale:(CGFloat)scale
+                                          gap:(CGFloat)gap
+                                contentHeight:(CGFloat)contentHeight
+                                   contentTop:(CGFloat)contentTop;
+@end
+
+@interface SPDFWindow ()
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event windowPoint:(NSPoint)windowPoint;
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event screenPoint:(NSPoint)screenPoint;
+@end
+
+static NSHashTable<SPDFWindow*>* spdf_inactive_magnify_windows(void) {
+    static NSHashTable<SPDFWindow*>* windows = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ windows = [NSHashTable weakObjectsHashTable]; });
+    return windows;
+}
+
+static void spdf_install_inactive_magnify_monitor(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+      [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMagnify
+                                             handler:^(NSEvent* event) {
+                                               NSPoint screenPoint = NSEvent.mouseLocation;
+                                               NSArray<SPDFWindow*>* windows = spdf_inactive_magnify_windows().allObjects;
+                                               windows = [windows sortedArrayUsingComparator:^NSComparisonResult(
+                                                                     SPDFWindow* a, SPDFWindow* b) {
+                                                 NSInteger aIndex = a.orderedIndex;
+                                                 NSInteger bIndex = b.orderedIndex;
+                                                 if (aIndex == bIndex) return NSOrderedSame;
+                                                 return aIndex < bIndex ? NSOrderedAscending : NSOrderedDescending;
+                                               }];
+                                               for (SPDFWindow* window in windows) {
+                                                   if ([window routeInactiveMagnifyEvent:event screenPoint:screenPoint])
+                                                       break;
+                                               }
+                                             }];
+    });
+}
+
 @implementation SPDFPresentationOverlayView
 
 - (BOOL)isFlipped {
@@ -489,6 +540,31 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
 
 @implementation SPDFWindow
 
+- (instancetype)initWithContentRect:(NSRect)contentRect
+                           styleMask:(NSWindowStyleMask)style
+                             backing:(NSBackingStoreType)bufferingType
+                               defer:(BOOL)flag {
+    self = [super initWithContentRect:contentRect styleMask:style backing:bufferingType defer:flag];
+    if (self) {
+        spdf_install_inactive_magnify_monitor();
+        [spdf_inactive_magnify_windows() addObject:self];
+    }
+    return self;
+}
+
+- (instancetype)initWithCoder:(NSCoder*)coder {
+    self = [super initWithCoder:coder];
+    if (self) {
+        spdf_install_inactive_magnify_monitor();
+        [spdf_inactive_magnify_windows() addObject:self];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [spdf_inactive_magnify_windows() removeObject:self];
+}
+
 - (BOOL)canBecomeKeyWindow {
     return YES;
 }
@@ -497,22 +573,58 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
     return YES;
 }
 
-- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event {
-    if (event.type != NSEventTypeMagnify || self.keyWindow) return NO;
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event windowPoint:(NSPoint)windowPoint {
+    if (event.type != NSEventTypeMagnify || self.keyWindow || !self.visible || self.miniaturized) return NO;
 
     NSView* contentView = self.contentView;
     if (!contentView) return NO;
 
-    NSPoint contentPoint = [contentView convertPoint:event.locationInWindow fromView:nil];
+    NSPoint contentPoint = [contentView convertPoint:windowPoint fromView:nil];
     NSView* hitView = [contentView hitTest:contentPoint];
     Class minimapClass = NSClassFromString(@"SPDFMinimapView");
     for (NSView* view = hitView; view; view = view.superview) {
-        if ([view isKindOfClass:SPDFScrollView.class] || (minimapClass && [view isKindOfClass:minimapClass])) {
-            [view magnifyWithEvent:event];
+        if ([view isKindOfClass:SPDFScrollView.class]) {
+            [(SPDFScrollView*)view spdf_magnifyWithEvent:event centeredAtWindowPoint:windowPoint];
+            return YES;
+        }
+
+        if (minimapClass && [view isKindOfClass:minimapClass]) {
+            SEL documentPointSelector = @selector(documentPointForMinimapCenterPoint:scale:gap:contentHeight:contentTop:);
+            if (![view respondsToSelector:@selector(layoutScale:gap:contentTop:contentHeight:visibleRect:)] ||
+                ![view respondsToSelector:documentPointSelector])
+                return NO;
+
+            CGFloat scale = 1.0;
+            CGFloat gap = 4.0;
+            CGFloat contentTop = 8.0;
+            CGFloat contentHeight = 0.0;
+            if (![view layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL])
+                return NO;
+
+            NSPoint minimapPoint = [view convertPoint:windowPoint fromView:nil];
+            NSPoint documentPoint = [view documentPointForMinimapCenterPoint:minimapPoint
+                                                                       scale:scale
+                                                                         gap:gap
+                                                               contentHeight:contentHeight
+                                                                  contentTop:contentTop];
+            id<SPDFMacUIReader> reader = [view valueForKey:@"reader"];
+            if (!reader) return NO;
+            [reader minimapViewDidReceiveMagnify:event documentPoint:documentPoint];
             return YES;
         }
     }
     return NO;
+}
+
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event screenPoint:(NSPoint)screenPoint {
+    if (event.type != NSEventTypeMagnify || self.keyWindow || !self.visible || self.miniaturized) return NO;
+    if (!NSPointInRect(screenPoint, self.frame)) return NO;
+    return [self routeInactiveMagnifyEvent:event windowPoint:[self convertPointFromScreen:screenPoint]];
+}
+
+- (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event {
+    if (event.type != NSEventTypeMagnify || self.keyWindow) return NO;
+    return [self routeInactiveMagnifyEvent:event windowPoint:event.locationInWindow];
 }
 
 - (void)sendEvent:(NSEvent*)event {
@@ -683,6 +795,11 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
 - (void)magnifyWithEvent:(NSEvent*)event {
     [self markZoomWheelAtTimestamp:event.timestamp];
     if (self.reader) [self.reader zoomWithMagnifyEvent:event centeredAtWindowPoint:event.locationInWindow];
+}
+
+- (void)spdf_magnifyWithEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint {
+    [self markZoomWheelAtTimestamp:event.timestamp];
+    if (self.reader) [self.reader zoomWithMagnifyEvent:event centeredAtWindowPoint:windowPoint];
 }
 
 - (void)keyDown:(NSEvent*)event {

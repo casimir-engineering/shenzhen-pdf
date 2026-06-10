@@ -5,6 +5,7 @@
 static const CGFloat kPageMargin = 44.0;
 static const CGFloat kPageGap = 26.0;
 static const CGFloat kSelectionOverlayAlpha = 0.20;
+static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1024 * 1024;
 
 @implementation SPDFDocumentView {
     BOOL _isPanning;
@@ -102,13 +103,13 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 - (void)setFrameSize:(NSSize)newSize {
     NSSize oldSize = self.frame.size;
     [super setFrameSize:newSize];
-    if (!NSEqualSizes(oldSize, newSize)) [self invalidateLayoutCache];
+    if (fabs(oldSize.width - newSize.width) > 0.001) [self invalidateLayoutCache];
 }
 
 - (void)setBoundsSize:(NSSize)newSize {
     NSSize oldSize = self.bounds.size;
     [super setBoundsSize:newSize];
-    if (!NSEqualSizes(oldSize, newSize)) [self invalidateLayoutCache];
+    if (fabs(oldSize.width - newSize.width) > 0.001) [self invalidateLayoutCache];
 }
 
 - (CGFloat)effectiveBackingScale {
@@ -155,10 +156,11 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     CGFloat viewportWidth = [self viewportWidth];
     CGFloat effectiveBackingScale = [self effectiveBackingScale];
     NSSize boundsSize = self.bounds.size;
+    BOOL boundsWidthMatches = fabs(_layoutBoundsSize.width - boundsSize.width) <= 0.001;
     if (_layoutCacheValid && _layoutPages == self.pages && _layoutZoom == self.zoom &&
         _layoutViewMode == self.viewMode && _layoutPresentationMode == self.presentationMode &&
         _layoutViewportWidth == viewportWidth && _layoutEffectiveBackingScale == effectiveBackingScale &&
-        NSEqualSizes(_layoutBoundsSize, boundsSize))
+        boundsWidthMatches)
         return;
 
     CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
@@ -236,6 +238,57 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     CGFloat scaleY = NSHeight(pageRect) / MAX(1.0, page.pageHeight);
     return NSMakePoint((point.x - pageRect.origin.x) / MAX(0.001, scaleX),
                        (point.y - pageRect.origin.y) / MAX(0.001, scaleY));
+}
+
+- (NSUInteger)estimatedFullPageImageByteCost:(SPDFRenderedPage*)page {
+    if (!page.image || page.imagePointWidth <= 0.0 || page.imagePointHeight <= 0.0) return 0;
+    CGFloat scale = page.imageScale > 0.0 ? page.imageScale : [self effectiveBackingScale];
+    double pixels = ceil(page.imagePointWidth * scale) * ceil(page.imagePointHeight * scale);
+    if (!isfinite(pixels) || pixels <= 0.0) return 0;
+    double bytes = pixels * 4.0;
+    if (bytes > (double)NSUIntegerMax) return NSUIntegerMax;
+    return (NSUInteger)bytes;
+}
+
+- (BOOL)shouldDrawStaleFullPageImageDuringLiveZoom:(SPDFRenderedPage*)page {
+    if (!page.image) return NO;
+    if (fabs(page.imageZoom - self.zoom) <= 0.001) return YES;
+    return [self estimatedFullPageImageByteCost:page] <= kLiveZoomStaleFullPageDrawByteLimit;
+}
+
+- (BOOL)pageSubrectCoversFullPage:(NSRect)pageSubrect page:(SPDFRenderedPage*)page {
+    if (NSIsEmptyRect(pageSubrect) || page.pageWidth <= 0.0 || page.pageHeight <= 0.0) return NO;
+    return fabs(NSMinX(pageSubrect)) <= 0.01 && fabs(NSMinY(pageSubrect)) <= 0.01 &&
+           fabs(NSWidth(pageSubrect) - page.pageWidth) <= 0.01 &&
+           fabs(NSHeight(pageSubrect) - page.pageHeight) <= 0.01;
+}
+
+- (BOOL)drawPageImage:(NSImage*)image
+          pageSubrect:(NSRect)pageSubrect
+               inRect:(NSRect)pageRect
+            dirtyRect:(NSRect)dirtyRect
+                 page:(SPDFRenderedPage*)page
+        interpolation:(NSImageInterpolation)interpolation {
+    if (!image || NSIsEmptyRect(pageSubrect)) return NO;
+    NSRect imageRect = [self convertPageRect:pageSubrect toViewRectInPageRect:pageRect page:page];
+    if (NSIsEmptyRect(imageRect)) return NO;
+    NSRect drawRect = NSIntersectionRect(imageRect, dirtyRect);
+    if (NSIsEmptyRect(drawRect)) return NO;
+
+    NSGraphicsContext* context = NSGraphicsContext.currentContext;
+    NSImageInterpolation oldInterpolation = context.imageInterpolation;
+    context.imageInterpolation = interpolation;
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip(drawRect);
+    [image drawInRect:imageRect
+             fromRect:NSZeroRect
+            operation:NSCompositingOperationSourceOver
+             fraction:1.0
+       respectFlipped:YES
+                hints:@{NSImageHintInterpolation : @(interpolation)}];
+    [NSGraphicsContext restoreGraphicsState];
+    context.imageInterpolation = oldInterpolation;
+    return YES;
 }
 
 - (CGFloat)widestPage {
@@ -352,7 +405,7 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     return bestPage;
 }
 
-- (void)drawPage:(SPDFRenderedPage*)page inRect:(NSRect)pageRect {
+- (void)drawPage:(SPDFRenderedPage*)page inRect:(NSRect)pageRect dirtyRect:(NSRect)dirtyRect {
     NSShadow* shadow = [[NSShadow alloc] init];
     shadow.shadowBlurRadius = 12.0;
     shadow.shadowOffset = NSMakeSize(0.0, -2.0);
@@ -364,45 +417,69 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
     NSRectFill(pageRect);
     [NSGraphicsContext restoreGraphicsState];
 
+    BOOL hasLiveZoomSeed = self.liveZooming && page.zoomSeedImage && !NSIsEmptyRect(page.zoomSeedPageRect);
+    BOOL liveZoomSeedCoversFullPage = hasLiveZoomSeed && [self pageSubrectCoversFullPage:page.zoomSeedPageRect page:page];
+    BOOL drewLiveZoomSeed = liveZoomSeedCoversFullPage &&
+                            [self drawPageImage:page.zoomSeedImage
+                                    pageSubrect:page.zoomSeedPageRect
+                                         inRect:pageRect
+                                      dirtyRect:dirtyRect
+                                           page:page
+                                  interpolation:NSImageInterpolationHigh];
+
     BOOL hasExactFullPageImage = page.image && fabs(page.imageZoom - self.zoom) <= 0.001 &&
                                  fabs(page.imageScale - [self effectiveBackingScale]) <= 0.001;
+    BOOL hasReusableViewportImage = page.viewportImage && !NSIsEmptyRect(page.viewportImagePageRect);
+    BOOL hasHighQualityImage = page.highQualityImage && page.highQualityImagePointWidth > 0.0 &&
+                               page.highQualityImagePointHeight > 0.0;
+    BOOL hasBaseImage = page.baseImage && page.baseImagePointWidth > 0.0 && page.baseImagePointHeight > 0.0;
+    NSRect fullPageSubrect = NSMakeRect(0.0, 0.0, page.pageWidth, page.pageHeight);
     NSImage* image = nil;
+    NSImageInterpolation imageInterpolation = NSImageInterpolationHigh;
     if (hasExactFullPageImage) image = page.image;
-    else if (self.liveZooming) image = page.minimapImage;
-    else image = page.image ?: page.minimapImage;
-    if (image) {
+    else if (self.liveZooming && hasHighQualityImage)
+        image = page.highQualityImage;
+    else if (self.liveZooming && hasBaseImage)
+        image = page.baseImage;
+    else if (self.liveZooming && [self shouldDrawStaleFullPageImageDuringLiveZoom:page])
+        image = page.image;
+    else if (self.liveZooming && !hasReusableViewportImage)
+        image = page.minimapImage;
+    else if (self.liveZooming)
+        image = nil;
+    else image = page.image ?: page.highQualityImage ?: page.baseImage ?: page.minimapImage;
+    if (!drewLiveZoomSeed && image) {
         BOOL drawingExactImage = hasExactFullPageImage && page.image == image;
         BOOL exactSize = drawingExactImage && fabs(NSWidth(pageRect) - page.imagePointWidth) < 0.01 &&
                          fabs(NSHeight(pageRect) - page.imagePointHeight) < 0.01;
-        NSGraphicsContext* context = NSGraphicsContext.currentContext;
-        NSImageInterpolation oldInterpolation = context.imageInterpolation;
-        NSImageInterpolation interpolation = exactSize ? NSImageInterpolationNone : NSImageInterpolationHigh;
-        context.imageInterpolation = interpolation;
-        [image drawInRect:pageRect
-                  fromRect:NSZeroRect
-                 operation:NSCompositingOperationSourceOver
-                  fraction:1.0
-            respectFlipped:YES
-                     hints:@{NSImageHintInterpolation : @(interpolation)}];
-        context.imageInterpolation = oldInterpolation;
+        imageInterpolation = exactSize ? NSImageInterpolationNone : NSImageInterpolationHigh;
+        [self drawPageImage:image
+                pageSubrect:fullPageSubrect
+                     inRect:pageRect
+                  dirtyRect:dirtyRect
+                       page:page
+              interpolation:imageInterpolation];
     }
 
     BOOL hasCurrentViewportImage = page.viewportImage && fabs(page.viewportImageZoom - self.zoom) <= 0.001 &&
                                    fabs(page.viewportImageScale - [self effectiveBackingScale]) <= 0.001;
-    if (!hasExactFullPageImage && hasCurrentViewportImage) {
-        NSRect cropRect = [self convertPageRect:page.viewportImagePageRect toViewRectInPageRect:pageRect page:page];
-        if (!NSIsEmptyRect(cropRect)) {
-            NSGraphicsContext* context = NSGraphicsContext.currentContext;
-            NSImageInterpolation oldInterpolation = context.imageInterpolation;
-            context.imageInterpolation = NSImageInterpolationHigh;
-            [page.viewportImage drawInRect:cropRect
-                                  fromRect:NSZeroRect
-                                 operation:NSCompositingOperationSourceOver
-                                  fraction:1.0
-                            respectFlipped:YES
-                                     hints:@{NSImageHintInterpolation : @(NSImageInterpolationHigh)}];
-            context.imageInterpolation = oldInterpolation;
-        }
+    BOOL canDrawViewportImage = hasCurrentViewportImage || (self.liveZooming && hasReusableViewportImage);
+    if (!drewLiveZoomSeed && !hasExactFullPageImage && canDrawViewportImage) {
+        [self drawPageImage:page.viewportImage
+                pageSubrect:page.viewportImagePageRect
+                     inRect:pageRect
+                  dirtyRect:dirtyRect
+                       page:page
+              interpolation:NSImageInterpolationHigh];
+    }
+
+    if (hasLiveZoomSeed && !drewLiveZoomSeed) {
+        [self drawPageImage:page.zoomSeedImage
+                pageSubrect:page.zoomSeedPageRect
+                     inRect:pageRect
+                  dirtyRect:dirtyRect
+                       page:page
+              interpolation:NSImageInterpolationHigh];
     }
 
     if (page.highlights.count > 0 && self.zoom > 0) {
@@ -470,13 +547,15 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
         NSInteger index = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
         SPDFRenderedPage* page = self.pages[(NSUInteger)index];
         NSRect pageRect = [self rectForPageAtIndex:index];
-        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect];
+        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect dirtyRect:dirtyRect];
         return;
     }
 
     for (SPDFRenderedPage* page in self.pages) {
         NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
-        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect];
+        if (NSMaxY(pageRect) < NSMinY(dirtyRect) - 1.0) continue;
+        if (NSMinY(pageRect) > NSMaxY(dirtyRect) + 1.0) break;
+        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect dirtyRect:dirtyRect];
     }
 }
 
@@ -497,6 +576,8 @@ static const CGFloat kSelectionOverlayAlpha = 0.20;
 
     for (SPDFRenderedPage* page in self.pages) {
         NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
+        if (NSMaxY(pageRect) < point.y - 1.0) continue;
+        if (NSMinY(pageRect) > point.y + 1.0) break;
         if (NSPointInRect(point, pageRect)) {
             if (pageIndex) *pageIndex = page.pageIndex;
             if (pagePoint) *pagePoint = [self convertViewPoint:point toPagePointInPageRect:pageRect page:page];

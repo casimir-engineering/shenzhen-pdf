@@ -27,6 +27,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) CGFloat imageZoom;
 @property(nonatomic) CGFloat imageScale;
 @property(nonatomic, strong) NSImage* image;
+@property(nonatomic) CGFloat baseImagePointWidth;
+@property(nonatomic) CGFloat baseImagePointHeight;
+@property(nonatomic) CGFloat baseImageZoom;
+@property(nonatomic) CGFloat baseImageScale;
+@property(nonatomic, strong) NSImage* baseImage;
+@property(nonatomic) CGFloat highQualityImagePointWidth;
+@property(nonatomic) CGFloat highQualityImagePointHeight;
+@property(nonatomic) CGFloat highQualityImageZoom;
+@property(nonatomic) CGFloat highQualityImageScale;
+@property(nonatomic, strong) NSImage* highQualityImage;
 @property(nonatomic) CGFloat minimapImageZoom;
 @property(nonatomic) CGFloat minimapImageScale;
 @property(nonatomic, strong) NSImage* minimapImage;
@@ -34,6 +44,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) CGFloat viewportImageZoom;
 @property(nonatomic) CGFloat viewportImageScale;
 @property(nonatomic, strong) NSImage* viewportImage;
+@property(nonatomic) NSRect zoomSeedPageRect;
+@property(nonatomic) CGFloat zoomSeedZoom;
+@property(nonatomic) CGFloat zoomSeedScale;
+@property(nonatomic, strong) NSImage* zoomSeedImage;
 @property(nonatomic, copy) NSArray<NSValue*>* highlights;
 @property(nonatomic, copy) NSArray<NSValue*>* selectionRects;
 @end
