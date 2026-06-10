@@ -86,6 +86,23 @@ static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) 
     return MAX(minValue, MIN(maxValue, value));
 }
 
+// Profiling-only (SPDF_ZOOM_PROFILE): logs "<name> <elapsed>ms" when a scope
+// exceeds thresholdMs. Zero work when profiling is disabled.
+struct SPDFScopedProfileLog {
+    const char* name;
+    double threshold;
+    double start;
+    SPDFScopedProfileLog(const char* n, double thresholdMs)
+        : name(n),
+          threshold(thresholdMs),
+          start(spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0) {}
+    ~SPDFScopedProfileLog() {
+        if (start <= 0.0) return;
+        double elapsed = spdf_zoom_profile_now_ms() - start;
+        if (elapsed > threshold) spdf_zoom_profile_log(@"%s %.1fms", name, elapsed);
+    }
+};
+
 static CGFloat spdf_smoothstep_cg(CGFloat value) {
     value = spdf_clamp_cg(value, 0.0, 1.0);
     return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
@@ -417,6 +434,15 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     // More than a few concurrent page renders saturates memory bandwidth and
     // visibly stalls main-thread input even though the work is off-main.
     _renderQueue.maxConcurrentOperationCount = MAX(2, MIN((NSInteger)3, cpuCount - 1));
+    // Profiling-only override (SPDF_RENDER_WORKERS): force the foreground render
+    // concurrency to test the memory-bandwidth hypothesis. No-op when unset.
+    if (const char* forcedWorkers = getenv("SPDF_RENDER_WORKERS")) {
+        NSInteger forced = (NSInteger)strtol(forcedWorkers, NULL, 10);
+        if (forced >= 1 && forced <= 16) {
+            _renderQueue.maxConcurrentOperationCount = forced;
+            spdf_zoom_profile_log(@"renderQueue maxConcurrent forced to %ld via SPDF_RENDER_WORKERS", (long)forced);
+        }
+    }
     _renderQueue.qualityOfService = NSQualityOfServiceUserInitiated;
     _zoomSeedRenderQueue = [[NSOperationQueue alloc] init];
     _zoomSeedRenderQueue.name = @"Shenzhen PDF zoom seed renderer";
@@ -477,7 +503,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
             double now = spdf_zoom_profile_now_ms();
             double latency = now - scheduled;
             static double lastStallLog;
-            if (latency > 50.0 && now - lastStallLog > 200.0) {
+            if (latency > 30.0 && now - lastStallLog > 200.0) {
                 lastStallLog = now;
                 spdf_zoom_profile_log(@"MAIN-STALL %.0fms", latency);
             }
@@ -522,10 +548,145 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                    ^{ [self runZoomSelfTestNavigationSteps:steps - 1 forward:forward]; });
 }
 
+// Continuous-scroll stress (profiling only): emulates trackpad scrolling the
+// way SPDFScrollView's scrollPreciseTrackpadEventWithDamping does (clipview
+// scrollToPoint + reflectScrolledClipView + documentScrollPositionChanged) in
+// small steps every 8ms, so renders/crops/adoptions fire DURING active
+// scrolling. Records an input-latency histogram (gap between when a step was
+// scheduled to fire and when the main thread actually ran it) -- the proxy for
+// "missed inputs".
+- (void)runZoomSelfTestScrollPhaseNamed:(NSString*)name
+                                  steps:(NSInteger)totalSteps
+                             zoomAtStep:(NSInteger)zoomStep
+                             completion:(void (^)(void))completion {
+    NSClipView* clipView = _pageScrollView.contentView;
+    double startY = clipView.bounds.origin.y;
+    double maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+    double avgPageHeight =
+        _renderedPages.count > 0 ? NSHeight(_pageView.bounds) / (double)_renderedPages.count : 800.0;
+    double span = MIN(10.0 * avgPageHeight, MAX(0.0, maxY - startY));
+    double stepPts = MAX(2.0, span / (double)MAX(1, totalSteps));
+    spdf_zoom_profile_log(@"SELFTEST %@ start zoom=%.3f page=%ld steps=%ld step=%.1fpt startY=%.0f maxY=%.0f", name,
+                          _zoom, (long)_pageIndex, (long)totalSteps, stepPts, startY, maxY);
+    NSPoint zoomWindowPoint = [_pageScrollView convertPoint:NSMakePoint(NSMidX(_pageScrollView.bounds),
+                                                                        NSMidY(_pageScrollView.bounds))
+                                                     toView:nil];
+    __block NSInteger remaining = totalSteps;
+    __block double expectedFire = 0.0;
+    __block long bucketLt8 = 0, bucket8_16 = 0, bucket16_33 = 0, bucket33_100 = 0, bucketGt100 = 0;
+    __block double maxLatency = 0.0, sumLatency = 0.0;
+    __weak __typeof__(self) weakSelf = self;
+    __block void (^step)(void) = nil;
+    void (^stepImpl)(void) = ^{
+      __strong __typeof__(self) strongSelf = weakSelf;
+      if (!strongSelf) return;
+      double now = spdf_zoom_profile_now_ms();
+      double latency = expectedFire > 0.0 ? now - expectedFire : 0.0;
+      if (latency < 8.0) bucketLt8++;
+      else if (latency < 16.0) bucket8_16++;
+      else if (latency < 33.0) bucket16_33++;
+      else if (latency < 100.0) bucket33_100++;
+      else bucketGt100++;
+      if (latency > maxLatency) maxLatency = latency;
+      sumLatency += MAX(0.0, latency);
+      if (latency > 33.0) spdf_zoom_profile_log(@"SELFTEST %@ stepLatency %.0fms", name, latency);
+
+      NSInteger stepIndex = totalSteps - remaining;
+      remaining--;
+      if (zoomStep >= 0 && stepIndex == zoomStep)
+          [strongSelf beginLiveZoomByFactor:1.08 centeredAtWindowPoint:zoomWindowPoint];
+      if (zoomStep >= 0 && stepIndex == zoomStep + 60)
+          [strongSelf beginLiveZoomByFactor:1.0 / 1.08 centeredAtWindowPoint:zoomWindowPoint];
+
+      // Mirror the user-scroll entry path exactly.
+      NSClipView* clip = strongSelf->_pageScrollView.contentView;
+      double maxYNow = MAX(0.0, NSHeight(strongSelf->_pageView.bounds) - NSHeight(clip.bounds));
+      NSPoint origin = clip.bounds.origin;
+      origin.y = MIN(maxYNow, origin.y + stepPts);
+      [clip scrollToPoint:origin];
+      [strongSelf->_pageScrollView reflectScrolledClipView:clip];
+      [strongSelf documentScrollPositionChanged];
+
+      if (remaining <= 0) {
+          long total = bucketLt8 + bucket8_16 + bucket16_33 + bucket33_100 + bucketGt100;
+          spdf_zoom_profile_log(@"SELFTEST %@ histogram steps=%ld lt8=%ld b8_16=%ld b16_33=%ld b33_100=%ld "
+                                @"gt100=%ld max=%.0fms avg=%.1fms endPage=%ld endZoom=%.3f",
+                                name, total, bucketLt8, bucket8_16, bucket16_33, bucket33_100, bucketGt100,
+                                maxLatency, total > 0 ? sumLatency / (double)total : 0.0,
+                                (long)strongSelf->_pageIndex, strongSelf->_zoom);
+          step = nil;
+          if (completion) completion();
+          return;
+      }
+      expectedFire = spdf_zoom_profile_now_ms() + 8.0;
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.008 * NSEC_PER_SEC)), dispatch_get_main_queue(),
+                     step);
+    };
+    step = [stepImpl copy];
+    step();
+}
+
+// Settle at a zoom where pages need 16-31MB renders, jump near the top of the
+// document, then run a pure continuous-scroll phase and a mixed
+// scroll+live-zoom phase before handing off to the navigation stress.
+- (void)runZoomSelfTestScrollStress {
+    double targetZoom = 1.7;
+    double factor = targetZoom / MAX(0.0001, (double)_zoom);
+    NSPoint windowPoint = [_pageScrollView convertPoint:NSMakePoint(NSMidX(_pageScrollView.bounds),
+                                                                    NSMidY(_pageScrollView.bounds))
+                                                 toView:nil];
+    spdf_zoom_profile_log(@"SELFTEST scroll setup zoom=%.3f->%.3f", _zoom, targetZoom);
+    if (fabs(factor - 1.0) > 0.001) [self beginLiveZoomByFactor:factor centeredAtWindowPoint:windowPoint];
+    __weak __typeof__(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      __strong __typeof__(self) strongSelf = weakSelf;
+      if (!strongSelf) return;
+      NSPoint topOrigin = strongSelf->_pageScrollView.contentView.bounds.origin;
+      topOrigin.y = 0.0;
+      [strongSelf scrollDocumentClipViewToOrigin:topOrigin notify:YES];
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        __strong __typeof__(self) innerSelf = weakSelf;
+        if (!innerSelf) return;
+        [innerSelf runZoomSelfTestScrollPhaseNamed:@"scrollA" steps:500 zoomAtStep:-1 completion:^{
+          __strong __typeof__(self) midSelf = weakSelf;
+          if (!midSelf) return;
+          [midSelf runZoomSelfTestScrollPhaseNamed:@"scrollB-mixed" steps:375 zoomAtStep:187 completion:^{
+            __strong __typeof__(self) highSelf = weakSelf;
+            if (!highSelf) return;
+            // High-zoom phase: beyond the full-page render cap the viewport
+            // crop machinery maintains the visible region while scrolling.
+            double highTarget = 5.0;
+            double highFactor = highTarget / MAX(0.0001, (double)highSelf->_zoom);
+            NSPoint highPoint = [highSelf->_pageScrollView
+                convertPoint:NSMakePoint(NSMidX(highSelf->_pageScrollView.bounds),
+                                         NSMidY(highSelf->_pageScrollView.bounds))
+                      toView:nil];
+            [highSelf beginLiveZoomByFactor:highFactor centeredAtWindowPoint:highPoint];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                             __strong __typeof__(self) hsSelf = weakSelf;
+                             if (!hsSelf) return;
+                             [hsSelf runZoomSelfTestScrollPhaseNamed:@"scrollC-highzoom"
+                                                               steps:500
+                                                          zoomAtStep:-1
+                                                          completion:^{
+                                                            __strong __typeof__(self) navSelf = weakSelf;
+                                                            if (!navSelf) return;
+                                                            spdf_zoom_profile_log(
+                                                                @"SELFTEST navigation start zoom=%.3f page=%ld",
+                                                                navSelf->_zoom, (long)navSelf->_pageIndex);
+                                                            [navSelf runZoomSelfTestNavigationSteps:14 forward:YES];
+                                                          }];
+                           });
+          }];
+        }];
+      });
+    });
+}
+
 - (void)runZoomSelfTestPhases:(NSArray<NSDictionary*>*)phases index:(NSUInteger)index {
     if (index >= phases.count) {
-        spdf_zoom_profile_log(@"SELFTEST navigation start zoom=%.3f page=%ld", _zoom, (long)_pageIndex);
-        [self runZoomSelfTestNavigationSteps:14 forward:YES];
+        [self runZoomSelfTestScrollStress];
         return;
     }
     NSDictionary* phase = phases[index];
@@ -1274,6 +1435,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)savePersistentState {
+    SPDFScopedProfileLog spdfScopedProfile("savePersistentState", 4.0);
     if (_suspendPersistentStateSaves) {
         _needsDeferredPersistentStateSave = YES;
         return;
@@ -3062,6 +3224,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
               }
 
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                double adoptT0 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
                 [self->_queuedRenderPages removeObject:number];
                 [self->_queuedRenderOperations removeObjectForKey:number];
                 if (generation != self->_renderGeneration || !self->_doc ||
@@ -3075,15 +3238,30 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                 BOOL geometryChanged =
                     fabs(old.pageWidth - page.pageWidth) > 0.01 || fabs(old.pageHeight - page.pageHeight) > 0.01;
                 [self->_renderedPages replaceObjectAtIndex:(NSUInteger)index withObject:page];
+                double adoptT1 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
                 [self applySearchHighlightsToCurrentPage];
+                double adoptT2 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
                 if (geometryChanged) [self resizeDocumentView];
                 else {
                     self->_pageView.pages = self->_renderedPages;
                     [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:index]];
                     [self updateMinimap];
                 }
+                double adoptT3 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
                 [self cacheActiveRenderedPagesForSelectedTab];
+                double adoptT4 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
                 [self evictDistantRenderedPageImages];
+                if (adoptT0 > 0.0) {
+                    double adoptT5 = spdf_zoom_profile_now_ms();
+                    double total = adoptT5 - adoptT0;
+                    if (total > 4.0)
+                        spdf_zoom_profile_log(@"ADOPT-PAGE page=%ld img=%p bytes=%luMB geom=%d total=%.1fms "
+                                              @"replace=%.1f highlights=%.1f display=%.1f cache=%.1f evict=%.1f",
+                                              (long)index, (__bridge void*)page.image,
+                                              (unsigned long)([self renderedImageByteCost:page] / (1024 * 1024)),
+                                              geometryChanged, total, adoptT1 - adoptT0, adoptT2 - adoptT1,
+                                              adoptT3 - adoptT2, adoptT4 - adoptT3, adoptT5 - adoptT4);
+                }
               }];
           }
         }];
@@ -3469,6 +3647,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
           }
 
           [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            double adoptT0 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
             if (sequence != self->_liveZoomSequence || renderGeneration != self->_renderGeneration ||
                 cropRenderSequence != self->_visibleCropRenderSequence || self->_liveZooming || !self->_doc ||
                 ![self->_path isEqualToString:path] ||
@@ -3484,12 +3663,24 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                 page.viewportImageScale = displayScale;
                 [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:pageIndex]];
             }
+            double adoptT1 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
             if (!self->_liveZooming) {
                 self->_pageView.liveZooming = NO;
                 [self clearLiveZoomSeeds];
             }
             [self setCurrentViewportNeedsDisplay];
+            double adoptT2 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
             [self evictDistantRenderedPageImages];
+            if (adoptT0 > 0.0) {
+                double adoptT3 = spdf_zoom_profile_now_ms();
+                double total = adoptT3 - adoptT0;
+                if (total > 4.0)
+                    spdf_zoom_profile_log(@"ADOPT-CROP pages=%lu img0=%p total=%.1fms assign=%.1f viewport=%.1f "
+                                          @"evict=%.1f",
+                                          (unsigned long)results.count,
+                                          results.count ? (__bridge void*)results[0][@"image"] : NULL, total,
+                                          adoptT1 - adoptT0, adoptT2 - adoptT1, adoptT3 - adoptT2);
+            }
           }];
       }
     }];
@@ -3678,6 +3869,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
           }
 
           [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            double adoptT0 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
             if (panGeneration != self->_documentViewPanCropGeneration || renderGeneration != self->_renderGeneration ||
                 !self->_documentViewPanActive || ![self->_path isEqualToString:path] ||
                 fabs(zoom - self->_zoom) > 0.001) {
@@ -3696,6 +3888,12 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                 [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:pageIndex]];
             }
             if (self->_documentViewPanActive) [self renderLiveDocumentPanViewportCropIfDue];
+            if (adoptT0 > 0.0) {
+                double total = spdf_zoom_profile_now_ms() - adoptT0;
+                if (total > 4.0)
+                    spdf_zoom_profile_log(@"ADOPT-PANCROP pages=%lu total=%.1fms", (unsigned long)results.count,
+                                          total);
+            }
           }];
       }
     }];
@@ -3786,6 +3984,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)evictDistantRenderedPageImages {
+    SPDFScopedProfileLog spdfScopedProfile("evictDistantRenderedPageImages", 4.0);
     if (!_renderedPages.count) return;
     if ([self shouldKeepFullRenderedDocumentAtCurrentZoom]) return;
 
@@ -4053,6 +4252,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)resizeDocumentView {
+    SPDFScopedProfileLog spdfScopedProfile("resizeDocumentView", 4.0);
     NSClipView* clipView = _pageScrollView.contentView;
     [_pageScrollView layoutSubtreeIfNeeded];
     [_pageScrollView tile];
@@ -4622,6 +4822,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)updateMinimap {
+    SPDFScopedProfileLog spdfScopedProfile("updateMinimap", 4.0);
     if (!_minimapView) return;
     BOOL liveZooming = _liveZooming;
     if (liveZooming) {
@@ -4885,6 +5086,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)persistActiveState {
+    SPDFScopedProfileLog spdfScopedProfile("persistActiveState", 4.0);
     [self rememberActiveTabState];
     [self savePersistentState];
 }
@@ -4966,6 +5168,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)cacheActiveRenderedPagesForSelectedTab {
+    SPDFScopedProfileLog spdfScopedProfile("cacheActiveRenderedPages", 4.0);
     SPDFDocumentTab* tab = [self selectedTab];
     if (!tab || tab.cachedDocument != _doc ||
         ![_path.stringByStandardizingPath isEqualToString:tab.path.stringByStandardizingPath])
@@ -7064,6 +7267,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)documentScrollPositionChanged {
+    SPDFScopedProfileLog spdfScopedProfile("scrollPosChanged", 4.0);
     if (_suppressScrollCallbacks) return;
     _viewportMovementGeneration++;
     if (_renderedPages.count == 0) {
@@ -7112,10 +7316,48 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         [self scheduleDocumentPanMaintenance];
         return;
     }
-    if (_liveZooming) [_pageView setNeedsDisplay:YES];
-    else [self renderVisiblePageCropsForCurrentViewportIfNeeded];
-    [self updateMinimap];
-    [self evictDistantRenderedPageImages];
+    if (_liveZooming) {
+        [_pageView setNeedsDisplay:YES];
+        [self updateMinimap];
+        return;
+    }
+    // Trackpad scrolling delivers up to 120 events/s; doing crop checks, a
+    // full minimap rebuild, and cache eviction per event saturates the main
+    // thread and drops input. Coalesce that maintenance to display cadence.
+    [self scheduleScrollViewportMaintenance];
+}
+
+- (void)scheduleScrollViewportMaintenance {
+    if (_scrollMaintenanceScheduled) return;
+    _scrollMaintenanceScheduled = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.033 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      self->_scrollMaintenanceScheduled = NO;
+      if (!self->_doc) return;
+      if (self->_liveZooming || self->_documentViewPanActive || self->_minimapPrecisionViewportDragActive) return;
+      [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+      [self updateMinimapForScrolling];
+      [self evictDistantRenderedPageImages];
+      NSUInteger generation = ++self->_scrollIdleMinimapRefreshGeneration;
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (generation != self->_scrollIdleMinimapRefreshGeneration || !self->_doc || self->_liveZooming) return;
+        [self updateMinimap];
+      });
+    });
+}
+
+// Minimap refresh for active scrolling: moves the viewport indicator over the
+// cached content strip instead of rebuilding the whole strip per update.
+- (void)updateMinimapForScrolling {
+    if (!_minimapView) return;
+    _minimapView.liveViewportOnly = YES;
+    _minimapView.currentPageIndex = _pageIndex;
+    _minimapView.viewMode = _viewMode;
+    _minimapView.documentPageRects = [self continuousDocumentPageRectsForMinimap];
+    _minimapView.documentVisibleRect = [self continuousDocumentVisibleRectForMinimap];
+    _minimapView.documentWidth = [self continuousDocumentWidthForMinimap];
+    _minimapView.documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
+    _minimapView.documentScale = MAX(0.01, _zoom);
+    [_minimapView setNeedsDisplay:YES];
 }
 
 - (NSInteger)documentViewCurrentPageIndex {
@@ -7246,6 +7488,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)syncToolbarState {
+    SPDFScopedProfileLog spdfScopedProfile("syncToolbarState", 4.0);
     CGFloat customZoom =
         _fitMode == SPDFFitModeCustom ? _zoom : (_rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom);
     NSString* zoomTitle = [NSString stringWithFormat:@"%.0f%%", customZoom * 100.0];
@@ -7284,6 +7527,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)updateControls {
+    SPDFScopedProfileLog spdfScopedProfile("updateControls", 4.0);
     NSInteger pageCount = spdf_page_count(_doc);
     BOOL hasDoc = _doc != NULL;
     _prevButton.enabled = hasDoc && _pageIndex > 0;
@@ -7317,6 +7561,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)selectCurrentSidebarRow {
+    SPDFScopedProfileLog spdfScopedProfile("selectCurrentSidebarRow", 4.0);
     if (!_doc || _updatingSelection) return;
     _updatingSelection = YES;
     NSInteger match = -1;
@@ -7411,6 +7656,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)applySearchHighlightsToCurrentPage {
+    SPDFScopedProfileLog spdfScopedProfile("applySearchHighlights", 4.0);
     for (SPDFRenderedPage* page in _renderedPages) page.highlights = _findHighlights[@(page.pageIndex)] ?: @[];
     _pageView.pages = _renderedPages;
     [_pageView setNeedsDisplay:YES];
