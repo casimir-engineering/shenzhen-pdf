@@ -50,25 +50,50 @@ static NSHashTable<SPDFWindow*>* spdf_inactive_magnify_windows(void) {
     return windows;
 }
 
+static SPDFWindow* spdf_magnify_window_under_screen_point(NSPoint screenPoint) {
+    NSInteger hitWindowNumber = [NSWindow windowNumberAtPoint:screenPoint belowWindowWithWindowNumber:0];
+    if (hitWindowNumber <= 0) return nil;
+    for (SPDFWindow* window in spdf_inactive_magnify_windows()) {
+        if (window.windowNumber != hitWindowNumber) continue;
+        if (!window.visible || window.miniaturized) return nil;
+        return window;
+    }
+    return nil;
+}
+
 static void spdf_install_inactive_magnify_monitor(void) {
     static dispatch_once_t onceToken;
+    static id spdf_global_magnify_monitor = nil;
+    static id spdf_local_magnify_monitor = nil;
     dispatch_once(&onceToken, ^{
-      [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMagnify
-                                             handler:^(NSEvent* event) {
-                                               NSPoint screenPoint = NSEvent.mouseLocation;
-                                               NSArray<SPDFWindow*>* windows = spdf_inactive_magnify_windows().allObjects;
-                                               windows = [windows sortedArrayUsingComparator:^NSComparisonResult(
-                                                                     SPDFWindow* a, SPDFWindow* b) {
-                                                 NSInteger aIndex = a.orderedIndex;
-                                                 NSInteger bIndex = b.orderedIndex;
-                                                 if (aIndex == bIndex) return NSOrderedSame;
-                                                 return aIndex < bIndex ? NSOrderedAscending : NSOrderedDescending;
-                                               }];
-                                               for (SPDFWindow* window in windows) {
-                                                   if ([window routeInactiveMagnifyEvent:event screenPoint:screenPoint])
-                                                       break;
-                                               }
-                                             }];
+      // Another app is active: its event stream receives the pinch, so the magnify events are only observable
+      // through a global monitor (global monitors never see events delivered to this app).
+      spdf_global_magnify_monitor =
+          [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMagnify
+                                                 handler:^(NSEvent* event) {
+                                                   NSPoint screenPoint = NSEvent.mouseLocation;
+                                                   SPDFWindow* window =
+                                                       spdf_magnify_window_under_screen_point(screenPoint);
+                                                   if (!window || window.keyWindow) return;
+                                                   [window routeInactiveMagnifyEvent:event screenPoint:screenPoint];
+                                                 }];
+      // This app is active: AppKit routes magnify events to the key window even when the cursor hovers another
+      // ShenzhenPDF window, so reroute them to the window under the cursor and swallow the event. When the
+      // cursor is over the key window itself the event is returned unchanged so the regular responder-chain
+      // magnifyWithEvent: path handles it exactly once.
+      spdf_local_magnify_monitor =
+          [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMagnify
+                                                handler:^NSEvent*(NSEvent* event) {
+                                                  NSPoint screenPoint = NSEvent.mouseLocation;
+                                                  SPDFWindow* window =
+                                                      spdf_magnify_window_under_screen_point(screenPoint);
+                                                  if (!window || window.keyWindow) return event;
+                                                  if ([window routeInactiveMagnifyEvent:event screenPoint:screenPoint])
+                                                      return nil;
+                                                  return event;
+                                                }];
+      (void)spdf_global_magnify_monitor;
+      (void)spdf_local_magnify_monitor;
     });
 }
 
@@ -579,7 +604,9 @@ static void spdf_install_inactive_magnify_monitor(void) {
     NSView* contentView = self.contentView;
     if (!contentView) return NO;
 
-    NSPoint contentPoint = [contentView convertPoint:windowPoint fromView:nil];
+    // hitTest: expects the point in the receiver's superview coordinate space.
+    NSView* hitReference = contentView.superview ?: contentView;
+    NSPoint contentPoint = [hitReference convertPoint:windowPoint fromView:nil];
     NSView* hitView = [contentView hitTest:contentPoint];
     Class minimapClass = NSClassFromString(@"SPDFMinimapView");
     for (NSView* view = hitView; view; view = view.superview) {
