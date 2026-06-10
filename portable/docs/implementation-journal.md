@@ -509,6 +509,14 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Self-test: added a navigation stress phase (`SPDF_ZOOM_SELFTEST=1`): 28 rapid next/previous page turns at 50ms cadence right after the zoom phases. Bear Sunny and Camera Module both show zero main-thread stalls and zero main-thread renders during navigation; the only synchronous render left is the intentional first-paint render in `renderDocumentAndScrollToPage:` at document open/full relayout.
    - Validation target: scroll and page through documents while pages are still rendering (e.g., right after changing zoom); input should never pause, with stale imagery sharpening as async renders land.
 
+61. Out-of-focus trackpad pinch zoom (agent-implemented).
+   - Status: Implemented; build-verified, needs manual pinch validation.
+   - Prompt link: window-out-of-focus zoom works with Cmd+scroll but not trackpad pinch.
+   - Agent root causes: (1) the inactive-magnify support only had a global event monitor, which by definition never observes events delivered to ShenzhenPDF itself — when the app was active but a different ShenzhenPDF window was key, the pinch always went to the key window; (2) the global handler hit-tested window frames front-to-back among registered windows only, ignoring other apps' windows stacked above, so an occluded window could zoom; (3) `hitTest:` was fed a point in the content view's own coordinates instead of its superview's.
+   - Changed (`SPDFMacUIHelpers.mm`): new `spdf_magnify_window_under_screen_point()` resolves the topmost window at the cursor via `+[NSWindow windowNumberAtPoint:belowWindowWithWindowNumber:]` and matches it to a registered ShenzhenPDF window. The global monitor (other app frontmost) now uses it; a new local monitor reroutes magnify events to a non-key ShenzhenPDF window under the cursor and swallows them, returning the event unchanged when the cursor is over the key window so the responder chain fires exactly once. Monitor tokens are retained; the `hitTest:` coordinate space is fixed.
+   - Limitation: if a macOS release neither delivers pinches to global monitors nor to the inactive app's own event stream, no in-process mechanism can observe them; current releases document magnify as globally observable without Accessibility permission.
+   - Validation target: with two ShenzhenPDF windows, pinch over the non-key one (should zoom it, not the key window); with another app frontmost, pinch over a visible ShenzhenPDF window; normal focused pinch must zoom exactly once.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.
