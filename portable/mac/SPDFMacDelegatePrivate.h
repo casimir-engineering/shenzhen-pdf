@@ -191,6 +191,8 @@
     BOOL _documentViewPanActive;
     BOOL _documentViewPanCropInFlight;
     BOOL _documentViewPanMaintenanceScheduled;
+    BOOL _scrollMaintenanceScheduled;
+    NSUInteger _scrollIdleMinimapRefreshGeneration;
     NSUInteger _documentViewPanCropGeneration;
     NSUInteger _visibleCropRenderSequence;
     NSTimeInterval _lastDocumentPanLiveCropRenderTime;

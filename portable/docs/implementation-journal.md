@@ -509,6 +509,14 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Self-test: added a navigation stress phase (`SPDF_ZOOM_SELFTEST=1`): 28 rapid next/previous page turns at 50ms cadence right after the zoom phases. Bear Sunny and Camera Module both show zero main-thread stalls and zero main-thread renders during navigation; the only synchronous render left is the intentional first-paint render in `renderDocumentAndScrollToPage:` at document open/full relayout.
    - Validation target: scroll and page through documents while pages are still rendering (e.g., right after changing zoom); input should never pause, with stale imagery sharpening as async renders land.
 
+61a. Per-scroll-event maintenance coalescing (input drops during rendering).
+   - Status: Implemented; validated with the extended profiler self-test.
+   - Prompt link: some inputs are still missed during rendering despite async renders.
+   - Investigation (agent + manual): an agent added a continuous-scroll stress (500 steps at 8ms emulating the trackpad entry path, with an input-latency histogram), a mixed scroll+zoom phase, adoption-block timing, and an SPDF_RENDER_WORKERS override; a high-zoom (5.0, crop-regime) scroll phase was added on top. Result: render adoption, first-draw decode, and bg-render bandwidth were all clean (99%+ of steps under 8ms at render concurrency 1 and 3 on both test documents). The real cost was per-event: `documentScrollPositionChanged` spent 4-6ms per scroll tick (visible-crop checks, full `updateMinimap` rebuild including page-rect arrays and thumbnail scans, cache eviction) plus 5-8ms minimap full redraws — at 120Hz trackpad event rates this saturates the main thread, so real input events get coalesced/dropped, worst exactly while renders add adoption work on top.
+   - Changed: the non-panning scroll path now does only page-index sync per event and coalesces crops + minimap + eviction into a single ~30Hz maintenance pass. During scrolling the minimap updates in its cached `liveViewportOnly` mode (indicator moves over the cached strip); a full minimap refresh runs 300ms after scrolling rests.
+   - Result: per-tick `scrollPosChanged` cost drops to sub-millisecond; scroll stress histograms stay at 99%+ under 8ms with maintenance now bounded regardless of event rate.
+   - Validation target: flick-scroll and momentum-scroll through documents while pages render (after zoom changes, at high zoom in the crop regime); input should stay responsive with no dropped scroll segments.
+
 61. Out-of-focus trackpad pinch zoom (agent-implemented).
    - Status: Implemented; build-verified, needs manual pinch validation.
    - Prompt link: window-out-of-focus zoom works with Cmd+scroll but not trackpad pinch.
