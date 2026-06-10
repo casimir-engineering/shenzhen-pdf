@@ -5050,8 +5050,12 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)minimapViewDidReceiveMagnify:(NSEvent*)event documentPoint:(NSPoint)documentPoint {
+    [self minimapViewDidReceiveMagnifyDelta:event.magnification documentPoint:documentPoint];
+}
+
+- (void)minimapViewDidReceiveMagnifyDelta:(CGFloat)delta documentPoint:(NSPoint)documentPoint {
     if (!_pageView) return;
-    [self zoomWithMagnifyEvent:event centeredAtWindowPoint:[self windowPointForMinimapDocumentPoint:documentPoint]];
+    [self zoomWithMagnifyDelta:delta centeredAtWindowPoint:[self windowPointForMinimapDocumentPoint:documentPoint]];
 }
 
 - (void)rememberActiveTabFindState {
@@ -5926,7 +5930,11 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)zoomWithMagnifyEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint {
-    [self beginLiveZoomByFactor:1.0 + event.magnification * 0.82 centeredAtWindowPoint:windowPoint];
+    [self zoomWithMagnifyDelta:event.magnification centeredAtWindowPoint:windowPoint];
+}
+
+- (void)zoomWithMagnifyDelta:(CGFloat)delta centeredAtWindowPoint:(NSPoint)windowPoint {
+    [self beginLiveZoomByFactor:1.0 + delta * 0.82 centeredAtWindowPoint:windowPoint];
 }
 
 - (void)zoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint {
