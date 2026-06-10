@@ -272,3 +272,23 @@ BOOL spdf_is_allowed_external_url(NSURL* url) {
     return [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] ||
            [scheme isEqualToString:@"mailto"] || [scheme isEqualToString:@"file"];
 }
+
+BOOL spdf_zoom_profile_enabled(void) {
+    static BOOL enabled;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ enabled = getenv("SPDF_ZOOM_PROFILE") != NULL; });
+    return enabled;
+}
+
+double spdf_zoom_profile_now_ms(void) {
+    return CFAbsoluteTimeGetCurrent() * 1000.0;
+}
+
+void spdf_zoom_profile_log(NSString* format, ...) {
+    if (!spdf_zoom_profile_enabled()) return;
+    va_list args;
+    va_start(args, format);
+    NSString* message = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    fprintf(stderr, "[zoomprof %.3f] %s\n", CFAbsoluteTimeGetCurrent() * 1000.0, message.UTF8String);
+}

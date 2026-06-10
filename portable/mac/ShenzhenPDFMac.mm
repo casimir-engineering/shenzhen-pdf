@@ -47,7 +47,10 @@ static const NSInteger kRenderedImageKeepRadius = 12;
 static const NSUInteger kRenderedImageKeepAllTotalByteLimit = (NSUInteger)512 * 1024 * 1024;
 static const NSUInteger kRenderedImageKeepAllPerPageByteLimit = (NSUInteger)(2.5 * 1024 * 1024);
 static const CGFloat kMaxRenderedPageBitmapDimension = 32760.0;
-static const NSUInteger kMaxRenderedPageBitmapByteLimit = (NSUInteger)512 * 1024 * 1024;
+// Cap full-page bitmaps to a size that renders in a few hundred ms and cannot
+// starve the main thread of memory bandwidth; beyond this the viewport
+// crop/pan-crop path keeps the visible region crisp instead.
+static const NSUInteger kMaxRenderedPageBitmapByteLimit = (NSUInteger)96 * 1024 * 1024;
 static const NSUInteger kRenderedImageSoftByteLimit = (NSUInteger)192 * 1024 * 1024;
 static const NSUInteger kRenderedImageTargetByteLimit = (NSUInteger)128 * 1024 * 1024;
 static const CGFloat kBaseZoomCacheZoom = 1.0;
@@ -457,6 +460,112 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
       if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
       if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0) [self showShortcutHelp:nil];
     });
+    if (spdf_zoom_profile_enabled()) {
+        // Main-thread stall detector: a background thread pings the main queue
+        // and reports gaps; CPU cost is negligible.
+        static dispatch_source_t stallTimer;
+        static double lastBeat;
+        lastBeat = spdf_zoom_profile_now_ms();
+        stallTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                            dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
+        dispatch_source_set_timer(stallTimer, DISPATCH_TIME_NOW, (uint64_t)(4 * NSEC_PER_MSEC), NSEC_PER_MSEC);
+        dispatch_source_set_event_handler(stallTimer, ^{
+          double scheduled = spdf_zoom_profile_now_ms();
+          dispatch_async(dispatch_get_main_queue(), ^{
+            double now = spdf_zoom_profile_now_ms();
+            double latency = now - scheduled;
+            static double lastStallLog;
+            if (latency > 50.0 && now - lastStallLog > 200.0) {
+                lastStallLog = now;
+                spdf_zoom_profile_log(@"MAIN-STALL %.0fms", latency);
+            }
+          });
+        });
+        dispatch_resume(stallTimer);
+    }
+    if (getenv("SPDF_ZOOM_SELFTEST")) {
+        spdf_zoom_profile_log(@"SELFTEST scheduled");
+        NSTimer* timer = [NSTimer timerWithTimeInterval:4.0
+                                                 target:self
+                                               selector:@selector(zoomSelfTestTimerFired:)
+                                               userInfo:nil
+                                                repeats:NO];
+        [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+    }
+}
+
+- (void)zoomSelfTestTimerFired:(NSTimer*)timer {
+    (void)timer;
+    [self runZoomSelfTest];
+}
+
+// Synthetic live-zoom gesture driver for profiling (SPDF_ZOOM_SELFTEST=1).
+- (void)runZoomSelfTestPhases:(NSArray<NSDictionary*>*)phases index:(NSUInteger)index {
+    if (index >= phases.count) {
+        spdf_zoom_profile_log(@"SELFTEST done");
+        return;
+    }
+    NSDictionary* phase = phases[index];
+    NSInteger count = [phase[@"count"] integerValue];
+    double factor = [phase[@"factor"] doubleValue];
+    double settle = [phase[@"settle"] doubleValue];
+    spdf_zoom_profile_log(@"SELFTEST phase %lu start factor=%.3f count=%ld zoom=%.3f", (unsigned long)index, factor,
+                          (long)count, _zoom);
+    NSPoint windowPoint = [_pageScrollView convertPoint:NSMakePoint(NSMidX(_pageScrollView.bounds),
+                                                                    NSMidY(_pageScrollView.bounds))
+                                                 toView:nil];
+    __block NSInteger remaining = count;
+    __weak __typeof__(self) weakSelf = self;
+    __block void (^step)(void) = nil;
+    void (^stepImpl)(void) = ^{
+      __strong __typeof__(self) strongSelf = weakSelf;
+      if (!strongSelf) return;
+      if (remaining <= 0) {
+          void (^continueBlock)(void) = ^{ [weakSelf runZoomSelfTestPhases:phases index:index + 1]; };
+          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(settle * NSEC_PER_SEC)),
+                         dispatch_get_main_queue(), continueBlock);
+          step = nil;
+          return;
+      }
+      remaining--;
+      [strongSelf beginLiveZoomByFactor:factor centeredAtWindowPoint:windowPoint];
+      [strongSelf->_pageView displayIfNeeded];
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.008 * NSEC_PER_SEC)), dispatch_get_main_queue(),
+                     step);
+    };
+    step = [stepImpl copy];
+    step();
+}
+
+- (void)runZoomSelfTest {
+    if (!_doc) {
+        for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
+            if (controller != self && controller->_doc) {
+                [controller runZoomSelfTest];
+                return;
+            }
+        }
+        static NSInteger retries = 0;
+        spdf_zoom_profile_log(@"SELFTEST no document yet (retry %ld)", (long)retries);
+        if (retries++ < 10) {
+            NSTimer* timer = [NSTimer timerWithTimeInterval:2.0
+                                                     target:self
+                                                   selector:@selector(zoomSelfTestTimerFired:)
+                                                   userInfo:nil
+                                                    repeats:NO];
+            [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+        }
+        return;
+    }
+    NSArray<NSDictionary*>* phases = @[
+        @{@"count" : @60, @"factor" : @1.05, @"settle" : @2.5},  // zoom to max
+        @{@"count" : @6, @"factor" : @0.97, @"settle" : @2.5},   // first unzoom events from fully zoomed in
+        @{@"count" : @40, @"factor" : @0.95, @"settle" : @2.5},  // long unzoom
+        @{@"count" : @12, @"factor" : @1.06, @"settle" : @2.5},  // zoom back in
+        @{@"count" : @6, @"factor" : @0.97, @"settle" : @2.5},   // short unzoom again
+    ];
+    spdf_zoom_profile_log(@"SELFTEST begin zoom=%.3f", _zoom);
+    [self runZoomSelfTestPhases:phases index:0];
 }
 
 - (void)performStartupDocumentWork {
@@ -2267,9 +2376,17 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         return nil;
     }
 
+    double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     spdf_bitmap bitmap;
     if (!spdf_render_page_rgba(doc, (int)pageIndex, (float)(zoom * renderDisplayScale), &bitmap, err, errLen))
         return nil;
+    if (spdf_zoom_profile_enabled()) {
+        double elapsed = spdf_zoom_profile_now_ms() - profileStart;
+        spdf_zoom_profile_log(@"renderFullPage page=%ld zoom=%.2f scale=%.2f px=%dx%d bytes=%dMB %.1fms [%s]",
+                              (long)pageIndex, zoom, renderDisplayScale, bitmap.width, bitmap.height,
+                              (int)(((long long)bitmap.stride * bitmap.height) / (1024 * 1024)), elapsed,
+                              NSThread.isMainThread ? "MAIN" : "bg");
+    }
 
     NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
                                                                     pixelsWide:bitmap.width
@@ -2330,9 +2447,17 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     crop.x1 = (float)NSMaxX(pageCropRect);
     crop.y1 = (float)NSMaxY(pageCropRect);
 
+    double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     spdf_bitmap bitmap;
     if (!spdf_render_page_region_rgba(doc, (int)pageIndex, (float)(zoom * displayScale), crop, &bitmap, err, errLen))
         return nil;
+    if (spdf_zoom_profile_enabled()) {
+        double elapsed = spdf_zoom_profile_now_ms() - profileStart;
+        spdf_zoom_profile_log(@"renderCrop page=%ld zoom=%.2f px=%dx%d bytes=%dMB %.1fms [%s]", (long)pageIndex, zoom,
+                              bitmap.width, bitmap.height,
+                              (int)(((long long)bitmap.stride * bitmap.height) / (1024 * 1024)), elapsed,
+                              NSThread.isMainThread ? "MAIN" : "bg");
+    }
 
     NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
                                                                     pixelsWide:bitmap.width
@@ -5603,12 +5728,15 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _pageView.backingScale = [self backingScale];
     _pageView.zoom = _zoom;
     _pageView.liveZooming = _liveZooming;
+    double t0 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     if (_liveZooming) [self resizeDocumentViewForLiveZoom];
     else [self resizeDocumentView];
+    double t1 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
     if (_liveZooming) _suppressScrollCallbacks = YES;
     [self scrollToPageAnchor:anchor notify:NO];
     _suppressScrollCallbacks = previousSuppressScrollCallbacks;
+    double t2 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
 
     if (!_liveZooming) {
         [self syncToolbarState];
@@ -5617,6 +5745,12 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [self setCurrentViewportNeedsDisplay];
     if (_liveZooming) [self scheduleLiveZoomMinimapUpdate];
     else [self updateMinimap];
+    if (spdf_zoom_profile_enabled()) {
+        double t3 = spdf_zoom_profile_now_ms();
+        if (t3 - t0 > 1.0)
+            spdf_zoom_profile_log(@"setZoomWithoutRendering resize=%.2f scroll=%.2f tail=%.2f", t1 - t0, t2 - t1,
+                                  t3 - t2);
+    }
 }
 
 - (void)renderDocumentPreservingScrollPosition {
@@ -5648,6 +5782,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     }
     BOOL singlePageZoom = _viewMode == SPDFViewModeSingle;
     NSInteger preservedPageIndex = _pageIndex;
+    double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     _liveZooming = NO;
     _liveZoomAnchorValid = NO;
     [self resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:YES];
@@ -5700,12 +5835,17 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         _pageView.liveZooming = NO;
         [self clearLiveZoomSeeds];
     }
+    if (spdf_zoom_profile_enabled())
+        spdf_zoom_profile_log(@"finishLiveZoom zoom=%.3f total=%.2fms", _zoom,
+                              spdf_zoom_profile_now_ms() - profileStart);
 }
 
 - (void)beginLiveZoomByFactor:(CGFloat)factor centeredAtWindowPoint:(NSPoint)windowPoint {
     if (!_doc || factor <= 0) return;
     CGFloat targetZoom = MAX(kMinZoom, MIN(kMaxZoom, _zoom * factor));
     if (fabs(targetZoom - _zoom) < 0.0001) return;
+    double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
+    double profilePause = 0.0, profileAnchor = 0.0, profileSeeds = 0.0, profileSetZoom = 0.0;
     _fitMode = SPDFFitModeCustom;
     _documentViewPanCropGeneration++;
     _documentViewPanCropInFlight = NO;
@@ -5714,21 +5854,38 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         _liveZoomSequence++;
         _liveZooming = YES;
         _pageView.liveZooming = YES;
+        double t0 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
         [self pauseBackgroundRenderQueuesForLiveZoom];
+        double t1 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
         SPDFPageAnchor anchor = [self pageAnchorForWindowPoint:windowPoint];
+        double t2 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
         _liveZoomAnchorPageIndex = anchor.pageIndex;
         _liveZoomAnchorPagePoint = anchor.pagePoint;
         _liveZoomAnchorOffsetInViewport = anchor.offsetInViewport;
         _liveZoomAnchorValid = anchor.valid;
         NSArray<NSNumber*>* seedPages = [self liveZoomSeedPageIndexesForAnchorPage:anchor.pageIndex];
         [self prepareLiveZoomSeedsForPageIndexes:seedPages];
+        double t3 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
+        profilePause = t1 - t0;
+        profileAnchor = t2 - t1;
+        profileSeeds = t3 - t2;
     } else {
         _liveZoomSequence++;
         _liveZooming = YES;
         _pageView.liveZooming = YES;
     }
     [_zoomFinishTimer invalidate];
+    double tz = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     [self setZoomWithoutRendering:targetZoom centeredAtWindowPoint:windowPoint];
+    if (spdf_zoom_profile_enabled()) {
+        profileSetZoom = spdf_zoom_profile_now_ms() - tz;
+        double total = spdf_zoom_profile_now_ms() - profileStart;
+        if (total > 1.0 || !wasLiveZooming)
+            spdf_zoom_profile_log(
+                @"beginLiveZoom new=%d zoom=%.3f->%.3f total=%.2fms pause=%.2f anchor=%.2f seeds=%.2f setZoom=%.2f",
+                !wasLiveZooming, _zoom / MAX(0.0001, factor), _zoom, total, profilePause, profileAnchor, profileSeeds,
+                profileSetZoom);
+    }
     _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:kLiveZoomFinishDelay
                                                         target:self
                                                       selector:@selector(finishLiveZoom:)

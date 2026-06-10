@@ -1,4 +1,5 @@
 #import "SPDFMacMinimapView.h"
+#import "SPDFMacSupport.h"
 
 #include <math.h>
 
@@ -481,7 +482,9 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
         if (NSHeight(pageRect) >= 1.0 && NSIntersectsRect(pageRect, clipRect)) {
             [[NSColor whiteColor] setFill];
             NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
-            NSImage* image = page.image ?: page.minimapImage;
+            // Thumbnails first: drawing full page bitmaps here forces whole-image
+            // decodes that can cost >100ms across a document strip.
+            NSImage* image = page.minimapImage ?: page.image;
             if (drawImages && image && NSHeight(pageRect) >= 5.0) {
                 [image drawInRect:pageRect
                           fromRect:NSZeroRect
@@ -570,6 +573,7 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
+    double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     [NSColor.windowBackgroundColor setFill];
     NSRectFill(self.bounds);
     [NSColor.separatorColor setFill];
@@ -607,6 +611,10 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
             path.lineWidth = 1.2;
             [path stroke];
         }
+    }
+    if (spdf_zoom_profile_enabled()) {
+        double elapsed = spdf_zoom_profile_now_ms() - profileStart;
+        if (elapsed > 2.0) spdf_zoom_profile_log(@"minimap drawRect total=%.2fms", elapsed);
     }
 }
 

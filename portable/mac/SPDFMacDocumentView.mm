@@ -1,4 +1,5 @@
 #import "SPDFMacDocumentView.h"
+#import "SPDFMacSupport.h"
 
 #include <math.h>
 
@@ -280,12 +281,21 @@ static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1
     context.imageInterpolation = interpolation;
     [NSGraphicsContext saveGraphicsState];
     NSRectClip(drawRect);
+    double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     [image drawInRect:imageRect
              fromRect:NSZeroRect
             operation:NSCompositingOperationSourceOver
              fraction:1.0
        respectFlipped:YES
                 hints:@{NSImageHintInterpolation : @(interpolation)}];
+    if (spdf_zoom_profile_enabled()) {
+        double elapsed = spdf_zoom_profile_now_ms() - profileStart;
+        if (elapsed > 2.0)
+            spdf_zoom_profile_log(@"drawPageImage page=%ld img=%p size=%.0fx%.0f imageRect=%.0fx%.0f draw=%.0fx%.0f %.2fms",
+                                  (long)page.pageIndex, image, image.size.width, image.size.height,
+                                  NSWidth(imageRect), NSHeight(imageRect), NSWidth(drawRect), NSHeight(drawRect),
+                                  elapsed);
+    }
     [NSGraphicsContext restoreGraphicsState];
     context.imageInterpolation = oldInterpolation;
     return YES;
@@ -523,6 +533,7 @@ static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
+    double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     [(self.presentationMode ? NSColor.blackColor : NSColor.windowBackgroundColor) setFill];
     NSRectFill(dirtyRect);
 
@@ -548,6 +559,12 @@ static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1
         SPDFRenderedPage* page = self.pages[(NSUInteger)index];
         NSRect pageRect = [self rectForPageAtIndex:index];
         if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect dirtyRect:dirtyRect];
+        if (spdf_zoom_profile_enabled()) {
+            double elapsed = spdf_zoom_profile_now_ms() - profileStart;
+            if (elapsed > 2.0)
+                spdf_zoom_profile_log(@"drawRect(single) liveZoom=%d zoom=%.2f dirty=%.0fx%.0f total=%.2fms",
+                                      self.liveZooming, self.zoom, NSWidth(dirtyRect), NSHeight(dirtyRect), elapsed);
+        }
         return;
     }
 
@@ -556,6 +573,12 @@ static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1
         if (NSMaxY(pageRect) < NSMinY(dirtyRect) - 1.0) continue;
         if (NSMinY(pageRect) > NSMaxY(dirtyRect) + 1.0) break;
         if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect dirtyRect:dirtyRect];
+    }
+    if (spdf_zoom_profile_enabled()) {
+        double elapsed = spdf_zoom_profile_now_ms() - profileStart;
+        if (elapsed > 2.0)
+            spdf_zoom_profile_log(@"drawRect liveZoom=%d zoom=%.2f dirty=%.0fx%.0f total=%.2fms", self.liveZooming,
+                                  self.zoom, NSWidth(dirtyRect), NSHeight(dirtyRect), elapsed);
     }
 }
 
