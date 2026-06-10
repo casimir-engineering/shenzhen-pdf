@@ -92,11 +92,25 @@ static CGFloat spdf_global_magnify_delta(NSEvent* event) {
 
     BOOL gestureBreak = (phase & NSEventPhaseBegan) || !gestureActive ||
                         event.timestamp - lastTimestamp > kSPDFInactiveMagnifyGestureGapSeconds;
-    CGFloat delta = gestureBreak ? 0.0 : cumulative - lastCumulative;
+    // A new gesture's cumulative value restarts from zero, so the first
+    // observed value IS the delta from rest — swallowing it as a baseline
+    // loses the start of the pinch. Phase Began events genuinely carry zero.
+    CGFloat delta;
+    if (gestureBreak) delta = (phase & NSEventPhaseBegan) ? 0.0 : cumulative;
+    else delta = cumulative - lastCumulative;
     gestureActive = YES;
     lastCumulative = cumulative;
     lastTimestamp = event.timestamp;
     return delta;
+}
+
+// Cheap in-process check for the overwhelmingly common case: the cursor is
+// over the key ShenzhenPDF window, so the responder chain is authoritative and
+// no window-server hit test (windowNumberAtPoint IPC) is needed per event.
+static BOOL spdf_point_in_key_spdf_window(NSPoint screenPoint) {
+    NSWindow* keyWindow = NSApp.keyWindow;
+    if (![keyWindow isKindOfClass:[SPDFWindow class]]) return NO;
+    return NSPointInRect(screenPoint, keyWindow.frame);
 }
 
 static void spdf_install_inactive_magnify_monitor(void) {
@@ -137,6 +151,7 @@ static void spdf_install_inactive_magnify_monitor(void) {
           addLocalMonitorForEventsMatchingMask:NSEventMaskMagnify
                                        handler:^NSEvent*(NSEvent* event) {
                                          NSPoint screenPoint = NSEvent.mouseLocation;
+                                         if (spdf_point_in_key_spdf_window(screenPoint)) return event;
                                          SPDFWindow* window = spdf_magnify_window_under_screen_point(screenPoint);
                                          if (!window || window.keyWindow) return event;
                                          if (spdf_zoom_profile_enabled()) {
@@ -787,10 +802,25 @@ static void spdf_install_inactive_magnify_monitor(void) {
     if (_lastZoomWheelTimestamp <= 0.0) return NO;
     BOOL phaseBegan = [self eventPhase:event.phase contains:NSEventPhaseBegan] ||
                       [self eventPhase:event.phase contains:NSEventPhaseMayBegin];
-    if (phaseBegan) return NO;
+    if (phaseBegan) {
+        // Fingers down again means a genuinely new gesture: end the residual
+        // window immediately so the new scroll's Changed events flow. Only the
+        // tail/momentum of the gesture that drove the zoom should ever be
+        // swallowed — previously this exempted just the Began event and then
+        // ate the first ~0.65s of the user's next trackpad scroll.
+        _lastZoomWheelTimestamp = 0.0;
+        _zoomWheelSuppressMomentumUntil = 0.0;
+        _zoomWheelSuppressPhaseLessUntil = 0.0;
+        return NO;
+    }
     BOOL phaseLess = event.phase == NSEventPhaseNone && event.momentumPhase == NSEventPhaseNone;
-    if (phaseLess) return event.timestamp < _zoomWheelSuppressPhaseLessUntil;
-    return event.timestamp < _zoomWheelSuppressMomentumUntil;
+    BOOL suppress = phaseLess ? event.timestamp < _zoomWheelSuppressPhaseLessUntil
+                              : event.timestamp < _zoomWheelSuppressMomentumUntil;
+    if (suppress && spdf_zoom_profile_enabled())
+        spdf_zoom_profile_log(@"suppressResidualWheel phase=%lu momentum=%lu dt=%.0fms",
+                              (unsigned long)event.phase, (unsigned long)event.momentumPhase,
+                              (event.timestamp - _lastZoomWheelTimestamp) * 1000.0);
+    return suppress;
 }
 
 - (CGFloat)dampedPreciseScrollDelta:(CGFloat)delta momentum:(BOOL)momentum {
@@ -896,6 +926,11 @@ static void spdf_install_inactive_magnify_monitor(void) {
 }
 
 - (void)magnifyWithEvent:(NSEvent*)event {
+    if (spdf_zoom_profile_enabled()) {
+        double ageMs = (NSProcessInfo.processInfo.systemUptime - event.timestamp) * 1000.0;
+        spdf_zoom_profile_log(@"focusedMagnify phase=%lu m=%.4f age=%.1fms", (unsigned long)event.phase,
+                              (double)event.magnification, ageMs);
+    }
     [self markZoomWheelAtTimestamp:event.timestamp];
     if (self.reader) [self.reader zoomWithMagnifyEvent:event centeredAtWindowPoint:event.locationInWindow];
 }
