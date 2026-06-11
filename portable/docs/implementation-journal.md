@@ -573,6 +573,16 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Result: 85+ renderCanceled events per stress run on the schematic doc at gesture starts; histograms and stall counts unchanged on both standard documents; crop replay medians unchanged.
    - Validation target: on the schematic page, chain zoom/scroll gestures rapidly; fresh crops should start immediately instead of queueing behind doomed renders.
 
+68. Launch latency: instrumentation, deferral, and dead-stripping (26.6.11-2).
+   - Status: Implemented; validated (agent-investigated in a worktree, merged).
+   - Prompt link: launch is sometimes instant, sometimes ~1s; make it faster AND consistent; lazy loading suggested; no functionality or viewer-performance changes.
+   - Instrumentation: SPDF_LAUNCH_PROFILE=1 logs a full launch timeline relative to process entry (image-load constructor): per-phase applicationDidFinishLaunching marks, per-file JSON loads, per-document session-restore opens with the first-paint render split, and the first document drawRect (= first visible paint). Zero overhead when unset.
+   - Findings (8-run medians on a real 12-tab session): warm first paint ~244ms total (dyld+AppKit 58, buildWindow 81, startup doc work 72 incl. 27ms spdf_open + 30ms intentional sync first-paint render). Warm spread <7ms — the instant-vs-1s variance is environmental: (1) the restored ACTIVE tab living on Google Drive pays a synchronous DriveFS stat+read before first paint (network-dependent, the multi-hundred-ms case); (2) one-time Gatekeeper validation after a build/update (+~100ms); (3) pre-fix, savePersistentState ran a full session.lock flock/read/serialize cycle inside buildWindow.
+   - Changed: launch now wraps menu/window/startup work in one batched persistent-state save (three pre-paint flock cycles became one, identical bytes on disk; flock-contention window inside buildWindow eliminated); ~70 SF-symbol menu images deferred 50ms past first paint (invisible until a menu opens; buildMenu 9.3ms -> 3.8ms); the app link gains -Wl,-dead_strip -Wl,-x (binary 42.6MB -> 40.7MB, less cold page-in/signature hashing).
+   - Not touched (by constraint or by ownership): the sync first-paint render, buildWindow geometry work (determines first-frame layout), AppKit/dyld init, render/cache logic from items 59-67. DriveFS active-tab latency is attributable with the profiler but cannot move off the critical path without changing what first paint shows.
+   - Result: warm first paint 244 -> 239ms median; app-controllable worst-case contributors removed; self-test histograms and schematic crop medians unchanged on the stripped binary; session restore byte-identical (12 tabs, selection, geometry, favorites verified).
+   - Validation target: cold-boot launch and post-quit relaunch with a multi-tab session; SPDF_LAUNCH_PROFILE=1 attributes any residual slow launch (look for the DriveFS open line).
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

@@ -301,3 +301,28 @@ void spdf_zoom_profile_log(NSString* format, ...) {
     va_end(args);
     fprintf(stderr, "[zoomprof %.3f] %s\n", CFAbsoluteTimeGetCurrent() * 1000.0, message.UTF8String);
 }
+
+// Captured as early as the runtime allows (static initializer at image load)
+// so launch-profile timestamps approximate "process entry". Recording one
+// double costs nothing, so this runs unconditionally.
+static double gSPDFProcessStartMs;
+__attribute__((constructor)) static void spdf_launch_profile_capture_process_start(void) {
+    gSPDFProcessStartMs = CFAbsoluteTimeGetCurrent() * 1000.0;
+}
+
+BOOL spdf_launch_profile_enabled(void) {
+    static BOOL enabled;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ enabled = getenv("SPDF_LAUNCH_PROFILE") != NULL; });
+    return enabled;
+}
+
+void spdf_launch_profile_log(NSString* format, ...) {
+    if (!spdf_launch_profile_enabled()) return;
+    va_list args;
+    va_start(args, format);
+    NSString* message = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    fprintf(stderr, "[launchprof +%.1f] %s\n", CFAbsoluteTimeGetCurrent() * 1000.0 - gSPDFProcessStartMs,
+            message.UTF8String);
+}

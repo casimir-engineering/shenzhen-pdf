@@ -103,6 +103,19 @@ struct SPDFScopedProfileLog {
     }
 };
 
+// Profiling-only (SPDF_LAUNCH_PROFILE): logs "<name> <elapsed>ms" when the
+// scope exits. Zero work when launch profiling is disabled.
+struct SPDFScopedLaunchPhaseLog {
+    const char* name;
+    double start;
+    explicit SPDFScopedLaunchPhaseLog(const char* n)
+        : name(n), start(spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0) {}
+    ~SPDFScopedLaunchPhaseLog() {
+        if (start <= 0.0) return;
+        spdf_launch_profile_log(@"%s %.1fms", name, spdf_zoom_profile_now_ms() - start);
+    }
+};
+
 static CGFloat spdf_smoothstep_cg(CGFloat value) {
     value = spdf_clamp_cg(value, 0.0, 1.0);
     return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
@@ -410,6 +423,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
     (void)notification;
+    spdf_launch_profile_log(@"applicationDidFinishLaunching enter");
+    double launchPhaseStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     _zoom = 1.0;
     _rememberedCustomZoom = 1.0;
     _fitMode = SPDFFitModePage;
@@ -523,21 +538,56 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _findQueue.name = @"Shenzhen PDF document find";
     _findQueue.maxConcurrentOperationCount = 1;
     _findQueue.qualityOfService = NSQualityOfServiceUserInitiated;
+    if (launchPhaseStart > 0.0) {
+        spdf_launch_profile_log(@"ivar+queue setup %.1fms", spdf_zoom_profile_now_ms() - launchPhaseStart);
+    }
 
-    [self loadPersistentState];
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("loadPersistentState");
+        [self loadPersistentState];
+    }
     if (!gSPDFWindowControllers) gSPDFWindowControllers = [NSMutableArray array];
     if (![gSPDFWindowControllers containsObject:self]) [gSPDFWindowControllers addObject:self];
 
-    [self buildMenu];
-    [self buildWindow];
-    [self installWindowArrangementShortcutMonitor];
-    _uiReady = YES;
+    // Batch persistent-state saves across the whole launch sequence: window
+    // construction fires windowDidResize (and sidebar restoration fires split
+    // view delegate callbacks) which each trigger a full savePersistentState
+    // cycle (session.lock flock + session.json read + serialize + compare)
+    // before the first paint. The single deferred save that runs when this
+    // block ends writes the same final state the last of those intermediate
+    // saves would have written, so on-disk results are identical — the
+    // intermediate lock/read/serialize cycles were pure launch overhead and,
+    // worse, could block on session.lock held by a terminating instance.
+    [self performWithBatchedPersistentStateSaves:^{
+      {
+          SPDFScopedLaunchPhaseLog launchPhase("buildMenu");
+          [self buildMenu];
+      }
+      {
+          SPDFScopedLaunchPhaseLog launchPhase("buildWindow");
+          [self buildWindow];
+      }
+      {
+          SPDFScopedLaunchPhaseLog launchPhase("installWindowArrangementShortcutMonitor");
+          [self installWindowArrangementShortcutMonitor];
+      }
+      self->_uiReady = YES;
 
-    [self performWithBatchedPersistentStateSaves:^{ [self performStartupDocumentWork]; }];
-    _allowSidebarWidthPersistence = YES;
-    [self restoreSidebarWidth];
+      {
+          SPDFScopedLaunchPhaseLog launchPhase("performStartupDocumentWork");
+          [self performStartupDocumentWork];
+      }
+      self->_allowSidebarWidthPersistence = YES;
+      {
+          SPDFScopedLaunchPhaseLog launchPhase("restoreSidebarWidth");
+          [self restoreSidebarWidth];
+      }
+    }];
 
-    [_window makeKeyAndOrderFront:nil];
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("makeKeyAndOrderFront");
+        [_window makeKeyAndOrderFront:nil];
+    }
     if (self.restoreWindowID.length == 0) [NSApp activateIgnoringOtherApps:YES];
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
@@ -575,6 +625,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                                 repeats:NO];
         [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
     }
+    spdf_launch_profile_log(@"applicationDidFinishLaunching exit");
 }
 
 - (void)zoomSelfTestTimerFired:(NSTimer*)timer {
@@ -1009,9 +1060,19 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (id)jsonObjectFromFile:(NSString*)name {
+    double launchStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     NSData* data = [NSData dataWithContentsOfFile:[self pathForStateFile:name]];
-    if (!data) return nil;
-    return [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
+    if (!data) {
+        if (launchStart > 0.0)
+            spdf_launch_profile_log(@"json %@ missing %.1fms", name, spdf_zoom_profile_now_ms() - launchStart);
+        return nil;
+    }
+    id object = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
+    if (launchStart > 0.0) {
+        spdf_launch_profile_log(@"json %@ %lu bytes %.1fms", name, (unsigned long)data.length,
+                                spdf_zoom_profile_now_ms() - launchStart);
+    }
+    return object;
 }
 
 - (void)writeJSONObject:(id)object toFile:(NSString*)name {
@@ -1819,8 +1880,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     shortcuts.keyEquivalentModifierMask = 0;
     helpItem.submenu = helpMenu;
 
-    spdf_apply_system_icons_to_main_menu_contents(mainMenu);
     NSApp.mainMenu = mainMenu;
+    // SF-symbol decoration creates ~70 system-symbol images (CoreUI asset
+    // lookups). Menu-item icons are only visible once a submenu is opened,
+    // which cannot happen before the first paint, so build them just after
+    // launch instead of on the critical path. The menu bar itself (titles
+    // only) is identical either way.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ spdf_apply_system_icons_to_main_menu_contents(mainMenu); });
 }
 
 - (NSString*)displayVersion {
@@ -2179,11 +2246,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                            : NSMakeRect(floor(NSMidX(visibleFrame) - contentSize.width / 2.0),
                                                         floor(NSMidY(visibleFrame) - contentSize.height / 2.0),
                                                         contentSize.width, contentSize.height);
+    double launchWindowStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     _window = [[SPDFWindow alloc] initWithContentRect:frame
                                             styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                                       NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
                                               backing:NSBackingStoreBuffered
                                                 defer:NO];
+    if (launchWindowStart > 0.0)
+        spdf_launch_profile_log(@"buildWindow.windowInit %.1fms", spdf_zoom_profile_now_ms() - launchWindowStart);
     ((SPDFWindow*)_window).reader = self;
     _window.delegate = self;
     _window.title = @"Shenzhen PDF";
@@ -2207,6 +2277,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     _tabStrip.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:_tabStrip];
     [self updateTabStripFrame];
+    if (launchWindowStart > 0.0)
+        spdf_launch_profile_log(@"buildWindow.contentAndTabStrip done at %.1fms",
+                                spdf_zoom_profile_now_ms() - launchWindowStart);
 
     _toolbar = [[SPDFToolbarStackView alloc] init];
     _toolbar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
@@ -2367,6 +2440,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [_toolbar setCustomSpacing:8.0 afterView:_continuousButton];
     [_toolbar setCustomSpacing:8.0 afterView:_searchField];
 
+    if (launchWindowStart > 0.0)
+        spdf_launch_profile_log(@"buildWindow.toolbar done at %.1fms", spdf_zoom_profile_now_ms() - launchWindowStart);
     _splitView = [[NSSplitView alloc] init];
     _splitView.vertical = YES;
     _splitView.dividerStyle = NSSplitViewDividerStyleThin;
@@ -2445,6 +2520,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         [sidebarScroll.bottomAnchor constraintEqualToAnchor:_sidebarContainer.bottomAnchor]
     ]];
 
+    if (launchWindowStart > 0.0)
+        spdf_launch_profile_log(@"buildWindow.sidebar done at %.1fms", spdf_zoom_profile_now_ms() - launchWindowStart);
     _pageScrollView = [[SPDFScrollView alloc] init];
     _pageScrollView.reader = self;
     _markerScroller = [[SPDFFindMarkerScroller alloc] initWithFrame:NSZeroRect];
@@ -2536,12 +2613,18 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         [_sidebarDividerView.centerXAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor]
     ]];
 
+    if (launchWindowStart > 0.0)
+        spdf_launch_profile_log(@"buildWindow.viewsAndConstraints done at %.1fms",
+                                spdf_zoom_profile_now_ms() - launchWindowStart);
     [self restoreSidebarWidth];
     if (!_sidebarPreferredVisible) [self setSidebarActuallyVisible:NO];
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
     [self syncToolbarState];
     [self updateControls];
     [self updateToolbarOverflow];
+    if (launchWindowStart > 0.0)
+        spdf_launch_profile_log(@"buildWindow.finalSync done at %.1fms",
+                                spdf_zoom_profile_now_ms() - launchWindowStart);
 }
 
 - (CGFloat)backingScale {
@@ -4349,7 +4432,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
     char err[1024];
     NSInteger pageCount = spdf_page_count(_doc);
     pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
+    double launchRenderStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     SPDFRenderedPage* preferredPage = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
+    if (launchRenderStart > 0.0) {
+        spdf_launch_profile_log(@"sync preferred-page render page=%ld zoom=%.2f %.1fms", (long)pageIndex, _zoom,
+                                spdf_zoom_profile_now_ms() - launchRenderStart);
+    }
     if (!preferredPage) {
         _statusLabel.stringValue = strstr(err, "too large")
                                        ? @""
@@ -4369,6 +4457,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
             return;
         }
         [pages addObject:page];
+    }
+    if (launchRenderStart > 0.0) {
+        spdf_launch_profile_log(@"placeholder geometry pass pages=%ld done at %.1fms", (long)pageCount,
+                                spdf_zoom_profile_now_ms() - launchRenderStart);
     }
 
     [NSAnimationContext
@@ -6506,7 +6598,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [_queuedMinimapThumbnailPages removeAllObjects];
 
     [self closeActiveDocumentIfUnowned];
+    double launchStatStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     NSDictionary* attributes = [self fileAttributesForPath:path];
+    if (launchStatStart > 0.0) {
+        spdf_launch_profile_log(@"fileAttributes %@ %.1fms", path.lastPathComponent,
+                                spdf_zoom_profile_now_ms() - launchStatStart);
+    }
     if (!attributes) {
         tab.missingFile = YES;
         tab.missingMessage = @"File moved or deleted";
@@ -6523,7 +6620,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self clearActiveMetadata];
 
     char err[1024];
+    double launchOpenStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     spdf_document* newDoc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+    if (launchOpenStart > 0.0) {
+        spdf_launch_profile_log(@"spdf_open %@ %.1fms", path.lastPathComponent,
+                                spdf_zoom_profile_now_ms() - launchOpenStart);
+    }
     if (!newDoc) {
         NSString* message = @"Could not open document";
         tab.missingFile = NO;
@@ -6544,7 +6646,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSInteger pageCount = spdf_page_count(_doc);
     [self applySinglePageMinimapDefaultToTab:tab pageCount:pageCount];
     [self prepareSelectedTabViewState:tab path:path];
-    [self loadInitialSidebarMetadataForSelectedTabIfNeeded];
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("loadInitialSidebarMetadata");
+        [self loadInitialSidebarMetadataForSelectedTabIfNeeded];
+    }
     _pageIndex = MAX(0, MIN(tab.pageIndex, pageCount - 1));
     _renderGeneration++;
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
@@ -6570,11 +6675,17 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
     tab.title = spdf_display_name_for_path(_path);
 
-    [self rebuildSidebar];
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("rebuildSidebar");
+        [self rebuildSidebar];
+    }
     [self updateTabStrip];
     _suppressViewportRerender = previousSuppressViewportRerender;
     NSValue* restoreOrigin = tab.hasScrollOrigin ? [NSValue valueWithPoint:tab.scrollOrigin] : nil;
-    [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES restoreOrigin:restoreOrigin];
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("renderDocumentAndScrollToPage(first)");
+        [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES restoreOrigin:restoreOrigin];
+    }
     NSUInteger layoutGeneration = _renderGeneration;
     NSString* layoutPath = [_path copy];
     clipView.postsBoundsChangedNotifications = previousPostsBoundsChangedNotifications;
@@ -12996,9 +13107,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 
 int main(int argc, const char* argv[]) {
     @autoreleasepool {
+        spdf_launch_profile_log(@"main enter");
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.11-1\n");
+                printf("Shenzhen PDF portable mac 26.6.11-2\n");
                 return 0;
             }
         }
