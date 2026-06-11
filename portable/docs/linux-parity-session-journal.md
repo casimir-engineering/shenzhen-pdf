@@ -24,3 +24,12 @@ the Parallels Ubuntu 24.04 ARM VM with captures. Evidence and decisions land her
   selected-text path (Ctrl+C, context menu, Edit menu) with whitespace-collapse
   toggle persisted as collapseWhitespaceWhenCopyingText; startup save batching.
   Patch held at /tmp/lxD.patch pending merge after Agent A.
+- [wave1] Agent A merged (+288/-60): persistent worker docs, async nav renders,
+  list-cache adoption, render tokens, 96MB cap. Agent D merged (+108).
+  Linux builds clean on Mac host after both.
+- [wave2] Agents B (anchored Ctrl+wheel/pinch zoom) and C (scroll coalescing +
+  minimap thumbnails) launched in /tmp/spdf-lxB, /tmp/spdf-lxC.
+- [vm] Prep complete: exec=root, gtk 3.24.41, gcc 13.2, repo rsynced to
+  /root/shenzhen-pdf, mupdf ARM build running (/root/mupdf-build.log,
+  ~15-30min). GDM login pending for GUI tests (autologin plan: gdm3
+  custom.conf + reboot). Screenshot /tmp/vm_ready.png.
