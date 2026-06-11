@@ -153,7 +153,16 @@ NSArray<NSDictionary<NSString*, NSString*>*>* spdf_ocr_languages(void) {
         @{@"code" : @"chi_sim+eng", @"name" : @"Chinese Simplified + English"},
         @{@"code" : @"chi_sim", @"name" : @"Chinese Simplified"},
         @{@"code" : @"chi_tra+eng", @"name" : @"Chinese Traditional + English"},
-        @{@"code" : @"chi_tra", @"name" : @"Chinese Traditional"}, @{@"code" : @"eng", @"name" : @"English"}
+        @{@"code" : @"chi_tra", @"name" : @"Chinese Traditional"}, @{@"code" : @"eng", @"name" : @"English"},
+        // Top 10 most-spoken languages by total speakers (English and Mandarin above).
+        @{@"code" : @"hin", @"name" : @"Hindi"}, @{@"code" : @"spa", @"name" : @"Spanish"},
+        @{@"code" : @"fra", @"name" : @"French"}, @{@"code" : @"ara", @"name" : @"Arabic"},
+        @{@"code" : @"ben", @"name" : @"Bengali"}, @{@"code" : @"por", @"name" : @"Portuguese"},
+        @{@"code" : @"rus", @"name" : @"Russian"}, @{@"code" : @"urd", @"name" : @"Urdu"},
+        // Large European languages (English, Spanish, French, Portuguese, Russian above).
+        @{@"code" : @"deu", @"name" : @"German"}, @{@"code" : @"ita", @"name" : @"Italian"},
+        @{@"code" : @"pol", @"name" : @"Polish"}, @{@"code" : @"ukr", @"name" : @"Ukrainian"},
+        @{@"code" : @"nld", @"name" : @"Dutch"}, @{@"code" : @"ron", @"name" : @"Romanian"}
     ];
     return languages;
 }
