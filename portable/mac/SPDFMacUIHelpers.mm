@@ -104,6 +104,16 @@ static CGFloat spdf_global_magnify_delta(NSEvent* event) {
     return delta;
 }
 
+// Magnify events from a live AppKit gesture session always carry a phase and a
+// per-event delta. Events rebuilt raw from gesture CGEvents (global monitor
+// observation, or native scroll-focus delivery to an INACTIVE app) carry no
+// phase and a CUMULATIVE magnification — AppKit's CGEvent conversion never
+// reads the gesture phase field. Discriminate on the phase, not on the path.
+static CGFloat spdf_normalized_magnify_delta(NSEvent* event) {
+    if (event.phase != NSEventPhaseNone || event.momentumPhase != NSEventPhaseNone) return event.magnification;
+    return spdf_global_magnify_delta(event);
+}
+
 // Cheap in-process check for the overwhelmingly common case: the cursor is
 // over the key ShenzhenPDF window, so the responder chain is authoritative and
 // no window-server hit test (windowNumberAtPoint IPC) is needed per event.
@@ -130,7 +140,7 @@ static void spdf_install_inactive_magnify_monitor(void) {
                                           NSPoint screenPoint = NSEvent.mouseLocation;
                                           SPDFWindow* window = spdf_magnify_window_under_screen_point(screenPoint);
                                           if (!window || window.keyWindow) return;
-                                          CGFloat delta = spdf_global_magnify_delta(event);
+                                          CGFloat delta = spdf_normalized_magnify_delta(event);
                                           if (spdf_zoom_profile_enabled()) {
                                               spdf_zoom_profile_log(@"inactiveMagnify path=global phase=%lu raw=%.4f "
                                                                     @"delta=%.4f",
@@ -154,14 +164,17 @@ static void spdf_install_inactive_magnify_monitor(void) {
                                          if (spdf_point_in_key_spdf_window(screenPoint)) return event;
                                          SPDFWindow* window = spdf_magnify_window_under_screen_point(screenPoint);
                                          if (!window || window.keyWindow) return event;
+                                         CGFloat delta = spdf_normalized_magnify_delta(event);
                                          if (spdf_zoom_profile_enabled()) {
-                                             spdf_zoom_profile_log(@"inactiveMagnify path=local phase=%lu raw=%.4f",
-                                                                   (unsigned long)event.phase,
-                                                                   (double)event.magnification);
+                                             spdf_zoom_profile_log(
+                                                 @"inactiveMagnify path=local phase=%lu raw=%.4f delta=%.4f",
+                                                 (unsigned long)event.phase, (double)event.magnification,
+                                                 (double)delta);
                                          }
+                                         if (delta == 0.0) return nil;
                                          if ([window routeInactiveMagnifyEvent:event
                                                                    screenPoint:screenPoint
-                                                                 magnification:event.magnification])
+                                                                 magnification:delta])
                                              return nil;
                                          return event;
                                        }];
@@ -736,13 +749,17 @@ static void spdf_install_inactive_magnify_monitor(void) {
 
 - (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event {
     if (event.type != NSEventTypeMagnify || self.keyWindow) return NO;
-    // Events that reach sendEvent: were dispatched to this window by AppKit itself, so their
-    // magnification is already a per-event delta.
+    // Magnify events AppKit dispatches to an inactive window under the cursor
+    // (scroll-focus delivery) are rebuilt raw from gesture CGEvents: phase-less
+    // with CUMULATIVE magnification. spdf_normalized_magnify_delta converts
+    // those to per-event deltas and passes phased gesture-session events as-is.
+    CGFloat delta = spdf_normalized_magnify_delta(event);
     if (spdf_zoom_profile_enabled()) {
-        spdf_zoom_profile_log(@"inactiveMagnify path=sendEvent phase=%lu raw=%.4f", (unsigned long)event.phase,
-                              (double)event.magnification);
+        spdf_zoom_profile_log(@"inactiveMagnify path=sendEvent phase=%lu raw=%.4f delta=%.4f",
+                              (unsigned long)event.phase, (double)event.magnification, (double)delta);
     }
-    return [self routeInactiveMagnifyEvent:event windowPoint:event.locationInWindow magnification:event.magnification];
+    if (delta == 0.0) return YES;
+    return [self routeInactiveMagnifyEvent:event windowPoint:event.locationInWindow magnification:delta];
 }
 
 - (void)sendEvent:(NSEvent*)event {
