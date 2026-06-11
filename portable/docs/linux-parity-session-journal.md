@@ -10,3 +10,13 @@ the Parallels Ubuntu 24.04 ARM VM with captures. Evidence and decisions land her
   control before GUI work, 4 install in VM, 5 test+capture parity verdict).
 - [open] Parallels reported downloading Ubuntu 24.04 ARM. Parity audit fanned
   out first; VM work follows once image lands.
+- [audit] Parity matrix delivered. Key gaps: per-task spdf_open/close in render
+  worker (kills any list cache), sync main-thread renders on every page jump,
+  no display-list/_opts adoption, no render tokens, no byte cap, no wheel/pinch
+  zoom at all, per-scroll-tick sync save_session, minimap placeholders only,
+  OCR list 5 vs 19. Linux builds on the Mac host (gtk+3 3.24.52) - local
+  compile gates possible. VM "Ubuntu 24.04 (with Rosetta)" running.
+- [plan] Wave 1: Agent A (worker docs + async nav renders + list cache + tokens
+  + byte cap) in /tmp/spdf-lxA; Agent D (OCR languages + small parity) in
+  /tmp/spdf-lxD; VM prep agent. Wave 2 after A: B (anchored zoom), C (scroll
+  coalescing + minimap thumbnails). Then VM build + capture matrix.
