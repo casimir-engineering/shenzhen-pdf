@@ -49,6 +49,35 @@ struct spdf_document {
     spdf_render_stats last_render_stats;
 };
 
+/* Core-private body of the public cancellation token: just an fz_cookie.
+ * cancel() writes cookie.abort from any thread while a render on another
+ * thread polls it; abort is a plain int flag that mupdf only ever reads
+ * during a run, so the unsynchronized write is benign (worst case the
+ * render aborts at the next poll point). */
+struct spdf_render_token {
+    fz_cookie cookie;
+};
+
+spdf_render_token* spdf_render_token_new(void) {
+    return (spdf_render_token*)calloc(1, sizeof(spdf_render_token));
+}
+
+void spdf_render_token_cancel(spdf_render_token* token) {
+    if (token) token->cookie.abort = 1;
+}
+
+void spdf_render_token_free(spdf_render_token* token) {
+    free(token);
+}
+
+static fz_cookie* token_cookie(spdf_render_token* token) {
+    return token ? &token->cookie : NULL;
+}
+
+static int token_canceled(const spdf_render_token* token) {
+    return token && token->cookie.abort;
+}
+
 typedef struct outline_builder {
     spdf_outline_item* items;
     int count;
@@ -305,8 +334,11 @@ spdf_render_stats spdf_last_render_stats(const spdf_document* doc) {
 }
 
 /* LRU lookup of the display list for page_index; builds and caches it on miss.
- * Returns NULL on build failure (err is set, nothing partial is ever cached). */
-static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_index, char* err, size_t err_len) {
+ * Returns NULL on build failure (err is set, nothing partial is ever cached).
+ * A token cancellation during the build run also returns NULL (err is
+ * "Render canceled."); the partial list is dropped, never cached. */
+static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_index, spdf_render_token* token, char* err,
+                                               size_t err_len) {
     spdf_page_list_entry* slot;
     fz_page* page = NULL;
     fz_display_list* list = NULL;
@@ -342,7 +374,7 @@ static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_inde
         page = fz_load_page(doc->ctx, doc->doc, page_index);
         list = fz_new_display_list(doc->ctx, fz_bound_page(doc->ctx, page));
         dev = fz_new_list_device(doc->ctx, list);
-        fz_run_page(doc->ctx, page, dev, fz_identity, NULL);
+        fz_run_page(doc->ctx, page, dev, fz_identity, token_cookie(token));
         fz_close_device(doc->ctx, dev);
         fz_drop_device(doc->ctx, dev);
         dev = NULL;
@@ -357,6 +389,14 @@ static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_inde
         return NULL;
     }
     build_ms = spdf_monotonic_ms() - build_start;
+
+    /* A cookie abort stops fz_run_page without throwing, leaving a PARTIAL
+     * list: take the never-cache-on-error path so it can never be replayed. */
+    if (token_canceled(token)) {
+        fz_drop_display_list(doc->ctx, list);
+        set_error(err, err_len, "Render canceled.");
+        return NULL;
+    }
 
     if (slot->list) fz_drop_display_list(doc->ctx, slot->list);
     slot->list = list;
@@ -422,6 +462,7 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
 
 int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, unsigned flags,
                                spdf_render_token* token, spdf_bitmap* out, char* err, size_t err_len) {
+    fz_page* page = NULL;
     fz_pixmap* pix = NULL;
     fz_device* dev = NULL;
     fz_display_list* list = NULL;
@@ -431,8 +472,6 @@ int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, u
     fz_matrix ctm;
     float page_width;
     float page_height;
-
-    (void)token; /* Phase 1: cancellation tokens are not implemented yet */
 
     set_error(err, err_len, "");
     if (!out) {
@@ -454,11 +493,20 @@ int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, u
     if (!spdf_page_size(doc, page_index, &page_width, &page_height, err, err_len)) return 0;
     if (!render_page_size_allowed(page_width, page_height, zoom, err, err_len)) return 0;
 
-    if (flags & SPDF_RENDER_USE_PAGE_LIST) {
-        list = get_or_build_page_list(doc, page_index, err, err_len);
-        if (!list) set_error(err, err_len, ""); /* fail-open: fall through to the direct path */
+    if (token_canceled(token)) {
+        set_error(err, err_len, "Render canceled.");
+        return 0;
     }
 
+    if (flags & SPDF_RENDER_USE_PAGE_LIST) {
+        list = get_or_build_page_list(doc, page_index, token, err, err_len);
+        if (!list) {
+            if (token_canceled(token)) return 0; /* err is already "Render canceled." */
+            set_error(err, err_len, "");         /* fail-open: fall through to the direct path */
+        }
+    }
+
+    fz_var(page);
     fz_var(pix);
     fz_var(dev);
 
@@ -471,17 +519,36 @@ int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, u
             pix = fz_new_pixmap_with_bbox(doc->ctx, fz_device_rgb(doc->ctx), bbox, NULL, 0);
             fz_clear_pixmap_with_value(doc->ctx, pix, 0xFF);
             dev = fz_new_draw_device(doc->ctx, fz_identity, pix);
-            fz_run_display_list(doc->ctx, list, dev, ctm, fz_infinite_rect, NULL);
+            fz_run_display_list(doc->ctx, list, dev, ctm, fz_infinite_rect, token_cookie(token));
             fz_close_device(doc->ctx, dev);
             fz_drop_device(doc->ctx, dev);
             dev = NULL;
             doc->last_render_stats.used_list = 1;
+        } else if (token) {
+            /* Explicit equivalent of fz_new_pixmap_from_page_number (mupdf
+             * source/fitz/util.c, alpha=0) so the cookie reaches fz_run_page. */
+            page = fz_load_page(doc->ctx, doc->doc, page_index);
+            bounds = fz_bound_page(doc->ctx, page);
+            ctm = fz_scale(zoom, zoom);
+            transformed = fz_transform_rect(bounds, ctm);
+            bbox = fz_round_rect(transformed);
+            pix = fz_new_pixmap_with_bbox(doc->ctx, fz_device_rgb(doc->ctx), bbox, NULL, 0);
+            fz_clear_pixmap_with_value(doc->ctx, pix, 0xFF);
+            dev = fz_new_draw_device(doc->ctx, ctm, pix);
+            fz_run_page(doc->ctx, page, dev, fz_identity, &token->cookie);
+            fz_close_device(doc->ctx, dev);
+            fz_drop_device(doc->ctx, dev);
+            dev = NULL;
+            fz_drop_page(doc->ctx, page);
+            page = NULL;
         } else {
             pix = fz_new_pixmap_from_page_number(doc->ctx, doc->doc, page_index, fz_scale(zoom, zoom),
                                                  fz_device_rgb(doc->ctx), 0);
         }
 
-        copy_pixmap_to_bitmap(doc, pix, out, err, err_len);
+        /* A cookie abort stops the run without throwing; skip the bitmap copy
+         * and report the cancellation after cleanup below. */
+        if (!token_canceled(token)) copy_pixmap_to_bitmap(doc, pix, out, err, err_len);
 
         fz_drop_pixmap(doc->ctx, pix);
         pix = NULL;
@@ -491,6 +558,13 @@ int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, u
         spdf_free_bitmap(out);
         if (dev) fz_drop_device(doc->ctx, dev);
         if (pix) fz_drop_pixmap(doc->ctx, pix);
+        if (page) fz_drop_page(doc->ctx, page);
+        return 0;
+    }
+
+    if (token_canceled(token)) {
+        spdf_free_bitmap(out);
+        set_error(err, err_len, "Render canceled.");
         return 0;
     }
 
@@ -516,8 +590,6 @@ int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float 
     fz_matrix ctm;
     float page_width;
     float page_height;
-
-    (void)token; /* Phase 1: cancellation tokens are not implemented yet */
 
     set_error(err, err_len, "");
     if (!out) {
@@ -548,9 +620,17 @@ int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float 
     }
     if (!render_page_size_allowed(region.x1 - region.x0, region.y1 - region.y0, zoom, err, err_len)) return 0;
 
+    if (token_canceled(token)) {
+        set_error(err, err_len, "Render canceled.");
+        return 0;
+    }
+
     if (flags & SPDF_RENDER_USE_PAGE_LIST) {
-        list = get_or_build_page_list(doc, page_index, err, err_len);
-        if (!list) set_error(err, err_len, ""); /* fail-open: fall through to the direct path */
+        list = get_or_build_page_list(doc, page_index, token, err, err_len);
+        if (!list) {
+            if (token_canceled(token)) return 0; /* err is already "Render canceled." */
+            set_error(err, err_len, "");         /* fail-open: fall through to the direct path */
+        }
     }
 
     fz_var(page);
@@ -577,16 +657,18 @@ int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float 
         dev = fz_new_draw_device(doc->ctx, fz_identity, pix);
         if (list) {
             /* Scissor is the DEVICE-space rect of the pixmap, not page coords. */
-            fz_run_display_list(doc->ctx, list, dev, ctm, fz_rect_from_irect(bbox), NULL);
+            fz_run_display_list(doc->ctx, list, dev, ctm, fz_rect_from_irect(bbox), token_cookie(token));
             doc->last_render_stats.used_list = 1;
         } else {
-            fz_run_page(doc->ctx, page, dev, ctm, NULL);
+            fz_run_page(doc->ctx, page, dev, ctm, token_cookie(token));
         }
         fz_close_device(doc->ctx, dev);
         fz_drop_device(doc->ctx, dev);
         dev = NULL;
 
-        copy_pixmap_to_bitmap(doc, pix, out, err, err_len);
+        /* A cookie abort stops the run without throwing; skip the bitmap copy
+         * and report the cancellation after cleanup below. */
+        if (!token_canceled(token)) copy_pixmap_to_bitmap(doc, pix, out, err, err_len);
 
         fz_drop_pixmap(doc->ctx, pix);
         pix = NULL;
@@ -601,6 +683,12 @@ int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float 
         if (dev) fz_drop_device(doc->ctx, dev);
         if (pix) fz_drop_pixmap(doc->ctx, pix);
         if (page) fz_drop_page(doc->ctx, page);
+        return 0;
+    }
+
+    if (token_canceled(token)) {
+        spdf_free_bitmap(out);
+        set_error(err, err_len, "Render canceled.");
         return 0;
     }
 

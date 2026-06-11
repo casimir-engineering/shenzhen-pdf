@@ -565,6 +565,14 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Result: page-10 crops drop from median ~153-230ms to median 35.6ms (hits as low as 17ms) after a one-time ~115-157ms per-thread build; ordinary pages unchanged (builds 0-5ms, output pixel-identical by memcmp); self-test histograms and stall counts unchanged on the schematic doc and Bear Sunny.
    - Validation target: open 8550 power tree, zoom/scroll on the schematic page; content should sharpen near-instantly after the first render; comments/rotation/search/selection on that page must behave unchanged.
 
+67. Abortable renders via fz_cookie tokens (performance initiative phase 2).
+   - Status: Implemented; regression validated.
+   - Prompt link: same initiative as item 66; in-flight renders (up to ~230ms of mupdf work) ran to completion after logical cancellation, delaying the fresh gesture's renders.
+   - Changed (core): `spdf_render_token` wraps an fz_cookie; cancel sets `cookie.abort` (thread-safe plain flag mupdf polls per node). The cookie reaches both display-list replay paths, the direct region render, the list build (aborted builds are never cached), and a token-aware explicit expansion of the full-page path. Canceled renders return 0 with "Render canceled." without fz_throw so nothing hits stderr.
+   - Changed (Mac): `SPDFRenderOperation : NSBlockOperation` owns a token; `-cancel` also cancels the cookie, so the EXISTING gesture-start queue purges and generation bumps now abort running renders within milliseconds. All six render enqueue sites converted; canceled renders skip error UI and do bookkeeping cleanup only; newly enqueued visible-crop/pan-crop renders cancel their superseded in-flight predecessor via weak references. No queue topology/priority/suspension/generation changes.
+   - Result: 85+ renderCanceled events per stress run on the schematic doc at gesture starts; histograms and stall counts unchanged on both standard documents; crop replay medians unchanged.
+   - Validation target: on the schematic page, chain zoom/scroll gestures rapidly; fresh crops should start immediately instead of queueing behind doomed renders.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

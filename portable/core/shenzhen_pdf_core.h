@@ -89,8 +89,19 @@ typedef struct spdf_link_target {
     float zoom;
 } spdf_link_target;
 
-/* Reserved for a later phase (cooperative render cancellation). Phase 1 callers pass NULL. */
+/* Cooperative render cancellation. A token wraps a mupdf fz_cookie; canceling
+ * sets the cookie's abort flag, which mupdf polls between content-stream tokens
+ * and display-list nodes, stopping the render within milliseconds. A canceled
+ * render returns 0 with err "Render canceled." -- callers must treat that as a
+ * non-error cancellation, not a render failure. spdf_render_token_cancel() is
+ * safe to call from any thread while a render using the token is running;
+ * free() only after no render is using the token. Passing NULL keeps the
+ * legacy non-cancelable behavior. */
 typedef struct spdf_render_token spdf_render_token;
+
+spdf_render_token* spdf_render_token_new(void);
+void spdf_render_token_cancel(spdf_render_token* token); /* thread-safe: sets cookie.abort = 1 */
+void spdf_render_token_free(spdf_render_token* token);
 
 enum {
     SPDF_RENDER_DEFAULT = 0,
