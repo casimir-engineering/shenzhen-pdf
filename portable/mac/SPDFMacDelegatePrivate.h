@@ -157,6 +157,14 @@
     NSMutableArray<NSDictionary*>* _findMatches;
     NSMutableSet<NSString*>* _preloadingPaths;
     NSMutableDictionary<NSString*, NSString*>* _preloadTokens;
+    // Launch-only deferred open of a cloud-backed active tab (see
+    // loadSelectedTab): set while performStartupDocumentWork runs so the
+    // restored active document can be opened off the main thread when it
+    // lives on cloud storage instead of blocking the first paint.
+    BOOL _startupDocumentWorkInProgress;
+    // Identity token for the in-flight deferred cloud open; any subsequent
+    // loadSelectedTab supersedes it and the stale completion abandons.
+    NSString* _pendingDeferredCloudOpenToken;
     NSUInteger _findGeneration;
     BOOL _findSearchInProgress;
     NSString* _path;
@@ -260,10 +268,18 @@
     NSMutableArray<NSString*>* _pendingRestoreWindowIDs;
     NSInteger _pendingFindPreferredPage;
     NSInteger _pendingFindPreferredMatchIndex;
+    SPDFRenderedPage* _launchPrerenderedFirstPage;
+    BOOL _suppressToolbarOverflowUpdates;
 }
 @property(nonatomic, copy) NSString* initialPath;
 @property(nonatomic, copy) NSString* restoreWindowID;
 @property(nonatomic) BOOL detachedTabLaunch;
+/* Launch prerender (prototype): kicked off from main() before AppKit init;
+   opens the restored active tab's document and renders its preferred page on
+   a background thread, overlapping NSApplication init and window build.
+   Adopted later only on exact (path, attributes, page, zoom, scale) match;
+   any mismatch falls back to the existing synchronous path. */
+- (void)startLaunchPrerender;
 - (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event;
 - (BOOL)zoomWithScrollWheelEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)zoomWithMagnifyEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
@@ -392,6 +408,7 @@
 - (void)savePersistentState;
 - (void)performStartupDocumentWork;
 - (void)performWithBatchedPersistentStateSaves:(void (^)(void))block;
+- (void)resumePersistentStateSavesAfterLaunch;
 - (void)dismissTabHoverPanel;
 - (NSArray<NSNumber*>*)visibleDocumentPageIndexesWithExtraRadius:(NSInteger)radius
                                                    preferredPage:(NSInteger*)preferredPageOut;

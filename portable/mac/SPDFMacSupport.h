@@ -23,3 +23,6 @@ void spdf_zoom_profile_log(NSString* format, ...) NS_FORMAT_FUNCTION(1, 2);
 // environment variable is unset.
 BOOL spdf_launch_profile_enabled(void);
 void spdf_launch_profile_log(NSString* format, ...) NS_FORMAT_FUNCTION(1, 2);
+// CFAbsoluteTime (ms) of the kernel process spawn (sysctl p_starttime);
+// predates dyld/code-signature work, so cold pre-main segments are visible.
+double spdf_process_spawn_time_ms(void);

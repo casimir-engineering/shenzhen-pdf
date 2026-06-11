@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/mount.h>
 #include <unistd.h>
 
 static const CGFloat kPageMargin = 44.0;
@@ -61,6 +62,36 @@ static const CGFloat kHighQualityZoomCacheZoom = 2.0;
 static const NSUInteger kHighQualityZoomCacheMaxPageBytes = (NSUInteger)96 * 1024 * 1024;
 static const NSUInteger kHighQualityZoomCacheTotalByteLimit = (NSUInteger)384 * 1024 * 1024;
 static const NSTimeInterval kAfterFirstPaintDelay = 0.05;
+// On a cold launch the post-first-paint warming barrage (zoom seed caches,
+// nearby page renders, outline/comments loads, inactive-tab preloads — up to
+// a dozen document opens) would start 50ms after the first paint and compete
+// for disk bandwidth with the cold reads the just-painted document still
+// needs (sidebar metadata, crisp viewport crops). When the launch itself
+// measured slow (cold caches), hold the barrage back a few hundred ms; the
+// work is identical, only its start moves. Warm launches are unaffected.
+static const NSTimeInterval kAfterFirstPaintDelayColdLaunch = 0.35;
+static const double kColdLaunchInProcessThresholdMs = 450.0;
+
+// Cold-launch detection for the launch-time warming schedule only: the first
+// caller (always the startup loadSelectedTab) compares how long the process
+// has been alive (kernel spawn time, so dyld page-in and code-signature
+// validation count) against what a warm launch needs (~240-300ms to reach
+// the first schedule); a genuinely cold launch — cold binary/AppKit pages,
+// fresh Gatekeeper assessment, cold state JSONs, cold or remote (DriveFS)
+// document bytes — lands well past the threshold. Subsequent calls (tab
+// switches) always use the normal delay.
+static NSTimeInterval spdf_after_first_paint_delay_consume_launch(void) {
+    static BOOL launchScheduleConsumed = NO;
+    if (launchScheduleConsumed) return kAfterFirstPaintDelay;
+    launchScheduleConsumed = YES;
+    double aliveMs = spdf_zoom_profile_now_ms() - spdf_process_spawn_time_ms();
+    if (aliveMs > kColdLaunchInProcessThresholdMs) {
+        spdf_launch_profile_log(@"cold launch detected (%.0fms to first warming schedule); warming delayed %.0fms",
+                                aliveMs, kAfterFirstPaintDelayColdLaunch * 1000.0);
+        return kAfterFirstPaintDelayColdLaunch;
+    }
+    return kAfterFirstPaintDelay;
+}
 static const NSTimeInterval kDocumentPanLiveCropRenderInterval = 0.05;
 static const NSTimeInterval kLiveZoomFinishDelay = 0.28;
 static const NSTimeInterval kLiveZoomFinishWhilePanningDelay = 0.12;
@@ -419,7 +450,228 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     return [date isKindOfClass:NSDate.class] ? date : nil;
 }
 
+// ---- Launch prerender (prototype) -----------------------------------------
+// Started from main() before NSApplication init. A background worker opens the
+// document the launch sequence will select (restored active tab, or the
+// CLI/Finder-opened file) and, when the restore zoom is viewport-independent
+// (Custom/Actual fit), renders the preferred page through the exact same
+// renderedPageAtIndex: path the synchronous first paint uses. loadSelectedTab
+// adopts the open document and renderDocumentAndScrollToPage adopts the bitmap
+// only on exact (path, size, mtime, page, zoom, scale) match; any mismatch or
+// timeout falls back to the unmodified synchronous path, so pixels and
+// behavior are identical by construction.
+@interface SPDFLaunchPrerenderResult : NSObject
+@property(nonatomic) spdf_document* doc;
+@property(nonatomic, strong) SPDFRenderedPage* page;
+@property(nonatomic, copy) NSString* path;
+@property(nonatomic) unsigned long long fileSize;
+@property(nonatomic, strong) NSDate* modificationDate;
+@property(nonatomic) BOOL finished;   // worker stored its results
+@property(nonatomic) BOOL abandoned;  // main thread gave up; worker cleans up
+@property(nonatomic) BOOL consumed;
+@property(nonatomic, strong) dispatch_group_t group;
+@end
+@implementation SPDFLaunchPrerenderResult
+@end
+
+static SPDFLaunchPrerenderResult* gSPDFLaunchPrerender;
+
+// Backing scale of the main display without touching AppKit (the worker runs
+// before/while NSApplication initializes). Adoption later compares against
+// the real window backingScale, so a wrong guess only skips the fast path.
+static CGFloat spdf_launch_prerender_display_scale(void) {
+    CGDirectDisplayID display = CGMainDisplayID();
+    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display);
+    if (!mode) return 0.0;
+    size_t pixelWidth = CGDisplayModeGetPixelWidth(mode);
+    CGDisplayModeRelease(mode);
+    double pointWidth = CGDisplayBounds(display).size.width;
+    if (pointWidth <= 0.0 || pixelWidth == 0) return 0.0;
+    return (CGFloat)((double)pixelWidth / pointWidth);
+}
+
+// Discard a never-adopted prerender without blocking the main thread.
+static void spdf_discard_launch_prerender(void) {
+    SPDFLaunchPrerenderResult* result = gSPDFLaunchPrerender;
+    gSPDFLaunchPrerender = nil;
+    if (!result) return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+      dispatch_group_wait(result.group, DISPATCH_TIME_FOREVER);
+      @synchronized(result) {
+          if (result.finished && !result.consumed && result.doc) {
+              spdf_close(result.doc);
+              result.doc = NULL;
+          }
+          result.abandoned = YES;
+      }
+    });
+}
+
 @implementation ShenzhenMacDelegate
+
+- (void)startLaunchPrerender {
+    if (self.detachedTabLaunch) return;
+    if (getenv("SPDF_DISABLE_LAUNCH_PRERENDER")) return;
+    NSString* initialPath = [self.initialPath copy];
+    NSString* restoreWindowID = [self.restoreWindowID copy];
+    SPDFLaunchPrerenderResult* result = [[SPDFLaunchPrerenderResult alloc] init];
+    result.group = dispatch_group_create();
+    gSPDFLaunchPrerender = result;
+    dispatch_group_async(result.group, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+      NSString* path = nil;
+      NSInteger pageIndex = 0;
+      double predictedZoom = 0.0;  // 0 = open-only prewarm (no page render)
+      if (initialPath.length > 0) {
+          // CLI/Finder open: that file becomes the selected tab. Its zoom is
+          // viewport-dependent (fit mode), so prewarm the open only.
+          path = initialPath.stringByStandardizingPath;
+      } else {
+          // Peek at session.json the same way loadPersistentState resolves the
+          // restored window and selected tab.
+          NSData* data = [NSData dataWithContentsOfFile:[self pathForStateFile:@"session.json"]];
+          NSDictionary* session =
+              data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+          if (![session isKindOfClass:NSDictionary.class]) session = nil;
+          NSArray* rawWindows =
+              [session[@"windows"] isKindOfClass:NSArray.class] ? session[@"windows"] : @[];
+          NSDictionary* windowState = nil;
+          NSMutableArray<NSDictionary*>* windows = [NSMutableArray array];
+          for (NSDictionary* window in rawWindows) {
+              if (![window isKindOfClass:NSDictionary.class]) continue;
+              NSArray* rawTabs = [window[@"tabs"] isKindOfClass:NSArray.class] ? window[@"tabs"] : @[];
+              NSMutableArray* tabs = [NSMutableArray array];
+              for (NSDictionary* tab in rawTabs) {
+                  if (![tab isKindOfClass:NSDictionary.class]) continue;
+                  NSString* tabPath = [tab[@"path"] isKindOfClass:NSString.class] ? tab[@"path"] : nil;
+                  if (tabPath.length > 0) [tabs addObject:tab];
+              }
+              if (tabs.count == 0) continue;
+              NSMutableDictionary* copy = [window mutableCopy];
+              copy[@"tabs"] = tabs;
+              [windows addObject:copy];
+          }
+          if (restoreWindowID.length > 0) {
+              for (NSDictionary* candidate in windows) {
+                  if ([candidate[@"id"] isKindOfClass:NSString.class] &&
+                      [candidate[@"id"] isEqualToString:restoreWindowID]) {
+                      windowState = candidate;
+                      break;
+                  }
+              }
+          } else {
+              windowState = windows.firstObject;
+          }
+          NSArray* tabs = [windowState[@"tabs"] isKindOfClass:NSArray.class] ? windowState[@"tabs"] : @[];
+          if (tabs.count > 0) {
+              NSInteger selected =
+                  MIN(MAX(0, [windowState[@"selectedTab"] integerValue]), (NSInteger)tabs.count - 1);
+              NSDictionary* tab = tabs[(NSUInteger)selected];
+              path = [tab[@"path"] isKindOfClass:NSString.class] ? tab[@"path"] : nil;
+              pageIndex = MAX(0, [tab[@"page"] integerValue]);
+              // Replicates loadSelectedTab zoom selection exactly for the two
+              // viewport-independent fit modes; other modes stay open-only.
+              NSInteger fitMode = [tab[@"fitMode"] integerValue];
+              if (fitMode == SPDFFitModeCustom) {
+                  double customZoom = [tab[@"customZoom"] doubleValue];
+                  double zoom = [tab[@"zoom"] doubleValue];
+                  double remembered = customZoom > 0 ? customZoom : (zoom > 0 ? zoom : 1.0);
+                  predictedZoom = MAX(kMinZoom, MIN(kMaxZoom, remembered));
+              } else if (fitMode == SPDFFitModeActual) {
+                  predictedZoom = 1.0;
+              }
+          }
+      }
+      // DriveFS/cloud/network paths are handled by the launch-only deferred
+      // cloud open (loadSelectedTab); do not race a second synchronous open
+      // against it. Same predicate as that deferral (CloudStorage file
+      // providers plus any non-apfs/hfs mount).
+      if (path.length == 0 || [self pathIsOnCloudStorage:path]) {
+          @synchronized(result) {
+              result.finished = YES;
+          }
+          return;
+      }
+      NSDictionary* attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+      if (!attributes) {
+          @synchronized(result) {
+              result.finished = YES;
+          }
+          return;
+      }
+      double openStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
+      char err[1024];
+      spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+      if (openStart > 0.0) {
+          spdf_launch_profile_log(@"prerender spdf_open %@ %.1fms [bg]", path.lastPathComponent,
+                                  spdf_zoom_profile_now_ms() - openStart);
+      }
+      SPDFRenderedPage* rendered = nil;
+      if (doc && predictedZoom > 0.0) {
+          NSInteger pageCount = spdf_page_count(doc);
+          pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
+          CGFloat displayScale = spdf_launch_prerender_display_scale();
+          if (displayScale > 0.0) {
+              double renderStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
+              rendered = [self renderedPageAtIndex:pageIndex
+                                          document:doc
+                                              zoom:predictedZoom
+                                      displayScale:displayScale
+                                             error:err
+                                       errorLength:sizeof(err)];
+              if (renderStart > 0.0) {
+                  spdf_launch_profile_log(@"prerender page=%ld zoom=%.2f %.1fms [bg]", (long)pageIndex,
+                                          predictedZoom, spdf_zoom_profile_now_ms() - renderStart);
+              }
+          }
+      }
+      @synchronized(result) {
+          if (result.abandoned) {
+              if (doc) spdf_close(doc);
+          } else {
+              result.doc = doc;
+              result.page = rendered;
+              result.path = [path copy];
+              result.fileSize = spdf_file_size_from_attributes(attributes);
+              result.modificationDate = spdf_file_modification_date_from_attributes(attributes);
+              result.finished = YES;
+          }
+      }
+    });
+}
+
+// Called once from loadSelectedTab. Returns the prerendered document when it
+// matches the file the launch sequence is about to open; stores the rendered
+// page for renderDocumentAndScrollToPage to adopt under its own exact checks.
+- (spdf_document*)takeLaunchPrerenderedDocumentForPath:(NSString*)path attributes:(NSDictionary*)attributes {
+    SPDFLaunchPrerenderResult* result = gSPDFLaunchPrerender;
+    if (!result || result.consumed) return NULL;
+    long waitResult =
+        dispatch_group_wait(result.group, dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC));
+    if (waitResult != 0) {
+        // Worker still running (slow disk?). Abandon: it closes its own doc.
+        @synchronized(result) {
+            result.abandoned = YES;
+        }
+        gSPDFLaunchPrerender = nil;
+        spdf_launch_profile_log(@"launch prerender abandoned (timeout)");
+        return NULL;
+    }
+    gSPDFLaunchPrerender = nil;
+    @synchronized(result) {
+        result.consumed = YES;
+    }
+    NSDate* modificationDate = spdf_file_modification_date_from_attributes(attributes);
+    BOOL match = result.finished && result.doc && [result.path isEqualToString:path] &&
+                 result.fileSize == spdf_file_size_from_attributes(attributes) && result.modificationDate &&
+                 modificationDate && [result.modificationDate isEqualToDate:modificationDate];
+    if (!match) {
+        if (result.doc) spdf_close(result.doc);  // worker is done; single-owner again
+        spdf_launch_profile_log(@"launch prerender discarded (mismatch)");
+        return NULL;
+    }
+    _launchPrerenderedFirstPage = result.page;
+    return result.doc;
+}
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
     (void)notification;
@@ -549,49 +801,66 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     if (!gSPDFWindowControllers) gSPDFWindowControllers = [NSMutableArray array];
     if (![gSPDFWindowControllers containsObject:self]) [gSPDFWindowControllers addObject:self];
 
-    // Batch persistent-state saves across the whole launch sequence: window
+    // Suspend persistent-state saves across the whole launch sequence: window
     // construction fires windowDidResize (and sidebar restoration fires split
     // view delegate callbacks) which each trigger a full savePersistentState
     // cycle (session.lock flock + session.json read + serialize + compare)
-    // before the first paint. The single deferred save that runs when this
-    // block ends writes the same final state the last of those intermediate
-    // saves would have written, so on-disk results are identical — the
-    // intermediate lock/read/serialize cycles were pure launch overhead and,
-    // worse, could block on session.lock held by a terminating instance.
-    [self performWithBatchedPersistentStateSaves:^{
-      {
-          SPDFScopedLaunchPhaseLog launchPhase("buildMenu");
-          [self buildMenu];
-      }
-      {
-          SPDFScopedLaunchPhaseLog launchPhase("buildWindow");
-          [self buildWindow];
-      }
-      {
-          SPDFScopedLaunchPhaseLog launchPhase("installWindowArrangementShortcutMonitor");
-          [self installWindowArrangementShortcutMonitor];
-      }
-      self->_uiReady = YES;
+    // before the first paint. Item 68 batched these into one save at the end
+    // of the launch block, but that single flock/read/serialize cycle still
+    // ran before the first paint; nothing about the saved state is needed for
+    // the first frame, so the suspension now extends just past it and the
+    // catch-up save (identical bytes — it serializes the same live state)
+    // runs ~50ms after the first paint instead. Every termination path goes
+    // through applicationWillTerminate, which lifts the suspension before its
+    // own save, so no state can be lost to an early quit.
+    _suspendPersistentStateSaves = YES;
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("buildMenu");
+        [self buildMenu];
+    }
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("buildWindow");
+        [self buildWindow];
+    }
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("installWindowArrangementShortcutMonitor");
+        [self installWindowArrangementShortcutMonitor];
+    }
+    self->_uiReady = YES;
 
-      {
-          SPDFScopedLaunchPhaseLog launchPhase("performStartupDocumentWork");
-          [self performStartupDocumentWork];
-      }
-      self->_allowSidebarWidthPersistence = YES;
-      {
-          SPDFScopedLaunchPhaseLog launchPhase("restoreSidebarWidth");
-          [self restoreSidebarWidth];
-      }
-    }];
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("performStartupDocumentWork");
+        [self performStartupDocumentWork];
+    }
+    self->_allowSidebarWidthPersistence = YES;
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("restoreSidebarWidth");
+        [self restoreSidebarWidth];
+    }
 
     {
         SPDFScopedLaunchPhaseLog launchPhase("makeKeyAndOrderFront");
         [_window makeKeyAndOrderFront:nil];
     }
     if (self.restoreWindowID.length == 0) [NSApp activateIgnoringOtherApps:YES];
+    // Post-first-paint launch tail. The async hop reaches the next runloop
+    // pass, displayIfNeeded forces the (already fully laid out) first frame
+    // onto screen if it has not drawn yet, and only then does the timer for
+    // the non-paint work start. Everything in the timer block was previously
+    // queued with plain dispatch_async and could execute before the first
+    // draw: the launch-end persistent-state save (flock + JSON serialize),
+    // the default-reader LaunchServices query, and — on first run — the
+    // whole shortcut-help panel construction.
     dispatch_async(dispatch_get_main_queue(), ^{
-      if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
-      if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0) [self showShortcutHelp:nil];
+      [self->_pageScrollView displayIfNeeded];
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
+                     dispatch_get_main_queue(), ^{
+                       [self spawnPendingRestoredWindowsIfNeeded];
+                       [self resumePersistentStateSavesAfterLaunch];
+                       if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
+                       if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0)
+                           [self showShortcutHelp:nil];
+                     });
     });
     if (spdf_zoom_profile_enabled()) {
         // Main-thread stall detector: a background thread pings the main queue
@@ -859,6 +1128,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 }
 
 - (void)performStartupDocumentWork {
+    _startupDocumentWorkInProgress = YES;
     NSMutableArray<NSString*>* startupPaths = [NSMutableArray array];
     if (_pendingOpenPath.length > 0) [startupPaths addObject:_pendingOpenPath];
     for (NSString* path in _pendingOpenPaths) {
@@ -875,7 +1145,15 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     } else {
         [self showEmptyDocumentViewWithMessage:@"Open a document"];
     }
-    [self spawnPendingRestoredWindowsIfNeeded];
+    _startupDocumentWorkInProgress = NO;
+    // Sibling-window restore processes are spawned from the post-first-paint
+    // block in applicationDidFinishLaunching: each spawn pages in another
+    // copy of the binary, which on a cold launch competes with this window's
+    // own pre-paint disk reads. Their windows are separate processes that
+    // were never part of this window's first frame.
+    // Whatever launch path ran above, the prerender had its one adoption
+    // chance; release a leftover (e.g. empty session, missing file) off-main.
+    spdf_discard_launch_prerender();
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
@@ -909,6 +1187,9 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [_preloadQueue cancelAllOperations];
     [_findQueue cancelAllOperations];
     [self rememberActiveTabState];
+    // If the app terminates before the post-first-paint resume ran, lift the
+    // launch save suspension so this final save cannot be swallowed.
+    [self resumePersistentStateSavesAfterLaunch];
     [self savePersistentState];
     [self clearActiveMetadata];
     [self closeActiveDocumentIfUnowned];
@@ -931,6 +1212,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     } else {
         _suppressSessionWriteOnTerminate = NO;
     }
+    [self resumePersistentStateSavesAfterLaunch];
     [self savePersistentState];
     dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:self]; });
     return NO;
@@ -1550,6 +1832,20 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     }
 }
 
+// Lifts the launch-wide save suspension installed at the top of
+// applicationDidFinishLaunching and performs the catch-up save if anything
+// requested one during launch. Runs just after the first paint; also called
+// defensively from every termination path so a quit during the brief
+// suspension window can never drop state.
+- (void)resumePersistentStateSavesAfterLaunch {
+    if (!_suspendPersistentStateSaves) return;
+    _suspendPersistentStateSaves = NO;
+    if (_needsDeferredPersistentStateSave) {
+        _needsDeferredPersistentStateSave = NO;
+        [self savePersistentState];
+    }
+}
+
 - (void)savePersistentState {
     SPDFScopedProfileLog spdfScopedProfile("savePersistentState", 4.0);
     if (_suspendPersistentStateSaves) {
@@ -1654,9 +1950,21 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     reopenClosed.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     NSMenuItem* recentItem = [[NSMenuItem alloc] initWithTitle:@"Recently Opened" action:nil keyEquivalent:@""];
     _recentlyOpenedMenu = [[NSMenu alloc] initWithTitle:@"Recently Opened"];
+    // Populated lazily via menuNeedsUpdate: (NSMenuDelegate) — AppKit calls it
+    // synchronously right before the submenu is shown, so the items (and
+    // their SF-symbol icons) never need to exist before the first paint and
+    // can never be observed missing or stale. One disabled placeholder keeps
+    // the submenu non-empty so the parent item can never be auto-disabled
+    // before the first open; it matches the empty-list state the eager build
+    // produced and is replaced on first display.
+    NSMenuItem* recentPlaceholder = [[NSMenuItem alloc] initWithTitle:@"No Recent Documents"
+                                                               action:nil
+                                                        keyEquivalent:@""];
+    recentPlaceholder.enabled = NO;
+    [_recentlyOpenedMenu addItem:recentPlaceholder];
+    _recentlyOpenedMenu.delegate = self;
     recentItem.submenu = _recentlyOpenedMenu;
     [fileMenu addItem:recentItem];
-    [self rebuildRecentlyOpenedMenu];
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Open in Adobe Acrobat Reader"
                         action:@selector(openInExternalReader:)
@@ -2196,6 +2504,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
 - (void)updateToolbarOverflow {
     if (!_toolbar || !_toolbarOverflowButton) return;
+    if (_suppressToolbarOverflowUpdates) return;
     NSArray<NSArray<NSView*>*>* groups = @[
         @[ _ocrButton, _translateButton, _ocrSeparator ],
         @[ _findCountLabel ],
@@ -2269,6 +2578,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     [content registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
     content.translatesAutoresizingMaskIntoConstraints = NO;
     _window.contentView = content;
+
+    // Window-first (prototype, aggressive variant): show the styled empty
+    // window before any controls exist; chrome and document fill in on the
+    // following display cycles.
+    if (getenv("SPDF_WINDOW_FIRST")) {
+        SPDFScopedLaunchPhaseLog launchPhase("orderFront(bare)");
+        [_window makeKeyAndOrderFront:nil];
+    }
 
     _tabStrip = [[SPDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(frame), kTabStripHeight)];
     _tabStrip.reader = self;
@@ -2490,7 +2807,13 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                                               action:@selector(deleteComment:)
                                                        keyEquivalent:@""];
     sidebarDeleteComment.target = self;
-    spdf_apply_system_icons_to_menu(sidebarMenu);
+    // Context-menu icons are invisible until a right-click opens the menu,
+    // which cannot happen before the first paint; decorate off the critical
+    // path (same policy as the main-menu SF symbols in buildMenu). If the
+    // menu is somehow opened sooner, it works identically minus icons for
+    // one open.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ spdf_apply_system_icons_to_menu(sidebarMenu); });
     _sidebarTable.menu = sidebarMenu;
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"title"];
     column.title = @"Title";
@@ -2616,12 +2939,32 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     if (launchWindowStart > 0.0)
         spdf_launch_profile_log(@"buildWindow.viewsAndConstraints done at %.1fms",
                                 spdf_zoom_profile_now_ms() - launchWindowStart);
-    [self restoreSidebarWidth];
+    // Coalesce toolbar-overflow recomputation (toolbar layout + fittingSize
+    // solves) across the calls below into the single explicit pass at the
+    // end; the intermediate results were never observable.
+    _suppressToolbarOverflowUpdates = YES;
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("buildWindow.finalSync.restoreSidebarWidth");
+        [self restoreSidebarWidth];
+    }
     if (!_sidebarPreferredVisible) [self setSidebarActuallyVisible:NO];
-    [self setMinimapActuallyVisible:_minimapPreferredVisible];
-    [self syncToolbarState];
-    [self updateControls];
-    [self updateToolbarOverflow];
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("buildWindow.finalSync.setMinimapActuallyVisible");
+        [self setMinimapActuallyVisible:_minimapPreferredVisible];
+    }
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("buildWindow.finalSync.syncToolbarState");
+        [self syncToolbarState];
+    }
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("buildWindow.finalSync.updateControls");
+        [self updateControls];
+    }
+    _suppressToolbarOverflowUpdates = NO;
+    {
+        SPDFScopedLaunchPhaseLog launchPhase("buildWindow.finalSync.updateToolbarOverflow");
+        [self updateToolbarOverflow];
+    }
     if (launchWindowStart > 0.0)
         spdf_launch_profile_log(@"buildWindow.finalSync done at %.1fms",
                                 spdf_zoom_profile_now_ms() - launchWindowStart);
@@ -4433,7 +4776,20 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSInteger pageCount = spdf_page_count(_doc);
     pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
     double launchRenderStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-    SPDFRenderedPage* preferredPage = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
+    SPDFRenderedPage* preferredPage = nil;
+    SPDFRenderedPage* prerendered = _launchPrerenderedFirstPage;
+    _launchPrerenderedFirstPage = nil;  // single-shot: launch first paint only
+    if (prerendered && prerendered.pageIndex == pageIndex && prerendered.imageZoom == _zoom &&
+        prerendered.imageScale == [self backingScale]) {
+        err[0] = '\0';
+        preferredPage = prerendered;
+        spdf_launch_profile_log(@"sync preferred-page render page=%ld zoom=%.2f adopted from prerender",
+                                (long)pageIndex, _zoom);
+    } else if (prerendered) {
+        spdf_launch_profile_log(@"prerendered page discarded page=%ld zoom=%.4f vs %.4f scale=%.1f", (long)pageIndex,
+                                prerendered.imageZoom, _zoom, prerendered.imageScale);
+    }
+    if (!preferredPage) preferredPage = [self renderedPageAtIndex:pageIndex error:err errorLength:sizeof(err)];
     if (launchRenderStart > 0.0) {
         spdf_launch_profile_log(@"sync preferred-page render page=%ld zoom=%.2f %.1fms", (long)pageIndex, _zoom,
                                 spdf_zoom_profile_now_ms() - launchRenderStart);
@@ -5965,9 +6321,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                   restoreSearch:(BOOL)restoreSearch
                             preferredRenderPage:(NSInteger)preferredRenderPage {
     if (!path.length) return;
+    NSTimeInterval warmingDelay = spdf_after_first_paint_delay_consume_launch();
     dispatch_async(dispatch_get_main_queue(), ^{
       [self->_pageScrollView displayIfNeeded];
-      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(warmingDelay * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
                        if (generation != self->_renderGeneration || ![self->_path isEqualToString:path]) return;
                        [self enqueueZoomSeedCachesForGeneration:generation
@@ -6582,8 +6939,128 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self savePersistentState];
 }
 
+// Cloud/network-backed paths can stall stat/open on the provider's cache
+// revalidation (DriveFS after its TTL takes ~1s). File-provider mounts live
+// under ~/Library/CloudStorage/; anything not on apfs/hfs (smbfs, nfs,
+// macfuse, ...) gets the same treatment. Local disks must return NO so the
+// launch path stays byte-identical for them.
+- (BOOL)pathIsOnCloudStorage:(NSString*)path {
+    if (!path.length) return NO;
+    NSString* standardized = path.stringByStandardizingPath ?: path;
+    if ([standardized rangeOfString:@"/CloudStorage/"].location != NSNotFound) return YES;
+    struct statfs fs;
+    if (statfs(standardized.fileSystemRepresentation, &fs) != 0) return NO;
+    return strcasecmp(fs.f_fstypename, "apfs") != 0 && strcasecmp(fs.f_fstypename, "hfs") != 0;
+}
+
+// Launch-only fast path for a cloud-backed restored active tab: put up the
+// full chrome (tabs, toolbar, sidebar, empty document area) so the window
+// paints immediately, then stat+open off the main thread and finish the
+// normal loadSelectedTab restore when it lands. Caller already ran the
+// cancellation/closeActiveDocumentIfUnowned preamble of loadSelectedTab.
+- (void)deferCloudBackedOpenForSelectedTab:(SPDFDocumentTab*)tab
+                                      path:(NSString*)path
+                       savedFindMatchIndex:(NSInteger)savedFindMatchIndex {
+    [self discardCachedRuntimeForTab:tab];
+    _doc = NULL;
+    [self clearActiveMetadata];
+    [self prepareSelectedTabViewState:tab path:path];
+    _pageIndex = 0;
+    _renderGeneration++;
+    [_renderedPages removeAllObjects];
+    [self replaceDocumentViewForTabSwitch];
+    [self rebuildSidebar];
+    [self showEmptyDocumentViewWithMessage:@"Opening..."];
+    _window.title =
+        [NSString stringWithFormat:@"%@ - Shenzhen PDF", [self displayNameForPathConsideringOpenTabs:path]];
+    _statusLabel.stringValue = @"Opening...";
+    [self updateTabStrip];
+    [self updateControls];
+    [self clearToolbarFieldFocusForTabSwitch];
+
+    NSString* token = NSUUID.UUID.UUIDString;
+    _pendingDeferredCloudOpenToken = token;
+    NSString* standardizedPath = [path.stringByStandardizingPath copy];
+    spdf_launch_profile_log(@"cloud-deferred open scheduled %@", path.lastPathComponent);
+    // Not on _preloadQueue: its operations get cancelAllOperations'd (palette
+    // search, tab close), which would strand the placeholder forever.
+    __weak __typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      @autoreleasepool {
+          double openStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
+          NSDictionary* attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+          char err[1024];
+          err[0] = '\0';
+          spdf_document* newDoc =
+              attributes ? spdf_open(path.fileSystemRepresentation, err, sizeof(err)) : NULL;
+          if (openStart > 0.0) {
+              spdf_launch_profile_log(@"cloud-deferred stat+spdf_open %@ ok=%d %.1fms", path.lastPathComponent,
+                                      newDoc != NULL, spdf_zoom_profile_now_ms() - openStart);
+          }
+          NSString* openError = [NSString stringWithUTF8String:err[0] ? err : "Unknown error"] ?: @"Unknown error";
+          dispatch_async(dispatch_get_main_queue(), ^{
+            __strong __typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf) {
+                if (newDoc) spdf_close(newDoc);
+                return;
+            }
+            [strongSelf finishDeferredCloudOpenWithToken:token
+                                        standardizedPath:standardizedPath
+                                                document:newDoc
+                                              attributes:attributes
+                                               openError:openError
+                                     savedFindMatchIndex:savedFindMatchIndex];
+          });
+      }
+    });
+}
+
+- (void)finishDeferredCloudOpenWithToken:(NSString*)token
+                        standardizedPath:(NSString*)standardizedPath
+                                document:(spdf_document*)newDoc
+                              attributes:(NSDictionary*)attributes
+                               openError:(NSString*)openError
+                     savedFindMatchIndex:(NSInteger)savedFindMatchIndex {
+    // Stale if anything loaded since the deferral (tab switch, new open,
+    // close, reload): loadSelectedTab clears the token on entry.
+    if (!_pendingDeferredCloudOpenToken.length || ![_pendingDeferredCloudOpenToken isEqualToString:token]) {
+        if (newDoc) spdf_close(newDoc);
+        return;
+    }
+    _pendingDeferredCloudOpenToken = nil;
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (!tab || _doc || ![tab.path.stringByStandardizingPath isEqualToString:standardizedPath]) {
+        if (newDoc) spdf_close(newDoc);
+        return;
+    }
+    NSString* path = [tab.path copy];
+    spdf_launch_profile_log(@"cloud-deferred open landing %@", path.lastPathComponent);
+    if (!attributes) {
+        if (newDoc) spdf_close(newDoc);
+        tab.missingFile = YES;
+        tab.missingMessage = @"File moved or deleted";
+        [self showUnavailableSelectedTab:tab path:path message:tab.missingMessage showOpenError:NO error:NULL];
+        return;
+    }
+    if (!newDoc) {
+        NSString* message = @"Could not open document";
+        tab.missingFile = NO;
+        tab.missingMessage = message;
+        [self showUnavailableSelectedTab:tab path:path message:message showOpenError:YES error:openError.UTF8String];
+        return;
+    }
+    [self presentOpenedDocument:newDoc
+                          forTab:tab
+                            path:path
+                      attributes:attributes
+             savedFindMatchIndex:savedFindMatchIndex];
+}
+
 - (void)loadSelectedTab {
     if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return;
+    // Any new load supersedes a pending deferred cloud open; its completion
+    // sees a stale token and abandons silently.
+    _pendingDeferredCloudOpenToken = nil;
     [self cancelDocumentTransientInteraction];
     [self clearToolbarFieldFocusForTabSwitch];
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
@@ -6598,6 +7075,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [_queuedMinimapThumbnailPages removeAllObjects];
 
     [self closeActiveDocumentIfUnowned];
+
+    // Launch only: a restored active tab on cloud storage (DriveFS & co.) can
+    // stall stat+open for ~1s on cache revalidation. Show the full window
+    // immediately and complete the identical restore when the background open
+    // lands. Local documents keep the exact synchronous path below.
+    if (_startupDocumentWorkInProgress && !tab.cachedDocument && [self pathIsOnCloudStorage:path]) {
+        [self deferCloudBackedOpenForSelectedTab:tab path:path savedFindMatchIndex:savedFindMatchIndex];
+        return;
+    }
+
     double launchStatStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     NSDictionary* attributes = [self fileAttributesForPath:path];
     if (launchStatStart > 0.0) {
@@ -6620,11 +7107,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self clearActiveMetadata];
 
     char err[1024];
-    double launchOpenStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-    spdf_document* newDoc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
-    if (launchOpenStart > 0.0) {
-        spdf_launch_profile_log(@"spdf_open %@ %.1fms", path.lastPathComponent,
-                                spdf_zoom_profile_now_ms() - launchOpenStart);
+    err[0] = '\0';
+    spdf_document* newDoc = [self takeLaunchPrerenderedDocumentForPath:path attributes:attributes];
+    if (newDoc) spdf_launch_profile_log(@"spdf_open %@ adopted from prerender", path.lastPathComponent);
+    if (!newDoc) {
+        double launchOpenStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
+        newDoc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+        if (launchOpenStart > 0.0) {
+            spdf_launch_profile_log(@"spdf_open %@ %.1fms", path.lastPathComponent,
+                                    spdf_zoom_profile_now_ms() - launchOpenStart);
+        }
     }
     if (!newDoc) {
         NSString* message = @"Could not open document";
@@ -6634,6 +7126,20 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
+    [self presentOpenedDocument:newDoc
+                          forTab:tab
+                            path:path
+                      attributes:attributes
+             savedFindMatchIndex:savedFindMatchIndex];
+}
+
+// Tail of loadSelectedTab once the document handle exists: identical for the
+// synchronous path and the deferred cloud-open completion.
+- (void)presentOpenedDocument:(spdf_document*)newDoc
+                       forTab:(SPDFDocumentTab*)tab
+                         path:(NSString*)path
+                   attributes:(NSDictionary*)attributes
+          savedFindMatchIndex:(NSInteger)savedFindMatchIndex {
     tab.missingFile = NO;
     tab.missingMessage = @"";
     tab.cachedDocument = newDoc;
@@ -7171,6 +7677,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
     } else {
         _pageScrollToMinimapConstraint.active = NO;
         _pageScrollFullWidthConstraint.active = YES;
+    }
+    // Launch fast path (prototype): during buildWindow (_uiReady == NO, no
+    // document, window not yet displayable) only the constraint/hidden state
+    // above matters. The synchronous layout + viewport relayout below would
+    // be redone from scratch by the first document layout or by
+    // showEmptyDocumentViewWithMessage before anything is visible, so solving
+    // the intermediate no-document layout here is pure launch overhead.
+    if (!_uiReady && !_doc) {
+        [self syncToolbarState];
+        return;
     }
     [_documentContainer layoutSubtreeIfNeeded];
     [self relayoutDocumentForViewportChange];
@@ -10497,6 +11013,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _windowArrangementShortcutMonitor = nil;
 }
 
+- (void)menuNeedsUpdate:(NSMenu*)menu {
+    if (menu == _recentlyOpenedMenu) [self rebuildRecentlyOpenedMenu];
+}
+
 - (void)menuWillOpen:(NSMenu*)menu {
     if (menu != _windowMenu || !_window || _windowMenuTemporarilyEnabledMovable) return;
     _windowMenuPreviousMovable = _window.movable;
@@ -13115,9 +13635,6 @@ int main(int argc, const char* argv[]) {
             }
         }
 
-        NSApplication* app = [NSApplication sharedApplication];
-        app.activationPolicy = NSApplicationActivationPolicyRegular;
-
         ShenzhenMacDelegate* delegate = [[ShenzhenMacDelegate alloc] init];
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--detached-tab") == 0) {
@@ -13133,6 +13650,13 @@ int main(int argc, const char* argv[]) {
                 break;
             }
         }
+        // Start the document prerender before NSApplication init so the
+        // background open/render overlaps AppKit startup and window build.
+        [delegate startLaunchPrerender];
+
+        NSApplication* app = [NSApplication sharedApplication];
+        spdf_launch_profile_log(@"NSApplication sharedApplication done");
+        app.activationPolicy = NSApplicationActivationPolicyRegular;
         app.delegate = delegate;
         [app run];
     }
