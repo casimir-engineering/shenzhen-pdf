@@ -541,6 +541,13 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Diagnostics: `SPDF_ZOOM_PROFILE=1` now logs `focusedMagnify phase/m/age` per focused pinch event (age = delivery latency) and `suppressResidualWheel` whenever the residual window swallows a scroll event, so one manual gesture confirms behavior.
    - Validation target: pinch then immediately two-finger scroll (no suppressed gap); rapid alternation of pinch and scroll; out-of-focus pinch should track from the very first finger movement.
 
+64. Zoom anchors on the cursor at every zoom level.
+   - Status: Implemented; build- and regression-verified.
+   - Prompt link: zoom goes to the page center instead of the mouse cursor; hybrid behavior that follows the cursor only past a certain zoom level.
+   - Cause: `pageAnchorForWindowPoint:` special-cased fully-visible pages — while the page still fit the viewport it returned a page-CENTER anchor, only switching to the cursor anchor once zoomed past page-fits. That is exactly the observed hybrid.
+   - Changed: the cursor point is now always the anchor when it falls in a page; when it falls in the margins/gutter it is clamped to the nearest page instead of using the viewport center. The fully-visible helpers were removed. While the document is smaller than the viewport, scroll clamping still keeps it centered, so small-zoom layouts are unchanged; the anchor takes over seamlessly as the page outgrows the viewport. Keyboard zoom (Cmd+/-) passes the viewport center as its anchor point and behaves as before.
+   - Validation target: pinch or Cmd/Ctrl-scroll with the cursor over a corner of a page at low zoom; the content under the cursor should stay under the cursor through the whole zoom range with no jump at the page-fits boundary.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

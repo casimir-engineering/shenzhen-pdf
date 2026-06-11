@@ -5833,32 +5833,6 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     return NSMakePoint(NSMinX(pageRect) + pagePoint.x * scaleX, NSMinY(pageRect) + pagePoint.y * scaleY);
 }
 
-- (BOOL)continuousPageIsFullyVisibleForZoomAnchor:(NSInteger)pageIndex visibleRect:(NSRect)visibleRect {
-    if (_viewMode != SPDFViewModeContinuous || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return NO;
-    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
-    if (NSIsEmptyRect(pageRect)) return NO;
-    return NSMinY(pageRect) >= NSMinY(visibleRect) - 0.5 && NSMaxY(pageRect) <= NSMaxY(visibleRect) + 0.5 &&
-           NSHeight(pageRect) <= NSHeight(visibleRect) + 0.5;
-}
-
-- (SPDFPageAnchor)centeredContinuousPageAnchorForPageIndex:(NSInteger)pageIndex visibleRect:(NSRect)visibleRect {
-    SPDFPageAnchor anchor;
-    memset(&anchor, 0, sizeof(anchor));
-    anchor.pageIndex = -1;
-    if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return anchor;
-
-    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
-    if (NSIsEmptyRect(pageRect)) return anchor;
-    SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
-    NSPoint pageCenter = NSMakePoint(NSMidX(pageRect), NSMidY(pageRect));
-    anchor.pageIndex = pageIndex;
-    anchor.pagePoint = [self pagePointForViewPoint:pageCenter pageRect:pageRect page:page];
-    anchor.offsetInViewport =
-        NSMakePoint(NSMidX(pageRect) - NSMinX(visibleRect), NSMidY(pageRect) - NSMinY(visibleRect));
-    anchor.valid = YES;
-    return anchor;
-}
-
 - (SPDFPageAnchor)pageAnchorForWindowPoint:(NSPoint)windowPoint {
     SPDFPageAnchor anchor;
     memset(&anchor, 0, sizeof(anchor));
@@ -5870,8 +5844,6 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSInteger pageIndex = -1;
     NSPoint pagePoint = NSZeroPoint;
     if ([_pageView point:viewPoint fallsInPage:&pageIndex pagePoint:&pagePoint]) {
-        if ([self continuousPageIsFullyVisibleForZoomAnchor:pageIndex visibleRect:clipView.bounds])
-            return [self centeredContinuousPageAnchorForPageIndex:pageIndex visibleRect:clipView.bounds];
         anchor.pageIndex = pageIndex;
         anchor.pagePoint = pagePoint;
         anchor.offsetInViewport =
@@ -5880,19 +5852,20 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         return anchor;
     }
 
+    // Cursor outside any page (margins/gutter): anchor at the cursor clamped
+    // to the nearest page so zoom still converges toward the pointer. Scroll
+    // clamping keeps a smaller-than-viewport document centered regardless.
     NSRect visible = clipView.bounds;
     pageIndex = _viewMode == SPDFViewModeSingle ? _pageIndex : [_pageView pageIndexForVisibleRect:visible];
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
-    if ([self continuousPageIsFullyVisibleForZoomAnchor:pageIndex visibleRect:visible])
-        return [self centeredContinuousPageAnchorForPageIndex:pageIndex visibleRect:visible];
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
     if (NSIsEmptyRect(pageRect)) return anchor;
     SPDFRenderedPage* page = _renderedPages[(NSUInteger)pageIndex];
-    NSPoint center = NSMakePoint(spdf_clamp_cg(NSMidX(visible), NSMinX(pageRect), NSMaxX(pageRect)),
-                                 spdf_clamp_cg(NSMidY(visible), NSMinY(pageRect), NSMaxY(pageRect)));
+    NSPoint clamped = NSMakePoint(spdf_clamp_cg(viewPoint.x, NSMinX(pageRect), NSMaxX(pageRect)),
+                                  spdf_clamp_cg(viewPoint.y, NSMinY(pageRect), NSMaxY(pageRect)));
     anchor.pageIndex = pageIndex;
-    anchor.pagePoint = [self pagePointForViewPoint:center pageRect:pageRect page:page];
-    anchor.offsetInViewport = NSMakePoint(center.x - NSMinX(visible), center.y - NSMinY(visible));
+    anchor.pagePoint = [self pagePointForViewPoint:clamped pageRect:pageRect page:page];
+    anchor.offsetInViewport = NSMakePoint(clamped.x - NSMinX(visible), clamped.y - NSMinY(visible));
     anchor.valid = YES;
     return anchor;
 }
