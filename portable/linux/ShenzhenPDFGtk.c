@@ -47,6 +47,10 @@
 #define MINIMAP_PRECISE_PAGE_LIMIT 2000
 #define MINIMAP_DRAG_FINE_SPEED 180.0
 #define MINIMAP_DRAG_FULL_SPEED 300.0
+#define MINIMAP_THUMB_WIDTH 118.0
+#define MINIMAP_THUMB_MAX_BYTES ((gsize)32 * 1024 * 1024)
+#define MINIMAP_THUMB_QUEUE_LIMIT_PER_DRAW 8
+#define SCROLL_SETTLE_DELAY_MS 200
 #define SHENZHENPDF_TAB_MIME_TYPE "application/x-shenzhenpdf-tab+json"
 
 static GtkWidget* menu_item_new_with_icon(const char* label, const char* icon_name, gboolean mnemonic) {
@@ -313,6 +317,20 @@ typedef struct app_state {
     gboolean defer_state_writes;
     gboolean pending_settings_write;
     gboolean pending_session_write;
+
+    /* Scroll coalescing: cached per-page vertical centers for O(log n) page
+     * detection plus a rest timer that defers heavy per-page-change work. */
+    guint scroll_settle_timeout_id;
+    double* scroll_page_centers;
+    int scroll_page_center_count;
+    guint scroll_page_centers_generation;
+    int scroll_page_centers_box_height;
+
+    /* Minimap thumbnail store: page index -> minimap_thumb (LRU, byte-bounded). */
+    GHashTable* minimap_thumbs;
+    gsize minimap_thumb_bytes;
+    guint minimap_thumb_generation;
+    guint64 minimap_thumb_use_counter;
 } app_state;
 
 typedef struct render_task {
@@ -332,6 +350,10 @@ typedef struct render_task {
     int selection_rect_count;
     gboolean has_active_rect;
     spdf_rect active_rect;
+    /* Thumbnail tasks render a small minimap preview instead of a page slot:
+     * image is NULL, generation snapshots document_generation (not
+     * render_generation), and the worker derives its own small zoom. */
+    gboolean is_thumbnail;
 } render_task;
 
 typedef struct render_result {
@@ -342,6 +364,7 @@ typedef struct render_result {
     guint generation;
     int page_index;
     gboolean missing_file;
+    gboolean is_thumbnail;
     char err[1024];
 } render_result;
 
@@ -2596,6 +2619,106 @@ static void cancel_inflight_render_tokens(app_state* state) {
     g_mutex_unlock(&state->inflight_render_token_lock);
 }
 
+/* Minimap thumbnail store. Small page previews rendered through the same
+ * worker pool at low priority; keyed by page index, byte-bounded with an LRU
+ * eviction policy, and invalidated whenever document_generation changes
+ * (document switch, rotation, OCR, save — all of which reopen the document). */
+typedef struct minimap_thumb {
+    cairo_surface_t* surface; /* NULL while a render is in flight */
+    gsize bytes;
+    guint64 last_used;
+} minimap_thumb;
+
+static void minimap_thumb_value_free(gpointer data) {
+    minimap_thumb* thumb = (minimap_thumb*)data;
+    if (!thumb) return;
+    if (thumb->surface) cairo_surface_destroy(thumb->surface);
+    g_free(thumb);
+}
+
+static void minimap_thumbnails_clear(app_state* state) {
+    if (!state || !state->minimap_thumbs) return;
+    g_hash_table_remove_all(state->minimap_thumbs);
+    state->minimap_thumb_bytes = 0;
+}
+
+static void minimap_thumbnails_validate(app_state* state) {
+    if (!state || !state->minimap_thumbs) return;
+    if (state->minimap_thumb_generation != state->document_generation) {
+        minimap_thumbnails_clear(state);
+        state->minimap_thumb_generation = state->document_generation;
+    }
+}
+
+static void minimap_thumbnails_evict_over_budget(app_state* state) {
+    if (!state || !state->minimap_thumbs) return;
+    while (state->minimap_thumb_bytes > MINIMAP_THUMB_MAX_BYTES && g_hash_table_size(state->minimap_thumbs) > 1) {
+        GHashTableIter iter;
+        gpointer key;
+        gpointer value;
+        gpointer oldest_key = NULL;
+        minimap_thumb* oldest = NULL;
+        g_hash_table_iter_init(&iter, state->minimap_thumbs);
+        while (g_hash_table_iter_next(&iter, &key, &value)) {
+            minimap_thumb* thumb = (minimap_thumb*)value;
+            if (!thumb->surface) continue;
+            if (!oldest || thumb->last_used < oldest->last_used) {
+                oldest = thumb;
+                oldest_key = key;
+            }
+        }
+        if (!oldest) break;
+        state->minimap_thumb_bytes -= MIN(state->minimap_thumb_bytes, oldest->bytes);
+        g_hash_table_remove(state->minimap_thumbs, oldest_key);
+    }
+}
+
+static cairo_surface_t* minimap_thumbnail_lookup(app_state* state, int page_index) {
+    minimap_thumb* thumb;
+
+    if (!state || !state->minimap_thumbs) return NULL;
+    thumb = g_hash_table_lookup(state->minimap_thumbs, GINT_TO_POINTER(page_index));
+    if (!thumb || !thumb->surface) return NULL;
+    thumb->last_used = ++state->minimap_thumb_use_counter;
+    return thumb->surface;
+}
+
+static void minimap_thumbnail_store(app_state* state, int page_index, cairo_surface_t* surface) {
+    minimap_thumb* thumb;
+    gsize bytes;
+
+    if (!state || !state->minimap_thumbs || !surface) return;
+    if (cairo_surface_get_type(surface) == CAIRO_SURFACE_TYPE_IMAGE)
+        bytes = (gsize)cairo_image_surface_get_stride(surface) * (gsize)MAX(0, cairo_image_surface_get_height(surface));
+    else
+        bytes = (gsize)MINIMAP_THUMB_WIDTH * (gsize)MINIMAP_THUMB_WIDTH * 6; /* conservative estimate */
+
+    thumb = g_hash_table_lookup(state->minimap_thumbs, GINT_TO_POINTER(page_index));
+    if (thumb) {
+        if (thumb->surface) {
+            state->minimap_thumb_bytes -= MIN(state->minimap_thumb_bytes, thumb->bytes);
+            cairo_surface_destroy(thumb->surface);
+        }
+    } else {
+        thumb = g_new0(minimap_thumb, 1);
+        g_hash_table_insert(state->minimap_thumbs, GINT_TO_POINTER(page_index), thumb);
+    }
+    thumb->surface = cairo_surface_reference(surface);
+    thumb->bytes = bytes;
+    thumb->last_used = ++state->minimap_thumb_use_counter;
+    state->minimap_thumb_bytes += bytes;
+    minimap_thumbnails_evict_over_budget(state);
+}
+
+/* Drops a pending (surface-less) marker so a later minimap draw can retry. */
+static void minimap_thumbnail_drop_pending(app_state* state, int page_index) {
+    minimap_thumb* thumb;
+
+    if (!state || !state->minimap_thumbs) return;
+    thumb = g_hash_table_lookup(state->minimap_thumbs, GINT_TO_POINTER(page_index));
+    if (thumb && !thumb->surface) g_hash_table_remove(state->minimap_thumbs, GINT_TO_POINTER(page_index));
+}
+
 /* Each render-pool thread keeps one document open, keyed by (path, mtime,
  * size), so the core's per-document display-list cache stays effective across
  * renders. Documents are only ever touched from their owning pool thread (the
@@ -2649,6 +2772,22 @@ static gboolean render_finished_idle(gpointer data) {
     render_result* result = (render_result*)data;
     app_state* state = result->state;
 
+    if (result->is_thumbnail) {
+        minimap_thumbnails_validate(state);
+        if (result->surface && result->generation == state->document_generation) {
+            minimap_thumbnail_store(state, result->page_index, result->surface);
+            if (state->minimap && state->show_minimap) gtk_widget_queue_draw(state->minimap);
+        } else {
+            /* Failed, canceled, or stale: clear the pending marker; the next
+             * minimap draw re-queues the thumbnail if it is still wanted. */
+            minimap_thumbnail_drop_pending(state, result->page_index);
+        }
+        if (result->surface) cairo_surface_destroy(result->surface);
+        g_free(result->path);
+        g_free(result);
+        return G_SOURCE_REMOVE;
+    }
+
     if (result->generation == state->render_generation) {
         gboolean stale_surface = result->surface && state->continuous_mode &&
                                  abs(result->page_index - state->page_index) > RENDERED_PAGE_EVICT_RADIUS;
@@ -2682,14 +2821,18 @@ static void render_worker(gpointer data, gpointer user_data) {
     render_task* task = (render_task*)data;
     render_result* result = g_new0(render_result, 1);
     spdf_document* doc;
+    gboolean stale;
 
     result->state = task->state;
     result->image = task->image;
     result->generation = task->generation;
     result->page_index = task->page_index;
+    result->is_thumbnail = task->is_thumbnail;
     result->path = g_strdup(task->path);
 
-    if (task->generation != task->state->render_generation) {
+    stale = task->is_thumbnail ? task->generation != task->state->document_generation
+                               : task->generation != task->state->render_generation;
+    if (stale) {
         release_render_token(task->state, task->token);
         g_idle_add(render_finished_idle, result);
         g_free(task->path);
@@ -2707,7 +2850,18 @@ static void render_worker(gpointer data, gpointer user_data) {
         doc = worker_document_for_path(task->path, result->err, sizeof(result->err));
         if (!doc && !g_file_test(task->path, G_FILE_TEST_EXISTS)) result->missing_file = TRUE;
     }
-    if (doc) {
+    if (doc && task->is_thumbnail) {
+        float page_width = 0.0f;
+        float page_height = 0.0f;
+        char size_err[256];
+        double thumb_zoom = MINIMAP_THUMB_WIDTH / 612.0;
+        if (spdf_page_size(doc, task->page_index, &page_width, &page_height, size_err, sizeof(size_err)) &&
+            page_width > 1.0f)
+            thumb_zoom = MINIMAP_THUMB_WIDTH / (double)page_width;
+        result->surface = render_page_surface_for_doc(doc, task->page_index, thumb_zoom, MAX(1, task->display_scale),
+                                                      task->token, NULL, FALSE, NULL, 0, NULL, 0, NULL, result->err,
+                                                      sizeof(result->err));
+    } else if (doc) {
         result->surface = render_page_surface_for_doc(
             doc, task->page_index, task->zoom, task->display_scale, task->token, task->search_text, task->search_regex,
             task->highlight_rects, task->highlight_rect_count, task->selection_rects, task->selection_rect_count,
@@ -2764,6 +2918,39 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
         g_thread_pool_move_to_front(state->render_pool, task);
     }
     if (error) g_error_free(error);
+}
+
+/* Queues a low-priority minimap thumbnail render through the shared worker
+ * pool. Never calls g_thread_pool_move_to_front, so page renders always win.
+ * Fail-open: any error just drops the request; the next draw can retry. */
+static void queue_minimap_thumbnail_render(app_state* state, int page_index) {
+    render_task* task;
+    minimap_thumb* pending;
+
+    if (!state || !state->render_pool || !state->path || !state->doc || !state->minimap_thumbs) return;
+    minimap_thumbnails_validate(state);
+    if (g_hash_table_contains(state->minimap_thumbs, GINT_TO_POINTER(page_index))) return; /* stored or pending */
+
+    pending = g_new0(minimap_thumb, 1);
+    pending->last_used = ++state->minimap_thumb_use_counter;
+    g_hash_table_insert(state->minimap_thumbs, GINT_TO_POINTER(page_index), pending);
+
+    task = g_new0(render_task, 1);
+    task->state = state;
+    task->path = g_strdup(state->path);
+    task->token = spdf_render_token_new();
+    task->generation = state->document_generation;
+    task->page_index = page_index;
+    task->display_scale = display_scale_for_state(state);
+    task->is_thumbnail = TRUE;
+    register_render_token(state, task->token);
+
+    if (!g_thread_pool_push(state->render_pool, task, NULL)) {
+        release_render_token(state, task->token);
+        g_free(task->path);
+        g_free(task);
+        g_hash_table_remove(state->minimap_thumbs, GINT_TO_POINTER(page_index));
+    }
 }
 
 static int queue_background_pages_near_current(app_state* state, int limit) {
@@ -5107,6 +5294,33 @@ static void minimap_visible_rect(app_state* state,
     if (height) *height = MAX(1.0, MIN(rh, layout->height - MAX(1.0, ry) - 1.0));
 }
 
+static void minimap_draw_thumbnail(cairo_t* cr,
+                                   cairo_surface_t* surface,
+                                   double x,
+                                   double y,
+                                   double width,
+                                   double height) {
+    double sx = 1.0;
+    double sy = 1.0;
+    double logical_width;
+    double logical_height;
+
+    cairo_surface_get_device_scale(surface, &sx, &sy);
+    logical_width = (double)cairo_image_surface_get_width(surface) / (sx > 0.0 ? sx : 1.0);
+    logical_height = (double)cairo_image_surface_get_height(surface) / (sy > 0.0 ? sy : 1.0);
+    if (logical_width < 1.0 || logical_height < 1.0) return;
+
+    cairo_save(cr);
+    cairo_rectangle(cr, x, y, width, height);
+    cairo_clip(cr);
+    cairo_translate(cr, x, y);
+    cairo_scale(cr, width / logical_width, height / logical_height);
+    cairo_set_source_surface(cr, surface, 0.0, 0.0);
+    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
+    cairo_paint(cr);
+    cairo_restore(cr);
+}
+
 static gboolean minimap_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     minimap_layout layout;
@@ -5114,8 +5328,13 @@ static gboolean minimap_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data)
     double vy;
     double vw;
     double vh;
+    gboolean use_thumbnails;
+    int thumbnails_queued = 0;
 
     if (!minimap_measure(state, widget, &layout)) return TRUE;
+    minimap_thumbnails_validate(state);
+    /* Long documents keep the cheap uniform-row path with placeholders only. */
+    use_thumbnails = layout.page_count <= MINIMAP_PRECISE_PAGE_LIMIT;
 
     cairo_set_source_rgb(cr, 0.94, 0.94, 0.94);
     cairo_rectangle(cr, 0.0, 0.0, layout.width, layout.height);
@@ -5151,10 +5370,20 @@ static gboolean minimap_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data)
         height = MAX(1.0, page_height * layout.scale);
         x = floor((layout.width - width) * 0.5);
         if (y <= layout.height && y + height >= 0.0) {
+            cairo_surface_t* thumbnail = use_thumbnails ? minimap_thumbnail_lookup(state, i) : NULL;
             cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
             cairo_rectangle(cr, x, y, width, height);
             cairo_fill(cr);
-            minimap_draw_placeholder(cr, x, y, width, height);
+            if (thumbnail) {
+                minimap_draw_thumbnail(cr, thumbnail, x, y, width, height);
+            } else {
+                minimap_draw_placeholder(cr, x, y, width, height);
+                if (use_thumbnails && thumbnails_queued < MINIMAP_THUMB_QUEUE_LIMIT_PER_DRAW &&
+                    width >= 8.0 && height >= 8.0) {
+                    queue_minimap_thumbnail_render(state, i);
+                    thumbnails_queued++;
+                }
+            }
             cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, i == state->page_index ? 0.36 : 0.14);
             cairo_set_line_width(cr, i == state->page_index ? 1.5 : 1.0);
             cairo_rectangle(cr, x + 0.5, y + 0.5, MAX(1.0, width - 1.0), MAX(1.0, height - 1.0));
@@ -8990,40 +9219,134 @@ static void drag_data_received(GtkWidget* widget,
     gtk_drag_finish(context, TRUE, FALSE, time);
 }
 
-static void vertical_scroll_changed(GtkAdjustment* adjustment, gpointer user_data) {
-    app_state* state = (app_state*)user_data;
+/* Rebuilds the cached per-page vertical centers if they are stale. The cache
+ * is keyed on render_generation (bumped by every zoom/fit/mode/document/
+ * rotation relayout) plus the page box height (catches resizes/reallocation).
+ * Returns FALSE when no trustworthy cache exists; callers then fall back to
+ * the per-tick O(n) scan. */
+static gboolean ensure_scroll_page_centers(app_state* state) {
+    GtkAllocation box_allocation;
     GList* children;
-    int page = 0;
-    int best_page = -1;
-    double viewport_mid;
-    double best_distance = 0.0;
+    int count;
+    int index = 0;
+    gboolean usable = TRUE;
 
-    if (!state->doc || !state->continuous_mode || !state->page_box) return;
-    viewport_mid = gtk_adjustment_get_value(adjustment) + gtk_adjustment_get_page_size(adjustment) * 0.5;
+    if (!state->page_box) return FALSE;
+    gtk_widget_get_allocation(state->page_box, &box_allocation);
+    if (state->scroll_page_centers && state->scroll_page_center_count > 0 &&
+        state->scroll_page_centers_generation == state->render_generation &&
+        state->scroll_page_centers_box_height == box_allocation.height)
+        return TRUE;
+
     children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
-    for (GList* it = children; it; it = it->next, ++page) {
+    count = (int)g_list_length(children);
+    if (count <= 0) {
+        g_list_free(children);
+        return FALSE;
+    }
+    g_free(state->scroll_page_centers);
+    state->scroll_page_centers = g_new0(double, count);
+    state->scroll_page_center_count = 0;
+    for (GList* it = children; it; it = it->next, ++index) {
         GtkAllocation allocation;
-        double center;
-        double distance;
         gtk_widget_get_allocation(GTK_WIDGET(it->data), &allocation);
-        if (allocation.height <= 0) continue;
-        center = allocation.y + allocation.height * 0.5;
-        distance = center > viewport_mid ? center - viewport_mid : viewport_mid - center;
-        if (best_page < 0 || distance < best_distance) {
-            best_page = page;
-            best_distance = distance;
-        }
+        if (allocation.height <= 0) usable = FALSE;
+        state->scroll_page_centers[index] = allocation.y + allocation.height * 0.5;
     }
     g_list_free(children);
 
+    if (!usable) {
+        /* Layout has not settled yet; do not memoize partial geometry. */
+        g_free(state->scroll_page_centers);
+        state->scroll_page_centers = NULL;
+        return FALSE;
+    }
+    state->scroll_page_center_count = count;
+    state->scroll_page_centers_generation = state->render_generation;
+    state->scroll_page_centers_box_height = box_allocation.height;
+    return TRUE;
+}
+
+/* Binary search over the (monotonically increasing) cached page centers for
+ * the page whose center is nearest viewport_mid; earlier page wins ties, to
+ * match the previous linear scan. */
+static int scroll_page_center_nearest(app_state* state, double viewport_mid) {
+    int lo = 0;
+    int hi = state->scroll_page_center_count - 1;
+
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (state->scroll_page_centers[mid] < viewport_mid) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo > 0 &&
+        fabs(state->scroll_page_centers[lo - 1] - viewport_mid) <= fabs(state->scroll_page_centers[lo] - viewport_mid))
+        lo--;
+    return lo;
+}
+
+/* Runs the deferred per-page-change work once scrolling has rested: render
+ * scheduling, surface eviction, and tab/session persistence (the synchronous
+ * JSON write). Everything re-checks current state, so a late fire after a
+ * document change is harmless. */
+static gboolean scroll_settle_timeout(gpointer data) {
+    app_state* state = (app_state*)data;
+
+    state->scroll_settle_timeout_id = 0;
+    if (!state->doc || !state->continuous_mode) return G_SOURCE_REMOVE;
+    schedule_background_render(state);
+    evict_distant_page_surfaces(state);
+    save_active_tab_state(state);
+    if (!state->switching_tabs) save_session(state);
+    return G_SOURCE_REMOVE;
+}
+
+static void arm_scroll_settle_timeout(app_state* state) {
+    if (state->scroll_settle_timeout_id) g_source_remove(state->scroll_settle_timeout_id);
+    state->scroll_settle_timeout_id = g_timeout_add(SCROLL_SETTLE_DELAY_MS, scroll_settle_timeout, state);
+}
+
+static void vertical_scroll_changed(GtkAdjustment* adjustment, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    int best_page = -1;
+    double viewport_mid;
+
+    if (!state->doc || !state->continuous_mode || !state->page_box) return;
+    viewport_mid = gtk_adjustment_get_value(adjustment) + gtk_adjustment_get_page_size(adjustment) * 0.5;
+    if (ensure_scroll_page_centers(state)) {
+        best_page = scroll_page_center_nearest(state, viewport_mid);
+    } else {
+        /* Fail-open fallback: per-tick scan identical to the pre-cache path. */
+        GList* children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+        int page = 0;
+        double best_distance = 0.0;
+        for (GList* it = children; it; it = it->next, ++page) {
+            GtkAllocation allocation;
+            double center;
+            double distance;
+            gtk_widget_get_allocation(GTK_WIDGET(it->data), &allocation);
+            if (allocation.height <= 0) continue;
+            center = allocation.y + allocation.height * 0.5;
+            distance = center > viewport_mid ? center - viewport_mid : viewport_mid - center;
+            if (best_page < 0 || distance < best_distance) {
+                best_page = page;
+                best_distance = distance;
+            }
+        }
+        g_list_free(children);
+    }
+
     if (best_page >= 0 && best_page != state->page_index) {
         state->page_index = best_page;
-        schedule_background_render(state);
-        evict_distant_page_surfaces(state);
         clamp_horizontal_scroll(state);
-        update_controls(state);
-        save_active_tab_state(state);
-        if (!state->switching_tabs) save_session(state);
+        update_controls(state); /* page-index label etc. stays immediate */
+        /* Heavy work (background renders, eviction, tab state, synchronous
+         * session JSON write) is coalesced behind a rest timer so fast
+         * scrolling costs near-zero per tick. */
+        arm_scroll_settle_timeout(state);
+    } else if (state->scroll_settle_timeout_id) {
+        /* Still scrolling: keep pushing the rest timer back. */
+        arm_scroll_settle_timeout(state);
     }
     if (state->minimap) gtk_widget_queue_draw(state->minimap);
 }
@@ -9843,6 +10166,7 @@ int main(int argc, char** argv) {
     g_mutex_init(&state.inflight_render_token_lock);
     state.inflight_render_tokens = g_ptr_array_new();
     state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, MIN(2, g_get_num_processors())), FALSE, NULL);
+    state.minimap_thumbs = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, minimap_thumb_value_free);
     init_config_paths(&state);
     load_settings(&state);
     has_startup_documents = command_line_has_documents(argc, argv) && !state.restore_window_id;
@@ -9867,6 +10191,9 @@ int main(int argc, char** argv) {
     if (state.startup_restore_idle_id) g_source_remove(state.startup_restore_idle_id);
     if (state.startup_shortcut_help_idle_id) g_source_remove(state.startup_shortcut_help_idle_id);
     if (state.deferred_find_idle_id) g_source_remove(state.deferred_find_idle_id);
+    if (state.scroll_settle_timeout_id) g_source_remove(state.scroll_settle_timeout_id);
+    g_free(state.scroll_page_centers);
+    state.scroll_page_centers = NULL;
     state.render_generation++;
     cancel_inflight_render_tokens(&state);
     if (state.render_pool) g_thread_pool_free(state.render_pool, TRUE, TRUE);
@@ -9878,6 +10205,10 @@ int main(int argc, char** argv) {
         state.inflight_render_tokens = NULL;
     }
     g_mutex_clear(&state.inflight_render_token_lock);
+    if (state.minimap_thumbs) {
+        g_hash_table_destroy(state.minimap_thumbs);
+        state.minimap_thumbs = NULL;
+    }
     spdf_free_outline(&state.outline);
     spdf_free_comments(&state.comments);
     spdf_close(state.doc);
