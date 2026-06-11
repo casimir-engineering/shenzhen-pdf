@@ -556,6 +556,15 @@ Scope: prompt-linked implementation journal for the current working tree. This r
    - Diagnostics: each path logs `path/phase/raw/delta` under SPDF_ZOOM_PROFILE=1. If an out-of-focus pinch still does nothing AND no `inactiveMagnify` lines appear, no in-process mechanism is receiving the events and the next step would be a listen-only CGEventTap (requires Accessibility permission).
    - Validation target: with another app frontmost, pinch over the unfocused window's document viewport (zooms the document) and over the minimap (zooms via the minimap's magnify handling); same with a second ShenzhenPDF window focused. Focused pinch must remain unchanged.
 
+66. Display-list render cache (performance initiative phase 1).
+   - Status: Implemented; pixel-identity and regression validated.
+   - Prompt link: match Preview/Chromium render speed on big pages (8550 power tree, an ~11000x7500pt vector schematic at page index 10; every viewport crop cost 200-230ms at all zooms).
+   - Method: a prototype agent benchmarked mupdf display lists on the exact page (build 88ms one-time/~7MB, replay 14-38ms, pixel-identical, cookie overhead zero); an architect agent designed the integration; an implementation agent built it in a worktree.
+   - Changed (core): per-document 4-slot LRU `fz_display_list` cache built lazily on first flagged render; new `_opts` render APIs with `SPDF_RENDER_USE_PAGE_LIST` (legacy APIs are wrappers; shared pixmap-copy tail); region replay keeps the exact crop/ctm/bbox math with a device-space scissor; fail-open to direct rendering on any build failure; list invalidation in all six document mutators; documented one-thread-per-spdf_document contract.
+   - Changed (Mac): viewport/pan/sync crop renders pass the flag only for crop-regime pages (full-page-render-disallowed predicate), so the launch/first-paint path is byte-identical by construction. `SPDF_DISABLE_LIST_CACHE=1` kill switch; `renderCrop` profiler lines tagged `list=hit|build|off build=Nms`.
+   - Result: page-10 crops drop from median ~153-230ms to median 35.6ms (hits as low as 17ms) after a one-time ~115-157ms per-thread build; ordinary pages unchanged (builds 0-5ms, output pixel-identical by memcmp); self-test histograms and stall counts unchanged on the schematic doc and Bear Sunny.
+   - Validation target: open 8550 power tree, zoom/scroll on the schematic page; content should sharpen near-instantly after the first render; comments/rotation/search/selection on that page must behave unchanged.
+
 ## Validation
 
 - Launch state/persistence lane: cached the Mac support-directory lookup, skipped byte-identical JSON atomic writes, skipped unchanged Mac current-window session writes under the same lock/read flow, and deferred GTK favorites loading behind `ensure_favorites_loaded`. Rendering resolution/timing, tab order, scroll restoration, minimap behavior, and session restore semantics were left untouched.

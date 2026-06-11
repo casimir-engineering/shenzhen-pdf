@@ -89,6 +89,21 @@ typedef struct spdf_link_target {
     float zoom;
 } spdf_link_target;
 
+/* Reserved for a later phase (cooperative render cancellation). Phase 1 callers pass NULL. */
+typedef struct spdf_render_token spdf_render_token;
+
+enum {
+    SPDF_RENDER_DEFAULT = 0,
+    SPDF_RENDER_USE_PAGE_LIST = 1 << 0 /* render by replaying a cached per-page display list */
+};
+
+/* How the LAST render on this document got its pixels (profiling aid). */
+typedef struct spdf_render_stats {
+    int used_list;   /* 1 if the render replayed a display list */
+    int built_list;  /* 1 if that render had to build the list first */
+    double build_ms; /* display-list build time for that render, 0 when not built */
+} spdf_render_stats;
+
 spdf_document* spdf_open(const char* path, char* err, size_t err_len);
 void spdf_close(spdf_document* doc);
 
@@ -100,6 +115,12 @@ int spdf_page_size(spdf_document* doc, int page_index, float* width, float* heig
 int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_bitmap* out, char* err, size_t err_len);
 int spdf_render_page_region_rgba(spdf_document* doc, int page_index, float zoom, spdf_rect region, spdf_bitmap* out,
                                  char* err, size_t err_len);
+int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, unsigned flags,
+                               spdf_render_token* token, spdf_bitmap* out, char* err, size_t err_len);
+int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float zoom, spdf_rect region, unsigned flags,
+                                      spdf_render_token* token, spdf_bitmap* out, char* err, size_t err_len);
+void spdf_drop_page_list_cache(spdf_document* doc, int page_index); /* -1 = drop all cached page lists */
+spdf_render_stats spdf_last_render_stats(const spdf_document* doc);
 void spdf_free_bitmap(spdf_bitmap* bitmap);
 
 int spdf_search_page(spdf_document* doc, int page_index, const char* needle, char* err, size_t err_len);

@@ -7,9 +7,11 @@
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define SPDF_MUPDF_STORE_LIMIT ((size_t)256 * 1024 * 1024)
@@ -22,12 +24,29 @@ typedef struct spdf_page_size_cache {
     int valid;
 } spdf_page_size_cache;
 
+#define SPDF_PAGE_LIST_SLOTS 4
+
+typedef struct spdf_page_list_entry {
+    fz_display_list* list; /* NULL = empty slot */
+    int page_index;
+    double build_ms;
+    uint64_t last_used; /* monotonic counter, LRU */
+} spdf_page_list_entry;
+
+/* THREADING CONTRACT: an spdf_document (and everything hanging off it, including
+ * the page-list cache and last_render_stats below) may only be used by one thread
+ * at a time. The app honors this by giving each worker thread its own document
+ * (see workerDocumentForPath on the Mac side); the main-thread document is only
+ * touched from the main thread. No locking is done here. */
 struct spdf_document {
     fz_context* ctx;
     fz_document* doc;
     char* title;
     int page_count;
     spdf_page_size_cache* page_sizes;
+    spdf_page_list_entry page_lists[SPDF_PAGE_LIST_SLOTS];
+    uint64_t page_list_use_counter;
+    spdf_render_stats last_render_stats;
 };
 
 typedef struct outline_builder {
@@ -137,6 +156,7 @@ spdf_document* spdf_open(const char* path, char* err, size_t err_len) {
 
 void spdf_close(spdf_document* doc) {
     if (!doc) return;
+    spdf_drop_page_list_cache(doc, -1);
     if (doc->doc) fz_drop_document(doc->ctx, doc->doc);
     if (doc->ctx) fz_drop_context(doc->ctx);
     free(doc->title);
@@ -260,13 +280,102 @@ static int render_pixmap_allocation_size(int width, int height, int comps, int s
     return 1;
 }
 
-int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_bitmap* out, char* err, size_t err_len) {
-    fz_pixmap* pix = NULL;
-    unsigned char* dst = NULL;
+static double spdf_monotonic_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0.0;
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
+}
+
+void spdf_drop_page_list_cache(spdf_document* doc, int page_index) {
+    int i;
+
+    if (!doc) return;
+    for (i = 0; i < SPDF_PAGE_LIST_SLOTS; ++i) {
+        spdf_page_list_entry* entry = &doc->page_lists[i];
+        if (!entry->list) continue;
+        if (page_index >= 0 && entry->page_index != page_index) continue;
+        fz_drop_display_list(doc->ctx, entry->list);
+        memset(entry, 0, sizeof(*entry));
+    }
+}
+
+spdf_render_stats spdf_last_render_stats(const spdf_document* doc) {
+    spdf_render_stats empty = {0, 0, 0.0};
+    return doc ? doc->last_render_stats : empty;
+}
+
+/* LRU lookup of the display list for page_index; builds and caches it on miss.
+ * Returns NULL on build failure (err is set, nothing partial is ever cached). */
+static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_index, char* err, size_t err_len) {
+    spdf_page_list_entry* slot;
+    fz_page* page = NULL;
+    fz_display_list* list = NULL;
+    fz_device* dev = NULL;
+    double build_start;
+    double build_ms;
+    int i;
+
+    for (i = 0; i < SPDF_PAGE_LIST_SLOTS; ++i) {
+        spdf_page_list_entry* entry = &doc->page_lists[i];
+        if (entry->list && entry->page_index == page_index) {
+            entry->last_used = ++doc->page_list_use_counter;
+            return entry->list;
+        }
+    }
+
+    slot = &doc->page_lists[0];
+    for (i = 0; i < SPDF_PAGE_LIST_SLOTS; ++i) {
+        spdf_page_list_entry* entry = &doc->page_lists[i];
+        if (!entry->list) {
+            slot = entry;
+            break;
+        }
+        if (entry->last_used < slot->last_used) slot = entry;
+    }
+
+    fz_var(page);
+    fz_var(list);
+    fz_var(dev);
+
+    build_start = spdf_monotonic_ms();
+    fz_try(doc->ctx) {
+        page = fz_load_page(doc->ctx, doc->doc, page_index);
+        list = fz_new_display_list(doc->ctx, fz_bound_page(doc->ctx, page));
+        dev = fz_new_list_device(doc->ctx, list);
+        fz_run_page(doc->ctx, page, dev, fz_identity, NULL);
+        fz_close_device(doc->ctx, dev);
+        fz_drop_device(doc->ctx, dev);
+        dev = NULL;
+        fz_drop_page(doc->ctx, page);
+        page = NULL;
+    }
+    fz_catch(doc->ctx) {
+        set_error(err, err_len, fz_caught_message(doc->ctx));
+        if (dev) fz_drop_device(doc->ctx, dev);
+        if (page) fz_drop_page(doc->ctx, page);
+        if (list) fz_drop_display_list(doc->ctx, list);
+        return NULL;
+    }
+    build_ms = spdf_monotonic_ms() - build_start;
+
+    if (slot->list) fz_drop_display_list(doc->ctx, slot->list);
+    slot->list = list;
+    slot->page_index = page_index;
+    slot->build_ms = build_ms;
+    slot->last_used = ++doc->page_list_use_counter;
+    doc->last_render_stats.built_list = 1;
+    doc->last_render_stats.build_ms = build_ms;
+    return list;
+}
+
+/* Shared pixmap -> RGBA bitmap tail of every render path: validates the pixmap
+ * layout (render_pixmap_allocation_size guards), allocates and fills out->rgba.
+ * Must be called inside fz_try; throws on failure (after which out is untouched,
+ * since out->rgba is only assigned once everything has succeeded). */
+static void copy_pixmap_to_bitmap(spdf_document* doc, fz_pixmap* pix, spdf_bitmap* out, char* err, size_t err_len) {
+    unsigned char* dst;
     unsigned char* src;
     size_t byte_count;
-    float page_width;
-    float page_height;
     int width;
     int height;
     int stride;
@@ -275,6 +384,55 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
     int src_stride;
     int y;
     int x;
+
+    width = fz_pixmap_width(doc->ctx, pix);
+    height = fz_pixmap_height(doc->ctx, pix);
+    comps = fz_pixmap_components(doc->ctx, pix);
+    alpha = fz_pixmap_alpha(doc->ctx, pix);
+    src_stride = fz_pixmap_stride(doc->ctx, pix);
+    src = fz_pixmap_samples(doc->ctx, pix);
+    if (!src || !render_pixmap_allocation_size(width, height, comps, src_stride, &stride, &byte_count, err, err_len))
+        fz_throw(doc->ctx, FZ_ERROR_FORMAT, "%s", err && *err ? err : "Rendered page is too large.");
+
+    dst = (unsigned char*)malloc(byte_count);
+    if (!dst) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
+
+    for (y = 0; y < height; ++y) {
+        const unsigned char* row = src + (size_t)y * (size_t)src_stride;
+        unsigned char* out_row = dst + (size_t)y * (size_t)stride;
+        for (x = 0; x < width; ++x) {
+            const unsigned char* px = row + (size_t)x * (size_t)comps;
+            unsigned char* opx = out_row + (size_t)x * 4;
+            opx[0] = comps > 0 ? px[0] : 255;
+            opx[1] = comps > 1 ? px[1] : opx[0];
+            opx[2] = comps > 2 ? px[2] : opx[0];
+            opx[3] = alpha ? px[comps - 1] : 255;
+        }
+    }
+
+    out->width = width;
+    out->height = height;
+    out->stride = stride;
+    out->rgba = dst;
+}
+
+int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_bitmap* out, char* err, size_t err_len) {
+    return spdf_render_page_rgba_opts(doc, page_index, zoom, SPDF_RENDER_DEFAULT, NULL, out, err, err_len);
+}
+
+int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, unsigned flags,
+                               spdf_render_token* token, spdf_bitmap* out, char* err, size_t err_len) {
+    fz_pixmap* pix = NULL;
+    fz_device* dev = NULL;
+    fz_display_list* list = NULL;
+    fz_rect bounds;
+    fz_rect transformed;
+    fz_irect bbox;
+    fz_matrix ctm;
+    float page_width;
+    float page_height;
+
+    (void)token; /* Phase 1: cancellation tokens are not implemented yet */
 
     set_error(err, err_len, "");
     if (!out) {
@@ -287,6 +445,7 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
         set_error(err, err_len, "Page index is out of range.");
         return 0;
     }
+    memset(&doc->last_render_stats, 0, sizeof(doc->last_render_stats));
     if (!isfinite(zoom)) {
         set_error(err, err_len, "Zoom level is invalid.");
         return 0;
@@ -295,46 +454,42 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
     if (!spdf_page_size(doc, page_index, &page_width, &page_height, err, err_len)) return 0;
     if (!render_page_size_allowed(page_width, page_height, zoom, err, err_len)) return 0;
 
+    if (flags & SPDF_RENDER_USE_PAGE_LIST) {
+        list = get_or_build_page_list(doc, page_index, err, err_len);
+        if (!list) set_error(err, err_len, ""); /* fail-open: fall through to the direct path */
+    }
+
+    fz_var(pix);
+    fz_var(dev);
+
     fz_try(doc->ctx) {
-        pix = fz_new_pixmap_from_page_number(doc->ctx, doc->doc, page_index, fz_scale(zoom, zoom),
-                                             fz_device_rgb(doc->ctx), 0);
-        width = fz_pixmap_width(doc->ctx, pix);
-        height = fz_pixmap_height(doc->ctx, pix);
-        comps = fz_pixmap_components(doc->ctx, pix);
-        alpha = fz_pixmap_alpha(doc->ctx, pix);
-        src_stride = fz_pixmap_stride(doc->ctx, pix);
-        src = fz_pixmap_samples(doc->ctx, pix);
-        if (!src ||
-            !render_pixmap_allocation_size(width, height, comps, src_stride, &stride, &byte_count, err, err_len))
-            fz_throw(doc->ctx, FZ_ERROR_FORMAT, "%s", err && *err ? err : "Rendered page is too large.");
-
-        dst = (unsigned char*)malloc(byte_count);
-        if (!dst) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
-
-        for (y = 0; y < height; ++y) {
-            const unsigned char* row = src + (size_t)y * (size_t)src_stride;
-            unsigned char* out_row = dst + (size_t)y * (size_t)stride;
-            for (x = 0; x < width; ++x) {
-                const unsigned char* px = row + (size_t)x * (size_t)comps;
-                unsigned char* opx = out_row + (size_t)x * 4;
-                opx[0] = comps > 0 ? px[0] : 255;
-                opx[1] = comps > 1 ? px[1] : opx[0];
-                opx[2] = comps > 2 ? px[2] : opx[0];
-                opx[3] = alpha ? px[comps - 1] : 255;
-            }
+        if (list) {
+            bounds = fz_bound_display_list(doc->ctx, list);
+            ctm = fz_scale(zoom, zoom);
+            transformed = fz_transform_rect(bounds, ctm);
+            bbox = fz_round_rect(transformed);
+            pix = fz_new_pixmap_with_bbox(doc->ctx, fz_device_rgb(doc->ctx), bbox, NULL, 0);
+            fz_clear_pixmap_with_value(doc->ctx, pix, 0xFF);
+            dev = fz_new_draw_device(doc->ctx, fz_identity, pix);
+            fz_run_display_list(doc->ctx, list, dev, ctm, fz_infinite_rect, NULL);
+            fz_close_device(doc->ctx, dev);
+            fz_drop_device(doc->ctx, dev);
+            dev = NULL;
+            doc->last_render_stats.used_list = 1;
+        } else {
+            pix = fz_new_pixmap_from_page_number(doc->ctx, doc->doc, page_index, fz_scale(zoom, zoom),
+                                                 fz_device_rgb(doc->ctx), 0);
         }
+
+        copy_pixmap_to_bitmap(doc, pix, out, err, err_len);
 
         fz_drop_pixmap(doc->ctx, pix);
         pix = NULL;
-
-        out->width = width;
-        out->height = height;
-        out->stride = stride;
-        out->rgba = dst;
     }
     fz_catch(doc->ctx) {
         set_error(err, err_len, fz_caught_message(doc->ctx));
-        free(dst);
+        spdf_free_bitmap(out);
+        if (dev) fz_drop_device(doc->ctx, dev);
         if (pix) fz_drop_pixmap(doc->ctx, pix);
         return 0;
     }
@@ -344,27 +499,25 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
 
 int spdf_render_page_region_rgba(spdf_document* doc, int page_index, float zoom, spdf_rect region, spdf_bitmap* out,
                                  char* err, size_t err_len) {
+    return spdf_render_page_region_rgba_opts(doc, page_index, zoom, region, SPDF_RENDER_DEFAULT, NULL, out, err,
+                                             err_len);
+}
+
+int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float zoom, spdf_rect region, unsigned flags,
+                                      spdf_render_token* token, spdf_bitmap* out, char* err, size_t err_len) {
     fz_page* page = NULL;
     fz_pixmap* pix = NULL;
     fz_device* dev = NULL;
-    unsigned char* dst = NULL;
-    unsigned char* src;
+    fz_display_list* list = NULL;
     fz_rect bounds;
     fz_rect crop;
     fz_rect transformed;
     fz_irect bbox;
     fz_matrix ctm;
-    size_t byte_count;
     float page_width;
     float page_height;
-    int width;
-    int height;
-    int stride;
-    int comps;
-    int alpha;
-    int src_stride;
-    int y;
-    int x;
+
+    (void)token; /* Phase 1: cancellation tokens are not implemented yet */
 
     set_error(err, err_len, "");
     if (!out) {
@@ -377,6 +530,7 @@ int spdf_render_page_region_rgba(spdf_document* doc, int page_index, float zoom,
         set_error(err, err_len, "Page index is out of range.");
         return 0;
     }
+    memset(&doc->last_render_stats, 0, sizeof(doc->last_render_stats));
     if (!isfinite(zoom)) {
         set_error(err, err_len, "Zoom level is invalid.");
         return 0;
@@ -394,14 +548,22 @@ int spdf_render_page_region_rgba(spdf_document* doc, int page_index, float zoom,
     }
     if (!render_page_size_allowed(region.x1 - region.x0, region.y1 - region.y0, zoom, err, err_len)) return 0;
 
+    if (flags & SPDF_RENDER_USE_PAGE_LIST) {
+        list = get_or_build_page_list(doc, page_index, err, err_len);
+        if (!list) set_error(err, err_len, ""); /* fail-open: fall through to the direct path */
+    }
+
     fz_var(page);
     fz_var(pix);
     fz_var(dev);
-    fz_var(dst);
 
     fz_try(doc->ctx) {
-        page = fz_load_page(doc->ctx, doc->doc, page_index);
-        bounds = fz_bound_page(doc->ctx, page);
+        if (list) {
+            bounds = fz_bound_display_list(doc->ctx, list);
+        } else {
+            page = fz_load_page(doc->ctx, doc->doc, page_index);
+            bounds = fz_bound_page(doc->ctx, page);
+        }
         crop.x0 = bounds.x0 + region.x0;
         crop.y0 = bounds.y0 + region.y0;
         crop.x1 = bounds.x0 + region.x1;
@@ -413,50 +575,29 @@ int spdf_render_page_region_rgba(spdf_document* doc, int page_index, float zoom,
         pix = fz_new_pixmap_with_bbox(doc->ctx, fz_device_rgb(doc->ctx), bbox, NULL, 0);
         fz_clear_pixmap_with_value(doc->ctx, pix, 0xFF);
         dev = fz_new_draw_device(doc->ctx, fz_identity, pix);
-        fz_run_page(doc->ctx, page, dev, ctm, NULL);
+        if (list) {
+            /* Scissor is the DEVICE-space rect of the pixmap, not page coords. */
+            fz_run_display_list(doc->ctx, list, dev, ctm, fz_rect_from_irect(bbox), NULL);
+            doc->last_render_stats.used_list = 1;
+        } else {
+            fz_run_page(doc->ctx, page, dev, ctm, NULL);
+        }
         fz_close_device(doc->ctx, dev);
         fz_drop_device(doc->ctx, dev);
         dev = NULL;
 
-        width = fz_pixmap_width(doc->ctx, pix);
-        height = fz_pixmap_height(doc->ctx, pix);
-        comps = fz_pixmap_components(doc->ctx, pix);
-        alpha = fz_pixmap_alpha(doc->ctx, pix);
-        src_stride = fz_pixmap_stride(doc->ctx, pix);
-        src = fz_pixmap_samples(doc->ctx, pix);
-        if (!src ||
-            !render_pixmap_allocation_size(width, height, comps, src_stride, &stride, &byte_count, err, err_len))
-            fz_throw(doc->ctx, FZ_ERROR_FORMAT, "%s", err && *err ? err : "Rendered page is too large.");
-
-        dst = (unsigned char*)malloc(byte_count);
-        if (!dst) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
-
-        for (y = 0; y < height; ++y) {
-            const unsigned char* row = src + (size_t)y * (size_t)src_stride;
-            unsigned char* out_row = dst + (size_t)y * (size_t)stride;
-            for (x = 0; x < width; ++x) {
-                const unsigned char* px = row + (size_t)x * (size_t)comps;
-                unsigned char* opx = out_row + (size_t)x * 4;
-                opx[0] = comps > 0 ? px[0] : 255;
-                opx[1] = comps > 1 ? px[1] : opx[0];
-                opx[2] = comps > 2 ? px[2] : opx[0];
-                opx[3] = alpha ? px[comps - 1] : 255;
-            }
-        }
+        copy_pixmap_to_bitmap(doc, pix, out, err, err_len);
 
         fz_drop_pixmap(doc->ctx, pix);
         pix = NULL;
-        fz_drop_page(doc->ctx, page);
-        page = NULL;
-
-        out->width = width;
-        out->height = height;
-        out->stride = stride;
-        out->rgba = dst;
+        if (page) {
+            fz_drop_page(doc->ctx, page);
+            page = NULL;
+        }
     }
     fz_catch(doc->ctx) {
         set_error(err, err_len, fz_caught_message(doc->ctx));
-        free(dst);
+        spdf_free_bitmap(out);
         if (dev) fz_drop_device(doc->ctx, dev);
         if (pix) fz_drop_pixmap(doc->ctx, pix);
         if (page) fz_drop_page(doc->ctx, page);
@@ -1531,9 +1672,11 @@ int spdf_add_highlight_comment(spdf_document* doc, int page_index, const spdf_re
         set_error(err, err_len, fz_caught_message(doc->ctx));
         if (quads) fz_free(doc->ctx, quads);
         if (page) pdf_drop_page(doc->ctx, page);
+        spdf_drop_page_list_cache(doc, page_index);
         return 0;
     }
 
+    spdf_drop_page_list_cache(doc, page_index);
     return 1;
 }
 
@@ -1566,9 +1709,11 @@ int spdf_add_text_comment(spdf_document* doc, int page_index, float x, float y, 
     fz_catch(doc->ctx) {
         set_error(err, err_len, fz_caught_message(doc->ctx));
         if (page) pdf_drop_page(doc->ctx, page);
+        spdf_drop_page_list_cache(doc, page_index);
         return 0;
     }
 
+    spdf_drop_page_list_cache(doc, page_index);
     return 1;
 }
 
@@ -1623,9 +1768,11 @@ int spdf_update_comment(spdf_document* doc, int comment_index, const char* text,
     fz_catch(doc->ctx) {
         set_error(err, err_len, fz_caught_message(doc->ctx));
         if (page) pdf_drop_page(doc->ctx, page);
+        spdf_drop_page_list_cache(doc, -1); /* page of the edited comment is not directly known */
         return 0;
     }
 
+    spdf_drop_page_list_cache(doc, -1); /* page of the edited comment is not directly known */
     return 1;
 }
 
@@ -1677,9 +1824,11 @@ int spdf_delete_comment(spdf_document* doc, int comment_index, char* err, size_t
     fz_catch(doc->ctx) {
         set_error(err, err_len, fz_caught_message(doc->ctx));
         if (page) pdf_drop_page(doc->ctx, page);
+        spdf_drop_page_list_cache(doc, -1); /* page of the deleted comment is not directly known */
         return 0;
     }
 
+    spdf_drop_page_list_cache(doc, -1); /* page of the deleted comment is not directly known */
     return 1;
 }
 
@@ -1736,9 +1885,11 @@ int spdf_rotate_page(spdf_document* doc, int page_index, int degrees, char* err,
         pdf_dict_put_int(doc->ctx, page_obj, PDF_NAME(Rotate), next_rotation);
         pdf_dirty_obj(doc->ctx, page_obj);
         if (doc->page_sizes) doc->page_sizes[page_index].valid = 0;
+        spdf_drop_page_list_cache(doc, page_index);
     }
     fz_catch(doc->ctx) {
         set_error(err, err_len, fz_caught_message(doc->ctx));
+        spdf_drop_page_list_cache(doc, page_index);
         return 0;
     }
 
@@ -2148,6 +2299,7 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
         free(image_backed);
         if (graft_map) pdf_drop_graft_map(doc->ctx, graft_map);
         if (out_pdf) pdf_drop_document(doc->ctx, out_pdf);
+        spdf_drop_page_list_cache(doc, -1);
     }
     fz_catch(doc->ctx) {
         set_error(err, err_len, fz_caught_message(doc->ctx));
