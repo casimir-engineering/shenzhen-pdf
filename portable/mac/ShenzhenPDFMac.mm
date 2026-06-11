@@ -2579,10 +2579,10 @@ static void spdf_discard_launch_prerender(void) {
     content.translatesAutoresizingMaskIntoConstraints = NO;
     _window.contentView = content;
 
-    // Window-first (prototype, aggressive variant): show the styled empty
-    // window before any controls exist; chrome and document fill in on the
-    // following display cycles.
-    if (getenv("SPDF_WINDOW_FIRST")) {
+    // Window-first (default): show the styled empty window before any
+    // controls exist; chrome and document fill in on the following display
+    // cycles. SPDF_NO_WINDOW_FIRST=1 restores the single-frame launch.
+    if (!getenv("SPDF_NO_WINDOW_FIRST")) {
         SPDFScopedLaunchPhaseLog launchPhase("orderFront(bare)");
         [_window makeKeyAndOrderFront:nil];
     }
