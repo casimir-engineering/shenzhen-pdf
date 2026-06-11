@@ -223,6 +223,7 @@ typedef struct app_state {
     gboolean show_sidebar;
     gboolean show_minimap;
     gboolean show_find_markers;
+    gboolean collapse_whitespace_on_copy;
     gboolean show_shortcut_help_on_launch;
     gboolean presentation_mode;
     gboolean presentation_prev_continuous_mode;
@@ -309,6 +310,9 @@ typedef struct app_state {
     guint startup_shortcut_help_idle_id;
     guint deferred_find_idle_id;
     gboolean defer_find_until_idle;
+    gboolean defer_state_writes;
+    gboolean pending_settings_write;
+    gboolean pending_session_write;
 } app_state;
 
 typedef struct render_task {
@@ -1052,6 +1056,10 @@ static void save_active_tab_state(app_state* state) {
 }
 
 static void save_settings(app_state* state) {
+    if (state->defer_state_writes) {
+        state->pending_settings_write = TRUE;
+        return;
+    }
     char* author = json_escape(state->comment_author ? state->comment_author : "");
     char* translate_source = json_escape(state->translate_source_language ? state->translate_source_language : "zh");
     char* translate_target = json_escape(state->translate_target_language ? state->translate_target_language : "en");
@@ -1069,6 +1077,8 @@ static void save_settings(app_state* state) {
         (state->presentation_mode ? state->presentation_prev_show_sidebar : state->show_sidebar) ? "true" : "false");
     g_string_append_printf(json, "  \"showMinimap\": %s,\n", state->show_minimap ? "true" : "false");
     g_string_append_printf(json, "  \"showFindMarkers\": %s,\n", state->show_find_markers ? "true" : "false");
+    g_string_append_printf(json, "  \"collapseWhitespaceWhenCopyingText\": %s,\n",
+                           state->collapse_whitespace_on_copy ? "true" : "false");
     g_string_append_printf(json, "  \"showShortcutHelpOnLaunch\": %s,\n",
                            state->show_shortcut_help_on_launch ? "true" : "false");
     g_string_append_printf(json, "  \"sidebarWidth\": %d,\n", state->sidebar_width);
@@ -1269,6 +1279,10 @@ static void write_session(app_state* state) {
 
 static void save_session(app_state* state) {
     if (state->suppress_session_write_on_quit) return;
+    if (state->defer_state_writes) {
+        state->pending_session_write = TRUE;
+        return;
+    }
     write_session(state);
 }
 
@@ -1331,6 +1345,8 @@ static void load_settings(app_state* state) {
     state->show_sidebar = json_get_bool(json, "showSidebar", state->show_sidebar);
     state->show_minimap = json_get_bool(json, "showMinimap", state->show_minimap);
     state->show_find_markers = json_get_bool(json, "showFindMarkers", state->show_find_markers);
+    state->collapse_whitespace_on_copy =
+        json_get_bool(json, "collapseWhitespaceWhenCopyingText", state->collapse_whitespace_on_copy);
     state->show_shortcut_help_on_launch =
         json_get_bool(json, "showShortcutHelpOnLaunch", state->show_shortcut_help_on_launch);
     state->sidebar_width = MAX(140, MIN(560, json_get_int(json, "sidebarWidth", state->sidebar_width)));
@@ -5777,6 +5793,47 @@ static void tab_context_copy_path(GtkMenuItem* item, gpointer user_data) {
     copy_path_to_clipboard(state, path);
 }
 
+/* Trim, then collapse runs of whitespace (including non-breaking spaces) to single spaces.
+ * Mirrors SPDFTextByCollapsingWhitespace in mac/ShenzhenPDFMac.mm. */
+static char* text_by_collapsing_whitespace(const char* text) {
+    GString* out = g_string_new(NULL);
+    gboolean pending_space = FALSE;
+    for (const char* p = text ? text : ""; *p; p = g_utf8_next_char(p)) {
+        gunichar ch = g_utf8_get_char(p);
+        if (g_unichar_isspace(ch) || ch == 0x00a0) {
+            if (out->len > 0) pending_space = TRUE;
+            continue;
+        }
+        if (pending_space) {
+            g_string_append_c(out, ' ');
+            pending_space = FALSE;
+        }
+        g_string_append_unichar(out, ch);
+    }
+    return g_string_free(out, FALSE);
+}
+
+static void copy_selection_to_clipboard(app_state* state) {
+    char* text;
+    if (!has_text_selection(state)) return;
+    text = state->collapse_whitespace_on_copy ? text_by_collapsing_whitespace(state->selected_text)
+                                              : g_strdup(state->selected_text);
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), text ? text : "", -1);
+    g_free(text);
+    gtk_label_set_text(GTK_LABEL(state->status), "Selected text copied.");
+}
+
+static void copy_selection_clicked(GtkWidget* widget, gpointer user_data) {
+    (void)widget;
+    copy_selection_to_clipboard((app_state*)user_data);
+}
+
+static void collapse_whitespace_copy_toggled(GtkCheckMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    state->collapse_whitespace_on_copy = gtk_check_menu_item_get_active(item);
+    save_settings(state);
+}
+
 static void update_text_selection(app_state* state, int page_index, double end_x, double end_y, gboolean rerender) {
     char err[1024];
     spdf_rect rects[256];
@@ -6382,6 +6439,22 @@ static const ocr_language_option OCR_LANGUAGE_OPTIONS[] = {
     {"chi_tra+eng", "Chinese Traditional + English"},
     {"chi_tra", "Chinese Traditional"},
     {"eng", "English"},
+    // Top 10 most-spoken languages by total speakers (English and Mandarin above).
+    {"hin", "Hindi"},
+    {"spa", "Spanish"},
+    {"fra", "French"},
+    {"ara", "Arabic"},
+    {"ben", "Bengali"},
+    {"por", "Portuguese"},
+    {"rus", "Russian"},
+    {"urd", "Urdu"},
+    // Large European languages (English, Spanish, French, Portuguese, Russian above).
+    {"deu", "German"},
+    {"ita", "Italian"},
+    {"pol", "Polish"},
+    {"ukr", "Ukrainian"},
+    {"nld", "Dutch"},
+    {"ron", "Romanian"},
 };
 
 static char** ocr_language_components(const char* language) {
@@ -8814,6 +8887,11 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
         add_current_favorite(state, shift);
         return TRUE;
     }
+    if (ctrl && !shift && (event->keyval == GDK_KEY_c || event->keyval == GDK_KEY_C)) {
+        if ((focus && GTK_IS_EDITABLE(focus)) || !has_text_selection(state)) return FALSE;
+        copy_selection_to_clipboard(state);
+        return TRUE;
+    }
 
     if (state->presentation_mode && state->doc && !ctrl) {
         if (event->keyval == GDK_KEY_space || event->keyval == GDK_KEY_KP_Space) {
@@ -9011,6 +9089,11 @@ static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpoi
             g_object_set_data(G_OBJECT(delete_comment), "comment-index",
                               GINT_TO_POINTER(state->context_comment_index + 1));
         }
+        GtkWidget* copy_selection = image_menu_item_new_with_label("Copy", "edit-copy");
+        gtk_widget_set_sensitive(copy_selection, has_text_selection(state));
+        g_signal_connect(copy_selection, "activate", G_CALLBACK(copy_selection_clicked), state);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), copy_selection);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         g_signal_connect(edit_comment, "activate", G_CALLBACK(edit_comment_clicked), state);
         g_signal_connect(delete_comment, "activate", G_CALLBACK(delete_comment_clicked), state);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), edit_comment);
@@ -9121,6 +9204,11 @@ static gboolean startup_restore_idle(gpointer user_data) {
     state->startup_restore_idle_id = 0;
     if (!state->window) return G_SOURCE_REMOVE;
 
+    /* Coalesce the settings/session writes triggered while restoring into one write each. */
+    state->defer_state_writes = TRUE;
+    state->pending_settings_write = FALSE;
+    state->pending_session_write = FALSE;
+
     if (!state->suppress_restore_once && state->tab_count > 0) {
         int index = state->restore_selected_tab >= 0 ? state->restore_selected_tab : 0;
         state->defer_find_until_idle = TRUE;
@@ -9136,6 +9224,16 @@ static gboolean startup_restore_idle(gpointer user_data) {
         update_tab_strip(state);
     }
     state->suppress_restore_once = FALSE;
+
+    state->defer_state_writes = FALSE;
+    if (state->pending_settings_write) {
+        state->pending_settings_write = FALSE;
+        save_settings(state);
+    }
+    if (state->pending_session_write) {
+        state->pending_session_write = FALSE;
+        save_session(state);
+    }
     return G_SOURCE_REMOVE;
 }
 
@@ -9250,6 +9348,9 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->rotate_clockwise_item = image_menu_item_new_with_mnemonic("Rotate _Clockwise", "object-rotate-right");
     state->rotate_anticlockwise_item = image_menu_item_new_with_mnemonic("Rotate _Anticlockwise", "object-rotate-left");
     state->translate_menu_item = image_menu_item_new_with_mnemonic("_Translate...", "preferences-desktop-locale");
+    GtkWidget* copy_selection_menu_item = image_menu_item_new_with_mnemonic("_Copy Selected Document Text", "edit-copy");
+    GtkWidget* collapse_whitespace_item =
+        gtk_check_menu_item_new_with_mnemonic("Collapse _Whitespace When Copying Text");
     state->search_regex_multiline_item = gtk_check_menu_item_new_with_mnemonic("Regex _Multiline");
     GtkWidget* settings_menu = gtk_menu_new();
     GtkWidget* settings = image_menu_item_new_with_mnemonic("_Settings", "preferences-system");
@@ -9314,6 +9415,12 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(edit), edit_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), set_comment_author);
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), state->translate_menu_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), gtk_separator_menu_item_new());
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(collapse_whitespace_item), state->collapse_whitespace_on_copy);
+    g_signal_connect(copy_selection_menu_item, "activate", G_CALLBACK(copy_selection_clicked), state);
+    g_signal_connect(collapse_whitespace_item, "toggled", G_CALLBACK(collapse_whitespace_copy_toggled), state);
+    gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), copy_selection_menu_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), collapse_whitespace_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), state->search_regex_multiline_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), edit);
@@ -9713,6 +9820,7 @@ int main(int argc, char** argv) {
     state.show_sidebar = TRUE;
     state.show_minimap = TRUE;
     state.show_find_markers = TRUE;
+    state.collapse_whitespace_on_copy = TRUE;
     state.show_shortcut_help_on_launch = TRUE;
     state.search_regex_multiline = TRUE;
     state.translate_source_language = g_strdup("zh");
