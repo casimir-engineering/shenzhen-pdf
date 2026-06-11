@@ -1825,7 +1825,15 @@ static void clamp_horizontal_scroll(app_state* state) {
 
     if (viewport_width <= 1.0 || page_width <= 1.0) return;
 
-    desired_policy = page_width <= viewport_width + 0.5 ? GTK_POLICY_NEVER : GTK_POLICY_AUTOMATIC;
+    /* Base the scrollbar policy on the full content width, not the current
+     * page: with GTK_POLICY_NEVER GtkScrolledWindow adopts the child's natural
+     * width, so a document holding one wide sheet would blow the viewport up
+     * to that width and push every narrower page outside the window. */
+    {
+        double content_width = gtk_adjustment_get_upper(hadj) - lower;
+        double scroll_width = gtk_widget_get_allocated_width(state->scroll);
+        desired_policy = content_width <= scroll_width + 0.5 ? GTK_POLICY_NEVER : GTK_POLICY_AUTOMATIC;
+    }
     gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(state->scroll), &hpolicy, &vpolicy);
     if (hpolicy != desired_policy)
         gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(state->scroll), desired_policy, vpolicy);
@@ -2541,6 +2549,12 @@ static void configure_page_image(app_state* state, GtkWidget* image) {
     gtk_widget_set_margin_end(image, horizontal_margin);
     gtk_widget_set_margin_top(image, vertical_margin);
     gtk_widget_set_margin_bottom(image, vertical_margin);
+    /* Keep each slot's allocation snug around its own page. Without this a
+     * single wide page (e.g. a schematic sheet) stretches every sibling slot
+     * to the box width and GtkImage paints the surface centered inside that
+     * oversized allocation, pushing narrow pages outside the viewport and
+     * breaking allocation-based hit testing and horizontal clamping. */
+    gtk_widget_set_halign(image, GTK_ALIGN_CENTER);
 }
 
 static GtkWidget* append_page_image(app_state* state, cairo_surface_t* surface, int page_index) {
