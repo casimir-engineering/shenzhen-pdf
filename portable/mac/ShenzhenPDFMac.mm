@@ -283,6 +283,61 @@ static void spdf_apply_system_icons_to_main_menu_contents(NSMenu* mainMenu) {
     }
 }
 
+/* A canceled render reports 0 with this exact core message; it is a
+ * cancellation, not a failure, and must never reach error UI. */
+static BOOL spdf_render_was_canceled(const char* err) {
+    return err && strcmp(err, "Render canceled.") == 0;
+}
+
+/* NSBlockOperation whose -cancel also aborts an in-flight mupdf render via an
+ * spdf_render_token (fz_cookie). Queue-level cancelAllOperations reaches the
+ * override too, so a gesture-start queue purge aborts running renders within
+ * milliseconds instead of letting up to ~230ms of mupdf work run to completion.
+ *
+ * Lifetime: the token is created before the execution block can run and freed
+ * in -dealloc; NSOperation guarantees execution blocks have finished before the
+ * operation can be released by its queue, so the render never outlives the
+ * token. The execution block references the operation WEAKLY (a __strong
+ * capture would be a retain cycle: operation retains block retains operation).
+ * While the block runs, the queue holds a strong reference, so the weak load
+ * only returns nil if the block somehow ran without a queue.
+ * -cancel may race the render start; cookie.abort is a plain int flag mupdf
+ * polls between display-list nodes / content tokens, so a flag set before
+ * fz_run begins simply makes the run abort at its first poll. */
+@interface SPDFRenderOperation : NSBlockOperation
+@property(atomic, readonly) spdf_render_token* renderToken; /* created in init, freed in dealloc */
++ (instancetype)operationWithRenderBlock:(void (^)(spdf_render_token* token))block;
+@end
+
+@implementation SPDFRenderOperation {
+    spdf_render_token* _renderToken;
+}
+
+@synthesize renderToken = _renderToken;
+
++ (instancetype)operationWithRenderBlock:(void (^)(spdf_render_token* token))block {
+    SPDFRenderOperation* operation = [[self alloc] init];
+    operation->_renderToken = spdf_render_token_new();
+    __weak SPDFRenderOperation* weakOperation = operation;
+    [operation addExecutionBlock:^{
+      SPDFRenderOperation* strongOperation = weakOperation;
+      if (!strongOperation) return;
+      block(strongOperation.renderToken);
+    }];
+    return operation;
+}
+
+- (void)cancel {
+    [super cancel];
+    spdf_render_token_cancel(self.renderToken);
+}
+
+- (void)dealloc {
+    spdf_render_token_free(_renderToken);
+}
+
+@end
+
 @class ShenzhenMacDelegate;
 
 static NSMutableArray<ShenzhenMacDelegate*>* gSPDFWindowControllers;
@@ -2546,6 +2601,22 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                             displayScale:(CGFloat)displayScale
                                    error:(char*)err
                              errorLength:(size_t)errLen {
+    return [self renderedPageAtIndex:pageIndex
+                            document:doc
+                                zoom:zoom
+                        displayScale:displayScale
+                         renderToken:NULL
+                               error:err
+                         errorLength:errLen];
+}
+
+- (SPDFRenderedPage*)renderedPageAtIndex:(NSInteger)pageIndex
+                                document:(spdf_document*)doc
+                                    zoom:(CGFloat)zoom
+                            displayScale:(CGFloat)displayScale
+                             renderToken:(spdf_render_token*)renderToken
+                                   error:(char*)err
+                             errorLength:(size_t)errLen {
     float pageWidth = 0;
     float pageHeight = 0;
     if (!spdf_page_size(doc, (int)pageIndex, &pageWidth, &pageHeight, err, errLen)) return nil;
@@ -2563,7 +2634,8 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
 
     double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     spdf_bitmap bitmap;
-    if (!spdf_render_page_rgba(doc, (int)pageIndex, (float)(zoom * renderDisplayScale), &bitmap, err, errLen))
+    if (!spdf_render_page_rgba_opts(doc, (int)pageIndex, (float)(zoom * renderDisplayScale), SPDF_RENDER_DEFAULT,
+                                    renderToken, &bitmap, err, errLen))
         return nil;
     if (spdf_zoom_profile_enabled()) {
         double elapsed = spdf_zoom_profile_now_ms() - profileStart;
@@ -2633,6 +2705,26 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                  useList:(BOOL)useList
                                    error:(char*)err
                              errorLength:(size_t)errLen {
+    return [self renderedPageCropImageAtIndex:pageIndex
+                                     document:doc
+                                         zoom:zoom
+                                 displayScale:displayScale
+                                 pageCropRect:pageCropRect
+                                      useList:useList
+                                  renderToken:NULL
+                                        error:err
+                                  errorLength:errLen];
+}
+
+- (NSImage*)renderedPageCropImageAtIndex:(NSInteger)pageIndex
+                                document:(spdf_document*)doc
+                                    zoom:(CGFloat)zoom
+                            displayScale:(CGFloat)displayScale
+                            pageCropRect:(NSRect)pageCropRect
+                                 useList:(BOOL)useList
+                             renderToken:(spdf_render_token*)renderToken
+                                   error:(char*)err
+                             errorLength:(size_t)errLen {
     if (NSIsEmptyRect(pageCropRect)) return nil;
     spdf_rect crop;
     crop.x0 = (float)NSMinX(pageCropRect);
@@ -2644,8 +2736,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     unsigned renderFlags = useList ? SPDF_RENDER_USE_PAGE_LIST : SPDF_RENDER_DEFAULT;
     double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     spdf_bitmap bitmap;
-    if (!spdf_render_page_region_rgba_opts(doc, (int)pageIndex, (float)(zoom * displayScale), crop, renderFlags, NULL,
-                                           &bitmap, err, errLen))
+    if (!spdf_render_page_region_rgba_opts(doc, (int)pageIndex, (float)(zoom * displayScale), crop, renderFlags,
+                                           renderToken, &bitmap, err, errLen))
         return nil;
     if (spdf_zoom_profile_enabled()) {
         double elapsed = spdf_zoom_profile_now_ms() - profileStart;
@@ -2956,7 +3048,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         scheduledBytes += estimatedBytes;
         [_queuedBaseRenderPages addObject:number];
         NSInteger distance = labs(index - preferredPage);
-        NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+        SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
           @autoreleasepool {
               if (generation != self->_renderGeneration || self->_liveZooming) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
@@ -2985,8 +3077,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                                             document:workerDoc
                                                                 zoom:kBaseZoomCacheZoom
                                                         displayScale:displayScale
+                                                         renderToken:token
                                                                error:err
                                                          errorLength:sizeof(err)];
+              if (!rendered && spdf_render_was_canceled(err) && spdf_zoom_profile_enabled())
+                  spdf_zoom_profile_log(@"renderCanceled page=%ld site=baseZoomCache", (long)index);
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                 [self->_queuedBaseRenderPages removeObject:number];
                 [self->_queuedBaseRenderOperations removeObjectForKey:number];
@@ -3077,7 +3172,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
         [_queuedHighQualityRenderPages addObject:number];
         NSInteger distance = labs(index - preferredPage);
-        NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+        SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
           @autoreleasepool {
               if (generation != self->_renderGeneration || self->_liveZooming) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
@@ -3106,8 +3201,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                                             document:workerDoc
                                                                 zoom:zoom
                                                         displayScale:displayScale
+                                                         renderToken:token
                                                                error:err
                                                          errorLength:sizeof(err)];
+              if (!rendered && spdf_render_was_canceled(err) && spdf_zoom_profile_enabled())
+                  spdf_zoom_profile_log(@"renderCanceled page=%ld site=highQualityZoomCache", (long)index);
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                 [self->_queuedHighQualityRenderPages removeObject:number];
                 [self->_queuedHighQualityRenderOperations removeObjectForKey:number];
@@ -3204,7 +3302,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [_queuedRenderPages addObject:number];
 
         NSInteger distance = labs(index - preferredPage);
-        NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+        SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
           @autoreleasepool {
               if (generation != self->_renderGeneration || liveZoomSequence != self->_liveZoomSequence) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
@@ -3226,9 +3324,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                                         document:workerDoc
                                                             zoom:zoom
                                                     displayScale:displayScale
+                                                     renderToken:token
                                                            error:err
                                                      errorLength:sizeof(err)];
               if (!page) {
+                  /* On cancel: bookkeeping cleanup only, no error UI. */
+                  if (spdf_render_was_canceled(err) && spdf_zoom_profile_enabled())
+                      spdf_zoom_profile_log(@"renderCanceled page=%ld site=pageRender", (long)index);
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedRenderPages removeObject:number];
                     [self->_queuedRenderOperations removeObjectForKey:number];
@@ -3315,7 +3417,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         if ([_queuedMinimapThumbnailPages containsObject:number]) continue;
         [_queuedMinimapThumbnailPages addObject:number];
 
-        NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+        SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
           @autoreleasepool {
               if (generation != self->_renderGeneration) {
                   [[NSOperationQueue mainQueue]
@@ -3333,8 +3435,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                                                  document:workerDoc
                                                                      zoom:thumbnailZoom
                                                              displayScale:displayScale
+                                                              renderToken:token
                                                                     error:err
                                                               errorLength:sizeof(err)];
+              if (!thumbnailPage && spdf_render_was_canceled(err) && spdf_zoom_profile_enabled())
+                  spdf_zoom_profile_log(@"renderCanceled page=%ld site=minimapThumbnail", (long)index);
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                 [self->_queuedMinimapThumbnailPages removeObject:number];
                 if (generation != self->_renderGeneration || !self->_doc || ![self->_path isEqualToString:path] ||
@@ -3638,7 +3743,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
     CGFloat zoom = _zoom;
     NSUInteger cropRenderSequence = ++_visibleCropRenderSequence;
-    NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+    /* The sequence has moved on: cookie-abort the superseded in-flight crop
+     * render so its worker frees up for this fresher viewport immediately. */
+    [_lastVisibleCropRenderOperation cancel];
+    SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
       @autoreleasepool {
           if (sequence != self->_liveZoomSequence || renderGeneration != self->_renderGeneration ||
               cropRenderSequence != self->_visibleCropRenderSequence)
@@ -3659,8 +3767,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                                          displayScale:displayScale
                                                          pageCropRect:cropRect
                                                               useList:[task[@"useList"] boolValue]
+                                                          renderToken:token
                                                                 error:err
                                                           errorLength:sizeof(err)];
+                  if (!image && spdf_render_was_canceled(err)) {
+                      /* Canceled mid-gesture: bail without error UI; the
+                       * superseding crop render repaints this viewport. */
+                      if (spdf_zoom_profile_enabled())
+                          spdf_zoom_profile_log(@"renderCanceled page=%ld site=visibleCrop", (long)pageIndex);
+                      return;
+                  }
                   if (!image) continue;
                   [results addObject:@{
                       @"page" : @(pageIndex),
@@ -3710,6 +3826,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }];
     operation.queuePriority = NSOperationQueuePriorityVeryHigh;
     operation.qualityOfService = NSQualityOfServiceUserInitiated;
+    _lastVisibleCropRenderOperation = operation;
     [_renderQueue addOperation:operation];
 }
 
@@ -3874,7 +3991,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSUInteger renderGeneration = _renderGeneration;
     NSString* path = [_path copy];
     CGFloat zoom = _zoom;
-    NSBlockOperation* operation = [NSBlockOperation blockOperationWithBlock:^{
+    /* A new pan crop pass supersedes any still-running one: cookie-abort it. */
+    [_lastPanCropRenderOperation cancel];
+    SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
       @autoreleasepool {
           char err[512];
           spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
@@ -3889,8 +4008,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                                          displayScale:displayScale
                                                          pageCropRect:cropRect
                                                               useList:[task[@"useList"] boolValue]
+                                                          renderToken:token
                                                                 error:err
                                                           errorLength:sizeof(err)];
+                  if (!image && spdf_render_was_canceled(err)) {
+                      /* Canceled: stop rendering, but fall through to the main
+                       * dispatch below so _documentViewPanCropInFlight resets. */
+                      if (spdf_zoom_profile_enabled())
+                          spdf_zoom_profile_log(@"renderCanceled page=%ld site=panCrop", (long)pageIndex);
+                      break;
+                  }
                   if (!image) continue;
                   [results addObject:@{
                       @"page" : @(pageIndex),
@@ -3931,6 +4058,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }];
     operation.queuePriority = NSOperationQueuePriorityNormal;
     operation.qualityOfService = NSQualityOfServiceUtility;
+    _lastPanCropRenderOperation = operation;
     [_renderQueue addOperation:operation];
 }
 

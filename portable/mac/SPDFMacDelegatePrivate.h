@@ -10,6 +10,8 @@
 
 #include "shenzhen_pdf_core.h"
 
+@class SPDFRenderOperation; /* NSBlockOperation + spdf_render_token, defined in ShenzhenPDFMac.mm */
+
 @interface ShenzhenMacDelegate : NSObject <NSApplicationDelegate,
                                            NSWindowDelegate,
                                            NSSplitViewDelegate,
@@ -128,6 +130,10 @@
     NSMutableSet<NSNumber*>* _queuedHighQualityRenderPages;
     NSMutableDictionary<NSNumber*, NSOperation*>* _queuedHighQualityRenderOperations;
     NSMutableSet<NSNumber*>* _queuedMinimapThumbnailPages;
+    /* Last enqueued visible-crop / pan-crop render ops, weakly held so a newly
+     * enqueued successor can cancel (cookie-abort) a superseded in-flight one. */
+    __weak SPDFRenderOperation* _lastVisibleCropRenderOperation;
+    __weak SPDFRenderOperation* _lastPanCropRenderOperation;
     NSTimer* _findFlashTimer;
     NSTimeInterval _findFlashStartTime;
 
