@@ -20,3 +20,7 @@ the Parallels Ubuntu 24.04 ARM VM with captures. Evidence and decisions land her
   + byte cap) in /tmp/spdf-lxA; Agent D (OCR languages + small parity) in
   /tmp/spdf-lxD; VM prep agent. Wave 2 after A: B (anchored zoom), C (scroll
   coalescing + minimap thumbnails). Then VM build + capture matrix.
+- [wave1] Agent D done (+108 lines, builds): OCR 5->19 languages; NEW copy-
+  selected-text path (Ctrl+C, context menu, Edit menu) with whitespace-collapse
+  toggle persisted as collapseWhitespaceWhenCopyingText; startup save batching.
+  Patch held at /tmp/lxD.patch pending merge after Agent A.
