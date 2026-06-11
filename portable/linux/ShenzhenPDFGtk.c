@@ -36,6 +36,11 @@
 #define BACKGROUND_RENDER_BATCH_LIMIT 6
 #define RENDERED_PAGE_EVICT_RADIUS 10
 #define MAX_RENDER_SURFACE_BYTES (96.0 * 1024.0 * 1024.0)
+#define MIN_ZOOM 0.10
+#define MAX_ZOOM 8.0
+#define ZOOM_WHEEL_STEP 1.1
+#define ZOOM_BUTTON_STEP 1.15
+#define ZOOM_SETTLE_DELAY_MS 250
 #define DEFAULT_WINDOW_WIDTH 960
 #define DEFAULT_WINDOW_HEIGHT 680
 #define MIN_WINDOW_WIDTH 560
@@ -331,6 +336,20 @@ typedef struct app_state {
     gsize minimap_thumb_bytes;
     guint minimap_thumb_generation;
     guint64 minimap_thumb_use_counter;
+
+    /* Cursor-anchored zoom (Ctrl+wheel, pinch, toolbar/accel). While a rapid
+     * zoom sequence is in flight the existing rendered surfaces are reused as
+     * a cheap scaled preview; one crisp async re-render happens at settle. */
+    gboolean zoom_preview_active;
+    double zoom_preview_base_zoom;
+    double pinch_begin_zoom;
+    guint zoom_settle_timeout_id;
+    gboolean zoom_anchor_valid;
+    int zoom_anchor_page_index;
+    double zoom_anchor_page_x;
+    double zoom_anchor_page_y;
+    double zoom_anchor_viewport_x;
+    double zoom_anchor_viewport_y;
 } app_state;
 
 typedef struct render_task {
@@ -447,6 +466,8 @@ static void set_presentation_mode(app_state* state, gboolean enable);
 static void cancel_background_render(app_state* state);
 static void cancel_deferred_sidebar_load(app_state* state);
 static void evict_distant_page_surfaces(app_state* state);
+static void apply_zoom_anchored(app_state* state, double factor, double viewport_x, double viewport_y);
+static void zoom_preview_cancel(app_state* state);
 
 static int clamp_int(int value, int min_value, int max_value) {
     if (value < min_value) return min_value;
@@ -2882,6 +2903,9 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
     GError* error = NULL;
 
     if (!state->render_pool || !state->path || page_render_state(image) != 0) return;
+    /* While a zoom gesture is in flight the slots show cheap scaled previews;
+     * the one crisp re-render is queued at settle. */
+    if (state->zoom_preview_active) return;
 
     task = g_new0(render_task, 1);
     task->state = state;
@@ -2996,6 +3020,7 @@ static void schedule_background_render(app_state* state) {
     generation_request* request;
 
     if (!state || !state->doc || !state->continuous_mode) return;
+    if (state->zoom_preview_active) return;
     if (state->background_render_idle_id) return;
     request = g_new0(generation_request, 1);
     request->state = state;
@@ -3219,6 +3244,8 @@ static void attach_document_to_view(app_state* state,
                                     gint64 size) {
     document_tab* tab = active_tab(state);
 
+    /* A pending zoom preview/settle belongs to the previous document. */
+    zoom_preview_cancel(state);
     spdf_free_outline(&state->outline);
     spdf_free_comments(&state->comments);
     state->doc = doc;
@@ -4494,28 +4521,292 @@ static gboolean go_to_adjacent_page_preserving_view(app_state* state, int delta)
     return TRUE;
 }
 
-static void zoom_in_clicked(GtkButton* button, gpointer user_data) {
-    (void)button;
-    app_state* state = (app_state*)user_data;
-    if (!state->doc) return;
-    state->fit_mode_id = 0;
-    gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), 0);
-    state->zoom = MIN(8.0, state->zoom * 1.15);
-    render_current_page(state, FALSE);
+/* ---------------------------------------------------------------------------
+ * Cursor-anchored zoom (Mac journal item 64 parity).
+ *
+ * Every zoom entry point (Ctrl+wheel, touchpad pinch, toolbar +/- and
+ * Ctrl+= / Ctrl+-) funnels through the same anchored math: the document point
+ * under the anchor stays under the anchor across the zoom, clamped to the
+ * nearest page when the anchor sits over the margins. During a rapid zoom
+ * sequence the render generation is bumped once and the in-flight renders are
+ * canceled; the already rendered surfaces are reused as a cheap live preview
+ * via cairo device scales, and one crisp async re-render is queued
+ * ZOOM_SETTLE_DELAY_MS after the last event. Scroll restoration goes through
+ * a render-generation-keyed idle because the adjustments are only valid after
+ * the relayout allocation (same pattern as restore_scroll_position_idle). */
+
+static gboolean zoom_settle_timeout(gpointer data);
+
+static gboolean zoom_anchor_scroll_idle(gpointer data) {
+    generation_request* request = (generation_request*)data;
+    app_state* state = request->state;
+
+    if (request->generation == state->render_generation && state->scroll && state->doc && state->zoom_anchor_valid) {
+        GtkWidget* page_widget = page_widget_for_index(state, state->zoom_anchor_page_index);
+        if (page_widget) {
+            GtkAllocation allocation;
+            GtkAdjustment* hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+            GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+            double target_h;
+            double target_v;
+
+            /* Page slot allocations live in the viewport bin window, so they
+             * compare directly with adjustment values (see
+             * vertical_scroll_changed). */
+            gtk_widget_get_allocation(page_widget, &allocation);
+            target_h = (double)allocation.x + state->zoom_anchor_page_x * state->zoom - state->zoom_anchor_viewport_x;
+            target_v = (double)allocation.y + state->zoom_anchor_page_y * state->zoom - state->zoom_anchor_viewport_y;
+            gtk_adjustment_set_value(
+                hadj, MAX(gtk_adjustment_get_lower(hadj),
+                          MIN(target_h, gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj))));
+            gtk_adjustment_set_value(
+                vadj, MAX(gtk_adjustment_get_lower(vadj),
+                          MIN(target_v, gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj))));
+            clamp_horizontal_scroll(state);
+        }
+    }
+
+    g_free(request);
+    return G_SOURCE_REMOVE;
+}
+
+static void queue_zoom_anchor_scroll(app_state* state) {
+    generation_request* request;
+
+    if (!state || !state->scroll || !state->zoom_anchor_valid) return;
+    request = g_new0(generation_request, 1);
+    request->state = state;
+    request->generation = state->render_generation;
+    g_idle_add(zoom_anchor_scroll_idle, request);
+}
+
+/* Resolves a viewport-relative point to (page, PDF point), clamping to the
+ * nearest page when the point is over the margins, and records it together
+ * with the viewport offset so the document point can be put back under the
+ * anchor after the relayout. Fails open: without a resolvable page the zoom
+ * still applies, only without scroll restoration. */
+static void capture_zoom_anchor(app_state* state, double viewport_x, double viewport_y) {
+    GtkAdjustment* hadj;
+    GtkAdjustment* vadj;
+    double content_x;
+    double content_y;
+    double anchor_x;
+    double anchor_y;
+    GList* children;
+    int best_page = -1;
+    double best_distance = 0.0;
+    GtkAllocation best_allocation = {0, 0, 0, 0};
+
+    if (!state) return;
+    state->zoom_anchor_valid = FALSE;
+    if (!state->doc || !state->scroll || !state->page_box) return;
+
+    hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    content_x = viewport_x + gtk_adjustment_get_value(hadj);
+    content_y = viewport_y + gtk_adjustment_get_value(vadj);
+
+    children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+    for (GList* it = children; it; it = it->next) {
+        GtkWidget* child = GTK_WIDGET(it->data);
+        GtkAllocation allocation;
+        int child_page = -1;
+        double dx = 0.0;
+        double dy = 0.0;
+        double distance;
+
+        if (!widget_page_index(child, &child_page)) continue;
+        gtk_widget_get_allocation(child, &allocation);
+        if (allocation.width <= 0 || allocation.height <= 0) continue;
+        if (content_x < allocation.x) dx = allocation.x - content_x;
+        else if (content_x > allocation.x + allocation.width) dx = content_x - (allocation.x + allocation.width);
+        if (content_y < allocation.y) dy = allocation.y - content_y;
+        else if (content_y > allocation.y + allocation.height) dy = content_y - (allocation.y + allocation.height);
+        distance = dx * dx + dy * dy;
+        if (best_page < 0 || distance < best_distance) {
+            best_page = child_page;
+            best_distance = distance;
+            best_allocation = allocation;
+        }
+        if (distance == 0.0) break;
+    }
+    g_list_free(children);
+    if (best_page < 0) return;
+
+    anchor_x = MAX((double)best_allocation.x, MIN(content_x, (double)best_allocation.x + best_allocation.width));
+    anchor_y = MAX((double)best_allocation.y, MIN(content_y, (double)best_allocation.y + best_allocation.height));
+    anchor_x = (anchor_x - best_allocation.x) / MAX(0.001, state->zoom);
+    anchor_y = (anchor_y - best_allocation.y) / MAX(0.001, state->zoom);
+    clamp_page_point(state, best_page, &anchor_x, &anchor_y);
+    state->zoom_anchor_page_index = best_page;
+    state->zoom_anchor_page_x = anchor_x;
+    state->zoom_anchor_page_y = anchor_y;
+    state->zoom_anchor_viewport_x = viewport_x;
+    state->zoom_anchor_viewport_y = viewport_y;
+    state->zoom_anchor_valid = TRUE;
+}
+
+static void zoom_preview_cancel(app_state* state) {
+    if (!state) return;
+    if (state->zoom_settle_timeout_id) {
+        g_source_remove(state->zoom_settle_timeout_id);
+        state->zoom_settle_timeout_id = 0;
+    }
+    state->zoom_preview_active = FALSE;
+    state->zoom_anchor_valid = FALSE;
+}
+
+static void zoom_preview_begin(app_state* state) {
+    GList* children;
+
+    if (!state || !state->doc || state->zoom_preview_active) return;
+    /* One generation bump per zoom sequence: every in-flight render is
+     * superseded and canceled so the pool is free for the settle render. */
+    state->render_generation++;
+    cancel_background_render(state);
+    state->zoom_preview_active = TRUE;
+    state->zoom_preview_base_zoom = state->zoom;
+    if (!state->page_box) return;
+
+    /* Snapshot each rendered surface's device scale; the preview rescales
+     * relative to these so repeated ticks do not accumulate error. */
+    children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+    for (GList* it = children; it; it = it->next) {
+        GtkWidget* image = GTK_WIDGET(it->data);
+        cairo_surface_t* surface = NULL;
+        double scale_x = 1.0;
+        double scale_y = 1.0;
+        double* base_scale;
+
+        if (gtk_image_get_storage_type(GTK_IMAGE(image)) != GTK_IMAGE_SURFACE) continue;
+        g_object_get(image, "surface", &surface, NULL);
+        if (!surface) continue;
+        cairo_surface_get_device_scale(surface, &scale_x, &scale_y);
+        base_scale = g_new(double, 1);
+        *base_scale = scale_x;
+        g_object_set_data_full(G_OBJECT(image), "zoom-preview-base-scale", base_scale, g_free);
+        cairo_surface_destroy(surface);
+    }
+    g_list_free(children);
+}
+
+/* Applies a preview zoom: resizes every page slot for the new zoom and
+ * redraws the already rendered surfaces scaled through their cairo device
+ * scale (cheap, no re-render), then re-arms the settle re-render. */
+static void zoom_preview_to(app_state* state, double new_zoom) {
+    if (!state || !state->doc || !state->page_box || !state->zoom_preview_active) return;
+
+    new_zoom = clamp_double(new_zoom, MIN_ZOOM, MAX_ZOOM);
+    if (new_zoom != state->zoom) {
+        int display_scale = display_scale_for_state(state);
+        GList* children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+
+        state->zoom = new_zoom;
+        for (GList* it = children; it; it = it->next) {
+            GtkWidget* image = GTK_WIDGET(it->data);
+            int child_page = -1;
+            float page_width = 0;
+            float page_height = 0;
+            char err[256];
+            double* base_scale;
+            double preview_scale;
+            cairo_surface_t* surface = NULL;
+
+            if (!widget_page_index(image, &child_page)) continue;
+            if (!spdf_page_size(state->doc, child_page, &page_width, &page_height, err, sizeof(err)) ||
+                page_width <= 0 || page_height <= 0)
+                continue;
+            size_page_slot(image, state->zoom, display_scale, page_width, page_height);
+            base_scale = g_object_get_data(G_OBJECT(image), "zoom-preview-base-scale");
+            if (!base_scale || gtk_image_get_storage_type(GTK_IMAGE(image)) != GTK_IMAGE_SURFACE) continue;
+            g_object_get(image, "surface", &surface, NULL);
+            if (!surface) continue;
+            /* A larger device scale draws the same pixels smaller and vice
+             * versa, so the stale pixels track the new zoom until the crisp
+             * render lands. */
+            preview_scale = *base_scale * state->zoom_preview_base_zoom / MAX(0.001, state->zoom);
+            cairo_surface_set_device_scale(surface, preview_scale, preview_scale);
+            gtk_image_set_from_surface(GTK_IMAGE(image), surface);
+            cairo_surface_destroy(surface);
+        }
+        g_list_free(children);
+        queue_zoom_anchor_scroll(state);
+        update_controls(state);
+    }
+
+    /* Re-arm the settle render even when clamped at the zoom bounds so a
+     * gesture that rides the limit still ends with a crisp pass. */
+    if (state->zoom_settle_timeout_id) g_source_remove(state->zoom_settle_timeout_id);
+    state->zoom_settle_timeout_id = g_timeout_add(ZOOM_SETTLE_DELAY_MS, zoom_settle_timeout, state);
+}
+
+static gboolean zoom_settle_timeout(gpointer data) {
+    app_state* state = (app_state*)data;
+
+    state->zoom_settle_timeout_id = 0;
+    if (!state->zoom_preview_active) return G_SOURCE_REMOVE;
+    state->zoom_preview_active = FALSE;
+    if (state->doc) {
+        /* The preview already sized every slot for the new zoom, so adopt the
+         * layout instead of rebuilding it: render_current_page then reuses the
+         * slots and keeps the scaled preview surfaces on screen until the
+         * crisp renders land. */
+        if (state->page_layout_valid && state->page_box) {
+            GList* children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+            for (GList* it = children; it; it = it->next) configure_page_image(state, GTK_WIDGET(it->data));
+            g_list_free(children);
+            state->page_layout_zoom = state->zoom;
+            state->page_layout_fit_mode_id = state->fit_mode_id;
+        }
+        render_current_page(state, FALSE);
+        queue_zoom_anchor_scroll(state);
+    }
     save_settings(state);
     save_session(state);
+    return G_SOURCE_REMOVE;
+}
+
+/* Switches to manual ("Custom") fit without triggering fit_mode_changed's
+ * own re-render/save; the zoom path renders and saves itself. */
+static void set_manual_fit_mode(app_state* state) {
+    if (state->fit_mode_id == 0) return;
+    state->fit_mode_id = 0;
+    if (state->fit_mode) {
+        gboolean previous = state->switching_tabs;
+        state->switching_tabs = TRUE;
+        gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), 0);
+        state->switching_tabs = previous;
+    }
+    update_toolbar_overflow_menu_state(state);
+}
+
+static void apply_zoom_anchored(app_state* state, double factor, double viewport_x, double viewport_y) {
+    if (!state || !state->doc || state->presentation_mode || factor <= 0.0) return;
+    set_manual_fit_mode(state);
+    zoom_preview_begin(state);
+    capture_zoom_anchor(state, viewport_x, viewport_y);
+    zoom_preview_to(state, state->zoom * factor);
+}
+
+static void apply_zoom_anchored_at_viewport_center(app_state* state, double factor) {
+    GtkAdjustment* hadj;
+    GtkAdjustment* vadj;
+
+    if (!state || !state->doc || !state->scroll) return;
+    hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    apply_zoom_anchored(state, factor, gtk_adjustment_get_page_size(hadj) * 0.5,
+                        gtk_adjustment_get_page_size(vadj) * 0.5);
+}
+
+static void zoom_in_clicked(GtkButton* button, gpointer user_data) {
+    (void)button;
+    apply_zoom_anchored_at_viewport_center((app_state*)user_data, ZOOM_BUTTON_STEP);
 }
 
 static void zoom_out_clicked(GtkButton* button, gpointer user_data) {
     (void)button;
-    app_state* state = (app_state*)user_data;
-    if (!state->doc) return;
-    state->fit_mode_id = 0;
-    gtk_combo_box_set_active(GTK_COMBO_BOX(state->fit_mode), 0);
-    state->zoom = MAX(0.10, state->zoom / 1.15);
-    render_current_page(state, FALSE);
-    save_settings(state);
-    save_session(state);
+    apply_zoom_anchored_at_viewport_center((app_state*)user_data, 1.0 / ZOOM_BUTTON_STEP);
 }
 
 static void fit_mode_changed(GtkComboBox* combo, gpointer user_data) {
@@ -9121,6 +9412,16 @@ static gboolean key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_d
         copy_selection_to_clipboard(state);
         return TRUE;
     }
+    if (ctrl && (event->keyval == GDK_KEY_equal || event->keyval == GDK_KEY_plus || event->keyval == GDK_KEY_KP_Add)) {
+        if (!state->doc || state->presentation_mode) return FALSE;
+        apply_zoom_anchored_at_viewport_center(state, ZOOM_BUTTON_STEP);
+        return TRUE;
+    }
+    if (ctrl && (event->keyval == GDK_KEY_minus || event->keyval == GDK_KEY_KP_Subtract)) {
+        if (!state->doc || state->presentation_mode) return FALSE;
+        apply_zoom_anchored_at_viewport_center(state, 1.0 / ZOOM_BUTTON_STEP);
+        return TRUE;
+    }
 
     if (state->presentation_mode && state->doc && !ctrl) {
         if (event->keyval == GDK_KEY_space || event->keyval == GDK_KEY_KP_Space) {
@@ -9355,12 +9656,65 @@ static gboolean page_scroll_event(GtkWidget* widget, GdkEventScroll* event, gpoi
     (void)widget;
     app_state* state = (app_state*)user_data;
     if (!state->doc) return FALSE;
+    if ((event->state & GDK_CONTROL_MASK) != 0) {
+        double factor = 0.0;
+        if (event->direction == GDK_SCROLL_UP) factor = ZOOM_WHEEL_STEP;
+        else if (event->direction == GDK_SCROLL_DOWN) factor = 1.0 / ZOOM_WHEEL_STEP;
+        else if (event->direction == GDK_SCROLL_SMOOTH && event->delta_y != 0.0)
+            factor = pow(ZOOM_WHEEL_STEP, -event->delta_y);
+        if (factor > 0.0 && !state->presentation_mode && state->scroll) {
+            /* The event box is the viewport child, so event coordinates are in
+             * adjustment/content space; subtracting the scroll offsets yields
+             * the viewport-relative anchor under the pointer. */
+            GtkAdjustment* hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+            GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+            apply_zoom_anchored(state, factor, event->x - gtk_adjustment_get_value(hadj),
+                                event->y - gtk_adjustment_get_value(vadj));
+        }
+        return TRUE; /* Ctrl+scroll never pans or flips pages. */
+    }
     if (!state->continuous_mode || state->fit_mode_id == 3 || state->fit_mode_id == 4) {
         if (event->direction == GDK_SCROLL_DOWN || event->delta_y > 0) next_clicked(NULL, state);
         else if (event->direction == GDK_SCROLL_UP || event->delta_y < 0) previous_clicked(NULL, state);
         return TRUE;
     }
     return FALSE;
+}
+
+/* Touchpad pinch zoom: same anchored math as Ctrl+wheel, with a continuous
+ * factor derived from the gesture scale relative to the zoom at begin. */
+static void pinch_zoom_begin(GtkGesture* gesture, GdkEventSequence* sequence, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    GtkAdjustment* hadj;
+    GtkAdjustment* vadj;
+    double center_x = 0.0;
+    double center_y = 0.0;
+    (void)sequence;
+
+    if (!state->doc || state->presentation_mode || !state->scroll) {
+        gtk_gesture_set_state(gesture, GTK_EVENT_SEQUENCE_DENIED);
+        return;
+    }
+    state->pinch_begin_zoom = state->zoom;
+    set_manual_fit_mode(state);
+    zoom_preview_begin(state);
+    hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    if (gtk_gesture_get_bounding_box_center(gesture, &center_x, &center_y)) {
+        /* Gesture coordinates are content-space (event box window). */
+        capture_zoom_anchor(state, center_x - gtk_adjustment_get_value(hadj),
+                            center_y - gtk_adjustment_get_value(vadj));
+    } else {
+        capture_zoom_anchor(state, gtk_adjustment_get_page_size(hadj) * 0.5,
+                            gtk_adjustment_get_page_size(vadj) * 0.5);
+    }
+}
+
+static void pinch_zoom_scale_changed(GtkGestureZoom* gesture, gdouble scale, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    (void)gesture;
+    if (!state->doc || !state->zoom_preview_active || scale <= 0.0) return;
+    zoom_preview_to(state, state->pinch_begin_zoom * scale);
 }
 
 static gboolean presentation_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
@@ -9979,7 +10333,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* page_box = gtk_event_box_new();
     gtk_widget_set_can_focus(page_box, TRUE);
     gtk_widget_add_events(page_box, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK |
-                                        GDK_LEAVE_NOTIFY_MASK | GDK_SCROLL_MASK | GDK_KEY_PRESS_MASK);
+                                        GDK_LEAVE_NOTIFY_MASK | GDK_SCROLL_MASK | GDK_KEY_PRESS_MASK |
+                                        GDK_TOUCHPAD_GESTURE_MASK);
     gtk_event_box_set_visible_window(GTK_EVENT_BOX(page_box), FALSE);
     gtk_widget_set_hexpand(page_box, TRUE);
     gtk_widget_set_vexpand(page_box, TRUE);
@@ -10074,6 +10429,15 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(page_box, "motion-notify-event", G_CALLBACK(page_motion), state);
     g_signal_connect(page_box, "leave-notify-event", G_CALLBACK(page_leave), state);
     g_signal_connect(page_box, "button-release-event", G_CALLBACK(page_button_release), state);
+    {
+        /* Touchpad pinch zoom on the document view; the ref is tied to the
+         * event box so the gesture lives exactly as long as its widget. */
+        GtkGesture* zoom_gesture = gtk_gesture_zoom_new(page_box);
+        gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(zoom_gesture), GTK_PHASE_CAPTURE);
+        g_signal_connect(zoom_gesture, "begin", G_CALLBACK(pinch_zoom_begin), state);
+        g_signal_connect(zoom_gesture, "scale-changed", G_CALLBACK(pinch_zoom_scale_changed), state);
+        g_object_set_data_full(G_OBJECT(page_box), "shenzhen-zoom-gesture", zoom_gesture, g_object_unref);
+    }
     g_signal_connect(state->scroll, "key-press-event", G_CALLBACK(key_press), state);
     g_signal_connect(state->scroll, "button-press-event", G_CALLBACK(presentation_button_press), state);
     g_signal_connect(toolbar, "size-allocate", G_CALLBACK(toolbar_size_allocate), state);
@@ -10194,6 +10558,7 @@ int main(int argc, char** argv) {
     if (state.scroll_settle_timeout_id) g_source_remove(state.scroll_settle_timeout_id);
     g_free(state.scroll_page_centers);
     state.scroll_page_centers = NULL;
+    if (state.zoom_settle_timeout_id) g_source_remove(state.zoom_settle_timeout_id);
     state.render_generation++;
     cancel_inflight_render_tokens(&state);
     if (state.render_pool) g_thread_pool_free(state.render_pool, TRUE, TRUE);
