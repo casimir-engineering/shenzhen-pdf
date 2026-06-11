@@ -35,6 +35,7 @@
 #define BACKGROUND_RENDER_RADIUS 3
 #define BACKGROUND_RENDER_BATCH_LIMIT 6
 #define RENDERED_PAGE_EVICT_RADIUS 10
+#define MAX_RENDER_SURFACE_BYTES (96.0 * 1024.0 * 1024.0)
 #define DEFAULT_WINDOW_WIDTH 960
 #define DEFAULT_WINDOW_HEIGHT 680
 #define MIN_WINDOW_WIDTH 560
@@ -287,9 +288,21 @@ typedef struct app_state {
     double context_page_x;
     double context_page_y;
     GThreadPool* render_pool;
+    GMutex inflight_render_token_lock;
+    GPtrArray* inflight_render_tokens;
     guint document_generation;
     guint render_generation;
     gboolean render_error_shown;
+    gboolean pending_first_paint;
+    gboolean page_layout_valid;
+    gboolean page_layout_continuous;
+    gboolean page_layout_presentation;
+    int page_layout_fit_mode_id;
+    int page_layout_display_scale;
+    int page_layout_page_index;
+    int page_layout_page_count;
+    double page_layout_zoom;
+    guint page_layout_document_generation;
     guint sidebar_metadata_idle_id;
     guint background_render_idle_id;
     guint startup_restore_idle_id;
@@ -302,6 +315,7 @@ typedef struct render_task {
     app_state* state;
     char* path;
     GtkWidget* image;
+    spdf_render_token* token;
     guint generation;
     int page_index;
     double zoom;
@@ -2157,7 +2171,27 @@ static void draw_find_highlight(cairo_t* cr, const spdf_rect* rect, double zoom)
     cairo_fill(cr);
 }
 
-static cairo_surface_t* page_surface_from_pixbuf(GdkPixbuf* pixbuf, int display_scale) {
+static unsigned page_list_render_flags(void) {
+    static gsize initialized = 0;
+    static unsigned flags = SPDF_RENDER_USE_PAGE_LIST;
+    if (g_once_init_enter(&initialized)) {
+        if (g_strcmp0(g_getenv("SPDF_DISABLE_LIST_CACHE"), "1") == 0) flags = SPDF_RENDER_DEFAULT;
+        g_once_init_leave(&initialized, 1);
+    }
+    return flags;
+}
+
+/* Reduce the render zoom so the page bitmap never exceeds MAX_RENDER_SURFACE_BYTES;
+ * the surface device scale upscales the capped bitmap back to the requested
+ * display size, so layout geometry is unchanged. */
+static double capped_render_zoom(double render_zoom, float page_width, float page_height) {
+    double bytes = (double)page_width * (double)page_height * render_zoom * render_zoom * 4.0;
+    if (render_zoom <= 0.0 || page_width <= 0.0f || page_height <= 0.0f) return render_zoom;
+    if (bytes <= MAX_RENDER_SURFACE_BYTES) return render_zoom;
+    return render_zoom * sqrt(MAX_RENDER_SURFACE_BYTES / bytes);
+}
+
+static cairo_surface_t* page_surface_from_pixbuf(GdkPixbuf* pixbuf, double device_scale) {
     int width = gdk_pixbuf_get_width(pixbuf);
     int height = gdk_pixbuf_get_height(pixbuf);
     cairo_surface_t* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
@@ -2165,7 +2199,7 @@ static cairo_surface_t* page_surface_from_pixbuf(GdkPixbuf* pixbuf, int display_
     gdk_cairo_set_source_pixbuf(cr, pixbuf, 0, 0);
     cairo_paint(cr);
     cairo_destroy(cr);
-    cairo_surface_set_device_scale(surface, display_scale, display_scale);
+    cairo_surface_set_device_scale(surface, device_scale, device_scale);
     return surface;
 }
 
@@ -2173,7 +2207,7 @@ static cairo_surface_t* decorate_page_surface(spdf_document* doc,
                                               GdkPixbuf* pixbuf,
                                               int page_index,
                                               double render_zoom,
-                                              int display_scale,
+                                              double device_scale,
                                               const char* search_text,
                                               gboolean search_regex,
                                               const spdf_rect* highlight_rects,
@@ -2192,7 +2226,7 @@ static cairo_surface_t* decorate_page_surface(spdf_document* doc,
 
     if (!pixbuf) return NULL;
     if (!has_search && !has_highlights && !has_selection && !has_active)
-        return page_surface_from_pixbuf(pixbuf, display_scale);
+        return page_surface_from_pixbuf(pixbuf, device_scale);
 
     width = gdk_pixbuf_get_width(pixbuf);
     height = gdk_pixbuf_get_height(pixbuf);
@@ -2233,7 +2267,7 @@ static cairo_surface_t* decorate_page_surface(spdf_document* doc,
     }
 
     cairo_destroy(cr);
-    cairo_surface_set_device_scale(surface, display_scale, display_scale);
+    cairo_surface_set_device_scale(surface, device_scale, device_scale);
     return surface;
 }
 
@@ -2241,6 +2275,7 @@ static cairo_surface_t* render_page_surface_for_doc(spdf_document* doc,
                                                     int page_index,
                                                     double zoom,
                                                     int display_scale,
+                                                    spdf_render_token* token,
                                                     const char* search_text,
                                                     gboolean search_regex,
                                                     const spdf_rect* highlight_rects,
@@ -2252,10 +2287,25 @@ static cairo_surface_t* render_page_surface_for_doc(spdf_document* doc,
                                                     size_t err_len) {
     spdf_bitmap bitmap;
     double render_zoom = zoom * display_scale;
+    double device_scale = display_scale;
+    float page_width = 0.0f;
+    float page_height = 0.0f;
+    char size_err[256];
     cairo_surface_t* surface;
     gsize byte_count;
     guchar* pixels;
-    if (!spdf_render_page_rgba(doc, page_index, (float)render_zoom, &bitmap, err, err_len)) return NULL;
+
+    if (spdf_page_size(doc, page_index, &page_width, &page_height, size_err, sizeof(size_err))) {
+        double capped_zoom = capped_render_zoom(render_zoom, page_width, page_height);
+        if (capped_zoom < render_zoom && render_zoom > 0.0) {
+            device_scale = (double)display_scale * (capped_zoom / render_zoom);
+            render_zoom = capped_zoom;
+        }
+    }
+
+    if (!spdf_render_page_rgba_opts(doc, page_index, (float)render_zoom, page_list_render_flags(), token, &bitmap, err,
+                                    err_len))
+        return NULL;
 
     byte_count = (gsize)bitmap.stride * (gsize)bitmap.height;
     pixels = g_try_malloc(byte_count);
@@ -2268,7 +2318,7 @@ static cairo_surface_t* render_page_surface_for_doc(spdf_document* doc,
     GdkPixbuf* pixbuf = gdk_pixbuf_new_from_data(pixels, GDK_COLORSPACE_RGB, TRUE, 8, bitmap.width, bitmap.height,
                                                  bitmap.stride, free_pixbuf_pixels, NULL);
     spdf_free_bitmap(&bitmap);
-    surface = decorate_page_surface(doc, pixbuf, page_index, render_zoom, display_scale, search_text, search_regex,
+    surface = decorate_page_surface(doc, pixbuf, page_index, render_zoom, device_scale, search_text, search_regex,
                                     highlight_rects, highlight_rect_count, selection_rects, selection_rect_count,
                                     active_rect);
     g_object_unref(pixbuf);
@@ -2292,7 +2342,7 @@ static cairo_surface_t* render_page_surface(app_state* state, int page_index, ch
         highlight_rects = copy_find_rects_for_page(state, page_index, &highlight_rect_count);
     }
     selection_rects = copy_selection_rects_for_page(state, page_index, &selection_rect_count);
-    surface = render_page_surface_for_doc(state->doc, page_index, state->zoom, display_scale_for_state(state),
+    surface = render_page_surface_for_doc(state->doc, page_index, state->zoom, display_scale_for_state(state), NULL,
                                           render_search_text, state->search_regex, highlight_rects,
                                           highlight_rect_count, selection_rects, selection_rect_count,
                                           has_active ? &active_rect : NULL, err, err_len);
@@ -2305,6 +2355,7 @@ static void clear_page_box(app_state* state) {
     GList* children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
     for (GList* it = children; it; it = it->next) gtk_widget_destroy(GTK_WIDGET(it->data));
     g_list_free(children);
+    state->page_layout_valid = FALSE;
 }
 
 static void show_empty_view_message(app_state* state, const char* message, const char* detail) {
@@ -2456,8 +2507,14 @@ static void set_page_render_state(GtkWidget* image, int render_state) {
     g_object_set_data(G_OBJECT(image), "render-state", GINT_TO_POINTER(render_state));
 }
 
-static void size_page_slot(GtkWidget* image, double zoom, float page_width, float page_height) {
-    gtk_widget_set_size_request(image, MAX(1, (int)(page_width * zoom)), MAX(1, (int)(page_height * zoom)));
+static void size_page_slot(GtkWidget* image, double zoom, int display_scale, float page_width, float page_height) {
+    int scale = MAX(1, display_scale);
+    double render_zoom = zoom * scale;
+    double capped_zoom = capped_render_zoom(render_zoom, page_width, page_height);
+    double device_scale =
+        capped_zoom < render_zoom && render_zoom > 0.0 ? (double)scale * (capped_zoom / render_zoom) : (double)scale;
+    gtk_widget_set_size_request(image, MAX(1, (int)(page_width * capped_zoom / device_scale)),
+                                MAX(1, (int)(page_height * capped_zoom / device_scale)));
 }
 
 static void cancel_deferred_sidebar_load(app_state* state) {
@@ -2495,6 +2552,83 @@ static void schedule_deferred_sidebar_load(app_state* state) {
     state->sidebar_metadata_idle_id = g_idle_add_full(G_PRIORITY_LOW, load_sidebar_metadata_idle, request, g_free);
 }
 
+static void register_render_token(app_state* state, spdf_render_token* token) {
+    if (!state || !state->inflight_render_tokens || !token) return;
+    g_mutex_lock(&state->inflight_render_token_lock);
+    g_ptr_array_add(state->inflight_render_tokens, token);
+    g_mutex_unlock(&state->inflight_render_token_lock);
+}
+
+/* Drops the in-flight registration and frees the token. Only call after the
+ * render using the token has returned (the core cancel API requires the token
+ * to stay alive while a render is running). */
+static void release_render_token(app_state* state, spdf_render_token* token) {
+    if (!token) return;
+    if (state && state->inflight_render_tokens) {
+        g_mutex_lock(&state->inflight_render_token_lock);
+        g_ptr_array_remove_fast(state->inflight_render_tokens, token);
+        g_mutex_unlock(&state->inflight_render_token_lock);
+    }
+    spdf_render_token_free(token);
+}
+
+static void cancel_inflight_render_tokens(app_state* state) {
+    if (!state || !state->inflight_render_tokens) return;
+    g_mutex_lock(&state->inflight_render_token_lock);
+    for (guint i = 0; i < state->inflight_render_tokens->len; ++i)
+        spdf_render_token_cancel(g_ptr_array_index(state->inflight_render_tokens, i));
+    g_mutex_unlock(&state->inflight_render_token_lock);
+}
+
+/* Each render-pool thread keeps one document open, keyed by (path, mtime,
+ * size), so the core's per-document display-list cache stays effective across
+ * renders. Documents are only ever touched from their owning pool thread (the
+ * core's one-thread-per-spdf_document contract); the GPrivate destructor
+ * closes the cached document when the thread exits. */
+typedef struct worker_document_slot {
+    char* path;
+    gint64 mtime;
+    gint64 size;
+    spdf_document* doc;
+} worker_document_slot;
+
+static void worker_document_slot_free(gpointer data) {
+    worker_document_slot* slot = (worker_document_slot*)data;
+    if (!slot) return;
+    if (slot->doc) spdf_close(slot->doc);
+    g_free(slot->path);
+    g_free(slot);
+}
+
+static GPrivate worker_document_slot_private = G_PRIVATE_INIT(worker_document_slot_free);
+
+static spdf_document* worker_document_for_path(const char* path, char* err, size_t err_len) {
+    gint64 mtime = 0;
+    gint64 size = 0;
+    worker_document_slot* slot = g_private_get(&worker_document_slot_private);
+
+    if (!file_state_for_path(path, &mtime, &size)) {
+        snprintf(err, err_len, "%s", "File moved or deleted.");
+        return NULL;
+    }
+    if (slot && slot->doc && g_strcmp0(slot->path, path) == 0 && slot->mtime == mtime && slot->size == size)
+        return slot->doc;
+    if (!slot) {
+        slot = g_new0(worker_document_slot, 1);
+        g_private_set(&worker_document_slot_private, slot);
+    }
+    if (slot->doc) {
+        spdf_close(slot->doc);
+        slot->doc = NULL;
+    }
+    g_free(slot->path);
+    slot->path = g_strdup(path);
+    slot->mtime = mtime;
+    slot->size = size;
+    slot->doc = spdf_open(path, err, err_len);
+    return slot->doc;
+}
+
 static gboolean render_finished_idle(gpointer data) {
     render_result* result = (render_result*)data;
     app_state* state = result->state;
@@ -2511,6 +2645,8 @@ static gboolean render_finished_idle(gpointer data) {
             evict_distant_page_surfaces(state);
         } else if (result->missing_file) {
             show_missing_document(state, result->path);
+        } else if (g_strcmp0(result->err, "Render canceled.") == 0) {
+            set_page_render_state(result->image, 0); /* superseded render; silent no-op */
         } else if (!state->render_error_shown) {
             set_page_render_state(result->image, 0);
             state->render_error_shown = TRUE;
@@ -2538,6 +2674,7 @@ static void render_worker(gpointer data, gpointer user_data) {
     result->path = g_strdup(task->path);
 
     if (task->generation != task->state->render_generation) {
+        release_render_token(task->state, task->token);
         g_idle_add(render_finished_idle, result);
         g_free(task->path);
         g_free(task->search_text);
@@ -2551,17 +2688,17 @@ static void render_worker(gpointer data, gpointer user_data) {
         result->missing_file = TRUE;
         doc = NULL;
     } else {
-        doc = spdf_open(task->path, result->err, sizeof(result->err));
+        doc = worker_document_for_path(task->path, result->err, sizeof(result->err));
         if (!doc && !g_file_test(task->path, G_FILE_TEST_EXISTS)) result->missing_file = TRUE;
     }
     if (doc) {
         result->surface = render_page_surface_for_doc(
-            doc, task->page_index, task->zoom, task->display_scale, task->search_text, task->search_regex,
+            doc, task->page_index, task->zoom, task->display_scale, task->token, task->search_text, task->search_regex,
             task->highlight_rects, task->highlight_rect_count, task->selection_rects, task->selection_rect_count,
             task->has_active_rect ? &task->active_rect : NULL, result->err, sizeof(result->err));
-        spdf_close(doc);
     }
 
+    release_render_token(task->state, task->token);
     g_idle_add(render_finished_idle, result);
     g_free(task->path);
     g_free(task->search_text);
@@ -2570,7 +2707,7 @@ static void render_worker(gpointer data, gpointer user_data) {
     g_free(task);
 }
 
-static void queue_page_render(app_state* state, GtkWidget* image, int page_index) {
+static void queue_page_render(app_state* state, GtkWidget* image, int page_index, gboolean high_priority) {
     render_task* task;
     GError* error = NULL;
 
@@ -2580,6 +2717,7 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
     task->state = state;
     task->path = g_strdup(state->path);
     task->image = g_object_ref(image);
+    task->token = spdf_render_token_new();
     task->generation = state->render_generation;
     task->page_index = page_index;
     task->zoom = state->zoom;
@@ -2590,10 +2728,12 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
         task->highlight_rects = copy_find_rects_for_page(state, page_index, &task->highlight_rect_count);
     task->selection_rects = copy_selection_rects_for_page(state, page_index, &task->selection_rect_count);
     task->has_active_rect = active_find_rect_for_page(state, page_index, &task->active_rect);
+    register_render_token(state, task->token);
 
     set_page_render_state(image, 1);
     if (!g_thread_pool_push(state->render_pool, task, &error)) {
         set_page_render_state(image, 0);
+        release_render_token(state, task->token);
         g_object_unref(task->image);
         g_free(task->path);
         g_free(task->search_text);
@@ -2604,6 +2744,8 @@ static void queue_page_render(app_state* state, GtkWidget* image, int page_index
             state->render_error_shown = TRUE;
             show_error(GTK_WINDOW(state->window), "Could not queue page render", error ? error->message : "");
         }
+    } else if (high_priority) {
+        g_thread_pool_move_to_front(state->render_pool, task);
     }
     if (error) g_error_free(error);
 }
@@ -2630,7 +2772,7 @@ static int queue_background_pages_near_current(app_state* state, int limit) {
             if (page < 0 || page >= page_count) continue;
             image = page_widget_for_index(state, page);
             if (!image || page_render_state(image) != 0) continue;
-            queue_page_render(state, image, page);
+            queue_page_render(state, image, page, FALSE);
             queued++;
         }
     }
@@ -2663,6 +2805,9 @@ static void cancel_background_render(app_state* state) {
         g_source_remove(state->background_render_idle_id);
         state->background_render_idle_id = 0;
     }
+    /* Callers bump render_generation first, so every in-flight render is
+     * superseded; aborting them frees the pool for the fresh generation. */
+    cancel_inflight_render_tokens(state);
 }
 
 static void evict_distant_page_surfaces(app_state* state) {
@@ -2676,6 +2821,26 @@ static void evict_distant_page_surfaces(app_state* state) {
         if (page < 0 || page_render_state(image) != 2) continue;
         if (abs(page - state->page_index) <= RENDERED_PAGE_EVICT_RADIUS) continue;
         gtk_image_clear(GTK_IMAGE(image));
+        set_page_render_state(image, 0);
+    }
+    g_list_free(children);
+}
+
+/* Marks every page slot as needing a re-render while keeping near pages'
+ * stale surfaces on screen until the fresh render lands; distant stale
+ * surfaces are dropped so the eviction policy still bounds memory. */
+static void mark_page_slots_for_refresh(app_state* state) {
+    GList* children;
+
+    if (!state || !state->page_box) return;
+    children = gtk_container_get_children(GTK_CONTAINER(state->page_box));
+    for (GList* it = children; it; it = it->next) {
+        GtkWidget* image = GTK_WIDGET(it->data);
+        int page = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(image), "page-index")) - 1;
+        if (page < 0) continue;
+        if (page_render_state(image) == 2 && state->continuous_mode &&
+            abs(page - state->page_index) > RENDERED_PAGE_EVICT_RADIUS)
+            gtk_image_clear(GTK_IMAGE(image));
         set_page_render_state(image, 0);
     }
     g_list_free(children);
@@ -2864,6 +3029,7 @@ static void attach_document_to_view(app_state* state,
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(state->continuous), state->continuous_mode);
     state->document_generation++;
     rebuild_sidebar(state);
+    state->pending_first_paint = TRUE; /* intentional synchronous first paint at document open */
     render_current_page(state, TRUE);
     schedule_deferred_sidebar_load(state);
     if (!state->switching_tabs) {
@@ -3899,6 +4065,9 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
     int start_page;
     int end_page;
     int page_count;
+    int display_scale;
+    gboolean sync_first_paint;
+    gboolean reuse_layout;
 
     if (!state->doc) return;
 
@@ -3925,60 +4094,108 @@ static void render_current_page(app_state* state, gboolean scroll_to_top) {
             state->zoom = MAX(0.10, MIN(8.0, MIN(width_zoom, height_zoom)));
     }
 
+    /* The only synchronous render is the intentional first paint at document
+     * open; every other navigation render goes through the async pipeline so
+     * stale/placeholder imagery stays on screen until the fresh render lands. */
+    sync_first_paint = state->pending_first_paint;
+    state->pending_first_paint = FALSE;
+    display_scale = display_scale_for_state(state);
+    page_count = spdf_page_count(state->doc);
+
     state->render_generation++;
     cancel_background_render(state);
     state->render_error_shown = FALSE;
-    gboolean center_single_page = state->presentation_mode || !state->continuous_mode;
-    gtk_widget_set_halign(state->page_box, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(state->page_box, center_single_page ? GTK_ALIGN_CENTER : GTK_ALIGN_START);
-    gtk_widget_set_hexpand(state->page_box, FALSE);
-    gtk_widget_set_vexpand(state->page_box, center_single_page);
-    clear_page_box(state);
-    page_count = spdf_page_count(state->doc);
-    start_page = state->continuous_mode ? 0 : state->page_index;
-    end_page = state->continuous_mode ? page_count : state->page_index + 1;
 
-    if (state->continuous_mode) {
-        GtkWidget** slots = g_new0(GtkWidget*, page_count);
-        cairo_surface_t* surface;
+    reuse_layout = !sync_first_paint && state->page_layout_valid &&
+                   state->page_layout_document_generation == state->document_generation &&
+                   state->page_layout_continuous == state->continuous_mode &&
+                   state->page_layout_presentation == state->presentation_mode &&
+                   state->page_layout_fit_mode_id == state->fit_mode_id &&
+                   state->page_layout_display_scale == display_scale &&
+                   state->page_layout_page_count == page_count && state->page_layout_zoom == state->zoom &&
+                   (state->continuous_mode || state->page_layout_page_index == state->page_index);
 
-        for (int i = start_page; i < end_page; ++i) {
-            float slot_width = page_width;
-            float slot_height = page_height;
-            char slot_err[256];
-            if (!spdf_page_size(state->doc, i, &slot_width, &slot_height, slot_err, sizeof(slot_err)) ||
-                slot_width <= 0 || slot_height <= 0) {
-                slot_width = page_width;
-                slot_height = page_height;
-            }
-            slots[i] = append_page_slot(state, i);
-            size_page_slot(slots[i], state->zoom, slot_width, slot_height);
+    if (reuse_layout) {
+        /* Same geometry as the last build: keep the slots and their stale
+         * surfaces, re-render the current page first at high priority. */
+        GtkWidget* current = page_widget_for_index(state, state->page_index);
+        mark_page_slots_for_refresh(state);
+        state->page_layout_page_index = state->page_index;
+        if (current) queue_page_render(state, current, state->page_index, TRUE);
+        if (state->continuous_mode) {
+            if (scroll_to_top && current) scroll_to_rendered_page(state, current);
+            schedule_background_render(state);
         }
-
-        surface = render_page_surface(state, state->page_index, err, sizeof(err));
-        if (!surface) {
-            g_free(slots);
-            show_error(GTK_WINDOW(state->window), "Could not render page", err);
-            return;
-        }
-        gtk_image_set_from_surface(GTK_IMAGE(slots[state->page_index]), surface);
-        set_page_render_state(slots[state->page_index], 2);
-        cairo_surface_destroy(surface);
-        gtk_widget_show_all(state->page_box);
-        if (scroll_to_top) scroll_to_rendered_page(state, slots[state->page_index]);
-        schedule_background_render(state);
-        g_free(slots);
     } else {
-        for (int i = start_page; i < end_page; ++i) {
-            cairo_surface_t* surface = render_page_surface(state, i, err, sizeof(err));
-            if (!surface) {
-                show_error(GTK_WINDOW(state->window), "Could not render page", err);
-                return;
+        gboolean center_single_page = state->presentation_mode || !state->continuous_mode;
+        gtk_widget_set_halign(state->page_box, GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(state->page_box, center_single_page ? GTK_ALIGN_CENTER : GTK_ALIGN_START);
+        gtk_widget_set_hexpand(state->page_box, FALSE);
+        gtk_widget_set_vexpand(state->page_box, center_single_page);
+        clear_page_box(state);
+        start_page = state->continuous_mode ? 0 : state->page_index;
+        end_page = state->continuous_mode ? page_count : state->page_index + 1;
+
+        if (state->continuous_mode) {
+            GtkWidget** slots = g_new0(GtkWidget*, page_count);
+
+            for (int i = start_page; i < end_page; ++i) {
+                float slot_width = page_width;
+                float slot_height = page_height;
+                char slot_err[256];
+                if (!spdf_page_size(state->doc, i, &slot_width, &slot_height, slot_err, sizeof(slot_err)) ||
+                    slot_width <= 0 || slot_height <= 0) {
+                    slot_width = page_width;
+                    slot_height = page_height;
+                }
+                slots[i] = append_page_slot(state, i);
+                size_page_slot(slots[i], state->zoom, display_scale, slot_width, slot_height);
             }
-            append_page_image(state, surface, i);
-            cairo_surface_destroy(surface);
+
+            if (sync_first_paint) {
+                cairo_surface_t* surface = render_page_surface(state, state->page_index, err, sizeof(err));
+                if (!surface) {
+                    g_free(slots);
+                    show_error(GTK_WINDOW(state->window), "Could not render page", err);
+                    return;
+                }
+                gtk_image_set_from_surface(GTK_IMAGE(slots[state->page_index]), surface);
+                set_page_render_state(slots[state->page_index], 2);
+                cairo_surface_destroy(surface);
+            }
+            gtk_widget_show_all(state->page_box);
+            if (scroll_to_top) scroll_to_rendered_page(state, slots[state->page_index]);
+            if (!sync_first_paint) queue_page_render(state, slots[state->page_index], state->page_index, TRUE);
+            schedule_background_render(state);
+            g_free(slots);
+        } else {
+            for (int i = start_page; i < end_page; ++i) {
+                if (sync_first_paint) {
+                    cairo_surface_t* surface = render_page_surface(state, i, err, sizeof(err));
+                    if (!surface) {
+                        show_error(GTK_WINDOW(state->window), "Could not render page", err);
+                        return;
+                    }
+                    append_page_image(state, surface, i);
+                    cairo_surface_destroy(surface);
+                } else {
+                    GtkWidget* slot = append_page_slot(state, i);
+                    size_page_slot(slot, state->zoom, display_scale, page_width, page_height);
+                    queue_page_render(state, slot, i, TRUE);
+                }
+            }
+            gtk_widget_show_all(state->page_box);
         }
-        gtk_widget_show_all(state->page_box);
+
+        state->page_layout_valid = TRUE;
+        state->page_layout_document_generation = state->document_generation;
+        state->page_layout_continuous = state->continuous_mode;
+        state->page_layout_presentation = state->presentation_mode;
+        state->page_layout_fit_mode_id = state->fit_mode_id;
+        state->page_layout_display_scale = display_scale;
+        state->page_layout_page_index = state->page_index;
+        state->page_layout_page_count = page_count;
+        state->page_layout_zoom = state->zoom;
     }
 
     if (scroll_to_top) {
@@ -9515,6 +9732,8 @@ int main(int argc, char** argv) {
     state.favorite_pending_delete = -1;
     state.detached_tab_launch = g_strcmp0(g_getenv("SHENZHENPDF_DETACHED_TAB"), "1") == 0;
     state.restore_window_id = g_strdup(g_getenv("SHENZHENPDF_RESTORE_WINDOW"));
+    g_mutex_init(&state.inflight_render_token_lock);
+    state.inflight_render_tokens = g_ptr_array_new();
     state.render_pool = g_thread_pool_new(render_worker, NULL, MAX(1, MIN(2, g_get_num_processors())), FALSE, NULL);
     init_config_paths(&state);
     load_settings(&state);
@@ -9541,7 +9760,16 @@ int main(int argc, char** argv) {
     if (state.startup_shortcut_help_idle_id) g_source_remove(state.startup_shortcut_help_idle_id);
     if (state.deferred_find_idle_id) g_source_remove(state.deferred_find_idle_id);
     state.render_generation++;
+    cancel_inflight_render_tokens(&state);
     if (state.render_pool) g_thread_pool_free(state.render_pool, TRUE, TRUE);
+    if (state.inflight_render_tokens) {
+        /* Only tokens of tasks the pool dropped before they started can remain. */
+        for (guint i = 0; i < state.inflight_render_tokens->len; ++i)
+            spdf_render_token_free(g_ptr_array_index(state.inflight_render_tokens, i));
+        g_ptr_array_free(state.inflight_render_tokens, TRUE);
+        state.inflight_render_tokens = NULL;
+    }
+    g_mutex_clear(&state.inflight_render_token_lock);
     spdf_free_outline(&state.outline);
     spdf_free_comments(&state.comments);
     spdf_close(state.doc);
