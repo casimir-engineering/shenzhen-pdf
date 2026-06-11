@@ -2618,11 +2618,19 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     return page;
 }
 
+static BOOL spdf_page_list_cache_disabled(void) {
+    static BOOL disabled;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ disabled = getenv("SPDF_DISABLE_LIST_CACHE") != NULL; });
+    return disabled;
+}
+
 - (NSImage*)renderedPageCropImageAtIndex:(NSInteger)pageIndex
                                 document:(spdf_document*)doc
                                     zoom:(CGFloat)zoom
                             displayScale:(CGFloat)displayScale
                             pageCropRect:(NSRect)pageCropRect
+                                 useList:(BOOL)useList
                                    error:(char*)err
                              errorLength:(size_t)errLen {
     if (NSIsEmptyRect(pageCropRect)) return nil;
@@ -2632,16 +2640,21 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     crop.x1 = (float)NSMaxX(pageCropRect);
     crop.y1 = (float)NSMaxY(pageCropRect);
 
+    if (spdf_page_list_cache_disabled()) useList = NO;
+    unsigned renderFlags = useList ? SPDF_RENDER_USE_PAGE_LIST : SPDF_RENDER_DEFAULT;
     double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     spdf_bitmap bitmap;
-    if (!spdf_render_page_region_rgba(doc, (int)pageIndex, (float)(zoom * displayScale), crop, &bitmap, err, errLen))
+    if (!spdf_render_page_region_rgba_opts(doc, (int)pageIndex, (float)(zoom * displayScale), crop, renderFlags, NULL,
+                                           &bitmap, err, errLen))
         return nil;
     if (spdf_zoom_profile_enabled()) {
         double elapsed = spdf_zoom_profile_now_ms() - profileStart;
-        spdf_zoom_profile_log(@"renderCrop page=%ld zoom=%.2f px=%dx%d bytes=%dMB %.1fms [%s]", (long)pageIndex, zoom,
-                              bitmap.width, bitmap.height,
+        spdf_render_stats stats = spdf_last_render_stats(doc);
+        const char* listState = stats.used_list ? (stats.built_list ? "build" : "hit") : "off";
+        spdf_zoom_profile_log(@"renderCrop page=%ld zoom=%.2f px=%dx%d bytes=%dMB %.1fms [%s] list=%s build=%.0fms",
+                              (long)pageIndex, zoom, bitmap.width, bitmap.height,
                               (int)(((long long)bitmap.stride * bitmap.height) / (1024 * 1024)), elapsed,
-                              NSThread.isMainThread ? "MAIN" : "bg");
+                              NSThread.isMainThread ? "MAIN" : "bg", listState, stats.build_ms);
     }
 
     NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
@@ -3534,11 +3547,13 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
             continue;
 
         char err[512];
+        BOOL useList = ![self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:backingScale];
         NSImage* image = [self renderedPageCropImageAtIndex:pageIndex
                                                    document:_doc
                                                        zoom:_zoom
                                                displayScale:displayScale
                                                pageCropRect:cropRect
+                                                    useList:useList
                                                       error:err
                                                 errorLength:sizeof(err)];
         if (!image) {
@@ -3590,7 +3605,15 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                                              zoom:_zoom
                                                      displayScale:backingScale])
             continue;
-        [tasks addObject:@{@"page" : @(pageIndex), @"crop" : [NSValue valueWithRect:cropRect]}];
+        /* Computed on the main thread so the worker block does not need to touch
+         * _renderedPages: the page is in the crop regime when a full-page render
+         * is disallowed at the current zoom/scale. */
+        BOOL useList = ![self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:backingScale];
+        [tasks addObject:@{
+            @"page" : @(pageIndex),
+            @"crop" : [NSValue valueWithRect:cropRect],
+            @"useList" : @(useList)
+        }];
     }
     return tasks;
 }
@@ -3635,6 +3658,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                                                  zoom:zoom
                                                          displayScale:displayScale
                                                          pageCropRect:cropRect
+                                                              useList:[task[@"useList"] boolValue]
                                                                 error:err
                                                           errorLength:sizeof(err)];
                   if (!image) continue;
@@ -3834,7 +3858,14 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
         if (NSIsEmptyRect(cropRect)) continue;
         if ([self viewportImage:page coversPageCropRect:cropRect zoom:_zoom displayScale:displayScale]) continue;
         if ([self viewportImage:page coversPageCropRect:cropRect zoom:_zoom displayScale:backingScale]) continue;
-        [tasks addObject:@{@"page" : @(pageIndex), @"crop" : [NSValue valueWithRect:cropRect]}];
+        /* Computed on the main thread for the worker block; the filter above already
+         * skipped every page whose full-page render is allowed, so this is the crop regime. */
+        BOOL useList = ![self fullPageRenderAllowedForPage:page zoom:_zoom displayScale:backingScale];
+        [tasks addObject:@{
+            @"page" : @(pageIndex),
+            @"crop" : [NSValue valueWithRect:cropRect],
+            @"useList" : @(useList)
+        }];
     }
     if (tasks.count == 0) return;
 
@@ -3857,6 +3888,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
                                                                  zoom:zoom
                                                          displayScale:displayScale
                                                          pageCropRect:cropRect
+                                                              useList:[task[@"useList"] boolValue]
                                                                 error:err
                                                           errorLength:sizeof(err)];
                   if (!image) continue;
