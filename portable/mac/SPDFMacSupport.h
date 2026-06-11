@@ -17,3 +17,9 @@ BOOL spdf_is_allowed_external_url(NSURL* url);
 BOOL spdf_zoom_profile_enabled(void);
 double spdf_zoom_profile_now_ms(void);
 void spdf_zoom_profile_log(NSString* format, ...) NS_FORMAT_FUNCTION(1, 2);
+
+// Launch-time profiling (SPDF_LAUNCH_PROFILE=1): timestamps are reported
+// relative to process entry (image-load constructor). Zero overhead when the
+// environment variable is unset.
+BOOL spdf_launch_profile_enabled(void);
+void spdf_launch_profile_log(NSString* format, ...) NS_FORMAT_FUNCTION(1, 2);

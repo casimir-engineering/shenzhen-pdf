@@ -8,6 +8,17 @@ static const CGFloat kPageGap = 26.0;
 static const CGFloat kSelectionOverlayAlpha = 0.20;
 static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1024 * 1024;
 
+// Launch profiling (SPDF_LAUNCH_PROFILE=1): logs the first completed drawRect
+// that painted actual document pages — i.e. the first visible paint.
+static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double startMs) {
+    if (startMs <= 0.0 || pageCount == 0) return;
+    static BOOL logged;
+    if (logged) return;
+    logged = YES;
+    spdf_launch_profile_log(@"first document drawRect complete pages=%lu draw=%.1fms", (unsigned long)pageCount,
+                            spdf_zoom_profile_now_ms() - startMs);
+}
+
 @implementation SPDFDocumentView {
     BOOL _isPanning;
     BOOL _isSelecting;
@@ -534,6 +545,7 @@ static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1
 
 - (void)drawRect:(NSRect)dirtyRect {
     double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
+    double launchPaintStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     [(self.presentationMode ? NSColor.blackColor : NSColor.windowBackgroundColor) setFill];
     NSRectFill(dirtyRect);
 
@@ -565,6 +577,7 @@ static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1
                 spdf_zoom_profile_log(@"drawRect(single) liveZoom=%d zoom=%.2f dirty=%.0fx%.0f total=%.2fms",
                                       self.liveZooming, self.zoom, NSWidth(dirtyRect), NSHeight(dirtyRect), elapsed);
         }
+        spdf_launch_log_first_document_paint(self.pages.count, launchPaintStart);
         return;
     }
 
@@ -580,6 +593,7 @@ static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1
             spdf_zoom_profile_log(@"drawRect liveZoom=%d zoom=%.2f dirty=%.0fx%.0f total=%.2fms", self.liveZooming,
                                   self.zoom, NSWidth(dirtyRect), NSHeight(dirtyRect), elapsed);
     }
+    spdf_launch_log_first_document_paint(self.pages.count, launchPaintStart);
 }
 
 - (BOOL)point:(NSPoint)point fallsInPage:(NSInteger*)pageIndex pagePoint:(NSPoint*)pagePoint {
