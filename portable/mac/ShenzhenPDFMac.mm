@@ -30,7 +30,7 @@ static const CGFloat kMaxZoom = 8.00;
 static const CGFloat kTabStripHeight = 42.0;
 static const CGFloat kMinWindowWidth = 560.0;
 static const CGFloat kMinWindowHeight = 380.0;
-static const CGFloat kDefaultMinimapWidth = 110.0;
+static const CGFloat kDefaultMinimapWidth = 126.5;
 static const CGFloat kDefaultSidebarWidth = 240.0;
 static const CGFloat kMinSidebarWidth = 176.0;
 static const CGFloat kSearchSidebarMinWidth = 216.0;
@@ -1827,7 +1827,7 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.6.8";
+    if (version.length == 0) version = @"26.6.11";
     if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
@@ -12998,7 +12998,7 @@ int main(int argc, const char* argv[]) {
     @autoreleasepool {
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.8-2\n");
+                printf("Shenzhen PDF portable mac 26.6.11-1\n");
                 return 0;
             }
         }
