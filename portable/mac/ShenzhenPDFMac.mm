@@ -1973,6 +1973,9 @@ static void spdf_discard_launch_prerender(void) {
     [appMenu addItemWithTitle:@"About Shenzhen PDF" action:@selector(showAboutPanel:) keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Set Up Permissions…" action:@selector(showPermissionsWizard:) keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"Make Shenzhen PDF Default PDF Reader..."
+                       action:@selector(makeDefaultPDFReader:)
+                keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit Shenzhen PDF" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
@@ -2006,9 +2009,6 @@ static void spdf_discard_launch_prerender(void) {
     [fileMenu addItemWithTitle:@"Open in Adobe Acrobat Reader"
                         action:@selector(openInExternalReader:)
                  keyEquivalent:@""];
-    [fileMenu addItemWithTitle:@"Make Shenzhen PDF Default PDF Reader..."
-                        action:@selector(makeDefaultPDFReader:)
-                 keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Show in Folder" action:@selector(showInFolder:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Copy Path" action:@selector(copyCurrentDocumentPath:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Save As..." action:@selector(saveDocumentAs:) keyEquivalent:@"s"];
@@ -2023,18 +2023,33 @@ static void spdf_discard_launch_prerender(void) {
     NSMenuItem* goItem = [[NSMenuItem alloc] initWithTitle:@"Go To" action:nil keyEquivalent:@""];
     [mainMenu addItem:goItem];
     NSMenu* goMenu = [[NSMenu alloc] initWithTitle:@"Go To"];
+    // Key equivalents mirror the keyboard navigation handled in
+    // documentArrowKeyDown:. Option+Up/Down (first/last) fall through that method
+    // (it returns NO for any Option combination) so the menu equivalents fire
+    // firstPage:/lastPage:. Cmd+Left/Right (previous/next) match the keyboard
+    // Cmd+arrow path, which previousPage:/nextPage: now replicate (preserve zoom +
+    // relative position). Plain arrows are intentionally NOT menu equivalents:
+    // they stay context-aware (page change vs smooth scroll) in documentArrowKeyDown:.
     NSMenuItem* firstPageItem =
         [goMenu addItemWithTitle:@"First Page"
                           action:@selector(firstPage:)
-                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSHomeFunctionKey)]];
-    NSMenuItem* previousPageItem = [goMenu addItemWithTitle:@"Previous Page"
-                                                     action:@selector(previousPage:)
-                                              keyEquivalent:@"["];
-    NSMenuItem* nextPageItem = [goMenu addItemWithTitle:@"Next Page" action:@selector(nextPage:) keyEquivalent:@"]"];
+                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSUpArrowFunctionKey)]];
+    firstPageItem.keyEquivalentModifierMask = NSEventModifierFlagOption;
+    NSMenuItem* previousPageItem =
+        [goMenu addItemWithTitle:@"Previous Page"
+                          action:@selector(previousPage:)
+                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSLeftArrowFunctionKey)]];
+    previousPageItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    NSMenuItem* nextPageItem =
+        [goMenu addItemWithTitle:@"Next Page"
+                          action:@selector(nextPage:)
+                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSRightArrowFunctionKey)]];
+    nextPageItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     NSMenuItem* lastPageItem =
         [goMenu addItemWithTitle:@"Last Page"
                           action:@selector(lastPage:)
-                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSEndFunctionKey)]];
+                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSDownArrowFunctionKey)]];
+    lastPageItem.keyEquivalentModifierMask = NSEventModifierFlagOption;
     for (NSMenuItem* item in @[ firstPageItem, previousPageItem, nextPageItem, lastPageItem ]) item.target = self;
     [goMenu addItem:[NSMenuItem separatorItem]];
     [goMenu addItemWithTitle:@"Go To Page..." action:@selector(focusPageField:) keyEquivalent:@"l"];
@@ -10988,12 +11003,20 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
 - (void)previousPage:(id)sender {
     (void)sender;
-    if (_doc && _pageIndex > 0) [self goToPage:_pageIndex - 1 preserveSinglePagePosition:NO];
+    if (!_doc || _pageIndex <= 0) return;
+    // Match the keyboard Cmd+arrow path: outside presentation mode, preserve zoom
+    // + relative position via goToAdjacentPagePreservingRelativePosition: so the
+    // menu's Cmd+Left behaves identically to the key event (which bypasses
+    // documentArrowKeyDown:). Presentation mode keeps align-top paging as before.
+    if (_presentationMode) [self goToPage:_pageIndex - 1 preserveSinglePagePosition:NO];
+    else [self goToAdjacentPagePreservingRelativePosition:-1];
 }
 
 - (void)nextPage:(id)sender {
     (void)sender;
-    if (_doc && _pageIndex + 1 < spdf_page_count(_doc)) [self goToPage:_pageIndex + 1 preserveSinglePagePosition:NO];
+    if (!_doc || _pageIndex + 1 >= spdf_page_count(_doc)) return;
+    if (_presentationMode) [self goToPage:_pageIndex + 1 preserveSinglePagePosition:NO];
+    else [self goToAdjacentPagePreservingRelativePosition:1];
 }
 
 - (void)firstPage:(id)sender {
