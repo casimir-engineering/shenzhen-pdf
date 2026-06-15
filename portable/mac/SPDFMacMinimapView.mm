@@ -98,6 +98,12 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
 }
 
 static const CGFloat kMinimapMaxWidthRatio = 2.5;
+// Viewport-drag speed cap: a page whose minimap slot is small relative to its
+// document height (a width-capped huge page) would otherwise scroll many times
+// faster per dragged pixel than a normal page. Cap its drag gain at this
+// multiple of the median page's gain so the speed transition is smooth instead
+// of a cliff. Normal pages are unaffected (their gain is at/below the median).
+static const CGFloat kMinimapDragGainCap = 2.0;
 
 - (CGFloat)widestPage {
     CGFloat widest = 0;
@@ -351,6 +357,19 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     return MAX(0.01, NSHeight(documentRect) / MAX(1.0, NSHeight(miniRect)));
 }
 
+// Reference drag gain (document points per minimap pixel) for a normal,
+// median-width page. A non-clamped page's gain reduces to (pageWidth *
+// documentScale) / miniSlotWidth (the height term cancels), so the median page
+// width gives the representative gain that the huge-page cap is measured against.
+- (CGFloat)medianPageDragSlopeForScale:(CGFloat)scale gap:(CGFloat)gap {
+    (void)gap;
+    CGFloat base = [self baseWidth];
+    if (base <= 0.0) return 1.0;
+    CGFloat usable = MAX(1.0, NSWidth(self.bounds) - 18.0);
+    CGFloat miniWidth = MAX(1.0, MIN(base * scale, usable));
+    return MAX(0.01, (base * MAX(0.01, self.documentScale)) / miniWidth);
+}
+
 - (NSRect)miniRectForDocumentIntersection:(NSRect)intersection
                              documentRect:(NSRect)documentRect
                                  miniRect:(NSRect)miniRect {
@@ -571,20 +590,27 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     if (!_draggingVisibleRect || ![self shouldUseLongDocumentViewportDrag]) return NO;
     (void)contentHeight;
 
+    (void)contentTop;
     CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
     CGFloat maxDocumentTop = MAX(0.0, self.documentHeight - visibleHeight);
 
-    // Absolute scrollbar-thumb mapping: the grabbed offset within the indicator
-    // is held constant, so the indicator's TOP follows the cursor. Convert that
-    // top from view space -> unscrolled minimap content space -> document-Y via
-    // the per-page piecewise map. Inside the huge page (small minimap slot, large
-    // document height) dragging across the slot still reaches every part of the
-    // page; across pages it is continuous and monotonic. This tracks the cursor
-    // directly rather than accumulating a fragile per-event delta.
-    CGFloat indicatorTopViewY = point.y - _dragOffsetFromVisibleTop;
-    CGFloat unscrolledTopMiniY = indicatorTopViewY - contentTop;
-    CGFloat documentTop = [self documentYForUnscrolledMiniY:unscrolledTopMiniY scale:scale gap:gap];
-    documentTop = spdf_clamp_cg(documentTop, 0.0, maxDocumentTop);
+    // Relative drag with a per-page gain that is capped on over-tall pages.
+    // The local gain (document points scrolled per minimap pixel of cursor
+    // travel) is the piecewise slope at the current position; on a normal page
+    // this equals the median gain, so the drag tracks the cursor exactly as an
+    // absolute mapping would. On a width-capped huge page the raw slope is many
+    // times larger, so it is capped at kMinimapDragGainCap x the median gain —
+    // the document still scrolls (so the whole page stays reachable by
+    // continuing to drag) but at a controlled, smooth speed instead of a cliff.
+    // The indicator follows the resulting document position (drawn by the
+    // existing piecewise projection), so it stays correct over the thumbnails.
+    CGFloat documentTop = _dragDocumentTopY;
+    CGFloat normalSlope = [self medianPageDragSlopeForScale:scale gap:gap];
+    CGFloat localSlope = [self documentPerMiniSlopeAtDocumentY:documentTop scale:scale gap:gap];
+    CGFloat effectiveSlope = MIN(localSlope, kMinimapDragGainCap * normalSlope);
+    CGFloat deltaCursorY = point.y - _dragLastMouseY;
+    documentTop = spdf_clamp_cg(documentTop + deltaCursorY * effectiveSlope, 0.0, maxDocumentTop);
+    _dragDocumentTopY = documentTop;
     _dragLastMouseY = point.y;
     _dragLastTimestamp = event.timestamp;
 
