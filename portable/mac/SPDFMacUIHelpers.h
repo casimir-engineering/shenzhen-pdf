@@ -62,6 +62,7 @@ void spdf_teardown_inactive_magnify_tap(void);
 - (void)minimapDividerDidFinishDragging;
 - (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction;
 - (void)minimapViewDidRequestViewportTopFraction:(CGFloat)yFraction documentCenterX:(CGFloat)documentCenterX;
+- (void)minimapViewDidRequestViewportTopDocumentY:(CGFloat)documentTopY documentCenterX:(CGFloat)documentCenterX;
 - (void)minimapViewDidFinishViewportDrag;
 - (void)minimapViewDidRequestCenterAtDocumentPoint:(NSPoint)documentPoint;
 - (void)minimapViewDidRequestCenterOnPage:(NSInteger)pageIndex
