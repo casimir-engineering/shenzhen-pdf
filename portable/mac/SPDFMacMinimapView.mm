@@ -590,10 +590,11 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     _dragLastMouseY = point.y;
     _dragLastTimestamp = event.timestamp;
 
-    // Vertical drag keeps the current horizontal position (scrollbar-like); the
-    // live visible rect already reflects any prior horizontal scroll.
-    CGFloat documentCenterX = NSMidX(self.documentVisibleRect);
-    [self.reader minimapViewDidRequestViewportTopDocumentY:_dragDocumentTopY documentCenterX:documentCenterX];
+    // Vertical drag must NOT touch the horizontal position. documentVisibleRect
+    // here is the minimap's vertical-only mapping (its x is ~0), so reporting its
+    // midX would snap the document's horizontal scroll to the left every step.
+    // Pass a non-finite sentinel so the reader leaves the current x untouched.
+    [self.reader minimapViewDidRequestViewportTopDocumentY:_dragDocumentTopY documentCenterX:(CGFloat)NAN];
     return YES;
 }
 

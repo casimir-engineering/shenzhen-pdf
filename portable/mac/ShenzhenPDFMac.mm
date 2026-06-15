@@ -13135,9 +13135,17 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 // (the user TCC database) is the standard check; it is a single access(2) call,
 // only ever run lazily after first paint, so it never touches the launch path.
 static BOOL spdf_has_full_disk_access(void) {
+    // Full Disk Access gates open()/read of TCC-protected files, not access()
+    // (whose behavior under TCC varies by macOS version). Actually opening a
+    // protected file is the reliable probe: it succeeds only with FDA.
     NSString* probe =
         [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/com.apple.TCC/TCC.db"];
-    return access(probe.fileSystemRepresentation, R_OK) == 0;
+    FILE* f = fopen(probe.fileSystemRepresentation, "rb");
+    if (f) {
+        fclose(f);
+        return YES;
+    }
+    return NO;
 }
 
 - (void)openFullDiskAccessSettings {
@@ -13180,7 +13188,10 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
         badge.stringValue = @"Granted";
         badge.textColor = NSColor.systemGreenColor;
     } else {
-        badge.stringValue = @"Not granted — needs setup";
+        // Honest wording: a fresh grant often isn't visible to the running
+        // process until it is quit and reopened, so avoid a confident "Not
+        // granted" when the user may have just granted it.
+        badge.stringValue = @"Not detected — grant, then relaunch";
         badge.textColor = NSColor.secondaryLabelColor;
     }
 }
@@ -13190,6 +13201,13 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
 - (void)refreshPermissionsWizardStatus {
     spdf_apply_permission_badge(_permissionsWizardFDABadge, spdf_has_full_disk_access());
     spdf_apply_permission_badge(_permissionsWizardAccessibilityBadge, spdf_inactive_magnify_tap_authorized());
+}
+
+- (void)permissionsWizardApplicationBecameActive:(NSNotification*)notification {
+    (void)notification;
+    // The user likely just toggled a permission in System Settings and switched
+    // back; re-probe so the badges update without reopening the wizard.
+    if (_permissionsWizardPanel.visible) [self refreshPermissionsWizardStatus];
 }
 
 // Build one permission row: name, one-line why, live status badge, and an
@@ -13261,6 +13279,10 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
         _permissionsWizardPanel.level = NSModalPanelWindowLevel;
         _permissionsWizardPanel.collectionBehavior =
             NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;
+        [NSNotificationCenter.defaultCenter addObserver:self
+                                               selector:@selector(permissionsWizardApplicationBecameActive:)
+                                                   name:NSApplicationDidBecomeActiveNotification
+                                                 object:nil];
 
         NSView* content = [[NSView alloc] initWithFrame:_permissionsWizardPanel.contentView.bounds];
         _permissionsWizardPanel.contentView = content;
