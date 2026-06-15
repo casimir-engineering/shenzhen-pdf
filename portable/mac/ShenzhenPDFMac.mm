@@ -700,6 +700,7 @@ static void spdf_discard_launch_prerender(void) {
     _preventSleepInPresentation = YES;
     _enableUnfocusedTrackpadZoom = NO;
     _defaultReaderPromptDismissed = NO;
+    _fullDiskAccessPromptDismissed = NO;
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
     _suspendPersistentStateSaves = NO;
@@ -857,6 +858,7 @@ static void spdf_discard_launch_prerender(void) {
                        [self spawnPendingRestoredWindowsIfNeeded];
                        [self resumePersistentStateSavesAfterLaunch];
                        if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
+                       if (self.restoreWindowID.length == 0) [self promptForFullDiskAccessIfNeededOnLaunch];
                        if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0)
                            [self showShortcutHelp:nil];
                      });
@@ -1404,6 +1406,7 @@ static void spdf_discard_launch_prerender(void) {
         NSNumber* preventSleepInPresentation = settings[@"preventSleepInPresentation"];
         NSNumber* enableUnfocusedTrackpadZoom = settings[@"enableUnfocusedTrackpadZoom"];
         NSNumber* defaultReaderPromptDismissed = settings[@"defaultReaderPromptDismissed"];
+        NSNumber* fullDiskAccessPromptDismissed = settings[@"fullDiskAccessPromptDismissed"];
         NSNumber* printScalingMode = settings[@"printScalingMode"];
         NSNumber* printCustomScale = settings[@"printCustomScale"];
         NSDictionary* windowSize = settings[@"windowSize"];
@@ -1422,6 +1425,7 @@ static void spdf_discard_launch_prerender(void) {
         if (preventSleepInPresentation) _preventSleepInPresentation = preventSleepInPresentation.boolValue;
         if (enableUnfocusedTrackpadZoom) _enableUnfocusedTrackpadZoom = enableUnfocusedTrackpadZoom.boolValue;
         if (defaultReaderPromptDismissed) _defaultReaderPromptDismissed = defaultReaderPromptDismissed.boolValue;
+        if (fullDiskAccessPromptDismissed) _fullDiskAccessPromptDismissed = fullDiskAccessPromptDismissed.boolValue;
         if (printScalingMode) _printScalingMode = (SPDFPrintScalingMode)MAX(0, MIN(2, printScalingMode.integerValue));
         if (printCustomScale) _printCustomScale = SPDFClampPrintCustomScale(printCustomScale.doubleValue);
         if ([windowSize isKindOfClass:NSDictionary.class]) {
@@ -1904,6 +1908,7 @@ static void spdf_discard_launch_prerender(void) {
         @"preventSleepInPresentation" : @(_preventSleepInPresentation),
         @"enableUnfocusedTrackpadZoom" : @(_enableUnfocusedTrackpadZoom),
         @"defaultReaderPromptDismissed" : @(_defaultReaderPromptDismissed),
+        @"fullDiskAccessPromptDismissed" : @(_fullDiskAccessPromptDismissed),
         @"printScalingMode" : @(_printScalingMode),
         @"printCustomScale" : @(SPDFClampPrintCustomScale(_printCustomScale)),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
@@ -1963,6 +1968,8 @@ static void spdf_discard_launch_prerender(void) {
     [mainMenu addItem:appItem];
     NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"Shenzhen PDF"];
     [appMenu addItemWithTitle:@"About Shenzhen PDF" action:@selector(showAboutPanel:) keyEquivalent:@""];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle:@"Grant Full Disk Access…" action:@selector(grantFullDiskAccess:) keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit Shenzhen PDF" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
@@ -13020,6 +13027,51 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 - (void)promptToMakeDefaultPDFReaderIfNeededOnLaunch {
     if (_defaultReaderPromptDismissed || self.detachedTabLaunch) return;
     [self promptToMakeDefaultPDFReaderFromLaunch:YES];
+}
+
+// True when the app can read TCC-protected locations without per-folder
+// consent — i.e. Full Disk Access is granted. Probing a known FDA-gated file
+// (the user TCC database) is the standard check; it is a single access(2) call,
+// only ever run lazily after first paint, so it never touches the launch path.
+static BOOL spdf_has_full_disk_access(void) {
+    NSString* probe =
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/com.apple.TCC/TCC.db"];
+    return access(probe.fileSystemRepresentation, R_OK) == 0;
+}
+
+- (void)openFullDiskAccessSettings {
+    NSURL* url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"];
+    if (url) [NSWorkspace.sharedWorkspace openURL:url];
+}
+
+- (void)presentFullDiskAccessPromptFromLaunch:(BOOL)fromLaunch {
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Grant Full Disk Access";
+    alert.informativeText =
+        @"Give Shenzhen PDF Full Disk Access so it can open PDFs from any folder "
+        @"(Downloads, Documents, iCloud Drive, Google Drive, etc.) without macOS asking for permission each time.\n\n"
+        @"In the window that opens, enable Shenzhen PDF under Full Disk Access, then relaunch the app.";
+    [alert addButtonWithTitle:@"Open Settings"];
+    [alert addButtonWithTitle:fromLaunch ? @"Not Now" : @"Cancel"];
+    NSModalResponse response = [alert runModal];
+    if (response == NSAlertFirstButtonReturn) [self openFullDiskAccessSettings];
+    if (fromLaunch) {
+        // Ask at most once; the menu item remains for later. Persist regardless
+        // of the choice so launches never nag again.
+        _fullDiskAccessPromptDismissed = YES;
+        [self savePersistentState];
+    }
+}
+
+- (void)promptForFullDiskAccessIfNeededOnLaunch {
+    if (_fullDiskAccessPromptDismissed || self.detachedTabLaunch) return;
+    if (spdf_has_full_disk_access()) return;
+    [self presentFullDiskAccessPromptFromLaunch:YES];
+}
+
+- (void)grantFullDiskAccess:(id)sender {
+    (void)sender;
+    [self presentFullDiskAccessPromptFromLaunch:NO];
 }
 
 - (void)makeDefaultPDFReader:(id)sender {
