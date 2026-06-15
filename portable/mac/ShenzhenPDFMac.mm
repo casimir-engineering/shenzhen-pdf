@@ -698,7 +698,6 @@ static void spdf_discard_launch_prerender(void) {
     _collapseWhitespaceWhenCopyingText = YES;
     _showShortcutHelpOnLaunch = YES;
     _preventSleepInPresentation = YES;
-    _enableUnfocusedTrackpadZoom = NO;
     _defaultReaderPromptDismissed = NO;
     _fullDiskAccessPromptDismissed = NO;
     _permissionsWizardShown = NO;
@@ -1204,13 +1203,12 @@ static void spdf_discard_launch_prerender(void) {
 - (void)applicationDidResignActive:(NSNotification*)notification {
     (void)notification;
     [self dismissTabHoverPanel];
-    // Out-of-focus trackpad pinch zoom is opt-in (it needs an Accessibility grant
-    // via a kCGHIDEventTap). Only arm the tap when the user has enabled the
-    // feature, so the permission prompt never appears unless requested. Arming
-    // here (not at the toggle) lets a previously-enabled-and-granted setting work
-    // across launches without any UI; failures degrade silently (the user can
-    // re-toggle the menu item to get the guidance alert).
-    if (_enableUnfocusedTrackpadZoom) (void)spdf_install_inactive_magnify_tap();
+    // Out-of-focus trackpad pinch zoom needs an Accessibility grant (the tap is a
+    // listen-only kCGHIDEventTap). Arm it whenever Accessibility is authorized,
+    // which the user grants via the Permissions wizard. spdf_install_inactive_magnify_tap
+    // is idempotent (no-ops if already armed) and never prompts; if the grant is
+    // missing we do nothing, so there is no UI side effect.
+    if (spdf_inactive_magnify_tap_authorized()) (void)spdf_install_inactive_magnify_tap();
 }
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
@@ -1408,7 +1406,6 @@ static void spdf_discard_launch_prerender(void) {
         NSNumber* collapseWhitespaceWhenCopyingText = settings[@"collapseWhitespaceWhenCopyingText"];
         NSNumber* showShortcutHelp = settings[@"showShortcutHelpOnLaunch"];
         NSNumber* preventSleepInPresentation = settings[@"preventSleepInPresentation"];
-        NSNumber* enableUnfocusedTrackpadZoom = settings[@"enableUnfocusedTrackpadZoom"];
         NSNumber* defaultReaderPromptDismissed = settings[@"defaultReaderPromptDismissed"];
         NSNumber* fullDiskAccessPromptDismissed = settings[@"fullDiskAccessPromptDismissed"];
         NSNumber* permissionsWizardShown = settings[@"permissionsWizardShown"];
@@ -1428,7 +1425,6 @@ static void spdf_discard_launch_prerender(void) {
             _collapseWhitespaceWhenCopyingText = collapseWhitespaceWhenCopyingText.boolValue;
         if (showShortcutHelp) _showShortcutHelpOnLaunch = showShortcutHelp.boolValue;
         if (preventSleepInPresentation) _preventSleepInPresentation = preventSleepInPresentation.boolValue;
-        if (enableUnfocusedTrackpadZoom) _enableUnfocusedTrackpadZoom = enableUnfocusedTrackpadZoom.boolValue;
         if (defaultReaderPromptDismissed) _defaultReaderPromptDismissed = defaultReaderPromptDismissed.boolValue;
         if (fullDiskAccessPromptDismissed) _fullDiskAccessPromptDismissed = fullDiskAccessPromptDismissed.boolValue;
         if (permissionsWizardShown) _permissionsWizardShown = permissionsWizardShown.boolValue;
@@ -1912,7 +1908,6 @@ static void spdf_discard_launch_prerender(void) {
         @"translateTargetLanguage" : _translationTargetLanguage ?: @"en",
         @"showShortcutHelpOnLaunch" : @(_showShortcutHelpOnLaunch),
         @"preventSleepInPresentation" : @(_preventSleepInPresentation),
-        @"enableUnfocusedTrackpadZoom" : @(_enableUnfocusedTrackpadZoom),
         @"defaultReaderPromptDismissed" : @(_defaultReaderPromptDismissed),
         @"fullDiskAccessPromptDismissed" : @(_fullDiskAccessPromptDismissed),
         @"permissionsWizardShown" : @(_permissionsWizardShown),
@@ -2115,10 +2110,6 @@ static void spdf_discard_launch_prerender(void) {
                             action:@selector(togglePreventSleepInPresentation:)
                      keyEquivalent:@""];
     preventSleep.target = self;
-    NSMenuItem* unfocusedZoom = [viewMenu addItemWithTitle:@"Zoom Unfocused Window With Trackpad"
-                                                    action:@selector(toggleUnfocusedTrackpadZoom:)
-                                             keyEquivalent:@""];
-    unfocusedZoom.target = self;
     NSMenuItem* fullScreen = [viewMenu addItemWithTitle:@"Full Screen"
                                                  action:@selector(toggleFullScreen:)
                                           keyEquivalent:@"f"];
@@ -10384,40 +10375,10 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     [self savePersistentState];
 }
 
-- (void)toggleUnfocusedTrackpadZoom:(id)sender {
-    (void)sender;
-    _enableUnfocusedTrackpadZoom = !_enableUnfocusedTrackpadZoom;
-    // Arm the tap immediately on enable (this is the moment the user opts in).
-    // The tap is a kCGHIDEventTap with kCGEventTapOptionDefault, which is gated by
-    // ACCESSIBILITY (not Input Monitoring): only that combination observes
-    // low-level trackpad gesture events for another, focused app. If the grant is
-    // missing, CGEventTapCreate returns NULL with no system prompt, so guide the
-    // user to the Accessibility pane. Disabling leaves the tap in place for this
-    // session but it no longer re-arms; it is torn down at quit.
-    if (_enableUnfocusedTrackpadZoom) {
-        SPDFMagnifyTapResult result = spdf_install_inactive_magnify_tap();
-        if (result == SPDFMagnifyTapResultNoPermission || result == SPDFMagnifyTapResultInert)
-            [self presentUnfocusedTrackpadZoomAccessibilityPrompt];
-    }
-    [self savePersistentState];
-}
-
 - (void)openAccessibilitySettings {
     NSURL* url =
         [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
     if (url) [NSWorkspace.sharedWorkspace openURL:url];
-}
-
-- (void)presentUnfocusedTrackpadZoomAccessibilityPrompt {
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = @"Allow Trackpad Zoom for Unfocused Windows";
-    alert.informativeText =
-        @"To zoom a Shenzhen PDF window with a trackpad pinch while another app is in front, macOS requires "
-        @"Accessibility permission (this is how the app can observe trackpad gestures system-wide).\n\n"
-        @"In the window that opens, enable Shenzhen PDF under Accessibility, then quit and reopen the app.";
-    [alert addButtonWithTitle:@"Open Settings"];
-    [alert addButtonWithTitle:@"Not Now"];
-    if ([alert runModal] == NSAlertFirstButtonReturn) [self openAccessibilitySettings];
 }
 
 - (void)clearFindFieldFocus {
@@ -13324,8 +13285,9 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
 
         NSView* axRow = [self
             permissionsWizardRowWithName:@"Accessibility"
-                                     why:@"Zoom an unfocused ShenzhenPDF window with a trackpad pinch. (Optional — only "
-                                         @"needed for the unfocused-pinch feature.)"
+                                     why:@"Zoom an unfocused ShenzhenPDF window with a trackpad pinch while another app "
+                                         @"is in front. Grant this here to enable the feature; it takes effect after "
+                                         @"the next app switch or relaunch."
                           settingsAction:@selector(openAccessibilitySettings)
                                    badge:&_permissionsWizardAccessibilityBadge];
 
@@ -14293,10 +14255,6 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
     }
     if (action == @selector(togglePreventSleepInPresentation:)) {
         menuItem.state = _preventSleepInPresentation ? NSControlStateValueOn : NSControlStateValueOff;
-        return YES;
-    }
-    if (action == @selector(toggleUnfocusedTrackpadZoom:)) {
-        menuItem.state = _enableUnfocusedTrackpadZoom ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
     if (action == @selector(searchSelectedTextInBrowser:)) return _selectedText.length > 0;
