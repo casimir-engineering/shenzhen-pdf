@@ -1203,10 +1203,13 @@ static void spdf_discard_launch_prerender(void) {
 - (void)applicationDidResignActive:(NSNotification*)notification {
     (void)notification;
     [self dismissTabHoverPanel];
-    // Out-of-focus trackpad pinch zoom is opt-in (it needs an Input Monitoring
-    // grant via a CGEventTap). Only arm the tap when the user has enabled the
-    // feature, so the permission prompt never appears unless requested.
-    if (_enableUnfocusedTrackpadZoom) spdf_install_inactive_magnify_tap();
+    // Out-of-focus trackpad pinch zoom is opt-in (it needs an Accessibility grant
+    // via a kCGHIDEventTap). Only arm the tap when the user has enabled the
+    // feature, so the permission prompt never appears unless requested. Arming
+    // here (not at the toggle) lets a previously-enabled-and-granted setting work
+    // across launches without any UI; failures degrade silently (the user can
+    // re-toggle the menu item to get the guidance alert).
+    if (_enableUnfocusedTrackpadZoom) (void)spdf_install_inactive_magnify_tap();
 }
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
@@ -10306,11 +10309,37 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 - (void)toggleUnfocusedTrackpadZoom:(id)sender {
     (void)sender;
     _enableUnfocusedTrackpadZoom = !_enableUnfocusedTrackpadZoom;
-    // Arm the tap immediately on enable (this is the moment the user opts in, so
-    // the Input Monitoring prompt is expected here). Disabling leaves the tap in
-    // place for this session but it no longer re-arms; it is torn down at quit.
-    if (_enableUnfocusedTrackpadZoom) spdf_install_inactive_magnify_tap();
+    // Arm the tap immediately on enable (this is the moment the user opts in).
+    // The tap is a kCGHIDEventTap with kCGEventTapOptionDefault, which is gated by
+    // ACCESSIBILITY (not Input Monitoring): only that combination observes
+    // low-level trackpad gesture events for another, focused app. If the grant is
+    // missing, CGEventTapCreate returns NULL with no system prompt, so guide the
+    // user to the Accessibility pane. Disabling leaves the tap in place for this
+    // session but it no longer re-arms; it is torn down at quit.
+    if (_enableUnfocusedTrackpadZoom) {
+        SPDFMagnifyTapResult result = spdf_install_inactive_magnify_tap();
+        if (result == SPDFMagnifyTapResultNoPermission || result == SPDFMagnifyTapResultInert)
+            [self presentUnfocusedTrackpadZoomAccessibilityPrompt];
+    }
     [self savePersistentState];
+}
+
+- (void)openAccessibilitySettings {
+    NSURL* url =
+        [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+    if (url) [NSWorkspace.sharedWorkspace openURL:url];
+}
+
+- (void)presentUnfocusedTrackpadZoomAccessibilityPrompt {
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Allow Trackpad Zoom for Unfocused Windows";
+    alert.informativeText =
+        @"To zoom a Shenzhen PDF window with a trackpad pinch while another app is in front, macOS requires "
+        @"Accessibility permission (this is how the app can observe trackpad gestures system-wide).\n\n"
+        @"In the window that opens, enable Shenzhen PDF under Accessibility, then quit and reopen the app.";
+    [alert addButtonWithTitle:@"Open Settings"];
+    [alert addButtonWithTitle:@"Not Now"];
+    if ([alert runModal] == NSAlertFirstButtonReturn) [self openAccessibilitySettings];
 }
 
 - (void)clearFindFieldFocus {
