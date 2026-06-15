@@ -3688,16 +3688,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
 }
 
-- (CGFloat)minimapThumbnailZoom {
-    if (!_minimapView || _renderedPages.count == 0) return 0.0;
-    CGFloat widest = 0.0;
-    for (SPDFRenderedPage* page in _renderedPages) widest = MAX(widest, page.pageWidth);
-    if (widest <= 0.0) return 0.0;
-    CGFloat width = NSWidth(_minimapView.bounds);
-    if (width <= 16.0) width = _minimapWidth;
-    return MAX(0.01, MIN(0.5, (MAX(16.0, width) - 18.0) / widest));
-}
-
 - (void)scheduleNearbyPageRendersAfterFirstPaintForGeneration:(NSUInteger)generation
                                                 preferredPage:(NSInteger)preferredPage {
     NSString* path = [_path copy];
@@ -3852,14 +3842,18 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
     NSString* path = [_path copy];
     NSUInteger generation = _renderGeneration;
-    CGFloat thumbnailZoom = [self minimapThumbnailZoom];
     CGFloat displayScale = [self backingScale];
-    if (thumbnailZoom <= 0.0 || displayScale <= 0.0) return;
+    if (displayScale <= 0.0) return;
 
     for (NSNumber* number in visiblePages) {
         NSInteger index = number.integerValue;
         if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
         SPDFRenderedPage* existing = _renderedPages[(NSUInteger)index];
+        // Per-page render zoom so each thumbnail is crisp at its (width-capped)
+        // displayed size in the strip, rather than rendering every page at the
+        // widest page's tiny scale and upscaling the normal ones.
+        CGFloat thumbnailZoom = [_minimapView thumbnailRenderZoomForPage:existing];
+        if (thumbnailZoom <= 0.0) continue;
         if ([self minimapThumbnailImage:existing matchesZoom:thumbnailZoom displayScale:displayScale]) continue;
         if ([_queuedMinimapThumbnailPages containsObject:number]) continue;
         [_queuedMinimapThumbnailPages addObject:number];

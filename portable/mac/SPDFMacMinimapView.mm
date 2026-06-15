@@ -133,6 +133,19 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     return usable / effectiveWidest;
 }
 
+- (CGFloat)thumbnailRenderZoomForPage:(SPDFRenderedPage*)page {
+    if (!page || page.pageWidth <= 0.0) return 0.0;
+    CGFloat usable = NSWidth(self.bounds) - 18.0;
+    if (usable <= 1.0) return 0.0;
+    CGFloat scale = [self layoutPointScaleForUsableWidth:usable];
+    if (scale <= 0.0) return 0.0;
+    // Match the page's clamped display width (see ensureMiniLayoutCache): an
+    // over-wide page is capped at the strip width, so its thumbnail zoom is
+    // usable/pageWidth; normal pages render at the shared point scale.
+    CGFloat displayWidth = MIN(page.pageWidth * scale, usable);
+    return displayWidth / page.pageWidth;
+}
+
 - (CGFloat)scrollFraction {
     CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
     CGFloat maxScroll = MAX(1.0, self.documentHeight - visibleHeight);
