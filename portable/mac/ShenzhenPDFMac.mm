@@ -701,6 +701,7 @@ static void spdf_discard_launch_prerender(void) {
     _enableUnfocusedTrackpadZoom = NO;
     _defaultReaderPromptDismissed = NO;
     _fullDiskAccessPromptDismissed = NO;
+    _permissionsWizardShown = NO;
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
     _suspendPersistentStateSaves = NO;
@@ -858,7 +859,7 @@ static void spdf_discard_launch_prerender(void) {
                        [self spawnPendingRestoredWindowsIfNeeded];
                        [self resumePersistentStateSavesAfterLaunch];
                        if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
-                       if (self.restoreWindowID.length == 0) [self promptForFullDiskAccessIfNeededOnLaunch];
+                       if (self.restoreWindowID.length == 0) [self showPermissionsWizardOnFirstLaunchIfNeeded];
                        if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0)
                            [self showShortcutHelp:nil];
                      });
@@ -1410,6 +1411,7 @@ static void spdf_discard_launch_prerender(void) {
         NSNumber* enableUnfocusedTrackpadZoom = settings[@"enableUnfocusedTrackpadZoom"];
         NSNumber* defaultReaderPromptDismissed = settings[@"defaultReaderPromptDismissed"];
         NSNumber* fullDiskAccessPromptDismissed = settings[@"fullDiskAccessPromptDismissed"];
+        NSNumber* permissionsWizardShown = settings[@"permissionsWizardShown"];
         NSNumber* printScalingMode = settings[@"printScalingMode"];
         NSNumber* printCustomScale = settings[@"printCustomScale"];
         NSDictionary* windowSize = settings[@"windowSize"];
@@ -1429,6 +1431,7 @@ static void spdf_discard_launch_prerender(void) {
         if (enableUnfocusedTrackpadZoom) _enableUnfocusedTrackpadZoom = enableUnfocusedTrackpadZoom.boolValue;
         if (defaultReaderPromptDismissed) _defaultReaderPromptDismissed = defaultReaderPromptDismissed.boolValue;
         if (fullDiskAccessPromptDismissed) _fullDiskAccessPromptDismissed = fullDiskAccessPromptDismissed.boolValue;
+        if (permissionsWizardShown) _permissionsWizardShown = permissionsWizardShown.boolValue;
         if (printScalingMode) _printScalingMode = (SPDFPrintScalingMode)MAX(0, MIN(2, printScalingMode.integerValue));
         if (printCustomScale) _printCustomScale = SPDFClampPrintCustomScale(printCustomScale.doubleValue);
         if ([windowSize isKindOfClass:NSDictionary.class]) {
@@ -1912,6 +1915,7 @@ static void spdf_discard_launch_prerender(void) {
         @"enableUnfocusedTrackpadZoom" : @(_enableUnfocusedTrackpadZoom),
         @"defaultReaderPromptDismissed" : @(_defaultReaderPromptDismissed),
         @"fullDiskAccessPromptDismissed" : @(_fullDiskAccessPromptDismissed),
+        @"permissionsWizardShown" : @(_permissionsWizardShown),
         @"printScalingMode" : @(_printScalingMode),
         @"printCustomScale" : @(SPDFClampPrintCustomScale(_printCustomScale)),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
@@ -1972,7 +1976,7 @@ static void spdf_discard_launch_prerender(void) {
     NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"Shenzhen PDF"];
     [appMenu addItemWithTitle:@"About Shenzhen PDF" action:@selector(showAboutPanel:) keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
-    [appMenu addItemWithTitle:@"Grant Full Disk Access…" action:@selector(grantFullDiskAccess:) keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"Set Up Permissions…" action:@selector(showPermissionsWizard:) keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit Shenzhen PDF" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
@@ -13125,15 +13129,217 @@ static BOOL spdf_has_full_disk_access(void) {
     }
 }
 
-- (void)promptForFullDiskAccessIfNeededOnLaunch {
-    if (_fullDiskAccessPromptDismissed || self.detachedTabLaunch) return;
-    if (spdf_has_full_disk_access()) return;
-    [self presentFullDiskAccessPromptFromLaunch:YES];
-}
-
 - (void)grantFullDiskAccess:(id)sender {
     (void)sender;
     [self presentFullDiskAccessPromptFromLaunch:NO];
+}
+
+#pragma mark - Permissions setup wizard
+
+// Status badge text/colour for a probeable permission. Green "Granted" when the
+// probe is true; a neutral, attention-drawing label otherwise. Pure helper —
+// no side effects, safe to call whenever the wizard refreshes.
+static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
+    if (!badge) return;
+    if (granted) {
+        badge.stringValue = @"Granted";
+        badge.textColor = NSColor.systemGreenColor;
+    } else {
+        badge.stringValue = @"Not granted — needs setup";
+        badge.textColor = NSColor.secondaryLabelColor;
+    }
+}
+
+// Re-probe both permissions and refresh the live badges. Cheap (two access(2)/
+// AX calls), only ever invoked when the wizard is actually on screen.
+- (void)refreshPermissionsWizardStatus {
+    spdf_apply_permission_badge(_permissionsWizardFDABadge, spdf_has_full_disk_access());
+    spdf_apply_permission_badge(_permissionsWizardAccessibilityBadge, spdf_inactive_magnify_tap_authorized());
+}
+
+// Build one permission row: name, one-line why, live status badge, and an
+// "Open Settings" button. Returns the container view; the badge is handed back
+// via outBadge so the wizard can refresh it later.
+- (NSView*)permissionsWizardRowWithName:(NSString*)name
+                                    why:(NSString*)why
+                          settingsAction:(SEL)settingsAction
+                                  badge:(NSTextField* __strong*)outBadge {
+    NSView* row = [[NSView alloc] initWithFrame:NSZeroRect];
+    row.translatesAutoresizingMaskIntoConstraints = NO;
+
+    NSTextField* nameLabel = [NSTextField labelWithString:name];
+    nameLabel.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightSemibold];
+    nameLabel.translatesAutoresizingMaskIntoConstraints = NO;
+
+    NSTextField* badge = [NSTextField labelWithString:@""];
+    badge.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightMedium];
+    badge.translatesAutoresizingMaskIntoConstraints = NO;
+    [badge setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+    NSTextField* whyLabel = [NSTextField wrappingLabelWithString:why];
+    whyLabel.font = [NSFont systemFontOfSize:11.5];
+    whyLabel.textColor = NSColor.secondaryLabelColor;
+    whyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+
+    NSButton* openButton = [NSButton buttonWithTitle:@"Open Settings" target:self action:settingsAction];
+    openButton.bezelStyle = NSBezelStyleRounded;
+    openButton.font = [NSFont systemFontOfSize:12.0];
+    openButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [openButton setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+    for (NSView* v in @[ nameLabel, badge, whyLabel, openButton ]) [row addSubview:v];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [nameLabel.topAnchor constraintEqualToAnchor:row.topAnchor],
+        [nameLabel.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
+
+        [badge.centerYAnchor constraintEqualToAnchor:nameLabel.centerYAnchor],
+        [badge.leadingAnchor constraintGreaterThanOrEqualToAnchor:nameLabel.trailingAnchor constant:8.0],
+        [badge.trailingAnchor constraintEqualToAnchor:row.trailingAnchor],
+
+        [whyLabel.topAnchor constraintEqualToAnchor:nameLabel.bottomAnchor constant:3.0],
+        [whyLabel.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
+        [whyLabel.trailingAnchor constraintEqualToAnchor:openButton.leadingAnchor constant:-12.0],
+
+        [openButton.topAnchor constraintGreaterThanOrEqualToAnchor:whyLabel.topAnchor],
+        [openButton.trailingAnchor constraintEqualToAnchor:row.trailingAnchor],
+        [openButton.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
+
+        [whyLabel.bottomAnchor constraintLessThanOrEqualToAnchor:row.bottomAnchor],
+    ]];
+
+    if (outBadge) *outBadge = badge;
+    return row;
+}
+
+- (void)showPermissionsWizard:(id)sender {
+    (void)sender;
+    if (!_permissionsWizardPanel) {
+        _permissionsWizardPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0.0, 0.0, 460.0, 420.0)
+                                                             styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                                                               backing:NSBackingStoreBuffered
+                                                                 defer:NO];
+        _permissionsWizardPanel.title = @"ShenzhenPDF Permissions";
+        _permissionsWizardPanel.releasedWhenClosed = NO;
+        _permissionsWizardPanel.floatingPanel = YES;
+        _permissionsWizardPanel.hidesOnDeactivate = NO;
+        _permissionsWizardPanel.level = NSModalPanelWindowLevel;
+        _permissionsWizardPanel.collectionBehavior =
+            NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;
+
+        NSView* content = [[NSView alloc] initWithFrame:_permissionsWizardPanel.contentView.bounds];
+        _permissionsWizardPanel.contentView = content;
+
+        NSTextField* titleLabel = [NSTextField labelWithString:@"ShenzhenPDF Permissions"];
+        titleLabel.font = [NSFont systemFontOfSize:18.0 weight:NSFontWeightSemibold];
+        titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+
+        NSTextField* introLabel = [NSTextField
+            wrappingLabelWithString:@"Granting these once lets ShenzhenPDF open PDFs from any location and zoom "
+                                    @"unfocused windows without repeated macOS prompts."];
+        introLabel.font = [NSFont systemFontOfSize:12.0];
+        introLabel.textColor = NSColor.secondaryLabelColor;
+        introLabel.translatesAutoresizingMaskIntoConstraints = NO;
+
+        NSView* fdaRow = [self
+            permissionsWizardRowWithName:@"Full Disk Access"
+                                     why:@"Open PDFs from any folder, and from other apps' data (e.g. files saved by "
+                                         @"Messages/WeChat/Mail), without per-folder prompts."
+                          settingsAction:@selector(openFullDiskAccessSettings)
+                                   badge:&_permissionsWizardFDABadge];
+
+        NSView* axRow = [self
+            permissionsWizardRowWithName:@"Accessibility"
+                                     why:@"Zoom an unfocused ShenzhenPDF window with a trackpad pinch. (Optional — only "
+                                         @"needed for the unfocused-pinch feature.)"
+                          settingsAction:@selector(openAccessibilitySettings)
+                                   badge:&_permissionsWizardAccessibilityBadge];
+
+        NSBox* separator = [[NSBox alloc] initWithFrame:NSZeroRect];
+        separator.boxType = NSBoxSeparator;
+        separator.translatesAutoresizingMaskIntoConstraints = NO;
+
+        NSTextField* noteLabel = [NSTextField
+            wrappingLabelWithString:@"Some permissions only take full effect after you quit and reopen ShenzhenPDF. "
+                                    @"If a “data from other apps” prompt still appears, granting Full Disk Access "
+                                    @"above resolves it."];
+        noteLabel.font = [NSFont systemFontOfSize:11.0];
+        noteLabel.textColor = NSColor.tertiaryLabelColor;
+        noteLabel.translatesAutoresizingMaskIntoConstraints = NO;
+
+        NSButton* doneButton = [NSButton buttonWithTitle:@"Done"
+                                                  target:_permissionsWizardPanel
+                                                  action:@selector(orderOut:)];
+        doneButton.bezelStyle = NSBezelStyleRounded;
+        doneButton.keyEquivalent = @"\r";
+        doneButton.translatesAutoresizingMaskIntoConstraints = NO;
+
+        for (NSView* v in @[ titleLabel, introLabel, fdaRow, axRow, separator, noteLabel, doneButton ])
+            [content addSubview:v];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [titleLabel.topAnchor constraintEqualToAnchor:content.topAnchor constant:22.0],
+            [titleLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
+            [titleLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+
+            [introLabel.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:8.0],
+            [introLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
+            [introLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+
+            [fdaRow.topAnchor constraintEqualToAnchor:introLabel.bottomAnchor constant:20.0],
+            [fdaRow.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
+            [fdaRow.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+
+            [axRow.topAnchor constraintEqualToAnchor:fdaRow.bottomAnchor constant:18.0],
+            [axRow.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
+            [axRow.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+
+            [separator.topAnchor constraintEqualToAnchor:axRow.bottomAnchor constant:18.0],
+            [separator.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
+            [separator.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+
+            [noteLabel.topAnchor constraintEqualToAnchor:separator.bottomAnchor constant:12.0],
+            [noteLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
+            [noteLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+
+            [doneButton.topAnchor constraintGreaterThanOrEqualToAnchor:noteLabel.bottomAnchor constant:16.0],
+            [doneButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+            [doneButton.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-18.0],
+            [doneButton.widthAnchor constraintGreaterThanOrEqualToConstant:86.0],
+        ]];
+    }
+
+    // Re-check live status every time the wizard opens.
+    [self refreshPermissionsWizardStatus];
+
+    if (_permissionsWizardPanel.parentWindow != _window) {
+        [_permissionsWizardPanel.parentWindow removeChildWindow:_permissionsWizardPanel];
+        if (_window) [_window addChildWindow:_permissionsWizardPanel ordered:NSWindowAbove];
+    }
+
+    if (_window) {
+        NSRect windowFrame = _window.frame;
+        NSRect panelFrame = _permissionsWizardPanel.frame;
+        panelFrame.origin.x = NSMidX(windowFrame) - NSWidth(panelFrame) * 0.5;
+        panelFrame.origin.y = NSMidY(windowFrame) - NSHeight(panelFrame) * 0.5;
+        [_permissionsWizardPanel setFrame:panelFrame display:NO];
+    } else {
+        [_permissionsWizardPanel center];
+    }
+
+    [NSApp activateIgnoringOtherApps:YES];
+    [_permissionsWizardPanel orderFrontRegardless];
+    [_permissionsWizardPanel makeKeyAndOrderFront:nil];
+}
+
+// First-launch auto-show: replaces the old standalone Full Disk Access prompt so
+// the user is guided through every permission in one place, and only ever once.
+// Runs in the deferred post-first-paint block, never on the launch critical path.
+- (void)showPermissionsWizardOnFirstLaunchIfNeeded {
+    if (_permissionsWizardShown || self.detachedTabLaunch) return;
+    _permissionsWizardShown = YES;
+    [self savePersistentState];
+    [self showPermissionsWizard:nil];
 }
 
 - (void)makeDefaultPDFReader:(id)sender {
@@ -13962,7 +14168,8 @@ static BOOL spdf_has_full_disk_access(void) {
         action == @selector(focusFind:) || action == @selector(setCommentAuthor:) ||
         action == @selector(openRecentDocument:) || action == @selector(openSettingsFile:) ||
         action == @selector(openStateJSONFile:) || action == @selector(revealSettingsFolder:) ||
-        action == @selector(showShortcutHelp:) || action == @selector(makeDefaultPDFReader:))
+        action == @selector(showShortcutHelp:) || action == @selector(makeDefaultPDFReader:) ||
+        action == @selector(showPermissionsWizard:))
         return YES;
     if (action == @selector(toggleDefaultSidebarForNewDocuments:)) {
         menuItem.state = _defaultSidebarVisibleForNewDocuments ? NSControlStateValueOn : NSControlStateValueOff;
