@@ -29,7 +29,12 @@
                 @{@"title" : @"Previous or next page", @"keys" : @[ @"[", @"]" ]},
                 @{@"title" : @"First or last page", @"keys" : @[ @"Home", @"End" ]},
                 @{@"title" : @"Go to page", @"keys" : @[ @"Cmd", @"L" ]},
-                @{@"title" : @"Previous or next page (keeps zoom and position)", @"keys" : @[ @"Left", @"Right" ]},
+                @{
+                    @"title" : @"Previous or next page (keeps zoom and position; scrolls when zoomed wider)",
+                    @"keys" : @[ @"Left", @"Right" ]
+                },
+                @{@"title" : @"Always jump a page (keeps zoom and position)", @"keys" : @[ @"Cmd", @"Arrow" ]},
+                @{@"title" : @"Jump a page", @"keys" : @[ @"Shift", @"Arrow" ]},
                 @{@"title" : @"Scroll up or down", @"keys" : @[ @"Up", @"Down" ]},
                 @{@"title" : @"Zoom in or out", @"keys" : @[ @"Cmd", @"+ / -" ]},
                 @{@"title" : @"Fit page", @"keys" : @[ @"Cmd", @"1" ]},
