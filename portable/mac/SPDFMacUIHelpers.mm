@@ -1,5 +1,6 @@
 #import "SPDFMacUIHelpers.h"
 #import "SPDFMacSupport.h"
+#import <ApplicationServices/ApplicationServices.h>  // AXIsProcessTrusted (Accessibility trust check)
 
 static CGFloat spdf_ui_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));
@@ -123,12 +124,25 @@ static BOOL spdf_point_in_key_spdf_window(NSPoint screenPoint) {
     return NSPointInRect(screenPoint, keyWindow.frame);
 }
 
-// Set once the listen-only CGEventTap has successfully armed (Input Monitoring
-// granted). The tap is the authoritative path for out-of-focus pinch, so once it
-// is live the (unreliable, usually-silent) global NSEvent monitor must stand
-// down — otherwise a single physical pinch could be applied twice. Read only on
-// the main thread; the tap callback also runs on the main thread's run loop.
+// Set once the CGEventTap has successfully armed (Accessibility granted). The tap
+// is the authoritative path for out-of-focus pinch, so once it is live the
+// (unreliable, usually-silent) global NSEvent monitor must stand down — otherwise
+// a single physical pinch could be applied twice. Read only on the main thread;
+// the tap callback also runs on the main thread's run loop.
 static BOOL gSPDFMagnifyTapActive = NO;
+
+// One-shot diagnostic window: when SPDF_ZOOM_PROFILE=1, the tap (temporarily
+// masking ALL events) logs every CGEventType it sees for the first few seconds
+// after arming, so a single manual out-of-focus pinch reveals which CGEventType
+// trackpad magnify actually arrives as on the user's macOS version. The shipped
+// fix still masks only the specific gesture type; this is observation only.
+static NSTimeInterval gSPDFMagnifyTapDiagnosticUntil = 0.0;
+
+// kCGEventGesture / NSEventTypeGesture. Not in the documented CGEventType enum,
+// but this is the umbrella HID gesture event that carries magnify/rotate/swipe
+// and is how Hammerspoon, LinearMouse, Mos, PinchBar, BetterTouchTool observe
+// pinch system-wide. Verified against PinchBar (eventsOfInterest: 1<<29).
+static const CGEventType kSPDFGestureEventType = (CGEventType)29;
 
 // Route one magnify NSEvent (rebuilt from a tapped gesture CGEvent) to the
 // ShenzhenPDF window under the cursor, if any. Shared by the tap callback. The
@@ -163,6 +177,34 @@ static CGEventRef spdf_inactive_magnify_tap_callback(CGEventTapProxy proxy, CGEv
         return cgEvent;
     }
 
+    // Diagnostic window (SPDF_ZOOM_PROFILE=1, first few seconds after arming): the
+    // tap masks ALL events, so log every CGEventType seen. A single out-of-focus
+    // pinch here proves which type magnify actually is on this OS. We still only
+    // ACT on the specific gesture type below, so all other events pass through
+    // untouched even during the diagnostic window.
+    if (gSPDFMagnifyTapDiagnosticUntil > 0.0) {
+        if (NSDate.timeIntervalSinceReferenceDate <= gSPDFMagnifyTapDiagnosticUntil) {
+            // Skip the firehose (mouse-moved/dragged) to keep the all-events tap
+            // cheap; still log every other type, and resolve the NSEvent subtype
+            // for gesture-family types so magnify is unambiguous in the log.
+            BOOL noisy = (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged ||
+                          type == kCGEventRightMouseDragged || type == kCGEventOtherMouseDragged);
+            if (!noisy) {
+                NSEvent* probe = [NSEvent eventWithCGEvent:cgEvent];
+                spdf_zoom_profile_log(@"inactiveMagnify diag cgType=%u nsType=%lu", (unsigned)type,
+                                      probe ? (unsigned long)probe.type : 0UL);
+            }
+        } else {
+            gSPDFMagnifyTapDiagnosticUntil = 0.0;
+            spdf_zoom_profile_log(@"inactiveMagnify diag window closed");
+        }
+    }
+
+    // Only act on the gesture event type. eventWithCGEvent: on any other type may
+    // not yield a magnify NSEvent, and acting on non-gesture events would be a bug
+    // even though, during diagnostics, this callback transiently sees everything.
+    if (type != kSPDFGestureEventType) return cgEvent;
+
     // Only the inactive case is the tap's job: when the app is active the
     // responder chain / local monitor are authoritative, so passing through here
     // (never routing) guarantees a single physical pinch is applied exactly once.
@@ -171,54 +213,87 @@ static CGEventRef spdf_inactive_magnify_tap_callback(CGEventTapProxy proxy, CGEv
     // type 29 = NSEventTypeGesture, the umbrella gesture event that carries
     // magnify. Rebuild an NSEvent so the existing cumulative->delta and routing
     // logic (which keys on NSEventTypeMagnify / phase / magnification) applies
-    // verbatim. eventWithCGEvent: reports the magnify subtype as type Magnify.
+    // verbatim. eventWithCGEvent: reports the magnify subtype as type Magnify;
+    // rotate/swipe gestures yield other types and are intentionally ignored.
     NSEvent* event = [NSEvent eventWithCGEvent:cgEvent];
     if (event && event.type == NSEventTypeMagnify) spdf_route_tapped_magnify_event(event);
+    else if (event && spdf_zoom_profile_enabled())
+        spdf_zoom_profile_log(@"inactiveMagnify gesture nsType=%lu (not magnify; ignored)",
+                              (unsigned long)event.type);
 
     // Listen-only tap: never consume or modify; the event continues to its
     // normal destination, so focused pinch and all other gestures are untouched.
     return cgEvent;
 }
 
-void spdf_install_inactive_magnify_tap(void) {
-    static BOOL attempted = NO;
-    if (attempted) return;  // main-thread only; arm at most once per launch
-    attempted = YES;
+BOOL spdf_inactive_magnify_tap_authorized(void) {
+    // The tap uses kCGEventTapOptionDefault, which is gated by ACCESSIBILITY (not
+    // Input Monitoring). AXIsProcessTrusted reflects exactly that grant. Query
+    // without the prompting option so this is a silent check.
+    return AXIsProcessTrusted() ? YES : NO;
+}
 
-    // type 29 = kCGEventGesture / NSEventTypeGesture. Gesture events are not in
-    // the documented CGEventType enum but ARE deliverable to a session tap
-    // (this is how Hammerspoon, LinearMouse, Mos, BetterTouchTool observe pinch
-    // system-wide). A listen-only tap requires Input Monitoring, not
-    // Accessibility, and only prompts the first time it is created.
-    const CGEventType kSPDFGestureEventType = (CGEventType)29;
+SPDFMagnifyTapResult spdf_install_inactive_magnify_tap(void) {
+    static BOOL armed = NO;
+    if (armed) return SPDFMagnifyTapResultArmed;  // main-thread only; arm at most once per launch
+
+    // type 29 = kCGEventGesture / NSEventTypeGesture, the umbrella HID gesture
+    // event that carries magnify. Trackpad gesture events are LOW-LEVEL HID
+    // events: they are observable at kCGHIDEventTap, not at the session tap
+    // (where they have already been dispatched into the focused app's stream).
+    // PinchBar, the canonical pinch-tapping app, uses cghidEventTap + defaultTap
+    // for exactly this reason. defaultTap is gated by Accessibility (listenOnly
+    // would be Input Monitoring, which does NOT authorize an HID gesture tap).
     CGEventMask mask = CGEventMaskBit(kSPDFGestureEventType);
 
-    CFMachPortRef port = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionListenOnly,
-                                          mask, spdf_inactive_magnify_tap_callback, NULL);
+    // When profiling, widen the mask to ALL events for a brief diagnostic window
+    // so one manual pinch reveals which CGEventType magnify really is on this OS.
+    if (spdf_zoom_profile_enabled()) {
+        mask = kCGEventMaskForAllEvents;
+        gSPDFMagnifyTapDiagnosticUntil = NSDate.timeIntervalSinceReferenceDate + 8.0;
+    }
+
+    CFMachPortRef port = CGEventTapCreate(kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, mask,
+                                          spdf_inactive_magnify_tap_callback, NULL);
     if (!port) {
-        // No Input Monitoring permission (or tap creation otherwise refused).
-        // Degrade silently: the legacy global NSEvent monitor remains in place
-        // and the feature is simply inactive. Do NOT prompt aggressively.
+        // Accessibility not granted (or tap creation otherwise refused). Degrade
+        // silently: the legacy global NSEvent monitor remains in place and the
+        // feature is simply inactive. The opt-in flow guides the user to grant
+        // Accessibility; do NOT prompt aggressively from here.
+        gSPDFMagnifyTapDiagnosticUntil = 0.0;
+        BOOL trusted = spdf_inactive_magnify_tap_authorized();
         if (spdf_zoom_profile_enabled())
-            spdf_zoom_profile_log(@"inactiveMagnify tap unavailable (Input Monitoring not granted); "
-                                  @"falling back to global monitor");
-        return;
+            spdf_zoom_profile_log(@"inactiveMagnify tap create FAILED (HID/defaultTap); AXIsProcessTrusted=%d; "
+                                  @"%@ — falling back to global monitor",
+                                  trusted, trusted ? @"unexpected (signing/sandbox?)" : @"Accessibility not granted");
+        return trusted ? SPDFMagnifyTapResultCreateFailed : SPDFMagnifyTapResultNoPermission;
     }
 
     CFRunLoopSourceRef source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0);
     if (!source) {
         CFMachPortInvalidate(port);
         CFRelease(port);
+        gSPDFMagnifyTapDiagnosticUntil = 0.0;
         if (spdf_zoom_profile_enabled()) spdf_zoom_profile_log(@"inactiveMagnify tap source creation failed");
-        return;
+        return SPDFMagnifyTapResultCreateFailed;
     }
 
     CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
     CGEventTapEnable(port, true);
+    // A non-nil tap is not necessarily a healthy tap (re-signed/relaunched dev
+    // builds can install an inert tap). Verify it is actually enabled.
+    BOOL enabled = CGEventTapIsEnabled(port) ? YES : NO;
     gSPDFMagnifyTapPort = port;
     gSPDFMagnifyTapSource = source;
     gSPDFMagnifyTapActive = YES;
-    if (spdf_zoom_profile_enabled()) spdf_zoom_profile_log(@"inactiveMagnify tap armed (Input Monitoring granted)");
+    armed = YES;
+    if (spdf_zoom_profile_enabled())
+        spdf_zoom_profile_log(@"inactiveMagnify tap ARMED tap=HID place=headInsert option=defaultTap "
+                              @"mask=%@ enabled=%d AXIsProcessTrusted=%d%@",
+                              (mask == kCGEventMaskForAllEvents) ? @"ALL(diag)" : @"gesture(29)", enabled,
+                              spdf_inactive_magnify_tap_authorized(),
+                              (mask == kCGEventMaskForAllEvents) ? @" [diag window 8s: pinch now]" : @"");
+    return enabled ? SPDFMagnifyTapResultArmed : SPDFMagnifyTapResultInert;
 }
 
 void spdf_teardown_inactive_magnify_tap(void) {
@@ -253,7 +328,7 @@ static void spdf_install_inactive_magnify_monitor(void) {
                                           // standing down here keeps a single physical pinch from being applied
                                           // twice. In practice global monitors do not observe gesture/magnify
                                           // events delivered to other apps, so this handler is usually silent —
-                                          // it remains only as the fallback when Input Monitoring is not granted.
+                                          // it remains only as the fallback when Accessibility is not granted.
                                           if (gSPDFMagnifyTapActive) return;
                                           if (NSApp.active) return;
                                           NSPoint screenPoint = NSEvent.mouseLocation;

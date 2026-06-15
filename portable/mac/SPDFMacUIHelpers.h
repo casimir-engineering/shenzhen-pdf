@@ -5,15 +5,28 @@
 void spdf_activate_window_for_view(NSView* view);
 void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName);
 
-// Lazily install / tear down the listen-only CGEventTap that captures
-// out-of-focus trackpad pinch (magnify) gestures. The install call is cheap and
-// idempotent; it is invoked the first time the app resigns active (never at
-// launch) so there is no launch-time cost and no launch-time permission prompt.
-// If Input Monitoring permission is absent the tap simply does not arm and the
-// feature stays inactive (logged under SPDF_ZOOM_PROFILE). Teardown is called on
-// app termination so the CFMachPort / run-loop source are released.
-void spdf_install_inactive_magnify_tap(void);
+// Lazily install / tear down the CGEventTap that captures out-of-focus trackpad
+// pinch (magnify) gestures. The tap is placed at kCGHIDEventTap with
+// kCGEventTapOptionDefault — the only combination that observes low-level
+// trackpad gesture events system-wide — which is gated by ACCESSIBILITY (not
+// Input Monitoring). The install call is cheap and idempotent; it is invoked
+// only when the user opts in via the View menu, so there is no launch-time cost
+// and no unsolicited permission prompt. If Accessibility is absent the tap does
+// not arm and the feature stays inactive (logged under SPDF_ZOOM_PROFILE);
+// the caller uses the result to guide the user to the right Settings pane.
+// Teardown releases the CFMachPort / run-loop source at app termination.
+typedef NS_ENUM(NSInteger, SPDFMagnifyTapResult) {
+    SPDFMagnifyTapResultArmed,         // tap created and confirmed enabled (or already armed)
+    SPDFMagnifyTapResultNoPermission,  // create failed, Accessibility not granted -> guide the user
+    SPDFMagnifyTapResultInert,         // tap created but reported disabled (rare; re-signed dev builds)
+    SPDFMagnifyTapResultCreateFailed,  // create failed despite trust, or source creation failed
+};
+SPDFMagnifyTapResult spdf_install_inactive_magnify_tap(void);
 void spdf_teardown_inactive_magnify_tap(void);
+
+// Silent check of whether the process currently has Accessibility trust (the
+// grant the tap needs). Does not prompt. Used by the opt-in flow.
+BOOL spdf_inactive_magnify_tap_authorized(void);
 
 @protocol SPDFMacUIReader <NSObject>
 - (BOOL)handlePresentationEvent:(NSEvent*)event;
