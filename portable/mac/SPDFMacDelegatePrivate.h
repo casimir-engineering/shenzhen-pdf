@@ -188,6 +188,16 @@
     NSInteger _selectedTabIndex;
     NSUInteger _renderGeneration;
     NSTimer* _zoomFinishTimer;
+    // Smooth keyboard (up/down arrow) scrolling. The OS auto-repeats key-down
+    // while a key is held; each repeat refreshes _keyScrollLastEventTime and the
+    // ramp keeps accelerating toward the cap. A gap longer than the idle timeout
+    // (no repeat) makes the tick decelerate to a stop. Velocity is in pt/s,
+    // signed by scroll direction (+down/-up in clip-view origin space).
+    NSTimer* _keyScrollTimer;
+    CGFloat _keyScrollVelocity;
+    CGFloat _keyScrollDirection;  // -1 (up), +1 (down), or 0 (idle)
+    NSTimeInterval _keyScrollLastEventTime;
+    NSTimeInterval _keyScrollLastTickTime;
     NSUInteger _liveZoomSequence;
     NSInteger _liveZoomAnchorPageIndex;
     NSPoint _liveZoomAnchorPagePoint;
