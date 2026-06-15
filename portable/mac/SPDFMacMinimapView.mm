@@ -430,6 +430,31 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     return pageScale + acceleration * (1.0 - pageScale);
 }
 
+- (CGFloat)longDocumentDragDocumentXForStripX:(CGFloat)stripX
+                                     fraction:(CGFloat)fraction
+                                        scale:(CGFloat)scale
+                                          gap:(CGFloat)gap {
+    // Pick the page to pan across from the SAME vertical target the drag is sending
+    // (documentCenterY derived from `fraction`, matching the reader's origin.y = fraction*maxY),
+    // not from the track-space thumb Y, which lives in a different height space and can
+    // converge onto a neighbouring (narrow) page — limiting horizontal pan to that page's width.
+    CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
+    CGFloat documentCenterY =
+        spdf_clamp_cg(fraction, 0.0, 1.0) * MAX(0.0, self.documentHeight - visibleHeight) + visibleHeight * 0.5;
+
+    for (SPDFRenderedPage* page in self.pages) {
+        NSRect documentRect = [self documentRectForPage:page];
+        if (NSIsEmptyRect(documentRect)) continue;
+        if (documentCenterY < NSMinY(documentRect) || documentCenterY > NSMaxY(documentRect)) continue;
+
+        NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
+        if (NSIsEmptyRect(miniRect)) continue;
+        CGFloat xFraction = spdf_clamp_cg((stripX - NSMinX(miniRect)) / MAX(1.0, NSWidth(miniRect)), 0.0, 1.0);
+        return NSMinX(documentRect) + xFraction * NSWidth(documentRect);
+    }
+    return NSMidX(self.documentVisibleRect);
+}
+
 - (BOOL)sendLongDocumentViewportDragForPoint:(NSPoint)point
                                        event:(NSEvent*)event
                                        scale:(CGFloat)scale
@@ -449,15 +474,12 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     _dragLastTimestamp = event.timestamp;
 
     CGFloat fraction = maxTop <= minTop ? 0.0 : (_dragThumbTop - minTop) / (maxTop - minTop);
-    NSPoint horizontalCenterPoint =
-        NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, _dragThumbTop + thumbHeight * 0.5);
-    NSPoint documentPoint = [self documentPointForMinimapCenterPoint:horizontalCenterPoint
-                                                               scale:scale
-                                                                 gap:gap
-                                                       contentHeight:contentHeight
-                                                          contentTop:contentTop];
-    if (!isfinite(documentPoint.x)) documentPoint.x = NSMidX(self.documentVisibleRect);
-    [self.reader minimapViewDidRequestViewportTopFraction:fraction documentCenterX:documentPoint.x];
+    CGFloat documentX = [self longDocumentDragDocumentXForStripX:point.x - _dragOffsetFromVisibleCenter.x
+                                                        fraction:fraction
+                                                           scale:scale
+                                                             gap:gap];
+    if (!isfinite(documentX)) documentX = NSMidX(self.documentVisibleRect);
+    [self.reader minimapViewDidRequestViewportTopFraction:fraction documentCenterX:documentX];
     return YES;
 }
 

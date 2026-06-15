@@ -5185,6 +5185,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)scrollToPage:(NSInteger)pageIndex preservingRelativePosition:(NSPoint)relativePosition {
+    NSRect pageRect = [_pageView rectForPageAtIndex:MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1))];
+    // No source page given: preserve relative Y unconditionally (same-page relayout
+    // case) by passing the target's own height so the mismatch guard never fires.
+    [self scrollToPage:pageIndex preservingRelativePosition:relativePosition fromPageHeight:NSHeight(pageRect)];
+}
+
+- (void)scrollToPage:(NSInteger)pageIndex
+    preservingRelativePosition:(NSPoint)relativePosition
+                fromPageHeight:(CGFloat)fromPageHeight {
     if (_renderedPages.count == 0) return;
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
@@ -5195,8 +5204,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
     CGFloat maxInPageY = MAX(0.0, NSHeight(pageRect) - NSHeight(clipView.bounds));
     CGFloat maxDocumentX = MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds));
     CGFloat maxDocumentY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+    // relativePosition.y is a 0..1 fraction of the *source* page. Mapping it onto a
+    // target page much taller than the source (e.g. paging into an oversized page
+    // that is many viewports tall) yanks the viewport deep into / past the page
+    // instead of landing just at its top boundary. When the target is >2x the
+    // source height, align its top so navigation lands predictably "just above" it.
+    BOOL targetMuchTaller = fromPageHeight > 0.5 && NSHeight(pageRect) > fromPageHeight * 2.0;
+    CGFloat relativeY = targetMuchTaller ? 0.0 : spdf_clamp_cg(relativePosition.y, 0.0, 1.0);
     NSPoint origin = NSMakePoint(NSMinX(pageRect) + spdf_clamp_cg(relativePosition.x, 0.0, 1.0) * maxInPageX,
-                                 NSMinY(pageRect) + spdf_clamp_cg(relativePosition.y, 0.0, 1.0) * maxInPageY);
+                                 NSMinY(pageRect) + relativeY * maxInPageY);
     if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5) origin.x = 0.0;
     if (_presentationMode) origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
@@ -5211,6 +5227,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (pageCount <= 0) return;
     pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
     NSPoint relativePosition = preserveSinglePagePosition ? [self relativeScrollPositionForCurrentPage] : NSZeroPoint;
+    // Source page height, captured before _pageIndex moves to the target, so
+    // scrollToPage: can suppress the relative-Y remap when crossing into a page
+    // of very different height (e.g. an oversized schematic page).
+    CGFloat sourcePageHeight = NSHeight([_pageView rectForPageAtIndex:_pageIndex]);
     [self cancelPendingLiveZoomCompletion];
 
     _pageIndex = pageIndex;
@@ -5224,8 +5244,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
     [self renderPageIfNeededAtIndex:_pageIndex];
     [self resizeDocumentView];
-    if (preserveSinglePagePosition) [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition];
-    else [self scrollToPage:_pageIndex alignTop:YES];
+    if (preserveSinglePagePosition)
+        [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition fromPageHeight:sourcePageHeight];
+    else
+        [self scrollToPage:_pageIndex alignTop:YES];
     [self updateControls];
     [self selectCurrentSidebarRow];
     [_pageView setNeedsDisplay:YES];
@@ -8304,6 +8326,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
       if (!self->_doc) return;
       if (self->_liveZooming || self->_documentViewPanActive || self->_minimapPrecisionViewportDragActive) return;
       [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+      // A page taller than several viewports (e.g. an oversized schematic page)
+      // keeps _pageIndex pinned across many scroll ticks, so the neighbor
+      // full-page scheduling in documentScrollPositionChanged never re-fires and
+      // the normal pages above/below it stay blank. The crop pass above only
+      // covers crop-regime pages, so schedule full-page renders for the current
+      // visible set here too (deduped via _queuedRenderOperations).
+      [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:NO];
       [self updateMinimapForScrolling];
       [self evictDistantRenderedPageImages];
       NSUInteger generation = ++self->_scrollIdleMinimapRefreshGeneration;
