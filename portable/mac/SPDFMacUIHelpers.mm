@@ -878,7 +878,13 @@ static void spdf_install_inactive_magnify_monitor(void) {
 
 - (void)scrollWheel:(NSEvent*)event {
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) {
+    // Only treat a Cmd/Ctrl-modified wheel as zoom when it is active scrolling.
+    // Inertial momentum is just scroll continuing to coast; the modifier must
+    // not turn it into zoom (e.g. the Command held during Cmd+Tab would
+    // otherwise make a coasting scroll zoom the document). Momentum events fall
+    // through to the normal scroll path below.
+    if ((flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) &&
+        event.momentumPhase == NSEventPhaseNone) {
         [self markZoomWheelAtTimestamp:event.timestamp];
         if (self.reader) [self.reader zoomWithScrollWheelEvent:event centeredAtWindowPoint:event.locationInWindow];
         return;
