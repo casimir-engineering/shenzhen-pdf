@@ -209,6 +209,7 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
     if (action == @selector(toggleSidebar:)) return @"sidebar.left";
     if (action == @selector(toggleMinimap:)) return @"map";
     if (action == @selector(togglePresentation:)) return @"play.rectangle";
+    if (action == @selector(togglePreventSleepInPresentation:)) return @"bolt.fill";
     if (action == @selector(toggleFullScreen:)) return @"arrow.up.left.and.arrow.down.right";
     if (action == @selector(rotateClockwise:)) return @"rotate.right";
     if (action == @selector(rotateAnticlockwise:)) return @"rotate.left";
@@ -700,6 +701,7 @@ static void spdf_discard_launch_prerender(void) {
     _selectionTranslationGeneration = 0;
     _collapseWhitespaceWhenCopyingText = YES;
     _showShortcutHelpOnLaunch = YES;
+    _preventSleepInPresentation = YES;
     _defaultReaderPromptDismissed = NO;
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
@@ -1176,6 +1178,7 @@ static void spdf_discard_launch_prerender(void) {
     [self dismissTabHoverPanel];
     [self removeWindowArrangementShortcutMonitor];
     [self removePresentationEventMonitor];
+    [self endPresentationSleepActivity];
     [_translationInstallTask terminate];
     [_translationTask terminate];
     [_renderQueue cancelAllOperations];
@@ -1381,6 +1384,7 @@ static void spdf_discard_launch_prerender(void) {
         NSNumber* defaultMinimapVisible = settings[@"defaultMinimapVisibleForNewDocuments"];
         NSNumber* collapseWhitespaceWhenCopyingText = settings[@"collapseWhitespaceWhenCopyingText"];
         NSNumber* showShortcutHelp = settings[@"showShortcutHelpOnLaunch"];
+        NSNumber* preventSleepInPresentation = settings[@"preventSleepInPresentation"];
         NSNumber* defaultReaderPromptDismissed = settings[@"defaultReaderPromptDismissed"];
         NSNumber* printScalingMode = settings[@"printScalingMode"];
         NSNumber* printCustomScale = settings[@"printCustomScale"];
@@ -1398,6 +1402,7 @@ static void spdf_discard_launch_prerender(void) {
         if (collapseWhitespaceWhenCopyingText)
             _collapseWhitespaceWhenCopyingText = collapseWhitespaceWhenCopyingText.boolValue;
         if (showShortcutHelp) _showShortcutHelpOnLaunch = showShortcutHelp.boolValue;
+        if (preventSleepInPresentation) _preventSleepInPresentation = preventSleepInPresentation.boolValue;
         if (defaultReaderPromptDismissed) _defaultReaderPromptDismissed = defaultReaderPromptDismissed.boolValue;
         if (printScalingMode) _printScalingMode = (SPDFPrintScalingMode)MAX(0, MIN(2, printScalingMode.integerValue));
         if (printCustomScale) _printCustomScale = SPDFClampPrintCustomScale(printCustomScale.doubleValue);
@@ -1876,6 +1881,7 @@ static void spdf_discard_launch_prerender(void) {
         @"translateSourceLanguage" : _translationSourceLanguage ?: @"zh",
         @"translateTargetLanguage" : _translationTargetLanguage ?: @"en",
         @"showShortcutHelpOnLaunch" : @(_showShortcutHelpOnLaunch),
+        @"preventSleepInPresentation" : @(_preventSleepInPresentation),
         @"defaultReaderPromptDismissed" : @(_defaultReaderPromptDismissed),
         @"printScalingMode" : @(_printScalingMode),
         @"printCustomScale" : @(SPDFClampPrintCustomScale(_printCustomScale)),
@@ -2072,6 +2078,11 @@ static void spdf_discard_launch_prerender(void) {
                                                      keyEquivalent:@"f"];
     presentationAlternate.target = self;
     presentationAlternate.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    NSMenuItem* preventSleep =
+        [viewMenu addItemWithTitle:@"Prevent Sleep During Presentation"
+                            action:@selector(togglePreventSleepInPresentation:)
+                     keyEquivalent:@""];
+    preventSleep.target = self;
     NSMenuItem* fullScreen = [viewMenu addItemWithTitle:@"Full Screen"
                                                  action:@selector(toggleFullScreen:)
                                           keyEquivalent:@"f"];
@@ -9941,6 +9952,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self savePersistentState];
 }
 
+- (void)togglePreventSleepInPresentation:(id)sender {
+    (void)sender;
+    _preventSleepInPresentation = !_preventSleepInPresentation;
+    if (_presentationMode) {
+        if (_preventSleepInPresentation) [self beginPresentationSleepActivityIfNeeded];
+        else [self endPresentationSleepActivity];
+    }
+    [self savePersistentState];
+}
+
 - (void)clearFindFieldFocus {
     if (_window.firstResponder == _searchField || _window.firstResponder == _searchField.currentEditor)
         [_window makeFirstResponder:_pageView];
@@ -10884,6 +10905,22 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (presentation && _presentationOverlayView) [_window makeFirstResponder:_presentationOverlayView];
 }
 
+- (void)beginPresentationSleepActivityIfNeeded {
+    if (_presentationSleepActivityToken) return;
+    NSActivityOptions options = NSActivityIdleSystemSleepDisabled |
+                                NSActivityIdleDisplaySleepDisabled |
+                                NSActivityUserInitiated;
+    _presentationSleepActivityToken =
+        [[NSProcessInfo processInfo] beginActivityWithOptions:options
+                                                       reason:@"ShenzhenPDF presentation mode"];
+}
+
+- (void)endPresentationSleepActivity {
+    if (!_presentationSleepActivityToken) return;
+    [[NSProcessInfo processInfo] endActivity:_presentationSleepActivityToken];
+    _presentationSleepActivityToken = nil;
+}
+
 - (void)enterPresentationMode:(id)sender {
     if (!_doc || _presentationMode) return;
 
@@ -10915,10 +10952,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [_window makeMainWindow];
     [_window makeFirstResponder:_presentationOverlayView ?: _pageView];
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
+    if (_preventSleepInPresentation) [self beginPresentationSleepActivityIfNeeded];
 }
 
 - (void)leavePresentationModeAndExitFullScreen:(BOOL)exitFullScreen sender:(id)sender {
     if (!_presentationMode) return;
+    [self endPresentationSleepActivity];
 
     BOOL shouldExitFullScreen = exitFullScreen && _presentationEnteredFullScreen && [self windowIsFullScreen];
     _presentationMode = NO;
@@ -13582,6 +13621,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
     if (action == @selector(toggleCollapseWhitespaceWhenCopyingText:)) {
         menuItem.state = _collapseWhitespaceWhenCopyingText ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (action == @selector(togglePreventSleepInPresentation:)) {
+        menuItem.state = _preventSleepInPresentation ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
     if (action == @selector(searchSelectedTextInBrowser:)) return _selectedText.length > 0;
