@@ -315,19 +315,31 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 
     if (self.pages.count == 0) return NSMakeSize(MAX(clipSize.width, 600), MAX(clipSize.height, 500));
 
-    // Presentation mode shows one page at a time: pages are laid out
-    // continuously (gap/margin 0) and the reader centers the current page in
-    // the viewport. The document view must therefore span the full continuous
-    // height so the scroll range exists — otherwise page changes cannot move
-    // (the view would be only one viewport tall) and just re-render in place.
-    height = [self continuousDocumentHeight];
-    if (self.presentationMode) return NSMakeSize(clipSize.width, MAX(height, clipSize.height));
+    // Presentation mode shows exactly one page (the current one) fit to and
+    // centered in the viewport, with no scrolling — the document view is a
+    // single viewport and page changes just swap which page is drawn.
+    if (self.presentationMode) return NSMakeSize(clipSize.width, clipSize.height);
 
+    height = [self continuousDocumentHeight];
     return NSMakeSize(width, MAX(height, clipSize.height));
+}
+
+- (NSRect)presentationRectForPageAtIndex:(NSInteger)pageIndex {
+    // Only the current page is shown in presentation mode, centered in the
+    // single-viewport document view at its current view size. Other pages are
+    // placed far offscreen so nothing else is drawn or hit-tested.
+    NSInteger current = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
+    if (pageIndex != current) return NSMakeRect(0.0, -1.0e7, 0.0, 0.0);
+    NSSize pageSize = [self viewSizeForPage:self.pages[(NSUInteger)current]];
+    NSRect bounds = self.bounds;
+    CGFloat x = [self pixelSnappedOrigin:NSMinX(bounds) + (NSWidth(bounds) - pageSize.width) / 2.0];
+    CGFloat y = [self pixelSnappedOrigin:NSMinY(bounds) + (NSHeight(bounds) - pageSize.height) / 2.0];
+    return NSMakeRect(x, y, pageSize.width, pageSize.height);
 }
 
 - (NSRect)rectForPageAtIndex:(NSInteger)pageIndex {
     if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return NSZeroRect;
+    if (self.presentationMode) return [self presentationRectForPageAtIndex:pageIndex];
     return [self continuousRectForPageAtIndex:pageIndex];
 }
 
@@ -498,6 +510,15 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
         [message drawWithRect:textRect
                       options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
                    attributes:attrs];
+        return;
+    }
+
+    if (self.presentationMode) {
+        NSInteger index = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
+        SPDFRenderedPage* page = self.pages[(NSUInteger)index];
+        NSRect pageRect = [self rectForPageAtIndex:index];
+        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect dirtyRect:dirtyRect];
+        spdf_launch_log_first_document_paint(self.pages.count, launchPaintStart);
         return;
     }
 
