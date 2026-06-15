@@ -8183,13 +8183,19 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return YES;
     }
 
+    // Continuous mode: plain left/right navigate pages while preserving the
+    // current zoom and relative position within the page. Up/down keep their
+    // vertical line-scroll behavior below.
+    if (left || right) {
+        [self goToAdjacentPagePreservingRelativePosition:left ? -1 : 1];
+        return YES;
+    }
+
     NSClipView* clipView = _pageScrollView.contentView;
     NSPoint origin = clipView.bounds.origin;
     CGFloat lineStep = 54.0;
     if (up) origin.y -= lineStep;
     if (down) origin.y += lineStep;
-    if (left) origin.x -= lineStep;
-    if (right) origin.x += lineStep;
     [self scrollDocumentClipViewToOrigin:origin notify:YES];
     [self rememberActiveTabState];
     return YES;
