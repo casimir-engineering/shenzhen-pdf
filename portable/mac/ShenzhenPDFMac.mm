@@ -1194,6 +1194,7 @@ static void spdf_discard_launch_prerender(void) {
     // launch save suspension so this final save cannot be swallowed.
     [self resumePersistentStateSavesAfterLaunch];
     [self savePersistentState];
+    [self teardownActiveFileWatcher];
     [self clearActiveMetadata];
     [self closeActiveDocumentIfUnowned];
 }
@@ -1287,6 +1288,16 @@ static void spdf_discard_launch_prerender(void) {
 - (void)windowDidResignKey:(NSNotification*)notification {
     (void)notification;
     [self dismissTabHoverPanel];
+}
+
+- (void)windowDidBecomeKey:(NSNotification*)notification {
+    (void)notification;
+    // Non-active tabs are not watched continuously: catch up on any on-disk
+    // changes that happened while this window was in the background, and refresh
+    // the active tab in place if its file changed. Deferred so it never blocks
+    // the focus transition; skipped entirely during launch (no key window yet
+    // when applicationDidFinishLaunching runs its critical path).
+    dispatch_async(dispatch_get_main_queue(), ^{ [self checkAllTabsForExternalChangesOnFocus]; });
 }
 
 - (void)windowWillMiniaturize:(NSNotification*)notification {
@@ -5744,6 +5755,19 @@ static BOOL spdf_page_list_cache_disabled(void) {
     tab.cachedFileSize = [attributes[NSFileSize] unsignedLongLongValue];
 }
 
+// Called right after one of our own in-place saves to _path (comment add/edit/
+// delete). Re-records the on-disk mtime/size into the active tab's cache so the
+// auto-reload watcher sees disk == cache and does not treat our write as an
+// external change. Save-as, rotate, and OCR already refresh the cache via their
+// own loadSelectedTab / saveActiveDocumentToPath paths.
+- (void)refreshActiveTabCachedFileAttributesAfterSelfSave {
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (!tab || !_path.length) return;
+    if (![tab.path.stringByStandardizingPath isEqualToString:_path.stringByStandardizingPath]) return;
+    NSDictionary* attributes = [self fileAttributesForPath:_path];
+    if (attributes) [self recordFileAttributes:attributes forTab:tab];
+}
+
 - (BOOL)fileAttributes:(NSDictionary*)lhs matchFileAttributes:(NSDictionary*)rhs {
     if (!lhs || !rhs) return NO;
     NSDate* lhsModificationDate = lhs[NSFileModificationDate];
@@ -5759,6 +5783,153 @@ static BOOL spdf_page_list_cache_disabled(void) {
     unsigned long long fileSize = [attributes[NSFileSize] unsignedLongLongValue];
     return tab.cachedModificationDate && [tab.cachedModificationDate isEqualToDate:modificationDate] &&
            tab.cachedFileSize == fileSize;
+}
+
+#pragma mark - Auto-reload on disk change
+
+// Lazily install / re-point the watcher onto the active tab's file. Called from
+// the tab-activation paths (loadSelectedTab tails) and on tab switch. Nothing
+// is created until a document is actually active, so launch's critical path
+// never installs a watcher or stats inactive tabs.
+- (void)repointActiveFileWatcher {
+    SPDFDocumentTab* tab = [self selectedTab];
+    NSString* path = tab.path;
+    // Only watch a live, on-disk document. A missing/unavailable tab or a tab
+    // with no open document gets no watcher (existing missing-file UI owns it).
+    if (!_doc || !path.length || tab.missingFile) {
+        [self teardownActiveFileWatcher];
+        return;
+    }
+    if (!_activeFileWatcher) {
+        _activeFileWatcher = [[SPDFMacFileWatcher alloc] init];
+        __weak ShenzhenMacDelegate* weakSelf = self;
+        _activeFileWatcher.changeHandler = ^(NSString* changedPath) {
+          [weakSelf activeFileWatcherDidReportChangeForPath:changedPath];
+        };
+    }
+    [_activeFileWatcher watchPath:path];
+}
+
+- (void)teardownActiveFileWatcher {
+    [_activeFileWatcher stop];
+}
+
+// Watcher callback (main thread, debounced). Authoritative check: only reload
+// when the on-disk mtime/size actually differ from the active tab's cached
+// values, so our own writes (which update the cache) never self-trigger.
+- (void)activeFileWatcherDidReportChangeForPath:(NSString*)changedPath {
+    if (_reloadInProgress) return;
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (!tab || !tab.path.length) return;
+    // Ensure the event still refers to the currently active tab (a tab switch
+    // between the event and the debounce fire re-points the watcher, but guard
+    // anyway).
+    if (![tab.path.stringByStandardizingPath isEqualToString:changedPath.stringByStandardizingPath]) return;
+    if (tab.missingFile) return;
+
+    NSDictionary* attributes = [self fileAttributesForPath:tab.path];
+    if (!attributes) {
+        // File temporarily absent (atomic replace in flight) or genuinely gone.
+        // Retry briefly before surfacing the missing-file UI.
+        [self handleActiveTabFileTemporarilyMissing:tab path:[tab.path copy] attempt:0];
+        return;
+    }
+
+    // Cache match => no real change (covers our own saves, which refresh the
+    // cache). Re-point the watcher in case an atomic replace swapped the inode.
+    if ([self fileAttributes:attributes
+          matchFileAttributes:@{
+              NSFileModificationDate : tab.cachedModificationDate ?: [NSDate distantPast],
+              NSFileSize : @(tab.cachedFileSize)
+          }]) {
+        [_activeFileWatcher watchPath:tab.path];
+        return;
+    }
+
+    [self reloadSelectedTabFromDiskChange];
+}
+
+- (void)handleActiveTabFileTemporarilyMissing:(SPDFDocumentTab*)tab path:(NSString*)path attempt:(NSInteger)attempt {
+    static const NSInteger kMaxMissingRetries = 5;  // ~5 * 0.25s = ~1.25s grace
+    if (![tab.path.stringByStandardizingPath isEqualToString:path.stringByStandardizingPath]) return;
+    NSDictionary* attributes = [self fileAttributesForPath:path];
+    if (attributes) {
+        // Reappeared (atomic replace landed). Re-point and reload if changed.
+        [_activeFileWatcher watchPath:path];
+        if (![self fileAttributes:attributes
+                matchFileAttributes:@{
+                    NSFileModificationDate : tab.cachedModificationDate ?: [NSDate distantPast],
+                    NSFileSize : @(tab.cachedFileSize)
+                }]) {
+            [self reloadSelectedTabFromDiskChange];
+        }
+        return;
+    }
+    if (attempt >= kMaxMissingRetries) {
+        // Stayed gone: fall through to the existing missing-file presentation by
+        // discarding the cache and re-running the load, which detects the
+        // absence and shows the standard "File moved or deleted" UI.
+        [self reloadSelectedTabFromDiskChange];
+        return;
+    }
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [weakSelf handleActiveTabFileTemporarilyMissing:tab path:path attempt:attempt + 1];
+    });
+}
+
+// Reload the active document in place, preserving the user's view (page, zoom,
+// fit mode, scroll origin, search). Reuses rememberActiveTabState (capture) +
+// loadSelectedTab (reopen + restore). loadSelectedTab clamps the page index to
+// the new page count and re-records the on-disk attributes, so the refreshed
+// cache will match disk and not immediately re-trigger.
+- (void)reloadSelectedTabFromDiskChange {
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (!tab || !tab.path.length) return;
+    if (_reloadInProgress) return;
+    _reloadInProgress = YES;
+
+    // Capture current view state into the tab so loadSelectedTab restores it.
+    [self rememberActiveTabState];
+    // Force a real reopen: drop the cached document/runtime so loadSelectedTab
+    // takes the open-from-disk branch instead of the cache-hit branch.
+    [self discardCachedRuntimeForTab:tab];
+    [self loadSelectedTab];
+    _statusLabel.stringValue = @"Reloaded after the file changed on disk.";
+    _reloadInProgress = NO;
+}
+
+// All non-active tabs are not watched continuously. When the window regains key
+// focus, check each tab once against its cached mtime/size and reload/refresh
+// any that changed. Cheap: a single stat per tab, only the active tab reopens
+// here (inactive tabs simply drop their stale cache so the next switch reopens).
+- (void)checkAllTabsForExternalChangesOnFocus {
+    if (_reloadInProgress) return;
+    if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return;
+    SPDFDocumentTab* activeTab = [self selectedTab];
+
+    for (SPDFDocumentTab* tab in _tabs) {
+        if (!tab.path.length || tab.missingFile) continue;
+        // Only meaningful for tabs we have a cached snapshot for; a tab never
+        // opened has no cache to compare and will stat fresh on first switch.
+        if (!tab.cachedModificationDate && tab.cachedFileSize == 0) continue;
+        NSDictionary* attributes = [self fileAttributesForPath:tab.path];
+        if (!attributes) continue;  // transient; active tab covered by its watcher
+        BOOL matches = [self fileAttributes:attributes
+                       matchFileAttributes:@{
+                           NSFileModificationDate : tab.cachedModificationDate ?: [NSDate distantPast],
+                           NSFileSize : @(tab.cachedFileSize)
+                       }];
+        if (matches) continue;
+
+        if (tab == activeTab) {
+            [self reloadSelectedTabFromDiskChange];
+        } else {
+            // Drop the stale cached document so the next activation reopens from
+            // disk and restores saved state via the normal loadSelectedTab path.
+            [self discardCachedRuntimeForTab:tab];
+        }
+    }
 }
 
 - (BOOL)ensureCachedRenderedPagesForTab:(SPDFDocumentTab*)tab preferredPage:(NSInteger)preferredPage {
@@ -5924,6 +6095,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self updateTabStrip];
     [self updateControls];
     [self clearToolbarFieldFocusForTabSwitch];
+    // No live document to watch; release any active watcher so we don't fire on
+    // a stale path. A later reappearance is handled by the focus-time sweep.
+    [self teardownActiveFileWatcher];
     [self savePersistentState];
     if (showOpenError) {
         [self showError:@"Could not open document"
@@ -6947,6 +7121,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                     restoreSearch:_searchField.stringValue.length > 0
                               preferredRenderPage:_pageIndex];
     [self clearToolbarFieldFocusForTabSwitch];
+    [self repointActiveFileWatcher];
     [self savePersistentState];
 }
 
@@ -7228,6 +7403,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                     restoreSearch:_searchField.stringValue.length > 0
                               preferredRenderPage:_pageIndex];
     [self clearToolbarFieldFocusForTabSwitch];
+    [self repointActiveFileWatcher];
     [self savePersistentState];
 }
 
@@ -7376,6 +7552,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         _selectedTabIndex = -1;
         [self cancelInactiveTabPreloads];
         [self clearActiveMetadata];
+        [self teardownActiveFileWatcher];
         [self closeActiveDocumentIfUnowned];
         _path = nil;
         _pageIndex = 0;
@@ -9670,6 +9847,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self showError:@"Could not add comment" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
         return;
     }
+    // Refresh cached mtime/size so the active-file watcher treats this as our
+    // own write and does not self-trigger a reload.
+    [self refreshActiveTabCachedFileAttributesAfterSelfSave];
 
     _statusLabel.stringValue = @"Comment added.";
     [self loadCommentsForCurrentDocumentAsync];
@@ -9770,6 +9950,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                  detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
         return;
     }
+    [self refreshActiveTabCachedFileAttributesAfterSelfSave];
 
     [self savePersistentState];
     _statusLabel.stringValue = @"Comment updated.";
@@ -9815,6 +9996,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                  detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
         return;
     }
+    [self refreshActiveTabCachedFileAttributesAfterSelfSave];
 
     _statusLabel.stringValue = @"Comment deleted.";
     [self loadCommentsForCurrentDocumentAsync];

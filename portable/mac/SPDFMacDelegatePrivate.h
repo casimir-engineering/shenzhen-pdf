@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
 #import "SPDFMacDocumentView.h"
+#import "SPDFMacFileWatcher.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacModels.h"
 #import "SPDFMacPrintView.h"
@@ -272,6 +273,12 @@
     NSInteger _pendingFindPreferredMatchIndex;
     SPDFRenderedPage* _launchPrerenderedFirstPage;
     BOOL _suppressToolbarOverflowUpdates;
+    // Lazily created watcher for the active (frontmost) tab's file; nil until
+    // the first document becomes active. Re-pointed on every tab activation,
+    // torn down on close/terminate. See "Auto-reload on disk change" section.
+    SPDFMacFileWatcher* _activeFileWatcher;
+    // Guards against a reload triggered by our own in-flight reopen.
+    BOOL _reloadInProgress;
 }
 @property(nonatomic, copy) NSString* initialPath;
 @property(nonatomic, copy) NSString* restoreWindowID;
@@ -362,6 +369,10 @@
 - (void)updateFindControls;
 - (void)updateMinimap;
 - (void)showEmptyDocumentViewWithMessage:(NSString*)message;
+- (void)repointActiveFileWatcher;
+- (void)teardownActiveFileWatcher;
+- (void)reloadSelectedTabFromDiskChange;
+- (void)checkAllTabsForExternalChangesOnFocus;
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop;
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex
                              alignTop:(BOOL)alignTop
