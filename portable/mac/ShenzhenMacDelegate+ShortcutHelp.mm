@@ -18,7 +18,7 @@
         @{
             @"category" : @"Favorites",
             @"items" : @[
-                @{@"title" : @"Favorites and open-document command palette", @"keys" : @[ @"Cmd", @"K" ]},
+                @{@"title" : @"Search all open documents and favorites (command palette)", @"keys" : @[ @"Cmd", @"K" ]},
                 @{@"title" : @"Favorite current page", @"keys" : @[ @"Cmd", @"B" ]},
                 @{@"title" : @"Favorite current document", @"keys" : @[ @"Cmd", @"Shift", @"B" ]}
             ]
