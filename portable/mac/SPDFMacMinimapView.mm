@@ -5,6 +5,13 @@
 
 static const CGFloat kPageMargin = 44.0;
 static const CGFloat kPageGap = 26.0;
+// Switch from 1:1 minimap drag to accelerated "long document" drag based on the
+// document's total height in PDF points, not page count: a few very large pages
+// scroll just as far as many normal pages. ~16000pt is just above 20 US-Letter
+// pages (20 * 792 = 15840), so ordinary documents keep their prior threshold.
+static const CGFloat kLongDocumentDragHeightThreshold = 16000.0;
+static const CGFloat kLongDocumentDragFineSpeed = 180.0;
+static const CGFloat kLongDocumentDragFullSpeed = 300.0;
 static const CGFloat kLiveContentCacheMaxPixels = 12000000.0;
 static const CGFloat kLiveContentCacheMaxHeight = 48000.0;
 
@@ -12,21 +19,21 @@ static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) 
     return MAX(minValue, MIN(maxValue, value));
 }
 
+static CGFloat spdf_smoothstep_cg(CGFloat value) {
+    value = spdf_clamp_cg(value, 0.0, 1.0);
+    return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
+}
+
 @implementation SPDFMinimapView {
     BOOL _draggingVisibleRect;
     BOOL _pressPending;
     BOOL _dragMoved;
     NSPoint _pressPoint;
-    // Single-map viewport drag state (see mouseDown:/sendViewportDragForEvent:).
-    CGFloat _grabOffsetMiniY;       // mini content-Y offset of grab from viewport top
-    CGFloat _dragDocumentTopY;      // current step-clamped document-space viewport top
-    CGFloat _dragLastCursorViewY;   // previous cursor view-Y, for per-event cursor travel
-    // Horizontal pan, decided once at mouseDown from the page under the press point.
-    BOOL _dragHorizPannable;
-    CGFloat _dragMiniRectMinX;
-    CGFloat _dragMiniRectWidth;
-    CGFloat _dragDocRectMinX;
-    CGFloat _dragDocRectWidth;
+    NSPoint _dragOffsetFromVisibleCenter;
+    CGFloat _dragOffsetFromVisibleTop;
+    CGFloat _dragThumbTop;
+    CGFloat _dragLastMouseY;
+    NSTimeInterval _dragLastTimestamp;
     BOOL _miniLayoutCacheValid;
     NSArray<SPDFRenderedPage*>* _miniLayoutPages;
     NSArray<NSValue*>* _miniLayoutPageRects;
@@ -91,14 +98,6 @@ static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) 
 }
 
 static const CGFloat kMinimapMaxWidthRatio = 2.5;
-// Viewport-drag speed ceiling: the document may not advance by more than this
-// multiple of the median page's drag slope (document points per minimap pixel)
-// per pixel of CURSOR travel. On normal/uniform pages the local slope is at or
-// below the median, so this never engages and the indicator sits exactly under
-// the cursor (pure absolute map). Inside a width-capped huge page the slope is
-// many times larger, so the step-clamp bounds the speed to this multiple,
-// smoothly and with no history state.
-static const CGFloat kMinimapDragMaxDocPtsPerMiniPxRatio = 2.5;
 
 - (CGFloat)widestPage {
     CGFloat widest = 0;
@@ -225,149 +224,6 @@ static const CGFloat kMinimapDragMaxDocPtsPerMiniPxRatio = 2.5;
     return NSMakeRect(MAX(kPageMargin / 2.0, x), y, width, height);
 }
 
-// Piecewise-linear correspondence between unscrolled minimap content-Y and
-// document content-Y, built from the per-page rects that already exist in both
-// spaces (_miniLayoutPageRects in minimap space, documentPageRects in document
-// space). Because the minimap caps each page's WIDTH (and derives HEIGHT from
-// the clamped width), the minimap is no longer a uniform scale of the document:
-// a single huge page occupies a small minimap slot but a huge document region.
-// These helpers locate the page whose rect contains the input Y, take the
-// fraction within that page, and apply it to the corresponding rect in the other
-// space; gaps between pages map linearly to the document inter-page gap. This is
-// the single source of truth that drives drag, the viewport indicator and
-// click-to-jump so they stay consistent through every page, including the huge
-// one. The inputs reuse the mini-layout cache (rebuilt/invalidated with it), so
-// no separate cache or invalidation is required.
-
-// Map an unscrolled minimap content-Y to a document content-Y. Mirrors the y
-// handling of documentPointForUnscrolledMiniPoint: (page interior + gap), but
-// returns only the Y so it can drive the viewport indicator and drag.
-- (CGFloat)documentYForUnscrolledMiniY:(CGFloat)miniY scale:(CGFloat)scale gap:(CGFloat)gap {
-    [self ensureMiniLayoutCacheForScale:scale gap:gap];
-    if (self.pages.count == 0) return 0.0;
-
-    NSRect firstMini = [self miniRectForPage:self.pages.firstObject scale:scale gap:gap];
-    NSRect firstDoc = [self documentRectForPage:self.pages.firstObject];
-    if (!NSIsEmptyRect(firstMini) && !NSIsEmptyRect(firstDoc) && miniY <= NSMinY(firstMini))
-        return NSMinY(firstDoc);
-
-    SPDFRenderedPage* lastUsablePage = nil;
-    NSRect lastUsableMini = NSZeroRect;
-    NSRect lastUsableDoc = NSZeroRect;
-    for (SPDFRenderedPage* page in self.pages) {
-        NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
-        NSRect documentRect = [self documentRectForPage:page];
-        if (NSIsEmptyRect(miniRect) || NSIsEmptyRect(documentRect)) continue;
-
-        if (miniY >= NSMinY(miniRect) && miniY <= NSMaxY(miniRect)) {
-            CGFloat fraction =
-                spdf_clamp_cg((miniY - NSMinY(miniRect)) / MAX(1.0, NSHeight(miniRect)), 0.0, 1.0);
-            return NSMinY(documentRect) + fraction * NSHeight(documentRect);
-        }
-
-        CGFloat gapStart = NSMaxY(miniRect);
-        CGFloat gapEnd = gapStart + gap;
-        if (miniY > gapStart && miniY < gapEnd) {
-            CGFloat gapFraction = spdf_clamp_cg((miniY - gapStart) / MAX(1.0, gap), 0.0, 1.0);
-            return NSMaxY(documentRect) + gapFraction * kPageGap;
-        }
-
-        lastUsablePage = page;
-        lastUsableMini = miniRect;
-        lastUsableDoc = documentRect;
-    }
-
-    if (lastUsablePage) return NSMaxY(lastUsableDoc);
-    return spdf_clamp_cg(miniY, 0.0, self.documentHeight);
-}
-
-// Inverse of documentYForUnscrolledMiniY:: map a document content-Y to an
-// unscrolled minimap content-Y. Used to position the viewport indicator (and to
-// seed the drag) so the blue rect sits where the document actually is.
-- (CGFloat)unscrolledMiniYForDocumentY:(CGFloat)documentY scale:(CGFloat)scale gap:(CGFloat)gap {
-    [self ensureMiniLayoutCacheForScale:scale gap:gap];
-    if (self.pages.count == 0) return 0.0;
-
-    NSRect firstMini = [self miniRectForPage:self.pages.firstObject scale:scale gap:gap];
-    NSRect firstDoc = [self documentRectForPage:self.pages.firstObject];
-    if (!NSIsEmptyRect(firstMini) && !NSIsEmptyRect(firstDoc) && documentY <= NSMinY(firstDoc))
-        return NSMinY(firstMini);
-
-    NSRect lastUsableMini = NSZeroRect;
-    BOOL haveLastUsable = NO;
-    for (SPDFRenderedPage* page in self.pages) {
-        NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
-        NSRect documentRect = [self documentRectForPage:page];
-        if (NSIsEmptyRect(miniRect) || NSIsEmptyRect(documentRect)) continue;
-
-        if (documentY >= NSMinY(documentRect) && documentY <= NSMaxY(documentRect)) {
-            CGFloat fraction =
-                spdf_clamp_cg((documentY - NSMinY(documentRect)) / MAX(1.0, NSHeight(documentRect)), 0.0, 1.0);
-            return NSMinY(miniRect) + fraction * NSHeight(miniRect);
-        }
-
-        CGFloat gapStart = NSMaxY(documentRect);
-        CGFloat gapEnd = gapStart + kPageGap;
-        if (documentY > gapStart && documentY < gapEnd) {
-            CGFloat gapFraction = spdf_clamp_cg((documentY - gapStart) / MAX(1.0, kPageGap), 0.0, 1.0);
-            return NSMaxY(miniRect) + gapFraction * gap;
-        }
-
-        lastUsableMini = miniRect;
-        haveLastUsable = YES;
-    }
-
-    if (haveLastUsable) return NSMaxY(lastUsableMini);
-    return spdf_clamp_cg(documentY, 0.0, NSHeight(self.bounds));
-}
-
-// Reference drag gain (document points per minimap pixel) for a normal,
-// median-width page. A non-clamped page's gain reduces to (pageWidth *
-// documentScale) / miniSlotWidth (the height term cancels), so the median page
-// width gives the representative gain that the huge-page cap is measured against.
-- (CGFloat)medianPageDragSlopeForScale:(CGFloat)scale gap:(CGFloat)gap {
-    (void)gap;
-    CGFloat base = [self baseWidth];
-    if (base <= 0.0) return 1.0;
-    CGFloat usable = MAX(1.0, NSWidth(self.bounds) - 18.0);
-    CGFloat miniWidth = MAX(1.0, MIN(base * scale, usable));
-    return MAX(0.01, (base * MAX(0.01, self.documentScale)) / miniWidth);
-}
-
-// Minimap slot rect and document rect of the page at a given document-Y (the
-// page currently under the viewport top). Used to map horizontal drag of the
-// indicator into a document X within that page.
-- (BOOL)pageRectsForDocumentY:(CGFloat)documentY
-                        scale:(CGFloat)scale
-                          gap:(CGFloat)gap
-                     miniRect:(NSRect*)miniOut
-                 documentRect:(NSRect*)docOut {
-    SPDFRenderedPage* containingPage = nil;
-    SPDFRenderedPage* nearestPage = nil;
-    CGFloat nearestDistance = CGFLOAT_MAX;
-    for (SPDFRenderedPage* page in self.pages) {
-        NSRect documentRect = [self documentRectForPage:page];
-        if (NSIsEmptyRect(documentRect)) continue;
-        if (documentY >= NSMinY(documentRect) && documentY <= NSMaxY(documentRect)) {
-            containingPage = page;
-            break;
-        }
-        CGFloat distance = MIN(fabs(documentY - NSMinY(documentRect)), fabs(documentY - NSMaxY(documentRect)));
-        if (distance < nearestDistance) {
-            nearestDistance = distance;
-            nearestPage = page;
-        }
-    }
-    SPDFRenderedPage* page = containingPage ?: nearestPage;
-    if (!page) return NO;
-    NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
-    NSRect documentRect = [self documentRectForPage:page];
-    if (NSIsEmptyRect(miniRect) || NSIsEmptyRect(documentRect)) return NO;
-    if (miniOut) *miniOut = miniRect;
-    if (docOut) *docOut = documentRect;
-    return YES;
-}
-
 - (NSRect)miniRectForDocumentIntersection:(NSRect)intersection
                              documentRect:(NSRect)documentRect
                                  miniRect:(NSRect)miniRect {
@@ -380,6 +236,22 @@ static const CGFloat kMinimapDragMaxDocPtsPerMiniPxRatio = 2.5;
 
     return NSMakeRect(NSMinX(miniRect) + x0 * NSWidth(miniRect), NSMinY(miniRect) + y0 * NSHeight(miniRect),
                       MAX(1.0, (x1 - x0) * NSWidth(miniRect)), MAX(1.0, (y1 - y0) * NSHeight(miniRect)));
+}
+
+- (CGFloat)totalDocumentPointHeight {
+    CGFloat total = 0.0;
+    for (SPDFRenderedPage* page in self.pages) total += MAX(1.0, page.pageHeight);
+    return total;
+}
+
+- (BOOL)shouldUseLongDocumentViewportDrag {
+    return [self totalDocumentPointHeight] > kLongDocumentDragHeightThreshold;
+}
+
+- (CGFloat)longDocumentViewportDragThumbHeightForContentHeight:(CGFloat)contentHeight track:(NSRect)track {
+    CGFloat heightFraction =
+        spdf_clamp_cg(NSHeight(self.documentVisibleRect) / MAX(1.0, self.documentHeight), 0.02, 1.0);
+    return MIN(MAX(10.0, heightFraction * MAX(1.0, contentHeight)), NSHeight(track));
 }
 
 - (NSRect)unscrolledVisibleRectForScale:(CGFloat)scale gap:(CGFloat)gap contentHeight:(CGFloat)contentHeight {
@@ -541,55 +413,52 @@ static const CGFloat kMinimapDragMaxDocPtsPerMiniPxRatio = 2.5;
     return NSIntersectionRect(visibleRect, NSInsetRect(self.bounds, 1.0, 1.0));
 }
 
-// THE single viewport-drag path for every document. One absolute vertical map
-// (documentYForUnscrolledMiniY:) drives both click and drag; the only per-event
-// state is the previous cursor-Y, used to bound the document's speed.
-//
-// VERTICAL. Each event recomputes the ABSOLUTE target viewport-top in document
-// space from the cursor, then step-clamps toward it so the document cannot
-// advance faster than a ceiling per pixel of cursor travel:
-//   target  = documentYForUnscrolledMiniY((cursorViewY - contentTop) - grabOffsetMiniY)
-//   maxStep = kMaxDocPtsPerMiniPx * |cursorViewY - lastCursorViewY|
-//   docTop += clamp(target - docTop, -maxStep, +maxStep)   then clamp to [0,maxTop]
-// where kMaxDocPtsPerMiniPx = ratio * medianPageDragSlope. On normal/uniform
-// pages the local slope is below the ceiling, so rawStep is never clamped and the
-// indicator sits exactly under the cursor (pure absolute map). Inside a
-// width-capped huge page the clamp engages, bounding speed to 2.5x normal,
-// smoothly and continuously across the page boundary (no step/jolt, no history).
-// Because target is recomputed absolutely each event, a fast flick that lags
-// inside the huge slot self-heals to the absolute target on the next slow pixel.
-//
-// HORIZONTAL. Decoupled and decided ONCE at mouseDown (cached _dragHoriz* state):
-// a pure function of cursor X. Non-pannable pages pass NAN so the reader leaves
-// origin.x untouched.
-- (void)sendViewportDragForEvent:(NSEvent*)event
-                           scale:(CGFloat)scale
-                             gap:(CGFloat)gap
-                      contentTop:(CGFloat)contentTop {
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
-    CGFloat maxDocumentTop = MAX(0.0, self.documentHeight - visibleHeight);
+- (NSTimeInterval)dragDeltaTimeForTimestamp:(NSTimeInterval)timestamp {
+    NSTimeInterval deltaT = timestamp - _dragLastTimestamp;
+    if (!isfinite(deltaT) || deltaT <= 0.0) deltaT = 1.0 / 60.0;
+    return spdf_clamp_cg(deltaT, 1.0 / 240.0, 1.0 / 15.0);
+}
 
-    CGFloat target =
-        [self documentYForUnscrolledMiniY:(point.y - contentTop) - _grabOffsetMiniY scale:scale gap:gap];
-    CGFloat kMaxDocPtsPerMiniPx =
-        kMinimapDragMaxDocPtsPerMiniPxRatio * [self medianPageDragSlopeForScale:scale gap:gap];
+- (CGFloat)longDocumentDragScaleForDeltaY:(CGFloat)deltaY timestamp:(NSTimeInterval)timestamp {
+    if (![self shouldUseLongDocumentViewportDrag]) return 1.0;
 
-    CGFloat deltaCursorPx = point.y - _dragLastCursorViewY;
-    CGFloat maxStep = kMaxDocPtsPerMiniPx * fabs(deltaCursorPx);
-    CGFloat rawStep = target - _dragDocumentTopY;
-    CGFloat documentTop = _dragDocumentTopY + spdf_clamp_cg(rawStep, -maxStep, maxStep);
-    documentTop = spdf_clamp_cg(documentTop, 0.0, maxDocumentTop);
-    _dragDocumentTopY = documentTop;
-    _dragLastCursorViewY = point.y;
+    NSTimeInterval deltaT = [self dragDeltaTimeForTimestamp:timestamp];
+    CGFloat speed = fabs(deltaY) / deltaT;
+    CGFloat acceleration = spdf_smoothstep_cg((speed - kLongDocumentDragFineSpeed) /
+                                              (kLongDocumentDragFullSpeed - kLongDocumentDragFineSpeed));
+    CGFloat pageScale = spdf_clamp_cg(20.0 / MAX(1.0, (CGFloat)self.pages.count), 0.30, 0.72);
+    return pageScale + acceleration * (1.0 - pageScale);
+}
 
-    CGFloat documentCenterX = (CGFloat)NAN;
-    if (_dragHorizPannable && _dragMiniRectWidth > 1.0) {
-        CGFloat xFraction = spdf_clamp_cg((point.x - _dragMiniRectMinX) / _dragMiniRectWidth, 0.0, 1.0);
-        documentCenterX = _dragDocRectMinX + xFraction * _dragDocRectWidth;
-    }
+- (BOOL)sendLongDocumentViewportDragForPoint:(NSPoint)point
+                                       event:(NSEvent*)event
+                                       scale:(CGFloat)scale
+                                         gap:(CGFloat)gap
+                               contentHeight:(CGFloat)contentHeight
+                                  contentTop:(CGFloat)contentTop {
+    if (!_draggingVisibleRect || ![self shouldUseLongDocumentViewportDrag]) return NO;
 
-    [self.reader minimapViewDidRequestViewportTopDocumentY:documentTop documentCenterX:documentCenterX];
+    NSRect track = NSInsetRect(self.bounds, 1.0, 1.0);
+    CGFloat thumbHeight = [self longDocumentViewportDragThumbHeightForContentHeight:contentHeight track:track];
+    CGFloat minTop = NSMinY(track);
+    CGFloat maxTop = MAX(minTop, NSMaxY(track) - thumbHeight);
+    CGFloat deltaY = point.y - _dragLastMouseY;
+    CGFloat dragScale = [self longDocumentDragScaleForDeltaY:deltaY timestamp:event.timestamp];
+    _dragThumbTop = spdf_clamp_cg(_dragThumbTop + deltaY * dragScale, minTop, maxTop);
+    _dragLastMouseY = point.y;
+    _dragLastTimestamp = event.timestamp;
+
+    CGFloat fraction = maxTop <= minTop ? 0.0 : (_dragThumbTop - minTop) / (maxTop - minTop);
+    NSPoint horizontalCenterPoint =
+        NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, _dragThumbTop + thumbHeight * 0.5);
+    NSPoint documentPoint = [self documentPointForMinimapCenterPoint:horizontalCenterPoint
+                                                               scale:scale
+                                                                 gap:gap
+                                                       contentHeight:contentHeight
+                                                          contentTop:contentTop];
+    if (!isfinite(documentPoint.x)) documentPoint.x = NSMidX(self.documentVisibleRect);
+    [self.reader minimapViewDidRequestViewportTopFraction:fraction documentCenterX:documentPoint.x];
+    return YES;
 }
 
 - (BOOL)documentPointForEvent:(NSEvent*)event documentPoint:(NSPoint*)documentPointOut {
@@ -840,6 +709,38 @@ static const CGFloat kMinimapDragMaxDocPtsPerMiniPxRatio = 2.5;
     return indexes;
 }
 
+- (void)sendScrollRequestForEvent:(NSEvent*)event {
+    CGFloat scale = 1.0;
+    CGFloat gap = 4.0;
+    CGFloat contentTop = 8.0;
+    CGFloat contentHeight = 0;
+    NSRect visibleRect = NSZeroRect;
+    if (![self layoutScale:&scale
+                       gap:&gap
+                contentTop:&contentTop
+             contentHeight:&contentHeight
+               visibleRect:&visibleRect])
+        return;
+
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    if ([self sendLongDocumentViewportDragForPoint:point
+                                             event:event
+                                             scale:scale
+                                               gap:gap
+                                     contentHeight:contentHeight
+                                        contentTop:contentTop])
+        return;
+    if (_draggingVisibleRect) {
+        point = NSMakePoint(point.x - _dragOffsetFromVisibleCenter.x, point.y - _dragOffsetFromVisibleCenter.y);
+    }
+    NSPoint documentPoint = [self documentPointForMinimapCenterPoint:point
+                                                               scale:scale
+                                                                 gap:gap
+                                                       contentHeight:contentHeight
+                                                          contentTop:contentTop];
+    [self.reader minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
+}
+
 - (void)sendClickRequestForEvent:(NSEvent*)event {
     CGFloat scale = 1.0;
     CGFloat gap = 4.0;
@@ -884,42 +785,20 @@ static const CGFloat kMinimapDragMaxDocPtsPerMiniPxRatio = 2.5;
     _dragMoved = NO;
     _pressPoint = point;
     _draggingVisibleRect = NSPointInRect(point, drawnVisibleRect);
-    (void)contentHeight;
-
-    // Single absolute map for click AND drag. Seed the document-space viewport top
-    // from the live viewport so the drag continues from where it actually is, and
-    // capture ONE grab offset (mini content-Y): pressing inside the indicator
-    // preserves the cursor-to-viewport-top distance; pressing off it jumps the
-    // viewport top under the cursor (offset 0) then drags from there.
-    CGFloat currentViewportTopDocY = MAX(0.0, NSMinY(self.documentVisibleRect));
-    _dragDocumentTopY = currentViewportTopDocY;
-    _dragLastCursorViewY = point.y;
-    if (_draggingVisibleRect) {
-        CGFloat indicatorMiniY = [self unscrolledMiniYForDocumentY:currentViewportTopDocY scale:scale gap:gap];
-        _grabOffsetMiniY = (point.y - contentTop) - indicatorMiniY;
-    } else {
-        _grabOffsetMiniY = 0.0;
+    _dragOffsetFromVisibleCenter =
+        _draggingVisibleRect ? NSMakePoint(point.x - NSMidX(drawnVisibleRect), point.y - NSMidY(drawnVisibleRect))
+                             : NSZeroPoint;
+    _dragOffsetFromVisibleTop = _draggingVisibleRect ? point.y - NSMinY(drawnVisibleRect) : 0.0;
+    _dragThumbTop = _draggingVisibleRect ? NSMinY(drawnVisibleRect) : 0.0;
+    if (_draggingVisibleRect && [self shouldUseLongDocumentViewportDrag]) {
+        NSRect track = NSInsetRect(self.bounds, 1.0, 1.0);
+        CGFloat thumbHeight = [self longDocumentViewportDragThumbHeightForContentHeight:contentHeight track:track];
+        CGFloat minTop = NSMinY(track);
+        CGFloat maxTop = MAX(minTop, NSMaxY(track) - thumbHeight);
+        _dragThumbTop = minTop + [self scrollFraction] * (maxTop - minTop);
     }
-
-    // Horizontal pan, decided ONCE from the page whose minimap slot contains the
-    // press point (NOT the moving viewport-top page). Cache its X geometry; pan
-    // only if that page is wider than the viewport.
-    CGFloat viewportWidth = NSWidth(self.documentVisibleRect);
-    _dragHorizPannable = NO;
-    _dragMiniRectMinX = 0.0;
-    _dragMiniRectWidth = 0.0;
-    _dragDocRectMinX = 0.0;
-    _dragDocRectWidth = 0.0;
-    CGFloat pressDocY = [self documentYForUnscrolledMiniY:point.y - contentTop scale:scale gap:gap];
-    NSRect pressMini = NSZeroRect;
-    NSRect pressDoc = NSZeroRect;
-    if ([self pageRectsForDocumentY:pressDocY scale:scale gap:gap miniRect:&pressMini documentRect:&pressDoc]) {
-        _dragMiniRectMinX = NSMinX(pressMini);
-        _dragMiniRectWidth = NSWidth(pressMini);
-        _dragDocRectMinX = NSMinX(pressDoc);
-        _dragDocRectWidth = NSWidth(pressDoc);
-        _dragHorizPannable = NSWidth(pressDoc) > viewportWidth + 0.5;
-    }
+    _dragLastMouseY = point.y;
+    _dragLastTimestamp = event.timestamp;
 }
 
 - (void)mouseDragged:(NSEvent*)event {
@@ -929,13 +808,7 @@ static const CGFloat kMinimapDragMaxDocPtsPerMiniPxRatio = 2.5;
         _dragMoved = YES;
         _pressPending = NO;
     }
-    CGFloat scale = 1.0;
-    CGFloat gap = 4.0;
-    CGFloat contentTop = 8.0;
-    CGFloat contentHeight = 0;
-    if (![self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL])
-        return;
-    [self sendViewportDragForEvent:event scale:scale gap:gap contentTop:contentTop];
+    [self sendScrollRequestForEvent:event];
 }
 
 - (void)scrollWheel:(NSEvent*)event {
@@ -957,21 +830,19 @@ static const CGFloat kMinimapDragMaxDocPtsPerMiniPxRatio = 2.5;
 }
 
 - (void)mouseUp:(NSEvent*)event {
-    BOOL didDragViewport = _dragMoved;
+    BOOL didFinishLongDocumentViewportDrag =
+        _draggingVisibleRect && _dragMoved && [self shouldUseLongDocumentViewportDrag];
     if (_pressPending && !_dragMoved) [self sendClickRequestForEvent:event];
     _draggingVisibleRect = NO;
     _pressPending = NO;
     _dragMoved = NO;
     _pressPoint = NSZeroPoint;
-    _grabOffsetMiniY = 0.0;
-    _dragDocumentTopY = 0.0;
-    _dragLastCursorViewY = 0.0;
-    _dragHorizPannable = NO;
-    _dragMiniRectMinX = 0.0;
-    _dragMiniRectWidth = 0.0;
-    _dragDocRectMinX = 0.0;
-    _dragDocRectWidth = 0.0;
-    if (didDragViewport) [self.reader minimapViewDidFinishViewportDrag];
+    _dragOffsetFromVisibleCenter = NSZeroPoint;
+    _dragOffsetFromVisibleTop = 0.0;
+    _dragThumbTop = 0.0;
+    _dragLastMouseY = 0.0;
+    _dragLastTimestamp = 0.0;
+    if (didFinishLongDocumentViewportDrag) [self.reader minimapViewDidFinishViewportDrag];
 }
 
 @end
