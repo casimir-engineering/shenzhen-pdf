@@ -315,11 +315,14 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 
     if (self.pages.count == 0) return NSMakeSize(MAX(clipSize.width, 600), MAX(clipSize.height, 500));
 
-    // Presentation mode shows one page at a time filling the viewport; the
-    // continuous (default) mode stacks every page vertically.
-    if (self.presentationMode) return NSMakeSize(clipSize.width, clipSize.height);
-
+    // Presentation mode shows one page at a time: pages are laid out
+    // continuously (gap/margin 0) and the reader centers the current page in
+    // the viewport. The document view must therefore span the full continuous
+    // height so the scroll range exists — otherwise page changes cannot move
+    // (the view would be only one viewport tall) and just re-render in place.
     height = [self continuousDocumentHeight];
+    if (self.presentationMode) return NSMakeSize(clipSize.width, MAX(height, clipSize.height));
+
     return NSMakeSize(width, MAX(height, clipSize.height));
 }
 
