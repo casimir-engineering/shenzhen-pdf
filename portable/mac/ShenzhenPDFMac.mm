@@ -2024,13 +2024,13 @@ static void spdf_discard_launch_prerender(void) {
     NSMenu* zoomMenu = [[NSMenu alloc] initWithTitle:@"Zoom"];
     NSMenuItem* zoomIn = [zoomMenu addItemWithTitle:@"Zoom In" action:@selector(zoomIn:) keyEquivalent:@"+"];
     NSMenuItem* zoomOut = [zoomMenu addItemWithTitle:@"Zoom Out" action:@selector(zoomOut:) keyEquivalent:@"-"];
-    NSMenuItem* actualSize = [zoomMenu addItemWithTitle:@"100%" action:@selector(actualSize:) keyEquivalent:@"0"];
+    NSMenuItem* actualSize = [zoomMenu addItemWithTitle:@"100%" action:@selector(actualSize:) keyEquivalent:@"4"];
     [zoomMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* zoomFitPage = [zoomMenu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@"9"];
-    NSMenuItem* zoomFitWidth = [zoomMenu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@"1"];
+    NSMenuItem* zoomFitPage = [zoomMenu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@"1"];
+    NSMenuItem* zoomFitWidth = [zoomMenu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@"2"];
     NSMenuItem* zoomFitHeight = [zoomMenu addItemWithTitle:@"Fit Height"
                                                     action:@selector(fitHeight:)
-                                             keyEquivalent:@"2"];
+                                             keyEquivalent:@"3"];
     for (NSMenuItem* item in @[ zoomIn, zoomOut, actualSize, zoomFitPage, zoomFitWidth, zoomFitHeight ])
         item.target = self;
     zoomItem.submenu = zoomMenu;

@@ -32,10 +32,10 @@
                 @{@"title" : @"Previous or next page (keeps zoom and position)", @"keys" : @[ @"Left", @"Right" ]},
                 @{@"title" : @"Scroll up or down", @"keys" : @[ @"Up", @"Down" ]},
                 @{@"title" : @"Zoom in or out", @"keys" : @[ @"Cmd", @"+ / -" ]},
-                @{@"title" : @"Actual size", @"keys" : @[ @"Cmd", @"0" ]},
-                @{@"title" : @"Fit width", @"keys" : @[ @"Cmd", @"1" ]},
-                @{@"title" : @"Fit height", @"keys" : @[ @"Cmd", @"2" ]},
-                @{@"title" : @"Fit page", @"keys" : @[ @"Cmd", @"9" ]}
+                @{@"title" : @"Fit page", @"keys" : @[ @"Cmd", @"1" ]},
+                @{@"title" : @"Fit width", @"keys" : @[ @"Cmd", @"2" ]},
+                @{@"title" : @"Fit height", @"keys" : @[ @"Cmd", @"3" ]},
+                @{@"title" : @"Actual size", @"keys" : @[ @"Cmd", @"4" ]}
             ]
         },
         @{
