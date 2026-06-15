@@ -5,6 +5,16 @@
 void spdf_activate_window_for_view(NSView* view);
 void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName);
 
+// Lazily install / tear down the listen-only CGEventTap that captures
+// out-of-focus trackpad pinch (magnify) gestures. The install call is cheap and
+// idempotent; it is invoked the first time the app resigns active (never at
+// launch) so there is no launch-time cost and no launch-time permission prompt.
+// If Input Monitoring permission is absent the tap simply does not arm and the
+// feature stays inactive (logged under SPDF_ZOOM_PROFILE). Teardown is called on
+// app termination so the CFMachPort / run-loop source are released.
+void spdf_install_inactive_magnify_tap(void);
+void spdf_teardown_inactive_magnify_tap(void);
+
 @protocol SPDFMacUIReader <NSObject>
 - (BOOL)handlePresentationEvent:(NSEvent*)event;
 - (BOOL)handleWindowArrangementShortcutEvent:(NSEvent*)event;
