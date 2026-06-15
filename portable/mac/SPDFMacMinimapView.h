@@ -10,7 +10,6 @@
 @property(nonatomic) CGFloat documentWidth;
 @property(nonatomic) CGFloat documentHeight;
 @property(nonatomic) CGFloat documentScale;
-@property(nonatomic) SPDFViewMode viewMode;
 @property(nonatomic) NSInteger currentPageIndex;
 @property(nonatomic) BOOL liveViewportOnly;
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;

@@ -50,7 +50,6 @@
     NSButton* _zoomOutButton;
     NSButton* _zoomInButton;
     NSPopUpButton* _fitModePopup;
-    NSButton* _continuousButton;
     NSButton* _sidebarToggleButton;
     NSButton* _minimapToggleButton;
     NSSearchField* _searchField;
@@ -186,7 +185,6 @@
     CGFloat _zoom;
     CGFloat _rememberedCustomZoom;
     SPDFFitMode _fitMode;
-    SPDFViewMode _viewMode;
     NSInteger _selectedTabIndex;
     NSUInteger _renderGeneration;
     NSTimer* _zoomFinishTimer;
@@ -238,7 +236,6 @@
     NSEventType _lastPresentationEventType;
     NSInteger _lastPresentationEventKeyCode;
     NSInteger _lastPresentationEventButtonNumber;
-    SPDFViewMode _presentationPreviousViewMode;
     SPDFFitMode _presentationPreviousFitMode;
     BOOL _presentationPreviousSidebarPreferredVisible;
     BOOL _presentationPreviousMinimapPreferredVisible;
@@ -386,8 +383,7 @@
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify;
 - (void)scrollDocumentClipViewToDocumentOrigin:(NSPoint)origin notify:(BOOL)notify;
 - (NSPoint)normalizedDocumentScrollOrigin:(NSPoint)origin forPageIndex:(NSInteger)pageIndex;
-- (CGFloat)singlePageDocumentScrollOriginYForPageIndex:(NSInteger)pageIndex;
-- (BOOL)normalizeSinglePageScrollPositionFromUserScroll;
+- (CGFloat)presentationCenteredScrollOriginYForPageIndex:(NSInteger)pageIndex;
 - (void)stabilizeDocumentLayoutWithRestoreOrigin:(NSValue*)restoreOrigin
                                         alignTop:(BOOL)alignTop
                                       generation:(NSUInteger)generation

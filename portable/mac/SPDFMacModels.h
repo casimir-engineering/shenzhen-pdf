@@ -10,8 +10,6 @@ typedef NS_ENUM(NSInteger, SPDFFitMode) {
     SPDFFitModePage
 };
 
-typedef NS_ENUM(NSInteger, SPDFViewMode) { SPDFViewModeSingle = 0, SPDFViewModeContinuous };
-
 typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     SPDFSidebarModeChapters = 0,
     SPDFSidebarModeComments = 1,
@@ -59,7 +57,6 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) CGFloat zoom;
 @property(nonatomic) CGFloat customZoom;
 @property(nonatomic) SPDFFitMode fitMode;
-@property(nonatomic) SPDFViewMode viewMode;
 @property(nonatomic) NSPoint scrollOrigin;
 @property(nonatomic) BOOL hasScrollOrigin;
 @property(nonatomic, copy) NSString* searchText;
