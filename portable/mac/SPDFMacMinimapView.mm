@@ -570,31 +570,28 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
                                   contentTop:(CGFloat)contentTop {
     if (!_draggingVisibleRect || ![self shouldUseLongDocumentViewportDrag]) return NO;
     (void)contentHeight;
-    (void)contentTop;
 
     CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
     CGFloat maxDocumentTop = MAX(0.0, self.documentHeight - visibleHeight);
 
-    // Advance the viewport-top document-Y by the finger delta mapped through the
-    // PER-PAGE piecewise correspondence: deltaY(minimap px) * local document-per-
-    // minimap slope * velocity acceleration. Inside the huge page the slope is
-    // large, so a small drag scrolls a proportionally large document distance and
-    // every part of the page stays reachable; across page boundaries the position
-    // is continuous because we accumulate in document space and clamp at the ends.
-    CGFloat deltaY = point.y - _dragLastMouseY;
-    CGFloat slope = [self documentPerMiniSlopeAtDocumentY:_dragDocumentTopY + visibleHeight * 0.5
-                                                    scale:scale
-                                                      gap:gap];
-    CGFloat acceleration = [self longDocumentDragAccelerationForDeltaY:deltaY timestamp:event.timestamp];
-    _dragDocumentTopY = spdf_clamp_cg(_dragDocumentTopY + deltaY * slope * acceleration, 0.0, maxDocumentTop);
+    // Absolute scrollbar-thumb mapping: the grabbed offset within the indicator
+    // is held constant, so the indicator's TOP follows the cursor. Convert that
+    // top from view space -> unscrolled minimap content space -> document-Y via
+    // the per-page piecewise map. Inside the huge page (small minimap slot, large
+    // document height) dragging across the slot still reaches every part of the
+    // page; across pages it is continuous and monotonic. This tracks the cursor
+    // directly rather than accumulating a fragile per-event delta.
+    CGFloat indicatorTopViewY = point.y - _dragOffsetFromVisibleTop;
+    CGFloat unscrolledTopMiniY = indicatorTopViewY - contentTop;
+    CGFloat documentTop = [self documentYForUnscrolledMiniY:unscrolledTopMiniY scale:scale gap:gap];
+    documentTop = spdf_clamp_cg(documentTop, 0.0, maxDocumentTop);
     _dragLastMouseY = point.y;
     _dragLastTimestamp = event.timestamp;
 
-    // Vertical drag must NOT touch the horizontal position. documentVisibleRect
-    // here is the minimap's vertical-only mapping (its x is ~0), so reporting its
-    // midX would snap the document's horizontal scroll to the left every step.
-    // Pass a non-finite sentinel so the reader leaves the current x untouched.
-    [self.reader minimapViewDidRequestViewportTopDocumentY:_dragDocumentTopY documentCenterX:(CGFloat)NAN];
+    // Vertical drag must NOT touch the horizontal position (the minimap's
+    // documentVisibleRect.x is ~0); pass a non-finite sentinel so the reader
+    // leaves the current horizontal scroll untouched.
+    [self.reader minimapViewDidRequestViewportTopDocumentY:documentTop documentCenterX:(CGFloat)NAN];
     return YES;
 }
 
