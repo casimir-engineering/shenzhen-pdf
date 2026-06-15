@@ -22,6 +22,7 @@
 #include <string.h>
 #include <sys/file.h>
 #include <sys/mount.h>
+#include <dirent.h>
 #include <unistd.h>
 
 static const CGFloat kPageMargin = 44.0;
@@ -13134,17 +13135,37 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 // consent — i.e. Full Disk Access is granted. Probing a known FDA-gated file
 // (the user TCC database) is the standard check; it is a single access(2) call,
 // only ever run lazily after first paint, so it never touches the launch path.
-static BOOL spdf_has_full_disk_access(void) {
-    // Full Disk Access gates open()/read of TCC-protected files, not access()
-    // (whose behavior under TCC varies by macOS version). Actually opening a
-    // protected file is the reliable probe: it succeeds only with FDA.
-    NSString* probe =
-        [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/com.apple.TCC/TCC.db"];
-    FILE* f = fopen(probe.fileSystemRepresentation, "rb");
+static BOOL spdf_path_readable_with_fda(NSString* path) {
+    if (!path.length) return NO;
+    FILE* f = fopen(path.fileSystemRepresentation, "rb");
     if (f) {
         fclose(f);
         return YES;
     }
+    return NO;
+}
+
+static BOOL spdf_has_full_disk_access(void) {
+    // Full Disk Access gates read/list of these locations (TCC blocks them
+    // otherwise). TCC.db alone is unreliable — recent macOS hardens it BEYOND
+    // FDA, so an FDA-granted app still can't read it, giving a false negative.
+    // Probe several FDA-gated paths and accept if ANY is readable. opendir of
+    // com.apple.sharedfilelist exists on every Mac and is FDA-readable without
+    // the extra TCC.db hardening; the file probes are belt-and-suspenders.
+    NSString* home = NSHomeDirectory();
+    NSString* sharedFileList =
+        [home stringByAppendingPathComponent:@"Library/Application Support/com.apple.sharedfilelist"];
+    DIR* dir = opendir(sharedFileList.fileSystemRepresentation);
+    if (dir) {
+        closedir(dir);
+        return YES;
+    }
+    if (spdf_path_readable_with_fda([home stringByAppendingPathComponent:@"Library/Safari/Bookmarks.plist"]))
+        return YES;
+    if (spdf_path_readable_with_fda([home stringByAppendingPathComponent:@"Library/Messages/chat.db"])) return YES;
+    if (spdf_path_readable_with_fda(
+            [home stringByAppendingPathComponent:@"Library/Application Support/com.apple.TCC/TCC.db"]))
+        return YES;
     return NO;
 }
 
