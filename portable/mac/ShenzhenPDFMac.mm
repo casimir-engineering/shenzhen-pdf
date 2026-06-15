@@ -1194,11 +1194,17 @@ static void spdf_discard_launch_prerender(void) {
     [self teardownActiveFileWatcher];
     [self clearActiveMetadata];
     [self closeActiveDocumentIfUnowned];
+    spdf_teardown_inactive_magnify_tap();
 }
 
 - (void)applicationDidResignActive:(NSNotification*)notification {
     (void)notification;
     [self dismissTabHoverPanel];
+    // Lazily arm the out-of-focus pinch (magnify) CGEventTap the first time the
+    // app goes inactive — never at launch, so there is no launch-time cost and
+    // the Input Monitoring prompt (if any) appears only after the user has
+    // switched away. Idempotent; degrades silently without permission.
+    spdf_install_inactive_magnify_tap();
 }
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
