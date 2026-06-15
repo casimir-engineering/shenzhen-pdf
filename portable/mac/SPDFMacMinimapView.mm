@@ -93,10 +93,40 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     _contentImageCachePages = nil;
 }
 
+static const CGFloat kMinimapMaxWidthRatio = 2.5;
+
 - (CGFloat)widestPage {
     CGFloat widest = 0;
     for (SPDFRenderedPage* page in self.pages) widest = MAX(widest, page.pageWidth);
     return widest;
+}
+
+// Median page width across all pages. Robust to a single huge-outlier page
+// (unlike the mean or max), so a document with one enormous page does not
+// shrink the normal pages to unreadable squares.
+- (CGFloat)baseWidth {
+    NSUInteger count = self.pages.count;
+    if (count == 0) return 0;
+    NSMutableArray<NSNumber*>* widths = [NSMutableArray arrayWithCapacity:count];
+    for (SPDFRenderedPage* page in self.pages) [widths addObject:@(MAX(1.0, page.pageWidth))];
+    [widths sortUsingSelector:@selector(compare:)];
+    if (count % 2 == 1) return widths[count / 2].doubleValue;
+    return (widths[count / 2 - 1].doubleValue + widths[count / 2].doubleValue) / 2.0;
+}
+
+// Points->minimap-px scale shared by every page that is not over-wide. Computed
+// from the median width so a lone giant page is clamped to at most
+// kMinimapMaxWidthRatio (2.5x) the median width. When no page exceeds the cap
+// (e.g. a uniform-width document) this is exactly usable/widestPage, preserving
+// the prior behaviour where the widest page filled the strip.
+- (CGFloat)layoutPointScaleForUsableWidth:(CGFloat)usable {
+    CGFloat widest = [self widestPage];
+    if (widest <= 0) return 0;
+    CGFloat base = [self baseWidth];
+    CGFloat cap = base > 0 ? kMinimapMaxWidthRatio * base : widest;
+    CGFloat effectiveWidest = MIN(widest, cap);
+    if (effectiveWidest <= 0) effectiveWidest = widest;
+    return usable / effectiveWidest;
 }
 
 - (CGFloat)scrollFraction {
@@ -111,12 +141,19 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
         _miniLayoutBoundsWidth == boundsWidth)
         return;
 
+    // Per-page geometry. The displayed width is the page width at the shared
+    // point scale, but clamped to the usable strip width so an over-wide page
+    // is capped at kMinimapMaxWidthRatio x the median (see layoutPointScale).
+    // Height follows the clamped width so each page keeps its own aspect ratio.
+    CGFloat usable = MAX(1.0, boundsWidth - 18.0);
     NSMutableArray<NSValue*>* pageRects = [NSMutableArray arrayWithCapacity:self.pages.count];
     NSMutableDictionary<NSNumber*, NSValue*>* pageRectsByIndex = [NSMutableDictionary dictionary];
     CGFloat y = 0.0;
     for (SPDFRenderedPage* page in self.pages) {
-        CGFloat pageWidth = MAX(1.0, page.pageWidth * scale);
-        CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
+        CGFloat srcWidth = MAX(1.0, page.pageWidth);
+        CGFloat srcHeight = MAX(1.0, page.pageHeight);
+        CGFloat pageWidth = MAX(1.0, MIN(srcWidth * scale, usable));
+        CGFloat pageHeight = MAX(1.0, pageWidth * (srcHeight / srcWidth));
         NSRect rect = NSMakeRect(floor((boundsWidth - pageWidth) / 2.0), y, pageWidth, pageHeight);
         NSValue* value = [NSValue valueWithRect:rect];
         [pageRects addObject:value];
@@ -232,13 +269,17 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
         visibleRect:(NSRect*)visibleOut {
     if (self.pages.count == 0 || NSWidth(self.bounds) < 16 || NSHeight(self.bounds) < 16) return NO;
 
-    CGFloat widest = [self widestPage];
-    if (widest <= 0) return NO;
+    CGFloat usable = NSWidth(self.bounds) - 18.0;
+    CGFloat scale = [self layoutPointScaleForUsableWidth:usable];
+    if (scale <= 0) return NO;
 
-    CGFloat scale = (NSWidth(self.bounds) - 18.0) / widest;
     CGFloat gap = 4.0;
+    // Derive content height from the cached per-page rects so the value stays in
+    // exact agreement with the laid-out geometry used for hit-testing and the
+    // viewport indicator (heights are clamped per page, not pageHeight*scale).
+    [self ensureMiniLayoutCacheForScale:scale gap:gap];
     CGFloat contentHeight = 0;
-    for (SPDFRenderedPage* page in self.pages) contentHeight += page.pageHeight * scale;
+    for (NSValue* value in _miniLayoutPageRects) contentHeight += NSHeight(value.rectValue);
     contentHeight += gap * MAX(0, (NSInteger)self.pages.count - 1);
     CGFloat available = MAX(1.0, NSHeight(self.bounds) - 16.0);
     NSRect visible = [self unscrolledVisibleRectForScale:scale gap:gap contentHeight:contentHeight];
@@ -275,8 +316,10 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     for (SPDFRenderedPage* page in self.pages) {
         NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
         NSRect documentRect = [self documentRectForPage:page];
+        CGFloat displayHeight =
+            NSIsEmptyRect(miniRect) ? MAX(1.0, page.pageHeight * scale) : NSHeight(miniRect);
         if (NSIsEmptyRect(miniRect) || NSIsEmptyRect(documentRect)) {
-            y += MAX(1.0, page.pageHeight * scale) + gap;
+            y += displayHeight + gap;
             continue;
         }
 
@@ -295,7 +338,7 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
             return NSMakePoint(NSMinX(documentRect) + xFraction * NSWidth(documentRect),
                                NSMaxY(documentRect) + gapFraction * kPageGap);
         }
-        y += MAX(1.0, page.pageHeight * scale) + gap;
+        y += displayHeight + gap;
     }
 
     CGFloat yFraction = spdf_clamp_cg(point.y / MAX(1.0, y), 0.0, 1.0);
@@ -474,11 +517,17 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
                                 gap:(CGFloat)gap
                          drawImages:(BOOL)drawImages
                            clipRect:(NSRect)clipRect {
-    CGFloat y = contentTop;
+    // Read the cached per-page rects so the strip draws at exactly the clamped
+    // (capped-width, aspect-preserved) geometry used for hit-testing/indicator.
+    [self ensureMiniLayoutCacheForScale:scale gap:gap];
     for (SPDFRenderedPage* page in self.pages) {
-        CGFloat pageWidth = page.pageWidth * scale;
-        CGFloat pageHeight = MAX(1.0, page.pageHeight * scale);
-        NSRect pageRect = NSMakeRect(floor((NSWidth(self.bounds) - pageWidth) / 2.0), y, pageWidth, pageHeight);
+        NSRect cachedRect = [self miniRectForPage:page scale:scale gap:gap];
+        if (NSIsEmptyRect(cachedRect)) continue;
+        NSRect pageRect = cachedRect;
+        pageRect.origin.y += contentTop;
+        // Page draws are uniformly scaled per page (width/height share one factor
+        // by construction), so overlays in page-space points map with this scale.
+        CGFloat pageScale = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
         if (NSHeight(pageRect) >= 1.0 && NSIntersectsRect(pageRect, clipRect)) {
             [[NSColor whiteColor] setFill];
             NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
@@ -495,10 +544,10 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
             } else {
                 [self drawPlaceholderInRect:pageRect];
             }
-            [self drawSearchRects:page.highlights pageRect:pageRect scale:scale];
+            [self drawSearchRects:page.highlights pageRect:pageRect scale:pageScale];
             [self drawRects:page.selectionRects
                    pageRect:pageRect
-                      scale:scale
+                      scale:pageScale
                       color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
                   minHeight:1.0];
             if (page.pageIndex == self.currentPageIndex) {
@@ -508,7 +557,6 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
                 [path stroke];
             }
         }
-        y += pageHeight + gap;
     }
 }
 
