@@ -261,7 +261,6 @@
     BOOL _presentationPreviousMinimapPreferredVisible;
     BOOL _preventSleepInPresentation;
     id<NSObject> _presentationSleepActivityToken;
-    BOOL _enableUnfocusedTrackpadZoom;
     BOOL _fullDiskAccessPromptDismissed;
     BOOL _permissionsWizardShown;
     BOOL _ocrInstallRunning;
