@@ -18,6 +18,7 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName);
 - (void)documentScrollPositionChanged;
 - (NSInteger)documentViewCurrentPageIndex;
 - (BOOL)documentArrowKeyDown:(NSEvent*)event;
+- (void)stopKeyboardScrollAnimation;
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
 - (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;

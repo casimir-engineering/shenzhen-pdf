@@ -1171,6 +1171,7 @@ static void spdf_discard_launch_prerender(void) {
 
 - (void)applicationWillTerminate:(NSNotification*)notification {
     (void)notification;
+    [self stopKeyboardScrollAnimation];
     [self dismissTabHoverPanel];
     [self removeWindowArrangementShortcutMonitor];
     [self removePresentationEventMonitor];
@@ -1283,6 +1284,7 @@ static void spdf_discard_launch_prerender(void) {
 
 - (void)windowDidResignKey:(NSNotification*)notification {
     (void)notification;
+    [self stopKeyboardScrollAnimation];
     [self dismissTabHoverPanel];
 }
 
@@ -8268,21 +8270,118 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
 
     // Continuous mode: plain left/right navigate pages while preserving the
-    // current zoom and relative position within the page. Up/down keep their
-    // vertical line-scroll behavior below.
+    // current zoom and relative position within the page. Any nav key other
+    // than up/down cancels an in-flight smooth keyboard scroll so the two
+    // motions never fight. Up/down feed the smooth-scroll ramp below.
     if (left || right) {
+        [self stopKeyboardScrollAnimation];
         [self goToAdjacentPagePreservingRelativePosition:left ? -1 : 1];
         return YES;
     }
+    if (pageUp || pageDown) {
+        [self stopKeyboardScrollAnimation];
+        return NO;  // unchanged: fall through to default page-up/down handling
+    }
+
+    // Smooth up/down scroll. Up arrow scrolls toward the document top (negative
+    // origin.y), down toward the bottom — same directions as the old discrete
+    // 54pt hop, just velocity-driven and continuous. Holding the key produces an
+    // OS auto-repeat stream (event.isARepeat == YES); each event refreshes the
+    // ramp toward the cap, and a gap stops it (see stepKeyboardScroll:).
+    [self beginOrSustainKeyboardScrollInDirection:up ? -1.0 : 1.0];
+    return YES;
+}
+
+// Tunables for smooth keyboard scrolling. Cap is a comfortable max; the ramp
+// eases velocity toward target each tick so a tap moves a little and a hold
+// accelerates smoothly to the cap. Idle timeout: if no up/down event arrives
+// within this window the hold is considered released and the tick decelerates.
+static const CGFloat kKeyScrollMaxVelocity = 2200.0;     // pt/s cap
+static const CGFloat kKeyScrollAccelEase = 0.18;         // per-tick ease toward target (~60fps)
+static const CGFloat kKeyScrollDecelEase = 0.30;         // per-tick ease toward 0 on release
+static const CGFloat kKeyScrollMinVelocity = 30.0;       // pt/s; below this when decaying, stop
+static const NSTimeInterval kKeyScrollIdleTimeout = 0.14; // s without a repeat => release
+static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
+
+- (void)beginOrSustainKeyboardScrollInDirection:(CGFloat)direction {
+    if (!_doc || !_pageScrollView) return;
+    // No scroll range: behave like before (do nothing).
+    NSClipView* clipView = _pageScrollView.contentView;
+    if (NSHeight(_pageView.bounds) - NSHeight(clipView.bounds) <= 0.5) {
+        [self stopKeyboardScrollAnimation];
+        return;
+    }
+
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    _keyScrollLastEventTime = now;
+    if (direction != _keyScrollDirection && _keyScrollDirection != 0.0) {
+        // Direction reversed mid-scroll: drop momentum so the reversal is crisp.
+        _keyScrollVelocity = 0.0;
+    }
+    _keyScrollDirection = direction;
+
+    if (!_keyScrollTimer) {
+        _keyScrollLastTickTime = now;
+        _keyScrollTimer = [NSTimer scheduledTimerWithTimeInterval:kKeyScrollTickInterval
+                                                           target:self
+                                                         selector:@selector(stepKeyboardScroll:)
+                                                         userInfo:nil
+                                                          repeats:YES];
+    }
+}
+
+- (void)stepKeyboardScroll:(NSTimer*)timer {
+    (void)timer;
+    if (!_doc || !_pageScrollView) {
+        [self stopKeyboardScrollAnimation];
+        return;
+    }
+
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    NSTimeInterval dt = now - _keyScrollLastTickTime;
+    if (dt <= 0.0 || dt > 0.25) dt = kKeyScrollTickInterval;  // clamp stalls
+    _keyScrollLastTickTime = now;
+
+    BOOL held = _keyScrollDirection != 0.0 &&
+                (now - _keyScrollLastEventTime) <= kKeyScrollIdleTimeout;
+
+    CGFloat target = held ? _keyScrollDirection * kKeyScrollMaxVelocity : 0.0;
+    CGFloat ease = held ? kKeyScrollAccelEase : kKeyScrollDecelEase;
+    _keyScrollVelocity += (target - _keyScrollVelocity) * ease;
+
+    // Settle: not held and effectively stopped.
+    if (!held && fabs(_keyScrollVelocity) < kKeyScrollMinVelocity) {
+        _keyScrollVelocity = 0.0;
+        [self stopKeyboardScrollAnimation];
+        [self rememberActiveTabState];
+        return;
+    }
 
     NSClipView* clipView = _pageScrollView.contentView;
+    CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
     NSPoint origin = clipView.bounds.origin;
-    CGFloat lineStep = 54.0;
-    if (up) origin.y -= lineStep;
-    if (down) origin.y += lineStep;
+    CGFloat before = origin.y;
+    origin.y += _keyScrollVelocity * dt;
+    origin.y = spdf_clamp_cg(origin.y, 0.0, maxY);
     [self scrollDocumentClipViewToOrigin:origin notify:YES];
-    [self rememberActiveTabState];
-    return YES;
+
+    // Hit an edge with no movement: stop (kill residual velocity at the bounds).
+    if (fabs(clipView.bounds.origin.y - before) < 0.01 &&
+        ((_keyScrollVelocity < 0 && before <= 0.01) ||
+         (_keyScrollVelocity > 0 && before >= maxY - 0.01))) {
+        _keyScrollVelocity = 0.0;
+        [self stopKeyboardScrollAnimation];
+        [self rememberActiveTabState];
+    }
+}
+
+- (void)stopKeyboardScrollAnimation {
+    if (_keyScrollTimer) {
+        [_keyScrollTimer invalidate];
+        _keyScrollTimer = nil;
+    }
+    _keyScrollVelocity = 0.0;
+    _keyScrollDirection = 0.0;
 }
 
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event {
@@ -8818,6 +8917,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)documentViewDidBeginPan {
+    [self stopKeyboardScrollAnimation];
     if (!_liveZooming) [self cancelPendingLiveZoomCompletion];
     _viewportMovementGeneration++;
     _documentViewPanActive = YES;
@@ -8850,6 +8950,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)cancelDocumentTransientInteraction {
+    [self stopKeyboardScrollAnimation];
     _viewportMovementGeneration++;
     _documentViewPanActive = NO;
     _documentViewPanCropGeneration++;
@@ -10960,6 +11061,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)enterPresentationMode:(id)sender {
     if (!_doc || _presentationMode) return;
 
+    [self stopKeyboardScrollAnimation];
     _presentationPreviousFitMode = _fitMode;
     _presentationPreviousSidebarPreferredVisible = _sidebarPreferredVisible;
     _presentationPreviousMinimapPreferredVisible = _minimapPreferredVisible;

@@ -877,6 +877,9 @@ static void spdf_install_inactive_magnify_monitor(void) {
 }
 
 - (void)scrollWheel:(NSEvent*)event {
+    // A real mouse/trackpad scroll takes over from any in-flight smooth
+    // keyboard scroll so the two never fight over the clip-view origin.
+    [self.reader stopKeyboardScrollAnimation];
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     // Only treat a Cmd/Ctrl-modified wheel as zoom when it is active scrolling.
     // Inertial momentum is just scroll continuing to coast; the modifier must
