@@ -698,6 +698,7 @@ static void spdf_discard_launch_prerender(void) {
     _collapseWhitespaceWhenCopyingText = YES;
     _showShortcutHelpOnLaunch = YES;
     _preventSleepInPresentation = YES;
+    _enableUnfocusedTrackpadZoom = NO;
     _defaultReaderPromptDismissed = NO;
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
@@ -1200,11 +1201,10 @@ static void spdf_discard_launch_prerender(void) {
 - (void)applicationDidResignActive:(NSNotification*)notification {
     (void)notification;
     [self dismissTabHoverPanel];
-    // Lazily arm the out-of-focus pinch (magnify) CGEventTap the first time the
-    // app goes inactive — never at launch, so there is no launch-time cost and
-    // the Input Monitoring prompt (if any) appears only after the user has
-    // switched away. Idempotent; degrades silently without permission.
-    spdf_install_inactive_magnify_tap();
+    // Out-of-focus trackpad pinch zoom is opt-in (it needs an Input Monitoring
+    // grant via a CGEventTap). Only arm the tap when the user has enabled the
+    // feature, so the permission prompt never appears unless requested.
+    if (_enableUnfocusedTrackpadZoom) spdf_install_inactive_magnify_tap();
 }
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
@@ -1402,6 +1402,7 @@ static void spdf_discard_launch_prerender(void) {
         NSNumber* collapseWhitespaceWhenCopyingText = settings[@"collapseWhitespaceWhenCopyingText"];
         NSNumber* showShortcutHelp = settings[@"showShortcutHelpOnLaunch"];
         NSNumber* preventSleepInPresentation = settings[@"preventSleepInPresentation"];
+        NSNumber* enableUnfocusedTrackpadZoom = settings[@"enableUnfocusedTrackpadZoom"];
         NSNumber* defaultReaderPromptDismissed = settings[@"defaultReaderPromptDismissed"];
         NSNumber* printScalingMode = settings[@"printScalingMode"];
         NSNumber* printCustomScale = settings[@"printCustomScale"];
@@ -1419,6 +1420,7 @@ static void spdf_discard_launch_prerender(void) {
             _collapseWhitespaceWhenCopyingText = collapseWhitespaceWhenCopyingText.boolValue;
         if (showShortcutHelp) _showShortcutHelpOnLaunch = showShortcutHelp.boolValue;
         if (preventSleepInPresentation) _preventSleepInPresentation = preventSleepInPresentation.boolValue;
+        if (enableUnfocusedTrackpadZoom) _enableUnfocusedTrackpadZoom = enableUnfocusedTrackpadZoom.boolValue;
         if (defaultReaderPromptDismissed) _defaultReaderPromptDismissed = defaultReaderPromptDismissed.boolValue;
         if (printScalingMode) _printScalingMode = (SPDFPrintScalingMode)MAX(0, MIN(2, printScalingMode.integerValue));
         if (printCustomScale) _printCustomScale = SPDFClampPrintCustomScale(printCustomScale.doubleValue);
@@ -1900,6 +1902,7 @@ static void spdf_discard_launch_prerender(void) {
         @"translateTargetLanguage" : _translationTargetLanguage ?: @"en",
         @"showShortcutHelpOnLaunch" : @(_showShortcutHelpOnLaunch),
         @"preventSleepInPresentation" : @(_preventSleepInPresentation),
+        @"enableUnfocusedTrackpadZoom" : @(_enableUnfocusedTrackpadZoom),
         @"defaultReaderPromptDismissed" : @(_defaultReaderPromptDismissed),
         @"printScalingMode" : @(_printScalingMode),
         @"printCustomScale" : @(SPDFClampPrintCustomScale(_printCustomScale)),
@@ -2098,6 +2101,10 @@ static void spdf_discard_launch_prerender(void) {
                             action:@selector(togglePreventSleepInPresentation:)
                      keyEquivalent:@""];
     preventSleep.target = self;
+    NSMenuItem* unfocusedZoom = [viewMenu addItemWithTitle:@"Zoom Unfocused Window With Trackpad"
+                                                    action:@selector(toggleUnfocusedTrackpadZoom:)
+                                             keyEquivalent:@""];
+    unfocusedZoom.target = self;
     NSMenuItem* fullScreen = [viewMenu addItemWithTitle:@"Full Screen"
                                                  action:@selector(toggleFullScreen:)
                                           keyEquivalent:@"f"];
@@ -8351,7 +8358,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 // immediate release produces a small finite move comparable to the old discrete
 // hop (~54pt), then decelerates to a stop.
 static const CGFloat kKeyScrollMaxVelocity = 2200.0;     // pt/s cap
-static const CGFloat kKeyScrollAccelEase = 0.18;         // per-tick ease toward target (~60fps)
+static const CGFloat kKeyScrollAccelEase = 0.115;        // per-tick ease toward target (~60fps)
 static const CGFloat kKeyScrollDecelEase = 0.30;         // per-tick ease toward 0 on release
 static const CGFloat kKeyScrollMinVelocity = 30.0;       // pt/s; below this when decaying, stop
 static const CGFloat kKeyScrollTapImpulse = 950.0;       // pt/s kick on a fresh press (tap distance)
@@ -10253,6 +10260,16 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         if (_preventSleepInPresentation) [self beginPresentationSleepActivityIfNeeded];
         else [self endPresentationSleepActivity];
     }
+    [self savePersistentState];
+}
+
+- (void)toggleUnfocusedTrackpadZoom:(id)sender {
+    (void)sender;
+    _enableUnfocusedTrackpadZoom = !_enableUnfocusedTrackpadZoom;
+    // Arm the tap immediately on enable (this is the moment the user opts in, so
+    // the Input Monitoring prompt is expected here). Disabling leaves the tap in
+    // place for this session but it no longer re-arms; it is torn down at quit.
+    if (_enableUnfocusedTrackpadZoom) spdf_install_inactive_magnify_tap();
     [self savePersistentState];
 }
 
@@ -13881,6 +13898,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
     if (action == @selector(togglePreventSleepInPresentation:)) {
         menuItem.state = _preventSleepInPresentation ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (action == @selector(toggleUnfocusedTrackpadZoom:)) {
+        menuItem.state = _enableUnfocusedTrackpadZoom ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
     if (action == @selector(searchSelectedTextInBrowser:)) return _selectedText.length > 0;

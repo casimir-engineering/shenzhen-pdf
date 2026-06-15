@@ -258,6 +258,7 @@
     BOOL _presentationPreviousMinimapPreferredVisible;
     BOOL _preventSleepInPresentation;
     id<NSObject> _presentationSleepActivityToken;
+    BOOL _enableUnfocusedTrackpadZoom;
     BOOL _ocrInstallRunning;
     BOOL _translationRunning;
     BOOL _translationInstallRunning;
