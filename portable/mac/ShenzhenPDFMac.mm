@@ -8452,14 +8452,21 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return YES;
 }
 
-// Horizontal navigability: true when the document content is wider than the
-// viewport, i.e. there is horizontal scroll range. Mirrors the
-// needsHorizontalScroller test in resizeDocumentView (content width vs clip
-// width). Used to choose smooth horizontal scroll over page change for left/right.
+// Horizontal navigability for the left/right keys: true only when the CURRENT
+// page's displayed width exceeds the viewport. Using the whole document-view
+// width was wrong — in a document that contains one very wide page (e.g. a
+// schematic), the document bounds are wider than the viewport for EVERY page,
+// so left/right would horizontal-scroll into empty margins instead of changing
+// pages. Keying off the current page makes left/right behave consistently: they
+// change pages whenever the page in view fits, and scroll horizontally only when
+// that page itself is zoomed wider than the viewport.
 - (BOOL)keyboardScrollHorizontallyNavigable {
-    if (!_pageScrollView || !_pageView) return NO;
+    if (!_pageScrollView || !_pageView || _renderedPages.count == 0) return NO;
     NSClipView* clipView = _pageScrollView.contentView;
-    return NSWidth(_pageView.bounds) - NSWidth(clipView.bounds) > 0.5;
+    NSInteger pageIndex = MAX(0, MIN(_pageIndex, (NSInteger)_renderedPages.count - 1));
+    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
+    if (NSIsEmptyRect(pageRect)) return NO;
+    return NSWidth(pageRect) - NSWidth(clipView.bounds) > 0.5;
 }
 
 // Tunables for smooth keyboard scrolling. Cap is a comfortable max; the ramp
