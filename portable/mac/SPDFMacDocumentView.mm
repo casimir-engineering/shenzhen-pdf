@@ -37,12 +37,10 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     NSArray<SPDFRenderedPage*>* _layoutPages;
     NSArray<NSValue*>* _layoutPageSizes;
     NSArray<NSValue*>* _layoutContinuousPageRects;
-    NSArray<NSValue*>* _layoutSinglePageSlots;
     NSSize _layoutBoundsSize;
     CGFloat _layoutViewportWidth;
     CGFloat _layoutEffectiveBackingScale;
     CGFloat _layoutZoom;
-    SPDFViewMode _layoutViewMode;
     BOOL _layoutPresentationMode;
     CGFloat _layoutWidestPage;
     CGFloat _layoutContinuousDocumentHeight;
@@ -85,12 +83,6 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 - (void)setZoom:(CGFloat)zoom {
     if (_zoom == zoom) return;
     _zoom = zoom;
-    [self invalidateLayoutCache];
-}
-
-- (void)setViewMode:(SPDFViewMode)viewMode {
-    if (_viewMode == viewMode) return;
-    _viewMode = viewMode;
     [self invalidateLayoutCache];
 }
 
@@ -154,7 +146,6 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     _layoutPages = nil;
     _layoutPageSizes = nil;
     _layoutContinuousPageRects = nil;
-    _layoutSinglePageSlots = nil;
 }
 
 - (CGFloat)viewportWidth {
@@ -170,7 +161,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     NSSize boundsSize = self.bounds.size;
     BOOL boundsWidthMatches = fabs(_layoutBoundsSize.width - boundsSize.width) <= 0.001;
     if (_layoutCacheValid && _layoutPages == self.pages && _layoutZoom == self.zoom &&
-        _layoutViewMode == self.viewMode && _layoutPresentationMode == self.presentationMode &&
+        _layoutPresentationMode == self.presentationMode &&
         _layoutViewportWidth == viewportWidth && _layoutEffectiveBackingScale == effectiveBackingScale &&
         boundsWidthMatches)
         return;
@@ -179,7 +170,6 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
     NSMutableArray<NSValue*>* pageSizes = [NSMutableArray arrayWithCapacity:self.pages.count];
     NSMutableArray<NSValue*>* continuousRects = [NSMutableArray arrayWithCapacity:self.pages.count];
-    NSMutableArray<NSValue*>* singlePageSlots = [NSMutableArray arrayWithCapacity:self.pages.count];
 
     CGFloat widestPage = 0.0;
     for (SPDFRenderedPage* page in self.pages) {
@@ -189,8 +179,6 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     }
 
     CGFloat continuousY = pageMargin / 2.0;
-    CGFloat singleSlotY = pageMargin / 2.0;
-    CGFloat singleDocumentWidth = MAX(NSWidth(self.bounds), widestPage + pageMargin);
     for (NSUInteger i = 0; i < self.pages.count; ++i) {
         NSSize pageSize = [pageSizes[i] sizeValue];
         CGFloat x = floor((viewportWidth - pageSize.width) / 2.0);
@@ -199,24 +187,15 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
                                            [self pixelSnappedOrigin:continuousY], pageSize.width, pageSize.height);
         [continuousRects addObject:[NSValue valueWithRect:continuousRect]];
         continuousY += pageSize.height + pageGap;
-
-        CGFloat slotX = floor((singleDocumentWidth - pageSize.width) / 2.0);
-        CGFloat slotMinX = pageSize.width >= singleDocumentWidth - 0.5 ? 0.0 : pageMargin / 2.0;
-        NSRect slotRect = NSMakeRect(MAX(slotMinX, [self pixelSnappedOrigin:slotX]),
-                                     [self pixelSnappedOrigin:singleSlotY], pageSize.width, pageSize.height);
-        [singlePageSlots addObject:[NSValue valueWithRect:slotRect]];
-        singleSlotY += pageSize.height + pageGap;
     }
 
     _layoutPages = self.pages;
     _layoutPageSizes = pageSizes;
     _layoutContinuousPageRects = continuousRects;
-    _layoutSinglePageSlots = singlePageSlots;
     _layoutBoundsSize = boundsSize;
     _layoutViewportWidth = viewportWidth;
     _layoutEffectiveBackingScale = effectiveBackingScale;
     _layoutZoom = self.zoom;
-    _layoutViewMode = self.viewMode;
     _layoutPresentationMode = self.presentationMode;
     _layoutWidestPage = widestPage;
     _layoutContinuousDocumentHeight = self.pages.count == 0 ? 0.0 : continuousY + pageMargin / 2.0;
@@ -322,30 +301,9 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     return _layoutContinuousDocumentHeight;
 }
 
-- (NSRect)singlePageDocumentSlotForPageAtIndex:(NSInteger)pageIndex {
-    [self ensureLayoutCache];
-    if (pageIndex < 0 || pageIndex >= (NSInteger)_layoutSinglePageSlots.count) return NSZeroRect;
-    return [_layoutSinglePageSlots[(NSUInteger)pageIndex] rectValue];
-}
-
 - (NSInteger)boundedPageIndex:(NSInteger)pageIndex {
     if (self.pages.count == 0) return 0;
     return MAX(0, MIN(pageIndex, (NSInteger)self.pages.count - 1));
-}
-
-- (NSSize)singlePageDocumentSizeForClipSize:(NSSize)clipSize page:(SPDFRenderedPage*)page {
-    NSSize pageSize = NSZeroSize;
-    if (page) {
-        NSInteger pageIndex = page.pageIndex;
-        if (pageIndex >= 0 && pageIndex < (NSInteger)self.pages.count && self.pages[(NSUInteger)pageIndex] == page)
-            pageSize = [self cachedViewSizeForPageAtIndex:pageIndex];
-        else pageSize = [self viewSizeForPage:page];
-    }
-    CGFloat width = pageSize.width >= clipSize.width - 0.5 ? MAX(clipSize.width, pageSize.width)
-                                                           : MAX(clipSize.width, pageSize.width + kPageMargin);
-    CGFloat height = self.pages.count > 1 ? [self continuousDocumentHeight] : pageSize.height + kPageMargin;
-    height = MAX(clipSize.height, height);
-    return NSMakeSize(width, height);
 }
 
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize {
@@ -357,41 +315,17 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 
     if (self.pages.count == 0) return NSMakeSize(MAX(clipSize.width, 600), MAX(clipSize.height, 500));
 
-    if (self.presentationMode && self.viewMode == SPDFViewModeSingle)
-        return NSMakeSize(clipSize.width, clipSize.height);
+    // Presentation mode shows one page at a time filling the viewport; the
+    // continuous (default) mode stacks every page vertically.
+    if (self.presentationMode) return NSMakeSize(clipSize.width, clipSize.height);
 
-    if (self.viewMode == SPDFViewModeSingle) {
-        NSInteger pageIndex = [self boundedPageIndex:self.currentPageIndex];
-        return [self singlePageDocumentSizeForClipSize:clipSize page:self.pages[(NSUInteger)pageIndex]];
-    } else {
-        height = [self continuousDocumentHeight];
-    }
-
+    height = [self continuousDocumentHeight];
     return NSMakeSize(width, MAX(height, clipSize.height));
 }
 
 - (NSRect)rectForPageAtIndex:(NSInteger)pageIndex {
     if (pageIndex < 0 || pageIndex >= (NSInteger)self.pages.count) return NSZeroRect;
-    if (self.viewMode != SPDFViewModeSingle) return [self continuousRectForPageAtIndex:pageIndex];
-
-    CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
-    NSSize pageSize = [self cachedViewSizeForPageAtIndex:pageIndex];
-    CGFloat width = pageSize.width;
-    CGFloat height = pageSize.height;
-    CGFloat viewportWidth = [self viewportWidth];
-    CGFloat x = floor((viewportWidth - width) / 2.0);
-    CGFloat minX = width >= viewportWidth - 0.5 ? 0.0 : pageMargin / 2.0;
-    NSClipView* clipView = self.enclosingScrollView.contentView;
-    NSRect visibleRect = clipView ? clipView.bounds : NSMakeRect(0.0, 0.0, NSWidth(self.bounds), NSHeight(self.bounds));
-    CGFloat minY = self.presentationMode ? 0.0 : kPageMargin / 2.0;
-    CGFloat y = 0.0;
-    if (height <= NSHeight(visibleRect) + 0.5) {
-        y = NSMinY(visibleRect) + floor((NSHeight(visibleRect) - height) / 2.0);
-        if (self.pages.count > 1) minY = -CGFLOAT_MAX;
-    } else {
-        y = NSMinY([self singlePageDocumentSlotForPageAtIndex:pageIndex]);
-    }
-    return NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]), MAX(minY, [self pixelSnappedOrigin:y]), width, height);
+    return [self continuousRectForPageAtIndex:pageIndex];
 }
 
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
@@ -403,9 +337,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     CGFloat bestCenterDistance = CGFLOAT_MAX;
     CGFloat closestDistance = CGFLOAT_MAX;
     for (SPDFRenderedPage* page in self.pages) {
-        NSRect pageRect = self.viewMode == SPDFViewModeSingle
-                              ? [self singlePageDocumentSlotForPageAtIndex:page.pageIndex]
-                              : [self rectForPageAtIndex:page.pageIndex];
+        NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
         CGFloat overlap = NSHeight(NSIntersectionRect(visibleRect, pageRect));
         CGFloat centerDistance = fabs(NSMidY(pageRect) - visibleMidY);
         if (overlap > bestOverlap + 0.5 ||
@@ -566,21 +498,6 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
         return;
     }
 
-    if (self.viewMode == SPDFViewModeSingle) {
-        NSInteger index = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
-        SPDFRenderedPage* page = self.pages[(NSUInteger)index];
-        NSRect pageRect = [self rectForPageAtIndex:index];
-        if (NSIntersectsRect(dirtyRect, pageRect)) [self drawPage:page inRect:pageRect dirtyRect:dirtyRect];
-        if (spdf_zoom_profile_enabled()) {
-            double elapsed = spdf_zoom_profile_now_ms() - profileStart;
-            if (elapsed > 2.0)
-                spdf_zoom_profile_log(@"drawRect(single) liveZoom=%d zoom=%.2f dirty=%.0fx%.0f total=%.2fms",
-                                      self.liveZooming, self.zoom, NSWidth(dirtyRect), NSHeight(dirtyRect), elapsed);
-        }
-        spdf_launch_log_first_document_paint(self.pages.count, launchPaintStart);
-        return;
-    }
-
     for (SPDFRenderedPage* page in self.pages) {
         NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
         if (NSMaxY(pageRect) < NSMinY(dirtyRect) - 1.0) continue;
@@ -597,20 +514,6 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 }
 
 - (BOOL)point:(NSPoint)point fallsInPage:(NSInteger*)pageIndex pagePoint:(NSPoint*)pagePoint {
-    if (self.viewMode == SPDFViewModeSingle && self.pages.count > 0) {
-        NSInteger index = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
-        NSRect pageRect = [self rectForPageAtIndex:index];
-        if (NSPointInRect(point, pageRect)) {
-            if (pageIndex) *pageIndex = index;
-            if (pagePoint)
-                *pagePoint = [self convertViewPoint:point
-                              toPagePointInPageRect:pageRect
-                                               page:self.pages[(NSUInteger)index]];
-            return YES;
-        }
-        return NO;
-    }
-
     for (SPDFRenderedPage* page in self.pages) {
         NSRect pageRect = [self rectForPageAtIndex:page.pageIndex];
         if (NSMaxY(pageRect) < point.y - 1.0) continue;
@@ -764,18 +667,9 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     _lastPanTime = event.timestamp;
     origin.x = MAX(0, MIN(origin.x, MAX(0, NSWidth(self.bounds) - NSWidth(clipView.bounds))));
     origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(self.bounds) - NSHeight(clipView.bounds))));
-    NSInteger pageBefore =
-        self.viewMode == SPDFViewModeSingle ? [self.reader documentViewCurrentPageIndex] : NSNotFound;
     [clipView scrollToPoint:origin];
     [scrollView reflectScrolledClipView:clipView];
     [self.reader documentScrollPositionChanged];
-    if (self.viewMode == SPDFViewModeSingle && [self.reader documentViewCurrentPageIndex] != pageBefore) {
-        _panStartInWindow = current;
-        _panStartOrigin = clipView.bounds.origin;
-        _lastPanPoint = current;
-        _lastPanTime = event.timestamp;
-        _panVelocity = NSZeroPoint;
-    }
 }
 
 - (void)stepPanInertia:(NSTimer*)timer {
@@ -809,11 +703,6 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 - (void)endPan {
     _isPanning = NO;
     [[NSCursor arrowCursor] set];
-    if (self.viewMode == SPDFViewModeSingle) {
-        _panVelocity = NSZeroPoint;
-        [self.reader documentViewDidFinishPanMotion];
-        return;
-    }
     if (hypot(_panVelocity.x, _panVelocity.y) > 90.0) {
         [_inertiaTimer invalidate];
         _inertiaTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0

@@ -7,7 +7,6 @@
 @property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
 @property(nonatomic) NSInteger currentPageIndex;
 @property(nonatomic) CGFloat zoom;
-@property(nonatomic) SPDFViewMode viewMode;
 @property(nonatomic) CGFloat viewportWidthHint;
 @property(nonatomic) CGFloat backingScale;
 @property(nonatomic) NSInteger activeFindPageIndex;

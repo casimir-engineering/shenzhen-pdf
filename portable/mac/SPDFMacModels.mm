@@ -12,7 +12,6 @@
         _zoom = 1.0;
         _customZoom = 1.0;
         _fitMode = SPDFFitModePage;
-        _viewMode = SPDFViewModeContinuous;
         _searchText = @"";
         _searchRegexMultiline = YES;
         _findMatchIndex = -1;
@@ -70,7 +69,6 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     copy.zoom = source.zoom;
     copy.customZoom = source.customZoom;
     copy.fitMode = source.fitMode;
-    copy.viewMode = source.viewMode;
     copy.scrollOrigin = source.scrollOrigin;
     copy.hasScrollOrigin = source.hasScrollOrigin;
     copy.searchText = source.searchText;
@@ -94,7 +92,10 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
         @"zoom" : @(tab.zoom),
         @"customZoom" : @(tab.customZoom),
         @"fitMode" : @(tab.fitMode),
-        @"viewMode" : @(tab.viewMode),
+        /* The app is always continuous now. Single-page view mode was removed;
+         * keep emitting viewMode=1 (continuous) so older app versions reading
+         * this session still open these tabs in the correct mode. */
+        @"viewMode" : @1,
         @"scrollX" : @(tab.scrollOrigin.x),
         @"scrollY" : @(tab.scrollOrigin.y),
         @"hasScrollOrigin" : @(tab.hasScrollOrigin),
@@ -120,7 +121,9 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     tab.zoom = [item[@"zoom"] doubleValue] > 0 ? [item[@"zoom"] doubleValue] : 1.0;
     tab.customZoom = [item[@"customZoom"] doubleValue] > 0 ? [item[@"customZoom"] doubleValue] : tab.zoom;
     if (item[@"fitMode"]) tab.fitMode = (SPDFFitMode)MAX(0, MIN(4, [item[@"fitMode"] integerValue]));
-    tab.viewMode = (SPDFViewMode)MAX(0, MIN(1, [item[@"viewMode"] integerValue]));
+    /* viewMode is intentionally ignored: single-page view mode was removed and
+     * the app is always continuous. Old sessions that stored viewMode=0 (single)
+     * open fine as continuous. */
     tab.scrollOrigin = NSMakePoint([item[@"scrollX"] doubleValue], [item[@"scrollY"] doubleValue]);
     if (item[@"hasScrollOrigin"] != nil) tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue];
     else tab.hasScrollOrigin = item[@"scrollX"] != nil || item[@"scrollY"] != nil;

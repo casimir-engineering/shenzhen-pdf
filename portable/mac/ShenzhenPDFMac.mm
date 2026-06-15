@@ -203,9 +203,6 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
     if (action == @selector(actualSize:)) return @"magnifyingglass";
     if (action == @selector(fitPage:) || action == @selector(fitWidth:) || action == @selector(fitHeight:))
         return @"arrow.up.left.and.arrow.down.right";
-    if (action == @selector(setSinglePageMode:)) return @"doc";
-    if (action == @selector(setContinuousMode:)) return @"doc.on.doc";
-    if (action == @selector(toggleContinuous:)) return @"doc.on.doc";
     if (action == @selector(toggleSidebar:)) return @"sidebar.left";
     if (action == @selector(toggleMinimap:)) return @"map";
     if (action == @selector(togglePresentation:)) return @"play.rectangle";
@@ -681,7 +678,6 @@ static void spdf_discard_launch_prerender(void) {
     _zoom = 1.0;
     _rememberedCustomZoom = 1.0;
     _fitMode = SPDFFitModePage;
-    _viewMode = SPDFViewModeContinuous;
     _highlightPageIndex = -1;
     _selectionPageIndex = -1;
     _contextPageIndex = -1;
@@ -1388,7 +1384,9 @@ static void spdf_discard_launch_prerender(void) {
     NSDictionary* settings = [self jsonObjectFromFile:@"settings.json"];
     if ([settings isKindOfClass:NSDictionary.class]) {
         NSNumber* fit = settings[@"fitMode"];
-        NSNumber* view = settings[@"viewMode"];
+        /* viewMode is intentionally not read: single-page view mode was removed
+         * and the app is always continuous. Old settings.json with viewMode=0
+         * (single) are ignored and open as continuous. */
         NSNumber* sidebarWidth = settings[@"sidebarWidth"];
         NSNumber* minimapWidth = settings[@"minimapWidth"];
         NSNumber* defaultSidebarVisible = settings[@"defaultSidebarVisibleForNewDocuments"];
@@ -1405,7 +1403,6 @@ static void spdf_discard_launch_prerender(void) {
         NSString* translateTarget = settings[@"translateTargetLanguage"];
         NSArray* recentlyOpened = settings[@"recentlyOpened"];
         if (fit) _fitMode = (SPDFFitMode)MAX(0, MIN(4, fit.integerValue));
-        if (view) _viewMode = (SPDFViewMode)MAX(0, MIN(1, view.integerValue));
         if (sidebarWidth) _sidebarWidth = spdf_sane_sidebar_width(sidebarWidth.doubleValue, 0);
         if (minimapWidth) _minimapWidth = spdf_clamp_cg(minimapWidth.doubleValue, 72.0, 260.0);
         if (defaultSidebarVisible) _defaultSidebarVisibleForNewDocuments = defaultSidebarVisible.boolValue;
@@ -1675,7 +1672,8 @@ static void spdf_discard_launch_prerender(void) {
             @"zoom" : @(tab.zoom),
             @"customZoom" : @(tab.customZoom),
             @"fitMode" : @(tab.fitMode),
-            @"viewMode" : @(tab.viewMode),
+            /* Always continuous now; kept for backward compat (see SPDFMacModels.mm). */
+            @"viewMode" : @1,
             @"scrollX" : @(tab.scrollOrigin.x),
             @"scrollY" : @(tab.scrollOrigin.y),
             @"hasScrollOrigin" : @(tab.hasScrollOrigin),
@@ -1881,7 +1879,8 @@ static void spdf_discard_launch_prerender(void) {
     [self writeJSONObject:@{
         @"version" : @1,
         @"fitMode" : @(_fitMode),
-        @"viewMode" : @(_viewMode),
+        /* Always continuous now; kept for backward compat (see SPDFMacModels.mm). */
+        @"viewMode" : @1,
         @"sidebarWidth" : @(sidebarWidth),
         @"minimapWidth" : @(_minimapWidth),
         @"defaultSidebarVisibleForNewDocuments" : @(_defaultSidebarVisibleForNewDocuments),
@@ -2039,9 +2038,6 @@ static void spdf_discard_launch_prerender(void) {
     NSMenuItem* viewItem = [[NSMenuItem alloc] initWithTitle:@"View" action:nil keyEquivalent:@""];
     [mainMenu addItem:viewItem];
     NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
-    [viewMenu addItemWithTitle:@"Single Page" action:@selector(setSinglePageMode:) keyEquivalent:@"4"];
-    [viewMenu addItemWithTitle:@"Continuous" action:@selector(setContinuousMode:) keyEquivalent:@"5"];
-    [viewMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem* viewFitWidth = [viewMenu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@""];
     NSMenuItem* viewFitHeight = [viewMenu addItemWithTitle:@"Fit Height"
                                                     action:@selector(fitHeight:)
@@ -2467,12 +2463,6 @@ static void spdf_discard_launch_prerender(void) {
                                   menu:menu
                                  state:NSControlStateValueOff
                                enabled:_findNextButton.enabled];
-    if ([hiddenViews containsObject:_continuousButton])
-        [self addOverflowItemWithTitle:@"Continuous"
-                                action:@selector(toggleContinuous:)
-                                  menu:menu
-                                 state:_continuousButton.state
-                               enabled:hasDoc];
     if ([hiddenViews containsObject:_fitModePopup] || [hiddenViews containsObject:_zoomOutButton] ||
         [hiddenViews containsObject:_zoomInButton]) {
         [menu addItem:[NSMenuItem separatorItem]];
@@ -2532,7 +2522,6 @@ static void spdf_discard_launch_prerender(void) {
         @[ _findCountLabel ],
         @[ _findPrevButton, _findNextButton ],
         @[ _findRegexCheckbox ],
-        @[ _continuousButton ],
         @[ _fitModePopup, _zoomOutButton, _zoomInButton ],
     ];
     NSMutableSet<NSView*>* hiddenViews = [NSMutableSet set];
@@ -2667,17 +2656,6 @@ static void spdf_discard_launch_prerender(void) {
     [_fitModePopup setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                             forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-    _continuousButton = [NSButton checkboxWithTitle:@"Continuous" target:self action:@selector(toggleContinuous:)];
-    [self styleToolbarTextButton:_continuousButton];
-    _continuousButton.toolTip = @"Continuous scrolling";
-    _continuousButton.translatesAutoresizingMaskIntoConstraints = NO;
-    _continuousButton.state = NSControlStateValueOn;
-    [_continuousButton.widthAnchor constraintEqualToConstant:104].active = YES;
-    [_continuousButton setContentHuggingPriority:NSLayoutPriorityRequired
-                                  forOrientation:NSLayoutConstraintOrientationHorizontal];
-    [_continuousButton setContentCompressionResistancePriority:NSLayoutPriorityRequired
-                                                forOrientation:NSLayoutConstraintOrientationHorizontal];
-
     _searchField = [[SPDFFindSearchField alloc] init];
     _searchField.placeholderString = @"Find";
     _searchField.translatesAutoresizingMaskIntoConstraints = NO;
@@ -2767,7 +2745,6 @@ static void spdf_discard_launch_prerender(void) {
     [_toolbar addArrangedSubview:_fitModePopup];
     [_toolbar addArrangedSubview:_zoomOutButton];
     [_toolbar addArrangedSubview:_zoomInButton];
-    [_toolbar addArrangedSubview:_continuousButton];
     [_toolbar addArrangedSubview:_searchField];
     [_toolbar addArrangedSubview:_findRegexCheckbox];
     [_toolbar addArrangedSubview:_findCountLabel];
@@ -2776,7 +2753,7 @@ static void spdf_discard_launch_prerender(void) {
     [_toolbar addArrangedSubview:_toolbarSpacer];
     [_toolbar addArrangedSubview:_toolbarOverflowButton];
     [_toolbar addArrangedSubview:_minimapToggleButton];
-    [_toolbar setCustomSpacing:8.0 afterView:_continuousButton];
+    [_toolbar setCustomSpacing:8.0 afterView:_zoomInButton];
     [_toolbar setCustomSpacing:8.0 afterView:_searchField];
 
     if (launchWindowStart > 0.0)
@@ -3921,7 +3898,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     preferredPage = MAX(0, MIN(preferredPage, (NSInteger)_renderedPages.count - 1));
 
     NSMutableOrderedSet<NSNumber*>* indexes = [NSMutableOrderedSet orderedSet];
-    if (_viewMode == SPDFViewModeSingle) {
+    if (_presentationMode) {
         [indexes addObject:@(preferredPage)];
     } else {
         for (NSInteger i = 0; i < (NSInteger)_renderedPages.count; ++i) {
@@ -4850,7 +4827,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
           self->_pageView.pages = self->_renderedPages;
           self->_pageView.currentPageIndex = self->_pageIndex;
           self->_pageView.zoom = self->_zoom;
-          self->_pageView.viewMode = self->_viewMode;
+          self->_pageView.presentationMode = self->_presentationMode;
           self->_pageView.backingScale = [self backingScale];
           self->_pageView.liveZooming = NO;
           [self clearLiveZoomSeeds];
@@ -5031,7 +5008,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (_renderedPages.count > 0 && _pageScrollView) {
         NSClipView* clipView = _pageScrollView.contentView;
         NSRect proposedVisible = NSMakeRect(origin.x, origin.y, NSWidth(clipView.bounds), NSHeight(clipView.bounds));
-        pageIndex = _viewMode == SPDFViewModeSingle ? _pageIndex : [_pageView pageIndexForVisibleRect:proposedVisible];
+        pageIndex = _presentationMode ? _pageIndex : [_pageView pageIndexForVisibleRect:proposedVisible];
     }
     return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
 }
@@ -5051,10 +5028,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
     if (NSIsEmptyRect(pageRect)) return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
 
-    if (_viewMode == SPDFViewModeSingle) {
+    if (_presentationMode) {
         CGFloat visibleHeight = NSHeight(clipView.bounds);
         if (NSHeight(pageRect) <= visibleHeight + 0.5) {
-            origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
+            origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
         } else {
             origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMaxY(pageRect) - visibleHeight);
         }
@@ -5070,7 +5047,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
 }
 
-- (CGFloat)singlePageDocumentScrollOriginYForPageIndex:(NSInteger)pageIndex {
+/* Vertically centers a page in the viewport. Used only in presentation mode,
+ * where the document view lays out one page at a time. */
+- (CGFloat)presentationCenteredScrollOriginYForPageIndex:(NSInteger)pageIndex {
     if (_renderedPages.count == 0) return 0.0;
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
     NSClipView* clipView = _pageScrollView.contentView;
@@ -5079,77 +5058,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
     CGFloat y = NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5;
     return spdf_clamp_cg(y, 0.0, maxY);
-}
-
-- (NSInteger)singlePageTargetPageForUserScrollVisibleRect:(NSRect)visibleRect {
-    NSInteger currentPage = MAX(0, MIN(_pageIndex, (NSInteger)_renderedPages.count - 1));
-    NSRect pageSlot = [self continuousDocumentRectForPageAtIndex:currentPage];
-    if (NSIsEmptyRect(pageSlot)) return currentPage;
-
-    CGFloat visibleHeight = NSHeight(visibleRect);
-    CGFloat minOriginY = NSMinY(pageSlot);
-    CGFloat maxOriginY = MAX(minOriginY, NSMaxY(pageSlot) - visibleHeight);
-    if (NSHeight(pageSlot) <= visibleHeight + 0.5) {
-        CGFloat centeredOriginY = [self singlePageDocumentScrollOriginYForPageIndex:currentPage];
-        minOriginY = centeredOriginY;
-        maxOriginY = centeredOriginY;
-    }
-
-    CGFloat threshold = MAX(24.0, visibleHeight / 3.0);
-    if (NSMinY(visibleRect) > maxOriginY + threshold && currentPage + 1 < (NSInteger)_renderedPages.count)
-        return currentPage + 1;
-    if (NSMinY(visibleRect) < minOriginY - threshold && currentPage > 0) return currentPage - 1;
-    return currentPage;
-}
-
-- (BOOL)normalizeSinglePageScrollPositionFromUserScroll {
-    if (_presentationMode || _viewMode != SPDFViewModeSingle || _updatingFromScroll || _renderedPages.count == 0)
-        return NO;
-
-    NSClipView* clipView = _pageScrollView.contentView;
-    NSRect visibleRect = clipView.bounds;
-    NSInteger visiblePage = [self singlePageTargetPageForUserScrollVisibleRect:visibleRect];
-    visiblePage = MAX(0, MIN(visiblePage, (NSInteger)_renderedPages.count - 1));
-    BOOL pageChanged = visiblePage != _pageIndex;
-    if (pageChanged) {
-        _pageIndex = visiblePage;
-        _pageView.currentPageIndex = _pageIndex;
-        [self clearPageFieldFocus];
-        [self renderPageIfNeededAtIndex:_pageIndex];
-        [self resizeDocumentView];
-        visibleRect = clipView.bounds;
-        [self enqueueZoomSeedCachesForGeneration:_renderGeneration preferredPage:_pageIndex includeWholeBase:NO];
-        [self enqueueCurrentPageNeighborhoodRendersForGeneration:_renderGeneration
-                                                   preferredPage:_pageIndex
-                                               forceHighPriority:NO];
-        [self updateControls];
-        [self selectCurrentSidebarRow];
-    }
-
-    [_pageView setNeedsDisplay:YES];
-    BOOL panning = _documentViewPanActive;
-    if (!panning || pageChanged) {
-        NSPoint snappedOrigin = [self normalizedDocumentScrollOrigin:visibleRect.origin forPageIndex:_pageIndex];
-        if (fabs(snappedOrigin.x - NSMinX(visibleRect)) > 0.5 || fabs(snappedOrigin.y - NSMinY(visibleRect)) > 0.5)
-            [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
-    }
-    if (panning) {
-        [self scheduleDocumentPanMaintenance];
-        return YES;
-    }
-    if (_liveZooming) [_pageView setNeedsDisplay:YES];
-    else [self renderVisiblePageCropsForCurrentViewportIfNeeded];
-    [self updateMinimap];
-    if (!panning) [self evictDistantRenderedPageImages];
-    return YES;
-}
-
-- (void)snapSinglePageScrollPositionAfterPan {
-    if (_presentationMode || _viewMode != SPDFViewModeSingle || _renderedPages.count == 0) return;
-    NSClipView* clipView = _pageScrollView.contentView;
-    NSPoint snappedOrigin = [self normalizedDocumentScrollOrigin:clipView.bounds.origin forPageIndex:_pageIndex];
-    if (fabs(snappedOrigin.x - NSMinX(clipView.bounds)) > 0.5 || fabs(snappedOrigin.y - NSMinY(clipView.bounds)) > 0.5)
-        [self scrollDocumentClipViewToOrigin:snappedOrigin pageIndexHint:_pageIndex notify:NO];
 }
 
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify {
@@ -5206,18 +5114,18 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSClipView* clipView = _pageScrollView.contentView;
         CGFloat x = NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5 ? 0.0 : MAX(0, pageRect.origin.x - 12.0);
         CGFloat y = MAX(0, pageRect.origin.y - 12);
-        if (_viewMode == SPDFViewModeSingle) y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
+        if (_presentationMode) y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
         NSPoint point = NSMakePoint(x, y);
         [self scrollDocumentClipViewToOrigin:point notify:NO];
     } else {
         NSClipView* clipView = _pageScrollView.contentView;
         NSRect visible = clipView.bounds;
         NSPoint origin = visible.origin;
-        if (_viewMode == SPDFViewModeSingle) origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
+        if (_presentationMode) origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
         if (NSMinX(pageRect) < NSMinX(visible)) origin.x = NSMinX(pageRect) - 12.0;
         else if (NSMaxX(pageRect) > NSMaxX(visible)) origin.x = NSMaxX(pageRect) - NSWidth(visible) + 12.0;
-        if (_viewMode != SPDFViewModeSingle && NSMinY(pageRect) < NSMinY(visible)) origin.y = NSMinY(pageRect) - 12.0;
-        else if (_viewMode != SPDFViewModeSingle && NSMaxY(pageRect) > NSMaxY(visible))
+        if (!_presentationMode && NSMinY(pageRect) < NSMinY(visible)) origin.y = NSMinY(pageRect) - 12.0;
+        else if (!_presentationMode && NSMaxY(pageRect) > NSMaxY(visible))
             origin.y = NSMaxY(pageRect) - NSHeight(visible) + 12.0;
         [self scrollDocumentClipViewToOrigin:origin notify:NO];
     }
@@ -5287,7 +5195,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSPoint origin = NSMakePoint(NSMinX(pageRect) + spdf_clamp_cg(relativePosition.x, 0.0, 1.0) * maxInPageX,
                                  NSMinY(pageRect) + spdf_clamp_cg(relativePosition.y, 0.0, 1.0) * maxInPageY);
     if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5) origin.x = 0.0;
-    if (_viewMode == SPDFViewModeSingle) origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
+    if (_presentationMode) origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
 
@@ -5322,7 +5230,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (CGFloat)continuousDocumentHeightForMinimap {
-    if (_viewMode == SPDFViewModeSingle) {
+    if (_presentationMode) {
         CGFloat height = kPageMargin / 2.0;
         for (SPDFRenderedPage* page in _renderedPages ?: @[]) height += MAX(1.0, page.pageHeight * _zoom) + kPageGap;
         height += kPageMargin / 2.0;
@@ -5332,7 +5240,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (CGFloat)continuousDocumentWidthForMinimap {
-    if (_viewMode == SPDFViewModeSingle) {
+    if (_presentationMode) {
         CGFloat widest = 0.0;
         for (SPDFRenderedPage* page in _renderedPages ?: @[]) widest = MAX(widest, page.pageWidth * _zoom);
         return MAX(1.0, MAX(NSWidth(_pageView.bounds), widest + kPageMargin));
@@ -5342,7 +5250,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (NSRect)continuousDocumentRectForPageAtIndex:(NSInteger)pageIndex {
     if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count || !_pageView) return NSZeroRect;
-    if (_viewMode == SPDFViewModeSingle) {
+    if (_presentationMode) {
         CGFloat y = kPageMargin / 2.0;
         for (NSInteger i = 0; i < pageIndex; ++i) {
             SPDFRenderedPage* prev = _renderedPages[(NSUInteger)i];
@@ -5360,7 +5268,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (NSRect)continuousDocumentVisibleRectForMinimap {
-    if (_viewMode == SPDFViewModeSingle) {
+    if (_presentationMode) {
         if (_renderedPages.count == 0) return NSZeroRect;
         NSInteger pageIndex = MAX(0, MIN(_pageIndex, (NSInteger)_renderedPages.count - 1));
         NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
@@ -5444,7 +5352,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5) origin.x = 0.0;
     else origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMinX(pageRect) + maxInPageX);
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
-    if (_viewMode == SPDFViewModeSingle) origin.y = [self singlePageDocumentScrollOriginYForPageIndex:pageIndex];
+    if (_presentationMode) origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
     else origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
 
@@ -5458,7 +5366,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (liveZooming) {
         _minimapView.liveViewportOnly = YES;
         _minimapView.currentPageIndex = _pageIndex;
-        _minimapView.viewMode = _viewMode;
         _minimapView.documentPageRects = [self continuousDocumentPageRectsForMinimap];
         _minimapView.documentVisibleRect = [self continuousDocumentVisibleRectForMinimap];
         _minimapView.documentWidth = [self continuousDocumentWidthForMinimap];
@@ -5471,7 +5378,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _minimapView.pages = _renderedPages ?: @[];
     _minimapView.documentPageRects = [self continuousDocumentPageRectsForMinimap];
     _minimapView.currentPageIndex = _pageIndex;
-    _minimapView.viewMode = _viewMode;
     _minimapView.documentVisibleRect = [self continuousDocumentVisibleRectForMinimap];
     _minimapView.documentWidth = [self continuousDocumentWidthForMinimap];
     _minimapView.documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
@@ -5526,7 +5432,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (!_doc || _renderedPages.count == 0) return;
     yFraction = spdf_clamp_cg(yFraction, 0.0, 1.0);
 
-    if (_viewMode == SPDFViewModeSingle) {
+    if (_presentationMode) {
         NSRect visibleRect = [self continuousDocumentVisibleRectForMinimap];
         CGFloat documentHeight = [self continuousDocumentHeightForMinimap];
         CGFloat documentTop = yFraction * MAX(0.0, documentHeight - NSHeight(visibleRect));
@@ -5551,7 +5457,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSInteger pageIndex = [_pageView
         pageIndexForVisibleRect:NSMakeRect(origin.x, origin.y, NSWidth(clipView.bounds), NSHeight(clipView.bounds))];
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
-    if (_viewMode == SPDFViewModeSingle && pageIndex != _pageIndex) {
+    if (_presentationMode && pageIndex != _pageIndex) {
         _pageIndex = pageIndex;
         _pageView.currentPageIndex = _pageIndex;
         [self renderPageIfNeededAtIndex:_pageIndex];
@@ -5559,7 +5465,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self selectCurrentSidebarRow];
     }
 
-    if (_viewMode == SPDFViewModeContinuous) {
+    if (!_presentationMode) {
         _minimapPrecisionViewportDragActive = YES;
         [self scrollDocumentClipViewToDocumentOrigin:origin notify:NO];
         [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
@@ -5589,7 +5495,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)minimapViewDidRequestCenterAtDocumentPoint:(NSPoint)documentPoint {
     if (!_doc || _renderedPages.count == 0) return;
 
-    if (_viewMode == SPDFViewModeContinuous) {
+    if (!_presentationMode) {
         NSClipView* clipView = _pageScrollView.contentView;
         NSPoint origin = NSMakePoint(documentPoint.x - NSWidth(clipView.bounds) * 0.5,
                                      documentPoint.y - NSHeight(clipView.bounds) * 0.5);
@@ -5622,7 +5528,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSPoint documentPoint = [self continuousDocumentPointForPage:pageIndex
                                                  xFractionInPage:xFraction
                                                  yFractionInPage:yFraction];
-    if (_viewMode == SPDFViewModeContinuous) {
+    if (!_presentationMode) {
         [self minimapViewDidRequestCenterAtDocumentPoint:documentPoint];
         return;
     }
@@ -5639,7 +5545,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (NSPoint)pageViewPointForMinimapDocumentPoint:(NSPoint)documentPoint {
-    if (_viewMode == SPDFViewModeSingle) {
+    if (_presentationMode) {
         CGFloat yFraction = 0.0;
         NSInteger pageIndex = [self pageIndexForContinuousDocumentY:documentPoint.y pageFraction:&yFraction];
         if (pageIndex != _pageIndex) {
@@ -5707,7 +5613,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     tab.zoom = _zoom;
     tab.customZoom = _rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom;
     tab.fitMode = _fitMode;
-    tab.viewMode = _viewMode;
     tab.showSidebar = _sidebarPreferredVisible;
     tab.showMinimap = _minimapPreferredVisible;
     tab.hasMinimapPreference = YES;
@@ -6650,7 +6555,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // to the nearest page so zoom still converges toward the pointer. Scroll
     // clamping keeps a smaller-than-viewport document centered regardless.
     NSRect visible = clipView.bounds;
-    pageIndex = _viewMode == SPDFViewModeSingle ? _pageIndex : [_pageView pageIndexForVisibleRect:visible];
+    pageIndex = _presentationMode ? _pageIndex : [_pageView pageIndexForVisibleRect:visible];
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
     if (NSIsEmptyRect(pageRect)) return anchor;
@@ -6774,7 +6679,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         finishAnchor.offsetInViewport = _liveZoomAnchorOffsetInViewport;
         finishAnchor.valid = YES;
     }
-    BOOL singlePageZoom = _viewMode == SPDFViewModeSingle;
+    BOOL presentationZoom = _presentationMode;
     NSInteger preservedPageIndex = _pageIndex;
     double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     _liveZooming = NO;
@@ -6788,7 +6693,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
         _suppressScrollCallbacks = YES;
         [self resizeDocumentView];
-        if (singlePageZoom && preservedPageIndex >= 0 && preservedPageIndex < (NSInteger)_renderedPages.count) {
+        if (presentationZoom && preservedPageIndex >= 0 && preservedPageIndex < (NSInteger)_renderedPages.count) {
             _pageIndex = preservedPageIndex;
             _pageView.currentPageIndex = _pageIndex;
         }
@@ -6796,7 +6701,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         _suppressScrollCallbacks = previousSuppressScrollCallbacks;
         [self syncToolbarState];
         [self updateControls];
-        if (!singlePageZoom) [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
+        if (!presentationZoom) [self syncCurrentPageFromVisibleViewportQueueRenders:NO forceHighPriority:YES];
         if (_documentViewPanActive) [self setCurrentViewportNeedsDisplay];
         else
             [self schedulePostLiveZoomViewportRenderForSequence:sequence
@@ -7054,7 +6959,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self loadInitialSidebarMetadataForSelectedTabIfNeeded];
     _pageIndex = MAX(0, MIN(tab.pageIndex, pageCount - 1));
     _fitMode = tab.fitMode;
-    _viewMode = tab.viewMode;
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
     _zoom = [self zoomForFitMode:_fitMode pageIndex:_pageIndex];
     _renderGeneration++;
@@ -7065,7 +6969,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _pageView.pages = _renderedPages;
     _pageView.currentPageIndex = _pageIndex;
     _pageView.zoom = _zoom;
-    _pageView.viewMode = _viewMode;
+    _pageView.presentationMode = _presentationMode;
     _pageView.backingScale = [self backingScale];
     if (_presentationMode) _pageScrollView.verticalScroller = nil;
     else if (_pageScrollView.verticalScroller != _markerScroller) _pageScrollView.verticalScroller = _markerScroller;
@@ -7346,7 +7250,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _renderGeneration++;
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
     _fitMode = tab.fitMode;
-    _viewMode = tab.viewMode;
     _zoom = [self zoomForFitMode:_fitMode pageIndex:_pageIndex];
 
     _statusLabel.stringValue = @"Opening...";
@@ -7444,7 +7347,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     tab.zoom = 1.0;
     tab.customZoom = 1.0;
     tab.fitMode = SPDFFitModePage;
-    tab.viewMode = _viewMode;
     tab.searchText = @"";
     tab.searchRegex = NO;
     tab.searchRegexMultiline = YES;
@@ -7730,7 +7632,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     SPDFDocumentView* view = [[SPDFDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 800, 1000)];
     view.reader = self;
     [view registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
-    view.viewMode = _viewMode;
+    view.presentationMode = _presentationMode;
     view.zoom = _zoom;
     view.currentPageIndex = _pageIndex;
     view.backingScale = [self backingScale];
@@ -8247,17 +8149,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self updateMinimap];
         return;
     }
-    if ([self normalizeSinglePageScrollPositionFromUserScroll]) return;
     if (!_updatingFromScroll) {
         NSInteger visiblePage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
         if (visiblePage != _pageIndex) {
             _pageIndex = visiblePage;
             _pageView.currentPageIndex = _pageIndex;
             [self clearPageFieldFocus];
-            if (_viewMode == SPDFViewModeSingle) {
-                [self renderPageIfNeededAtIndex:_pageIndex];
-                [_pageView setNeedsDisplay:YES];
-            }
             [self enqueueZoomSeedCachesForGeneration:_renderGeneration preferredPage:_pageIndex includeWholeBase:NO];
             [self enqueueCurrentPageNeighborhoodRendersForGeneration:_renderGeneration
                                                        preferredPage:_pageIndex
@@ -8307,7 +8204,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (!_minimapView) return;
     _minimapView.liveViewportOnly = YES;
     _minimapView.currentPageIndex = _pageIndex;
-    _minimapView.viewMode = _viewMode;
     _minimapView.documentPageRects = [self continuousDocumentPageRectsForMinimap];
     _minimapView.documentVisibleRect = [self continuousDocumentVisibleRectForMinimap];
     _minimapView.documentWidth = [self continuousDocumentWidthForMinimap];
@@ -8360,12 +8256,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
     if (!left && !right && !down && !up && !pageUp && !pageDown) return NO;
 
-    if (!_presentationMode && _viewMode == SPDFViewModeContinuous && shift && (left || right || up || down)) {
+    if (!_presentationMode && shift && (left || right || up || down)) {
         [self goToAdjacentPagePreservingRelativePosition:(left || up) ? -1 : 1];
         return YES;
     }
 
-    if (_presentationMode || _viewMode == SPDFViewModeSingle) {
+    if (_presentationMode) {
         if (left || up || pageUp) [self previousPage:nil];
         else [self nextPage:nil];
         return YES;
@@ -8420,7 +8316,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (!_doc) return NO;
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) return NO;
-    return _viewMode == SPDFViewModeSingle;
+    return _presentationMode;
 }
 
 - (BOOL)isAutoFitMode:(SPDFFitMode)fitMode {
@@ -8474,7 +8370,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSMenuItem* selectedFitItem = [self fitModePopupItemForMode:_fitMode];
     if (!selectedFitItem && _fitMode == SPDFFitModeCustom) selectedFitItem = actualItem;
     if (selectedFitItem) [_fitModePopup selectItem:selectedFitItem];
-    _continuousButton.state = _viewMode == SPDFViewModeContinuous ? NSControlStateValueOn : NSControlStateValueOff;
     [self styleToolbarPanelButton:_sidebarToggleButton
                             title:@"Side Panel"
                            active:_sidebarVisible
@@ -8499,7 +8394,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _zoomOutButton.enabled = hasDoc;
     _zoomInButton.enabled = hasDoc;
     _fitModePopup.enabled = hasDoc;
-    _continuousButton.enabled = hasDoc;
     _searchField.enabled = hasDoc;
     _findRegexCheckbox.enabled = hasDoc;
     _ocrButton.enabled = hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
@@ -8514,10 +8408,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSString* displayName = _path.length ? [self displayNameForPathConsideringOpenTabs:_path]
                                              : [NSString stringWithUTF8String:spdf_title(_doc)];
         _window.title = [NSString stringWithFormat:@"%@ - Shenzhen PDF", displayName];
-        NSString* mode = _viewMode == SPDFViewModeContinuous ? @"Continuous" : @"Single page";
         _statusLabel.stringValue =
-            [NSString stringWithFormat:@"Page %ld of %ld    Zoom %.0f%%    %@", (long)_pageIndex + 1, (long)pageCount,
-                                       _zoom * 100.0, mode];
+            [NSString stringWithFormat:@"Page %ld of %ld    Zoom %.0f%%", (long)_pageIndex + 1, (long)pageCount,
+                                       _zoom * 100.0];
     }
     [self updateToolbarOverflow];
 }
@@ -8815,7 +8708,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSRect visibleRect = clipView.bounds;
     NSPoint origin =
         NSMakePoint(NSMidX(viewRect) - NSWidth(visibleRect) * 0.5, NSMidY(viewRect) - NSHeight(visibleRect) * 0.5);
-    BOOL fullPageHeightFits = _viewMode == SPDFViewModeSingle && NSHeight(pageRect) <= NSHeight(visibleRect) + 0.5;
+    BOOL fullPageHeightFits = _presentationMode && NSHeight(pageRect) <= NSHeight(visibleRect) + 0.5;
     if (fullPageHeightFits) {
         BOOL pageAlreadyVisible =
             NSMinY(pageRect) >= NSMinY(visibleRect) - 0.5 && NSMaxY(pageRect) <= NSMaxY(visibleRect) + 0.5;
@@ -8941,7 +8834,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _documentViewPanCropInFlight = NO;
     _documentViewPanMaintenanceScheduled = NO;
     _lastDocumentPanLiveCropRenderTime = 0.0;
-    [self snapSinglePageScrollPositionAfterPan];
     if (_liveZooming) {
         [_zoomFinishTimer invalidate];
         _zoomFinishTimer = [NSTimer scheduledTimerWithTimeInterval:0.02
@@ -10770,26 +10662,22 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)previousPage:(id)sender {
     (void)sender;
-    if (_doc && _pageIndex > 0)
-        [self goToPage:_pageIndex - 1 preserveSinglePagePosition:!_presentationMode && _viewMode == SPDFViewModeSingle];
+    if (_doc && _pageIndex > 0) [self goToPage:_pageIndex - 1 preserveSinglePagePosition:NO];
 }
 
 - (void)nextPage:(id)sender {
     (void)sender;
-    if (_doc && _pageIndex + 1 < spdf_page_count(_doc))
-        [self goToPage:_pageIndex + 1 preserveSinglePagePosition:!_presentationMode && _viewMode == SPDFViewModeSingle];
+    if (_doc && _pageIndex + 1 < spdf_page_count(_doc)) [self goToPage:_pageIndex + 1 preserveSinglePagePosition:NO];
 }
 
 - (void)firstPage:(id)sender {
     (void)sender;
-    if (_doc) [self goToPage:0 preserveSinglePagePosition:!_presentationMode && _viewMode == SPDFViewModeSingle];
+    if (_doc) [self goToPage:0 preserveSinglePagePosition:NO];
 }
 
 - (void)lastPage:(id)sender {
     (void)sender;
-    if (_doc)
-        [self goToPage:spdf_page_count(_doc) - 1
-            preserveSinglePagePosition:!_presentationMode && _viewMode == SPDFViewModeSingle];
+    if (_doc) [self goToPage:spdf_page_count(_doc) - 1 preserveSinglePagePosition:NO];
 }
 
 - (void)focusPageField:(id)sender {
@@ -10803,7 +10691,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSInteger requested = _pageField.integerValue - 1;
     NSInteger pageCount = spdf_page_count(_doc);
     requested = MAX(0, MIN(requested, pageCount - 1));
-    [self goToPage:requested preserveSinglePagePosition:_viewMode == SPDFViewModeSingle];
+    [self goToPage:requested preserveSinglePagePosition:_presentationMode];
 }
 
 - (void)zoomIn:(id)sender {
@@ -10870,40 +10758,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     } else {
         _fitMode = selected;
     }
-}
-
-- (void)setSinglePageMode:(id)sender {
-    (void)sender;
-    if (!_doc) return;
-    NSPoint relativePosition = [self relativeScrollPositionForCurrentPage];
-    _viewMode = SPDFViewModeSingle;
-    _pageView.viewMode = _viewMode;
-    _pageView.currentPageIndex = _pageIndex;
-    [self resizeDocumentView];
-    [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition];
-    [self syncToolbarState];
-    [self updateControls];
-    [self persistActiveState];
-}
-
-- (void)setContinuousMode:(id)sender {
-    (void)sender;
-    if (!_doc) return;
-    NSPoint relativePosition = [self relativeScrollPositionForCurrentPage];
-    _viewMode = SPDFViewModeContinuous;
-    _pageView.viewMode = _viewMode;
-    [self resizeDocumentView];
-    [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition];
-    [self syncToolbarState];
-    [self updateControls];
-    [self updateMinimap];
-    [self persistActiveState];
-}
-
-- (void)toggleContinuous:(id)sender {
-    (void)sender;
-    if (_continuousButton.state == NSControlStateValueOn) [self setContinuousMode:sender];
-    else [self setSinglePageMode:sender];
 }
 
 - (void)toggleSidebar:(id)sender {
@@ -11106,7 +10960,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)enterPresentationMode:(id)sender {
     if (!_doc || _presentationMode) return;
 
-    _presentationPreviousViewMode = _viewMode;
     _presentationPreviousFitMode = _fitMode;
     _presentationPreviousSidebarPreferredVisible = _sidebarPreferredVisible;
     _presentationPreviousMinimapPreferredVisible = _minimapPreferredVisible;
@@ -11120,9 +10973,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self enterPresentationWindowChrome];
     _sidebarPreferredVisible = NO;
     _minimapPreferredVisible = NO;
-    _viewMode = SPDFViewModeSingle;
     _fitMode = SPDFFitModePage;
-    _pageView.viewMode = _viewMode;
+    /* presentationMode drives the document view's page-at-a-time layout;
+     * applyPresentationChrome propagates it to _pageView. */
     _pageView.currentPageIndex = _pageIndex;
     [self applyPresentationChrome];
     [self rebuildSidebar];
@@ -11147,9 +11000,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self removePresentationEventMonitor];
     _sidebarPreferredVisible = _presentationPreviousSidebarPreferredVisible;
     _minimapPreferredVisible = _presentationPreviousMinimapPreferredVisible;
-    _viewMode = _presentationPreviousViewMode;
     _fitMode = _presentationPreviousFitMode;
-    _pageView.viewMode = _viewMode;
+    /* Clearing presentationMode (above) returns the document view to continuous
+     * layout; applyPresentationChrome propagates it to _pageView. */
     _pageView.currentPageIndex = _pageIndex;
     [self applyPresentationChrome];
     [self restorePresentationWindowChrome];
@@ -13830,11 +13683,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                _renderedPages[(NSUInteger)_pageIndex].image != nil;
     if (!hasDoc) return action == @selector(unimplementedMenuItem:);
 
-    if (action == @selector(setSinglePageMode:))
-        menuItem.state = _viewMode == SPDFViewModeSingle ? NSControlStateValueOn : NSControlStateValueOff;
-    else if (action == @selector(setContinuousMode:))
-        menuItem.state = _viewMode == SPDFViewModeContinuous ? NSControlStateValueOn : NSControlStateValueOff;
-    else if (action == @selector(fitWidth:))
+    if (action == @selector(fitWidth:))
         menuItem.state = _fitMode == SPDFFitModeWidth ? NSControlStateValueOn : NSControlStateValueOff;
     else if (action == @selector(fitHeight:))
         menuItem.state = _fitMode == SPDFFitModeHeight ? NSControlStateValueOn : NSControlStateValueOff;
