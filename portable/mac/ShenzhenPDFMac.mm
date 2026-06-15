@@ -2059,13 +2059,6 @@ static void spdf_discard_launch_prerender(void) {
     NSMenuItem* viewItem = [[NSMenuItem alloc] initWithTitle:@"View" action:nil keyEquivalent:@""];
     [mainMenu addItem:viewItem];
     NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
-    NSMenuItem* viewFitWidth = [viewMenu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@""];
-    NSMenuItem* viewFitHeight = [viewMenu addItemWithTitle:@"Fit Height"
-                                                    action:@selector(fitHeight:)
-                                             keyEquivalent:@""];
-    NSMenuItem* viewFitPage = [viewMenu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@""];
-    for (NSMenuItem* item in @[ viewFitWidth, viewFitHeight, viewFitPage ]) item.target = self;
-    [viewMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem* sidePanelItem = [viewMenu addItemWithTitle:@"Show Side Panel"
                                                     action:@selector(toggleSidebar:)
                                              keyEquivalent:@""];
@@ -2075,26 +2068,6 @@ static void spdf_discard_launch_prerender(void) {
                                            keyEquivalent:@""];
     minimapItem.target = self;
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* viewMoveResizeItem = [[NSMenuItem alloc] initWithTitle:@"Move & Resize Window"
-                                                                action:nil
-                                                         keyEquivalent:@""];
-    NSMenu* viewMoveResizeMenu = [[NSMenu alloc] initWithTitle:@"Move & Resize Window"];
-    NSArray<NSDictionary*>* viewMoveResizeActions = @[
-        @{@"title" : @"Fill", @"action" : NSStringFromSelector(@selector(fillWindow:))},
-        @{@"title" : @"Center", @"action" : NSStringFromSelector(@selector(centerWindowInScreen:))},
-        @{@"title" : @"Left Half", @"action" : NSStringFromSelector(@selector(moveWindowToLeftHalf:))},
-        @{@"title" : @"Right Half", @"action" : NSStringFromSelector(@selector(moveWindowToRightHalf:))},
-        @{@"title" : @"Top Half", @"action" : NSStringFromSelector(@selector(moveWindowToTopHalf:))},
-        @{@"title" : @"Bottom Half", @"action" : NSStringFromSelector(@selector(moveWindowToBottomHalf:))}
-    ];
-    for (NSDictionary* itemInfo in viewMoveResizeActions) {
-        NSMenuItem* item = [viewMoveResizeMenu addItemWithTitle:itemInfo[@"title"]
-                                                         action:NSSelectorFromString(itemInfo[@"action"])
-                                                  keyEquivalent:@""];
-        item.target = self;
-    }
-    viewMoveResizeItem.submenu = viewMoveResizeMenu;
-    [viewMenu addItem:viewMoveResizeItem];
     NSMenuItem* presentation =
         [viewMenu addItemWithTitle:@"Presentation Mode"
                             action:@selector(togglePresentation:)
