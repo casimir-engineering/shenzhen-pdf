@@ -114,6 +114,7 @@
     NSUInteger _paletteSearchGeneration;
     id _paletteEventMonitor;
     id _windowArrangementShortcutMonitor;
+    id _keyScrollKeyUpMonitor;
     id _presentationEventMonitor;
     id _presentationGlobalEventMonitor;
     NSOperationQueue* _renderQueue;
@@ -188,14 +189,20 @@
     NSInteger _selectedTabIndex;
     NSUInteger _renderGeneration;
     NSTimer* _zoomFinishTimer;
-    // Smooth keyboard (up/down arrow) scrolling. The OS auto-repeats key-down
-    // while a key is held; each repeat refreshes _keyScrollLastEventTime and the
-    // ramp keeps accelerating toward the cap. A gap longer than the idle timeout
-    // (no repeat) makes the tick decelerate to a stop. Velocity is in pt/s,
-    // signed by scroll direction (+down/-up in clip-view origin space).
+    // Smooth keyboard arrow scrolling, two axes (vertical up/down, horizontal
+    // left/right). Hold is detected by real key release rather than auto-repeat
+    // timing: a keyDown sets _keyScrollKeyDown (and remembers _keyScrollKeyCode)
+    // and a keyUp local monitor clears it, so the ramp accelerates toward the cap
+    // for the whole hold with no mid-hold stall, then decelerates on release. The
+    // idle timeout is a safety keep-alive only (covers a missed keyUp). Velocity
+    // is in pt/s, signed by direction along the active axis (+down/-up,
+    // +right/-left in clip-view origin space). Axis 0 = vertical, 1 = horizontal.
     NSTimer* _keyScrollTimer;
     CGFloat _keyScrollVelocity;
-    CGFloat _keyScrollDirection;  // -1 (up), +1 (down), or 0 (idle)
+    CGFloat _keyScrollDirection;  // -1 / +1 along the active axis, or 0 (idle)
+    NSInteger _keyScrollAxis;     // 0 = vertical (y), 1 = horizontal (x)
+    BOOL _keyScrollKeyDown;       // YES from keyDown until the matching keyUp
+    unsigned short _keyScrollKeyCode;  // keyCode of the held arrow
     NSTimeInterval _keyScrollLastEventTime;
     NSTimeInterval _keyScrollLastTickTime;
     NSUInteger _liveZoomSequence;

@@ -8226,7 +8226,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return YES;
     }
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) return NO;
 
     BOOL space = event.keyCode == 49;
     BOOL left = event.keyCode == 123;
@@ -8240,6 +8239,29 @@ static BOOL spdf_page_list_cache_disabled(void) {
     BOOL returnKey = event.keyCode == 36 || event.keyCode == 76;
     BOOL deleteKey = event.keyCode == 51;
     BOOL shift = (flags & NSEventModifierFlagShift) != 0;
+    BOOL anyArrow = left || right || up || down;
+    BOOL cmdOrCtrl = (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) != 0;
+    BOOL option = (flags & NSEventModifierFlagOption) != 0;
+
+    // Cmd/Ctrl + any arrow always jumps a page (preserving zoom + relative
+    // position), in either mode, and cancels any in-flight smooth scroll first so
+    // the two motions never fight. Up/Left = previous, Down/Right = next.
+    if (cmdOrCtrl && !option && anyArrow) {
+        [self stopKeyboardScrollAnimation];
+        if (_presentationMode) {
+            if (up || left) [self previousPage:nil];
+            else [self nextPage:nil];
+        } else {
+            [self goToAdjacentPagePreservingRelativePosition:(up || left) ? -1 : 1];
+        }
+        return YES;
+    }
+    // Any other Cmd/Ctrl/Option combination falls through to the system default,
+    // matching the prior behavior (the only addition is Cmd/Ctrl+arrow above).
+    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) {
+        return NO;
+    }
+
     if (_presentationMode && home) {
         [self firstPage:nil];
         return YES;
@@ -8269,56 +8291,110 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return YES;
     }
 
-    // Continuous mode: plain left/right navigate pages while preserving the
-    // current zoom and relative position within the page. Any nav key other
-    // than up/down cancels an in-flight smooth keyboard scroll so the two
-    // motions never fight. Up/down feed the smooth-scroll ramp below.
-    if (left || right) {
-        [self stopKeyboardScrollAnimation];
-        [self goToAdjacentPagePreservingRelativePosition:left ? -1 : 1];
-        return YES;
-    }
     if (pageUp || pageDown) {
         [self stopKeyboardScrollAnimation];
         return NO;  // unchanged: fall through to default page-up/down handling
     }
 
+    // Continuous mode: plain left/right is context dependent.
+    //  - If the page content fits horizontally in the viewport (no horizontal
+    //    scroll range), left/right navigate pages while preserving zoom +
+    //    relative position, as before.
+    //  - If zoomed in so content is wider than the viewport, left/right smooth
+    //    scroll horizontally inside the page (same velocity ramp as up/down).
+    if (left || right) {
+        if ([self keyboardScrollHorizontallyNavigable]) {
+            [self beginOrSustainKeyboardScrollInDirection:right ? 1.0 : -1.0
+                                                     axis:1
+                                                  keyCode:event.keyCode
+                                                 isRepeat:event.isARepeat];
+            return YES;
+        }
+        [self stopKeyboardScrollAnimation];
+        [self goToAdjacentPagePreservingRelativePosition:left ? -1 : 1];
+        return YES;
+    }
+
     // Smooth up/down scroll. Up arrow scrolls toward the document top (negative
-    // origin.y), down toward the bottom — same directions as the old discrete
-    // 54pt hop, just velocity-driven and continuous. Holding the key produces an
-    // OS auto-repeat stream (event.isARepeat == YES); each event refreshes the
-    // ramp toward the cap, and a gap stops it (see stepKeyboardScroll:).
-    [self beginOrSustainKeyboardScrollInDirection:up ? -1.0 : 1.0];
+    // origin.y), down toward the bottom. A single tap kicks a small impulse then
+    // settles; holding accelerates toward the cap with no mid-hold stop because a
+    // keyUp monitor (not auto-repeat timing) decides when the hold ends.
+    [self beginOrSustainKeyboardScrollInDirection:up ? -1.0 : 1.0
+                                             axis:0
+                                          keyCode:event.keyCode
+                                         isRepeat:event.isARepeat];
     return YES;
 }
 
+// Horizontal navigability: true when the document content is wider than the
+// viewport, i.e. there is horizontal scroll range. Mirrors the
+// needsHorizontalScroller test in resizeDocumentView (content width vs clip
+// width). Used to choose smooth horizontal scroll over page change for left/right.
+- (BOOL)keyboardScrollHorizontallyNavigable {
+    if (!_pageScrollView || !_pageView) return NO;
+    NSClipView* clipView = _pageScrollView.contentView;
+    return NSWidth(_pageView.bounds) - NSWidth(clipView.bounds) > 0.5;
+}
+
 // Tunables for smooth keyboard scrolling. Cap is a comfortable max; the ramp
-// eases velocity toward target each tick so a tap moves a little and a hold
-// accelerates smoothly to the cap. Idle timeout: if no up/down event arrives
-// within this window the hold is considered released and the tick decelerates.
+// eases velocity toward target each tick so a hold accelerates smoothly to the
+// cap. Hold is driven by real key release (a keyUp monitor sets _keyScrollKeyDown
+// false), so there is no mid-hold stall from auto-repeat gaps. The idle timeout
+// is only a safety net: if a keyUp is ever missed, an event silence this long
+// treats the key as released. A single tap kicks a minimum impulse so even an
+// immediate release produces a small finite move comparable to the old discrete
+// hop (~54pt), then decelerates to a stop.
 static const CGFloat kKeyScrollMaxVelocity = 2200.0;     // pt/s cap
 static const CGFloat kKeyScrollAccelEase = 0.18;         // per-tick ease toward target (~60fps)
 static const CGFloat kKeyScrollDecelEase = 0.30;         // per-tick ease toward 0 on release
 static const CGFloat kKeyScrollMinVelocity = 30.0;       // pt/s; below this when decaying, stop
-static const NSTimeInterval kKeyScrollIdleTimeout = 0.14; // s without a repeat => release
+static const CGFloat kKeyScrollTapImpulse = 950.0;       // pt/s kick on a fresh press (tap distance)
+static const NSTimeInterval kKeyScrollIdleTimeout = 1.0; // s of event silence => assume keyUp missed
 static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
-- (void)beginOrSustainKeyboardScrollInDirection:(CGFloat)direction {
+// Scroll extent along the active axis (height for vertical, width for horizontal).
+- (CGFloat)keyScrollMaxOffsetForAxis:(NSInteger)axis clip:(NSClipView*)clipView {
+    if (axis == 1) return MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds));
+    return MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+}
+
+- (void)beginOrSustainKeyboardScrollInDirection:(CGFloat)direction
+                                           axis:(NSInteger)axis
+                                        keyCode:(unsigned short)keyCode
+                                       isRepeat:(BOOL)isRepeat {
     if (!_doc || !_pageScrollView) return;
-    // No scroll range: behave like before (do nothing).
+    // No scroll range on this axis: behave like before (do nothing).
     NSClipView* clipView = _pageScrollView.contentView;
-    if (NSHeight(_pageView.bounds) - NSHeight(clipView.bounds) <= 0.5) {
+    if ([self keyScrollMaxOffsetForAxis:axis clip:clipView] <= 0.5) {
         [self stopKeyboardScrollAnimation];
         return;
     }
 
     NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
     _keyScrollLastEventTime = now;
-    if (direction != _keyScrollDirection && _keyScrollDirection != 0.0) {
-        // Direction reversed mid-scroll: drop momentum so the reversal is crisp.
+
+    BOOL axisChanged = (axis != _keyScrollAxis);
+    BOOL reversed = (direction != _keyScrollDirection);
+    if ((axisChanged || reversed) && _keyScrollDirection != 0.0) {
+        // Direction or axis changed mid-scroll: drop momentum so the switch is crisp.
         _keyScrollVelocity = 0.0;
     }
+    _keyScrollAxis = axis;
     _keyScrollDirection = direction;
+
+    // Mark the key held; its keyUp (via the monitor) clears this. Auto-repeats are
+    // only a keep-alive: they refresh the event time above but otherwise do not
+    // affect the ramp, so acceleration builds continuously for the whole hold.
+    _keyScrollKeyDown = YES;
+    _keyScrollKeyCode = keyCode;
+
+    // Fresh press (not an OS auto-repeat): kick a minimum impulse immediately so
+    // that even a tap released before the first timer tick produces a small finite
+    // move comparable to the old discrete hop. Repeats must not re-kick or they
+    // would cap the velocity each repeat and stall acceleration.
+    if (!isRepeat && fabs(_keyScrollVelocity) < kKeyScrollTapImpulse) {
+        _keyScrollVelocity = direction * kKeyScrollTapImpulse;
+    }
 
     if (!_keyScrollTimer) {
         _keyScrollLastTickTime = now;
@@ -8328,6 +8404,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
                                                          userInfo:nil
                                                           repeats:YES];
     }
+    [self installKeyScrollKeyUpMonitor];
 }
 
 - (void)stepKeyboardScroll:(NSTimer*)timer {
@@ -8342,7 +8419,9 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     if (dt <= 0.0 || dt > 0.25) dt = kKeyScrollTickInterval;  // clamp stalls
     _keyScrollLastTickTime = now;
 
-    BOOL held = _keyScrollDirection != 0.0 &&
+    // Held = the key is physically down (per keyDown/keyUp), with a safety net:
+    // if a keyUp was somehow missed, a long event silence forces release.
+    BOOL held = _keyScrollKeyDown && _keyScrollDirection != 0.0 &&
                 (now - _keyScrollLastEventTime) <= kKeyScrollIdleTimeout;
 
     CGFloat target = held ? _keyScrollDirection * kKeyScrollMaxVelocity : 0.0;
@@ -8358,21 +8437,51 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     }
 
     NSClipView* clipView = _pageScrollView.contentView;
-    CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+    NSInteger axis = _keyScrollAxis;
+    CGFloat maxOffset = [self keyScrollMaxOffsetForAxis:axis clip:clipView];
     NSPoint origin = clipView.bounds.origin;
-    CGFloat before = origin.y;
-    origin.y += _keyScrollVelocity * dt;
-    origin.y = spdf_clamp_cg(origin.y, 0.0, maxY);
+    CGFloat before = (axis == 1) ? origin.x : origin.y;
+    CGFloat moved = before + _keyScrollVelocity * dt;
+    moved = spdf_clamp_cg(moved, 0.0, maxOffset);
+    if (axis == 1) origin.x = moved; else origin.y = moved;
     [self scrollDocumentClipViewToOrigin:origin notify:YES];
 
     // Hit an edge with no movement: stop (kill residual velocity at the bounds).
-    if (fabs(clipView.bounds.origin.y - before) < 0.01 &&
+    CGFloat after = (axis == 1) ? clipView.bounds.origin.x : clipView.bounds.origin.y;
+    if (fabs(after - before) < 0.01 &&
         ((_keyScrollVelocity < 0 && before <= 0.01) ||
-         (_keyScrollVelocity > 0 && before >= maxY - 0.01))) {
+         (_keyScrollVelocity > 0 && before >= maxOffset - 0.01))) {
         _keyScrollVelocity = 0.0;
         [self stopKeyboardScrollAnimation];
         [self rememberActiveTabState];
     }
+}
+
+// Local keyUp monitor: active only while a keyboard scroll runs. When the held
+// arrow's keyUp arrives, clear _keyScrollKeyDown so the tick decelerates to a
+// stop. Releasing one arrow while a different one is now held (fast re-press to
+// the other direction) must not cancel the new hold, so we only react to the
+// keyCode we are currently tracking.
+- (void)installKeyScrollKeyUpMonitor {
+    if (_keyScrollKeyUpMonitor) return;
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    _keyScrollKeyUpMonitor = [NSEvent
+        addLocalMonitorForEventsMatchingMask:NSEventMaskKeyUp
+                                     handler:^NSEvent*(NSEvent* ev) {
+                                       ShenzhenMacDelegate* strongSelf = weakSelf;
+                                       if (!strongSelf) return ev;
+                                       if (ev.keyCode == strongSelf->_keyScrollKeyCode &&
+                                           strongSelf->_keyScrollKeyDown) {
+                                           strongSelf->_keyScrollKeyDown = NO;
+                                       }
+                                       return ev;
+                                     }];
+}
+
+- (void)removeKeyScrollKeyUpMonitor {
+    if (!_keyScrollKeyUpMonitor) return;
+    [NSEvent removeMonitor:_keyScrollKeyUpMonitor];
+    _keyScrollKeyUpMonitor = nil;
 }
 
 - (void)stopKeyboardScrollAnimation {
@@ -8380,8 +8489,12 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         [_keyScrollTimer invalidate];
         _keyScrollTimer = nil;
     }
+    [self removeKeyScrollKeyUpMonitor];
     _keyScrollVelocity = 0.0;
     _keyScrollDirection = 0.0;
+    _keyScrollAxis = 0;
+    _keyScrollKeyDown = NO;
+    _keyScrollKeyCode = 0;
 }
 
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event {
