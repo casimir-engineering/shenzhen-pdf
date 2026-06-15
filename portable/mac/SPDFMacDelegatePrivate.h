@@ -104,6 +104,9 @@
     NSPanel* _commentPanel;
     NSTextField* _commentLabel;
     NSPanel* _aboutPanel;
+    NSPanel* _permissionsWizardPanel;
+    NSTextField* _permissionsWizardFDABadge;
+    NSTextField* _permissionsWizardAccessibilityBadge;
     NSPanel* _shortcutHelpPanel;
     NSSearchField* _shortcutHelpSearchField;
     NSTableView* _shortcutHelpTable;
@@ -260,6 +263,7 @@
     id<NSObject> _presentationSleepActivityToken;
     BOOL _enableUnfocusedTrackpadZoom;
     BOOL _fullDiskAccessPromptDismissed;
+    BOOL _permissionsWizardShown;
     BOOL _ocrInstallRunning;
     BOOL _translationRunning;
     BOOL _translationInstallRunning;

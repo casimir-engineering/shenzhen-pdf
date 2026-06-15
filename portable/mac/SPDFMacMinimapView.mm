@@ -710,7 +710,10 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
                       color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
                   minHeight:1.0];
             if (page.pageIndex == self.currentPageIndex) {
-                [[NSColor controlAccentColor] setStroke];
+                // Light gray, not the accent color — the accent/blue is the
+                // viewport indicator's color, so the selected-page outline must
+                // not compete with it.
+                [[NSColor colorWithCalibratedWhite:0.75 alpha:0.9] setStroke];
                 NSBezierPath* path = [NSBezierPath bezierPathWithRect:NSInsetRect(pageRect, -1, -1)];
                 path.lineWidth = 1.5;
                 [path stroke];
