@@ -33,6 +33,7 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     CGFloat _dragOffsetFromVisibleTop;
     CGFloat _dragDocumentTopY;
     CGFloat _dragLastMouseY;
+    CGFloat _dragSmoothedSlope;
     NSTimeInterval _dragLastTimestamp;
     BOOL _miniLayoutCacheValid;
     NSArray<SPDFRenderedPage*>* _miniLayoutPages;
@@ -104,6 +105,9 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
 // multiple of the median page's gain so the speed transition is smooth instead
 // of a cliff. Normal pages are unaffected (their gain is at/below the median).
 static const CGFloat kMinimapDragGainCap = 2.0;
+// Per-event easing of the drag gain so it RAMPS across a page-size boundary
+// (e.g. entering the huge page) instead of stepping, removing the transition jolt.
+static const CGFloat kMinimapDragSlopeEase = 0.18;
 
 - (CGFloat)widestPage {
     CGFloat widest = 0;
@@ -370,6 +374,40 @@ static const CGFloat kMinimapDragGainCap = 2.0;
     return MAX(0.01, (base * MAX(0.01, self.documentScale)) / miniWidth);
 }
 
+// Minimap slot rect and document rect of the page at a given document-Y (the
+// page currently under the viewport top). Used to map horizontal drag of the
+// indicator into a document X within that page.
+- (BOOL)pageRectsForDocumentY:(CGFloat)documentY
+                        scale:(CGFloat)scale
+                          gap:(CGFloat)gap
+                     miniRect:(NSRect*)miniOut
+                 documentRect:(NSRect*)docOut {
+    SPDFRenderedPage* containingPage = nil;
+    SPDFRenderedPage* nearestPage = nil;
+    CGFloat nearestDistance = CGFLOAT_MAX;
+    for (SPDFRenderedPage* page in self.pages) {
+        NSRect documentRect = [self documentRectForPage:page];
+        if (NSIsEmptyRect(documentRect)) continue;
+        if (documentY >= NSMinY(documentRect) && documentY <= NSMaxY(documentRect)) {
+            containingPage = page;
+            break;
+        }
+        CGFloat distance = MIN(fabs(documentY - NSMinY(documentRect)), fabs(documentY - NSMaxY(documentRect)));
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestPage = page;
+        }
+    }
+    SPDFRenderedPage* page = containingPage ?: nearestPage;
+    if (!page) return NO;
+    NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
+    NSRect documentRect = [self documentRectForPage:page];
+    if (NSIsEmptyRect(miniRect) || NSIsEmptyRect(documentRect)) return NO;
+    if (miniOut) *miniOut = miniRect;
+    if (docOut) *docOut = documentRect;
+    return YES;
+}
+
 - (NSRect)miniRectForDocumentIntersection:(NSRect)intersection
                              documentRect:(NSRect)documentRect
                                  miniRect:(NSRect)miniRect {
@@ -592,32 +630,49 @@ static const CGFloat kMinimapDragGainCap = 2.0;
 
     (void)contentTop;
     CGFloat visibleHeight = NSHeight(self.documentVisibleRect);
+    CGFloat viewportWidth = NSWidth(self.documentVisibleRect);
     CGFloat maxDocumentTop = MAX(0.0, self.documentHeight - visibleHeight);
 
-    // Relative drag with a per-page gain that is capped on over-tall pages.
+    // Relative VERTICAL drag with a per-page gain capped on over-tall pages.
     // The local gain (document points scrolled per minimap pixel of cursor
     // travel) is the piecewise slope at the current position; on a normal page
     // this equals the median gain, so the drag tracks the cursor exactly as an
     // absolute mapping would. On a width-capped huge page the raw slope is many
-    // times larger, so it is capped at kMinimapDragGainCap x the median gain —
-    // the document still scrolls (so the whole page stays reachable by
-    // continuing to drag) but at a controlled, smooth speed instead of a cliff.
-    // The indicator follows the resulting document position (drawn by the
-    // existing piecewise projection), so it stays correct over the thumbnails.
+    // times larger, so it is capped at kMinimapDragGainCap x the median gain.
+    // The cap is then eased per-event (kMinimapDragSlopeEase) so crossing a
+    // page-size boundary RAMPS the speed rather than stepping it — no jolt
+    // entering/leaving the huge page. The whole page stays reachable by
+    // continuing to drag; the indicator follows the resulting document position
+    // (drawn by the existing piecewise projection), staying correct over thumbs.
     CGFloat documentTop = _dragDocumentTopY;
     CGFloat normalSlope = [self medianPageDragSlopeForScale:scale gap:gap];
     CGFloat localSlope = [self documentPerMiniSlopeAtDocumentY:documentTop scale:scale gap:gap];
-    CGFloat effectiveSlope = MIN(localSlope, kMinimapDragGainCap * normalSlope);
+    CGFloat targetSlope = MIN(localSlope, kMinimapDragGainCap * normalSlope);
+    if (_dragSmoothedSlope <= 0.0)
+        _dragSmoothedSlope = targetSlope;
+    else
+        _dragSmoothedSlope += (targetSlope - _dragSmoothedSlope) * kMinimapDragSlopeEase;
     CGFloat deltaCursorY = point.y - _dragLastMouseY;
-    documentTop = spdf_clamp_cg(documentTop + deltaCursorY * effectiveSlope, 0.0, maxDocumentTop);
+    documentTop = spdf_clamp_cg(documentTop + deltaCursorY * _dragSmoothedSlope, 0.0, maxDocumentTop);
     _dragDocumentTopY = documentTop;
     _dragLastMouseY = point.y;
     _dragLastTimestamp = event.timestamp;
 
-    // Vertical drag must NOT touch the horizontal position (the minimap's
-    // documentVisibleRect.x is ~0); pass a non-finite sentinel so the reader
-    // leaves the current horizontal scroll untouched.
-    [self.reader minimapViewDidRequestViewportTopDocumentY:documentTop documentCenterX:(CGFloat)NAN];
+    // HORIZONTAL drag: when the page under the viewport is wider than the
+    // viewport (a width-capped huge page), map the cursor's X within that page's
+    // minimap slot to a document X so dragging left/right pans the page. Pages
+    // that fit horizontally pass a non-finite sentinel so the reader leaves the
+    // horizontal scroll untouched (it would otherwise snap to the left).
+    CGFloat documentCenterX = (CGFloat)NAN;
+    NSRect curMini = NSZeroRect;
+    NSRect curDoc = NSZeroRect;
+    if ([self pageRectsForDocumentY:documentTop scale:scale gap:gap miniRect:&curMini documentRect:&curDoc] &&
+        NSWidth(curDoc) > viewportWidth + 0.5 && NSWidth(curMini) > 1.0) {
+        CGFloat xFraction = spdf_clamp_cg((point.x - NSMinX(curMini)) / NSWidth(curMini), 0.0, 1.0);
+        documentCenterX = NSMinX(curDoc) + xFraction * NSWidth(curDoc);
+    }
+
+    [self.reader minimapViewDidRequestViewportTopDocumentY:documentTop documentCenterX:documentCenterX];
     return YES;
 }
 
@@ -953,6 +1008,7 @@ static const CGFloat kMinimapDragGainCap = 2.0;
     // position so the piecewise mapping continues smoothly from where the user
     // grabbed the indicator (rather than a global track fraction).
     _dragDocumentTopY = _draggingVisibleRect ? MAX(0.0, NSMinY(self.documentVisibleRect)) : 0.0;
+    _dragSmoothedSlope = 0.0;  // re-seeded to the start-position gain on first drag event
     (void)contentHeight;
     _dragLastMouseY = point.y;
     _dragLastTimestamp = event.timestamp;
@@ -997,6 +1053,7 @@ static const CGFloat kMinimapDragGainCap = 2.0;
     _dragOffsetFromVisibleCenter = NSZeroPoint;
     _dragOffsetFromVisibleTop = 0.0;
     _dragDocumentTopY = 0.0;
+    _dragSmoothedSlope = 0.0;
     _dragLastMouseY = 0.0;
     _dragLastTimestamp = 0.0;
     if (didFinishLongDocumentViewportDrag) [self.reader minimapViewDidFinishViewportDrag];
