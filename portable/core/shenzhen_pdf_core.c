@@ -1237,7 +1237,8 @@ void spdf_free_text_lines(spdf_text_lines* lines) {
     memset(lines, 0, sizeof(*lines));
 }
 
-static int append_outline_item(outline_builder* builder, const char* title, int page_index, int level) {
+static int append_outline_item(outline_builder* builder, const char* title, int page_index, int level, float dest_x,
+                               float dest_y, int has_dest) {
     spdf_outline_item* next_items;
     int next_capacity;
 
@@ -1253,6 +1254,9 @@ static int append_outline_item(outline_builder* builder, const char* title, int 
     if (!builder->items[builder->count].title) return 0;
     builder->items[builder->count].page_index = page_index;
     builder->items[builder->count].level = level;
+    builder->items[builder->count].dest_x = has_dest ? dest_x : 0.0f;
+    builder->items[builder->count].dest_y = has_dest ? dest_y : 0.0f;
+    builder->items[builder->count].has_dest = has_dest;
     builder->count++;
     return 1;
 }
@@ -1262,8 +1266,15 @@ static void collect_outline(spdf_document* doc, outline_builder* builder, fz_out
 
     for (item = outline; item; item = item->next) {
         int page_index = -1;
+        /* fz_outline.x/y carry the destination point for the outline link. For
+         * /Fit-style destinations mupdf leaves them as 0 (or non-finite); only
+         * treat the point as usable when it is finite and not the (0,0) sentinel
+         * so position-aware attribution falls back gracefully otherwise. */
+        float dest_x = item->x;
+        float dest_y = item->y;
+        int has_dest = isfinite(dest_x) && isfinite(dest_y) && !(dest_x == 0.0f && dest_y == 0.0f);
         if (item->page.page >= 0) page_index = fz_page_number_from_location(doc->ctx, doc->doc, item->page);
-        if (!append_outline_item(builder, item->title, page_index, level))
+        if (!append_outline_item(builder, item->title, page_index, level, dest_x, dest_y, has_dest))
             fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
         if (item->down) collect_outline(doc, builder, item->down, level + 1);
     }

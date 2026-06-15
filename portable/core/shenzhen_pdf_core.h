@@ -20,6 +20,16 @@ typedef struct spdf_outline_item {
     char* title;
     int page_index;
     int level;
+    /* Destination point of the heading on its page, taken from the PDF outline
+     * link (fz_outline.x/y). PDF destination coordinates are in PDF user space
+     * (origin bottom-left, y increases UPWARD). has_dest is 0 when the outline
+     * entry carries no usable point (e.g. /Fit-style dests, or non-finite
+     * coordinates); callers must fall back to page-only attribution then.
+     * Appended at the end of the struct so the Linux build, which ignores these
+     * fields, is unaffected. */
+    float dest_x;
+    float dest_y;
+    int has_dest;
 } spdf_outline_item;
 
 typedef struct spdf_outline {
