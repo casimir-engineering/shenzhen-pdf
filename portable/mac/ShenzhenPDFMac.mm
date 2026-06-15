@@ -5497,6 +5497,45 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
 }
 
+// Precise viewport drag: the minimap reports the document-Y where the viewport
+// TOP should land (computed through the per-page piecewise minimap<->document
+// map), instead of a global scroll fraction. This is correct even when the
+// document contains a huge page whose minimap slot is tiny — a small drag inside
+// it still scrolls a proportionally large document region. In non-presentation
+// mode the minimap's document space is exactly _pageView.bounds, so documentTopY
+// is the clip-view origin Y directly.
+- (void)minimapViewDidRequestViewportTopDocumentY:(CGFloat)documentTopY documentCenterX:(CGFloat)documentCenterX {
+    if (!_doc || _renderedPages.count == 0) return;
+
+    if (_presentationMode) {
+        NSRect visibleRect = [self continuousDocumentVisibleRectForMinimap];
+        CGFloat pageFraction = 0.0;
+        NSInteger pageIndex =
+            [self pageIndexForContinuousDocumentY:documentTopY + NSHeight(visibleRect) * 0.5 pageFraction:&pageFraction];
+        NSRect pageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
+        CGFloat xFraction =
+            !NSIsEmptyRect(pageRect) && isfinite(documentCenterX)
+                ? spdf_clamp_cg((documentCenterX - NSMinX(pageRect)) / MAX(1.0, NSWidth(pageRect)), 0.0, 1.0)
+                : 0.5;
+        [self minimapViewDidRequestCenterOnPage:pageIndex xFractionInPage:xFraction yFractionInPage:pageFraction];
+        return;
+    }
+
+    NSClipView* clipView = _pageScrollView.contentView;
+    CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
+    NSPoint origin = clipView.bounds.origin;
+    if (isfinite(documentCenterX)) origin.x = documentCenterX - NSWidth(clipView.bounds) * 0.5;
+    origin.y = spdf_clamp_cg(documentTopY, 0.0, maxY);
+
+    _minimapPrecisionViewportDragActive = YES;
+    [self scrollDocumentClipViewToDocumentOrigin:origin notify:NO];
+    [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
+    [self renderVisiblePageCropsForCurrentViewportIfNeeded];
+    [_pageView setNeedsDisplay:YES];
+    [_pageView displayIfNeeded];
+    [self updateMinimap];
+}
+
 - (void)minimapViewDidFinishViewportDrag {
     _minimapPrecisionViewportDragActive = NO;
     if (!_doc || _renderedPages.count == 0) return;
