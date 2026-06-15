@@ -5,7 +5,11 @@
 
 static const CGFloat kPageMargin = 44.0;
 static const CGFloat kPageGap = 26.0;
-static const NSInteger kLongDocumentDragPageThreshold = 20;
+// Switch from 1:1 minimap drag to accelerated "long document" drag based on the
+// document's total height in PDF points, not page count: a few very large pages
+// scroll just as far as many normal pages. ~16000pt is just above 20 US-Letter
+// pages (20 * 792 = 15840), so ordinary documents keep their prior threshold.
+static const CGFloat kLongDocumentDragHeightThreshold = 16000.0;
 static const CGFloat kLongDocumentDragFineSpeed = 180.0;
 static const CGFloat kLongDocumentDragFullSpeed = 300.0;
 static const CGFloat kLiveContentCacheMaxPixels = 12000000.0;
@@ -221,8 +225,14 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
                       MAX(1.0, (x1 - x0) * NSWidth(miniRect)), MAX(1.0, (y1 - y0) * NSHeight(miniRect)));
 }
 
+- (CGFloat)totalDocumentPointHeight {
+    CGFloat total = 0.0;
+    for (SPDFRenderedPage* page in self.pages) total += MAX(1.0, page.pageHeight);
+    return total;
+}
+
 - (BOOL)shouldUseLongDocumentViewportDrag {
-    return self.pages.count > kLongDocumentDragPageThreshold;
+    return [self totalDocumentPointHeight] > kLongDocumentDragHeightThreshold;
 }
 
 - (CGFloat)longDocumentViewportDragThumbHeightForContentHeight:(CGFloat)contentHeight track:(NSRect)track {
