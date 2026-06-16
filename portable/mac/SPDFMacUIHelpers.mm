@@ -1222,6 +1222,33 @@ static void spdf_install_inactive_magnify_monitor(void) {
 
 @implementation SPDFSidebarTableView
 
+- (void)keyDown:(NSEvent*)event {
+    // Typing a printable character while the sidebar (e.g. search results) is
+    // focused should start a fresh search — exactly as it does when typing after
+    // clicking in the document — rather than driving the table's type-select.
+    // Arrows / Enter / Escape / Tab / Delete keep their normal table behavior
+    // and fall through to super.
+    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+    BOOL hasModifier = (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl |
+                                 NSEventModifierFlagOption | NSEventModifierFlagFunction)) != 0;
+    NSString* typed = event.characters ?: @"";
+    BOOL printable = !hasModifier && typed.length > 0;
+    if (printable) {
+        NSCharacterSet* controls = NSCharacterSet.controlCharacterSet;
+        for (NSUInteger i = 0; i < typed.length; ++i) {
+            unichar ch = [typed characterAtIndex:i];
+            // Reject control characters and the function-key range (arrows, F-keys,
+            // page up/down, etc. all live at >= 0xF700) so they keep navigating.
+            if (ch >= 0xF700 || [controls characterIsMember:ch]) {
+                printable = NO;
+                break;
+            }
+        }
+    }
+    if (printable && self.reader && [self.reader documentTypeToSearchKeyDown:event]) return;
+    [super keyDown:event];
+}
+
 - (NSMenu*)menuForEvent:(NSEvent*)event {
     if (!self.reader) return [super menuForEvent:event];
 
