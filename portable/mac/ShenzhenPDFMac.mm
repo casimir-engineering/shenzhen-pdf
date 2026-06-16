@@ -5249,7 +5249,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)scrollDocumentClipViewToDocumentOrigin:(NSPoint)origin notify:(BOOL)notify {
     NSClipView* clipView = _pageScrollView.contentView;
-    origin = [self clampedDocumentBoundsScrollOrigin:origin];
+    // Page-aware clamp (not the raw canvas clamp) so a minimap drag keeps a
+    // viewport-fit page centered and only pans pages wider than the viewport.
+    origin = [self clampedDocumentScrollOrigin:origin];
     BOOL wasSuppressingScrollCallbacks = _suppressScrollCallbacks;
     if (!notify) _suppressScrollCallbacks = YES;
     _updatingFromScroll = YES;
@@ -5271,6 +5273,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin notify:(BOOL)notify {
     [self scrollDocumentClipViewToOrigin:origin pageIndexHint:-1 notify:notify];
+}
+
+- (void)documentViewPanToProposedOrigin:(NSPoint)origin {
+    // Page-aware clamp centers a viewport-fit page (cannot be dragged off-center)
+    // and pans a wider page. notify:NO keeps the per-event work light; the
+    // explicit documentScrollPositionChanged drives the coalesced minimap update
+    // (a full updateMinimap per pan event would be too heavy).
+    [self scrollDocumentClipViewToOrigin:origin pageIndexHint:-1 notify:NO];
+    [self documentScrollPositionChanged];
 }
 
 - (void)scrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop {

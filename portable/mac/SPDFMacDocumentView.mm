@@ -687,8 +687,6 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 - (void)continuePanWithEvent:(NSEvent*)event {
     if (!_isPanning) return;
 
-    NSScrollView* scrollView = self.enclosingScrollView;
-    NSClipView* clipView = scrollView.contentView;
     NSPoint current = event.locationInWindow;
     NSPoint delta = NSMakePoint(current.x - _panStartInWindow.x, current.y - _panStartInWindow.y);
     NSPoint origin = NSMakePoint(_panStartOrigin.x - delta.x, _panStartOrigin.y + delta.y);
@@ -696,11 +694,9 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     _panVelocity = NSMakePoint((current.x - _lastPanPoint.x) / dt, (current.y - _lastPanPoint.y) / dt);
     _lastPanPoint = current;
     _lastPanTime = event.timestamp;
-    origin.x = MAX(0, MIN(origin.x, MAX(0, NSWidth(self.bounds) - NSWidth(clipView.bounds))));
-    origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(self.bounds) - NSHeight(clipView.bounds))));
-    [clipView scrollToPoint:origin];
-    [scrollView reflectScrolledClipView:clipView];
-    [self.reader documentScrollPositionChanged];
+    // The reader clamps (centering a viewport-fit page, panning a wider one),
+    // applies the scroll, and posts the position change.
+    [self.reader documentViewPanToProposedOrigin:origin];
 }
 
 - (void)stepPanInertia:(NSTimer*)timer {
@@ -716,11 +712,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     NSPoint origin = clipView.bounds.origin;
     origin.x -= _panVelocity.x / 60.0;
     origin.y += _panVelocity.y / 60.0;
-    origin.x = MAX(0, MIN(origin.x, MAX(0, NSWidth(self.bounds) - NSWidth(clipView.bounds))));
-    origin.y = MAX(0, MIN(origin.y, MAX(0, NSHeight(self.bounds) - NSHeight(clipView.bounds))));
-    [clipView scrollToPoint:origin];
-    [scrollView reflectScrolledClipView:clipView];
-    [self.reader documentScrollPositionChanged];
+    [self.reader documentViewPanToProposedOrigin:origin];
 
     _panVelocity.x *= 0.90;
     _panVelocity.y *= 0.90;
