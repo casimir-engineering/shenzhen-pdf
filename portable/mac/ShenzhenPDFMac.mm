@@ -2024,12 +2024,12 @@ static void spdf_discard_launch_prerender(void) {
     [mainMenu addItem:goItem];
     NSMenu* goMenu = [[NSMenu alloc] initWithTitle:@"Go To"];
     // Key equivalents mirror the keyboard navigation handled in
-    // documentArrowKeyDown:. Option+Up/Down (first/last) fall through that method
-    // (it returns NO for any Option combination) so the menu equivalents fire
-    // firstPage:/lastPage:. Cmd+Left/Right (previous/next) match the keyboard
-    // Cmd+arrow path, which previousPage:/nextPage: now replicate (preserve zoom +
-    // relative position). Plain arrows are intentionally NOT menu equivalents:
-    // they stay context-aware (page change vs smooth scroll) in documentArrowKeyDown:.
+    // documentArrowKeyDown:. Page navigation is on Option+arrows: Option+Up/Down =
+    // first/last page, Option+Left/Right = previous/next page. Cmd+Left/Right
+    // switch tabs (Cmd+Up/Down also page through, handled directly in
+    // documentArrowKeyDown: since they are not menu equivalents). Plain arrows are
+    // intentionally NOT menu equivalents: they stay context-aware (page change vs
+    // smooth scroll) in documentArrowKeyDown:.
     NSMenuItem* firstPageItem =
         [goMenu addItemWithTitle:@"First Page"
                           action:@selector(firstPage:)
@@ -2039,12 +2039,12 @@ static void spdf_discard_launch_prerender(void) {
         [goMenu addItemWithTitle:@"Previous Page"
                           action:@selector(previousPage:)
                    keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSLeftArrowFunctionKey)]];
-    previousPageItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    previousPageItem.keyEquivalentModifierMask = NSEventModifierFlagOption;
     NSMenuItem* nextPageItem =
         [goMenu addItemWithTitle:@"Next Page"
                           action:@selector(nextPage:)
                    keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSRightArrowFunctionKey)]];
-    nextPageItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    nextPageItem.keyEquivalentModifierMask = NSEventModifierFlagOption;
     NSMenuItem* lastPageItem =
         [goMenu addItemWithTitle:@"Last Page"
                           action:@selector(lastPage:)
@@ -2053,6 +2053,18 @@ static void spdf_discard_launch_prerender(void) {
     for (NSMenuItem* item in @[ firstPageItem, previousPageItem, nextPageItem, lastPageItem ]) item.target = self;
     [goMenu addItem:[NSMenuItem separatorItem]];
     [goMenu addItemWithTitle:@"Go To Page..." action:@selector(focusPageField:) keyEquivalent:@"l"];
+    [goMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* previousTabItem =
+        [goMenu addItemWithTitle:@"Previous Tab"
+                          action:@selector(selectPreviousTab:)
+                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSLeftArrowFunctionKey)]];
+    previousTabItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    NSMenuItem* nextTabItem =
+        [goMenu addItemWithTitle:@"Next Tab"
+                          action:@selector(selectNextTab:)
+                   keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSRightArrowFunctionKey)]];
+    nextTabItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    for (NSMenuItem* item in @[ previousTabItem, nextTabItem ]) item.target = self;
     goItem.submenu = goMenu;
 
     NSMenuItem* zoomItem = [[NSMenuItem alloc] initWithTitle:@"Zoom" action:nil keyEquivalent:@""];
@@ -8740,21 +8752,29 @@ static BOOL spdf_page_list_cache_disabled(void) {
     BOOL cmdOrCtrl = (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl)) != 0;
     BOOL option = (flags & NSEventModifierFlagOption) != 0;
 
-    // Cmd/Ctrl + any arrow always jumps a page (preserving zoom + relative
-    // position), in either mode, and cancels any in-flight smooth scroll first so
-    // the two motions never fight. Up/Left = previous, Down/Right = next.
+    // Cmd/Ctrl + Up/Down pages through the document (preserving zoom + relative
+    // position); Cmd/Ctrl + Left/Right switches tabs. Cancel any in-flight smooth
+    // scroll first so the motions never fight. (These mirror the Go To menu key
+    // equivalents, which fire first; this is the fallback when a menu item is
+    // disabled.)
     if (cmdOrCtrl && !option && anyArrow) {
         [self stopKeyboardScrollAnimation];
-        if (_presentationMode) {
-            if (up || left) [self previousPage:nil];
-            else [self nextPage:nil];
-        } else {
-            [self goToAdjacentPagePreservingRelativePosition:(up || left) ? -1 : 1];
-        }
+        if (left) [self selectPreviousTab:nil];
+        else if (right) [self selectNextTab:nil];
+        else if (up) [self previousPage:nil];
+        else [self nextPage:nil];
         return YES;
     }
-    // Any other Cmd/Ctrl/Option combination falls through to the system default,
-    // matching the prior behavior (the only addition is Cmd/Ctrl+arrow above).
+    // Option + Left/Right forces a page change (previous/next), in either mode.
+    // Option + Up/Down (first/last page) falls through to the Go To menu equivalents.
+    if (option && !cmdOrCtrl && (left || right)) {
+        [self stopKeyboardScrollAnimation];
+        if (left) [self previousPage:nil];
+        else [self nextPage:nil];
+        return YES;
+    }
+    // Any other Cmd/Ctrl/Option combination falls through to the system default
+    // (Option+Up/Down reach firstPage:/lastPage: via the Go To menu equivalents).
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) {
         return NO;
     }
@@ -11423,10 +11443,10 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 - (void)previousPage:(id)sender {
     (void)sender;
     if (!_doc || _pageIndex <= 0) return;
-    // Match the keyboard Cmd+arrow path: outside presentation mode, preserve zoom
-    // + relative position via goToAdjacentPagePreservingRelativePosition: so the
-    // menu's Cmd+Left behaves identically to the key event (which bypasses
-    // documentArrowKeyDown:). Presentation mode keeps align-top paging as before.
+    // Drives the Go To menu's Previous Page (Option+Left) and the Cmd+Up /
+    // Option+Left keyboard paths. Outside presentation mode, preserve zoom +
+    // relative position via goToAdjacentPagePreservingRelativePosition:.
+    // Presentation mode keeps align-top paging as before.
     if (_presentationMode) [self goToPage:_pageIndex - 1 preserveSinglePagePosition:NO];
     else [self goToAdjacentPagePreservingRelativePosition:-1];
 }
@@ -11446,6 +11466,22 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 - (void)lastPage:(id)sender {
     (void)sender;
     if (_doc) [self goToPage:spdf_page_count(_doc) - 1 preserveSinglePagePosition:NO];
+}
+
+- (void)selectPreviousTab:(id)sender {
+    (void)sender;
+    if (_tabs.count < 2) return;
+    NSInteger target = _selectedTabIndex - 1;
+    if (target < 0) target = (NSInteger)_tabs.count - 1;  // wrap to the last tab
+    [self selectTabAtIndex:target];
+}
+
+- (void)selectNextTab:(id)sender {
+    (void)sender;
+    if (_tabs.count < 2) return;
+    NSInteger target = _selectedTabIndex + 1;
+    if (target >= (NSInteger)_tabs.count) target = 0;  // wrap to the first tab
+    [self selectTabAtIndex:target];
 }
 
 - (void)focusPageField:(id)sender {
