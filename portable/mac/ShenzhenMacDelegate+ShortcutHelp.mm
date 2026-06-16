@@ -28,14 +28,14 @@
             @"items" : @[
                 @{@"title" : @"First page", @"keys" : @[ @"Opt", @"↑" ]},
                 @{@"title" : @"Last page", @"keys" : @[ @"Opt", @"↓" ]},
-                @{@"title" : @"Previous page (keeps zoom and position)", @"keys" : @[ @"Cmd", @"←" ]},
-                @{@"title" : @"Next page (keeps zoom and position)", @"keys" : @[ @"Cmd", @"→" ]},
+                @{@"title" : @"Previous page (always jumps a page)", @"keys" : @[ @"Opt", @"←" ]},
+                @{@"title" : @"Next page (always jumps a page)", @"keys" : @[ @"Opt", @"→" ]},
                 @{@"title" : @"Go to page", @"keys" : @[ @"Cmd", @"L" ]},
                 @{
                     @"title" : @"Previous or next page (keeps zoom and position; scrolls when zoomed wider)",
                     @"keys" : @[ @"←", @"→" ]
                 },
-                @{@"title" : @"Always jump a page (keeps zoom and position)", @"keys" : @[ @"Cmd", @"Arrow" ]},
+                @{@"title" : @"Previous or next page (keeps zoom and position)", @"keys" : @[ @"Cmd", @"↑ / ↓" ]},
                 @{@"title" : @"Jump a page", @"keys" : @[ @"Shift", @"Arrow" ]},
                 @{@"title" : @"Scroll up or down", @"keys" : @[ @"↑", @"↓" ]},
                 @{@"title" : @"Zoom in or out", @"keys" : @[ @"Cmd", @"+ / -" ]},
@@ -49,6 +49,7 @@
             @"category" : @"Tabs and Tools",
             @"items" : @[
                 @{@"title" : @"Reorder or detach tabs", @"subtitle" : @"Drag tabs"},
+                @{@"title" : @"Previous or next tab", @"keys" : @[ @"Cmd", @"← / →" ]},
                 @{@"title" : @"Reopen last closed document", @"keys" : @[ @"Cmd", @"Shift", @"T" ]},
                 @{@"title" : @"Rotate page clockwise", @"keys" : @[ @"Cmd", @"R" ]},
                 @{@"title" : @"Rotate page anticlockwise", @"keys" : @[ @"Cmd", @"Shift", @"R" ]},
