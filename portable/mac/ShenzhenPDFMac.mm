@@ -5515,6 +5515,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self scrollToPage:_pageIndex preservingRelativePosition:relativePosition fromPageHeight:sourcePageHeight];
     else
         [self scrollToPage:_pageIndex alignTop:YES];
+    // The navigation scroll runs documentScrollPositionChanged, which re-detects
+    // _pageIndex from the *dominant* (center) visible page. When several short
+    // pages fit the viewport (zoomed out so a page is shorter than the viewport),
+    // that center page differs from the navigation target: paging to N-1 aligns
+    // its top but leaves page N centered, so _pageIndex snapped back to N and
+    // "previous page" got stuck (it only re-aligned the top, never advanced).
+    // Re-assert the explicit target so repeated paging moves one page each press.
+    _pageIndex = pageIndex;
+    _pageView.currentPageIndex = _pageIndex;
     [self updateControls];
     [self selectCurrentSidebarRow];
     [_pageView setNeedsDisplay:YES];
