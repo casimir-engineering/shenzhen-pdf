@@ -12,8 +12,15 @@ static const CGFloat kPageGap = 26.0;
 static const CGFloat kLongDocumentDragHeightThreshold = 16000.0;
 static const CGFloat kLongDocumentDragFineSpeed = 180.0;
 static const CGFloat kLongDocumentDragFullSpeed = 300.0;
-static const CGFloat kLiveContentCacheMaxPixels = 12000000.0;
-static const CGFloat kLiveContentCacheMaxHeight = 48000.0;
+// The whole-strip cache is only worth it when the strip is short enough that
+// building/patching the single bitmap is cheap. For a tall multi-page strip
+// (e.g. a 100+ page document at ~200px/thumb) the cache image is many thousands
+// of pixels tall, and every rebuild AND every per-thumbnail lockFocus patch pays
+// for the full bitmap — tens of ms each. Past these caps the minimap draws the
+// visible slice directly (only ~a handful of thumbnails are on screen at once),
+// which is ~1ms and needs no cache invalidation.
+static const CGFloat kLiveContentCacheMaxPixels = 320000.0;
+static const CGFloat kLiveContentCacheMaxHeight = 1600.0;
 
 static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));

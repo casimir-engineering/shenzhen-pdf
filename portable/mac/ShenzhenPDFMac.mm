@@ -3856,7 +3856,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                     fabs(old.pageWidth - page.pageWidth) > 0.01 || fabs(old.pageHeight - page.pageHeight) > 0.01;
                 [self->_renderedPages replaceObjectAtIndex:(NSUInteger)index withObject:page];
                 double adoptT1 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
-                [self applySearchHighlightsToCurrentPage];
+                // The rendered page's highlights are already set above (line with
+                // _findHighlights). Do NOT call applySearchHighlightsToCurrentPage
+                // here — it reassigns _pageView.pages (full layout invalidate +
+                // whole-view redraw) and runs a full updateMinimap (strip rebuild)
+                // on EVERY render completion, which was the residual scroll stutter.
                 double adoptT2 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
                 if (geometryChanged) [self resizeDocumentView];
                 else
@@ -5105,21 +5109,26 @@ static BOOL spdf_page_list_cache_disabled(void) {
 // horizontal origin there (blocking panning, keeping pages centered); NAN frees
 // horizontal scrolling. When `animated` and the viewport is far from the target
 // (i.e. we are leaving a wide page that was panned off-center), ease to it.
+// Pin the viewport's horizontal origin at x (min==max => no horizontal panning,
+// page stays centered); NAN frees it. When `animated` and the viewport is far
+// from x (leaving a wide page that was panned off-center), ease to it.
 - (void)setHorizontalScrollLockX:(CGFloat)x animated:(BOOL)animated {
     if (![_pageScrollView.contentView isKindOfClass:[SPDFDocumentClipView class]]) return;
     SPDFDocumentClipView* clip = (SPDFDocumentClipView*)_pageScrollView.contentView;
-    // No horizontal rubber-band while locked, so a viewport-fit page cannot be
+    // No horizontal rubber-band while pinned, so a viewport-fit page cannot be
     // wiggled off center; restore elasticity when horizontal panning is free.
     _pageScrollView.horizontalScrollElasticity = isfinite(x) ? NSScrollElasticityNone : NSScrollElasticityAllowed;
     if (!isfinite(x)) {
         [self cancelHorizontalLockEase];
-        clip.horizontalLockX = NAN;
+        clip.horizontalLockMinX = NAN;
+        clip.horizontalLockMaxX = NAN;
         return;
     }
     CGFloat current = NSMinX(clip.bounds);
     if (!animated || fabs(current - x) <= 1.0) {
         [self cancelHorizontalLockEase];
-        clip.horizontalLockX = x;
+        clip.horizontalLockMinX = x;
+        clip.horizontalLockMaxX = x;
         if (fabs(current - x) > 0.01) {
             NSPoint origin = clip.bounds.origin;
             origin.x = x;
@@ -5136,12 +5145,37 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _horizontalLockEaseStartX = current;
     _horizontalLockEaseTargetX = x;
     _horizontalLockEaseStartTime = spdf_zoom_profile_now_ms();
-    clip.horizontalLockX = current;  // pin throughout; each tick advances it toward the target
+    clip.horizontalLockMinX = current;  // pin throughout; each tick advances it toward the target
+    clip.horizontalLockMaxX = current;
     _horizontalLockEaseTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0
                                                                 target:self
                                                               selector:@selector(stepHorizontalLockEase:)
                                                               userInfo:nil
                                                                repeats:YES];
+}
+
+// Confine horizontal panning to [minX, maxX] (a page wider than the viewport but
+// narrower than the canvas) so the page can't be scrolled off into empty canvas.
+// No ease — the page is freely pannable within the range; just snap the current
+// origin into it if it fell outside.
+- (void)setHorizontalScrollClampMinX:(CGFloat)minX maxX:(CGFloat)maxX {
+    if (![_pageScrollView.contentView isKindOfClass:[SPDFDocumentClipView class]]) return;
+    SPDFDocumentClipView* clip = (SPDFDocumentClipView*)_pageScrollView.contentView;
+    [self cancelHorizontalLockEase];
+    _pageScrollView.horizontalScrollElasticity = NSScrollElasticityAllowed;
+    clip.horizontalLockMinX = minX;
+    clip.horizontalLockMaxX = MAX(minX, maxX);
+    CGFloat current = NSMinX(clip.bounds);
+    CGFloat clamped = spdf_clamp_cg(current, clip.horizontalLockMinX, clip.horizontalLockMaxX);
+    if (fabs(clamped - current) > 0.01) {
+        NSPoint origin = clip.bounds.origin;
+        origin.x = clamped;
+        BOOL wasSuppressing = _suppressScrollCallbacks;
+        _suppressScrollCallbacks = YES;
+        [clip setBoundsOrigin:origin];
+        [_pageScrollView reflectScrolledClipView:clip];
+        _suppressScrollCallbacks = wasSuppressing;
+    }
 }
 
 - (void)stepHorizontalLockEase:(NSTimer*)timer {
@@ -5154,7 +5188,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     double p = spdf_clamp_cg((spdf_zoom_profile_now_ms() - _horizontalLockEaseStartTime) / durationMs, 0.0, 1.0);
     double eased = 1.0 - pow(1.0 - p, 3.0);  // easeOutCubic
     CGFloat x = _horizontalLockEaseStartX + (_horizontalLockEaseTargetX - _horizontalLockEaseStartX) * eased;
-    clip.horizontalLockX = x;
+    clip.horizontalLockMinX = x;
+    clip.horizontalLockMaxX = x;
     NSPoint origin = clip.bounds.origin;  // preserve the live vertical scroll position
     origin.x = x;
     BOOL wasSuppressing = _suppressScrollCallbacks;
@@ -5164,7 +5199,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _suppressScrollCallbacks = wasSuppressing;
     [_pageView setNeedsDisplay:YES];
     if (p >= 1.0) {
-        clip.horizontalLockX = _horizontalLockEaseTargetX;
+        clip.horizontalLockMinX = _horizontalLockEaseTargetX;
+        clip.horizontalLockMaxX = _horizontalLockEaseTargetX;
         [self cancelHorizontalLockEase];
     }
 }
@@ -5189,8 +5225,17 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // the dominant page. Crossing that boundary (portrait<->landscape,
     // small<->big) is the only time the viewport eases back to center.
     NSRect pageRect = [_pageView rectForPageAtIndex:[_pageView pageIndexForVisibleRect:visibleRect]];
-    if (NSIsEmptyRect(pageRect) || NSWidth(pageRect) > clipWidth + 0.5) {
+    if (NSIsEmptyRect(pageRect)) {
         [self setHorizontalScrollLockX:NAN animated:NO];
+        return;
+    }
+    if (NSWidth(pageRect) > clipWidth + 0.5) {
+        // Page wider than the viewport: pan within the PAGE only. The canvas can be
+        // far wider (a bigger page elsewhere in a mixed-size document), so clamping
+        // to the canvas would let you scroll off this page into empty space.
+        CGFloat maxDocX = MAX(0.0, NSWidth(_pageView.bounds) - clipWidth);
+        [self setHorizontalScrollClampMinX:spdf_clamp_cg(NSMinX(pageRect), 0.0, maxDocX)
+                                      maxX:spdf_clamp_cg(NSMaxX(pageRect) - clipWidth, 0.0, maxDocX)];
         return;
     }
     [self setHorizontalScrollLockX:[self centeredHorizontalScrollOriginXForPageRect:pageRect] animated:animated];
@@ -6165,17 +6210,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)scheduleRenderAdoptionMaintenance {
     if (_renderAdoptionMaintenanceScheduled) return;
     _renderAdoptionMaintenanceScheduled = YES;
-    NSUInteger movementAtSchedule = _viewportMovementGeneration;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       self->_renderAdoptionMaintenanceScheduled = NO;
       if (!self->_doc) return;
+      // Eviction only — NOT updateMinimap. A completed full-page render never
+      // changes a minimap THUMBNAIL (those are patched separately as they load),
+      // so the full updateMinimap here was pointless; worse, its "idle" guard
+      // false-positives during a scroll stall (no scroll events => generation
+      // frozen => looks idle), firing a strip-cache rebuild mid-scroll. That
+      // rebuild was the stutter, and it fed back into the next stall.
       [self evictDistantRenderedPageImages];
-      // Rebuild the minimap (which throws away the strip cache) only when nothing
-      // moved during the debounce — i.e. the viewport is idle. While scrolling,
-      // the scroll path drives the minimap and a full rebuild would stutter.
-      BOOL idle = movementAtSchedule == self->_viewportMovementGeneration && !self->_liveZooming &&
-                  !self->_documentViewPanActive && !self->_minimapPrecisionViewportDragActive;
-      if (idle) [self updateMinimap];
     });
 }
 

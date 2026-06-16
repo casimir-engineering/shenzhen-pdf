@@ -136,13 +136,17 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
 @end
 
-// Clip view for the document scroll view. When horizontalLockX is finite, the
-// horizontal scroll origin is pinned to it (blocking horizontal panning and
-// keeping pages centered); NaN leaves horizontal scrolling free. This is the
-// AppKit-native lock point — constrainBoundsRect: is consulted for every scroll,
-// elastic bounce, and programmatic bounds change.
+// Clip view for the document scroll view. When the horizontal lock range is
+// finite the scroll origin's x is clamped to [horizontalLockMinX,
+// horizontalLockMaxX]: min==max pins a viewport-fit page centered (no horizontal
+// panning); min<max confines panning to a page wider than the viewport but
+// narrower than the canvas (so you can't scroll off the page into empty canvas);
+// NaN leaves horizontal scrolling free. This is the AppKit-native clamp point —
+// constrainBoundsRect: is consulted for every scroll, elastic bounce, and
+// programmatic bounds change.
 @interface SPDFDocumentClipView : NSClipView
-@property(nonatomic) CGFloat horizontalLockX;
+@property(nonatomic) CGFloat horizontalLockMinX;
+@property(nonatomic) CGFloat horizontalLockMaxX;
 @end
 
 @interface SPDFWindow : NSWindow
