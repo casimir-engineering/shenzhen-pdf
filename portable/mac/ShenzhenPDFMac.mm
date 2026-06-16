@@ -3616,7 +3616,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 }
                 if (!self->_liveZooming) {
                     [self cacheActiveRenderedPagesForSelectedTab];
-                    [self evictDistantRenderedPageImages];
+                    [self scheduleRenderAdoptionMaintenance];
                 }
               }];
           }
@@ -3741,7 +3741,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 }
                 if (!self->_liveZooming) {
                     [self cacheActiveRenderedPagesForSelectedTab];
-                    [self evictDistantRenderedPageImages];
+                    [self scheduleRenderAdoptionMaintenance];
                 }
               }];
           }
@@ -3862,12 +3862,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 else {
                     self->_pageView.pages = self->_renderedPages;
                     [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:index]];
-                    [self updateMinimap];
                 }
                 double adoptT3 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
                 [self cacheActiveRenderedPagesForSelectedTab];
                 double adoptT4 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
-                [self evictDistantRenderedPageImages];
+                // Coalesced: the per-completion full updateMinimap + eviction were
+                // the page-to-page scroll stutter when many prefetch renders land.
+                [self scheduleRenderAdoptionMaintenance];
                 if (adoptT0 > 0.0) {
                     double adoptT5 = spdf_zoom_profile_now_ms();
                     double total = adoptT5 - adoptT0;
@@ -4043,8 +4044,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         if (_documentViewPanActive) [self renderLiveDocumentPanViewportCropIfDue];
         else [self renderVisiblePageCropsForCurrentViewportIfNeeded];
         [_pageView setNeedsDisplayInRect:[_pageView rectForPageAtIndex:pageIndex]];
-        [self updateMinimap];
-        [self evictDistantRenderedPageImages];
+        [self scheduleRenderAdoptionMaintenance];
         return;
     }
 
@@ -4322,7 +4322,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
             }
             [self setCurrentViewportNeedsDisplay];
             double adoptT2 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
-            [self evictDistantRenderedPageImages];
+            [self scheduleRenderAdoptionMaintenance];
             if (adoptT0 > 0.0) {
                 double adoptT3 = spdf_zoom_profile_now_ms();
                 double total = adoptT3 - adoptT0;
@@ -6150,6 +6150,29 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
     tab.cachedRenderedPages = pages;
     return YES;
+}
+
+// Debounced follow-up for completed page renders. A burst of finishing prefetch
+// renders would otherwise each run an O(total-pages) eviction sweep and a full
+// minimap rebuild on the main thread — the page-to-page scroll stutter. Run that
+// once per ~80ms instead, and only rebuild the minimap when not actively
+// scrolling (the scroll path drives the minimap itself; a full updateMinimap
+// mid-scroll would throw away and rebuild the strip cache).
+- (void)scheduleRenderAdoptionMaintenance {
+    if (_renderAdoptionMaintenanceScheduled) return;
+    _renderAdoptionMaintenanceScheduled = YES;
+    NSUInteger movementAtSchedule = _viewportMovementGeneration;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      self->_renderAdoptionMaintenanceScheduled = NO;
+      if (!self->_doc) return;
+      [self evictDistantRenderedPageImages];
+      // Rebuild the minimap (which throws away the strip cache) only when nothing
+      // moved during the debounce — i.e. the viewport is idle. While scrolling,
+      // the scroll path drives the minimap and a full rebuild would stutter.
+      BOOL idle = movementAtSchedule == self->_viewportMovementGeneration && !self->_liveZooming &&
+                  !self->_documentViewPanActive && !self->_minimapPrecisionViewportDragActive;
+      if (idle) [self updateMinimap];
+    });
 }
 
 - (void)cacheActiveRenderedPagesForSelectedTab {

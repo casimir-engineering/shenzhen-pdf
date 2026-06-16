@@ -228,6 +228,10 @@
     // Counts coalesced scroll-maintenance ticks so the heavy prefetch/eviction
     // pass runs at a coarser cadence than the per-tick crop refresh.
     NSUInteger _scrollMaintenanceTickCount;
+    // Coalesces the per-render-completion bookkeeping (eviction sweep + idle
+    // minimap refresh) so a burst of completing prefetch renders doesn't run that
+    // heavy work once per page on the main thread.
+    BOOL _renderAdoptionMaintenanceScheduled;
     NSUInteger _scrollIdleMinimapRefreshGeneration;
     NSUInteger _documentViewPanCropGeneration;
     NSUInteger _visibleCropRenderSequence;
