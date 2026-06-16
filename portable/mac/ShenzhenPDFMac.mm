@@ -4457,7 +4457,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                      self->_documentViewPanMaintenanceScheduled = NO;
                      if (!self->_documentViewPanActive || panGeneration != self->_documentViewPanCropGeneration) return;
                      [self renderLiveDocumentPanViewportCropIfDue];
-                     [self updateMinimap];
+                     // Lightweight minimap update, NOT the full updateMinimap: the
+                     // full path reassigns _minimapView.pages (a copy), which
+                     // invalidates the strip content cache and forces a full
+                     // lockFocus rebuild on the next pan frame — the big pan stutter.
+                     [self updateMinimapForScrolling];
                    });
 }
 
@@ -8553,6 +8557,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
       self->_scrollMaintenanceScheduled = NO;
       if (!self->_doc) return;
       if (self->_liveZooming || self->_documentViewPanActive || self->_minimapPrecisionViewportDragActive) return;
+      self->_scrollMaintenanceTickCount++;
+      // Every tick (≈33ms): keep the visible viewport crisp and the minimap
+      // indicator tracking. These touch only the visible set, so they're cheap.
       [self renderVisiblePageCropsForCurrentViewportIfNeeded];
       // A page taller than several viewports (e.g. an oversized schematic page)
       // keeps _pageIndex pinned across many scroll ticks, so the neighbor
@@ -8561,18 +8568,19 @@ static BOOL spdf_page_list_cache_disabled(void) {
       // covers crop-regime pages, so schedule full-page renders for the current
       // visible set here too (deduped via _queuedRenderOperations).
       [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:NO];
-      // Continuously top up the ±2 neighbourhood (idempotent — already-resident
-      // or already-queued pages early-out) so the next page is resident before it
-      // scrolls into view, not only right at a page-boundary crossing.
-      [self enqueueCurrentPageNeighborhoodRendersForGeneration:self->_renderGeneration
-                                                preferredPage:self->_pageIndex
-                                            forceHighPriority:NO];
-      // Render thumbnails for pages now in the minimap strip while still
-      // scrolling (deduped, low priority), so they patch in as you go instead of
-      // appearing blank until the scroll stops. Persisted once rendered.
-      [self enqueueVisibleMinimapThumbnailRenders];
       [self updateMinimapForScrolling];
-      [self evictDistantRenderedPageImages];
+      // Heavier passes — the zoom-scaled neighbourhood prefetch, the padded
+      // minimap-thumbnail band, and the O(total-pages) eviction sweep — don't
+      // need per-frame cadence; running them every tick saturated the main thread
+      // and dropped frames on large documents. Coalesce to ≈200ms (every 6th
+      // tick, starting on the first so prefetch still kicks in promptly).
+      if (self->_scrollMaintenanceTickCount % 6 == 1) {
+          [self enqueueCurrentPageNeighborhoodRendersForGeneration:self->_renderGeneration
+                                                    preferredPage:self->_pageIndex
+                                                forceHighPriority:NO];
+          [self enqueueVisibleMinimapThumbnailRenders];
+          [self evictDistantRenderedPageImages];
+      }
       NSUInteger generation = ++self->_scrollIdleMinimapRefreshGeneration;
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (generation != self->_scrollIdleMinimapRefreshGeneration || !self->_doc || self->_liveZooming) return;
