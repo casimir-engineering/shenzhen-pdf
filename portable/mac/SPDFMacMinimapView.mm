@@ -764,6 +764,14 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
 }
 
 - (NSArray<NSNumber*>*)visiblePageIndexes {
+    return [self visiblePageIndexesWithPaddingScreens:0.0];
+}
+
+// Pages whose strip slot intersects the visible bounds expanded vertically by
+// `screens` times the strip height on each side. Padding 0 = strictly visible
+// (used for eviction/keep); a large padding is used to prerender thumbnails well
+// above and below the viewport so scrolling reveals already-rendered frames.
+- (NSArray<NSNumber*>*)visiblePageIndexesWithPaddingScreens:(CGFloat)screens {
     CGFloat scale = 1.0;
     CGFloat gap = 4.0;
     CGFloat contentTop = 8.0;
@@ -771,11 +779,12 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     if (![self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL])
         return @[];
 
+    NSRect testRect = NSInsetRect(self.bounds, 0.0, -MAX(0.0, screens) * NSHeight(self.bounds));
     NSMutableArray<NSNumber*>* indexes = [NSMutableArray array];
     for (SPDFRenderedPage* page in self.pages) {
         NSRect miniRect = [self miniRectForPage:page scale:scale gap:gap];
         miniRect.origin.y += contentTop;
-        if (NSIntersectsRect(miniRect, self.bounds)) [indexes addObject:@(page.pageIndex)];
+        if (NSIntersectsRect(miniRect, testRect)) [indexes addObject:@(page.pageIndex)];
     }
     return indexes;
 }

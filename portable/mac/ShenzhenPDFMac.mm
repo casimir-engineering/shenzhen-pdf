@@ -3442,13 +3442,31 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return fabs(page.highQualityImageZoom - zoom) <= 0.001 && fabs(page.highQualityImageScale - displayScale) <= 0.001;
 }
 
+// Prefetch radius scaled to zoom: keep roughly two viewports of pages rendered
+// on each side. Zoomed out (small pages, many per screen, fast page turnover) →
+// a wide radius; zoomed in (a page taller than the viewport) → as few as ±2.
+// Capped at the eviction keep window so nothing is rendered just to be dropped,
+// and zoomed-out renders are individually small (fewer pixels) so the wider
+// radius does not blow up memory.
+- (NSInteger)zoomScaledNeighborhoodRenderRadius {
+    if (_renderedPages.count == 0) return 2;
+    CGFloat viewportHeight = NSHeight(_pageScrollView.contentView.bounds);
+    NSRect pageRect = [_pageView rectForPageAtIndex:_pageIndex];
+    CGFloat pageHeight = NSHeight(pageRect);
+    if (viewportHeight < 1.0 || pageHeight < 1.0) return 2;
+    CGFloat pagesPerViewport = viewportHeight / pageHeight;
+    NSInteger radius = (NSInteger)ceil(pagesPerViewport * 2.0) + 1;
+    return MAX(2, MIN(radius, kRenderedImageKeepRadius));
+}
+
 - (void)enqueueCurrentPageNeighborhoodRendersForGeneration:(NSUInteger)generation
                                              preferredPage:(NSInteger)preferredPage
                                          forceHighPriority:(BOOL)forceHighPriority {
-    // Radius 2 (±2 pages) so the pages just above and below the current one are
-    // already resident before they scroll into view — eviction keeps a radius-2
-    // window plus all queued pages, so nothing is rendered just to be dropped.
-    NSArray<NSNumber*>* pages = [self pageNeighborhoodIndexesAroundPage:preferredPage radius:2];
+    // Zoom-scaled radius so the pages about to scroll into view are already
+    // resident; eviction keeps a ±kRenderedImageKeepRadius window plus all queued
+    // pages, so nothing is rendered just to be dropped.
+    NSArray<NSNumber*>* pages = [self pageNeighborhoodIndexesAroundPage:preferredPage
+                                                                radius:[self zoomScaledNeighborhoodRenderRadius]];
     [self enqueuePageRendersForGeneration:generation
                               pageIndexes:pages
                             preferredPage:preferredPage
@@ -3884,7 +3902,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)enqueueVisibleMinimapThumbnailRenders {
     if (!_minimapVisible || !_doc || !_path.length || _renderedPages.count == 0 || _liveZooming) return;
-    NSArray<NSNumber*>* visiblePages = [_minimapView visiblePageIndexes];
+    // Prerender a generous band above and below the strip viewport (thumbnails
+    // are small and never evicted), so scrolling reveals already-rendered frames
+    // instead of blank slots.
+    NSArray<NSNumber*>* visiblePages = [_minimapView visiblePageIndexesWithPaddingScreens:2.5];
     if (visiblePages.count == 0) return;
 
     NSString* path = [_path copy];

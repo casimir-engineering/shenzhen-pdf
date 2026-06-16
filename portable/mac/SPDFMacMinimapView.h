@@ -14,6 +14,9 @@
 @property(nonatomic) BOOL liveViewportOnly;
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
 - (NSArray<NSNumber*>*)visiblePageIndexes;
+// Pages within the visible strip expanded by `screens` strip-heights on each
+// side — used to prerender thumbnails above and below the viewport.
+- (NSArray<NSNumber*>*)visiblePageIndexesWithPaddingScreens:(CGFloat)screens;
 // Page-content zoom at which a thumbnail should be rendered so it is crisp at
 // the page's displayed width in the strip (which is width-capped at 2.5x the
 // median page). Returns 0 if the strip has no usable width yet.
