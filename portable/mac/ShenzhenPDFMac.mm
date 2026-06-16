@@ -5064,6 +5064,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)setHorizontalScrollLockX:(CGFloat)x animated:(BOOL)animated {
     if (![_pageScrollView.contentView isKindOfClass:[SPDFDocumentClipView class]]) return;
     SPDFDocumentClipView* clip = (SPDFDocumentClipView*)_pageScrollView.contentView;
+    // No horizontal rubber-band while locked, so a viewport-fit page cannot be
+    // wiggled off center; restore elasticity when horizontal panning is free.
+    _pageScrollView.horizontalScrollElasticity = isfinite(x) ? NSScrollElasticityNone : NSScrollElasticityAllowed;
     if (!isfinite(x)) {
         [self cancelHorizontalLockEase];
         clip.horizontalLockX = NAN;
@@ -5135,23 +5138,14 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSClipView* clipView = _pageScrollView.contentView;
     CGFloat clipWidth = NSWidth(clipView.bounds);
     NSRect visibleRect = clipView.bounds;
-    BOOL wideVisible = NO;
-    for (SPDFRenderedPage* page in _renderedPages) {
-        NSRect r = [_pageView rectForPageAtIndex:page.pageIndex];
-        if (NSIsEmptyRect(r)) continue;
-        if (NSMaxY(r) < NSMinY(visibleRect) - 1.0) continue;
-        if (NSMinY(r) > NSMaxY(visibleRect) + 1.0) break;
-        if (NSWidth(r) > clipWidth + 0.5) {
-            wideVisible = YES;
-            break;
-        }
-    }
-    if (wideVisible) {
-        [self setHorizontalScrollLockX:NAN animated:NO];
-        return;
-    }
+    // Decide from the CURRENT (dominant) page only. While you are mostly on a
+    // page that fits the viewport it stays centered and hard-locked — even if a
+    // wider page is peeking in at the edge, so there is no horizontal wiggle.
+    // Horizontal panning unlocks only once a page wider than the viewport becomes
+    // the dominant page. Crossing that boundary (portrait<->landscape,
+    // small<->big) is the only time the viewport eases back to center.
     NSRect pageRect = [_pageView rectForPageAtIndex:[_pageView pageIndexForVisibleRect:visibleRect]];
-    if (NSIsEmptyRect(pageRect)) {
+    if (NSIsEmptyRect(pageRect) || NSWidth(pageRect) > clipWidth + 0.5) {
         [self setHorizontalScrollLockX:NAN animated:NO];
         return;
     }
@@ -7016,6 +7010,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
     [_zoomFinishTimer invalidate];
     double tz = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
+    // Release the horizontal lock for the duration of the zoom: a lock value
+    // computed for the old (smaller) canvas would pin origin.x and drag the
+    // cursor-anchored zoom toward the left as the canvas grows. resizeDocumentView
+    // re-establishes the correct lock when the gesture settles.
+    [self setHorizontalScrollLockX:NAN animated:NO];
     [self setZoomWithoutRendering:targetZoom centeredAtWindowPoint:windowPoint];
     if (spdf_zoom_profile_enabled()) {
         profileSetZoom = spdf_zoom_profile_now_ms() - tz;
