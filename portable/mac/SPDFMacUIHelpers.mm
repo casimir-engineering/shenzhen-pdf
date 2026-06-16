@@ -1077,6 +1077,12 @@ static void spdf_install_inactive_magnify_monitor(void) {
 
     [clipView scrollToPoint:origin];
     [self reflectScrolledClipView:clipView];
+    // Flush the exposed-area redraw synchronously so the document content stays
+    // locked to the scroll position — this is exactly what makes minimap-driven
+    // scrolling smooth. Without it the redraw lands on a later, possibly
+    // congested, display cycle (background-render completions flooding the main
+    // queue), so the content visibly lags and stutters behind the scroll.
+    [self.documentView displayIfNeeded];
     if (self.reader) [self.reader documentScrollPositionChanged];
     return YES;
 }
