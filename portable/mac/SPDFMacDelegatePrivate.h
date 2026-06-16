@@ -238,6 +238,10 @@
     CGFloat _horizontalLockEaseStartX;
     CGFloat _horizontalLockEaseTargetX;
     NSTimeInterval _horizontalLockEaseStartTime;
+    // Coalesces the heavier per-page-change work (zoom-seed caches, neighbor
+    // renders, control + sidebar refresh) off the scroll frame so crossing a
+    // page boundary doesn't hitch.
+    BOOL _pageChangeFollowUpScheduled;
     BOOL _defaultSidebarVisibleForNewDocuments;
     BOOL _defaultMinimapVisibleForNewDocuments;
     BOOL _sidebarPreferredVisible;
