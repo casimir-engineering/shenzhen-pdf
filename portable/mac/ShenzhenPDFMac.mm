@@ -3324,12 +3324,21 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (NSArray<NSNumber*>*)pageNeighborhoodIndexesAroundPage:(NSInteger)pageIndex {
+    return [self pageNeighborhoodIndexesAroundPage:pageIndex radius:1];
+}
+
+- (NSArray<NSNumber*>*)pageNeighborhoodIndexesAroundPage:(NSInteger)pageIndex radius:(NSInteger)radius {
     if (_renderedPages.count == 0) return @[];
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
-    NSMutableArray<NSNumber*>* indexes = [NSMutableArray arrayWithCapacity:3];
-    if (pageIndex > 0) [indexes addObject:@(pageIndex - 1)];
+    radius = MAX(0, radius);
+    // Center-out order so the nearest neighbours render first under the
+    // distance-priority queue.
+    NSMutableArray<NSNumber*>* indexes = [NSMutableArray arrayWithCapacity:(NSUInteger)(2 * radius + 1)];
     [indexes addObject:@(pageIndex)];
-    if (pageIndex + 1 < (NSInteger)_renderedPages.count) [indexes addObject:@(pageIndex + 1)];
+    for (NSInteger d = 1; d <= radius; ++d) {
+        if (pageIndex + d < (NSInteger)_renderedPages.count) [indexes addObject:@(pageIndex + d)];
+        if (pageIndex - d >= 0) [indexes addObject:@(pageIndex - d)];
+    }
     return indexes;
 }
 
@@ -3436,7 +3445,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)enqueueCurrentPageNeighborhoodRendersForGeneration:(NSUInteger)generation
                                              preferredPage:(NSInteger)preferredPage
                                          forceHighPriority:(BOOL)forceHighPriority {
-    NSArray<NSNumber*>* pages = [self pageNeighborhoodIndexesAroundPage:preferredPage];
+    // Radius 2 (±2 pages) so the pages just above and below the current one are
+    // already resident before they scroll into view — eviction keeps a radius-2
+    // window plus all queued pages, so nothing is rendered just to be dropped.
+    NSArray<NSNumber*>* pages = [self pageNeighborhoodIndexesAroundPage:preferredPage radius:2];
     [self enqueuePageRendersForGeneration:generation
                               pageIndexes:pages
                             preferredPage:preferredPage
@@ -8480,12 +8492,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
             _pageIndex = visiblePage;
             _pageView.currentPageIndex = _pageIndex;
             [self clearPageFieldFocus];
-            [self enqueueZoomSeedCachesForGeneration:_renderGeneration preferredPage:_pageIndex includeWholeBase:NO];
-            [self enqueueCurrentPageNeighborhoodRendersForGeneration:_renderGeneration
-                                                       preferredPage:_pageIndex
-                                                   forceHighPriority:NO];
-            [self updateControls];
-            [self selectCurrentSidebarRow];
+            // Keep only the cheap page-indicator update on the scroll frame; defer
+            // the heavy zoom-seed/neighbour-render/control/sidebar work off-frame
+            // so crossing a page boundary doesn't stutter.
+            [self updatePageIndicatorControls];
+            [self schedulePageChangeFollowUp];
         }
     }
     [self updateHorizontalScrollLockAnimated:YES];
@@ -8526,6 +8537,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
       // covers crop-regime pages, so schedule full-page renders for the current
       // visible set here too (deduped via _queuedRenderOperations).
       [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:NO];
+      // Continuously top up the ±2 neighbourhood (idempotent — already-resident
+      // or already-queued pages early-out) so the next page is resident before it
+      // scrolls into view, not only right at a page-boundary crossing.
+      [self enqueueCurrentPageNeighborhoodRendersForGeneration:self->_renderGeneration
+                                                preferredPage:self->_pageIndex
+                                            forceHighPriority:NO];
       [self updateMinimapForScrolling];
       [self evictDistantRenderedPageImages];
       NSUInteger generation = ++self->_scrollIdleMinimapRefreshGeneration;
@@ -8950,6 +8967,38 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
     [self updateToolbarOverflow];
+}
+
+// Cheap subset of updateControls run synchronously on a page crossing so the
+// page number / nav buttons stay responsive; the full updateControls (title,
+// toolbar, status, find controls) is deferred to the page-change follow-up.
+- (void)updatePageIndicatorControls {
+    NSInteger pageCount = spdf_page_count(_doc);
+    BOOL hasDoc = _doc != NULL;
+    _prevButton.enabled = hasDoc && _pageIndex > 0;
+    _nextButton.enabled = hasDoc && _pageIndex + 1 < pageCount;
+    _pageField.stringValue = hasDoc ? [NSString stringWithFormat:@"%ld", (long)_pageIndex + 1] : @"";
+}
+
+// Coalesced off-frame follow-up for a page change. The instant a scroll crosses
+// a page boundary we only update the cheap page indicator; the heavier work
+// (zoom-seed caches with their O(n) byte accounting, ±2 neighbour renders, full
+// control refresh, sidebar selection) runs here ~1 frame later, and only once
+// per burst no matter how many boundaries a fast scroll crosses.
+- (void)schedulePageChangeFollowUp {
+    if (_pageChangeFollowUpScheduled) return;
+    _pageChangeFollowUpScheduled = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 / 60.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      self->_pageChangeFollowUpScheduled = NO;
+      if (!self->_doc || self->_renderedPages.count == 0 || self->_liveZooming) return;
+      NSInteger page = self->_pageIndex;
+      [self enqueueZoomSeedCachesForGeneration:self->_renderGeneration preferredPage:page includeWholeBase:NO];
+      [self enqueueCurrentPageNeighborhoodRendersForGeneration:self->_renderGeneration
+                                                preferredPage:page
+                                            forceHighPriority:NO];
+      [self updateControls];
+      [self selectCurrentSidebarRow];
+    });
 }
 
 - (void)updateControls {
