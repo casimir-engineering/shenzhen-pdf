@@ -3443,6 +3443,38 @@ static BOOL spdf_page_list_cache_disabled(void) {
                         forceHighPriority:forceHighPriority];
 }
 
+// Largest displayScale at which the whole page (at `zoom`) still renders within
+// `byteLimit` and the max bitmap dimension. Used to give an oversized page —
+// whose full-resolution render is over budget — the highest-resolution
+// whole-page "navigation base" it can have. Returns 0 if even a tiny render
+// would not fit (shouldn't happen for real pages).
+- (CGFloat)cappedFullPageDisplayScaleForPage:(SPDFRenderedPage*)page
+                                        zoom:(CGFloat)zoom
+                                   byteLimit:(NSUInteger)byteLimit {
+    if (!page || page.pageWidth <= 0.0 || page.pageHeight <= 0.0 || zoom <= 0.0) return 0.0;
+    double w = (double)page.pageWidth * (double)zoom;
+    double h = (double)page.pageHeight * (double)zoom;
+    if (w <= 0.0 || h <= 0.0) return 0.0;
+    double byteScale = sqrt((double)byteLimit / 4.0 / (w * h));
+    double dimScale = MIN((double)kMaxRenderedPageBitmapDimension / w, (double)kMaxRenderedPageBitmapDimension / h);
+    double s = MIN(byteScale, dimScale) * 0.97;  // safety for ceil()/+2 padding in the budget check
+    if (!isfinite(s) || s <= 0.0) return 0.0;
+    // Guarantee the renderer accepts it — renderDisplayScaleForPageWidth: bails if
+    // the padded bitmap is even one pixel over the exact limit.
+    for (int i = 0; i < 8 && [self renderDisplayScaleForPageWidth:page.pageWidth
+                                                       pageHeight:page.pageHeight
+                                                             zoom:zoom
+                                                     displayScale:s] <= 0.0;
+         ++i)
+        s *= 0.9;
+    return [self renderDisplayScaleForPageWidth:page.pageWidth
+                                     pageHeight:page.pageHeight
+                                           zoom:zoom
+                                   displayScale:s] > 0.0
+               ? s
+               : 0.0;
+}
+
 - (void)enqueueBaseZoomCacheForPageIndexes:(NSArray<NSNumber*>*)pageIndexes
                           renderGeneration:(NSUInteger)generation
                               preferredPage:(NSInteger)preferredPage
@@ -3458,12 +3490,25 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSInteger index = number.integerValue;
         if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
         SPDFRenderedPage* existing = _renderedPages[(NSUInteger)index];
-        if ([self basePageImage:existing matchesDisplayScale:displayScale]) continue;
-        if (![self fullPageRenderAllowedForPage:existing zoom:kBaseZoomCacheZoom displayScale:displayScale]) continue;
+        // Normal pages cache a whole-page base at kBaseZoomCacheDisplayScale. An
+        // oversized page (full render over budget) instead gets a "navigation
+        // base": the whole page at the largest scale that fits a single bitmap,
+        // so panning inside it shows real content rather than the tiny minimap
+        // thumbnail stretched over the whole page.
+        CGFloat pageDisplayScale = displayScale;
+        NSUInteger perPageByteLimit = kBaseZoomCacheMaxPageBytes;
+        if (![self fullPageRenderAllowedForPage:existing zoom:kBaseZoomCacheZoom displayScale:displayScale]) {
+            pageDisplayScale = [self cappedFullPageDisplayScaleForPage:existing
+                                                                  zoom:kBaseZoomCacheZoom
+                                                             byteLimit:kMaxRenderedPageBitmapByteLimit];
+            if (pageDisplayScale <= 0.0 || pageDisplayScale >= displayScale) continue;
+            perPageByteLimit = kMaxRenderedPageBitmapByteLimit;
+        }
+        if ([self basePageImage:existing matchesDisplayScale:pageDisplayScale]) continue;
         NSUInteger estimatedBytes = [self estimatedRenderedImageByteCostForPage:existing
                                                                            zoom:kBaseZoomCacheZoom
-                                                                   displayScale:displayScale];
-        if (estimatedBytes == 0 || estimatedBytes > kBaseZoomCacheMaxPageBytes) continue;
+                                                                   displayScale:pageDisplayScale];
+        if (estimatedBytes == 0 || estimatedBytes > perPageByteLimit) continue;
         if (scheduledBytes > kBaseZoomCacheTotalByteLimit ||
             estimatedBytes > kBaseZoomCacheTotalByteLimit - scheduledBytes)
             continue;
@@ -3513,7 +3558,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
               SPDFRenderedPage* rendered = [self renderedPageAtIndex:(NSInteger)index
                                                             document:workerDoc
                                                                 zoom:kBaseZoomCacheZoom
-                                                        displayScale:displayScale
+                                                        displayScale:pageDisplayScale
                                                          renderToken:token
                                                                error:err
                                                          errorLength:sizeof(err)];
@@ -3530,7 +3575,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 page.baseImagePointWidth = rendered.imagePointWidth;
                 page.baseImagePointHeight = rendered.imagePointHeight;
                 page.baseImageZoom = kBaseZoomCacheZoom;
-                page.baseImageScale = displayScale;
+                page.baseImageScale = pageDisplayScale;
                 if (self->_liveZooming && labs(index - self->_pageIndex) <= 1 && !page.zoomSeedImage) {
                     [self setZoomSeedForPage:page
                                         image:page.baseImage
