@@ -2855,6 +2855,9 @@ static void spdf_discard_launch_prerender(void) {
         spdf_launch_profile_log(@"buildWindow.sidebar done at %.1fms", spdf_zoom_profile_now_ms() - launchWindowStart);
     _pageScrollView = [[SPDFScrollView alloc] init];
     _pageScrollView.reader = self;
+    // Custom clip view so horizontal panning can be locked on pages that fit the
+    // viewport (see updateHorizontalScrollLockAnimated:).
+    _pageScrollView.contentView = [[SPDFDocumentClipView alloc] init];
     _markerScroller = [[SPDFFindMarkerScroller alloc] initWithFrame:NSZeroRect];
     _markerScroller.reader = self;
     _pageScrollView.verticalScroller = _markerScroller;
@@ -4915,6 +4918,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [_pageView setNeedsDisplay:YES];
     if (!_liveZooming) [self updateMinimap];
     [self invalidateFindMarkers];
+    [self updateHorizontalScrollLockAnimated:NO];
 }
 
 - (void)resizeDocumentViewForWindowLiveResize {
@@ -5001,6 +5005,112 @@ static BOOL spdf_page_list_cache_disabled(void) {
     CGFloat clipWidth = NSWidth(clipView.bounds);
     CGFloat maxX = MAX(0.0, NSWidth(_pageView.bounds) - clipWidth);
     return spdf_clamp_cg(NSMidX(pageRect) - clipWidth * 0.5, 0.0, maxX);
+}
+
+- (void)cancelHorizontalLockEase {
+    [_horizontalLockEaseTimer invalidate];
+    _horizontalLockEaseTimer = nil;
+}
+
+// Set (or clear) the horizontal scroll lock. A finite x pins the viewport's
+// horizontal origin there (blocking panning, keeping pages centered); NAN frees
+// horizontal scrolling. When `animated` and the viewport is far from the target
+// (i.e. we are leaving a wide page that was panned off-center), ease to it.
+- (void)setHorizontalScrollLockX:(CGFloat)x animated:(BOOL)animated {
+    if (![_pageScrollView.contentView isKindOfClass:[SPDFDocumentClipView class]]) return;
+    SPDFDocumentClipView* clip = (SPDFDocumentClipView*)_pageScrollView.contentView;
+    if (!isfinite(x)) {
+        [self cancelHorizontalLockEase];
+        clip.horizontalLockX = NAN;
+        return;
+    }
+    CGFloat current = NSMinX(clip.bounds);
+    if (!animated || fabs(current - x) <= 1.0) {
+        [self cancelHorizontalLockEase];
+        clip.horizontalLockX = x;
+        if (fabs(current - x) > 0.01) {
+            NSPoint origin = clip.bounds.origin;
+            origin.x = x;
+            BOOL wasSuppressing = _suppressScrollCallbacks;
+            _suppressScrollCallbacks = YES;
+            [clip setBoundsOrigin:origin];
+            [_pageScrollView reflectScrolledClipView:clip];
+            _suppressScrollCallbacks = wasSuppressing;
+        }
+        return;
+    }
+    if (_horizontalLockEaseTimer && fabs(_horizontalLockEaseTargetX - x) <= 0.5) return;  // already easing there
+    [self cancelHorizontalLockEase];
+    _horizontalLockEaseStartX = current;
+    _horizontalLockEaseTargetX = x;
+    _horizontalLockEaseStartTime = spdf_zoom_profile_now_ms();
+    clip.horizontalLockX = current;  // pin throughout; each tick advances it toward the target
+    _horizontalLockEaseTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0
+                                                                target:self
+                                                              selector:@selector(stepHorizontalLockEase:)
+                                                              userInfo:nil
+                                                               repeats:YES];
+}
+
+- (void)stepHorizontalLockEase:(NSTimer*)timer {
+    if (![_pageScrollView.contentView isKindOfClass:[SPDFDocumentClipView class]]) {
+        [self cancelHorizontalLockEase];
+        return;
+    }
+    SPDFDocumentClipView* clip = (SPDFDocumentClipView*)_pageScrollView.contentView;
+    const double durationMs = 220.0;
+    double p = spdf_clamp_cg((spdf_zoom_profile_now_ms() - _horizontalLockEaseStartTime) / durationMs, 0.0, 1.0);
+    double eased = 1.0 - pow(1.0 - p, 3.0);  // easeOutCubic
+    CGFloat x = _horizontalLockEaseStartX + (_horizontalLockEaseTargetX - _horizontalLockEaseStartX) * eased;
+    clip.horizontalLockX = x;
+    NSPoint origin = clip.bounds.origin;  // preserve the live vertical scroll position
+    origin.x = x;
+    BOOL wasSuppressing = _suppressScrollCallbacks;
+    _suppressScrollCallbacks = YES;
+    [clip setBoundsOrigin:origin];
+    [_pageScrollView reflectScrolledClipView:clip];
+    _suppressScrollCallbacks = wasSuppressing;
+    [_pageView setNeedsDisplay:YES];
+    if (p >= 1.0) {
+        clip.horizontalLockX = _horizontalLockEaseTargetX;
+        [self cancelHorizontalLockEase];
+    }
+}
+
+// Lock horizontal panning on pages that fit the viewport (kept centered) and
+// unlock it whenever a page wider than the viewport is in view. Crossing from a
+// wide page back to narrow pages eases the viewport back to center.
+- (void)updateHorizontalScrollLockAnimated:(BOOL)animated {
+    if (![_pageScrollView.contentView isKindOfClass:[SPDFDocumentClipView class]]) return;
+    if (!_doc || _renderedPages.count == 0 || _presentationMode || _liveZooming ||
+        _minimapPrecisionViewportDragActive) {
+        [self setHorizontalScrollLockX:NAN animated:NO];
+        return;
+    }
+    NSClipView* clipView = _pageScrollView.contentView;
+    CGFloat clipWidth = NSWidth(clipView.bounds);
+    NSRect visibleRect = clipView.bounds;
+    BOOL wideVisible = NO;
+    for (SPDFRenderedPage* page in _renderedPages) {
+        NSRect r = [_pageView rectForPageAtIndex:page.pageIndex];
+        if (NSIsEmptyRect(r)) continue;
+        if (NSMaxY(r) < NSMinY(visibleRect) - 1.0) continue;
+        if (NSMinY(r) > NSMaxY(visibleRect) + 1.0) break;
+        if (NSWidth(r) > clipWidth + 0.5) {
+            wideVisible = YES;
+            break;
+        }
+    }
+    if (wideVisible) {
+        [self setHorizontalScrollLockX:NAN animated:NO];
+        return;
+    }
+    NSRect pageRect = [_pageView rectForPageAtIndex:[_pageView pageIndexForVisibleRect:visibleRect]];
+    if (NSIsEmptyRect(pageRect)) {
+        [self setHorizontalScrollLockX:NAN animated:NO];
+        return;
+    }
+    [self setHorizontalScrollLockX:[self centeredHorizontalScrollOriginXForPageRect:pageRect] animated:animated];
 }
 
 - (NSPoint)clampedDocumentScrollOrigin:(NSPoint)origin forPageIndex:(NSInteger)pageIndex {
@@ -5512,6 +5622,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
     if (!_presentationMode) {
         _minimapPrecisionViewportDragActive = YES;
+        [self setHorizontalScrollLockX:NAN animated:NO];  // minimap positions absolutely; don't pin x
         [self scrollDocumentClipViewToDocumentOrigin:origin notify:NO];
         [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
         [self renderVisiblePageCropsForCurrentViewportIfNeeded];
@@ -5557,6 +5668,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     origin.y = spdf_clamp_cg(documentTopY, 0.0, maxY);
 
     _minimapPrecisionViewportDragActive = YES;
+    [self setHorizontalScrollLockX:NAN animated:NO];  // minimap positions absolutely; don't pin x
     [self scrollDocumentClipViewToDocumentOrigin:origin notify:NO];
     [self syncCurrentPageFromVisibleViewportQueueRenders:YES forceHighPriority:YES];
     [self renderVisiblePageCropsForCurrentViewportIfNeeded];
@@ -8321,6 +8433,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
             [self selectCurrentSidebarRow];
         }
     }
+    [self updateHorizontalScrollLockAnimated:YES];
     BOOL panning = _documentViewPanActive;
     if (panning) {
         [self setCurrentViewportNeedsDisplay];

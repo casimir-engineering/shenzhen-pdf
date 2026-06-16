@@ -231,6 +231,13 @@
     NSTimeInterval _lastDocumentPanLiveCropRenderTime;
     NSUInteger _viewportMovementGeneration;
     BOOL _minimapPrecisionViewportDragActive;
+    // Horizontal scroll lock: narrow pages (width <= viewport) block horizontal
+    // panning and stay centered; wide pages unlock it. Crossing from a wide page
+    // back to narrow pages eases the viewport back to center.
+    NSTimer* _horizontalLockEaseTimer;
+    CGFloat _horizontalLockEaseStartX;
+    CGFloat _horizontalLockEaseTargetX;
+    NSTimeInterval _horizontalLockEaseStartTime;
     BOOL _defaultSidebarVisibleForNewDocuments;
     BOOL _defaultMinimapVisibleForNewDocuments;
     BOOL _sidebarPreferredVisible;
