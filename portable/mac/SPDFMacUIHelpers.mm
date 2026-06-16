@@ -1075,7 +1075,16 @@ static void spdf_install_inactive_magnify_monitor(void) {
     }
     if (fabs(origin.x - NSMinX(visible)) < 0.0001 && fabs(origin.y - NSMinY(visible)) < 0.0001) return YES;
 
+    // scrollToPoint: posts a bounds-change notification that re-enters
+    // documentScrollPositionChanged; since we invoke it explicitly just below,
+    // suppress the duplicate (the minimap-drag path suppresses the same way via
+    // notify:NO). Halves the per-event work — the redundant pass was doing extra
+    // O(total-pages) pageIndexForVisibleRect: scans and an extra horizontal-lock
+    // update, which is the main trackpad scroll/page-switch stutter on large docs.
+    BOOL posts = clipView.postsBoundsChangedNotifications;
+    clipView.postsBoundsChangedNotifications = NO;
     [clipView scrollToPoint:origin];
+    clipView.postsBoundsChangedNotifications = posts;
     [self reflectScrolledClipView:clipView];
     // Flush the exposed-area redraw synchronously so the document content stays
     // locked to the scroll position — this is exactly what makes minimap-driven

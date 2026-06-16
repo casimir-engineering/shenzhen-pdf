@@ -44,6 +44,17 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     BOOL _layoutPresentationMode;
     CGFloat _layoutWidestPage;
     CGFloat _layoutContinuousDocumentHeight;
+    // Bumped on every layout rebuild/invalidation so the page-index memo below
+    // can tell when it is stale.
+    NSUInteger _layoutGeneration;
+    // Memo for pageIndexForVisibleRect: — it is O(total pages) and called several
+    // times per scroll event with the same rect; cache the result for a given
+    // (rect, currentPage, layout generation).
+    NSRect _pageIndexMemoRect;
+    NSInteger _pageIndexMemoCurrentPage;
+    NSUInteger _pageIndexMemoGeneration;
+    NSInteger _pageIndexMemoResult;
+    BOOL _pageIndexMemoValid;
 }
 
 - (BOOL)isFlipped {
@@ -141,11 +152,20 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
                       [self pixelSnappedLength:page.pageHeight * self.zoom]);
 }
 
+// drawRect: always fills its whole dirty rect with an opaque background, so the
+// view is opaque — telling AppKit lets it skip compositing anything behind it
+// during scroll.
+- (BOOL)isOpaque {
+    return YES;
+}
+
 - (void)invalidateLayoutCache {
     _layoutCacheValid = NO;
     _layoutPages = nil;
     _layoutPageSizes = nil;
     _layoutContinuousPageRects = nil;
+    _layoutGeneration++;
+    _pageIndexMemoValid = NO;
 }
 
 - (CGFloat)viewportWidth {
@@ -165,6 +185,10 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
         _layoutViewportWidth == viewportWidth && _layoutEffectiveBackingScale == effectiveBackingScale &&
         boundsWidthMatches)
         return;
+    // About to rebuild the layout — the page rects change, so the page-index memo
+    // is stale.
+    _layoutGeneration++;
+    _pageIndexMemoValid = NO;
 
     CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
     CGFloat pageGap = self.presentationMode ? 0.0 : kPageGap;
@@ -353,9 +377,18 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
     if (self.pages.count == 0) return 0;
 
+    // This is O(total pages) and is called several times per scroll event with an
+    // identical rect (page-change check + horizontal lock, etc.). Memoize on
+    // (rect, currentPage, layout generation) so the repeats are O(1).
+    [self ensureLayoutCache];
+    if (_pageIndexMemoValid && _pageIndexMemoGeneration == _layoutGeneration &&
+        _pageIndexMemoCurrentPage == self.currentPageIndex && NSEqualRects(visibleRect, _pageIndexMemoRect))
+        return _pageIndexMemoResult;
+
     NSInteger bestPage = self.currentPageIndex;
     CGFloat bestOverlap = -1;
     CGFloat visibleMidY = NSMidY(visibleRect);
+    CGFloat visibleMaxY = NSMaxY(visibleRect);
     CGFloat bestCenterDistance = CGFLOAT_MAX;
     CGFloat closestDistance = CGFLOAT_MAX;
     for (SPDFRenderedPage* page in self.pages) {
@@ -376,18 +409,34 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
                 if (bestOverlap <= 0.0) bestPage = page.pageIndex;
             }
         }
+        // Pages are laid out in monotonically increasing Y; once one starts below
+        // the visible rect, every later page is further below and cannot win.
+        if (NSMinY(pageRect) > visibleMaxY) break;
     }
+
+    _pageIndexMemoRect = visibleRect;
+    _pageIndexMemoCurrentPage = self.currentPageIndex;
+    _pageIndexMemoGeneration = _layoutGeneration;
+    _pageIndexMemoResult = bestPage;
+    _pageIndexMemoValid = YES;
     return bestPage;
 }
 
 - (void)drawPage:(SPDFRenderedPage*)page inRect:(NSRect)pageRect dirtyRect:(NSRect)dirtyRect {
-    NSShadow* shadow = [[NSShadow alloc] init];
-    shadow.shadowBlurRadius = 12.0;
-    shadow.shadowOffset = NSMakeSize(0.0, -2.0);
-    shadow.shadowColor = [NSColor colorWithCalibratedWhite:0.0 alpha:0.28];
+    // Cached once instead of allocated per page per frame — the 12pt blurred
+    // shadow is the same for every page, and the alloc showed up on the trackpad
+    // scroll path (drawPage runs for every page touching the exposed strip).
+    static NSShadow* pageShadow;
+    static dispatch_once_t pageShadowOnce;
+    dispatch_once(&pageShadowOnce, ^{
+        pageShadow = [[NSShadow alloc] init];
+        pageShadow.shadowBlurRadius = 12.0;
+        pageShadow.shadowOffset = NSMakeSize(0.0, -2.0);
+        pageShadow.shadowColor = [NSColor colorWithCalibratedWhite:0.0 alpha:0.28];
+    });
 
     [NSGraphicsContext saveGraphicsState];
-    if (!self.presentationMode) [shadow set];
+    if (!self.presentationMode) [pageShadow set];
     [[NSColor whiteColor] setFill];
     NSRectFill(pageRect);
     [NSGraphicsContext restoreGraphicsState];
