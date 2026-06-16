@@ -178,11 +178,18 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
         widestPage = MAX(widestPage, pageSize.width);
     }
 
+    // Center every page on the same vertical axis — the canvas midline — so a
+    // page wider than the viewport (e.g. an oversized schematic) shares its
+    // midline with the normal pages instead of being pinned to the left while
+    // the narrow pages sit centered in the viewport. The canvas is as wide as the
+    // widest page, so center within max(viewportWidth, widestPage); for a uniform
+    // document this equals viewportWidth, leaving the prior layout unchanged.
+    CGFloat layoutWidth = MAX(viewportWidth, widestPage);
     CGFloat continuousY = pageMargin / 2.0;
     for (NSUInteger i = 0; i < self.pages.count; ++i) {
         NSSize pageSize = [pageSizes[i] sizeValue];
-        CGFloat x = floor((viewportWidth - pageSize.width) / 2.0);
-        CGFloat minX = pageSize.width >= viewportWidth - 0.5 ? 0.0 : pageMargin / 2.0;
+        CGFloat x = floor((layoutWidth - pageSize.width) / 2.0);
+        CGFloat minX = pageSize.width >= layoutWidth - 0.5 ? 0.0 : pageMargin / 2.0;
         NSRect continuousRect = NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]),
                                            [self pixelSnappedOrigin:continuousY], pageSize.width, pageSize.height);
         [continuousRects addObject:[NSValue valueWithRect:continuousRect]];

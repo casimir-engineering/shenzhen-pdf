@@ -4990,6 +4990,19 @@ static BOOL spdf_page_list_cache_disabled(void) {
     });
 }
 
+// Horizontal scroll origin that centers a page on the document canvas midline —
+// the axis every page is laid out around (see ensureLayoutCache). For a document
+// whose canvas is no wider than the viewport this clamps to ~0, so normal
+// documents are unaffected; when an oversized page widens the canvas, a narrow
+// page is shown centered on the same axis as the wide page rather than clinging
+// to the left edge.
+- (CGFloat)centeredHorizontalScrollOriginXForPageRect:(NSRect)pageRect {
+    NSClipView* clipView = _pageScrollView.contentView;
+    CGFloat clipWidth = NSWidth(clipView.bounds);
+    CGFloat maxX = MAX(0.0, NSWidth(_pageView.bounds) - clipWidth);
+    return spdf_clamp_cg(NSMidX(pageRect) - clipWidth * 0.5, 0.0, maxX);
+}
+
 - (NSPoint)clampedDocumentScrollOrigin:(NSPoint)origin forPageIndex:(NSInteger)pageIndex {
     NSClipView* clipView = _pageScrollView.contentView;
     if (_renderedPages.count > 0) {
@@ -4997,8 +5010,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
         if (!NSIsEmptyRect(pageRect)) {
             CGFloat visibleWidth = NSWidth(clipView.bounds);
-            if (NSWidth(pageRect) <= visibleWidth + 0.5) origin.x = 0.0;
-            else origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMaxX(pageRect) - visibleWidth);
+            if (NSWidth(pageRect) <= visibleWidth + 0.5)
+                origin.x = [self centeredHorizontalScrollOriginXForPageRect:pageRect];
+            else
+                origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMaxX(pageRect) - visibleWidth);
         }
     }
     origin.x = spdf_clamp_cg(origin.x, 0.0, MAX(0.0, NSWidth(_pageView.bounds) - NSWidth(clipView.bounds)));
@@ -5042,7 +5057,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
     CGFloat visibleWidth = NSWidth(clipView.bounds);
     if (NSWidth(pageRect) <= visibleWidth + 0.5) {
-        origin.x = 0.0;
+        origin.x = [self centeredHorizontalScrollOriginXForPageRect:pageRect];
     } else if (origin.x <= NSMinX(pageRect) + 2.0) {
         origin.x = MAX(0.0, NSMinX(pageRect) - kPageMargin / 2.0);
     }
@@ -5115,7 +5130,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
     if (alignTop) {
         NSClipView* clipView = _pageScrollView.contentView;
-        CGFloat x = NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5 ? 0.0 : MAX(0, pageRect.origin.x - 12.0);
+        CGFloat x = NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5
+                        ? [self centeredHorizontalScrollOriginXForPageRect:pageRect]
+                        : MAX(0, pageRect.origin.x - 12.0);
         CGFloat y = MAX(0, pageRect.origin.y - 12);
         if (_presentationMode) y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
         NSPoint point = NSMakePoint(x, y);
@@ -5213,7 +5230,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     CGFloat relativeY = targetMuchTaller ? 0.0 : spdf_clamp_cg(relativePosition.y, 0.0, 1.0);
     NSPoint origin = NSMakePoint(NSMinX(pageRect) + spdf_clamp_cg(relativePosition.x, 0.0, 1.0) * maxInPageX,
                                  NSMinY(pageRect) + relativeY * maxInPageY);
-    if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5) origin.x = 0.0;
+    if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5)
+        origin.x = [self centeredHorizontalScrollOriginXForPageRect:pageRect];
     if (_presentationMode) origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
@@ -5374,8 +5392,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     CGFloat maxDocumentY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
     NSPoint origin = NSMakePoint(NSMinX(pageRect) + NSWidth(pageRect) * xFraction - NSWidth(clipView.bounds) * 0.5,
                                  NSMinY(pageRect) + NSHeight(pageRect) * yFraction - NSHeight(clipView.bounds) * 0.5);
-    if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5) origin.x = 0.0;
-    else origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMinX(pageRect) + maxInPageX);
+    if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5)
+        origin.x = [self centeredHorizontalScrollOriginXForPageRect:pageRect];
+    else
+        origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMinX(pageRect) + maxInPageX);
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
     if (_presentationMode) origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
     else origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
