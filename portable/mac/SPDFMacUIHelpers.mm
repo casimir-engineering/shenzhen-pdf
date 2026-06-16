@@ -1068,10 +1068,14 @@ static void spdf_install_inactive_magnify_monitor(void) {
     origin.x = spdf_ui_clamp_cg(origin.x - deltaX, 0.0, maxX);
     origin.y = spdf_ui_clamp_cg(origin.y - deltaY, 0.0, maxY);
     // scrollToPoint: bypasses constrainBoundsRect:, so honor the horizontal lock
-    // here (pages that fit the viewport block horizontal panning).
+    // range here: a viewport-fit page is pinned centered (min==max); a page wider
+    // than the viewport pans only within its own bounds (min<max), not across the
+    // whole canvas.
     if ([clipView isKindOfClass:[SPDFDocumentClipView class]]) {
-        CGFloat lockX = ((SPDFDocumentClipView*)clipView).horizontalLockX;
-        if (isfinite(lockX)) origin.x = lockX;
+        SPDFDocumentClipView* docClip = (SPDFDocumentClipView*)clipView;
+        if (isfinite(docClip.horizontalLockMinX))
+            origin.x = spdf_ui_clamp_cg(origin.x, docClip.horizontalLockMinX,
+                                        MAX(docClip.horizontalLockMinX, docClip.horizontalLockMaxX));
     }
     if (fabs(origin.x - NSMinX(visible)) < 0.0001 && fabs(origin.y - NSMinY(visible)) < 0.0001) return YES;
 
@@ -1200,13 +1204,17 @@ static void spdf_install_inactive_magnify_monitor(void) {
 @implementation SPDFDocumentClipView
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
-    if ((self = [super initWithFrame:frameRect])) _horizontalLockX = NAN;
+    if ((self = [super initWithFrame:frameRect])) {
+        _horizontalLockMinX = NAN;
+        _horizontalLockMaxX = NAN;
+    }
     return self;
 }
 
 - (NSRect)constrainBoundsRect:(NSRect)proposedBounds {
     NSRect bounds = [super constrainBoundsRect:proposedBounds];
-    if (isfinite(_horizontalLockX)) bounds.origin.x = _horizontalLockX;
+    if (isfinite(_horizontalLockMinX))
+        bounds.origin.x = spdf_ui_clamp_cg(bounds.origin.x, _horizontalLockMinX, MAX(_horizontalLockMinX, _horizontalLockMaxX));
     return bounds;
 }
 
