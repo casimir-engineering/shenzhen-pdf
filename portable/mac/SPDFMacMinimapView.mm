@@ -595,27 +595,45 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
                       scale:pageScale
                       color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
                   minHeight:1.0];
-            if (page.pageIndex == self.currentPageIndex) {
-                // Light gray, not the accent color — the accent/blue is the
-                // viewport indicator's color, so the selected-page outline must
-                // not compete with it.
-                [[NSColor colorWithCalibratedWhite:0.75 alpha:0.9] setStroke];
-                NSBezierPath* path = [NSBezierPath bezierPathWithRect:NSInsetRect(pageRect, -1, -1)];
-                path.lineWidth = 1.5;
-                [path stroke];
-            }
+            // The selected-page outline is NOT drawn here: it would bake the
+            // current page into the cached strip image, forcing a full strip
+            // re-render every time the current page changes during a scroll. It
+            // is drawn as a cheap per-frame overlay in drawRect: instead.
         }
     }
+}
+
+// Selected-page outline, drawn over the (current-page-independent) cached strip
+// so crossing a page boundary while scrolling doesn't invalidate the cache.
+- (void)drawCurrentPageOutlineAtContentTop:(CGFloat)contentTop scale:(CGFloat)scale gap:(CGFloat)gap {
+    if (self.currentPageIndex < 0) return;
+    NSRect pageRect = NSZeroRect;
+    for (SPDFRenderedPage* page in self.pages) {
+        if (page.pageIndex != self.currentPageIndex) continue;
+        pageRect = [self miniRectForPage:page scale:scale gap:gap];
+        break;
+    }
+    if (NSIsEmptyRect(pageRect)) return;
+    pageRect.origin.y += contentTop;
+    if (!NSIntersectsRect(pageRect, self.bounds)) return;
+    // Light gray, not the accent color — the accent/blue is the viewport
+    // indicator's color, so the selected-page outline must not compete with it.
+    [[NSColor colorWithCalibratedWhite:0.75 alpha:0.9] setStroke];
+    NSBezierPath* path = [NSBezierPath bezierPathWithRect:NSInsetRect(pageRect, -1, -1)];
+    path.lineWidth = 1.5;
+    [path stroke];
 }
 
 - (BOOL)contentImageCacheMatchesScale:(CGFloat)scale
                                   gap:(CGFloat)gap
                         contentHeight:(CGFloat)contentHeight
                            drawImages:(BOOL)drawImages {
+    // currentPageIndex is intentionally NOT part of the key — the selected-page
+    // outline is a drawRect: overlay, not baked into the strip — so scrolling
+    // across page boundaries reuses the cached strip instead of rebuilding it.
     return _contentImageCache && _contentImageCachePages == self.pages && _contentImageCacheScale == scale &&
            _contentImageCacheGap == gap && _contentImageCacheHeight == contentHeight &&
-           _contentImageCacheBoundsWidth == NSWidth(self.bounds) &&
-           _contentImageCacheCurrentPageIndex == self.currentPageIndex && _contentImageCacheDrawImages == drawImages;
+           _contentImageCacheBoundsWidth == NSWidth(self.bounds) && _contentImageCacheDrawImages == drawImages;
 }
 
 - (BOOL)rebuildContentImageCacheForScale:(CGFloat)scale
@@ -696,6 +714,7 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     if (!drewCachedContent)
         [self drawPageContentAtContentTop:contentTop scale:scale gap:gap drawImages:drawImages clipRect:self.bounds];
     if (!self.liveViewportOnly) [self invalidateContentImageCache];
+    [self drawCurrentPageOutlineAtContentTop:contentTop scale:scale gap:gap];
 
     if (contentHeight > 1.0) {
         visibleRect = NSIntersectionRect(visibleRect, NSInsetRect(self.bounds, 1.0, 1.0));
