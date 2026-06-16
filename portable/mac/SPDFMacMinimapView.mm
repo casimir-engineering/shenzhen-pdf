@@ -570,37 +570,67 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
         if (NSIsEmptyRect(cachedRect)) continue;
         NSRect pageRect = cachedRect;
         pageRect.origin.y += contentTop;
-        // Page draws are uniformly scaled per page (width/height share one factor
-        // by construction), so overlays in page-space points map with this scale.
-        CGFloat pageScale = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
-        if (NSHeight(pageRect) >= 1.0 && NSIntersectsRect(pageRect, clipRect)) {
-            [[NSColor whiteColor] setFill];
-            NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
-            // Thumbnails first: drawing full page bitmaps here forces whole-image
-            // decodes that can cost >100ms across a document strip.
-            NSImage* image = page.minimapImage ?: page.image;
-            if (drawImages && image && NSHeight(pageRect) >= 5.0) {
-                [image drawInRect:pageRect
-                          fromRect:NSZeroRect
-                         operation:NSCompositingOperationSourceOver
-                          fraction:1.0
-                    respectFlipped:YES
-                             hints:@{NSImageHintInterpolation : @(NSImageInterpolationLow)}];
-            } else {
-                [self drawPlaceholderInRect:pageRect];
+        if (NSHeight(pageRect) >= 1.0 && NSIntersectsRect(pageRect, clipRect))
+            [self drawMiniPage:page inPageRect:pageRect drawImages:drawImages];
+    }
+}
+
+// Draws one page's slot (white background, thumbnail or placeholder, search /
+// selection overlays). Shared by the full strip draw and the single-page cache
+// patch. The selected-page outline is intentionally not drawn here — it is a
+// drawRect: overlay so it never bakes the current page into the cached strip.
+- (void)drawMiniPage:(SPDFRenderedPage*)page inPageRect:(NSRect)pageRect drawImages:(BOOL)drawImages {
+    // Page draws are uniformly scaled per page (width/height share one factor by
+    // construction), so overlays in page-space points map with this scale.
+    CGFloat pageScale = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
+    [[NSColor whiteColor] setFill];
+    NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
+    // Thumbnails first: drawing full page bitmaps here forces whole-image decodes
+    // that can cost >100ms across a document strip.
+    NSImage* image = page.minimapImage ?: page.image;
+    if (drawImages && image && NSHeight(pageRect) >= 5.0) {
+        [image drawInRect:pageRect
+                  fromRect:NSZeroRect
+                 operation:NSCompositingOperationSourceOver
+                  fraction:1.0
+            respectFlipped:YES
+                     hints:@{NSImageHintInterpolation : @(NSImageInterpolationLow)}];
+    } else {
+        [self drawPlaceholderInRect:pageRect];
+    }
+    [self drawSearchRects:page.highlights pageRect:pageRect scale:pageScale];
+    [self drawRects:page.selectionRects
+           pageRect:pageRect
+              scale:pageScale
+              color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
+          minHeight:1.0];
+}
+
+// A thumbnail finished rendering: draw just that page into the existing cached
+// strip image (a single image draw at its slot) instead of throwing the cache
+// away and rebuilding the whole strip on the next scroll frame. Falls through to
+// a normal redraw if there is no live cache to patch.
+- (void)noteThumbnailLoadedForPageIndex:(NSInteger)pageIndex {
+    if (_contentImageCache && _contentImageCacheScale > 0.0) {
+        SPDFRenderedPage* target = nil;
+        for (SPDFRenderedPage* page in self.pages) {
+            if (page.pageIndex == pageIndex) {
+                target = page;
+                break;
             }
-            [self drawSearchRects:page.highlights pageRect:pageRect scale:pageScale];
-            [self drawRects:page.selectionRects
-                   pageRect:pageRect
-                      scale:pageScale
-                      color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
-                  minHeight:1.0];
-            // The selected-page outline is NOT drawn here: it would bake the
-            // current page into the cached strip image, forcing a full strip
-            // re-render every time the current page changes during a scroll. It
-            // is drawn as a cheap per-frame overlay in drawRect: instead.
+        }
+        if (target) {
+            NSRect miniRect = [self miniRectForPage:target
+                                              scale:_contentImageCacheScale
+                                                gap:_contentImageCacheGap];
+            if (!NSIsEmptyRect(miniRect) && NSHeight(miniRect) >= 1.0) {
+                [_contentImageCache lockFocusFlipped:YES];
+                [self drawMiniPage:target inPageRect:miniRect drawImages:_contentImageCacheDrawImages];
+                [_contentImageCache unlockFocus];
+            }
         }
     }
+    [self setNeedsDisplay:YES];
 }
 
 // Selected-page outline, drawn over the (current-page-independent) cached strip

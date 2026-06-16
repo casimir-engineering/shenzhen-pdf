@@ -3938,7 +3938,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 page.minimapImage = thumbnailPage.image;
                 page.minimapImageZoom = thumbnailZoom;
                 page.minimapImageScale = displayScale;
-                [self->_minimapView setNeedsDisplay:YES];
+                // Patch this one thumbnail into the cached strip instead of
+                // invalidating the whole cache (which would force a full rebuild
+                // on the next scroll frame).
+                [self->_minimapView noteThumbnailLoadedForPageIndex:index];
               }];
           }
         }];
@@ -8543,6 +8546,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
       [self enqueueCurrentPageNeighborhoodRendersForGeneration:self->_renderGeneration
                                                 preferredPage:self->_pageIndex
                                             forceHighPriority:NO];
+      // Render thumbnails for pages now in the minimap strip while still
+      // scrolling (deduped, low priority), so they patch in as you go instead of
+      // appearing blank until the scroll stops. Persisted once rendered.
+      [self enqueueVisibleMinimapThumbnailRenders];
       [self updateMinimapForScrolling];
       [self evictDistantRenderedPageImages];
       NSUInteger generation = ++self->_scrollIdleMinimapRefreshGeneration;

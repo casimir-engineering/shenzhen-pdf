@@ -18,4 +18,7 @@
 // the page's displayed width in the strip (which is width-capped at 2.5x the
 // median page). Returns 0 if the strip has no usable width yet.
 - (CGFloat)thumbnailRenderZoomForPage:(SPDFRenderedPage*)page;
+// Called when a page's minimap thumbnail finishes rendering: patches just that
+// page into the cached strip (cheap) rather than forcing a full-strip rebuild.
+- (void)noteThumbnailLoadedForPageIndex:(NSInteger)pageIndex;
 @end
