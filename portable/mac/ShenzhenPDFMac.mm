@@ -8492,6 +8492,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     BOOL panning = _documentViewPanActive;
     if (panning) {
         [self setCurrentViewportNeedsDisplay];
+        [self updateMinimapViewportIndicator];
         [self scheduleDocumentPanMaintenance];
         return;
     }
@@ -8500,6 +8501,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self updateMinimap];
         return;
     }
+    // Move the lightweight viewport indicator every event so it tracks the
+    // scroll smoothly; the heavier crop/render/evict maintenance below stays
+    // coalesced.
+    [self updateMinimapViewportIndicator];
     // Trackpad scrolling delivers up to 120 events/s; doing crop checks, a
     // full minimap rebuild, and cache eviction per event saturates the main
     // thread and drops input. Coalesce that maintenance to display cadence.
@@ -8533,6 +8538,20 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 // Minimap refresh for active scrolling: moves the viewport indicator over the
 // cached content strip instead of rebuilding the whole strip per update.
+// Per-scroll-event update of only the minimap viewport indicator. The strip
+// geometry (page rects, thumbnails, document height) changes only on
+// layout/zoom, so refreshing just the visible rect on every scroll event lets
+// the indicator track the scroll at display rate — without rebuilding the
+// page-rect array each frame. The fuller updateMinimapForScrolling still runs on
+// the coalesced maintenance tick to keep the rest in sync.
+- (void)updateMinimapViewportIndicator {
+    if (!_minimapView) return;
+    _minimapView.liveViewportOnly = YES;
+    _minimapView.currentPageIndex = _pageIndex;
+    _minimapView.documentVisibleRect = [self continuousDocumentVisibleRectForMinimap];
+    [_minimapView setNeedsDisplay:YES];
+}
+
 - (void)updateMinimapForScrolling {
     if (!_minimapView) return;
     _minimapView.liveViewportOnly = YES;
