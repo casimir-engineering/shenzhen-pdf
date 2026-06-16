@@ -91,6 +91,20 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     [self setNeedsDisplay:YES];
 }
 
+- (void)refreshRenderedPages:(NSArray<SPDFRenderedPage*>*)pages changedPageIndex:(NSInteger)changedIndex {
+    _pages = [pages copy];
+    // The caller guarantees page SIZES are unchanged (image-only update), so the
+    // laid-out rects are still valid. Re-point the layout cache at the new array
+    // so ensureLayoutCache's identity check passes instead of rebuilding, and
+    // leave _layoutGeneration untouched so the page-index memo stays valid.
+    if (_layoutCacheValid) _layoutPages = _pages;
+    NSRect changedRect = changedIndex >= 0 ? [self rectForPageAtIndex:changedIndex] : NSZeroRect;
+    if (!NSIsEmptyRect(changedRect))
+        [self setNeedsDisplayInRect:changedRect];
+    else
+        [self setNeedsDisplay:YES];
+}
+
 - (void)setZoom:(CGFloat)zoom {
     if (_zoom == zoom) return;
     _zoom = zoom;

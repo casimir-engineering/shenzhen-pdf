@@ -3859,10 +3859,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 [self applySearchHighlightsToCurrentPage];
                 double adoptT2 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
                 if (geometryChanged) [self resizeDocumentView];
-                else {
-                    self->_pageView.pages = self->_renderedPages;
-                    [self->_pageView setNeedsDisplayInRect:[self->_pageView rectForPageAtIndex:index]];
-                }
+                else
+                    // Image-only update: avoid the full layout-invalidate + whole-view
+                    // redraw the `pages` setter does — that per-completion O(n) rebuild
+                    // was the downward-scroll stutter as prefetch renders landed.
+                    [self->_pageView refreshRenderedPages:self->_renderedPages changedPageIndex:index];
                 double adoptT3 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
                 [self cacheActiveRenderedPagesForSelectedTab];
                 double adoptT4 = adoptT0 > 0.0 ? spdf_zoom_profile_now_ms() : 0.0;
@@ -4737,9 +4738,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
 
     if (evicted) {
-        _pageView.pages = _renderedPages;
+        // Evicted pages are distant/off-screen and their image fields were nil'd
+        // in place (the view holds the same page objects), so don't reassign
+        // `pages` — that would invalidate the layout cache and force a full
+        // redraw per eviction. A viewport repaint is enough; the minimap strip is
+        // unaffected (thumbnails aren't evicted).
         [_pageView setNeedsDisplay:YES];
-        [self updateMinimap];
     }
 
     NSUInteger highQualityBytes = 0;
