@@ -48,6 +48,10 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 - (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
 - (void)documentViewDidBeginPan;
 - (void)documentViewDidFinishPanMotion;
+// Scrolls to a hand-drag pan origin, applying the same horizontal centering as
+// every other scroll path: a viewport-fit page stays centered (drag cannot push
+// it off-center), a wider page pans freely.
+- (void)documentViewPanToProposedOrigin:(NSPoint)origin;
 - (BOOL)documentViewInPresentationMode;
 - (NSArray<NSDictionary*>*)commentAnnotationsForPage:(NSInteger)pageIndex;
 - (void)documentViewHoverComment:(NSDictionary*)comment atWindowPoint:(NSPoint)windowPoint;
