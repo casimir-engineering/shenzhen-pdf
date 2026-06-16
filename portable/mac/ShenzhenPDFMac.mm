@@ -8608,6 +8608,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (generation != self->_scrollIdleMinimapRefreshGeneration || !self->_doc || self->_liveZooming) return;
         [self updateMinimap];
+        // Warm the zoom-seed caches once scrolling has settled (not per page
+        // crossing) so a subsequent zoom is still instant without stuttering the
+        // scroll.
+        [self enqueueZoomSeedCachesForGeneration:self->_renderGeneration
+                                   preferredPage:self->_pageIndex
+                                includeWholeBase:NO];
       });
     });
 }
@@ -9051,7 +9057,11 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
       self->_pageChangeFollowUpScheduled = NO;
       if (!self->_doc || self->_renderedPages.count == 0 || self->_liveZooming) return;
       NSInteger page = self->_pageIndex;
-      [self enqueueZoomSeedCachesForGeneration:self->_renderGeneration preferredPage:page includeWholeBase:NO];
+      // Note: the zoom-seed (high-quality + base) caches are NOT warmed here — they
+      // are speculative pre-rendering for zoom, their enqueue does O(total-pages)
+      // byte-cost sums, and the HQ renders contend for CPU. Warming them on every
+      // page crossing was the residual page-switch stutter; they're deferred to
+      // scroll-idle (scheduleScrollViewportMaintenance's idle tail) instead.
       [self enqueueCurrentPageNeighborhoodRendersForGeneration:self->_renderGeneration
                                                 preferredPage:page
                                             forceHighPriority:NO];
