@@ -132,6 +132,15 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
 @end
 
+// Clip view for the document scroll view. When horizontalLockX is finite, the
+// horizontal scroll origin is pinned to it (blocking horizontal panning and
+// keeping pages centered); NaN leaves horizontal scrolling free. This is the
+// AppKit-native lock point — constrainBoundsRect: is consulted for every scroll,
+// elastic bounce, and programmatic bounds change.
+@interface SPDFDocumentClipView : NSClipView
+@property(nonatomic) CGFloat horizontalLockX;
+@end
+
 @interface SPDFWindow : NSWindow
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
 @end
