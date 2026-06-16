@@ -6256,7 +6256,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
     SPDFDocumentTab* tab = [self selectedTab];
     if (!_doc || !tab) return;
 
-    BOOL preloadForFirstFrame = !_window.visible && _sidebarPreferredVisible;
+    // Synchronously load the outline/comments before the first frame so the
+    // sidebar is in its final state (shown/hidden, with content) when the launch
+    // frame paints — instead of popping in once the async metadata load lands.
+    // The window-first launch shows a bare window early, so `!_window.visible` is
+    // no longer a reliable "first frame" signal; `_startupDocumentWorkInProgress`
+    // is true exactly while the launch document is loading, which is the case we
+    // want to preload for (covers both restored open docs and a new document).
+    BOOL preloadForFirstFrame =
+        (_startupDocumentWorkInProgress || !_window.visible) && _sidebarPreferredVisible;
     if (preloadForFirstFrame && !tab.cachedOutlineLoaded) {
         spdf_outline outline;
         memset(&outline, 0, sizeof(outline));
