@@ -2229,7 +2229,7 @@ static void spdf_discard_launch_prerender(void) {
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.6.11";
+    if (version.length == 0) version = @"26.6.16";
     if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
@@ -14761,7 +14761,7 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter");
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.11-2\n");
+                printf("Shenzhen PDF portable mac 26.6.16-1\n");
                 return 0;
             }
         }
