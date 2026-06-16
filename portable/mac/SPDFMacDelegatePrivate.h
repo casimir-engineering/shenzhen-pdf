@@ -225,6 +225,9 @@
     BOOL _documentViewPanCropInFlight;
     BOOL _documentViewPanMaintenanceScheduled;
     BOOL _scrollMaintenanceScheduled;
+    // Counts coalesced scroll-maintenance ticks so the heavy prefetch/eviction
+    // pass runs at a coarser cadence than the per-tick crop refresh.
+    NSUInteger _scrollMaintenanceTickCount;
     NSUInteger _scrollIdleMinimapRefreshGeneration;
     NSUInteger _documentViewPanCropGeneration;
     NSUInteger _visibleCropRenderSequence;
