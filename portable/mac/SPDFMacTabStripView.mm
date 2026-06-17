@@ -629,6 +629,12 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     [self.reader copyTabPathToPasteboardAtIndex:indexNumber.integerValue];
 }
 
+- (void)tabContextCopyTitle:(NSMenuItem*)sender {
+    NSNumber* indexNumber = [sender.representedObject isKindOfClass:NSNumber.class] ? sender.representedObject : nil;
+    if (!indexNumber) return;
+    [self.reader copyTabTitleToPasteboardAtIndex:indexNumber.integerValue];
+}
+
 - (void)startTabDragSessionWithEvent:(NSEvent*)event {
     if (_draggedTabIndex < 0 || _draggedTabIndex >= (NSInteger)self.tabs.count) return;
     SPDFDocumentTab* snapshot = [self.reader tabSnapshotForDragAtIndex:_draggedTabIndex];
@@ -778,11 +784,17 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(tabContextCopyFile:) keyEquivalent:@""];
     copy.target = self;
     copy.representedObject = indexNumber;
+    NSMenuItem* copyTitle = [menu addItemWithTitle:@"Copy Title"
+                                            action:@selector(tabContextCopyTitle:)
+                                     keyEquivalent:@""];
+    copyTitle.target = self;
+    copyTitle.representedObject = indexNumber;
     NSMenuItem* copyPath = [menu addItemWithTitle:@"Copy Path" action:@selector(tabContextCopyPath:) keyEquivalent:@""];
     copyPath.target = self;
     copyPath.representedObject = indexNumber;
     spdf_set_menu_item_system_symbol(showInFolder, @"folder");
     spdf_set_menu_item_system_symbol(copy, @"doc.on.doc");
+    spdf_set_menu_item_system_symbol(copyTitle, @"character.cursor.ibeam");
     spdf_set_menu_item_system_symbol(copyPath, @"doc.text");
     [NSMenu popUpContextMenu:menu withEvent:event forView:self];
 }

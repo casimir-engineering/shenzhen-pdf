@@ -1641,8 +1641,8 @@ static int text_link_at_point(spdf_document* doc, int page_index, float x, float
     return result;
 }
 
-int spdf_link_at_point(spdf_document* doc, int page_index, float x, float y, spdf_link_target* out, char* err,
-                       size_t err_len) {
+int spdf_link_at_point(spdf_document* doc, int page_index, float x, float y, spdf_link_target* out,
+                       int detect_text_links, char* err, size_t err_len) {
     fz_page* page = NULL;
     fz_link* links = NULL;
     fz_link* link;
@@ -1693,7 +1693,7 @@ int spdf_link_at_point(spdf_document* doc, int page_index, float x, float y, spd
         links = NULL;
         fz_drop_page(doc->ctx, page);
         page = NULL;
-        if (out->kind == SPDF_LINK_NONE && text_link_at_point(doc, page_index, x, y, out) < 0)
+        if (detect_text_links && out->kind == SPDF_LINK_NONE && text_link_at_point(doc, page_index, x, y, out) < 0)
             fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
     }
     fz_catch(doc->ctx) {
@@ -2396,6 +2396,52 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
     }
     fz_always(doc->ctx) {
         free(image_backed);
+        if (graft_map) pdf_drop_graft_map(doc->ctx, graft_map);
+        if (out_pdf) pdf_drop_document(doc->ctx, out_pdf);
+        spdf_drop_page_list_cache(doc, -1);
+    }
+    fz_catch(doc->ctx) {
+        set_error(err, err_len, fz_caught_message(doc->ctx));
+        return 0;
+    }
+
+    return 1;
+}
+
+int spdf_save_single_page_pdf(spdf_document* doc, int page_index, const char* path, char* err, size_t err_len) {
+    pdf_document* source_pdf = NULL;
+    pdf_document* out_pdf = NULL;
+    pdf_graft_map* graft_map = NULL;
+    pdf_write_options options;
+
+    set_error(err, err_len, "");
+    if (!doc || !path || !*path) {
+        set_error(err, err_len, "No document path was supplied.");
+        return 0;
+    }
+    if (page_index < 0 || page_index >= doc->page_count) {
+        set_error(err, err_len, "Page index is out of range.");
+        return 0;
+    }
+
+    fz_var(out_pdf);
+    fz_var(graft_map);
+    fz_try(doc->ctx) {
+        source_pdf = pdf_specifics(doc->ctx, doc->doc);
+        if (!source_pdf) fz_throw(doc->ctx, FZ_ERROR_FORMAT, "Only PDF documents can be copied as PDF.");
+
+        out_pdf = pdf_create_document(doc->ctx);
+        graft_map = pdf_new_graft_map(doc->ctx, out_pdf);
+        /* Graft the single requested page into the fresh document at the end. */
+        pdf_graft_mapped_page(doc->ctx, graft_map, -1, source_pdf, page_index);
+
+        options = pdf_default_write_options;
+        options.do_compress = 1;
+        options.do_compress_images = 1;
+        options.do_compress_fonts = 1;
+        pdf_save_document(doc->ctx, out_pdf, path, &options);
+    }
+    fz_always(doc->ctx) {
         if (graft_map) pdf_drop_graft_map(doc->ctx, graft_map);
         if (out_pdf) pdf_drop_document(doc->ctx, out_pdf);
         spdf_drop_page_list_cache(doc, -1);

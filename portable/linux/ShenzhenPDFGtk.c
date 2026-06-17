@@ -3929,10 +3929,12 @@ static int tab_insert_index_for_bar_x(app_state* state, double x) {
 
 static void tab_context_show_in_folder(GtkMenuItem* item, gpointer user_data);
 static void tab_context_copy_path(GtkMenuItem* item, gpointer user_data);
+static void tab_context_copy_title(GtkMenuItem* item, gpointer user_data);
 
 static void show_tab_context_menu(app_state* state, int index, GdkEventButton* event) {
     GtkWidget* menu;
     GtkWidget* show_folder;
+    GtkWidget* copy_title;
     GtkWidget* copy_path;
     document_tab* tab;
 
@@ -3942,12 +3944,16 @@ static void show_tab_context_menu(app_state* state, int index, GdkEventButton* e
 
     menu = gtk_menu_new();
     show_folder = image_menu_item_new_with_label("Show in Folder", "folder");
+    copy_title = image_menu_item_new_with_label("Copy Title", "insert-text");
     copy_path = image_menu_item_new_with_label("Copy Path", "edit-copy");
     g_object_set_data_full(G_OBJECT(show_folder), "tab-path", g_strdup(tab->path), g_free);
+    g_object_set_data_full(G_OBJECT(copy_title), "tab-title", spdf_gtk_display_name_for_path(tab->path), g_free);
     g_object_set_data_full(G_OBJECT(copy_path), "tab-path", g_strdup(tab->path), g_free);
     g_signal_connect(show_folder, "activate", G_CALLBACK(tab_context_show_in_folder), state);
+    g_signal_connect(copy_title, "activate", G_CALLBACK(tab_context_copy_title), state);
     g_signal_connect(copy_path, "activate", G_CALLBACK(tab_context_copy_path), state);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), show_folder);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), copy_title);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), copy_path);
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
@@ -6315,6 +6321,98 @@ static void copy_path_clicked(GtkWidget* widget, gpointer user_data) {
     copy_path_to_clipboard(state, state->path);
 }
 
+// Puts a file on the clipboard as a "text/uri-list" (plus the plain path) so it
+// pastes as a real file into Files/Nautilus, mail and chat apps, etc. The data
+// is supplied on demand from this payload, freed when the clipboard is cleared.
+typedef struct {
+    char* uri;
+    char* path;
+} clipboard_file_payload;
+
+static void clipboard_file_get(GtkClipboard* clipboard, GtkSelectionData* selection, guint info,
+                               gpointer user_data) {
+    (void)clipboard;
+    clipboard_file_payload* payload = (clipboard_file_payload*)user_data;
+    if (!payload) return;
+    if (info == 1) {
+        gtk_selection_data_set_text(selection, payload->path ? payload->path : "", -1);
+    } else {
+        char* uris[2] = {payload->uri, NULL};
+        gtk_selection_data_set_uris(selection, uris);
+    }
+}
+
+static void clipboard_file_clear(GtkClipboard* clipboard, gpointer user_data) {
+    (void)clipboard;
+    clipboard_file_payload* payload = (clipboard_file_payload*)user_data;
+    if (!payload) return;
+    g_free(payload->uri);
+    g_free(payload->path);
+    g_free(payload);
+}
+
+static void copy_file_to_clipboard(app_state* state, const char* path, const char* status) {
+    GtkTargetEntry targets[] = {{(gchar*)"text/uri-list", 0, 0}, {(gchar*)"text/plain", 0, 1}};
+    GtkClipboard* clipboard;
+    clipboard_file_payload* payload;
+    char* uri;
+    if (!state || !path || !*path) return;
+    uri = g_filename_to_uri(path, NULL, NULL);
+    if (!uri) return;
+    payload = g_new0(clipboard_file_payload, 1);
+    payload->uri = uri;
+    payload->path = g_strdup(path);
+    clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+    if (gtk_clipboard_set_with_data(clipboard, targets, G_N_ELEMENTS(targets), clipboard_file_get,
+                                    clipboard_file_clear, payload)) {
+        if (state->status) gtk_label_set_text(GTK_LABEL(state->status), status);
+    } else {
+        clipboard_file_clear(clipboard, payload);
+    }
+}
+
+static void copy_document_clicked(GtkWidget* widget, gpointer user_data) {
+    (void)widget;
+    app_state* state = (app_state*)user_data;
+    if (!state || !state->doc || !state->path) return;
+    copy_file_to_clipboard(state, state->path, "Document copied.");
+}
+
+// Copy the right-clicked (or current) page to the clipboard as a standalone
+// single-page PDF file, written under the temp dir.
+static void copy_page_clicked(GtkWidget* widget, gpointer user_data) {
+    (void)widget;
+    app_state* state = (app_state*)user_data;
+    char err[1024];
+    int page;
+    char* base;
+    char* dot;
+    char* name;
+    char* dir;
+    char* temp_path;
+    if (!state || !state->doc || !state->path) return;
+    page = state->context_page_index >= 0 ? state->context_page_index : state->page_index;
+    if (page < 0) return;
+
+    base = g_path_get_basename(state->path);
+    dot = strrchr(base, '.');
+    if (dot && dot != base) *dot = '\0';
+    name = g_strdup_printf("%s - page %d.pdf", base && *base ? base : "Page", page + 1);
+    dir = g_build_filename(g_get_tmp_dir(), "ShenzhenPDF-copy", NULL);
+    g_mkdir_with_parents(dir, 0700);
+    temp_path = g_build_filename(dir, name, NULL);
+
+    if (spdf_save_single_page_pdf(state->doc, page, temp_path, err, sizeof(err)))
+        copy_file_to_clipboard(state, temp_path, "Page copied.");
+    else if (state->status)
+        gtk_label_set_text(GTK_LABEL(state->status), "Could not copy page.");
+
+    g_free(base);
+    g_free(name);
+    g_free(dir);
+    g_free(temp_path);
+}
+
 static void tab_context_show_in_folder(GtkMenuItem* item, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     const char* path = (const char*)g_object_get_data(G_OBJECT(item), "tab-path");
@@ -6325,6 +6423,15 @@ static void tab_context_copy_path(GtkMenuItem* item, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     const char* path = (const char*)g_object_get_data(G_OBJECT(item), "tab-path");
     copy_path_to_clipboard(state, path);
+}
+
+// Copy the tab's title — the document name without its .pdf extension.
+static void tab_context_copy_title(GtkMenuItem* item, gpointer user_data) {
+    app_state* state = (app_state*)user_data;
+    const char* title = (const char*)g_object_get_data(G_OBJECT(item), "tab-title");
+    if (!state || !title || !*title) return;
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), title, -1);
+    if (state->status) gtk_label_set_text(GTK_LABEL(state->status), "Title copied.");
 }
 
 /* Trim, then collapse runs of whitespace (including non-breaking spaces) to single spaces.
@@ -6403,7 +6510,8 @@ static gboolean open_link_at_page_point(app_state* state, int page_index, double
     int hit;
 
     if (!state || !state->doc || page_index < 0) return FALSE;
-    hit = spdf_link_at_point(state->doc, page_index, (float)page_x, (float)page_y, &target, err, sizeof(err));
+    /* A click follows the link, so do the full check including plain-text URLs. */
+    hit = spdf_link_at_point(state->doc, page_index, (float)page_x, (float)page_y, &target, 1, err, sizeof(err));
     if (hit <= 0) {
         if (hit < 0 && err[0]) gtk_label_set_text(GTK_LABEL(state->status), err);
         return FALSE;
@@ -6446,7 +6554,10 @@ static gboolean link_at_page_point(app_state* state, int page_index, double page
     gboolean has_link;
 
     if (!state || !state->doc || page_index < 0) return FALSE;
-    hit = spdf_link_at_point(state->doc, page_index, (float)page_x, (float)page_y, &target, err, sizeof(err));
+    /* Hover hit-testing for the hand cursor runs on every motion event; only
+     * test real link annotations (detect_text_links=0) so it never builds the
+     * page's stext, which stalls for hundreds of ms on dense pages. */
+    hit = spdf_link_at_point(state->doc, page_index, (float)page_x, (float)page_y, &target, 0, err, sizeof(err));
     if (hit <= 0) return FALSE;
     has_link =
         (target.kind == SPDF_LINK_URI && target.uri) || (target.kind == SPDF_LINK_INTERNAL && target.page_index >= 0);
@@ -9763,6 +9874,8 @@ static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpoi
         double page_x = 0.0;
         double page_y = 0.0;
         GtkWidget* show_folder = image_menu_item_new_with_label("Show in Folder", "folder");
+        GtkWidget* copy_document = image_menu_item_new_with_label("Copy Document", "edit-copy");
+        GtkWidget* copy_page = image_menu_item_new_with_label("Copy Page", "edit-copy");
         GtkWidget* copy_path = image_menu_item_new_with_label("Copy Path", "edit-copy");
         state->context_page_index = -1;
         state->context_comment_index = -1;
@@ -9796,6 +9909,13 @@ static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpoi
         gtk_widget_set_sensitive(show_folder, state->doc != NULL && state->path != NULL);
         g_signal_connect(show_folder, "activate", G_CALLBACK(show_in_folder), state);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), show_folder);
+        gtk_widget_set_sensitive(copy_document, state->doc != NULL && state->path != NULL);
+        g_signal_connect(copy_document, "activate", G_CALLBACK(copy_document_clicked), state);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), copy_document);
+        gtk_widget_set_sensitive(copy_page,
+                                 state->doc != NULL && state->path != NULL && state->context_page_index >= 0);
+        g_signal_connect(copy_page, "activate", G_CALLBACK(copy_page_clicked), state);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), copy_page);
         gtk_widget_set_sensitive(copy_path, state->doc != NULL && state->path != NULL);
         g_signal_connect(copy_path, "activate", G_CALLBACK(copy_path_clicked), state);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), copy_path);
