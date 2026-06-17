@@ -186,6 +186,8 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
     if (action == @selector(makeDefaultPDFReader:)) return @"checkmark.seal";
     if (action == @selector(showInFolder:)) return @"folder";
     if (action == @selector(copyCurrentDocumentPath:)) return @"doc.text";
+    if (action == @selector(copyCurrentDocumentFile:)) return @"doc.on.clipboard";
+    if (action == @selector(copyCurrentPageAsPDF:)) return @"doc.on.clipboard.fill";
     if (action == @selector(searchSelectedTextInBrowser:)) return @"safari";
     if (action == @selector(saveDocumentAs:)) return @"square.and.arrow.down";
     if (action == @selector(closeDocument:)) return @"xmark.circle";
@@ -2245,7 +2247,7 @@ static void spdf_discard_launch_prerender(void) {
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.6.17";
+    if (version.length == 0) version = @"26.6.18";
     if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
@@ -4972,6 +4974,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
         _pageIndex = renderCenterPage;
         _pageView.currentPageIndex = _pageIndex;
         [self renderPageIfNeededAtIndex:_pageIndex];
+    } else if (_pageIndex != pageIndex) {
+        // We scrolled to a specific page (fit/zoom commands, navigation). The
+        // scroll above runs documentScrollPositionChanged, which re-detects the
+        // page from the viewport center — for a fit page shorter than the
+        // viewport the next page peeks in below and the center lands on it, so
+        // _pageIndex would drift one page per press (e.g. repeated Cmd+1/Cmd+4).
+        // Re-pin to the page we actually navigated to so the operation is stable.
+        _pageIndex = pageIndex;
+        _pageView.currentPageIndex = _pageIndex;
     }
     [self renderVisiblePageCropsForCurrentViewportIfNeeded];
 
@@ -5418,11 +5429,25 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSRect visible = clipView.bounds;
         NSPoint origin = visible.origin;
         if (_presentationMode) origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
-        if (NSMinX(pageRect) < NSMinX(visible)) origin.x = NSMinX(pageRect) - 12.0;
-        else if (NSMaxX(pageRect) > NSMaxX(visible)) origin.x = NSMaxX(pageRect) - NSWidth(visible) + 12.0;
-        if (!_presentationMode && NSMinY(pageRect) < NSMinY(visible)) origin.y = NSMinY(pageRect) - 12.0;
-        else if (!_presentationMode && NSMaxY(pageRect) > NSMaxY(visible))
-            origin.y = NSMaxY(pageRect) - NSHeight(visible) + 12.0;
+        // A page larger than the viewport on an axis has the viewport sitting
+        // INSIDE it, so both "page extends past the start" and "page extends
+        // past the end" are true at once; the nudges below would then toggle the
+        // view between the two edges on each call — e.g. repeated Cmd+4 (actual
+        // size) flipping a wide page between its left and right sides. Only nudge
+        // an axis when the page does NOT already cover the viewport there, i.e.
+        // part of the page is genuinely off-screen and needs bringing in.
+        BOOL pageCoversViewportX =
+            NSMinX(pageRect) <= NSMinX(visible) + 0.5 && NSMaxX(pageRect) >= NSMaxX(visible) - 0.5;
+        if (!pageCoversViewportX) {
+            if (NSMinX(pageRect) < NSMinX(visible)) origin.x = NSMinX(pageRect) - 12.0;
+            else if (NSMaxX(pageRect) > NSMaxX(visible)) origin.x = NSMaxX(pageRect) - NSWidth(visible) + 12.0;
+        }
+        BOOL pageCoversViewportY =
+            NSMinY(pageRect) <= NSMinY(visible) + 0.5 && NSMaxY(pageRect) >= NSMaxY(visible) - 0.5;
+        if (!_presentationMode && !pageCoversViewportY) {
+            if (NSMinY(pageRect) < NSMinY(visible)) origin.y = NSMinY(pageRect) - 12.0;
+            else if (NSMaxY(pageRect) > NSMaxY(visible)) origin.y = NSMaxY(pageRect) - NSHeight(visible) + 12.0;
+        }
         [self scrollDocumentClipViewToOrigin:origin notify:NO];
     }
     [self documentScrollPositionChanged];
@@ -8036,6 +8061,17 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self copyPathStringToPasteboard:tab.path statusMessage:@"Path copied."];
 }
 
+// Copy the tab's title — the document name without its .pdf extension.
+- (void)copyTabTitleToPasteboardAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)_tabs.count) {
+        NSBeep();
+        return;
+    }
+    SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
+    NSString* title = tab.path.length ? spdf_display_name_for_path(tab.path) : tab.title;
+    [self copyPathStringToPasteboard:title ?: @"" statusMessage:@"Title copied."];
+}
+
 - (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex {
     NSInteger count = (NSInteger)_tabs.count;
     if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count || fromIndex == toIndex) return;
@@ -10153,8 +10189,11 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
     char err[512];
     spdf_link_target target;
-    int hit =
-        spdf_link_at_point(_doc, (int)pageIndex, (float)pagePoint.x, (float)pagePoint.y, &target, err, sizeof(err));
+    // Hover hit-testing runs on every mouse-move; only test real link
+    // annotations (detect_text_links=0) so it never builds the page's stext
+    // (which stalls the main thread for hundreds of ms on dense pages).
+    int hit = spdf_link_at_point(_doc, (int)pageIndex, (float)pagePoint.x, (float)pagePoint.y, &target,
+                                 /*detect_text_links=*/0, err, sizeof(err));
     if (hit <= 0) return NO;
     BOOL hasLink =
         (target.kind == SPDF_LINK_URI && target.uri) || (target.kind == SPDF_LINK_INTERNAL && target.page_index >= 0);
@@ -10167,8 +10206,10 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
     char err[512];
     spdf_link_target target;
-    int hit =
-        spdf_link_at_point(_doc, (int)pageIndex, (float)pagePoint.x, (float)pagePoint.y, &target, err, sizeof(err));
+    // A click actually follows the link, so do the full check including
+    // plain-text URL detection (detect_text_links=1).
+    int hit = spdf_link_at_point(_doc, (int)pageIndex, (float)pagePoint.x, (float)pagePoint.y, &target,
+                                 /*detect_text_links=*/1, err, sizeof(err));
     if (hit <= 0) return NO;
 
     if (target.kind == SPDF_LINK_URI && target.uri) {
@@ -14033,6 +14074,17 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
     [self copyPathStringToPasteboard:_path statusMessage:@"Path copied."];
 }
 
+// Copy the whole document file to the clipboard — same as the tab strip's
+// "Copy", reusing copyTabFileToPasteboardAtIndex: for the active tab.
+- (void)copyCurrentDocumentFile:(id)sender {
+    (void)sender;
+    if (!_doc || !_path.length) {
+        NSBeep();
+        return;
+    }
+    [self copyTabFileToPasteboardAtIndex:_selectedTabIndex];
+}
+
 - (void)copyCurrentPageImage:(id)sender {
     (void)sender;
     if (!_doc || _pageIndex < 0 || _pageIndex >= (NSInteger)_renderedPages.count ||
@@ -14045,6 +14097,49 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
     [pasteboard clearContents];
     [pasteboard writeObjects:@[ _renderedPages[(NSUInteger)_pageIndex].image ]];
     _statusLabel.stringValue = @"Page image copied.";
+}
+
+// Copy the right-clicked (or current) page to the clipboard as a standalone
+// single-page PDF file.
+- (void)copyCurrentPageAsPDF:(id)sender {
+    (void)sender;
+    NSInteger pageIndex = _contextPageIndex >= 0 ? _contextPageIndex : _pageIndex;
+    if (!_doc || !_path.length || pageIndex < 0 || pageIndex >= spdf_page_count(_doc)) {
+        NSBeep();
+        return;
+    }
+
+    NSString* base = _path.lastPathComponent.stringByDeletingPathExtension;
+    NSString* fileName =
+        [NSString stringWithFormat:@"%@ - page %ld.pdf", base.length ? base : @"Page", (long)(pageIndex + 1)];
+    NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ShenzhenPDF-copy"];
+    [NSFileManager.defaultManager createDirectoryAtPath:directory
+                            withIntermediateDirectories:YES
+                                             attributes:nil
+                                                  error:nil];
+    NSString* tempPath = [directory stringByAppendingPathComponent:fileName];
+
+    char err[1024];
+    if (!spdf_save_single_page_pdf(_doc, (int)pageIndex, tempPath.fileSystemRepresentation, err, sizeof(err))) {
+        [self showError:@"Could not copy page"
+                 detail:[NSString stringWithFormat:@"%s", err[0] ? err : "The page could not be written as a PDF."]];
+        return;
+    }
+
+    // One pasteboard item carrying two representations: the raw PDF bytes (so
+    // Preview/Pages/Keynote paste the page directly) and a file-URL (so Finder,
+    // Mail and chat apps paste it as a .pdf file).
+    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
+    [pasteboard clearContents];
+    NSPasteboardItem* item = [[NSPasteboardItem alloc] init];
+    NSData* pdfData = [NSData dataWithContentsOfFile:tempPath];
+    if (pdfData) [item setData:pdfData forType:NSPasteboardTypePDF];
+    [item setString:[NSURL fileURLWithPath:tempPath].absoluteString forType:NSPasteboardTypeFileURL];
+    if (![pasteboard writeObjects:@[ item ]]) {
+        NSBeep();
+        return;
+    }
+    _statusLabel.stringValue = @"Page copied.";
 }
 
 - (void)showContextMenuForDocumentView:(NSView*)view event:(NSEvent*)event {
@@ -14094,11 +14189,6 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
     }
     NSMenuItem* addComment = [menu addItemWithTitle:@"Add Comment..." action:@selector(addComment:) keyEquivalent:@""];
     addComment.enabled = _doc != NULL && (_selectedText.length > 0 || _contextPageIndex >= 0);
-    NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
-                                            action:@selector(copyCurrentPageImage:)
-                                     keyEquivalent:@""];
-    copyImage.enabled = _doc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
-                        _renderedPages[(NSUInteger)_pageIndex].image != nil;
     [menu addItem:[NSMenuItem separatorItem]];
     [menu addItemWithTitle:@"Zoom In" action:@selector(zoomIn:) keyEquivalent:@""];
     [menu addItemWithTitle:@"Zoom Out" action:@selector(zoomOut:) keyEquivalent:@""];
@@ -14113,6 +14203,19 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
                                                action:@selector(showInFolder:)
                                         keyEquivalent:@""];
     showInFolder.enabled = _doc != NULL && _path.length > 0;
+    NSMenuItem* copyDocument = [menu addItemWithTitle:@"Copy Document"
+                                               action:@selector(copyCurrentDocumentFile:)
+                                        keyEquivalent:@""];
+    copyDocument.enabled = _doc != NULL && _path.length > 0;
+    NSMenuItem* copyPage = [menu addItemWithTitle:@"Copy Page"
+                                           action:@selector(copyCurrentPageAsPDF:)
+                                    keyEquivalent:@""];
+    copyPage.enabled = _doc != NULL && _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
+    NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
+                                            action:@selector(copyCurrentPageImage:)
+                                     keyEquivalent:@""];
+    copyImage.enabled = _doc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
+                        _renderedPages[(NSUInteger)_pageIndex].image != nil;
     NSMenuItem* copyPath = [menu addItemWithTitle:@"Copy Path"
                                            action:@selector(copyCurrentDocumentPath:)
                                     keyEquivalent:@""];
@@ -14873,6 +14976,8 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(showInFolder:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentPath:)) return hasDoc && _path.length > 0;
+    if (action == @selector(copyCurrentDocumentFile:)) return hasDoc && _path.length > 0;
+    if (action == @selector(copyCurrentPageAsPDF:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentPageImage:))
         return hasDoc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
                _renderedPages[(NSUInteger)_pageIndex].image != nil;
@@ -14905,7 +15010,7 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter");
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.17-1\n");
+                printf("Shenzhen PDF portable mac 26.6.18-1\n");
                 return 0;
             }
         }

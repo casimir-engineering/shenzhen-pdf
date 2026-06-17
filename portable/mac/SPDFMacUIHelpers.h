@@ -69,6 +69,7 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 - (void)showTabInFolderAtIndex:(NSInteger)index;
 - (void)copyTabFileToPasteboardAtIndex:(NSInteger)index;
 - (void)copyTabPathToPasteboardAtIndex:(NSInteger)index;
+- (void)copyTabTitleToPasteboardAtIndex:(NSInteger)index;
 - (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex;
 - (void)detachTabAtIndex:(NSInteger)index;
 - (void)newTabRequested:(id)sender;

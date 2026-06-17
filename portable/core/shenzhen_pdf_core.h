@@ -161,8 +161,12 @@ int spdf_load_outline(spdf_document* doc, spdf_outline* out, char* err, size_t e
 void spdf_free_outline(spdf_outline* outline);
 int spdf_load_comments(spdf_document* doc, spdf_comments* out, char* err, size_t err_len);
 void spdf_free_comments(spdf_comments* comments);
-int spdf_link_at_point(spdf_document* doc, int page_index, float x, float y, spdf_link_target* out, char* err,
-                       size_t err_len);
+/* detect_text_links: when non-zero, also scan the page's structured text for
+ * plain-text URLs (builds the full stext page — expensive on dense pages, so
+ * pass 0 for hover/cursor hit-testing and 1 only when actually following a
+ * link on click). */
+int spdf_link_at_point(spdf_document* doc, int page_index, float x, float y, spdf_link_target* out,
+                       int detect_text_links, char* err, size_t err_len);
 void spdf_free_link_target(spdf_link_target* target);
 int spdf_add_highlight_comment(spdf_document* doc, int page_index, const spdf_rect* rects, int rect_count,
                                const char* text, const char* author, char* err, size_t err_len);
@@ -176,6 +180,10 @@ int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t e
 int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t err_len);
 int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_translated_line* lines, int line_count,
                               char* err, size_t err_len);
+/* Write a standalone single-page PDF (the given page grafted into a fresh
+ * document) to path. Backs the "Copy Page" clipboard action on both platforms.
+ * Returns 1 on success, 0 on failure (err is filled). */
+int spdf_save_single_page_pdf(spdf_document* doc, int page_index, const char* path, char* err, size_t err_len);
 
 #ifdef __cplusplus
 }
