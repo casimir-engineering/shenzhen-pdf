@@ -7390,6 +7390,22 @@ static BOOL spdf_page_list_cache_disabled(void) {
           [self->_window.contentView layoutSubtreeIfNeeded];
           [self->_documentContainer layoutSubtreeIfNeeded];
           [self resizeDocumentView];
+          // The fit-mode zoom computed at adoption (above) used the OUTGOING
+          // tab's clip width — the sidebar/minimap chrome for THIS tab is only
+          // applied just before this animation group, and the page tiling
+          // happens in resizeDocumentView right above. Reconcile the auto-fit
+          // zoom against the now-final clip size, exactly like
+          // resizeDocumentViewForWindowLiveResize does; otherwise the popup
+          // reads "Fit Page" while the rendered zoom is stale. Custom/Actual
+          // don't depend on clip width, so they're left untouched.
+          if ([self isAutoFitMode:self->_fitMode]) {
+              CGFloat fit = [self zoomForFitMode:self->_fitMode pageIndex:self->_pageIndex];
+              if (isfinite(fit) && fit > 0.0 && fabs(fit - self->_zoom) > 0.0001) {
+                  self->_zoom = fit;
+                  self->_pageView.zoom = self->_zoom;
+                  [self resizeDocumentView];
+              }
+          }
           if (restoreOrigin)
               [self scrollDocumentClipViewToOrigin:[self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
                                                                            forPageIndex:self->_pageIndex]
