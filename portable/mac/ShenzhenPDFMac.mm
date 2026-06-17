@@ -3933,14 +3933,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // Boost only the first band after a document becomes active so it isn't
     // starved behind page renders / background-tab warming; later (scroll-driven)
     // bands stay at Utility. See _minimapInitialPopulationPending.
-    BOOL boostInitialBand = _minimapInitialPopulationPending;
-    _minimapInitialPopulationPending = NO;
-
     NSString* path = [_path copy];
     NSUInteger generation = _renderGeneration;
     CGFloat displayScale = [self backingScale];
     if (displayScale <= 0.0) return;
 
+    // Consume the one-shot boost only once we actually create operations, so a
+    // no-op enqueue (everything already queued/cached) during a tab switch
+    // doesn't waste the boost before the real population runs.
+    BOOL boostInitialBand = NO;
     for (NSNumber* number in visiblePages) {
         NSInteger index = number.integerValue;
         if (index < 0 || index >= (NSInteger)_renderedPages.count) continue;
@@ -3953,6 +3954,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         if ([self minimapThumbnailImage:existing matchesZoom:thumbnailZoom displayScale:displayScale]) continue;
         if ([_queuedMinimapThumbnailPages containsObject:number]) continue;
         [_queuedMinimapThumbnailPages addObject:number];
+        if (_minimapInitialPopulationPending) {
+            boostInitialBand = YES;
+            _minimapInitialPopulationPending = NO;
+        }
 
         SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
           @autoreleasepool {
@@ -7418,6 +7423,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
     _zoom = [self zoomForFitMode:_fitMode pageIndex:_pageIndex];
     _renderGeneration++;
+    // Bumping the generation invalidates any minimap thumbnail renders that were
+    // enqueued for the outgoing tab (or earlier in this switch) — their
+    // completion blocks bail on the generation check. Cancel and clear them now,
+    // exactly like renderDocumentAndScrollToPage: does, so the post-switch
+    // minimap enqueue below creates a fresh band at THIS generation. Otherwise
+    // those stale pages stay marked "already queued", the immediate enqueue is a
+    // no-op, and the strip only fills in on a later deferred pass (~300ms+),
+    // which reads as the minimap loading slowly on tab switch.
+    [_minimapQueue cancelAllOperations];
+    [_queuedMinimapThumbnailPages removeAllObjects];
 
     _renderedPages = tab.cachedRenderedPages;
     _pageScrollView.hidden = NO;
