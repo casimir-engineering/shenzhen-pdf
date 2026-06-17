@@ -255,6 +255,14 @@
     BOOL _sidebarVisible;
     BOOL _minimapPreferredVisible;
     BOOL _minimapVisible;
+    // One-shot: set when a document becomes active (open / tab switch) so the
+    // FIRST visible minimap thumbnail band renders at UserInitiated QoS instead
+    // of Utility. Without this, on a busy launch (many restored tabs warming) or
+    // when switching into a tab while a large document is rendering, the
+    // thumbnail renders sit behind the page-render and warming work and the
+    // strip fills in late. Scroll-driven thumbnail enqueues stay at Utility so
+    // the prior anti-stutter behaviour is preserved.
+    BOOL _minimapInitialPopulationPending;
     BOOL _presentationMode;
     BOOL _presentationEnteredFullScreen;
     BOOL _presentationUsingBorderlessWindow;

@@ -3926,6 +3926,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSArray<NSNumber*>* visiblePages = [_minimapView visiblePageIndexesWithPaddingScreens:2.5];
     if (visiblePages.count == 0) return;
 
+    // Boost only the first band after a document becomes active so it isn't
+    // starved behind page renders / background-tab warming; later (scroll-driven)
+    // bands stay at Utility. See _minimapInitialPopulationPending.
+    BOOL boostInitialBand = _minimapInitialPopulationPending;
+    _minimapInitialPopulationPending = NO;
+
     NSString* path = [_path copy];
     NSUInteger generation = _renderGeneration;
     CGFloat displayScale = [self backingScale];
@@ -3984,8 +3990,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
               }];
           }
         }];
-        operation.queuePriority = NSOperationQueuePriorityNormal;
-        operation.qualityOfService = NSQualityOfServiceUtility;
+        operation.queuePriority = boostInitialBand ? NSOperationQueuePriorityVeryHigh : NSOperationQueuePriorityNormal;
+        operation.qualityOfService = boostInitialBand ? NSQualityOfServiceUserInitiated : NSQualityOfServiceUtility;
         [_minimapQueue addOperation:operation];
     }
 }
@@ -7365,6 +7371,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (_presentationMode) _pageScrollView.verticalScroller = nil;
     else if (_pageScrollView.verticalScroller != _markerScroller) _pageScrollView.verticalScroller = _markerScroller;
     _pageScrollView.hasVerticalScroller = !_presentationMode;
+    _minimapInitialPopulationPending = YES;
     BOOL previousSuppressViewportRerender = _suppressViewportRerender;
     _suppressViewportRerender = YES;
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
@@ -7672,6 +7679,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (_presentationMode) _pageScrollView.verticalScroller = nil;
     else if (_pageScrollView.verticalScroller != _markerScroller) _pageScrollView.verticalScroller = _markerScroller;
     _pageScrollView.hasVerticalScroller = !_presentationMode;
+    _minimapInitialPopulationPending = YES;
     BOOL previousSuppressViewportRerender = _suppressViewportRerender;
     _suppressViewportRerender = YES;
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
