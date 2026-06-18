@@ -155,6 +155,9 @@
     NSMutableDictionary<NSString*, NSMutableDictionary*>* _documentStates;
     NSMutableArray<NSString*>* _recentlyOpenedPaths;
     NSMutableArray<NSString*>* _closedDocumentPaths;
+    // path -> security-scoped bookmark, for App Sandbox file access across launches.
+    NSMutableDictionary<NSString*, NSData*>* _securityBookmarks;
+    NSMutableSet<NSURL*>* _activeSecurityScopedURLs;
     NSDictionary* _paletteFavoritePendingDelete;
     NSMutableDictionary<NSNumber*, NSArray<NSValue*>*>* _findHighlights;
     NSMutableArray<NSDictionary*>* _findMatches;

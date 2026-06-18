@@ -732,6 +732,8 @@ static void spdf_discard_launch_prerender(void) {
     _documentStates = [NSMutableDictionary dictionary];
     _recentlyOpenedPaths = [NSMutableArray array];
     _closedDocumentPaths = [NSMutableArray array];
+    _securityBookmarks = [NSMutableDictionary dictionary];
+    _activeSecurityScopedURLs = [NSMutableSet set];
     _paletteFavoritePendingDelete = nil;
     _findHighlights = [NSMutableDictionary dictionary];
     _findMatches = [NSMutableArray array];
@@ -1477,6 +1479,7 @@ static void spdf_discard_launch_prerender(void) {
     NSDictionary* documents = [self jsonObjectFromFile:@"documents.json"];
     if ([documents isKindOfClass:NSDictionary.class]) _documentStates = [documents mutableCopy];
     else _documentStates = [NSMutableDictionary dictionary];
+    [self loadSecurityBookmarks];
 
     if (self.detachedTabLaunch) return;
 
@@ -1669,6 +1672,70 @@ static void spdf_discard_launch_prerender(void) {
         if (!spdf_set_page_size_cache(doc, (int)i, width, height)) return NO;
     }
     return YES;
+}
+
+// --- Security-scoped bookmarks (App Sandbox file access) --------------------
+// The Mac App Store build is sandboxed, so Full Disk Access does nothing and the
+// app may only read files the user picked through the Open panel / drag — which
+// grant a temporary extension that is lost on quit. To reopen a file later
+// (restored session tabs, recents, favorites, Open Path) we persist a
+// security-scoped bookmark and re-acquire access on the next launch. A single
+// path -> bookmark side table (bookmarks.json) covers every reopen surface
+// because they all key on the file path. On a non-sandboxed build these are
+// inert: bookmark creation returns nil (no entitlement), so nothing is stored
+// and files open straight from their path.
+- (void)captureSecurityBookmarkForPath:(NSString*)path {
+    if (path.length == 0) return;
+    NSData* data = [[NSURL fileURLWithPath:path] bookmarkDataWithOptions:NSURLBookmarkCreationWithSecurityScope
+                                          includingResourceValuesForKeys:nil
+                                                           relativeToURL:nil
+                                                                   error:NULL];
+    if (!data) return;  // no current access, non-sandboxed, or non-bookmarkable
+    @synchronized(_securityBookmarks) { _securityBookmarks[path] = data; }
+}
+
+// Resolve path's stored bookmark and start accessing it so spdf_open can read
+// the file inside the sandbox. Idempotent and thread-safe (render workers call
+// it). No stored bookmark -> nothing to do (fresh opens already hold access).
+- (void)ensureSecurityAccessForPath:(NSString*)path {
+    if (path.length == 0) return;
+    NSData* data = nil;
+    @synchronized(_securityBookmarks) { data = _securityBookmarks[path]; }
+    if (!data) return;
+    BOOL stale = NO;
+    NSURL* url = [NSURL URLByResolvingBookmarkData:data
+                                           options:NSURLBookmarkResolutionWithSecurityScope
+                                     relativeToURL:nil
+                               bookmarkDataIsStale:&stale
+                                             error:NULL];
+    if (!url) return;
+    @synchronized(_activeSecurityScopedURLs) {
+        if (![_activeSecurityScopedURLs containsObject:url] && [url startAccessingSecurityScopedResource])
+            [_activeSecurityScopedURLs addObject:url];
+    }
+    if (stale) [self captureSecurityBookmarkForPath:path];
+}
+
+- (void)loadSecurityBookmarks {
+    id stored = [self jsonObjectFromFile:@"bookmarks.json"];
+    if (![stored isKindOfClass:NSDictionary.class]) return;
+    @synchronized(_securityBookmarks) {
+        for (NSString* path in (NSDictionary*)stored) {
+            id b64 = ((NSDictionary*)stored)[path];
+            if (![path isKindOfClass:NSString.class] || ![b64 isKindOfClass:NSString.class]) continue;
+            NSData* data = [[NSData alloc] initWithBase64EncodedString:b64 options:0];
+            if (data) _securityBookmarks[path] = data;
+        }
+    }
+}
+
+- (void)saveSecurityBookmarks {
+    NSMutableDictionary<NSString*, NSString*>* out = [NSMutableDictionary dictionary];
+    @synchronized(_securityBookmarks) {
+        for (NSString* path in _securityBookmarks)
+            out[path] = [_securityBookmarks[path] base64EncodedStringWithOptions:0];
+    }
+    [self writeJSONObject:out toFile:@"bookmarks.json"];
 }
 
 - (void)saveDocumentStateForTab:(SPDFDocumentTab*)tab {
@@ -1931,6 +1998,7 @@ static void spdf_discard_launch_prerender(void) {
                    toFile:@"settings.json"];
     [self writeJSONObject:_favorites toFile:@"favorites.json"];
     [self writeJSONObject:_documentStates ?: @{} toFile:@"documents.json"];
+    [self saveSecurityBookmarks];
 }
 
 - (void)rebuildRecentlyOpenedMenu {
@@ -2217,7 +2285,8 @@ static void spdf_discard_launch_prerender(void) {
                                                       keyEquivalent:@""];
     defaultMinimapItem.target = self;
     [settingsMenu addItem:[NSMenuItem separatorItem]];
-    NSArray<NSString*>* stateFiles = @[ @"settings.json", @"session.json", @"documents.json", @"favorites.json" ];
+    NSArray<NSString*>* stateFiles =
+        @[ @"settings.json", @"session.json", @"documents.json", @"favorites.json", @"bookmarks.json" ];
     for (NSString* stateFile in stateFiles) {
         NSMenuItem* stateItem =
             [settingsMenu addItemWithTitle:[NSString stringWithFormat:@"Open %@...", stateFile]
@@ -2259,7 +2328,7 @@ static void spdf_discard_launch_prerender(void) {
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
     if (version.length == 0) version = @"26.6.19";
-    if (build.length == 0) build = @"1";
+    if (build.length == 0) build = @"2";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
@@ -3297,6 +3366,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     holder = [[SPDFWorkerDocument alloc] init];
     holder.path = path;
     holder.cacheKey = cacheKey;
+    [self ensureSecurityAccessForPath:path];
     holder.document = spdf_open(path.fileSystemRepresentation, err, errLen);
     if (!holder.document) return NULL;
     threadDictionary[@"ShenzhenPDFWorkerDocument"] = holder;
@@ -7906,6 +7976,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSInteger targetIndex = -1;
     for (NSString* path in paths) {
         if (![path isKindOfClass:NSString.class] || path.length == 0) continue;
+        [self captureSecurityBookmarkForPath:path];
         NSInteger existing = [self indexOfTabForPath:path];
         if (existing >= 0) {
             targetIndex = existing;
@@ -15014,7 +15085,7 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter");
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.19-1\n");
+                printf("Shenzhen PDF portable mac 26.6.19-2\n");
                 return 0;
             }
         }
