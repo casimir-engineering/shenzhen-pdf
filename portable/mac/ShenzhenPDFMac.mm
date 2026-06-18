@@ -4506,8 +4506,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (now - _lastDocumentPanLiveCropRenderTime < kDocumentPanLiveCropRenderInterval) return;
     _lastDocumentPanLiveCropRenderTime = now;
 
-    CGFloat displayScale = 1.0;
     CGFloat backingScale = [self backingScale];
+    // Render the live pan crop at the display's backing scale. It used to be a
+    // fixed 1x, which looked blurry upscaled on a Retina display while dragging
+    // a big crop-regime page. The crop is bounded by the page's visible portion
+    // plus a margin, so the bitmap stays modest. Small pages never reach here
+    // (they full-page render above), so this only sharpens the big pages.
+    CGFloat displayScale = backingScale;
     CGFloat margin =
         MAX(NSWidth(_pageScrollView.contentView.bounds), NSHeight(_pageScrollView.contentView.bounds)) * 0.35;
     NSInteger preferredPage = -1;
@@ -15010,7 +15015,7 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter");
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.18-1\n");
+                printf("Shenzhen PDF portable mac 26.6.18-2\n");
                 return 0;
             }
         }
