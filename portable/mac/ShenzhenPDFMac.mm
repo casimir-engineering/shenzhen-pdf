@@ -862,9 +862,18 @@ static void spdf_discard_launch_prerender(void) {
                        [self spawnPendingRestoredWindowsIfNeeded];
                        [self resumePersistentStateSavesAfterLaunch];
                        if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
-                       if (self.restoreWindowID.length == 0) [self showPermissionsWizardOnFirstLaunchIfNeeded];
-                       if (self->_showShortcutHelpOnLaunch && self.restoreWindowID.length == 0)
-                           [self showShortcutHelp:nil];
+                       if (self.restoreWindowID.length == 0) {
+                           // Permissions is the first thing the user sets. The shortcut-help
+                           // panel floats above the wizard's child window, so while the wizard
+                           // is up, hold the shortcut help back until the wizard is dismissed.
+                           BOOL wizardShown = [self showPermissionsWizardOnFirstLaunchIfNeeded];
+                           if (self->_showShortcutHelpOnLaunch) {
+                               if (wizardShown)
+                                   self->_pendingShortcutHelpAfterPermissions = YES;
+                               else
+                                   [self showShortcutHelp:nil];
+                           }
+                       }
                      });
     });
     if (spdf_zoom_profile_enabled()) {
@@ -2249,7 +2258,7 @@ static void spdf_discard_launch_prerender(void) {
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.6.18";
+    if (version.length == 0) version = @"26.6.19";
     if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
@@ -13797,44 +13806,6 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     [self promptToMakeDefaultPDFReaderFromLaunch:YES];
 }
 
-// True when the app can read TCC-protected locations without per-folder
-// consent — i.e. Full Disk Access is granted. Probing a known FDA-gated file
-// (the user TCC database) is the standard check; it is a single access(2) call,
-// only ever run lazily after first paint, so it never touches the launch path.
-static BOOL spdf_path_readable_with_fda(NSString* path) {
-    if (!path.length) return NO;
-    FILE* f = fopen(path.fileSystemRepresentation, "rb");
-    if (f) {
-        fclose(f);
-        return YES;
-    }
-    return NO;
-}
-
-static BOOL spdf_has_full_disk_access(void) {
-    // Full Disk Access gates read/list of these locations (TCC blocks them
-    // otherwise). TCC.db alone is unreliable — recent macOS hardens it BEYOND
-    // FDA, so an FDA-granted app still can't read it, giving a false negative.
-    // Probe several FDA-gated paths and accept if ANY is readable. opendir of
-    // com.apple.sharedfilelist exists on every Mac and is FDA-readable without
-    // the extra TCC.db hardening; the file probes are belt-and-suspenders.
-    NSString* home = NSHomeDirectory();
-    NSString* sharedFileList =
-        [home stringByAppendingPathComponent:@"Library/Application Support/com.apple.sharedfilelist"];
-    DIR* dir = opendir(sharedFileList.fileSystemRepresentation);
-    if (dir) {
-        closedir(dir);
-        return YES;
-    }
-    if (spdf_path_readable_with_fda([home stringByAppendingPathComponent:@"Library/Safari/Bookmarks.plist"]))
-        return YES;
-    if (spdf_path_readable_with_fda([home stringByAppendingPathComponent:@"Library/Messages/chat.db"])) return YES;
-    if (spdf_path_readable_with_fda(
-            [home stringByAppendingPathComponent:@"Library/Application Support/com.apple.TCC/TCC.db"]))
-        return YES;
-    return NO;
-}
-
 - (void)openFullDiskAccessSettings {
     NSURL* url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"];
     if (url) [NSWorkspace.sharedWorkspace openURL:url];
@@ -13866,55 +13837,17 @@ static BOOL spdf_has_full_disk_access(void) {
 
 #pragma mark - Permissions setup wizard
 
-// Status badge text/colour for a probeable permission. Green "Granted" when the
-// probe is true; a neutral, attention-drawing label otherwise. Pure helper —
-// no side effects, safe to call whenever the wizard refreshes.
-static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
-    if (!badge) return;
-    if (granted) {
-        badge.stringValue = @"Granted";
-        badge.textColor = NSColor.systemGreenColor;
-    } else {
-        // Honest wording: a fresh grant often isn't visible to the running
-        // process until it is quit and reopened, so avoid a confident "Not
-        // granted" when the user may have just granted it.
-        badge.stringValue = @"Not detected — grant, then relaunch";
-        badge.textColor = NSColor.secondaryLabelColor;
-    }
-}
-
-// Re-probe both permissions and refresh the live badges. Cheap (two access(2)/
-// AX calls), only ever invoked when the wizard is actually on screen.
-- (void)refreshPermissionsWizardStatus {
-    spdf_apply_permission_badge(_permissionsWizardFDABadge, spdf_has_full_disk_access());
-    spdf_apply_permission_badge(_permissionsWizardAccessibilityBadge, spdf_inactive_magnify_tap_authorized());
-}
-
-- (void)permissionsWizardApplicationBecameActive:(NSNotification*)notification {
-    (void)notification;
-    // The user likely just toggled a permission in System Settings and switched
-    // back; re-probe so the badges update without reopening the wizard.
-    if (_permissionsWizardPanel.visible) [self refreshPermissionsWizardStatus];
-}
-
-// Build one permission row: name, one-line why, live status badge, and an
-// "Open Settings" button. Returns the container view; the badge is handed back
-// via outBadge so the wizard can refresh it later.
+// Build one permission row: name, one-line why, and an "Open Settings" button.
+// Returns the container view.
 - (NSView*)permissionsWizardRowWithName:(NSString*)name
                                     why:(NSString*)why
-                          settingsAction:(SEL)settingsAction
-                                  badge:(NSTextField* __strong*)outBadge {
+                          settingsAction:(SEL)settingsAction {
     NSView* row = [[NSView alloc] initWithFrame:NSZeroRect];
     row.translatesAutoresizingMaskIntoConstraints = NO;
 
     NSTextField* nameLabel = [NSTextField labelWithString:name];
     nameLabel.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightSemibold];
     nameLabel.translatesAutoresizingMaskIntoConstraints = NO;
-
-    NSTextField* badge = [NSTextField labelWithString:@""];
-    badge.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightMedium];
-    badge.translatesAutoresizingMaskIntoConstraints = NO;
-    [badge setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 
     NSTextField* whyLabel = [NSTextField wrappingLabelWithString:why];
     whyLabel.font = [NSFont systemFontOfSize:11.5];
@@ -13927,15 +13860,11 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
     openButton.translatesAutoresizingMaskIntoConstraints = NO;
     [openButton setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-    for (NSView* v in @[ nameLabel, badge, whyLabel, openButton ]) [row addSubview:v];
+    for (NSView* v in @[ nameLabel, whyLabel, openButton ]) [row addSubview:v];
 
     [NSLayoutConstraint activateConstraints:@[
         [nameLabel.topAnchor constraintEqualToAnchor:row.topAnchor],
         [nameLabel.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
-
-        [badge.centerYAnchor constraintEqualToAnchor:nameLabel.centerYAnchor],
-        [badge.leadingAnchor constraintGreaterThanOrEqualToAnchor:nameLabel.trailingAnchor constant:8.0],
-        [badge.trailingAnchor constraintEqualToAnchor:row.trailingAnchor],
 
         [whyLabel.topAnchor constraintEqualToAnchor:nameLabel.bottomAnchor constant:3.0],
         [whyLabel.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
@@ -13948,7 +13877,6 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
         [whyLabel.bottomAnchor constraintLessThanOrEqualToAnchor:row.bottomAnchor],
     ]];
 
-    if (outBadge) *outBadge = badge;
     return row;
 }
 
@@ -13956,7 +13884,7 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
     (void)sender;
     if (!_permissionsWizardPanel) {
         _permissionsWizardPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0.0, 0.0, 460.0, 420.0)
-                                                             styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                                                             styleMask:NSWindowStyleMaskTitled
                                                                backing:NSBackingStoreBuffered
                                                                  defer:NO];
         _permissionsWizardPanel.title = @"ShenzhenPDF Permissions";
@@ -13966,11 +13894,6 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
         _permissionsWizardPanel.level = NSModalPanelWindowLevel;
         _permissionsWizardPanel.collectionBehavior =
             NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary;
-        [NSNotificationCenter.defaultCenter addObserver:self
-                                               selector:@selector(permissionsWizardApplicationBecameActive:)
-                                                   name:NSApplicationDidBecomeActiveNotification
-                                                 object:nil];
-
         NSView* content = [[NSView alloc] initWithFrame:_permissionsWizardPanel.contentView.bounds];
         _permissionsWizardPanel.contentView = content;
 
@@ -13985,20 +13908,19 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
         introLabel.textColor = NSColor.secondaryLabelColor;
         introLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
-        NSView* fdaRow = [self
-            permissionsWizardRowWithName:@"Full Disk Access"
-                                     why:@"Open PDFs from any folder, and from other apps' data (e.g. files saved by "
-                                         @"Messages/WeChat/Mail), without per-folder prompts."
-                          settingsAction:@selector(openFullDiskAccessSettings)
-                                   badge:&_permissionsWizardFDABadge];
-
         NSView* axRow = [self
-            permissionsWizardRowWithName:@"Accessibility"
+            permissionsWizardRowWithName:@"Accessibility (trackpad zoom)"
                                      why:@"Zoom an unfocused ShenzhenPDF window with a trackpad pinch while another app "
                                          @"is in front. Grant this here to enable the feature; it takes effect after "
                                          @"the next app switch or relaunch."
-                          settingsAction:@selector(openAccessibilitySettings)
-                                   badge:&_permissionsWizardAccessibilityBadge];
+                          settingsAction:@selector(openAccessibilitySettings)];
+
+        NSView* fdaRow = [self
+            permissionsWizardRowWithName:@"Full Disk Access"
+                                     why:@"Open PDFs from any folder, and from other apps' data (e.g. files saved by "
+                                         @"Messages/WeChat/Mail), without per-folder prompts. Quit and reopen "
+                                         @"ShenzhenPDF after granting this for it to take effect."
+                          settingsAction:@selector(openFullDiskAccessSettings)];
 
         NSBox* separator = [[NSBox alloc] initWithFrame:NSZeroRect];
         separator.boxType = NSBoxSeparator;
@@ -14013,13 +13935,13 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
         noteLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
         NSButton* doneButton = [NSButton buttonWithTitle:@"Done"
-                                                  target:_permissionsWizardPanel
-                                                  action:@selector(orderOut:)];
+                                                  target:self
+                                                  action:@selector(permissionsWizardDone:)];
         doneButton.bezelStyle = NSBezelStyleRounded;
         doneButton.keyEquivalent = @"\r";
         doneButton.translatesAutoresizingMaskIntoConstraints = NO;
 
-        for (NSView* v in @[ titleLabel, introLabel, fdaRow, axRow, separator, noteLabel, doneButton ])
+        for (NSView* v in @[ titleLabel, introLabel, axRow, fdaRow, separator, noteLabel, doneButton ])
             [content addSubview:v];
 
         [NSLayoutConstraint activateConstraints:@[
@@ -14031,15 +13953,15 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
             [introLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
             [introLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
 
-            [fdaRow.topAnchor constraintEqualToAnchor:introLabel.bottomAnchor constant:20.0],
-            [fdaRow.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
-            [fdaRow.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
-
-            [axRow.topAnchor constraintEqualToAnchor:fdaRow.bottomAnchor constant:18.0],
+            [axRow.topAnchor constraintEqualToAnchor:introLabel.bottomAnchor constant:20.0],
             [axRow.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
             [axRow.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
 
-            [separator.topAnchor constraintEqualToAnchor:axRow.bottomAnchor constant:18.0],
+            [fdaRow.topAnchor constraintEqualToAnchor:axRow.bottomAnchor constant:18.0],
+            [fdaRow.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
+            [fdaRow.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
+
+            [separator.topAnchor constraintEqualToAnchor:fdaRow.bottomAnchor constant:18.0],
             [separator.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:24.0],
             [separator.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-24.0],
 
@@ -14053,9 +13975,6 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
             [doneButton.widthAnchor constraintGreaterThanOrEqualToConstant:86.0],
         ]];
     }
-
-    // Re-check live status every time the wizard opens.
-    [self refreshPermissionsWizardStatus];
 
     if (_permissionsWizardPanel.parentWindow != _window) {
         [_permissionsWizardPanel.parentWindow removeChildWindow:_permissionsWizardPanel];
@@ -14077,14 +13996,30 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
     [_permissionsWizardPanel makeKeyAndOrderFront:nil];
 }
 
+// "Done" dismisses the wizard. On first launch the shortcut-help panel is held
+// back until the wizard is gone (see the post-first-paint block) so permissions
+// is the first thing the user sets; reveal it now. The wizard is a child window
+// with no close box, so a plain orderOut is the dismissal — there is no close
+// notification to hook, hence this direct action.
+- (void)permissionsWizardDone:(id)sender {
+    (void)sender;
+    [_permissionsWizardPanel orderOut:nil];
+    if (!_pendingShortcutHelpAfterPermissions) return;
+    _pendingShortcutHelpAfterPermissions = NO;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self showShortcutHelp:nil];
+    });
+}
+
 // First-launch auto-show: replaces the old standalone Full Disk Access prompt so
 // the user is guided through every permission in one place, and only ever once.
 // Runs in the deferred post-first-paint block, never on the launch critical path.
-- (void)showPermissionsWizardOnFirstLaunchIfNeeded {
-    if (_permissionsWizardShown || self.detachedTabLaunch) return;
+- (BOOL)showPermissionsWizardOnFirstLaunchIfNeeded {
+    if (_permissionsWizardShown || self.detachedTabLaunch) return NO;
     _permissionsWizardShown = YES;
     [self savePersistentState];
     [self showPermissionsWizard:nil];
+    return YES;
 }
 
 - (void)makeDefaultPDFReader:(id)sender {
@@ -14977,7 +14912,7 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
         action == @selector(openRecentDocument:) || action == @selector(openSettingsFile:) ||
         action == @selector(openStateJSONFile:) || action == @selector(revealSettingsFolder:) ||
         action == @selector(showShortcutHelp:) || action == @selector(makeDefaultPDFReader:) ||
-        action == @selector(showPermissionsWizard:))
+        action == @selector(showPermissionsWizard:) || action == @selector(showAboutPanel:))
         return YES;
     if (action == @selector(toggleDefaultSidebarForNewDocuments:)) {
         menuItem.state = _defaultSidebarVisibleForNewDocuments ? NSControlStateValueOn : NSControlStateValueOff;
@@ -15079,7 +15014,7 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter");
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.18-3\n");
+                printf("Shenzhen PDF portable mac 26.6.19-1\n");
                 return 0;
             }
         }

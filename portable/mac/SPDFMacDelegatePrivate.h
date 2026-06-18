@@ -105,8 +105,7 @@
     NSTextField* _commentLabel;
     NSPanel* _aboutPanel;
     NSPanel* _permissionsWizardPanel;
-    NSTextField* _permissionsWizardFDABadge;
-    NSTextField* _permissionsWizardAccessibilityBadge;
+    BOOL _pendingShortcutHelpAfterPermissions;
     NSPanel* _shortcutHelpPanel;
     NSSearchField* _shortcutHelpSearchField;
     NSTableView* _shortcutHelpTable;
