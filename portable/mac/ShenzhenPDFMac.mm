@@ -602,7 +602,7 @@ static void spdf_discard_launch_prerender(void) {
       }
       double openStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
       char err[1024];
-      spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+      spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
       if (openStart > 0.0) {
           spdf_launch_profile_log(@"prerender spdf_open %@ %.1fms [bg]", path.lastPathComponent,
                                   spdf_zoom_profile_now_ms() - openStart);
@@ -1716,6 +1716,16 @@ static void spdf_discard_launch_prerender(void) {
     if (stale) [self captureSecurityBookmarkForPath:path];
 }
 
+// Every document open funnels through here so the sandbox's security-scoped
+// access is acquired BEFORE spdf_open — otherwise restored tabs / recents fail
+// with "Operation not permitted". ensureSecurityAccessForPath is a no-op when
+// there is no stored bookmark (fresh opens already hold access; non-sandboxed
+// builds open by path directly), so this is safe on every open path and thread.
+- (spdf_document*)openSpdfDocumentAtPath:(NSString*)path error:(char*)err errorLength:(size_t)errLen {
+    [self ensureSecurityAccessForPath:path];
+    return spdf_open(path.fileSystemRepresentation, err, errLen);
+}
+
 - (void)loadSecurityBookmarks {
     id stored = [self jsonObjectFromFile:@"bookmarks.json"];
     if (![stored isKindOfClass:NSDictionary.class]) return;
@@ -2328,7 +2338,7 @@ static void spdf_discard_launch_prerender(void) {
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
     if (version.length == 0) version = @"26.6.19";
-    if (build.length == 0) build = @"2";
+    if (build.length == 0) build = @"3";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
@@ -6698,7 +6708,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
               }
 
               char err[1024];
-              spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+              spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
               if (!doc) {
                   NSString* message = @"Could not open document";
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
@@ -6788,7 +6798,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 [self updateTabStrip];
               }];
 
-              spdf_document* renderDoc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+              spdf_document* renderDoc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
               if (!renderDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     if ([self preloadToken:preloadToken isCurrentForPath:standardized])
@@ -6847,7 +6857,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
           __block spdf_comments comments;
           memset(&comments, 0, sizeof(comments));
           char err[1024];
-          spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+          spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
           BOOL ok = doc && spdf_load_comments(doc, &comments, err, sizeof(err));
           if (doc) spdf_close(doc);
 
@@ -6891,7 +6901,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
           __block spdf_outline outline;
           memset(&outline, 0, sizeof(outline));
           char err[1024];
-          spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+          spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
           BOOL ok = doc && spdf_load_outline(doc, &outline, err, sizeof(err));
           if (doc) spdf_close(doc);
 
@@ -7681,7 +7691,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
           char err[1024];
           err[0] = '\0';
           spdf_document* newDoc =
-              attributes ? spdf_open(path.fileSystemRepresentation, err, sizeof(err)) : NULL;
+              attributes ? [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)] : NULL;
           if (openStart > 0.0) {
               spdf_launch_profile_log(@"cloud-deferred stat+spdf_open %@ ok=%d %.1fms", path.lastPathComponent,
                                       newDoc != NULL, spdf_zoom_profile_now_ms() - openStart);
@@ -7801,7 +7811,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (newDoc) spdf_launch_profile_log(@"spdf_open %@ adopted from prerender", path.lastPathComponent);
     if (!newDoc) {
         double launchOpenStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-        newDoc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+        newDoc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
         if (launchOpenStart > 0.0) {
             spdf_launch_profile_log(@"spdf_open %@ %.1fms", path.lastPathComponent,
                                     spdf_zoom_profile_now_ms() - launchOpenStart);
@@ -9600,7 +9610,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
           NSMutableArray<NSDictionary*>* matches = [NSMutableArray array];
           __block NSString* searchError = nil;
           char openErr[1024];
-          spdf_document* doc = spdf_open(path.fileSystemRepresentation, openErr, sizeof(openErr));
+          spdf_document* doc = [self openSpdfDocumentAtPath:path error:openErr errorLength:sizeof(openErr)];
           if (!doc) {
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                 if (generation != self->_findGeneration) return;
@@ -11478,7 +11488,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
               [searchedPaths addObject:path.stringByStandardizingPath];
 
               char openErr[512];
-              spdf_document* doc = spdf_open(path.fileSystemRepresentation, openErr, sizeof(openErr));
+              spdf_document* doc = [self openSpdfDocumentAtPath:path error:openErr errorLength:sizeof(openErr)];
               if (!doc) continue;
               NSInteger pageCount = spdf_page_count(doc);
               for (NSInteger page = 0; page < pageCount && results.count < 220; ++page) {
@@ -13458,7 +13468,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
 
     char err[1024];
-    spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+    spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
     if (!doc) {
         if (errorOut) *errorOut = [NSString stringWithUTF8String:err[0] ? err : "Could not open PDF."];
         return -1;
@@ -15085,7 +15095,7 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter");
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.19-2\n");
+                printf("Shenzhen PDF portable mac 26.6.19-3\n");
                 return 0;
             }
         }
