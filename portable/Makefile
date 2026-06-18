@@ -15,8 +15,8 @@ MAC_WINDOW_SHORTCUT_TEST := $(BUILD)/SPDFMacWindowShortcutsTests
 MAC_SRCS := $(sort $(wildcard mac/*.mm))
 MAC_HDRS := $(sort $(wildcard mac/*.h))
 MAC_BUNDLE_ID ?= com.intuition.shenzhenpdf
-MAC_VERSION ?= 26.6.18
-MAC_BUILD ?= 3
+MAC_VERSION ?= 26.6.19
+MAC_BUILD ?= 1
 MAC_TESTFLIGHT_PKG = $(DIST)/ShenzhenPDF-testflight-$(MAC_VERSION)-$(MAC_BUILD).pkg
 OPENSSL_LIBDIR ?= $(shell pkg-config --variable=libdir openssl 2>/dev/null || echo /opt/homebrew/opt/openssl@3/lib)
 OPENSSL_LIBCRYPTO ?= $(OPENSSL_LIBDIR)/libcrypto.3.dylib
@@ -100,6 +100,8 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/As
 	fi
 	@if [ -n "$(MAC_PROVISIONING_PROFILE)" ]; then \
 		cp "$(MAC_PROVISIONING_PROFILE)" "$(MAC_APP)/Contents/embedded.provisionprofile"; \
+		chmod u+w "$(MAC_APP)/Contents/embedded.provisionprofile"; \
+		xattr -c "$(MAC_APP)/Contents/embedded.provisionprofile"; \
 	fi
 	@if [ -n "$(MAC_PROVISIONING_PROFILE)" ] && echo "$(MAC_CODESIGN_EXTRA)" | grep -q "TestFlight.entitlements"; then \
 		mkdir -p "$(BUILD)"; \

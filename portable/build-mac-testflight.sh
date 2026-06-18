@@ -14,8 +14,8 @@ Your Apple Developer account holder must create:
 
 Example:
   MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
-  MAC_VERSION=26.6.18 \
-  MAC_BUILD=3 \
+  MAC_VERSION=26.6.19 \
+  MAC_BUILD=1 \
   MAC_APPSTORE_IDENTITY="Apple Distribution: Friend Name (TEAMID1234)" \
   MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Friend Name (TEAMID1234)" \
   MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
@@ -33,9 +33,16 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 
+# Load local, git-ignored signing identities/profile if present. Copy
+# .testflight.env.example to .testflight.env and fill it in to run with no args.
+if [[ -f "$script_dir/.testflight.env" ]]; then
+  # shellcheck disable=SC1090,SC1091
+  source "$script_dir/.testflight.env"
+fi
+
 : "${MAC_BUNDLE_ID:=com.intuition.shenzhenpdf}"
-: "${MAC_VERSION:=26.6.18}"
-: "${MAC_BUILD:=3}"
+: "${MAC_VERSION:=26.6.19}"
+: "${MAC_BUILD:=1}"
 : "${OPEN_TRANSPORTER:=0}"
 
 need_var() {
@@ -59,6 +66,22 @@ fi
 
 if ! command -v productbuild >/dev/null 2>&1; then
   echo "productbuild is required. Install Xcode first." >&2
+  exit 2
+fi
+
+# The Mac App Store requires the app icon in a compiled asset catalog
+# (Assets.car); without it the upload is rejected with error 90546. Only the
+# full Xcode ships actool — Command Line Tools alone do not. Fail early rather
+# than build a package that Transporter will reject.
+if ! xcrun --find actool >/dev/null 2>&1; then
+  echo "actool was not found, so the app icon asset catalog cannot be built." >&2
+  echo "The App Store rejects packages without it (error 90546)." >&2
+  echo "actool ships only with the full Xcode, not the Command Line Tools." >&2
+  echo >&2
+  echo "Install Xcode from the App Store, then either run:" >&2
+  echo "  sudo xcode-select -s /Applications/Xcode.app" >&2
+  echo "or prefix this command with:" >&2
+  echo "  DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer" >&2
   exit 2
 fi
 
