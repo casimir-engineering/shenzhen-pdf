@@ -14258,16 +14258,16 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
     }
     NSMenuItem* addComment = [menu addItemWithTitle:@"Add Comment..." action:@selector(addComment:) keyEquivalent:@""];
     addComment.enabled = _doc != NULL && (_selectedText.length > 0 || _contextPageIndex >= 0);
+    NSMenuItem* favorite = [menu addItemWithTitle:@"Favorite Page"
+                                           action:@selector(favoriteCurrentPage:)
+                                    keyEquivalent:@""];
+    favorite.enabled = _doc != NULL;
     [menu addItem:[NSMenuItem separatorItem]];
     [menu addItemWithTitle:@"Zoom In" action:@selector(zoomIn:) keyEquivalent:@""];
     [menu addItemWithTitle:@"Zoom Out" action:@selector(zoomOut:) keyEquivalent:@""];
     [menu addItemWithTitle:@"Fit Width" action:@selector(fitWidth:) keyEquivalent:@""];
     [menu addItemWithTitle:@"Fit Page" action:@selector(fitPage:) keyEquivalent:@""];
     [menu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* favorite = [menu addItemWithTitle:@"Favorite Page"
-                                           action:@selector(favoriteCurrentPage:)
-                                    keyEquivalent:@""];
-    favorite.enabled = _doc != NULL;
     NSMenuItem* showInFolder = [menu addItemWithTitle:@"Show in Folder"
                                                action:@selector(showInFolder:)
                                         keyEquivalent:@""];

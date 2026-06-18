@@ -8931,6 +8931,11 @@ static void add_current_favorite(app_state* state, gboolean document) {
     gtk_label_set_text(GTK_LABEL(state->status), status);
 }
 
+static void favorite_page_clicked(GtkMenuItem* item, gpointer user_data) {
+    (void)item;
+    add_current_favorite((app_state*)user_data, FALSE);
+}
+
 static gboolean favorite_matches(favorite_item* favorite, const char* filter) {
     char* title;
     char* path;
@@ -9949,6 +9954,7 @@ static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpoi
         GtkWidget* edit_comment = image_menu_item_new_with_label("Edit Comment...", "document-edit");
         GtkWidget* delete_comment = image_menu_item_new_with_label("Delete Comment...", "edit-delete");
         GtkWidget* add_comment = image_menu_item_new_with_label("Add Comment...", "insert-text");
+        GtkWidget* favorite_page = image_menu_item_new_with_label("Favorite Page", "starred");
         int page_index = -1;
         double page_x = 0.0;
         double page_y = 0.0;
@@ -9984,6 +9990,9 @@ static gboolean page_button_press(GtkWidget* widget, GdkEventButton* event, gpoi
         gtk_widget_set_sensitive(add_comment, state->doc != NULL && (has_text_selection(state) || page_index >= 0));
         g_signal_connect(add_comment, "activate", G_CALLBACK(add_comment_clicked), state);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), add_comment);
+        gtk_widget_set_sensitive(favorite_page, state->doc != NULL && state->path != NULL);
+        g_signal_connect(favorite_page, "activate", G_CALLBACK(favorite_page_clicked), state);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), favorite_page);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         gtk_widget_set_sensitive(show_folder, state->doc != NULL && state->path != NULL);
         g_signal_connect(show_folder, "activate", G_CALLBACK(show_in_folder), state);
