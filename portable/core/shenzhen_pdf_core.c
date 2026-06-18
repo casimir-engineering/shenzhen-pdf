@@ -1995,6 +1995,105 @@ int spdf_rotate_page(spdf_document* doc, int page_index, int degrees, char* err,
     return 1;
 }
 
+/* Sanitize-filter text callback: a non-zero return removes the character. We
+ * remove every one, dropping the whole text layer. */
+static int spdf_delete_all_text_filter(fz_context* ctx, void* opaque, int* ucsbuf, int ucslen, fz_matrix trm,
+                                       fz_matrix ctm, fz_rect bbox, int tr, float ca, float CA) {
+    (void)ctx;
+    (void)opaque;
+    (void)ucsbuf;
+    (void)ucslen;
+    (void)trm;
+    (void)ctm;
+    (void)bbox;
+    (void)tr;
+    (void)ca;
+    (void)CA;
+    return 1;
+}
+
+static char* create_temp_save_path(fz_context* ctx, const char* path);
+
+int spdf_delete_all_text(spdf_document* doc, const char* path, char* err, size_t err_len) {
+    pdf_document* pdf = NULL;
+    pdf_page* page = NULL;
+    pdf_write_options options;
+    char* temp_path = NULL;
+    int i;
+    int page_count;
+
+    set_error(err, err_len, "");
+    if (!doc || !path || !*path) {
+        set_error(err, err_len, "No document path was supplied.");
+        return 0;
+    }
+
+    fz_var(page);
+    fz_var(temp_path);
+    fz_try(doc->ctx) {
+        pdf = pdf_specifics(doc->ctx, doc->doc);
+        if (!pdf) fz_throw(doc->ctx, FZ_ERROR_FORMAT, "Only PDF documents can have their text removed.");
+        page_count = doc->page_count;
+        for (i = 0; i < page_count; ++i) {
+            pdf_filter_options filter_opts;
+            pdf_sanitize_filter_options sanitize_opts;
+            pdf_filter_factory filter_list[2];
+
+            page = pdf_load_page(doc->ctx, pdf, i);
+
+            memset(&filter_opts, 0, sizeof filter_opts);
+            memset(&sanitize_opts, 0, sizeof sanitize_opts);
+            memset(filter_list, 0, sizeof filter_list);
+            filter_opts.instance_forms = 1; /* expand form xobjects so their text is filtered too */
+            filter_opts.ascii = 1;
+            filter_opts.filters = filter_list;
+            sanitize_opts.text_filter = spdf_delete_all_text_filter;
+            filter_list[0].filter = pdf_new_sanitize_filter;
+            filter_list[0].options = &sanitize_opts;
+
+            pdf_filter_page_contents(doc->ctx, pdf, page, &filter_opts);
+
+            pdf_drop_page(doc->ctx, page);
+            page = NULL;
+        }
+
+        /* Full (non-incremental) rewrite with garbage collection so the old,
+         * now-unreferenced text content streams are actually dropped from the
+         * file rather than left behind as orphans. */
+        options = pdf_default_write_options;
+        options.do_garbage = 2;
+        options.do_compress = 1;
+        options.do_compress_images = 1;
+        options.do_compress_fonts = 1;
+        temp_path = create_temp_save_path(doc->ctx, path);
+        pdf_save_document(doc->ctx, pdf, temp_path, &options);
+        spdf_drop_page_list_cache(doc, -1);
+    }
+    fz_always(doc->ctx) {
+        if (page) pdf_drop_page(doc->ctx, page);
+        page = NULL;
+    }
+    fz_catch(doc->ctx) {
+        set_error(err, err_len, fz_caught_message(doc->ctx));
+        if (temp_path) {
+            remove(temp_path);
+            free(temp_path);
+        }
+        return 0;
+    }
+
+    if (temp_path) {
+        if (rename(temp_path, path) != 0) {
+            set_error(err, err_len, "Could not replace the original PDF after removing text.");
+            remove(temp_path);
+            free(temp_path);
+            return 0;
+        }
+        free(temp_path);
+    }
+    return 1;
+}
+
 static char* create_temp_save_path(fz_context* ctx, const char* path) {
     static const char temp_name[] = ".shenzhenpdf-save-XXXXXX";
     const char* slash = strrchr(path, '/');
