@@ -15,7 +15,7 @@ Your Apple Developer account holder must create:
 Example:
   MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
   MAC_VERSION=26.6.18 \
-  MAC_BUILD=2 \
+  MAC_BUILD=3 \
   MAC_APPSTORE_IDENTITY="Apple Distribution: Friend Name (TEAMID1234)" \
   MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Friend Name (TEAMID1234)" \
   MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
@@ -35,7 +35,7 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 
 : "${MAC_BUNDLE_ID:=com.intuition.shenzhenpdf}"
 : "${MAC_VERSION:=26.6.18}"
-: "${MAC_BUILD:=2}"
+: "${MAC_BUILD:=3}"
 : "${OPEN_TRANSPORTER:=0}"
 
 need_var() {
