@@ -176,6 +176,11 @@ int spdf_update_comment(spdf_document* doc, int comment_index, const char* text,
                         size_t err_len);
 int spdf_delete_comment(spdf_document* doc, int comment_index, char* err, size_t err_len);
 int spdf_rotate_page(spdf_document* doc, int page_index, int degrees, char* err, size_t err_len);
+/* Remove every text-showing operation from every page (keeping images and
+ * graphics) and rewrite the file at path (garbage-collected, so the old text
+ * streams are dropped, not just orphaned) so the document can be re-OCR'd.
+ * Returns 1 on success, 0 on failure (err is filled). */
+int spdf_delete_all_text(spdf_document* doc, const char* path, char* err, size_t err_len);
 int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t err_len);
 int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t err_len);
 int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_translated_line* lines, int line_count,

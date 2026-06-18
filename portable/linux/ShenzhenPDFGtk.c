@@ -126,6 +126,7 @@ typedef struct app_state {
     GtkWidget* recently_opened_menu;
     GtkWidget* reopen_closed_menu_item;
     GtkWidget* save_as_item;
+    GtkWidget* delete_all_text_item;
     GtkWidget* rotate_clockwise_item;
     GtkWidget* rotate_anticlockwise_item;
     GtkWidget* show_sidebar_item;
@@ -1899,6 +1900,9 @@ static void update_controls(app_state* state) {
         gtk_widget_set_sensitive(state->show_in_folder, state->doc != NULL && state->path != NULL);
     if (state->copy_path_item)
         gtk_widget_set_sensitive(state->copy_path_item, state->doc != NULL && state->path != NULL);
+    if (state->delete_all_text_item)
+        gtk_widget_set_sensitive(state->delete_all_text_item,
+                                 state->doc != NULL && path_has_pdf_extension(state->path));
     if (state->rotate_clockwise_item)
         gtk_widget_set_sensitive(state->rotate_clockwise_item,
                                  state->doc != NULL && path_has_pdf_extension(state->path));
@@ -6991,6 +6995,81 @@ static void rotate_anticlockwise_clicked(GtkMenuItem* item, gpointer user_data) 
     rotate_current_page((app_state*)user_data, -90);
 }
 
+static char* backup_path_for_pdf(const char* path);
+
+/* Strip the entire text layer (e.g. a wrong OCR layer) so the document can be
+ * re-OCR'd. Backs the original up, asks for confirmation first. */
+static void delete_all_text(app_state* state) {
+    char err[1024];
+    char* path;
+    char* backup;
+    int page_index;
+    GtkWidget* dialog;
+    int response;
+    GFile* src;
+    GFile* dst;
+    GError* copy_error = NULL;
+    const char* backup_name;
+
+    if (!state || !state->doc || !state->path || !path_has_pdf_extension(state->path)) return;
+
+    dialog = gtk_message_dialog_new(GTK_WINDOW(state->window), GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE,
+                                    "Delete all text from this document?");
+    gtk_message_dialog_format_secondary_text(
+        GTK_MESSAGE_DIALOG(dialog),
+        "This removes the entire text layer (for example a wrong OCR layer) from every page, keeping images and "
+        "graphics. A backup copy is saved next to the original first, so you can re-run OCR afterwards.");
+    gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_Delete Text", GTK_RESPONSE_ACCEPT, "_Cancel", GTK_RESPONSE_CANCEL,
+                           NULL);
+    response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    if (response != GTK_RESPONSE_ACCEPT) return;
+
+    if (!prompt_save_as_before_modification(state, "Delete Text")) return;
+
+    err[0] = '\0';
+    page_index = state->page_index;
+    path = g_strdup(state->path);
+
+    backup = backup_path_for_pdf(state->path);
+    src = g_file_new_for_path(state->path);
+    dst = g_file_new_for_path(backup);
+    if (!g_file_copy(src, dst, G_FILE_COPY_NONE, NULL, NULL, NULL, &copy_error)) {
+        show_error(GTK_WINDOW(state->window), "Could not back up the document", copy_error ? copy_error->message : "");
+        if (copy_error) g_error_free(copy_error);
+        g_object_unref(src);
+        g_object_unref(dst);
+        g_free(backup);
+        g_free(path);
+        return;
+    }
+    g_object_unref(src);
+    g_object_unref(dst);
+
+    if (!spdf_delete_all_text(state->doc, state->path, err, sizeof(err))) {
+        open_path_at_page(state, path, page_index);
+        show_error(GTK_WINDOW(state->window), "Could not delete text", err[0] ? err : "Unknown error");
+        g_free(backup);
+        g_free(path);
+        return;
+    }
+
+    open_path_at_page(state, path, page_index);
+    backup_name = strrchr(backup, '/') ? strrchr(backup, '/') + 1 : backup;
+    {
+        char* msg = g_strdup_printf("All text removed. Backup saved as %s.", backup_name);
+        gtk_label_set_text(GTK_LABEL(state->status), msg);
+        g_free(msg);
+    }
+    g_free(backup);
+    g_free(path);
+}
+
+static void delete_all_text_clicked(GtkMenuItem* item, gpointer user_data) {
+    (void)item;
+    delete_all_text((app_state*)user_data);
+}
+
 static gboolean comments_sidebar_button_press(GtkWidget* widget, GdkEventButton* event, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     GtkListBoxRow* row;
@@ -10147,6 +10226,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* open_menu = image_menu_item_new_with_mnemonic("_Open...", "document-open");
     state->reopen_closed_menu_item = image_menu_item_new_with_mnemonic("Reopen Last _Closed", "edit-undo");
     state->save_as_item = image_menu_item_new_with_mnemonic("_Save As...", "document-save-as");
+    state->delete_all_text_item = image_menu_item_new_with_mnemonic("_Delete All Text...", "edit-clear");
     GtkWidget* recently_opened = image_menu_item_new_with_mnemonic("Recently _Opened", "document-open-recent");
     state->recently_opened_menu = gtk_menu_new();
     state->open_in_browser = image_menu_item_new_with_mnemonic("Open in Default _Browser", "web-browser");
@@ -10217,6 +10297,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->open_in_browser);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->show_in_folder);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->copy_path_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), state->delete_all_text_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), quit_menu);
     update_recent_menu(state);
@@ -10494,6 +10575,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect_swapped(state->reopen_closed_menu_item, "activate", G_CALLBACK(reopen_last_closed_document),
                              state);
     g_signal_connect(state->save_as_item, "activate", G_CALLBACK(save_as_clicked), state);
+    g_signal_connect(state->delete_all_text_item, "activate", G_CALLBACK(delete_all_text_clicked), state);
     g_signal_connect(state->open_in_browser, "activate", G_CALLBACK(open_in_browser), state);
     g_signal_connect(state->show_in_folder, "activate", G_CALLBACK(show_in_folder), state);
     g_signal_connect(state->copy_path_item, "activate", G_CALLBACK(copy_path_clicked), state);

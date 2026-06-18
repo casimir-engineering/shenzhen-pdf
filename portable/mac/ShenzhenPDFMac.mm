@@ -193,6 +193,7 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
     if (action == @selector(closeDocument:)) return @"xmark.circle";
     if (action == @selector(printDocument:)) return @"printer";
     if (action == @selector(ocrDocument:)) return @"text.viewfinder";
+    if (action == @selector(deleteAllTextFromDocument:)) return @"text.badge.minus";
     if (action == @selector(translateDocument:) || action == @selector(showSelectionTranslationPanel:))
         return @"translate";
     if (action == @selector(showProperties:)) return @"info.circle";
@@ -2022,6 +2023,7 @@ static void spdf_discard_launch_prerender(void) {
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Print..." action:@selector(printDocument:) keyEquivalent:@"p"];
     [fileMenu addItemWithTitle:@"OCR Document..." action:@selector(ocrDocument:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Delete All Text..." action:@selector(deleteAllTextFromDocument:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Translate..." action:@selector(translateDocument:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@""];
     fileItem.submenu = fileMenu;
@@ -13306,6 +13308,68 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     [self runOCRWithLanguage:language[@"code"] displayName:language[@"name"]];
 }
 
+// Strip the entire text layer (e.g. a wrong OCR layer) so the document can be
+// re-OCR'd. Backs the original up, asks for confirmation first.
+- (void)deleteAllTextFromDocument:(id)sender {
+    (void)sender;
+    if (!_doc || !_path.length || ![_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
+        NSBeep();
+        return;
+    }
+
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Delete all text from this document?";
+    alert.informativeText = @"This removes the entire text layer (for example a wrong OCR layer) from every page, "
+                            @"keeping images and graphics. A backup copy is saved next to the original first, so you "
+                            @"can re-run OCR afterwards.";
+    alert.alertStyle = NSAlertStyleWarning;
+    [alert addButtonWithTitle:@"Delete Text"];
+    [alert addButtonWithTitle:@"Cancel"];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+
+    if (![self ensureActivePDFCanBeModifiedForOperation:@"removing the text"]) return;
+
+    [self cancelDocumentTransientInteraction];
+    NSInteger pageIndex = [self currentPageIndexFromCounterForMutation];
+    [self clearPageFieldFocus];
+
+    // Backup the original before touching it.
+    NSString* backupPath = [self backupPathForPDFPath:_path];
+    NSError* copyError = nil;
+    if (![NSFileManager.defaultManager copyItemAtPath:_path toPath:backupPath error:&copyError]) {
+        [self showError:@"Could not back up the document"
+                 detail:copyError.localizedDescription.length ? copyError.localizedDescription
+                                                              : @"The text was not removed."];
+        return;
+    }
+
+    char err[1024];
+    if (!spdf_delete_all_text(_doc, _path.fileSystemRepresentation, err, sizeof(err))) {
+        [self discardCachedRuntimeForTab:[self selectedTab]];
+        [self loadSelectedTab];
+        [self showError:@"Could not delete text"
+                 detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
+        return;
+    }
+
+    [_renderQueue cancelAllOperations];
+    [self cancelCacheRenderOperations];
+    [_minimapQueue cancelAllOperations];
+    [_queuedRenderPages removeAllObjects];
+    [_queuedRenderOperations removeAllObjects];
+    [_queuedMinimapThumbnailPages removeAllObjects];
+    _renderGeneration++;
+    if (_selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count) {
+        SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
+        tab.pageIndex = pageIndex;
+        [self discardCachedRuntimeForTab:tab];
+    }
+    _pageIndex = pageIndex;
+    [self loadSelectedTab];
+    _statusLabel.stringValue =
+        [NSString stringWithFormat:@"All text removed. Backup saved as %@.", backupPath.lastPathComponent];
+}
+
 - (NSInteger)selectableTextStateForPDFAtPath:(NSString*)path errorMessage:(NSString**)errorOut {
     if (errorOut) *errorOut = nil;
     if (!path.length) {
@@ -14974,7 +15038,7 @@ static void spdf_apply_permission_badge(NSTextField* badge, BOOL granted) {
     if (action == @selector(deleteComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(rotateClockwise:) || action == @selector(rotateAnticlockwise:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
-    if (action == @selector(ocrDocument:))
+    if (action == @selector(ocrDocument:) || action == @selector(deleteAllTextFromDocument:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(translateDocument:)) return hasDoc && !_translationRunning && !_translationInstallRunning;
     if (action == @selector(saveDocumentAs:))
