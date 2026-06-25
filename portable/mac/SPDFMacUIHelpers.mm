@@ -516,6 +516,9 @@ static void spdf_install_inactive_magnify_monitor(void) {
         self.translatesAutoresizingMaskIntoConstraints = NO;
         self.focusRingType = NSFocusRingTypeNone;
         [self setButtonType:NSButtonTypeMomentaryChange];
+        // Fire on mouse-down rather than the default mouse-up so toggling the
+        // Side Panel / Map feels immediate.
+        [self sendActionOn:NSEventMaskLeftMouseDown];
         [self setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                        forOrientation:NSLayoutConstraintOrientationHorizontal];
     }
@@ -983,6 +986,13 @@ static void spdf_install_inactive_magnify_monitor(void) {
 
 @end
 
+// Points scrolled per line for a classic mouse wheel. A non-precise wheel
+// reports line-based deltas (already scaled by the system "scrolling speed"
+// preference). AppKit's own default uses a conservative line height and an
+// animated, deferred redraw, which reads as sluggish next to other apps. We
+// convert lines to points with this factor and scroll immediately instead.
+static const CGFloat kSPDFMouseWheelPointsPerLine = 32.0;
+
 @implementation SPDFScrollView {
     CGFloat _wheelAccumulator;
     NSTimeInterval _lastZoomWheelTimestamp;
@@ -1049,14 +1059,13 @@ static void spdf_install_inactive_magnify_monitor(void) {
     return delta * ratio;
 }
 
-- (BOOL)scrollPreciseTrackpadEventWithDamping:(NSEvent*)event {
-    if (!event.hasPreciseScrollingDeltas) return NO;
+// Apply a point-space scroll delta to the document clip view immediately, with a
+// synchronous redraw flush. Shared by the trackpad (precise) and mouse-wheel
+// paths so both feel equally reactive. Returns YES when the event is consumed
+// (including when already pinned at an edge), NO only when there is nothing to
+// scroll so the caller can fall back to the default handler.
+- (BOOL)scrollDocumentClipViewByDeltaX:(CGFloat)deltaX deltaY:(CGFloat)deltaY {
     if (!self.documentView || !self.contentView) return NO;
-
-    CGFloat deltaX = [self dampedPreciseScrollDelta:event.scrollingDeltaX
-                                           momentum:event.momentumPhase != NSEventPhaseNone];
-    CGFloat deltaY = [self dampedPreciseScrollDelta:event.scrollingDeltaY
-                                           momentum:event.momentumPhase != NSEventPhaseNone];
     if (fabs(deltaX) < 0.0001 && fabs(deltaY) < 0.0001) return YES;
 
     NSClipView* clipView = self.contentView;
@@ -1098,6 +1107,34 @@ static void spdf_install_inactive_magnify_monitor(void) {
     [self.documentView displayIfNeeded];
     if (self.reader) [self.reader documentScrollPositionChanged];
     return YES;
+}
+
+// Classic mouse wheel: translate line-based notches into an immediate point
+// scroll so it matches the snappiness of other apps (and our own trackpad path),
+// instead of AppKit's animated, deferred default.
+- (BOOL)scrollMouseWheelEvent:(NSEvent*)event {
+    if (event.hasPreciseScrollingDeltas) return NO;  // trackpad: handled with damping
+    CGFloat lineDeltaX = event.scrollingDeltaX != 0.0 ? event.scrollingDeltaX : event.deltaX;
+    CGFloat lineDeltaY = event.scrollingDeltaY != 0.0 ? event.scrollingDeltaY : event.deltaY;
+    // Shift+wheel scrolls horizontally, matching the AppKit default we bypass.
+    if ((event.modifierFlags & NSEventModifierFlagShift) && fabs(lineDeltaX) < fabs(lineDeltaY)) {
+        lineDeltaX = lineDeltaY;
+        lineDeltaY = 0.0;
+    }
+    if (fabs(lineDeltaX) < 0.0001 && fabs(lineDeltaY) < 0.0001) return NO;
+    return [self scrollDocumentClipViewByDeltaX:lineDeltaX * kSPDFMouseWheelPointsPerLine
+                                         deltaY:lineDeltaY * kSPDFMouseWheelPointsPerLine];
+}
+
+- (BOOL)scrollPreciseTrackpadEventWithDamping:(NSEvent*)event {
+    if (!event.hasPreciseScrollingDeltas) return NO;
+    if (!self.documentView || !self.contentView) return NO;
+
+    CGFloat deltaX = [self dampedPreciseScrollDelta:event.scrollingDeltaX
+                                           momentum:event.momentumPhase != NSEventPhaseNone];
+    CGFloat deltaY = [self dampedPreciseScrollDelta:event.scrollingDeltaY
+                                           momentum:event.momentumPhase != NSEventPhaseNone];
+    return [self scrollDocumentClipViewByDeltaX:deltaX deltaY:deltaY];
 }
 
 - (void)scrollWheel:(NSEvent*)event {
@@ -1171,6 +1208,7 @@ static void spdf_install_inactive_magnify_monitor(void) {
 
     [self resetPageWheelGesture];
     if ([self scrollPreciseTrackpadEventWithDamping:event]) return;
+    if ([self scrollMouseWheelEvent:event]) return;
     [super scrollWheel:event];
     if (self.reader) [self.reader documentScrollPositionChanged];
 }

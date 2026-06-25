@@ -19,6 +19,41 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
                             spdf_zoom_profile_now_ms() - startMs);
 }
 
+// Canvas background for the (non-presentation) document viewport. Deliberately a
+// touch darker than the surrounding chrome (which uses windowBackgroundColor) so
+// the document region reads as a distinct surface. Built once as a dynamic color
+// that resolves per appearance: in each appearance we take windowBackgroundColor,
+// pull it into sRGB, and darken it slightly toward black. If resolution ever
+// fails we fall back to plain windowBackgroundColor so the opaque fill is never
+// nil/black.
+static NSColor* spdf_canvas_background_color(void) {
+    static NSColor* color;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        color = [NSColor colorWithName:nil
+                       dynamicProvider:^NSColor*(NSAppearance* appearance) {
+                           NSColor* base = NSColor.windowBackgroundColor;
+                           // Resolve windowBackgroundColor (a dynamic catalog
+                           // color) into concrete sRGB components for the
+                           // appearance that is current for this invocation.
+                           __block NSColor* rgb = nil;
+                           [appearance performAsCurrentDrawingAppearance:^{
+                               rgb = [base colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+                           }];
+                           if (!rgb) return base;
+                           BOOL dark = [[appearance bestMatchFromAppearancesWithNames:@[
+                               NSAppearanceNameAqua, NSAppearanceNameDarkAqua
+                           ]] isEqualToString:NSAppearanceNameDarkAqua];
+                           // Light: ~8% toward black. Dark: blend toward black a
+                           // touch less so it stays subtle on an already-dark base.
+                           CGFloat fraction = dark ? 0.06 : 0.08;
+                           NSColor* darker = [rgb blendedColorWithFraction:fraction ofColor:NSColor.blackColor];
+                           return darker ?: base;
+                       }];
+    });
+    return color;
+}
+
 @implementation SPDFDocumentView {
     BOOL _isPanning;
     BOOL _isSelecting;
@@ -563,7 +598,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 - (void)drawRect:(NSRect)dirtyRect {
     double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     double launchPaintStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-    [(self.presentationMode ? NSColor.blackColor : NSColor.windowBackgroundColor) setFill];
+    [(self.presentationMode ? NSColor.blackColor : spdf_canvas_background_color()) setFill];
     NSRectFill(dirtyRect);
 
     if (self.pages.count == 0) {
