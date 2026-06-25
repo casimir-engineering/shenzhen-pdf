@@ -43,6 +43,11 @@ static const CGFloat kSidebarDividerWidth = kMinimapDividerWidth;
 static const CGFloat kTopChromeResizeCornerSize = 16.0;
 static const CGFloat kSidebarSearchLeadingInset = 0.0;
 static const CGFloat kSidebarSearchTrailingInset = 8.0;
+// Comment rows carry the full annotation text, so they wrap to a few lines.
+// Size the row to the wrapped text plus a little vertical breathing room above
+// and below (mirroring the comfortable spacing chapter rows get for free).
+static const NSInteger kSidebarCommentMaxLines = 3;
+static const CGFloat kSidebarCommentVerticalPadding = 5.0;
 static const NSInteger kBackgroundRenderBatchSize = 8;
 static const NSInteger kRecentDocumentLimit = 10;
 static const NSInteger kRenderedImageKeepRadius = 12;
@@ -1230,14 +1235,11 @@ static void spdf_discard_launch_prerender(void) {
     if (sender != _window) return YES;
     [self dismissTabHoverPanel];
     [self rememberActiveTabState];
-    BOOL hasOtherWindows = [self hasOtherShenzhenWindows];
-    _terminateOnlyThisProcess = hasOtherWindows;
-    if (hasOtherWindows) {
-        [self removeSessionStateForCurrentWindow];
-        _suppressSessionWriteOnTerminate = YES;
-    } else {
-        _suppressSessionWriteOnTerminate = NO;
-    }
+    // The red close button quits the entire app, exactly like Cmd+Q: cascade
+    // terminate to every sibling window and write the normal session so the next
+    // launch restores all windows. Do not special-case other open windows.
+    _terminateOnlyThisProcess = NO;
+    _suppressSessionWriteOnTerminate = NO;
     [self resumePersistentStateSavesAfterLaunch];
     [self savePersistentState];
     dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:self]; });
@@ -2023,8 +2025,7 @@ static void spdf_discard_launch_prerender(void) {
     NSUInteger count = MIN((NSUInteger)kRecentDocumentLimit, _recentlyOpenedPaths.count);
     for (NSUInteger i = 0; i < count; i++) {
         NSString* path = _recentlyOpenedPaths[i];
-        NSString* title =
-            [NSString stringWithFormat:@"%lu) %@", (unsigned long)(i + 1), spdf_display_name_for_path(path)];
+        NSString* title = spdf_display_name_for_path(path);
         NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title
                                                       action:@selector(openRecentDocument:)
                                                keyEquivalent:@""];
@@ -2190,17 +2191,23 @@ static void spdf_discard_launch_prerender(void) {
                                            keyEquivalent:@""];
     minimapItem.target = self;
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* presentation =
+    // One visible Presentation Mode row: it shows ⇧⌘F natively and advertises
+    // the F5 shortcut via the "(F5)" suffix added in -validateMenuItem:. F5 keeps
+    // working through the hidden companion item below, so there is no duplicate
+    // row in the View menu.
+    NSMenuItem* presentation = [viewMenu addItemWithTitle:@"Presentation Mode"
+                                                   action:@selector(togglePresentation:)
+                                            keyEquivalent:@"f"];
+    presentation.target = self;
+    presentation.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    NSMenuItem* presentationF5 =
         [viewMenu addItemWithTitle:@"Presentation Mode"
                             action:@selector(togglePresentation:)
                      keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSF5FunctionKey)]];
-    presentation.target = self;
-    presentation.keyEquivalentModifierMask = 0;
-    NSMenuItem* presentationAlternate = [viewMenu addItemWithTitle:@"Presentation Mode"
-                                                            action:@selector(togglePresentation:)
-                                                     keyEquivalent:@"f"];
-    presentationAlternate.target = self;
-    presentationAlternate.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    presentationF5.target = self;
+    presentationF5.keyEquivalentModifierMask = 0;
+    presentationF5.hidden = YES;
+    presentationF5.allowsKeyEquivalentWhenHidden = YES;
     NSMenuItem* preventSleep =
         [viewMenu addItemWithTitle:@"Prevent Sleep During Presentation"
                             action:@selector(togglePreventSleepInPresentation:)
@@ -2337,8 +2344,8 @@ static void spdf_discard_launch_prerender(void) {
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.6.19";
-    if (build.length == 0) build = @"3";
+    if (version.length == 0) version = @"26.6.25";
+    if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
@@ -6839,6 +6846,34 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self updateTabStrip];
 }
 
+// Reload comments synchronously from the in-memory document after a local
+// mutation (add/edit/delete). The active _doc already holds the saved
+// annotation, so reading it directly is both correct and immediate. Going
+// through loadCommentsForCurrentDocumentAsync here would leave the new comment
+// out of the sidebar and hover overlay: it short-circuits on the now-stale
+// cachedCommentsLoaded fast path, and even when forced async its result is
+// dropped by the render-generation guard once the follow-up render bumps the
+// generation. Background renders use per-thread worker documents, so the main
+// thread owns _doc exclusively and this load is race-free.
+- (void)reloadCommentsFromActiveDocument {
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (!_doc || !tab) return;
+    spdf_comments comments;
+    memset(&comments, 0, sizeof(comments));
+    char err[1024];
+    if (spdf_load_comments(_doc, &comments, err, sizeof(err))) {
+        [tab replaceCachedComments:comments loaded:YES];
+    } else {
+        spdf_free_comments(&comments);
+        spdf_comments emptyComments;
+        memset(&emptyComments, 0, sizeof(emptyComments));
+        [tab replaceCachedComments:emptyComments loaded:YES];
+    }
+    [self adoptCachedMetadataForTab:tab];
+    [self rebuildSidebar];
+    [_pageView setNeedsDisplay:YES];
+}
+
 - (void)loadCommentsForCurrentDocumentAsync {
     if (!_doc || !_path.length) return;
     SPDFDocumentTab* tab = [self selectedTab];
@@ -7961,9 +7996,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
     tab.searchRegex = NO;
     tab.searchRegexMultiline = YES;
     tab.findMatchIndex = -1;
+    // A freshly opened document follows the "Open New Documents with Side
+    // Panel/Map" defaults. We deliberately do NOT restore the document's
+    // previously remembered panel state here: per-document panel memory is only
+    // honored for session restore (a tab that was open at quit, see
+    // -loadSessionWindowState:). The defaults are still narrowed afterwards by
+    // the single-page minimap rule (-applySinglePageMinimapDefaultToTab:) and by
+    // the no-chapters/no-comments side-panel gate in -rebuildSidebar.
     tab.showSidebar = _defaultSidebarVisibleForNewDocuments;
     tab.showMinimap = _defaultMinimapVisibleForNewDocuments;
-    [self applyStoredDocumentStateToTab:tab];
     return tab;
 }
 
@@ -8226,12 +8267,32 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self openPath:path];
 }
 
+// Most-recent persisted Recently Opened path (index 0 is newest) that isn't
+// already open in a tab, or nil. Used as the Reopen Last Closed fallback after a
+// relaunch, when the in-session closed stack is empty.
+- (NSString*)firstRecentlyOpenedPathNotOpen {
+    for (NSString* path in _recentlyOpenedPaths) {
+        if (path.length && [self indexOfTabForPath:path] < 0) return path;
+    }
+    return nil;
+}
+
 - (void)reopenLastClosedDocument:(id)sender {
     (void)sender;
-    NSString* path = _closedDocumentPaths.lastObject;
-    if (!path.length) return;
-    [_closedDocumentPaths removeLastObject];
-    [self openPath:path];
+    // Prefer the in-session stack of explicitly closed documents.
+    while (_closedDocumentPaths.count > 0) {
+        NSString* path = _closedDocumentPaths.lastObject;
+        [_closedDocumentPaths removeLastObject];
+        if (path.length) {
+            [self openPath:path];
+            return;
+        }
+    }
+    // The closed stack is in-memory only, so after relaunch it is empty. Fall
+    // back to the persisted Recently Opened list (newest first), reopening the
+    // first entry that isn't already open. Repeated presses walk down the list.
+    NSString* fallback = [self firstRecentlyOpenedPathNotOpen];
+    if (fallback.length) [self openPath:fallback];
 }
 
 - (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard {
@@ -8547,7 +8608,14 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (!isfinite(width) || width < 80.0) width = [self clampedSidebarWidth];
     width = MAX(80.0, floor(width));
     NSTableColumn* column = _sidebarTable.tableColumns.firstObject;
-    if (fabs(column.width - width) > 0.5) column.width = width;
+    if (fabs(column.width - width) > 0.5) {
+        column.width = width;
+        // Comment rows wrap to the column width, so their heights change with it.
+        NSMutableIndexSet* commentRows = [NSMutableIndexSet indexSet];
+        for (NSUInteger i = 0; i < _sidebarItems.count; ++i)
+            if ([_sidebarItems[(NSUInteger)i][@"kind"] isEqualToString:@"comment"]) [commentRows addIndex:i];
+        if (commentRows.count > 0) [_sidebarTable noteHeightOfRowsWithIndexesChanged:commentRows];
+    }
 }
 
 - (BOOL)sidebarSearchText:(NSString*)text matchesFilter:(NSString*)filter {
@@ -10754,7 +10822,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     [self refreshActiveTabCachedFileAttributesAfterSelfSave];
 
     _statusLabel.stringValue = @"Comment added.";
-    [self loadCommentsForCurrentDocumentAsync];
+    [self reloadCommentsFromActiveDocument];
     [self renderDocumentAndScrollToPage:_pageIndex
                                alignTop:NO
                           restoreOrigin:[NSValue valueWithPoint:_pageScrollView.contentView.bounds.origin]];
@@ -10856,7 +10924,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
     [self savePersistentState];
     _statusLabel.stringValue = @"Comment updated.";
-    [self loadCommentsForCurrentDocumentAsync];
+    [self reloadCommentsFromActiveDocument];
     [self renderDocumentAndScrollToPage:_pageIndex
                                alignTop:NO
                           restoreOrigin:[NSValue valueWithPoint:_pageScrollView.contentView.bounds.origin]];
@@ -10901,7 +10969,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     [self refreshActiveTabCachedFileAttributesAfterSelfSave];
 
     _statusLabel.stringValue = @"Comment deleted.";
-    [self loadCommentsForCurrentDocumentAsync];
+    [self reloadCommentsFromActiveDocument];
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO restoreOrigin:restoreOrigin];
 }
 
@@ -14451,6 +14519,27 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     return (NSInteger)_sidebarItems.count;
 }
 
+// Height of a comment sidebar row: the wrapped annotation text (capped at
+// kSidebarCommentMaxLines) plus kSidebarCommentVerticalPadding above and below.
+// Single-line comments fall back to the standard row height so they read just
+// like chapter rows.
+- (CGFloat)sidebarCommentRowHeightForText:(id)text {
+    NSString* string = [text isKindOfClass:NSString.class] ? text : @"";
+    CGFloat columnWidth = _sidebarTable.tableColumns.firstObject.width;
+    if (!isfinite(columnWidth) || columnWidth <= 0.0) columnWidth = NSWidth(_sidebarTable.bounds);
+    // 8pt leading + 6pt trailing inset, matching the SidebarCell text constraints.
+    CGFloat available = MAX(40.0, columnWidth - 14.0);
+    NSFont* font = [NSFont systemFontOfSize:13];
+    NSMutableParagraphStyle* paragraph = [[NSMutableParagraphStyle alloc] init];
+    paragraph.lineBreakMode = NSLineBreakByWordWrapping;
+    NSRect rect = [string boundingRectWithSize:NSMakeSize(available, CGFLOAT_MAX)
+                                       options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
+                                    attributes:@{NSFontAttributeName : font, NSParagraphStyleAttributeName : paragraph}];
+    CGFloat lineHeight = ceil(font.ascender - font.descender + font.leading);
+    CGFloat textHeight = MIN(ceil(NSHeight(rect)), lineHeight * (CGFloat)kSidebarCommentMaxLines);
+    return MAX(_sidebarTable.rowHeight, textHeight + 2.0 * kSidebarCommentVerticalPadding);
+}
+
 - (CGFloat)tableView:(NSTableView*)tableView heightOfRow:(NSInteger)row {
     if (tableView == _shortcutHelpTable) {
         if (row < 0 || row >= (NSInteger)_shortcutHelpRows.count) return 48.0;
@@ -14459,13 +14548,15 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
     if (tableView != _paletteTable) {
         if (row >= 0 && row < (NSInteger)_sidebarItems.count) {
-            NSString* kind = _sidebarItems[(NSUInteger)row][@"kind"];
+            NSDictionary* item = _sidebarItems[(NSUInteger)row];
+            NSString* kind = item[@"kind"];
             if ([kind isEqualToString:@"findResult"]) return 46.0;
             if ([kind isEqualToString:@"findDivider"]) return 30.0;
             if ([kind isEqualToString:@"findStatus"]) {
                 CGFloat visibleHeight = NSHeight(tableView.enclosingScrollView.contentView.bounds);
                 return MAX(36.0, floor(visibleHeight));
             }
+            if ([kind isEqualToString:@"comment"]) return [self sidebarCommentRowHeightForText:item[@"title"]];
         }
         return _sidebarTable.rowHeight;
     }
@@ -14929,6 +15020,19 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         ]];
     }
 
+    // Cells are reused across comment and chapter rows, so set the line behavior
+    // every time. Comments wrap to a few lines (the row is sized to match in
+    // -sidebarCommentRowHeightForText:); chapters stay a single truncated line.
+    if ([item[@"kind"] isEqualToString:@"comment"]) {
+        cell.textField.lineBreakMode = NSLineBreakByWordWrapping;
+        cell.textField.maximumNumberOfLines = kSidebarCommentMaxLines;
+        cell.textField.cell.usesSingleLineMode = NO;
+    } else {
+        cell.textField.lineBreakMode = NSLineBreakByTruncatingTail;
+        cell.textField.maximumNumberOfLines = 1;
+        cell.textField.cell.usesSingleLineMode = YES;
+    }
+
     id levelValue = item[@"level"];
     NSInteger level = [levelValue respondsToSelector:@selector(integerValue)] ? [levelValue integerValue] : 0;
     level = MAX(0, MIN(level, 16));
@@ -15007,7 +15111,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         action == @selector(moveWindowToLeftHalf:) || action == @selector(moveWindowToRightHalf:) ||
         action == @selector(moveWindowToTopHalf:) || action == @selector(moveWindowToBottomHalf:))
         return _window != nil && !_presentationMode && ![self firstResponderIsEditingText];
-    if (action == @selector(reopenLastClosedDocument:)) return _closedDocumentPaths.count > 0;
+    if (action == @selector(reopenLastClosedDocument:))
+        return _closedDocumentPaths.count > 0 || [self firstRecentlyOpenedPathNotOpen].length > 0;
     if (action == @selector(toggleSidebar:)) {
         menuItem.title = _sidebarVisible ? @"Hide Side Panel" : @"Show Side Panel";
         menuItem.state = _sidebarVisible ? NSControlStateValueOn : NSControlStateValueOff;
@@ -15024,7 +15129,8 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         return hasDoc && hasItems;
     }
     if (action == @selector(togglePresentation:)) {
-        menuItem.title = _presentationMode ? @"Exit Presentation Mode" : @"Presentation Mode";
+        // "(F5)" advertises the second shortcut; ⇧⌘F shows in the key column.
+        menuItem.title = _presentationMode ? @"Exit Presentation Mode (F5)" : @"Presentation Mode (F5)";
         menuItem.state = _presentationMode ? NSControlStateValueOn : NSControlStateValueOff;
         return hasDoc;
     }
@@ -15095,7 +15201,7 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter");
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.19-3\n");
+                printf("Shenzhen PDF portable mac 26.6.25-1\n");
                 return 0;
             }
         }
