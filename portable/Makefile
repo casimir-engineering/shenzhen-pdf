@@ -12,7 +12,9 @@ MAC_APP := $(DIST)/ShenzhenPDF.app
 MAC_BIN := $(MAC_APP)/Contents/MacOS/ShenzhenPDF
 MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
 MAC_WINDOW_SHORTCUT_TEST := $(BUILD)/SPDFMacWindowShortcutsTests
-MAC_SRCS := $(sort $(wildcard mac/*.mm))
+MAC_UPDATER_TEST := $(BUILD)/SPDFUpdaterTests
+# Exclude standalone test translation units (each defines its own main()).
+MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm)))
 MAC_HDRS := $(sort $(wildcard mac/*.h))
 MAC_BUNDLE_ID ?= com.intuition.shenzhenpdf
 MAC_VERSION ?= 26.6.25
@@ -39,7 +41,7 @@ MAC_CODESIGN_APP = $(MAC_CODESIGN_NESTED); codesign --force --timestamp --option
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app mac-window-shortcut-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app mac-window-shortcut-tests mac-updater-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -60,6 +62,12 @@ $(MAC_WINDOW_SHORTCUT_TEST): mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMa
 
 mac-window-shortcut-tests: $(MAC_WINDOW_SHORTCUT_TEST)
 	"$(MAC_WINDOW_SHORTCUT_TEST)"
+
+$(MAC_UPDATER_TEST): mac/SPDFUpdaterTests.mm mac/SPDFUpdater.mm mac/SPDFUpdater.h | $(BUILD)
+	clang++ -std=c++17 -fobjc-arc -Imac mac/SPDFUpdaterTests.mm mac/SPDFUpdater.mm -framework Cocoa -framework Security -o "$(MAC_UPDATER_TEST)"
+
+mac-updater-tests: $(MAC_UPDATER_TEST)
+	"$(MAC_UPDATER_TEST)"
 
 $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
@@ -92,7 +100,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/As
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
-	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -q 'libcrypto.3.dylib'; then \
 		cp "$(OPENSSL_LIBCRYPTO)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
 		crypto_path=$$(otool -L "$(MAC_BIN)" | awk '/libcrypto.3.dylib/ { print $$1; exit }'); \

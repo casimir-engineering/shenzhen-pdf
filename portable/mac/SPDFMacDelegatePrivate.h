@@ -297,6 +297,8 @@
     BOOL _translationCancelRequested;
     NSUInteger _selectionTranslationGeneration;
     BOOL _showShortcutHelpOnLaunch;
+    BOOL _autoUpdateEnabled;
+    NSString* _skippedUpdateVersion;
     BOOL _defaultReaderPromptDismissed;
     BOOL _tabStripCapturingMouse;
     BOOL _terminateOnlyThisProcess;

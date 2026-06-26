@@ -12,6 +12,7 @@
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabStripView.h"
 #import "SPDFMacUIHelpers.h"
+#import "SPDFUpdater.h"
 
 #include "shenzhen_pdf_core.h"
 
@@ -683,6 +684,16 @@ static void spdf_discard_launch_prerender(void) {
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
     (void)notification;
     spdf_launch_profile_log(@"applicationDidFinishLaunching enter");
+    // Quit-for-update IPC: every process (primary and restored siblings) listens
+    // for the driver's distributed request so it can exit WITHOUT re-cascading
+    // terminate to all other processes (the N-squared storm). Non-sandboxed only.
+    if (!spdf_is_sandboxed()) {
+        [[NSDistributedNotificationCenter defaultCenter]
+            addObserver:self
+               selector:@selector(handleQuitForUpdateNotification:)
+                   name:@"com.intuition.shenzhenpdf.QuitForUpdate"
+                 object:nil];
+    }
     double launchPhaseStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     _zoom = 1.0;
     _rememberedCustomZoom = 1.0;
@@ -706,6 +717,8 @@ static void spdf_discard_launch_prerender(void) {
     _selectionTranslationGeneration = 0;
     _collapseWhitespaceWhenCopyingText = YES;
     _showShortcutHelpOnLaunch = YES;
+    _autoUpdateEnabled = YES;
+    _skippedUpdateVersion = nil;
     _preventSleepInPresentation = YES;
     _defaultReaderPromptDismissed = NO;
     _fullDiskAccessPromptDismissed = NO;
@@ -879,6 +892,13 @@ static void spdf_discard_launch_prerender(void) {
                                    self->_pendingShortcutHelpAfterPermissions = YES;
                                else
                                    [self showShortcutHelp:nil];
+                           }
+                           if (!self.detachedTabLaunch) {
+                               // Consume the post-update health marker FIRST (writes
+                               // update_ok / deletes .old / shows the success banner, or
+                               // rolls back a failed new version), then arm the daily check.
+                               [[SPDFUpdater shared] consumePendingUpdateMarkerAndSweep];
+                               [[SPDFUpdater shared] scheduleDailyUpdateCheckIfNeeded];
                            }
                        }
                      });
@@ -1422,6 +1442,8 @@ static void spdf_discard_launch_prerender(void) {
         NSNumber* defaultMinimapVisible = settings[@"defaultMinimapVisibleForNewDocuments"];
         NSNumber* collapseWhitespaceWhenCopyingText = settings[@"collapseWhitespaceWhenCopyingText"];
         NSNumber* showShortcutHelp = settings[@"showShortcutHelpOnLaunch"];
+        NSNumber* autoUpdateEnabled = settings[@"autoUpdateEnabled"];
+        NSString* skippedUpdateVersion = settings[@"skippedUpdateVersion"];
         NSNumber* preventSleepInPresentation = settings[@"preventSleepInPresentation"];
         NSNumber* defaultReaderPromptDismissed = settings[@"defaultReaderPromptDismissed"];
         NSNumber* fullDiskAccessPromptDismissed = settings[@"fullDiskAccessPromptDismissed"];
@@ -1441,6 +1463,9 @@ static void spdf_discard_launch_prerender(void) {
         if (collapseWhitespaceWhenCopyingText)
             _collapseWhitespaceWhenCopyingText = collapseWhitespaceWhenCopyingText.boolValue;
         if (showShortcutHelp) _showShortcutHelpOnLaunch = showShortcutHelp.boolValue;
+        if (autoUpdateEnabled) _autoUpdateEnabled = autoUpdateEnabled.boolValue;
+        if ([skippedUpdateVersion isKindOfClass:NSString.class] && skippedUpdateVersion.length)
+            _skippedUpdateVersion = [skippedUpdateVersion copy];
         if (preventSleepInPresentation) _preventSleepInPresentation = preventSleepInPresentation.boolValue;
         if (defaultReaderPromptDismissed) _defaultReaderPromptDismissed = defaultReaderPromptDismissed.boolValue;
         if (fullDiskAccessPromptDismissed) _fullDiskAccessPromptDismissed = fullDiskAccessPromptDismissed.boolValue;
@@ -1999,6 +2024,8 @@ static void spdf_discard_launch_prerender(void) {
         @"translateSourceLanguage" : _translationSourceLanguage ?: @"zh",
         @"translateTargetLanguage" : _translationTargetLanguage ?: @"en",
         @"showShortcutHelpOnLaunch" : @(_showShortcutHelpOnLaunch),
+        @"autoUpdateEnabled" : @(_autoUpdateEnabled),
+        @"skippedUpdateVersion" : _skippedUpdateVersion ?: @"",
         @"preventSleepInPresentation" : @(_preventSleepInPresentation),
         @"defaultReaderPromptDismissed" : @(_defaultReaderPromptDismissed),
         @"fullDiskAccessPromptDismissed" : @(_fullDiskAccessPromptDismissed),
@@ -2062,6 +2089,13 @@ static void spdf_discard_launch_prerender(void) {
     [mainMenu addItem:appItem];
     NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"Shenzhen PDF"];
     [appMenu addItemWithTitle:@"About Shenzhen PDF" action:@selector(showAboutPanel:) keyEquivalent:@""];
+    if (!spdf_is_sandboxed()) {
+        [appMenu addItem:[NSMenuItem separatorItem]];
+        [appMenu addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""];
+        [appMenu addItemWithTitle:@"Automatically check for updates"
+                           action:@selector(toggleAutomaticUpdateChecks:)
+                    keyEquivalent:@""];
+    }
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Set Up Permissions…" action:@selector(showPermissionsWizard:) keyEquivalent:@""];
     [appMenu addItemWithTitle:@"Make Shenzhen PDF Default PDF Reader..."
@@ -2349,6 +2383,56 @@ static void spdf_discard_launch_prerender(void) {
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
+// ----- Auto-updater bridge (Dev ID build only; runtime sandbox re-check) -------
+
+- (void)checkForUpdates:(id)sender {
+    (void)sender;
+    if (spdf_is_sandboxed()) return;
+    [[SPDFUpdater shared] checkForUpdatesUserInitiated:YES];
+}
+
+- (void)toggleAutomaticUpdateChecks:(id)sender {
+    (void)sender;
+    if (spdf_is_sandboxed()) return;
+    _autoUpdateEnabled = !_autoUpdateEnabled;
+    [self savePersistentState];
+}
+
+// The update driver calls this on itself before quitting siblings so an
+// incoming sibling-cascade terminate can't pre-empt the helper spawn.
+- (void)prepareForUpdateTerminate {
+    _terminateOnlyThisProcess = YES;
+}
+
+// A sibling received the driver's "quit for update" request. Exit this process
+// WITHOUT re-broadcasting terminate to every other process (set
+// _terminateOnlyThisProcess so applicationShouldTerminate's cascade guard at
+// :1193 short-circuits), after writing this window's session synchronously so
+// the relaunched primary restores the full multi-window set.
+- (void)handleQuitForUpdateNotification:(NSNotification*)note {
+    (void)note;
+    if (spdf_is_sandboxed()) return;
+    _terminateOnlyThisProcess = YES;
+    [self resumePersistentStateSavesAfterLaunch];
+    if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
+    [self savePersistentState];
+    dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; });
+}
+
+// Accessors used by SPDFUpdater to read/write the persisted prefs.
+- (BOOL)autoUpdateEnabledForUpdater {
+    return _autoUpdateEnabled;
+}
+
+- (NSString*)skippedUpdateVersionForUpdater {
+    return _skippedUpdateVersion;
+}
+
+- (void)setSkippedUpdateVersionForUpdater:(NSString*)tag {
+    _skippedUpdateVersion = [tag copy];
+    [self savePersistentState];
+}
+
 - (void)showAboutPanel:(id)sender {
     (void)sender;
     if (!_aboutPanel) {
@@ -2394,7 +2478,23 @@ static void spdf_discard_launch_prerender(void) {
         okButton.keyEquivalent = @"\r";
         okButton.translatesAutoresizingMaskIntoConstraints = NO;
 
-        for (NSView* view in @[ iconView, titleLabel, versionLabel, aboutLabel, okButton ]) {
+        NSButton* updateLink = nil;
+        if (!spdf_is_sandboxed()) {
+            updateLink = [NSButton buttonWithTitle:@"Check for Updates"
+                                            target:self
+                                            action:@selector(checkForUpdates:)];
+            updateLink.bezelStyle = NSBezelStyleInline;
+            updateLink.bordered = NO;
+            updateLink.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightRegular];
+            updateLink.contentTintColor = NSColor.linkColor;
+            updateLink.translatesAutoresizingMaskIntoConstraints = NO;
+            updateLink.accessibilityRole = NSAccessibilityButtonRole;
+            updateLink.accessibilityLabel = @"Check for Updates";
+        }
+
+        NSMutableArray<NSView*>* views = [@[ iconView, titleLabel, versionLabel, aboutLabel, okButton ] mutableCopy];
+        if (updateLink) [views addObject:updateLink];
+        for (NSView* view in views) {
             view.translatesAutoresizingMaskIntoConstraints = NO;
             [content addSubview:view];
         }
@@ -2417,11 +2517,22 @@ static void spdf_discard_launch_prerender(void) {
             [aboutLabel.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:34.0],
             [aboutLabel.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-34.0],
 
-            [okButton.topAnchor constraintGreaterThanOrEqualToAnchor:aboutLabel.bottomAnchor constant:18.0],
             [okButton.centerXAnchor constraintEqualToAnchor:content.centerXAnchor],
             [okButton.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-18.0],
             [okButton.widthAnchor constraintEqualToConstant:86.0],
         ]];
+
+        if (updateLink) {
+            [NSLayoutConstraint activateConstraints:@[
+                [updateLink.topAnchor constraintGreaterThanOrEqualToAnchor:aboutLabel.bottomAnchor constant:12.0],
+                [updateLink.centerXAnchor constraintEqualToAnchor:content.centerXAnchor],
+                [okButton.topAnchor constraintEqualToAnchor:updateLink.bottomAnchor constant:12.0],
+            ]];
+        } else {
+            [NSLayoutConstraint activateConstraints:@[
+                [okButton.topAnchor constraintGreaterThanOrEqualToAnchor:aboutLabel.bottomAnchor constant:18.0],
+            ]];
+        }
     }
 
     if (_aboutPanel.parentWindow != _window) {
@@ -15097,8 +15208,13 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         action == @selector(openRecentDocument:) || action == @selector(openSettingsFile:) ||
         action == @selector(openStateJSONFile:) || action == @selector(revealSettingsFolder:) ||
         action == @selector(showShortcutHelp:) || action == @selector(makeDefaultPDFReader:) ||
-        action == @selector(showPermissionsWizard:) || action == @selector(showAboutPanel:))
+        action == @selector(showPermissionsWizard:) || action == @selector(showAboutPanel:) ||
+        action == @selector(checkForUpdates:))
         return YES;
+    if (action == @selector(toggleAutomaticUpdateChecks:)) {
+        menuItem.state = _autoUpdateEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     if (action == @selector(toggleDefaultSidebarForNewDocuments:)) {
         menuItem.state = _defaultSidebarVisibleForNewDocuments ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
@@ -15201,8 +15317,19 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter");
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
-                printf("Shenzhen PDF portable mac 26.6.25-1\n");
+                NSDictionary* info = NSBundle.mainBundle.infoDictionary;
+                NSString* shortVersion = info[@"CFBundleShortVersionString"] ?: @"";
+                NSString* build = info[(NSString*)kCFBundleVersionKey] ?: @"";
+                printf("Shenzhen PDF portable mac %s-%s\n", shortVersion.UTF8String, build.UTF8String);
                 return 0;
+            }
+            // Atomic-swap helper: run from the CURRENT trusted in-place binary,
+            // entirely as a Foundation-only function, and return BEFORE any
+            // AppKit delegate / NSApplication is constructed.
+            if (strcmp(argv[i], "--post-update") == 0 && i + 2 < argc) {
+                NSString* staged = [NSString stringWithUTF8String:argv[i + 1]];
+                NSString* target = [NSString stringWithUTF8String:argv[i + 2]];
+                return spdf_run_post_update_helper(staged, target);
             }
         }
 
