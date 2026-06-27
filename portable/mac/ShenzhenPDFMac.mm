@@ -3,6 +3,8 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
 
+#include <CommonCrypto/CommonDigest.h>
+
 #import "SPDFMacDefaultReader.h"
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacDocumentView.h"
@@ -529,6 +531,12 @@ static void spdf_discard_launch_prerender(void) {
       NSString* path = nil;
       NSInteger pageIndex = 0;
       double predictedZoom = 0.0;  // 0 = open-only prewarm (no page render)
+      // Read-only shadow copy: when the restored source is read-only, prerender
+      // must open the persisted temp copy (never the source) to avoid the macOS
+      // access prompt at launch. These mirror the tab's persisted fields.
+      NSString* persistedWorkingPath = nil;
+      unsigned long long persistedCopyFileSize = 0;
+      double persistedCopyModifiedAt = 0.0;
       if (initialPath.length > 0) {
           // CLI/Finder open: that file becomes the selected tab. Its zoom is
           // viewport-dependent (fit mode), so prewarm the open only.
@@ -575,6 +583,10 @@ static void spdf_discard_launch_prerender(void) {
                   MIN(MAX(0, [windowState[@"selectedTab"] integerValue]), (NSInteger)tabs.count - 1);
               NSDictionary* tab = tabs[(NSUInteger)selected];
               path = [tab[@"path"] isKindOfClass:NSString.class] ? tab[@"path"] : nil;
+              if ([tab[@"workingPath"] isKindOfClass:NSString.class] && [tab[@"workingPath"] length] > 0)
+                  persistedWorkingPath = tab[@"workingPath"];
+              persistedCopyFileSize = (unsigned long long)[tab[@"roCopyFileSize"] unsignedLongLongValue];
+              persistedCopyModifiedAt = [tab[@"roCopyModifiedAt"] doubleValue];
               pageIndex = MAX(0, [tab[@"page"] integerValue]);
               // Replicates loadSelectedTab zoom selection exactly for the two
               // viewport-independent fit modes; other modes stay open-only.
@@ -606,9 +618,34 @@ static void spdf_discard_launch_prerender(void) {
           }
           return;
       }
+      // Read-only shadow copy: stat-only read-only check (no content read / no
+      // prompt). For a read-only source, open the persisted temp copy if it is
+      // present and matches the persisted source stat; otherwise skip prerender
+      // entirely so loadSelectedTab makes/refreshes the copy on the main thread
+      // (the single prompt site). openedPath becomes the prerender identity, so
+      // it matches the workingPath loadSelectedTab passes to adopt the result.
+      NSString* openedPath = path;
+      if ([self sourcePathIsReadOnly:path]) {
+          BOOL canUseCopy = persistedWorkingPath.length &&
+                            [NSFileManager.defaultManager fileExistsAtPath:persistedWorkingPath] &&
+                            persistedCopyModifiedAt > 0.0 &&
+                            persistedCopyFileSize == spdf_file_size_from_attributes(attributes);
+          if (canUseCopy) {
+              NSDate* sourceModified = spdf_file_modification_date_from_attributes(attributes);
+              NSDate* persistedModified = [NSDate dateWithTimeIntervalSince1970:persistedCopyModifiedAt];
+              canUseCopy = sourceModified && [persistedModified isEqualToDate:sourceModified];
+          }
+          if (!canUseCopy) {
+              @synchronized(result) {
+                  result.finished = YES;
+              }
+              return;
+          }
+          openedPath = persistedWorkingPath;
+      }
       double openStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
       char err[1024];
-      spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
+      spdf_document* doc = [self openSpdfDocumentAtPath:openedPath error:err errorLength:sizeof(err)];
       if (openStart > 0.0) {
           spdf_launch_profile_log(@"prerender spdf_open %@ %.1fms [bg]", path.lastPathComponent,
                                   spdf_zoom_profile_now_ms() - openStart);
@@ -638,7 +675,11 @@ static void spdf_discard_launch_prerender(void) {
           } else {
               result.doc = doc;
               result.page = rendered;
-              result.path = [path copy];
+              // Identity is the path actually opened (temp copy for a read-only
+              // source) so loadSelectedTab's workingPath-keyed adoption matches;
+              // the stat stays the SOURCE stat (loadSelectedTab passes source
+              // attributes), keeping cache coherency keyed to the source.
+              result.path = [openedPath copy];
               result.fileSize = spdf_file_size_from_attributes(attributes);
               result.modificationDate = spdf_file_modification_date_from_attributes(attributes);
               result.finished = YES;
@@ -822,6 +863,11 @@ static void spdf_discard_launch_prerender(void) {
         SPDFScopedLaunchPhaseLog launchPhase("loadPersistentState");
         [self loadPersistentState];
     }
+    // Read-only shadow copy: the orphaned-temp-copy sweep is deferred to
+    // -resumePersistentStateSavesAfterLaunch (after first paint, after tabs are
+    // restored, after the catch-up save). Running it here against the stale
+    // on-disk session.json races copy (re)creation on the main thread and could
+    // delete an in-use / just-created copy. See -sweepOrphanedReadOnlyCopies.
     if (!gSPDFWindowControllers) gSPDFWindowControllers = [NSMutableArray array];
     if (![gSPDFWindowControllers containsObject:self]) [gSPDFWindowControllers addObject:self];
 
@@ -1815,7 +1861,16 @@ static void spdf_discard_launch_prerender(void) {
             @"searchRegexMultiline" : @(tab.searchRegexMultiline),
             @"findMatchIndex" : @(tab.findMatchIndex),
             @"showSidebar" : @(tab.showSidebar),
-            @"showMinimap" : @(tab.showMinimap)
+            @"showMinimap" : @(tab.showMinimap),
+            // Read-only shadow copy: persist the temp copy + the source stat it
+            // reflects so relaunch reopens the copy without a source content read.
+            // readOnly is persisted so the orange dot shows immediately on restore
+            // for not-yet-preloaded inactive tabs.
+            // (Kept in sync with spdf_dictionary_from_tab in SPDFMacModels.mm.)
+            @"readOnly" : @(tab.readOnly),
+            @"workingPath" : tab.workingPath ?: @"",
+            @"roCopyFileSize" : @(tab.copiedSourceFileSize),
+            @"roCopyModifiedAt" : @(tab.copiedSourceModificationDate ? tab.copiedSourceModificationDate.timeIntervalSince1970 : 0.0)
         }];
     }
 
@@ -1990,6 +2045,14 @@ static void spdf_discard_launch_prerender(void) {
     if (_needsDeferredPersistentStateSave) {
         _needsDeferredPersistentStateSave = NO;
         [self savePersistentState];
+    }
+    // Read-only shadow copy: now that tabs are restored and the catch-up save has
+    // run, it is safe to sweep orphaned temp copies against the LIVE tabs. Primary
+    // launch only, once. (Detached-tab launches share the same ReadOnlyCopies dir
+    // but must not sweep — their tab set is partial.)
+    if (!_didSweepReadOnlyCopies && !self.detachedTabLaunch) {
+        _didSweepReadOnlyCopies = YES;
+        [self sweepOrphanedReadOnlyCopies];
     }
 }
 
@@ -3739,6 +3802,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (!_doc || !_path.length || pageIndexes.count == 0) return;
 
     NSString* path = [_path copy];
+    // Render workers open the working path (temp copy for a read-only source);
+    // the staleness guard still compares against the SOURCE _path.
+    NSString* workingPath = [self activeWorkingPath];
     CGFloat displayScale = kBaseZoomCacheDisplayScale;
     NSUInteger scheduledBytes = 0;
     for (SPDFRenderedPage* page in _renderedPages) scheduledBytes += [self renderedBaseImageByteCost:page];
@@ -3797,7 +3863,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                   return;
               }
               char err[1024];
-              spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+              spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedBaseRenderPages removeObject:number];
@@ -3890,6 +3956,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (!_doc || !_path.length || pageIndexes.count == 0) return;
 
     NSString* path = [_path copy];
+    NSString* workingPath = [self activeWorkingPath];  // temp copy for read-only source
     CGFloat zoom = kHighQualityZoomCacheZoom;
     CGFloat displayScale = [self highQualityZoomCacheDisplayScale];
     for (NSNumber* number in pageIndexes) {
@@ -3921,7 +3988,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                   return;
               }
               char err[1024];
-              spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+              spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedHighQualityRenderPages removeObject:number];
@@ -4010,7 +4077,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                       forceHighPriority:(BOOL)forceHighPriority {
     if (!_doc || !_path.length) return;
 
-    NSString* path = [_path copy];
+    NSString* workingPath = [self activeWorkingPath];  // temp copy for read-only source
     CGFloat zoom = _zoom;
     CGFloat displayScale = [self backingScale];
     NSUInteger liveZoomSequence = _liveZoomSequence;
@@ -4041,7 +4108,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                   return;
               }
               char err[1024];
-              spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+              spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedRenderPages removeObject:number];
@@ -4145,6 +4212,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // starved behind page renders / background-tab warming; later (scroll-driven)
     // bands stay at Utility. See _minimapInitialPopulationPending.
     NSString* path = [_path copy];
+    NSString* workingPath = [self activeWorkingPath];  // temp copy for read-only source
     NSUInteger generation = _renderGeneration;
     CGFloat displayScale = [self backingScale];
     if (displayScale <= 0.0) return;
@@ -4178,7 +4246,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                   return;
               }
               char err[512];
-              spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+              spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue]
                       addOperationWithBlock:^{ [self->_queuedMinimapThumbnailPages removeObject:number]; }];
@@ -4484,6 +4552,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                                            path:(NSString*)path
                                                renderGeneration:(NSUInteger)renderGeneration {
     if (!_doc || !path.length) return;
+    // Render the working path (temp copy for a read-only source); the staleness
+    // guard below keeps comparing the SOURCE _path against the SOURCE path arg.
+    NSString* workingPath = [self activeWorkingPath];
     displayScale = MAX(0.5, displayScale);
     NSArray<NSDictionary*>* tasks =
         [self visiblePageCropRenderTasksForDisplayScale:displayScale
@@ -4507,7 +4578,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
               cropRenderSequence != self->_visibleCropRenderSequence)
               return;
           char err[512];
-          spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+          spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
           NSMutableArray<NSDictionary*>* results = [NSMutableArray arrayWithCapacity:tasks.count];
           if (workerDoc) {
               for (NSDictionary* task in tasks) {
@@ -4754,13 +4825,14 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSUInteger panGeneration = _documentViewPanCropGeneration;
     NSUInteger renderGeneration = _renderGeneration;
     NSString* path = [_path copy];
+    NSString* workingPath = [self activeWorkingPath];  // temp copy for read-only source
     CGFloat zoom = _zoom;
     /* A new pan crop pass supersedes any still-running one: cookie-abort it. */
     [_lastPanCropRenderOperation cancel];
     SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
       @autoreleasepool {
           char err[512];
-          spdf_document* workerDoc = [self workerDocumentForPath:path error:err errorLength:sizeof(err)];
+          spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
           NSMutableArray<NSDictionary*>* results = [NSMutableArray arrayWithCapacity:tasks.count];
           if (workerDoc) {
               for (NSDictionary* task in tasks) {
@@ -6270,6 +6342,171 @@ static BOOL spdf_page_list_cache_disabled(void) {
     tab.cachedFileSize = [attributes[NSFileSize] unsignedLongLongValue];
 }
 
+#pragma mark - Read-only shadow copy
+
+// Persistent directory for read-only render copies. Subdirectory of
+// -supportDirectory (NOT NSTemporaryDirectory, which the OS purges): the copy
+// must survive quit so session restore reopens the same copy without reading the
+// source.
+- (NSString*)readOnlyCopiesDirectory {
+    NSString* dir = [[self supportDirectory] stringByAppendingPathComponent:@"ReadOnlyCopies"];
+    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return dir;
+}
+
+// STAT-ONLY read-only detection on the SOURCE path: same signal the edit gate
+// uses (-activePDFNeedsSaveAsBeforeModificationWithReason:). No content read, so
+// no macOS access prompt. A missing file returns NO (handled by the missing-file
+// UI), so it is not mistaken for read-only.
+- (BOOL)sourcePathIsReadOnly:(NSString*)path {
+    if (!path.length) return NO;
+    NSFileManager* fm = NSFileManager.defaultManager;
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:path isDirectory:&isDir] || isDir) return NO;
+    return ![fm isWritableFileAtPath:path];
+}
+
+// Deterministic copy filename bound to the standardized source path so an
+// unchanged source reclaims the same copy across relaunch (and the orphan sweep
+// can match it). Distinct sources -> distinct copies (no worker-cache collision).
+// Uses a SHA-256 digest of the standardized path (NOT NSString -hash, which is
+// not stable across launches/OS versions and is collision-prone) so a fresh
+// open of an unchanged source reclaims the same copy and the digest is stable.
+- (NSString*)readOnlyCopyFileNameForSourcePath:(NSString*)sourcePath {
+    NSString* standardized = sourcePath.stringByStandardizingPath ?: sourcePath;
+    NSData* bytes = [standardized dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(bytes.bytes, (CC_LONG)bytes.length, digest);
+    // 16 bytes (128 bits) of the digest is collision-resistant for this use.
+    NSMutableString* hex = [NSMutableString stringWithCapacity:32];
+    for (int i = 0; i < 16; ++i) [hex appendFormat:@"%02x", digest[i]];
+    NSString* ext = sourcePath.pathExtension.length ? sourcePath.pathExtension : @"pdf";
+    return [NSString stringWithFormat:@"ro-%@.%@", hex, ext];
+}
+
+// Ensure the tab has a fresh read-only render copy of its (read-only) SOURCE and
+// return the copy path; returns the source path for writable files (no copy).
+//
+// STAT-ONLY change detection: the source mtime/size stat is metadata (no
+// prompt). The copy is refreshed from the source content ONLY when it is missing
+// or the source changed vs the stat the copy reflects (copiedSource*). That copy
+// is the ONE place the macOS prompt may appear; an unchanged source reopens the
+// existing copy with no content read.
+- (NSString*)ensureWorkingPathForTab:(SPDFDocumentTab*)tab
+                          sourcePath:(NSString*)sourcePath
+                          attributes:(NSDictionary*)attributes {
+    if (!tab || !sourcePath.length) return sourcePath;
+    if (![self sourcePathIsReadOnly:sourcePath]) {
+        // Writable: drop any stale copy binding, render straight from the source.
+        if (tab.workingPath.length) {
+            [NSFileManager.defaultManager removeItemAtPath:tab.workingPath error:nil];
+        }
+        tab.workingPath = nil;
+        tab.copiedSourceFileSize = 0;
+        tab.copiedSourceModificationDate = nil;
+        return sourcePath;
+    }
+
+    unsigned long long sourceSize = spdf_file_size_from_attributes(attributes);
+    NSDate* sourceModified = spdf_file_modification_date_from_attributes(attributes);
+
+    NSString* copyPath = tab.workingPath.length
+                             ? tab.workingPath
+                             : [[self readOnlyCopiesDirectory]
+                                   stringByAppendingPathComponent:[self readOnlyCopyFileNameForSourcePath:sourcePath]];
+
+    BOOL copyExists = [NSFileManager.defaultManager fileExistsAtPath:copyPath];
+    BOOL unchanged = copyExists && tab.copiedSourceModificationDate && sourceModified &&
+                     [tab.copiedSourceModificationDate isEqualToDate:sourceModified] &&
+                     tab.copiedSourceFileSize == sourceSize;
+    if (unchanged) {
+        tab.workingPath = copyPath;
+        return copyPath;
+    }
+
+    // Missing or changed: re-read the source content into the copy (prompt site).
+    // Acquire security-scoped access first, mirroring -openSpdfDocumentAtPath:,
+    // so a sandboxed restored read-only source does not fail the copy with EPERM
+    // (which would silently fall back to reading the source and re-prompt).
+    [self ensureSecurityAccessForPath:sourcePath];
+    NSFileManager* fm = NSFileManager.defaultManager;
+    if (copyExists) [fm removeItemAtPath:copyPath error:nil];
+    NSError* copyError = nil;
+    if (![fm copyItemAtPath:sourcePath toPath:copyPath error:&copyError]) {
+        // Copy failed (e.g. denied): fall back to opening the source directly so
+        // the document still loads; no copy binding is recorded.
+        tab.workingPath = nil;
+        tab.copiedSourceFileSize = 0;
+        tab.copiedSourceModificationDate = nil;
+        return sourcePath;
+    }
+    tab.workingPath = copyPath;
+    tab.copiedSourceFileSize = sourceSize;
+    tab.copiedSourceModificationDate = sourceModified;
+    return copyPath;
+}
+
+// Render/read path for the ACTIVE document: the temp copy when the active source
+// is read-only, else the source. Consumed only by document-open/render workers.
+- (NSString*)activeWorkingPath {
+    return _workingPath.length ? _workingPath : _path;
+}
+
+// Launch-time sweep: delete any file in ReadOnlyCopies not referenced by a
+// workingPath on a LIVE tab across all windows. Deferred until after tabs are
+// restored and the post-first-paint catch-up save (see
+// -resumePersistentStateSavesAfterLaunch) so it never races copy (re)creation
+// nor reads a stale on-disk session. The referenced set is built on the main
+// thread from in-memory tabs; only the directory enumeration + removal runs
+// off-main. A recency backstop skips files touched in the last 60s as defense
+// against any copy created concurrently. The directory may not exist yet on a
+// fresh install — guarded.
+- (void)sweepOrphanedReadOnlyCopies {
+    // Build the referenced set from live tabs on the main thread (tab arrays are
+    // main-thread state).
+    NSMutableSet<NSString*>* referenced = [NSMutableSet set];
+    for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
+        for (SPDFDocumentTab* tab in controller->_tabs) {
+            NSString* wp = tab.workingPath;
+            if (wp.length) [referenced addObject:wp.lastPathComponent];
+        }
+    }
+
+    NSString* dir = [self readOnlyCopiesDirectory];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        @autoreleasepool {
+            NSFileManager* fm = NSFileManager.defaultManager;
+            NSArray<NSString*>* contents = [fm contentsOfDirectoryAtPath:dir error:nil];
+            if (contents.count == 0) return;
+            NSDate* recencyCutoff = [NSDate dateWithTimeIntervalSinceNow:-60.0];
+            for (NSString* name in contents) {
+                if ([referenced containsObject:name]) continue;
+                NSString* full = [dir stringByAppendingPathComponent:name];
+                // Skip a copy created/modified during this launch (not yet bound
+                // to a live tab) so a concurrent open is never swept.
+                NSDate* modified = [fm attributesOfItemAtPath:full error:nil][NSFileModificationDate];
+                if (modified && [modified compare:recencyCutoff] == NSOrderedDescending) continue;
+                [fm removeItemAtPath:full error:nil];
+            }
+        }
+    });
+}
+
+// Delete a tab's read-only temp copy unless another tab in this window still
+// references the same copy file (shared read-only source). Used both when a tab
+// is deliberately closed and when Save-As converts it to a writable file.
+// excludeTab is the tab being closed/converted (skipped during the shared-use
+// scan, since its own binding is being torn down).
+- (void)deleteReadOnlyCopyIfUnsharedForTab:(SPDFDocumentTab*)excludeTab {
+    NSString* copyPath = excludeTab.workingPath;
+    if (!copyPath.length) return;
+    for (SPDFDocumentTab* other in _tabs) {
+        if (other == excludeTab) continue;
+        if ([other.workingPath isEqualToString:copyPath]) return;  // still in use
+    }
+    [NSFileManager.defaultManager removeItemAtPath:copyPath error:nil];
+}
+
 // Called right after one of our own in-place saves to _path (comment add/edit/
 // delete). Re-records the on-disk mtime/size into the active tab's cache so the
 // auto-reload watcher sees disk == cache and does not treat our write as an
@@ -6608,6 +6845,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)prepareSelectedTabViewState:(SPDFDocumentTab*)tab path:(NSString*)path {
     _path = [path copy];
+    // Render/read path: temp copy when the source is read-only, else the source.
+    // _path stays the SOURCE for title/Recent/Favorites/watcher/Save/edit-gate.
+    _workingPath = tab.workingPath.length ? [tab.workingPath copy] : [path copy];
     _highlightPageIndex = -1;
     _selectionPageIndex = -1;
     _selectedText = nil;
@@ -6791,6 +7031,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
             tab.missingMessage = @"File moved or deleted";
             continue;
         }
+        // Read-only shadow copy: keep the per-tab flag current and, for a
+        // read-only source, ensure/refresh its temp render copy so the preload
+        // open below never reads the source. workingPath is the temp copy for a
+        // read-only source, the source otherwise.
+        tab.readOnly = [self sourcePathIsReadOnly:path];
+        NSString* workingPath = [self ensureWorkingPathForTab:tab sourcePath:path attributes:attributes];
         if ([self tab:tab cacheMatchesFileAttributes:attributes]) {
             tab.missingFile = NO;
             tab.missingMessage = @"";
@@ -6826,7 +7072,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
               }
 
               char err[1024];
-              spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
+              spdf_document* doc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
               if (!doc) {
                   NSString* message = @"Could not open document";
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
@@ -6916,7 +7162,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 [self updateTabStrip];
               }];
 
-              spdf_document* renderDoc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
+              spdf_document* renderDoc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
               if (!renderDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     if ([self preloadToken:preloadToken isCurrentForPath:standardized])
@@ -6995,7 +7241,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
-    NSString* path = [_path copy];
+    NSString* workingPath = [self activeWorkingPath];  // temp copy for read-only source
     NSString* standardizedPath = [_path.stringByStandardizingPath copy];
     NSUInteger generation = _renderGeneration;
     [_preloadQueue addOperationWithBlock:^{
@@ -7003,7 +7249,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
           __block spdf_comments comments;
           memset(&comments, 0, sizeof(comments));
           char err[1024];
-          spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
+          spdf_document* doc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
           BOOL ok = doc && spdf_load_comments(doc, &comments, err, sizeof(err));
           if (doc) spdf_close(doc);
 
@@ -7039,7 +7285,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
-    NSString* path = [_path copy];
+    NSString* workingPath = [self activeWorkingPath];  // temp copy for read-only source
     NSString* standardizedPath = [_path.stringByStandardizingPath copy];
     NSUInteger generation = _renderGeneration;
     [_preloadQueue addOperationWithBlock:^{
@@ -7047,7 +7293,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
           __block spdf_outline outline;
           memset(&outline, 0, sizeof(outline));
           char err[1024];
-          spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
+          spdf_document* doc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
           BOOL ok = doc && spdf_load_outline(doc, &outline, err, sizeof(err));
           if (doc) spdf_close(doc);
 
@@ -7596,12 +7842,22 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
 
     _path = [destinationPath copy];
+    // Read-only shadow copy: Save-As writes a real, writable file. The temp-copy
+    // proxy drops away — the saved doc is a normal writable tab from here on.
+    _workingPath = _path;
     SPDFDocumentTab* tab = [self selectedTab];
     if (tab) {
         tab.path = _path;
         tab.title = spdf_display_name_for_path(_path);
         tab.missingFile = NO;
         tab.missingMessage = @"";
+        // Delete the old read-only proxy only if no sibling tab still views the
+        // same shared copy (otherwise it would strand them into a re-copy/prompt).
+        [self deleteReadOnlyCopyIfUnsharedForTab:tab];
+        tab.workingPath = nil;
+        tab.copiedSourceFileSize = 0;
+        tab.copiedSourceModificationDate = nil;
+        tab.readOnly = [self sourcePathIsReadOnly:_path];
         tab.cachedDocument = _doc;
         tab.cachedRenderedPages = _renderedPages;
         NSDictionary* attributes = [self fileAttributesForPath:_path];
@@ -7823,6 +8079,14 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self updateControls];
     [self clearToolbarFieldFocusForTabSwitch];
 
+    // Resolve the read-only flag on the main thread (cheap stat, no content read)
+    // before dispatching, so the tab-strip draw never races the background write
+    // of tab.readOnly. The copy binding (workingPath/copiedSource*) is written
+    // off-main below; those fields are not read concurrently during launch
+    // (serialization is suspended; -finishDeferredCloudOpenWithToken: re-reads
+    // them into _workingPath on the main thread when the open lands).
+    tab.readOnly = [self sourcePathIsReadOnly:path];
+
     NSString* token = NSUUID.UUID.UUIDString;
     _pendingDeferredCloudOpenToken = token;
     NSString* standardizedPath = [path.stringByStandardizingPath copy];
@@ -7836,8 +8100,17 @@ static BOOL spdf_page_list_cache_disabled(void) {
           NSDictionary* attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
           char err[1024];
           err[0] = '\0';
+          // Read-only shadow copy: open the temp copy (refreshing it from the
+          // source only when missing/changed) so a read-only cloud source is not
+          // read on open. Tab fields are re-read into _workingPath on the main
+          // thread when finishDeferredCloudOpenWithToken: re-runs
+          // prepareSelectedTabViewState via presentOpenedDocument.
+          NSString* openPath = path;
+          if (attributes) {
+              openPath = [self ensureWorkingPathForTab:tab sourcePath:path attributes:attributes];
+          }
           spdf_document* newDoc =
-              attributes ? [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)] : NULL;
+              attributes ? [self openSpdfDocumentAtPath:openPath error:err errorLength:sizeof(err)] : NULL;
           if (openStart > 0.0) {
               spdf_launch_profile_log(@"cloud-deferred stat+spdf_open %@ ok=%d %.1fms", path.lastPathComponent,
                                       newDoc != NULL, spdf_zoom_profile_now_ms() - openStart);
@@ -7943,6 +8216,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
+    // Read-only shadow copy: keep the dot/flag current, and (when read-only)
+    // ensure a fresh private render copy. workingPath is the temp copy for a
+    // read-only source, the source otherwise. Render/open use workingPath; path
+    // (== source) stays the identity everywhere else.
+    tab.readOnly = [self sourcePathIsReadOnly:path];
+    NSString* workingPath = [self ensureWorkingPathForTab:tab sourcePath:path attributes:attributes];
+
     if ([self tab:tab cacheMatchesFileAttributes:attributes]) {
         [self activateCachedSelectedTab:tab path:path attributes:attributes savedFindMatchIndex:savedFindMatchIndex];
         return;
@@ -7953,11 +8233,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
     char err[1024];
     err[0] = '\0';
-    spdf_document* newDoc = [self takeLaunchPrerenderedDocumentForPath:path attributes:attributes];
+    spdf_document* newDoc = [self takeLaunchPrerenderedDocumentForPath:workingPath attributes:attributes];
     if (newDoc) spdf_launch_profile_log(@"spdf_open %@ adopted from prerender", path.lastPathComponent);
     if (!newDoc) {
         double launchOpenStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-        newDoc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
+        newDoc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
         if (launchOpenStart > 0.0) {
             spdf_launch_profile_log(@"spdf_open %@ %.1fms", path.lastPathComponent,
                                     spdf_zoom_profile_now_ms() - launchOpenStart);
@@ -8079,6 +8359,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self clearActiveMetadata];
     [self closeActiveDocumentIfUnowned];
     _path = nil;
+    _workingPath = nil;  // keep working/source paths in sync when the doc clears
     _pageIndex = 0;
     _highlightPageIndex = -1;
     _selectionPageIndex = -1;
@@ -8204,6 +8485,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (closingActive) [self cancelDocumentTransientInteraction];
     SPDFDocumentTab* closingTab = _tabs[(NSUInteger)index];
     NSString* closedPath = [closingTab.path copy];
+    // Read-only shadow copy: a deliberately-closed tab's private temp copy is
+    // deleted here (NOT in -discardCachedRuntimeForTab:, which runs on reopen).
+    // Skip if another tab in this window still uses the same copy (shared
+    // read-only source); the launch orphan sweep is the cross-window backstop.
+    [self deleteReadOnlyCopyIfUnsharedForTab:closingTab];
     [self rememberClosedDocumentPath:closedPath];
     [_preloadingPaths removeObject:closedPath.stringByStandardizingPath];
     [_preloadTokens removeObjectForKey:closedPath.stringByStandardizingPath];
@@ -8220,6 +8506,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self teardownActiveFileWatcher];
         [self closeActiveDocumentIfUnowned];
         _path = nil;
+        _workingPath = nil;  // keep working/source paths in sync when the doc clears
         _pageIndex = 0;
         _selectedText = nil;
         _searchField.stringValue = @"";
@@ -9774,7 +10061,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         return;
     }
 
-    NSString* path = [_path copy];
+    NSString* path = [self activeWorkingPath];  // temp copy for read-only source
     NSInteger preferredPage = _pendingFindPreferredPage;
     _pendingFindPreferredPage = -1;
     NSInteger preferredMatchIndex = _pendingFindPreferredMatchIndex;
@@ -11666,8 +11953,12 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
               if (!path.length || [searchedPaths containsObject:path.stringByStandardizingPath]) continue;
               [searchedPaths addObject:path.stringByStandardizingPath];
 
+              // Read-only shadow copy: open the per-tab temp copy when present so
+              // a read-only source is not read (no prompt); searchedPaths dedup
+              // and the result identity stay keyed to the SOURCE path.
+              NSString* openPath = tab.workingPath.length ? tab.workingPath : path;
               char openErr[512];
-              spdf_document* doc = [self openSpdfDocumentAtPath:path error:openErr errorLength:sizeof(openErr)];
+              spdf_document* doc = [self openSpdfDocumentAtPath:openPath error:openErr errorLength:sizeof(openErr)];
               if (!doc) continue;
               NSInteger pageCount = spdf_page_count(doc);
               for (NSInteger page = 0; page < pageCount && results.count < 220; ++page) {
@@ -13952,7 +14243,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     info.verticallyCentered = YES;
 
     if ([_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
-        NSURL* url = [NSURL fileURLWithPath:_path];
+        // Read-only shadow copy: PDFKit reads the file CONTENT here, which would
+        // trigger the macOS prompt for a read-only source. Read the working path
+        // (temp copy when read-only) instead; the source stays the identity.
+        NSURL* url = [NSURL fileURLWithPath:[self activeWorkingPath]];
         PDFDocument* pdfDocument = [[PDFDocument alloc] initWithURL:url];
         if (pdfDocument && pdfDocument.pageCount > 0) {
             if (!pdfDocument.allowsPrinting) {

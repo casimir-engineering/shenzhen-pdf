@@ -174,6 +174,13 @@
     NSUInteger _findGeneration;
     BOOL _findSearchInProgress;
     NSString* _path;
+    // Render/read path for the active document. Equals a private read-only temp
+    // copy when the active source (_path) is read-only, else equals _path. Only
+    // document-open/render/read-content sites consume it; _path stays the SOURCE.
+    NSString* _workingPath;
+    // One-shot guard so the orphaned read-only-copy sweep runs only once, after
+    // the primary launch's first-paint catch-up save.
+    BOOL _didSweepReadOnlyCopies;
     NSString* _pendingOpenPath;
     NSMutableArray<NSString*>* _pendingOpenPaths;
     NSInteger _pageIndex;

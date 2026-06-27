@@ -8,6 +8,10 @@ static const CGFloat kTabGap = 6.0;
 static const CGFloat kTabMinVisibleWidth = 112.0;
 static const CGFloat kTabMaxWidth = 320.0;
 static const CGFloat kTabControlWidth = 32.0;
+// Read-only indicator dot. Shared by the draw and tooltip-rect sites so the
+// hover hit-area stays aligned with the drawn dot if either is tweaked.
+static const CGFloat kReadOnlyDotDiameter = 7.0;
+static const CGFloat kReadOnlyDotLeftInset = 12.0;
 static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzhenpdf.tab";
 
 static NSString* spdf_tab_strip_json_string_from_object(id object) {
@@ -239,6 +243,34 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
                                                    owner:self
                                                 userInfo:nil];
     [self addTrackingArea:_trackingArea];
+    [self rebuildReadOnlyTooltips];
+}
+
+// Per-dot helper tooltip for read-only tabs. AppKit-managed (does not go through
+// mouseMoved:), so it coexists with the full-title hover panel and never
+// interferes with drag tracking. Rebuilt on any layout change.
+- (void)rebuildReadOnlyTooltips {
+    [self removeAllToolTips];
+    for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
+        SPDFDocumentTab* tab = self.tabs[(NSUInteger)i];
+        if (!tab.readOnly || tab.missingFile) continue;
+        NSRect tabRect = [self rectForTabAtIndex:i];
+        if (NSWidth(tabRect) < 40.0) continue;
+        NSRect dotRect = [self readOnlyDotRectForTabRect:tabRect
+                                                diameter:kReadOnlyDotDiameter
+                                               leftInset:kReadOnlyDotLeftInset];
+        // Pad the hit area so the small dot is easy to hover.
+        [self addToolTipRect:NSInsetRect(dotRect, -3.0, -3.0) owner:self userData:NULL];
+    }
+}
+
+- (NSString*)view:(NSView*)view stringForToolTip:(NSToolTipTag)tag point:(NSPoint)point userData:(void*)userData {
+    (void)view;
+    (void)tag;
+    (void)point;
+    (void)userData;
+    return @"Read-only file. You're viewing a copy, so opening it doesn't prompt "
+           @"for access. Editing will ask to save a copy.";
 }
 
 - (void)hideHoverPanel {
@@ -334,6 +366,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 - (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs {
     _tabs = [tabs copy];
     [self setNeedsDisplay:YES];
+    [self rebuildReadOnlyTooltips];
     if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint, self.bounds)) [self updateHoverForPoint:_lastHoverPoint];
     else [self hideHoverPanel];
 }
@@ -341,11 +374,18 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 - (void)setSelectedIndex:(NSInteger)selectedIndex {
     _selectedIndex = selectedIndex;
     [self setNeedsDisplay:YES];
+    [self rebuildReadOnlyTooltips];
 }
 
 - (NSRect)closeCircleRectForTabRect:(NSRect)tabRect {
     CGFloat diameter = 16.0;
     return NSMakeRect(floor(NSMaxX(tabRect) - 26.0), floor(NSMidY(tabRect) - diameter / 2.0), diameter, diameter);
+}
+
+// Read-only dot rect: inside the title's left inset, vertically centered. View
+// is non-flipped (y grows up), so center via NSMidY like the close circle.
+- (NSRect)readOnlyDotRectForTabRect:(NSRect)tabRect diameter:(CGFloat)diameter leftInset:(CGFloat)leftInset {
+    return NSMakeRect(floor(NSMinX(tabRect) + leftInset), floor(NSMidY(tabRect) - diameter / 2.0), diameter, diameter);
 }
 
 - (void)beginTabTrackingAtIndex:(NSInteger)index point:(NSPoint)point tabRect:(NSRect)tabRect {
@@ -477,6 +517,24 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
     CGFloat leftInset = 12.0;
     CGFloat rightInset = 34.0;
+
+    // Read-only indicator: a small orange dot immediately left of the title for
+    // any tab whose SOURCE is read-only (the app renders a copy without
+    // prompting). Drawn per-tab so it follows reorder; never for a missing tab
+    // (the red tint already owns that case). systemOrange is theme-correct.
+    BOOL showReadOnlyDot = tab.readOnly && !missing;
+    if (showReadOnlyDot) {
+        // leftInset here equals kReadOnlyDotLeftInset; -rebuildReadOnlyTooltips
+        // computes the same rect so the hover hit-area stays aligned.
+        NSRect dotRect = [self readOnlyDotRectForTabRect:tabRect
+                                                diameter:kReadOnlyDotDiameter
+                                               leftInset:leftInset];
+        [NSColor.systemOrangeColor setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:dotRect] fill];
+        // Reserve space so the (middle-ellipsis) title sits right of the dot.
+        leftInset += kReadOnlyDotDiameter + 5.0;
+    }
+
     NSRect titleRect = NSMakeRect(NSMinX(tabRect) + leftInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
                                   MAX(1.0, NSWidth(tabRect) - leftInset - rightInset), titleHeight + 2);
     [title drawWithRect:titleRect

@@ -80,6 +80,10 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     copy.hasMinimapPreference = source.hasMinimapPreference;
     copy.missingFile = source.missingFile;
     copy.missingMessage = source.missingMessage;
+    copy.readOnly = source.readOnly;
+    copy.workingPath = source.workingPath;
+    copy.copiedSourceFileSize = source.copiedSourceFileSize;
+    copy.copiedSourceModificationDate = source.copiedSourceModificationDate;
     return copy;
 }
 
@@ -106,7 +110,11 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
         @"showSidebar" : @(tab.showSidebar),
         @"showMinimap" : @(tab.showMinimap),
         @"sourcePID" : @(NSProcessInfo.processInfo.processIdentifier),
-        @"sourceWindow" : @(sourceWindowNumber)
+        @"sourceWindow" : @(sourceWindowNumber),
+        @"readOnly" : @(tab.readOnly),
+        @"workingPath" : tab.workingPath ?: @"",
+        @"roCopyFileSize" : @(tab.copiedSourceFileSize),
+        @"roCopyModifiedAt" : @(tab.copiedSourceModificationDate ? tab.copiedSourceModificationDate.timeIntervalSince1970 : 0.0)
     };
 }
 
@@ -134,6 +142,12 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     tab.showSidebar = item[@"showSidebar"] ? [item[@"showSidebar"] boolValue] : YES;
     tab.showMinimap = item[@"showMinimap"] ? [item[@"showMinimap"] boolValue] : YES;
     tab.hasMinimapPreference = item[@"showMinimap"] != nil;
+    tab.readOnly = [item[@"readOnly"] boolValue];
+    if ([item[@"workingPath"] isKindOfClass:NSString.class] && [item[@"workingPath"] length] > 0)
+        tab.workingPath = item[@"workingPath"];
+    tab.copiedSourceFileSize = (unsigned long long)[item[@"roCopyFileSize"] unsignedLongLongValue];
+    double roModified = [item[@"roCopyModifiedAt"] doubleValue];
+    if (roModified > 0.0) tab.copiedSourceModificationDate = [NSDate dateWithTimeIntervalSince1970:roModified];
     return tab;
 }
 
