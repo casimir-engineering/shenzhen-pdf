@@ -1,5 +1,5 @@
 <h1 align="center">ShenzhenPDF</h1>
-<p align="center"><b>A fast, native Mac PDF reader with on-device OCR and offline translation built in.</b></p>
+<p align="center"><b>A fast, tabbed native Mac PDF reader with on-device OCR and offline translation built in.</b></p>
 
 <div align="center">
 
@@ -13,9 +13,9 @@
 
 <p align="center"><img src="docs/images/portable/macos-main-window.webp" alt="ShenzhenPDF main window: compact tabs with a read-only dot, outline sidebar, and the document map rendering a bilingual catalogue" width="880"></p>
 
-<p align="center">A lightweight, SumatraPDF-fast document reader for macOS (and soon Linux) on a portable MuPDF-backed C core. Tabs, a draggable document map, instant search, and multi-window session restore make it a joy to read with — while OCR and translation run entirely on your machine, with nothing ever leaving your device.</p>
+<p align="center">Type anywhere to search. Jump anywhere in a long document using the map. Launches instantly. App restarts in the exact state you left it in.</p>
 
-ShenzhenPDF opens PDFs (and much more) instantly, keeps documents in tidy tabs, and does the heavy work — OCR and translation — entirely on-device. **A separate project, not affiliated with SumatraPDF.**
+ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and does the heavy work - OCR and translation - entirely on-device. **Inspired by SumatraPDF, a separate project, not affiliated with it.**
 
 <sub><a href="#reading">Reading</a> · <a href="#search">Search &amp; map</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a></sub>
 
@@ -36,7 +36,7 @@ ShenzhenPDF opens PDFs (and much more) instantly, keeps documents in tidy tabs, 
 
 <p align="center"><img src="docs/images/portable/macos-search-highlights.webp" alt="Chapter-grouped search results with in-page highlights and a 2 / 19 match counter" width="880"></p>
 
-- **Incremental search with live count** — Type in the toolbar and every match appears instantly with a running "current / total" counter, highlighted in-page. <sub>macOS · Linux</sub>
+- **Incremental search with live count** — Type anywhere to start searching and every match appears instantly with a running "current / total" counter, highlighted in-page. <sub>macOS · Linux</sub>
 - **Chapter-grouped results sidebar** — Every match listed with a snippet, grouped under its chapter heading; click to jump. <sub>macOS</sub>
 - **Regex & multiline search** — Regular-expression matching, including patterns that span line and paragraph breaks; invalid patterns fail gracefully. <sub>macOS · Linux</sub>
 - **Document map (minimap)** — A live right-side thumbnail strip with a draggable viewport: drag to scroll, click to jump, Cmd-scroll to zoom — search hits show as yellow markers. Scales to hundreds of pages. <sub>macOS; Linux has its own</sub>
