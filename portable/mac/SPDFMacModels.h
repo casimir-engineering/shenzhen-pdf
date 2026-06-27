@@ -68,6 +68,16 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) BOOL hasMinimapPreference;
 @property(nonatomic) BOOL missingFile;
 @property(nonatomic, copy) NSString* missingMessage;
+// Read-only shadow copy: when the SOURCE (path) is read-only we render a
+// private temp copy so opening never reads the source (no macOS prompt).
+// path stays the SOURCE everywhere the user perceives the file; workingPath is
+// the render/read copy (nil for writable files). copiedSource* record the
+// source stat the copy reflects, so an unchanged source reopens the copy with
+// no content read on relaunch.
+@property(nonatomic) BOOL readOnly;
+@property(nonatomic, copy) NSString* workingPath;
+@property(nonatomic) unsigned long long copiedSourceFileSize;
+@property(nonatomic, strong) NSDate* copiedSourceModificationDate;
 @property(nonatomic) spdf_document* cachedDocument;
 @property(nonatomic, strong) NSMutableArray<SPDFRenderedPage*>* cachedRenderedPages;
 @property(nonatomic, strong) NSDate* cachedModificationDate;
