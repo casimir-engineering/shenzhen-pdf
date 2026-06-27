@@ -157,44 +157,6 @@ recent.json
 
 </details>
 
-<details>
-<summary><b>TestFlight handoff</b></summary>
-
-<br>
-
-The publisher needs an active Apple Developer Program account.
-
-Create once in Apple Developer and App Store Connect:
-
-1. An explicit macOS Bundle ID: `com.intuition.shenzhenpdf`.
-2. An App Store Connect macOS app record using that Bundle ID.
-3. A Mac App Store distribution provisioning profile.
-4. An Apple Distribution certificate.
-5. A 3rd Party Mac Developer Installer certificate.
-
-Build the upload package:
-
-```sh
-MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
-MAC_VERSION=26.6.8 \
-MAC_BUILD=2 \
-MAC_APPSTORE_IDENTITY="Apple Distribution: Publisher Name (TEAMID1234)" \
-MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Publisher Name (TEAMID1234)" \
-MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
-./portable/build-mac-testflight.sh
-```
-
-Expected output: `dist/ShenzhenPDF-testflight-26.6.8-2.pkg`
-
-Open in Transporter:
-
-```sh
-OPEN_TRANSPORTER=1 ./portable/build-mac-testflight.sh
-```
-
-See [portable/docs/testflight.md](portable/docs/testflight.md) for the complete handoff checklist.
-
-</details>
 
 ## Legal & Attribution
 
