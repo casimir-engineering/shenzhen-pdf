@@ -29,6 +29,14 @@ NS_ASSUME_NONNULL_BEGIN
  * repeatedly with the same path (no-op when unchanged and still healthy). */
 - (void)watchPath:(nullable NSString*)path;
 
+/* Same as -watchPath:, but when pollOnly is YES the watcher uses ONLY the
+ * stat-based polling timer — it never opens an FSEvents stream nor an O_EVTONLY
+ * vnode fd on the file. Used for read-only sources (e.g. files from another
+ * app's container), where opening/streaming the source at every launch can
+ * re-trigger the macOS "access data from other apps" prompt. The path is still
+ * watched (for change detection), just via metadata polling only. */
+- (void)watchPath:(nullable NSString*)path pollOnly:(BOOL)pollOnly;
+
 /* Stop watching and release all OS resources (fds / sources / streams). */
 - (void)stop;
 

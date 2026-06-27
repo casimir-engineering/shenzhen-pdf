@@ -2,8 +2,21 @@
 #import <PDFKit/PDFKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
+#import <os/log.h>
 
 #include <CommonCrypto/CommonDigest.h>
+#include <sys/stat.h>
+
+// Error-only logging for the read-only "shadow copy" feature. Reserved for real
+// failures (e.g. a copy write that fails); no routine/info logging.
+static os_log_t SPDFReadOnlyLog(void) {
+    static os_log_t log;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+      log = os_log_create("com.intuition.shenzhenpdf", "readonly");
+    });
+    return log;
+}
 
 #import "SPDFMacDefaultReader.h"
 #import "SPDFMacDelegatePrivate.h"
@@ -460,6 +473,50 @@ static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attribu
     return [date isKindOfClass:NSDate.class] ? date : nil;
 }
 
+// Bare lstat() of a path: SILENT (no macOS "access data from other apps"
+// prompt), unlike -[NSFileManager isWritableFileAtPath:] (an access(W_OK)
+// write-intent check) or -[NSFileManager attributesOfItemAtPath:]. Used for
+// read-only DETECTION and change-detection on a read-only SOURCE so the app
+// never prompts to touch the source. Returns NO (and leaves *stOut untouched)
+// for a missing path or a non-regular file (symlink target not followed; a
+// directory/special file is treated as "no stat" so callers fall through to
+// their existing not-a-document handling).
+static BOOL spdf_bare_lstat(NSString* path, struct stat* stOut) {
+    if (!path.length || !stOut) return NO;
+    struct stat st;
+    if (lstat(path.fileSystemRepresentation, &st) != 0) return NO;
+    if (!S_ISREG(st.st_mode)) return NO;
+    *stOut = st;
+    return YES;
+}
+
+// Build an (NSFileSize, NSFileModificationDate) dictionary from a bare lstat,
+// matching the shape -fileAttributesForPath: returns so the existing
+// cache-coherency / copy-reuse comparisons work unchanged — but WITHOUT the
+// prompting -[NSFileManager attributesOfItemAtPath:] call. Returns nil when the
+// path cannot be stat'd as a regular file.
+static NSDictionary* spdf_bare_lstat_attributes(NSString* path) {
+    struct stat st;
+    if (!spdf_bare_lstat(path, &st)) return nil;
+    NSTimeInterval mtime = (NSTimeInterval)st.st_mtimespec.tv_sec +
+                           (NSTimeInterval)st.st_mtimespec.tv_nsec / 1e9;
+    return @{
+        NSFileSize : @((unsigned long long)st.st_size),
+        NSFileModificationDate : [NSDate dateWithTimeIntervalSince1970:mtime]
+    };
+}
+
+// Read-only determination from a bare lstat's mode/uid/gid vs the effective
+// user/group: read-only iff no write bit that applies to this process is set.
+// Pure metadata math on the lstat result — SILENT, no access(W_OK).
+static BOOL spdf_stat_is_read_only(const struct stat* st) {
+    if (!st) return NO;
+    mode_t mode = st->st_mode;
+    if (st->st_uid == geteuid()) return (mode & S_IWUSR) == 0;
+    if (st->st_gid == getegid()) return (mode & S_IWGRP) == 0;
+    return (mode & S_IWOTH) == 0;
+}
+
 // ---- Launch prerender (prototype) -----------------------------------------
 // Started from main() before NSApplication init. A background worker opens the
 // document the launch sequence will select (restored active tab, or the
@@ -611,22 +668,19 @@ static void spdf_discard_launch_prerender(void) {
           }
           return;
       }
-      NSDictionary* attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
-      if (!attributes) {
-          @synchronized(result) {
-              result.finished = YES;
-          }
-          return;
-      }
-      // Read-only shadow copy: stat-only read-only check (no content read / no
-      // prompt). For a read-only source, open the persisted temp copy if it is
-      // present and matches the persisted source stat; otherwise skip prerender
-      // entirely so loadSelectedTab makes/refreshes the copy on the main thread
-      // (the single prompt site). openedPath becomes the prerender identity, so
-      // it matches the workingPath loadSelectedTab passes to adopt the result.
+      // Read-only shadow copy: the source read-only check + change detection use a
+      // BARE lstat (silent) — never the prompting -attributesOfItemAtPath:. For a
+      // read-only source, open the persisted temp copy when it exists and the
+      // bare-lstat (mtime,size) matches the persisted copy stat; otherwise skip
+      // prerender so loadSelectedTab (re)creates the copy on the main thread (the
+      // single prompt site). The prerender identity (openedPath) is the copy, and
+      // the attributes are the bare-lstat source attributes — exactly what
+      // loadSelectedTab passes for adoption. Writable sources keep -attributesOf.
       NSString* openedPath = path;
+      NSDictionary* attributes = nil;
       if ([self sourcePathIsReadOnly:path]) {
-          BOOL canUseCopy = persistedWorkingPath.length &&
+          attributes = [self readOnlySourceAttributesForPath:path];
+          BOOL canUseCopy = attributes && persistedWorkingPath.length &&
                             [NSFileManager.defaultManager fileExistsAtPath:persistedWorkingPath] &&
                             persistedCopyModifiedAt > 0.0 &&
                             persistedCopyFileSize == spdf_file_size_from_attributes(attributes);
@@ -642,6 +696,14 @@ static void spdf_discard_launch_prerender(void) {
               return;
           }
           openedPath = persistedWorkingPath;
+      } else {
+          attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+          if (!attributes) {
+              @synchronized(result) {
+                  result.finished = YES;
+              }
+              return;
+          }
       }
       double openStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
       char err[1024];
@@ -676,9 +738,10 @@ static void spdf_discard_launch_prerender(void) {
               result.doc = doc;
               result.page = rendered;
               // Identity is the path actually opened (temp copy for a read-only
-              // source) so loadSelectedTab's workingPath-keyed adoption matches;
-              // the stat stays the SOURCE stat (loadSelectedTab passes source
-              // attributes), keeping cache coherency keyed to the source.
+              // source) so loadSelectedTab's workingPath-keyed adoption matches.
+              // The stat is the source stat: full attributes for writable tabs,
+              // the bare-lstat source attributes for read-only tabs — exactly what
+              // loadSelectedTab passes for adoption.
               result.path = [openedPath copy];
               result.fileSize = spdf_file_size_from_attributes(attributes);
               result.modificationDate = spdf_file_modification_date_from_attributes(attributes);
@@ -1687,7 +1750,11 @@ static void spdf_discard_launch_prerender(void) {
     NSDate* modificationDate = tab.cachedModificationDate;
     unsigned long long fileSize = tab.cachedFileSize;
     if (!modificationDate || fileSize == 0) {
-        NSDictionary* attributes = [self fileAttributesForPath:tab.path];
+        // Read-only source: stat via a bare lstat (silent) — never the prompting
+        // -attributesOfItemAtPath:. (The cache is normally already populated for a
+        // read-only tab, so this fallback rarely fires.)
+        NSDictionary* attributes = tab.readOnly ? [self readOnlySourceAttributesForPath:tab.path]
+                                                : [self fileAttributesForPath:tab.path];
         modificationDate = spdf_file_modification_date_from_attributes(attributes);
         fileSize = spdf_file_size_from_attributes(attributes);
     }
@@ -6354,16 +6421,51 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return dir;
 }
 
-// STAT-ONLY read-only detection on the SOURCE path: same signal the edit gate
-// uses (-activePDFNeedsSaveAsBeforeModificationWithReason:). No content read, so
-// no macOS access prompt. A missing file returns NO (handled by the missing-file
-// UI), so it is not mistaken for read-only.
+// Read-only detection on the SOURCE path via a BARE lstat() — SILENT (no macOS
+// "access data from other apps" prompt), unlike -isWritableFileAtPath: (which is
+// access(W_OK), a write-intent check that DOES prompt on a source from another
+// app's container). Read-only iff the process cannot write per st_mode/uid/gid.
+// A missing/non-regular path returns NO (handled by the missing-file UI), so it
+// is not mistaken for read-only. KEEP -isWritableFileAtPath: only in the
+// user-initiated Save-As gate (-activePDFNeedsSaveAsBeforeModificationWithReason:),
+// where a prompt is acceptable.
 - (BOOL)sourcePathIsReadOnly:(NSString*)path {
-    if (!path.length) return NO;
-    NSFileManager* fm = NSFileManager.defaultManager;
-    BOOL isDir = NO;
-    if (![fm fileExistsAtPath:path isDirectory:&isDir] || isDir) return NO;
-    return ![fm isWritableFileAtPath:path];
+    struct stat st;
+    if (!spdf_bare_lstat(path, &st)) return NO;
+    return spdf_stat_is_read_only(&st);
+}
+
+// Source attributes for a read-only SOURCE via a bare lstat — SILENT. Returns
+// the (NSFileSize, NSFileModificationDate) shape used everywhere for cache
+// coherency and copy-reuse comparison, without the prompting
+// -attributesOfItemAtPath:. nil when the path cannot be stat'd as a regular file.
+- (NSDictionary*)readOnlySourceAttributesForPath:(NSString*)path {
+    return spdf_bare_lstat_attributes(path);
+}
+
+// One-stop source-attribute resolution that NEVER prompts for a read-only
+// source: a single bare lstat() determines read-only and (when read-only) yields
+// the (size, mtime) attributes silently; only a writable source falls through to
+// the richer -attributesOfItemAtPath:. Writes the resolved read-only flag into
+// `tab` (so the orange dot stays current). Returns nil for a missing/unreadable
+// path (caller surfaces the missing-file UI). This is the single source touch
+// for a read-only tab on every open/refresh path: a bare lstat, nothing more.
+- (NSDictionary*)sourceAttributesForTab:(SPDFDocumentTab*)tab path:(NSString*)path {
+    struct stat st;
+    if (spdf_bare_lstat(path, &st)) {
+        if (spdf_stat_is_read_only(&st)) {
+            if (tab) tab.readOnly = YES;
+            NSTimeInterval mtime = (NSTimeInterval)st.st_mtimespec.tv_sec +
+                                   (NSTimeInterval)st.st_mtimespec.tv_nsec / 1e9;
+            return @{
+                NSFileSize : @((unsigned long long)st.st_size),
+                NSFileModificationDate : [NSDate dateWithTimeIntervalSince1970:mtime]
+            };
+        }
+        if (tab) tab.readOnly = NO;
+    }
+    // Writable (or could-not-lstat): unchanged behavior — full attributes.
+    return [self fileAttributesForPath:path];
 }
 
 // Deterministic copy filename bound to the standardized source path so an
@@ -6384,14 +6486,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return [NSString stringWithFormat:@"ro-%@.%@", hex, ext];
 }
 
-// Ensure the tab has a fresh read-only render copy of its (read-only) SOURCE and
+// Ensure the tab has a read-only render copy of its (read-only) SOURCE and
 // return the copy path; returns the source path for writable files (no copy).
 //
-// STAT-ONLY change detection: the source mtime/size stat is metadata (no
-// prompt). The copy is refreshed from the source content ONLY when it is missing
-// or the source changed vs the stat the copy reflects (copiedSource*). That copy
-// is the ONE place the macOS prompt may appear; an unchanged source reopens the
-// existing copy with no content read.
+// `attributes` MUST be the SOURCE's (NSFileSize, NSFileModificationDate) — for a
+// read-only source callers pass the bare-lstat attributes (silent), never
+// -attributesOfItemAtPath: on the source. Change detection compares those
+// (mtime,size) against the stat the copy reflects (copiedSource*). The copy is
+// refreshed from the source CONTENT only when it is missing or the source
+// changed; that content read is the ONE place the macOS prompt may appear. An
+// unchanged source reopens the existing copy with no content read.
 - (NSString*)ensureWorkingPathForTab:(SPDFDocumentTab*)tab
                           sourcePath:(NSString*)sourcePath
                           attributes:(NSDictionary*)attributes {
@@ -6420,21 +6524,33 @@ static BOOL spdf_page_list_cache_disabled(void) {
                      [tab.copiedSourceModificationDate isEqualToDate:sourceModified] &&
                      tab.copiedSourceFileSize == sourceSize;
     if (unchanged) {
+        // Source unchanged vs the stat the copy reflects: reuse the copy with no
+        // source content read (no prompt).
         tab.workingPath = copyPath;
         return copyPath;
     }
 
-    // Missing or changed: re-read the source content into the copy (prompt site).
+    // Missing or changed: author a FRESH copy from the source bytes.
+    // A plain copyItemAtPath: PRESERVES the source's restricted xattrs
+    // (com.apple.provenance / com.apple.macl / com.apple.quarantine), which mark
+    // the file as "from another app" and re-trigger the prompt — and those
+    // xattrs cannot be stripped after the fact. Reading the bytes and writing a
+    // NEW file makes the copy authored by OUR process, so it gets OUR provenance.
+    //
     // Acquire security-scoped access first, mirroring -openSpdfDocumentAtPath:,
-    // so a sandboxed restored read-only source does not fail the copy with EPERM
-    // (which would silently fall back to reading the source and re-prompt).
+    // so a sandboxed restored read-only source does not fail the read with EPERM
+    // (which would silently fall back to reading the source and re-prompt). This
+    // is the ONE allowed source-content read.
     [self ensureSecurityAccessForPath:sourcePath];
+    NSError* ioError = nil;
+    NSData* data = [NSData dataWithContentsOfFile:sourcePath options:0 error:&ioError];
     NSFileManager* fm = NSFileManager.defaultManager;
     if (copyExists) [fm removeItemAtPath:copyPath error:nil];
-    NSError* copyError = nil;
-    if (![fm copyItemAtPath:sourcePath toPath:copyPath error:&copyError]) {
-        // Copy failed (e.g. denied): fall back to opening the source directly so
-        // the document still loads; no copy binding is recorded.
+    if (!data || ![data writeToFile:copyPath options:NSDataWritingAtomic error:&ioError]) {
+        // Read or write failed (e.g. denied): fall back to opening the source
+        // directly so the document still loads; no copy binding is recorded.
+        os_log_error(SPDFReadOnlyLog(), "read-only copy write failed: %{public}@",
+                     ioError.localizedDescription);
         tab.workingPath = nil;
         tab.copiedSourceFileSize = 0;
         tab.copiedSourceModificationDate = nil;
@@ -6492,17 +6608,22 @@ static BOOL spdf_page_list_cache_disabled(void) {
     });
 }
 
-// Delete a tab's read-only temp copy unless another tab in this window still
-// references the same copy file (shared read-only source). Used both when a tab
-// is deliberately closed and when Save-As converts it to a writable file.
-// excludeTab is the tab being closed/converted (skipped during the shared-use
-// scan, since its own binding is being torn down).
+// Delete a tab's read-only temp copy unless another tab — in ANY window — still
+// references the same copy file (shared read-only source). The copy filename is
+// deterministic by standardized source path, so the same ro-<sha>.pdf is shared
+// across windows that open the same source; the shared-use scan must therefore
+// cover every window's tabs (mirroring -sweepOrphanedReadOnlyCopies), not just
+// this window's. Used both when a tab is deliberately closed and when Save-As
+// converts it to a writable file. excludeTab is the tab being closed/converted
+// (skipped during the scan, since its own binding is being torn down).
 - (void)deleteReadOnlyCopyIfUnsharedForTab:(SPDFDocumentTab*)excludeTab {
     NSString* copyPath = excludeTab.workingPath;
     if (!copyPath.length) return;
-    for (SPDFDocumentTab* other in _tabs) {
-        if (other == excludeTab) continue;
-        if ([other.workingPath isEqualToString:copyPath]) return;  // still in use
+    for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
+        for (SPDFDocumentTab* other in controller->_tabs) {
+            if (other == excludeTab) continue;
+            if ([other.workingPath isEqualToString:copyPath]) return;  // still in use
+        }
     }
     [NSFileManager.defaultManager removeItemAtPath:copyPath error:nil];
 }
@@ -6559,7 +6680,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
           [weakSelf activeFileWatcherDidReportChangeForPath:changedPath];
         };
     }
-    [_activeFileWatcher watchPath:path];
+    // Read-only source: change detection runs via the poll-only watcher — a plain
+    // NSTimer that NEVER opens an FSEvents stream nor an O_EVTONLY vnode fd on the
+    // source (either would prompt). It only nudges the owner, which then does a
+    // bare lstat() (silent) to detect a real change. Writable sources keep the
+    // FSEvents/vnode event watch unchanged.
+    BOOL pollOnly = tab.readOnly || [self sourcePathIsReadOnly:path];
+    [_activeFileWatcher watchPath:path pollOnly:pollOnly];
 }
 
 - (void)teardownActiveFileWatcher {
@@ -6579,7 +6706,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (![tab.path.stringByStandardizingPath isEqualToString:changedPath.stringByStandardizingPath]) return;
     if (tab.missingFile) return;
 
-    NSDictionary* attributes = [self fileAttributesForPath:tab.path];
+    // Read-only source: detect changes with a BARE lstat (silent) — never the
+    // prompting -attributesOfItemAtPath:. Writable sources keep NSFileManager.
+    NSDictionary* attributes = tab.readOnly ? [self readOnlySourceAttributesForPath:tab.path]
+                                            : [self fileAttributesForPath:tab.path];
     if (!attributes) {
         // File temporarily absent (atomic replace in flight) or genuinely gone.
         // Retry briefly before surfacing the missing-file UI.
@@ -6587,32 +6717,60 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
-    // Cache match => no real change (covers our own saves, which refresh the
-    // cache). Re-point the watcher in case an atomic replace swapped the inode.
-    if ([self fileAttributes:attributes
-          matchFileAttributes:@{
-              NSFileModificationDate : tab.cachedModificationDate ?: [NSDate distantPast],
-              NSFileSize : @(tab.cachedFileSize)
-          }]) {
-        [_activeFileWatcher watchPath:tab.path];
+    // For a read-only tab the authoritative "did the source change" comparison is
+    // fresh source-lstat vs the stat the copy reflects (copiedSource*) — the
+    // source stat captured when the copy was last (re)created. (cachedModification
+    // Date/cachedFileSize also hold the source stat for a read-only tab, but
+    // copiedSource* is the canonical baseline.) A match means no change.
+    BOOL unchanged;
+    if (tab.readOnly) {
+        unchanged = [self fileAttributes:attributes
+                     matchFileAttributes:@{
+                         NSFileModificationDate : tab.copiedSourceModificationDate ?: [NSDate distantPast],
+                         NSFileSize : @(tab.copiedSourceFileSize)
+                     }];
+    } else {
+        // Cache match => no real change (covers our own saves, which refresh the
+        // cache).
+        unchanged = [self fileAttributes:attributes
+                     matchFileAttributes:@{
+                         NSFileModificationDate : tab.cachedModificationDate ?: [NSDate distantPast],
+                         NSFileSize : @(tab.cachedFileSize)
+                     }];
+    }
+    if (unchanged) {
+        // Re-point the watcher in case an atomic replace swapped the inode
+        // (writable only; the poll-only read-only watcher has no inode binding).
+        if (!tab.readOnly) [_activeFileWatcher watchPath:tab.path];
         return;
     }
 
+    // Changed: reload. For a read-only tab this re-runs loadSelectedTab, which
+    // recreates the copy from the new source content (the one allowed prompt) via
+    // -ensureWorkingPathForTab: and re-renders the open document.
     [self reloadSelectedTabFromDiskChange];
 }
 
 - (void)handleActiveTabFileTemporarilyMissing:(SPDFDocumentTab*)tab path:(NSString*)path attempt:(NSInteger)attempt {
     static const NSInteger kMaxMissingRetries = 5;  // ~5 * 0.25s = ~1.25s grace
     if (![tab.path.stringByStandardizingPath isEqualToString:path.stringByStandardizingPath]) return;
-    NSDictionary* attributes = [self fileAttributesForPath:path];
+    // Read-only source: probe with a bare lstat (silent), compare against the
+    // stat the copy reflects; writable keeps NSFileManager + the cached stat.
+    NSDictionary* attributes = tab.readOnly ? [self readOnlySourceAttributesForPath:path]
+                                            : [self fileAttributesForPath:path];
     if (attributes) {
         // Reappeared (atomic replace landed). Re-point and reload if changed.
-        [_activeFileWatcher watchPath:path];
-        if (![self fileAttributes:attributes
-                matchFileAttributes:@{
-                    NSFileModificationDate : tab.cachedModificationDate ?: [NSDate distantPast],
-                    NSFileSize : @(tab.cachedFileSize)
-                }]) {
+        if (!tab.readOnly) [_activeFileWatcher watchPath:path];
+        NSDictionary* baseline = tab.readOnly
+                                     ? @{
+                                           NSFileModificationDate : tab.copiedSourceModificationDate ?: [NSDate distantPast],
+                                           NSFileSize : @(tab.copiedSourceFileSize)
+                                       }
+                                     : @{
+                                           NSFileModificationDate : tab.cachedModificationDate ?: [NSDate distantPast],
+                                           NSFileSize : @(tab.cachedFileSize)
+                                       };
+        if (![self fileAttributes:attributes matchFileAttributes:baseline]) {
             [self reloadSelectedTabFromDiskChange];
         }
         return;
@@ -6662,6 +6820,28 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
     for (SPDFDocumentTab* tab in _tabs) {
         if (!tab.path.length || tab.missingFile) continue;
+        // Read-only source: detect changes with a BARE lstat (silent), compared
+        // against the stat the copy reflects (copiedSource*). Never stat the
+        // SOURCE via the prompting -attributesOfItemAtPath:.
+        if (tab.readOnly) {
+            // A read-only tab with no copy binding yet has nothing to compare;
+            // it stats fresh (via bare lstat) on first activation.
+            if (!tab.copiedSourceModificationDate && tab.copiedSourceFileSize == 0) continue;
+            NSDictionary* attributes = [self readOnlySourceAttributesForPath:tab.path];
+            if (!attributes) continue;  // transient; reappearance handled on next focus
+            BOOL matches = [self fileAttributes:attributes
+                           matchFileAttributes:@{
+                               NSFileModificationDate : tab.copiedSourceModificationDate ?: [NSDate distantPast],
+                               NSFileSize : @(tab.copiedSourceFileSize)
+                           }];
+            if (matches) continue;
+            // Source changed: the active tab reloads (recreates the copy from the
+            // new content + re-renders); an inactive tab drops its cache so the
+            // next activation reopens and refreshes the copy via loadSelectedTab.
+            if (tab == activeTab) [self reloadSelectedTabFromDiskChange];
+            else [self discardCachedRuntimeForTab:tab];
+            continue;
+        }
         // Only meaningful for tabs we have a cached snapshot for; a tab never
         // opened has no cache to compare and will stat fresh on first switch.
         if (!tab.cachedModificationDate && tab.cachedFileSize == 0) continue;
@@ -7024,18 +7204,20 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSString* standardized = [path.stringByStandardizingPath copy];
         if ([_preloadingPaths containsObject:standardized]) continue;
 
-        NSDictionary* attributes = [self fileAttributesForPath:path];
+        // Read-only shadow copy: source attributes via a BARE lstat (silent) when
+        // read-only (also sets tab.readOnly), full attributes when writable. No
+        // prompting source access for a read-only tab.
+        BOOL readOnly = [self sourcePathIsReadOnly:path];
+        NSDictionary* attributes = [self sourceAttributesForTab:tab path:path];
         if (!attributes) {
             [self discardCachedRuntimeForTab:tab];
             tab.missingFile = YES;
             tab.missingMessage = @"File moved or deleted";
             continue;
         }
-        // Read-only shadow copy: keep the per-tab flag current and, for a
-        // read-only source, ensure/refresh its temp render copy so the preload
-        // open below never reads the source. workingPath is the temp copy for a
-        // read-only source, the source otherwise.
-        tab.readOnly = [self sourcePathIsReadOnly:path];
+        // workingPath is the temp render copy for a read-only source (reused unless
+        // the bare-lstat shows a change), the source otherwise. The preload open
+        // below reads the COPY for a read-only tab — never the source.
         NSString* workingPath = [self ensureWorkingPathForTab:tab sourcePath:path attributes:attributes];
         if ([self tab:tab cacheMatchesFileAttributes:attributes]) {
             tab.missingFile = NO;
@@ -7053,9 +7235,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
         CGFloat displayScale = [self backingScale];
         NSDictionary* pageGeometryState = [self pageGeometryStateForPath:path];
 
+        // Read-only: reuse the main-thread bare-lstat attributes so the preload
+        // worker performs ZERO source access (it only opens the COPY). Writable:
+        // re-stat the source off-main as before.
+        NSDictionary* capturedReadOnlyAttributes = readOnly ? attributes : nil;
         [_preloadQueue addOperationWithBlock:^{
           @autoreleasepool {
-              NSDictionary* operationAttributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+              NSDictionary* operationAttributes = readOnly
+                                                      ? capturedReadOnlyAttributes
+                                                      : [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
               if (!operationAttributes) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
@@ -7146,7 +7334,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                     spdf_close(doc);
                     return;
                 }
-                NSDictionary* latestAttributes = [self fileAttributesForPath:currentTab.path];
+                // Read-only: re-validate against the captured bare-lstat
+                // attributes, never a prompting source stat. Writable re-stats.
+                NSDictionary* latestAttributes = readOnly
+                                                     ? capturedReadOnlyAttributes
+                                                     : [self fileAttributesForPath:currentTab.path];
                 if (![self fileAttributes:operationAttributes matchFileAttributes:latestAttributes]) {
                     [self finishPreloadForPath:standardized token:preloadToken];
                     spdf_close(doc);
@@ -7187,8 +7379,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 if (!preferredRenderedPage) return;
                 NSInteger tabIndex = -1;
                 SPDFDocumentTab* currentTab = [self tabForStandardizedPath:standardized index:&tabIndex];
+                // Read-only: validate the cache against the captured bare-lstat
+                // attributes, never a prompting source stat. Writable re-stats.
+                NSDictionary* cacheCheckAttributes = readOnly
+                                                         ? capturedReadOnlyAttributes
+                                                         : [self fileAttributesForPath:currentTab.path];
                 if (!currentTab || tabIndex == self->_selectedTabIndex ||
-                    ![self tab:currentTab cacheMatchesFileAttributes:[self fileAttributesForPath:currentTab.path]])
+                    ![self tab:currentTab cacheMatchesFileAttributes:cacheCheckAttributes])
                     return;
                 if (pageIndex < 0 || pageIndex >= (NSInteger)currentTab.cachedRenderedPages.count) return;
                 SPDFRenderedPage* old = currentTab.cachedRenderedPages[(NSUInteger)pageIndex];
@@ -8079,13 +8276,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self updateControls];
     [self clearToolbarFieldFocusForTabSwitch];
 
-    // Resolve the read-only flag on the main thread (cheap stat, no content read)
-    // before dispatching, so the tab-strip draw never races the background write
-    // of tab.readOnly. The copy binding (workingPath/copiedSource*) is written
-    // off-main below; those fields are not read concurrently during launch
-    // (serialization is suspended; -finishDeferredCloudOpenWithToken: re-reads
-    // them into _workingPath on the main thread when the open lands).
-    tab.readOnly = [self sourcePathIsReadOnly:path];
+    // Read-only shadow copy: resolve read-only via a BARE lstat (silent) on the
+    // main thread — this both sets tab.readOnly (so the tab-strip draw never races
+    // the background write) and yields the source attributes for a read-only tab
+    // WITHOUT a prompting -attributesOfItemAtPath:. For a read-only source the
+    // captured attributes are reused off-main so the worker performs zero source
+    // touch; the copy binding (workingPath/copiedSource*) is written off-main and
+    // re-read into _workingPath when -finishDeferredCloudOpenWithToken: lands.
+    BOOL readOnly = [self sourcePathIsReadOnly:path];
+    NSDictionary* roSourceAttributes = readOnly ? [self readOnlySourceAttributesForPath:path] : nil;
+    tab.readOnly = readOnly;
 
     NSString* token = NSUUID.UUID.UUIDString;
     _pendingDeferredCloudOpenToken = token;
@@ -8097,7 +8297,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       @autoreleasepool {
           double openStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-          NSDictionary* attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+          // Read-only: reuse the main-thread bare-lstat attributes (zero source
+          // touch). Writable: stat the source off-main as before.
+          NSDictionary* attributes = readOnly
+                                         ? roSourceAttributes
+                                         : [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
           char err[1024];
           err[0] = '\0';
           // Read-only shadow copy: open the temp copy (refreshing it from the
@@ -8203,10 +8407,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
+    // Read-only shadow copy: source attributes come from a BARE lstat (silent)
+    // when the source is read-only — never the prompting -attributesOfItemAtPath:.
+    // This single lstat also sets tab.readOnly (the dot). A writable source keeps
+    // the unchanged full-attributes path. At launch/restore for a persisted
+    // read-only tab whose copy exists, this lstat is the ONLY source touch; the
+    // copy is opened below and reused unless the lstat shows the source changed.
     double launchStatStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-    NSDictionary* attributes = [self fileAttributesForPath:path];
+    NSDictionary* attributes = [self sourceAttributesForTab:tab path:path];
     if (launchStatStart > 0.0) {
-        spdf_launch_profile_log(@"fileAttributes %@ %.1fms", path.lastPathComponent,
+        spdf_launch_profile_log(@"sourceAttributes %@ %.1fms", path.lastPathComponent,
                                 spdf_zoom_profile_now_ms() - launchStatStart);
     }
     if (!attributes) {
@@ -8215,12 +8425,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self showUnavailableSelectedTab:tab path:path message:tab.missingMessage showOpenError:NO error:NULL];
         return;
     }
-
-    // Read-only shadow copy: keep the dot/flag current, and (when read-only)
-    // ensure a fresh private render copy. workingPath is the temp copy for a
-    // read-only source, the source otherwise. Render/open use workingPath; path
-    // (== source) stays the identity everywhere else.
-    tab.readOnly = [self sourcePathIsReadOnly:path];
+    // workingPath is the temp render copy for a read-only source (created/refreshed
+    // from the source content only when missing or the bare-lstat shows a change),
+    // the source itself otherwise. Render/open use workingPath; path (== source)
+    // stays the identity everywhere else.
     NSString* workingPath = [self ensureWorkingPathForTab:tab sourcePath:path attributes:attributes];
 
     if ([self tab:tab cacheMatchesFileAttributes:attributes]) {
