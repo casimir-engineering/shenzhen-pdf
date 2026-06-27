@@ -5,7 +5,7 @@
 
 <a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg"><img src="https://img.shields.io/badge/Download%20for%20macOS-Apple%20Silicon-2ea44f?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS (Apple Silicon)" height="46"></a>
 
-<sub>Latest <b>26.6.27</b> · Apple Silicon · Developer ID notarized · auto-updates</sub>
+<sub>Latest <b>26.6.27-2</b> · Apple Silicon</sub>
 
 <a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest">All releases</a> · <a href="https://github.com/casimir-engineering/shenzhen-pdf">Source</a>
 
@@ -13,7 +13,7 @@
 
 <p align="center"><img src="docs/images/portable/macos-main-window.webp" alt="ShenzhenPDF main window: compact tabs with a read-only dot, outline sidebar, and the document map rendering a bilingual catalogue" width="880"></p>
 
-<p align="center">A lightweight, SumatraPDF-fast document reader for macOS (and Linux) on a portable MuPDF-backed C core. Tabs, a draggable document map, instant search, and multi-window session restore make it a joy to read with — while OCR and translation run entirely on your machine, with nothing ever leaving your device.</p>
+<p align="center">A lightweight, SumatraPDF-fast document reader for macOS (and soon Linux) on a portable MuPDF-backed C core. Tabs, a draggable document map, instant search, and multi-window session restore make it a joy to read with — while OCR and translation run entirely on your machine, with nothing ever leaving your device.</p>
 
 ShenzhenPDF opens PDFs (and much more) instantly, keeps documents in tidy tabs, and does the heavy work — OCR and translation — entirely on-device. **A separate project, not affiliated with SumatraPDF.**
 
@@ -21,7 +21,7 @@ ShenzhenPDF opens PDFs (and much more) instantly, keeps documents in tidy tabs, 
 
 ---
 
-## <a id="reading"></a>Reading, built for actually reading <sub>macOS</sub>
+## <a id="reading"></a>Instant launch, intuitive interface, with all the features to do actual work
 
 - **Compact tabbed windows** — Keep many documents in one tidy window; a space-efficient tab strip disambiguates same-named files and overflows into a "…" menu.
 - **Draggable & detachable tabs** — Reorder by dragging, or pull a tab into its own window — it reopens exactly where you left it, carrying its view state.
@@ -32,7 +32,7 @@ ShenzhenPDF opens PDFs (and much more) instantly, keeps documents in tidy tabs, 
 
 <p align="center"><img src="docs/images/portable/macos-multi-window.webp" alt="Two ShenzhenPDF windows side by side, each with its own tabs, outline sidebar, and document map" width="880"></p>
 
-## <a id="search"></a>Find anything, navigate everything
+## <a id="search"></a>Search-oriented architecture
 
 <p align="center"><img src="docs/images/portable/macos-search-highlights.webp" alt="Chapter-grouped search results with in-page highlights and a 2 / 19 match counter" width="880"></p>
 
@@ -57,17 +57,17 @@ ShenzhenPDF opens PDFs (and much more) instantly, keeps documents in tidy tabs, 
 - **MuPDF-backed C core** — A compact ~93 KB C core wraps statically-linked MuPDF 1.27.2 behind a small stable ABI shared by both frontends — no Win32 emulation. Adds highlights/comments, page rotate, and single-page PDF export on top of viewing.
 - **Far more than PDF** — Opens everything MuPDF recognizes — XPS, CBZ comics, EPUB/MOBI e-books, images, FB2, and HTML. PDF is the primary, most-polished path.
 
-## Files, printing & updates <sub>macOS</sub>
+## Files, printing & updates
 
-- **Verified daily auto-updater** — A once-a-day background check against GitHub Releases (off the launch path, disabled in the App Store build). Every update is verified offline against a pinned Apple Developer ID (Team 66LJ4BV7Q3), hardened runtime, bundle id, and stapled notarization before an atomic swap — with automatic rollback if the new build fails to launch. <sub>Developer ID build</sub>
-- **High-quality native printing** — Prints through the standard macOS pipeline with Fit / Actual Size / Custom scaling, honoring the document's print permission.
+- **Verified daily auto-updater** — A once-a-day background check against GitHub Releases (off the launch path, disabled in the App Store build). Every update is verified offline against a pinned Apple Developer ID (Team 66LJ4BV7Q3), hardened runtime, bundle id, and stapled notarization before an atomic swap — with automatic rollback if the new build fails to launch.
+- **High-quality native printing** — Prints through the standard macOS pipeline with Fit / Actual Size / Custom scaling
 - **One-click default reader & readable JSON state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as pretty-printed JSON you can read, diff, and edit. <sub>JSON state: macOS · Linux</sub>
 
 ## Platform support
 
 - **macOS — the polished path** — Native AppKit + PDFKit; most reading polish (tabs, sessions, document map, prompt-free opening, auto-updater) is macOS.
-- **Linux — shares the core** — Native GTK 3 app on the same portable C core and data formats, with its own minimap; OCR, translation, and search work here too. Some latest behavior is macOS-specific.
-- **Windows — legacy** — A separate Win32 C++ tree remains in-tree but is independent of the portable core and not yet rebranded; no published Windows binary.
+- **WIP: Linux — shares the core** — Native GTK 3 app on the same portable C core and data formats, with its own minimap; OCR, translation, and search work here too. Some latest behavior is macOS-specific, will be fixed.
+- **Windows — legacy** — A separate Win32 C++ tree remains in-tree but is independent of the portable core; no published Windows binary.
 
 ---
 
