@@ -256,9 +256,16 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
 }
 
 - (CGFloat)longDocumentViewportDragThumbHeightForContentHeight:(CGFloat)contentHeight track:(NSRect)track {
+    (void)contentHeight;
+    // The drag thumb height must be a fraction of the TRACK, not of the minimap's
+    // total content height. contentHeight scales with page count, so for very long
+    // documents (~200+ pages) heightFraction*contentHeight overshoots the track and
+    // clamps to the full track height — which collapses the drag range
+    // (maxTop == minTop) and makes the viewport undraggable. Sizing against the
+    // track keeps a usable range at any document length.
     CGFloat heightFraction =
         spdf_clamp_cg(NSHeight(self.documentVisibleRect) / MAX(1.0, self.documentHeight), 0.02, 1.0);
-    return MIN(MAX(10.0, heightFraction * MAX(1.0, contentHeight)), NSHeight(track));
+    return MIN(MAX(10.0, heightFraction * NSHeight(track)), NSHeight(track));
 }
 
 - (NSRect)unscrolledVisibleRectForScale:(CGFloat)scale gap:(CGFloat)gap contentHeight:(CGFloat)contentHeight {

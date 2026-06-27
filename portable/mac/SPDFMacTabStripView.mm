@@ -11,7 +11,9 @@ static const CGFloat kTabControlWidth = 32.0;
 // Read-only indicator dot. Shared by the draw and tooltip-rect sites so the
 // hover hit-area stays aligned with the drawn dot if either is tweaked.
 static const CGFloat kReadOnlyDotDiameter = 7.0;
-static const CGFloat kReadOnlyDotLeftInset = 12.0;
+// 50% less horizontal space around the read-only dot than before (was 12 / 5).
+static const CGFloat kReadOnlyDotLeftInset = 6.0;
+static const CGFloat kReadOnlyDotTitleGap = 2.5;
 static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzhenpdf.tab";
 
 static NSString* spdf_tab_strip_json_string_from_object(id object) {
@@ -525,15 +527,15 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     // (the red tint already owns that case). systemOrange is theme-correct.
     BOOL showReadOnlyDot = tab.readOnly && !missing;
     if (showReadOnlyDot) {
-        // leftInset here equals kReadOnlyDotLeftInset; -rebuildReadOnlyTooltips
-        // computes the same rect so the hover hit-area stays aligned.
+        // -rebuildReadOnlyTooltips computes the same rect via kReadOnlyDotLeftInset,
+        // so the hover hit-area stays aligned with the drawn dot.
         NSRect dotRect = [self readOnlyDotRectForTabRect:tabRect
                                                 diameter:kReadOnlyDotDiameter
-                                               leftInset:leftInset];
+                                               leftInset:kReadOnlyDotLeftInset];
         [NSColor.systemOrangeColor setFill];
         [[NSBezierPath bezierPathWithOvalInRect:dotRect] fill];
-        // Reserve space so the (middle-ellipsis) title sits right of the dot.
-        leftInset += kReadOnlyDotDiameter + 5.0;
+        // Reserve space so the (middle-ellipsis) title sits just right of the dot.
+        leftInset = kReadOnlyDotLeftInset + kReadOnlyDotDiameter + kReadOnlyDotTitleGap;
     }
 
     NSRect titleRect = NSMakeRect(NSMinX(tabRect) + leftInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
