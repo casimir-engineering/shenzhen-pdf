@@ -269,8 +269,9 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     (void)tag;
     (void)point;
     (void)userData;
-    return @"Read-only file. You're viewing a copy, so opening it doesn't prompt "
-           @"for access. Editing will ask to save a copy.";
+    return @"Read-only file. You're viewing a local copy, so opening it doesn't "
+           @"prompt for access. Changes to the original are picked up automatically "
+           @"(and on reopen). Editing will ask to save a copy.";
 }
 
 - (void)hideHoverPanel {

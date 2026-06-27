@@ -21,8 +21,9 @@ static const NSTimeInterval kSPDFFileWatcherPollInterval = 1.5;
     int _vnodeFD;                    // -1 when none
     dispatch_source_t _vnodeSource;  // nil when none
     FSEventStreamRef _eventStream;   // NULL when none
-    NSTimer* _pollTimer;             // nil unless in fallback mode
+    NSTimer* _pollTimer;             // nil unless in fallback / poll-only mode
     NSTimer* _debounceTimer;         // nil when no pending coalesced fire
+    BOOL _pollOnly;                  // YES: stat-poll only, never open/stream source
 }
 
 - (instancetype)init {
@@ -41,15 +42,22 @@ static const NSTimeInterval kSPDFFileWatcherPollInterval = 1.5;
 }
 
 - (void)watchPath:(NSString*)path {
+    [self watchPath:path pollOnly:NO];
+}
+
+- (void)watchPath:(NSString*)path pollOnly:(BOOL)pollOnly {
     NSString* standardized = path.length ? (path.stringByStandardizingPath ?: path) : nil;
 
-    // No-op if already watching this exact path and the watch is still live.
-    if (standardized && [standardized isEqualToString:_watchedPath] &&
+    // No-op if already watching this exact path in the same mode and the watch is
+    // still live. (Mode must match: a switch between event and poll-only watching
+    // must re-arm.)
+    if (standardized && [standardized isEqualToString:_watchedPath] && pollOnly == _pollOnly &&
         (_eventStream || _vnodeSource || _pollTimer)) {
         return;
     }
 
     [self teardownResources];
+    _pollOnly = pollOnly;
 
     if (!standardized.length) {
         _watchedPath = nil;
@@ -61,6 +69,14 @@ static const NSTimeInterval kSPDFFileWatcherPollInterval = 1.5;
     _watchedPath = [standardized copy];
     _watchedDirectory = [standardized.stringByDeletingLastPathComponent copy];
     _watchedName = [standardized.lastPathComponent copy];
+
+    if (pollOnly) {
+        // Read-only source: NEVER open an FSEvents stream nor an O_EVTONLY vnode
+        // fd on it (either can re-trigger the macOS prompt). Stat-based polling
+        // only — it reads metadata, never the file content.
+        [self startPollTimer];
+        return;
+    }
 
     BOOL eventStreamStarted = [self startEventStream];
     BOOL vnodeStarted = [self startVnodeSource];
@@ -78,6 +94,7 @@ static const NSTimeInterval kSPDFFileWatcherPollInterval = 1.5;
     _watchedPath = nil;
     _watchedDirectory = nil;
     _watchedName = nil;
+    _pollOnly = NO;
 }
 
 #pragma mark - FSEvents (parent directory)
