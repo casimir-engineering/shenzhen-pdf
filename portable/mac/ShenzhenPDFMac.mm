@@ -135,6 +135,17 @@ typedef struct SPDFPageAnchor {
     BOOL valid;
 } SPDFPageAnchor;
 
+// Resolved read-only render-copy binding for a tab, computed off-main and applied
+// to the tab on the main thread. `hasCopyBinding` distinguishes "render from the
+// app-owned copy" (record fileSize/modificationDate) from "render from the source
+// directly" (writable source or read/write fallback — clear the binding).
+typedef struct SPDFReadOnlyCopyResolution {
+    NSString* workingPath;
+    unsigned long long fileSize;
+    NSDate* modificationDate;
+    BOOL hasCopyBinding;
+} SPDFReadOnlyCopyResolution;
+
 static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));
 }
@@ -6499,16 +6510,37 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (NSString*)ensureWorkingPathForTab:(SPDFDocumentTab*)tab
                           sourcePath:(NSString*)sourcePath
                           attributes:(NSDictionary*)attributes {
-    if (!tab || !sourcePath.length) return sourcePath;
+    // Main-thread callers: resolve AND apply the binding to the tab in one step.
+    SPDFReadOnlyCopyResolution resolution =
+        [self resolveWorkingPathForTab:tab sourcePath:sourcePath attributes:attributes];
+    [self applyReadOnlyCopyResolution:resolution toTab:tab];
+    return resolution.workingPath ?: sourcePath;
+}
+
+// Resolve the read-only render copy for `tab`'s source WITHOUT mutating the tab.
+// The (possibly slow / prompting) source content read + copy write happen here so
+// they can run off-main; the tab's nonatomic binding fields are then applied via
+// -applyReadOnlyCopyResolution:toTab: ON THE MAIN THREAD (see the deferred cloud
+// open path). `attributes` MUST be the SOURCE's stat (bare-lstat for a read-only
+// source — never the prompting -attributesOfItemAtPath:). The reads of
+// tab.workingPath/copiedSource* below are change-detection inputs; in the deferred
+// cloud path the tab is a single token-serialized restored tab not yet bound to a
+// copy, so they are stable for the duration of the resolve.
+- (SPDFReadOnlyCopyResolution)resolveWorkingPathForTab:(SPDFDocumentTab*)tab
+                                            sourcePath:(NSString*)sourcePath
+                                            attributes:(NSDictionary*)attributes {
+    SPDFReadOnlyCopyResolution resolution = {nil, 0, nil, NO};
+    if (!tab || !sourcePath.length) {
+        resolution.workingPath = sourcePath;
+        return resolution;
+    }
     if (![self sourcePathIsReadOnly:sourcePath]) {
         // Writable: drop any stale copy binding, render straight from the source.
         if (tab.workingPath.length) {
             [NSFileManager.defaultManager removeItemAtPath:tab.workingPath error:nil];
         }
-        tab.workingPath = nil;
-        tab.copiedSourceFileSize = 0;
-        tab.copiedSourceModificationDate = nil;
-        return sourcePath;
+        resolution.workingPath = sourcePath;
+        return resolution;
     }
 
     unsigned long long sourceSize = spdf_file_size_from_attributes(attributes);
@@ -6525,9 +6557,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
                      tab.copiedSourceFileSize == sourceSize;
     if (unchanged) {
         // Source unchanged vs the stat the copy reflects: reuse the copy with no
-        // source content read (no prompt).
-        tab.workingPath = copyPath;
-        return copyPath;
+        // source content read (no prompt). Preserve the existing stat binding.
+        resolution.workingPath = copyPath;
+        resolution.fileSize = tab.copiedSourceFileSize;
+        resolution.modificationDate = tab.copiedSourceModificationDate;
+        resolution.hasCopyBinding = YES;
+        return resolution;
     }
 
     // Missing or changed: author a FRESH copy from the source bytes.
@@ -6551,15 +6586,32 @@ static BOOL spdf_page_list_cache_disabled(void) {
         // directly so the document still loads; no copy binding is recorded.
         os_log_error(SPDFReadOnlyLog(), "read-only copy write failed: %{public}@",
                      ioError.localizedDescription);
+        resolution.workingPath = sourcePath;
+        return resolution;
+    }
+    resolution.workingPath = copyPath;
+    resolution.fileSize = sourceSize;
+    resolution.modificationDate = sourceModified;
+    resolution.hasCopyBinding = YES;
+    return resolution;
+}
+
+// Apply a resolved read-only copy binding to the tab. MUST run on the main thread
+// (tab.workingPath/copiedSource* are nonatomic main-thread state). hasCopyBinding
+// records the stat the app-owned copy reflects; otherwise the binding is cleared
+// and rendering uses the source path directly (writable source / read-write
+// fallback).
+- (void)applyReadOnlyCopyResolution:(SPDFReadOnlyCopyResolution)resolution toTab:(SPDFDocumentTab*)tab {
+    if (!tab) return;
+    if (resolution.hasCopyBinding) {
+        tab.workingPath = resolution.workingPath;
+        tab.copiedSourceFileSize = resolution.fileSize;
+        tab.copiedSourceModificationDate = resolution.modificationDate;
+    } else {
         tab.workingPath = nil;
         tab.copiedSourceFileSize = 0;
         tab.copiedSourceModificationDate = nil;
-        return sourcePath;
     }
-    tab.workingPath = copyPath;
-    tab.copiedSourceFileSize = sourceSize;
-    tab.copiedSourceModificationDate = sourceModified;
-    return copyPath;
 }
 
 // Render/read path for the ACTIVE document: the temp copy when the active source
@@ -8304,14 +8356,19 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                          : [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
           char err[1024];
           err[0] = '\0';
-          // Read-only shadow copy: open the temp copy (refreshing it from the
-          // source only when missing/changed) so a read-only cloud source is not
-          // read on open. Tab fields are re-read into _workingPath on the main
-          // thread when finishDeferredCloudOpenWithToken: re-runs
-          // prepareSelectedTabViewState via presentOpenedDocument.
+          // Read-only shadow copy: resolve+open the temp copy (refreshing it from
+          // the source only when missing/changed) so a read-only cloud source is
+          // not read on open. The resolve (content read + copy write) runs here
+          // off-main, but the tab's nonatomic binding fields are NOT mutated here:
+          // the resolution is applied on the MAIN thread in
+          // finishDeferredCloudOpenWithToken: (which then re-reads it into
+          // _workingPath via prepareSelectedTabViewState). Mirrors the main-thread
+          // mutation discipline of every other ensureWorkingPathForTab: caller.
+          SPDFReadOnlyCopyResolution resolution = {nil, 0, nil, NO};
           NSString* openPath = path;
           if (attributes) {
-              openPath = [self ensureWorkingPathForTab:tab sourcePath:path attributes:attributes];
+              resolution = [self resolveWorkingPathForTab:tab sourcePath:path attributes:attributes];
+              openPath = resolution.workingPath ?: path;
           }
           spdf_document* newDoc =
               attributes ? [self openSpdfDocumentAtPath:openPath error:err errorLength:sizeof(err)] : NULL;
@@ -8330,6 +8387,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                         standardizedPath:standardizedPath
                                                 document:newDoc
                                               attributes:attributes
+                                              resolution:resolution
                                                openError:openError
                                      savedFindMatchIndex:savedFindMatchIndex];
           });
@@ -8341,6 +8399,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                         standardizedPath:(NSString*)standardizedPath
                                 document:(spdf_document*)newDoc
                               attributes:(NSDictionary*)attributes
+                              resolution:(SPDFReadOnlyCopyResolution)resolution
                                openError:(NSString*)openError
                      savedFindMatchIndex:(NSInteger)savedFindMatchIndex {
     // Stale if anything loaded since the deferral (tab switch, new open,
@@ -8355,6 +8414,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
         if (newDoc) spdf_close(newDoc);
         return;
     }
+    // Apply the read-only copy binding resolved off-main now that we are on the
+    // main thread and have confirmed this tab is still the live target.
+    [self applyReadOnlyCopyResolution:resolution toTab:tab];
     NSString* path = [tab.path copy];
     spdf_launch_profile_log(@"cloud-deferred open landing %@", path.lastPathComponent);
     if (!attributes) {
