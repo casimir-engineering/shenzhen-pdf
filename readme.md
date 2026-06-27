@@ -1,82 +1,90 @@
-# Shenzhen PDF
+<h1 align="center">ShenzhenPDF</h1>
+<p align="center"><b>A fast, native Mac PDF reader with on-device OCR and offline translation built in.</b></p>
 
-Shenzhen PDF is a fast native document reader for macOS, Linux, and Windows,
-with a portable MuPDF-backed core and frontends that keep the interface compact.
-It follows the lightweight reader philosophy that made SumatraPDF pleasant to
-use: open documents quickly, stay out of the way, make navigation/search fast,
-and avoid heavy library-management chrome.
+<div align="center">
 
-Shenzhen PDF is a separate project and is not affiliated with the SumatraPDF
-project.
+<a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg"><img src="https://img.shields.io/badge/Download%20for%20macOS-Apple%20Silicon-2ea44f?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS (Apple Silicon)" height="46"></a>
 
-## Screenshots
+<sub>Latest <b>26.6.27</b> · Apple Silicon · Developer ID notarized · auto-updates</sub>
 
-![macOS main window with tabs, toolbar, side panel, document view, and minimap](docs/images/portable/macos-main-window.png)
+<a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest">All releases</a> · <a href="https://github.com/casimir-engineering/shenzhen-pdf">Source</a>
 
-![Search highlights with match count and minimap markers](docs/images/portable/macos-search-highlights.png)
+</div>
 
-## What Stands Out
+<p align="center"><img src="docs/images/portable/macos-main-window.webp" alt="ShenzhenPDF main window: compact tabs with a read-only dot, outline sidebar, and the document map rendering a bilingual catalogue" width="880"></p>
 
-- Native portable frontends for macOS and Linux. The macOS app is built with
-  AppKit, the Linux app is built with GTK, and both share the portable document
-  core instead of emulating Win32.
-- Fast reader workflow: current-page-first rendering, background preloading,
-  persistent per-tab document caches, remembered scroll/zoom state, restored
-  sessions, recent files, favorites, and compact tabbed windows.
-- Search that behaves like a reading tool: match counts, keyboard navigation,
-  regex mode, highlighted results, minimap markers, per-document search memory,
-  and a macOS Search sidebar that groups contextual results by chapter.
-- A right-side document map with viewport dragging, page separators, search
-  markers, remembered visibility/width, and special handling for long documents.
-- OCR via OCRmyPDF/Tesseract with language selection, Chinese traineddata
-  support, progress feedback, source backups, save-back behavior, and reload
-  after processing.
-- Offline translation via Argos Translate, including optional language package
-  installation and translated PDFs saved next to the original.
-- Reader polish on macOS: draggable/detachable tabs, multi-window session
-  restore, presentation mode, native window arrangement shortcuts, smoother
-  resizing, Preview-like trackpad panning, default-PDF-reader flow, and high
-  quality PDF printing through the macOS print pipeline.
-- Human-readable JSON state for settings, sessions, document state, favorites,
-  and recent documents.
+<p align="center">A lightweight, SumatraPDF-fast document reader for macOS (and Linux) on a portable MuPDF-backed C core. Tabs, a draggable document map, instant search, and multi-window session restore make it a joy to read with — while OCR and translation run entirely on your machine, with nothing ever leaving your device.</p>
 
-## Current Boundaries
+ShenzhenPDF opens PDFs (and much more) instantly, keeps documents in tidy tabs, and does the heavy work — OCR and translation — entirely on-device. **A separate project, not affiliated with SumatraPDF.**
 
-- The macOS portable frontend is the most polished and recently validated path.
-  The Linux GTK frontend shares the same core and data formats, but some of the
-  latest behavior work is macOS-specific.
-- The Windows C++/Win32 codebase remains in-tree and buildable in a Windows
-  Visual Studio environment. Executable/resource branding should still be
-  completed and verified before publishing Windows binaries under the Shenzhen
-  PDF name.
-- TestFlight packaging has a handoff script and checklist, but upload-ready
-  packages require the publisher's Apple Distribution certificate, 3rd Party Mac
-  Developer Installer certificate, App Store provisioning profile, and optionally
-  Transporter.
+<sub><a href="#reading">Reading</a> · <a href="#search">Search &amp; map</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a></sub>
 
-## Build
+---
+
+## <a id="reading"></a>Reading, built for actually reading <sub>macOS</sub>
+
+- **Compact tabbed windows** — Keep many documents in one tidy window; a space-efficient tab strip disambiguates same-named files and overflows into a "…" menu.
+- **Draggable & detachable tabs** — Reorder by dragging, or pull a tab into its own window — it reopens exactly where you left it, carrying its view state.
+- **Multi-window session restore** — Quit and relaunch to get every window back, each with its own tabs, selected tab, and size.
+- **Resume exactly where you left off** — Reopen any document at the same page, zoom, fit mode, scroll position, and search.
+- **Recents, reopen-last-closed & favorites** — Jump back into recent files, reopen a just-closed tab (<kbd>Cmd+Shift+T</kbd>), or star pages/docs and find them from a palette (<kbd>Cmd+K</kbd>).
+- **Presentation mode** — Present full-screen with chrome-free advance and optional sleep prevention (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>).
+
+<p align="center"><img src="docs/images/portable/macos-multi-window.webp" alt="Two ShenzhenPDF windows side by side, each with its own tabs, outline sidebar, and document map" width="880"></p>
+
+## <a id="search"></a>Find anything, navigate everything
+
+<p align="center"><img src="docs/images/portable/macos-search-highlights.webp" alt="Chapter-grouped search results with in-page highlights and a 2 / 19 match counter" width="880"></p>
+
+- **Incremental search with live count** — Type in the toolbar and every match appears instantly with a running "current / total" counter, highlighted in-page. <sub>macOS · Linux</sub>
+- **Chapter-grouped results sidebar** — Every match listed with a snippet, grouped under its chapter heading; click to jump. <sub>macOS</sub>
+- **Regex & multiline search** — Regular-expression matching, including patterns that span line and paragraph breaks; invalid patterns fail gracefully. <sub>macOS · Linux</sub>
+- **Document map (minimap)** — A live right-side thumbnail strip with a draggable viewport: drag to scroll, click to jump, Cmd-scroll to zoom — search hits show as yellow markers. Scales to hundreds of pages. <sub>macOS; Linux has its own</sub>
+- **Scrollbar heat-map** — The scrollbar doubles as a match heat-map — a tick per hit, the active one hotter; each tab remembers its query across switches and relaunches. <sub>macOS</sub>
+
+## <a id="powertools"></a>Power tools — 100% on-device <sub>macOS · Linux</sub>
+
+<p align="center"><img src="docs/images/portable/macos-translate.webp" alt="The Translate Selection panel translating Chinese 产品设计 into “Product design”, fully offline" width="760"></p>
+
+- **Local OCR for scanned PDFs** — Make image-only PDFs searchable on your own machine with OCRmyPDF + Tesseract; no document is ever uploaded. Runs one job per core, deskews scans, backs up the original, and swaps in only confirmed text.
+- **Chinese + ~20 languages** — Pick the OCR language up front — Simplified/Traditional Chinese alone or with English, plus ~20 more; missing data fetched on demand.
+- **One-click toolchain install** — Missing OCRmyPDF, Tesseract, or a language pack? The app installs it (Homebrew on macOS; apt/dnf/pacman/zypper on Linux) and resumes automatically, with a live copyable log.
+- **Offline translation (Argos Translate)** — Translate a selection or a whole PDF on-device across ~19 languages incl. Chinese — text never leaves your machine. Whole-doc mode writes a real translated PDF (`<name>_<lang>.pdf`) with text overlaid at each line's position and opens it automatically; cancellable mid-run.
+
+## <a id="fast"></a>Fast by design
+
+- **Snappy native rendering** — The page you're viewing renders first at high priority while nearby pages and inactive tabs warm up quietly — tab-switching is instant. Cached display lists and crop-to-viewport rendering make repeat renders cheap; stale renders abort within milliseconds. <sub>macOS scheduler; core cross-platform</sub>
+- **MuPDF-backed C core** — A compact ~93 KB C core wraps statically-linked MuPDF 1.27.2 behind a small stable ABI shared by both frontends — no Win32 emulation. Adds highlights/comments, page rotate, and single-page PDF export on top of viewing.
+- **Far more than PDF** — Opens everything MuPDF recognizes — XPS, CBZ comics, EPUB/MOBI e-books, images, FB2, and HTML. PDF is the primary, most-polished path.
+
+## Files, printing & updates <sub>macOS</sub>
+
+- **Verified daily auto-updater** — A once-a-day background check against GitHub Releases (off the launch path, disabled in the App Store build). Every update is verified offline against a pinned Apple Developer ID (Team 66LJ4BV7Q3), hardened runtime, bundle id, and stapled notarization before an atomic swap — with automatic rollback if the new build fails to launch. <sub>Developer ID build</sub>
+- **High-quality native printing** — Prints through the standard macOS pipeline with Fit / Actual Size / Custom scaling, honoring the document's print permission.
+- **One-click default reader & readable JSON state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as pretty-printed JSON you can read, diff, and edit. <sub>JSON state: macOS · Linux</sub>
+
+## Platform support
+
+- **macOS — the polished path** — Native AppKit + PDFKit; most reading polish (tabs, sessions, document map, prompt-free opening, auto-updater) is macOS.
+- **Linux — shares the core** — Native GTK 3 app on the same portable C core and data formats, with its own minimap; OCR, translation, and search work here too. Some latest behavior is macOS-specific.
+- **Windows — legacy** — A separate Win32 C++ tree remains in-tree but is independent of the portable core and not yet rebranded; no published Windows binary.
+
+---
+
+<details>
+<summary><b>Build from source</b> (macOS / Linux / Windows)</summary>
+
+<br>
 
 ### macOS
 
-Build the app:
-
 ```sh
-make -C portable mac-app
+make -C portable mac-app      # build the app
+make -C portable install      # build and install locally
+make -C portable dmg          # build a DMG
 ```
 
-Build and install locally:
-
-```sh
-make -C portable install
-```
-
-Build a DMG:
-
-```sh
-make -C portable dmg
-```
-
-Build artifacts:
+Artifacts:
 
 ```text
 dist/ShenzhenPDF.app
@@ -84,8 +92,7 @@ dist/ShenzhenPDF-mac-arm64.dmg
 /Applications/ShenzhenPDF.app
 ```
 
-Local development builds are ad-hoc signed. Public downloads must be Developer
-ID signed and notarized. TestFlight builds use the App Store signing path below.
+Local development builds are ad-hoc signed. Public downloads must be Developer ID signed and notarized. TestFlight builds use the App Store signing path.
 
 ### Linux
 
@@ -105,22 +112,55 @@ make -C portable linux
 ./portable/build/ShenzhenPDF-gtk
 ```
 
-### Windows
+### Windows (legacy)
 
 ```sh
 bun ./cmd/build.ts
 ```
 
-This creates:
+This creates `./out/dbg64/SumatraPDF.exe`. Run from an environment where the Visual Studio command-line tools are on `PATH`. This Win32 tree is legacy and not yet rebranded under the ShenzhenPDF name.
+
+</details>
+
+<details>
+<summary><b>Data files &amp; locations</b></summary>
+
+<br>
+
+macOS: `~/Library/Application Support/ShenzhenPDF/`
+Linux: `~/.config/shenzhenpdf/`
+
+Typical files (pretty-printed JSON you can read, diff, and edit):
 
 ```text
-./out/dbg64/SumatraPDF.exe
+settings.json
+session.json
+documents.json
+favorites.json
+recent.json
 ```
 
-Run the Windows build from an environment where the Visual Studio command-line
-tools are available in `PATH`.
+</details>
 
-## TestFlight Handoff
+<details>
+<summary><b>Repository layout</b></summary>
+
+<br>
+
+- `portable/core/`: shared document, render, search, OCR-facing, and save core.
+- `portable/mac/`: native macOS AppKit application.
+- `portable/linux/`: native Linux GTK application.
+- `src/`: Windows C++/Win32 application code.
+- `mupdf/`: MuPDF dependency.
+- `ext/`: third-party dependencies.
+- `portable/docs/`: release, TestFlight, and portability notes.
+
+</details>
+
+<details>
+<summary><b>TestFlight handoff</b></summary>
+
+<br>
 
 The publisher needs an active Apple Developer Program account.
 
@@ -144,11 +184,7 @@ MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile"
 ./portable/build-mac-testflight.sh
 ```
 
-Expected output:
-
-```text
-dist/ShenzhenPDF-testflight-26.6.8-2.pkg
-```
+Expected output: `dist/ShenzhenPDF-testflight-26.6.8-2.pkg`
 
 Open in Transporter:
 
@@ -156,48 +192,13 @@ Open in Transporter:
 OPEN_TRANSPORTER=1 ./portable/build-mac-testflight.sh
 ```
 
-See [portable/docs/testflight.md](portable/docs/testflight.md) for the complete
-handoff checklist.
+See [portable/docs/testflight.md](portable/docs/testflight.md) for the complete handoff checklist.
 
-## Data Files
+</details>
 
-macOS:
+## Legal & Attribution
 
-```text
-~/Library/Application Support/ShenzhenPDF/
-```
-
-Linux:
-
-```text
-~/.config/shenzhenpdf/
-```
-
-Typical files:
-
-```text
-settings.json
-session.json
-documents.json
-favorites.json
-recent.json
-```
-
-## Repository Layout
-
-- `portable/core/`: shared document, render, search, OCR-facing, and save core.
-- `portable/mac/`: native macOS AppKit application.
-- `portable/linux/`: native Linux GTK application.
-- `src/`: Windows C++/Win32 application code.
-- `mupdf/`: MuPDF dependency.
-- `ext/`: third-party dependencies.
-- `portable/docs/`: release, TestFlight, and portability notes.
-
-## Legal And Attribution
-
-Shenzhen PDF is free/open-source software. This repository currently retains
-source and dependencies that carry their own licenses and notices. Preserve the
-license files and per-file copyright notices when publishing:
+Shenzhen PDF is free/open-source software. This repository retains source and dependencies that carry their own licenses and notices. Preserve the license files and per-file copyright notices when publishing:
 
 - `COPYING`
 - `COPYING.BSD`
@@ -205,6 +206,4 @@ license files and per-file copyright notices when publishing:
 - `mupdf/COPYING`
 - third-party notices under `ext/`, `packages/`, and `mupdf/`
 
-See [NOTICE.md](NOTICE.md) for the publication notice. Before claiming that the
-repository contains no inherited code, perform a source audit and remove or
-rewrite the retained code first.
+Upstream AGPL/BSD notices are preserved intact. See [NOTICE.md](NOTICE.md) for the publication notice. Shenzhen PDF is a separate project and is not affiliated with the SumatraPDF project. Before claiming that the repository contains no inherited code, perform a source audit and remove or rewrite the retained code first.
