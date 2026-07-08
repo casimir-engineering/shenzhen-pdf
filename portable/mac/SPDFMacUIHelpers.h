@@ -43,6 +43,7 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 - (BOOL)documentArrowKeyDown:(NSEvent*)event;
 - (void)stopKeyboardScrollAnimation;
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
+- (BOOL)documentEscapeKeyDown:(NSEvent*)event;
 - (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;

@@ -1261,11 +1261,15 @@ static const CGFloat kSPDFMouseWheelPointsPerLine = 32.0;
 @implementation SPDFSidebarTableView
 
 - (void)keyDown:(NSEvent*)event {
+    // Escape clears the active search from the sidebar too (same as when the
+    // document view is focused); with no active search it keeps its normal
+    // table behavior.
+    if (event.keyCode == 53 && self.reader && [self.reader documentEscapeKeyDown:event]) return;
     // Typing a printable character while the sidebar (e.g. search results) is
     // focused should start a fresh search — exactly as it does when typing after
     // clicking in the document — rather than driving the table's type-select.
-    // Arrows / Enter / Escape / Tab / Delete keep their normal table behavior
-    // and fall through to super.
+    // Arrows / Enter / Tab / Delete keep their normal table behavior and fall
+    // through to super.
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     BOOL hasModifier = (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl |
                                  NSEventModifierFlagOption | NSEventModifierFlagFunction)) != 0;
