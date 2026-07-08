@@ -749,7 +749,14 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
                visibleRect:&visibleRect])
         return;
 
-    BOOL drawImages = self.pages.count <= 400;
+    // Thumbnails draw at any page count: the delegate only renders/keeps a
+    // bounded window of thumbnails around the viewport (see
+    // SPDFMacMinimapWindow.h), pages outside it have no minimapImage and fall
+    // back to the cheap placeholder, and the direct draw path below clips to
+    // the visible slice — so per-frame cost stays bounded for any document
+    // size. (This replaces a hard `pages.count <= 400` cap that made the
+    // minimap never show content on larger documents.)
+    BOOL drawImages = YES;
     BOOL drewCachedContent = self.liveViewportOnly && [self drawCachedPageContentAtContentTop:contentTop
                                                                                         scale:scale
                                                                                           gap:gap
