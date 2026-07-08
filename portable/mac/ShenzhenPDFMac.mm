@@ -7579,14 +7579,25 @@ static BOOL spdf_page_list_cache_disabled(void) {
       [self->_pageScrollView displayIfNeeded];
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(warmingDelay * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
-                       if (generation != self->_renderGeneration || ![self->_path isEqualToString:path]) return;
+                       if (![self->_path isEqualToString:path]) return;
+                       // Sidebar metadata (outline/comments) belongs to the
+                       // DOCUMENT, not to a render generation: a same-document
+                       // re-render between scheduling and this block (e.g. a
+                       // favorites/palette open jumping to the favorite's page
+                       // via renderDocumentAndScrollToPage:) bumps the
+                       // generation and used to cancel the initial metadata
+                       // load entirely — leaving the side panel unavailable and
+                       // its toggle dead until a tab switch reloaded it. Only
+                       // require that the same document is still active; the
+                       // loads re-capture the current generation themselves.
+                       [self loadOutlineForCurrentDocumentAsync];
+                       [self loadCommentsForCurrentDocumentAsync];
+                       [self preloadInactiveTabs];
+                       if (generation != self->_renderGeneration) return;
                        [self enqueueZoomSeedCachesForGeneration:generation
                                                   preferredPage:preferredRenderPage
                                                includeWholeBase:YES];
                        [self enqueueNearbyPageRendersForGeneration:generation preferredPage:preferredRenderPage];
-                       [self loadOutlineForCurrentDocumentAsync];
-                       [self loadCommentsForCurrentDocumentAsync];
-                       [self preloadInactiveTabs];
                        if (restoreSearch && self->_searchField.stringValue.length > 0) {
                            self->_pendingFindPreferredMatchIndex = savedFindMatchIndex;
                            self->_pendingFindPreferredPage = -1;
