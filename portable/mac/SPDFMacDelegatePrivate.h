@@ -468,6 +468,7 @@
 - (NSNumber*)commentIndexForSidebarRow:(NSInteger)row;
 - (BOOL)documentArrowKeyDown:(NSEvent*)event;
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
+- (BOOL)documentEscapeKeyDown:(NSEvent*)event;
 - (void)goToAdjacentPagePreservingRelativePosition:(NSInteger)delta;
 - (void)installPresentationEventMonitor;
 - (void)removePresentationEventMonitor;
