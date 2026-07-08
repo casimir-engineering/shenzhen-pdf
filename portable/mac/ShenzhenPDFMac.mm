@@ -21,6 +21,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacDefaultReader.h"
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacDocumentView.h"
+#import "SPDFMacFindNearest.h"
 #import "SPDFMacModels.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacPrintView.h"
@@ -263,6 +264,7 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
         return @"star";
     if (action == @selector(toggleDefaultSidebarForNewDocuments:)) return @"sidebar.left";
     if (action == @selector(toggleDefaultMinimapForNewDocuments:)) return @"map";
+    if (action == @selector(toggleSearchJumpsToNearestResult:)) return @"scope";
     if (action == @selector(openStateJSONFile:)) return @"curlybraces";
     if (action == @selector(revealSettingsFolder:)) return @"folder";
     if (action == @selector(showShortcutHelp:)) return @"keyboard";
@@ -831,6 +833,7 @@ static void spdf_discard_launch_prerender(void) {
     _translationInstallRunning = NO;
     _selectionTranslationGeneration = 0;
     _collapseWhitespaceWhenCopyingText = YES;
+    _searchJumpsToNearestResult = YES;
     _showShortcutHelpOnLaunch = YES;
     _autoUpdateEnabled = YES;
     _skippedUpdateVersion = nil;
@@ -1561,6 +1564,7 @@ static void spdf_discard_launch_prerender(void) {
         NSNumber* defaultSidebarVisible = settings[@"defaultSidebarVisibleForNewDocuments"];
         NSNumber* defaultMinimapVisible = settings[@"defaultMinimapVisibleForNewDocuments"];
         NSNumber* collapseWhitespaceWhenCopyingText = settings[@"collapseWhitespaceWhenCopyingText"];
+        NSNumber* searchJumpsToNearestResult = settings[@"searchJumpsToNearestResult"];
         NSNumber* showShortcutHelp = settings[@"showShortcutHelpOnLaunch"];
         NSNumber* autoUpdateEnabled = settings[@"autoUpdateEnabled"];
         NSString* skippedUpdateVersion = settings[@"skippedUpdateVersion"];
@@ -1582,6 +1586,8 @@ static void spdf_discard_launch_prerender(void) {
         if (defaultMinimapVisible) _defaultMinimapVisibleForNewDocuments = defaultMinimapVisible.boolValue;
         if (collapseWhitespaceWhenCopyingText)
             _collapseWhitespaceWhenCopyingText = collapseWhitespaceWhenCopyingText.boolValue;
+        /* Missing key (settings.json from an older build) keeps the enabled default. */
+        if (searchJumpsToNearestResult) _searchJumpsToNearestResult = searchJumpsToNearestResult.boolValue;
         if (showShortcutHelp) _showShortcutHelpOnLaunch = showShortcutHelp.boolValue;
         if (autoUpdateEnabled) _autoUpdateEnabled = autoUpdateEnabled.boolValue;
         if ([skippedUpdateVersion isKindOfClass:NSString.class] && skippedUpdateVersion.length)
@@ -2160,6 +2166,7 @@ static void spdf_discard_launch_prerender(void) {
         @"defaultSidebarVisibleForNewDocuments" : @(_defaultSidebarVisibleForNewDocuments),
         @"defaultMinimapVisibleForNewDocuments" : @(_defaultMinimapVisibleForNewDocuments),
         @"collapseWhitespaceWhenCopyingText" : @(_collapseWhitespaceWhenCopyingText),
+        @"searchJumpsToNearestResult" : @(_searchJumpsToNearestResult),
         @"windowSize" : @{@"width" : @(windowContentSize.width), @"height" : @(windowContentSize.height)},
         @"commentAuthor" : _commentAuthor ?: @"",
         @"translateSourceLanguage" : _translationSourceLanguage ?: @"zh",
@@ -2476,6 +2483,10 @@ static void spdf_discard_launch_prerender(void) {
                                                              action:@selector(toggleDefaultMinimapForNewDocuments:)
                                                       keyEquivalent:@""];
     defaultMinimapItem.target = self;
+    NSMenuItem* nearestSearchItem = [settingsMenu addItemWithTitle:@"Search Jumps to Nearest Result"
+                                                            action:@selector(toggleSearchJumpsToNearestResult:)
+                                                     keyEquivalent:@""];
+    nearestSearchItem.target = self;
     [settingsMenu addItem:[NSMenuItem separatorItem]];
     NSArray<NSString*>* stateFiles =
         @[ @"settings.json", @"session.json", @"documents.json", @"favorites.json", @"bookmarks.json" ];
@@ -10315,6 +10326,57 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     return [snippet stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
+// Index into _findMatches of the match closest to the current viewport:
+// nearest by page distance from the visible page range, tie-broken by vertical
+// distance from the viewport center (see spdf_nearest_find_match_index).
+// Returns -1 when it cannot be computed (no matches / no layout yet), in which
+// case the caller falls back to the first match.
+- (NSInteger)nearestFindMatchIndexToCurrentViewport {
+    NSInteger count = (NSInteger)_findMatches.count;
+    if (!_doc || count == 0 || !_pageView || _renderedPages.count == 0) return -1;
+    NSRect visibleRect = _pageScrollView.contentView.bounds;
+    if (NSIsEmptyRect(visibleRect)) return -1;
+
+    // Visible page range: pages are laid out top-to-bottom in increasing Y, so
+    // scan with an early break (same invariant as pageIndexForVisibleRect:).
+    NSInteger firstVisible = -1;
+    NSInteger lastVisible = -1;
+    for (NSInteger i = 0; i < (NSInteger)_renderedPages.count; ++i) {
+        NSRect pageRect = [_pageView rectForPageAtIndex:i];
+        if (NSIsEmptyRect(pageRect)) continue;
+        if (NSMinY(pageRect) > NSMaxY(visibleRect)) break;
+        if (NSMaxY(pageRect) < NSMinY(visibleRect)) continue;
+        if (firstVisible < 0) firstVisible = i;
+        lastVisible = i;
+    }
+    if (firstVisible < 0) {
+        firstVisible = _pageIndex;
+        lastVisible = _pageIndex;
+    }
+
+    NSInteger* pages = (NSInteger*)malloc(sizeof(NSInteger) * (size_t)count);
+    CGFloat* centers = (CGFloat*)malloc(sizeof(CGFloat) * (size_t)count);
+    if (!pages || !centers) {
+        free(pages);
+        free(centers);
+        return -1;
+    }
+    for (NSInteger i = 0; i < count; ++i) {
+        NSDictionary* match = _findMatches[(NSUInteger)i];
+        NSInteger page = [match[@"page"] integerValue];
+        NSRect matchRect = [match[@"rect"] rectValue];
+        NSRect pageRect = [_pageView rectForPageAtIndex:page];
+        pages[i] = page;
+        // Same page-to-view mapping as scrollToPageRect:pageIndex:.
+        centers[i] = NSMinY(pageRect) + NSMidY(matchRect) * _zoom;
+    }
+    NSInteger nearest =
+        spdf_nearest_find_match_index(pages, centers, count, firstVisible, lastVisible, NSMidY(visibleRect));
+    free(pages);
+    free(centers);
+    return nearest;
+}
+
 - (void)startFindForCurrentQuery {
     [self startFindForCurrentQueryResetSavedIndex:YES revealMatch:YES];
 }
@@ -10427,6 +10489,11 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
             }
             if (preferredMatchIndex >= 0 && preferredMatchIndex < (NSInteger)self->_findMatches.count)
                 preferredMatch = preferredMatchIndex;
+            // New/changed query with no explicit target: select the match
+            // nearest the current viewport (counter shows its true index)
+            // instead of match #1, when the setting is enabled.
+            if (preferredMatch < 0 && self->_searchJumpsToNearestResult)
+                preferredMatch = [self nearestFindMatchIndexToCurrentViewport];
             self->_findMatchIndex = preferredMatch >= 0 ? preferredMatch : (self->_findMatches.count > 0 ? 0 : -1);
             self->_findSearchInProgress = NO;
             [self rememberActiveTabFindState];
@@ -15124,6 +15191,12 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     [self savePersistentState];
 }
 
+- (void)toggleSearchJumpsToNearestResult:(id)sender {
+    (void)sender;
+    _searchJumpsToNearestResult = !_searchJumpsToNearestResult;
+    [self savePersistentState];
+}
+
 - (void)findNext:(id)sender {
     (void)sender;
     [self findFromCurrentForward:YES];
@@ -15807,6 +15880,10 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     }
     if (action == @selector(toggleDefaultMinimapForNewDocuments:)) {
         menuItem.state = _defaultMinimapVisibleForNewDocuments ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (action == @selector(toggleSearchJumpsToNearestResult:)) {
+        menuItem.state = _searchJumpsToNearestResult ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
     if (action == @selector(fillWindow:) || action == @selector(centerWindowInScreen:) ||
