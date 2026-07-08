@@ -5189,7 +5189,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
         // in place (the view holds the same page objects), so don't reassign
         // `pages` — that would invalidate the layout cache and force a full
         // redraw per eviction. A viewport repaint is enough; the minimap strip is
-        // unaffected (thumbnails aren't evicted).
+        // unaffected (its thumbnails are evicted separately, window-based, in
+        // evictMinimapThumbnailsOutsideWindow:).
         [_pageView setNeedsDisplay:YES];
     }
 
