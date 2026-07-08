@@ -23,6 +23,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacModels.h"
 #import "SPDFMacMinimapView.h"
+#import "SPDFMacMinimapWindow.h"
 #import "SPDFMacPrintView.h"
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabStripView.h"
@@ -884,6 +885,7 @@ static void spdf_discard_launch_prerender(void) {
     _queuedHighQualityRenderPages = [NSMutableSet set];
     _queuedHighQualityRenderOperations = [NSMutableDictionary dictionary];
     _queuedMinimapThumbnailPages = [NSMutableSet set];
+    _queuedMinimapThumbnailOperations = [NSMapTable strongToWeakObjectsMapTable];
     _selectedTabIndex = -1;
     _windowSessionID = NSUUID.UUID.UUIDString;
     _pendingFindPreferredPage = -1;
@@ -4278,12 +4280,59 @@ static BOOL spdf_page_list_cache_disabled(void) {
                         forceHighPriority:NO];
 }
 
+// Cancel queued minimap-thumbnail renders for pages that fell out of the
+// thumbnail window (e.g. after a drag/jump far away) so nearby thumbnails
+// don't wait behind stale far-away work. In-flight renders abort via their
+// render token; their completion blocks clean up _queuedMinimapThumbnailPages.
+- (void)cancelQueuedMinimapThumbnailRendersOutsideWindow:(SPDFMinimapThumbnailWindow)window {
+    if (_queuedMinimapThumbnailPages.count == 0) return;
+    NSMutableArray<NSNumber*>* stale = [NSMutableArray array];
+    for (NSNumber* number in _queuedMinimapThumbnailPages) {
+        if (!spdf_minimap_window_contains(window, number.integerValue)) [stale addObject:number];
+    }
+    for (NSNumber* number in stale) {
+        [[_queuedMinimapThumbnailOperations objectForKey:number] cancel];
+        [_queuedMinimapThumbnailOperations removeObjectForKey:number];
+        [_queuedMinimapThumbnailPages removeObject:number];
+    }
+}
+
+// Window-based thumbnail eviction: drop thumbnails that fell far enough
+// outside the window (see spdf_minimap_window_should_evict) so minimap memory
+// stays bounded no matter the page count. Evicted slots are always off-screen
+// and re-render lazily when the window recenters over them. Documents that fit
+// inside the window (+ slack) never evict, preserving the old keep-everything
+// behavior for small documents. No strip-cache repaint is needed: the cached
+// strip only exists for documents far shorter than the window (see
+// kLiveContentCacheMaxHeight), which never evict.
+- (void)evictMinimapThumbnailsOutsideWindow:(SPDFMinimapThumbnailWindow)window {
+    for (SPDFRenderedPage* page in _renderedPages) {
+        if (!page.minimapImage) continue;
+        if (!spdf_minimap_window_should_evict(window, page.pageIndex)) continue;
+        page.minimapImage = nil;
+        page.minimapImageZoom = 0.0;
+        page.minimapImageScale = 0.0;
+    }
+}
+
 - (void)enqueueVisibleMinimapThumbnailRenders {
     if (!_minimapVisible || !_doc || !_path.length || _renderedPages.count == 0 || _liveZooming) return;
-    // Prerender a generous band above and below the strip viewport (thumbnails
-    // are small and never evicted), so scrolling reveals already-rendered frames
-    // instead of blank slots.
-    NSArray<NSNumber*>* visiblePages = [_minimapView visiblePageIndexesWithPaddingScreens:2.5];
+    // Windowed lazy loading (see SPDFMacMinimapWindow.h): only pages inside a
+    // window around the visible strip range get thumbnails, rendered
+    // nearest-to-the-viewport first; queued renders that fell outside the
+    // window are cancelled and far-outside thumbnails are evicted, so cost and
+    // memory stay bounded for any document size. Pages outside the window keep
+    // the cheap placeholder at exact strip geometry.
+    NSArray<NSNumber*>* strictlyVisiblePages = [_minimapView visiblePageIndexes];
+    if (strictlyVisiblePages.count == 0) return;
+    NSInteger firstVisible = strictlyVisiblePages.firstObject.integerValue;
+    NSInteger lastVisible = strictlyVisiblePages.lastObject.integerValue;
+    _minimapThumbnailWindow = spdf_minimap_window_for_visible_range((NSInteger)_renderedPages.count, firstVisible,
+                                                                    lastVisible, _minimapThumbnailWindow);
+    [self cancelQueuedMinimapThumbnailRendersOutsideWindow:_minimapThumbnailWindow];
+    [self evictMinimapThumbnailsOutsideWindow:_minimapThumbnailWindow];
+    NSArray<NSNumber*>* visiblePages =
+        spdf_minimap_window_render_order(_minimapThumbnailWindow, firstVisible, lastVisible);
     if (visiblePages.count == 0) return;
 
     // Boost only the first band after a document becomes active so it isn't
@@ -4358,6 +4407,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         }];
         operation.queuePriority = boostInitialBand ? NSOperationQueuePriorityVeryHigh : NSOperationQueuePriorityNormal;
         operation.qualityOfService = boostInitialBand ? NSQualityOfServiceUserInitiated : NSQualityOfServiceUtility;
+        [_queuedMinimapThumbnailOperations setObject:operation forKey:number];
         [_minimapQueue addOperation:operation];
     }
 }

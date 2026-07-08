@@ -3,6 +3,7 @@
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacFileWatcher.h"
 #import "SPDFMacMinimapView.h"
+#import "SPDFMacMinimapWindow.h"
 #import "SPDFMacModels.h"
 #import "SPDFMacPrintView.h"
 #import "SPDFMacTabStripView.h"
@@ -133,6 +134,15 @@
     NSMutableSet<NSNumber*>* _queuedHighQualityRenderPages;
     NSMutableDictionary<NSNumber*, NSOperation*>* _queuedHighQualityRenderOperations;
     NSMutableSet<NSNumber*>* _queuedMinimapThumbnailPages;
+    /* page -> queued minimap-thumbnail op (weak values, auto-cleared when an
+     * op finishes), so a recentered thumbnail window can cancel renders that
+     * fell out of the window. */
+    NSMapTable<NSNumber*, SPDFRenderOperation*>* _queuedMinimapThumbnailOperations;
+    /* Current windowed-lazy-loading page window for minimap thumbnails; kept
+     * across updates so recentering has hysteresis (see SPDFMacMinimapWindow.h).
+     * Zero-initialized {0, 0} is a harmless 1-page window; recomputed on the
+     * first thumbnail enqueue. */
+    SPDFMinimapThumbnailWindow _minimapThumbnailWindow;
     /* Last enqueued visible-crop / pan-crop render ops, weakly held so a newly
      * enqueued successor can cancel (cookie-abort) a superseded in-flight one. */
     __weak SPDFRenderOperation* _lastVisibleCropRenderOperation;
