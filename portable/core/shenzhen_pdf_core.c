@@ -460,8 +460,8 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
     return spdf_render_page_rgba_opts(doc, page_index, zoom, SPDF_RENDER_DEFAULT, NULL, out, err, err_len);
 }
 
-int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, unsigned flags,
-                               spdf_render_token* token, spdf_bitmap* out, char* err, size_t err_len) {
+int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, unsigned flags, spdf_render_token* token,
+                               spdf_bitmap* out, char* err, size_t err_len) {
     fz_page* page = NULL;
     fz_pixmap* pix = NULL;
     fz_device* dev = NULL;
@@ -2378,6 +2378,80 @@ static void append_page_content_stream(fz_context* ctx, pdf_document* pdf, pdf_o
     }
 }
 
+static pdf_obj* ensure_page_resources(fz_context* ctx, pdf_obj* page_obj) {
+    pdf_obj* res = pdf_dict_get(ctx, page_obj, PDF_NAME(Resources));
+
+    if (!res) {
+        res = pdf_dict_get_inheritable(ctx, page_obj, PDF_NAME(Resources));
+        if (res)
+            pdf_dict_put(ctx, page_obj, PDF_NAME(Resources), res);
+        else
+            res = pdf_dict_put_dict(ctx, page_obj, PDF_NAME(Resources), 4);
+    }
+    return res;
+}
+
+/* Appended overlay streams run after the page's original content, so a page
+ * whose content stream leaves the graphics state unbalanced (missing or
+ * excess Q -- common in CAD-exported PDFs) would draw every overlay under a
+ * stale transform, typically scaled into a corner. Mirror pdf_bake_page():
+ * count the q/Q balance and wrap the original content with enough q's in
+ * front and Q's at the end that appended streams start from the initial
+ * page state. Must run once per page before the first overlay is appended. */
+static void balance_page_contents_for_overlays(fz_context* ctx, pdf_document* pdf, pdf_obj* page_obj, pdf_obj* res) {
+    pdf_obj* contents = pdf_dict_get(ctx, page_obj, PDF_NAME(Contents));
+    pdf_obj* new_contents = NULL;
+    pdf_obj* prologue = NULL;
+    fz_buffer* buf = NULL;
+    int prepend = 0;
+    int append = 0;
+
+    fz_try(ctx) {
+        pdf_count_q_balance(ctx, pdf, res, contents, &prepend, &append);
+    }
+    fz_catch(ctx) {
+        /* Content too broken to parse: keep today's behavior. */
+        fz_report_error(ctx);
+        return;
+    }
+    if (prepend <= 0 && append <= 0) return;
+
+    fz_var(buf);
+    fz_var(new_contents);
+    fz_try(ctx) {
+        if (!pdf_is_array(ctx, contents)) {
+            new_contents = pdf_new_array(ctx, pdf, 4);
+            if (contents) pdf_array_push(ctx, new_contents, contents);
+            pdf_dict_put(ctx, page_obj, PDF_NAME(Contents), new_contents);
+            contents = new_contents;
+        }
+        if (prepend > 0) {
+            buf = fz_new_buffer(ctx, 64);
+            while (prepend-- > 0) fz_append_string(ctx, buf, "q\n");
+            prologue = pdf_add_stream(ctx, pdf, buf, NULL, 0);
+            fz_drop_buffer(ctx, buf);
+            buf = NULL;
+            pdf_array_insert_drop(ctx, contents, prologue, 0);
+            prologue = NULL;
+        }
+        if (append > 0) {
+            buf = fz_new_buffer(ctx, 64);
+            while (append-- > 0) fz_append_string(ctx, buf, "Q\n");
+            pdf_array_push_drop(ctx, contents, pdf_add_stream(ctx, pdf, buf, NULL, 0));
+            fz_drop_buffer(ctx, buf);
+            buf = NULL;
+        }
+    }
+    fz_always(ctx) {
+        fz_drop_buffer(ctx, buf);
+        pdf_drop_obj(ctx, prologue);
+        pdf_drop_obj(ctx, new_contents);
+    }
+    fz_catch(ctx) {
+        fz_rethrow(ctx);
+    }
+}
+
 static fz_matrix annot_xobject_transform(fz_context* ctx, pdf_obj* annot_obj, pdf_obj* ap) {
     fz_rect rect = pdf_dict_get_rect(ctx, annot_obj, PDF_NAME(Rect));
     fz_rect bbox = pdf_dict_get_rect(ctx, ap, PDF_NAME(BBox));
@@ -2444,14 +2518,7 @@ static void bake_overlay_annotation(fz_context* ctx, pdf_document* pdf, pdf_page
         ap = pdf_annot_ap(ctx, annot);
         if (!ap || !pdf_is_stream(ctx, ap)) fz_throw(ctx, FZ_ERROR_FORMAT, "Could not generate translation overlay");
 
-        res = pdf_dict_get(ctx, page_obj, PDF_NAME(Resources));
-        if (!res) {
-            res = pdf_dict_get_inheritable(ctx, page_obj, PDF_NAME(Resources));
-            if (res)
-                pdf_dict_put(ctx, page_obj, PDF_NAME(Resources), res);
-            else
-                res = pdf_dict_put_dict(ctx, page_obj, PDF_NAME(Resources), 4);
-        }
+        res = ensure_page_resources(ctx, page_obj);
         xobjects = pdf_dict_get(ctx, res, PDF_NAME(XObject));
         if (!xobjects) xobjects = pdf_dict_put_dict(ctx, res, PDF_NAME(XObject), 8);
 
@@ -2561,6 +2628,7 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
     pdf_graft_map* graft_map = NULL;
     pdf_write_options options;
     int* image_backed = NULL;
+    char* balanced_pages = NULL;
     int needs_image_backed = 0;
     int i;
 
@@ -2571,6 +2639,12 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
     }
     if (line_count < 0 || (line_count > 0 && !lines)) {
         set_error(err, err_len, "No translated lines were supplied.");
+        return 0;
+    }
+
+    balanced_pages = (char*)calloc((size_t)(doc->page_count > 0 ? doc->page_count : 1), 1);
+    if (!balanced_pages) {
+        set_error(err, err_len, "Out of memory");
         return 0;
     }
 
@@ -2597,6 +2671,21 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
         for (i = 0; i < doc->page_count; ++i) pdf_graft_mapped_page(doc->ctx, graft_map, -1, source_pdf, i);
 
         for (i = 0; i < line_count; ++i) {
+            int page_index = lines[i].page_index;
+            if (!balanced_pages[page_index]) {
+                pdf_page* page = pdf_load_page(doc->ctx, out_pdf, page_index);
+                balanced_pages[page_index] = 1;
+                fz_try(doc->ctx) {
+                    balance_page_contents_for_overlays(doc->ctx, out_pdf, page->obj,
+                                                       ensure_page_resources(doc->ctx, page->obj));
+                }
+                fz_always(doc->ctx) {
+                    pdf_drop_page(doc->ctx, page);
+                }
+                fz_catch(doc->ctx) {
+                    fz_rethrow(doc->ctx);
+                }
+            }
             add_translated_line_overlay(doc->ctx, out_pdf, &lines[i], image_backed);
         }
 
@@ -2607,6 +2696,7 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
         pdf_save_document(doc->ctx, out_pdf, path, &options);
     }
     fz_always(doc->ctx) {
+        free(balanced_pages);
         free(image_backed);
         if (graft_map) pdf_drop_graft_map(doc->ctx, graft_map);
         if (out_pdf) pdf_drop_document(doc->ctx, out_pdf);
