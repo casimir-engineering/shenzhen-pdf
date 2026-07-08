@@ -23,6 +23,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacModels.h"
 #import "SPDFMacMinimapView.h"
+#import "SPDFMacPaletteResults.h"
 #import "SPDFMacPrintView.h"
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabStripView.h"
@@ -11996,7 +11997,30 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     [_paletteResults removeAllObjects];
     NSString* query = _paletteSearchField.stringValue.lowercaseString ?: @"";
 
-    NSArray<NSDictionary*>* favorites = [self favoriteResultsForQuery:query prefix:@""];
+    // Open documents come first: with a query they are the strongest match for
+    // "take me to that document" (the live tab beats reopening a favorite);
+    // with an empty query they make the palette a quick tab switcher before
+    // the browsing groups (Favorites, Actions) below.
+    NSArray<NSDictionary*>* openDocuments =
+        spdf_palette_open_document_results([self openDocumentPaletteCandidates], query);
+    NSMutableSet<NSString*>* openShownPaths = [NSMutableSet setWithCapacity:openDocuments.count];
+    if (openDocuments.count > 0) {
+        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Open documents", @"subtitle" : @""}];
+        for (NSDictionary* entry in openDocuments) {
+            NSString* path = entry[@"path"] ?: @"";
+            [openShownPaths addObject:path.stringByStandardizingPath ?: path];
+            [_paletteResults addObject:@{
+                @"kind" : @"openDoc",
+                @"title" : entry[@"title"] ?: @"",
+                @"subtitle" : [self shortProvenanceForPath:path],
+                @"path" : path,
+                @"page" : @(-1)
+            }];
+        }
+    }
+
+    NSArray<NSDictionary*>* favorites = spdf_palette_favorites_without_open_documents(
+        [self favoriteResultsForQuery:query prefix:@""], openShownPaths);
     if (favorites.count > 0) {
         [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Favorites", @"subtitle" : @""}];
         [_paletteResults addObjectsFromArray:favorites];
@@ -12016,7 +12040,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
     if (query.length > 0 && _tabs.count > 0) {
         [_preloadQueue cancelAllOperations];
-        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Open documents", @"subtitle" : @""}];
+        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Text in open documents", @"subtitle" : @""}];
         [_paletteResults
             addObject:@{@"kind" : @"status", @"title" : @"Searching open documents...", @"subtitle" : @""}];
         [self runFindPaletteSearchForQuery:query generation:generation searchAll:YES];
@@ -12062,6 +12086,26 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         }
     }
     return results;
+}
+
+// One palette candidate (@{@"path", @"title"}) per open tab in every window of
+// this process, in window then tab order. The active tab is skipped: the
+// open-documents group lists switch targets, and selecting the document that
+// is already frontmost would be a no-op.
+- (NSArray<NSDictionary*>*)openDocumentPaletteCandidates {
+    NSMutableArray<NSDictionary*>* candidates = [NSMutableArray array];
+    for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
+        NSArray<NSString*>* paths = [controller openTabPaths];
+        NSArray<NSString*>* names = spdf_disambiguated_display_names_for_paths(paths);
+        for (NSUInteger i = 0; i < paths.count; ++i) {
+            if (controller == self && (NSInteger)i == controller->_selectedTabIndex) continue;
+            NSString* path = paths[i];
+            if (!path.length) continue;
+            NSString* title = i < names.count && names[i].length ? names[i] : spdf_display_name_for_path(path);
+            [candidates addObject:@{@"path" : path, @"title" : title ?: @""}];
+        }
+    }
+    return candidates;
 }
 
 - (NSDictionary<NSString*, NSString*>*)openDocumentPaletteTitlesByStandardizedPath {
@@ -12294,6 +12338,33 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     }];
 }
 
+// Open-document palette entries switch to the live tab (never a duplicate):
+// find the owning window controller, bring its window forward, and select the
+// tab. Falls back to a regular open when the tab was closed while the palette
+// was up (openPaths: reuses an existing tab, so still no duplicates).
+- (void)focusOpenDocumentTabForPath:(NSString*)path {
+    if (!path.length) return;
+    ShenzhenMacDelegate* owner = nil;
+    NSInteger tabIndex = -1;
+    for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
+        NSInteger index = [controller indexOfTabForPath:path];
+        if (index < 0) continue;
+        owner = controller;
+        tabIndex = index;
+        if (controller == self) break;  // prefer this window when open in several
+    }
+    if (!owner) {
+        [self openPath:path];
+        return;
+    }
+    if (owner != self) {
+        [NSApp activateIgnoringOtherApps:YES];
+        [owner->_window makeKeyAndOrderFront:nil];
+        [owner->_window makeMainWindow];
+    }
+    [owner selectTabAtIndex:tabIndex];
+}
+
 - (void)openPaletteResult:(NSDictionary*)result {
     NSString* kind = result[@"kind"];
     if (![self isSelectablePaletteResult:result]) return;
@@ -12306,6 +12377,10 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         return;
     }
     NSString* path = result[@"path"];
+    if ([kind isEqualToString:@"openDoc"]) {
+        [self focusOpenDocumentTabForPath:path];
+        return;
+    }
     NSInteger page = [result[@"page"] integerValue];
     if (path.length) {
         [self openPath:path];
