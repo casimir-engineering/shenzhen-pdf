@@ -130,14 +130,27 @@ void spdf_close(spdf_document* doc);
 
 int spdf_page_count(spdf_document* doc);
 const char* spdf_title(spdf_document* doc);
+/* Look up a document metadata string by mupdf key ("format", "encryption",
+ * "info:Title", "info:Author", "info:Subject", "info:Keywords", "info:Creator",
+ * "info:Producer", "info:CreationDate", "info:ModDate"). Returns 1 and fills
+ * buf (NUL-terminated, possibly truncated) when a non-empty value exists;
+ * returns 0 (buf set to "") when the key is absent, empty, or unsupported by
+ * the document's format handler. */
+int spdf_lookup_metadata(spdf_document* doc, const char* key, char* buf, size_t buf_len);
+/* Permission check. `permission` is an fz_permission character constant:
+ * 'p' print, 'c' copy, 'e' edit, 'n' annotate. Returns 1 when allowed (also
+ * for formats without a permission model), 0 when the document denies it. */
+int spdf_has_permission(spdf_document* doc, int permission);
+/* Returns 1 when the document is encrypted with a non-blank password. */
+int spdf_needs_password(spdf_document* doc);
 int spdf_set_page_size_cache(spdf_document* doc, int page_index, float width, float height);
 int spdf_page_size(spdf_document* doc, int page_index, float* width, float* height, char* err, size_t err_len);
 
 int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_bitmap* out, char* err, size_t err_len);
 int spdf_render_page_region_rgba(spdf_document* doc, int page_index, float zoom, spdf_rect region, spdf_bitmap* out,
                                  char* err, size_t err_len);
-int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, unsigned flags,
-                               spdf_render_token* token, spdf_bitmap* out, char* err, size_t err_len);
+int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, unsigned flags, spdf_render_token* token,
+                               spdf_bitmap* out, char* err, size_t err_len);
 int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float zoom, spdf_rect region, unsigned flags,
                                       spdf_render_token* token, spdf_bitmap* out, char* err, size_t err_len);
 void spdf_drop_page_list_cache(spdf_document* doc, int page_index); /* -1 = drop all cached page lists */
