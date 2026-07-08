@@ -7262,6 +7262,26 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return YES;
     }
 
+    // Middle-click (button 2) on a tab closes it. The strip sits under the
+    // transparent title bar, so it never receives these events through normal
+    // hit-testing — forward them like the left/right-click paths above/below.
+    if (type == NSEventTypeOtherMouseDown || type == NSEventTypeOtherMouseUp) {
+        if (event.buttonNumber != 2) return NO;
+        if (type == NSEventTypeOtherMouseDown) {
+            _tabStripCapturingMiddleMouse = NO;
+            if (_tabStripHeightConstraint.constant <= 0.0) return NO;
+            NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
+            if (!NSPointInRect(point, _tabStrip.bounds)) return NO;
+            _tabStripCapturingMiddleMouse = YES;
+            [_tabStrip otherMouseDown:event];
+            return YES;
+        }
+        if (!_tabStripCapturingMiddleMouse) return NO;
+        _tabStripCapturingMiddleMouse = NO;
+        [_tabStrip otherMouseUp:event];
+        return YES;
+    }
+
     if (type == NSEventTypeLeftMouseDown) {
         if ([self eventHitsTopChromeResizeCorner:event]) return NO;
         if ([self eventHitsStandardWindowButton:event]) {

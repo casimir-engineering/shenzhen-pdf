@@ -1,6 +1,7 @@
 #import "SPDFMacTabStripView.h"
 
 #import "SPDFMacSupport.h"
+#import "SPDFMacTabStripGeometry.h"
 
 #include <math.h>
 
@@ -14,6 +15,10 @@ static const CGFloat kReadOnlyDotDiameter = 7.0;
 // 50% less horizontal space around the read-only dot than before (was 12 / 5).
 static const CGFloat kReadOnlyDotLeftInset = 6.0;
 static const CGFloat kReadOnlyDotTitleGap = 2.5;
+// Upper bound on simultaneously visible tabs, for stack-allocated geometry
+// arrays. Visible tabs are >= kTabMinVisibleWidth wide, so even a 5K-wide
+// strip shows far fewer than this.
+static const NSInteger kMaxVisibleTabGeometry = 64;
 static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzhenpdf.tab";
 
 static NSString* spdf_tab_strip_json_string_from_object(id object) {
@@ -50,6 +55,11 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     BOOL _hasLastHoverPoint;
     BOOL _suppressingWindowMovementForTabGesture;
     BOOL _previousWindowMovableForTabGesture;
+    NSInteger _middleClickTabIndex;
+    NSString* _middleClickTabPath;
+    // Insertion slot (see SPDFMacTabStripGeometry.h) for the yellow drop
+    // indicator shown while a detached tab hovers over this strip; -1 hidden.
+    NSInteger _dropIndicatorSlot;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -60,6 +70,8 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
         _dragSessionTabIndex = -1;
         _dragSourceTabIndex = -1;
         _dragTargetTabIndex = -1;
+        _middleClickTabIndex = -1;
+        _dropIndicatorSlot = -1;
         [self registerForDraggedTypes:@[ SPDFTabDragPasteboardType ]];
     }
     return self;
@@ -104,7 +116,10 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (void)setHidden:(BOOL)hidden {
-    if (hidden) [self hideHoverPanel];
+    if (hidden) {
+        [self hideHoverPanel];
+        [self clearDropIndicator];
+    }
     [super setHidden:hidden];
 }
 
@@ -434,17 +449,57 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     return targetIndex;
 }
 
-- (NSInteger)dropIndexForPoint:(NSPoint)point {
-    NSArray<NSNumber*>* visibleIndexes = [self visibleTabIndexes];
-    if (!visibleIndexes.count) return (NSInteger)self.tabs.count;
-
-    for (NSNumber* indexNumber in visibleIndexes) {
+// Collects the frames of the visible, non-collapsed tabs (left to right) into
+// the caller-provided arrays, each sized kMaxVisibleTabGeometry. arrayIndexes
+// maps each geometry slot back to the tab's index in self.tabs. Returns the
+// number of entries filled. Shared by the drop-index computation and the
+// insertion-indicator drawing so both always agree.
+- (NSInteger)collectVisibleTabGeometryMinXs:(CGFloat*)minXs
+                                      midXs:(CGFloat*)midXs
+                                      maxXs:(CGFloat*)maxXs
+                               arrayIndexes:(NSInteger*)arrayIndexes {
+    NSInteger filled = 0;
+    for (NSNumber* indexNumber in [self visibleTabIndexes]) {
+        if (filled >= kMaxVisibleTabGeometry) break;
         NSInteger index = indexNumber.integerValue;
         NSRect tabRect = [self rectForTabAtIndex:index];
         if (NSIsEmptyRect(tabRect)) continue;
-        if (point.x < NSMidX(tabRect)) return index;
+        minXs[filled] = NSMinX(tabRect);
+        midXs[filled] = NSMidX(tabRect);
+        maxXs[filled] = NSMaxX(tabRect);
+        arrayIndexes[filled] = index;
+        ++filled;
     }
-    return MIN((NSInteger)self.tabs.count, visibleIndexes.lastObject.integerValue + 1);
+    return filled;
+}
+
+- (NSInteger)dropIndexForPoint:(NSPoint)point {
+    CGFloat minXs[kMaxVisibleTabGeometry], midXs[kMaxVisibleTabGeometry], maxXs[kMaxVisibleTabGeometry];
+    NSInteger arrayIndexes[kMaxVisibleTabGeometry];
+    NSInteger visibleCount = [self collectVisibleTabGeometryMinXs:minXs midXs:midXs maxXs:maxXs
+                                                     arrayIndexes:arrayIndexes];
+    if (visibleCount <= 0) return (NSInteger)self.tabs.count;
+
+    NSInteger slot = spdf_tab_strip_drop_slot_for_x(point.x, midXs, visibleCount);
+    if (slot < visibleCount) return arrayIndexes[slot];
+    return MIN((NSInteger)self.tabs.count, arrayIndexes[visibleCount - 1] + 1);
+}
+
+- (void)updateDropIndicatorForPoint:(NSPoint)point {
+    CGFloat minXs[kMaxVisibleTabGeometry], midXs[kMaxVisibleTabGeometry], maxXs[kMaxVisibleTabGeometry];
+    NSInteger arrayIndexes[kMaxVisibleTabGeometry];
+    NSInteger visibleCount = [self collectVisibleTabGeometryMinXs:minXs midXs:midXs maxXs:maxXs
+                                                     arrayIndexes:arrayIndexes];
+    NSInteger slot = visibleCount > 0 ? spdf_tab_strip_drop_slot_for_x(point.x, midXs, visibleCount) : -1;
+    if (slot == _dropIndicatorSlot) return;
+    _dropIndicatorSlot = slot;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)clearDropIndicator {
+    if (_dropIndicatorSlot < 0) return;
+    _dropIndicatorSlot = -1;
+    [self setNeedsDisplay:YES];
 }
 
 - (BOOL)containsTabOrControlAtPoint:(NSPoint)point {
@@ -625,6 +680,24 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     [@"+" drawAtPoint:NSMakePoint(floor(NSMidX(plusRect) - plusSize.width / 2.0),
                                   floor(NSMidY(plusRect) - plusSize.height / 2.0))
         withAttributes:plusAttrs];
+
+    // Drop-insertion indicator: a thin rounded systemYellow line, full tab
+    // height, centered in the gap where a hovering detached tab would insert.
+    // Drawn last as a pure overlay so the existing tabs never shift.
+    if (_dropIndicatorSlot >= 0) {
+        CGFloat minXs[kMaxVisibleTabGeometry], midXs[kMaxVisibleTabGeometry], maxXs[kMaxVisibleTabGeometry];
+        NSInteger arrayIndexes[kMaxVisibleTabGeometry];
+        NSInteger visibleCount = [self collectVisibleTabGeometryMinXs:minXs midXs:midXs maxXs:maxXs
+                                                         arrayIndexes:arrayIndexes];
+        CGFloat centerX = spdf_tab_strip_drop_indicator_center_x(_dropIndicatorSlot, minXs, maxXs, visibleCount,
+                                                                 kTabGap);
+        if (!isnan(centerX)) {
+            NSRect anyTabRect = [self rectForTabAtIndex:arrayIndexes[0]];
+            NSRect lineRect = NSMakeRect(floor(centerX) - 1.0, NSMinY(anyTabRect), 2.0, NSHeight(anyTabRect));
+            [NSColor.systemYellowColor setFill];
+            [[NSBezierPath bezierPathWithRoundedRect:lineRect xRadius:1.0 yRadius:1.0] fill];
+        }
+    }
 }
 
 - (void)showOverflowMenuWithEvent:(NSEvent*)event {
@@ -769,15 +842,38 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
-    if (![sender.draggingPasteboard availableTypeFromArray:@[ SPDFTabDragPasteboardType ]]) return NSDragOperationNone;
-    return [self ignoreDraggedTabFromSender:sender] ? NSDragOperationNone : NSDragOperationMove;
+    NSDragOperation operation = NSDragOperationNone;
+    if ([sender.draggingPasteboard availableTypeFromArray:@[ SPDFTabDragPasteboardType ]] &&
+        ![self ignoreDraggedTabFromSender:sender]) {
+        operation = NSDragOperationMove;
+    }
+    // Browser-style insertion indicator: while a detached tab hovers over this
+    // strip, mark the gap it would insert into; the drop below uses the same
+    // -dropIndexForPoint: geometry, so indicator and drop always agree.
+    if (operation == NSDragOperationMove) {
+        [self updateDropIndicatorForPoint:[self convertPoint:sender.draggingLocation fromView:nil]];
+    } else {
+        [self clearDropIndicator];
+    }
+    return operation;
 }
 
 - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
     return [self draggingEntered:sender];
 }
 
+- (void)draggingExited:(id<NSDraggingInfo>)sender {
+    (void)sender;
+    [self clearDropIndicator];
+}
+
+- (void)draggingEnded:(id<NSDraggingInfo>)sender {
+    (void)sender;
+    [self clearDropIndicator];
+}
+
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    [self clearDropIndicator];
     if ([self ignoreDraggedTabFromSender:sender]) return NO;
     NSString* json = [sender.draggingPasteboard stringForType:SPDFTabDragPasteboardType];
     SPDFDocumentTab* tab = spdf_tab_from_dictionary(spdf_tab_strip_json_dictionary_from_string(json));
@@ -898,6 +994,44 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     } else if (!dragged && clickedTabIndex >= 0) {
         [self.reader selectTabAtIndex:clickedTabIndex];
     }
+}
+
+// Middle-click closes a tab with browser semantics: the close fires on
+// middle-button RELEASE over the same tab that was pressed (middle-dragging
+// off the tab cancels). Goes through the same -closeTabAtIndex: path as the
+// tab's close button, so reopen-last-closed bookkeeping applies. The pressed
+// tab is never selected first. Presses on the "+" / "…" controls or empty
+// strip space hit no tab and do nothing.
+- (void)otherMouseDown:(NSEvent*)event {
+    if (event.buttonNumber != 2) {
+        [super otherMouseDown:event];
+        return;
+    }
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger index = [self tabIndexAtPoint:point];
+    _middleClickTabIndex = index;
+    _middleClickTabPath = index >= 0 ? [self.tabs[(NSUInteger)index].path copy] : nil;
+}
+
+- (void)otherMouseUp:(NSEvent*)event {
+    if (event.buttonNumber != 2) {
+        [super otherMouseUp:event];
+        return;
+    }
+    NSInteger pressedIndex = _middleClickTabIndex;
+    NSString* pressedPath = _middleClickTabPath;
+    _middleClickTabIndex = -1;
+    _middleClickTabPath = nil;
+    if (pressedIndex < 0 || pressedIndex >= (NSInteger)self.tabs.count) return;
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    if ([self tabIndexAtPoint:point] != pressedIndex) return;
+    // Guard against the tabs array having changed between press and release
+    // (async tab-strip refreshes): only close if the same document is still at
+    // the pressed index.
+    NSString* currentPath = self.tabs[(NSUInteger)pressedIndex].path ?: @"";
+    if (![currentPath isEqualToString:pressedPath ?: @""]) return;
+    [self hideHoverPanel];
+    [self.reader closeTabAtIndex:pressedIndex];
 }
 
 - (void)mouseMoved:(NSEvent*)event {
