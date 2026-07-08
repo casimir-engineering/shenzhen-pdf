@@ -50,6 +50,8 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     BOOL _hasLastHoverPoint;
     BOOL _suppressingWindowMovementForTabGesture;
     BOOL _previousWindowMovableForTabGesture;
+    NSInteger _middleClickTabIndex;
+    NSString* _middleClickTabPath;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -60,6 +62,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
         _dragSessionTabIndex = -1;
         _dragSourceTabIndex = -1;
         _dragTargetTabIndex = -1;
+        _middleClickTabIndex = -1;
         [self registerForDraggedTypes:@[ SPDFTabDragPasteboardType ]];
     }
     return self;
@@ -898,6 +901,44 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     } else if (!dragged && clickedTabIndex >= 0) {
         [self.reader selectTabAtIndex:clickedTabIndex];
     }
+}
+
+// Middle-click closes a tab with browser semantics: the close fires on
+// middle-button RELEASE over the same tab that was pressed (middle-dragging
+// off the tab cancels). Goes through the same -closeTabAtIndex: path as the
+// tab's close button, so reopen-last-closed bookkeeping applies. The pressed
+// tab is never selected first. Presses on the "+" / "…" controls or empty
+// strip space hit no tab and do nothing.
+- (void)otherMouseDown:(NSEvent*)event {
+    if (event.buttonNumber != 2) {
+        [super otherMouseDown:event];
+        return;
+    }
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger index = [self tabIndexAtPoint:point];
+    _middleClickTabIndex = index;
+    _middleClickTabPath = index >= 0 ? [self.tabs[(NSUInteger)index].path copy] : nil;
+}
+
+- (void)otherMouseUp:(NSEvent*)event {
+    if (event.buttonNumber != 2) {
+        [super otherMouseUp:event];
+        return;
+    }
+    NSInteger pressedIndex = _middleClickTabIndex;
+    NSString* pressedPath = _middleClickTabPath;
+    _middleClickTabIndex = -1;
+    _middleClickTabPath = nil;
+    if (pressedIndex < 0 || pressedIndex >= (NSInteger)self.tabs.count) return;
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    if ([self tabIndexAtPoint:point] != pressedIndex) return;
+    // Guard against the tabs array having changed between press and release
+    // (async tab-strip refreshes): only close if the same document is still at
+    // the pressed index.
+    NSString* currentPath = self.tabs[(NSUInteger)pressedIndex].path ?: @"";
+    if (![currentPath isEqualToString:pressedPath ?: @""]) return;
+    [self hideHoverPanel];
+    [self.reader closeTabAtIndex:pressedIndex];
 }
 
 - (void)mouseMoved:(NSEvent*)event {
