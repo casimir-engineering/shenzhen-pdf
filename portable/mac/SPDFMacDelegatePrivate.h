@@ -186,6 +186,9 @@
     NSInteger _pageIndex;
     NSInteger _highlightPageIndex;
     NSInteger _findMatchIndex;
+    // Settings toggle: a new search selects the match nearest the current
+    // viewport (default) instead of match #1.
+    BOOL _searchJumpsToNearestResult;
     NSInteger _selectionPageIndex;
     NSString* _selectedText;
     BOOL _collapseWhitespaceWhenCopyingText;
@@ -405,6 +408,7 @@
 - (void)revealSettingsFolder:(id)sender;
 - (void)toggleDefaultSidebarForNewDocuments:(id)sender;
 - (void)toggleDefaultMinimapForNewDocuments:(id)sender;
+- (void)toggleSearchJumpsToNearestResult:(id)sender;
 - (NSString*)documentStateKeyForPath:(NSString*)path;
 - (void)applyStoredDocumentStateToTab:(SPDFDocumentTab*)tab;
 - (void)saveDocumentStateForTab:(SPDFDocumentTab*)tab;
@@ -541,6 +545,7 @@
 - (void)restorePaletteSelectionAfterReloadFromRow:(NSInteger)previousRow;
 - (void)rememberActiveTabFindState;
 - (void)startFindForCurrentQueryResetSavedIndex:(BOOL)resetSavedIndex revealMatch:(BOOL)revealMatch;
+- (NSInteger)nearestFindMatchIndexToCurrentViewport;
 - (void)invalidateFindMarkers;
 - (NSArray<NSDictionary*>*)findScrollbarMarkers;
 - (BOOL)isAutoFitMode:(SPDFFitMode)fitMode;
