@@ -11483,6 +11483,29 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     return text;
 }
 
+// Whole-document translation from Chinese: text blocks containing no Han
+// ideographs (pure Latin captions, part numbers, dimensions...) are left
+// completely untouched -- not sent to Argos and no overlay drawn. Rebuilds
+// _pendingTranslationItems in lockstep and returns the filtered source text
+// (nil when nothing contains Chinese).
+- (NSString*)sourceTextByKeepingChineseLines:(NSString*)sourceText {
+    NSArray<NSString*>* sourceLines =
+        [sourceText componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    NSArray<NSDictionary*>* items = _pendingTranslationItems ?: @[];
+    NSMutableArray<NSDictionary*>* keptItems = [NSMutableArray arrayWithCapacity:items.count];
+    NSMutableString* keptText = [NSMutableString string];
+    for (NSUInteger i = 0; i < items.count; ++i) {
+        NSString* line = i < sourceLines.count ? sourceLines[i] : @"";
+        if (!spdf_text_contains_han(line.UTF8String)) continue;
+        [keptItems addObject:items[i]];
+        [keptText appendString:line];
+        [keptText appendString:@"\n"];
+    }
+    if (keptItems.count == 0) return nil;
+    _pendingTranslationItems = keptItems;
+    return keptText;
+}
+
 - (BOOL)writeTranslatedPDFWithText:(NSString*)text
                         sourcePath:(NSString*)sourcePath
                         outputPath:(NSString*)outputPath
@@ -13842,6 +13865,11 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
       } else {
           NSUInteger start = 0;
           NSUInteger translatedCount = 0;
+          // Each Argos spawn costs seconds of model loading, so batch whole
+          // pages together (up to a line budget) instead of one spawn per
+          // page. Batches end on page boundaries so any line-count drift in
+          // Argos output never leaks past the batch's last page.
+          const NSUInteger batchLineBudget = 100;
           while (start < items.count && !failure.length) {
               if (self->_translationCancelRequested) {
                   failure = @"Translation canceled.";
@@ -13850,10 +13878,23 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
               NSInteger page = [items[start][@"page"] integerValue];
               NSUInteger end = start + 1;
               while (end < items.count && [items[end][@"page"] integerValue] == page) end++;
+              while (end < items.count && end - start < batchLineBudget) {
+                  NSInteger nextPage = [items[end][@"page"] integerValue];
+                  NSUInteger nextEnd = end + 1;
+                  while (nextEnd < items.count && [items[nextEnd][@"page"] integerValue] == nextPage) nextEnd++;
+                  if (nextEnd - start > batchLineBudget) break;
+                  end = nextEnd;
+              }
+              NSInteger lastPage = [items[end - 1][@"page"] integerValue];
               dispatch_async(dispatch_get_main_queue(), ^{
                 NSString* detail =
-                    [NSString stringWithFormat:@"Translating page %ld (%lu of %lu text blocks)...", (long)page + 1,
-                                               (unsigned long)translatedCount, (unsigned long)items.count];
+                    page == lastPage
+                        ? [NSString stringWithFormat:@"Translating page %ld (%lu of %lu text blocks)...",
+                                                     (long)page + 1, (unsigned long)translatedCount,
+                                                     (unsigned long)items.count]
+                        : [NSString stringWithFormat:@"Translating pages %ld-%ld (%lu of %lu text blocks)...",
+                                                     (long)page + 1, (long)lastPage + 1,
+                                                     (unsigned long)translatedCount, (unsigned long)items.count];
                 [weakSelf updateTranslationProgress:(double)translatedCount detail:detail];
               });
 
@@ -13871,8 +13912,12 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                                              input:pageInput
                                             output:&translated
                                              error:&failure]) {
-                  if (failure.length && ![failure isEqualToString:@"Translation canceled."])
-                      failure = [NSString stringWithFormat:@"Page %ld: %@", (long)page + 1, failure];
+                  if (failure.length && ![failure isEqualToString:@"Translation canceled."]) {
+                      failure = page == lastPage
+                                    ? [NSString stringWithFormat:@"Page %ld: %@", (long)page + 1, failure]
+                                    : [NSString stringWithFormat:@"Pages %ld-%ld: %@", (long)page + 1,
+                                                                 (long)lastPage + 1, failure];
+                  }
                   break;
               }
               NSArray<NSString*>* pageOutput =
@@ -13883,19 +13928,23 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                   translatedLines[i] = line.length ? line : @" ";
               }
               if (pageOutput.count > end - start) {
+                  // Join with spaces, not newlines: the combined output is
+                  // rejoined with "\n" and resplit per line when writing the
+                  // PDF, so embedded newlines here would shift every later
+                  // line onto the wrong overlay.
                   NSMutableString* tail = [translatedLines[end - 1] mutableCopy];
                   for (NSUInteger i = end - start; i < pageOutput.count; ++i) {
                       NSString* extra = pageOutput[i];
                       if (!extra.length) continue;
-                      if (tail.length) [tail appendString:@"\n"];
+                      if (tail.length) [tail appendString:@" "];
                       [tail appendString:extra];
                   }
-                  translatedLines[end - 1] = tail;
+                  translatedLines[end - 1] = [tail stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
               }
               translatedCount = end;
               dispatch_async(dispatch_get_main_queue(), ^{
                 NSString* detail =
-                    [NSString stringWithFormat:@"Translated page %ld (%lu of %lu text blocks)...", (long)page + 1,
+                    [NSString stringWithFormat:@"Translated page %ld (%lu of %lu text blocks)...", (long)lastPage + 1,
                                                (unsigned long)translatedCount, (unsigned long)items.count];
                 [weakSelf updateTranslationProgress:(double)translatedCount detail:detail];
               });
@@ -13915,7 +13964,12 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                 strongSelf->_statusLabel.stringValue = @"Translation canceled.";
                 return;
             }
-            if (!offeredInstaller) {
+            // Only offer the language-package installer for missing-package
+            // errors; anything else (crashes, bad toolchain, ...) must show
+            // the real error instead of hiding it behind an install prompt.
+            BOOL missingPackage = [failure rangeOfString:@"is not an installed language"].location != NSNotFound ||
+                                  [failure rangeOfString:@"No package"].location != NSNotFound;
+            if (!offeredInstaller && missingPackage) {
                 [strongSelf runArgosPackageInstallFromLanguage:sourceLanguage
                                                     toLanguage:targetLanguage
                                                     sourceText:sourceText
@@ -14032,6 +14086,16 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 
     NSString* sourceLanguage = options[@"source"];
     NSString* targetLanguage = options[@"target"];
+    // Argos codes: "zh" simplified, "zt" traditional (also matches custom zh-* codes).
+    BOOL chineseSource = [sourceLanguage hasPrefix:@"zh"] || [sourceLanguage hasPrefix:@"zt"];
+    if (!usingSelection && chineseSource) {
+        sourceText = [self sourceTextByKeepingChineseLines:sourceText];
+        if (sourceText.length == 0) {
+            [self showError:@"Nothing to translate"
+                     detail:@"No text block in this document contains Chinese characters."];
+            return;
+        }
+    }
     NSString* outputPath = [self translatedOutputPathForPath:_path targetLanguage:targetLanguage];
     [self runArgosTranslationWithTool:[self argosToolPath]
                            sourceText:sourceText

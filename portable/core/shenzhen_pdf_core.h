@@ -198,6 +198,13 @@ int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t e
 int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t err_len);
 int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_translated_line* lines, int line_count,
                               char* err, size_t err_len);
+/* Returns 1 when the UTF-8 string contains at least one Han ideograph
+ * (CJK Unified Ideographs U+4E00-U+9FFF, Extension A U+3400-U+4DBF,
+ * compatibility ideographs U+F900-U+FAFF, or supplementary-plane extensions
+ * U+20000-U+2FA1F). Malformed UTF-8 bytes are skipped. Pure helper shared by
+ * the translation pipeline so Chinese-source translation can leave blocks
+ * with no Chinese text untouched. */
+int spdf_text_contains_han(const char* utf8);
 /* Write a standalone single-page PDF (the given page grafted into a fresh
  * document) to path. Backs the "Copy Page" clipboard action on both platforms.
  * Returns 1 on success, 0 on failure (err is filled). */
