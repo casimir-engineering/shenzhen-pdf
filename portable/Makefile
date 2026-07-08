@@ -15,6 +15,7 @@ MAC_WINDOW_SHORTCUT_TEST := $(BUILD)/SPDFMacWindowShortcutsTests
 MAC_MINIMAP_WINDOW_TEST := $(BUILD)/SPDFMacMinimapWindowTests
 MAC_TAB_STRIP_GEOMETRY_TEST := $(BUILD)/SPDFMacTabStripGeometryTests
 MAC_PALETTE_RESULTS_TEST := $(BUILD)/SPDFMacPaletteResultsTests
+MAC_FIND_NEAREST_TEST := $(BUILD)/SPDFMacFindNearestTests
 MAC_UPDATER_TEST := $(BUILD)/SPDFUpdaterTests
 MAC_PROPERTIES_FORMAT_TEST := $(BUILD)/SPDFMacPropertiesFormatTests
 # Exclude standalone test translation units (each defines its own main()).
@@ -45,7 +46,7 @@ MAC_CODESIGN_APP = $(MAC_CODESIGN_NESTED); codesign --force --timestamp --option
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app mac-window-shortcut-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-palette-results-tests mac-updater-tests mac-properties-format-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app mac-window-shortcut-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -84,6 +85,12 @@ $(MAC_PALETTE_RESULTS_TEST): mac/tests/SPDFMacPaletteResultsTests.mm mac/SPDFMac
 
 mac-palette-results-tests: $(MAC_PALETTE_RESULTS_TEST)
 	"$(MAC_PALETTE_RESULTS_TEST)"
+
+$(MAC_FIND_NEAREST_TEST): mac/tests/SPDFMacFindNearestTests.mm mac/SPDFMacFindNearest.mm mac/SPDFMacFindNearest.h | $(BUILD)
+	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacFindNearestTests.mm mac/SPDFMacFindNearest.mm -framework Cocoa -o "$(MAC_FIND_NEAREST_TEST)"
+
+mac-find-nearest-tests: $(MAC_FIND_NEAREST_TEST)
+	"$(MAC_FIND_NEAREST_TEST)"
 
 $(MAC_UPDATER_TEST): mac/SPDFUpdaterTests.mm mac/SPDFUpdater.mm mac/SPDFUpdater.h | $(BUILD)
 	clang++ -std=c++17 -fobjc-arc -Imac mac/SPDFUpdaterTests.mm mac/SPDFUpdater.mm -framework Cocoa -framework Security -o "$(MAC_UPDATER_TEST)"
