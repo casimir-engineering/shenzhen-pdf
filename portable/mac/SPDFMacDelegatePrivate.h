@@ -308,6 +308,7 @@
     NSString* _skippedUpdateVersion;
     BOOL _defaultReaderPromptDismissed;
     BOOL _tabStripCapturingMouse;
+    BOOL _tabStripCapturingMiddleMouse;
     BOOL _terminateOnlyThisProcess;
     BOOL _suppressSessionWriteOnTerminate;
     BOOL _suspendPersistentStateSaves;
