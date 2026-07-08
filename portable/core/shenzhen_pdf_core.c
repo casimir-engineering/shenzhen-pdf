@@ -201,6 +201,53 @@ const char* spdf_title(spdf_document* doc) {
     return doc && doc->title ? doc->title : "";
 }
 
+int spdf_lookup_metadata(spdf_document* doc, const char* key, char* buf, size_t buf_len) {
+    int found = 0;
+
+    if (!buf || buf_len == 0) return 0;
+    buf[0] = '\0';
+    if (!doc || !doc->doc || !key || !*key) return 0;
+
+    fz_try(doc->ctx) {
+        found = fz_lookup_metadata(doc->ctx, doc->doc, key, buf, buf_len) > 0;
+    }
+    fz_catch(doc->ctx) {
+        buf[0] = '\0';
+        found = 0;
+    }
+    if (!found || !buf[0]) {
+        buf[0] = '\0';
+        return 0;
+    }
+    return 1;
+}
+
+int spdf_has_permission(spdf_document* doc, int permission) {
+    int allowed = 1;
+
+    if (!doc || !doc->doc) return 1;
+    fz_try(doc->ctx) {
+        allowed = fz_has_permission(doc->ctx, doc->doc, (fz_permission)permission) != 0;
+    }
+    fz_catch(doc->ctx) {
+        allowed = 1;
+    }
+    return allowed;
+}
+
+int spdf_needs_password(spdf_document* doc) {
+    int needs = 0;
+
+    if (!doc || !doc->doc) return 0;
+    fz_try(doc->ctx) {
+        needs = fz_needs_password(doc->ctx, doc->doc) != 0;
+    }
+    fz_catch(doc->ctx) {
+        needs = 0;
+    }
+    return needs;
+}
+
 int spdf_set_page_size_cache(spdf_document* doc, int page_index, float width, float height) {
     spdf_page_size_cache* cached;
 
@@ -460,8 +507,8 @@ int spdf_render_page_rgba(spdf_document* doc, int page_index, float zoom, spdf_b
     return spdf_render_page_rgba_opts(doc, page_index, zoom, SPDF_RENDER_DEFAULT, NULL, out, err, err_len);
 }
 
-int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, unsigned flags,
-                               spdf_render_token* token, spdf_bitmap* out, char* err, size_t err_len) {
+int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, unsigned flags, spdf_render_token* token,
+                               spdf_bitmap* out, char* err, size_t err_len) {
     fz_page* page = NULL;
     fz_pixmap* pix = NULL;
     fz_device* dev = NULL;
