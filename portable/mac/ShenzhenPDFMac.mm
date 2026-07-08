@@ -9701,6 +9701,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self leavePresentationModeAndExitFullScreen:YES sender:nil];
         return YES;
     }
+    if (event.keyCode == 53) return [self documentEscapeKeyDown:event];
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
 
     BOOL space = event.keyCode == 49;
@@ -9986,6 +9987,27 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     _keyScrollAxis = 0;
     _keyScrollKeyDown = NO;
     _keyScrollKeyCode = 0;
+}
+
+// Escape in the normal viewer clears the active search entirely: query, in-page
+// highlights, match counter, scrollbar markers, the search-results sidebar, and
+// the per-tab remembered query (startFindForCurrentQuery with an empty field
+// resets tab.searchText). Returns NO — letting the event keep its default
+// meaning — when Escape has a higher-priority job: presentation mode (exit,
+// handled before this in documentArrowKeyDown:), system full screen (exit full
+// screen), or when there is no active search to clear. The search field's own
+// editor handles Escape separately in control:textView:doCommandBySelector:.
+- (BOOL)documentEscapeKeyDown:(NSEvent*)event {
+    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) return NO;
+    if (!_doc || _presentationMode) return NO;
+    if (_window.styleMask & NSWindowStyleMaskFullScreen) return NO;
+    BOOL hasActiveSearch = _searchField.stringValue.length > 0 || _findSearchInProgress || _findMatches.count > 0;
+    if (!hasActiveSearch) return NO;
+    _searchField.stringValue = @"";
+    [self startFindForCurrentQuery];
+    [self clearFindFieldFocus];
+    return YES;
 }
 
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event {
