@@ -54,6 +54,7 @@
                 @{@"title" : @"Open path (file opens it; folder opens the browser there)",
                   @"keys" : @[ @"Cmd", @"Shift", @"O" ]},
                 @{@"title" : @"Reopen last closed document", @"keys" : @[ @"Cmd", @"Shift", @"T" ]},
+                @{@"title" : @"Document properties", @"keys" : @[ @"Cmd", @"I" ]},
                 @{@"title" : @"Rotate page clockwise", @"keys" : @[ @"Cmd", @"R" ]},
                 @{@"title" : @"Rotate page anticlockwise", @"keys" : @[ @"Cmd", @"Shift", @"R" ]},
                 @{@"title" : @"Presentation mode", @"keys" : @[ @"F5", @"Cmd", @"Shift", @"F" ]},
