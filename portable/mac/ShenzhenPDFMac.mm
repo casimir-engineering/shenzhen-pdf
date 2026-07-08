@@ -15255,6 +15255,20 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
         }
         return NO;
     }
+    if (control == _pageField) {
+        if (commandSelector == @selector(cancelOperation:)) {
+            // Escape cancels the page-number edit without committing the typed
+            // value (abortEditing first so the focus change cannot fire the
+            // field's action), returns focus to the document, and clears the
+            // active search like Escape everywhere else in the viewer.
+            [_pageField abortEditing];
+            NSResponder* target = _pageView ? (NSResponder*)_pageView : (NSResponder*)_pageScrollView;
+            if (target) [_window makeFirstResponder:target];
+            [self documentEscapeKeyDown:NSApp.currentEvent];
+            return YES;
+        }
+        return NO;
+    }
     if (control == _shortcutHelpSearchField) {
         if (commandSelector == @selector(cancelOperation:)) {
             [self closeShortcutHelp:control];
