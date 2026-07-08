@@ -25,6 +25,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
 #import "SPDFMacPrintView.h"
+#import "SPDFMacPropertiesPanel.h"
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabStripView.h"
 #import "SPDFMacUIHelpers.h"
@@ -2290,7 +2291,7 @@ static void spdf_discard_launch_prerender(void) {
     [fileMenu addItemWithTitle:@"OCR Document..." action:@selector(ocrDocument:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Delete All Text..." action:@selector(deleteAllTextFromDocument:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Translate..." action:@selector(translateDocument:) keyEquivalent:@""];
-    [fileMenu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@""];
+    [fileMenu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@"i"];
     fileItem.submenu = fileMenu;
 
     NSMenuItem* goItem = [[NSMenuItem alloc] initWithTitle:@"Go To" action:nil keyEquivalent:@""];
@@ -14641,14 +14642,13 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
 - (void)showProperties:(id)sender {
     (void)sender;
     if (!_doc) return;
-    NSString* message =
-        [NSString stringWithFormat:@"%@\n%ld pages\n%@",
-                                   spdf_title(_doc) ? [NSString stringWithUTF8String:spdf_title(_doc)] : @"Untitled",
-                                   (long)spdf_page_count(_doc), _path ?: @""];
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = @"Document Properties";
-    alert.informativeText = message;
-    [alert runModal];
+    [SPDFPropertiesPanelController presentForDocument:_doc
+                                           sourcePath:_path
+                                          workingPath:_workingPath.length ? _workingPath : _path
+                                            pageIndex:_pageIndex
+                                         outlineCount:_outline.count
+                                      annotationCount:_comments.count
+                                         parentWindow:_window];
 }
 
 - (void)showDefaultPDFReaderStatus:(NSString*)message detail:(NSString*)detail {
