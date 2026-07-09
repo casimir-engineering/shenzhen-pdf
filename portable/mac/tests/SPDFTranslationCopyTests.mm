@@ -19,6 +19,9 @@
 #include <unistd.h>
 #include <vector>
 
+#include "mupdf/fitz.h"
+#include "mupdf/pdf.h"
+
 #import "shenzhen_pdf_core.h"
 
 static int gFailureCount = 0;
@@ -52,7 +55,7 @@ static void append_stream_object(NSMutableData* pdf, NSUInteger* offsets, NSUInt
 }
 
 static NSData* build_fixture_pdf(void) {
-    static const NSUInteger kObjectCount = 20;
+    static const NSUInteger kObjectCount = 22;
     NSMutableData* pdf = [NSMutableData data];
     NSUInteger offsets[kObjectCount + 1] = {0};
 
@@ -68,7 +71,7 @@ static NSData* build_fixture_pdf(void) {
                   @"/Resources<</Font<</F1 9 0 R/F2 10 0 R>>>>/Annots[13 0 R 14 0 R 15 0 R]>>");
     append_object(pdf, offsets, 5,
                   @"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 8 0 R"
-                  @"/Resources<</Font<</F1 9 0 R>>>>>>");
+                  @"/Resources<</Font<</F1 9 0 R>>>>/Annots[21 0 R]>>");
 
     // Page 1: Latin heading, Han block ("ABCD" -> U+786C U+4EF6 U+8BBE U+8BA1), digits-only block.
     append_stream_object(pdf, offsets, 6,
@@ -119,6 +122,20 @@ static NSData* build_fixture_pdf(void) {
     append_object(pdf, offsets, 19, @"<</Title<FEFF75356E90>/Parent 18 0 R/Dest[4 0 R /XYZ 100 500 0]>>");
     append_object(pdf, offsets, 20, @"<</Title(Appendix)/Parent 16 0 R/Prev 17 0 R/Dest[5 0 R /XYZ 0 792 0]>>");
 
+    // FreeText comment (page 3) with Chinese contents and a pre-existing
+    // appearance stream: translation must regenerate the appearance, not
+    // keep drawing the stale one.
+    append_object(pdf, offsets, 21,
+                  @"<</Type/Annot/Subtype/FreeText/Rect[72 600 300 640]/Contents<FEFF786C4EF6>"
+                  @"/DA(/Helv 12 Tf 0 g)/T(Zhang)/AP<</N 22 0 R>>>>");
+    offsets[22] = pdf.length;
+    NSString* apStream = @"BT /F1 12 Tf 4 10 Td (STALE-AP-TEXT) Tj ET";
+    NSString* apBody = [NSString
+        stringWithFormat:@"22 0 obj\n<</Type/XObject/Subtype/Form/BBox[0 0 228 40]"
+                         @"/Resources<</Font<</F1 9 0 R>>>>/Length %lu>>\nstream\n%@\nendstream\nendobj\n",
+                         (unsigned long)[apStream lengthOfBytesUsingEncoding:NSASCIIStringEncoding], apStream];
+    [pdf appendData:[apBody dataUsingEncoding:NSASCIIStringEncoding]];
+
     NSUInteger xref_offset = pdf.length;
     NSMutableString* xref = [NSMutableString string];
     [xref appendFormat:@"xref\n0 %lu\n", (unsigned long)(kObjectCount + 1)];
@@ -131,6 +148,43 @@ static NSData* build_fixture_pdf(void) {
 }
 
 // --- Helpers ---------------------------------------------------------------
+
+// Decompressed /AP/N stream of the first FreeText annotation on a page
+// (annotation appearances are not part of structured text extraction, so the
+// test reads the appearance stream directly through mupdf).
+static NSString* freetext_appearance_stream(NSString* path, int page_index) {
+    fz_context* ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
+    NSString* result = nil;
+    if (!ctx) return nil;
+    fz_var(result);
+    fz_try(ctx) {
+        pdf_document* doc = pdf_open_document(ctx, path.fileSystemRepresentation);
+        pdf_obj* page = pdf_lookup_page_obj(ctx, doc, page_index);
+        pdf_obj* annots = pdf_dict_get(ctx, page, PDF_NAME(Annots));
+        int i;
+        for (i = 0; i < pdf_array_len(ctx, annots); ++i) {
+            pdf_obj* annot = pdf_array_get(ctx, annots, i);
+            pdf_obj* ap;
+            fz_buffer* buf;
+            unsigned char* data = NULL;
+            size_t len;
+            if (!pdf_name_eq(ctx, pdf_dict_get(ctx, annot, PDF_NAME(Subtype)), PDF_NAME(FreeText))) continue;
+            ap = pdf_dict_getl(ctx, annot, PDF_NAME(AP), PDF_NAME(N), NULL);
+            if (!pdf_is_stream(ctx, ap)) continue;
+            buf = pdf_load_stream(ctx, ap);
+            len = fz_buffer_storage(ctx, buf, &data);
+            result = [[NSString alloc] initWithBytes:data length:len encoding:NSISOLatin1StringEncoding];
+            fz_drop_buffer(ctx, buf);
+            break;
+        }
+        pdf_drop_document(ctx, doc);
+    }
+    fz_catch(ctx) {
+        result = nil;
+    }
+    fz_drop_context(ctx);
+    return result;
+}
 
 static NSString* page_text(spdf_document* doc, int page_index) {
     spdf_text_lines lines;
@@ -182,7 +236,7 @@ int main(int argc, char** argv) {
         EXPECT(outline.count == 4, "fixture outline count %d", outline.count);
         spdf_comments comments;
         EXPECT(spdf_load_comments(doc, &comments, err, sizeof(err)), "load fixture comments: %s", err);
-        EXPECT(comments.count == 3, "fixture comment count %d", comments.count);
+        EXPECT(comments.count == 4, "fixture comment count %d", comments.count);
         NSString* fixturePage1 = page_text(doc, 0);
         EXPECT([fixturePage1 rangeOfString:[NSString stringWithUTF8String:kHanBlock1]].location != NSNotFound,
                "fixture page 1 contains Han block");
@@ -240,7 +294,7 @@ int main(int argc, char** argv) {
             update.text = commentTexts.lastObject.UTF8String;
             commentUpdates.push_back(update);
         }
-        EXPECT(commentUpdates.size() == 2, "two Han comments are translated, got %zu", commentUpdates.size());
+        EXPECT(commentUpdates.size() == 3, "three Han comments are translated, got %zu", commentUpdates.size());
 
         EXPECT(spdf_save_translated_copy_full(doc, outputPath.fileSystemRepresentation, lines.data(), (int)lines.size(),
                                               outlineUpdates.data(), (int)outlineUpdates.size(), commentUpdates.data(),
@@ -290,12 +344,12 @@ int main(int argc, char** argv) {
 
             spdf_comments outComments;
             EXPECT(spdf_load_comments(out, &outComments, err, sizeof(err)), "load output comments: %s", err);
-            EXPECT(outComments.count == 3, "output keeps all 3 comments, got %d", outComments.count);
-            if (outComments.count == 3) {
-                const char* expectedTexts[3] = {"EN-COM-0", "Looks good", "EN-COM-2"};
-                const char* expectedTypes[3] = {"Text", "Text", "Highlight"};
-                int expectedPages[3] = {0, 1, 1};
-                for (int i = 0; i < 3; ++i) {
+            EXPECT(outComments.count == 4, "output keeps all 4 comments, got %d", outComments.count);
+            if (outComments.count == 4) {
+                const char* expectedTexts[4] = {"EN-COM-0", "Looks good", "EN-COM-2", "EN-COM-3"};
+                const char* expectedTypes[4] = {"Text", "Text", "Highlight", "FreeText"};
+                int expectedPages[4] = {0, 1, 1, 2};
+                for (int i = 0; i < 4; ++i) {
                     EXPECT(strcmp(outComments.items[i].text, expectedTexts[i]) == 0,
                            "output comment %d text is '%s', expected '%s'", i, outComments.items[i].text,
                            expectedTexts[i]);
@@ -325,6 +379,14 @@ int main(int argc, char** argv) {
             NSString* outPage3 = page_text(out, 2);
             EXPECT([outPage3 rangeOfString:@"EN-BODY"].location == NSNotFound, "page 3 has no overlay");
             EXPECT([outPage3 rangeOfString:@"Appendix content only"].location != NSNotFound, "page 3 text untouched");
+            // The FreeText comment draws its contents on the page: its
+            // appearance must be regenerated with the translated text.
+            NSString* outAp = freetext_appearance_stream(outputPath, 2);
+            EXPECT(outAp != nil, "output FreeText appearance stream readable");
+            EXPECT(outAp && [outAp rangeOfString:@"EN-COM-3"].location != NSNotFound,
+                   "output FreeText appearance shows the translated text");
+            EXPECT(outAp && [outAp rangeOfString:@"STALE-AP-TEXT"].location == NSNotFound,
+                   "output FreeText stale appearance is gone");
 
             // The link annotation survives with its URI (fz link rects are in
             // y-down page space: PDF y 640..652 -> 792-652=140..152).
@@ -357,12 +419,16 @@ int main(int argc, char** argv) {
 
             spdf_comments plainComments;
             EXPECT(spdf_load_comments(plain, &plainComments, err, sizeof(err)), "load plain comments: %s", err);
-            EXPECT(plainComments.count == 3, "plain copy keeps all comments, got %d", plainComments.count);
-            if (plainComments.count == 3) {
+            EXPECT(plainComments.count == 4, "plain copy keeps all comments, got %d", plainComments.count);
+            if (plainComments.count == 4) {
                 EXPECT(strcmp(plainComments.items[0].text, kHanComment1) == 0, "plain comment 0 untranslated");
                 EXPECT(strcmp(plainComments.items[1].text, "Looks good") == 0, "plain comment 1 untranslated");
                 EXPECT(strcmp(plainComments.items[2].text, kHanComment2) == 0, "plain comment 2 untranslated");
+                EXPECT(strcmp(plainComments.items[3].text, kHanComment1) == 0, "plain comment 3 untranslated");
             }
+            NSString* plainAp = freetext_appearance_stream(plainCopyPath, 2);
+            EXPECT(plainAp && [plainAp rangeOfString:@"STALE-AP-TEXT"].location != NSNotFound,
+                   "plain copy keeps the untouched FreeText appearance");
             spdf_free_comments(&plainComments);
             spdf_close(plain);
         }
