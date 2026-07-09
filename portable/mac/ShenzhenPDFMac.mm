@@ -12203,8 +12203,12 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         }
     }
 
-    NSArray<NSDictionary*>* favorites = spdf_palette_favorites_without_open_documents(
-        [self favoriteResultsForQuery:query prefix:@""], openShownPaths);
+    // "fav" (any >= 3 character prefix of "favorites") is a browse keyword:
+    // reveal every favorite, bypassing title matching and the open-document
+    // dedupe so the group is complete rather than filtered by the keyword.
+    BOOL revealAllFavorites = spdf_palette_query_reveals_all_favorites(query);
+    NSArray<NSDictionary*>* favorites = [self favoriteResultsForQuery:revealAllFavorites ? @"" : query prefix:@""];
+    if (!revealAllFavorites) favorites = spdf_palette_favorites_without_open_documents(favorites, openShownPaths);
     if (favorites.count > 0) {
         [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Favorites", @"subtitle" : @""}];
         [_paletteResults addObjectsFromArray:favorites];
