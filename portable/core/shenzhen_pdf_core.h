@@ -198,6 +198,24 @@ int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t e
 int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t err_len);
 int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_translated_line* lines, int line_count,
                               char* err, size_t err_len);
+/* Replacement text for one outline entry or one comment in the translated
+ * copy. `index` is the item's position in spdf_load_outline order (pre-order
+ * walk) for outline titles, or the visible comment index from
+ * spdf_load_comments for comments. Arrays passed to
+ * spdf_save_translated_copy_full must be sorted by ascending index. */
+typedef struct spdf_translated_text {
+    int index;
+    const char* text;
+} spdf_translated_text;
+/* Like spdf_save_translated_copy, additionally replacing the titles of the
+ * given outline entries and the text contents of the given comments in the
+ * written copy. Outline structure, destinations and expansion state are
+ * preserved; annotations keep their type, position and appearance (FreeText
+ * comments get their appearance regenerated so the translated text shows). */
+int spdf_save_translated_copy_full(spdf_document* doc, const char* path, const spdf_translated_line* lines,
+                                   int line_count, const spdf_translated_text* outline_titles, int outline_title_count,
+                                   const spdf_translated_text* comment_texts, int comment_text_count, char* err,
+                                   size_t err_len);
 /* Returns 1 when the UTF-8 string contains at least one Han ideograph
  * (CJK Unified Ideographs U+4E00-U+9FFF, Extension A U+3400-U+4DBF,
  * compatibility ideographs U+F900-U+FAFF, or supplementary-plane extensions
@@ -205,6 +223,32 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
  * the translation pipeline so Chinese-source translation can leave blocks
  * with no Chinese text untouched. */
 int spdf_text_contains_han(const char* utf8);
+/* Returns 1 when the UTF-8 string contains at least one Latin letter (ASCII
+ * A-Z/a-z, Latin-1 letters, Latin Extended-A/B, or Latin Extended
+ * Additional). Digits, punctuation and non-Latin scripts do not count.
+ * Malformed UTF-8 bytes are skipped. */
+int spdf_text_contains_latin(const char* utf8);
+/* Script family of a translation language code, for the per-item
+ * translate/skip decision. Matches the primary subtag case-insensitively
+ * ("zh", "zh-TW", "pt_BR"...). */
+typedef enum spdf_translation_script {
+    SPDF_TRANSLATION_SCRIPT_UNKNOWN = 0, /* unrecognized language code */
+    SPDF_TRANSLATION_SCRIPT_LATIN = 1,   /* language written in Latin script */
+    SPDF_TRANSLATION_SCRIPT_HAN = 2,     /* Chinese ("zh" simplified, "zt" traditional) */
+    SPDF_TRANSLATION_SCRIPT_OTHER = 3    /* recognized language in a script the detectors cannot classify */
+} spdf_translation_script;
+spdf_translation_script spdf_translation_script_for_language(const char* code);
+/* Per-item translate/skip decision for whole-document translation, used
+ * uniformly for body text blocks, outline titles and comments. A source
+ * language with a detectable script takes precedence: Chinese source keeps
+ * only items containing Han text (existing behavior); a Latin-script source
+ * keeps only Latin-script items without Han text. When the source script is
+ * unknown the target decides: Chinese target keeps Latin-script items,
+ * Latin-script target keeps Han items. Items in neither script (digits,
+ * punctuation) or already in the target script are skipped. Sources in other
+ * scripts (Cyrillic, Japanese...) are never filtered. */
+int spdf_translation_should_translate(const char* utf8, spdf_translation_script source_script,
+                                      spdf_translation_script target_script);
 /* Write a standalone single-page PDF (the given page grafted into a fresh
  * document) to path. Backs the "Copy Page" clipboard action on both platforms.
  * Returns 1 on success, 0 on failure (err is filled). */
