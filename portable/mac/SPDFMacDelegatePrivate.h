@@ -113,6 +113,7 @@
     NSButton* _shortcutHelpDisableButton;
     NSMutableArray<NSDictionary*>* _shortcutHelpRows;
     NSMutableArray<NSDictionary*>* _paletteResults;
+    NSArray<NSDictionary*>* _paletteMenuCommandCandidates;
     NSInteger _paletteMode;
     NSUInteger _paletteSearchGeneration;
     id _paletteEventMonitor;
