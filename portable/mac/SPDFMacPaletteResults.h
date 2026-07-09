@@ -21,3 +21,9 @@ NSArray<NSDictionary*>* spdf_palette_open_document_results(NSArray<NSDictionary*
 // open-document row does not.
 NSArray<NSDictionary*>* spdf_palette_favorites_without_open_documents(NSArray<NSDictionary*>* favoriteResults,
                                                                       NSSet<NSString*>* openStandardizedPaths);
+
+// YES when the query is a browse keyword for the Favorites group: a
+// case-insensitive prefix of "favorites" at least 3 characters long ("fav",
+// "favo", ... "favorites"), ignoring surrounding whitespace. The palette then
+// reveals every favorite instead of only title matches.
+BOOL spdf_palette_query_reveals_all_favorites(NSString* query);

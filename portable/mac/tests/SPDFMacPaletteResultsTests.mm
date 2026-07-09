@@ -92,6 +92,23 @@ int main(int argc, char** argv) {
         expect_paths(@"no open documents keeps all favorites",
                      spdf_palette_favorites_without_open_documents(favorites, [NSSet set]),
                      @[ @"/docs/alpha.pdf", @"/docs/alpha.pdf", @"/docs/beta.pdf" ]);
+
+        // --- spdf_palette_query_reveals_all_favorites ---
+        expect_true(@"'fav' reveals all favorites", spdf_palette_query_reveals_all_favorites(@"fav"));
+        expect_true(@"'favo' reveals all favorites", spdf_palette_query_reveals_all_favorites(@"favo"));
+        expect_true(@"'favorite' reveals all favorites", spdf_palette_query_reveals_all_favorites(@"favorite"));
+        expect_true(@"'favorites' reveals all favorites", spdf_palette_query_reveals_all_favorites(@"favorites"));
+        expect_true(@"keyword is case-insensitive", spdf_palette_query_reveals_all_favorites(@"FaV"));
+        expect_true(@"keyword ignores surrounding whitespace",
+                    spdf_palette_query_reveals_all_favorites(@" fav "));
+        expect_true(@"two characters are not enough", !spdf_palette_query_reveals_all_favorites(@"fa"));
+        expect_true(@"empty query is not the keyword", !spdf_palette_query_reveals_all_favorites(@""));
+        expect_true(@"nil query is not the keyword", !spdf_palette_query_reveals_all_favorites(nil));
+        expect_true(@"'fax' is not a prefix of favorites", !spdf_palette_query_reveals_all_favorites(@"fax"));
+        expect_true(@"'favorite x' is not a prefix of favorites",
+                    !spdf_palette_query_reveals_all_favorites(@"favorite x"));
+        expect_true(@"'favoritess' overshoots the keyword",
+                    !spdf_palette_query_reveals_all_favorites(@"favoritess"));
     }
     if (gFailureCount > 0) return 1;
     printf("SPDFMacPaletteResultsTests passed\n");

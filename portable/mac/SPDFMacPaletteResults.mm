@@ -29,6 +29,14 @@ NSArray<NSDictionary*>* spdf_palette_open_document_results(NSArray<NSDictionary*
     return results;
 }
 
+BOOL spdf_palette_query_reveals_all_favorites(NSString* query) {
+    NSString* trimmed = [query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (trimmed.length < 3) return NO;
+    NSRange range = [@"favorites" rangeOfString:trimmed
+                                        options:NSCaseInsensitiveSearch | NSAnchoredSearch];
+    return range.location == 0;
+}
+
 NSArray<NSDictionary*>* spdf_palette_favorites_without_open_documents(NSArray<NSDictionary*>* favoriteResults,
                                                                       NSSet<NSString*>* openStandardizedPaths) {
     if (openStandardizedPaths.count == 0) return favoriteResults ?: @[];
