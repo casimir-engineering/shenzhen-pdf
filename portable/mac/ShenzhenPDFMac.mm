@@ -12076,9 +12076,10 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
     _palettePanel.title = title;
     _paletteSearchField.stringValue = @"";
-    _paletteSearchField.placeholderString = @"Favorites and open documents";
+    _paletteSearchField.placeholderString = @"Favorites, open documents, and commands";
     _paletteAllDocsCheckbox.hidden = YES;
     _paletteFavoritePendingDelete = nil;
+    _paletteMenuCommandCandidates = [self paletteMenuCommandCandidates];
     [self refreshPaletteResults];
     [self updatePalettePanelFramePreservingTop:NO];
     [_palettePanel makeKeyAndOrderFront:nil];
@@ -12175,6 +12176,70 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     [_palettePanel setFrame:frame display:_palettePanel.visible animate:NO];
 }
 
+- (void)collectPaletteMenuCommandsFromMenu:(NSMenu*)menu
+                                menuTitles:(NSArray<NSString*>*)menuTitles
+                                      into:(NSMutableArray<NSDictionary*>*)commands {
+    // Lazily-populated submenus (Recently Opened) fill themselves in
+    // menuNeedsUpdate:, which AppKit calls right before showing them; do the
+    // same so the palette sees the live items.
+    if ([menu.delegate respondsToSelector:@selector(menuNeedsUpdate:)]) [menu.delegate menuNeedsUpdate:menu];
+    for (NSMenuItem* item in menu.itemArray) {
+        if (item.separatorItem || item.hidden) continue;
+        if (item.hasSubmenu) {
+            NSString* component = item.submenu.title.length ? item.submenu.title : item.title;
+            [self collectPaletteMenuCommandsFromMenu:item.submenu
+                                          menuTitles:[menuTitles arrayByAddingObject:component ?: @""]
+                                                into:commands];
+            continue;
+        }
+        SEL action = item.action;
+        if (!action || item.title.length == 0) continue;
+        // The palette is itself the favorites search; a row that reopens it
+        // would be a no-op loop.
+        if (action == @selector(showFavoritesPalette:)) continue;
+        // Same validation the menu system runs before display: resolve the
+        // target through the responder chain and let it validate (which also
+        // refreshes toggle titles and checkmarks). Disabled commands are
+        // hidden, matching how the palette omits empty groups.
+        id target = [NSApp targetForAction:action to:item.target from:item];
+        BOOL enabled;
+        if ([target respondsToSelector:@selector(validateMenuItem:)])
+            enabled = [(id<NSMenuItemValidation>)target validateMenuItem:item];
+        else if ([target respondsToSelector:@selector(validateUserInterfaceItem:)])
+            enabled = [(id<NSUserInterfaceValidations>)target validateUserInterfaceItem:item];
+        else
+            enabled = [target respondsToSelector:action];
+        if (!enabled) continue;
+        NSString* title = item.state == NSControlStateValueOn
+                              ? [NSString stringWithFormat:@"\u2713 %@", item.title]  // mirrors the menu checkmark
+                              : item.title;
+        NSString* breadcrumb = spdf_palette_menu_breadcrumb(menuTitles, item.title);
+        NSString* shortcut = spdf_palette_key_equivalent_display_string(item.keyEquivalent,
+                                                                        item.keyEquivalentModifierMask);
+        [commands addObject:@{
+            @"kind" : @"menuCommand",
+            @"title" : title ?: @"",
+            @"subtitle" : shortcut.length ? [NSString stringWithFormat:@"%@ \u2014 %@", breadcrumb, shortcut]
+                                          : breadcrumb,
+            @"breadcrumb" : breadcrumb,
+            @"selector" : NSStringFromSelector(action),
+            @"menuItem" : item
+        }];
+    }
+}
+
+// Snapshot of every command reachable through the menu bar, enumerated fresh
+// each time the palette opens so dynamic items (toggles, Recently Opened,
+// window list) reflect current state. Enumeration is on-open only; keystroke
+// refreshes just filter the snapshot. The snapshot is dropped when the
+// palette closes: NSMenuItem retains its target, so holding items past close
+// would keep window controllers alive.
+- (NSArray<NSDictionary*>*)paletteMenuCommandCandidates {
+    NSMutableArray<NSDictionary*>* commands = [NSMutableArray array];
+    if (NSApp.mainMenu) [self collectPaletteMenuCommandsFromMenu:NSApp.mainMenu menuTitles:@[] into:commands];
+    return commands;
+}
+
 - (void)refreshPaletteResults {
     _paletteSearchGeneration++;
     NSUInteger generation = _paletteSearchGeneration;
@@ -12203,23 +12268,51 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         }
     }
 
-    NSArray<NSDictionary*>* favorites = spdf_palette_favorites_without_open_documents(
-        [self favoriteResultsForQuery:query prefix:@""], openShownPaths);
+    // "fav" (any >= 3 character prefix of "favorites") is a browse keyword:
+    // reveal every favorite, bypassing title matching and the open-document
+    // dedupe so the group is complete rather than filtered by the keyword.
+    BOOL revealAllFavorites = spdf_palette_query_reveals_all_favorites(query);
+    NSArray<NSDictionary*>* favorites = [self favoriteResultsForQuery:revealAllFavorites ? @"" : query prefix:@""];
+    if (!revealAllFavorites) favorites = spdf_palette_favorites_without_open_documents(favorites, openShownPaths);
     if (favorites.count > 0) {
         [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Favorites", @"subtitle" : @""}];
         [_paletteResults addObjectsFromArray:favorites];
     }
 
-    if (_doc && _path.length && query.length == 0) {
+    // Actions: the curated favorite-current shortcuts plus every menu-bar
+    // command captured when the palette opened. A curated action wins over
+    // the menu item with the same selector (it carries the live document
+    // name), so the two never show as duplicate rows.
+    NSMutableArray<NSDictionary*>* actionRows = [NSMutableArray array];
+    NSMutableSet<NSString*>* curatedSelectors = [NSMutableSet set];
+    if (_doc && _path.length) {
         NSString* displayName = spdf_display_name_for_path(_path);
+        if (spdf_palette_menu_command_matches_query(query, @"Favorite current page", @"")) {
+            [actionRows addObject:@{
+                @"kind" : @"addPage",
+                @"title" : @"Favorite current page",
+                @"subtitle" : displayName ?: @""
+            }];
+            [curatedSelectors addObject:NSStringFromSelector(@selector(favoriteCurrentPage:))];
+        }
+        if (spdf_palette_menu_command_matches_query(query, @"Favorite current document", @"")) {
+            [actionRows addObject:@{
+                @"kind" : @"addDoc",
+                @"title" : @"Favorite current document",
+                @"subtitle" : displayName ?: @""
+            }];
+            [curatedSelectors addObject:NSStringFromSelector(@selector(favoriteCurrentDocument:))];
+        }
+    }
+    NSMutableArray<NSDictionary*>* menuCommands = [NSMutableArray array];
+    for (NSDictionary* command in _paletteMenuCommandCandidates ?: @[]) {
+        if (spdf_palette_menu_command_matches_query(query, command[@"title"], command[@"breadcrumb"]))
+            [menuCommands addObject:command];
+    }
+    [actionRows addObjectsFromArray:spdf_palette_menu_commands_excluding_selectors(menuCommands, curatedSelectors)];
+    if (actionRows.count > 0) {
         [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Actions", @"subtitle" : @""}];
-        [_paletteResults
-            addObject:@{@"kind" : @"addPage", @"title" : @"Favorite current page", @"subtitle" : displayName ?: @""}];
-        [_paletteResults addObject:@{
-            @"kind" : @"addDoc",
-            @"title" : @"Favorite current document",
-            @"subtitle" : displayName ?: @""
-        }];
+        [_paletteResults addObjectsFromArray:actionRows];
     }
 
     if (query.length > 0 && _tabs.count > 0) {
@@ -12560,6 +12653,18 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         [self favoriteCurrentDocument:nil];
         return;
     }
+    if ([kind isEqualToString:@"menuCommand"]) {
+        NSMenuItem* item = [result[@"menuItem"] isKindOfClass:NSMenuItem.class] ? result[@"menuItem"] : nil;
+        if (!item || !item.action) return;
+        // Defer one runloop turn so key-window restoration after the panel
+        // closes has settled, then dispatch exactly as the menu would:
+        // through the responder chain with the menu item as sender (handlers
+        // like openRecentDocument: read the sender's representedObject).
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (item.action) [NSApp sendAction:item.action to:item.target from:item];
+        });
+        return;
+    }
     NSString* path = result[@"path"];
     if ([kind isEqualToString:@"openDoc"]) {
         [self focusOpenDocumentTabForPath:path];
@@ -12644,6 +12749,12 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     }
     _paletteFavoritePendingDelete = nil;
     [_palettePanel orderOut:nil];
+    // Drop the menu-command snapshot and its rows: captured NSMenuItems
+    // retain their targets, so keeping them past close would pin window
+    // controllers. Reopening rebuilds both from the live menu tree anyway.
+    _paletteMenuCommandCandidates = nil;
+    [_paletteResults removeAllObjects];
+    [_paletteTable reloadData];
 }
 
 - (void)paletteFavoriteDeleteClicked:(id)sender {
