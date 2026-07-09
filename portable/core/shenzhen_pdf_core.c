@@ -2223,17 +2223,22 @@ int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t e
     return 1;
 }
 
-int spdf_text_contains_han(const char* utf8) {
-    const unsigned char* s = (const unsigned char*)utf8;
+/* Tolerant UTF-8 scan shared by the script detectors: decodes the next code
+ * point, skipping stray continuation bytes, invalid lead bytes and truncated
+ * sequences. Returns 0 at the end of the string. */
+static unsigned utf8_next_rune(const unsigned char** cursor) {
+    const unsigned char* s = *cursor;
 
-    if (!s) return 0;
     while (*s) {
         unsigned rune;
         int extra;
         int i;
         unsigned char c = *s++;
 
-        if (c < 0x80) continue;
+        if (c < 0x80) {
+            *cursor = s;
+            return c;
+        }
         if ((c & 0xE0) == 0xC0) {
             rune = c & 0x1Fu;
             extra = 1;
@@ -2250,17 +2255,95 @@ int spdf_text_contains_han(const char* utf8) {
             if ((s[i] & 0xC0) != 0x80) break; /* also stops at NUL */
             rune = (rune << 6) | (s[i] & 0x3Fu);
         }
-        if (i < extra) {
-            s += i;
-            continue; /* truncated/malformed sequence */
-        }
-        s += extra;
+        s += i;
+        if (i < extra) continue; /* truncated/malformed sequence */
+        if (rune == 0) continue; /* overlong-encoded NUL */
+        *cursor = s;
+        return rune;
+    }
+    *cursor = s;
+    return 0;
+}
+
+int spdf_text_contains_han(const char* utf8) {
+    const unsigned char* s = (const unsigned char*)utf8;
+    unsigned rune;
+
+    if (!s) return 0;
+    while ((rune = utf8_next_rune(&s)) != 0) {
         if ((rune >= 0x4E00 && rune <= 0x9FFF) || (rune >= 0x3400 && rune <= 0x4DBF) ||
             (rune >= 0xF900 && rune <= 0xFAFF) || (rune >= 0x20000 && rune <= 0x2FA1F)) {
             return 1;
         }
     }
     return 0;
+}
+
+int spdf_text_contains_latin(const char* utf8) {
+    const unsigned char* s = (const unsigned char*)utf8;
+    unsigned rune;
+
+    if (!s) return 0;
+    while ((rune = utf8_next_rune(&s)) != 0) {
+        if ((rune >= 'A' && rune <= 'Z') || (rune >= 'a' && rune <= 'z')) return 1;
+        /* Latin-1 letters (multiplication/division signs excluded), Latin
+         * Extended-A/B, and Latin Extended Additional (Vietnamese). */
+        if (rune >= 0x00C0 && rune <= 0x024F && rune != 0x00D7 && rune != 0x00F7) return 1;
+        if (rune >= 0x1E00 && rune <= 0x1EFF) return 1;
+    }
+    return 0;
+}
+
+spdf_translation_script spdf_translation_script_for_language(const char* code) {
+    /* Argos-supported languages written in Latin script. */
+    static const char* const latin_codes[] = {"az", "ca", "cs", "da", "de", "en", "eo", "es", "et", "eu", "fi", "fr",
+                                              "ga", "gl", "hr", "hu", "id", "it", "lt", "lv", "ms", "nb", "nl", "no",
+                                              "pl", "pt", "ro", "sk", "sl", "sq", "sv", "tl", "tr", "vi"};
+    /* Recognized languages whose script the detectors cannot classify. */
+    static const char* const other_codes[] = {"ar", "be", "bg", "bn", "el", "fa", "he", "hi", "ja", "ka", "kk", "km",
+                                              "ko", "ky", "mk", "mn", "my", "ru", "sr", "ta", "te", "th", "uk", "ur"};
+    char primary[4];
+    size_t len = 0;
+    size_t i;
+
+    if (!code) return SPDF_TRANSLATION_SCRIPT_UNKNOWN;
+    while (len < 3 && code[len]) {
+        char c = code[len];
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        if (c < 'a' || c > 'z') break;
+        primary[len++] = c;
+    }
+    primary[len] = 0;
+    /* The primary subtag must stand alone or be followed by a region/script
+     * separator ("zh-TW", "pt_BR"); anything else is not a language code. */
+    if (len < 2 || (code[len] && code[len] != '-' && code[len] != '_')) return SPDF_TRANSLATION_SCRIPT_UNKNOWN;
+
+    if (strcmp(primary, "zh") == 0 || strcmp(primary, "zt") == 0) return SPDF_TRANSLATION_SCRIPT_HAN;
+    for (i = 0; i < sizeof(latin_codes) / sizeof(latin_codes[0]); ++i)
+        if (strcmp(primary, latin_codes[i]) == 0) return SPDF_TRANSLATION_SCRIPT_LATIN;
+    for (i = 0; i < sizeof(other_codes) / sizeof(other_codes[0]); ++i)
+        if (strcmp(primary, other_codes[i]) == 0) return SPDF_TRANSLATION_SCRIPT_OTHER;
+    return SPDF_TRANSLATION_SCRIPT_UNKNOWN;
+}
+
+int spdf_translation_should_translate(const char* utf8, spdf_translation_script source_script,
+                                      spdf_translation_script target_script) {
+    int has_han;
+
+    if (!utf8 || !*utf8) return 0;
+    has_han = spdf_text_contains_han(utf8);
+    /* An explicitly selected source language with a detectable script takes
+     * precedence: keep the existing Chinese-source behavior (translate only
+     * items containing Han text) and mirror it for Latin-script sources. */
+    if (source_script == SPDF_TRANSLATION_SCRIPT_HAN) return has_han;
+    if (source_script == SPDF_TRANSLATION_SCRIPT_LATIN) return spdf_text_contains_latin(utf8) && !has_han;
+    /* Known source in a script the detectors cannot classify (Cyrillic,
+     * Japanese, Arabic...): never filter, translate everything as before. */
+    if (source_script == SPDF_TRANSLATION_SCRIPT_OTHER) return 1;
+    /* Source unknown: decide by script vs. the target language. */
+    if (target_script == SPDF_TRANSLATION_SCRIPT_HAN) return spdf_text_contains_latin(utf8) && !has_han;
+    if (target_script == SPDF_TRANSLATION_SCRIPT_LATIN) return has_han;
+    return 1;
 }
 
 static fz_rect normalized_public_rect(const spdf_rect* rect) {
@@ -2668,11 +2751,171 @@ static void add_translated_line_overlay(fz_context* ctx, pdf_document* pdf, cons
     free(text);
 }
 
+/* Clone the current in-memory state of a PDF document by writing it into a
+ * buffer and reopening that buffer. Unlike grafting individual pages (which
+ * copies only page content and drops everything else), the clone keeps the
+ * complete document: outline tree, annotations, links, named destinations
+ * and metadata. Encryption is dropped so the translated copy opens without
+ * the original's password (the caller already authenticated to read it). */
+static pdf_document* clone_pdf_document_in_memory(fz_context* ctx, pdf_document* source_pdf) {
+    pdf_document* clone = NULL;
+    fz_buffer* buf = NULL;
+    fz_output* out = NULL;
+    fz_stream* stream = NULL;
+    pdf_write_options options;
+
+    fz_var(buf);
+    fz_var(out);
+    fz_var(stream);
+    fz_try(ctx) {
+        options = pdf_default_write_options;
+        options.do_encrypt = PDF_ENCRYPT_NONE;
+        buf = fz_new_buffer(ctx, 1 << 20);
+        out = fz_new_output_with_buffer(ctx, buf);
+        pdf_write_document(ctx, source_pdf, out, &options);
+        fz_close_output(ctx, out);
+        stream = fz_open_buffer(ctx, buf);
+        clone = pdf_open_document_with_stream(ctx, stream);
+    }
+    fz_always(ctx) {
+        fz_drop_output(ctx, out);
+        fz_drop_stream(ctx, stream);
+        fz_drop_buffer(ctx, buf);
+    }
+    fz_catch(ctx) {
+        fz_rethrow(ctx);
+    }
+    return clone;
+}
+
+typedef struct outline_title_update_state {
+    const spdf_translated_text* updates;
+    int update_count;
+    int next_update;
+    int node_index;    /* pre-order index of the node being visited */
+    int nodes_visited; /* safety cap against cyclic/malformed outline trees */
+} outline_title_update_state;
+
+/* Pre-order walk of the raw outline dictionary tree (node, then /First
+ * children, then /Next siblings) -- the same order spdf_load_outline flattens
+ * the outline in, so update indices line up. Only /Title is touched:
+ * structure, destinations, colors and expansion state stay as they are. */
+static void update_outline_titles_walk(fz_context* ctx, pdf_obj* node, int depth, outline_title_update_state* state) {
+    while (node && state->next_update < state->update_count) {
+        pdf_obj* down;
+        if (++state->nodes_visited > 200000 || depth > 256) return;
+        if (state->updates[state->next_update].index == state->node_index) {
+            const char* text = state->updates[state->next_update].text;
+            pdf_dict_put_text_string(ctx, node, PDF_NAME(Title), text ? text : "");
+            state->next_update++;
+        }
+        state->node_index++;
+        down = pdf_dict_get(ctx, node, PDF_NAME(First));
+        if (down) update_outline_titles_walk(ctx, down, depth + 1, state);
+        node = pdf_dict_get(ctx, node, PDF_NAME(Next));
+    }
+}
+
+static void apply_outline_title_updates(fz_context* ctx, pdf_document* pdf, const spdf_translated_text* updates,
+                                        int update_count) {
+    pdf_obj* root = pdf_dict_get(ctx, pdf_trailer(ctx, pdf), PDF_NAME(Root));
+    pdf_obj* outlines = pdf_dict_get(ctx, root, PDF_NAME(Outlines));
+    pdf_obj* first = pdf_dict_get(ctx, outlines, PDF_NAME(First));
+    outline_title_update_state state;
+
+    memset(&state, 0, sizeof(state));
+    state.updates = updates;
+    state.update_count = update_count;
+    if (first) update_outline_titles_walk(ctx, first, 0, &state);
+}
+
+/* Replace the text contents of comments identified by their visible comment
+ * index -- the same page-by-page annotation enumeration and filter that
+ * spdf_load_comments and spdf_update_comment use, so indices line up.
+ * FreeText annotations draw their contents on the page, so their appearance
+ * stream is regenerated; every other type keeps its appearance and only the
+ * popup/note text changes. */
+static void apply_comment_text_updates(fz_context* ctx, pdf_document* pdf, int page_count,
+                                       const spdf_translated_text* updates, int update_count) {
+    pdf_page* page = NULL;
+    int visible_index = 0;
+    int next_update = 0;
+    int i;
+
+    fz_var(page);
+    fz_try(ctx) {
+        for (i = 0; i < page_count && next_update < update_count; ++i) {
+            pdf_annot* annot;
+            pdf_obj* annots;
+            page = pdf_load_page(ctx, pdf, i);
+            annots = pdf_dict_get(ctx, page->obj, PDF_NAME(Annots));
+            for (annot = pdf_first_annot(ctx, page); annot && next_update < update_count;
+                 annot = pdf_next_annot(ctx, annot)) {
+                pdf_obj* obj = pdf_annot_obj(ctx, annot);
+                pdf_obj* popup = pdf_dict_get(ctx, obj, PDF_NAME(Popup));
+                enum pdf_annot_type annot_type = pdf_annot_type(ctx, annot);
+                const char* contents = pdf_annot_contents(ctx, annot);
+                const char* author;
+                if (!popup) popup = popup_for_parent(ctx, annots, obj);
+                if (!contents || !*contents) contents = dict_text_or_empty(ctx, popup, PDF_NAME(Contents));
+                author = comment_author_or_empty(ctx, obj, popup);
+                if (!comment_annotation_should_surface(contents, author, annot_type)) continue;
+                if (visible_index == updates[next_update].index) {
+                    const char* text = updates[next_update].text ? updates[next_update].text : "";
+                    pdf_dict_put_text_string(ctx, obj, PDF_NAME(Contents), text);
+                    pdf_dict_del(ctx, obj, PDF_NAME(RC));
+                    if (popup) {
+                        pdf_dict_put_text_string(ctx, popup, PDF_NAME(Contents), text);
+                        pdf_dict_del(ctx, popup, PDF_NAME(RC));
+                    }
+                    if (annot_type == PDF_ANNOT_FREE_TEXT) {
+                        fz_try(ctx) {
+                            pdf_dirty_annot(ctx, annot);
+                            pdf_update_annot(ctx, annot);
+                        }
+                        fz_catch(ctx) {
+                            /* Contents are updated even when the appearance
+                             * cannot be regenerated. */
+                            fz_report_error(ctx);
+                        }
+                    }
+                    next_update++;
+                }
+                visible_index++;
+            }
+            pdf_drop_page(ctx, page);
+            page = NULL;
+        }
+    }
+    fz_always(ctx) {
+        if (page) pdf_drop_page(ctx, page);
+    }
+    fz_catch(ctx) {
+        fz_rethrow(ctx);
+    }
+}
+
+static int translated_text_updates_are_sorted(const spdf_translated_text* updates, int count) {
+    int i;
+
+    for (i = 0; i < count; ++i) {
+        if (updates[i].index < 0) return 0;
+        if (i > 0 && updates[i].index <= updates[i - 1].index) return 0;
+    }
+    return 1;
+}
+
 int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_translated_line* lines, int line_count,
                               char* err, size_t err_len) {
+    return spdf_save_translated_copy_full(doc, path, lines, line_count, NULL, 0, NULL, 0, err, err_len);
+}
+
+int spdf_save_translated_copy_full(spdf_document* doc, const char* path, const spdf_translated_line* lines,
+                                   int line_count, const spdf_translated_text* outline_titles, int outline_title_count,
+                                   const spdf_translated_text* comment_texts, int comment_text_count, char* err,
+                                   size_t err_len) {
     pdf_document* source_pdf = NULL;
     pdf_document* out_pdf = NULL;
-    pdf_graft_map* graft_map = NULL;
     pdf_write_options options;
     int* image_backed = NULL;
     char* balanced_pages = NULL;
@@ -2688,6 +2931,16 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
         set_error(err, err_len, "No translated lines were supplied.");
         return 0;
     }
+    if (outline_title_count < 0 || (outline_title_count > 0 && !outline_titles) ||
+        !translated_text_updates_are_sorted(outline_titles, outline_title_count)) {
+        set_error(err, err_len, "Translated outline titles are invalid.");
+        return 0;
+    }
+    if (comment_text_count < 0 || (comment_text_count > 0 && !comment_texts) ||
+        !translated_text_updates_are_sorted(comment_texts, comment_text_count)) {
+        set_error(err, err_len, "Translated comment texts are invalid.");
+        return 0;
+    }
 
     balanced_pages = (char*)calloc((size_t)(doc->page_count > 0 ? doc->page_count : 1), 1);
     if (!balanced_pages) {
@@ -2696,7 +2949,6 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
     }
 
     fz_var(out_pdf);
-    fz_var(graft_map);
     fz_var(image_backed);
     fz_try(doc->ctx) {
         source_pdf = pdf_specifics(doc->ctx, doc->doc);
@@ -2713,9 +2965,14 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
             compute_image_backed_pages(doc->ctx, doc->doc, doc->page_count, image_backed);
         }
 
-        out_pdf = pdf_create_document(doc->ctx);
-        graft_map = pdf_new_graft_map(doc->ctx, out_pdf);
-        for (i = 0; i < doc->page_count; ++i) pdf_graft_mapped_page(doc->ctx, graft_map, -1, source_pdf, i);
+        /* Clone the whole document (not a page-by-page graft) so the outline
+         * tree, annotations and links survive into the translated copy. */
+        out_pdf = clone_pdf_document_in_memory(doc->ctx, source_pdf);
+
+        if (outline_title_count > 0)
+            apply_outline_title_updates(doc->ctx, out_pdf, outline_titles, outline_title_count);
+        if (comment_text_count > 0)
+            apply_comment_text_updates(doc->ctx, out_pdf, doc->page_count, comment_texts, comment_text_count);
 
         for (i = 0; i < line_count; ++i) {
             int page_index = lines[i].page_index;
@@ -2745,7 +3002,6 @@ int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_t
     fz_always(doc->ctx) {
         free(balanced_pages);
         free(image_backed);
-        if (graft_map) pdf_drop_graft_map(doc->ctx, graft_map);
         if (out_pdf) pdf_drop_document(doc->ctx, out_pdf);
         spdf_drop_page_list_cache(doc, -1);
     }

@@ -12,6 +12,31 @@ static void expect_han(NSString* label, const char* text, int expected) {
     }
 }
 
+static void expect_latin(NSString* label, const char* text, int expected) {
+    int actual = spdf_text_contains_latin(text);
+    if (actual != expected) {
+        fprintf(stderr, "FAIL latin %s: expected %d, got %d\n", label.UTF8String, expected, actual);
+        ++gFailureCount;
+    }
+}
+
+static void expect_script(NSString* label, const char* code, spdf_translation_script expected) {
+    spdf_translation_script actual = spdf_translation_script_for_language(code);
+    if (actual != expected) {
+        fprintf(stderr, "FAIL script %s: expected %d, got %d\n", label.UTF8String, (int)expected, (int)actual);
+        ++gFailureCount;
+    }
+}
+
+static void expect_decision(NSString* label, const char* text, const char* source, const char* target, int expected) {
+    int actual = spdf_translation_should_translate(text, spdf_translation_script_for_language(source),
+                                                   spdf_translation_script_for_language(target));
+    if (actual != expected) {
+        fprintf(stderr, "FAIL decision %s: expected %d, got %d\n", label.UTF8String, expected, actual);
+        ++gFailureCount;
+    }
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -60,6 +85,95 @@ int main(int argc, char** argv) {
         expect_han(@"invalid lead byte 0xFF", "\xFF\xFE abc", 0);
         expect_han(@"Han after malformed bytes", "\x80\xE7\xA1\xAC", 1);
         expect_han(@"lone lead byte then Latin", "\xE7 hardware", 0);
+
+        // Latin-letter detector.
+        expect_latin(@"NULL input", NULL, 0);
+        expect_latin(@"empty string", "", 0);
+        expect_latin(@"pure ASCII Latin", "Power Management", 1);
+        expect_latin(@"single letter among digits", "3.3V", 1);
+        expect_latin(@"accented Latin", "Coordonn\xC3\xA9"
+                                        "es pr\xC3\xA9"
+                                        "cises",
+                     1);
+        expect_latin(@"Latin Extended-A (Polish)",
+                     "\xC5\x81\xC3\xB3"
+                     "d\xC5\xBA",
+                     1);
+        expect_latin(@"Latin Extended Additional (Vietnamese)", "Vi\xE1\xBB\x87t", 1);
+        expect_latin(@"digits and punctuation only", "3.3 / 100 (,;:!)", 0);
+        expect_latin(@"multiplication and division signs", "3\xC3\x97"
+                                                           "4\xC3\xB7"
+                                                           "2",
+                     0);
+        expect_latin(@"pure Han", "\xE7\xA1\xAC\xE4\xBB\xB6\xE8\xAE\xBE\xE8\xAE\xA1", 0);
+        expect_latin(@"Cyrillic only", "\xD0\xA0\xD1\x83\xD1\x81\xD1\x81\xD0\xBA\xD0\xB8\xD0\xB9", 0);
+        expect_latin(@"hiragana only", "\xE3\x81\xB2\xE3\x82\x89\xE3\x81\x8C\xE3\x81\xAA", 0);
+        expect_latin(@"mixed Han and Latin", "\xE7\x94\xB5\xE6\xBA\x90 Power", 1);
+        expect_latin(@"malformed bytes then Latin", "\x80\xFF abc", 1);
+
+        // Language code -> script mapping.
+        expect_script(@"zh", "zh", SPDF_TRANSLATION_SCRIPT_HAN);
+        expect_script(@"zt traditional", "zt", SPDF_TRANSLATION_SCRIPT_HAN);
+        expect_script(@"zh-TW region", "zh-TW", SPDF_TRANSLATION_SCRIPT_HAN);
+        expect_script(@"ZH uppercase", "ZH", SPDF_TRANSLATION_SCRIPT_HAN);
+        expect_script(@"en", "en", SPDF_TRANSLATION_SCRIPT_LATIN);
+        expect_script(@"pt_BR underscore region", "pt_BR", SPDF_TRANSLATION_SCRIPT_LATIN);
+        expect_script(@"vi", "vi", SPDF_TRANSLATION_SCRIPT_LATIN);
+        expect_script(@"ru", "ru", SPDF_TRANSLATION_SCRIPT_OTHER);
+        expect_script(@"ja", "ja", SPDF_TRANSLATION_SCRIPT_OTHER);
+        expect_script(@"ko", "ko", SPDF_TRANSLATION_SCRIPT_OTHER);
+        expect_script(@"NULL code", NULL, SPDF_TRANSLATION_SCRIPT_UNKNOWN);
+        expect_script(@"empty code", "", SPDF_TRANSLATION_SCRIPT_UNKNOWN);
+        expect_script(@"garbage code", "x1", SPDF_TRANSLATION_SCRIPT_UNKNOWN);
+        expect_script(@"unrecognized code", "qq", SPDF_TRANSLATION_SCRIPT_UNKNOWN);
+
+        // Per-item translate/skip decision.
+        static const char* kHan = "\xE7\xA1\xAC\xE4\xBB\xB6\xE8\xAE\xBE\xE8\xAE\xA1";
+        static const char* kLatin = "Hardware design manual";
+        static const char* kMixed = "\xE7\x94\xB5\xE6\xBA\x90\xE7\xAE\xA1\xE7\x90\x86 Power Management";
+        static const char* kNeither = "3.3 / 100 \xEF\xBC\x8C\xE3\x80\x82 \xC2\xB1 42";
+
+        // Known Chinese source takes precedence (existing zh behavior must not regress).
+        expect_decision(@"zh->en Han", kHan, "zh", "en", 1);
+        expect_decision(@"zh->en Latin", kLatin, "zh", "en", 0);
+        expect_decision(@"zh->en mixed", kMixed, "zh", "en", 1);
+        expect_decision(@"zh->en digits/punct", kNeither, "zh", "en", 0);
+        expect_decision(@"zt->en Han", kHan, "zt", "en", 1);
+        // Precedence: an explicitly Chinese source keeps the Han filter even
+        // when the target script would say otherwise.
+        expect_decision(@"zh-TW->fr Latin skipped", kLatin, "zh-TW", "fr", 0);
+
+        // Known Latin-script source: keep Latin items, skip Han and neutral items.
+        expect_decision(@"en->zh Latin", kLatin, "en", "zh", 1);
+        expect_decision(@"en->zh Han", kHan, "en", "zh", 0);
+        expect_decision(@"en->zh mixed", kMixed, "en", "zh", 0);
+        expect_decision(@"en->zh digits/punct", kNeither, "en", "zh", 0);
+        expect_decision(@"fr->en Latin", kLatin, "fr", "en", 1);
+        expect_decision(@"fr->en Han", kHan, "fr", "en", 0);
+
+        // Unknown source falls back to the script-vs-target heuristic.
+        expect_decision(@"?->zh Latin", kLatin, "qq", "zh", 1);
+        expect_decision(@"?->zh Han", kHan, "qq", "zh", 0);
+        expect_decision(@"?->zh mixed", kMixed, "qq", "zh", 0);
+        expect_decision(@"?->zh digits/punct", kNeither, "qq", "zh", 0);
+        expect_decision(@"?->en Han", kHan, "qq", "en", 1);
+        expect_decision(@"?->en Latin", kLatin, "qq", "en", 0);
+        expect_decision(@"?->en mixed", kMixed, "qq", "en", 1);
+        expect_decision(@"?->en digits/punct", kNeither, "qq", "en", 0);
+        // Unknown source and unclassifiable target: never filter.
+        expect_decision(@"?->ja Latin", kLatin, "qq", "ja", 1);
+        expect_decision(@"?->ja digits/punct kept", kNeither, "qq", "ja", 1);
+
+        // Sources in scripts the detectors cannot classify are never filtered.
+        expect_decision(@"ru->en Cyrillic",
+                        "\xD0\xA0\xD1\x83\xD1\x81\xD1\x81\xD0\xBA\xD0\xB8\xD0\xB9 \xD1\x82\xD0\xB5\xD0\xBA\xD1\x81\xD1\x82",
+                        "ru", "en", 1);
+        expect_decision(@"ru->en Latin kept", kLatin, "ru", "en", 1);
+        expect_decision(@"ja->en Han kept", kHan, "ja", "en", 1);
+
+        // Empty text never translates.
+        expect_decision(@"empty text", "", "zh", "en", 0);
+        expect_decision(@"NULL text", NULL, "en", "zh", 0);
     }
     if (gFailureCount > 0) return 1;
     printf("SPDFTranslationChineseFilterTests passed\n");

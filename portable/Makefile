@@ -19,6 +19,7 @@ MAC_FIND_NEAREST_TEST := $(BUILD)/SPDFMacFindNearestTests
 MAC_UPDATER_TEST := $(BUILD)/SPDFUpdaterTests
 MAC_PROPERTIES_FORMAT_TEST := $(BUILD)/SPDFMacPropertiesFormatTests
 MAC_TRANSLATION_FILTER_TEST := $(BUILD)/SPDFTranslationChineseFilterTests
+MAC_TRANSLATION_COPY_TEST := $(BUILD)/SPDFTranslationCopyTests
 # Exclude standalone test translation units (each defines its own main()).
 MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm)))
 MAC_HDRS := $(sort $(wildcard mac/*.h))
@@ -47,7 +48,7 @@ MAC_CODESIGN_APP = $(MAC_CODESIGN_NESTED); codesign --force --timestamp --option
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app mac-window-shortcut-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app mac-window-shortcut-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -110,6 +111,12 @@ $(MAC_TRANSLATION_FILTER_TEST): mac/tests/SPDFTranslationChineseFilterTests.mm $
 
 mac-translation-filter-tests: $(MAC_TRANSLATION_FILTER_TEST)
 	"$(MAC_TRANSLATION_FILTER_TEST)"
+
+$(MAC_TRANSLATION_COPY_TEST): mac/tests/SPDFTranslationCopyTests.mm $(CORE_OBJ) | $(BUILD)
+	clang++ -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFTranslationCopyTests.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$(MAC_TRANSLATION_COPY_TEST)"
+
+mac-translation-copy-tests: $(MAC_TRANSLATION_COPY_TEST)
+	"$(MAC_TRANSLATION_COPY_TEST)"
 
 $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
