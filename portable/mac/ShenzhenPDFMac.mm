@@ -11476,19 +11476,25 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     }
 
     if (items.count == 0 || text.length == 0) {
+        // Not a hard failure: chapters and comments can still be translatable.
+        // The caller shows this message only when they turn out empty too.
         if (errorOut) *errorOut = @"No selectable document text was found. Run OCR first, then translate.";
-        return nil;
+        _pendingTranslationItems = @[];
+        return @"";
     }
     _pendingTranslationItems = items;
     return text;
 }
 
-// Whole-document translation from Chinese: text blocks containing no Han
-// ideographs (pure Latin captions, part numbers, dimensions...) are left
-// completely untouched -- not sent to Argos and no overlay drawn. Rebuilds
-// _pendingTranslationItems in lockstep and returns the filtered source text
-// (nil when nothing contains Chinese).
-- (NSString*)sourceTextByKeepingChineseLines:(NSString*)sourceText {
+// Whole-document translation: per-item translate/skip decision shared with
+// the core (script of the item's text vs. the selected languages; a Chinese
+// or Latin-script source takes precedence, otherwise the target decides).
+// Skipped blocks are left completely untouched -- not sent to Argos and no
+// overlay drawn. Rebuilds _pendingTranslationItems in lockstep and returns
+// the filtered source text (empty when nothing passes).
+- (NSString*)sourceTextByKeepingTranslatableLines:(NSString*)sourceText
+                                     sourceScript:(spdf_translation_script)sourceScript
+                                     targetScript:(spdf_translation_script)targetScript {
     NSArray<NSString*>* sourceLines =
         [sourceText componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
     NSArray<NSDictionary*>* items = _pendingTranslationItems ?: @[];
@@ -11496,14 +11502,63 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     NSMutableString* keptText = [NSMutableString string];
     for (NSUInteger i = 0; i < items.count; ++i) {
         NSString* line = i < sourceLines.count ? sourceLines[i] : @"";
-        if (!spdf_text_contains_han(line.UTF8String)) continue;
+        if (!spdf_translation_should_translate(line.UTF8String, sourceScript, targetScript)) continue;
         [keptItems addObject:items[i]];
         [keptText appendString:line];
         [keptText appendString:@"\n"];
     }
-    if (keptItems.count == 0) return nil;
     _pendingTranslationItems = keptItems;
     return keptText;
+}
+
+// Chapter (outline) titles and comment texts join the same batched Argos
+// pipeline as body blocks: one source line per item, appended after the body
+// lines under the same per-item translate/skip decision. Titles and comment
+// texts are collapsed to single lines so the one-line-per-item mapping
+// through Argos holds. "index" identifies the entry for the core writer
+// (spdf_load_outline pre-order index / visible comment index); "page" only
+// groups the items into spawn batches after the last body page.
+- (NSString*)sourceTextByAppendingOutlineAndCommentItems:(NSString*)sourceText
+                                            sourceScript:(spdf_translation_script)sourceScript
+                                            targetScript:(spdf_translation_script)targetScript {
+    if (!_doc) return sourceText;
+    NSMutableArray<NSDictionary*>* items = [_pendingTranslationItems mutableCopy] ?: [NSMutableArray array];
+    NSMutableString* text = [sourceText mutableCopy] ?: [NSMutableString string];
+    int pageCount = spdf_page_count(_doc);
+    char err[512];
+
+    spdf_outline outline;
+    memset(&outline, 0, sizeof(outline));
+    if (spdf_load_outline(_doc, &outline, err, sizeof(err))) {
+        for (int i = 0; i < outline.count; ++i) {
+            NSString* title = outline.items[i].title ? [NSString stringWithUTF8String:outline.items[i].title] : nil;
+            title = SPDFTextByCollapsingWhitespace(title ?: @"");
+            if (title.length == 0) continue;
+            if (!spdf_translation_should_translate(title.UTF8String, sourceScript, targetScript)) continue;
+            [items addObject:@{@"kind" : @"outline", @"index" : @(i), @"page" : @(pageCount)}];
+            [text appendString:title];
+            [text appendString:@"\n"];
+        }
+        spdf_free_outline(&outline);
+    }
+
+    spdf_comments comments;
+    memset(&comments, 0, sizeof(comments));
+    if (spdf_load_comments(_doc, &comments, err, sizeof(err))) {
+        for (int i = 0; i < comments.count; ++i) {
+            NSString* body = comments.items[i].text ? [NSString stringWithUTF8String:comments.items[i].text] : nil;
+            body = SPDFTextByCollapsingWhitespace(body ?: @"");
+            if (body.length == 0) continue;
+            if (!spdf_translation_should_translate(body.UTF8String, sourceScript, targetScript)) continue;
+            [items addObject:@{@"kind" : @"comment", @"index" : @(comments.items[i].index), @"page" : @(pageCount + 1)}];
+            [text appendString:body];
+            [text appendString:@"\n"];
+        }
+        spdf_free_comments(&comments);
+    }
+
+    _pendingTranslationItems = items;
+    return text;
 }
 
 - (BOOL)writeTranslatedPDFWithText:(NSString*)text
@@ -11536,23 +11591,62 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
     NSUInteger count = MIN(_pendingTranslationItems.count, mappedText.count);
     spdf_translated_line* lines = (spdf_translated_line*)calloc(count ? count : 1, sizeof(spdf_translated_line));
-    if (!lines) return NO;
+    spdf_translated_text* outlineTitles = (spdf_translated_text*)calloc(count ? count : 1, sizeof(spdf_translated_text));
+    spdf_translated_text* commentTexts = (spdf_translated_text*)calloc(count ? count : 1, sizeof(spdf_translated_text));
+    if (!lines || !outlineTitles || !commentTexts) {
+        free(lines);
+        free(outlineTitles);
+        free(commentTexts);
+        return NO;
+    }
+    // Keeps the collapsed/trimmed strings (and their UTF8String buffers)
+    // alive until the core call below returns.
+    NSMutableArray<NSString*>* retainedTexts = [NSMutableArray arrayWithCapacity:count];
+    NSUInteger lineCount = 0;
+    NSUInteger outlineCount = 0;
+    NSUInteger commentCount = 0;
     for (NSUInteger i = 0; i < count; ++i) {
         NSDictionary* item = _pendingTranslationItems[i];
-        NSRect rect = [item[@"rect"] rectValue];
-        lines[i].page_index = [item[@"page"] intValue];
-        lines[i].bounds.x0 = (float)NSMinX(rect);
-        lines[i].bounds.y0 = (float)NSMinY(rect);
-        lines[i].bounds.x1 = (float)NSMaxX(rect);
-        lines[i].bounds.y1 = (float)NSMaxY(rect);
-        lines[i].font_size = [item[@"font"] floatValue];
-        lines[i].opaque_background = SPDF_TRANSLATION_BACKGROUND_OPAQUE;
-        lines[i].text = mappedText[i].UTF8String;
+        NSString* kind = item[@"kind"];
+        if ([kind isEqualToString:@"outline"]) {
+            // Titles must stay single-line; keep the original when Argos
+            // produced nothing for this line.
+            NSString* title = SPDFTextByCollapsingWhitespace(mappedText[i]);
+            if (title.length == 0) continue;
+            [retainedTexts addObject:title];
+            outlineTitles[outlineCount].index = [item[@"index"] intValue];
+            outlineTitles[outlineCount].text = title.UTF8String;
+            outlineCount++;
+        } else if ([kind isEqualToString:@"comment"]) {
+            NSString* body = [mappedText[i]
+                stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if (body.length == 0) continue;
+            [retainedTexts addObject:body];
+            commentTexts[commentCount].index = [item[@"index"] intValue];
+            commentTexts[commentCount].text = body.UTF8String;
+            commentCount++;
+        } else {
+            NSRect rect = [item[@"rect"] rectValue];
+            lines[lineCount].page_index = [item[@"page"] intValue];
+            lines[lineCount].bounds.x0 = (float)NSMinX(rect);
+            lines[lineCount].bounds.y0 = (float)NSMinY(rect);
+            lines[lineCount].bounds.x1 = (float)NSMaxX(rect);
+            lines[lineCount].bounds.y1 = (float)NSMaxY(rect);
+            lines[lineCount].font_size = [item[@"font"] floatValue];
+            lines[lineCount].opaque_background = SPDF_TRANSLATION_BACKGROUND_OPAQUE;
+            lines[lineCount].text = mappedText[i].UTF8String;
+            lineCount++;
+        }
     }
 
     char err[1024];
-    BOOL ok = spdf_save_translated_copy(_doc, outputPath.fileSystemRepresentation, lines, (int)count, err, sizeof(err));
+    BOOL ok = spdf_save_translated_copy_full(_doc, outputPath.fileSystemRepresentation, lines, (int)lineCount,
+                                             outlineTitles, (int)outlineCount, commentTexts, (int)commentCount, err,
+                                             sizeof(err));
+    (void)retainedTexts;
     free(lines);
+    free(outlineTitles);
+    free(commentTexts);
     if (!ok && errorOut) {
         NSString* detail = [NSString stringWithUTF8String:err[0] ? err : "Could not save translated PDF."];
         *errorOut =
@@ -13859,6 +13953,40 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     return [kept componentsJoinedByString:@"\n"];
 }
 
+// Human-readable scope of a translation batch for progress and error text:
+// "page 3" / "pages 3-5" for body blocks, and naming chapters/comments when
+// the batch (also) carries outline-title or comment items.
+static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInteger start, NSUInteger end) {
+    BOOL hasOutline = NO;
+    BOOL hasComment = NO;
+    NSInteger firstPage = -1;
+    NSInteger lastPage = -1;
+    for (NSUInteger i = start; i < end && i < items.count; ++i) {
+        NSString* kind = items[i][@"kind"];
+        if ([kind isEqualToString:@"outline"]) {
+            hasOutline = YES;
+        } else if ([kind isEqualToString:@"comment"]) {
+            hasComment = YES;
+        } else {
+            NSInteger page = [items[i][@"page"] integerValue];
+            if (firstPage < 0) firstPage = page;
+            lastPage = page;
+        }
+    }
+    NSString* pages = nil;
+    if (firstPage >= 0) {
+        pages = firstPage == lastPage ? [NSString stringWithFormat:@"page %ld", (long)firstPage + 1]
+                                      : [NSString stringWithFormat:@"pages %ld-%ld", (long)firstPage + 1,
+                                                                   (long)lastPage + 1];
+    }
+    NSString* extras = nil;
+    if (hasOutline && hasComment) extras = @"chapters and comments";
+    else if (hasOutline) extras = @"chapter titles";
+    else if (hasComment) extras = @"comments";
+    if (pages && extras) return [NSString stringWithFormat:@"%@ and %@", pages, extras];
+    return pages ?: extras ?: @"text";
+}
+
 - (BOOL)runArgosToolSynchronously:(NSString*)tool
                    sourceLanguage:(NSString*)sourceLanguage
                    targetLanguage:(NSString*)targetLanguage
@@ -13996,16 +14124,11 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                   if (nextEnd - start > batchLineBudget) break;
                   end = nextEnd;
               }
-              NSInteger lastPage = [items[end - 1][@"page"] integerValue];
+              NSString* scope = SPDFTranslationBatchScope(items, start, end);
               dispatch_async(dispatch_get_main_queue(), ^{
                 NSString* detail =
-                    page == lastPage
-                        ? [NSString stringWithFormat:@"Translating page %ld (%lu of %lu text blocks)...",
-                                                     (long)page + 1, (unsigned long)translatedCount,
-                                                     (unsigned long)items.count]
-                        : [NSString stringWithFormat:@"Translating pages %ld-%ld (%lu of %lu text blocks)...",
-                                                     (long)page + 1, (long)lastPage + 1,
-                                                     (unsigned long)translatedCount, (unsigned long)items.count];
+                    [NSString stringWithFormat:@"Translating %@ (%lu of %lu text items)...", scope,
+                                               (unsigned long)translatedCount, (unsigned long)items.count];
                 [weakSelf updateTranslationProgress:(double)translatedCount detail:detail];
               });
 
@@ -14024,10 +14147,11 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
                                             output:&translated
                                              error:&failure]) {
                   if (failure.length && ![failure isEqualToString:@"Translation canceled."]) {
-                      failure = page == lastPage
-                                    ? [NSString stringWithFormat:@"Page %ld: %@", (long)page + 1, failure]
-                                    : [NSString stringWithFormat:@"Pages %ld-%ld: %@", (long)page + 1,
-                                                                 (long)lastPage + 1, failure];
+                      NSString* prefix = scope.length > 1
+                                             ? [[[scope substringToIndex:1] uppercaseString]
+                                                   stringByAppendingString:[scope substringFromIndex:1]]
+                                             : scope;
+                      failure = [NSString stringWithFormat:@"%@: %@", prefix, failure];
                   }
                   break;
               }
@@ -14055,7 +14179,7 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
               translatedCount = end;
               dispatch_async(dispatch_get_main_queue(), ^{
                 NSString* detail =
-                    [NSString stringWithFormat:@"Translated page %ld (%lu of %lu text blocks)...", (long)lastPage + 1,
+                    [NSString stringWithFormat:@"Translated %@ (%lu of %lu text items)...", scope,
                                                (unsigned long)translatedCount, (unsigned long)items.count];
                 [weakSelf updateTranslationProgress:(double)translatedCount detail:detail];
               });
@@ -14187,23 +14311,32 @@ static NSString* SPDFStringByRemovingArgosDiagnostics(NSString* output) {
     BOOL usingSelection = NO;
     NSString* textError = nil;
     NSString* sourceText = [self currentTextForTranslationUsingSelection:&usingSelection error:&textError];
-    if (sourceText.length == 0) {
+    if (!sourceText) {
         [self showError:@"Could not prepare translation" detail:textError ?: @"No text is available to translate."];
         return;
     }
+    // sourceText can be empty here (no selectable body text): chapter titles
+    // and comments may still be translatable, so keep going until the
+    // per-item filter below has seen them too.
 
     NSDictionary* options = [self promptForTranslationOptionsUsingSelection:usingSelection];
     if (!options) return;
 
     NSString* sourceLanguage = options[@"source"];
     NSString* targetLanguage = options[@"target"];
-    // Argos codes: "zh" simplified, "zt" traditional (also matches custom zh-* codes).
-    BOOL chineseSource = [sourceLanguage hasPrefix:@"zh"] || [sourceLanguage hasPrefix:@"zt"];
-    if (!usingSelection && chineseSource) {
-        sourceText = [self sourceTextByKeepingChineseLines:sourceText];
-        if (sourceText.length == 0) {
+    if (!usingSelection) {
+        spdf_translation_script sourceScript = spdf_translation_script_for_language(sourceLanguage.UTF8String);
+        spdf_translation_script targetScript = spdf_translation_script_for_language(targetLanguage.UTF8String);
+        sourceText = [self sourceTextByKeepingTranslatableLines:sourceText
+                                                   sourceScript:sourceScript
+                                                   targetScript:targetScript];
+        sourceText = [self sourceTextByAppendingOutlineAndCommentItems:sourceText
+                                                          sourceScript:sourceScript
+                                                          targetScript:targetScript];
+        if (sourceText.length == 0 || _pendingTranslationItems.count == 0) {
             [self showError:@"Nothing to translate"
-                     detail:@"No text block in this document contains Chinese characters."];
+                     detail:textError ?: @"No text block, chapter title or comment in this document needs "
+                                         @"translation for the selected languages."];
             return;
         }
     }

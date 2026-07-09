@@ -38,3 +38,12 @@ When cutting the next release, use this section as the GitHub release body
   PDFs.
 - Translated overlays are now white 95%-opacity boxes with black fitted text.
 - Chinese translation skips blocks without Chinese characters.
+- Fixed: the translated copy lost the document's chapters (outline) and
+  annotations; both are now preserved, including links.
+- Chapter titles and comment texts are now translated too when they are in
+  the source language.
+- Smarter per-item translate/skip decision: with a Chinese or Latin-script
+  source language only items in that script are translated; with other or
+  unknown sources the target language decides (Latin-script text when
+  translating to Chinese, Chinese text when translating to a Latin-script
+  language). Digits/punctuation-only items are left untouched.
