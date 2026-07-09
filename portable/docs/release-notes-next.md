@@ -20,6 +20,11 @@ When cutting the next release, use this section as the GitHub release body
 
 ### Navigation
 - Cmd+K palette now lists open documents first.
+- Cmd+K palette now includes every menu-bar command (with menu breadcrumb,
+  keyboard shortcut, and toggle state); search matches command titles and
+  menu names.
+- Typing "fav" (or any longer prefix of "favorites") in the Cmd+K palette
+  shows all favorites.
 - Fixed: side panel could be unavailable after opening a document from
   favorites.
 - Document map now works on documents of any size (windowed lazy loading).

@@ -21,3 +21,31 @@ NSArray<NSDictionary*>* spdf_palette_open_document_results(NSArray<NSDictionary*
 // open-document row does not.
 NSArray<NSDictionary*>* spdf_palette_favorites_without_open_documents(NSArray<NSDictionary*>* favoriteResults,
                                                                       NSSet<NSString*>* openStandardizedPaths);
+
+// YES when the query is a browse keyword for the Favorites group: a
+// case-insensitive prefix of "favorites" at least 3 characters long ("fav",
+// "favo", ... "favorites"), ignoring surrounding whitespace. The palette then
+// reveals every favorite instead of only title matches.
+BOOL spdf_palette_query_reveals_all_favorites(NSString* query);
+
+// Formats a menu item's key equivalent for display, e.g. ("f", Cmd|Shift) ->
+// "⇧⌘F". modifierMask is the item's keyEquivalentModifierMask; an
+// uppercase-letter key equivalent implies Shift, matching menu behavior.
+// Returns @"" when there is no key equivalent.
+NSString* spdf_palette_key_equivalent_display_string(NSString* keyEquivalent, NSUInteger modifierMask);
+
+// Builds the menu path breadcrumb shown under a menu-command palette row,
+// e.g. (@[@"View"], @"Document Map") -> "View ▸ Document Map". Empty
+// components are skipped.
+NSString* spdf_palette_menu_breadcrumb(NSArray<NSString*>* menuTitles, NSString* itemTitle);
+
+// YES when the query is a case/diacritic-insensitive substring of the menu
+// item title or of its breadcrumb (so "view" finds every View-menu command).
+// An empty query matches everything.
+BOOL spdf_palette_menu_command_matches_query(NSString* query, NSString* title, NSString* breadcrumb);
+
+// Removes menu-command entries (@{... @"selector"}) whose action selector is
+// already covered by a visible curated palette action, so a curated action
+// and the equivalent menu item never show as duplicate rows.
+NSArray<NSDictionary*>* spdf_palette_menu_commands_excluding_selectors(NSArray<NSDictionary*>* menuCommands,
+                                                                       NSSet<NSString*>* excludedSelectors);
