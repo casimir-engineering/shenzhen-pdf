@@ -373,7 +373,12 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
         NSMakeRect(floor(NSMidX(tabScreenRect) - width / 2.0), floor(NSMinY(tabScreenRect) - 31.0), width, 26.0);
     [_hoverPanel setFrame:frame display:NO];
     if (_hoverPanel.parentWindow != self.window) [self.window addChildWindow:_hoverPanel ordered:NSWindowAbove];
-    [_hoverPanel orderFront:nil];
+    // orderFront: on a child window pulls the whole parent group to the front of
+    // its level, so hovering a tab in an UNFOCUSED window (the tracking area is
+    // NSTrackingActiveAlways) would re-stack this window above other windows
+    // without a click. Order the bubble relative to its parent instead: it
+    // becomes visible without moving the parent in the z-order.
+    [_hoverPanel orderWindow:NSWindowAbove relativeTo:self.window.windowNumber];
     _hoverTabIndex = index;
 }
 

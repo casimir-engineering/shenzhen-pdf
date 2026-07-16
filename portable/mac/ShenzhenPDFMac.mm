@@ -7764,7 +7764,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSMakeRect(floor(NSMinX(cursorScreen) + 14.0), floor(NSMinY(cursorScreen) - height - 12.0), width, height);
     [_commentPanel setFrame:frame display:NO];
     if (_commentPanel.parentWindow != _window) [_window addChildWindow:_commentPanel ordered:NSWindowAbove];
-    [_commentPanel orderFront:nil];
+    // Same hover rule as the tab-strip bubble: never orderFront: a child window
+    // from a hover path (it re-stacks the parent group). Order relative to the
+    // parent so the bubble shows without changing window order.
+    [_commentPanel orderWindow:NSWindowAbove relativeTo:_window.windowNumber];
 }
 
 - (void)documentViewEndHoverComment {
