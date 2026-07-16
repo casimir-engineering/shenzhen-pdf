@@ -60,6 +60,11 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     // Insertion slot (see SPDFMacTabStripGeometry.h) for the yellow drop
     // indicator shown while a detached tab hovers over this strip; -1 hidden.
     NSInteger _dropIndicatorSlot;
+    // Set by -performDragOperation: when a drop from this strip's own dragging
+    // session was handled as an in-process move (continuous same-window
+    // gesture), so the source-side session-ended callback neither closes nor
+    // detaches the tab.
+    BOOL _sameWindowTabDropHandled;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -808,9 +813,16 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     [dragItem setDraggingFrame:tabRect contents:image];
 
     _dragSessionTabIndex = _draggedTabIndex;
+    _sameWindowTabDropHandled = NO;
     _detachedTabDrag = YES;
     [self setNeedsDisplay:YES];
-    [self beginDraggingSessionWithItems:@[ dragItem ] event:event source:self];
+    NSDraggingSession* session = [self beginDraggingSessionWithItems:@[ dragItem ] event:event source:self];
+    // No slide-back animation on cancel/fail: a failed drop detaches into a new
+    // window at the drop point (animating the image back first would contradict
+    // that), and -draggingSession:endedAtPoint:operation: then runs at the
+    // instant of an Escape cancel, while the key/button state that identifies
+    // the cancellation (see -tabDragSessionEndedByCancellation) is still live.
+    session.animatesToStartingPositionsOnCancelOrFail = NO;
 }
 
 - (NSDragOperation)draggingSession:(NSDraggingSession*)session
@@ -820,23 +832,43 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     return NSDragOperationMove;
 }
 
+// YES when the dragging session that just ended was cancelled (Escape or
+// Cmd-.) rather than concluded by a drop: a release ends the drag BECAUSE the
+// left button went up, so at cancel time the button is still physically down.
+// The Escape key state is checked as well in case the button-up races the
+// ended callback. Both are point-in-time state queries (no event tap, no
+// Accessibility/Input Monitoring permission). Sessions are created with
+// animatesToStartingPositionsOnCancelOrFail = NO, so this runs at the moment
+// of cancellation while that state is still current.
+- (BOOL)tabDragSessionEndedByCancellation {
+    if ((NSEvent.pressedMouseButtons & 0x1) != 0) return YES;
+    return CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 53 /* kVK_Escape */);
+}
+
 - (void)draggingSession:(NSDraggingSession*)session
            endedAtPoint:(NSPoint)screenPoint
               operation:(NSDragOperation)operation {
     (void)session;
     (void)screenPoint;
     NSInteger index = _dragSessionTabIndex;
+    BOOL sameWindowDropHandled = _sameWindowTabDropHandled;
     _dragSessionTabIndex = -1;
+    _sameWindowTabDropHandled = NO;
     [self resetTabDragTracking];
-    if (index < 0) return;
+    if (index < 0 || sameWindowDropHandled) return;
     if (operation == NSDragOperationMove) {
         [self.reader closeTabAtIndex:index];
-    } else if (operation == NSDragOperationNone) {
-        [self.reader detachTabAtIndex:index];
+        return;
     }
+    if (operation != NSDragOperationNone) return;
+    if ([self tabDragSessionEndedByCancellation]) return;
+    [self.reader detachTabAtIndex:index];
 }
 
-- (BOOL)ignoreDraggedTabFromSender:(id<NSDraggingInfo>)sender {
+// YES when the dragged tab originated from THIS strip (same process and same
+// window number in the pasteboard payload): the drop is then handled as an
+// in-process move of the live tab instead of a pasteboard-copy insert.
+- (BOOL)isSameWindowTabDragFromSender:(id<NSDraggingInfo>)sender {
     NSString* json = [sender.draggingPasteboard stringForType:SPDFTabDragPasteboardType];
     NSDictionary* payload = spdf_tab_strip_json_dictionary_from_string(json);
     NSNumber* sourcePID = [payload[@"sourcePID"] isKindOfClass:NSNumber.class] ? payload[@"sourcePID"] : nil;
@@ -847,9 +879,11 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    // Same-window drags are accepted too: a tab torn off this strip and (still
+    // held) dragged back in reinserts in place — the continuous-gesture
+    // counterpart of the cross-window reattach, with the same indicator.
     NSDragOperation operation = NSDragOperationNone;
-    if ([sender.draggingPasteboard availableTypeFromArray:@[ SPDFTabDragPasteboardType ]] &&
-        ![self ignoreDraggedTabFromSender:sender]) {
+    if ([sender.draggingPasteboard availableTypeFromArray:@[ SPDFTabDragPasteboardType ]]) {
         operation = NSDragOperationMove;
     }
     // Browser-style insertion indicator: while a detached tab hovers over this
@@ -879,12 +913,45 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
     [self clearDropIndicator];
-    if ([self ignoreDraggedTabFromSender:sender]) return NO;
     NSString* json = [sender.draggingPasteboard stringForType:SPDFTabDragPasteboardType];
     SPDFDocumentTab* tab = spdf_tab_from_dictionary(spdf_tab_strip_json_dictionary_from_string(json));
     if (!tab.path.length) return NO;
     NSPoint point = [self convertPoint:sender.draggingLocation fromView:nil];
-    [self.reader insertDraggedTab:tab atIndex:[self dropIndexForPoint:point]];
+    NSInteger insertionIndex = [self dropIndexForPoint:point];
+    if ([self isSameWindowTabDragFromSender:sender]) {
+        // Continuous same-window gesture: the tab never left this window, so
+        // move the LIVE tab (no reload, no process spawn) instead of round-
+        // tripping through the pasteboard copy. The insertion index was
+        // computed with the dragged tab still occupying its slot; map it to
+        // the post-removal index. Always report the drop handled: the flag
+        // stops the session-ended callback from closing or detaching, and the
+        // downstream operation for a NO here would be ambiguous.
+        _sameWindowTabDropHandled = YES;
+        NSInteger count = (NSInteger)self.tabs.count;
+        NSInteger sourceIndex = _dragSessionTabIndex;
+        if (sourceIndex < 0 || sourceIndex >= count ||
+            ![(self.tabs[(NSUInteger)sourceIndex].path ?: @"") isEqualToString:tab.path]) {
+            // Tabs changed under the drag (async strip refresh): relocate the
+            // live tab by path so the right one moves.
+            sourceIndex = -1;
+            for (NSInteger i = 0; i < count; ++i) {
+                if ([(self.tabs[(NSUInteger)i].path ?: @"") isEqualToString:tab.path]) {
+                    sourceIndex = i;
+                    break;
+                }
+            }
+        }
+        if (sourceIndex < 0) {
+            // The live tab vanished mid-drag; fall back to inserting the
+            // pasteboard snapshot so the drop still lands.
+            [self.reader insertDraggedTab:tab atIndex:insertionIndex];
+            return YES;
+        }
+        NSInteger targetIndex = spdf_tab_strip_same_window_move_index(insertionIndex, sourceIndex, count);
+        if (targetIndex != sourceIndex) [self.reader moveTabFromIndex:sourceIndex toIndex:targetIndex];
+        return YES;
+    }
+    [self.reader insertDraggedTab:tab atIndex:insertionIndex];
     return YES;
 }
 
