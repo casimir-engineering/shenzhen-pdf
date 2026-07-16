@@ -28,6 +28,18 @@ static void expect_center_x(NSString* label,
     }
 }
 
+static void expect_move_index(NSString* label,
+                              NSInteger expected,
+                              NSInteger insertionIndex,
+                              NSInteger sourceIndex,
+                              NSInteger tabCount) {
+    NSInteger actual = spdf_tab_strip_same_window_move_index(insertionIndex, sourceIndex, tabCount);
+    if (actual != expected) {
+        fprintf(stderr, "FAIL %s: expected %ld, got %ld\n", label.UTF8String, (long)expected, (long)actual);
+        ++gFailureCount;
+    }
+}
+
 static void expect_center_nan(NSString* label,
                               NSInteger slot,
                               const CGFloat* minXs,
@@ -73,6 +85,22 @@ int main(int argc, char** argv) {
         expect_center_nan(@"slot past the end", 4, minXs, maxXs, 3, gap);
         expect_center_nan(@"no visible tabs", 0, minXs, maxXs, 0, gap);
         expect_center_nan(@"nil geometry", 1, NULL, NULL, 3, gap);
+
+        // Same-window continuous drag: insertion index -> final move index once
+        // the dragged tab's original slot is removed. Tabs A B C D (source B=1).
+        expect_move_index(@"insert before first tab", 0, 0, 1, 4);
+        expect_move_index(@"gap left of source is a no-op", 1, 1, 1, 4);
+        expect_move_index(@"gap right of source is a no-op", 1, 2, 1, 4);
+        expect_move_index(@"insert after next tab", 2, 3, 1, 4);
+        expect_move_index(@"insert at the very end", 3, 4, 1, 4);
+        expect_move_index(@"source at end, insert at start", 0, 0, 3, 4);
+        expect_move_index(@"source at end, end gap is a no-op", 3, 4, 3, 4);
+        expect_move_index(@"source at start, insert at end", 3, 4, 0, 4);
+        expect_move_index(@"single tab always stays", 0, 1, 0, 1);
+        expect_move_index(@"insertion index clamped high", 3, 99, 1, 4);
+        expect_move_index(@"insertion index clamped low", 0, -5, 1, 4);
+        expect_move_index(@"empty strip returns source", 2, 0, 2, 0);
+        expect_move_index(@"source out of range returns source", 7, 0, 7, 4);
 
         // Indicator/drop consistency: the indicator for the slot chosen for a
         // cursor x must lie in the gap the tab will actually insert into.

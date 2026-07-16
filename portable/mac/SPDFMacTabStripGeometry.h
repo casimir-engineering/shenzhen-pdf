@@ -23,3 +23,12 @@ CGFloat spdf_tab_strip_drop_indicator_center_x(NSInteger slot,
                                                const CGFloat* visibleTabMaxXs,
                                                NSInteger visibleCount,
                                                CGFloat tabGap);
+
+// Same-window continuous drag: converts a drop insertion index (computed while
+// the dragged tab still occupies sourceIndex in the tabs array) into the final
+// index for a remove-then-reinsert move. Insertion slots past the source shift
+// left by one once the tab is removed, so the two gaps adjacent to the source
+// both collapse to the tab's own position (a no-op move). Out-of-range
+// insertion indexes are clamped; degenerate inputs (empty strip, source out of
+// range) return sourceIndex so a bad slot never moves the tab.
+NSInteger spdf_tab_strip_same_window_move_index(NSInteger insertionIndex, NSInteger sourceIndex, NSInteger tabCount);

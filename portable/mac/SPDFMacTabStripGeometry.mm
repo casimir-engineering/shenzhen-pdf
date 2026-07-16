@@ -20,3 +20,10 @@ CGFloat spdf_tab_strip_drop_indicator_center_x(NSInteger slot,
     if (slot == visibleCount) return visibleTabMaxXs[visibleCount - 1] + tabGap / 2.0;
     return (visibleTabMaxXs[slot - 1] + visibleTabMinXs[slot]) / 2.0;
 }
+
+NSInteger spdf_tab_strip_same_window_move_index(NSInteger insertionIndex, NSInteger sourceIndex, NSInteger tabCount) {
+    if (tabCount <= 0 || sourceIndex < 0 || sourceIndex >= tabCount) return sourceIndex;
+    NSInteger clamped = MAX((NSInteger)0, MIN(insertionIndex, tabCount));
+    NSInteger target = clamped > sourceIndex ? clamped - 1 : clamped;
+    return MAX((NSInteger)0, MIN(target, tabCount - 1));
+}
