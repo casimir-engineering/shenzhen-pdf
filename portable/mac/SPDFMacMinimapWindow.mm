@@ -82,3 +82,29 @@ NSArray<NSNumber*>* spdf_minimap_window_render_order(SPDFMinimapThumbnailWindow 
     }];
     return order;
 }
+
+CGFloat spdf_minimap_document_delta_for_strip_scroll(CGFloat stripDeltaY,
+                                                     CGFloat stripContentHeight,
+                                                     CGFloat stripAvailableHeight,
+                                                     CGFloat documentHeight,
+                                                     CGFloat documentVisibleHeight) {
+    CGFloat maxDocumentScroll = documentHeight - documentVisibleHeight;
+    if (maxDocumentScroll <= 0.0 || stripContentHeight <= 0.0) return 0.0;
+    CGFloat maxStripScroll = stripContentHeight - stripAvailableHeight;
+    CGFloat documentPerStripPixel =
+        maxStripScroll > 0.0 ? maxDocumentScroll / maxStripScroll : documentHeight / stripContentHeight;
+    return stripDeltaY * documentPerStripPixel;
+}
+
+CGFloat spdf_minimap_document_top_for_strip_scroll(CGFloat currentDocumentTop,
+                                                   CGFloat stripDeltaY,
+                                                   CGFloat stripContentHeight,
+                                                   CGFloat stripAvailableHeight,
+                                                   CGFloat documentHeight,
+                                                   CGFloat documentVisibleHeight) {
+    CGFloat delta = spdf_minimap_document_delta_for_strip_scroll(stripDeltaY, stripContentHeight,
+                                                                 stripAvailableHeight, documentHeight,
+                                                                 documentVisibleHeight);
+    CGFloat maxDocumentScroll = MAX(0.0, documentHeight - documentVisibleHeight);
+    return MAX(0.0, MIN(currentDocumentTop + delta, maxDocumentScroll));
+}
