@@ -25,7 +25,7 @@ MAC_CURSOR_REGION_TEST := $(BUILD)/SPDFMacCursorRegionsTests
 MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm)))
 MAC_HDRS := $(sort $(wildcard mac/*.h))
 MAC_BUNDLE_ID ?= com.intuition.shenzhenpdf
-MAC_VERSION ?= 26.7.9
+MAC_VERSION ?= 26.7.17
 MAC_BUILD ?= 1
 MAC_TESTFLIGHT_PKG = $(DIST)/ShenzhenPDF-testflight-$(MAC_VERSION)-$(MAC_BUILD).pkg
 OPENSSL_LIBDIR ?= $(shell pkg-config --variable=libdir openssl 2>/dev/null || echo /opt/homebrew/opt/openssl@3/lib)
