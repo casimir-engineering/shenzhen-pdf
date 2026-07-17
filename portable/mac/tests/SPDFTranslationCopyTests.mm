@@ -398,6 +398,21 @@ int main(int argc, char** argv) {
                    "output link URI preserved");
             if (hit == 1) spdf_free_link_target(&link);
 
+            // The cursor-region cache builder sees the same link: one rect on
+            // page 2 (the annotation; the fixture has no plain-text URLs), in
+            // the same y-down page space as the at-point test.
+            spdf_rect linkRects[8];
+            int linkRectCount = spdf_page_link_rects(out, 1, /*detect_text_links=*/1, linkRects, 8, err, sizeof(err));
+            EXPECT(linkRectCount == 1, "page 2 link rect collected, got %d (%s)", linkRectCount, err);
+            if (linkRectCount == 1) {
+                EXPECT(linkRects[0].x0 >= 71.0f && linkRects[0].x1 <= 201.0f && linkRects[0].y0 >= 139.0f &&
+                           linkRects[0].y1 <= 153.0f,
+                       "link rect matches the annotation bounds, got (%.1f %.1f %.1f %.1f)", linkRects[0].x0,
+                       linkRects[0].y0, linkRects[0].x1, linkRects[0].y1);
+            }
+            int page3LinkCount = spdf_page_link_rects(out, 2, /*detect_text_links=*/1, linkRects, 8, err, sizeof(err));
+            EXPECT(page3LinkCount == 0, "page 3 has no links, got %d (%s)", page3LinkCount, err);
+
             spdf_close(out);
         }
 

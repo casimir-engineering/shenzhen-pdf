@@ -184,6 +184,12 @@
     NSString* _pendingDeferredCloudOpenToken;
     NSUInteger _findGeneration;
     BOOL _findSearchInProgress;
+    // Per-page cursor-region caches (page-space text-line + link rects) behind
+    // the hover cursor: built once per page off-main, hit-tested per mouse-move.
+    NSOperationQueue* _cursorRegionQueue;
+    NSMutableDictionary<NSNumber*, NSDictionary*>* _cursorRegionCache;
+    NSMutableSet<NSNumber*>* _cursorRegionPagesBuilding;
+    NSUInteger _cursorRegionGeneration;
     NSString* _path;
     // Render/read path for the active document. Equals a private read-only temp
     // copy when the active source (_path) is read-only, else equals _path. Only
@@ -369,7 +375,9 @@
 - (void)cancelPendingLiveZoomCompletion;
 - (void)documentScrollPositionChanged;
 - (NSInteger)documentViewCurrentPageIndex;
-- (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
+- (SPDFCursorRegionKind)documentViewCursorRegionAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
+- (void)invalidateCursorRegionCache;
+- (void)buildCursorRegionsForPageIfNeeded:(NSInteger)pageIndex;
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
 - (void)documentViewDidBeginPan;

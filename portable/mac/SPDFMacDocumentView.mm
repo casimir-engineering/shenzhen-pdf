@@ -66,6 +66,12 @@ static NSColor* spdf_canvas_background_color(void) {
     NSTimer* _inertiaTimer;
     NSInteger _selectionPageIndex;
     NSPoint _selectionStart;
+    // Click-vs-drag decision for link activation: the press is recorded here and
+    // the link (if any) at the PRESS point is only opened on mouse-up when the
+    // gesture never became a selection drag (see SPDFMacCursorRegions.h).
+    SPDFLinkClickGesture _linkGesture;
+    NSInteger _linkGesturePageIndex;
+    NSPoint _linkGesturePagePoint;
     NSTrackingArea* _trackingArea;
     NSDictionary* _hoveredComment;
     BOOL _layoutCacheValid;
@@ -112,9 +118,12 @@ static NSColor* spdf_canvas_background_color(void) {
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
     if (_trackingArea) [self removeTrackingArea:_trackingArea];
+    // ActiveAlways (was ActiveInKeyWindow) so cursor feedback works over
+    // unfocused windows like the app's other hover affordances. Comment hover
+    // previews keep their historical key-window-only gating in mouseMoved:.
     _trackingArea = [[NSTrackingArea alloc]
         initWithRect:self.bounds
-             options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveInKeyWindow
+             options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways
                owner:self
             userInfo:nil];
     [self addTrackingArea:_trackingArea];
@@ -698,32 +707,87 @@ static NSColor* spdf_canvas_background_color(void) {
     NSPoint pagePoint = NSZeroPoint;
     NSInteger pageIndex = -1;
     if ([self point:point fallsInPage:&pageIndex pagePoint:&pagePoint]) {
-        if ([self.reader documentViewOpenLinkAtPageIndex:pageIndex pagePoint:pagePoint]) return;
+        // Link activation is decided on mouse-up (click vs drag-select), so a
+        // drag that selects link text never opens the link. Mouse-down only
+        // starts the selection gesture and records the press for that decision.
         _isSelecting = YES;
         _selectionPageIndex = pageIndex;
         _selectionStart = pagePoint;
+        _linkGesture = spdf_link_click_gesture_begin(point);
+        _linkGesturePageIndex = pageIndex;
+        _linkGesturePagePoint = pagePoint;
         [self.reader documentViewSelectionChangedOnPage:pageIndex from:pagePoint to:pagePoint];
     } else {
+        _linkGesture.active = NO;
         [super mouseDown:event];
     }
 }
 
-- (void)mouseMoved:(NSEvent*)event {
-    [self updateHoveredCommentForEvent:event];
-    if (!self.reader) return;
-    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+- (BOOL)windowIsFrontmostAtWindowPoint:(NSPoint)windowPoint {
+    NSWindow* window = self.window;
+    if (!window) return NO;
+    NSRect screenRect = [window convertRectToScreen:NSMakeRect(windowPoint.x, windowPoint.y, 1.0, 1.0)];
+    NSInteger hitWindowNumber = [NSWindow windowNumberAtPoint:screenRect.origin belowWindowWithWindowNumber:0];
+    return hitWindowNumber == window.windowNumber;
+}
+
+- (void)updateCursorForPointInWindow:(NSPoint)windowPoint {
+    if (_isPanning || !self.reader) return;  // the closed-hand grab owns the cursor
+    if ([self.reader documentViewInPresentationMode]) {
+        [NSCursor.arrowCursor set];
+        return;
+    }
+    // Selection drag in progress: I-beam until release, even while over a link.
+    if (_isSelecting && (_linkGesture.draggedBeyondThreshold || _linkGesture.selectionCreated)) {
+        [NSCursor.IBeamCursor set];
+        return;
+    }
+    // The ActiveAlways tracking area fires even when another window covers this
+    // one (that is how the hover-raise bug happened), so an unfocused window
+    // only touches the cursor when it is actually the top window at the point.
+    // Key windows skip the window-server hit test (IPC) - the responder chain
+    // routing is authoritative there.
+    if (!self.window.isKeyWindow && ![self windowIsFrontmostAtWindowPoint:windowPoint]) return;
+    NSPoint point = [self convertPoint:windowPoint fromView:nil];
     NSPoint pagePoint = NSZeroPoint;
     NSInteger pageIndex = -1;
-    BOOL hasLink = [self point:point fallsInPage:&pageIndex pagePoint:&pagePoint] &&
-                   [self.reader documentViewHasLinkAtPageIndex:pageIndex pagePoint:pagePoint];
-    [(hasLink ? NSCursor.pointingHandCursor : NSCursor.arrowCursor) set];
+    SPDFCursorRegionKind kind = SPDFCursorRegionNone;
+    if ([self point:point fallsInPage:&pageIndex pagePoint:&pagePoint])
+        kind = [self.reader documentViewCursorRegionAtPageIndex:pageIndex pagePoint:pagePoint];
+    if (kind == SPDFCursorRegionLink) [NSCursor.pointingHandCursor set];
+    else if (kind == SPDFCursorRegionText) [NSCursor.IBeamCursor set];
+    else [NSCursor.arrowCursor set];
+}
+
+- (void)refreshCursorForMouseLocation {
+    NSWindow* window = self.window;
+    if (!window) return;
+    NSPoint windowPoint = [window mouseLocationOutsideOfEventStream];
+    NSPoint viewPoint = [self convertPoint:windowPoint fromView:nil];
+    if (!NSPointInRect(viewPoint, self.visibleRect)) return;
+    [self updateCursorForPointInWindow:windowPoint];
+}
+
+- (void)mouseMoved:(NSEvent*)event {
+    // Comment hover previews keep their historical key-window-only behavior
+    // (the tracking area is ActiveAlways now solely for cursor feedback).
+    if (self.window.isKeyWindow) {
+        [self updateHoveredCommentForEvent:event];
+    } else if (_hoveredComment) {
+        _hoveredComment = nil;
+        [self.reader documentViewEndHoverComment];
+    }
+    if (!self.reader) return;
+    [self updateCursorForPointInWindow:event.locationInWindow];
 }
 
 - (void)mouseExited:(NSEvent*)event {
-    (void)event;
     _hoveredComment = nil;
     [self.reader documentViewEndHoverComment];
-    [NSCursor.arrowCursor set];
+    // Leaving the view resets the cursor, but an occluded unfocused window must
+    // not fight the cursor of whatever window is actually under the pointer.
+    if (self.window.isKeyWindow || [self windowIsFrontmostAtWindowPoint:event.locationInWindow])
+        [NSCursor.arrowCursor set];
 }
 
 - (void)keyDown:(NSEvent*)event {
@@ -748,16 +812,26 @@ static NSColor* spdf_canvas_background_color(void) {
     if (NSIsEmptyRect(pageRect)) return;
     SPDFRenderedPage* page = self.pages[(NSUInteger)_selectionPageIndex];
     NSPoint pagePoint = [self convertViewPoint:point toPagePointInPageRect:pageRect page:page];
-    [self.reader documentViewSelectionChangedOnPage:_selectionPageIndex from:_selectionStart to:pagePoint];
+    BOOL selectionNonEmpty = [self.reader documentViewSelectionChangedOnPage:_selectionPageIndex
+                                                                        from:_selectionStart
+                                                                          to:pagePoint];
+    spdf_link_click_gesture_drag(&_linkGesture, point, selectionNonEmpty);
+    if (_linkGesture.draggedBeyondThreshold || _linkGesture.selectionCreated) [NSCursor.IBeamCursor set];
 }
 
 - (void)mouseUp:(NSEvent*)event {
-    (void)event;
     if (_isPanning) {
         [self endPan];
         return;
     }
+    BOOL wasSelecting = _isSelecting;
     _isSelecting = NO;
+    // Only a press-and-release that never became a selection drag opens the
+    // link under the PRESS point (browser click semantics).
+    if (wasSelecting && spdf_link_click_gesture_activates_on_release(&_linkGesture))
+        [self.reader documentViewOpenLinkAtPageIndex:_linkGesturePageIndex pagePoint:_linkGesturePagePoint];
+    _linkGesture.active = NO;
+    [self updateCursorForPointInWindow:event.locationInWindow];
 }
 
 - (void)beginPanWithEvent:(NSEvent*)event {
@@ -824,6 +898,7 @@ static NSColor* spdf_canvas_background_color(void) {
 - (void)endPan {
     _isPanning = NO;
     [[NSCursor arrowCursor] set];
+    [self refreshCursorForMouseLocation];
     if (hypot(_panVelocity.x, _panVelocity.y) > 90.0) {
         [_inertiaTimer invalidate];
         _inertiaTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0
@@ -842,6 +917,7 @@ static NSColor* spdf_canvas_background_color(void) {
     _isPanning = NO;
     _isSelecting = NO;
     _rightMouseMoved = NO;
+    _linkGesture.active = NO;
     _panVelocity = NSZeroPoint;
     _selectionPageIndex = -1;
     [[NSCursor arrowCursor] set];

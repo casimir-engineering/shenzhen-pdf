@@ -181,6 +181,16 @@ void spdf_free_comments(spdf_comments* comments);
 int spdf_link_at_point(spdf_document* doc, int page_index, float x, float y, spdf_link_target* out,
                        int detect_text_links, char* err, size_t err_len);
 void spdf_free_link_target(spdf_link_target* target);
+/* Collect the page-space rectangles of every clickable link on the page:
+ * all link annotations with a target (the same set spdf_link_at_point
+ * follows), plus, when detect_text_links is non-zero, plain-text URLs found
+ * in the page's structured text (builds the full stext page once - callers
+ * cache the result rather than calling this per hit-test). Fills up to
+ * rect_max rects and returns the number written, or -1 on error (err is
+ * filled). Rects are unpadded; the at-point text-URL check applies a 2pt
+ * slop, so hover hit-testing should expand them by the same amount. */
+int spdf_page_link_rects(spdf_document* doc, int page_index, int detect_text_links, spdf_rect* rects, int rect_max,
+                         char* err, size_t err_len);
 int spdf_add_highlight_comment(spdf_document* doc, int page_index, const spdf_rect* rects, int rect_count,
                                const char* text, const char* author, char* err, size_t err_len);
 int spdf_add_text_comment(spdf_document* doc, int page_index, float x, float y, const char* text, const char* author,

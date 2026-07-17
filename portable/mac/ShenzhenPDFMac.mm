@@ -936,6 +936,12 @@ static void spdf_discard_launch_prerender(void) {
     _findQueue.name = @"Shenzhen PDF document find";
     _findQueue.maxConcurrentOperationCount = 1;
     _findQueue.qualityOfService = NSQualityOfServiceUserInitiated;
+    _cursorRegionQueue = [[NSOperationQueue alloc] init];
+    _cursorRegionQueue.name = @"Shenzhen PDF cursor regions";
+    _cursorRegionQueue.maxConcurrentOperationCount = 1;
+    _cursorRegionQueue.qualityOfService = NSQualityOfServiceUtility;
+    _cursorRegionCache = [NSMutableDictionary dictionary];
+    _cursorRegionPagesBuilding = [NSMutableSet set];
     if (launchPhaseStart > 0.0) {
         spdf_launch_profile_log(@"ivar+queue setup %.1fms", spdf_zoom_profile_now_ms() - launchPhaseStart);
     }
@@ -7144,6 +7150,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // Render/read path: temp copy when the source is read-only, else the source.
     // _path stays the SOURCE for title/Recent/Favorites/watcher/Save/edit-gate.
     _workingPath = tab.workingPath.length ? [tab.workingPath copy] : [path copy];
+    // Every document (re)load and tab switch funnels through here, so this is
+    // the invalidation choke point for the per-page cursor-region caches.
+    [self invalidateCursorRegionCache];
     _highlightPageIndex = -1;
     _selectionPageIndex = -1;
     _selectedText = nil;
@@ -7561,6 +7570,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
     [self adoptCachedMetadataForTab:tab];
     [self rebuildSidebar];
+    // Annotation edits can change what stext extracts (e.g. FreeText contents),
+    // so the cursor-region caches rebuild lazily from the updated document.
+    [self invalidateCursorRegionCache];
     [_pageView setNeedsDisplay:YES];
 }
 
@@ -11193,21 +11205,82 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
                          }];
 }
 
-- (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint {
-    if (!_doc) return NO;
+// Hover cursor hit-testing runs on every mouse-move, so it never queries the
+// core: per-page text-line and link rects (page space, zoom-independent) are
+// built ONCE per page on a background queue - including text-URL detection,
+// which builds the page's stext and would stall the main thread for hundreds
+// of ms on dense pages - and cached until the document's content changes.
+// A page whose cache is still building resolves to "none" (arrow) and the
+// cursor corrects itself when the build lands (refreshCursorForMouseLocation).
+static const CGFloat kSPDFCursorLinkHitPadding = 2.0;  // matches spdf_link_at_point's text-URL slop
+static const int kSPDFCursorRegionMaxLinkRects = 512;
 
-    char err[512];
-    spdf_link_target target;
-    // Hover hit-testing runs on every mouse-move; only test real link
-    // annotations (detect_text_links=0) so it never builds the page's stext
-    // (which stalls the main thread for hundreds of ms on dense pages).
-    int hit = spdf_link_at_point(_doc, (int)pageIndex, (float)pagePoint.x, (float)pagePoint.y, &target,
-                                 /*detect_text_links=*/0, err, sizeof(err));
-    if (hit <= 0) return NO;
-    BOOL hasLink =
-        (target.kind == SPDF_LINK_URI && target.uri) || (target.kind == SPDF_LINK_INTERNAL && target.page_index >= 0);
-    spdf_free_link_target(&target);
-    return hasLink;
+- (SPDFCursorRegionKind)documentViewCursorRegionAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint {
+    if (!_doc || pageIndex < 0) return SPDFCursorRegionNone;
+    NSDictionary* regions = _cursorRegionCache[@(pageIndex)];
+    if (!regions) {
+        [self buildCursorRegionsForPageIfNeeded:pageIndex];
+        return SPDFCursorRegionNone;
+    }
+    return spdf_cursor_region_at_point(pagePoint, regions[@"links"], regions[@"text"], kSPDFCursorLinkHitPadding);
+}
+
+- (void)invalidateCursorRegionCache {
+    _cursorRegionGeneration++;
+    [_cursorRegionCache removeAllObjects];
+    [_cursorRegionPagesBuilding removeAllObjects];
+}
+
+- (void)buildCursorRegionsForPageIfNeeded:(NSInteger)pageIndex {
+    NSNumber* number = @(pageIndex);
+    if (_cursorRegionCache[number] || [_cursorRegionPagesBuilding containsObject:number]) return;
+    NSString* path = [self activeWorkingPath];
+    if (!path.length) return;
+    [_cursorRegionPagesBuilding addObject:number];
+    NSUInteger generation = _cursorRegionGeneration;
+    [_cursorRegionQueue addOperationWithBlock:^{
+      @autoreleasepool {
+          char err[1024];
+          NSMutableArray<NSValue*>* textValues = [NSMutableArray array];
+          NSMutableArray<NSValue*>* linkValues = [NSMutableArray array];
+          spdf_document* workerDoc = generation == self->_cursorRegionGeneration
+                                         ? [self workerDocumentForPath:path error:err errorLength:sizeof(err)]
+                                         : NULL;
+          if (workerDoc) {
+              spdf_text_lines lines;
+              memset(&lines, 0, sizeof(lines));
+              if (spdf_extract_page_text_lines(workerDoc, (int)pageIndex, &lines, err, sizeof(err))) {
+                  for (int i = 0; i < lines.count; ++i) {
+                      if (!lines.items[i].text || !*lines.items[i].text) continue;
+                      NSRect r = NSMakeRect(lines.items[i].bounds.x0, lines.items[i].bounds.y0,
+                                            lines.items[i].bounds.x1 - lines.items[i].bounds.x0,
+                                            lines.items[i].bounds.y1 - lines.items[i].bounds.y0);
+                      if (NSIsEmptyRect(r)) continue;
+                      [textValues addObject:[NSValue valueWithRect:r]];
+                  }
+                  spdf_free_text_lines(&lines);
+              }
+              spdf_rect rects[kSPDFCursorRegionMaxLinkRects];
+              int count = spdf_page_link_rects(workerDoc, (int)pageIndex, /*detect_text_links=*/1, rects,
+                                               kSPDFCursorRegionMaxLinkRects, err, sizeof(err));
+              for (int i = 0; i < count; ++i) {
+                  NSRect r = NSMakeRect(rects[i].x0, rects[i].y0, rects[i].x1 - rects[i].x0,
+                                        rects[i].y1 - rects[i].y0);
+                  if (NSIsEmptyRect(r)) continue;
+                  [linkValues addObject:[NSValue valueWithRect:r]];
+              }
+          }
+          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            [self->_cursorRegionPagesBuilding removeObject:number];
+            if (generation != self->_cursorRegionGeneration || !self->_doc) return;
+            // Failures (unreadable file, out-of-range page) cache empty region
+            // arrays: the cursor shows the arrow there and, unlike retrying,
+            // mouse moves cannot re-kick a doomed build every event.
+            self->_cursorRegionCache[number] = @{@"links" : linkValues, @"text" : textValues};
+            [self->_pageView refreshCursorForMouseLocation];
+          }];
+      }
+    }];
 }
 
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint {
