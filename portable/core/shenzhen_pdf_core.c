@@ -1760,6 +1760,116 @@ void spdf_free_link_target(spdf_link_target* target) {
     memset(target, 0, sizeof(*target));
 }
 
+/* Append the union rect of every plain-text URL run in the line (same run
+ * detection as text_line_link_at_point, minus the point test). Returns the
+ * new total; runs beyond rect_max are dropped. */
+static int text_line_collect_link_rects(fz_stext_line* line, spdf_rect* rects, int rect_max, int count_so_far) {
+    char text[2048];
+    fz_rect char_rects[2048];
+    int count = 0;
+    int total = count_so_far;
+    int i;
+
+    for (fz_stext_char* ch = line->first_char; ch && count < (int)(sizeof(text) - 1); ch = ch->next) {
+        text[count] = ch->c > 0 && ch->c < 128 ? (char)ch->c : ' ';
+        char_rects[count] = fz_rect_from_quad(ch->quad);
+        count++;
+    }
+    text[count] = '\0';
+
+    for (i = 0; i < count; ++i) {
+        int end;
+        int j;
+        fz_rect link_rect = fz_empty_rect;
+        int has_rect = 0;
+
+        if (!line_link_prefix_length(text + i)) continue;
+        end = i;
+        while (end < count && link_char_can_continue(text[end])) end++;
+        while (end > i && link_trailing_punctuation(text[end - 1])) end--;
+        if (end <= i) continue;
+
+        for (j = i; j < end; ++j) {
+            if (fz_is_empty_rect(char_rects[j])) continue;
+            link_rect = has_rect ? fz_union_rect(link_rect, char_rects[j]) : char_rects[j];
+            has_rect = 1;
+        }
+        if (has_rect && total < rect_max) {
+            rects[total].x0 = link_rect.x0;
+            rects[total].y0 = link_rect.y0;
+            rects[total].x1 = link_rect.x1;
+            rects[total].y1 = link_rect.y1;
+            total++;
+        }
+        i = end;
+    }
+
+    return total;
+}
+
+int spdf_page_link_rects(spdf_document* doc, int page_index, int detect_text_links, spdf_rect* rects, int rect_max,
+                         char* err, size_t err_len) {
+    fz_page* page = NULL;
+    fz_link* links = NULL;
+    fz_link* link;
+    fz_stext_page* text = NULL;
+    int count = 0;
+
+    set_error(err, err_len, "");
+    if (!rects || rect_max <= 0) {
+        set_error(err, err_len, "No rectangle output was supplied.");
+        return -1;
+    }
+    if (!doc || page_index < 0 || page_index >= doc->page_count) {
+        set_error(err, err_len, "Page index is out of range.");
+        return -1;
+    }
+
+    fz_var(page);
+    fz_var(links);
+    fz_var(text);
+    fz_try(doc->ctx) {
+        page = fz_load_page(doc->ctx, doc->doc, page_index);
+        links = fz_load_links(doc->ctx, page);
+        /* Any link annotation with a URI is clickable: spdf_link_at_point
+         * follows external URIs directly and treats unresolvable internal
+         * ones as URIs, so nothing with a non-empty URI is a dead target. */
+        for (link = links; link && count < rect_max; link = link->next) {
+            if (!link->uri || !*link->uri) continue;
+            rects[count].x0 = link->rect.x0;
+            rects[count].y0 = link->rect.y0;
+            rects[count].x1 = link->rect.x1;
+            rects[count].y1 = link->rect.y1;
+            count++;
+        }
+        if (links) fz_drop_link(doc->ctx, links);
+        links = NULL;
+        fz_drop_page(doc->ctx, page);
+        page = NULL;
+        if (detect_text_links && count < rect_max) {
+            /* Same stext walk as text_link_at_point (top-level text blocks,
+             * default options) so hover rects match what a click resolves. */
+            text = fz_new_stext_page_from_page_number(doc->ctx, doc->doc, page_index, NULL);
+            for (fz_stext_block* block = text ? text->first_block : NULL; block; block = block->next) {
+                if (block->type != FZ_STEXT_BLOCK_TEXT) continue;
+                for (fz_stext_line* line = block->u.t.first_line; line; line = line->next)
+                    count = text_line_collect_link_rects(line, rects, rect_max, count);
+            }
+            fz_drop_stext_page(doc->ctx, text);
+            text = NULL;
+        }
+    }
+    fz_catch(doc->ctx) {
+        set_error(err, err_len, fz_caught_message(doc->ctx));
+        if (links) fz_drop_link(doc->ctx, links);
+        if (page) fz_drop_page(doc->ctx, page);
+        if (text) fz_drop_stext_page(doc->ctx, text);
+        return -1;
+    }
+
+    return count;
+}
+
 static fz_rect rect_from_spdf_rect(spdf_rect rect) {
     fz_rect out;
     out.x0 = rect.x0 < rect.x1 ? rect.x0 : rect.x1;

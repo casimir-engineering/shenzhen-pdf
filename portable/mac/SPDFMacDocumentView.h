@@ -27,4 +27,8 @@
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect;
 - (BOOL)point:(NSPoint)point fallsInPage:(NSInteger*)pageIndex pagePoint:(NSPoint*)pagePoint;
 - (void)cancelTransientInteraction;
+// Re-resolve the pointer cursor (I-beam / hand / arrow) for the current mouse
+// location, e.g. after a cursor-region cache fill or when a pan drag ends.
+// No-op when the pointer is outside the view.
+- (void)refreshCursorForMouseLocation;
 @end

@@ -1,5 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
+#import "SPDFMacCursorRegions.h"
+
 @class SPDFDocumentTab;
 
 void spdf_activate_window_for_view(NSView* view);
@@ -44,7 +46,7 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 - (void)stopKeyboardScrollAnimation;
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
 - (BOOL)documentEscapeKeyDown:(NSEvent*)event;
-- (BOOL)documentViewHasLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
+- (SPDFCursorRegionKind)documentViewCursorRegionAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (BOOL)documentViewOpenLinkAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end;
 - (void)documentViewDidBeginPan;
