@@ -412,6 +412,8 @@
 - (void)openRecentDocument:(id)sender;
 - (void)reopenLastClosedDocument:(id)sender;
 - (void)focusFind:(id)sender;
+- (void)paste:(id)sender;
+- (void)startSearchForText:(NSString*)query;
 - (void)showFindPalette:(id)sender;
 - (void)toggleFindRegex:(id)sender;
 - (void)toggleFindRegexMultiline:(id)sender;

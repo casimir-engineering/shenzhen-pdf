@@ -12042,8 +12042,36 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
 - (void)focusFind:(id)sender {
     (void)sender;
+    // Cmd+F with a live text selection searches for it immediately (the query
+    // stays selected in the field, so typing replaces it, like in a browser).
+    NSString* selection = SPDFTextByCollapsingWhitespace([self trimmedSelectedTextForCommand]);
+    if (selection.length > 0 && ![selection isEqualToString:_searchField.stringValue]) {
+        [self startSearchForText:selection];
+        return;
+    }
     [_window makeFirstResponder:_searchField];
     [_searchField selectText:nil];
+}
+
+// Cmd+V (or Edit > Paste) with no editable field focused searches for the
+// clipboard text. When a text field is focused its field editor sits earlier
+// in the responder chain and handles paste: itself, so this only runs for the
+// document viewer.
+- (void)paste:(id)sender {
+    (void)sender;
+    if (!_doc || _presentationMode || !_searchField) return;
+    NSString* clip = [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];
+    NSString* query = SPDFTextByCollapsingWhitespace(
+        [clip stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]);
+    if (query.length == 0) return;
+    [self startSearchForText:query];
+}
+
+- (void)startSearchForText:(NSString*)query {
+    [_window makeFirstResponder:_searchField];
+    _searchField.stringValue = query;
+    [_searchField selectText:nil];
+    [self startFindForCurrentQueryResetSavedIndex:YES revealMatch:YES];
 }
 
 - (void)toggleFindRegex:(id)sender {
@@ -16342,6 +16370,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
     SEL action = menuItem.action;
     BOOL hasDoc = _doc != NULL;
+    if (action == @selector(paste:))
+        return hasDoc && !_presentationMode &&
+               [NSPasteboard.generalPasteboard canReadObjectForClasses:@[ NSString.class ] options:@{}];
     if (action == @selector(openDocument:) || action == @selector(openPathPrompt:) ||
         action == @selector(toggleFullScreen:) ||
         action == @selector(showFavoritesPalette:) || action == @selector(showFindPalette:) ||
