@@ -182,7 +182,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/As
 	fi
 
 dmg: mac-app
-	hdiutil create -volname "Shenzhen PDF" -srcfolder "$(MAC_APP)" -ov -format UDZO "$(MAC_DMG)"
+	mac/make-installer-dmg.sh "$(MAC_APP)" "$(MAC_DMG)" "Shenzhen PDF"
 	$(MAC_CODESIGN_DMG)
 
 notarize: dmg
