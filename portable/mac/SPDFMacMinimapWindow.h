@@ -47,3 +47,32 @@ BOOL spdf_minimap_window_should_evict(SPDFMinimapThumbnailWindow window, NSInteg
 NSArray<NSNumber*>* spdf_minimap_window_render_order(SPDFMinimapThumbnailWindow window,
                                                      NSInteger visibleFirst,
                                                      NSInteger visibleLast);
+
+// Strip scrolling: a plain scroll gesture over the minimap scrolls the STRIP by
+// the gesture distance and the document follows at the strip's page-per-pixel
+// scale (VS Code-style). The strip has no scroll state of its own — its offset
+// is derived from the document scroll position — so these map a strip-space
+// gesture delta to the equivalent document movement.
+
+// Document-space Y movement for scrolling the strip contents by stripDeltaY
+// pixels (positive = toward the document end). While the strip overflows its
+// viewport the scale is the scrollbar ratio maxDocumentScroll/maxStripScroll,
+// which keeps the strip glued 1:1 to the gesture; when the whole strip fits
+// (no overflow, so the strip itself cannot move) it falls back to
+// documentHeight/stripContentHeight so the gesture moves the viewport
+// indicator by the gesture distance instead. Returns 0 when the document
+// itself cannot scroll.
+CGFloat spdf_minimap_document_delta_for_strip_scroll(CGFloat stripDeltaY,
+                                                     CGFloat stripContentHeight,
+                                                     CGFloat stripAvailableHeight,
+                                                     CGFloat documentHeight,
+                                                     CGFloat documentVisibleHeight);
+
+// New document top after a strip scroll: currentDocumentTop plus the delta
+// above, clamped to [0, documentHeight - documentVisibleHeight].
+CGFloat spdf_minimap_document_top_for_strip_scroll(CGFloat currentDocumentTop,
+                                                   CGFloat stripDeltaY,
+                                                   CGFloat stripContentHeight,
+                                                   CGFloat stripAvailableHeight,
+                                                   CGFloat documentHeight,
+                                                   CGFloat documentVisibleHeight);

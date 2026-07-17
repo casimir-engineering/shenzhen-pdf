@@ -1,4 +1,5 @@
 #import "SPDFMacMinimapView.h"
+#import "SPDFMacMinimapWindow.h"
 #import "SPDFMacSupport.h"
 
 #include <math.h>
@@ -21,6 +22,10 @@ static const CGFloat kLongDocumentDragFullSpeed = 300.0;
 // which is ~1ms and needs no cache invalidation.
 static const CGFloat kLiveContentCacheMaxPixels = 320000.0;
 static const CGFloat kLiveContentCacheMaxHeight = 1600.0;
+// Line-based (classic wheel) scroll deltas converted to strip pixels with the
+// same factor the document scroll view uses (kSPDFMouseWheelPointsPerLine in
+// SPDFMacUIHelpers.mm), so one notch feels consistent in both places.
+static const CGFloat kMinimapWheelPointsPerLine = 32.0;
 
 static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));
@@ -41,6 +46,7 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     CGFloat _dragThumbTop;
     CGFloat _dragLastMouseY;
     NSTimeInterval _dragLastTimestamp;
+    BOOL _scrollWheelDrivingViewport;
     BOOL _miniLayoutCacheValid;
     NSArray<SPDFRenderedPage*>* _miniLayoutPages;
     NSArray<NSValue*>* _miniLayoutPageRects;
@@ -921,7 +927,58 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
         return;
     }
 
-    [self.reader minimapViewDidReceiveScrollWheel:event];
+    [self sendStripScrollForEvent:event];
+}
+
+// A plain scroll over the minimap scrolls the STRIP by the gesture distance
+// (standard scroll feel, momentum included) and the document follows to the
+// position that strip offset represents — so a flick traverses the document at
+// the strip's page-per-pixel scale (VS Code-style), not the document's. The
+// strip has no scroll state of its own: its offset is derived from the document
+// scroll position (see layoutScale:...), so moving the document by the
+// strip-scale equivalent of the gesture delta makes the strip track the
+// gesture 1:1 by construction, with the viewport indicator sliding along the
+// track exactly as it does for any other document movement.
+- (void)sendStripScrollForEvent:(NSEvent*)event {
+    CGFloat scale = 1.0;
+    CGFloat gap = 4.0;
+    CGFloat contentTop = 8.0;
+    CGFloat contentHeight = 0;
+    if (![self layoutScale:&scale gap:&gap contentTop:&contentTop contentHeight:&contentHeight visibleRect:NULL]) {
+        // No strip layout (no pages / degenerate bounds): keep the historical
+        // fall-through to the document scroll view.
+        [self.reader minimapViewDidReceiveScrollWheel:event];
+        return;
+    }
+
+    CGFloat deltaY = event.scrollingDeltaY != 0.0 ? event.scrollingDeltaY : event.deltaY;
+    if (!event.hasPreciseScrollingDeltas) deltaY *= kMinimapWheelPointsPerLine;
+
+    if (fabs(deltaY) > 0.0001) {
+        // Positive deltaY scrolls toward the document top (the document view's
+        // convention, see scrollDocumentClipViewByDeltaX:deltaY:), i.e. the
+        // strip content moves toward its start.
+        CGFloat available = MAX(1.0, NSHeight(self.bounds) - 16.0);
+        CGFloat documentTop = spdf_minimap_document_top_for_strip_scroll(
+            NSMinY(self.documentVisibleRect), -deltaY, contentHeight, available, self.documentHeight,
+            NSHeight(self.documentVisibleRect));
+        _scrollWheelDrivingViewport = YES;
+        // NAN center-x keeps the current horizontal position; the reader's
+        // precision path defers full viewport maintenance until the finish
+        // call, exactly like a viewport drag.
+        [self.reader minimapViewDidRequestViewportTopDocumentY:documentTop documentCenterX:NAN];
+    }
+
+    // Finish when the gesture or its momentum tail ends; phase-less events
+    // (classic wheel notches) finish immediately. A finish at fingers-up
+    // followed by a momentum tail simply re-enters and finishes again.
+    BOOL ended = event.phase == NSEventPhaseEnded || event.phase == NSEventPhaseCancelled ||
+                 event.momentumPhase == NSEventPhaseEnded || event.momentumPhase == NSEventPhaseCancelled ||
+                 (event.phase == NSEventPhaseNone && event.momentumPhase == NSEventPhaseNone);
+    if (ended && _scrollWheelDrivingViewport) {
+        _scrollWheelDrivingViewport = NO;
+        [self.reader minimapViewDidFinishViewportDrag];
+    }
 }
 
 - (void)magnifyWithEvent:(NSEvent*)event {

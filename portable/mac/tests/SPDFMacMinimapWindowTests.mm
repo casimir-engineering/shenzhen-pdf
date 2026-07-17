@@ -183,6 +183,132 @@ static void test_no_thrash_single_page_moves(void) {
     expect_true(@"reverse scroll reuses kept thumbnails", reverseRenders <= kSPDFMinimapWindowExtraPages * 2);
 }
 
+static void expect_close(NSString* label, CGFloat actual, CGFloat expected) {
+    if (fabs(actual - expected) > 0.001) {
+        fprintf(stderr, "FAIL %s: expected %.4f, got %.4f\n", label.UTF8String, (double)expected, (double)actual);
+        ++gFailureCount;
+    }
+}
+
+static void test_strip_scroll_scale(void) {
+    // Long document: strip overflows its viewport. Gesture distance moves the
+    // document at the scrollbar ratio maxDocScroll / maxStripScroll.
+    const CGFloat contentHeight = 10000.0;   // strip pixels
+    const CGFloat available = 600.0;         // strip viewport pixels
+    const CGFloat documentHeight = 48000.0;  // document pixels
+    const CGFloat visibleHeight = 800.0;
+    const CGFloat maxDocScroll = documentHeight - visibleHeight;
+    const CGFloat maxStripScroll = contentHeight - available;
+    expect_close(@"gesture at strip scale",
+                 spdf_minimap_document_delta_for_strip_scroll(100.0, contentHeight, available, documentHeight,
+                                                              visibleHeight),
+                 100.0 * maxDocScroll / maxStripScroll);
+    // Scrolling the strip across its whole range traverses the whole document.
+    expect_close(@"full strip range = full document",
+                 spdf_minimap_document_delta_for_strip_scroll(maxStripScroll, contentHeight, available,
+                                                              documentHeight, visibleHeight),
+                 maxDocScroll);
+    // Direction is preserved.
+    expect_close(@"negative delta scrolls up",
+                 spdf_minimap_document_delta_for_strip_scroll(-100.0, contentHeight, available, documentHeight,
+                                                              visibleHeight),
+                 -100.0 * maxDocScroll / maxStripScroll);
+    // Strip-scale movement is much faster than 1:1 document scrolling.
+    expect_true(@"strip scale beats document scale", maxDocScroll / maxStripScroll > 1.0);
+}
+
+static void test_strip_scroll_clamping(void) {
+    const CGFloat contentHeight = 10000.0;
+    const CGFloat available = 600.0;
+    const CGFloat documentHeight = 48000.0;
+    const CGFloat visibleHeight = 800.0;
+    const CGFloat maxDocScroll = documentHeight - visibleHeight;
+    // Overshooting past the end clamps to the last scroll position.
+    expect_close(@"clamps at document end",
+                 spdf_minimap_document_top_for_strip_scroll(maxDocScroll - 10.0, 5000.0, contentHeight, available,
+                                                            documentHeight, visibleHeight),
+                 maxDocScroll);
+    // Overshooting past the start clamps to zero.
+    expect_close(@"clamps at document start",
+                 spdf_minimap_document_top_for_strip_scroll(10.0, -5000.0, contentHeight, available, documentHeight,
+                                                            visibleHeight),
+                 0.0);
+    // A mid-document step lands exactly at current + delta.
+    expect_close(@"mid-document step unclamped",
+                 spdf_minimap_document_top_for_strip_scroll(20000.0, 50.0, contentHeight, available, documentHeight,
+                                                            visibleHeight),
+                 20000.0 + 50.0 * maxDocScroll / (contentHeight - available));
+}
+
+static void test_strip_scroll_tiny_document(void) {
+    // Whole strip fits (no strip overflow): the strip itself cannot move, so
+    // the gesture moves the viewport indicator by the gesture distance at the
+    // strip's document-per-pixel scale.
+    const CGFloat contentHeight = 300.0;
+    const CGFloat available = 600.0;
+    const CGFloat documentHeight = 4000.0;
+    const CGFloat visibleHeight = 800.0;
+    CGFloat delta =
+        spdf_minimap_document_delta_for_strip_scroll(30.0, contentHeight, available, documentHeight, visibleHeight);
+    expect_close(@"tiny doc: viewport moves at strip scale", delta, 30.0 * documentHeight / contentHeight);
+    // Round-tripped back to strip pixels, the indicator moved by the gesture.
+    expect_close(@"tiny doc: indicator follows gesture", delta * contentHeight / documentHeight, 30.0);
+    // A document that fits entirely in its viewport has nothing to scroll.
+    expect_close(@"unscrollable document ignores scroll",
+                 spdf_minimap_document_delta_for_strip_scroll(30.0, contentHeight, available, 500.0, 800.0), 0.0);
+    expect_close(@"unscrollable document keeps top",
+                 spdf_minimap_document_top_for_strip_scroll(0.0, 30.0, contentHeight, available, 500.0, 800.0), 0.0);
+}
+
+static void test_strip_scroll_window_interaction(void) {
+    // Flick-scroll a 2400-page document via the strip-scroll mapping and feed
+    // the resulting visible ranges into the window policy: no page may be
+    // rendered, evicted, and re-rendered while scrolling one direction, so a
+    // screenful of strip scrolling cannot trigger a re-render storm.
+    const NSInteger pageCount = 2400;
+    const CGFloat pageDocHeight = 1000.0;  // document pixels per page
+    const CGFloat documentHeight = pageCount * pageDocHeight;
+    const CGFloat visibleHeight = 1000.0;
+    const CGFloat contentHeight = pageCount * 204.0;  // strip pixels (thumb + gap)
+    const CGFloat available = 800.0;
+
+    SPDFMinimapThumbnailWindow window = spdf_minimap_window_empty();
+    NSMutableSet<NSNumber*>* thumbnails = [NSMutableSet set];
+    NSMutableDictionary<NSNumber*, NSNumber*>* renderCounts = [NSMutableDictionary dictionary];
+    CGFloat documentTop = 0.0;
+    const NSInteger events = 3000;
+    const CGFloat stepStripPixels = 40.0;
+    for (NSInteger i = 0; i < events; ++i) {
+        documentTop = spdf_minimap_document_top_for_strip_scroll(documentTop, stepStripPixels, contentHeight,
+                                                                 available, documentHeight, visibleHeight);
+        NSInteger visibleFirst = (NSInteger)(documentTop / pageDocHeight);
+        NSInteger visibleLast = (NSInteger)((documentTop + visibleHeight) / pageDocHeight);
+        window = spdf_minimap_window_for_visible_range(pageCount, visibleFirst, visibleLast, window);
+        for (NSNumber* number in [thumbnails copy]) {
+            if (spdf_minimap_window_should_evict(window, number.integerValue)) [thumbnails removeObject:number];
+        }
+        for (NSNumber* number in spdf_minimap_window_render_order(window, visibleFirst, visibleLast)) {
+            if ([thumbnails containsObject:number]) continue;
+            [thumbnails addObject:number];
+            renderCounts[number] = @(renderCounts[number].integerValue + 1);
+        }
+    }
+    // The gesture traversed the document at exactly the strip's scale (~5x the
+    // document-speed scroll for this geometry), without hitting the clamp.
+    CGFloat expectedTop = events * stepStripPixels * (documentHeight - visibleHeight) / (contentHeight - available);
+    expect_close(@"strip flick moves at strip scale", documentTop, expectedTop);
+    expect_true(@"strip flick outruns document-speed scrolling",
+                documentTop > events * stepStripPixels * 4.0);
+    for (NSNumber* number in renderCounts) {
+        if (renderCounts[number].integerValue > 1) {
+            fprintf(stderr, "FAIL strip-scroll thrash: page %ld rendered %ld times\n", (long)number.integerValue,
+                    (long)renderCounts[number].integerValue);
+            ++gFailureCount;
+            break;
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -193,6 +319,10 @@ int main(int argc, char** argv) {
         test_eviction();
         test_render_order();
         test_no_thrash_single_page_moves();
+        test_strip_scroll_scale();
+        test_strip_scroll_clamping();
+        test_strip_scroll_tiny_document();
+        test_strip_scroll_window_interaction();
     }
     if (gFailureCount > 0) return 1;
     printf("SPDFMacMinimapWindowTests passed\n");
