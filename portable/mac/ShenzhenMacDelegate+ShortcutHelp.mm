@@ -1,3 +1,4 @@
+#import "SPDFKeycapLabel.h"
 #import "SPDFMacDelegatePrivate.h"
 
 @implementation ShenzhenMacDelegate (ShortcutHelp)
@@ -104,7 +105,7 @@
     stack.alignment = NSLayoutAttributeCenterY;
     stack.spacing = 5.0;
     for (NSString* key in keys ?: @[]) {
-        NSTextField* keycap = [NSTextField labelWithString:key];
+        NSTextField* keycap = [SPDFKeycapLabel labelWithString:key];
         keycap.translatesAutoresizingMaskIntoConstraints = NO;
         keycap.alignment = NSTextAlignmentCenter;
         keycap.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
