@@ -43,6 +43,14 @@ BOOL spdf_is_sandboxed(void);
 /// Malformed input compares as ordered-same. Never lexical.
 NSComparisonResult spdf_compare_versions(NSString* _Nullable a, NSString* _Nullable b);
 
+/// Formats a GitHub release body for the update alert: keeps only the
+/// highlights section above the first horizontal rule, renders Markdown list
+/// items as "• " lines with real line breaks, rejoins hard-wrapped
+/// continuation lines, strips inline Markdown markers and control/bidi
+/// characters (anti-spoofing), drops blank lines, and caps the result at 500
+/// characters on a line boundary.
+NSString* spdf_format_release_notes_for_alert(NSString* _Nullable body);
+
 /// Offline Security.framework verification of a signed DMG (isApp == NO) or an
 /// extracted .app (isApp == YES). Requires the full Developer ID requirement
 /// (Apple anchor + WWDR marker + Developer ID Application leaf marker) plus a

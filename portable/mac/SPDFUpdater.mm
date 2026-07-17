@@ -800,15 +800,50 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
 }
 
 - (NSString*)plainTextReleaseNotes:(NSString*)body {
-    // Plain-text only: strip the most common Markdown markers, cap length.
-    NSString* text = body;
-    for (NSString* marker in @[ @"**", @"`", @"#", @"> ", @"_" ])
-        text = [text stringByReplacingOccurrencesOfString:marker withString:@""];
+    return spdf_format_release_notes_for_alert(body);
+}
+
+NSString* spdf_format_release_notes_for_alert(NSString* body) {
+    if (![body isKindOfClass:NSString.class] || body.length == 0) return @"";
+    NSCharacterSet* ws = NSCharacterSet.whitespaceCharacterSet;
+    NSString* text = [body stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"];
+    text = [text stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
+
+    NSMutableArray<NSString*>* lines = [NSMutableArray array];
+    for (NSString* rawLine in [text componentsSeparatedByString:@"\n"]) {
+        NSString* line = [rawLine stringByTrimmingCharactersInSet:ws];
+        // Release bodies put a brief highlights section above the first
+        // horizontal rule; the alert shows only that section.
+        if ([line hasPrefix:@"---"] || [line hasPrefix:@"***"] || [line hasPrefix:@"___"]) break;
+        while ([line hasPrefix:@"#"]) line = [line substringFromIndex:1];
+        if ([line hasPrefix:@"> "]) line = [line substringFromIndex:2];
+        line = [line stringByTrimmingCharactersInSet:ws];
+        BOOL isBullet = NO;
+        for (NSString* bullet in @[ @"- ", @"* ", @"+ " ]) {
+            if ([line hasPrefix:bullet]) {
+                line = [@"• " stringByAppendingString:[line substringFromIndex:2]];
+                isBullet = YES;
+                break;
+            }
+        }
+        for (NSString* marker in @[ @"**", @"`", @"_" ])
+            line = [line stringByReplacingOccurrencesOfString:marker withString:@""];
+        // Hard-wrapped continuation lines (indented in the raw body) rejoin
+        // their bullet so the alert wraps them naturally.
+        BOOL continuation = !isBullet && line.length && [rawLine hasPrefix:@"  "] && lines.count &&
+                            ((NSString*)lines.lastObject).length;
+        if (continuation) {
+            lines[lines.count - 1] = [lines.lastObject stringByAppendingFormat:@" %@", line];
+        } else if (line.length) {
+            [lines addObject:line];  // blank lines add nothing in the compact alert
+        }
+    }
+    text = [lines componentsJoinedByString:@"\n"];
 
     // Neutralize control + format characters and bidi overrides so a crafted
     // release body can't spoof the version/identity line that follows in the
     // alert. NSAlert renders plain text (won't execute), but bidi/control chars
-    // could still reorder or hide text visually.
+    // could still reorder or hide text visually. Real line breaks survive.
     NSMutableCharacterSet* strip = [NSMutableCharacterSet new];
     [strip formUnionWithCharacterSet:NSCharacterSet.controlCharacterSet];
     [strip addCharactersInRange:NSMakeRange(0x202A, 5)];   // U+202A-202E embeddings/overrides
@@ -821,15 +856,17 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
                             (void)er;
                             (void)stop;
                             unichar c = sub.length ? [sub characterAtIndex:0] : 0;
-                            if (sub.length == 1 && [strip characterIsMember:c]) {
-                                // Preserve real line breaks as spaces; drop other controls.
-                                if (c == '\n' || c == '\r') [cleaned appendString:@" "];
-                                return;
-                            }
+                            if (sub.length == 1 && [strip characterIsMember:c] && c != '\n') return;
                             [cleaned appendString:sub];
                           }];
     text = [cleaned stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (text.length > 500) text = [[text substringToIndex:500] stringByAppendingString:@"…"];
+    if (text.length > 500) {
+        // Cut at the last complete line that fits, falling back to a hard cut.
+        NSRange lastBreak = [[text substringToIndex:500] rangeOfString:@"\n" options:NSBackwardsSearch];
+        NSUInteger cut = lastBreak.location != NSNotFound ? lastBreak.location : 500;
+        text = [[[text substringToIndex:cut] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+            stringByAppendingString:@"\n…"];
+    }
     return text;
 }
 
