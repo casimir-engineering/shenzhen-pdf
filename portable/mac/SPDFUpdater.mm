@@ -23,6 +23,8 @@ static NSString* const kSPDFAssetName = @"ShenzhenPDF-mac-arm64.dmg";
 
 static const NSTimeInterval kSPDFDailyInterval = 86400.0;        // 24h gate
 static const NSTimeInterval kSPDFIdleDelay = 5.0;               // post-first-paint settle
+static const NSTimeInterval kSPDFRecurringCadence = 3600.0;      // re-arm poll while running
+static const NSTimeInterval kSPDFRecurringLeeway = 600.0;        // generous coalescing tolerance
 static const NSTimeInterval kSPDFNetworkTimeout = 15.0;
 static const NSTimeInterval kSPDFLeaseStaleAfter = 3600.0;      // 1h liveness ceiling
 static const NSTimeInterval kSPDFLaterSnooze = 7.0 * 86400.0;   // "Later" nag cap
@@ -92,6 +94,22 @@ NSComparisonResult spdf_compare_versions(NSString* a, NSString* b) {
         if (va > vb) return NSOrderedDescending;
     }
     return NSOrderedSame;
+}
+
+// ---------------------------------------------------------------------------
+// Daily-check scheduling decision (pure)
+// ---------------------------------------------------------------------------
+
+NSTimeInterval spdf_daily_check_delay(BOOL autoUpdateEnabled, BOOL haveLastCheck,
+                                      NSTimeInterval lastCheckEpoch, NSTimeInterval nowEpoch) {
+    if (!autoUpdateEnabled) return -1;
+    if (!haveLastCheck) return 0;  // fresh install: no stamp yet, due immediately
+    NSTimeInterval elapsed = nowEpoch - lastCheckEpoch;
+    if (elapsed >= kSPDFDailyInterval) return 0;
+    // Rolling 24h window, deliberately NOT calendar-day based: a day-change
+    // trigger arriving <24h after the last check stays gated. A backwards
+    // clock (negative elapsed) yields a delay > 24h — gate stays closed.
+    return kSPDFDailyInterval - elapsed;
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +431,7 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
 @implementation SPDFUpdater {
     dispatch_queue_t _queue;            // Background-QoS serial queue
     BOOL _updateInProgress;             // in-process driver flag (main thread)
+    dispatch_source_t _recurringTimer;  // hourly re-arm poll (fires on _queue)
 
     // Download/session state (touched on _queue / delegate callbacks).
     NSURLSession* _downloadSession;
@@ -553,23 +572,29 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
 
 // ----- daily scheduling -------------------------------------------------------
 
-- (void)scheduleDailyUpdateCheckIfNeeded {
-    if (spdf_is_sandboxed()) return;        // 1. App Store build never self-updates
-    if (![self autoUpdateEnabled]) return;  // 2. persisted opt-out
-
-    // 3. Cross-process 24h gate, stamped pre-network (a crash still burns the day).
-    __block BOOL gated = NO;
+// autoUpdate gate + cross-process flock'd 24h gate, stamped pre-network (a
+// crash still burns the day). Shared by the launch hook and every recurring
+// trigger; stamping BEFORE the network call is what makes redundant triggers
+// (hourly timer + day-change + wake, across N window processes) harmless —
+// exactly one process can claim a given day's slot.
+- (BOOL)claimDailyCheckSlot {
+    if (![self autoUpdateEnabled]) return NO;  // live read; honours toggles without relaunch
+    __block BOOL claimed = NO;
     [self withLockedUpdateStore:^BOOL(NSMutableDictionary* update) {
       NSTimeInterval now = [NSDate date].timeIntervalSince1970;
       NSNumber* last = update[@"lastUpdateCheck"];
-      if ([last isKindOfClass:NSNumber.class] && (now - last.doubleValue) < kSPDFDailyInterval) {
-          gated = YES;
-          return NO;
-      }
+      BOOL haveLast = [last isKindOfClass:NSNumber.class];
+      if (spdf_daily_check_delay(YES, haveLast, haveLast ? last.doubleValue : 0, now) != 0) return NO;
       update[@"lastUpdateCheck"] = @(now);
+      claimed = YES;
       return YES;
     }];
-    if (gated) return;
+    return claimed;
+}
+
+- (void)scheduleDailyUpdateCheckIfNeeded {
+    if (spdf_is_sandboxed()) return;          // 1. App Store build never self-updates
+    if (![self claimDailyCheckSlot]) return;  // 2. persisted opt-out  3. 24h gate
 
     // On launch, sweep any stale staging dirs from an interrupted prior run.
     [self sweepStaleStagingDirs];
@@ -578,6 +603,48 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kSPDFIdleDelay * NSEC_PER_SEC)), _queue, ^{
       [self performNetworkCheckUserInitiated:NO];
     });
+}
+
+- (void)armRecurringUpdateCheck {
+    if (spdf_is_sandboxed()) return;  // App Store build never self-updates
+    static dispatch_once_t once;      // singleton; arm at most once per process
+    dispatch_once(&once, ^{
+      // Hourly cadence with generous leeway: every fire re-runs the full gate
+      // chain, so extra fires cost one flock'd JSON read and no network; the
+      // cadence only bounds how late a check can run once the 24h gate opens.
+      _recurringTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _queue);
+      dispatch_source_set_timer(_recurringTimer,
+                                dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kSPDFRecurringCadence * NSEC_PER_SEC)),
+                                (uint64_t)(kSPDFRecurringCadence * NSEC_PER_SEC),
+                                (uint64_t)(kSPDFRecurringLeeway * NSEC_PER_SEC));
+      dispatch_source_set_event_handler(_recurringTimer, ^{ [self recurringUpdateTriggerFired]; });
+      dispatch_resume(_recurringTimer);
+      // Dispatch timers do not fire across sleep; these two wall-clock
+      // catch-ups cover "slept past the gate" and "day changed while asleep".
+      [[NSNotificationCenter defaultCenter] addObserver:self
+                                               selector:@selector(recurringUpdateCatchUp:)
+                                                   name:NSCalendarDayChangedNotification
+                                                 object:nil];
+      [[NSWorkspace.sharedWorkspace notificationCenter] addObserver:self
+                                                           selector:@selector(recurringUpdateCatchUp:)
+                                                               name:NSWorkspaceDidWakeNotification
+                                                             object:nil];
+    });
+}
+
+// Notification catch-ups arrive on the main thread; hop straight to the
+// Background-QoS queue so gate I/O and the check never touch the main thread.
+- (void)recurringUpdateCatchUp:(NSNotification*)note {
+    (void)note;
+    dispatch_async(_queue, ^{ [self recurringUpdateTriggerFired]; });
+}
+
+// Runs on _queue. Same gate chain as the launch hook, minus the idle delay
+// (we are long past launch and already on the Background-QoS serial queue).
+- (void)recurringUpdateTriggerFired {
+    if (![self claimDailyCheckSlot]) return;
+    [self sweepStaleStagingDirs];
+    [self performNetworkCheckUserInitiated:NO];
 }
 
 - (void)checkForUpdatesUserInitiated:(BOOL)userInitiated {

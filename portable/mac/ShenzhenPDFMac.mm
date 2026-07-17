@@ -1034,6 +1034,11 @@ static void spdf_discard_launch_prerender(void) {
                                [[SPDFUpdater shared] scheduleDailyUpdateCheckIfNeeded];
                            }
                        }
+                       // EVERY process (primary, restored sibling, detached tab)
+                       // keeps the daily check alive while the app runs for days
+                       // without a relaunch; the flock'd 24h gate still collapses
+                       // all processes' triggers to at most one check per day.
+                       [[SPDFUpdater shared] armRecurringUpdateCheck];
                      });
     });
     if (spdf_zoom_profile_enabled()) {

@@ -29,6 +29,13 @@ static void expectString(NSString* label, NSString* actual, NSString* expected) 
     }
 }
 
+static void expectDelay(NSString* label, NSTimeInterval actual, NSTimeInterval expected) {
+    if (actual != expected) {
+        fprintf(stderr, "FAIL %s: expected %.1f, got %.1f\n", label.UTF8String, expected, actual);
+        ++gFailureCount;
+    }
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -88,11 +95,35 @@ int main(int argc, char** argv) {
 
         // 11. nil / empty input.
         expectString(@"nil body", spdf_format_release_notes_for_alert(nil), @"");
+
+        // --- spdf_daily_check_delay: pure fire/delay decision consumed under
+        //     update.lock by every trigger (launch, hourly timer, day-change,
+        //     wake). 0 = due now, >0 = seconds until the gate opens, -1 = never.
+        NSTimeInterval now = 1800000000.0;  // arbitrary epoch instant
+
+        // 12. Fresh install: no lastUpdateCheck stamp yet -> due immediately.
+        expectDelay(@"fresh install due now", spdf_daily_check_delay(YES, NO, 0, now), 0);
+
+        // 13. Checked recently (2h ago) -> gated for the remaining 22h.
+        expectDelay(@"checked recently gated", spdf_daily_check_delay(YES, YES, now - 7200, now),
+                    86400 - 7200);
+
+        // 14. Long sleep past the gate (last check 30h ago) -> the wake catch-up
+        //     trigger must fire the check immediately.
+        expectDelay(@"long sleep past gate", spdf_daily_check_delay(YES, YES, now - 30 * 3600, now), 0);
+
+        // 15. Day changed while asleep but only 40min since the last check: the
+        //     rolling 24h gate stays closed (calendar-day triggers don't defeat it).
+        expectDelay(@"day change inside window", spdf_daily_check_delay(YES, YES, now - 2400, now),
+                    86400 - 2400);
+
+        // 16. autoUpdate disabled -> never fires, even when long overdue.
+        expectDelay(@"autoUpdate disabled", spdf_daily_check_delay(NO, YES, now - 30 * 3600, now), -1);
     }
     if (gFailureCount > 0) {
         fprintf(stderr, "SPDFUpdaterTests: %d failure(s)\n", gFailureCount);
         return 1;
     }
-    printf("SPDFUpdaterTests passed (11 cases)\n");
+    printf("SPDFUpdaterTests passed (16 cases)\n");
     return 0;
 }

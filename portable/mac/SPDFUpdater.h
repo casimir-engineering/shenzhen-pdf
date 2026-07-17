@@ -13,6 +13,19 @@ NS_ASSUME_NONNULL_BEGIN
 /// Sandbox gate -> autoUpdate gate -> flock'd 24h gate -> Background-QoS check.
 - (void)scheduleDailyUpdateCheckIfNeeded;
 
+/// Keeps the silent daily check alive in a continuously-running app. Armed
+/// post-first-paint in EVERY window process (primary, restored sibling,
+/// detached tab) so the schedule survives the primary window closing; the
+/// flock'd 24h gate still collapses all processes' triggers to at most one
+/// check per day globally. Idempotent. An hourly Background-QoS dispatch timer
+/// with generous leeway, plus the two wall-clock catch-ups timers miss across
+/// sleep (NSCalendarDayChangedNotification, NSWorkspaceDidWakeNotification),
+/// each re-run the exact launch gate chain: sandbox -> autoUpdate -> flock'd
+/// 24h gate -> Background-QoS check. The timer stays armed while autoUpdate is
+/// off — every fire early-returns on the live setting — so re-enabling the
+/// setting resumes daily checks without a relaunch.
+- (void)armRecurringUpdateCheck;
+
 /// Launch-time post-update health handshake (§5.9.6 / §5.10). Runs in the
 /// primary process only, before scheduleDailyUpdateCheckIfNeeded. Under
 /// update.lock: if pendingTag matches the now-running version, writes update_ok,
@@ -42,6 +55,16 @@ BOOL spdf_is_sandboxed(void);
 /// "[. -]". YY.M.DD is the primary key; -BUILD is a same-day tiebreaker.
 /// Malformed input compares as ordered-same. Never lexical.
 NSComparisonResult spdf_compare_versions(NSString* _Nullable a, NSString* _Nullable b);
+
+/// Pure fire/delay decision for the silent daily check (consumed under
+/// update.lock by the gate; every trigger source funnels through it). Returns
+/// 0 when a check is due now, the positive number of seconds until the rolling
+/// 24h gate next opens, or -1 when no check may run at all (autoUpdate off).
+/// haveLastCheck is NO on a fresh install (update.json has no lastUpdateCheck
+/// stamp) => due immediately. A wall clock set backwards yields a delay > 24h
+/// (the gate stays closed until real time catches up).
+NSTimeInterval spdf_daily_check_delay(BOOL autoUpdateEnabled, BOOL haveLastCheck,
+                                      NSTimeInterval lastCheckEpoch, NSTimeInterval nowEpoch);
 
 /// Formats a GitHub release body for the update alert: keeps only the
 /// highlights section above the first horizontal rule, renders Markdown list
