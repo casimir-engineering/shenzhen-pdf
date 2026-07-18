@@ -688,17 +688,23 @@ typedef struct {
     int ok;
 } yaml_parser;
 
-static int yp_has_line(const yaml_parser* yp) { return yp->has_pending || yp->i < yp->lines->count; }
+static int yp_has_line(const yaml_parser* yp) {
+    return yp->has_pending || yp->i < yp->lines->count;
+}
 
 static const char* yp_peek_text(const yaml_parser* yp) {
     return yp->has_pending ? yp->pending_text : yp->lines->texts[yp->i];
 }
 
-static int yp_peek_col(const yaml_parser* yp) { return yp->has_pending ? yp->pending_col : yp->lines->cols[yp->i]; }
+static int yp_peek_col(const yaml_parser* yp) {
+    return yp->has_pending ? yp->pending_col : yp->lines->cols[yp->i];
+}
 
 static void yp_advance(yaml_parser* yp) {
-    if (yp->has_pending) yp->has_pending = 0;
-    else yp->i++;
+    if (yp->has_pending)
+        yp->has_pending = 0;
+    else
+        yp->i++;
 }
 
 static spdf_node* yaml_parse_block(yaml_parser* yp);
