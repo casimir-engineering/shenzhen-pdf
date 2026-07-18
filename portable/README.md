@@ -11,7 +11,7 @@ the platform UI instead of emulating the Windows application.
   searching, extracting selected text, loading outlines/comments, rotating
   pages, detecting text before OCR, and saving edited PDFs.
 - `mac/`: native AppKit application bundle frontend.
-- `linux/`: native GTK frontend using the same core API and JSON state shapes.
+- `linux/`: native GTK frontend using the same core API and YAML state shapes.
 - `docs/`: TestFlight handoff, release, and portability notes.
 
 ## Frontend Snapshot
@@ -48,9 +48,11 @@ portable frontend rather than a compatibility shim.
   automatic reload.
 - Offline translation via Argos Translate with language package installation and
   translated PDFs saved next to the original.
-- Human-readable state under the platform application-support/config directory:
-  `settings.json`, `session.json`, `documents.json`, `favorites.json`, and
-  `recent.json`.
+- Human-readable YAML state under the platform application-support/config
+  directory: `settings.yaml`, `session.yaml`, `documents.yaml`,
+  `favorites.yaml`, and (macOS) `bookmarks.yaml`; recents live inside
+  `settings.yaml`. Legacy `.json` files are auto-migrated on launch, with the
+  originals kept as `<name>.json.migrated-backup`.
 
 ## macOS
 
@@ -151,7 +153,8 @@ See [docs/testflight.md](docs/testflight.md) for the complete checklist.
 
 - Keep cross-platform reader behavior in `core/` when possible, and keep
   platform-specific UI behavior in the frontend directories.
-- Prefer the existing JSON state formats so macOS and Linux can continue to
-  share document/session/favorites semantics.
+- Prefer the existing YAML state formats (shared codec in `core/spdf_yaml.c`)
+  so macOS and Linux can continue to share document/session/favorites
+  semantics.
 - Treat macOS-only polish as macOS-only in docs until the GTK frontend has the
   same behavior implemented and validated.
