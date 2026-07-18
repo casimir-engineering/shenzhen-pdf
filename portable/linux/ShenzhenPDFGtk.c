@@ -6,6 +6,7 @@
 
 #include "ShenzhenPDFGtkDisplay.h"
 #include "shenzhen_pdf_core.h"
+#include "spdf_yaml.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -22,7 +23,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define MAX_CONFIG_JSON_BYTES (2 * 1024 * 1024)
+#define MAX_CONFIG_STATE_BYTES (2 * 1024 * 1024)
 #define MAX_SESSION_WINDOWS 16
 #define MAX_SESSION_TABS 64
 #define MAX_FAVORITES 4096
@@ -699,9 +700,9 @@ static gboolean read_limited_text_file(const char* path, char** contents, gsize*
     if (contents) *contents = NULL;
     if (len) *len = 0;
     if (!path) return FALSE;
-    if (g_stat(path, &st) == 0 && st.st_size > MAX_CONFIG_JSON_BYTES) return FALSE;
+    if (g_stat(path, &st) == 0 && st.st_size > MAX_CONFIG_STATE_BYTES) return FALSE;
     ok = g_file_get_contents(path, contents, len, NULL);
-    if (ok && len && *len > MAX_CONFIG_JSON_BYTES) {
+    if (ok && len && *len > MAX_CONFIG_STATE_BYTES) {
         g_free(contents ? *contents : NULL);
         if (contents) *contents = NULL;
         *len = 0;
@@ -727,19 +728,58 @@ static char* dup_limited_utf8(const char* text, gsize max_bytes) {
 static gboolean find_query_too_long(const char* text) { return text && strlen(text) > MAX_FIND_QUERY_BYTES; }
 
 static void init_config_paths(app_state* state) {
+    static const char* const migrate_stems[] = {"settings", "session", "documents", "favorites"};
     state->config_dir = g_build_filename(g_get_user_config_dir(), "shenzhenpdf", NULL);
-    state->settings_path = g_build_filename(state->config_dir, "settings.json", NULL);
-    state->session_path = g_build_filename(state->config_dir, "session.json", NULL);
+    state->settings_path = g_build_filename(state->config_dir, "settings.yaml", NULL);
+    state->session_path = g_build_filename(state->config_dir, "session.yaml", NULL);
     state->session_lock_path = g_build_filename(state->config_dir, "session.lock", NULL);
-    state->favorites_path = g_build_filename(state->config_dir, "favorites.json", NULL);
-    state->documents_path = g_build_filename(state->config_dir, "documents.json", NULL);
+    state->favorites_path = g_build_filename(state->config_dir, "favorites.yaml", NULL);
+    state->documents_path = g_build_filename(state->config_dir, "documents.yaml", NULL);
     g_mkdir_with_parents(state->config_dir, 0700);
+    /* One-time per-file JSON -> YAML migration, flock-guarded across the
+     * app's window processes inside the codec (see core/spdf_yaml.h). Must
+     * run before load_settings/load_session read anything. */
+    spdf_state_migrate_dir(state->config_dir, migrate_stems, 4);
 }
 
 static gboolean write_text_file(const char* path, const char* text) {
     GError* error = NULL;
     gboolean ok = g_file_set_contents(path, text, -1, &error);
     if (error) g_error_free(error);
+    return ok;
+}
+
+/* State files are YAML on disk; internally this frontend still builds and
+ * scans JSON text, converting at the file boundary through the shared codec.
+ * Returns FALSE with *json_out = NULL when the file is missing, oversized, or
+ * unparseable (matching the old ignore-corrupt-JSON behavior). */
+static gboolean read_state_file_as_json(const char* path, char** json_out) {
+    char* yaml = NULL;
+    gsize len = 0;
+    char* json;
+    if (json_out) *json_out = NULL;
+    if (!json_out) return FALSE;
+    if (!read_limited_text_file(path, &yaml, &len)) return FALSE;
+    json = spdf_json_from_yaml(yaml);
+    g_free(yaml);
+    if (!json) return FALSE;
+    /* Copy into glib-owned memory so callers keep using g_free. */
+    *json_out = g_strdup(json);
+    free(json);
+    return TRUE;
+}
+
+/* Converts internally-built JSON text to YAML (with the standard header
+ * comment) and writes it to the state file. */
+static gboolean write_state_file_from_json(const char* path, const char* json_text) {
+    char header[128];
+    char* yaml;
+    gboolean ok;
+    spdf_state_header_for_file(path, header, sizeof(header));
+    yaml = spdf_yaml_from_json(json_text, header);
+    if (!yaml) return FALSE;
+    ok = write_text_file(path, yaml);
+    free(yaml);
     return ok;
 }
 
@@ -1144,7 +1184,7 @@ static void save_settings(app_state* state) {
     }
     g_string_append(json, "  ]\n");
     g_string_append(json, "}\n");
-    write_text_file(state->settings_path, json->str);
+    write_state_file_from_json(state->settings_path, json->str);
     g_string_free(json, TRUE);
     g_free(translate_target);
     g_free(translate_source);
@@ -1293,7 +1333,6 @@ static gboolean append_existing_session_window(const char* id, const char* objec
 
 static void write_session(app_state* state) {
     char* existing = NULL;
-    gsize len = 0;
     char* current;
     GString* out;
     session_write_context context;
@@ -1302,7 +1341,7 @@ static void write_session(app_state* state) {
     if (!state || state->suppress_session_write_on_quit) return;
     ensure_window_session_id(state);
     lock_fd = lock_session_store(state);
-    read_limited_text_file(state->session_path, &existing, &len);
+    read_state_file_as_json(state->session_path, &existing);
     current = session_window_object_for_current_state(state);
     context.windows_json = g_string_new("");
     context.skip_id = state->window_session_id;
@@ -1314,7 +1353,7 @@ static void write_session(app_state* state) {
     out = g_string_new("{\n  \"version\": 2,\n  \"windows\": [\n");
     g_string_append(out, context.windows_json->str);
     g_string_append(out, "\n  ]\n}\n");
-    write_text_file(state->session_path, out->str);
+    write_state_file_from_json(state->session_path, out->str);
     g_string_free(out, TRUE);
     g_string_free(context.windows_json, TRUE);
     g_free(current);
@@ -1333,14 +1372,13 @@ static void save_session(app_state* state) {
 
 static void remove_current_window_session(app_state* state) {
     char* existing = NULL;
-    gsize len = 0;
     GString* out;
     session_write_context context;
     int lock_fd;
 
     if (!state || !state->window_session_id || !*state->window_session_id) return;
     lock_fd = lock_session_store(state);
-    read_limited_text_file(state->session_path, &existing, &len);
+    read_state_file_as_json(state->session_path, &existing);
     context.windows_json = g_string_new("");
     context.skip_id = state->window_session_id;
     context.wrote_any = FALSE;
@@ -1348,7 +1386,7 @@ static void remove_current_window_session(app_state* state) {
     out = g_string_new("{\n  \"version\": 2,\n  \"windows\": [\n");
     g_string_append(out, context.windows_json->str);
     g_string_append(out, "\n  ]\n}\n");
-    write_text_file(state->session_path, out->str);
+    write_state_file_from_json(state->session_path, out->str);
     g_string_free(out, TRUE);
     g_string_free(context.windows_json, TRUE);
     g_free(existing);
@@ -1370,7 +1408,7 @@ static void save_favorites(app_state* state) {
         g_free(title);
     }
     g_string_append(json, "  ]\n}\n");
-    write_text_file(state->favorites_path, json->str);
+    write_state_file_from_json(state->favorites_path, json->str);
     g_string_free(json, TRUE);
 }
 
@@ -1380,8 +1418,7 @@ static void load_settings(app_state* state) {
     char* translate_source;
     char* translate_target;
     char* recent_array;
-    gsize len = 0;
-    if (!read_limited_text_file(state->settings_path, &json, &len)) return;
+    if (!read_state_file_as_json(state->settings_path, &json)) return;
     state->fit_mode_id = json_get_int(json, "fitMode", state->fit_mode_id);
     if (state->fit_mode_id < 0 || state->fit_mode_id > 4) state->fit_mode_id = 4;
     state->zoom = json_get_double(json, "zoom", state->zoom);
@@ -1551,13 +1588,12 @@ static void load_legacy_session(app_state* state, const char* json) {
 
 static void load_session(app_state* state) {
     char* json = NULL;
-    gsize len = 0;
     session_load_context context;
     int lock_fd;
 
     if (!state) return;
     lock_fd = lock_session_store(state);
-    if (!read_limited_text_file(state->session_path, &json, &len)) {
+    if (!read_state_file_as_json(state->session_path, &json)) {
         unlock_session_store(lock_fd);
         return;
     }
@@ -1575,10 +1611,9 @@ static void load_session(app_state* state) {
 static void load_favorites(app_state* state) {
     char* json = NULL;
     char* pos;
-    gsize len = 0;
     if (!state || state->favorites_loaded) return;
     state->favorites_loaded = TRUE;
-    if (!read_limited_text_file(state->favorites_path, &json, &len)) return;
+    if (!read_state_file_as_json(state->favorites_path, &json)) return;
     pos = json;
     while ((pos = strstr(pos, "\"path\"")) != NULL && state->favorite_count < MAX_FAVORITES) {
         char* end = strchr(pos, '}');
@@ -6094,29 +6129,29 @@ static void open_in_browser(GtkWidget* widget, gpointer user_data) {
     g_free(uri);
 }
 
-static const char* state_json_path_for_name(app_state* state, const char* name) {
+static const char* state_file_path_for_name(app_state* state, const char* name) {
     if (!state || !name) return NULL;
-    if (strcmp(name, "settings.json") == 0) return state->settings_path;
-    if (strcmp(name, "session.json") == 0) return state->session_path;
-    if (strcmp(name, "documents.json") == 0) return state->documents_path;
-    if (strcmp(name, "favorites.json") == 0) return state->favorites_path;
+    if (strcmp(name, "settings.yaml") == 0) return state->settings_path;
+    if (strcmp(name, "session.yaml") == 0) return state->session_path;
+    if (strcmp(name, "documents.yaml") == 0) return state->documents_path;
+    if (strcmp(name, "favorites.yaml") == 0) return state->favorites_path;
     return state->settings_path;
 }
 
-static void open_state_json_file(GtkWidget* widget, gpointer user_data) {
+static void open_state_file(GtkWidget* widget, gpointer user_data) {
     app_state* state = (app_state*)user_data;
     GError* error = NULL;
-    const char* name = widget ? (const char*)g_object_get_data(G_OBJECT(widget), "state-json-name") : NULL;
+    const char* name = widget ? (const char*)g_object_get_data(G_OBJECT(widget), "state-file-name") : NULL;
     const char* path;
     char* uri;
 
-    if (!name || !*name) name = "settings.json";
-    path = state_json_path_for_name(state, name);
+    if (!name || !*name) name = "settings.yaml";
+    path = state_file_path_for_name(state, name);
     if (!state || !path) return;
     save_settings(state);
-    if (strcmp(name, "favorites.json") == 0) ensure_favorites_loaded(state);
+    if (strcmp(name, "favorites.yaml") == 0) ensure_favorites_loaded(state);
     if (!g_file_test(path, G_FILE_TEST_EXISTS))
-        write_text_file(path, strcmp(name, "favorites.json") == 0 ? "[]\n" : "{}\n");
+        write_text_file(path, strcmp(name, "favorites.yaml") == 0 ? "[]\n" : "{}\n");
     uri = g_filename_to_uri(path, NULL, &error);
     if (!uri) {
         show_error(GTK_WINDOW(state->window), "Could not build settings file URI", error ? error->message : "");
@@ -6133,8 +6168,8 @@ static void open_state_json_file(GtkWidget* widget, gpointer user_data) {
 }
 
 static void open_settings_file(GtkWidget* widget, gpointer user_data) {
-    if (widget) g_object_set_data(G_OBJECT(widget), "state-json-name", "settings.json");
-    open_state_json_file(widget, user_data);
+    if (widget) g_object_set_data(G_OBJECT(widget), "state-file-name", "settings.yaml");
+    open_state_file(widget, user_data);
 }
 
 static GtkWidget* shortcut_help_row(const char* shortcut, const char* action) {
@@ -10254,10 +10289,10 @@ static void activate(GtkApplication* app, gpointer user_data) {
     state->search_regex_multiline_item = gtk_check_menu_item_new_with_mnemonic("Regex _Multiline");
     GtkWidget* settings_menu = gtk_menu_new();
     GtkWidget* settings = image_menu_item_new_with_mnemonic("_Settings", "preferences-system");
-    GtkWidget* settings_json_menu = image_menu_item_new_with_mnemonic("Open _settings.json...", "text-x-generic");
-    GtkWidget* session_json_menu = image_menu_item_new_with_mnemonic("Open _session.json...", "text-x-generic");
-    GtkWidget* documents_json_menu = image_menu_item_new_with_mnemonic("Open _documents.json...", "text-x-generic");
-    GtkWidget* favorites_json_menu = image_menu_item_new_with_mnemonic("Open _favorites.json...", "text-x-generic");
+    GtkWidget* settings_state_menu = image_menu_item_new_with_mnemonic("Open _settings.yaml...", "text-x-generic");
+    GtkWidget* session_state_menu = image_menu_item_new_with_mnemonic("Open _session.yaml...", "text-x-generic");
+    GtkWidget* documents_state_menu = image_menu_item_new_with_mnemonic("Open _documents.yaml...", "text-x-generic");
+    GtkWidget* favorites_state_menu = image_menu_item_new_with_mnemonic("Open _favorites.yaml...", "text-x-generic");
     GtkWidget* view_menu = gtk_menu_new();
     GtkWidget* view = image_menu_item_new_with_mnemonic("_View", "view-preview");
     GtkWidget* fit_width_item = image_menu_item_new_with_mnemonic("Fit _Width", "zoom-fit-best");
@@ -10270,7 +10305,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
     GtkWidget* help = image_menu_item_new_with_mnemonic("_Help", "help-browser");
     state->shortcut_help_item =
         image_menu_item_new_with_mnemonic("_Keyboard Shortcuts", "preferences-desktop-keyboard");
-    gtk_widget_add_accelerator(settings_json_menu, "activate", accel_group, GDK_KEY_comma, GDK_CONTROL_MASK,
+    gtk_widget_add_accelerator(settings_state_menu, "activate", accel_group, GDK_KEY_comma, GDK_CONTROL_MASK,
                                GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_F5, 0, GTK_ACCEL_VISIBLE);
     gtk_widget_add_accelerator(state->presentation_item, "activate", accel_group, GDK_KEY_f,
@@ -10326,14 +10361,14 @@ static void activate(GtkApplication* app, gpointer user_data) {
     gtk_menu_shell_append(GTK_MENU_SHELL(edit_menu), state->search_regex_multiline_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), edit);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(settings), settings_menu);
-    g_object_set_data(G_OBJECT(settings_json_menu), "state-json-name", "settings.json");
-    g_object_set_data(G_OBJECT(session_json_menu), "state-json-name", "session.json");
-    g_object_set_data(G_OBJECT(documents_json_menu), "state-json-name", "documents.json");
-    g_object_set_data(G_OBJECT(favorites_json_menu), "state-json-name", "favorites.json");
-    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), settings_json_menu);
-    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), session_json_menu);
-    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), documents_json_menu);
-    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), favorites_json_menu);
+    g_object_set_data(G_OBJECT(settings_state_menu), "state-file-name", "settings.yaml");
+    g_object_set_data(G_OBJECT(session_state_menu), "state-file-name", "session.yaml");
+    g_object_set_data(G_OBJECT(documents_state_menu), "state-file-name", "documents.yaml");
+    g_object_set_data(G_OBJECT(favorites_state_menu), "state-file-name", "favorites.yaml");
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), settings_state_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), session_state_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), documents_state_menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(settings_menu), favorites_state_menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), settings);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), view_menu);
     g_object_set_data(G_OBJECT(fit_width_item), "shenzhen-fit-mode", GINT_TO_POINTER(2));
@@ -10596,10 +10631,10 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_signal_connect(fit_width_item, "activate", G_CALLBACK(fit_mode_menu_clicked), state);
     g_signal_connect(fit_height_item, "activate", G_CALLBACK(fit_mode_menu_clicked), state);
     g_signal_connect(fit_page_item, "activate", G_CALLBACK(fit_mode_menu_clicked), state);
-    g_signal_connect(settings_json_menu, "activate", G_CALLBACK(open_state_json_file), state);
-    g_signal_connect(session_json_menu, "activate", G_CALLBACK(open_state_json_file), state);
-    g_signal_connect(documents_json_menu, "activate", G_CALLBACK(open_state_json_file), state);
-    g_signal_connect(favorites_json_menu, "activate", G_CALLBACK(open_state_json_file), state);
+    g_signal_connect(settings_state_menu, "activate", G_CALLBACK(open_state_file), state);
+    g_signal_connect(session_state_menu, "activate", G_CALLBACK(open_state_file), state);
+    g_signal_connect(documents_state_menu, "activate", G_CALLBACK(open_state_file), state);
+    g_signal_connect(favorites_state_menu, "activate", G_CALLBACK(open_state_file), state);
     g_signal_connect(state->show_sidebar_item, "toggled", G_CALLBACK(show_sidebar_toggled), state);
     g_signal_connect(state->show_minimap_item, "toggled", G_CALLBACK(show_minimap_toggled), state);
     g_signal_connect(state->presentation_item, "toggled", G_CALLBACK(presentation_toggled), state);
