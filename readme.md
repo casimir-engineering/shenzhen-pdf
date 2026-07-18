@@ -61,7 +61,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Verified daily auto-updater** — A once-a-day background check against GitHub Releases (off the launch path, disabled in the App Store build). Every update is verified offline against a pinned Apple Developer ID (Team 66LJ4BV7Q3), hardened runtime, bundle id, and stapled notarization before an atomic swap — with automatic rollback if the new build fails to launch.
 - **High-quality native printing** — Prints through the standard macOS pipeline with Fit / Actual Size / Custom scaling
-- **One-click default reader & readable JSON state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as pretty-printed JSON you can read, diff, and edit. <sub>JSON state: macOS · Linux</sub>
+- **One-click default reader & readable YAML state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as human-readable YAML you can read, diff, and edit. Existing JSON state files migrate automatically (originals kept as `.migrated-backup`). <sub>YAML state: macOS · Linux</sub>
 
 ## Platform support
 
@@ -130,15 +130,19 @@ This creates `./out/dbg64/SumatraPDF.exe`. Run from an environment where the Vis
 macOS: `~/Library/Application Support/ShenzhenPDF/`
 Linux: `~/.config/shenzhenpdf/`
 
-Typical files (pretty-printed JSON you can read, diff, and edit):
+Typical files (human-readable YAML you can read, diff, and edit; recents live
+inside `settings.yaml`):
 
 ```text
-settings.json
-session.json
-documents.json
-favorites.json
-recent.json
+settings.yaml
+session.yaml
+documents.yaml
+favorites.yaml
+bookmarks.yaml
 ```
+
+On first launch after updating, existing `.json` state files are converted to
+`.yaml` and the originals are kept next to them as `<name>.json.migrated-backup`.
 
 </details>
 
