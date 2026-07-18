@@ -8,6 +8,9 @@ CPU := $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 CORE_SRC := core/shenzhen_pdf_core.c
 CORE_HDR := core/shenzhen_pdf_core.h
 CORE_OBJ := $(BUILD)/shenzhen_pdf_core.o
+YAML_SRC := core/spdf_yaml.c
+YAML_HDR := core/spdf_yaml.h
+YAML_OBJ := $(BUILD)/spdf_yaml.o
 MAC_APP := $(DIST)/ShenzhenPDF.app
 MAC_BIN := $(MAC_APP)/Contents/MacOS/ShenzhenPDF
 MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
@@ -21,6 +24,7 @@ MAC_PROPERTIES_FORMAT_TEST := $(BUILD)/SPDFMacPropertiesFormatTests
 MAC_TRANSLATION_FILTER_TEST := $(BUILD)/SPDFTranslationChineseFilterTests
 MAC_TRANSLATION_COPY_TEST := $(BUILD)/SPDFTranslationCopyTests
 MAC_CURSOR_REGION_TEST := $(BUILD)/SPDFMacCursorRegionsTests
+MAC_STATE_YAML_TEST := $(BUILD)/SPDFStateYamlTests
 # Exclude standalone test translation units (each defines its own main()).
 MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm)))
 MAC_HDRS := $(sort $(wildcard mac/*.h))
@@ -49,7 +53,7 @@ MAC_CODESIGN_APP = $(MAC_CODESIGN_NESTED); codesign --force --timestamp --option
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app mac-window-shortcut-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app mac-window-shortcut-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -62,6 +66,9 @@ $(BUILD):
 
 $(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
+
+$(YAML_OBJ): $(YAML_SRC) $(YAML_HDR) Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) -Icore -c "$(YAML_SRC)" -o "$(YAML_OBJ)"
 
 mac-app: $(MAC_BIN)
 
@@ -125,7 +132,13 @@ $(MAC_CURSOR_REGION_TEST): mac/tests/SPDFMacCursorRegionsTests.mm mac/SPDFMacCur
 mac-cursor-region-tests: $(MAC_CURSOR_REGION_TEST)
 	"$(MAC_CURSOR_REGION_TEST)"
 
-$(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
+$(MAC_STATE_YAML_TEST): mac/tests/SPDFStateYamlTests.mm $(YAML_OBJ) | $(BUILD)
+	clang++ -std=c++17 -fobjc-arc -Icore mac/tests/SPDFStateYamlTests.mm "$(YAML_OBJ)" -framework Foundation -o "$(MAC_STATE_YAML_TEST)"
+
+mac-state-yaml-tests: $(MAC_STATE_YAML_TEST)
+	"$(MAC_STATE_YAML_TEST)"
+
+$(MAC_BIN): mupdf-libs $(CORE_OBJ) $(YAML_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(MAC_APP)/Contents/Frameworks" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
@@ -156,7 +169,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/As
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
-	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) "$(CORE_OBJ)" "$(YAML_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -q 'libcrypto.3.dylib'; then \
 		cp "$(OPENSSL_LIBCRYPTO)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
 		crypto_path=$$(otool -L "$(MAC_BIN)" | awk '/libcrypto.3.dylib/ { print $$1; exit }'); \
@@ -251,7 +264,7 @@ install: mac-app
 	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/ShenzhenPDF.app"
 
 linux: mupdf-libs | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk+-3.0) "$(CORE_SRC)" $(LINUX_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk+-3.0 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk"
+	$(CC) $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk+-3.0) "$(CORE_SRC)" "$(YAML_SRC)" $(LINUX_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk+-3.0 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk"
 
 clean:
 	rm -rf "$(BUILD)" "$(MAC_APP)" "$(MAC_DMG)" "$(MAC_TESTFLIGHT_PKG)"
