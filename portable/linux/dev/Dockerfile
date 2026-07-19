@@ -10,5 +10,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential clang pkg-config make git ca-certificates \
     libgtk-4-dev libadwaita-1-dev libssl-dev \
     minisign \
-    python3 file \
+    python3 file unzip zip \
     && rm -rf /var/lib/apt/lists/*
