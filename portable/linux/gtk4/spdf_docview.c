@@ -153,6 +153,10 @@ struct _SpdfDocView {
     int search_current; /* index into the arrays, -1 = none */
 
     gboolean first_snapshot_marked;
+
+    /* Wave B (spdf_annot.c): comment markers, drawn as a snapshot overlay
+     * following the selection pattern. */
+    GArray* comment_markers; /* SpdfCommentMarker */
 };
 
 enum { PROP_0, PROP_HADJUSTMENT, PROP_VADJUSTMENT, PROP_HSCROLL_POLICY, PROP_VSCROLL_POLICY };
@@ -1148,6 +1152,27 @@ static void spdf_doc_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot) {
                     gtk_snapshot_append_color(snapshot, i == view->search_current ? &match_hot : &match_all, &hl);
                 }
             }
+
+            /* Wave B: comment marker badges (amber square hugging the
+             * annotation's top-right corner; geometry shared with the
+             * click-to-edit hit test via spdf_comment_marker_badge). */
+            if (view->comment_markers) {
+                GdkRGBA marker_fill = {0.98, 0.74, 0.18, 0.92};
+                GdkRGBA marker_border = {0.55, 0.35, 0.0, 0.9};
+                for (guint i = 0; i < view->comment_markers->len; ++i) {
+                    const SpdfCommentMarker* m = &g_array_index(view->comment_markers, SpdfCommentMarker, i);
+                    spdf_rect badge;
+                    graphene_rect_t br;
+                    if (m->page != p) continue;
+                    badge = spdf_comment_marker_badge(&m->bounds);
+                    br = GRAPHENE_RECT_INIT((float)(rect->x + badge.x0 * view->zoom),
+                                            (float)(rect->y + badge.y0 * view->zoom),
+                                            (float)((badge.x1 - badge.x0) * view->zoom),
+                                            (float)((badge.y1 - badge.y0) * view->zoom));
+                    gtk_snapshot_append_color(snapshot, &marker_fill, &br);
+                    snapshot_page_border(snapshot, &br, &marker_border);
+                }
+            }
         }
     }
 
@@ -1258,6 +1283,10 @@ static void spdf_doc_view_dispose(GObject* object) {
         g_array_free(view->region_text, TRUE);
         view->region_text = NULL;
     }
+    if (view->comment_markers) {
+        g_array_free(view->comment_markers, TRUE);
+        view->comment_markers = NULL;
+    }
     g_free(view->selected_text);
     view->selected_text = NULL;
     /* search-module overlay copies */
@@ -1317,6 +1346,7 @@ static void spdf_doc_view_init(SpdfDocView* view) {
     view->search_current = -1;
     view->pending_ctxs = g_ptr_array_new();
     view->region_text = g_array_new(FALSE, FALSE, sizeof(spdf_rect));
+    view->comment_markers = g_array_new(FALSE, FALSE, sizeof(SpdfCommentMarker));
 
     gtk_widget_set_focusable(GTK_WIDGET(view), TRUE);
     gtk_widget_set_hexpand(GTK_WIDGET(view), TRUE);
@@ -1543,6 +1573,61 @@ void spdf_doc_view_scroll_to_match(SpdfDocView* view, int page, const spdf_rect*
     view_arm_scroll_settle(view);
 }
 
+/* ---------------------------------------------------------------------------
+ * Wave B additions (contract in spdf_internal.h; spdf_annot.c is the
+ * consumer). Kept in one section so parallel edits elsewhere in this file
+ * never collide with it. */
+
+/* The document behind the view was rewritten (rotate/comment save/OCR) or the
+ * tab was retargeted at a different file (Save As): every cached texture is
+ * stale and the page geometry may have changed. In-flight render contexts are
+ * orphaned rather than merely canceled — after a render-service swap their
+ * tokens could collide with fresh tokens from the new service, and the old
+ * service still delivers each done callback exactly once, which frees them. */
+void spdf_doc_view_document_changed(SpdfDocView* view) {
+    int restore_page;
+
+    g_return_if_fail(SPDF_IS_DOC_VIEW(view));
+    restore_page = view->current_page;
+
+    view_cancel_all_renders(view);
+    if (view->pending_ctxs) {
+        for (guint i = 0; i < view->pending_ctxs->len; ++i)
+            ((render_ctx*)g_ptr_array_index(view->pending_ctxs, i))->view = NULL;
+        g_ptr_array_set_size(view->pending_ctxs, 0);
+    }
+
+    if (view->slots) {
+        for (int p = 0; p < view->page_count; ++p) {
+            g_clear_object(&view->slots[p].full);
+            g_clear_object(&view->slots[p].crop);
+        }
+        g_free(view->slots);
+        view->slots = NULL;
+    }
+    g_free(view->sizes);
+    view->sizes = NULL;
+    view->page_count = 0;
+    spdf_layout_clear(&view->layout);
+
+    if (view_clear_selection(view)) g_signal_emit(view, signals[SIG_SELECTION_CHANGED], 0);
+    view->region_page = -1;
+    view->region_link_count = 0;
+    if (view->region_text) g_array_set_size(view->region_text, 0);
+    if (view->comment_markers) g_array_set_size(view->comment_markers, 0);
+    view->anchor.valid = FALSE;
+
+    view_load_document(view);
+    view->current_page = view->page_count > 0 ? CLAMP(restore_page, 0, view->page_count - 1) : 0;
+    view_configure_adjustments(view);
+    view_clamp_horizontal(view);
+    gtk_widget_queue_resize(GTK_WIDGET(view));
+    gtk_widget_queue_draw(GTK_WIDGET(view));
+    g_signal_emit(view, signals[SIG_PAGE_CHANGED], 0, view->current_page);
+    view_schedule_renders(view, FALSE);
+    view_arm_scroll_settle(view);
+}
+
 gboolean spdf_doc_view_page_slot(SpdfDocView* view, int page, double* x, double* y, double* w, double* h) {
     const SpdfPageRect* slot;
 
@@ -1563,4 +1648,29 @@ gboolean spdf_doc_view_visible_pages(SpdfDocView* view, int* first, int* last) {
     if (view->layout.count <= 0 || view->viewport_h <= 0.0) return FALSE;
     y0 = view_scroll_y(view);
     return spdf_layout_visible_range(&view->layout, y0, y0 + view->viewport_h, first, last);
+}
+
+gboolean spdf_doc_view_widget_point_to_page(SpdfDocView* view, double widget_x, double widget_y, int* page,
+                                            double* page_x, double* page_y) {
+    g_return_val_if_fail(SPDF_IS_DOC_VIEW(view), FALSE);
+    return view_page_point_at(view, widget_x, widget_y, page, page_x, page_y);
+}
+
+int spdf_doc_view_get_selection_rects(SpdfDocView* view, int* page, spdf_rect* rects, int rect_max) {
+    int count;
+
+    g_return_val_if_fail(SPDF_IS_DOC_VIEW(view), 0);
+    if (!view_has_selection(view)) return 0;
+    count = MIN(view->selection_rect_count, MAX(0, rect_max));
+    if (rects && count > 0) memcpy(rects, view->selection_rects, (gsize)count * sizeof(spdf_rect));
+    if (page) *page = view->selection_page;
+    return count;
+}
+
+void spdf_doc_view_set_comment_markers(SpdfDocView* view, const SpdfCommentMarker* markers, int count) {
+    g_return_if_fail(SPDF_IS_DOC_VIEW(view));
+    if (!view->comment_markers) return; /* disposing */
+    g_array_set_size(view->comment_markers, 0);
+    if (markers && count > 0) g_array_append_vals(view->comment_markers, markers, (guint)count);
+    gtk_widget_queue_draw(GTK_WIDGET(view));
 }
