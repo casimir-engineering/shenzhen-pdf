@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "spdf_app.h"
+#include "spdf_palette.h"
 #include "spdf_window.h"
 
 #define SPDF_DEFAULT_WINDOW_WIDTH 960
@@ -677,6 +678,25 @@ static void action_tab_copy_title(GSimpleAction* action, GVariant* parameter, gp
     g_free(title);
 }
 
+// Palette module bodies (spdf_palette.c).
+static void action_palette(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    spdf_palette_open(SPDF_WINDOW(user_data));
+}
+
+static void action_favorite_page(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    spdf_palette_toggle_favorite_page(SPDF_WINDOW(user_data));
+}
+
+static void action_favorite_document(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    spdf_palette_toggle_favorite_document(SPDF_WINDOW(user_data));
+}
+
 // Stub for actions whose module is not built yet; the accel, menu item and
 // action name are already final, only the body moves out later.
 static void action_stub(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
@@ -723,12 +743,13 @@ static const GActionEntry k_window_actions[] = {
     // Stateful; activating with no parameter toggles and calls change-state.
     {"presentation", NULL, NULL, "false", presentation_change_state, {0}},
     {"sidebar", NULL, NULL, "false", sidebar_change_state, {0}},
+    // Palette + favorites (spdf_palette.c).
+    {"palette", action_palette, NULL, NULL, NULL, {0}},
+    {"favorite-page", action_favorite_page, NULL, NULL, NULL, {0}},
+    {"favorite-document", action_favorite_document, NULL, NULL, NULL, {0}},
     // Stubs until their modules land (bodies move to those modules).
     {"find-next", action_stub, NULL, NULL, NULL, {0}},      // spdf_search.c
     {"find-prev", action_stub, NULL, NULL, NULL, {0}},      // spdf_search.c
-    {"palette", action_stub, NULL, NULL, NULL, {0}},        // spdf_palette.c
-    {"favorite-page", action_stub, NULL, NULL, NULL, {0}},  // spdf_palette.c
-    {"favorite-document", action_stub, NULL, NULL, NULL, {0}},
     {"rotate-cw", action_stub, NULL, NULL, NULL, {0}},      // spdf_annot.c
     {"rotate-ccw", action_stub, NULL, NULL, NULL, {0}},     // spdf_annot.c
     {"print", action_stub, NULL, NULL, NULL, {0}},          // spdf_print.c
