@@ -22,7 +22,13 @@ char* spdf_tab_display_name(const SpdfTab* tab) {
 
     if (!tab) return g_strdup("Untitled");
     meta = tab->doc ? spdf_title(tab->doc) : NULL;
-    if (meta && *meta) return g_strdup(meta);
+    if (meta && *meta) {
+        // GTK3 parity: labels drop a trailing ".pdf" even from metadata.
+        char* copy = g_strdup(meta);
+        char* dot = strrchr(copy, '.');
+        if (dot && dot != copy && g_ascii_strcasecmp(dot, ".pdf") == 0) *dot = '\0';
+        return copy;
+    }
     return display_name_for_path(tab->path);
 }
 
