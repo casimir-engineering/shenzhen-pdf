@@ -41,6 +41,7 @@
 
 #include "spdf_docview_internal.h"
 #include "spdf_internal.h"
+#include "spdf_search.h" /* declares this file's search-integration section */
 
 #define ZOOM_WHEEL_STEP 1.1
 #define ZOOM_SETTLE_DELAY_MS 120
@@ -143,6 +144,13 @@ struct _SpdfDocView {
     spdf_rect region_links[CURSOR_REGION_RECT_MAX];
     int region_link_count;
     GArray* region_text; /* spdf_rect */
+
+    /* search-highlight overlay (owned copies; spdf_search.c section at the
+     * bottom of this file — see spdf_search.h for the setters) */
+    int* search_pages;
+    spdf_rect* search_rects;
+    int search_count;
+    int search_current; /* index into the arrays, -1 = none */
 
     gboolean first_snapshot_marked;
 };
@@ -1122,6 +1130,24 @@ static void spdf_doc_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot) {
                     gtk_snapshot_append_color(snapshot, &selection, &sel);
                 }
             }
+
+            /* --- search-module overlay (same pattern as the selection):
+             * every match pale yellow (GTK3 decorate_page_surface's find
+             * color), the current one hot yellow on top. --- */
+            if (view->search_count > 0) {
+                GdkRGBA match_all = {1.0, 0.84, 0.12, 0.34};
+                GdkRGBA match_hot = {1.0, 0.62, 0.00, 0.55};
+                for (int i = 0; i < view->search_count; ++i) {
+                    const spdf_rect* r;
+                    graphene_rect_t hl;
+                    if (view->search_pages[i] != p) continue;
+                    r = &view->search_rects[i];
+                    hl = GRAPHENE_RECT_INIT(
+                        (float)(rect->x + r->x0 * view->zoom), (float)(rect->y + r->y0 * view->zoom),
+                        (float)((r->x1 - r->x0) * view->zoom), (float)((r->y1 - r->y0) * view->zoom));
+                    gtk_snapshot_append_color(snapshot, i == view->search_current ? &match_hot : &match_all, &hl);
+                }
+            }
         }
     }
 
@@ -1234,6 +1260,11 @@ static void spdf_doc_view_dispose(GObject* object) {
     }
     g_free(view->selected_text);
     view->selected_text = NULL;
+    /* search-module overlay copies */
+    g_clear_pointer(&view->search_pages, g_free);
+    g_clear_pointer(&view->search_rects, g_free);
+    view->search_count = 0;
+    view->search_current = -1;
     g_free(view->sizes);
     view->sizes = NULL;
     view->page_count = 0;
@@ -1283,6 +1314,7 @@ static void spdf_doc_view_init(SpdfDocView* view) {
     view->current_page = 0;
     view->selection_page = -1;
     view->region_page = -1;
+    view->search_current = -1;
     view->pending_ctxs = g_ptr_array_new();
     view->region_text = g_array_new(FALSE, FALSE, sizeof(spdf_rect));
 
@@ -1455,4 +1487,80 @@ void spdf_doc_view_prime_first_page(SpdfDocView* view) {
     if (!view_doc(view) || !view_render(view) || view->page_count <= 0) return;
     spdf_launch_mark("prime-first-page");
     view_request_full(view, CLAMP(view->current_page, 0, view->page_count - 1), view_render_scale(view), 0);
+}
+
+/* --------------------------------------------------------------------------- */
+/* Search integration (declared in spdf_search.h; the search module owns the
+ * match data, this section only stores overlay copies, scrolls and exposes
+ * layout facts). Kept self-contained: other wave-B agents edit other regions
+ * of this file. */
+
+void spdf_doc_view_set_search_matches(SpdfDocView* view, const int* pages, const spdf_rect* rects, int count,
+                                      int current) {
+    g_return_if_fail(SPDF_IS_DOC_VIEW(view));
+    g_clear_pointer(&view->search_pages, g_free);
+    g_clear_pointer(&view->search_rects, g_free);
+    view->search_count = 0;
+    view->search_current = -1;
+    if (pages && rects && count > 0) {
+        view->search_pages = g_new(int, count);
+        view->search_rects = g_new(spdf_rect, count);
+        memcpy(view->search_pages, pages, (gsize)count * sizeof(int));
+        memcpy(view->search_rects, rects, (gsize)count * sizeof(spdf_rect));
+        view->search_count = count;
+        view->search_current = current >= 0 && current < count ? current : -1;
+    }
+    gtk_widget_queue_draw(GTK_WIDGET(view));
+}
+
+void spdf_doc_view_set_search_current(SpdfDocView* view, int current) {
+    g_return_if_fail(SPDF_IS_DOC_VIEW(view));
+    view->search_current = current >= 0 && current < view->search_count ? current : -1;
+    gtk_widget_queue_draw(GTK_WIDGET(view));
+}
+
+/* Center the match rect in the viewport (Mac scrollToPageRect:pageIndex:);
+ * the adjustments clamp to the scrollable range. */
+void spdf_doc_view_scroll_to_match(SpdfDocView* view, int page, const spdf_rect* rect) {
+    const SpdfPageRect* slot;
+    double cx;
+    double cy;
+
+    g_return_if_fail(SPDF_IS_DOC_VIEW(view));
+    if (view->layout.count <= 0) return;
+    page = CLAMP(page, 0, view->layout.count - 1);
+    if (!rect) {
+        spdf_doc_view_goto_page(view, page);
+        return;
+    }
+    slot = &view->layout.rects[page];
+    cx = slot->x + (rect->x0 + rect->x1) * 0.5 * view->zoom;
+    cy = slot->y + (rect->y0 + rect->y1) * 0.5 * view->zoom;
+    view_set_scroll_values(view, cx - view->viewport_w * 0.5, cy - view->viewport_h * 0.5);
+    view_update_current_page(view);
+    view_clamp_horizontal(view);
+    view_schedule_renders(view, FALSE);
+    view_arm_scroll_settle(view);
+}
+
+gboolean spdf_doc_view_page_slot(SpdfDocView* view, int page, double* x, double* y, double* w, double* h) {
+    const SpdfPageRect* slot;
+
+    g_return_val_if_fail(SPDF_IS_DOC_VIEW(view), FALSE);
+    if (page < 0 || page >= view->layout.count) return FALSE;
+    slot = &view->layout.rects[page];
+    if (x) *x = slot->x;
+    if (y) *y = slot->y;
+    if (w) *w = slot->w;
+    if (h) *h = slot->h;
+    return TRUE;
+}
+
+gboolean spdf_doc_view_visible_pages(SpdfDocView* view, int* first, int* last) {
+    double y0;
+
+    g_return_val_if_fail(SPDF_IS_DOC_VIEW(view), FALSE);
+    if (view->layout.count <= 0 || view->viewport_h <= 0.0) return FALSE;
+    y0 = view_scroll_y(view);
+    return spdf_layout_visible_range(&view->layout, y0, y0 + view->viewport_h, first, last);
 }

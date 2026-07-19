@@ -77,6 +77,13 @@ struct _SpdfTab {
     char *search_text;           // persisted per-tab query
     gboolean read_only_shadow;   // orange-dot shadow copy tab
     // agents may append fields; never reorder existing ones mid-wave
+    // --- appended by spdf_search.c (wave B) ---
+    gboolean search_regex;             // persisted per-tab regex toggle
+    gboolean search_regex_multiline;   // persisted per-tab multiline toggle (GTK3 default TRUE)
+    int find_match_index;              // persisted current match, -1 = none
+    struct _SpdfSearchController *search; // owned; created in spdf_tab_open
+    GtkWidget *scroller;               // GtkScrolledWindow wrapping view
+    GtkWidget *overlay;                // page-content root: scroller + overlay lanes
 };
 SpdfTab *spdf_tab_open(SpdfWindow *win, const char *path, char **error);
 void spdf_tab_close(SpdfTab *tab);
