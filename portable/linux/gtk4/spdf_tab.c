@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include "spdf_search.h"
 #include "spdf_window.h"
 
 static char* display_name_for_path(const char* path) {
@@ -78,6 +79,8 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
     tab->doc = doc;
     tab->win = win;
     tab->search_text = g_strdup("");
+    tab->search_regex_multiline = TRUE; // GTK3/session default
+    tab->find_match_index = -1;
 
     {
         char* render_error = NULL;
@@ -91,7 +94,16 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
         g_free(render_error);
     }
     tab->view = spdf_doc_view_new(tab);
-    content = GTK_WIDGET(tab->view);
+    // --- search module (wave B): the doc view implements GtkScrollable, so
+    // it gets its GtkScrolledWindow here; a GtkOverlay on top hosts the
+    // scrollbar heat-map lane (and later overlay lanes from other modules).
+    tab->scroller = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(tab->scroller), GTK_WIDGET(tab->view));
+    tab->overlay = gtk_overlay_new();
+    gtk_overlay_set_child(GTK_OVERLAY(tab->overlay), tab->scroller);
+    tab->search = spdf_search_controller_new(tab);
+    gtk_overlay_add_overlay(GTK_OVERLAY(tab->overlay), spdf_search_markers_new(tab));
+    content = tab->overlay;
 
     view = spdf_window_get_tab_view(win);
     tab->page = adw_tab_view_append(view, content);
@@ -111,6 +123,12 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
 
 void spdf_tab_close(SpdfTab* tab) {
     if (!tab) return;
+    if (tab->search) {
+        // Cancels any in-flight search; late idle deliveries hold their own
+        // controller refs and drop themselves on the generation check.
+        spdf_search_controller_detach(tab->search);
+        g_clear_object(&tab->search);
+    }
     g_clear_pointer(&tab->render, spdf_render_service_free);
     if (tab->doc) {
         spdf_close(tab->doc);
@@ -120,6 +138,8 @@ void spdf_tab_close(SpdfTab* tab) {
     g_free(tab->search_text);
     tab->page = NULL;
     tab->view = NULL;
+    tab->scroller = NULL; // owned by the page's widget tree, like view
+    tab->overlay = NULL;
     tab->win = NULL;
     g_free(tab);
 }

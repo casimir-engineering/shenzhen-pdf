@@ -112,6 +112,9 @@ static void snapshot_window(SpdfApp* app, SpdfWindow* win) {
         session_tab->path = g_strdup(tab->path);
         if (tab->page) session_tab->title = g_strdup(adw_tab_page_get_title(tab->page));
         session_tab->search_text = g_strdup(tab->search_text ? tab->search_text : "");
+        session_tab->search_regex = tab->search_regex;
+        session_tab->search_regex_multiline = tab->search_regex_multiline;
+        session_tab->find_match_index = tab->find_match_index;
         session_tab->read_only = tab->read_only_shadow;
         if (tab->view) {
             session_tab->page = spdf_doc_view_current_page(tab->view);
@@ -206,6 +209,11 @@ static SpdfTab* open_session_tab(SpdfWindow* win, const SpdfSessionTab* stored) 
         g_free(tab->search_text);
         tab->search_text = g_strdup(stored->search_text);
     }
+    // Search options restore into the tab fields only; the query re-runs
+    // lazily on first search-bar open (spdf_search.c, GTK3 deferred find).
+    tab->search_regex = stored->search_regex;
+    tab->search_regex_multiline = stored->search_regex_multiline;
+    tab->find_match_index = stored->find_match_index;
     if (tab->view) {
         switch (stored->fit_mode) {
             case 4:

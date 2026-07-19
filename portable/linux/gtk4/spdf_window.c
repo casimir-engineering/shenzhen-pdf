@@ -9,6 +9,7 @@
 
 #include "spdf_app.h"
 #include "spdf_palette.h"
+#include "spdf_search.h"
 #include "spdf_window.h"
 
 #define SPDF_DEFAULT_WINDOW_WIDTH 960
@@ -354,10 +355,9 @@ static gboolean window_key_pressed(GtkEventControllerKey* controller,
             spdf_window_set_presentation(win, FALSE);
             return GDK_EVENT_STOP;
         }
-        if (gtk_toggle_button_get_active(win->search_toggle)) {
-            gtk_toggle_button_set_active(win->search_toggle, FALSE);
-            return GDK_EVENT_STOP;
-        }
+        // Escape in the canvas clears the active search + hides the bar
+        // (spdf_search.c; Mac documentEscapeKeyDown semantics).
+        if (spdf_search_dismiss(win)) return GDK_EVENT_STOP;
     }
     return GDK_EVENT_PROPAGATE;
 }
@@ -550,11 +550,23 @@ static void action_shortcuts(GSimpleAction* action, GVariant* parameter, gpointe
 }
 
 static void action_search(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
-    SpdfWindow* win = SPDF_WINDOW(user_data);
     (void)action;
     (void)parameter;
-    // The search module owns the bar; the shell just owns the toggle state.
-    gtk_toggle_button_set_active(win->search_toggle, !gtk_toggle_button_get_active(win->search_toggle));
+    // Ctrl+F: selection-to-search or reveal + focus the bar (spdf_search.c;
+    // the header toggle tracks the bar through a property binding).
+    spdf_search_focus(SPDF_WINDOW(user_data));
+}
+
+static void action_find_next(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    spdf_search_find_next(SPDF_WINDOW(user_data));
+}
+
+static void action_find_prev(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    spdf_search_find_prev(SPDF_WINDOW(user_data));
 }
 
 static void action_zoom_in(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
@@ -747,9 +759,10 @@ static const GActionEntry k_window_actions[] = {
     {"palette", action_palette, NULL, NULL, NULL, {0}},
     {"favorite-page", action_favorite_page, NULL, NULL, NULL, {0}},
     {"favorite-document", action_favorite_document, NULL, NULL, NULL, {0}},
+    // Search (spdf_search.c).
+    {"find-next", action_find_next, NULL, NULL, NULL, {0}},
+    {"find-prev", action_find_prev, NULL, NULL, NULL, {0}},
     // Stubs until their modules land (bodies move to those modules).
-    {"find-next", action_stub, NULL, NULL, NULL, {0}},      // spdf_search.c
-    {"find-prev", action_stub, NULL, NULL, NULL, {0}},      // spdf_search.c
     {"rotate-cw", action_stub, NULL, NULL, NULL, {0}},      // spdf_annot.c
     {"rotate-ccw", action_stub, NULL, NULL, NULL, {0}},     // spdf_annot.c
     {"print", action_stub, NULL, NULL, NULL, {0}},          // spdf_print.c
@@ -811,11 +824,6 @@ static GMenuModel* build_primary_menu(SpdfWindow* win) {
 
 // ---------------------------------------------------------------------------
 // Construction
-
-static void search_toggle_toggled(GtkToggleButton* button, gpointer user_data) {
-    (void)user_data;
-    if (gtk_toggle_button_get_active(button)) g_message("shenzhenpdf: search bar pending spdf_search.c");
-}
 
 static gboolean window_close_request(GtkWindow* window, gpointer user_data) {
     GtkApplication* app = gtk_window_get_application(window);
@@ -912,7 +920,7 @@ static GtkWidget* header_bar_new(SpdfWindow* self) {
     self->search_toggle = GTK_TOGGLE_BUTTON(gtk_toggle_button_new());
     gtk_button_set_icon_name(GTK_BUTTON(self->search_toggle), "system-search-symbolic");
     gtk_widget_set_tooltip_text(GTK_WIDGET(self->search_toggle), "Search (Ctrl+F)");
-    g_signal_connect(self->search_toggle, "toggled", G_CALLBACK(search_toggle_toggled), self);
+    // The search module binds the toggle to the bar's search mode.
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), GTK_WIDGET(self->search_toggle));
 
     return header;
@@ -954,6 +962,10 @@ static void spdf_window_init(SpdfWindow* self) {
     self->toolbar_view = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
     adw_toolbar_view_add_top_bar(self->toolbar_view, header);
     adw_toolbar_view_add_top_bar(self->toolbar_view, GTK_WIDGET(self->tab_bar));
+    // Search bar (spdf_search.c): entry, live counter, prev/next, regex +
+    // multiline toggles; also installs the window-level type-anywhere and
+    // paste-to-search key handling.
+    adw_toolbar_view_add_top_bar(self->toolbar_view, spdf_search_bar_new(self, self->search_toggle));
     adw_toolbar_view_set_content(self->toolbar_view, GTK_WIDGET(self->tab_view));
 
     self->tab_overview = ADW_TAB_OVERVIEW(adw_tab_overview_new());
