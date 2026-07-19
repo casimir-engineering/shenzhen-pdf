@@ -124,6 +124,11 @@ struct _SpdfTab {
     spdf_comments comments;      // cached comment list (markers, context menu)
     gboolean comments_loaded;
     guint annot_idle_id;         // deferred initial comment load
+    // --- appended by spdf_watcher.c (wave C) ---
+    char *working_path;          // read-only shadow copy actually opened; NULL = path
+    guint64 ro_copy_file_size;   // source stat the shadow copy reflects
+    double ro_copy_modified_at;  //   (session keys roCopyFileSize/roCopyModifiedAt)
+    struct _SpdfTabWatch *watch; // owned by spdf_watcher.c; NULL when unwatched
 };
 SpdfTab *spdf_tab_open(SpdfWindow *win, const char *path, char **error);
 void spdf_tab_close(SpdfTab *tab);

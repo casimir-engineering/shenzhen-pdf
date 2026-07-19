@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "spdf_app.h"
+#include "spdf_watcher.h"
 #include "spdf_window.h"
 
 struct _SpdfApp {
@@ -116,6 +117,12 @@ static void snapshot_window(SpdfApp* app, SpdfWindow* win) {
         session_tab->search_regex_multiline = tab->search_regex_multiline;
         session_tab->find_match_index = tab->find_match_index;
         session_tab->read_only = tab->read_only_shadow;
+        // --- watcher (Wave C): persist the shadow-copy binding so restore
+        // reopens the same copy (Mac keys workingPath/roCopyFileSize/
+        // roCopyModifiedAt; path above stays the SOURCE).
+        session_tab->working_path = g_strdup(tab->working_path ? tab->working_path : "");
+        session_tab->ro_copy_file_size = tab->ro_copy_file_size;
+        session_tab->ro_copy_modified_at = tab->ro_copy_modified_at;
         if (tab->view) {
             session_tab->page = spdf_doc_view_current_page(tab->view);
             session_tab->zoom = spdf_doc_view_get_zoom(tab->view);
@@ -203,6 +210,12 @@ static SpdfTab* open_session_tab(SpdfWindow* win, const SpdfSessionTab* stored) 
     SpdfTab* tab;
 
     if (!stored || !stored->path || !*stored->path) return NULL;
+    // --- watcher (Wave C): a read_only entry reopens through its persisted
+    // working copy (no source content read when the source is unchanged)
+    // instead of the path directly; spdf_tab_open consumes the adoption.
+    if (stored->read_only)
+        spdf_watcher_prime_restore(stored->path, stored->working_path, stored->ro_copy_file_size,
+                                   stored->ro_copy_modified_at);
     tab = spdf_window_open_path(win, stored->path, stored->page, FALSE);
     if (!tab) return NULL;
     if (stored->search_text && *stored->search_text) {
