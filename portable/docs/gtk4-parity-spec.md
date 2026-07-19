@@ -23,13 +23,24 @@ dev machine (Ubuntu 25.10, GNOME 49, Wayland, GTK 4.20, libadwaita 1.8).
 4. **Done bar:** all audit gaps closed + validated capture matrix committed to
    `portable/docs/` (like the June 2026 session).
 5. **Launch speed is a headline requirement.** The app must *feel instant*.
-   Budget: **≤120 ms cold to first window paint, ≤80 ms warm** on the dev
-   machine (measure via `SPDF_LAUNCH_PROFILE=1`, same env var as Mac).
-   Techniques: no synchronous I/O on the launch path; session/state JSON read
-   with a small parser before GTK init only if needed; first page render
-   kicked off before window map; sidebar/minimap/metadata deferred (existing
-   pattern); no GResource/icon-theme scans beyond defaults; lazy OCR/translate
-   subsystem init; updater check off-path (existing Mac rule).
+   Measured reality (dev machine, 2026-07-19): an *empty* AdwApplicationWindow
+   maps in ~285 ms — cold GTK4 init can never feel instant. Two-track strategy:
+   - **Resident mode (the instant path):** GApplication uniqueness makes any
+     open-while-running a D-Bus forward (measured 30 ms) + tab open + render.
+     The app holds itself alive after the last window closes (small RSS: docs
+     closed, caches dropped) and installs a login autostart entry. Setting
+     `instantLaunchResident` (default on) controls both; disabling releases
+     the hold and removes the autostart file. Budget: **≤100 ms from invoke
+     to visible page** for every open after login.
+   - **Cold path (once per login):** budget **≤350 ms to first page visible**.
+     Force the measured-fastest GSK renderer (gl: startup 370→238 ms,
+     present 692→455 ms vs default) via g_setenv default-only in main; trim
+     the ~170 ms we currently spend above the empty-window floor (icon
+     lookups, tab-bar construction, deferred everything); keep doc-open +
+     first render ahead of window map. No synchronous I/O on the launch path;
+     sidebar/minimap/metadata deferred; lazy OCR/translate init; updater
+     check off-path (existing Mac rule). All measured via
+     `SPDF_LAUNCH_PROFILE=1` (same env var as Mac).
 
 ## Architecture
 
