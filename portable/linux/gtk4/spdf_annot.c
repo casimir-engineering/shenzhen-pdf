@@ -105,6 +105,7 @@ gboolean spdf_annot_pdf_path_allows_same_folder_write(const char* path) {
 #ifndef SPDF_ANNOT_TESTING
 
 #include "spdf_app.h"
+#include "spdf_watcher.h" /* self-save baseline + Save-As repoint (Wave C) */
 
 #define ANNOT_SELECTION_RECT_MAX 256
 #define ANNOT_COMMENT_HIT_SLOP_PT 3.0 /* GTK3 comment_index_at_page_point */
@@ -261,8 +262,20 @@ static void annot_after_document_write(SpdfTab* tab) {
     if (tab->render) spdf_render_service_invalidate(tab->render);
     if (tab->view) spdf_doc_view_document_changed(tab->view);
     annot_refresh_comments(tab);
+    /* --- watcher (Wave C): our own write must not read as an external
+     * change (Mac refreshActiveTabCachedFileAttributesAfterSelfSave). */
+    spdf_watcher_note_self_save(tab);
     app = tab->win ? annot_window_app(tab->win) : NULL;
     if (app) spdf_app_save_session(app);
+}
+
+/* --- watcher (Wave C): in-place reload tail --------------------------------
+ * The watcher swapped tab->doc for a fresh open after a disk change; only the
+ * comment cache/markers need refreshing here (render + view are the
+ * watcher's job, and the session did not change). */
+void spdf_annot_document_reloaded(SpdfTab* tab) {
+    if (!tab) return;
+    annot_refresh_comments(tab);
 }
 
 /* Full reload of the tab's main-thread document from disk. Rotation follows
@@ -327,6 +340,10 @@ static gboolean annot_save_active_pdf_to_path(SpdfWindow* win, SpdfTab* tab, con
         g_free(tooltip);
         g_free(title);
     }
+    /* --- watcher (Wave C): follow the retarget — the saved file is writable,
+     * so any shadow-copy binding is dropped (orange dot cleared) and the
+     * monitor re-points at the new path. */
+    spdf_watcher_tab_repoint(tab);
     app = annot_window_app(win);
     if (app) spdf_app_remember_recent(app, tab->path);
     spdf_window_update_title(win);

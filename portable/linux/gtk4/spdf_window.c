@@ -12,6 +12,7 @@
 #include "spdf_palette.h"
 #include "spdf_print.h"
 #include "spdf_search.h"
+#include "spdf_watcher.h"
 #include "spdf_window.h"
 
 #define SPDF_DEFAULT_WINDOW_WIDTH 960
@@ -27,6 +28,7 @@ struct _SpdfWindow {
     AdwTabView* tab_view;
     AdwTabBar* tab_bar;
     AdwTabOverview* tab_overview;
+    AdwToastOverlay* toast_overlay; // subtle notifications (watcher, Wave C)
     GtkEntry* page_entry;
     GtkLabel* page_total_label;
     GtkButton* zoom_button;
@@ -91,6 +93,17 @@ void spdf_window_set_session_id(SpdfWindow* win, const char* id) {
     if (win->session_id == id) return;
     g_free(win->session_id);
     win->session_id = g_strdup(id);
+}
+
+// --- watcher (Wave C): subtle notification lane ------------------------------
+void spdf_window_show_toast(SpdfWindow* win, const char* text) {
+    AdwToast* toast;
+
+    g_return_if_fail(SPDF_IS_WINDOW(win));
+    if (!win->toast_overlay || !text || !*text) return; // disposing / nothing to say
+    toast = adw_toast_new(text);
+    adw_toast_set_timeout(toast, 3);
+    adw_toast_overlay_add_toast(win->toast_overlay, toast); // sinks the toast
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +403,9 @@ static gboolean tab_view_close_page(AdwTabView* view, AdwTabPage* page, gpointer
 
     // Reopen-last-closed ring; shadow copies are transient and not recorded.
     if (app && tab && tab->path && *tab->path && !tab->read_only_shadow) spdf_app_remember_closed(app, tab->path);
+    // --- watcher (Wave C): a DELIBERATE close deletes an unshared shadow
+    // copy (window teardown/quit keeps it so session restore reopens it).
+    if (tab) spdf_watcher_tab_deliberate_close(tab);
     g_object_set_data(G_OBJECT(page), "spdf-tab", NULL);
     adw_tab_view_close_page_finish(view, page, TRUE); // no confirmation needed
     if (tab) spdf_tab_close(tab);
@@ -975,7 +991,11 @@ static void spdf_window_init(SpdfWindow* self) {
     self->tab_overview = ADW_TAB_OVERVIEW(adw_tab_overview_new());
     adw_tab_overview_set_view(self->tab_overview, self->tab_view);
     adw_tab_overview_set_child(self->tab_overview, GTK_WIDGET(self->toolbar_view));
-    adw_application_window_set_content(ADW_APPLICATION_WINDOW(self), GTK_WIDGET(self->tab_overview));
+    // --- watcher (Wave C): toast overlay wraps the whole content so the
+    // auto-reload notification shows over any state (incl. the overview).
+    self->toast_overlay = ADW_TOAST_OVERLAY(adw_toast_overlay_new());
+    adw_toast_overlay_set_child(self->toast_overlay, GTK_WIDGET(self->tab_overview));
+    adw_application_window_set_content(ADW_APPLICATION_WINDOW(self), GTK_WIDGET(self->toast_overlay));
 
     keys = gtk_event_controller_key_new();
     g_signal_connect(keys, "key-pressed", G_CALLBACK(window_key_pressed), self);
@@ -1024,6 +1044,7 @@ static void spdf_window_dispose(GObject* object) {
     self->tab_view = NULL;
     self->tab_bar = NULL;
     self->tab_overview = NULL;
+    self->toast_overlay = NULL;
     self->toolbar_view = NULL;
     self->page_entry = NULL;
     self->page_total_label = NULL;

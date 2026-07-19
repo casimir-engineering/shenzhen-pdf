@@ -47,6 +47,10 @@ typedef void (*SpdfAnnotContinuation)(SpdfWindow* win, SpdfTab* tab, gpointer da
 void spdf_annot_preflight(SpdfWindow* win, SpdfTab* tab, const char* action_name, SpdfAnnotContinuation cont,
                           gpointer data, GDestroyNotify data_destroy);
 
+// The file watcher (Wave C) reloaded tab->doc in place: refresh the comment
+// cache + markers against the new document.
+void spdf_annot_document_reloaded(SpdfTab* tab);
+
 G_END_DECLS
 #else
 #include <glib.h>
