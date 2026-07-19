@@ -28,7 +28,9 @@ typedef struct {
     GdkRectangle crop;       // page-space crop in device px; {0,0,0,0} = full
     guint64 token;           // request generation; stale results dropped
 } SpdfRenderSpec;
-// Callback on main thread. texture is owned by callee after return.
+// Fires exactly once per token, always on the main thread; texture is NULL on
+// cancel/error/shutdown — the deterministic release point for user_data.
+// texture is owned by callee after return.
 typedef void (*SpdfRenderDone)(GdkTexture *texture, const SpdfRenderSpec *spec,
                                gpointer user_data);
 SpdfRenderService *spdf_render_service_new(const char *path, char **error);
@@ -38,6 +40,9 @@ guint64 spdf_render_request(SpdfRenderService *svc, const SpdfRenderSpec *spec,
                             SpdfRenderDone done, gpointer user_data);
 void spdf_render_cancel(SpdfRenderService *svc, guint64 token);
 void spdf_render_set_byte_cap(SpdfRenderService *svc, gsize bytes);
+// Drop every cached texture/list (rotation/OCR/save rewrote the file; worker
+// docs re-open by themselves, keyed on path+mtime+size).
+void spdf_render_service_invalidate(SpdfRenderService *svc);
 
 // ---------------------------------------------------------------------------
 // spdf_docview.c — the page canvas (custom GtkWidget, snapshot + GdkTexture).
@@ -55,6 +60,9 @@ SpdfFitMode spdf_doc_view_get_fit(SpdfDocView *v);
 void spdf_doc_view_get_scroll(SpdfDocView *v, double *x, double *y);
 void spdf_doc_view_set_scroll(SpdfDocView *v, double x, double y);
 char *spdf_doc_view_copy_selection(SpdfDocView *v); // NULL if none
+// Kick the first-page render before the window maps (launch-speed budget);
+// renders at the restored zoom, settle pass corrects fit after first allocate.
+void spdf_doc_view_prime_first_page(SpdfDocView *v);
 // "page-changed", "zoom-changed", "selection-changed" signals emitted.
 
 // ---------------------------------------------------------------------------
