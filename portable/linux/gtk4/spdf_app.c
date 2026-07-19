@@ -123,19 +123,50 @@ static void snapshot_window(SpdfApp* app, SpdfWindow* win) {
         }
         if (tab == selected) snapshot->selected_tab = (int)snapshot->tabs->len - 1;
     }
+    if (snapshot->tabs->len == 0) {
+        // Never persist tab-less windows: the session parser skips them on
+        // read but the merge-on-write would keep the entry on disk forever.
+        spdf_state_remove_session_window(state, snapshot->id);
+        spdf_session_window_free(snapshot);
+        return;
+    }
     spdf_state_update_session_window(state, snapshot); // takes ownership
 }
 
 void spdf_app_save_session(SpdfApp* app) {
+    SpdfState* state;
     GList* windows;
+    GPtrArray* stale;
+    guint stored;
 
     g_return_if_fail(SPDF_IS_APP(app));
+    state = spdf_app_get_state(app);
     windows = g_list_copy(gtk_application_get_windows(GTK_APPLICATION(app)));
     windows = g_list_reverse(windows); // stable order: oldest window first
     for (GList* it = windows; it; it = it->next)
         if (SPDF_IS_WINDOW(it->data)) snapshot_window(app, SPDF_WINDOW(it->data));
+
+    // GApplication uniqueness means no other process owns session windows, so
+    // stored ids without a live window are leftovers from crashed/old runs —
+    // prune them or every launch resurrects them forever.
+    stale = g_ptr_array_new_with_free_func(g_free);
+    stored = spdf_state_session_window_count(state);
+    for (guint i = 0; i < stored; ++i) {
+        const SpdfSessionWindow* sw = spdf_state_session_window(state, i);
+        gboolean live = FALSE;
+
+        if (!sw || !sw->id) continue;
+        for (GList* it = windows; it && !live; it = it->next)
+            if (SPDF_IS_WINDOW(it->data) &&
+                g_strcmp0(spdf_window_get_session_id(SPDF_WINDOW(it->data)), sw->id) == 0)
+                live = TRUE;
+        if (!live) g_ptr_array_add(stale, g_strdup(sw->id));
+    }
+    for (guint i = 0; i < stale->len; ++i)
+        spdf_state_remove_session_window(state, g_ptr_array_index(stale, i));
+    g_ptr_array_unref(stale);
     g_list_free(windows);
-    spdf_state_save_session(spdf_app_get_state(app));
+    spdf_state_save_session(state);
 }
 
 void spdf_app_forget_window(SpdfApp* app, SpdfWindow* win) {
@@ -193,6 +224,7 @@ static SpdfTab* open_session_tab(SpdfWindow* win, const SpdfSessionTab* stored) 
 typedef struct session_restore_request {
     SpdfApp* app;             // owned ref
     SpdfWindow* first_window; // owned ref, may be NULL
+    int first_index;          // stored session index of first_window
     int first_selected;
 } session_restore_request;
 
@@ -205,7 +237,7 @@ static gboolean session_restore_idle(gpointer user_data) {
     if (req->first_window) {
         SpdfWindow* win = req->first_window;
         AdwTabView* view = spdf_window_get_tab_view(win);
-        const SpdfSessionWindow* stored = spdf_state_session_window(state, 0);
+        const SpdfSessionWindow* stored = spdf_state_session_window(state, (guint)req->first_index);
         AdwTabPage* first_page =
             view && adw_tab_view_get_n_pages(view) > 0 ? adw_tab_view_get_nth_page(view, 0) : NULL;
 
@@ -222,12 +254,13 @@ static gboolean session_restore_idle(gpointer user_data) {
         }
     }
 
-    for (guint w = 1; w < windows; ++w) {
+    for (guint w = 0; w < windows; ++w) {
         const SpdfSessionWindow* stored = spdf_state_session_window(state, w);
         SpdfWindow* win;
         SpdfTab* selected_tab = NULL;
 
-        if (!stored || stored->tabs->len == 0) continue;
+        if ((int)w == req->first_index) continue;
+        if (!stored || stored->tabs->len == 0) continue; // stale empty entry
         win = spdf_window_new(ADW_APPLICATION(app));
         spdf_window_set_session_id(win, stored->id);
         apply_session_geometry(win, stored);
@@ -251,25 +284,34 @@ static void restore_session_or_open_empty(SpdfApp* app) {
     SpdfState* state = spdf_app_get_state(app);
     guint windows = spdf_state_session_window_count(state);
     SpdfWindow* win = spdf_window_new(ADW_APPLICATION(app));
+    int first_index = -1;
 
-    if (windows > 0) {
-        const SpdfSessionWindow* stored = spdf_state_session_window(state, 0);
-        session_restore_request* req;
-        int selected = 0;
-
-        if (stored) {
-            spdf_window_set_session_id(win, stored->id);
-            apply_session_geometry(win, stored);
-            selected = CLAMP(stored->selected_tab, 0, MAX((int)stored->tabs->len - 1, 0));
-            if (stored->tabs->len > 0)
-                open_session_tab(win, g_ptr_array_index(stored->tabs, (guint)selected));
+    // Fast path: the first stored window that actually has tabs, so the
+    // first paint already shows a document.
+    for (guint w = 0; w < windows; ++w) {
+        const SpdfSessionWindow* stored = spdf_state_session_window(state, w);
+        if (stored && stored->tabs->len > 0) {
+            first_index = (int)w;
+            break;
         }
+    }
+    if (first_index < 0 && windows > 0 && spdf_state_session_window(state, 0)) first_index = 0;
+
+    if (first_index >= 0) {
+        const SpdfSessionWindow* stored = spdf_state_session_window(state, (guint)first_index);
+        session_restore_request* req;
+        int selected = CLAMP(stored->selected_tab, 0, MAX((int)stored->tabs->len - 1, 0));
+
+        spdf_window_set_session_id(win, stored->id);
+        apply_session_geometry(win, stored);
+        if (stored->tabs->len > 0) open_session_tab(win, g_ptr_array_index(stored->tabs, (guint)selected));
         gtk_window_present(GTK_WINDOW(win));
         spdf_launch_mark("first-window-present");
 
         req = g_new0(session_restore_request, 1);
         req->app = g_object_ref(app);
         req->first_window = g_object_ref(win);
+        req->first_index = first_index;
         req->first_selected = selected;
         g_idle_add(session_restore_idle, req);
         return;
