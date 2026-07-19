@@ -27,6 +27,9 @@ gboolean spdf_window_get_presentation(SpdfWindow* win);
 
 void spdf_window_update_title(SpdfWindow* win);
 void spdf_window_refresh_recents(SpdfWindow* win); // rebuilds the hamburger recents submenu
+// Subtle notification via the window's AdwToastOverlay (watcher auto-reload
+// etc.); safe no-op while the window is disposing. (Wave C)
+void spdf_window_show_toast(SpdfWindow* win, const char* text);
 
 // Session identity (session.json "id"). Restored windows keep their persisted
 // id; new windows get one lazily on first session capture.
