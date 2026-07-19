@@ -35,8 +35,8 @@ dev machine (Ubuntu 25.10, GNOME 49, Wayland, GTK 4.20, libadwaita 1.8).
 
 `portable/linux/gtk4/` — C modules, GTK4 + libadwaita, sharing
 `portable/core/shenzhen_pdf_core.{c,h}` and the Mac app's JSON state schemas
-(`settings.json`, `session.json`, `documents.json`, `favorites.json`,
-`recent.json` — byte-compatible).
+(`settings.json` — which also holds `recentlyOpened` —, `session.json`,
+`documents.json`, `favorites.json`; byte-compatible).
 
 | Module | Role (Mac counterpart) |
 |---|---|
