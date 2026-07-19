@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include "spdf_annot.h"
 #include "spdf_window.h"
 
 static char* display_name_for_path(const char* path) {
@@ -106,11 +107,13 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
         tab->read_only_shadow = FALSE;
         spdf_tab_set_read_only_shadow(tab, TRUE);
     }
+    spdf_annot_tab_attached(tab); // context menu, comment markers (Wave B)
     return tab;
 }
 
 void spdf_tab_close(SpdfTab* tab) {
     if (!tab) return;
+    spdf_annot_tab_closing(tab); // comment cache + pending idle (Wave B)
     g_clear_pointer(&tab->render, spdf_render_service_free);
     if (tab->doc) {
         spdf_close(tab->doc);

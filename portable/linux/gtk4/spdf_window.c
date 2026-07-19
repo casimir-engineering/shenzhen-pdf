@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "spdf_annot.h"
 #include "spdf_app.h"
 #include "spdf_window.h"
 
@@ -724,16 +725,15 @@ static const GActionEntry k_window_actions[] = {
     {"presentation", NULL, NULL, "false", presentation_change_state, {0}},
     {"sidebar", NULL, NULL, "false", sidebar_change_state, {0}},
     // Stubs until their modules land (bodies move to those modules).
+    // rotate-cw / rotate-ccw / save-as moved to spdf_annot.c (Wave B),
+    // registered by spdf_annot_install below.
     {"find-next", action_stub, NULL, NULL, NULL, {0}},      // spdf_search.c
     {"find-prev", action_stub, NULL, NULL, NULL, {0}},      // spdf_search.c
     {"palette", action_stub, NULL, NULL, NULL, {0}},        // spdf_palette.c
     {"favorite-page", action_stub, NULL, NULL, NULL, {0}},  // spdf_palette.c
     {"favorite-document", action_stub, NULL, NULL, NULL, {0}},
-    {"rotate-cw", action_stub, NULL, NULL, NULL, {0}},      // spdf_annot.c
-    {"rotate-ccw", action_stub, NULL, NULL, NULL, {0}},     // spdf_annot.c
     {"print", action_stub, NULL, NULL, NULL, {0}},          // spdf_print.c
     {"properties", action_stub, NULL, NULL, NULL, {0}},     // spdf_props.c
-    {"save-as", action_stub, NULL, NULL, NULL, {0}},        // spdf_annot.c
     {"ocr", action_stub, NULL, NULL, NULL, {0}},            // spdf_ocr.c
     {"translate", action_stub, NULL, NULL, NULL, {0}},      // spdf_translate.c
 };
@@ -908,6 +908,7 @@ static void spdf_window_init(SpdfWindow* self) {
     gtk_widget_set_size_request(GTK_WIDGET(self), SPDF_MIN_WINDOW_WIDTH, SPDF_MIN_WINDOW_HEIGHT);
 
     g_action_map_add_action_entries(G_ACTION_MAP(self), k_window_actions, G_N_ELEMENTS(k_window_actions), self);
+    spdf_annot_install(self); // win.rotate-cw/ccw, win.save-as, context-menu actions
 
     self->tab_view = ADW_TAB_VIEW(adw_tab_view_new());
     context_menu = build_tab_context_menu();
