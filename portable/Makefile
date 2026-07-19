@@ -253,5 +253,17 @@ install: mac-app
 linux: mupdf-libs | $(BUILD)
 	$(CC) $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk+-3.0) "$(CORE_SRC)" $(LINUX_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk+-3.0 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk"
 
+LINUX_GTK4_SRCS := $(sort $(wildcard linux/gtk4/*.c))
+
+linux-gtk4: mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
+
+linux-gtk4-tests: | $(BUILD)
+	@set -e; for t in $(sort $(wildcard linux/gtk4/tests/*_test.c)); do \
+		bin="$(BUILD)/$$(basename $$t .c)"; \
+		$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 $$(pkg-config --cflags glib-2.0) $$t $$(pkg-config --libs glib-2.0) -lm -o "$$bin"; \
+		"$$bin"; \
+	done
+
 clean:
 	rm -rf "$(BUILD)" "$(MAC_APP)" "$(MAC_DMG)" "$(MAC_TESTFLIGHT_PKG)"
