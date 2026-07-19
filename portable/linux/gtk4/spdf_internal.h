@@ -65,6 +65,42 @@ char *spdf_doc_view_copy_selection(SpdfDocView *v); // NULL if none
 void spdf_doc_view_prime_first_page(SpdfDocView *v);
 // "page-changed", "zoom-changed", "selection-changed" signals emitted.
 
+// --- Wave B additions (spdf_annot.c is the consumer) ------------------------
+// The document behind the view was rewritten in place (rotate/OCR/comment
+// save) or the tab was retargeted at another file (Save As): drop every
+// texture, orphan in-flight render contexts, re-read page sizes from
+// tab->doc and relayout, preserving the current page. Callers invalidate the
+// render service themselves (spdf_render_service_invalidate) first.
+void spdf_doc_view_document_changed(SpdfDocView *v);
+// Resolve a widget-space point to (page, PDF-point) coordinates; FALSE when
+// the point is over the margins/background.
+gboolean spdf_doc_view_widget_point_to_page(SpdfDocView *v, double widget_x, double widget_y,
+                                            int *page, double *page_x, double *page_y);
+// Copy up to rect_max selection rects (PDF points on *page); returns the
+// count, 0 when there is no selection.
+int spdf_doc_view_get_selection_rects(SpdfDocView *v, int *page, spdf_rect *rects, int rect_max);
+// Comment markers, drawn as a snapshot overlay (same pattern as the
+// selection). The view copies the array; annotations module owns the truth.
+typedef struct {
+    int page;
+    spdf_rect bounds; // annotation bounds, PDF points (origin top-left)
+} SpdfCommentMarker;
+void spdf_doc_view_set_comment_markers(SpdfDocView *v, const SpdfCommentMarker *markers, int count);
+// Badge rect (PDF points) drawn for a comment marker and hit-tested by the
+// click-to-edit gesture: a 12pt square hugging the annotation's top-right
+// corner. Pure, shared between spdf_docview.c drawing and spdf_annot.c
+// hit-testing so the two can never disagree.
+static inline spdf_rect spdf_comment_marker_badge(const spdf_rect *bounds) {
+    spdf_rect badge;
+    float right = bounds->x0 > bounds->x1 ? bounds->x0 : bounds->x1;
+    float top = bounds->y0 < bounds->y1 ? bounds->y0 : bounds->y1;
+    badge.x0 = right - 4.0f;
+    badge.x1 = right + 8.0f;
+    badge.y0 = top - 8.0f;
+    badge.y1 = top + 4.0f;
+    return badge;
+}
+
 // ---------------------------------------------------------------------------
 // spdf_tab.c (owned by spdf_window.c agent) — per-document model.
 struct _SpdfTab {
@@ -84,6 +120,10 @@ struct _SpdfTab {
     struct _SpdfSearchController *search; // owned; created in spdf_tab_open
     GtkWidget *scroller;               // GtkScrolledWindow wrapping view
     GtkWidget *overlay;                // page-content root: scroller + overlay lanes
+    // --- appended by spdf_annot.c (wave B) ---
+    spdf_comments comments;      // cached comment list (markers, context menu)
+    gboolean comments_loaded;
+    guint annot_idle_id;         // deferred initial comment load
 };
 SpdfTab *spdf_tab_open(SpdfWindow *win, const char *path, char **error);
 void spdf_tab_close(SpdfTab *tab);

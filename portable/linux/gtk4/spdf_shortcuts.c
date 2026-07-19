@@ -50,6 +50,13 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.open-in-browser", {NULL, NULL, NULL}, NULL, "Open in the default browser"},
     {"win.show-in-folder", {NULL, NULL, NULL}, NULL, "Show the document in its folder"},
     {"win.copy-path", {NULL, NULL, NULL}, NULL, "Copy the document path"},
+    // --- Doc-view context menu (spdf_annot.c, menu-only)
+    {"win.annot-add-comment", {NULL, NULL, NULL}, NULL, "Add a comment at the selection or click point"},
+    {"win.annot-add-highlight", {NULL, NULL, NULL}, NULL, "Highlight the selection with a comment"},
+    {"win.annot-edit-comment", {NULL, NULL, NULL}, NULL, "Edit the clicked comment"},
+    {"win.annot-delete-comment", {NULL, NULL, NULL}, NULL, "Delete the clicked comment"},
+    {"win.copy-page-pdf", {NULL, NULL, NULL}, NULL, "Copy the page as a single-page PDF"},
+    {"win.save-page-pdf", {NULL, NULL, NULL}, NULL, "Save the page as a single-page PDF"},
     // --- Tab context menu
     {"win.tab-show-in-folder", {NULL, NULL, NULL}, NULL, "Show this tab's document in its folder"},
     {"win.tab-copy-path", {NULL, NULL, NULL}, NULL, "Copy this tab's document path"},
