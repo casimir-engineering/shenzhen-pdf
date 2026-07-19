@@ -54,7 +54,7 @@ endif
 all: mac-app
 
 mupdf-libs:
-	@test -f "$(MUPDF_BUILD)/libmupdf.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no libs
+	@test -f "$(MUPDF_BUILD)/libmupdf.a" -a -f "$(MUPDF_BUILD)/libmupdf-third.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no libs "build/release/libmupdf-third.a"
 	@test -f "$(MUPDF_BUILD)/libmupdf-pkcs7.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no "build/release/libmupdf-pkcs7.a"
 
 $(BUILD):
