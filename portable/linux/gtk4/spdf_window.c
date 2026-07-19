@@ -10,6 +10,7 @@
 #include "spdf_annot.h"
 #include "spdf_app.h"
 #include "spdf_palette.h"
+#include "spdf_print.h"
 #include "spdf_search.h"
 #include "spdf_window.h"
 
@@ -765,8 +766,9 @@ static const GActionEntry k_window_actions[] = {
     {"find-prev", action_find_prev, NULL, NULL, NULL, {0}},
     // rotate-cw / rotate-ccw / save-as moved to spdf_annot.c (Wave B),
     // registered by spdf_annot_install below.
+    // win.print moved to spdf_print.c (Wave C), registered by
+    // spdf_print_install below.
     // Stubs until their modules land (bodies move to those modules).
-    {"print", action_stub, NULL, NULL, NULL, {0}},          // spdf_print.c
     {"properties", action_stub, NULL, NULL, NULL, {0}},     // spdf_props.c
     {"ocr", action_stub, NULL, NULL, NULL, {0}},            // spdf_ocr.c
     {"translate", action_stub, NULL, NULL, NULL, {0}},      // spdf_translate.c
@@ -938,6 +940,7 @@ static void spdf_window_init(SpdfWindow* self) {
 
     g_action_map_add_action_entries(G_ACTION_MAP(self), k_window_actions, G_N_ELEMENTS(k_window_actions), self);
     spdf_annot_install(self); // win.rotate-cw/ccw, win.save-as, context-menu actions
+    spdf_print_install(self); // win.print (GtkPrintOperation, Fit/Actual/Custom)
 
     self->tab_view = ADW_TAB_VIEW(adw_tab_view_new());
     context_menu = build_tab_context_menu();
