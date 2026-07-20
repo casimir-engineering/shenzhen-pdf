@@ -10,6 +10,7 @@
 
 #include "spdf_app.h"
 #include "spdf_minimap.h"
+#include "spdf_updater.h"
 #include "spdf_watcher.h"
 #include "spdf_window.h"
 
@@ -379,7 +380,7 @@ static void action_about(GSimpleAction* action, GVariant* parameter, gpointer us
                  "application-name", SPDF_APP_DISPLAY_NAME,
                  "application-icon", SPDF_APP_ID,
                  "developer-name", "Intuition",
-                 "version", "26.7.17",
+                 "version", SPDF_APP_VERSION,
                  NULL);
     adw_dialog_present(dialog, active ? GTK_WIDGET(active) : NULL);
 }
@@ -423,6 +424,11 @@ static void spdf_app_startup(GApplication* app) {
     spdf_shortcuts_install(GTK_APPLICATION(app)); // hash inserts only; cheap
     self->sigterm_id = g_unix_signal_add(SIGTERM, terminate_signal, self);
     self->sigint_id = g_unix_signal_add(SIGINT, terminate_signal, self);
+    // Auto-updater (spdf_updater.c): registers two timers only — the launch
+    // health check + first daily check fire seconds after the main loop
+    // settles, and autoUpdateEnabled is read live inside the trigger, so
+    // nothing here touches state or the network on the launch path.
+    spdf_updater_start(self);
     spdf_launch_mark("startup-end");
 }
 
