@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "spdf_app.h"
+#include "spdf_minimap.h"
 #include "spdf_watcher.h"
 #include "spdf_window.h"
 
@@ -123,6 +124,10 @@ static void snapshot_window(SpdfApp* app, SpdfWindow* win) {
         session_tab->working_path = g_strdup(tab->working_path ? tab->working_path : "");
         session_tab->ro_copy_file_size = tab->ro_copy_file_size;
         session_tab->ro_copy_modified_at = tab->ro_copy_modified_at;
+        // --- minimap module (wave B): per-tab visibility rides the session
+        // like the Mac schema (documents.json keeps the per-document truth).
+        session_tab->show_minimap = tab->show_minimap;
+        session_tab->has_show_minimap = TRUE;
         if (tab->view) {
             session_tab->page = spdf_doc_view_current_page(tab->view);
             session_tab->zoom = spdf_doc_view_get_zoom(tab->view);
@@ -227,6 +232,10 @@ static SpdfTab* open_session_tab(SpdfWindow* win, const SpdfSessionTab* stored) 
     tab->search_regex = stored->search_regex;
     tab->search_regex_multiline = stored->search_regex_multiline;
     tab->find_match_index = stored->find_match_index;
+    // --- minimap module (wave B): a stored session value overrides the
+    // documents.json / settings-default resolution done in spdf_minimap_new;
+    // persist=FALSE keeps the restore from rewriting documents.json.
+    if (stored->has_show_minimap) spdf_minimap_set_visible(tab, stored->show_minimap, FALSE);
     if (tab->view) {
         switch (stored->fit_mode) {
             case 4:

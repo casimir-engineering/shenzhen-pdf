@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "spdf_annot.h"
+#include "spdf_minimap.h"
 #include "spdf_search.h"
 #include "spdf_watcher.h"
 #include "spdf_window.h"
@@ -123,7 +124,18 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
     gtk_overlay_set_child(GTK_OVERLAY(tab->overlay), tab->scroller);
     tab->search = spdf_search_controller_new(tab);
     gtk_overlay_add_overlay(GTK_OVERLAY(tab->overlay), spdf_search_markers_new(tab));
-    content = tab->overlay;
+    // --- minimap module (wave B): the strip takes real width on the RIGHT of
+    // the page content (Mac trailing-edge placement: document — with its
+    // scrollbar + heat-map lane — then the map), so the overlay and the strip
+    // share a horizontal row. tab->overlay stays the page-content root.
+    {
+        GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        gtk_widget_set_hexpand(tab->overlay, TRUE);
+        gtk_box_append(GTK_BOX(row), tab->overlay);
+        tab->minimap = spdf_minimap_new(tab);
+        gtk_box_append(GTK_BOX(row), tab->minimap);
+        content = row;
+    }
 
     view = spdf_window_get_tab_view(win);
     tab->page = adw_tab_view_append(view, content);
@@ -161,6 +173,7 @@ void spdf_tab_close(SpdfTab* tab) {
     tab->view = NULL;
     tab->scroller = NULL; // owned by the page's widget tree, like view
     tab->overlay = NULL;
+    tab->minimap = NULL;  // owned by the page's widget tree (spdf_minimap.c)
     tab->win = NULL;
     g_free(tab);
 }
