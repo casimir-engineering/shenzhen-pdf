@@ -4,10 +4,17 @@
 // non-essential is deferred behind the first window map (see spdf_app.c).
 
 #include "spdf_app.h"
+#include "spdf_updater.h"
 
 int main(int argc, char** argv) {
     SpdfApp* app;
     int status;
+
+    // Updater CLI flags (--check-updates-now / --install-update /
+    // --updater-health-probe) run headless and exit before GApplication is
+    // constructed; for every normal launch this is a handful of strcmps.
+    status = spdf_updater_handle_cli(argc, argv);
+    if (status >= 0) return status;
 
     spdf_launch_mark("main");
     app = spdf_app_new();

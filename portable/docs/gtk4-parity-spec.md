@@ -105,6 +105,37 @@ as-is.
 - Release signing: `minisign -S` step in `cut-release.sh` (Linux artifacts),
   pinned pubkey constant in `spdf_updater.c`.
 
+### Auto-updater (Wave C, implemented in `spdf_updater.c`)
+
+- **Assets the release must ship:** `ShenzhenPDF-linux-amd64.deb` (system
+  installs) and `ShenzhenPDF-linux-amd64.tar.gz` containing the
+  `ShenzhenPDF-gtk4` binary (user-local installs under `$HOME`), each with a
+  detached `<asset>.minisig` signed by the key in
+  `portable/linux/pkg/minisign.pub`. Both minisign modes verify ("ED"
+  prehashed BLAKE2b-512 — the `minisign -S` default — and legacy "Ed");
+  nothing is installed unless the signature verifies against the pinned key
+  (keyid + Ed25519 via OpenSSL + global-signature check). Transport is a
+  runtime-probed `curl` (else `wget`) via GSubprocess — no new build deps;
+  the deb should `Recommends: curl`.
+- **Install/rollback divergences from the Mac updater:** a deb install is
+  root-owned, so install goes through `pkexec dpkg -i`; there is no
+  automated `.old` rollback for the deb path — the previous release's `.deb`
+  is retained in `~/.cache/shenzhenpdf/updates/<tag>/` for a manual
+  `dpkg -i`. User-local installs get the Mac-style atomic swap
+  (`rename` to `.old`, rename new into place, restore on failure) plus a
+  bounded `--updater-health-probe` launch check that rolls the swap back if
+  the new binary cannot start. Both paths record `pendingTag` in
+  `update.json`; the next launch confirms it (`updateOk`, `.old` deleted,
+  one-time banner) or logs the failed take and keeps `.old`.
+- **State:** `autoUpdateEnabled` / `skippedUpdateVersion` stay in
+  settings.json (spdf_state.c); the flock'd `update.json` (+`update.lock`)
+  carries lastUpdateCheck / etag / highestVersionSeen / deferredTag /
+  remindAfter / pendingTag / updateOk / lease{Pid,Timestamp}.
+- **cut-release.sh TODO:** bump `SPDF_APP_VERSION` / `SPDF_APP_BUILD` in
+  `portable/linux/gtk4/spdf_app.h` (new sixth bump location), build the two
+  Linux assets, `minisign -S` them, and attach all four files to the GitHub
+  release.
+
 ## Validation
 
 - Unit tests where logic is pure C (tab strip geometry, search grouping,
