@@ -9,8 +9,10 @@
 
 #include "spdf_annot.h"
 #include "spdf_app.h"
+#include "spdf_ocr.h"
 #include "spdf_palette.h"
 #include "spdf_search.h"
+#include "spdf_translate.h"
 #include "spdf_window.h"
 
 #define SPDF_DEFAULT_WINDOW_WIDTH 960
@@ -23,6 +25,7 @@ struct _SpdfWindow {
     AdwApplicationWindow parent_instance;
 
     AdwToolbarView* toolbar_view;
+    AdwToastOverlay* toast_overlay; // Wave C: OCR/translate completion toasts
     AdwTabView* tab_view;
     AdwTabBar* tab_bar;
     AdwTabOverview* tab_overview;
@@ -461,6 +464,15 @@ static SpdfTab* context_menu_tab(SpdfWindow* win) {
 }
 
 // ---------------------------------------------------------------------------
+// Wave C: completion toasts (OCR / translation modules).
+
+void spdf_window_add_toast(SpdfWindow* win, const char* title) {
+    g_return_if_fail(SPDF_IS_WINDOW(win));
+    if (!win->toast_overlay || !title || !*title) return;
+    adw_toast_overlay_add_toast(win->toast_overlay, adw_toast_new(title));
+}
+
+// ---------------------------------------------------------------------------
 // Simple helpers used by actions
 
 static void copy_text_to_clipboard(SpdfWindow* win, const char* text) {
@@ -764,12 +776,11 @@ static const GActionEntry k_window_actions[] = {
     {"find-next", action_find_next, NULL, NULL, NULL, {0}},
     {"find-prev", action_find_prev, NULL, NULL, NULL, {0}},
     // rotate-cw / rotate-ccw / save-as moved to spdf_annot.c (Wave B),
-    // registered by spdf_annot_install below.
+    // registered by spdf_annot_install below. ocr / translate moved to
+    // spdf_ocr.c / spdf_translate.c (Wave C), registered the same way.
     // Stubs until their modules land (bodies move to those modules).
     {"print", action_stub, NULL, NULL, NULL, {0}},          // spdf_print.c
     {"properties", action_stub, NULL, NULL, NULL, {0}},     // spdf_props.c
-    {"ocr", action_stub, NULL, NULL, NULL, {0}},            // spdf_ocr.c
-    {"translate", action_stub, NULL, NULL, NULL, {0}},      // spdf_translate.c
 };
 
 // ---------------------------------------------------------------------------
@@ -937,7 +948,9 @@ static void spdf_window_init(SpdfWindow* self) {
     gtk_widget_set_size_request(GTK_WIDGET(self), SPDF_MIN_WINDOW_WIDTH, SPDF_MIN_WINDOW_HEIGHT);
 
     g_action_map_add_action_entries(G_ACTION_MAP(self), k_window_actions, G_N_ELEMENTS(k_window_actions), self);
-    spdf_annot_install(self); // win.rotate-cw/ccw, win.save-as, context-menu actions
+    spdf_annot_install(self);     // win.rotate-cw/ccw, win.save-as, context-menu actions
+    spdf_ocr_install(self);       // win.ocr (Wave C)
+    spdf_translate_install(self); // win.translate (Wave C)
 
     self->tab_view = ADW_TAB_VIEW(adw_tab_view_new());
     context_menu = build_tab_context_menu();
@@ -969,9 +982,14 @@ static void spdf_window_init(SpdfWindow* self) {
     adw_toolbar_view_add_top_bar(self->toolbar_view, spdf_search_bar_new(self, self->search_toggle));
     adw_toolbar_view_set_content(self->toolbar_view, GTK_WIDGET(self->tab_view));
 
+    // Wave C: toast overlay between the toolbar view and the tab overview so
+    // long-running tools (OCR, translation) can announce completion.
+    self->toast_overlay = ADW_TOAST_OVERLAY(adw_toast_overlay_new());
+    adw_toast_overlay_set_child(self->toast_overlay, GTK_WIDGET(self->toolbar_view));
+
     self->tab_overview = ADW_TAB_OVERVIEW(adw_tab_overview_new());
     adw_tab_overview_set_view(self->tab_overview, self->tab_view);
-    adw_tab_overview_set_child(self->tab_overview, GTK_WIDGET(self->toolbar_view));
+    adw_tab_overview_set_child(self->tab_overview, GTK_WIDGET(self->toast_overlay));
     adw_application_window_set_content(ADW_APPLICATION_WINDOW(self), GTK_WIDGET(self->tab_overview));
 
     keys = gtk_event_controller_key_new();
@@ -1022,6 +1040,7 @@ static void spdf_window_dispose(GObject* object) {
     self->tab_bar = NULL;
     self->tab_overview = NULL;
     self->toolbar_view = NULL;
+    self->toast_overlay = NULL;
     self->page_entry = NULL;
     self->page_total_label = NULL;
     self->zoom_button = NULL;
