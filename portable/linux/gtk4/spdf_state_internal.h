@@ -85,6 +85,12 @@ typedef struct {
     // persists this (their prompts always preselect the first entry); both
     // readers pass unknown keys through, so the schema stays compatible.
     char* ocr_language;
+    // --- Wave D additions (spdf_app.c / spdf_resident.c) --------------------
+    // "instantLaunchResident": resident instant-launch mode — the app holds
+    // itself alive after the last window closes and installs a login
+    // autostart entry (spec "Launch speed", default on). Linux-only key like
+    // ocrLanguage: the Mac reader ignores it.
+    gboolean instant_launch_resident;
 } SpdfSettings;
 
 // ---------------------------------------------------------------------------

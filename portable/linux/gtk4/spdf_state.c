@@ -468,6 +468,7 @@ static void settings_init_defaults(SpdfSettings* settings) {
     settings->translate_source_language = g_strdup("zh");
     settings->translate_target_language = g_strdup("en");
     settings->ocr_language = g_strdup("chi_sim+eng"); // first OCR table entry (Wave C)
+    settings->instant_launch_resident = TRUE;         // resident instant launch (Wave D)
 }
 
 static void settings_read_string(const char* json, const char* key, char** field, gboolean keep_when_empty) {
@@ -513,6 +514,8 @@ static void parse_settings(SpdfState* state, const char* json) {
         json_get_bool(json, "preventSleepInPresentation", settings->prevent_sleep_in_presentation);
     settings->default_reader_prompt_dismissed =
         json_get_bool(json, "defaultReaderPromptDismissed", settings->default_reader_prompt_dismissed);
+    settings->instant_launch_resident =
+        json_get_bool(json, "instantLaunchResident", settings->instant_launch_resident); // Wave D (GTK4 extra)
     settings->print_scaling_mode = clamp_int(json_get_int(json, "printScalingMode", settings->print_scaling_mode), 0, 2);
     settings->print_custom_scale = clamp_double(json_get_double(json, "printCustomScale", settings->print_custom_scale),
                                                 SPDF_STATE_MIN_PRINT_SCALE, SPDF_STATE_MAX_PRINT_SCALE);
@@ -586,6 +589,10 @@ static char* settings_to_json(SpdfState* state) {
                            settings->default_sidebar_visible ? "true" : "false");
     g_string_append_printf(json, "  \"fitMode\": %d,\n",
                            settings->fit_mode >= 0 && settings->fit_mode <= 4 ? settings->fit_mode : 4);
+    // "instantLaunchResident" is a Wave D GTK4/Linux-only extra (like
+    // "ocrLanguage"); the Mac reader ignores unknown keys.
+    g_string_append_printf(json, "  \"instantLaunchResident\": %s,\n",
+                           settings->instant_launch_resident ? "true" : "false");
     g_string_append(json, "  \"minimapWidth\": ");
     append_json_fixed(json, clamp_double(settings->minimap_width, SPDF_STATE_MIN_MINIMAP_WIDTH, SPDF_STATE_MAX_MINIMAP_WIDTH), 4);
     g_string_append(json, ",\n");
