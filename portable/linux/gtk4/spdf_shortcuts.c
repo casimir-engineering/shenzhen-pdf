@@ -64,6 +64,7 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     // --- Application
     {"app.open-recent", {NULL, NULL, NULL}, NULL, "Open a recently opened document"},
     {"app.about", {NULL, NULL, NULL}, NULL, "About Shenzhen PDF"},
+    {"win.check-updates", {NULL, NULL, NULL}, NULL, "Check for updates"},
     // --- Help
     {"win.shortcuts", {"F1", NULL, NULL}, "Help", "Show this shortcut cheat sheet"},
 };

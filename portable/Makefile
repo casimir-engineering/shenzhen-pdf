@@ -261,7 +261,7 @@ linux-gtk4: mupdf-libs | $(BUILD)
 linux-gtk4-tests: | $(BUILD)
 	@set -e; for t in $(sort $(wildcard linux/gtk4/tests/*_test.c)); do \
 		bin="$(BUILD)/$$(basename $$t .c)"; \
-		$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 $$(pkg-config --cflags glib-2.0) $$t $$(pkg-config --libs glib-2.0) -lm -o "$$bin"; \
+		$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 $$(pkg-config --cflags glib-2.0 openssl) $$t $$(pkg-config --libs glib-2.0 openssl) -lm -o "$$bin"; \
 		"$$bin"; \
 	done
 
