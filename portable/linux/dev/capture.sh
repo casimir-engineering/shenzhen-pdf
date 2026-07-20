@@ -42,9 +42,12 @@ done
 [ -n "$WIN" ] && echo "window: $WIN" || { echo "no window after 10s"; tail -20 "$applog"; exit 1; }
 xdotool windowactivate --sync "$WIN"
 
+# Input goes through XTEST (no --window): GTK4/GDK ignores XSendEvent-style
+# synthetic events, so keys must be injected at the server with the app
+# window focused (windowactivate above + before each helper).
 settle() { sleep "$(printf '%s' "${1:-400}" | awk '{print $1/1000}')"; }
-key()    { xdotool key --window "$WIN" "$@"; settle 150; }
-type()   { xdotool type --window "$WIN" --delay 30 "$@"; settle 150; }
+key()    { xdotool windowactivate --sync "$WIN" key --clearmodifiers "$@"; settle 150; }
+type()   { xdotool windowactivate --sync "$WIN" type --delay 30 "$@"; settle 150; }
 click()  { local x=$1 y=$2; eval "$(xdotool getwindowgeometry --shell "$WIN")"; xdotool mousemove $((X+x)) $((Y+y)) click 1; settle 150; }
 drag()   { eval "$(xdotool getwindowgeometry --shell "$WIN")"; xdotool mousemove $((X+$1)) $((Y+$2)) mousedown 1 mousemove_relative $(($3-$1)) $(($4-$2)) mouseup 1; settle 150; }
 snap()   { import -window "$WIN" "$OUT/$1"; echo "snap $1"; }

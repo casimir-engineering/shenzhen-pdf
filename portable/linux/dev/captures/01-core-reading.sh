@@ -8,8 +8,9 @@ snap 01-first-paint.png
 key ctrl+l; type "5"; key Return; settle 500
 snap 02-page-5.png
 
-# Anchored zoom in three steps
-key ctrl+plus; key ctrl+plus; key ctrl+plus; settle 700
+# Anchored zoom in three steps (ctrl+equal: the "plus" keysym needs shift on
+# some layouts and XTEST+clearmodifiers garbles it; equal is a bound alias)
+key ctrl+equal; key ctrl+equal; key ctrl+equal; settle 700
 snap 03-zoomed-in.png
 key ctrl+0; settle 400
 
