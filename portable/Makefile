@@ -37,7 +37,6 @@ MAC_CODESIGN_EXTRA ?=
 MAC_PROVISIONING_PROFILE ?=
 NOTARY_PROFILE ?=
 PORTABLE_OPTFLAGS ?= -O2 -DNDEBUG
-LINUX_SRCS := linux/ShenzhenPDFGtk.c linux/ShenzhenPDFGtkDisplay.c
 
 ifeq ($(MAC_SIGN_IDENTITY),-)
 MAC_CODESIGN_NESTED = if [ -f "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib" ]; then codesign --force --sign - "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; fi
@@ -249,9 +248,6 @@ install: mac-app
 	rm -rf "/Applications/ShenzhenPDF.app"
 	ditto "$(MAC_APP)" "/Applications/ShenzhenPDF.app"
 	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/ShenzhenPDF.app"
-
-linux: mupdf-libs | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk+-3.0) "$(CORE_SRC)" $(LINUX_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk+-3.0 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk"
 
 LINUX_GTK4_SRCS := $(sort $(wildcard linux/gtk4/*.c))
 

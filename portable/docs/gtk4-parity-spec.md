@@ -97,8 +97,8 @@ as-is.
 
 - Toolchain container: `portable/linux/dev/Dockerfile` (Ubuntu 25.10 = host).
 - Makefile target `linux-gtk4` (pkg-config `gtk4 libadwaita-1 openssl`,
-  static in-tree MuPDF, same `mupdf-libs` prerequisite). GTK3 `linux` target
-  kept until retirement commit.
+  static in-tree MuPDF, same `mupdf-libs` prerequisite). GTK3 frontend and
+  its `linux` target retired 2026-07-20 (see gtk4-parity-journal.md).
 - `portable/linux/dev/build.sh` wraps the docker invocation.
 - Deb packaging (`portable/linux/pkg/`): binary, `.desktop`, icon, MIME
   associations; versioned like the Mac release (26.x.y-b).
