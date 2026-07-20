@@ -127,6 +127,11 @@ struct _SpdfTab {
     // --- appended by spdf_minimap.c (wave B) ---
     GtkWidget* minimap;          // document-map strip, right of the overlay
     gboolean show_minimap;       // per-document visibility (documents.json "showMinimap")
+    // --- appended by spdf_sidebar.c (wave B) ---
+    spdf_outline outline;        // cached outline (chapters pane, search grouping)
+    gboolean outline_loaded;     // load attempted (count may be 0)
+    gboolean sidebar_resolved;   // per-document showSidebar resolved into...
+    gboolean sidebar_visible;    // ...this flag (documents.json, else default)
     // --- appended by spdf_watcher.c (wave C) ---
     char *working_path;          // read-only shadow copy actually opened; NULL = path
     guint64 ro_copy_file_size;   // source stat the shadow copy reflects
