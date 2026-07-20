@@ -242,15 +242,20 @@ static gboolean deliver_idle(gpointer data) {
     c->searching = FALSE;
     g_free(c->error);
     c->error = g_steal_pointer(&d->error);
-    c->current = controller_choose_current(c);
+    if (c->current < 0) {
+        /* Only pick a current if the user hasn't already stepped to one
+         * mid-search (indices are stable: batches append). Recomputing here
+         * would yank the view away from their choice. */
+        c->current = controller_choose_current(c);
+        if (c->pending_reveal && c->current >= 0 && controller_view(c)) {
+            const SpdfSearchMatch* m = spdf_search_match_list_get(&c->list, (guint)c->current);
+            spdf_doc_view_scroll_to_match(controller_view(c), m->page, &m->rect);
+        }
+    }
     if (c->tab) c->tab->find_match_index = c->current;
     controller_push_highlights(c);
     g_signal_emit(c, signals[SIG_MATCHES_CHANGED], 0);
     g_signal_emit(c, signals[SIG_CURRENT_CHANGED], 0, c->current);
-    if (c->pending_reveal && c->current >= 0 && controller_view(c)) {
-        const SpdfSearchMatch* m = spdf_search_match_list_get(&c->list, (guint)c->current);
-        spdf_doc_view_scroll_to_match(controller_view(c), m->page, &m->rect);
-    }
     save_session_for_tab(c->tab);
     return G_SOURCE_REMOVE;
 }
@@ -522,8 +527,17 @@ static void controller_step(SpdfSearchController* c, gboolean forward) {
         return;
     }
     next = c->current;
-    if (next < 0) next = forward ? 0 : count - 1;
-    else next = (next + (forward ? 1 : -1) + count) % count; /* GTK3 find_step wraparound */
+    if (next < 0) {
+        /* No current yet — Enter lands here whenever the final batch hasn't
+         * arrived (large docs) or before any step. Honor the nearest-match
+         * rule against the live viewport (Mac findFromCurrentForward), not
+         * the document's first match. */
+        SpdfSettings* settings = settings_for_tab(c->tab);
+        int nearest = settings && settings->search_jumps_to_nearest_result ? controller_nearest_index(c) : -1;
+        next = nearest >= 0 ? nearest : (forward ? 0 : count - 1);
+    } else {
+        next = (next + (forward ? 1 : -1) + count) % count; /* GTK3 find_step wraparound */
+    }
     controller_set_current_full(c, next, TRUE);
 }
 
@@ -1008,8 +1022,20 @@ static gboolean on_window_key(GtkEventControllerKey* controller, guint keyval, g
     ch = gdk_keyval_to_unicode(keyval);
     if (ch >= 0x20 && ch != 0x7f) {
         char typed[8] = {0};
+        SearchUi* ui = search_ui(win);
+
         g_unichar_to_utf8(ch, typed);
-        start_search_text(win, typed, FALSE);
+        if (ui && gtk_search_bar_get_search_mode(ui->bar)) {
+            /* Bar already revealed but the entry hasn't received focus yet
+             * (reveal animation races the grab): APPEND to the live query
+             * instead of restarting it, so fast typists lose no keystrokes
+             * ("connector" was landing as "cnnector"). */
+            char* joined = g_strconcat(gtk_editable_get_text(GTK_EDITABLE(ui->entry)), typed, NULL);
+            start_search_text(win, joined, FALSE);
+            g_free(joined);
+        } else {
+            start_search_text(win, typed, FALSE);
+        }
         return GDK_EVENT_STOP;
     }
     return GDK_EVENT_PROPAGATE;
