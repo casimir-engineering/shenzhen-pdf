@@ -8,6 +8,7 @@
 #include "spdf_annot.h"
 #include "spdf_minimap.h"
 #include "spdf_search.h"
+#include "spdf_sidebar.h"
 #include "spdf_watcher.h"
 #include "spdf_window.h"
 
@@ -160,7 +161,8 @@ void spdf_tab_close(SpdfTab* tab) {
         spdf_search_controller_detach(tab->search);
         g_clear_object(&tab->search);
     }
-    spdf_annot_tab_closing(tab); // comment cache + pending idle (Wave B)
+    spdf_annot_tab_closing(tab);   // comment cache + pending idle (Wave B)
+    spdf_sidebar_tab_closing(tab); // outline cache + sidebar refs (Wave B)
     spdf_watcher_tab_detached(tab); // monitor + timers + shadow fields (Wave C)
     g_clear_pointer(&tab->render, spdf_render_service_free);
     if (tab->doc) {
