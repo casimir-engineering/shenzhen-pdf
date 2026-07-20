@@ -775,6 +775,17 @@ static void sidebar_tabs_changed(GObject* object, GParamSpec* pspec, gpointer us
     if (sb) sidebar_schedule_sync(sb);
 }
 
+// "page-attached" has its own signature (view, page, position, user_data) —
+// it must NOT share the notify:: handler above or user_data lands on the
+// position argument.
+static void sidebar_page_attached(AdwTabView* view, AdwTabPage* page, int position, gpointer user_data) {
+    SpdfSidebar* sb = sidebar_for_paned(user_data);
+    (void)view;
+    (void)page;
+    (void)position;
+    if (sb) sidebar_schedule_sync(sb);
+}
+
 static void sidebar_fullscreen_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
     SpdfSidebar* sb = sidebar_for_paned(user_data);
     (void)object;
@@ -918,7 +929,7 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
     tab_view = spdf_window_get_tab_view(win);
     if (tab_view) {
         g_signal_connect_object(tab_view, "notify::selected-page", G_CALLBACK(sidebar_tabs_changed), paned, 0);
-        g_signal_connect_object(tab_view, "page-attached", G_CALLBACK(sidebar_tabs_changed), paned, 0);
+        g_signal_connect_object(tab_view, "page-attached", G_CALLBACK(sidebar_page_attached), paned, 0);
     }
     g_signal_connect_object(win, "notify::fullscreened", G_CALLBACK(sidebar_fullscreen_changed), paned, 0);
 
