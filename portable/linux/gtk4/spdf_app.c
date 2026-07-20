@@ -434,7 +434,11 @@ static void instant_launch_change_state(GSimpleAction* action, GVariant* value, 
 
 static SpdfWindow* ensure_window_for_documents(SpdfApp* app) {
     GtkWindow* active = gtk_application_get_active_window(GTK_APPLICATION(app));
-    if (active && SPDF_IS_WINDOW(active)) return SPDF_WINDOW(active);
+    // Never adopt the transparent resident-warmup window (it is being torn
+    // down); a document arriving during the ~100 ms login warmup gets its
+    // own real window.
+    if (active && SPDF_IS_WINDOW(active) && !g_object_get_data(G_OBJECT(active), "spdf-warmup"))
+        return SPDF_WINDOW(active);
     return spdf_window_new(ADW_APPLICATION(app));
 }
 
@@ -551,6 +555,46 @@ static void spdf_app_activate(GApplication* app) {
     restore_session_or_open_empty(self);
 }
 
+// Resident warmup (see the resident-start branch below): realize a throwaway
+// shell window (never mapped) and push one text render node through its GSK
+// renderer, forcing the process-global first-frame work — font map, glyph
+// rasterization + atlas upload, CSS, icon theme, shader compilation — to
+// happen at login instead of on the user's first open.
+static gboolean resident_warmup_teardown(gpointer win) {
+    gtk_window_destroy(GTK_WINDOW(win));
+    spdf_launch_mark("resident-warmup-done");
+    return G_SOURCE_REMOVE;
+}
+
+static void resident_warmup_mapped(GtkWidget* warm, gpointer user_data) {
+    (void)user_data;
+    // Destroy from an idle, after the frame that mapping produced — that
+    // frame is exactly the warmup payload.
+    g_idle_add_full(G_PRIORITY_LOW, resident_warmup_teardown, warm, NULL);
+}
+
+static gboolean resident_warmup_idle(gpointer user_data) {
+    SpdfApp* self = SPDF_APP(user_data);
+    GtkWidget* warm;
+    GskRenderer* renderer;
+
+    // A real open raced us and already paid the bill.
+    if (gtk_application_get_windows(GTK_APPLICATION(self))) return G_SOURCE_REMOVE;
+
+    warm = GTK_WIDGET(spdf_window_new(ADW_APPLICATION(self)));
+    g_object_set_data(G_OBJECT(warm), "spdf-warmup", GINT_TO_POINTER(1));
+    (void)renderer;
+    // Realize alone rasterizes nothing (measured: the first real present
+    // still blocked ~220 ms). The full bill is only paid by an actual first
+    // frame of a real widget tree, so present the throwaway window fully
+    // transparent and tear it down right after it maps. This happens only on
+    // the --resident login start, before any user-visible window exists.
+    gtk_widget_set_opacity(warm, 0.0);
+    g_signal_connect(warm, "map", G_CALLBACK(resident_warmup_mapped), self);
+    gtk_window_present(GTK_WINDOW(warm));
+    return G_SOURCE_REMOVE;
+}
+
 static int spdf_app_command_line(GApplication* app, GApplicationCommandLine* cmdline) {
     SpdfApp* self = SPDF_APP(app);
     int argc = 0;
@@ -586,6 +630,7 @@ static int spdf_app_command_line(GApplication* app, GApplicationCommandLine* cmd
     if (win) {
         // Launched with documents: skip session restore (GTK3 behavior).
         self->opened_anything = TRUE;
+        spdf_launch_mark("present-begin");
         gtk_window_present(GTK_WINDOW(win));
         spdf_launch_mark("first-window-present");
     } else if (resident_flag) {
@@ -596,8 +641,19 @@ static int spdf_app_command_line(GApplication* app, GApplicationCommandLine* cmd
         // there is no hold: remove the entry now and fall through to a
         // natural exit — use count 0, no window.
         spdf_launch_mark("resident-start");
-        if (!spdf_state_settings(spdf_app_get_state(self))->instant_launch_resident)
+        if (!spdf_state_settings(spdf_app_get_state(self))->instant_launch_resident) {
             spdf_resident_sync_autostart(FALSE);
+        } else {
+            // Warm the process-global first-frame costs (fontconfig/Pango
+            // glyph rasterization, CSS, icon theme, GSK shader + atlas
+            // uploads) at login, without mapping anything: measured on the
+            // dev machine, the FIRST gtk_window_present of a process blocks
+            // ~450 ms while the second takes ~1 ms. Realizing a throwaway
+            // shell window off-screen pays that bill so the first real open
+            // presents instantly. Deferred to an idle: keeps resident-start
+            // itself cheap and off the login critical path.
+            g_idle_add_full(G_PRIORITY_LOW, resident_warmup_idle, g_object_ref(self), g_object_unref);
+        }
     } else {
         g_application_activate(app);
     }

@@ -1015,6 +1015,7 @@ static void spdf_window_init(SpdfWindow* self) {
     gtk_window_set_default_size(GTK_WINDOW(self), SPDF_DEFAULT_WINDOW_WIDTH, SPDF_DEFAULT_WINDOW_HEIGHT);
     gtk_widget_set_size_request(GTK_WIDGET(self), SPDF_MIN_WINDOW_WIDTH, SPDF_MIN_WINDOW_HEIGHT);
 
+    spdf_launch_mark("win-init-begin");
     g_action_map_add_action_entries(G_ACTION_MAP(self), k_window_actions, G_N_ELEMENTS(k_window_actions), self);
     spdf_annot_install(self);     // win.rotate-cw/ccw, win.save-as, context-menu actions
     spdf_print_install(self);     // win.print (GtkPrintOperation, Fit/Actual/Custom)
@@ -1035,6 +1036,7 @@ static void spdf_window_init(SpdfWindow* self) {
     // sync (needs the tab view, so installed after it exists).
     spdf_minimap_install(self);
 
+    spdf_launch_mark("win-actions+tabview");
     self->tab_bar = ADW_TAB_BAR(adw_tab_bar_new());
     adw_tab_bar_set_view(self->tab_bar, self->tab_view);
     new_tab_button = gtk_button_new_from_icon_name("tab-new-symbolic");
@@ -1043,7 +1045,9 @@ static void spdf_window_init(SpdfWindow* self) {
     gtk_actionable_set_action_name(GTK_ACTIONABLE(new_tab_button), "win.new-tab");
     adw_tab_bar_set_end_action_widget(self->tab_bar, new_tab_button);
 
+    spdf_launch_mark("win-tabbar");
     header = header_bar_new(self);
+    spdf_launch_mark("win-header");
 
     self->toolbar_view = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
     adw_toolbar_view_add_top_bar(self->toolbar_view, header);
@@ -1052,10 +1056,12 @@ static void spdf_window_init(SpdfWindow* self) {
     // multiline toggles; also installs the window-level type-anywhere and
     // paste-to-search key handling.
     adw_toolbar_view_add_top_bar(self->toolbar_view, spdf_search_bar_new(self, self->search_toggle));
+    spdf_launch_mark("win-searchbar");
     // Sidebar (spdf_sidebar.c, Wave B): wraps the tab view in a GtkPaned with
     // the chapters/comments/search-results panel; owns the win.sidebar action
     // and the persisted width + per-document visibility.
     adw_toolbar_view_set_content(self->toolbar_view, spdf_sidebar_new(self, GTK_WIDGET(self->tab_view)));
+    spdf_launch_mark("win-sidebar");
 
     self->tab_overview = ADW_TAB_OVERVIEW(adw_tab_overview_new());
     adw_tab_overview_set_view(self->tab_overview, self->tab_view);
@@ -1072,6 +1078,7 @@ static void spdf_window_init(SpdfWindow* self) {
     gtk_widget_add_controller(GTK_WIDGET(self), keys);
 
     g_signal_connect(self, "close-request", G_CALLBACK(window_close_request), NULL);
+    spdf_launch_mark("win-init-end");
 
     // Off-launch-path work, in scheduling order (same priority => FIFO):
     // menu models first (creates recent_menu), then the recents state read.

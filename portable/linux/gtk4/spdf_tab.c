@@ -84,7 +84,9 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
     }
 
     canonical = g_canonicalize_filename(path, NULL);
+    spdf_launch_mark("tab-open-begin");
     source_read_only = spdf_watcher_resolve_open(canonical, &shadow);
+    spdf_launch_mark("tab-watcher-resolved");
     doc = spdf_open(shadow.working_path ? shadow.working_path : canonical, err, sizeof(err));
     if (!doc) {
         if (error) *error = g_strdup(err[0] ? err : "Could not open document.");
@@ -115,7 +117,9 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
         }
         g_free(render_error);
     }
+    spdf_launch_mark("tab-render-svc");
     tab->view = spdf_doc_view_new(tab);
+    spdf_launch_mark("tab-view-built");
     // --- search module (wave B): the doc view implements GtkScrollable, so
     // it gets its GtkScrolledWindow here; a GtkOverlay on top hosts the
     // scrollbar heat-map lane (and later overlay lanes from other modules).
@@ -148,8 +152,10 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
     g_free(tooltip);
     g_free(title);
     if (source_read_only) spdf_tab_set_read_only_shadow(tab, TRUE); // orange dot (Wave C)
+    spdf_launch_mark("tab-page-appended");
     spdf_annot_tab_attached(tab); // context menu, comment markers (Wave B)
     spdf_watcher_tab_attached(tab); // file monitor on tab->path (Wave C)
+    spdf_launch_mark("tab-open-end");
     return tab;
 }
 
