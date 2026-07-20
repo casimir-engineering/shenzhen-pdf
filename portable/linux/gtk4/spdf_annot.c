@@ -197,6 +197,16 @@ static void annot_push_markers(SpdfTab* tab) {
     g_array_free(markers, TRUE);
 }
 
+/* --- Wave B sidebar coordination (see spdf_annot.h) ----------------------- */
+static SpdfAnnotCommentsChanged annot_comments_hook = NULL;
+static gpointer annot_comments_hook_data = NULL;
+
+void spdf_annot_set_comments_changed_hook(SpdfAnnotCommentsChanged hook, gpointer user_data) {
+    annot_comments_hook = hook;
+    annot_comments_hook_data = user_data;
+}
+/* --------------------------------------------------------------------------- */
+
 static void annot_refresh_comments(SpdfTab* tab) {
     char err[1024] = "";
 
@@ -207,6 +217,7 @@ static void annot_refresh_comments(SpdfTab* tab) {
         else g_warning("shenzhenpdf: could not load comments: %s", err[0] ? err : "unknown error");
     }
     annot_push_markers(tab);
+    if (annot_comments_hook) annot_comments_hook(tab, annot_comments_hook_data); /* sidebar refresh */
 }
 
 /* Port of comment_index_at_page_point: annotation bounds inflated by 3pt. */

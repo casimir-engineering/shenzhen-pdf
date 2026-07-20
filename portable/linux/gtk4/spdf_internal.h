@@ -124,6 +124,11 @@ struct _SpdfTab {
     spdf_comments comments;      // cached comment list (markers, context menu)
     gboolean comments_loaded;
     guint annot_idle_id;         // deferred initial comment load
+    // --- appended by spdf_sidebar.c (wave B) ---
+    spdf_outline outline;        // cached outline (chapters pane, search grouping)
+    gboolean outline_loaded;     // load attempted (count may be 0)
+    gboolean sidebar_resolved;   // per-document showSidebar resolved into...
+    gboolean sidebar_visible;    // ...this flag (documents.json, else default)
 };
 SpdfTab *spdf_tab_open(SpdfWindow *win, const char *path, char **error);
 void spdf_tab_close(SpdfTab *tab);
