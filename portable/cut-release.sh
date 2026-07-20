@@ -202,6 +202,12 @@ sed -i '' -E "s|<sub>Latest <b>[^<]*</b>|<sub>Latest <b>${TAG}</b>|" "$repo_root
 grep -q "<sub>Latest <b>${TAG}</b>" "$repo_root/readme.md" || fail "readme.md badge bump failed."
 log "  readme.md OK"
 
+sed -i '' -E "s/^#define SPDF_APP_VERSION \".*\"/#define SPDF_APP_VERSION \"${VERSION}\"/" "$script_dir/linux/gtk4/spdf_app.h"
+sed -i '' -E "s/^#define SPDF_APP_BUILD \".*\"/#define SPDF_APP_BUILD \"${BUILD}\"/" "$script_dir/linux/gtk4/spdf_app.h"
+grep -q "#define SPDF_APP_VERSION \"${VERSION}\"" "$script_dir/linux/gtk4/spdf_app.h" || fail "spdf_app.h version bump failed."
+grep -q "#define SPDF_APP_BUILD \"${BUILD}\"" "$script_dir/linux/gtk4/spdf_app.h" || fail "spdf_app.h build bump failed."
+log "  portable/linux/gtk4/spdf_app.h OK"
+
 {
   echo "# Release notes"
   echo
@@ -265,3 +271,6 @@ echo "$latest_head" | grep -qi "location: .*${TAG}/ShenzhenPDF-mac-arm64.dmg" \
 log "https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg -> $TAG"
 
 log "Done: https://github.com/casimir-engineering/shenzhen-pdf/releases/tag/$TAG"
+log "NEXT: on the Linux release machine, run portable/linux/pkg/cut-linux-assets.sh $TAG"
+log "      to build, minisign-sign and upload the Linux deb + tarball (in-app"
+log "      updater on Linux only offers releases that ship those assets)."
