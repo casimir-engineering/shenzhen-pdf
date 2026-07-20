@@ -11,6 +11,7 @@
 #include "spdf_app.h"
 #include "spdf_palette.h"
 #include "spdf_search.h"
+#include "spdf_updater.h"
 #include "spdf_window.h"
 
 #define SPDF_DEFAULT_WINDOW_WIDTH 960
@@ -550,6 +551,15 @@ static void action_shortcuts(GSimpleAction* action, GVariant* parameter, gpointe
     spdf_shortcuts_present_window(GTK_WINDOW(user_data));
 }
 
+// --- auto-updater (spdf_updater.c) ------------------------------------------
+static void action_check_updates(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    SpdfApp* app = window_app(win);
+    (void)action;
+    (void)parameter;
+    if (app) spdf_updater_check_interactive(app, GTK_WINDOW(win));
+}
+
 static void action_search(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
     (void)action;
     (void)parameter;
@@ -747,6 +757,7 @@ static const GActionEntry k_window_actions[] = {
     {"fit-page", action_fit_page, NULL, NULL, NULL, {0}},
     {"fit-width", action_fit_width, NULL, NULL, NULL, {0}},
     {"copy", action_copy, NULL, NULL, NULL, {0}},
+    {"check-updates", action_check_updates, NULL, NULL, NULL, {0}},
     {"copy-path", action_copy_path, NULL, NULL, NULL, {0}},
     {"show-in-folder", action_show_in_folder, NULL, NULL, NULL, {0}},
     {"open-in-browser", action_open_in_browser, NULL, NULL, NULL, {0}},
@@ -812,6 +823,7 @@ static GMenuModel* build_primary_menu(SpdfWindow* win) {
     g_menu_append_section(menu, NULL, G_MENU_MODEL(tools));
 
     g_menu_append(help, "_Keyboard Shortcuts", "win.shortcuts");
+    g_menu_append(help, "Check for _Updates…", "win.check-updates");
     g_menu_append(help, "_About Shenzhen PDF", "app.about");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(help));
 
