@@ -467,6 +467,7 @@ static void settings_init_defaults(SpdfSettings* settings) {
     settings->skipped_update_version = g_strdup("");
     settings->translate_source_language = g_strdup("zh");
     settings->translate_target_language = g_strdup("en");
+    settings->ocr_language = g_strdup("chi_sim+eng"); // first OCR table entry (Wave C)
 }
 
 static void settings_read_string(const char* json, const char* key, char** field, gboolean keep_when_empty) {
@@ -535,6 +536,7 @@ static void parse_settings(SpdfState* state, const char* json) {
     settings_read_string(json, "skippedUpdateVersion", &settings->skipped_update_version, TRUE);
     settings_read_string(json, "translateSourceLanguage", &settings->translate_source_language, FALSE);
     settings_read_string(json, "translateTargetLanguage", &settings->translate_target_language, FALSE);
+    settings_read_string(json, "ocrLanguage", &settings->ocr_language, FALSE); // Wave C (GTK4 extra)
 
     recent_array = json_get_array_contents(json, "recentlyOpened");
     if (recent_array) {
@@ -566,6 +568,7 @@ static char* settings_to_json(SpdfState* state) {
     char* skipped = json_escape(settings->skipped_update_version ? settings->skipped_update_version : "");
     char* translate_source = json_escape(settings->translate_source_language ? settings->translate_source_language : "zh");
     char* translate_target = json_escape(settings->translate_target_language ? settings->translate_target_language : "en");
+    char* ocr_language = json_escape(settings->ocr_language ? settings->ocr_language : "chi_sim+eng");
     GString* json = g_string_new("{\n");
 
     // Keys sorted alphabetically, mirroring the Mac writer
@@ -586,6 +589,8 @@ static char* settings_to_json(SpdfState* state) {
     g_string_append(json, "  \"minimapWidth\": ");
     append_json_fixed(json, clamp_double(settings->minimap_width, SPDF_STATE_MIN_MINIMAP_WIDTH, SPDF_STATE_MAX_MINIMAP_WIDTH), 4);
     g_string_append(json, ",\n");
+    // "ocrLanguage" is a Wave C GTK4 extra; the Mac reader ignores unknown keys.
+    g_string_append_printf(json, "  \"ocrLanguage\": \"%s\",\n", ocr_language);
     g_string_append_printf(json, "  \"preventSleepInPresentation\": %s,\n",
                            settings->prevent_sleep_in_presentation ? "true" : "false");
     g_string_append(json, "  \"printCustomScale\": ");
@@ -622,6 +627,7 @@ static char* settings_to_json(SpdfState* state) {
     append_json_fixed(json, clamp_double(settings->zoom, SPDF_STATE_MIN_ZOOM, SPDF_STATE_MAX_ZOOM), 4);
     g_string_append(json, "\n}\n");
 
+    g_free(ocr_language);
     g_free(translate_target);
     g_free(translate_source);
     g_free(skipped);
@@ -1377,6 +1383,7 @@ void spdf_state_free(SpdfState* state) {
     g_free(state->settings.skipped_update_version);
     g_free(state->settings.translate_source_language);
     g_free(state->settings.translate_target_language);
+    g_free(state->settings.ocr_language);
     for (int i = 0; i < state->recent_count; ++i) g_free(state->recent_paths[i]);
     for (int i = 0; i < state->closed_count; ++i) g_free(state->closed_paths[i]);
     g_ptr_array_free(state->loaded_windows, TRUE);
