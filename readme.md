@@ -37,10 +37,10 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 <p align="center"><img src="docs/images/portable/macos-search-highlights.webp" alt="Chapter-grouped search results with in-page highlights and a 2 / 19 match counter" width="880"></p>
 
 - **Incremental search with live count** — Type anywhere to start searching and every match appears instantly with a running "current / total" counter, highlighted in-page. <sub>macOS · Linux</sub>
-- **Chapter-grouped results sidebar** — Every match listed with a snippet, grouped under its chapter heading; click to jump. <sub>macOS</sub>
+- **Chapter-grouped results sidebar** — Every match listed with a snippet, grouped under its chapter heading; click to jump. <sub>macOS · Linux</sub>
 - **Regex & multiline search** — Regular-expression matching, including patterns that span line and paragraph breaks; invalid patterns fail gracefully. <sub>macOS · Linux</sub>
-- **Document map (minimap)** — A live right-side thumbnail strip with a draggable viewport: drag to scroll, click to jump, Cmd-scroll to zoom — search hits show as yellow markers. Scales to hundreds of pages. <sub>macOS; Linux has its own</sub>
-- **Scrollbar heat-map** — The scrollbar doubles as a match heat-map — a tick per hit, the active one hotter; each tab remembers its query across switches and relaunches. <sub>macOS</sub>
+- **Document map (minimap)** — A live right-side thumbnail strip with a draggable viewport: drag to scroll, click to jump, Cmd-scroll to zoom — search hits show as yellow markers. Scales to hundreds of pages. <sub>macOS · Linux</sub>
+- **Scrollbar heat-map** — The scrollbar doubles as a match heat-map — a tick per hit, the active one hotter; each tab remembers its query across switches and relaunches. <sub>macOS · Linux</sub>
 
 ## <a id="powertools"></a>Power tools — 100% on-device <sub>macOS · Linux</sub>
 
@@ -53,7 +53,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 ## <a id="fast"></a>Fast by design
 
-- **Snappy native rendering** — The page you're viewing renders first at high priority while nearby pages and inactive tabs warm up quietly — tab-switching is instant. Cached display lists and crop-to-viewport rendering make repeat renders cheap; stale renders abort within milliseconds. <sub>macOS scheduler; core cross-platform</sub>
+- **Snappy native rendering** — The page you're viewing renders first at high priority while nearby pages and inactive tabs warm up quietly — tab-switching is instant. Cached display lists and crop-to-viewport rendering make repeat renders cheap; stale renders abort within milliseconds. <sub>macOS · Linux</sub>
 - **MuPDF-backed C core** — A compact ~93 KB C core wraps statically-linked MuPDF 1.27.2 behind a small stable ABI shared by both frontends — no Win32 emulation. Adds highlights/comments, page rotate, and single-page PDF export on top of viewing.
 - **Far more than PDF** — Opens everything MuPDF recognizes — XPS, CBZ comics, EPUB/MOBI e-books, images, FB2, and HTML. PDF is the primary, most-polished path.
 
@@ -61,12 +61,12 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Verified daily auto-updater** — A once-a-day background check against GitHub Releases (off the launch path, disabled in the App Store build). Every update is verified offline against a pinned Apple Developer ID (Team 66LJ4BV7Q3), hardened runtime, bundle id, and stapled notarization before an atomic swap — with automatic rollback if the new build fails to launch.
 - **High-quality native printing** — Prints through the standard macOS pipeline with Fit / Actual Size / Custom scaling
-- **One-click default reader & readable JSON state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as pretty-printed JSON you can read, diff, and edit. <sub>JSON state: macOS · Linux</sub>
+- **One-click default reader & readable JSON state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as pretty-printed JSON you can read, diff, and edit. <sub>macOS · Linux</sub>
 
 ## Platform support
 
-- **macOS — the polished path** — Native AppKit + PDFKit; most reading polish (tabs, sessions, document map, prompt-free opening, auto-updater) is macOS.
-- **WIP: Linux — shares the core** — Native GTK 3 app on the same portable C core and data formats, with its own minimap; OCR, translation, and search work here too. Some latest behavior is macOS-specific, will be fixed.
+- **macOS — the original** — Native AppKit + PDFKit.
+- **Linux — full parity** — Native GTK4 + libadwaita app on the same portable C core and data formats: tabs (drag, detach, reattach), multi-window session restore, document map, chapter-grouped search sidebar, scrollbar heat-map, command palette, favorites, presentation mode, printing, auto-reload, properties panel, OCR, translation, and a minisign-verified auto-updater (deb + tarball). Instant launches via an optional resident mode. Built from `portable/linux/gtk4/`.
 - **Windows — legacy** — A separate Win32 C++ tree remains in-tree but is independent of the portable core; no published Windows binary.
 
 ---
@@ -99,18 +99,23 @@ Local development builds are ad-hoc signed. Public downloads must be Developer I
 Ubuntu/Debian:
 
 ```sh
-sudo apt install build-essential pkg-config libgtk-3-dev libssl-dev
-make -C portable linux
-./portable/build/ShenzhenPDF-gtk
+sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libssl-dev unzip
+make -C portable linux-gtk4
+./portable/build/ShenzhenPDF-gtk4
 ```
 
 Fedora:
 
 ```sh
-sudo dnf install gcc make pkgconf-pkg-config gtk3-devel openssl-devel
-make -C portable linux
-./portable/build/ShenzhenPDF-gtk
+sudo dnf install gcc make pkgconf-pkg-config gtk4-devel libadwaita-devel openssl-devel unzip
+make -C portable linux-gtk4
+./portable/build/ShenzhenPDF-gtk4
 ```
+
+Or containerized (no host toolchain needed): `docker build -t shenzhen-build
+portable/linux/dev && docker run --rm -v "$PWD:/work" -w /work shenzhen-build
+make -C portable linux-gtk4`. A `.deb` is built by
+`portable/linux/pkg/build-deb.sh <version>`.
 
 ### Windows (legacy)
 
@@ -149,7 +154,7 @@ recent.json
 
 - `portable/core/`: shared document, render, search, OCR-facing, and save core.
 - `portable/mac/`: native macOS AppKit application.
-- `portable/linux/`: native Linux GTK application.
+- `portable/linux/gtk4/`: native Linux GTK4 + libadwaita application.
 - `src/`: Windows C++/Win32 application code.
 - `mupdf/`: MuPDF dependency.
 - `ext/`: third-party dependencies.
