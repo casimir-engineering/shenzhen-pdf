@@ -10,7 +10,9 @@
 #include "spdf_annot.h"
 #include "spdf_app.h"
 #include "spdf_palette.h"
+#include "spdf_props.h"
 #include "spdf_search.h"
+#include "spdf_sidebar.h"
 #include "spdf_window.h"
 
 #define SPDF_DEFAULT_WINDOW_WIDTH 960
@@ -724,12 +726,6 @@ static void presentation_change_state(GSimpleAction* action, GVariant* value, gp
     spdf_window_set_presentation(win, g_variant_get_boolean(value));
 }
 
-static void sidebar_change_state(GSimpleAction* action, GVariant* value, gpointer user_data) {
-    (void)user_data;
-    g_simple_action_set_state(action, value); // keep the header toggle live
-    g_message("shenzhenpdf: action 'sidebar' pending spdf_sidebar.c (state %d)", g_variant_get_boolean(value));
-}
-
 static const GActionEntry k_window_actions[] = {
     {"open", action_open, NULL, NULL, NULL, {0}},
     {"new-tab", action_open, NULL, NULL, NULL, {0}}, // new tab = pick a document, like the GTK3 "+" button
@@ -755,7 +751,8 @@ static const GActionEntry k_window_actions[] = {
     {"tab-copy-title", action_tab_copy_title, NULL, NULL, NULL, {0}},
     // Stateful; activating with no parameter toggles and calls change-state.
     {"presentation", NULL, NULL, "false", presentation_change_state, {0}},
-    {"sidebar", NULL, NULL, "false", sidebar_change_state, {0}},
+    // "sidebar" (stateful) moved to spdf_sidebar.c (Wave B), registered by
+    // spdf_sidebar_new below.
     // Palette + favorites (spdf_palette.c).
     {"palette", action_palette, NULL, NULL, NULL, {0}},
     {"favorite-page", action_favorite_page, NULL, NULL, NULL, {0}},
@@ -764,10 +761,10 @@ static const GActionEntry k_window_actions[] = {
     {"find-next", action_find_next, NULL, NULL, NULL, {0}},
     {"find-prev", action_find_prev, NULL, NULL, NULL, {0}},
     // rotate-cw / rotate-ccw / save-as moved to spdf_annot.c (Wave B),
-    // registered by spdf_annot_install below.
+    // registered by spdf_annot_install below; properties moved to
+    // spdf_props.c (Wave B), registered by spdf_props_install.
     // Stubs until their modules land (bodies move to those modules).
     {"print", action_stub, NULL, NULL, NULL, {0}},          // spdf_print.c
-    {"properties", action_stub, NULL, NULL, NULL, {0}},     // spdf_props.c
     {"ocr", action_stub, NULL, NULL, NULL, {0}},            // spdf_ocr.c
     {"translate", action_stub, NULL, NULL, NULL, {0}},      // spdf_translate.c
 };
@@ -938,6 +935,7 @@ static void spdf_window_init(SpdfWindow* self) {
 
     g_action_map_add_action_entries(G_ACTION_MAP(self), k_window_actions, G_N_ELEMENTS(k_window_actions), self);
     spdf_annot_install(self); // win.rotate-cw/ccw, win.save-as, context-menu actions
+    spdf_props_install(self); // win.properties (Ctrl+I) — spdf_props.c (Wave B)
 
     self->tab_view = ADW_TAB_VIEW(adw_tab_view_new());
     context_menu = build_tab_context_menu();
@@ -967,7 +965,10 @@ static void spdf_window_init(SpdfWindow* self) {
     // multiline toggles; also installs the window-level type-anywhere and
     // paste-to-search key handling.
     adw_toolbar_view_add_top_bar(self->toolbar_view, spdf_search_bar_new(self, self->search_toggle));
-    adw_toolbar_view_set_content(self->toolbar_view, GTK_WIDGET(self->tab_view));
+    // Sidebar (spdf_sidebar.c, Wave B): wraps the tab view in a GtkPaned with
+    // the chapters/comments/search-results panel; owns the win.sidebar action
+    // and the persisted width + per-document visibility.
+    adw_toolbar_view_set_content(self->toolbar_view, spdf_sidebar_new(self, GTK_WIDGET(self->tab_view)));
 
     self->tab_overview = ADW_TAB_OVERVIEW(adw_tab_overview_new());
     adw_tab_overview_set_view(self->tab_overview, self->tab_view);

@@ -47,6 +47,14 @@ typedef void (*SpdfAnnotContinuation)(SpdfWindow* win, SpdfTab* tab, gpointer da
 void spdf_annot_preflight(SpdfWindow* win, SpdfTab* tab, const char* action_name, SpdfAnnotContinuation cont,
                           gpointer data, GDestroyNotify data_destroy);
 
+// --- Wave B sidebar coordination (single consumer: spdf_sidebar.c) ----------
+// Invoked on the main thread after a tab's comment cache is (re)loaded —
+// initial idle load, comment CRUD, rotate, Save As retarget, document reload
+// — so the sidebar's comments pane can refresh live. One hook, process-wide;
+// NULL clears it. Not fired by spdf_annot_tab_closing (the tab is going away).
+typedef void (*SpdfAnnotCommentsChanged)(SpdfTab* tab, gpointer user_data);
+void spdf_annot_set_comments_changed_hook(SpdfAnnotCommentsChanged hook, gpointer user_data);
+
 G_END_DECLS
 #else
 #include <glib.h>
