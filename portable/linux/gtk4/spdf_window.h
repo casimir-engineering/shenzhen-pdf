@@ -31,6 +31,10 @@ void spdf_window_refresh_recents(SpdfWindow* win); // rebuilds the hamburger rec
 // etc.); safe no-op while the window is disposing. (Wave C)
 void spdf_window_show_toast(SpdfWindow* win, const char* text);
 
+// Wave C (OCR/translate): show a short-lived completion toast over the
+// document area. No-op when the title is empty or the window is disposing.
+void spdf_window_add_toast(SpdfWindow* win, const char* title);
+
 // Session identity (session.json "id"). Restored windows keep their persisted
 // id; new windows get one lazily on first session capture.
 const char* spdf_window_get_session_id(SpdfWindow* win);
