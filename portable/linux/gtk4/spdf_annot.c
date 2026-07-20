@@ -105,6 +105,7 @@ gboolean spdf_annot_pdf_path_allows_same_folder_write(const char* path) {
 #ifndef SPDF_ANNOT_TESTING
 
 #include "spdf_app.h"
+#include "spdf_minimap.h" /* minimap module (wave B): thumbnail invalidation */
 
 #define ANNOT_SELECTION_RECT_MAX 256
 #define ANNOT_COMMENT_HIT_SLOP_PT 3.0 /* GTK3 comment_index_at_page_point */
@@ -260,6 +261,7 @@ static void annot_after_document_write(SpdfTab* tab) {
 
     if (tab->render) spdf_render_service_invalidate(tab->render);
     if (tab->view) spdf_doc_view_document_changed(tab->view);
+    spdf_minimap_document_changed(tab); // minimap module (wave B): stale thumbnails
     annot_refresh_comments(tab);
     app = tab->win ? annot_window_app(tab->win) : NULL;
     if (app) spdf_app_save_session(app);
@@ -316,6 +318,7 @@ static gboolean annot_save_active_pdf_to_path(SpdfWindow* win, SpdfTab* tab, con
                       render_error && *render_error ? render_error : "unknown error");
         g_free(render_error);
         if (tab->view) spdf_doc_view_document_changed(tab->view);
+        spdf_minimap_document_changed(tab); // minimap module (wave B): orphan before the old service dies
         if (old) spdf_render_service_free(old);
     }
 

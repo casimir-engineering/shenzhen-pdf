@@ -124,6 +124,9 @@ struct _SpdfTab {
     spdf_comments comments;      // cached comment list (markers, context menu)
     gboolean comments_loaded;
     guint annot_idle_id;         // deferred initial comment load
+    // --- appended by spdf_minimap.c (wave B) ---
+    GtkWidget* minimap;          // document-map strip, right of the overlay
+    gboolean show_minimap;       // per-document visibility (documents.json "showMinimap")
 };
 SpdfTab *spdf_tab_open(SpdfWindow *win, const char *path, char **error);
 void spdf_tab_close(SpdfTab *tab);
