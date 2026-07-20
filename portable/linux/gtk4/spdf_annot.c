@@ -105,6 +105,7 @@ gboolean spdf_annot_pdf_path_allows_same_folder_write(const char* path) {
 #ifndef SPDF_ANNOT_TESTING
 
 #include "spdf_app.h"
+#include "spdf_minimap.h" /* minimap module (wave B): thumbnail invalidation */
 #include "spdf_watcher.h" /* self-save baseline + Save-As repoint (Wave C) */
 
 #define ANNOT_SELECTION_RECT_MAX 256
@@ -261,6 +262,7 @@ static void annot_after_document_write(SpdfTab* tab) {
 
     if (tab->render) spdf_render_service_invalidate(tab->render);
     if (tab->view) spdf_doc_view_document_changed(tab->view);
+    spdf_minimap_document_changed(tab); // minimap module (wave B): stale thumbnails
     annot_refresh_comments(tab);
     /* --- watcher (Wave C): our own write must not read as an external
      * change (Mac refreshActiveTabCachedFileAttributesAfterSelfSave). */
@@ -329,6 +331,7 @@ static gboolean annot_save_active_pdf_to_path(SpdfWindow* win, SpdfTab* tab, con
                       render_error && *render_error ? render_error : "unknown error");
         g_free(render_error);
         if (tab->view) spdf_doc_view_document_changed(tab->view);
+        spdf_minimap_document_changed(tab); // minimap module (wave B): orphan before the old service dies
         if (old) spdf_render_service_free(old);
     }
 

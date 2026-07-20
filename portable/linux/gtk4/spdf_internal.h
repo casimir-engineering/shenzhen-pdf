@@ -124,6 +124,9 @@ struct _SpdfTab {
     spdf_comments comments;      // cached comment list (markers, context menu)
     gboolean comments_loaded;
     guint annot_idle_id;         // deferred initial comment load
+    // --- appended by spdf_minimap.c (wave B) ---
+    GtkWidget* minimap;          // document-map strip, right of the overlay
+    gboolean show_minimap;       // per-document visibility (documents.json "showMinimap")
     // --- appended by spdf_watcher.c (wave C) ---
     char *working_path;          // read-only shadow copy actually opened; NULL = path
     guint64 ro_copy_file_size;   // source stat the shadow copy reflects
