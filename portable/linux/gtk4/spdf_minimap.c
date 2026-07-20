@@ -405,6 +405,13 @@ static void minimap_draw_search_markers(SpdfMinimap* self, cairo_t* cr, const mi
 
 static void minimap_draw(GtkDrawingArea* area, cairo_t* cr, int width, int height, gpointer user_data) {
     SpdfMinimap* self = SPDF_MINIMAP(user_data);
+    /* Dark-mode audit (Wave D): two palettes keyed off AdwStyleManager's dark
+     * state (the Mac tunes the same chrome surfaces per appearance,
+     * SPDFMacDocumentView.mm:34-47). Backdrop/divider/page borders/viewport
+     * swap; thumbnails, the white page backing and the yellow/orange search
+     * ticks stay — pages render white in both themes. notify::dark repaints
+     * (connected in init). */
+    gboolean dark = adw_style_manager_get_dark(adw_style_manager_get_default());
     minimap_frame f;
     int first = 0;
     int last = -1;
@@ -418,10 +425,12 @@ static void minimap_draw(GtkDrawingArea* area, cairo_t* cr, int width, int heigh
     (void)area;
     /* GTK3 minimap_draw backdrop + the Mac leading-edge separator (the strip
      * sits on the right, so the divider is its left edge). */
-    cairo_set_source_rgb(cr, 0.94, 0.94, 0.94);
+    if (dark) cairo_set_source_rgb(cr, 0.13, 0.13, 0.14);
+    else cairo_set_source_rgb(cr, 0.94, 0.94, 0.94);
     cairo_rectangle(cr, 0.0, 0.0, width, height);
     cairo_fill(cr);
-    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.16);
+    if (dark) cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.12);
+    else cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.16);
     cairo_rectangle(cr, 0.0, 0.0, 1.0, height);
     cairo_fill(cr);
 
@@ -449,8 +458,10 @@ static void minimap_draw(GtkDrawingArea* area, cairo_t* cr, int width, int heigh
                     queued++;
                 }
             }
-            /* Current-page emphasis (GTK3 border weights). */
-            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, i == current_page ? 0.36 : 0.14);
+            /* Current-page emphasis (GTK3 border weights; dark flips the
+             * border to white — black is invisible on the dark backdrop). */
+            if (dark) cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, i == current_page ? 0.55 : 0.20);
+            else cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, i == current_page ? 0.36 : 0.14);
             cairo_set_line_width(cr, i == current_page ? 1.5 : 1.0);
             cairo_rectangle(cr, x + 0.5, y + 0.5, MAX(1.0, rect->w - 1.0), MAX(1.0, rect->h - 1.0));
             cairo_stroke(cr);
@@ -461,10 +472,14 @@ static void minimap_draw(GtkDrawingArea* area, cairo_t* cr, int width, int heigh
     minimap_frame_viewport_rect(&f, &vx, &vy, &vw, &vh);
     vy = MAX(1.0, MIN(vy, f.height - 1.0));
     vh = MAX(1.0, MIN(vh, f.height - vy - 1.0));
-    cairo_set_source_rgba(cr, 0.18, 0.48, 0.86, 0.18);
+    /* Viewport: same blue family, lifted for dark so the stroke clears the
+     * dark backdrop (the light stroke reads near-black there). */
+    if (dark) cairo_set_source_rgba(cr, 0.40, 0.62, 0.92, 0.22);
+    else cairo_set_source_rgba(cr, 0.18, 0.48, 0.86, 0.18);
     cairo_rectangle(cr, vx, vy, vw, vh);
     cairo_fill(cr);
-    cairo_set_source_rgba(cr, 0.06, 0.36, 0.76, 0.95);
+    if (dark) cairo_set_source_rgba(cr, 0.55, 0.72, 0.98, 0.95);
+    else cairo_set_source_rgba(cr, 0.06, 0.36, 0.76, 0.95);
     cairo_set_line_width(cr, 1.3);
     cairo_rectangle(cr, vx + 0.5, vy + 0.5, MAX(1.0, vw - 1.0), MAX(1.0, vh - 1.0));
     cairo_stroke(cr);
@@ -811,6 +826,13 @@ static void minimap_presentation_state_changed(GObject* action, GParamSpec* pspe
     minimap_sync_visible(SPDF_MINIMAP(user_data));
 }
 
+/* Wave D dark-mode audit: theme flips repaint with the other palette. */
+static void minimap_style_dark_changed(GObject* manager, GParamSpec* pspec, gpointer user_data) {
+    (void)manager;
+    (void)pspec;
+    gtk_widget_queue_draw(GTK_WIDGET(user_data));
+}
+
 static void spdf_minimap_dispose(GObject* object) {
     SpdfMinimap* self = SPDF_MINIMAP(object);
 
@@ -849,6 +871,12 @@ static void spdf_minimap_init(SpdfMinimap* self) {
     scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
     g_signal_connect(scroll, "scroll", G_CALLBACK(minimap_scroll), self);
     gtk_widget_add_controller(GTK_WIDGET(self), scroll);
+
+    /* Wave D dark-mode audit: minimap_draw picks its palette per paint;
+     * repaint when the app-wide dark state flips (object-scoped, detaches
+     * with the widget). */
+    g_signal_connect_object(adw_style_manager_get_default(), "notify::dark",
+                            G_CALLBACK(minimap_style_dark_changed), self, 0);
 }
 
 GtkWidget* spdf_minimap_new(SpdfTab* tab) {

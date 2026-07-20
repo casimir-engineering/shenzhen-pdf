@@ -31,6 +31,13 @@ gboolean spdf_app_has_closed(SpdfApp* app);
 void spdf_app_save_session(SpdfApp* app); // snapshot all windows into SpdfState
 // Deliberate window close: drop it from session.json (Mac semantics).
 void spdf_app_forget_window(SpdfApp* app, SpdfWindow* win);
+// --- resident instant-launch (Wave D) ---------------------------------------
+// The last window is being deliberately closed. Under the resident hold the
+// process lives on with everything per-window/per-tab already torn down; this
+// only returns freed heap to the OS (small idle RSS) — the "no session
+// resurrection" rule needs no flag because restore only ever runs on the
+// first open of a process (see spdf_app_activate).
+void spdf_app_notify_last_window_closed(SpdfApp* app);
 
 // ---------------------------------------------------------------------------
 // spdf_shortcuts.c — the single registry of every GAction name, its accels

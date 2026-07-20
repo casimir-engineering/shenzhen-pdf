@@ -9,6 +9,7 @@
 
 #include "spdf_annot.h"
 #include "spdf_app.h"
+#include "spdf_default_reader.h"
 #include "spdf_minimap.h"
 #include "spdf_ocr.h"
 #include "spdf_palette.h"
@@ -39,12 +40,14 @@ struct _SpdfWindow {
     GtkLabel* page_total_label;
     GtkButton* zoom_button;
     GtkToggleButton* search_toggle;
-    GMenu* recent_menu;
+    GtkMenuButton* menu_button; // model attached from the deferred-menus idle
+    GMenu* recent_menu;         // NULL until the deferred-menus idle built it
     AdwTabPage* context_page; // page targeted by the tab context menu
     char* session_id;         // session.json window id; NULL until captured/restored
 
     gboolean presentation;
     guint inhibit_cookie;
+    guint menus_idle_id;
     guint recents_idle_id;
     guint close_if_empty_idle_id;
 };
@@ -200,7 +203,10 @@ void spdf_window_refresh_recents(SpdfWindow* win) {
     int count;
 
     g_return_if_fail(SPDF_IS_WINDOW(win));
-    if (!app) return;
+    // Menus build in the deferred-menus idle (Wave D launch trim); a recents
+    // change landing before that (document opened straight from the command
+    // line) is picked up when the menu is built.
+    if (!app || !win->recent_menu) return;
     state = spdf_app_get_state(app);
     count = spdf_state_recent_count(state);
     g_menu_remove_all(win->recent_menu);
@@ -285,6 +291,9 @@ SpdfTab* spdf_window_open_path(SpdfWindow* win, const char* path, int page_index
     g_free(canonical);
     spdf_window_update_title(win);
     update_page_controls(win);
+    // First document open of the run: schedule the default-reader prompt
+    // check (Wave D; runs in a LOW idle, never on the open path itself).
+    spdf_default_reader_note_document_opened(win);
     return tab;
 }
 
@@ -837,6 +846,10 @@ static GMenuModel* build_primary_menu(SpdfWindow* win) {
     g_menu_append(tools, "Show in Folder", "win.show-in-folder");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(tools));
 
+    // --- Wave D: default-reader registration (spdf_default_reader.c) and the
+    // resident instant-launch toggle (stateful app action -> check item).
+    g_menu_append(help, "Set as Default PDF Reader", "win.make-default");
+    g_menu_append(help, "Instant Launch in Background", "app.instant-launch");
     g_menu_append(help, "_Keyboard Shortcuts", "win.shortcuts");
     g_menu_append(help, "Check for _Updates…", "win.check-updates");
     g_menu_append(help, "_About Shenzhen PDF", "app.about");
@@ -865,11 +878,15 @@ static gboolean window_close_request(GtkWindow* window, gpointer user_data) {
         // (Mac semantics), keeping the survivors for the next restore.
         spdf_app_forget_window(SPDF_APP(app), SPDF_WINDOW(window));
     } else {
-        // Closing the last window is the quit path: capture it (while still
-        // alive) so an empty relaunch restores it, then flush synchronously —
-        // by shutdown the widgets are already gone.
+        // Closing the last window: capture it (while still alive) so a cold
+        // relaunch restores it, then flush synchronously — by shutdown the
+        // widgets are already gone. Without the resident hold this is the
+        // quit path; with it the process stays alive (docs, render services
+        // and thumbnail caches die with the window) and the notify below
+        // trims the freed heap once destruction finished.
         spdf_app_save_session(SPDF_APP(app));
         spdf_state_flush(spdf_app_get_state(SPDF_APP(app)));
+        spdf_app_notify_last_window_closed(SPDF_APP(app));
     }
     return GDK_EVENT_PROPAGATE;
 }
@@ -884,7 +901,6 @@ static GtkWidget* header_bar_new(SpdfWindow* self) {
     GtkWidget* menu_button;
     GtkWidget* tab_button;
     GtkWidget* sidebar_toggle;
-    GMenuModel* primary;
 
     // Same layout as the Mac toolbar: open, page "n / total", zoom cluster on
     // the left; search, sidebar, tabs and the menu on the right.
@@ -927,9 +943,11 @@ static GtkWidget* header_bar_new(SpdfWindow* self) {
     gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_button), "open-menu-symbolic");
     gtk_menu_button_set_primary(GTK_MENU_BUTTON(menu_button), TRUE);
     gtk_widget_set_tooltip_text(menu_button, "Main menu");
-    primary = build_primary_menu(self);
-    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_button), primary);
-    g_object_unref(primary);
+    // Launch trim (Wave D): setting the model here makes GtkMenuButton build
+    // its whole GtkPopoverMenu item tree (rows, icons, accels) before the
+    // window ever maps. The model attaches from the deferred-menus idle in
+    // spdf_window_init — the popover cannot open before the loop runs it.
+    self->menu_button = GTK_MENU_BUTTON(menu_button);
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), menu_button);
 
     tab_button = adw_tab_button_new();
@@ -964,10 +982,33 @@ static GtkWidget* header_bar_new(SpdfWindow* self) {
     return header;
 }
 
+// Wave D launch trim: menu MODELS (hamburger + tab context) attach in this
+// idle instead of during window construction. Building them is GMenu appends,
+// but attaching makes GtkMenuButton/AdwTabView construct their popover item
+// trees — measurable widget work for UI that cannot be opened before the
+// main loop runs anyway (the window is not even mapped yet).
+static gboolean deferred_menus_idle(gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    GMenuModel* primary;
+    GMenuModel* context_menu;
+
+    win->menus_idle_id = 0;
+    if (!win->menu_button || !win->tab_view) return G_SOURCE_REMOVE; // disposing
+    primary = build_primary_menu(win); // also creates win->recent_menu
+    gtk_menu_button_set_menu_model(win->menu_button, primary);
+    g_object_unref(primary);
+    context_menu = build_tab_context_menu();
+    adw_tab_view_set_menu_model(win->tab_view, context_menu);
+    g_object_unref(context_menu);
+    // Recents that landed before the menu existed (command-line document
+    // opens) render now; the separate recents idle stays as the state read.
+    spdf_window_refresh_recents(win);
+    return G_SOURCE_REMOVE;
+}
+
 static void spdf_window_init(SpdfWindow* self) {
     GtkWidget* header;
     GtkWidget* new_tab_button;
-    GMenuModel* context_menu;
     GtkEventController* keys;
 
     gtk_window_set_title(GTK_WINDOW(self), SPDF_APP_DISPLAY_NAME);
@@ -980,11 +1021,10 @@ static void spdf_window_init(SpdfWindow* self) {
     spdf_props_install(self);     // win.properties (Ctrl+I) — spdf_props.c (Wave B)
     spdf_ocr_install(self);       // win.ocr (Wave C)
     spdf_translate_install(self); // win.translate (Wave C)
+    spdf_default_reader_install(self); // win.make-default (Wave D)
 
     self->tab_view = ADW_TAB_VIEW(adw_tab_view_new());
-    context_menu = build_tab_context_menu();
-    adw_tab_view_set_menu_model(self->tab_view, context_menu);
-    g_object_unref(context_menu);
+    // Tab context menu model attaches in deferred_menus_idle (Wave D).
     g_signal_connect(self->tab_view, "create-window", G_CALLBACK(tab_view_create_window), self);
     g_signal_connect(self->tab_view, "close-page", G_CALLBACK(tab_view_close_page), self);
     g_signal_connect(self->tab_view, "page-attached", G_CALLBACK(tab_view_page_attached), self);
@@ -1033,8 +1073,9 @@ static void spdf_window_init(SpdfWindow* self) {
 
     g_signal_connect(self, "close-request", G_CALLBACK(window_close_request), NULL);
 
-    // Recents come from state; populate off the launch path once the
-    // application property is set and the main loop is idle.
+    // Off-launch-path work, in scheduling order (same priority => FIFO):
+    // menu models first (creates recent_menu), then the recents state read.
+    self->menus_idle_id = g_idle_add(deferred_menus_idle, self);
     self->recents_idle_id = g_idle_add(refresh_recents_idle, self);
 }
 
@@ -1043,6 +1084,10 @@ static void spdf_window_dispose(GObject* object) {
     GtkApplication* app = gtk_window_get_application(GTK_WINDOW(self));
     GSList* orphan_tabs = NULL;
 
+    if (self->menus_idle_id) {
+        g_source_remove(self->menus_idle_id);
+        self->menus_idle_id = 0;
+    }
     if (self->recents_idle_id) {
         g_source_remove(self->recents_idle_id);
         self->recents_idle_id = 0;
@@ -1080,6 +1125,7 @@ static void spdf_window_dispose(GObject* object) {
     self->page_total_label = NULL;
     self->zoom_button = NULL;
     self->search_toggle = NULL;
+    self->menu_button = NULL;
     self->context_page = NULL;
     G_OBJECT_CLASS(spdf_window_parent_class)->dispose(object);
     g_slist_free_full(orphan_tabs, (GDestroyNotify)spdf_tab_close);

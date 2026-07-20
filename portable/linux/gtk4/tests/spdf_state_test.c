@@ -98,6 +98,7 @@ static void test_settings_gtk3_fixture(void) {
     g_assert_true(settings->auto_update_enabled);
     g_assert_true(settings->prevent_sleep_in_presentation);
     g_assert_true(settings->search_jumps_to_nearest_result);
+    g_assert_true(settings->instant_launch_resident); // Wave D default on
 
     spdf_state_free(state);
     test_remove_tree(dir);
@@ -192,6 +193,7 @@ static void test_settings_round_trip(void) {
     settings->auto_update_enabled = FALSE;
     settings->prevent_sleep_in_presentation = FALSE;
     settings->default_reader_prompt_dismissed = TRUE;
+    settings->instant_launch_resident = FALSE; // Wave D (Linux-only key)
     settings->print_scaling_mode = 1;
     settings->print_custom_scale = 0.25;
     settings->window_width = 1600;
@@ -228,6 +230,7 @@ static void test_settings_round_trip(void) {
     g_assert_false(loaded->auto_update_enabled);
     g_assert_false(loaded->prevent_sleep_in_presentation);
     g_assert_true(loaded->default_reader_prompt_dismissed);
+    g_assert_false(loaded->instant_launch_resident); // Wave D round-trips
     g_assert_cmpint(loaded->print_scaling_mode, ==, 1);
     g_assert_cmpfloat(loaded->print_custom_scale, ==, 0.25);
     g_assert_cmpint(loaded->window_width, ==, 1600);
