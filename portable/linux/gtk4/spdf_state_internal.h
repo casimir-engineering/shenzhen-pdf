@@ -79,6 +79,12 @@ typedef struct {
     char* skipped_update_version;       // "skippedUpdateVersion"
     char* translate_source_language;    // "translateSourceLanguage"
     char* translate_target_language;    // "translateTargetLanguage"
+    // --- Wave C additions (spdf_ocr.c) --------------------------------------
+    // "ocrLanguage": the last OCR language choice (Tesseract code, e.g.
+    // "chi_sim+eng"). GTK4 extra: neither the GTK3 nor the Mac writer
+    // persists this (their prompts always preselect the first entry); both
+    // readers pass unknown keys through, so the schema stays compatible.
+    char* ocr_language;
 } SpdfSettings;
 
 // ---------------------------------------------------------------------------

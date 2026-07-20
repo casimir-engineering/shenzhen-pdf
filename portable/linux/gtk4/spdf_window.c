@@ -10,11 +10,13 @@
 #include "spdf_annot.h"
 #include "spdf_app.h"
 #include "spdf_minimap.h"
+#include "spdf_ocr.h"
 #include "spdf_palette.h"
 #include "spdf_print.h"
 #include "spdf_props.h"
 #include "spdf_search.h"
 #include "spdf_sidebar.h"
+#include "spdf_translate.h"
 #include "spdf_watcher.h"
 #include "spdf_window.h"
 
@@ -31,7 +33,7 @@ struct _SpdfWindow {
     AdwTabView* tab_view;
     AdwTabBar* tab_bar;
     AdwTabOverview* tab_overview;
-    AdwToastOverlay* toast_overlay; // subtle notifications (watcher, Wave C)
+    AdwToastOverlay* toast_overlay; // Wave C notifications: watcher reloads, OCR/translate completion
     GtkEntry* page_entry;
     GtkLabel* page_total_label;
     GtkButton* zoom_button;
@@ -481,6 +483,15 @@ static SpdfTab* context_menu_tab(SpdfWindow* win) {
 }
 
 // ---------------------------------------------------------------------------
+// Wave C: completion toasts (OCR / translation modules).
+
+void spdf_window_add_toast(SpdfWindow* win, const char* title) {
+    g_return_if_fail(SPDF_IS_WINDOW(win));
+    if (!win->toast_overlay || !title || !*title) return;
+    adw_toast_overlay_add_toast(win->toast_overlay, adw_toast_new(title));
+}
+
+// ---------------------------------------------------------------------------
 // Simple helpers used by actions
 
 static void copy_text_to_clipboard(SpdfWindow* win, const char* text) {
@@ -730,14 +741,6 @@ static void action_favorite_document(GSimpleAction* action, GVariant* parameter,
     spdf_palette_toggle_favorite_document(SPDF_WINDOW(user_data));
 }
 
-// Stub for actions whose module is not built yet; the accel, menu item and
-// action name are already final, only the body moves out later.
-static void action_stub(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
-    (void)parameter;
-    (void)user_data;
-    g_message("shenzhenpdf: action '%s' is not wired yet (module pending)", g_action_get_name(G_ACTION(action)));
-}
-
 static void presentation_change_state(GSimpleAction* action, GVariant* value, gpointer user_data) {
     SpdfWindow* win = SPDF_WINDOW(user_data);
     (void)action;
@@ -778,13 +781,10 @@ static const GActionEntry k_window_actions[] = {
     // Search (spdf_search.c).
     {"find-next", action_find_next, NULL, NULL, NULL, {0}},
     {"find-prev", action_find_prev, NULL, NULL, NULL, {0}},
-    // rotate-cw / rotate-ccw / save-as moved to spdf_annot.c (Wave B),
-    // registered by spdf_annot_install below; properties moved to
-    // spdf_props.c (Wave B), registered by spdf_props_install; win.print
-    // moved to spdf_print.c (Wave C), registered by spdf_print_install.
-    // Stubs until their modules land (bodies move to those modules).
-    {"ocr", action_stub, NULL, NULL, NULL, {0}},            // spdf_ocr.c
-    {"translate", action_stub, NULL, NULL, NULL, {0}},      // spdf_translate.c
+    // rotate-cw / rotate-ccw / save-as moved to spdf_annot.c (Wave B);
+    // properties to spdf_props.c (Wave B); print to spdf_print.c (Wave C);
+    // ocr / translate to spdf_ocr.c / spdf_translate.c (Wave C). Each is
+    // registered by its module's _install call below — no stubs remain.
 };
 
 // ---------------------------------------------------------------------------
@@ -963,9 +963,11 @@ static void spdf_window_init(SpdfWindow* self) {
     gtk_widget_set_size_request(GTK_WIDGET(self), SPDF_MIN_WINDOW_WIDTH, SPDF_MIN_WINDOW_HEIGHT);
 
     g_action_map_add_action_entries(G_ACTION_MAP(self), k_window_actions, G_N_ELEMENTS(k_window_actions), self);
-    spdf_annot_install(self); // win.rotate-cw/ccw, win.save-as, context-menu actions
-    spdf_print_install(self); // win.print (GtkPrintOperation, Fit/Actual/Custom)
-    spdf_props_install(self); // win.properties (Ctrl+I) — spdf_props.c (Wave B)
+    spdf_annot_install(self);     // win.rotate-cw/ccw, win.save-as, context-menu actions
+    spdf_print_install(self);     // win.print (GtkPrintOperation, Fit/Actual/Custom)
+    spdf_props_install(self);     // win.properties (Ctrl+I) — spdf_props.c (Wave B)
+    spdf_ocr_install(self);       // win.ocr (Wave C)
+    spdf_translate_install(self); // win.translate (Wave C)
 
     self->tab_view = ADW_TAB_VIEW(adw_tab_view_new());
     context_menu = build_tab_context_menu();
@@ -1006,8 +1008,9 @@ static void spdf_window_init(SpdfWindow* self) {
     self->tab_overview = ADW_TAB_OVERVIEW(adw_tab_overview_new());
     adw_tab_overview_set_view(self->tab_overview, self->tab_view);
     adw_tab_overview_set_child(self->tab_overview, GTK_WIDGET(self->toolbar_view));
-    // --- watcher (Wave C): toast overlay wraps the whole content so the
-    // auto-reload notification shows over any state (incl. the overview).
+    // One toast overlay wraps the whole content so notifications (watcher
+    // auto-reload, OCR/translate completion) show over any state, including
+    // the tab overview.
     self->toast_overlay = ADW_TOAST_OVERLAY(adw_toast_overlay_new());
     adw_toast_overlay_set_child(self->toast_overlay, GTK_WIDGET(self->tab_overview));
     adw_application_window_set_content(ADW_APPLICATION_WINDOW(self), GTK_WIDGET(self->toast_overlay));
