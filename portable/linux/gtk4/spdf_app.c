@@ -6,10 +6,12 @@
 // side, parity with GTK3 + Mac).
 
 #include <glib-unix.h>
+#include <malloc.h> // malloc_trim: return freed heap after last-window close (resident mode)
 #include <string.h>
 
 #include "spdf_app.h"
 #include "spdf_minimap.h"
+#include "spdf_resident.h"
 #include "spdf_updater.h"
 #include "spdf_watcher.h"
 #include "spdf_window.h"
@@ -20,6 +22,9 @@ struct _SpdfApp {
     SpdfState* state; // lazy; see spdf_app_get_state()
     guint sigterm_id;
     guint sigint_id;
+    // --- resident instant-launch (Wave D) ------------------------------------
+    gboolean resident_hold;   // g_application_hold currently taken
+    gboolean opened_anything; // a window was opened this run (see activate)
 };
 
 G_DEFINE_FINAL_TYPE(SpdfApp, spdf_app, ADW_TYPE_APPLICATION)
@@ -158,6 +163,11 @@ void spdf_app_save_session(SpdfApp* app) {
     g_return_if_fail(SPDF_IS_APP(app));
     state = spdf_app_get_state(app);
     windows = g_list_copy(gtk_application_get_windows(GTK_APPLICATION(app)));
+    // Resident mode (Wave D) makes quit reachable with ZERO windows (Ctrl+Q,
+    // SIGTERM, updater restart while idling after the last window closed).
+    // What is on disk then is the last-window-close capture — running the
+    // stale-prune below against an empty window list would wipe it.
+    if (!windows) return;
     windows = g_list_reverse(windows); // stable order: oldest window first
     for (GList* it = windows; it; it = it->next)
         if (SPDF_IS_WINDOW(it->data)) snapshot_window(app, SPDF_WINDOW(it->data));
@@ -352,6 +362,74 @@ static void restore_session_or_open_empty(SpdfApp* app) {
 }
 
 // ---------------------------------------------------------------------------
+// Resident instant-launch (Wave D; spec "Launch speed", two-track strategy).
+// State machine of the hold:
+//
+//   setting on  + not held  ->  g_application_hold    (startup, or toggle on)
+//   setting off + held      ->  g_application_release (toggle off; with no
+//                                windows the use count hits 0 and the process
+//                                exits — exactly today's non-resident life)
+//
+// The hold keeps the process alive after the last window closes, so the next
+// `shenzhenpdf file.pdf` is a D-Bus forward into spdf_app_command_line
+// (measured 30 ms) instead of a cold GTK4 init (~285 ms empty-window floor).
+// Paths that must STILL quit for real — app.quit (Ctrl+Q), SIGTERM/SIGINT,
+// the updater restart flow — all go through g_application_quit, which exits
+// the main loop regardless of the hold count. No release bookkeeping needed.
+
+static void resident_update_hold(SpdfApp* app) {
+    gboolean want = spdf_state_settings(spdf_app_get_state(app))->instant_launch_resident;
+
+    if (want == app->resident_hold) return;
+    app->resident_hold = want;
+    if (want)
+        g_application_hold(G_APPLICATION(app));
+    else
+        g_application_release(G_APPLICATION(app));
+}
+
+// Deferred autostart reconcile (one stat + at most one small file write):
+// runs at LOW priority so it lands after the first window painted; also
+// repairs a stale Exec line when the binary moved (user-local installs).
+static gboolean resident_autostart_idle(gpointer user_data) {
+    SpdfApp* app = SPDF_APP(user_data);
+    spdf_resident_sync_autostart(spdf_state_settings(spdf_app_get_state(app))->instant_launch_resident);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean resident_trim_idle(gpointer user_data) {
+    SpdfApp* app = SPDF_APP(user_data);
+    GList* windows = gtk_application_get_windows(GTK_APPLICATION(app));
+
+    // Runs after gtk_window_destroy finished tearing down tabs, render
+    // services and thumbnail caches; with no window left, hand the freed
+    // heap back to the OS so the resident process idles at a small RSS.
+    if (!windows) malloc_trim(0);
+    return G_SOURCE_REMOVE;
+}
+
+void spdf_app_notify_last_window_closed(SpdfApp* app) {
+    g_return_if_fail(SPDF_IS_APP(app));
+    if (!app->resident_hold) return; // non-resident: this close quits anyway
+    g_idle_add_full(G_PRIORITY_LOW, resident_trim_idle, g_object_ref(app), g_object_unref);
+}
+
+// app.instant-launch — stateful toggle behind the hamburger menu item and the
+// command palette. Takes effect immediately: hold/release + autostart file.
+static void instant_launch_change_state(GSimpleAction* action, GVariant* value, gpointer user_data) {
+    SpdfApp* app = SPDF_APP(user_data);
+    SpdfState* state = spdf_app_get_state(app);
+    gboolean enabled = g_variant_get_boolean(value);
+
+    g_simple_action_set_state(action, value);
+    if (spdf_state_settings(state)->instant_launch_resident == enabled) return;
+    spdf_state_settings(state)->instant_launch_resident = enabled;
+    spdf_state_save_settings(state);
+    spdf_resident_sync_autostart(enabled); // user intent, not the launch path: sync now
+    resident_update_hold(app);
+}
+
+// ---------------------------------------------------------------------------
 // Application actions
 
 static SpdfWindow* ensure_window_for_documents(SpdfApp* app) {
@@ -429,10 +507,27 @@ static void spdf_app_startup(GApplication* app) {
     // settles, and autoUpdateEnabled is read live inside the trigger, so
     // nothing here touches state or the network on the launch path.
     spdf_updater_start(self);
+    // --- resident instant-launch (Wave D): take the hold as soon as the
+    // setting is known (state load is one settings.json+session.json read
+    // that activate/command-line needs moments later anyway) and register
+    // the toggle with its persisted state.
+    resident_update_hold(self);
+    spdf_launch_mark(self->resident_hold ? "resident-hold" : "resident-off");
+    {
+        GSimpleAction* instant = g_simple_action_new_stateful(
+            "instant-launch", NULL,
+            g_variant_new_boolean(spdf_state_settings(spdf_app_get_state(self))->instant_launch_resident));
+        g_signal_connect(instant, "change-state", G_CALLBACK(instant_launch_change_state), self);
+        g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(instant));
+        g_object_unref(instant);
+    }
+    // Autostart entry reconcile: deferred to a LOW idle (after first paint).
+    g_idle_add_full(G_PRIORITY_LOW, resident_autostart_idle, g_object_ref(self), g_object_unref);
     spdf_launch_mark("startup-end");
 }
 
 static void spdf_app_activate(GApplication* app) {
+    SpdfApp* self = SPDF_APP(app);
     GtkWindow* active = gtk_application_get_active_window(GTK_APPLICATION(app));
 
     spdf_launch_mark("activate");
@@ -440,7 +535,20 @@ static void spdf_app_activate(GApplication* app) {
         gtk_window_present(active);
         return;
     }
-    restore_session_or_open_empty(SPDF_APP(app));
+    // --- resident (Wave D): session restore belongs to the FIRST open of a
+    // process only. Once windows existed and the user deliberately closed
+    // them (the process stays alive under the resident hold), a bare
+    // activate presents a fresh empty window — never the just-closed
+    // session; a `--resident` login start has opened nothing yet, so the
+    // first real activate after login still restores like a cold launch.
+    if (self->opened_anything) {
+        SpdfWindow* win = spdf_window_new(ADW_APPLICATION(app));
+        gtk_window_present(GTK_WINDOW(win));
+        spdf_launch_mark("warm-window-present"); // resident warm path (<=100ms budget)
+        return;
+    }
+    self->opened_anything = TRUE;
+    restore_session_or_open_empty(self);
 }
 
 static int spdf_app_command_line(GApplication* app, GApplicationCommandLine* cmdline) {
@@ -448,13 +556,20 @@ static int spdf_app_command_line(GApplication* app, GApplicationCommandLine* cmd
     int argc = 0;
     char** argv = g_application_command_line_get_arguments(cmdline, &argc);
     SpdfWindow* win = NULL;
+    gboolean resident_flag = FALSE;
 
     spdf_launch_mark("command-line");
     for (int i = 1; i < argc; ++i) {
         GFile* file;
         char* path;
 
-        if (!argv[i] || !argv[i][0] || argv[i][0] == '-') continue;
+        if (!argv[i] || !argv[i][0]) continue;
+        // --resident (Wave D, login autostart): start held with no window.
+        if (strcmp(argv[i], "--resident") == 0) {
+            resident_flag = TRUE;
+            continue;
+        }
+        if (argv[i][0] == '-') continue;
         // Resolve against the invoker's cwd — this runs in the primary
         // instance even when a second process forwarded the arguments.
         file = g_application_command_line_create_file_for_arg(cmdline, argv[i]);
@@ -470,8 +585,19 @@ static int spdf_app_command_line(GApplication* app, GApplicationCommandLine* cmd
 
     if (win) {
         // Launched with documents: skip session restore (GTK3 behavior).
+        self->opened_anything = TRUE;
         gtk_window_present(GTK_WINDOW(win));
         spdf_launch_mark("first-window-present");
+    } else if (resident_flag) {
+        // Fast path (spec: skip session restore, skip everything but gtk
+        // init): no activate, no window. With the setting on, startup
+        // already took the hold and the process idles until the next open
+        // forwards here over D-Bus. With it off (stale autostart entry)
+        // there is no hold: remove the entry now and fall through to a
+        // natural exit — use count 0, no window.
+        spdf_launch_mark("resident-start");
+        if (!spdf_state_settings(spdf_app_get_state(self))->instant_launch_resident)
+            spdf_resident_sync_autostart(FALSE);
     } else {
         g_application_activate(app);
     }
