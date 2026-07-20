@@ -9,6 +9,7 @@
 
 #include "spdf_annot.h"
 #include "spdf_app.h"
+#include "spdf_minimap.h"
 #include "spdf_palette.h"
 #include "spdf_search.h"
 #include "spdf_window.h"
@@ -917,6 +918,17 @@ static GtkWidget* header_bar_new(SpdfWindow* self) {
     gtk_actionable_set_action_name(GTK_ACTIONABLE(sidebar_toggle), "win.sidebar");
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), sidebar_toggle);
 
+    // --- minimap module (wave B): header-bar toggle for win.minimap (the Mac
+    // "Map" toolbar toggle); the action lives in spdf_minimap.c and tracks
+    // the selected tab's per-document showMinimap state.
+    {
+        GtkWidget* minimap_toggle = gtk_toggle_button_new();
+        gtk_button_set_icon_name(GTK_BUTTON(minimap_toggle), "view-dual-symbolic");
+        gtk_widget_set_tooltip_text(minimap_toggle, "Toggle the minimap");
+        gtk_actionable_set_action_name(GTK_ACTIONABLE(minimap_toggle), "win.minimap");
+        adw_header_bar_pack_end(ADW_HEADER_BAR(header), minimap_toggle);
+    }
+
     self->search_toggle = GTK_TOGGLE_BUTTON(gtk_toggle_button_new());
     gtk_button_set_icon_name(GTK_BUTTON(self->search_toggle), "system-search-symbolic");
     gtk_widget_set_tooltip_text(GTK_WIDGET(self->search_toggle), "Search (Ctrl+F)");
@@ -949,6 +961,9 @@ static void spdf_window_init(SpdfWindow* self) {
     g_signal_connect(self->tab_view, "page-detached", G_CALLBACK(tab_view_page_detached), self);
     g_signal_connect(self->tab_view, "setup-menu", G_CALLBACK(tab_view_setup_menu), self);
     g_signal_connect(self->tab_view, "notify::selected-page", G_CALLBACK(tab_view_selected_page_changed), self);
+    // --- minimap module (wave B): win.minimap action + selected-tab state
+    // sync (needs the tab view, so installed after it exists).
+    spdf_minimap_install(self);
 
     self->tab_bar = ADW_TAB_BAR(adw_tab_bar_new());
     adw_tab_bar_set_view(self->tab_bar, self->tab_view);

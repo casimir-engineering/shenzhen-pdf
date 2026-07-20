@@ -33,6 +33,9 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.rotate-cw", {"<Control>r", NULL, NULL}, "View", "Rotate page clockwise"},
     {"win.rotate-ccw", {"<Control><Shift>r", NULL, NULL}, "View", "Rotate page anticlockwise"},
     {"win.sidebar", {"F9", NULL, NULL}, "View", "Toggle the side panel"},
+    // No accelerator: neither GTK3 nor the Mac app bound a key to the
+    // minimap toggle (spdf_minimap.c registers the action).
+    {"win.minimap", {NULL, NULL, NULL}, NULL, "Toggle the minimap"},
     {"win.presentation", {"F5", "<Control><Shift>f", NULL}, "View", "Presentation mode (Escape exits)"},
     // --- Navigation
     {"win.goto-page", {"<Control>l", NULL, NULL}, "Navigation", "Go to page"},
