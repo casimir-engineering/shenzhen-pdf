@@ -631,6 +631,13 @@ static void markers_on_current(SpdfSearchController* c, int index, gpointer area
     markers_update_visibility(GTK_WIDGET(area));
 }
 
+/* Wave D dark-mode audit: theme flips repaint with the other backdrop. */
+static void markers_style_dark_changed(GObject* manager, GParamSpec* pspec, gpointer area) {
+    (void)manager;
+    (void)pspec;
+    gtk_widget_queue_draw(GTK_WIDGET(area));
+}
+
 static void markers_draw_tick(cairo_t* cr, double lane_w, double lane_h, double fraction, gboolean active) {
     double y = spdf_search_marker_y(fraction, lane_h, SPDF_SEARCH_MARKER_TICK_H);
     /* GTK3 draw_find_marker colors: hot orange for the current match. */
@@ -666,8 +673,14 @@ static void markers_draw(GtkDrawingArea* area, cairo_t* cr, int width, int heigh
     zoom = spdf_doc_view_get_zoom(view);
     current = spdf_search_controller_current(ctrl);
 
-    /* GTK3 find_markers_draw backdrop. */
-    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.08);
+    /* GTK3 find_markers_draw backdrop. Dark-mode audit (Wave D): the lane
+     * floats over the doc-view background (dark in dark mode), where the
+     * light theme's black wash disappears — use a white wash there. The
+     * yellow/orange ticks themselves carry enough contrast in both themes. */
+    if (adw_style_manager_get_dark(adw_style_manager_get_default()))
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.10);
+    else
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.08);
     cairo_rectangle(cr, 0.0, 0.0, width, height);
     cairo_fill(cr);
 
@@ -699,6 +712,10 @@ GtkWidget* spdf_search_markers_new(SpdfTab* tab) {
         g_signal_connect_object(tab->search, "matches-changed", G_CALLBACK(markers_on_matches), area, 0);
         g_signal_connect_object(tab->search, "current-changed", G_CALLBACK(markers_on_current), area, 0);
     }
+    /* Wave D dark-mode audit: repaint with the other backdrop wash when the
+     * app-wide dark state flips (markers_draw picks it per paint). */
+    g_signal_connect_object(adw_style_manager_get_default(), "notify::dark", G_CALLBACK(markers_style_dark_changed),
+                            area, 0);
     return area;
 }
 

@@ -68,6 +68,11 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"app.open-recent", {NULL, NULL, NULL}, NULL, "Open a recently opened document"},
     {"app.about", {NULL, NULL, NULL}, NULL, "About Shenzhen PDF"},
     {"win.check-updates", {NULL, NULL, NULL}, NULL, "Check for updates"},
+    // --- Wave D: default-reader registration (spdf_default_reader.c) and
+    // the resident instant-launch toggle (stateful, spdf_app.c). Menu +
+    // palette only; no accelerators.
+    {"win.make-default", {NULL, NULL, NULL}, NULL, "Set as the default PDF reader"},
+    {"app.instant-launch", {NULL, NULL, NULL}, NULL, "Instant launch: keep running in the background"},
     // --- Help
     {"win.shortcuts", {"F1", NULL, NULL}, "Help", "Show this shortcut cheat sheet"},
 };

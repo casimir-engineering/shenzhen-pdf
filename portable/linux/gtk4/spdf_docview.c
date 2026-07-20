@@ -1155,7 +1155,12 @@ static void spdf_doc_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot) {
 
             /* Wave B: comment marker badges (amber square hugging the
              * annotation's top-right corner; geometry shared with the
-             * click-to-edit hit test via spdf_comment_marker_badge). */
+             * click-to-edit hit test via spdf_comment_marker_badge).
+             * Dark-mode audit (Wave D): badge, selection and search-match
+             * colors are deliberately theme-invariant — they composite onto
+             * the page surface, which renders white in both themes
+             * (page_white above); only the widget chrome (background/border
+             * at the top of this function) swaps palettes. */
             if (view->comment_markers) {
                 GdkRGBA marker_fill = {0.98, 0.74, 0.18, 0.92};
                 GdkRGBA marker_border = {0.55, 0.35, 0.0, 0.9};
