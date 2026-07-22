@@ -29,6 +29,21 @@ G_BEGIN_DECLS
 // ---------------------------------------------------------------------------
 // Pure filter logic (no GTK).
 
+// Palette sections, in display order. Open documents come first: with a
+// query they are the strongest match for "take me to that document" (the
+// live tab beats reopening a favorite); with an empty query they make the
+// palette a quick tab switcher before the browsing groups below — Mac
+// refreshPaletteResults ordering (ShenzhenPDFMac.mm @12452-12526: Open
+// documents, Favorites, Actions, Text in open documents; Recents is the
+// GTK4-only extra slotted before the text matches).
+typedef enum {
+    SPDF_PALETTE_SECTION_OPEN_DOCS = 0,
+    SPDF_PALETTE_SECTION_FAVORITES,
+    SPDF_PALETTE_SECTION_COMMANDS,
+    SPDF_PALETTE_SECTION_RECENTS,
+    SPDF_PALETTE_SECTION_MATCHES,
+} SpdfPaletteSection;
+
 // Fuzzy match score of query against haystack. Returns -1 when the query is
 // not a case-insensitive (ASCII) subsequence of haystack; otherwise a score
 // >= 0, higher is better. Matching is greedy left-most; each matched byte
@@ -43,24 +58,74 @@ int spdf_palette_fuzzy_score(const char* query, const char* haystack);
 // One entry of the command section's input table (built from
 // spdf_shortcuts_table() by the palette; faked directly by the tests).
 typedef struct {
-    const char* action; // detailed action name, e.g. "win.open"
-    const char* title;  // human-readable label (fuzzy-matched)
-    const char* accel;  // primary accelerator string, NULL when none
-    gboolean enabled;   // live GAction enabled state
+    const char* action;     // detailed action name, e.g. "win.open"
+    const char* title;      // human-readable label (fuzzy-matched)
+    const char* accel;      // primary accelerator string, NULL when none
+    const char* breadcrumb; // menu path subtitle ("View ▸ Zoom in"), NULL when
+                            // none; part of the fuzzy haystack (Mac
+                            // spdf_palette_menu_command_matches_query matches
+                            // title OR breadcrumb)
+    gboolean enabled;       // live GAction enabled state
+    gboolean toggled;       // stateful boolean action currently on — the row
+                            // title gets the Mac "✓ " checkmark prefix
+                            // (ShenzhenPDFMac.mm @12416-12418)
 } SpdfPaletteCommand;
 
 typedef struct {
     int index; // index into the input command array
-    int score; // spdf_palette_fuzzy_score of the query against the title
+    int score; // spdf_palette_fuzzy_score of the query against the entry
 } SpdfPaletteMatch;
 
 // Filters and ranks commands for the palette's Commands section. Disabled
 // entries and entries with no title are always skipped. An empty (or NULL)
-// query keeps table order; otherwise results are sorted by score descending,
+// query keeps table order; otherwise an entry matches when the query is a
+// fuzzy match of its title or its breadcrumb (so searching by menu name
+// works, Mac spdf_palette_menu_command_matches_query semantics) and takes
+// the better of the two scores; results are sorted by score descending,
 // ties by table order. Returns the number of matches written (at most
 // out_max).
 int spdf_palette_filter_commands(const SpdfPaletteCommand* commands, int count, const char* query,
                                  SpdfPaletteMatch* out, int out_max);
+
+// Joins the menu path and the item title with " ▸ ", skipping empty
+// components — port of SPDFMacPaletteResults.mm spdf_palette_menu_breadcrumb
+// (@94-101) with the GTK4 shortcuts table's single group level. Returns NULL
+// when both parts are empty; caller frees.
+char* spdf_palette_menu_breadcrumb(const char* group, const char* title);
+
+// One open-tab candidate for the Open documents section (built from the live
+// tab views by the palette; faked directly by the tests).
+typedef struct {
+    const char* path;  // absolute document path
+    const char* title; // tab display title
+} SpdfPaletteOpenDoc;
+
+// TRUE when the query is empty or a case-insensitive (ASCII) substring of
+// the title or of the path's basename (directories never match) — port of
+// SPDFMacPaletteResults.mm spdf_palette_open_document_matches_query (@10-16).
+gboolean spdf_palette_open_document_matches_query(const char* query, const char* title, const char* path);
+
+// Filters the Open documents section: keeps candidate order, drops blank
+// paths, deduplicates by canonicalized path (the same document open in two
+// windows lists once) and applies the query match above — port of
+// SPDFMacPaletteResults.mm spdf_palette_open_document_results (@18-32).
+// Writes candidate indices into out; returns how many (at most out_max).
+int spdf_palette_filter_open_documents(const SpdfPaletteOpenDoc* docs, int count, const char* query, int* out,
+                                       int out_max);
+
+// TRUE when the trimmed query is a >= 3 character case-insensitive prefix of
+// the word "favorites" ("fav", "favo", … "favorites") — the browse keyword
+// that reveals every favorite; port of SPDFMacPaletteResults.mm
+// spdf_palette_query_reveals_all_favorites (@122-128).
+gboolean spdf_palette_query_reveals_all_favorites(const char* query);
+
+// TRUE when a favorite must be hidden because the document it points at is
+// already listed in the Open documents section: only document-level
+// favorites dedupe (a page favorite is a distinct jump target) — port of
+// SPDFMacPaletteResults.mm spdf_palette_favorites_without_open_documents
+// (@130-145). open_paths holds canonicalized paths (g_str_hash set).
+gboolean spdf_palette_favorite_shadowed_by_open_doc(const char* favorite_type, const char* favorite_path,
+                                                    GHashTable* open_paths);
 
 // Extracts a short display snippet around the first case-insensitive (ASCII)
 // occurrence of query in line: up to 24 bytes of context on each side,
