@@ -766,6 +766,25 @@ static void presentation_change_state(GSimpleAction* action, GVariant* value, gp
     spdf_window_set_presentation(win, g_variant_get_boolean(value));
 }
 
+// win.search-nearest — stateful toggle behind the hamburger menu item and the
+// command palette for the searchJumpsToNearestResult setting (Mac "Search
+// Jumps to Nearest Result" Settings menu item, ShenzhenPDFMac.mm @2501-2504,
+// toggle @15768-15771). Takes effect on the next find: spdf_search.c reads
+// the setting live on every query/step.
+static void search_nearest_change_state(GSimpleAction* action, GVariant* value, gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    GtkApplication* app = gtk_window_get_application(GTK_WINDOW(win));
+    gboolean enabled = g_variant_get_boolean(value);
+    SpdfState* state;
+
+    g_simple_action_set_state(action, value);
+    if (!app || !SPDF_IS_APP(app)) return;
+    state = spdf_app_get_state(SPDF_APP(app));
+    if (spdf_state_settings(state)->search_jumps_to_nearest_result == enabled) return;
+    spdf_state_settings(state)->search_jumps_to_nearest_result = enabled;
+    spdf_state_save_settings(state); // coalesced write
+}
+
 static const GActionEntry k_window_actions[] = {
     {"open", action_open, NULL, NULL, NULL, {0}},
     {"new-tab", action_open, NULL, NULL, NULL, {0}}, // new tab = pick a document, like the GTK3 "+" button
@@ -850,6 +869,9 @@ static GMenuModel* build_primary_menu(SpdfWindow* win) {
     // resident instant-launch toggle (stateful app action -> check item).
     g_menu_append(help, "Set as Default PDF Reader", "win.make-default");
     g_menu_append(help, "Instant Launch in Background", "app.instant-launch");
+    // Stateful toggle -> check item, same pattern as instant-launch (Mac
+    // Settings menu "Search Jumps to Nearest Result").
+    g_menu_append(help, "Search Jumps to Nearest Result", "win.search-nearest");
     g_menu_append(help, "_Keyboard Shortcuts", "win.shortcuts");
     g_menu_append(help, "Check for _Updates…", "win.check-updates");
     g_menu_append(help, "_About Shenzhen PDF", "app.about");
@@ -994,6 +1016,17 @@ static gboolean deferred_menus_idle(gpointer user_data) {
 
     win->menus_idle_id = 0;
     if (!win->menu_button || !win->tab_view) return G_SOURCE_REMOVE; // disposing
+    // Sync win.search-nearest to the persisted setting (the action predates
+    // the application property being set; see spdf_window_init).
+    {
+        GtkApplication* app = gtk_window_get_application(GTK_WINDOW(win));
+        GAction* nearest = g_action_map_lookup_action(G_ACTION_MAP(win), "search-nearest");
+
+        if (nearest && app && SPDF_IS_APP(app)) {
+            gboolean enabled = spdf_state_settings(spdf_app_get_state(SPDF_APP(app)))->search_jumps_to_nearest_result;
+            g_simple_action_set_state(G_SIMPLE_ACTION(nearest), g_variant_new_boolean(enabled));
+        }
+    }
     primary = build_primary_menu(win); // also creates win->recent_menu
     gtk_menu_button_set_menu_model(win->menu_button, primary);
     g_object_unref(primary);
@@ -1017,6 +1050,16 @@ static void spdf_window_init(SpdfWindow* self) {
 
     spdf_launch_mark("win-init-begin");
     g_action_map_add_action_entries(G_ACTION_MAP(self), k_window_actions, G_N_ELEMENTS(k_window_actions), self);
+    // win.search-nearest: registered here so the palette lists it from the
+    // first open; the state starts at the settings default (TRUE) and syncs
+    // to the persisted value in deferred_menus_idle, once the application
+    // (and with it spdf_state) is reachable.
+    {
+        GSimpleAction* nearest = g_simple_action_new_stateful("search-nearest", NULL, g_variant_new_boolean(TRUE));
+        g_signal_connect_object(nearest, "change-state", G_CALLBACK(search_nearest_change_state), self, 0);
+        g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(nearest));
+        g_object_unref(nearest);
+    }
     spdf_annot_install(self);     // win.rotate-cw/ccw, win.save-as, context-menu actions
     spdf_print_install(self);     // win.print (GtkPrintOperation, Fit/Actual/Custom)
     spdf_props_install(self);     // win.properties (Ctrl+I) — spdf_props.c (Wave B)

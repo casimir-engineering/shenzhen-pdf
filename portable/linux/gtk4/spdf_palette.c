@@ -9,13 +9,20 @@
 // (.navigation-sidebar) — GtkListView's factory + GtkSectionModel machinery
 // buys virtualization this list does not need.
 //
-// Sections (hidden when empty):
-//   Commands   — every entry of the spdf_shortcuts.c table (minus the palette
-//                itself and target-taking actions), fuzzy-filtered by label,
-//                accel right-aligned; disabled actions are skipped (Mac
-//                behavior: invalid menu commands are hidden, 30be87712).
+// Sections (hidden when empty, Mac refreshPaletteResults order):
+//   Open documents — every open tab in every window except the palette
+//                window's active one; substring-matched by title/file name,
+//                deduped by canonical path; Enter focuses the live tab.
 //   Favorites  — favorites.json via spdf_state; icon distinguishes page vs
-//                document favorites; Enter opens the doc and jumps.
+//                document favorites; Enter opens the doc and jumps. Document
+//                favorites already shown in Open documents are hidden; the
+//                "fav"/"favo"/… keyword reveals all of them unfiltered.
+//   Commands   — every entry of the spdf_shortcuts.c table (minus the palette
+//                itself and target-taking actions), fuzzy-filtered by label
+//                and menu breadcrumb (shown as the subtitle), accel
+//                right-aligned, "✓" prefix on toggled-on stateful actions;
+//                disabled actions are skipped (Mac behavior: invalid menu
+//                commands are hidden, 30be87712).
 //   Recents    — settings.json "recentlyOpened"; Enter opens.
 //   Text in open documents — every open tab's document searched on a worker
 //                thread (fresh spdf_open per doc, like the Mac palette), page
@@ -87,7 +94,13 @@ int spdf_palette_filter_commands(const SpdfPaletteCommand* commands, int count, 
 
         if (!commands[i].enabled || !commands[i].title || !*commands[i].title) continue;
         if (filtered) {
+            // Title or breadcrumb, whichever matches better — the Mac palette
+            // matches menu commands against the title OR the menu breadcrumb
+            // (SPDFMacPaletteResults.mm spdf_palette_menu_command_matches_query
+            // @103-108), so searching by menu name finds the commands in it.
+            int crumb_score = spdf_palette_fuzzy_score(query, commands[i].breadcrumb);
             score = spdf_palette_fuzzy_score(query, commands[i].title);
+            score = MAX(score, crumb_score);
             if (score < 0) continue;
         }
         out[n].index = i;
@@ -110,6 +123,104 @@ static const char* palette_ascii_ci_strstr(const char* haystack, const char* nee
         if (i == needle_len) return h;
     }
     return NULL;
+}
+
+char* spdf_palette_menu_breadcrumb(const char* group, const char* title) {
+    // SPDFMacPaletteResults.mm spdf_palette_menu_breadcrumb (@94-101): join
+    // the non-empty components with " ▸ ". The GTK4 shortcuts table has one
+    // menu level (the group), so the path is at most "group ▸ title".
+    gboolean has_group = group && *group;
+    gboolean has_title = title && *title;
+
+    if (has_group && has_title) return g_strdup_printf("%s \xE2\x96\xB8 %s", group, title);
+    if (has_group) return g_strdup(group);
+    if (has_title) return g_strdup(title);
+    return NULL;
+}
+
+gboolean spdf_palette_open_document_matches_query(const char* query, const char* title, const char* path) {
+    // SPDFMacPaletteResults.mm spdf_palette_open_document_matches_query
+    // (@10-16): empty query matches; otherwise substring of the title or of
+    // the file name (never the directory). ASCII case folding stands in for
+    // the Mac's case+diacritic-insensitive compare, like the rest of the
+    // palette's matching.
+    const char* base;
+
+    if (!query || !*query) return TRUE;
+    if (title && *title && palette_ascii_ci_strstr(title, query)) return TRUE;
+    if (!path || !*path) return FALSE;
+    base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    return *base && palette_ascii_ci_strstr(base, query) != NULL;
+}
+
+// The dedup key: same canonical form for tab paths and favorite paths (the
+// Mac's stringByStandardizingPath, SPDFMacPaletteResults.mm @5-8).
+static char* palette_canonical_path(const char* path) {
+    return g_canonicalize_filename(path, "/");
+}
+
+int spdf_palette_filter_open_documents(const SpdfPaletteOpenDoc* docs, int count, const char* query, int* out,
+                                       int out_max) {
+    // SPDFMacPaletteResults.mm spdf_palette_open_document_results (@18-32):
+    // keep candidate order, skip blank paths, list each document once (the
+    // canonical path of a shown row blocks later duplicates), filter by the
+    // query. A duplicate is only recorded as seen when it matched, exactly
+    // like the Mac's seenPaths bookkeeping.
+    GHashTable* seen;
+    int n = 0;
+
+    if (!docs || !out || out_max <= 0) return 0;
+    seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    for (int i = 0; i < count && n < out_max; ++i) {
+        char* key;
+
+        if (!docs[i].path || !*docs[i].path) continue;
+        key = palette_canonical_path(docs[i].path);
+        if (g_hash_table_contains(seen, key) ||
+            !spdf_palette_open_document_matches_query(query, docs[i].title, docs[i].path)) {
+            g_free(key);
+            continue;
+        }
+        g_hash_table_add(seen, key); // hash owns the key
+        out[n++] = i;
+    }
+    g_hash_table_unref(seen);
+    return n;
+}
+
+gboolean spdf_palette_query_reveals_all_favorites(const char* query) {
+    // SPDFMacPaletteResults.mm spdf_palette_query_reveals_all_favorites
+    // (@122-128): the trimmed query must be an anchored, case-insensitive
+    // prefix of "favorites" at least 3 characters long.
+    const char* keyword = "favorites";
+    char* trimmed;
+    size_t len;
+    gboolean reveals;
+
+    if (!query) return FALSE;
+    trimmed = g_strstrip(g_strdup(query));
+    len = strlen(trimmed);
+    reveals = len >= 3 && len <= strlen(keyword) && g_ascii_strncasecmp(trimmed, keyword, len) == 0;
+    g_free(trimmed);
+    return reveals;
+}
+
+gboolean spdf_palette_favorite_shadowed_by_open_doc(const char* favorite_type, const char* favorite_path,
+                                                    GHashTable* open_paths) {
+    // SPDFMacPaletteResults.mm spdf_palette_favorites_without_open_documents
+    // (@130-145): only document-level favorites dedupe against the open
+    // section (a page favorite is a distinct jump target and stays listed).
+    char* key;
+    gboolean shadowed;
+
+    if (!open_paths || g_hash_table_size(open_paths) == 0) return FALSE;
+    if (g_strcmp0(favorite_type, "document") != 0) return FALSE;
+    if (!favorite_path || !*favorite_path) return FALSE;
+    key = palette_canonical_path(favorite_path);
+    shadowed = g_hash_table_contains(open_paths, key);
+    g_free(key);
+    return shadowed;
 }
 
 #define SPDF_PALETTE_SNIPPET_CONTEXT_BYTES 24
@@ -144,15 +255,12 @@ char* spdf_palette_snippet_from_line(const char* line, const char* query) {
 // ===========================================================================
 // GTK implementation.
 
-typedef enum {
-    SPDF_PALETTE_SECTION_COMMANDS = 0,
-    SPDF_PALETTE_SECTION_FAVORITES,
-    SPDF_PALETTE_SECTION_RECENTS,
-    SPDF_PALETTE_SECTION_MATCHES,
-} SpdfPaletteSection;
+// SpdfPaletteSection (display order) lives in spdf_palette.h with the rest of
+// the pure ordering semantics.
 
 typedef enum {
     SPDF_PALETTE_ROW_COMMAND = 0,
+    SPDF_PALETTE_ROW_OPEN_DOC,
     SPDF_PALETTE_ROW_FAVORITE,
     SPDF_PALETTE_ROW_RECENT,
     SPDF_PALETTE_ROW_MATCH,
@@ -289,6 +397,7 @@ static void palette_install_css(void) {
 
 static const char* palette_section_title(int section) {
     switch (section) {
+        case SPDF_PALETTE_SECTION_OPEN_DOCS: return "Open Documents";
         case SPDF_PALETTE_SECTION_COMMANDS: return "Commands";
         case SPDF_PALETTE_SECTION_FAVORITES: return "Favorites";
         case SPDF_PALETTE_SECTION_RECENTS: return "Recently Opened";
@@ -535,6 +644,11 @@ static void palette_activate_row(SpdfPalette* palette, GtkListBoxRow* row) {
         case SPDF_PALETTE_ROW_COMMAND:
             palette_activate_command(win, action);
             break;
+        case SPDF_PALETTE_ROW_OPEN_DOC:
+            // The document is already open somewhere; this just focuses its
+            // tab (Mac focusOpenDocumentTabForPath), so no recents churn.
+            palette_jump_to_document(win, path, -1, NULL, FALSE);
+            break;
         case SPDF_PALETTE_ROW_FAVORITE:
         case SPDF_PALETTE_ROW_RECENT:
             palette_jump_to_document(win, path, page, NULL, TRUE);
@@ -717,11 +831,70 @@ static void palette_start_search(SpdfPalette* palette, const char* query) {
 // ---------------------------------------------------------------------------
 // Section assembly
 
+// Appends the Open documents section: one row per open tab in every window,
+// in window/tab order, the palette window's own active tab skipped (the group
+// lists switch targets; the frontmost document would be a no-op) — Mac
+// openDocumentPaletteCandidates (ShenzhenPDFMac.mm @12575-12589) over the
+// pure spdf_palette_filter_open_documents. Returns the set of canonical
+// paths actually shown, for the favorites dedup (Mac openShownPaths,
+// @12458-12463); caller unrefs.
+static GHashTable* palette_append_open_docs(SpdfPalette* palette, const char* query) {
+    GtkApplication* app = gtk_window_get_application(GTK_WINDOW(palette->win));
+    SpdfTab* active = spdf_window_current_tab(palette->win);
+    GPtrArray* paths = g_ptr_array_new_with_free_func(g_free);
+    GPtrArray* titles = g_ptr_array_new_with_free_func(g_free);
+    GHashTable* shown = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    SpdfPaletteOpenDoc* docs;
+    int* picks;
+    int pick_count;
+
+    for (GList* it = app ? gtk_application_get_windows(app) : NULL; it; it = it->next) {
+        SpdfWindow* window;
+        int count;
+
+        if (!SPDF_IS_WINDOW(it->data)) continue;
+        window = SPDF_WINDOW(it->data);
+        count = spdf_window_tab_count(window);
+        for (int t = 0; t < count; ++t) {
+            SpdfTab* tab = spdf_window_tab_at(window, t);
+
+            if (!tab || !tab->path || !*tab->path) continue;
+            if (window == palette->win && tab == active) continue;
+            g_ptr_array_add(paths, g_strdup(tab->path));
+            g_ptr_array_add(titles, spdf_tab_display_name(tab));
+        }
+    }
+    docs = g_new0(SpdfPaletteOpenDoc, MAX(paths->len, 1));
+    picks = g_new0(int, MAX(paths->len, 1));
+    for (guint i = 0; i < paths->len; ++i) {
+        docs[i].path = g_ptr_array_index(paths, i);
+        docs[i].title = g_ptr_array_index(titles, i);
+    }
+    pick_count = spdf_palette_filter_open_documents(docs, (int)paths->len, query, picks, (int)paths->len);
+    for (int i = 0; i < pick_count; ++i) {
+        const SpdfPaletteOpenDoc* doc = &docs[picks[i]];
+        SpdfPaletteRowData* data = g_new0(SpdfPaletteRowData, 1);
+
+        data->kind = SPDF_PALETTE_ROW_OPEN_DOC;
+        data->section = SPDF_PALETTE_SECTION_OPEN_DOCS;
+        data->path = g_strdup(doc->path);
+        data->page = -1;
+        palette_append_row(palette, data, "document-open-symbolic", doc->title, doc->path, NULL);
+        g_hash_table_add(shown, palette_canonical_path(doc->path));
+    }
+    g_free(picks);
+    g_free(docs);
+    g_ptr_array_unref(titles);
+    g_ptr_array_unref(paths);
+    return shown;
+}
+
 static void palette_append_commands(SpdfPalette* palette, const char* query) {
     int table_count = 0;
     const SpdfShortcutEntry* table = spdf_shortcuts_table(&table_count);
     SpdfPaletteCommand* commands = g_new0(SpdfPaletteCommand, (gsize)MAX(table_count, 1));
     SpdfPaletteMatch* matches = g_new0(SpdfPaletteMatch, (gsize)MAX(table_count, 1));
+    char** breadcrumbs = g_new0(char*, (gsize)MAX(table_count, 1)); // owned, parallel to commands
     int command_count = 0;
     int match_count;
 
@@ -730,6 +903,8 @@ static void palette_append_commands(SpdfPalette* palette, const char* query) {
         GActionMap* map = NULL;
         const char* name = NULL;
         GAction* action;
+        GVariant* state;
+        gboolean toggled = FALSE;
 
         // The palette is itself the favorites search; a row that reopens it
         // would be a no-op loop (Mac parity).
@@ -746,34 +921,62 @@ static void palette_append_commands(SpdfPalette* palette, const char* query) {
         action = g_action_map_lookup_action(map, name);
         if (!action) continue;
         if (g_action_get_parameter_type(action)) continue; // needs a target
+        // Stateful boolean actions are the menus' check items; the palette
+        // row mirrors the checkmark (Mac collectPaletteMenuCommandsFromMenu,
+        // ShenzhenPDFMac.mm @12416-12418).
+        state = g_action_get_state(action);
+        if (state) {
+            toggled = g_variant_is_of_type(state, G_VARIANT_TYPE_BOOLEAN) && g_variant_get_boolean(state);
+            g_variant_unref(state);
+        }
+        // Group = the entry's menu; entries without one (context-menu
+        // actions) have no menu path to show or match.
+        breadcrumbs[command_count] = entry->group ? spdf_palette_menu_breadcrumb(entry->group, entry->title) : NULL;
         commands[command_count].action = entry->action;
         commands[command_count].title = entry->title;
         commands[command_count].accel = entry->accels[0];
+        commands[command_count].breadcrumb = breadcrumbs[command_count];
         commands[command_count].enabled = g_action_get_enabled(action);
+        commands[command_count].toggled = toggled;
         command_count++;
     }
     match_count = spdf_palette_filter_commands(commands, command_count, query, matches, command_count);
     for (int i = 0; i < match_count; ++i) {
         const SpdfPaletteCommand* command = &commands[matches[i].index];
         SpdfPaletteRowData* data = g_new0(SpdfPaletteRowData, 1);
+        // Display-only checkmark: the Mac folds it into the matched title,
+        // but the fuzzy ranking must not penalize toggled-on commands with
+        // two bytes of leading skip.
+        char* title = command->toggled ? g_strdup_printf("\xE2\x9C\x93 %s", command->title) : NULL;
 
         data->kind = SPDF_PALETTE_ROW_COMMAND;
         data->section = SPDF_PALETTE_SECTION_COMMANDS;
         data->action = g_strdup(command->action);
         data->page = -1;
-        palette_append_row(palette, data, "system-run-symbolic", command->title, NULL, command->accel);
+        palette_append_row(palette, data, "system-run-symbolic", title ? title : command->title,
+                           command->breadcrumb, command->accel);
+        g_free(title);
     }
+    for (int i = 0; i < command_count; ++i) g_free(breadcrumbs[i]);
+    g_free(breadcrumbs);
     g_free(matches);
     g_free(commands);
 }
 
 #define SPDF_PALETTE_MAX_FAVORITE_ROWS 100
 
-static void palette_append_favorites(SpdfPalette* palette, SpdfState* state, const char* query) {
+static void palette_append_favorites(SpdfPalette* palette, SpdfState* state, const char* query,
+                                     GHashTable* open_paths) {
     guint count = spdf_state_favorite_count(state);
+    // "fav" (any >= 3 character prefix of "favorites") is a browse keyword:
+    // reveal every favorite, bypassing the matching and the open-document
+    // dedupe so the group is complete rather than filtered by the keyword
+    // (Mac refreshPaletteResults, ShenzhenPDFMac.mm @12474-12479).
+    gboolean reveal_all = spdf_palette_query_reveals_all_favorites(query);
     SpdfPaletteMatch* matches;
     int match_count = 0;
 
+    if (reveal_all) query = NULL;
     if (count == 0) return;
     matches = g_new0(SpdfPaletteMatch, count);
     for (guint i = 0; i < count; ++i) {
@@ -781,6 +984,10 @@ static void palette_append_favorites(SpdfPalette* palette, SpdfState* state, con
         int score = 0;
 
         if (!favorite) continue;
+        // A document that is both open and a favorite lists once, in the
+        // open section (Mac spdf_palette_favorites_without_open_documents).
+        if (!reveal_all && spdf_palette_favorite_shadowed_by_open_doc(favorite->type, favorite->path, open_paths))
+            continue;
         if (query && *query) {
             // Same haystack the Mac palette matches: name, title, path, labels.
             char* labels = favorite->labels ? g_strjoinv(" ", favorite->labels) : NULL;
@@ -852,11 +1059,16 @@ static void palette_rebuild(SpdfPalette* palette) {
     palette->status_row = NULL;
     gtk_list_box_remove_all(palette->list);
 
-    palette_append_commands(palette, query);
-    if (state) {
-        palette_append_favorites(palette, state, query);
-        palette_append_recents(palette, state, query);
+    // Mac section order (refreshPaletteResults, ShenzhenPDFMac.mm
+    // @12452-12526): Open documents, Favorites, Commands ("Actions"),
+    // then the GTK4-only Recents, then the async text matches.
+    {
+        GHashTable* open_paths = palette_append_open_docs(palette, query);
+        if (state) palette_append_favorites(palette, state, query, open_paths);
+        g_hash_table_unref(open_paths);
     }
+    palette_append_commands(palette, query);
+    if (state) palette_append_recents(palette, state, query);
     if (query && strlen(query) >= SPDF_PALETTE_MIN_TEXT_QUERY_BYTES &&
         strlen(query) < SPDF_STATE_MAX_FIND_QUERY_BYTES)
         palette_start_search(palette, query);
