@@ -27,6 +27,17 @@ char* spdf_tab_display_name(const SpdfTab* tab) {
 
     if (!tab) return g_strdup("Untitled");
     meta = tab->doc ? spdf_title(tab->doc) : NULL;
+    // Read-only shadow copies open from the private working copy, and the
+    // core's no-metadata fallback title is the basename of the file it
+    // OPENED — the ro-<hash>.pdf copy, not the document. Tab identity stays
+    // on the SOURCE (Mac model), so ignore that fallback and derive the
+    // label from tab->path below.
+    if (meta && *meta && tab->working_path) {
+        char* copy_base = g_path_get_basename(tab->working_path);
+        gboolean is_copy_fallback = g_strcmp0(meta, copy_base) == 0;
+        g_free(copy_base);
+        if (is_copy_fallback) meta = NULL;
+    }
     if (meta && *meta) {
         // GTK3 parity: labels drop a trailing ".pdf" even from metadata.
         char* copy = g_strdup(meta);
