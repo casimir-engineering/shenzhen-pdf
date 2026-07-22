@@ -280,6 +280,59 @@ static void test_strip_scroll_clamps(void) {
 }
 
 /* --------------------------------------------------------------------------
+ * Kinetic strip-scroll momentum (GtkKineticScrolling decay model). */
+
+static void test_kinetic_step_decay(void) {
+    /* One 16ms frame at 600 px/s: velocity decays by exp(-4*0.016), distance
+     * is the closed-form integral of the decaying velocity. */
+    double v = 600.0;
+    double exp_part = exp(-SPDF_MINIMAP_KINETIC_FRICTION * 0.016);
+    double delta = spdf_minimap_kinetic_step(&v, 0.016);
+    g_assert_cmpfloat_with_epsilon(delta, (1.0 - exp_part) * 600.0 / SPDF_MINIMAP_KINETIC_FRICTION, 1e-9);
+    g_assert_cmpfloat_with_epsilon(v, 600.0 * exp_part, 1e-9);
+    /* Degenerate dt: nothing moves, nothing decays. */
+    g_assert_cmpfloat(spdf_minimap_kinetic_step(&v, 0.0), ==, 0.0);
+    g_assert_cmpfloat(spdf_minimap_kinetic_step(&v, -1.0), ==, 0.0);
+    g_assert_cmpfloat(spdf_minimap_kinetic_step(NULL, 0.016), ==, 0.0);
+}
+
+static void test_kinetic_total_travel(void) {
+    /* Integrated to exhaustion the tail covers v0/friction — a 1600 px/s
+     * flick travels ~400 strip px, i.e. a whole strip lane, matching the
+     * "flick traverses the whole document" release note when fed through the
+     * maxDoc/maxStrip strip-scroll model. Frame-size independence: many
+     * small steps sum to the same closed form. */
+    double v = 1600.0;
+    double total = 0.0;
+    int frames = 0;
+    while (!spdf_minimap_kinetic_done(v) && frames < 10000) {
+        total += spdf_minimap_kinetic_step(&v, 1.0 / 120.0);
+        frames++;
+    }
+    g_assert_cmpfloat_with_epsilon(total, 1600.0 / SPDF_MINIMAP_KINETIC_FRICTION, 1.0);
+    /* Sign follows the velocity. */
+    v = -1600.0;
+    g_assert_cmpfloat(spdf_minimap_kinetic_step(&v, 0.016), <, 0.0);
+}
+
+static void test_kinetic_duration(void) {
+    /* The 1 px/s stop threshold ends a typical flick after ~1.5s (GTK feel:
+     * ln(v0)/friction seconds), and momentum-worthy velocities survive the
+     * done check while sub-threshold ones never start. */
+    double v = 400.0;
+    double t = 0.0;
+    while (!spdf_minimap_kinetic_done(v)) {
+        spdf_minimap_kinetic_step(&v, 1.0 / 60.0);
+        t += 1.0 / 60.0;
+    }
+    g_assert_cmpfloat(t, >, 1.3);
+    g_assert_cmpfloat(t, <, 1.7);
+    g_assert_true(spdf_minimap_kinetic_done(0.5));
+    g_assert_true(spdf_minimap_kinetic_done(-0.5));
+    g_assert_false(spdf_minimap_kinetic_done(-30.0));
+}
+
+/* --------------------------------------------------------------------------
  * Bounded thumbnail window. */
 
 static void test_thumb_window_initial(void) {
@@ -396,6 +449,9 @@ int main(int argc, char** argv) {
     g_test_add_func("/minimap/strip-scroll-overflow", test_strip_scroll_overflowing_strip);
     g_test_add_func("/minimap/strip-scroll-fallback", test_strip_scroll_fitting_strip_falls_back);
     g_test_add_func("/minimap/strip-scroll-clamps", test_strip_scroll_clamps);
+    g_test_add_func("/minimap/kinetic-step-decay", test_kinetic_step_decay);
+    g_test_add_func("/minimap/kinetic-total-travel", test_kinetic_total_travel);
+    g_test_add_func("/minimap/kinetic-duration", test_kinetic_duration);
     g_test_add_func("/minimap/thumb-window-initial", test_thumb_window_initial);
     g_test_add_func("/minimap/thumb-window-hysteresis", test_thumb_window_hysteresis);
     g_test_add_func("/minimap/thumb-window-evict", test_thumb_window_evict);
