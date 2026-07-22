@@ -81,7 +81,17 @@ static char* resident_exec_value(void) {
 }
 
 void spdf_resident_sync_autostart(gboolean enabled) {
-    char* file_path = resident_autostart_path();
+    char* file_path;
+
+    /* Inside Flatpak the sandboxed ~/.config/autostart is not the host's —
+     * a file written there never runs at login, and the Exec value (a
+     * sandbox path or bare binary name) would be wrong on the host anyway.
+     * No-op entirely; wiring login autostart through the XDG Background
+     * portal (org.freedesktop.portal.Background RequestBackground) is the
+     * correct future implementation. */
+    if (spdf_running_in_flatpak()) return;
+
+    file_path = resident_autostart_path();
 
     if (!enabled) {
         if (g_file_test(file_path, G_FILE_TEST_EXISTS)) g_unlink(file_path);

@@ -2251,8 +2251,20 @@ static gboolean updater_first_idle(gpointer user_data) {
 
 // ----- public entry points ----------------------------------------------------
 
+// Flatpak installs update through the remote that shipped them (Flathub);
+// self-updating would fight the sandbox (read-only /app, no pkexec/dpkg) and
+// the store. Same disable-with-a-reason pattern as the missing-curl/wget
+// path: the silent cadence never arms, the manual check explains itself.
+#define SPDF_UPDATER_FLATPAK_REASON \
+    "This Shenzhen PDF was installed as a Flatpak; updates are delivered by " \
+    "your software store (e.g. Flathub), not the built-in updater."
+
 void spdf_updater_start(SpdfApp* app) {
     g_return_if_fail(SPDF_IS_APP(app));
+    if (spdf_running_in_flatpak()) {
+        g_message("shenzhenpdf: %s", SPDF_UPDATER_FLATPAK_REASON);
+        return; // no timers, no state, no network — fully disabled
+    }
     if (g_updater.app) return; // started once per process
     g_updater.app = g_object_ref(app);
     // Nothing runs on the launch path: the first gate/health-check I/O happens
@@ -2267,8 +2279,12 @@ void spdf_updater_start(SpdfApp* app) {
 }
 
 void spdf_updater_check_interactive(SpdfApp* app, GtkWindow* parent) {
-    (void)parent; // dialogs attach to the active window
     g_return_if_fail(SPDF_IS_APP(app));
+    if (spdf_running_in_flatpak()) {
+        updater_show_message(parent, "Software Update", SPDF_UPDATER_FLATPAK_REASON);
+        return;
+    }
+    (void)parent; // dialogs attach to the active window
     if (!g_updater.app) g_updater.app = g_object_ref(app);
     updater_launch_check(TRUE);
 }
@@ -2333,8 +2349,15 @@ int spdf_updater_handle_cli(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         if (strcmp(argv[i], "--updater-health-probe") == 0) return 0;
-        if (strcmp(argv[i], "--check-updates-now") == 0) return updater_cli_check();
-        if (strcmp(argv[i], "--install-update") == 0) return updater_cli_install();
+        if (strcmp(argv[i], "--check-updates-now") == 0 ||
+            strcmp(argv[i], "--install-update") == 0) {
+            if (spdf_running_in_flatpak()) {
+                g_print("updates-disabled: %s\n", SPDF_UPDATER_FLATPAK_REASON);
+                return 0;
+            }
+            return strcmp(argv[i], "--check-updates-now") == 0 ? updater_cli_check()
+                                                               : updater_cli_install();
+        }
     }
     return -1;
 }
