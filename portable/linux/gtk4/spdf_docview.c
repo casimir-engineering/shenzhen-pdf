@@ -883,6 +883,22 @@ static const char* view_cursor_name_at(SpdfDocView* view, int page, double page_
 /* --------------------------------------------------------------------------- */
 /* Event controllers. */
 
+/* The Ctrl+wheel zoom step, reusable by widgets that forward their own
+ * Ctrl+scroll here (the minimap, matching the Mac's
+ * minimapViewDidReceiveZoomScrollWheel -> zoomWithScrollWheelEvent path).
+ * The anchor is a widget-space point of THIS view; without one the zoom
+ * anchors at the center of the visible document area. */
+void spdf_doc_view_zoom_scroll(SpdfDocView* view, double dy, gboolean has_anchor, double anchor_x, double anchor_y) {
+    double factor;
+
+    g_return_if_fail(SPDF_IS_DOC_VIEW(view));
+    if (!view_doc(view)) return;
+    factor = dy != 0.0 ? pow(ZOOM_WHEEL_STEP, -dy) : 0.0;
+    if (factor <= 0.0) return;
+    if (has_anchor) view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_POINT, anchor_x, anchor_y);
+    else view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_CENTER, 0.0, 0.0);
+}
+
 static gboolean on_scroll(GtkEventControllerScroll* controller, double dx, double dy, gpointer user_data) {
     SpdfDocView* view = SPDF_DOC_VIEW(user_data);
     GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
@@ -890,12 +906,7 @@ static gboolean on_scroll(GtkEventControllerScroll* controller, double dx, doubl
 
     if (!view_doc(view)) return FALSE;
     if ((state & GDK_CONTROL_MASK) != 0) {
-        double factor = dy != 0.0 ? pow(ZOOM_WHEEL_STEP, -dy) : 0.0;
-        if (factor > 0.0) {
-            if (view->pointer_valid)
-                view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_POINT, view->pointer_x, view->pointer_y);
-            else view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_CENTER, 0.0, 0.0);
-        }
+        spdf_doc_view_zoom_scroll(view, dy, view->pointer_valid, view->pointer_x, view->pointer_y);
         return TRUE; /* Ctrl+scroll never pans (page_scroll_event) */
     }
     return FALSE; /* plain scrolling belongs to the GtkScrolledWindow */
