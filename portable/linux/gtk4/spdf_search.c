@@ -747,7 +747,17 @@ typedef struct {
     GtkToggleButton* multiline;
     SpdfSearchController* connected; /* weak pointer; signals via connect_object */
     gboolean suppress;
+    gint64 reveal_grace_until_us; /* capture-phase key takeover deadline */
 } SearchUi;
+
+/* How long after a bar reveal the window's capture-phase controller commits
+ * printable keys straight into the query. The entry's input method (ibus on
+ * GNOME) consumes-and-drops keys while its async focus-in setup runs, so
+ * during this window keys must not reach the entry at all ("connector"
+ * landed as "cctor" even with the bubble-phase append fix, because dropped
+ * keys never bubble). Trade-off: IM composition (e.g. pinyin) is bypassed
+ * for these few hundred ms right after the reveal. */
+#define SEARCH_REVEAL_GRACE_US ((gint64)500 * 1000)
 
 static GQuark search_ui_quark(void) {
     static GQuark quark;
@@ -973,6 +983,14 @@ static void start_search_text(SpdfWindow* win, const char* text, gboolean select
     SpdfSearchController* ctrl = current_controller(win);
 
     if (!ui || !ctrl) return;
+    /* Arm the capture-phase takeover while the entry's focus/IM setup
+     * settles (see SEARCH_REVEAL_GRACE_US). Only when the entry does not
+     * already own focus — steady-state typing must go through the IM. */
+    {
+        GtkWidget* focus = gtk_root_get_focus(GTK_ROOT(win));
+        if (!focus || !(focus == GTK_WIDGET(ui->entry) || gtk_widget_is_ancestor(focus, GTK_WIDGET(ui->entry))))
+            ui->reveal_grace_until_us = g_get_monotonic_time() + SEARCH_REVEAL_GRACE_US;
+    }
     gtk_search_bar_set_search_mode(ui->bar, TRUE); /* first: its handler syncs old state */
     ui->suppress = TRUE;
     gtk_editable_set_text(GTK_EDITABLE(ui->entry), text);
@@ -995,6 +1013,36 @@ static void clipboard_text_ready(GObject* source, GAsyncResult* result, gpointer
     g_object_unref(win);
 }
 
+/* Capture-phase companion to on_window_key: for SEARCH_REVEAL_GRACE_US after
+ * a type-anywhere reveal, printable unmodified keys are committed straight
+ * into the query BEFORE the toolkit can route them to the just-focused entry,
+ * whose input method silently drops keys while its async focus-in completes
+ * (GNOME/ibus; the bubble-phase append never sees a dropped key). */
+static gboolean on_window_key_capture(GtkEventControllerKey* controller, guint keyval, guint keycode,
+                                      GdkModifierType state, gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    SearchUi* ui = search_ui(win);
+    gunichar ch;
+
+    (void)controller;
+    (void)keycode;
+    if (!ui || !gtk_search_bar_get_search_mode(ui->bar)) return GDK_EVENT_PROPAGATE;
+    if (g_get_monotonic_time() >= ui->reveal_grace_until_us) return GDK_EVENT_PROPAGATE;
+    if ((state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) != 0)
+        return GDK_EVENT_PROPAGATE;
+    ch = gdk_keyval_to_unicode(keyval);
+    if (ch < 0x20 || ch == 0x7f) return GDK_EVENT_PROPAGATE;
+    {
+        char typed[8] = {0};
+        char* joined;
+        g_unichar_to_utf8(ch, typed);
+        joined = g_strconcat(gtk_editable_get_text(GTK_EDITABLE(ui->entry)), typed, NULL);
+        start_search_text(win, joined, FALSE);
+        g_free(joined);
+    }
+    return GDK_EVENT_STOP;
+}
+
 /* Window-level keys: type-anywhere (GTK3 key_press printable branch) and
  * Ctrl+V paste-to-search (Mac paste:). Bubble phase, so a focused editable
  * consumes its keys first; the explicit focus check covers the rest. */
@@ -1008,7 +1056,21 @@ static gboolean on_window_key(GtkEventControllerKey* controller, guint keyval, g
     (void)controller;
     (void)keycode;
     if (!tab || !tab->doc || spdf_window_get_presentation(win)) return GDK_EVENT_PROPAGATE;
-    if (focus && GTK_IS_EDITABLE(focus)) return GDK_EVENT_PROPAGATE;
+    if (focus && GTK_IS_EDITABLE(focus)) {
+        /* Focused editables consume their keys in the target/bubble phase, so
+         * a key reaching this bubble-phase window handler was NOT consumed.
+         * For every editable but the search entry that means "not ours" —
+         * propagate. For the search entry it means the entry dropped the key
+         * (the reveal animation window: focus is granted before the entry
+         * accepts input, which lost mid-word keystrokes — "connector" landed
+         * as "cctor"). Fall through so the append branch below re-injects it;
+         * no double-insert is possible because a consumed key never bubbles
+         * here. */
+        SearchUi* focus_ui = search_ui(win);
+        gboolean in_search_entry = focus_ui && (focus == GTK_WIDGET(focus_ui->entry) ||
+                                                gtk_widget_is_ancestor(focus, GTK_WIDGET(focus_ui->entry)));
+        if (!in_search_entry) return GDK_EVENT_PROPAGATE;
+    }
 
     if ((state & GDK_CONTROL_MASK) != 0 && (state & (GDK_SHIFT_MASK | GDK_ALT_MASK)) == 0 &&
         (keyval == GDK_KEY_v || keyval == GDK_KEY_V)) {
@@ -1111,6 +1173,14 @@ GtkWidget* spdf_search_bar_new(SpdfWindow* win, GtkToggleButton* search_toggle) 
     window_keys = gtk_event_controller_key_new();
     g_signal_connect(window_keys, "key-pressed", G_CALLBACK(on_window_key), win);
     gtk_widget_add_controller(GTK_WIDGET(win), window_keys);
+
+    /* Reveal-race takeover (see on_window_key_capture). */
+    {
+        GtkEventController* capture_keys = gtk_event_controller_key_new();
+        gtk_event_controller_set_propagation_phase(capture_keys, GTK_PHASE_CAPTURE);
+        g_signal_connect(capture_keys, "key-pressed", G_CALLBACK(on_window_key_capture), win);
+        gtk_widget_add_controller(GTK_WIDGET(win), capture_keys);
+    }
 
     g_signal_connect_object(spdf_window_get_tab_view(win), "notify::selected-page",
                             G_CALLBACK(on_selected_page_changed), win, 0);
