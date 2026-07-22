@@ -33,6 +33,8 @@
 #include <glib.h>
 #include <math.h>
 
+#include "shenzhen_pdf_core.h" /* spdf_rect (header-only use; tests do not link the core) */
+
 G_BEGIN_DECLS
 
 /* ---------------------------------------------------------------------------
@@ -447,6 +449,57 @@ static inline void spdf_lru_deinit(SpdfLruCache* cache) {
 static inline gboolean spdf_slot_needs_crop(const SpdfPageRect* rect, double viewport_w, double viewport_h) {
     if (!rect || viewport_w <= 0.0 || viewport_h <= 0.0) return FALSE;
     return rect->h > 2.0 * viewport_h || rect->w > 2.0 * viewport_w;
+}
+
+/* ---------------------------------------------------------------------------
+ * Cursor regions. Port of the Mac model (SPDFMacCursorRegions.mm
+ * spdf_cursor_region_at_point + ShenzhenPDFMac.mm
+ * buildCursorRegionsForPageIfNeeded): per-page link and text-line rects in
+ * page space (PDF points), built ONCE per page off the main thread — the
+ * link set includes plain-text URLs (spdf_page_link_rects with
+ * detect_text_links=1, which builds the page's stext and would stall the
+ * main thread for hundreds of ms on dense pages). */
+
+/* Matches spdf_link_at_point's 2pt text-URL slop (Mac kSPDFCursorLinkHitPadding),
+ * so what hover shows as a hand is exactly what a click follows. */
+#define SPDF_CURSOR_LINK_HIT_PADDING 2.0
+/* Mac kSPDFCursorRegionMaxLinkRects. */
+#define SPDF_CURSOR_REGION_MAX_LINK_RECTS 512
+
+typedef enum {
+    SPDF_CURSOR_REGION_NONE = 0,
+    SPDF_CURSOR_REGION_LINK,
+    SPDF_CURSOR_REGION_TEXT,
+} SpdfCursorRegionKind;
+
+static inline gboolean spdf_cursor_rect_empty(const spdf_rect* rect) {
+    return !rect || rect->x1 <= rect->x0 || rect->y1 <= rect->y0;
+}
+
+/* Merge policy for the worker-built region arrays (Mac
+ * buildCursorRegionsForPageIfNeeded skips NSIsEmptyRect rects): only
+ * non-empty rects enter the cache, so a degenerate rect from the core can
+ * never own a hit test. Returns TRUE when the rect was appended. */
+static inline gboolean spdf_cursor_region_append_rect(GArray* rects /* spdf_rect */, const spdf_rect* rect) {
+    if (!rects || spdf_cursor_rect_empty(rect)) return FALSE;
+    g_array_append_vals(rects, rect, 1);
+    return TRUE;
+}
+
+static inline gboolean spdf_cursor_rect_contains(const spdf_rect* rect, double x, double y, double slop) {
+    return rect && x >= rect->x0 - slop && x <= rect->x1 + slop && y >= rect->y0 - slop && y <= rect->y1 + slop;
+}
+
+/* Link beats text beats none (SPDFMacCursorRegions.mm
+ * spdf_cursor_region_at_point); only link rects get the padding slop. */
+static inline SpdfCursorRegionKind spdf_cursor_region_at_point(const spdf_rect* links, guint link_count,
+                                                               const spdf_rect* text, guint text_count, double x,
+                                                               double y, double link_padding) {
+    for (guint i = 0; i < link_count; ++i)
+        if (spdf_cursor_rect_contains(&links[i], x, y, link_padding)) return SPDF_CURSOR_REGION_LINK;
+    for (guint i = 0; i < text_count; ++i)
+        if (spdf_cursor_rect_contains(&text[i], x, y, 0.0)) return SPDF_CURSOR_REGION_TEXT;
+    return SPDF_CURSOR_REGION_NONE;
 }
 
 G_END_DECLS

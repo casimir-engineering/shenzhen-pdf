@@ -43,6 +43,10 @@ void spdf_render_set_byte_cap(SpdfRenderService *svc, gsize bytes);
 // Drop every cached texture/list (rotation/OCR/save rewrote the file; worker
 // docs re-open by themselves, keyed on path+mtime+size).
 void spdf_render_service_invalidate(SpdfRenderService *svc);
+// Per-thread persistent worker document keyed on (path, mtime, size); worker
+// threads only (Mac workerDocumentForPath). The returned document is owned by
+// the calling thread's private slot — do not close it. NULL + err on failure.
+spdf_document *spdf_render_worker_document(const char *path, char *err, size_t err_len);
 
 // ---------------------------------------------------------------------------
 // spdf_docview.c — the page canvas (custom GtkWidget, snapshot + GdkTexture).
