@@ -1238,6 +1238,22 @@ static const char* updater_asset_name(void) {
     return updater_is_user_local() ? SPDF_UPDATER_TAR_ASSET : SPDF_UPDATER_DEB_ASSET;
 }
 
+// A system install can only be auto-updated where dpkg exists (the system
+// asset is a .deb). On foreign-package installs (the rpm from build-rpm.sh,
+// or anything else that lands the binary outside $HOME without dpkg) the
+// updater still announces new releases but must not offer to install —
+// updates come from the distribution/package manager (pkg/README.md).
+static gboolean updater_can_install(void) {
+    char* dpkg;
+    gboolean ok;
+
+    if (updater_is_user_local()) return TRUE;
+    dpkg = g_find_program_in_path("dpkg");
+    ok = dpkg != NULL;
+    g_free(dpkg);
+    return ok;
+}
+
 typedef struct {
     gboolean ok;            // an HTTP outcome was obtained and parsed
     gboolean not_modified;  // 304
@@ -1799,9 +1815,17 @@ static gboolean updater_install_deb(const char* deb_path, char** error_out) {
     gboolean ok = FALSE;
     int exit_status = -1;
 
-    if (!pkexec || !dpkg) {
+    if (!dpkg) {
+        // Non-dpkg system (e.g. the rpm install on Fedora): the system asset
+        // is a .deb, so there is nothing we could meaningfully install.
+        set_error(error_out,
+                  "this system does not use dpkg, so the update cannot be installed "
+                  "automatically; update Shenzhen PDF through your package manager");
+        goto out;
+    }
+    if (!pkexec) {
         char* msg = g_strdup_printf(
-            "pkexec/dpkg not available. Install the update manually:\n  sudo dpkg -i %s",
+            "pkexec is not available. Install the update manually:\n  sudo dpkg -i %s",
             deb_path);
         set_error(error_out, msg);
         g_free(msg);
@@ -1860,10 +1884,20 @@ static gboolean mutator_set_pending_tag(SpdfUpdateStore* store, gpointer user_da
 // completed install (pendingTag recorded, cache pruned).
 static gboolean updater_install_sync(const SpdfReleaseInfo* rel, GCancellable* cancellable,
                                      char** error_out) {
-    char* verified = updater_download_and_verify(rel, cancellable, error_out);
+    char* verified;
     gboolean installed;
     PendingTagArgs args;
 
+    // Refuse before downloading: on a no-dpkg system install (rpm etc.) the
+    // .deb asset could never be applied (reached via --install-update; the
+    // GTK prompt never offers Install Now here).
+    if (!updater_can_install()) {
+        set_error(error_out,
+                  "this system does not use dpkg, so the update cannot be installed "
+                  "automatically; update Shenzhen PDF through your package manager");
+        return FALSE;
+    }
+    verified = updater_download_and_verify(rel, cancellable, error_out);
     if (!verified) return FALSE;
     installed = updater_is_user_local() ? updater_install_user_local(verified, error_out)
                                         : updater_install_deb(verified, error_out);
@@ -2072,6 +2106,7 @@ static void updater_begin_install(const SpdfReleaseInfo* release) {
 typedef struct {
     SpdfReleaseInfo release;
     gboolean user_initiated;
+    gboolean can_install; // FALSE: no-dpkg system install (rpm etc.)
 } PromptCtx;
 
 static void prompt_ctx_free(PromptCtx* ctx) {
@@ -2095,16 +2130,20 @@ static gboolean mutator_snooze(SpdfUpdateStore* store, gpointer user_data) {
 static void update_prompt_done(GObject* source, GAsyncResult* result, gpointer user_data) {
     PromptCtx* ctx = user_data;
     int button = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), result, NULL);
+    // Buttons: {"Install Now", "Skip This Version", "Later"} when installable,
+    // {"OK", "Skip This Version"} on a no-dpkg system install (OK == Later).
+    gboolean install = ctx->can_install && button == 0;
+    gboolean skip = button == 1;
 
-    if (button == 0) { // Install Now
+    if (install) {
         updater_begin_install(&ctx->release);
-    } else if (button == 1) { // Skip This Version (permanent per-version)
+    } else if (skip) { // Skip This Version (permanent per-version)
         SpdfSettings* settings = updater_settings();
         if (settings) {
             spdf_state_set_string(&settings->skipped_update_version, ctx->release.tag);
             spdf_state_save_settings(spdf_app_get_state(g_updater.app));
         }
-    } else { // Later: snooze this tag on the silent path
+    } else { // Later/OK: snooze this tag on the silent path
         SnoozeArgs args = {ctx->release.tag};
         with_locked_update_store(mutator_snooze, &args);
     }
@@ -2112,19 +2151,31 @@ static void update_prompt_done(GObject* source, GAsyncResult* result, gpointer u
 }
 
 static void updater_present_update_available(PromptCtx* ctx) {
-    GtkAlertDialog* alert =
-        gtk_alert_dialog_new("Update %s ready", ctx->release.tag);
-    const char* buttons[] = {"Install Now", "Skip This Version", "Later", NULL};
+    GtkAlertDialog* alert = gtk_alert_dialog_new(
+        ctx->can_install ? "Update %s ready" : "Update %s available", ctx->release.tag);
+    const char* install_buttons[] = {"Install Now", "Skip This Version", "Later", NULL};
+    const char* manual_buttons[] = {"OK", "Skip This Version", NULL};
     char* notes = spdf_updater_format_notes(ctx->release.notes);
     char* detail;
 
     detail = g_strdup_printf("Shenzhen PDF %s is available — you have %s.%s%s",
                              ctx->release.tag, updater_running_version(),
                              *notes ? "\n\n" : "", notes);
+    if (!ctx->can_install) {
+        // Announce only: this system install cannot take the .deb asset
+        // (no dpkg — e.g. the rpm package), so never offer Install Now.
+        char* manual = g_strdup_printf(
+            "%s\n\nThis copy was installed by your system's package manager, so it "
+            "can't update itself. Install the new version the same way you installed "
+            "this one.",
+            detail);
+        g_free(detail);
+        detail = manual;
+    }
     gtk_alert_dialog_set_detail(alert, detail);
-    gtk_alert_dialog_set_buttons(alert, buttons);
+    gtk_alert_dialog_set_buttons(alert, ctx->can_install ? install_buttons : manual_buttons);
     gtk_alert_dialog_set_default_button(alert, 0);
-    gtk_alert_dialog_set_cancel_button(alert, 2);
+    gtk_alert_dialog_set_cancel_button(alert, ctx->can_install ? 2 : 0);
     gtk_alert_dialog_choose(alert, updater_active_window(), NULL, update_prompt_done, ctx);
     g_object_unref(alert);
     g_free(detail);
@@ -2172,6 +2223,7 @@ static gboolean check_finished_idle(gpointer user_data) {
         if (!suppress) {
             PromptCtx* prompt = g_new0(PromptCtx, 1);
             prompt->user_initiated = ctx->user_initiated;
+            prompt->can_install = updater_can_install();
             prompt->release = o->release; // transfer ownership
             memset(&o->release, 0, sizeof(o->release));
             updater_present_update_available(prompt);
