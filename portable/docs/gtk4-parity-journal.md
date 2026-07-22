@@ -82,10 +82,47 @@ autostart entry. Evidence: `SPDF-LAUNCH` marks, `gtk4-captures/launch-profile.tx
 "connector", entry got "cnnector") — the type-anywhere prefill focuses the
 entry asynchronously and a fast second keystroke races it. Fix: buffer
 window-level keys until the entry has focus. Low severity, logged.
+**RESOLVED 2026-07-22 in two stages:** the bubble-phase append (45bd9d6ee)
+was not enough — GNOME's ibus IM consumes-and-drops keys during the entry's
+async focus-in, so they never bubble. A 500 ms capture-phase takeover after
+a type-anywhere reveal now commits printable keys straight into the query
+(62c11bd3b). Verified 5/5 clean "connector" runs at 30–80 ms per key.
+
+## 2026-07-22 follow-up session (release-notes parity closure)
+
+All gaps from the release-notes audit closed, each verified with live
+XTEST captures on the built binary unless noted:
+
+- **Minimap viewport width vs zoom** (user report): the indicator kept the
+  GTK3 full-width band at every zoom. Now ports the Mac
+  `unscrolledVisibleRectForScale` union-of-page-intersections model — zoom
+  in and the indicator narrows/tracks horizontally. Verified: 115 px →
+  63 px at 195 % on a captured run; unit tests cover narrow + fallback.
+- **Enter mid-search on a large document** (45bd9d6ee, was unverified):
+  400-page probe shows 2395/4799 (nearest match) immediately after Enter
+  and unchanged after the final result batch.
+- **Palette (26.7.9 headliners)**: Open Documents section first (deduped
+  against favorites, current tab excluded), "fav" prefix lists favorites,
+  every command row carries a menu-breadcrumb subtitle + toggle state, and
+  menu names are searchable. New `win.search-nearest` toggle exposes
+  `searchJumpsToNearestResult`. Verified in a two-document capture.
+- **Cursor regions (26.7.17)**: plain-text URLs get the hand cursor;
+  rects built off-main with `detect_text_links=1` (Mac @11269 model),
+  generation-invalidated. Unit-tested (priority/slop/merge); live hover
+  needs a manual pass.
+- **Minimap (26.7.17)**: strip-scroll kinetic momentum
+  (`::decelerate` + frame clock, GtkKineticScrolling decay), Ctrl+scroll
+  forwards to the docview zoom anchored at the strip point (verified live:
+  100 % → 121 % on two notches over the strip). Momentum needs a touchpad
+  flick to feel-check (wheel notches never emit decelerate, same as Mac).
+- **Read-only dot (26.6.27-2)**: fixed systemOrange #FF9500 PNG icon
+  replaces the theme-recolored symbolic (verified in capture, dark theme).
+  Bonus fix found while verifying: shadow-copy tabs no longer show the
+  `ro-<hash>` working-copy basename as their title.
 
 ## Known issues / needs live verification
 
-1. Search-bar reveal keystroke race (above).
+1. ~~Search-bar reveal keystroke race~~ — fixed + capture-verified above.
 2. pkexec flows (updater install, OCR toolchain install) need a real
    interactive auth dialog — not testable headless.
 3. Printing verified by unit tests + dialog code paths; needs a real CUPS
@@ -98,6 +135,9 @@ window-level keys until the entry has focus. Low severity, logged.
    worth one manual session on the real power-tree PDF from the June VM run.
 7. Cold-path present (~450 ms of process warmup) could shrink further by
    moving warmup earlier for non-resident users; resident mode makes it moot.
+8. Minimap kinetic momentum: touchpad flick feel-check (direction assumed
+   from the GtkScrolledWindow decelerate convention).
+9. Plain-text URL hover: one manual hover+click on a PDF with a bare URL.
 
 ## GTK3 retirement
 
