@@ -205,6 +205,11 @@ void spdf_default_reader_note_document_opened(SpdfWindow* win) {
     SpdfSettings* settings;
 
     g_return_if_fail(SPDF_IS_WINDOW(win));
+    /* Inside Flatpak, `xdg-mime default ...` (if present at all in the
+     * runtime) edits the SANDBOX's mimeapps.list, not the host's — the
+     * registration silently does nothing. Skip the prompt; making this work
+     * would need a host-side portal (no default-handler portal exists yet). */
+    if (spdf_running_in_flatpak()) return;
     if (g_reader_prompted) return;
     settings = reader_settings(win);
     if (settings && settings->default_reader_prompt_dismissed) return;
@@ -230,6 +235,14 @@ static void action_make_default(GSimpleAction* action, GVariant* parameter, gpoi
 
     (void)action;
     (void)parameter;
+    if (spdf_running_in_flatpak()) {
+        /* Same sandbox limitation as the prompt path (see
+         * spdf_default_reader_note_document_opened); the menu action gives
+         * feedback instead of silently editing the sandbox's mimeapps.list. */
+        spdf_window_show_toast(win, "Inside Flatpak, choose the default PDF app in your "
+                                    "system Settings (Apps → Default Apps)");
+        return;
+    }
     if (!reader_desktop_installed()) {
         /* Menu path gives feedback where the automatic prompt stays silent. */
         spdf_window_show_toast(win, "shenzhenpdf.desktop is not installed — install the package to register");
