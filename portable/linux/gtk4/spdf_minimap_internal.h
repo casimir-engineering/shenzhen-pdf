@@ -365,6 +365,39 @@ static inline double spdf_minimap_document_top_for_strip_scroll(double current_d
 }
 
 /* ---------------------------------------------------------------------------
+ * Kinetic strip-scroll momentum. The Mac gets momentum for free (AppKit
+ * feeds momentumPhase scroll events through the same
+ * sendStripScrollForEvent: path, SPDFMacMinimapView.mm); GTK only reports
+ * the fling velocity ("decelerate" on a GTK_EVENT_CONTROLLER_SCROLL_KINETIC
+ * controller), so the widget animates the decay itself on a frame-clock
+ * tick. The decay model is GtkKineticScrolling's DECELERATING phase
+ * (gtk/gtkkineticscrolling.c): per frame
+ *     position += (1 - exp(-friction*dt)) * velocity / friction
+ *     velocity *= exp(-friction*dt)
+ * with the standard deceleration friction 4/s and the 1 px/s stop
+ * threshold — a typical flick (a few hundred strip px/s) is spent after
+ * roughly 1.5 s, matching GtkScrolledWindow's feel. */
+#define SPDF_MINIMAP_KINETIC_FRICTION 4.0      /* GtkKineticScrolling DECELERATION_FRICTION, 1/s */
+#define SPDF_MINIMAP_KINETIC_STOP_VELOCITY 1.0 /* strip px/s; below this the tail is invisible */
+
+/* Advance the decay by dt seconds: returns the strip distance covered this
+ * frame and decays *velocity in place. */
+static inline double spdf_minimap_kinetic_step(double* velocity, double dt_s) {
+    double exp_part;
+    double delta;
+
+    if (!velocity || !isfinite(dt_s) || dt_s <= 0.0) return 0.0;
+    exp_part = exp(-SPDF_MINIMAP_KINETIC_FRICTION * dt_s);
+    delta = (1.0 - exp_part) * *velocity / SPDF_MINIMAP_KINETIC_FRICTION;
+    *velocity *= exp_part;
+    return delta;
+}
+
+static inline gboolean spdf_minimap_kinetic_done(double velocity) {
+    return fabs(velocity) < SPDF_MINIMAP_KINETIC_STOP_VELOCITY;
+}
+
+/* ---------------------------------------------------------------------------
  * Bounded thumbnail window (Mac SPDFMacMinimapWindow). Only pages inside the
  * window get thumbnails; the hysteresis band keeps the window steady while
  * scrolling within it. */
