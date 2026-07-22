@@ -41,6 +41,41 @@ const char* spdf_tab_get_path(SpdfTab* tab) {
     return tab ? tab->path : NULL;
 }
 
+static cairo_status_t read_only_dot_png_write(void* closure, const unsigned char* data, unsigned int length) {
+    g_byte_array_append((GByteArray*)closure, data, length);
+    return CAIRO_STATUS_SUCCESS;
+}
+
+// The ORANGE read-only dot (Mac SPDFMacTabStripView.mm: kReadOnlyDotDiameter
+// 7pt filled with NSColor.systemOrangeColor, 26.6.27-2 release notes). A
+// themed *-symbolic icon gets recolored to the theme foreground and reads as
+// a gray/white dot, so the dot is rendered once into a PNG-backed GBytesIcon,
+// which the tab bar shows as-is: fixed systemOrange (#FF9500) in both light
+// and dark. Drawn at 2x with the dot filling half the canvas, mirroring the
+// Mac's small-dot-in-tab proportions when scaled to the 16px indicator slot.
+static GIcon* read_only_dot_icon(void) {
+    static GIcon* icon = NULL;
+    static gsize initialized = 0; // same one-shot pattern as render_pool_get
+    if (g_once_init_enter(&initialized)) {
+        cairo_surface_t* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 32, 32);
+        cairo_t* cr = cairo_create(surface);
+        GByteArray* array = g_byte_array_new();
+        GBytes* bytes;
+
+        cairo_set_source_rgb(cr, 1.0, 0.584, 0.0); // systemOrange light variant
+        cairo_arc(cr, 16.0, 16.0, 8.0, 0.0, 2.0 * G_PI);
+        cairo_fill(cr);
+        cairo_destroy(cr);
+        cairo_surface_write_to_png_stream(surface, read_only_dot_png_write, array);
+        cairo_surface_destroy(surface);
+        bytes = g_byte_array_free_to_bytes(array);
+        icon = g_bytes_icon_new(bytes);
+        g_bytes_unref(bytes);
+        g_once_init_leave(&initialized, 1);
+    }
+    return icon;
+}
+
 void spdf_tab_set_read_only_shadow(SpdfTab* tab, gboolean read_only) {
     if (!tab || tab->read_only_shadow == read_only) return;
     tab->read_only_shadow = read_only;
@@ -49,13 +84,11 @@ void spdf_tab_set_read_only_shadow(SpdfTab* tab, gboolean read_only) {
         // Indicator slot for the orange read-only dot; the watcher module
         // flips this when it swaps a document for its shadow copy. Tooltip
         // ports the Mac dot tooltip (minus the macOS prompt wording).
-        GIcon* icon = g_themed_icon_new("media-record-symbolic");
-        adw_tab_page_set_indicator_icon(tab->page, icon);
+        adw_tab_page_set_indicator_icon(tab->page, read_only_dot_icon());
         adw_tab_page_set_indicator_tooltip(tab->page,
                                            "Read-only file. You're viewing a local copy; changes to the "
                                            "original are picked up automatically. Editing will ask to "
                                            "save a copy.");
-        g_object_unref(icon);
     } else {
         adw_tab_page_set_indicator_icon(tab->page, NULL);
     }
