@@ -7,8 +7,13 @@
 
 #include "spdf_app.h"
 
-// Entries with a NULL group are registered (and get accels) but stay out of
-// the cheat sheet; entries with no accels are name-registry-only.
+// The group doubles as the entry's menu name: the F1 cheat sheet groups by
+// it (accel-bearing entries only) and the palette shows it as the row's
+// breadcrumb ("View ▸ Zoom in") and matches queries against it (Mac menu
+// breadcrumbs, SPDFMacPaletteResults.mm spdf_palette_menu_breadcrumb).
+// Entries with a NULL group (context-menu actions with no menu path) are
+// registered but get neither; entries with no accels are name-registry-only
+// and never reach the cheat sheet.
 static const SpdfShortcutEntry k_shortcuts[] = {
     // --- Files
     {"win.open", {"<Control>o", NULL, NULL}, "Files", "Open a document"},
@@ -24,6 +29,9 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.find-next", {"<Control>g", NULL, NULL}, "Search", "Go to the next match"},
     {"win.find-prev", {"<Control><Shift>g", NULL, NULL}, "Search", "Go to the previous match"},
     {"win.palette", {"<Control>k", NULL, NULL}, "Search", "Favorites and command palette"},
+    // Stateful menu toggle for searchJumpsToNearestResult (spdf_window.c;
+    // Mac "Search Jumps to Nearest Result", ShenzhenPDFMac.mm @2501-2504).
+    {"win.search-nearest", {NULL, NULL, NULL}, "Search", "Search jumps to the nearest result"},
     // --- View
     {"win.zoom-in", {"<Control>plus", "<Control>equal", "<Control>KP_Add"}, "View", "Zoom in"},
     {"win.zoom-out", {"<Control>minus", "<Control>KP_Subtract", NULL}, "View", "Zoom out"},
@@ -35,7 +43,7 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.sidebar", {"F9", NULL, NULL}, "View", "Toggle the side panel"},
     // No accelerator: neither GTK3 nor the Mac app bound a key to the
     // minimap toggle (spdf_minimap.c registers the action).
-    {"win.minimap", {NULL, NULL, NULL}, NULL, "Toggle the minimap"},
+    {"win.minimap", {NULL, NULL, NULL}, "View", "Toggle the minimap"},
     {"win.presentation", {"F5", "<Control><Shift>f", NULL}, "View", "Presentation mode (Escape exits)"},
     // --- Navigation
     {"win.goto-page", {"<Control>l", NULL, NULL}, "Navigation", "Go to page"},
@@ -48,11 +56,11 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.favorite-page", {"<Control>b", NULL, NULL}, "Favorites", "Favorite the current page"},
     {"win.favorite-document", {"<Control><Shift>b", NULL, NULL}, "Favorites", "Favorite the current document"},
     // --- Tools (menu-only)
-    {"win.ocr", {NULL, NULL, NULL}, NULL, "OCR the document"},
-    {"win.translate", {NULL, NULL, NULL}, NULL, "Translate the document"},
-    {"win.open-in-browser", {NULL, NULL, NULL}, NULL, "Open in the default browser"},
-    {"win.show-in-folder", {NULL, NULL, NULL}, NULL, "Show the document in its folder"},
-    {"win.copy-path", {NULL, NULL, NULL}, NULL, "Copy the document path"},
+    {"win.ocr", {NULL, NULL, NULL}, "Tools", "OCR the document"},
+    {"win.translate", {NULL, NULL, NULL}, "Tools", "Translate the document"},
+    {"win.open-in-browser", {NULL, NULL, NULL}, "Tools", "Open in the default browser"},
+    {"win.show-in-folder", {NULL, NULL, NULL}, "Tools", "Show the document in its folder"},
+    {"win.copy-path", {NULL, NULL, NULL}, "Tools", "Copy the document path"},
     // --- Doc-view context menu (spdf_annot.c, menu-only)
     {"win.annot-add-comment", {NULL, NULL, NULL}, NULL, "Add a comment at the selection or click point"},
     {"win.annot-add-highlight", {NULL, NULL, NULL}, NULL, "Highlight the selection with a comment"},
@@ -66,13 +74,13 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.tab-copy-title", {NULL, NULL, NULL}, NULL, "Copy this tab's title"},
     // --- Application
     {"app.open-recent", {NULL, NULL, NULL}, NULL, "Open a recently opened document"},
-    {"app.about", {NULL, NULL, NULL}, NULL, "About Shenzhen PDF"},
-    {"win.check-updates", {NULL, NULL, NULL}, NULL, "Check for updates"},
+    {"app.about", {NULL, NULL, NULL}, "Help", "About Shenzhen PDF"},
+    {"win.check-updates", {NULL, NULL, NULL}, "Help", "Check for updates"},
     // --- Wave D: default-reader registration (spdf_default_reader.c) and
     // the resident instant-launch toggle (stateful, spdf_app.c). Menu +
     // palette only; no accelerators.
-    {"win.make-default", {NULL, NULL, NULL}, NULL, "Set as the default PDF reader"},
-    {"app.instant-launch", {NULL, NULL, NULL}, NULL, "Instant launch: keep running in the background"},
+    {"win.make-default", {NULL, NULL, NULL}, "Help", "Set as the default PDF reader"},
+    {"app.instant-launch", {NULL, NULL, NULL}, "Help", "Instant launch: keep running in the background"},
     // --- Help
     {"win.shortcuts", {"F1", NULL, NULL}, "Help", "Show this shortcut cheat sheet"},
 };
@@ -153,7 +161,10 @@ void spdf_shortcuts_present_window(GtkWindow* parent) {
         const char* group = k_shortcuts[i].group;
         gboolean seen = FALSE;
 
-        if (!group) continue;
+        // Accel-less entries never render (append_group_xml skips them), so
+        // a group discovered only through them would be an empty heading —
+        // groups exist for the palette breadcrumbs too, not just this sheet.
+        if (!group || !k_shortcuts[i].accels[0]) continue;
         for (int s = 0; s < seen_count; ++s) {
             if (strcmp(seen_groups[s], group) == 0) {
                 seen = TRUE;

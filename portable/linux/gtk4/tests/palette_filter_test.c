@@ -1,7 +1,11 @@
 // Pure-logic tests for the command palette's filter (glib only, no GTK):
 // fuzzy ranking semantics, Commands-section assembly from a fake action
-// table, and the text-match snippet builder. The GTK half of the module is
-// compiled out via SPDF_PALETTE_TESTING (same pattern as spdf_state_test.c).
+// table (menu breadcrumbs included in the haystack), the Open-documents
+// section (query match, path dedup, favorites dedup, the "fav" browse
+// keyword — ports of SPDFMacPaletteResults.mm, mirrored on its
+// SPDFMacPaletteResultsTests.mm), and the text-match snippet builder. The
+// GTK half of the module is compiled out via SPDF_PALETTE_TESTING (same
+// pattern as spdf_state_test.c).
 #define SPDF_PALETTE_TESTING 1
 
 #include "../spdf_palette.c"
@@ -64,12 +68,13 @@ static void test_fuzzy_exact_values_are_stable(void) {
 // --- command filtering / section assembly --------------------------------------
 
 static const SpdfPaletteCommand k_fake_table[] = {
-    {"win.open", "Open a document", "<Control>o", TRUE},
-    {"win.close-tab", "Close the current tab", "<Control>w", TRUE},
-    {"win.print", "Print the document", "<Control>p", FALSE}, // disabled
-    {"win.copy", "Copy selected document text", "<Control>c", TRUE},
-    {"win.rotate-cw", "", "<Control>r", TRUE},                // no title
-    {"app.quit", "Quit Shenzhen PDF", "<Control>q", TRUE},
+    {"win.open", "Open a document", "<Control>o", "Files \xE2\x96\xB8 Open a document", TRUE, FALSE},
+    {"win.close-tab", "Close the current tab", "<Control>w", "Files \xE2\x96\xB8 Close the current tab", TRUE, FALSE},
+    {"win.print", "Print the document", "<Control>p", "Files \xE2\x96\xB8 Print the document", FALSE, FALSE}, // disabled
+    {"win.copy", "Copy selected document text", "<Control>c", "Edit \xE2\x96\xB8 Copy selected document text", TRUE,
+     FALSE},
+    {"win.rotate-cw", "", "<Control>r", NULL, TRUE, FALSE}, // no title
+    {"app.quit", "Quit Shenzhen PDF", "<Control>q", NULL, TRUE, FALSE},
 };
 #define FAKE_COUNT ((int)G_N_ELEMENTS(k_fake_table))
 
@@ -105,8 +110,8 @@ static void test_filter_ranks_by_score(void) {
 
 static void test_filter_tie_keeps_table_order(void) {
     static const SpdfPaletteCommand twins[] = {
-        {"win.a", "Same label", NULL, TRUE},
-        {"win.b", "Same label", NULL, TRUE},
+        {"win.a", "Same label", NULL, NULL, TRUE, FALSE},
+        {"win.b", "Same label", NULL, NULL, TRUE, FALSE},
     };
     SpdfPaletteMatch matches[2];
     int n = spdf_palette_filter_commands(twins, 2, "same", matches, 2);
@@ -130,6 +135,181 @@ static void test_filter_no_match_returns_empty(void) {
     SpdfPaletteMatch matches[FAKE_COUNT];
     int n = spdf_palette_filter_commands(k_fake_table, FAKE_COUNT, "zzzz", matches, FAKE_COUNT);
     g_assert_cmpint(n, ==, 0);
+}
+
+static void test_filter_breadcrumb_is_part_of_haystack(void) {
+    SpdfPaletteMatch matches[FAKE_COUNT];
+    // "edit" is not a subsequence of any title in the table, but it is the
+    // menu name of win.copy's "Edit ▸ Copy selected document text" — the Mac
+    // matches menu commands by breadcrumb too (searching by menu name).
+    int n = spdf_palette_filter_commands(k_fake_table, FAKE_COUNT, "edit", matches, FAKE_COUNT);
+
+    g_assert_cmpint(n, ==, 1);
+    g_assert_cmpint(matches[0].index, ==, 3); // win.copy
+}
+
+static void test_filter_no_breadcrumb_never_matches_menu_names(void) {
+    SpdfPaletteMatch matches[FAKE_COUNT];
+    // "files" reaches the two enabled entries under the Files menu, but not
+    // app.quit (NULL breadcrumb) even though it is enabled and titled.
+    int n = spdf_palette_filter_commands(k_fake_table, FAKE_COUNT, "files", matches, FAKE_COUNT);
+
+    g_assert_cmpint(n, ==, 2);
+    for (int i = 0; i < n; ++i) g_assert_cmpint(matches[i].index, !=, 5);
+}
+
+static void test_filter_takes_better_of_title_and_breadcrumb_score(void) {
+    static const SpdfPaletteCommand commands[] = {
+        {"win.zoom-in", "Zoom in", NULL, "View \xE2\x96\xB8 Zoom in", TRUE, FALSE},
+    };
+    SpdfPaletteMatch matches[1];
+    int title_only = spdf_palette_fuzzy_score("zoom", "Zoom in");
+    int n = spdf_palette_filter_commands(commands, 1, "zoom", matches, 1);
+
+    // The breadcrumb's leading "View ▸ " costs lead-skip penalty, so the
+    // clean title score must win the MAX.
+    g_assert_cmpint(n, ==, 1);
+    g_assert_cmpint(matches[0].score, ==, title_only);
+}
+
+// --- menu breadcrumb ------------------------------------------------------------
+
+static void test_breadcrumb_joins_group_and_title(void) {
+    char* crumb = spdf_palette_menu_breadcrumb("View", "Zoom in");
+    g_assert_cmpstr(crumb, ==, "View \xE2\x96\xB8 Zoom in");
+    g_free(crumb);
+}
+
+static void test_breadcrumb_skips_empty_components(void) {
+    char* title_only = spdf_palette_menu_breadcrumb("", "Open…");
+    char* group_only = spdf_palette_menu_breadcrumb("Tools", NULL);
+
+    // Mac parity: empty components are skipped, a lone component stands by
+    // itself, and nothing at all is NULL.
+    g_assert_cmpstr(title_only, ==, "Open…");
+    g_assert_cmpstr(group_only, ==, "Tools");
+    g_assert_null(spdf_palette_menu_breadcrumb(NULL, ""));
+    g_free(title_only);
+    g_free(group_only);
+}
+
+// --- open documents -------------------------------------------------------------
+
+static void test_open_doc_query_match(void) {
+    // Mac spdf_palette_open_document_matches_query semantics: empty query
+    // matches; otherwise title or file name substring, case-insensitively;
+    // directory components never match.
+    g_assert_true(spdf_palette_open_document_matches_query("", "Title", "/a/b.pdf"));
+    g_assert_true(spdf_palette_open_document_matches_query(NULL, "Title", "/a/b.pdf"));
+    g_assert_true(spdf_palette_open_document_matches_query("hard", "SG882G Hardware Design", "/a/b.pdf"));
+    g_assert_true(spdf_palette_open_document_matches_query("quectel", "Datasheet (2)", "/docs/Quectel_SG882G.pdf"));
+    g_assert_false(spdf_palette_open_document_matches_query("missing", "Title", "/a/b.pdf"));
+    g_assert_false(spdf_palette_open_document_matches_query("docs", "Title", "/docs/b.pdf"));
+}
+
+static const SpdfPaletteOpenDoc k_open_docs[] = {
+    {"/docs/alpha.pdf", "alpha"},
+    {"/docs/beta.pdf", "beta"},
+    {"/other/alpha-two.pdf", "alpha-two"},
+};
+#define OPEN_DOC_COUNT ((int)G_N_ELEMENTS(k_open_docs))
+
+static void test_open_docs_empty_query_keeps_order(void) {
+    int picks[OPEN_DOC_COUNT];
+    int n = spdf_palette_filter_open_documents(k_open_docs, OPEN_DOC_COUNT, "", picks, OPEN_DOC_COUNT);
+
+    g_assert_cmpint(n, ==, 3);
+    for (int i = 0; i < n; ++i) g_assert_cmpint(picks[i], ==, i);
+}
+
+static void test_open_docs_query_filters_preserving_order(void) {
+    int picks[OPEN_DOC_COUNT];
+    int n = spdf_palette_filter_open_documents(k_open_docs, OPEN_DOC_COUNT, "alpha", picks, OPEN_DOC_COUNT);
+
+    g_assert_cmpint(n, ==, 2);
+    g_assert_cmpint(picks[0], ==, 0);
+    g_assert_cmpint(picks[1], ==, 2);
+    g_assert_cmpint(spdf_palette_filter_open_documents(k_open_docs, OPEN_DOC_COUNT, "gamma", picks, OPEN_DOC_COUNT),
+                    ==, 0);
+}
+
+static void test_open_docs_dedup_by_canonical_path(void) {
+    static const SpdfPaletteOpenDoc duplicated[] = {
+        {"/docs/alpha.pdf", "alpha"},
+        {"/docs/alpha.pdf", "alpha"},
+        {"/docs//alpha.pdf", "alpha"}, // same file through a sloppy path
+    };
+    int picks[3];
+    int n = spdf_palette_filter_open_documents(duplicated, 3, "", picks, 3);
+
+    // The same document open twice (even under a non-normalized path) lists
+    // once — Mac stringByStandardizingPath dedup.
+    g_assert_cmpint(n, ==, 1);
+    g_assert_cmpint(picks[0], ==, 0);
+}
+
+static void test_open_docs_blank_paths_and_bad_input(void) {
+    static const SpdfPaletteOpenDoc ghost[] = {{"", "ghost"}, {NULL, "gone"}};
+    int picks[2];
+
+    g_assert_cmpint(spdf_palette_filter_open_documents(ghost, 2, "", picks, 2), ==, 0);
+    g_assert_cmpint(spdf_palette_filter_open_documents(NULL, 2, "", picks, 2), ==, 0);
+    g_assert_cmpint(spdf_palette_filter_open_documents(k_open_docs, OPEN_DOC_COUNT, "", NULL, 2), ==, 0);
+    g_assert_cmpint(spdf_palette_filter_open_documents(k_open_docs, OPEN_DOC_COUNT, "", picks, 0), ==, 0);
+}
+
+static void test_open_docs_section_is_first(void) {
+    // The documented palette order: Open documents at the top, before the
+    // browsing groups — Mac refreshPaletteResults section order.
+    g_assert_cmpint(SPDF_PALETTE_SECTION_OPEN_DOCS, <, SPDF_PALETTE_SECTION_FAVORITES);
+    g_assert_cmpint(SPDF_PALETTE_SECTION_FAVORITES, <, SPDF_PALETTE_SECTION_COMMANDS);
+    g_assert_cmpint(SPDF_PALETTE_SECTION_COMMANDS, <, SPDF_PALETTE_SECTION_RECENTS);
+    g_assert_cmpint(SPDF_PALETTE_SECTION_RECENTS, <, SPDF_PALETTE_SECTION_MATCHES);
+}
+
+// --- favorites vs open documents ------------------------------------------------
+
+static void test_favorite_shadowed_only_for_open_document_favorites(void) {
+    GHashTable* open = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+    g_hash_table_add(open, g_strdup("/docs/alpha.pdf"));
+    // A document favorite of an open doc hides; the page favorite of the
+    // same doc stays (a distinct jump target), as does any other document.
+    g_assert_true(spdf_palette_favorite_shadowed_by_open_doc("document", "/docs/alpha.pdf", open));
+    g_assert_true(spdf_palette_favorite_shadowed_by_open_doc("document", "/docs//alpha.pdf", open));
+    g_assert_false(spdf_palette_favorite_shadowed_by_open_doc("page", "/docs/alpha.pdf", open));
+    g_assert_false(spdf_palette_favorite_shadowed_by_open_doc("document", "/docs/beta.pdf", open));
+    g_assert_false(spdf_palette_favorite_shadowed_by_open_doc("document", "", open));
+    g_assert_false(spdf_palette_favorite_shadowed_by_open_doc("document", NULL, open));
+    g_assert_false(spdf_palette_favorite_shadowed_by_open_doc("document", "/docs/alpha.pdf", NULL));
+    g_hash_table_unref(open);
+
+    open = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    g_assert_false(spdf_palette_favorite_shadowed_by_open_doc("document", "/docs/alpha.pdf", open)); // nothing open
+    g_hash_table_unref(open);
+}
+
+// --- "fav" browse keyword -------------------------------------------------------
+
+static void test_fav_prefix_reveals_all_favorites(void) {
+    // Any >= 3 character prefix of "favorites", case-insensitively, with
+    // surrounding whitespace ignored — Mac
+    // spdf_palette_query_reveals_all_favorites.
+    g_assert_true(spdf_palette_query_reveals_all_favorites("fav"));
+    g_assert_true(spdf_palette_query_reveals_all_favorites("favo"));
+    g_assert_true(spdf_palette_query_reveals_all_favorites("favorite"));
+    g_assert_true(spdf_palette_query_reveals_all_favorites("favorites"));
+    g_assert_true(spdf_palette_query_reveals_all_favorites("FaV"));
+    g_assert_true(spdf_palette_query_reveals_all_favorites(" fav "));
+}
+
+static void test_fav_keyword_rejects_non_prefixes(void) {
+    g_assert_false(spdf_palette_query_reveals_all_favorites("fa")); // too short
+    g_assert_false(spdf_palette_query_reveals_all_favorites(""));
+    g_assert_false(spdf_palette_query_reveals_all_favorites(NULL));
+    g_assert_false(spdf_palette_query_reveals_all_favorites("fax"));
+    g_assert_false(spdf_palette_query_reveals_all_favorites("favorite x"));
+    g_assert_false(spdf_palette_query_reveals_all_favorites("favoritess")); // overshoots the keyword
 }
 
 // --- snippet builder -----------------------------------------------------------
@@ -188,6 +368,20 @@ int main(int argc, char** argv) {
     g_test_add_func("/palette/filter/tie-order", test_filter_tie_keeps_table_order);
     g_test_add_func("/palette/filter/out-max", test_filter_respects_out_max_and_bad_input);
     g_test_add_func("/palette/filter/no-match", test_filter_no_match_returns_empty);
+    g_test_add_func("/palette/filter/breadcrumb-haystack", test_filter_breadcrumb_is_part_of_haystack);
+    g_test_add_func("/palette/filter/no-breadcrumb", test_filter_no_breadcrumb_never_matches_menu_names);
+    g_test_add_func("/palette/filter/breadcrumb-score", test_filter_takes_better_of_title_and_breadcrumb_score);
+    g_test_add_func("/palette/breadcrumb/joins", test_breadcrumb_joins_group_and_title);
+    g_test_add_func("/palette/breadcrumb/empty-components", test_breadcrumb_skips_empty_components);
+    g_test_add_func("/palette/open-docs/query-match", test_open_doc_query_match);
+    g_test_add_func("/palette/open-docs/empty-query-order", test_open_docs_empty_query_keeps_order);
+    g_test_add_func("/palette/open-docs/query-filters", test_open_docs_query_filters_preserving_order);
+    g_test_add_func("/palette/open-docs/dedup", test_open_docs_dedup_by_canonical_path);
+    g_test_add_func("/palette/open-docs/bad-input", test_open_docs_blank_paths_and_bad_input);
+    g_test_add_func("/palette/open-docs/section-first", test_open_docs_section_is_first);
+    g_test_add_func("/palette/favorites/shadowed-by-open", test_favorite_shadowed_only_for_open_document_favorites);
+    g_test_add_func("/palette/favorites/fav-keyword", test_fav_prefix_reveals_all_favorites);
+    g_test_add_func("/palette/favorites/fav-keyword-rejects", test_fav_keyword_rejects_non_prefixes);
     g_test_add_func("/palette/snippet/short-line", test_snippet_short_line_returned_whole);
     g_test_add_func("/palette/snippet/no-match", test_snippet_no_match_returns_null);
     g_test_add_func("/palette/snippet/clipping", test_snippet_clips_long_line_with_ellipses);
