@@ -29,6 +29,9 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.find-next", {"<Control>g", NULL, NULL}, "Search", "Go to the next match"},
     {"win.find-prev", {"<Control><Shift>g", NULL, NULL}, "Search", "Go to the previous match"},
     {"win.palette", {"<Control>k", NULL, NULL}, "Search", "Favorites and command palette"},
+    // Stateful menu toggle for searchJumpsToNearestResult (spdf_window.c;
+    // Mac "Search Jumps to Nearest Result", ShenzhenPDFMac.mm @2501-2504).
+    {"win.search-nearest", {NULL, NULL, NULL}, "Search", "Search jumps to the nearest result"},
     // --- View
     {"win.zoom-in", {"<Control>plus", "<Control>equal", "<Control>KP_Add"}, "View", "Zoom in"},
     {"win.zoom-out", {"<Control>minus", "<Control>KP_Subtract", NULL}, "View", "Zoom out"},
