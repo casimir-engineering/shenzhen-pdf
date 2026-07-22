@@ -43,6 +43,10 @@ void spdf_render_set_byte_cap(SpdfRenderService *svc, gsize bytes);
 // Drop every cached texture/list (rotation/OCR/save rewrote the file; worker
 // docs re-open by themselves, keyed on path+mtime+size).
 void spdf_render_service_invalidate(SpdfRenderService *svc);
+// Per-thread persistent worker document keyed on (path, mtime, size); worker
+// threads only (Mac workerDocumentForPath). The returned document is owned by
+// the calling thread's private slot — do not close it. NULL + err on failure.
+spdf_document *spdf_render_worker_document(const char *path, char *err, size_t err_len);
 
 // ---------------------------------------------------------------------------
 // spdf_docview.c — the page canvas (custom GtkWidget, snapshot + GdkTexture).
@@ -59,6 +63,12 @@ void spdf_doc_view_set_fit(SpdfDocView *v, SpdfFitMode m);
 SpdfFitMode spdf_doc_view_get_fit(SpdfDocView *v);
 void spdf_doc_view_get_scroll(SpdfDocView *v, double *x, double *y);
 void spdf_doc_view_set_scroll(SpdfDocView *v, double x, double y);
+// One Ctrl+wheel zoom step (dy in scroll-event units), for widgets that
+// forward their Ctrl+scroll to the document (the minimap; Mac
+// minimapViewDidReceiveZoomScrollWheel). anchor_x/anchor_y are widget-space
+// coordinates of the view; has_anchor=FALSE anchors at the viewport center.
+void spdf_doc_view_zoom_scroll(SpdfDocView *v, double dy, gboolean has_anchor,
+                               double anchor_x, double anchor_y);
 char *spdf_doc_view_copy_selection(SpdfDocView *v); // NULL if none
 // Kick the first-page render before the window maps (launch-speed budget);
 // renders at the restored zoom, settle pass corrects fit after first allocate.

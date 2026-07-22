@@ -72,6 +72,10 @@ static gboolean file_state_for_path(const char* path, gint64* mtime, gint64* siz
     return TRUE;
 }
 
+/* Exported as spdf_render_worker_document (spdf_internal.h): the docview's
+ * cursor-region builder runs on its own worker thread and needs the same
+ * per-thread persistent document (the core's one-thread-per-spdf_document
+ * contract forbids touching the tab's main-thread doc off-main). */
 static spdf_document* worker_document_for_path(const char* path, char* err, size_t err_len) {
     gint64 mtime = 0;
     gint64 size = 0;
@@ -97,6 +101,10 @@ static spdf_document* worker_document_for_path(const char* path, char* err, size
     slot->size = size;
     slot->doc = spdf_open(path, err, err_len);
     return slot->doc;
+}
+
+spdf_document* spdf_render_worker_document(const char* path, char* err, size_t err_len) {
+    return worker_document_for_path(path, err, err_len);
 }
 
 static unsigned page_list_render_flags(void) {

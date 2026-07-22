@@ -31,7 +31,9 @@
  *     (SPDFMacCursorRegions.mm spdf_link_click_gesture_*, commit c61cc349f:
  *     a press that moves beyond the threshold or creates a selection never
  *     activates the link) and I-beam/hand cursor regions
- *     (spdf_cursor_region_at_point);
+ *     (spdf_cursor_region_at_point), built per page off the main thread
+ *     including plain-text URLs (ShenzhenPDFMac.mm
+ *     buildCursorRegionsForPageIfNeeded, detect_text_links=1);
  *   - shift+arrow page flip preserving the in-page view:
  *     go_to_adjacent_page_preserving_view.
  */
@@ -50,8 +52,6 @@
 #define NEIGHBOR_RENDER_RADIUS 2
 #define TEXTURE_KEEP_RADIUS 10
 #define LINK_CLICK_DRAG_THRESHOLD 4.0
-#define LINK_HOVER_SLOP_PT 2.0
-#define CURSOR_REGION_RECT_MAX 256
 #define SELECTION_RECT_MAX 256
 
 typedef struct {
@@ -139,11 +139,12 @@ struct _SpdfDocView {
     double pointer_y;
     gboolean pointer_valid;
 
-    /* cursor regions, cached per page (Mac SPDFMacCursorRegions model) */
-    int region_page;
-    spdf_rect region_links[CURSOR_REGION_RECT_MAX];
-    int region_link_count;
-    GArray* region_text; /* spdf_rect */
+    /* cursor regions, cached per page and built OFF the main thread including
+     * plain-text URL detection (Mac SPDFMacCursorRegions model +
+     * ShenzhenPDFMac.mm buildCursorRegionsForPageIfNeeded, commit ~@11269) */
+    GHashTable* region_cache;    /* GINT_TO_POINTER(page) -> region_entry* */
+    GHashTable* region_building; /* set of GINT_TO_POINTER(page) */
+    guint region_generation;     /* bumped on document change; stale builds drop */
 
     /* search-highlight overlay (owned copies; spdf_search.c section at the
      * bottom of this file — see spdf_search.h for the setters) */
@@ -717,46 +718,186 @@ static gboolean view_open_link_at(SpdfDocView* view, int page, double page_x, do
     return FALSE;
 }
 
-/* Cursor-region cache, one page at a time (Mac model). Link rects use the
- * cheap annotation-only scan (detect_text_links=0) so hover never builds the
- * page's stext for URLs; text-line bounds are built once per page on first
- * hover. */
-static void view_ensure_cursor_regions(SpdfDocView* view, int page) {
-    char err[512];
-    spdf_text_lines lines;
+/* Cursor-region cache, per page, built off the main thread. Port of
+ * ShenzhenPDFMac.mm buildCursorRegionsForPageIfNeeded (commit ~@11269):
+ * hover cursor hit-testing runs on every mouse-move, so it never queries the
+ * core — per-page text-line and link rects (page space, zoom-independent)
+ * are built ONCE per page on a worker thread, INCLUDING text-URL detection
+ * (detect_text_links=1 builds the page's stext and would stall the main
+ * thread for hundreds of ms on dense pages), and cached until the document's
+ * content changes. A page whose cache is still building resolves to "none"
+ * (arrow) and the cursor corrects itself when the build lands
+ * (view_refresh_cursor_at_pointer = Mac refreshCursorForMouseLocation). */
 
-    if (view->region_page == page || !view_doc(view)) return;
-    view->region_page = page;
-    view->region_link_count =
-        spdf_page_link_rects(view_doc(view), page, 0, view->region_links, CURSOR_REGION_RECT_MAX, err, sizeof(err));
-    if (view->region_link_count < 0) view->region_link_count = 0;
-    g_array_set_size(view->region_text, 0);
-    memset(&lines, 0, sizeof(lines));
-    if (spdf_extract_page_text_lines(view_doc(view), page, &lines, err, sizeof(err))) {
-        for (int i = 0; i < lines.count; ++i) g_array_append_val(view->region_text, lines.items[i].bounds);
-        spdf_free_text_lines(&lines);
-    }
+typedef struct {
+    GArray* links; /* spdf_rect: annotation links + plain-text URLs */
+    GArray* text;  /* spdf_rect: text-line bounds */
+} region_entry;
+
+static void region_entry_free(gpointer data) {
+    region_entry* entry = (region_entry*)data;
+    if (!entry) return;
+    if (entry->links) g_array_free(entry->links, TRUE);
+    if (entry->text) g_array_free(entry->text, TRUE);
+    g_free(entry);
 }
 
-static gboolean rect_contains_point(const spdf_rect* rect, double x, double y, double slop) {
-    return x >= rect->x0 - slop && x <= rect->x1 + slop && y >= rect->y0 - slop && y <= rect->y1 + slop;
+/* Build context. The worker fills the arrays; the main-thread done step
+ * adopts them into the cache (or drops them when the generation moved). The
+ * view reference is strong, so the done step always finds a live object; the
+ * dispose guard is region_cache = NULL. */
+typedef struct {
+    SpdfDocView* view; /* strong ref */
+    char* path;        /* working path snapshot (worker doc key) */
+    int page;
+    guint generation;
+    GArray* links;
+    GArray* text;
+} region_build_ctx;
+
+static void view_refresh_cursor_at_pointer(SpdfDocView* view);
+
+/* Main-thread tail: cache the result (empty arrays on failure too — unlike
+ * retrying, mouse moves cannot re-kick a doomed build every event, Mac
+ * comment) and refresh the cursor under the pointer. */
+static gboolean region_build_done(gpointer data) {
+    region_build_ctx* ctx = (region_build_ctx*)data;
+    SpdfDocView* view = ctx->view;
+
+    if (view->region_building) g_hash_table_remove(view->region_building, GINT_TO_POINTER(ctx->page));
+    if (view->region_cache && ctx->generation == view->region_generation && view_doc(view)) {
+        region_entry* entry = g_new0(region_entry, 1);
+        entry->links = ctx->links;
+        entry->text = ctx->text;
+        ctx->links = NULL;
+        ctx->text = NULL;
+        g_hash_table_insert(view->region_cache, GINT_TO_POINTER(ctx->page), entry);
+        view_refresh_cursor_at_pointer(view);
+    }
+    if (ctx->links) g_array_free(ctx->links, TRUE);
+    if (ctx->text) g_array_free(ctx->text, TRUE);
+    g_object_unref(ctx->view);
+    g_free(ctx->path);
+    g_free(ctx);
+    return G_SOURCE_REMOVE;
 }
 
-/* Port of spdf_cursor_region_at_point (SPDFMacCursorRegions.mm): link beats
- * text beats default. */
-static const char* view_cursor_name_at(SpdfDocView* view, int page, double page_x, double page_y) {
-    view_ensure_cursor_regions(view, page);
-    for (int i = 0; i < view->region_link_count; ++i) {
-        if (rect_contains_point(&view->region_links[i], page_x, page_y, LINK_HOVER_SLOP_PT)) return "pointer";
+/* Worker: same extraction as the Mac block, against the per-thread persistent
+ * worker document (never the tab's main-thread doc — the core is
+ * one-thread-per-spdf_document). */
+static void region_build_worker(gpointer data, gpointer user_data) {
+    region_build_ctx* ctx = (region_build_ctx*)data;
+    char err[1024];
+    spdf_document* doc = spdf_render_worker_document(ctx->path, err, sizeof(err));
+    (void)user_data;
+
+    if (doc) {
+        spdf_text_lines lines;
+        spdf_rect rects[SPDF_CURSOR_REGION_MAX_LINK_RECTS];
+        int count;
+
+        memset(&lines, 0, sizeof(lines));
+        if (spdf_extract_page_text_lines(doc, ctx->page, &lines, err, sizeof(err))) {
+            for (int i = 0; i < lines.count; ++i) {
+                if (!lines.items[i].text || !*lines.items[i].text) continue;
+                spdf_cursor_region_append_rect(ctx->text, &lines.items[i].bounds);
+            }
+            spdf_free_text_lines(&lines);
+        }
+        count = spdf_page_link_rects(doc, ctx->page, /*detect_text_links=*/1, rects,
+                                     SPDF_CURSOR_REGION_MAX_LINK_RECTS, err, sizeof(err));
+        for (int i = 0; i < count; ++i) spdf_cursor_region_append_rect(ctx->links, &rects[i]);
     }
-    for (guint i = 0; i < view->region_text->len; ++i) {
-        if (rect_contains_point(&g_array_index(view->region_text, spdf_rect, i), page_x, page_y, 0.0)) return "text";
+    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, region_build_done, ctx, NULL);
+}
+
+/* One serial worker, process-wide (Mac _cursorRegionQueue:
+ * maxConcurrentOperationCount = 1) — stext builds are memory-bandwidth heavy
+ * and must not compete with the page render pool. */
+static GThreadPool* region_pool_get(void) {
+    static GThreadPool* pool = NULL;
+    static gsize initialized = 0;
+    if (g_once_init_enter(&initialized)) {
+        pool = g_thread_pool_new(region_build_worker, NULL, 1, FALSE, NULL);
+        g_once_init_leave(&initialized, 1);
+    }
+    return pool;
+}
+
+/* The path the render service opened: the shadow working copy when the
+ * source is read-only (Mac activeWorkingPath). */
+static const char* view_active_path(SpdfDocView* view) {
+    if (!view->tab) return NULL;
+    return view->tab->working_path ? view->tab->working_path : view->tab->path;
+}
+
+/* Cache lookup; a miss kicks the worker build once and returns NULL (arrow
+ * cursor) until the build lands. */
+static region_entry* view_ensure_cursor_regions(SpdfDocView* view, int page) {
+    region_entry* entry;
+    const char* path;
+
+    if (!view->region_cache || !view_doc(view) || page < 0) return NULL;
+    entry = g_hash_table_lookup(view->region_cache, GINT_TO_POINTER(page));
+    if (entry) return entry;
+    if (g_hash_table_contains(view->region_building, GINT_TO_POINTER(page))) return NULL;
+    path = view_active_path(view);
+    if (!path || !*path) return NULL;
+    {
+        region_build_ctx* ctx = g_new0(region_build_ctx, 1);
+        ctx->view = g_object_ref(view);
+        ctx->path = g_strdup(path);
+        ctx->page = page;
+        ctx->generation = view->region_generation;
+        ctx->links = g_array_new(FALSE, FALSE, sizeof(spdf_rect));
+        ctx->text = g_array_new(FALSE, FALSE, sizeof(spdf_rect));
+        g_hash_table_add(view->region_building, GINT_TO_POINTER(page));
+        g_thread_pool_push(region_pool_get(), ctx, NULL);
     }
     return NULL;
 }
 
+/* Every cached texture and region is stale: bump the generation so in-flight
+ * builds drop their result, and clear the cache. */
+static void view_invalidate_cursor_regions(SpdfDocView* view) {
+    view->region_generation++;
+    if (view->region_cache) g_hash_table_remove_all(view->region_cache);
+    if (view->region_building) g_hash_table_remove_all(view->region_building);
+}
+
+static const char* view_cursor_name_at(SpdfDocView* view, int page, double page_x, double page_y) {
+    region_entry* entry = view_ensure_cursor_regions(view, page);
+    if (!entry) return NULL; /* still building: arrow until the build lands */
+    switch (spdf_cursor_region_at_point((const spdf_rect*)entry->links->data, entry->links->len,
+                                        (const spdf_rect*)entry->text->data, entry->text->len, page_x, page_y,
+                                        SPDF_CURSOR_LINK_HIT_PADDING)) {
+        case SPDF_CURSOR_REGION_LINK:
+            return "pointer";
+        case SPDF_CURSOR_REGION_TEXT:
+            return "text";
+        default:
+            return NULL;
+    }
+}
+
 /* --------------------------------------------------------------------------- */
 /* Event controllers. */
+
+/* The Ctrl+wheel zoom step, reusable by widgets that forward their own
+ * Ctrl+scroll here (the minimap, matching the Mac's
+ * minimapViewDidReceiveZoomScrollWheel -> zoomWithScrollWheelEvent path).
+ * The anchor is a widget-space point of THIS view; without one the zoom
+ * anchors at the center of the visible document area. */
+void spdf_doc_view_zoom_scroll(SpdfDocView* view, double dy, gboolean has_anchor, double anchor_x, double anchor_y) {
+    double factor;
+
+    g_return_if_fail(SPDF_IS_DOC_VIEW(view));
+    if (!view_doc(view)) return;
+    factor = dy != 0.0 ? pow(ZOOM_WHEEL_STEP, -dy) : 0.0;
+    if (factor <= 0.0) return;
+    if (has_anchor) view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_POINT, anchor_x, anchor_y);
+    else view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_CENTER, 0.0, 0.0);
+}
 
 static gboolean on_scroll(GtkEventControllerScroll* controller, double dx, double dy, gpointer user_data) {
     SpdfDocView* view = SPDF_DOC_VIEW(user_data);
@@ -765,12 +906,7 @@ static gboolean on_scroll(GtkEventControllerScroll* controller, double dx, doubl
 
     if (!view_doc(view)) return FALSE;
     if ((state & GDK_CONTROL_MASK) != 0) {
-        double factor = dy != 0.0 ? pow(ZOOM_WHEEL_STEP, -dy) : 0.0;
-        if (factor > 0.0) {
-            if (view->pointer_valid)
-                view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_POINT, view->pointer_x, view->pointer_y);
-            else view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_CENTER, 0.0, 0.0);
-        }
+        spdf_doc_view_zoom_scroll(view, dy, view->pointer_valid, view->pointer_x, view->pointer_y);
         return TRUE; /* Ctrl+scroll never pans (page_scroll_event) */
     }
     return FALSE; /* plain scrolling belongs to the GtkScrolledWindow */
@@ -898,22 +1034,31 @@ static void on_pan_end(GtkGestureDrag* gesture, double offset_x, double offset_y
     gtk_widget_set_cursor_from_name(GTK_WIDGET(view), NULL);
 }
 
-static void on_motion(GtkEventControllerMotion* controller, double x, double y, gpointer user_data) {
-    SpdfDocView* view = SPDF_DOC_VIEW(user_data);
+/* Re-resolve the cursor for the last known pointer position (Mac
+ * refreshCursorForMouseLocation): motion events call it directly, and the
+ * async region build calls it when a page's regions land so the cursor
+ * corrects itself without the mouse moving. */
+static void view_refresh_cursor_at_pointer(SpdfDocView* view) {
     int page = -1;
     double page_x = 0.0;
     double page_y = 0.0;
     const char* cursor = NULL;
+
+    if (!view->pointer_valid || view->panning) return;
+    if (view->selecting && (view->dragged_beyond_threshold || view->selection_created)) return; /* I-beam until release */
+    if (view_doc(view) && view_page_point_at(view, view->pointer_x, view->pointer_y, &page, &page_x, &page_y))
+        cursor = view_cursor_name_at(view, page, page_x, page_y);
+    gtk_widget_set_cursor_from_name(GTK_WIDGET(view), cursor);
+}
+
+static void on_motion(GtkEventControllerMotion* controller, double x, double y, gpointer user_data) {
+    SpdfDocView* view = SPDF_DOC_VIEW(user_data);
     (void)controller;
 
     view->pointer_x = x;
     view->pointer_y = y;
     view->pointer_valid = TRUE;
-    if (view->panning) return;
-    if (view->selecting && (view->dragged_beyond_threshold || view->selection_created)) return; /* I-beam until release */
-    if (view_doc(view) && view_page_point_at(view, x, y, &page, &page_x, &page_y))
-        cursor = view_cursor_name_at(view, page, page_x, page_y);
-    gtk_widget_set_cursor_from_name(GTK_WIDGET(view), cursor);
+    view_refresh_cursor_at_pointer(view);
 }
 
 static void on_leave(GtkEventControllerMotion* controller, gpointer user_data) {
@@ -1284,10 +1429,11 @@ static void spdf_doc_view_dispose(GObject* object) {
     }
     view_set_adjustment(view, NULL, TRUE);
     view_set_adjustment(view, NULL, FALSE);
-    if (view->region_text) {
-        g_array_free(view->region_text, TRUE);
-        view->region_text = NULL;
-    }
+    /* In-flight region builds hold a strong view ref; NULL region_cache is
+     * the "disposing" guard their done step checks before caching. */
+    view->region_generation++;
+    g_clear_pointer(&view->region_cache, g_hash_table_destroy);
+    g_clear_pointer(&view->region_building, g_hash_table_destroy);
     if (view->comment_markers) {
         g_array_free(view->comment_markers, TRUE);
         view->comment_markers = NULL;
@@ -1347,10 +1493,10 @@ static void spdf_doc_view_init(SpdfDocView* view) {
     view->fit = SPDF_FIT_CUSTOM;
     view->current_page = 0;
     view->selection_page = -1;
-    view->region_page = -1;
     view->search_current = -1;
     view->pending_ctxs = g_ptr_array_new();
-    view->region_text = g_array_new(FALSE, FALSE, sizeof(spdf_rect));
+    view->region_cache = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, region_entry_free);
+    view->region_building = g_hash_table_new(g_direct_hash, g_direct_equal);
     view->comment_markers = g_array_new(FALSE, FALSE, sizeof(SpdfCommentMarker));
 
     gtk_widget_set_focusable(GTK_WIDGET(view), TRUE);
@@ -1616,9 +1762,7 @@ void spdf_doc_view_document_changed(SpdfDocView* view) {
     spdf_layout_clear(&view->layout);
 
     if (view_clear_selection(view)) g_signal_emit(view, signals[SIG_SELECTION_CHANGED], 0);
-    view->region_page = -1;
-    view->region_link_count = 0;
-    if (view->region_text) g_array_set_size(view->region_text, 0);
+    view_invalidate_cursor_regions(view); /* rotation/save/OCR moved every rect */
     if (view->comment_markers) g_array_set_size(view->comment_markers, 0);
     view->anchor.valid = FALSE;
 
