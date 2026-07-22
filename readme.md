@@ -114,8 +114,13 @@ make -C portable linux-gtk4
 
 Or containerized (no host toolchain needed): `docker build -t shenzhen-build
 portable/linux/dev && docker run --rm -v "$PWD:/work" -w /work shenzhen-build
-make -C portable linux-gtk4`. A `.deb` is built by
-`portable/linux/pkg/build-deb.sh <version>`.
+make -C portable linux-gtk4`.
+
+Packages: a `.deb` via `portable/linux/pkg/build-deb.sh <version>`, an
+`.rpm` via `portable/linux/pkg/build-rpm.sh <version>` (builds inside a
+Fedora container), and a Flatpak via the manifest in
+`portable/linux/pkg/flatpak/` (see its README; Flathub submission notes
+included).
 
 ### Windows (legacy)
 
