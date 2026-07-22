@@ -28,9 +28,12 @@
  *                                        documentPointForUnscrolledMiniPoint
  *                                        (page-interior fractions preserved,
  *                                        gaps map onto gaps)
- *   spdf_minimap_viewport_rect        <- Mac unscrolledVisibleRectForScale +
- *                                        GTK3 minimap_visible_rect (continuous
- *                                        branch: full-width band, >= 10px tall)
+ *   spdf_minimap_viewport_rect        <- Mac unscrolledVisibleRectForScale
+ *                                        (union of per-page miniRect
+ *                                        intersections, -2 inset, so the
+ *                                        indicator narrows when zoomed in;
+ *                                        full-width >= 10px band fallback =
+ *                                        GTK3 continuous branch)
  *   spdf_minimap_marker_y             <- Mac drawSearchRects page-fraction
  *                                        placement, reduced to the GTK4 tick
  *                                        model (3px tick pinned inside the slot)
@@ -263,19 +266,62 @@ static inline double spdf_minimap_document_y_for_strip_y(const SpdfMinimapStrip*
     }
 }
 
-/* Viewport indicator in unscrolled strip space for the visible document band
- * [doc_top, doc_top + doc_visible_h]: full strip width (GTK3 continuous
- * branch), at least 10px tall. */
-static inline void spdf_minimap_viewport_rect(const SpdfMinimapStrip* strip, const double* doc_y,
-                                              const double* doc_h, int count, double doc_top,
+/* Viewport indicator in unscrolled strip space for the visible document rect
+ * [doc_left, doc_left + doc_visible_w] x [doc_top, doc_top + doc_visible_h].
+ *
+ * Vertical: fraction-preserving strip mapping (gaps map onto gaps), at least
+ * 10px tall. Horizontal: union of the visible horizontal fraction of every
+ * page the band touches, mapped into its strip rect and inset by -2 like the
+ * Mac (unscrolledVisibleRectForScale unions miniRectForDocumentIntersection
+ * rects, so zooming IN narrows the indicator; the old GTK3 continuous branch
+ * kept it full-width at every zoom). Falls back to the full-width band when
+ * no page intersects the document band. */
+static inline void spdf_minimap_viewport_rect(const SpdfMinimapStrip* strip, const double* doc_x,
+                                              const double* doc_y, const double* doc_w, const double* doc_h,
+                                              int count, double doc_left, double doc_top, double doc_visible_w,
                                               double doc_visible_h, double widget_w, double* x, double* y,
                                               double* w, double* h) {
     double y0 = spdf_minimap_strip_y_for_document_y(strip, doc_y, doc_h, count, doc_top);
     double y1 = spdf_minimap_strip_y_for_document_y(strip, doc_y, doc_h, count, doc_top + doc_visible_h);
-    if (x) *x = 5.0;
-    if (w) *w = MAX(1.0, widget_w - 10.0);
+    double rx0 = 0.0;
+    double rx1 = 0.0;
+    gboolean has_page = FALSE;
+
     if (y) *y = y0;
     if (h) *h = MAX(10.0, y1 - y0);
+
+    if (strip && strip->count == count && doc_x && doc_w && doc_visible_w > 0.0) {
+        for (int i = 0; i < count; ++i) {
+            double frac0;
+            double frac1;
+            double px0;
+            double px1;
+            if (doc_y[i] + doc_h[i] < doc_top || doc_y[i] > doc_top + doc_visible_h) continue;
+            if (doc_w[i] <= 0.0) continue;
+            frac0 = CLAMP((doc_left - doc_x[i]) / doc_w[i], 0.0, 1.0);
+            frac1 = CLAMP((doc_left + doc_visible_w - doc_x[i]) / doc_w[i], 0.0, 1.0);
+            if (frac1 <= frac0) continue; /* page fully off-screen horizontally */
+            px0 = strip->rects[i].x + frac0 * strip->rects[i].w;
+            px1 = strip->rects[i].x + frac1 * strip->rects[i].w;
+            if (!has_page) {
+                rx0 = px0;
+                rx1 = px1;
+                has_page = TRUE;
+            } else {
+                rx0 = MIN(rx0, px0);
+                rx1 = MAX(rx1, px1);
+            }
+        }
+    }
+    if (has_page) {
+        rx0 = MAX(0.0, rx0 - 2.0);
+        rx1 = MIN(widget_w, rx1 + 2.0);
+        if (x) *x = rx0;
+        if (w) *w = MAX(1.0, rx1 - rx0);
+    } else {
+        if (x) *x = 5.0;
+        if (w) *w = MAX(1.0, widget_w - 10.0);
+    }
 }
 
 /* Search-hit tick y inside a page's strip rect: the match center's page-space

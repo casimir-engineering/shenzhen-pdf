@@ -175,25 +175,59 @@ static void test_viewport_rect(void) {
     SpdfMinimapStrip strip = {0};
     double* doc_y;
     double* doc_h;
+    double* doc_x;
+    double* doc_w;
     double x;
     double y;
     double w;
     double h;
+    double full_x;
+    double full_w;
 
     spdf_minimap_strip_compute(&strip, sizes, 10, WIDGET_W);
     doc_rows(&strip, 6.0, 26.0, &doc_y, &doc_h);
+    doc_x = g_new0(double, 10);
+    doc_w = g_new0(double, 10);
+    for (int i = 0; i < 10; ++i) {
+        doc_x[i] = 40.0;
+        doc_w[i] = strip.rects[i].w * 6.0;
+    }
 
-    /* Viewport covering exactly page 2 maps to (about) strip rect 2. */
-    spdf_minimap_viewport_rect(&strip, doc_y, doc_h, 10, doc_y[2], doc_h[2], WIDGET_W, &x, &y, &w, &h);
-    g_assert_cmpfloat(x, ==, 5.0);
-    g_assert_cmpfloat(w, ==, WIDGET_W - 10.0);
+    /* Viewport covering exactly page 2, full page width visible: maps to
+     * (about) strip rect 2, width = the page's strip rect inset by -2 (Mac
+     * union-of-miniRects model). */
+    spdf_minimap_viewport_rect(&strip, doc_x, doc_y, doc_w, doc_h, 10, doc_x[2] - 10.0, doc_y[2], doc_w[2] + 20.0,
+                               doc_h[2], WIDGET_W, &x, &y, &w, &h);
+    g_assert_cmpfloat_with_epsilon(x, MAX(0.0, strip.rects[2].x - 2.0), 1e-6);
+    g_assert_cmpfloat_with_epsilon(w, strip.rects[2].w + 4.0, 1e-6);
     g_assert_cmpfloat_with_epsilon(y, strip.rects[2].y, 1e-6);
     g_assert_cmpfloat_with_epsilon(h, strip.rects[2].h, 1e-6);
+    full_x = x;
+    full_w = w;
+
+    /* Zoomed in: only the middle half of the page width is visible — the
+     * indicator narrows accordingly (the user-reported GTK4 bug kept it
+     * full-width at every zoom). */
+    spdf_minimap_viewport_rect(&strip, doc_x, doc_y, doc_w, doc_h, 10, doc_x[2] + doc_w[2] * 0.25, doc_y[2],
+                               doc_w[2] * 0.5, doc_h[2], WIDGET_W, &x, &y, &w, &h);
+    g_assert_cmpfloat(w, <, full_w);
+    g_assert_cmpfloat_with_epsilon(w, strip.rects[2].w * 0.5 + 4.0, 1e-6);
+    g_assert_cmpfloat(x, >, full_x);
+    g_assert_cmpfloat_with_epsilon(x, strip.rects[2].x + strip.rects[2].w * 0.25 - 2.0, 1e-6);
+
+    /* Without horizontal info the full-width fallback band survives. */
+    spdf_minimap_viewport_rect(&strip, NULL, doc_y, NULL, doc_h, 10, 0.0, doc_y[2], 0.0, doc_h[2], WIDGET_W, &x,
+                               &y, &w, &h);
+    g_assert_cmpfloat(x, ==, 5.0);
+    g_assert_cmpfloat(w, ==, WIDGET_W - 10.0);
 
     /* A sliver of a viewport keeps the 10px minimum height. */
-    spdf_minimap_viewport_rect(&strip, doc_y, doc_h, 10, doc_y[0], 1.0, WIDGET_W, NULL, &y, NULL, &h);
+    spdf_minimap_viewport_rect(&strip, doc_x, doc_y, doc_w, doc_h, 10, doc_x[0], doc_y[0], doc_w[0], 1.0, WIDGET_W,
+                               NULL, &y, NULL, &h);
     g_assert_cmpfloat(h, >=, 10.0);
 
+    g_free(doc_x);
+    g_free(doc_w);
     g_free(doc_y);
     g_free(doc_h);
     spdf_minimap_strip_clear(&strip);

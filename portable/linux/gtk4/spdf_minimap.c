@@ -108,6 +108,8 @@ typedef struct {
     double doc_top;
     double doc_visible_h;
     double doc_upper;
+    double doc_left;
+    double doc_visible_w;
 } minimap_frame;
 
 static void minimap_frame_release(minimap_frame* f) {
@@ -161,6 +163,8 @@ static gboolean minimap_frame_acquire(SpdfMinimap* self, minimap_frame* f) {
     f->doc_top = f->vadj ? gtk_adjustment_get_value(f->vadj) : 0.0;
     f->doc_visible_h = f->vadj ? gtk_adjustment_get_page_size(f->vadj) : f->height;
     f->doc_upper = f->vadj ? gtk_adjustment_get_upper(f->vadj) : 0.0;
+    f->doc_left = f->hadj ? gtk_adjustment_get_value(f->hadj) : 0.0;
+    f->doc_visible_w = f->hadj ? gtk_adjustment_get_page_size(f->hadj) : 0.0;
     max_scroll = MAX(0.0, f->doc_upper - f->doc_visible_h);
     fraction = max_scroll > 0.0 ? f->doc_top / max_scroll : 0.0;
     f->content_top = spdf_minimap_content_top(f->strip.content_h, f->height, fraction);
@@ -168,8 +172,8 @@ static gboolean minimap_frame_acquire(SpdfMinimap* self, minimap_frame* f) {
 }
 
 static void minimap_frame_viewport_rect(const minimap_frame* f, double* x, double* y, double* w, double* h) {
-    spdf_minimap_viewport_rect(&f->strip, f->doc_y, f->doc_h, f->count, f->doc_top, f->doc_visible_h, f->width, x, y,
-                               w, h);
+    spdf_minimap_viewport_rect(&f->strip, f->doc_x, f->doc_y, f->doc_w, f->doc_h, f->count, f->doc_left, f->doc_top,
+                               f->doc_visible_w, f->doc_visible_h, f->width, x, y, w, h);
     if (y) *y += f->content_top;
 }
 
