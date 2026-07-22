@@ -15,6 +15,7 @@ mupdf/generated/
 artifacts/
 dist/
 portable/build/
+portable/build-fedora/
 .idea/
 src/.vscode
 tools/pdfjs/coverage/
