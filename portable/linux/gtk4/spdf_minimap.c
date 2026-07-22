@@ -15,7 +15,8 @@
 //     drag), click-to-jump, strip-scroll wheel with kinetic momentum (Mac
 //     db9515802 + SPDFMacMinimapView sendStripScrollForEvent:, which gets the
 //     momentum tail from AppKit; GTK animates the GtkKineticScrolling decay
-//     itself);
+//     itself), Ctrl+scroll zoom forwarded to the doc view (Mac
+//     minimapViewDidReceiveZoomScrollWheel:);
 //   - visibility + win.minimap action + documents.json persistence.
 
 #include <math.h>
@@ -67,6 +68,13 @@ struct _SpdfMinimap {
     double drag_thumb_top;
     double drag_last_y;
     gint64 drag_last_time_us;
+
+    /* Pointer tracking: the Ctrl+scroll zoom anchors at the document point
+     * under the strip cursor (Mac documentPointForEvent:), but GTK scroll
+     * events carry no position, so a motion controller remembers it. */
+    double pointer_x;
+    double pointer_y;
+    gboolean pointer_valid;
 
     /* Kinetic strip-scroll momentum ("::decelerate" + frame-clock decay;
      * model constants in spdf_minimap_internal.h). */
@@ -748,6 +756,37 @@ static void minimap_scroll_decelerate(GtkEventControllerScroll* controller, doub
         self->kinetic_tick_id = gtk_widget_add_tick_callback(GTK_WIDGET(self), minimap_kinetic_tick, self, NULL);
 }
 
+/* Ctrl+scroll over the strip zooms the DOCUMENT, anchored at the document
+ * point under the strip cursor (Mac scrollWheel: command/control branch ->
+ * minimapViewDidReceiveZoomScrollWheel:documentPoint:, which anchors the
+ * zoom at that document point). Previously the event was propagated and died
+ * on a sibling widget without ever reaching the doc view. */
+static gboolean minimap_forward_zoom_scroll(SpdfMinimap* self, double dy) {
+    minimap_frame f;
+    double doc_px;
+    double doc_py;
+
+    if (!minimap_frame_acquire(self, &f)) return GDK_EVENT_PROPAGATE;
+    if (self->pointer_valid) {
+        int page = -1;
+        double x_fraction = 0.5;
+        double y_fraction = 0.0;
+        doc_py = spdf_minimap_document_y_for_strip_y(&f.strip, f.doc_y, f.doc_h, f.count,
+                                                     self->pointer_y - f.content_top);
+        if (spdf_minimap_page_hit(&f.strip, self->pointer_x, self->pointer_y - f.content_top, &page, &x_fraction,
+                                  &y_fraction))
+            doc_px = f.doc_x[page] + x_fraction * f.doc_w[page];
+        else
+            doc_px = f.doc_left + f.doc_visible_w * 0.5; /* strip gap: keep the horizontal center */
+        /* Doc-view widget coordinates = document space minus its scroll. */
+        spdf_doc_view_zoom_scroll(f.view, dy, TRUE, doc_px - f.doc_left, doc_py - f.doc_top);
+    } else {
+        spdf_doc_view_zoom_scroll(f.view, dy, FALSE, 0.0, 0.0); /* visible-center fallback */
+    }
+    minimap_frame_release(&f);
+    return GDK_EVENT_STOP;
+}
+
 /* Strip-scroll (Mac db9515802): the gesture moves the STRIP by its own
  * distance; the document follows at the maxDoc/maxStrip ratio, which keeps
  * the strip glued 1:1 to the gesture because the strip offset derives from
@@ -759,11 +798,25 @@ static gboolean minimap_scroll(GtkEventControllerScroll* controller, double dx, 
 
     (void)dx;
     minimap_kinetic_cancel(self); /* any new scroll input supersedes the tail */
-    if (state & GDK_CONTROL_MASK) return GDK_EVENT_PROPAGATE;
+    if (state & GDK_CONTROL_MASK) return minimap_forward_zoom_scroll(self, dy);
     if (gtk_event_controller_scroll_get_unit(controller) == GDK_SCROLL_UNIT_WHEEL)
         strip_dy *= SPDF_MINIMAP_WHEEL_POINTS_PER_LINE;
     /* No frame (no document): keep the historical fall-through to siblings. */
     return minimap_apply_strip_scroll(self, strip_dy) < 0 ? GDK_EVENT_PROPAGATE : GDK_EVENT_STOP;
+}
+
+static void minimap_motion(GtkEventControllerMotion* controller, double x, double y, gpointer user_data) {
+    SpdfMinimap* self = SPDF_MINIMAP(user_data);
+    (void)controller;
+    self->pointer_x = x;
+    self->pointer_y = y;
+    self->pointer_valid = TRUE;
+}
+
+static void minimap_motion_leave(GtkEventControllerMotion* controller, gpointer user_data) {
+    SpdfMinimap* self = SPDF_MINIMAP(user_data);
+    (void)controller;
+    self->pointer_valid = FALSE;
 }
 
 static void minimap_unmap_cb(GtkWidget* widget, gpointer user_data) {
@@ -943,6 +996,7 @@ static void spdf_minimap_class_init(SpdfMinimapClass* klass) {
 static void spdf_minimap_init(SpdfMinimap* self) {
     GtkGesture* drag;
     GtkEventController* scroll;
+    GtkEventController* motion;
 
     spdf_lru_init(&self->thumbs, SPDF_MINIMAP_THUMB_MAX_BYTES, g_direct_hash, g_direct_equal, NULL,
                   minimap_thumb_free);
@@ -967,6 +1021,14 @@ static void spdf_minimap_init(SpdfMinimap* self) {
     g_signal_connect(scroll, "scroll", G_CALLBACK(minimap_scroll), self);
     g_signal_connect(scroll, "decelerate", G_CALLBACK(minimap_scroll_decelerate), self);
     gtk_widget_add_controller(GTK_WIDGET(self), scroll);
+
+    /* Pointer position for the Ctrl+scroll zoom anchor (Mac
+     * documentPointForEvent:). */
+    motion = gtk_event_controller_motion_new();
+    g_signal_connect(motion, "motion", G_CALLBACK(minimap_motion), self);
+    g_signal_connect(motion, "enter", G_CALLBACK(minimap_motion), self);
+    g_signal_connect(motion, "leave", G_CALLBACK(minimap_motion_leave), self);
+    gtk_widget_add_controller(GTK_WIDGET(self), motion);
 
     g_signal_connect(self, "unmap", G_CALLBACK(minimap_unmap_cb), self);
 
