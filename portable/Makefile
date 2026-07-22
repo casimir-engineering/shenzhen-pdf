@@ -1,7 +1,11 @@
 BUILD := build
 DIST := ../dist
 MUPDF_DIR := ../mupdf
-MUPDF_BUILD := $(MUPDF_DIR)/build/release
+# Where the mupdf static libs live, relative to $(MUPDF_DIR). Overridable so
+# builds for another distro's toolchain don't clobber the default output
+# (build-rpm.sh uses MUPDF_OUT=build/release-fedora).
+MUPDF_OUT ?= build/release
+MUPDF_BUILD := $(MUPDF_DIR)/$(MUPDF_OUT)
 MUPDF_LIBS := $(MUPDF_BUILD)/libmupdf.a $(MUPDF_BUILD)/libmupdf-third.a $(MUPDF_BUILD)/libmupdf-pkcs7.a
 CPU := $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 
@@ -53,8 +57,8 @@ endif
 all: mac-app
 
 mupdf-libs:
-	@test -f "$(MUPDF_BUILD)/libmupdf.a" -a -f "$(MUPDF_BUILD)/libmupdf-third.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no libs "build/release/libmupdf-third.a"
-	@test -f "$(MUPDF_BUILD)/libmupdf-pkcs7.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release USE_SYSTEM_GLUT=yes brotli=no "build/release/libmupdf-pkcs7.a"
+	@test -f "$(MUPDF_BUILD)/libmupdf.a" -a -f "$(MUPDF_BUILD)/libmupdf-third.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release OUT="$(MUPDF_OUT)" USE_SYSTEM_GLUT=yes brotli=no libs "$(MUPDF_OUT)/libmupdf-third.a"
+	@test -f "$(MUPDF_BUILD)/libmupdf-pkcs7.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release OUT="$(MUPDF_OUT)" USE_SYSTEM_GLUT=yes brotli=no "$(MUPDF_OUT)/libmupdf-pkcs7.a"
 
 $(BUILD):
 	mkdir -p "$(BUILD)"
