@@ -19,6 +19,15 @@ void spdf_launch_mark(const char *stage); // no-op unless profiling enabled
 gboolean spdf_launch_profile_enabled(void);
 
 // ---------------------------------------------------------------------------
+// Flatpak detection, shared by every module that must behave differently in
+// the sandbox (spdf_updater.c, spdf_resident.c, spdf_default_reader.c).
+// /.flatpak-info exists in every Flatpak sandbox; FLATPAK_ID covers the
+// (theoretical) case of a caller scrubbing the filesystem view but not env.
+static inline gboolean spdf_running_in_flatpak(void) {
+    return g_file_test("/.flatpak-info", G_FILE_TEST_EXISTS) || g_getenv("FLATPAK_ID") != NULL;
+}
+
+// ---------------------------------------------------------------------------
 // spdf_render.c — worker render pipeline (ported semantics from GTK3 file:
 // persistent worker docs, display-list cache, render tokens, 96MB byte cap).
 typedef struct _SpdfRenderService SpdfRenderService;
