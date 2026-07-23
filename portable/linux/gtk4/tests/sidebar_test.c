@@ -213,6 +213,37 @@ static void test_snippet_markup(void) {
     expect_markup("ab", "abc", "ab");
 }
 
+static void expect_window(const char* line, const char* query, const char* expected) {
+    char* window = spdf_sidebar_snippet_window(line, query);
+    g_assert_cmpstr(window, ==, expected);
+    g_free(window);
+}
+
+/* Port of Mac paletteSnippetRangeInLine: 2 words before the match through 2
+ * words after — the sidebar result rows must NOT show the whole line (line
+ * numbers / leading labels get cut away). */
+static void test_snippet_window(void) {
+    /* Match in the middle: 2 words kept each side. */
+    expect_window("Line 12: the quick brown fox inspects connector J12 on page 3", "brown",
+                  "the quick brown fox inspects");
+    /* Case-insensitive match. */
+    expect_window("Line 12: the quick BROWN fox inspects connector J12", "brown", "the quick BROWN fox inspects");
+    /* Match near the start: window clamps at the line head. */
+    expect_window("the quick brown fox", "the", "the quick brown");
+    /* Match near the end: window clamps at the line tail. */
+    expect_window("the quick brown fox", "fox", "quick brown fox");
+    /* Multi-word query spans words; the window wraps the whole span. */
+    expect_window("one two three four five six seven eight", "four five", "two three four five six seven");
+    /* Query not literally present (regex): the whole (trimmed) line stays. */
+    expect_window("  the whole line stays  ", "f.x", "the whole line stays");
+    /* Multi-byte text around the match. */
+    expect_window("深圳 阻抗 pdf viewer 大 好", "pdf", "深圳 阻抗 pdf viewer 大");
+    /* Degenerate inputs. */
+    expect_window("", "q", "");
+    expect_window(NULL, "q", "");
+    expect_window("plain", "", "plain");
+}
+
 int main(int argc, char** argv) {
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/sidebar/outline/normalize-levels", test_normalize_levels);
@@ -221,5 +252,6 @@ int main(int argc, char** argv) {
     g_test_add_func("/sidebar/search/grouping", test_search_grouping);
     g_test_add_func("/sidebar/search/chapter-title", test_chapter_title);
     g_test_add_func("/sidebar/search/snippet-markup", test_snippet_markup);
+    g_test_add_func("/sidebar/search/snippet-window", test_snippet_window);
     return g_test_run();
 }

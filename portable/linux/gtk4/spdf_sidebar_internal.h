@@ -152,45 +152,126 @@ static inline gboolean spdf_sidebar_filter_matches(const char* haystack, const c
 }
 
 /* --------------------------------------------------------------------------
- * Snippet markup: escape the snippet for Pango and bold the first
- * case-insensitive occurrence of `query` (matched by UTF-8 casefold over
- * equal character counts; queries that do not literally occur — e.g. regex
- * patterns — leave the snippet unbolded). Caller frees. */
-static inline char* spdf_sidebar_snippet_markup(const char* snippet, const char* query) {
-    const char* s = snippet ? snippet : "";
+ * First case-insensitive occurrence of `query` in `s` (UTF-8 casefold over
+ * equal character counts). Returns FALSE when the query does not literally
+ * occur — e.g. regex patterns. On success, start and end bound the occurrence. */
+static inline gboolean spdf_sidebar_snippet_match_range(const char* s, const char* query, const char** start,
+                                                        const char** end) {
     char* folded_query = NULL;
-    char* result = NULL;
+    gboolean found = FALSE;
 
-    if (query && *query) folded_query = g_utf8_casefold(query, -1);
-    if (folded_query && *folded_query) {
+    if (!s || !query || !*query) return FALSE;
+    folded_query = g_utf8_casefold(query, -1);
+    if (*folded_query) {
         glong query_chars = g_utf8_strlen(query, -1);
         for (const char* p = s; *p; p = g_utf8_next_char(p)) {
-            const char* end = p;
+            const char* q = p;
             glong n = 0;
             char* candidate;
-            gboolean hit;
-            while (*end && n < query_chars) {
-                end = g_utf8_next_char(end);
+            while (*q && n < query_chars) {
+                q = g_utf8_next_char(q);
                 ++n;
             }
             if (n < query_chars) break; /* fewer chars left than the query */
-            candidate = g_utf8_casefold(p, end - p);
-            hit = strcmp(candidate, folded_query) == 0;
+            candidate = g_utf8_casefold(p, q - p);
+            found = strcmp(candidate, folded_query) == 0;
             g_free(candidate);
-            if (hit) {
-                char* pre = g_markup_escape_text(s, p - s);
-                char* mid = g_markup_escape_text(p, end - p);
-                char* post = g_markup_escape_text(end, -1);
-                result = g_strconcat(pre, "<b>", mid, "</b>", post, NULL);
-                g_free(pre);
-                g_free(mid);
-                g_free(post);
+            if (found) {
+                *start = p;
+                *end = q;
                 break;
             }
         }
     }
     g_free(folded_query);
-    if (!result) result = g_markup_escape_text(s, -1);
+    return found;
+}
+
+/* --------------------------------------------------------------------------
+ * Snippet window. Port of Mac paletteSnippetRangeInLine (the sidebar search
+ * rows run their line through it via findContextForQuery): keep from the 2nd
+ * word before the match to the 2nd word after it — no leading line prefix,
+ * just the surrounding words. When the query doesn't literally occur (regex)
+ * the whole line stays; when the match doesn't overlap any word (whitespace
+ * queries) a 24-character window each side is kept instead. Words are
+ * maximal runs of non-whitespace. Returns a trimmed copy; caller frees. */
+static inline char* spdf_sidebar_snippet_window(const char* line, const char* query) {
+    const char* s = line ? line : "";
+    const char* match_start;
+    const char* match_end;
+    const char* win_start = NULL;
+    const char* win_end = NULL;
+    const char* words[2] = {0}; /* starts of the last 2 words before the match */
+    const char* p;
+    int after = 0;
+
+    if (!spdf_sidebar_snippet_match_range(s, query, &match_start, &match_end))
+        return g_strstrip(g_strdup(s));
+
+    /* Walk the words once, remembering the last 3 word starts up to the
+     * match and extending the window until the 2nd word past the match. */
+    p = s;
+    while (*p) {
+        const char* word_start;
+        const char* word_end;
+        while (*p && g_unichar_isspace(g_utf8_get_char(p))) p = g_utf8_next_char(p);
+        if (!*p) break;
+        word_start = p;
+        while (*p && !g_unichar_isspace(g_utf8_get_char(p))) p = g_utf8_next_char(p);
+        word_end = p;
+        if (win_start == NULL) {
+            if (word_start < match_end && match_start < word_end) {
+                /* First word intersecting the match: window starts 2 words back. */
+                win_start = words[1] ? words[1] : (words[0] ? words[0] : word_start);
+                win_end = word_end;
+            } else {
+                words[1] = words[0];
+                words[0] = word_start;
+            }
+        }
+        if (win_start) {
+            if (word_start < match_end && match_start < word_end) {
+                win_end = word_end; /* still inside the match: reset the tail */
+                after = 0;
+            } else if (++after <= 2) {
+                win_end = word_end;
+            } else {
+                break;
+            }
+        }
+    }
+
+    if (!win_start) {
+        /* Match overlaps no word (whitespace query): 24 chars each side. */
+        glong before_chars = g_utf8_strlen(s, match_start - s);
+        win_start = g_utf8_offset_to_pointer(s, MAX(0, before_chars - 24));
+        win_end = match_end;
+        for (int i = 0; i < 24 && *win_end; ++i) win_end = g_utf8_next_char(win_end);
+    }
+    return g_strstrip(g_strndup(win_start, win_end - win_start));
+}
+
+/* --------------------------------------------------------------------------
+ * Snippet markup: escape the snippet for Pango and bold the first
+ * case-insensitive occurrence of `query` (queries that do not literally
+ * occur — e.g. regex patterns — leave the snippet unbolded). Caller frees. */
+static inline char* spdf_sidebar_snippet_markup(const char* snippet, const char* query) {
+    const char* s = snippet ? snippet : "";
+    const char* start;
+    const char* end;
+    char* result;
+    char* pre;
+    char* mid;
+    char* post;
+
+    if (!spdf_sidebar_snippet_match_range(s, query, &start, &end)) return g_markup_escape_text(s, -1);
+    pre = g_markup_escape_text(s, start - s);
+    mid = g_markup_escape_text(start, end - start);
+    post = g_markup_escape_text(end, -1);
+    result = g_strconcat(pre, "<b>", mid, "</b>", post, NULL);
+    g_free(pre);
+    g_free(mid);
+    g_free(post);
     return result;
 }
 
