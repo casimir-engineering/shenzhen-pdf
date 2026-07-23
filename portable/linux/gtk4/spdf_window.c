@@ -39,6 +39,7 @@ struct _SpdfWindow {
     GtkEntry* page_entry;
     GtkLabel* page_total_label;
     GtkButton* zoom_button;
+    GtkMenuButton* fit_button; // Mac fit-mode popup; label tracks the current fit
     GtkToggleButton* search_toggle;
     GtkMenuButton* menu_button; // model attached from the deferred-menus idle
     GMenu* recent_menu;         // NULL until the deferred-menus idle built it
@@ -156,6 +157,21 @@ static void update_page_controls(SpdfWindow* win) {
         gtk_button_set_label(win->zoom_button, text);
     } else {
         gtk_button_set_label(win->zoom_button, "100%");
+    }
+
+    // Fit-mode dropdown label (Mac _fitModePopup selection).
+    if (win->fit_button) {
+        const char* fit_label = "Zoom";
+        if (tab && tab->view) {
+            switch (spdf_doc_view_get_fit(tab->view)) {
+                case SPDF_FIT_PAGE: fit_label = "Fit Page"; break;
+                case SPDF_FIT_WIDTH: fit_label = "Fit Width"; break;
+                case SPDF_FIT_HEIGHT: fit_label = "Fit Height"; break;
+                case SPDF_FIT_CUSTOM:
+                default: fit_label = "Zoom"; break;
+            }
+        }
+        gtk_menu_button_set_label(win->fit_button, fit_label);
     }
 }
 
@@ -473,6 +489,16 @@ static void tab_view_page_detached(AdwTabView* view, AdwTabPage* page, gint posi
                                                       g_object_ref(win), g_object_unref);
 }
 
+void spdf_window_tab_linked(SpdfWindow* win, AdwTabPage* page) {
+    g_return_if_fail(SPDF_IS_WINDOW(win));
+    if (!win->tab_view || !page) return;
+    // Re-run the attach handler now that tab_for_page(page) resolves; the
+    // NULL-tab run during adw_tab_view_append connected nothing, so this
+    // cannot double-connect.
+    tab_view_page_attached(win->tab_view, page, 0, win);
+    spdf_minimap_window_sync(win);
+}
+
 static void tab_view_selected_page_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
     SpdfWindow* win = SPDF_WINDOW(user_data);
     (void)object;
@@ -667,6 +693,34 @@ static void action_fit_width(GSimpleAction* action, GVariant* parameter, gpointe
     update_page_controls(win);
 }
 
+static void action_fit_height(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    SpdfTab* tab = spdf_window_current_tab(win);
+    (void)action;
+    (void)parameter;
+    if (tab && tab->view) spdf_doc_view_set_fit(tab->view, SPDF_FIT_HEIGHT);
+    update_page_controls(win);
+}
+
+// Mac toolbar "<" / ">" page-step buttons.
+static void action_prev_page(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    SpdfTab* tab = spdf_window_current_tab(win);
+    (void)action;
+    (void)parameter;
+    if (tab && tab->view) spdf_doc_view_goto_page(tab->view, spdf_doc_view_current_page(tab->view) - 1);
+    update_page_controls(win);
+}
+
+static void action_next_page(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    SpdfTab* tab = spdf_window_current_tab(win);
+    (void)action;
+    (void)parameter;
+    if (tab && tab->view) spdf_doc_view_goto_page(tab->view, spdf_doc_view_current_page(tab->view) + 1);
+    update_page_controls(win);
+}
+
 static void action_copy(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
     SpdfWindow* win = SPDF_WINDOW(user_data);
     SpdfTab* tab = spdf_window_current_tab(win);
@@ -801,6 +855,9 @@ static const GActionEntry k_window_actions[] = {
     {"zoom-actual", action_zoom_actual, NULL, NULL, NULL, {0}},
     {"fit-page", action_fit_page, NULL, NULL, NULL, {0}},
     {"fit-width", action_fit_width, NULL, NULL, NULL, {0}},
+    {"fit-height", action_fit_height, NULL, NULL, NULL, {0}},
+    {"prev-page", action_prev_page, NULL, NULL, NULL, {0}},
+    {"next-page", action_next_page, NULL, NULL, NULL, {0}},
     {"copy", action_copy, NULL, NULL, NULL, {0}},
     {"check-updates", action_check_updates, NULL, NULL, NULL, {0}},
     {"copy-path", action_copy_path, NULL, NULL, NULL, {0}},
@@ -840,6 +897,7 @@ static GMenuModel* build_tab_context_menu(void) {
 static GMenuModel* build_primary_menu(SpdfWindow* win) {
     GMenu* menu = g_menu_new();
     GMenu* files = g_menu_new();
+    GMenu* view = g_menu_new();
     GMenu* favorites = g_menu_new();
     GMenu* tools = g_menu_new();
     GMenu* help = g_menu_new();
@@ -851,6 +909,22 @@ static GMenuModel* build_primary_menu(SpdfWindow* win) {
     g_menu_append_submenu(files, "Recently _Opened", G_MENU_MODEL(win->recent_menu));
     g_menu_append(files, "Reopen Last _Closed", "win.reopen-closed");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(files));
+
+    // View section (Mac View menu): fit modes plus the stateful side panel /
+    // minimap / presentation toggles (check items via the stateful actions).
+    {
+        GMenu* fit = g_menu_new();
+        g_menu_append(fit, "Fit _Page", "win.fit-page");
+        g_menu_append(fit, "Fit _Width", "win.fit-width");
+        g_menu_append(fit, "Fit _Height", "win.fit-height");
+        g_menu_append(fit, "Actual Size", "win.zoom-actual");
+        g_menu_append_submenu(view, "_Zoom", G_MENU_MODEL(fit));
+        g_object_unref(fit);
+    }
+    g_menu_append(view, "Show Side Panel", "win.sidebar");
+    g_menu_append(view, "Show Minimap", "win.minimap");
+    g_menu_append(view, "Presentation Mode", "win.presentation");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(view));
 
     g_menu_append(favorites, "Search Favorites…", "win.palette");
     g_menu_append(favorites, "Favorite Current Page", "win.favorite-page");
@@ -878,6 +952,7 @@ static GMenuModel* build_primary_menu(SpdfWindow* win) {
     g_menu_append_section(menu, NULL, G_MENU_MODEL(help));
 
     g_object_unref(files);
+    g_object_unref(view);
     g_object_unref(favorites);
     g_object_unref(tools);
     g_object_unref(help);
@@ -932,6 +1007,19 @@ static GtkWidget* header_bar_new(SpdfWindow* self) {
     adw_header_bar_pack_start(ADW_HEADER_BAR(header), open_button);
 
     page_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    // Mac toolbar "<" / ">" page-step buttons flank the page field.
+    {
+        GtkWidget* prev_page = gtk_button_new_from_icon_name("go-up-symbolic");
+        GtkWidget* next_page = gtk_button_new_from_icon_name("go-down-symbolic");
+        gtk_widget_add_css_class(prev_page, "flat");
+        gtk_widget_add_css_class(next_page, "flat");
+        gtk_widget_set_tooltip_text(prev_page, "Previous page");
+        gtk_widget_set_tooltip_text(next_page, "Next page");
+        gtk_actionable_set_action_name(GTK_ACTIONABLE(prev_page), "win.prev-page");
+        gtk_actionable_set_action_name(GTK_ACTIONABLE(next_page), "win.next-page");
+        gtk_box_append(GTK_BOX(page_box), prev_page);
+        gtk_box_append(GTK_BOX(page_box), next_page);
+    }
     self->page_entry = GTK_ENTRY(gtk_entry_new());
     gtk_entry_set_input_purpose(self->page_entry, GTK_INPUT_PURPOSE_DIGITS);
     gtk_editable_set_width_chars(GTK_EDITABLE(self->page_entry), 4);
@@ -960,6 +1048,18 @@ static GtkWidget* header_bar_new(SpdfWindow* self) {
     gtk_box_append(GTK_BOX(zoom_box), GTK_WIDGET(self->zoom_button));
     gtk_box_append(GTK_BOX(zoom_box), zoom_in);
     adw_header_bar_pack_start(ADW_HEADER_BAR(header), zoom_box);
+
+    // Fit-mode dropdown (Mac _fitModePopup: 100% / Fit Width / Fit Height /
+    // Fit Page). The model attaches in deferred_menus_idle (launch trim);
+    // the label tracks the current tab's fit in update_page_controls.
+    {
+        GtkWidget* fit_button = gtk_menu_button_new();
+        gtk_menu_button_set_label(GTK_MENU_BUTTON(fit_button), "Zoom");
+        gtk_menu_button_set_always_show_arrow(GTK_MENU_BUTTON(fit_button), TRUE);
+        gtk_widget_set_tooltip_text(fit_button, "Zoom to fit");
+        self->fit_button = GTK_MENU_BUTTON(fit_button);
+        adw_header_bar_pack_start(ADW_HEADER_BAR(header), fit_button);
+    }
 
     menu_button = gtk_menu_button_new();
     gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_button), "open-menu-symbolic");
@@ -1030,6 +1130,16 @@ static gboolean deferred_menus_idle(gpointer user_data) {
     primary = build_primary_menu(win); // also creates win->recent_menu
     gtk_menu_button_set_menu_model(win->menu_button, primary);
     g_object_unref(primary);
+    // Fit-mode dropdown model (Mac fit popup items, same order).
+    if (win->fit_button) {
+        GMenu* fit_menu = g_menu_new();
+        g_menu_append(fit_menu, "100%", "win.zoom-actual");
+        g_menu_append(fit_menu, "Fit Width", "win.fit-width");
+        g_menu_append(fit_menu, "Fit Height", "win.fit-height");
+        g_menu_append(fit_menu, "Fit Page", "win.fit-page");
+        gtk_menu_button_set_menu_model(win->fit_button, G_MENU_MODEL(fit_menu));
+        g_object_unref(fit_menu);
+    }
     context_menu = build_tab_context_menu();
     adw_tab_view_set_menu_model(win->tab_view, context_menu);
     g_object_unref(context_menu);
@@ -1082,6 +1192,10 @@ static void spdf_window_init(SpdfWindow* self) {
     spdf_launch_mark("win-actions+tabview");
     self->tab_bar = ADW_TAB_BAR(adw_tab_bar_new());
     adw_tab_bar_set_view(self->tab_bar, self->tab_view);
+    // Mac keeps the tab strip visible even with a single document (the
+    // titlebar tab row in the readme screenshot); AdwTabBar's default
+    // autohide would collapse it until a second tab opens.
+    adw_tab_bar_set_autohide(self->tab_bar, FALSE);
     new_tab_button = gtk_button_new_from_icon_name("tab-new-symbolic");
     gtk_widget_add_css_class(new_tab_button, "flat");
     gtk_widget_set_tooltip_text(new_tab_button, "Open document in a new tab (Ctrl+T)");
@@ -1174,6 +1288,7 @@ static void spdf_window_dispose(GObject* object) {
     self->page_entry = NULL;
     self->page_total_label = NULL;
     self->zoom_button = NULL;
+    self->fit_button = NULL;
     self->search_toggle = NULL;
     self->menu_button = NULL;
     self->context_page = NULL;

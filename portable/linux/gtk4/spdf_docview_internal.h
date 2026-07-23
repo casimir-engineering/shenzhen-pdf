@@ -189,6 +189,13 @@ static inline double spdf_fit_page_zoom(double page_w, double page_h, double vie
     return CLAMP(MIN(viewport_w / page_w, viewport_h / page_h), SPDF_MIN_ZOOM, SPDF_MAX_ZOOM);
 }
 
+/* Mac fit-mode popup "Fit Height" (SPDFFitModeHeight): the page height fills
+ * the viewport height. */
+static inline double spdf_fit_height_zoom(double page_h, double viewport_h) {
+    if (page_h <= 0.0 || viewport_h <= 80.0) return 0.0;
+    return CLAMP(viewport_h / page_h, SPDF_MIN_ZOOM, SPDF_MAX_ZOOM);
+}
+
 /* ---------------------------------------------------------------------------
  * Cursor-anchored zoom, in document space. The anchor is a (page, PDF point)
  * pair plus the viewport point it sat under; after a relayout at the new zoom

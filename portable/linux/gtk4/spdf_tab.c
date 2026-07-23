@@ -189,6 +189,11 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
     view = spdf_window_get_tab_view(win);
     tab->page = adw_tab_view_append(view, content);
     g_object_set_data(G_OBJECT(tab->page), "spdf-tab", tab);
+    // adw_tab_view_append fired page-attached (and, for the first page,
+    // notify::selected-page) synchronously — before the "spdf-tab" link
+    // above existed. Re-run the window's attach work (docview page/zoom
+    // signal hookup, minimap action sync) now that the link resolves.
+    spdf_window_tab_linked(win, tab->page);
     title = spdf_tab_display_name(tab);
     adw_tab_page_set_title(tab->page, title);
     tooltip = g_markup_escape_text(tab->path, -1); // tab tooltip = full path
