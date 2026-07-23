@@ -77,6 +77,11 @@ typedef struct {
     GtkWidget* panel;
     AdwViewStack* stack;
 
+    // Filter field (Mac _sidebarFilterField): filters the chapters tree and
+    // the comments list; hidden on the search-results pane.
+    GtkWidget* filter_entry;
+    char* filter_text; // casefolded; NULL/empty = no filtering
+
     // Chapters pane
     GtkListView* chapters_view;
     GtkSingleSelection* chapters_sel; // owned; over a GtkTreeListModel
@@ -147,6 +152,7 @@ static void sidebar_free(gpointer data) {
     g_free(sb->cache_levels);
     g_free(sb->cache_titles);
     g_free(sb->results_query);
+    g_free(sb->filter_text);
     g_free(sb);
 }
 
@@ -338,9 +344,51 @@ static void chapters_selection_changed(GObject* selection, GParamSpec* pspec, gp
     g_clear_object(&item);
 }
 
+/* Filtered chapters: a FLAT store of the outline entries whose title matches
+ * the filter text (Mac filters the flattened sidebar table the same way). */
+static GListStore* chapters_build_filtered(SpdfSidebar* sb, SpdfTab* tab) {
+    GListStore* root = g_list_store_new(SPDF_TYPE_SIDEBAR_ITEM);
+
+    sidebar_cache_ensure(sb, tab);
+    for (int i = 0; i < sb->cache_count; ++i) {
+        const spdf_outline_item* entry = &tab->outline.items[i];
+        SpdfSidebarItem* item;
+
+        if (!spdf_sidebar_filter_matches(entry->title, sb->filter_text)) continue;
+        item = sidebar_item_new(SPDF_SIDEBAR_ROW_CHAPTER,
+                                g_strdup(entry->title && *entry->title ? entry->title : "Untitled"), NULL,
+                                entry->page_index, i);
+        g_list_store_append(root, item);
+        g_object_unref(item);
+    }
+    return root;
+}
+
+/* Click-to-jump regardless of selection state (Mac activateSidebarRow):
+ * notify::selected alone misses clicks on the row that is ALREADY selected —
+ * chapters_follow_page keeps the current chapter highlighted, so "click the
+ * chapter I'm in to go back to its start" was a dead click. */
+static void chapters_row_activated(GtkListView* view, guint position, gpointer user_data) {
+    SpdfSidebar* sb = sidebar_for_paned(user_data);
+    GtkTreeListRow* row;
+    SpdfSidebarItem* item;
+    SpdfTab* tab;
+
+    (void)view;
+    if (!sb || !sb->win || !sb->chapters_sel) return;
+    row = g_list_model_get_item(G_LIST_MODEL(sb->chapters_sel), position);
+    if (!row) return;
+    item = gtk_tree_list_row_get_item(row);
+    tab = spdf_window_current_tab(sb->win);
+    if (item && tab && tab->view && item->page >= 0) spdf_doc_view_goto_page(tab->view, item->page);
+    g_clear_object(&item);
+    g_object_unref(row);
+}
+
 static void chapters_rebuild(SpdfSidebar* sb, SpdfTab* tab) {
     GListStore* root;
     GtkTreeListModel* tree;
+    gboolean filtering = sb->filter_text && *sb->filter_text;
 
     sb->chapters_tab = tab;
     g_clear_object(&sb->chapters_sel);
@@ -349,7 +397,7 @@ static void chapters_rebuild(SpdfSidebar* sb, SpdfTab* tab) {
         gtk_stack_set_visible_child_name(sb->chapters_pane, "empty");
         return;
     }
-    root = chapters_build_root(sb, tab);
+    root = filtering ? chapters_build_filtered(sb, tab) : chapters_build_root(sb, tab);
     tree = gtk_tree_list_model_new(G_LIST_MODEL(root), FALSE, TRUE, chapters_child_model, NULL, NULL);
     sb->chapters_sel = gtk_single_selection_new(G_LIST_MODEL(tree));
     gtk_single_selection_set_autoselect(sb->chapters_sel, FALSE);
@@ -451,6 +499,7 @@ static void comments_rebuild(SpdfSidebar* sb, SpdfTab* tab) {
         gtk_box_append(GTK_BOX(box), subtitle_label);
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
         g_object_set_data(G_OBJECT(row), "comment-page", GINT_TO_POINTER(item->page_index));
+        g_object_set_data_full(G_OBJECT(row), "comment-filter-text", g_strdup(title), g_free);
         if (w > 0 && h > 0)
             g_object_set_data_full(G_OBJECT(row), "comment-bounds", g_memdup2(&item->bounds, sizeof(item->bounds)),
                                    g_free);
@@ -458,6 +507,14 @@ static void comments_rebuild(SpdfSidebar* sb, SpdfTab* tab) {
         g_free(subtitle);
         g_free(title);
     }
+}
+
+/* Mac filters comments through the same field ("Filter Comments"). */
+static gboolean comments_filter_func(GtkListBoxRow* row, gpointer user_data) {
+    SpdfSidebar* sb = sidebar_for_paned(user_data);
+    const char* text = g_object_get_data(G_OBJECT(row), "comment-filter-text");
+    if (!sb) return TRUE;
+    return spdf_sidebar_filter_matches(text, sb->filter_text);
 }
 
 /* spdf_annot.h comments-changed hook: fired after any (re)load of a tab's
@@ -530,6 +587,23 @@ static void results_selection_changed(GObject* selection, GParamSpec* pspec, gpo
     if (!item || item->kind != SPDF_SIDEBAR_ROW_MATCH) return;
     tab = spdf_window_current_tab(sb->win);
     if (tab && tab->search) spdf_search_controller_set_current(tab->search, item->index);
+}
+
+/* Same click-to-jump rule as the chapters pane: re-clicking the currently
+ * selected match re-centers it. */
+static void results_row_activated(GtkListView* view, guint position, gpointer user_data) {
+    SpdfSidebar* sb = sidebar_for_paned(user_data);
+    SpdfSidebarItem* item;
+    SpdfTab* tab;
+
+    (void)view;
+    if (!sb || !sb->win || !sb->results_store) return;
+    item = g_list_model_get_item(G_LIST_MODEL(sb->results_store), position);
+    if (item && item->kind == SPDF_SIDEBAR_ROW_MATCH) {
+        tab = spdf_window_current_tab(sb->win);
+        if (tab && tab->search) spdf_search_controller_set_current(tab->search, item->index);
+    }
+    g_clear_object(&item);
 }
 
 static void results_reset(SpdfSidebar* sb) {
@@ -794,6 +868,37 @@ static void sidebar_fullscreen_changed(GObject* object, GParamSpec* pspec, gpoin
 }
 
 // ---------------------------------------------------------------------------
+// Filter field (Mac _sidebarFilterField)
+
+static void sidebar_filter_changed(GtkSearchEntry* entry, gpointer user_data) {
+    SpdfSidebar* sb = sidebar_for_paned(user_data);
+    const char* text;
+
+    if (!sb) return;
+    text = gtk_editable_get_text(GTK_EDITABLE(entry));
+    g_free(sb->filter_text);
+    sb->filter_text = text && *text ? g_utf8_casefold(text, -1) : NULL;
+    // Chapters get a rebuilt (flat) model; comments just re-run the filter.
+    chapters_rebuild(sb, sb->win ? spdf_window_current_tab(sb->win) : NULL);
+    gtk_list_box_invalidate_filter(sb->comments_list);
+}
+
+/* Placeholder follows the visible pane (Mac swaps "Filter Chapters" /
+ * "Filter Comments"); the search-results pane has its own query, so the
+ * filter row hides there. */
+static void sidebar_filter_pane_changed(GObject* stack, GParamSpec* pspec, gpointer user_data) {
+    SpdfSidebar* sb = sidebar_for_paned(user_data);
+    const char* name;
+
+    (void)pspec;
+    if (!sb || !sb->filter_entry) return;
+    name = adw_view_stack_get_visible_child_name(ADW_VIEW_STACK(stack));
+    gtk_widget_set_visible(sb->filter_entry, g_strcmp0(name, "search") != 0);
+    g_object_set(sb->filter_entry, "placeholder-text",
+                 g_strcmp0(name, "comments") == 0 ? "Filter Comments" : "Filter Chapters", NULL);
+}
+
+// ---------------------------------------------------------------------------
 // Construction
 
 /* GtkStack pane: "list" = scrolled list widget, "empty" = dim status label.
@@ -848,6 +953,8 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
     g_signal_connect(chapters_factory, "bind", G_CALLBACK(chapters_factory_bind), NULL);
     sb->chapters_view = GTK_LIST_VIEW(gtk_list_view_new(NULL, chapters_factory));
     gtk_widget_add_css_class(GTK_WIDGET(sb->chapters_view), "navigation-sidebar");
+    gtk_list_view_set_single_click_activate(sb->chapters_view, TRUE);
+    g_signal_connect_object(sb->chapters_view, "activate", G_CALLBACK(chapters_row_activated), paned, 0);
     sb->chapters_pane =
         GTK_STACK(sidebar_pane_new(GTK_WIDGET(sb->chapters_view), "No chapters in this document", &chapters_empty));
 
@@ -855,6 +962,7 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
     sb->comments_list = GTK_LIST_BOX(gtk_list_box_new());
     gtk_list_box_set_selection_mode(sb->comments_list, GTK_SELECTION_NONE);
     gtk_widget_add_css_class(GTK_WIDGET(sb->comments_list), "navigation-sidebar");
+    gtk_list_box_set_filter_func(sb->comments_list, comments_filter_func, paned, NULL);
     {
         GtkWidget* placeholder = gtk_label_new("No comments in this document");
         gtk_label_set_wrap(GTK_LABEL(placeholder), TRUE);
@@ -880,6 +988,8 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
     sb->results_view =
         GTK_LIST_VIEW(gtk_list_view_new(GTK_SELECTION_MODEL(g_object_ref(sb->results_sel)), results_factory));
     gtk_widget_add_css_class(GTK_WIDGET(sb->results_view), "navigation-sidebar");
+    gtk_list_view_set_single_click_activate(sb->results_view, TRUE);
+    g_signal_connect_object(sb->results_view, "activate", G_CALLBACK(results_row_activated), paned, 0);
     sb->results_pane =
         GTK_STACK(sidebar_pane_new(GTK_WIDGET(sb->results_view), "No search results", &sb->results_empty));
 
@@ -907,6 +1017,17 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
 
     panel_view = adw_toolbar_view_new();
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(panel_view), switcher);
+
+    // Filter row (Mac _sidebarFilterField under the mode control).
+    sb->filter_entry = gtk_search_entry_new();
+    g_object_set(sb->filter_entry, "placeholder-text", "Filter Chapters", NULL);
+    gtk_widget_set_margin_start(sb->filter_entry, 6);
+    gtk_widget_set_margin_end(sb->filter_entry, 6);
+    gtk_widget_set_margin_bottom(sb->filter_entry, 6);
+    g_signal_connect(sb->filter_entry, "search-changed", G_CALLBACK(sidebar_filter_changed), paned);
+    g_signal_connect_object(sb->stack, "notify::visible-child", G_CALLBACK(sidebar_filter_pane_changed), paned, 0);
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(panel_view), sb->filter_entry);
+
     adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(panel_view), GTK_WIDGET(sb->stack));
     sb->panel = panel_view;
     gtk_widget_set_size_request(sb->panel, SPDF_SIDEBAR_MIN_WIDTH, -1);

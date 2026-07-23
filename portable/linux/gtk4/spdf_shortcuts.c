@@ -38,6 +38,7 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.zoom-actual", {"<Control>0", "<Control>KP_0", NULL}, "View", "Zoom to actual size"},
     {"win.fit-page", {"<Control>1", NULL, NULL}, "View", "Fit page"},
     {"win.fit-width", {"<Control>2", NULL, NULL}, "View", "Fit width"},
+    {"win.fit-height", {"<Control>3", NULL, NULL}, "View", "Fit height"},
     {"win.rotate-cw", {"<Control>r", NULL, NULL}, "View", "Rotate page clockwise"},
     {"win.rotate-ccw", {"<Control><Shift>r", NULL, NULL}, "View", "Rotate page anticlockwise"},
     {"win.sidebar", {"F9", NULL, NULL}, "View", "Toggle the side panel"},
@@ -47,6 +48,10 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.presentation", {"F5", "<Control><Shift>f", NULL}, "View", "Presentation mode (Escape exits)"},
     // --- Navigation
     {"win.goto-page", {"<Control>l", NULL, NULL}, "Navigation", "Go to page"},
+    // No accelerators: Page Up / Page Down are handled by the doc view
+    // directly; these actions back the toolbar page-step buttons.
+    {"win.prev-page", {NULL, NULL, NULL}, "Navigation", "Previous page"},
+    {"win.next-page", {NULL, NULL, NULL}, "Navigation", "Next page"},
     {"win.prev-tab", {"<Control>Page_Up", NULL, NULL}, "Navigation", "Previous tab"},
     {"win.next-tab", {"<Control>Page_Down", NULL, NULL}, "Navigation", "Next tab"},
     {"win.tab-overview", {"<Control><Shift>o", NULL, NULL}, "Navigation", "Open the tab overview"},

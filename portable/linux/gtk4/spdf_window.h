@@ -40,6 +40,13 @@ void spdf_window_add_toast(SpdfWindow* win, const char* title);
 const char* spdf_window_get_session_id(SpdfWindow* win);
 void spdf_window_set_session_id(SpdfWindow* win, const char* id);
 
+// Called by spdf_tab_open right after the page↔tab link ("spdf-tab" object
+// data) is set: AdwTabView emits page-attached and notify::selected-page
+// INSIDE adw_tab_view_append — before the link exists — so the handlers keyed
+// off tab_for_page() saw a NULL tab (docview page/zoom signals were never
+// connected; the win.minimap action stayed disabled on the first tab).
+void spdf_window_tab_linked(SpdfWindow* win, AdwTabPage* page);
+
 // ---------------------------------------------------------------------------
 // spdf_tab.c — beyond the contract entry points in spdf_internal.h.
 // spdf_tab_open/spdf_tab_close are declared there.

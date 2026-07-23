@@ -184,7 +184,7 @@ static double view_margin_h(SpdfDocView* view) {
 }
 
 static double view_margin_v(SpdfDocView* view) {
-    return view->fit == SPDF_FIT_PAGE ? 0.0 : SPDF_PAGE_MARGIN_V;
+    return (view->fit == SPDF_FIT_PAGE || view->fit == SPDF_FIT_HEIGHT) ? 0.0 : SPDF_PAGE_MARGIN_V;
 }
 
 static double view_scroll_x(SpdfDocView* view) {
@@ -560,6 +560,7 @@ static double view_fit_zoom(SpdfDocView* view) {
     if (view->page_count <= 0 || view->current_page < 0 || view->current_page >= view->page_count) return 0.0;
     size = &view->sizes[view->current_page];
     if (view->fit == SPDF_FIT_WIDTH) return spdf_fit_width_zoom(size->width, view->viewport_w);
+    if (view->fit == SPDF_FIT_HEIGHT) return spdf_fit_height_zoom(size->height, view->viewport_h);
     if (view->fit == SPDF_FIT_PAGE) return spdf_fit_page_zoom(size->width, size->height, view->viewport_w,
                                                               view->viewport_h);
     return 0.0;
@@ -1502,6 +1503,12 @@ static void spdf_doc_view_init(SpdfDocView* view) {
     gtk_widget_set_focusable(GTK_WIDGET(view), TRUE);
     gtk_widget_set_hexpand(GTK_WIDGET(view), TRUE);
     gtk_widget_set_vexpand(GTK_WIDGET(view), TRUE);
+    /* The snapshot draws page textures in canvas coordinates translated by
+     * the scroll offset; when the canvas is larger than the allocation the
+     * pages extend past the widget bounds. GTK4 does not clip by default
+     * (GTK_OVERFLOW_VISIBLE), so without this the zoomed-in document paints
+     * over the sidebar and minimap (GtkViewport sets the same flag). */
+    gtk_widget_set_overflow(GTK_WIDGET(view), GTK_OVERFLOW_HIDDEN);
 
     scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
     g_signal_connect(scroll, "scroll", G_CALLBACK(on_scroll), view);

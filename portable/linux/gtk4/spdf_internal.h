@@ -67,7 +67,7 @@ int spdf_doc_view_current_page(SpdfDocView *v);
 void spdf_doc_view_set_zoom(SpdfDocView *v, double zoom, gboolean anchored,
                             double anchor_x, double anchor_y);
 double spdf_doc_view_get_zoom(SpdfDocView *v);
-typedef enum { SPDF_FIT_PAGE, SPDF_FIT_WIDTH, SPDF_FIT_CUSTOM } SpdfFitMode;
+typedef enum { SPDF_FIT_PAGE, SPDF_FIT_WIDTH, SPDF_FIT_HEIGHT, SPDF_FIT_CUSTOM } SpdfFitMode;
 void spdf_doc_view_set_fit(SpdfDocView *v, SpdfFitMode m);
 SpdfFitMode spdf_doc_view_get_fit(SpdfDocView *v);
 void spdf_doc_view_get_scroll(SpdfDocView *v, double *x, double *y);

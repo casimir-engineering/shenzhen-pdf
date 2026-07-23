@@ -76,6 +76,7 @@ static int fit_mode_id_for_view(SpdfDocView* view) {
     // settings/session schema: 0 custom, 1 actual, 2 width, 3 height, 4 page
     switch (spdf_doc_view_get_fit(view)) {
         case SPDF_FIT_PAGE: return 4;
+        case SPDF_FIT_HEIGHT: return 3;
         case SPDF_FIT_WIDTH: return 2;
         case SPDF_FIT_CUSTOM:
         default: return 0;
@@ -249,8 +250,8 @@ static SpdfTab* open_session_tab(SpdfWindow* win, const SpdfSessionTab* stored) 
     if (stored->has_show_minimap) spdf_minimap_set_visible(tab, stored->show_minimap, FALSE);
     if (tab->view) {
         switch (stored->fit_mode) {
-            case 4:
-            case 3: spdf_doc_view_set_fit(tab->view, SPDF_FIT_PAGE); break;
+            case 4: spdf_doc_view_set_fit(tab->view, SPDF_FIT_PAGE); break;
+            case 3: spdf_doc_view_set_fit(tab->view, SPDF_FIT_HEIGHT); break;
             case 2: spdf_doc_view_set_fit(tab->view, SPDF_FIT_WIDTH); break;
             case 1: spdf_doc_view_set_zoom(tab->view, 1.0, FALSE, 0, 0); break;
             default:
@@ -502,6 +503,11 @@ static void spdf_app_startup(GApplication* app) {
 
     spdf_launch_mark("startup-begin");
     G_APPLICATION_CLASS(spdf_app_parent_class)->startup(app);
+    // Window icon: without an explicit name GTK falls back to the prgname,
+    // which resolves for the deb (hicolor "shenzhenpdf") but not under
+    // Flatpak (icon exported as the app id) — decoration layouts that show
+    // the window icon then render the broken-image glyph.
+    gtk_window_set_default_icon_name(g_getenv("FLATPAK_ID") ? g_getenv("FLATPAK_ID") : "shenzhenpdf");
     g_action_map_add_action_entries(G_ACTION_MAP(app), k_app_actions, G_N_ELEMENTS(k_app_actions), app);
     spdf_shortcuts_install(GTK_APPLICATION(app)); // hash inserts only; cheap
     self->sigterm_id = g_unix_signal_add(SIGTERM, terminate_signal, self);

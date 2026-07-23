@@ -136,6 +136,22 @@ static inline const char* spdf_sidebar_chapter_title(const char* const* titles, 
 }
 
 /* --------------------------------------------------------------------------
+ * Sidebar filter (Mac _sidebarFilterField, localizedCaseInsensitiveContains):
+ * case-insensitive substring over UTF-8 casefolds. `needle_folded` must
+ * already be casefolded (the caller folds the filter text once); an empty or
+ * NULL needle matches everything. */
+static inline gboolean spdf_sidebar_filter_matches(const char* haystack, const char* needle_folded) {
+    char* folded;
+    gboolean hit;
+    if (!needle_folded || !*needle_folded) return TRUE;
+    if (!haystack || !*haystack) return FALSE;
+    folded = g_utf8_casefold(haystack, -1);
+    hit = strstr(folded, needle_folded) != NULL;
+    g_free(folded);
+    return hit;
+}
+
+/* --------------------------------------------------------------------------
  * Snippet markup: escape the snippet for Pango and bold the first
  * case-insensitive occurrence of `query` (matched by UTF-8 casefold over
  * equal character counts; queries that do not literally occur — e.g. regex
