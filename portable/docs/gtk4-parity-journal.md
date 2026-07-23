@@ -120,6 +120,57 @@ XTEST captures on the built binary unless noted:
   Bonus fix found while verifying: shadow-copy tabs no longer show the
   `ro-<hash>` working-copy basename as their title.
 
+## 2026-07-23 session (fresh-install UI report: shell chrome + sidebar)
+
+A user pass on the freshly installed 26.7.22 deb surfaced shell-level gaps
+that never showed in the earlier single-focus captures. All fixed and
+verified live (X11 captures on the dev build); 182 unit checks stay green.
+
+- **No tab row with one document**: AdwTabBar autohides by default until a
+  second tab opens; the Mac strip is always visible. `autohide = FALSE`.
+- **Zoomed pages painted over the sidebar** (user screenshot): the docview
+  is a custom GtkScrollable that draws page textures translated by the
+  scroll offset, and GTK4 widgets default to `GTK_OVERFLOW_VISIBLE` — at
+  zoom > fit the canvas painted left of its allocation, across the panel.
+  `gtk_widget_set_overflow(GTK_OVERFLOW_HIDDEN)` in init (what GtkViewport
+  does). Verified at 161%: the page clips exactly at the pane edge.
+- **Page↔tab link race (root cause of two symptoms)**: AdwTabView emits
+  `page-attached` + `notify::selected-page` synchronously INSIDE
+  `adw_tab_view_append`, i.e. before spdf_tab.c could attach the
+  "spdf-tab" object data to the page. `tab_for_page()` returned NULL, so
+  (a) the window never connected `page-changed`/`zoom-changed` for any
+  freshly opened tab — the header page entry sat stale through scrolling
+  and chapter jumps — and (b) `win.minimap` stayed disabled for the first
+  tab (grey toggle → the report "no hide minimap option").
+  `spdf_window_tab_linked()` (called right after the data is set) re-runs
+  the attach hookup + minimap sync; cannot double-connect since the
+  NULL-tab run connected nothing.
+- **Hamburger menu had no View section**: added Zoom submenu (Fit
+  Page/Width/Height, Actual Size) and stateful check items for Show Side
+  Panel / Show Minimap / Presentation Mode.
+- **Mac toolbar parity**: fit-mode dropdown (100% / Fit Width / Fit
+  Height / Fit Page; label mirrors the tab's fit, "Zoom" when custom) and
+  prev/next page-step buttons beside the page entry. `SPDF_FIT_HEIGHT` is
+  new end-to-end: fit zoom + margin rules, session schema id 3 (was
+  approximated to Fit Page on restore), Ctrl+3.
+- **Sidebar filter (Mac `_sidebarFilterField`)**: search entry under the
+  pane switcher; chapters filter to a flat matching list (Mac filters the
+  flattened table), comments filter via list-box filter func; placeholder
+  swaps Chapters/Comments; hidden on the Results pane (it has its own
+  query). Matching = casefolded substring (`spdf_sidebar_filter_matches`).
+- **Sidebar dead click** (user report): jumps hung off `notify::selected`,
+  so clicking the row that follow-page had ALREADY selected did nothing —
+  "click the chapter I'm in to return to its start" was dead. Chapters and
+  results lists now single-click-activate and jump from the `activate`
+  signal too (Mac `activateSidebarRow` semantics).
+- **Window icon**: never set → decoration layouts that render the window
+  icon showed the broken-image glyph (user screenshot, flatpak).
+  `gtk_window_set_default_icon_name(FLATPAK_ID || "shenzhenpdf")`.
+- Deliberately NOT ported (Adw conventions, documented divergence):
+  OCR/Translate toolbar icon buttons (hamburger menu + palette cover
+  them), the inline Find field + Regex checkbox (GTK search bar has
+  its own regex/multiline toggles).
+
 ## Known issues / needs live verification
 
 1. ~~Search-bar reveal keystroke race~~ — fixed + capture-verified above.
