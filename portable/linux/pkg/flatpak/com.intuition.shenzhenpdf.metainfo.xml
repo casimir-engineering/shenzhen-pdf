@@ -40,6 +40,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="26.7.23" date="2026-07-23">
+      <description>
+        <p>UI parity fixes: always-visible tab row, document view clipping, minimap toggle, fit-height mode, fit-mode dropdown, page-step buttons, sidebar chapter/comment filtering, and reliable chapter navigation.</p>
+      </description>
+    </release>
     <release version="26.7.17" date="2026-07-17">
       <description>
         <p>GTK4 Linux release with tabbed reading, search, OCR, offline translation, annotations and printing.</p>
