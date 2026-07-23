@@ -107,6 +107,7 @@ typedef struct {
     GtkLabel* results_empty;
     GArray* match_rows;       // guint store position per match index
     guint results_built;      // matches already turned into rows
+    guint results_total;      // match count stamped in the row subtitles
     int results_prev_chapter; // grouping state (SPDF_SIDEBAR_NO_CHAPTER)
     char* results_query;      // query the store was built for
     SpdfSearchController* connected; // weak pointer
@@ -265,15 +266,25 @@ static void sidebar_schedule_sync(SpdfSidebar* sb) {
 // ---------------------------------------------------------------------------
 // Chapters pane
 
+static void chapters_row_clicked(GtkGestureClick* gesture, int n_press, double x, double y, gpointer user_data);
+
 static void chapters_factory_setup(GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data) {
     GtkWidget* expander = gtk_tree_expander_new();
     GtkWidget* label = gtk_label_new("");
+    GtkGesture* click = gtk_gesture_click_new();
     (void)factory;
-    (void)user_data;
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
     gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
     gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), label);
     gtk_list_item_set_child(list_item, expander);
+    // Click-to-jump even when the row is already selected (Mac
+    // activateSidebarRow): notify::selected misses that case, and
+    // single-click-activate is not an option — it makes GtkListView move the
+    // SELECTION on pointer hover. Bubble-phase per-row gesture instead; the
+    // expander arrow sits outside the label, so expansion clicks don't jump.
+    g_object_set_data(G_OBJECT(label), "chapter-expander", expander);
+    g_signal_connect(click, "released", G_CALLBACK(chapters_row_clicked), user_data);
+    gtk_widget_add_controller(label, GTK_EVENT_CONTROLLER(click));
 }
 
 static void chapters_factory_bind(GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data) {
@@ -383,6 +394,28 @@ static void chapters_row_activated(GtkListView* view, guint position, gpointer u
     if (item && tab && tab->view && item->page >= 0) spdf_doc_view_goto_page(tab->view, item->page);
     g_clear_object(&item);
     g_object_unref(row);
+}
+
+/* Per-row bubble-phase click: fires whether or not the click changed the
+ * selection, covering the already-selected row (see chapters_factory_setup). */
+static void chapters_row_clicked(GtkGestureClick* gesture, int n_press, double x, double y, gpointer user_data) {
+    GtkWidget* label = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    GtkTreeExpander* expander = g_object_get_data(G_OBJECT(label), "chapter-expander");
+    SpdfSidebar* sb = sidebar_for_paned(user_data);
+    GtkTreeListRow* row;
+    SpdfSidebarItem* item;
+    SpdfTab* tab;
+
+    (void)n_press;
+    (void)x;
+    (void)y;
+    if (!sb || !sb->win || !expander) return;
+    row = gtk_tree_expander_get_list_row(expander);
+    if (!row) return;
+    item = gtk_tree_list_row_get_item(row);
+    tab = spdf_window_current_tab(sb->win);
+    if (item && tab && tab->view && item->page >= 0) spdf_doc_view_goto_page(tab->view, item->page);
+    g_clear_object(&item);
 }
 
 static void chapters_rebuild(SpdfSidebar* sb, SpdfTab* tab) {
@@ -530,13 +563,19 @@ static void sidebar_comments_changed(SpdfTab* tab, gpointer user_data) {
 // ---------------------------------------------------------------------------
 // Search results pane
 
+static void results_row_clicked(GtkGestureClick* gesture, int n_press, double x, double y, gpointer user_data);
+
 static void results_factory_setup(GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data) {
     GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     GtkWidget* title = gtk_label_new("");
     GtkWidget* subtitle = gtk_label_new("");
+    GtkGesture* click = gtk_gesture_click_new();
 
     (void)factory;
-    (void)user_data;
+    // Same already-selected-row click handling as the chapters pane (the
+    // bound item is stored on the box in results_factory_bind).
+    g_signal_connect(click, "released", G_CALLBACK(results_row_clicked), user_data);
+    gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(click));
     gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
     gtk_label_set_ellipsize(GTK_LABEL(title), PANGO_ELLIPSIZE_END);
     gtk_label_set_xalign(GTK_LABEL(subtitle), 0.0f);
@@ -563,6 +602,9 @@ static void results_factory_bind(GtkSignalListItemFactory* factory, GtkListItem*
     (void)user_data;
     gtk_list_item_set_selectable(list_item, !header);
     gtk_list_item_set_activatable(list_item, !header);
+    // Borrowed pointer for results_row_clicked; rebinding overwrites it and
+    // headers clear it (their clicks must not navigate).
+    g_object_set_data(G_OBJECT(box), "result-item", header ? NULL : item);
     if (header) {
         gtk_label_set_text(title, item->text ? item->text : "");
         gtk_widget_add_css_class(GTK_WIDGET(title), "heading");
@@ -606,10 +648,26 @@ static void results_row_activated(GtkListView* view, guint position, gpointer us
     g_clear_object(&item);
 }
 
+/* Per-row bubble-phase click (see results_factory_setup). */
+static void results_row_clicked(GtkGestureClick* gesture, int n_press, double x, double y, gpointer user_data) {
+    GtkWidget* box = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    SpdfSidebarItem* item = g_object_get_data(G_OBJECT(box), "result-item");
+    SpdfSidebar* sb = sidebar_for_paned(user_data);
+    SpdfTab* tab;
+
+    (void)n_press;
+    (void)x;
+    (void)y;
+    if (!sb || !sb->win || !item || item->kind != SPDF_SIDEBAR_ROW_MATCH) return;
+    tab = spdf_window_current_tab(sb->win);
+    if (tab && tab->search) spdf_search_controller_set_current(tab->search, item->index);
+}
+
 static void results_reset(SpdfSidebar* sb) {
     g_list_store_remove_all(sb->results_store);
     g_array_set_size(sb->match_rows, 0);
     sb->results_built = 0;
+    sb->results_total = 0;
     sb->results_prev_chapter = SPDF_SIDEBAR_NO_CHAPTER;
 }
 
@@ -636,6 +694,45 @@ static void results_select_current(SpdfSidebar* sb, int current) {
  * Append-only while a search streams batches in; a changed query or a
  * shrunken list rebuilds from scratch. A freshly changed query also switches
  * the panel to the search pane (Mac sidebar auto-enters search mode). */
+/* Append match rows [sb->results_built, count). Title: the match line cut to
+ * the Mac's word window (2 words each side, spdf_sidebar_snippet_window) with
+ * the query bolded; subtitle: Mac's "Page N - match I of TOTAL". */
+static void results_append(SpdfSidebar* sb, SpdfSearchController* ctrl, const char* query, guint count,
+                           gboolean has_outline) {
+    // Building from scratch stamps every subtitle with the same total; later
+    // appends leave results_total at the older value, which flags the list
+    // for the settle-time rebuild in results_sync.
+    if (sb->results_built == 0) sb->results_total = count;
+    for (guint i = sb->results_built; i < count; ++i) {
+        SpdfSearchMatch match;
+        GArray* rows;
+        if (!spdf_search_controller_match(ctrl, i, &match)) break;
+        rows = g_array_new(FALSE, FALSE, sizeof(SpdfSidebarGroupRow));
+        spdf_sidebar_group_append(rows, &sb->results_prev_chapter, match.chapter_index, has_outline, (int)i);
+        for (guint r = 0; r < rows->len; ++r) {
+            const SpdfSidebarGroupRow* row = &g_array_index(rows, SpdfSidebarGroupRow, r);
+            SpdfSidebarItem* item;
+            if (row->is_header) {
+                const char* title = spdf_sidebar_chapter_title(sb->cache_titles, sb->cache_count, row->value);
+                item = sidebar_item_new(SPDF_SIDEBAR_ROW_HEADER, g_strdup(title), NULL, -1, row->value);
+            } else {
+                guint pos = g_list_model_get_n_items(G_LIST_MODEL(sb->results_store));
+                char* window = spdf_sidebar_snippet_window(match.snippet, query);
+                item = sidebar_item_new(SPDF_SIDEBAR_ROW_MATCH, spdf_sidebar_snippet_markup(window, query),
+                                        g_strdup_printf("Page %d - match %d of %d", match.page + 1, row->value + 1,
+                                                        (int)count),
+                                        match.page, row->value);
+                g_free(window);
+                g_array_append_val(sb->match_rows, pos);
+            }
+            g_list_store_append(sb->results_store, item);
+            g_object_unref(item);
+        }
+        g_array_free(rows, TRUE);
+    }
+    sb->results_built = count;
+}
+
 static void results_sync(SpdfSidebar* sb, SpdfTab* tab, SpdfSearchController* ctrl) {
     const char* query = ctrl ? spdf_search_controller_get_query(ctrl) : "";
     gboolean switch_to_search = FALSE;
@@ -661,31 +758,14 @@ static void results_sync(SpdfSidebar* sb, SpdfTab* tab, SpdfSearchController* ct
     sidebar_cache_ensure(sb, tab);
     has_outline = sb->cache_count > 0;
 
-    for (guint i = sb->results_built; i < count; ++i) {
-        SpdfSearchMatch match;
-        GArray* rows;
-        if (!spdf_search_controller_match(ctrl, i, &match)) break;
-        rows = g_array_new(FALSE, FALSE, sizeof(SpdfSidebarGroupRow));
-        spdf_sidebar_group_append(rows, &sb->results_prev_chapter, match.chapter_index, has_outline, (int)i);
-        for (guint r = 0; r < rows->len; ++r) {
-            const SpdfSidebarGroupRow* row = &g_array_index(rows, SpdfSidebarGroupRow, r);
-            SpdfSidebarItem* item;
-            if (row->is_header) {
-                const char* title = spdf_sidebar_chapter_title(sb->cache_titles, sb->cache_count, row->value);
-                item = sidebar_item_new(SPDF_SIDEBAR_ROW_HEADER, g_strdup(title), NULL, -1, row->value);
-            } else {
-                guint pos = g_list_model_get_n_items(G_LIST_MODEL(sb->results_store));
-                item = sidebar_item_new(SPDF_SIDEBAR_ROW_MATCH, spdf_sidebar_snippet_markup(match.snippet, query),
-                                        g_strdup_printf("Page %d · match %d", match.page + 1, row->value + 1),
-                                        match.page, row->value);
-                g_array_append_val(sb->match_rows, pos);
-            }
-            g_list_store_append(sb->results_store, item);
-            g_object_unref(item);
-        }
-        g_array_free(rows, TRUE);
+    results_append(sb, ctrl, query, count, has_outline);
+    // Mac subtitles read "match i of N" with N rebuilt on every update; rows
+    // appended mid-stream carry the count as of their batch, so once the
+    // search settles rebuild the list with the final total stamped on all.
+    if (!spdf_search_controller_is_searching(ctrl) && count > 0 && sb->results_total != count) {
+        results_reset(sb);
+        results_append(sb, ctrl, query, count, has_outline);
     }
-    sb->results_built = count;
 
     if (count == 0) {
         char* status;
@@ -949,11 +1029,12 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
     // Chapters: outline tree (GtkTreeListModel + GtkListView; GtkTreeView is
     // deprecated in GTK 4.10+).
     chapters_factory = gtk_signal_list_item_factory_new();
-    g_signal_connect(chapters_factory, "setup", G_CALLBACK(chapters_factory_setup), NULL);
+    g_signal_connect(chapters_factory, "setup", G_CALLBACK(chapters_factory_setup), paned);
     g_signal_connect(chapters_factory, "bind", G_CALLBACK(chapters_factory_bind), NULL);
     sb->chapters_view = GTK_LIST_VIEW(gtk_list_view_new(NULL, chapters_factory));
     gtk_widget_add_css_class(GTK_WIDGET(sb->chapters_view), "navigation-sidebar");
-    gtk_list_view_set_single_click_activate(sb->chapters_view, TRUE);
+    // No single-click-activate: it moves the selection on HOVER. Clicks are
+    // handled per row (chapters_row_clicked); "activate" covers Enter.
     g_signal_connect_object(sb->chapters_view, "activate", G_CALLBACK(chapters_row_activated), paned, 0);
     sb->chapters_pane =
         GTK_STACK(sidebar_pane_new(GTK_WIDGET(sb->chapters_view), "No chapters in this document", &chapters_empty));
@@ -977,7 +1058,7 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
     // Search results: chapter-grouped snippets, recycled rows (GtkListView —
     // the match list can hold up to SPDF_SEARCH_MAX_MATCHES rows).
     results_factory = gtk_signal_list_item_factory_new();
-    g_signal_connect(results_factory, "setup", G_CALLBACK(results_factory_setup), NULL);
+    g_signal_connect(results_factory, "setup", G_CALLBACK(results_factory_setup), paned);
     g_signal_connect(results_factory, "bind", G_CALLBACK(results_factory_bind), NULL);
     sb->results_store = g_list_store_new(SPDF_TYPE_SIDEBAR_ITEM);
     sb->results_sel = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(sb->results_store)));
@@ -988,7 +1069,6 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
     sb->results_view =
         GTK_LIST_VIEW(gtk_list_view_new(GTK_SELECTION_MODEL(g_object_ref(sb->results_sel)), results_factory));
     gtk_widget_add_css_class(GTK_WIDGET(sb->results_view), "navigation-sidebar");
-    gtk_list_view_set_single_click_activate(sb->results_view, TRUE);
     g_signal_connect_object(sb->results_view, "activate", G_CALLBACK(results_row_activated), paned, 0);
     sb->results_pane =
         GTK_STACK(sidebar_pane_new(GTK_WIDGET(sb->results_view), "No search results", &sb->results_empty));
