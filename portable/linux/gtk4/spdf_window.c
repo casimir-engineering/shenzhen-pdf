@@ -964,27 +964,14 @@ static GMenuModel* build_primary_menu(SpdfWindow* win) {
 
 static gboolean window_close_request(GtkWindow* window, gpointer user_data) {
     GtkApplication* app = gtk_window_get_application(window);
-    int shell_windows = 0;
 
     (void)user_data;
     if (!app || !SPDF_IS_APP(app)) return GDK_EVENT_PROPAGATE;
-    for (GList* it = gtk_application_get_windows(app); it; it = it->next)
-        if (SPDF_IS_WINDOW(it->data)) shell_windows++;
-    if (shell_windows > 1) {
-        // Deliberate close with other windows open: drop it from the session
-        // (Mac semantics), keeping the survivors for the next restore.
-        spdf_app_forget_window(SPDF_APP(app), SPDF_WINDOW(window));
-    } else {
-        // Closing the last window: capture it (while still alive) so a cold
-        // relaunch restores it, then flush synchronously — by shutdown the
-        // widgets are already gone. Without the resident hold this is the
-        // quit path; with it the process stays alive (docs, render services
-        // and thumbnail caches die with the window) and the notify below
-        // trims the freed heap once destruction finished.
-        spdf_app_save_session(SPDF_APP(app));
-        spdf_state_flush(spdf_app_get_state(SPDF_APP(app)));
-        spdf_app_notify_last_window_closed(SPDF_APP(app));
-    }
+    // Alt+F4 / the titlebar close button quits the whole APP, not just this
+    // window (user request): the full multi-window session is captured and
+    // flushed first, every other window is destroyed, and this one closes by
+    // propagating. The next launch/activate restores everything as it was.
+    spdf_app_close_all_windows(SPDF_APP(app), SPDF_WINDOW(window));
     return GDK_EVENT_PROPAGATE;
 }
 

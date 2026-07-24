@@ -69,8 +69,8 @@ gboolean spdf_app_has_closed(SpdfApp* app) {
 // ---------------------------------------------------------------------------
 // Session capture. Each window is snapshotted into an owned SpdfSessionWindow
 // and handed to the state module (merge-on-write keeps other processes'
-// windows). Deliberately closed windows are removed instead (spdf_window.c
-// calls spdf_app_forget_window via close-request).
+// windows). The WM close (Alt+F4 / titlebar button) snapshots ALL windows and
+// closes the whole app (spdf_app_close_all_windows).
 
 static int fit_mode_id_for_view(SpdfDocView* view) {
     // settings/session schema: 0 custom, 1 actual, 2 width, 3 height, 4 page
@@ -196,15 +196,25 @@ void spdf_app_save_session(SpdfApp* app) {
     spdf_state_save_session(state);
 }
 
-void spdf_app_forget_window(SpdfApp* app, SpdfWindow* win) {
-    const char* id;
+void spdf_app_close_all_windows(SpdfApp* app, SpdfWindow* keep) {
+    GList* windows;
 
     g_return_if_fail(SPDF_IS_APP(app));
-    g_return_if_fail(SPDF_IS_WINDOW(win));
-    id = spdf_window_get_session_id(win);
-    if (!id) return;
-    spdf_state_remove_session_window(spdf_app_get_state(app), id);
-    spdf_state_save_session(spdf_app_get_state(app));
+    // Alt+F4 / the WM close button quits the whole app, not just one window
+    // (user request): snapshot every window while they are all still alive,
+    // flush synchronously, and tear the others down. `keep` is the window
+    // whose close-request is in flight — GTK destroys it when the handler
+    // propagates. Under the resident hold the process idles on invisibly
+    // (instant relaunch); without it the last destroy exits. Either way the
+    // next activate restores the full multi-window session.
+    spdf_app_save_session(app);
+    spdf_state_flush(spdf_app_get_state(app));
+    app->opened_anything = FALSE; // re-arm session restore for the next activate
+    windows = g_list_copy(gtk_application_get_windows(GTK_APPLICATION(app)));
+    for (GList* it = windows; it; it = it->next)
+        if (SPDF_IS_WINDOW(it->data) && it->data != keep) gtk_window_destroy(GTK_WINDOW(it->data));
+    g_list_free(windows);
+    spdf_app_notify_last_window_closed(app);
 }
 
 // ---------------------------------------------------------------------------
@@ -545,12 +555,14 @@ static void spdf_app_activate(GApplication* app) {
         gtk_window_present(active);
         return;
     }
-    // --- resident (Wave D): session restore belongs to the FIRST open of a
-    // process only. Once windows existed and the user deliberately closed
-    // them (the process stays alive under the resident hold), a bare
-    // activate presents a fresh empty window — never the just-closed
-    // session; a `--resident` login start has opened nothing yet, so the
-    // first real activate after login still restores like a cold launch.
+    // --- resident (Wave D): session restore runs whenever nothing has been
+    // opened yet THIS cycle. spdf_app_close_all_windows (the Alt+F4 path)
+    // re-arms opened_anything, so a relaunch after a WM close restores the
+    // full session even when the resident process never exited; a
+    // `--resident` login start has opened nothing yet, so the first real
+    // activate after login also restores like a cold launch. Only an
+    // activate arriving while this cycle already opened something (e.g. the
+    // user closed every TAB but kept the shell) gets a fresh empty window.
     if (self->opened_anything) {
         SpdfWindow* win = spdf_window_new(ADW_APPLICATION(app));
         gtk_window_present(GTK_WINDOW(win));

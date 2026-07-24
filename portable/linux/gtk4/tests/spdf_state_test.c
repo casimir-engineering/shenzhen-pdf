@@ -167,6 +167,27 @@ static void test_settings_mac_fixture(void) {
     g_assert_cmpint(spdf_state_recent_count(state), ==, 1);
     g_assert_cmpfloat(settings->zoom, ==, 1.0); // Mac never writes zoom; default kept
 
+    // Mac-only permission flags parsed with presence tracking...
+    g_assert_true(settings->has_mac_full_disk_prompt_dismissed);
+    g_assert_false(settings->mac_full_disk_prompt_dismissed);
+    g_assert_true(settings->has_mac_permissions_wizard_shown);
+    g_assert_true(settings->mac_permissions_wizard_shown);
+
+    // ...and round-tripped by the Linux writer: rewriting a Mac settings.json
+    // must not wipe them (the Mac app would re-run its permission prompts).
+    {
+        char* path = g_build_filename(dir, "settings.json", NULL);
+        char* text = NULL;
+
+        spdf_state_save_settings(state);
+        spdf_state_flush(state);
+        g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+        g_assert_nonnull(strstr(text, "\"fullDiskAccessPromptDismissed\": false"));
+        g_assert_nonnull(strstr(text, "\"permissionsWizardShown\": true"));
+        g_free(text);
+        g_free(path);
+    }
+
     spdf_state_free(state);
     test_remove_tree(dir);
     g_free(dir);

@@ -850,6 +850,27 @@ char* spdf_updater_format_notes(const char* body) {
 // 5. update.json store parse/serialize (pure)
 // ===========================================================================
 
+/* Mac writes the in-progress lease as a nested object:
+ *   "updateInProgress": { "pid": 123, "timestamp": 1710000000.5 }
+ * (SPDFUpdater.mm). Map it onto the flat leasePid/leaseTimestamp fields so a
+ * Mac-written update.json can't make the Linux updater take an overlapping
+ * lease. */
+static gboolean store_parse_mac_lease(JsCursor* c, SpdfUpdateStore* out) {
+    char* key;
+    int r;
+
+    if (!js_enter_object(c)) return js_skip_value(c);
+    while ((r = js_next_member(c, &key)) > 0) {
+        gboolean ok;
+        if (strcmp(key, "pid") == 0) ok = js_read_int_value(c, &out->lease_pid);
+        else if (strcmp(key, "timestamp") == 0) ok = js_read_int_value(c, &out->lease_ts);
+        else ok = js_skip_value(c);
+        g_free(key);
+        if (!ok) return FALSE;
+    }
+    return r == 0;
+}
+
 void spdf_update_store_parse(const char* json, gssize len, SpdfUpdateStore* out) {
     JsCursor c;
     char* key;
@@ -867,6 +888,7 @@ void spdf_update_store_parse(const char* json, gssize len, SpdfUpdateStore* out)
         else if (strcmp(key, "remindAfter") == 0) ok = js_read_int_value(&c, &out->remind_after);
         else if (strcmp(key, "leasePid") == 0) ok = js_read_int_value(&c, &out->lease_pid);
         else if (strcmp(key, "leaseTimestamp") == 0) ok = js_read_int_value(&c, &out->lease_ts);
+        else if (strcmp(key, "updateInProgress") == 0) ok = store_parse_mac_lease(&c, out);
         else if (strcmp(key, "etag") == 0) ok = (out->etag = js_read_string_value(&c)) != NULL;
         else if (strcmp(key, "highestVersionSeen") == 0)
             ok = (out->highest_seen = js_read_string_value(&c)) != NULL;
@@ -874,9 +896,11 @@ void spdf_update_store_parse(const char* json, gssize len, SpdfUpdateStore* out)
             ok = (out->deferred_tag = js_read_string_value(&c)) != NULL;
         else if (strcmp(key, "pendingTag") == 0)
             ok = (out->pending_tag = js_read_string_value(&c)) != NULL;
-        else if (strcmp(key, "updateOk") == 0)
+        else if (strcmp(key, "updateOk") == 0 || strcmp(key, "update_ok") == 0) {
+            // Mac spells the healthy-relaunch marker update_ok (snake_case).
+            g_free(out->update_ok);
             ok = (out->update_ok = js_read_string_value(&c)) != NULL;
-        else ok = js_skip_value(&c);
+        } else ok = js_skip_value(&c);
         g_free(key);
         if (!ok) break;
     }

@@ -413,6 +413,35 @@ static void test_store_roundtrip(void) {
     spdf_update_store_clear(&parsed);
 }
 
+// Mac SPDFUpdater.mm shapes: snake_case "update_ok" and the in-progress
+// lease as a nested {"pid","timestamp"} object (fractional seconds). A
+// Mac-written update.json must yield the same store as the Linux spelling —
+// otherwise the Linux updater misses the healthy-relaunch marker and can
+// grab an overlapping lease.
+static void test_store_parses_mac_format(void) {
+    SpdfUpdateStore parsed;
+    static const char* kMacUpdateFixture =
+        "{\n"
+        "  \"etag\" : \"W/\\\"zz\\\"\",\n"
+        "  \"highestVersionSeen\" : \"26.8.2-1\",\n"
+        "  \"lastUpdateCheck\" : 1800000123.25,\n"
+        "  \"update_ok\" : \"26.7.17-1\",\n"
+        "  \"updateInProgress\" : {\n"
+        "    \"pid\" : 4242,\n"
+        "    \"timestamp\" : 1800000200.75\n"
+        "  }\n"
+        "}";
+
+    spdf_update_store_parse(kMacUpdateFixture, -1, &parsed);
+    g_assert_cmpstr(parsed.etag, ==, "W/\"zz\"");
+    g_assert_cmpstr(parsed.highest_seen, ==, "26.8.2-1");
+    g_assert_cmpint(parsed.last_check, ==, 1800000123); // fraction truncated
+    g_assert_cmpstr(parsed.update_ok, ==, "26.7.17-1");
+    g_assert_cmpint(parsed.lease_pid, ==, 4242);
+    g_assert_cmpint(parsed.lease_ts, ==, 1800000200);
+    spdf_update_store_clear(&parsed);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -427,6 +456,7 @@ int main(int argc, char** argv) {
     test_minisign_verify_legacy();
     test_parse_release();
     test_store_roundtrip();
+    test_store_parses_mac_format();
     g_print("updater_test passed (version compare, daily gate, notes, minisign, "
             "release parse, store)\n");
     return 0;

@@ -29,8 +29,11 @@ void spdf_app_remember_closed(SpdfApp* app, const char* path);
 char* spdf_app_pop_closed(SpdfApp* app); // caller owns; NULL when ring empty
 gboolean spdf_app_has_closed(SpdfApp* app);
 void spdf_app_save_session(SpdfApp* app); // snapshot all windows into SpdfState
-// Deliberate window close: drop it from session.json (Mac semantics).
-void spdf_app_forget_window(SpdfApp* app, SpdfWindow* win);
+// WM close (Alt+F4/titlebar ×): save the full session, then close every
+// window so the whole app goes away; the next activate restores everything.
+// `keep` (may be NULL) is the window whose close-request is already in
+// flight — it is skipped here and destroyed by GTK when the handler returns.
+void spdf_app_close_all_windows(SpdfApp* app, SpdfWindow* keep);
 // --- resident instant-launch (Wave D) ---------------------------------------
 // The last window is being deliberately closed. Under the resident hold the
 // process lives on with everything per-window/per-tab already torn down; this
