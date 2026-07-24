@@ -82,6 +82,10 @@ typedef struct {
     GtkWidget* filter_entry;
     char* filter_text; // casefolded; NULL/empty = no filtering
 
+    // Pane switcher (Mac segmented control): linked text-only toggles —
+    // AdwViewSwitcher stacks icon over label (too tall) or ellipsizes.
+    GtkToggleButton* pane_buttons[3]; // chapters, comments, search
+
     // Chapters pane
     GtkListView* chapters_view;
     GtkSingleSelection* chapters_sel; // owned; over a GtkTreeListModel
@@ -965,7 +969,8 @@ static void sidebar_filter_changed(GtkSearchEntry* entry, gpointer user_data) {
 
 /* Placeholder follows the visible pane (Mac swaps "Filter Chapters" /
  * "Filter Comments"); the search-results pane has its own query, so the
- * filter row hides there. */
+ * filter row hides there. Also keeps the segmented switcher in sync when the
+ * pane changes programmatically (search opening the results pane). */
 static void sidebar_filter_pane_changed(GObject* stack, GParamSpec* pspec, gpointer user_data) {
     SpdfSidebar* sb = sidebar_for_paned(user_data);
     const char* name;
@@ -976,6 +981,23 @@ static void sidebar_filter_pane_changed(GObject* stack, GParamSpec* pspec, gpoin
     gtk_widget_set_visible(sb->filter_entry, g_strcmp0(name, "search") != 0);
     g_object_set(sb->filter_entry, "placeholder-text",
                  g_strcmp0(name, "comments") == 0 ? "Filter Comments" : "Filter Chapters", NULL);
+    for (int i = 0; i < 3; ++i) {
+        GtkToggleButton* btn = sb->pane_buttons[i];
+        if (!btn) continue;
+        if (g_strcmp0(g_object_get_data(G_OBJECT(btn), "pane-name"), name) == 0 &&
+            !gtk_toggle_button_get_active(btn))
+            gtk_toggle_button_set_active(btn, TRUE);
+    }
+}
+
+/* Segmented-control toggle -> stack pane. Setting the same visible child
+ * twice is a no-op, so the sync back through the notify handler above cannot
+ * recurse. */
+static void sidebar_pane_button_toggled(GtkToggleButton* btn, gpointer user_data) {
+    SpdfSidebar* sb = sidebar_for_paned(user_data);
+
+    if (!sb || !gtk_toggle_button_get_active(btn)) return;
+    adw_view_stack_set_visible_child_name(sb->stack, g_object_get_data(G_OBJECT(btn), "pane-name"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,6 +1023,28 @@ static GtkWidget* sidebar_pane_new(GtkWidget* list, const char* empty_text, GtkL
     gtk_stack_set_visible_child_name(GTK_STACK(stack), "empty");
     if (empty_out) *empty_out = GTK_LABEL(empty);
     return stack;
+}
+
+static void sidebar_install_css(void) {
+    static gboolean installed = FALSE;
+    GtkCssProvider* provider;
+
+    if (installed) return;
+    installed = TRUE;
+    provider = gtk_css_provider_new();
+    // Tighten the block under the Chapters/Comments/Results switcher (user
+    // report): Adwaita gives .navigation-sidebar lists 6px top padding and
+    // 36px-minimum rows, which pushes the first row far below the filter
+    // field and double-spaces the list next to the Mac sidebar (25px rows).
+    // NOTE: GTK's CSS parser rejects unitless lengths — keep the "px" on
+    // zeroes or the whole declaration is silently dropped.
+    gtk_css_provider_load_from_string(provider,
+                                      ".spdf-sidebar .navigation-sidebar { padding: 2px 0px; }"
+                                      ".spdf-sidebar .navigation-sidebar > row {"
+                                      "  min-height: 25px; margin: 0px 6px; }");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(provider),
+                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
 }
 
 GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
@@ -1081,21 +1125,45 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
         gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(comments_scroller), GTK_WIDGET(sb->comments_list));
 
         sb->stack = ADW_VIEW_STACK(adw_view_stack_new());
-        adw_view_stack_add_titled_with_icon(sb->stack, GTK_WIDGET(sb->chapters_pane), "chapters", "Chapters",
-                                            "view-list-symbolic");
-        adw_view_stack_add_titled_with_icon(sb->stack, comments_scroller, "comments", "Comments",
-                                            "document-edit-symbolic");
-        adw_view_stack_add_titled_with_icon(sb->stack, GTK_WIDGET(sb->results_pane), "search", "Results",
-                                            "system-search-symbolic");
+        // Text-only pages (like the Mac segmented control): with icons the
+        // WIDE switcher ellipsizes all three labels at sidebar width.
+        adw_view_stack_add_titled(sb->stack, GTK_WIDGET(sb->chapters_pane), "chapters", "Chapters");
+        adw_view_stack_add_titled(sb->stack, comments_scroller, "comments", "Comments");
+        adw_view_stack_add_titled(sb->stack, GTK_WIDGET(sb->results_pane), "search", "Results");
     }
 
-    switcher = adw_view_switcher_new();
-    adw_view_switcher_set_stack(ADW_VIEW_SWITCHER(switcher), sb->stack);
-    adw_view_switcher_set_policy(ADW_VIEW_SWITCHER(switcher), ADW_VIEW_SWITCHER_POLICY_NARROW);
+    // Mac-style segmented control (linked text-only toggles). AdwViewSwitcher
+    // is unusable here: NARROW stacks icon over label (twice the height, the
+    // gap the user reported), WIDE ellipsizes labels / shows an icon slot.
+    {
+        static const struct {
+            const char* name;
+            const char* label;
+        } k_tabs[] = {{"chapters", "Chapters"}, {"comments", "Comments"}, {"search", "Results"}};
+        GtkToggleButton* group = NULL;
+
+        switcher = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        gtk_widget_add_css_class(switcher, "linked");
+        gtk_widget_set_halign(switcher, GTK_ALIGN_CENTER);
+        for (int i = 0; i < 3; ++i) {
+            GtkWidget* btn = gtk_toggle_button_new_with_label(k_tabs[i].label);
+            g_object_set_data(G_OBJECT(btn), "pane-name", (gpointer)k_tabs[i].name);
+            if (group)
+                gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(btn), group);
+            else
+                group = GTK_TOGGLE_BUTTON(btn);
+            g_signal_connect(btn, "toggled", G_CALLBACK(sidebar_pane_button_toggled), paned);
+            gtk_box_append(GTK_BOX(switcher), btn);
+            sb->pane_buttons[i] = GTK_TOGGLE_BUTTON(btn);
+        }
+        gtk_toggle_button_set_active(sb->pane_buttons[0], TRUE); // chapters, like Mac
+    }
     gtk_widget_set_margin_top(switcher, 3);
     gtk_widget_set_margin_bottom(switcher, 3);
 
+    sidebar_install_css();
     panel_view = adw_toolbar_view_new();
+    gtk_widget_add_css_class(panel_view, "spdf-sidebar");
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(panel_view), switcher);
 
     // Filter row (Mac _sidebarFilterField under the mode control).
@@ -1103,7 +1171,7 @@ GtkWidget* spdf_sidebar_new(SpdfWindow* win, GtkWidget* content) {
     g_object_set(sb->filter_entry, "placeholder-text", "Filter Chapters", NULL);
     gtk_widget_set_margin_start(sb->filter_entry, 6);
     gtk_widget_set_margin_end(sb->filter_entry, 6);
-    gtk_widget_set_margin_bottom(sb->filter_entry, 6);
+    gtk_widget_set_margin_bottom(sb->filter_entry, 3); // list starts right below (Mac)
     g_signal_connect(sb->filter_entry, "search-changed", G_CALLBACK(sidebar_filter_changed), paned);
     g_signal_connect_object(sb->stack, "notify::visible-child", G_CALLBACK(sidebar_filter_pane_changed), paned, 0);
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(panel_view), sb->filter_entry);

@@ -91,6 +91,16 @@ typedef struct {
     // autostart entry (spec "Launch speed", default on). Linux-only key like
     // ocrLanguage: the Mac reader ignores it.
     gboolean instant_launch_resident;
+    // --- Mac-only keys carried through Linux rewrites ------------------------
+    // "fullDiskAccessPromptDismissed" / "permissionsWizardShown": macOS
+    // permission-flow flags. The Linux app never uses them, but a
+    // settings.json copied from (or shared with) the Mac app must not lose
+    // them on a Linux rewrite — that would re-trigger the Mac prompts.
+    // Written back only when present in the loaded file.
+    gboolean mac_full_disk_prompt_dismissed;
+    gboolean has_mac_full_disk_prompt_dismissed;
+    gboolean mac_permissions_wizard_shown;
+    gboolean has_mac_permissions_wizard_shown;
 } SpdfSettings;
 
 // ---------------------------------------------------------------------------

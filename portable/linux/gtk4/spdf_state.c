@@ -516,6 +516,12 @@ static void parse_settings(SpdfState* state, const char* json) {
         json_get_bool(json, "defaultReaderPromptDismissed", settings->default_reader_prompt_dismissed);
     settings->instant_launch_resident =
         json_get_bool(json, "instantLaunchResident", settings->instant_launch_resident); // Wave D (GTK4 extra)
+    // Mac-only permission flags: remember presence + value so the Linux
+    // writer can round-trip a Mac settings.json without wiping them.
+    settings->has_mac_full_disk_prompt_dismissed = json_find_key(json, "fullDiskAccessPromptDismissed") != NULL;
+    settings->mac_full_disk_prompt_dismissed = json_get_bool(json, "fullDiskAccessPromptDismissed", FALSE);
+    settings->has_mac_permissions_wizard_shown = json_find_key(json, "permissionsWizardShown") != NULL;
+    settings->mac_permissions_wizard_shown = json_get_bool(json, "permissionsWizardShown", FALSE);
     settings->print_scaling_mode = clamp_int(json_get_int(json, "printScalingMode", settings->print_scaling_mode), 0, 2);
     settings->print_custom_scale = clamp_double(json_get_double(json, "printCustomScale", settings->print_custom_scale),
                                                 SPDF_STATE_MIN_PRINT_SCALE, SPDF_STATE_MAX_PRINT_SCALE);
@@ -589,6 +595,11 @@ static char* settings_to_json(SpdfState* state) {
                            settings->default_sidebar_visible ? "true" : "false");
     g_string_append_printf(json, "  \"fitMode\": %d,\n",
                            settings->fit_mode >= 0 && settings->fit_mode <= 4 ? settings->fit_mode : 4);
+    // Mac-only permission flags round-trip (only when the loaded file had
+    // them) so a shared/copied Mac settings.json keeps its Mac state.
+    if (settings->has_mac_full_disk_prompt_dismissed)
+        g_string_append_printf(json, "  \"fullDiskAccessPromptDismissed\": %s,\n",
+                               settings->mac_full_disk_prompt_dismissed ? "true" : "false");
     // "instantLaunchResident" is a Wave D GTK4/Linux-only extra (like
     // "ocrLanguage"); the Mac reader ignores unknown keys.
     g_string_append_printf(json, "  \"instantLaunchResident\": %s,\n",
@@ -598,6 +609,9 @@ static char* settings_to_json(SpdfState* state) {
     g_string_append(json, ",\n");
     // "ocrLanguage" is a Wave C GTK4 extra; the Mac reader ignores unknown keys.
     g_string_append_printf(json, "  \"ocrLanguage\": \"%s\",\n", ocr_language);
+    if (settings->has_mac_permissions_wizard_shown)
+        g_string_append_printf(json, "  \"permissionsWizardShown\": %s,\n",
+                               settings->mac_permissions_wizard_shown ? "true" : "false");
     g_string_append_printf(json, "  \"preventSleepInPresentation\": %s,\n",
                            settings->prevent_sleep_in_presentation ? "true" : "false");
     g_string_append(json, "  \"printCustomScale\": ");
