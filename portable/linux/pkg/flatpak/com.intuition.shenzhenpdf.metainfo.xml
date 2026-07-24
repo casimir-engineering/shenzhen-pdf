@@ -40,6 +40,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="26.7.24" date="2026-07-24">
+      <description>
+        <p>Compact Mac-style sidebar pane switcher and row spacing, window close now exits the whole app with full session restore on relaunch, and state files are compatible with the macOS app.</p>
+      </description>
+    </release>
     <release version="26.7.23" date="2026-07-23">
       <description>
         <p>UI parity fixes: always-visible tab row, document view clipping, minimap toggle, fit-height mode, fit-mode dropdown, page-step buttons, sidebar chapter/comment filtering, and reliable chapter navigation.</p>
