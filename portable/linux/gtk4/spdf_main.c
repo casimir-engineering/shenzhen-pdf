@@ -21,7 +21,13 @@ int main(int argc, char** argv) {
     // GTK 4.20/GNOME 49/Wayland) "gl" cut startup 370→238 ms and
     // invoke-to-present 692→455 ms vs the default renderer. Default-only
     // (overwrite=FALSE): a user's own GSK_RENDERER always wins.
-    g_setenv("GSK_RENDERER", "gl", FALSE);
+    //
+    // The name is version-dependent: GTK 4.18 DELETED the legacy "gl"
+    // renderer while the modern one was still called "ngl", so asking for
+    // "gl" there only earns a Gsk-WARNING and lands on the default (seen on
+    // Fedora 42 / GTK 4.18.6 during rpm smoke tests); 4.20 renamed "ngl" to
+    // "gl". Pick per the GTK actually linked at runtime.
+    g_setenv("GSK_RENDERER", gtk_get_minor_version() >= 20 ? "gl" : "ngl", FALSE);
 
     spdf_launch_mark("main");
     app = spdf_app_new();
