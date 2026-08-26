@@ -22,6 +22,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacFindNearest.h"
+#import "SPDFMacFileExplorerPreference.h"
 #import "SPDFMacModels.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
@@ -292,6 +293,8 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
     if ([title isEqualToString:@"Settings"]) return @"gearshape";
     if ([title isEqualToString:@"Help"]) return @"questionmark.circle";
     if ([title isEqualToString:@"Recently Opened"]) return @"clock";
+    if ([title isEqualToString:@"File Manager"]) return @"folder.badge.gearshape";
+    if ([title isEqualToString:@"Finder"] || [title isEqualToString:@"Shenzhen Files"]) return @"folder";
     if ([title isEqualToString:@"Move & Resize Window"]) return @"rectangle.arrowtriangle.2.inward";
     return nil;
 }
@@ -2526,6 +2529,8 @@ static void spdf_discard_launch_prerender(void) {
                                                             action:@selector(toggleSearchJumpsToNearestResult:)
                                                      keyEquivalent:@""];
     nearestSearchItem.target = self;
+    [settingsMenu addItem:[NSMenuItem separatorItem]];
+    SPDFMacInstallFileExplorerSettingsMenu(settingsMenu);
     [settingsMenu addItem:[NSMenuItem separatorItem]];
     NSArray<NSString*>* stateFiles =
         @[ @"settings.json", @"session.json", @"documents.json", @"favorites.json", @"bookmarks.json" ];
@@ -15812,13 +15817,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 }
 
 - (void)showPathInFolder:(NSString*)path {
-    if (!path.length) {
-        NSBeep();
-        return;
-    }
-
-    NSURL* fileURL = [NSURL fileURLWithPath:path];
-    [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ fileURL ]];
+    if (!SPDFMacRevealPathUsingPreference(path)) NSBeep();
 }
 
 - (void)showInFolder:(id)sender {
@@ -16030,11 +16029,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 - (void)revealSettingsFolder:(id)sender {
     (void)sender;
-    NSURL* url = [NSURL fileURLWithPath:[self supportDirectory] isDirectory:YES];
-    if (![NSWorkspace.sharedWorkspace openURL:url]) {
-        NSBeep();
-        _statusLabel.stringValue = @"Could not open settings folder.";
-    }
+    [self showPathInFolder:[self supportDirectory]];
 }
 
 - (void)toggleDefaultSidebarForNewDocuments:(id)sender {
