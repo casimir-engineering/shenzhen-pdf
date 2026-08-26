@@ -1010,7 +1010,8 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
                                         keyEquivalent:@""];
     showInFolder.target = self;
     showInFolder.representedObject = indexNumber;
-    NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(tabContextCopyFile:) keyEquivalent:@""];
+    NSMenuItem* copy =
+        [menu addItemWithTitle:@"Copy Document" action:@selector(tabContextCopyFile:) keyEquivalent:@""];
     copy.target = self;
     copy.representedObject = indexNumber;
     NSMenuItem* copyTitle = [menu addItemWithTitle:@"Copy Title"

@@ -1,5 +1,6 @@
 #import "SPDFMacUIHelpers.h"
 #import "SPDFMacSupport.h"
+#import "SPDFMacWindowChrome.h"
 #import <ApplicationServices/ApplicationServices.h>  // AXIsProcessTrusted (Accessibility trust check)
 
 static CGFloat spdf_ui_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
@@ -443,10 +444,7 @@ static void spdf_install_inactive_magnify_monitor(void) {
 }
 
 - (void)mouseDown:(NSEvent*)event {
-    BOOL wasMovable = self.window.movable;
-    self.window.movable = YES;
-    [self.window performWindowDragWithEvent:event];
-    self.window.movable = wasMovable;
+    [(SPDFWindow*)self.window handleChromeMouseDown:event];
 }
 
 @end
@@ -463,10 +461,7 @@ static void spdf_install_inactive_magnify_monitor(void) {
 }
 
 - (void)mouseDown:(NSEvent*)event {
-    BOOL wasMovable = self.window.movable;
-    self.window.movable = YES;
-    [self.window performWindowDragWithEvent:event];
-    self.window.movable = wasMovable;
+    [(SPDFWindow*)self.window handleChromeMouseDown:event];
 }
 
 @end
@@ -495,10 +490,7 @@ static void spdf_install_inactive_magnify_monitor(void) {
 }
 
 - (void)mouseDown:(NSEvent*)event {
-    BOOL wasMovable = self.window.movable;
-    self.window.movable = YES;
-    [self.window performWindowDragWithEvent:event];
-    self.window.movable = wasMovable;
+    [(SPDFWindow*)self.window handleChromeMouseDown:event];
 }
 
 @end
@@ -879,6 +871,26 @@ static void spdf_install_inactive_magnify_monitor(void) {
 
 - (BOOL)canBecomeMainWindow {
     return YES;
+}
+
+- (void)handleChromeMouseDown:(NSEvent*)event {
+    if (!event) return;
+    BOOL fullScreen = (self.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    BOOL presentation = self.reader && [self.reader documentViewInPresentationMode];
+    switch (spdf_window_chrome_action(event.clickCount, fullScreen, presentation)) {
+        case SPDFWindowChromeActionDrag: {
+            BOOL wasMovable = self.movable;
+            self.movable = YES;
+            [self performWindowDragWithEvent:event];
+            self.movable = wasMovable;
+            break;
+        }
+        case SPDFWindowChromeActionZoom:
+            [self performZoom:nil];
+            break;
+        case SPDFWindowChromeActionNone:
+            break;
+    }
 }
 
 - (BOOL)routeInactiveMagnifyEvent:(NSEvent*)event windowPoint:(NSPoint)windowPoint magnification:(CGFloat)magnification {

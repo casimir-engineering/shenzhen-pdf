@@ -7320,10 +7320,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)performTopChromeWindowDragWithEvent:(NSEvent*)event {
     [self dismissTabHoverPanel];
-    BOOL wasMovable = _window.movable;
-    _window.movable = YES;
-    [_window performWindowDragWithEvent:event];
-    _window.movable = wasMovable;
+    [(SPDFWindow*)_window handleChromeMouseDown:event];
 }
 
 - (BOOL)handleTabStripMouseEvent:(NSEvent*)event {
