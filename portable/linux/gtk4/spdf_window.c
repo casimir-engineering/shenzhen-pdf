@@ -21,6 +21,7 @@
 #include "spdf_updater.h"
 #include "spdf_watcher.h"
 #include "spdf_window.h"
+#include "spdf_window_interactions.h"
 
 #define SPDF_DEFAULT_WINDOW_WIDTH 960
 #define SPDF_DEFAULT_WINDOW_HEIGHT 680
@@ -43,8 +44,9 @@ struct _SpdfWindow {
     GtkToggleButton* search_toggle;
     GtkMenuButton* menu_button; // model attached from the deferred-menus idle
     GMenu* recent_menu;         // NULL until the deferred-menus idle built it
-    AdwTabPage* context_page; // page targeted by the tab context menu
-    char* session_id;         // session.json window id; NULL until captured/restored
+    AdwTabPage* context_page;   // page targeted by the tab context menu
+    char* session_id;           // session.json window id; NULL until captured/restored
+    SpdfWindowTabHistory tab_history;
 
     gboolean presentation;
     guint inhibit_cookie;
@@ -64,6 +66,11 @@ static SpdfApp* window_app(SpdfWindow* win) {
 
 static SpdfTab* tab_for_page(AdwTabPage* page) {
     return page ? (SpdfTab*)g_object_get_data(G_OBJECT(page), "spdf-tab") : NULL;
+}
+
+static gboolean window_contains_page(gpointer page, gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    return win->tab_view && page && adw_tab_view_get_page_position(win->tab_view, ADW_TAB_PAGE(page)) >= 0;
 }
 
 AdwTabView* spdf_window_get_tab_view(SpdfWindow* win) {
@@ -437,6 +444,10 @@ static gboolean tab_view_close_page(AdwTabView* view, AdwTabPage* page, gpointer
     // --- watcher (Wave C): a DELIBERATE close deletes an unshared shadow
     // copy (window teardown/quit keeps it so session restore reopens it).
     if (tab) spdf_watcher_tab_deliberate_close(tab);
+    // Ctrl+W and the native close affordances share this signal path. Remove
+    // the page before AdwTabView selects its normal adjacent close fallback;
+    // this intentionally differs from drag-detach restoration below.
+    spdf_window_tab_history_remove(&win->tab_history, page, FALSE, window_contains_page, win);
     g_object_set_data(G_OBJECT(page), "spdf-tab", NULL);
     adw_tab_view_close_page_finish(view, page, TRUE); // no confirmation needed
     if (tab) spdf_tab_close(tab);
@@ -482,11 +493,15 @@ static void tab_view_page_detached(AdwTabView* view, AdwTabPage* page, gint posi
 
     (void)position;
     if (tab && tab->view) g_signal_handlers_disconnect_by_data(tab->view, win);
+    {
+        AdwTabPage* restore = spdf_window_tab_history_remove(&win->tab_history, page, TRUE, window_contains_page, win);
+        if (restore && adw_tab_view_get_selected_page(view) != restore) adw_tab_view_set_selected_page(view, restore);
+    }
     spdf_window_update_title(win);
     update_page_controls(win);
     if (win->tab_view && adw_tab_view_get_n_pages(view) == 0 && !win->close_if_empty_idle_id)
-        win->close_if_empty_idle_id = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, close_if_empty_idle,
-                                                      g_object_ref(win), g_object_unref);
+        win->close_if_empty_idle_id =
+            g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, close_if_empty_idle, g_object_ref(win), g_object_unref);
 }
 
 void spdf_window_tab_linked(SpdfWindow* win, AdwTabPage* page) {
@@ -501,16 +516,27 @@ void spdf_window_tab_linked(SpdfWindow* win, AdwTabPage* page) {
 
 static void tab_view_selected_page_changed(GObject* object, GParamSpec* pspec, gpointer user_data) {
     SpdfWindow* win = SPDF_WINDOW(user_data);
-    (void)object;
+    AdwTabPage* selected = adw_tab_view_get_selected_page(ADW_TAB_VIEW(object));
+    AdwTabPage* restore =
+        spdf_window_tab_history_selection_changed(&win->tab_history, selected, window_contains_page, win);
     (void)pspec;
+    if (restore && restore != selected) {
+        adw_tab_view_set_selected_page(win->tab_view, restore);
+        return;
+    }
     spdf_window_update_title(win);
     update_page_controls(win);
 }
 
 static void tab_view_setup_menu(AdwTabView* view, AdwTabPage* page, gpointer user_data) {
     SpdfWindow* win = SPDF_WINDOW(user_data);
+    SpdfTab* tab = tab_for_page(page);
+    GAction* copy_document = g_action_map_lookup_action(G_ACTION_MAP(win), "tab-copy-document");
     (void)view;
     win->context_page = page; // NULL when the menu is dismissed
+    if (copy_document)
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(copy_document),
+                                    tab && tab->path && g_file_test(tab->path, G_FILE_TEST_IS_REGULAR));
 }
 
 static SpdfTab* context_menu_tab(SpdfWindow* win) {
@@ -533,6 +559,26 @@ void spdf_window_add_toast(SpdfWindow* win, const char* title) {
 static void copy_text_to_clipboard(SpdfWindow* win, const char* text) {
     if (!text) return;
     gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(win)), text);
+}
+
+static void copy_file_to_clipboard(SpdfWindow* win, const char* path) {
+    GFile* file;
+    GdkFileList* file_list;
+    GdkContentProvider* providers[2];
+    GdkContentProvider* provider;
+
+    if (!path || !*path || !g_file_test(path, G_FILE_TEST_IS_REGULAR)) return;
+    file = g_file_new_for_path(path);
+    file_list = gdk_file_list_new_from_array(&file, 1);
+    // GdkFileList provides text/uri-list and the desktop portal file-transfer
+    // representation; text/plain remains useful for terminal/text targets.
+    providers[0] = gdk_content_provider_new_typed(GDK_TYPE_FILE_LIST, file_list);
+    providers[1] = gdk_content_provider_new_typed(G_TYPE_STRING, path);
+    provider = gdk_content_provider_new_union(providers, G_N_ELEMENTS(providers));
+    gdk_clipboard_set_content(gtk_widget_get_clipboard(GTK_WIDGET(win)), provider);
+    g_object_unref(provider);
+    g_boxed_free(GDK_TYPE_FILE_LIST, file_list);
+    g_object_unref(file);
 }
 
 static void show_path_in_folder(SpdfWindow* win, const char* path) {
@@ -782,6 +828,14 @@ static void action_tab_copy_path(GSimpleAction* action, GVariant* parameter, gpo
     if (tab && tab->path) copy_text_to_clipboard(win, tab->path);
 }
 
+static void action_tab_copy_document(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    SpdfTab* tab = context_menu_tab(win);
+    (void)action;
+    (void)parameter;
+    if (tab) copy_file_to_clipboard(win, tab->path);
+}
+
 static void action_tab_copy_title(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
     SpdfWindow* win = SPDF_WINDOW(user_data);
     SpdfTab* tab = context_menu_tab(win);
@@ -864,6 +918,7 @@ static const GActionEntry k_window_actions[] = {
     {"show-in-folder", action_show_in_folder, NULL, NULL, NULL, {0}},
     {"open-in-browser", action_open_in_browser, NULL, NULL, NULL, {0}},
     {"tab-show-in-folder", action_tab_show_in_folder, NULL, NULL, NULL, {0}},
+    {"tab-copy-document", action_tab_copy_document, NULL, NULL, NULL, {0}},
     {"tab-copy-path", action_tab_copy_path, NULL, NULL, NULL, {0}},
     {"tab-copy-title", action_tab_copy_title, NULL, NULL, NULL, {0}},
     // Stateful; activating with no parameter toggles and calls change-state.
@@ -889,6 +944,7 @@ static const GActionEntry k_window_actions[] = {
 static GMenuModel* build_tab_context_menu(void) {
     GMenu* menu = g_menu_new();
     g_menu_append(menu, "Show in Folder", "win.tab-show-in-folder");
+    g_menu_append(menu, "Copy Document", "win.tab-copy-document");
     g_menu_append(menu, "Copy Title", "win.tab-copy-title");
     g_menu_append(menu, "Copy Path", "win.tab-copy-path");
     return G_MENU_MODEL(menu);
@@ -975,8 +1031,30 @@ static gboolean window_close_request(GtkWindow* window, gpointer user_data) {
     return GDK_EVENT_PROPAGATE;
 }
 
+static gboolean header_target_is_control(GtkWidget* header, GtkWidget* target) {
+    for (GtkWidget* widget = target; widget && widget != header; widget = gtk_widget_get_parent(widget))
+        if (GTK_IS_ACTIONABLE(widget) || GTK_IS_EDITABLE(widget)) return TRUE;
+    return FALSE;
+}
+
+static void header_pressed(GtkGestureClick* gesture, int n_press, double x, double y, gpointer user_data) {
+    SpdfWindow* win = SPDF_WINDOW(user_data);
+    GtkWidget* header = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    GtkWidget* target = gtk_widget_pick(header, x, y, GTK_PICK_DEFAULT);
+    SpdfHeaderHitKind hit = header_target_is_control(header, target) ? SPDF_HEADER_HIT_CONTROL : SPDF_HEADER_HIT_EMPTY;
+    gboolean fullscreen = win->presentation || gtk_window_is_fullscreen(GTK_WINDOW(win));
+
+    if (!spdf_window_header_should_toggle_maximize((guint)n_press, GDK_BUTTON_PRIMARY, hit, fullscreen)) return;
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+    if (gtk_window_is_maximized(GTK_WINDOW(win)))
+        gtk_window_unmaximize(GTK_WINDOW(win));
+    else
+        gtk_window_maximize(GTK_WINDOW(win));
+}
+
 static GtkWidget* header_bar_new(SpdfWindow* self) {
     GtkWidget* header = adw_header_bar_new();
+    GtkGesture* header_click;
     GtkWidget* open_button;
     GtkWidget* page_box;
     GtkWidget* zoom_box;
@@ -985,6 +1063,15 @@ static GtkWidget* header_bar_new(SpdfWindow* self) {
     GtkWidget* menu_button;
     GtkWidget* tab_button;
     GtkWidget* sidebar_toggle;
+
+    // Explicitly handle only empty header chrome. The gesture lives on the
+    // header, never the AdwTabBar, and does not claim single clicks, so native
+    // window dragging plus tab reorder/detach keep their complete sequences.
+    header_click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(header_click), GDK_BUTTON_PRIMARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(header_click), GTK_PHASE_CAPTURE);
+    g_signal_connect(header_click, "pressed", G_CALLBACK(header_pressed), self);
+    gtk_widget_add_controller(header, GTK_EVENT_CONTROLLER(header_click));
 
     // Same layout as the Mac toolbar: open, page "n / total", zoom cluster on
     // the left; search, sidebar, tabs and the menu on the right.
@@ -1144,6 +1231,7 @@ static void spdf_window_init(SpdfWindow* self) {
     gtk_window_set_title(GTK_WINDOW(self), SPDF_APP_DISPLAY_NAME);
     gtk_window_set_default_size(GTK_WINDOW(self), SPDF_DEFAULT_WINDOW_WIDTH, SPDF_DEFAULT_WINDOW_HEIGHT);
     gtk_widget_set_size_request(GTK_WIDGET(self), SPDF_MIN_WINDOW_WIDTH, SPDF_MIN_WINDOW_HEIGHT);
+    spdf_window_tab_history_init(&self->tab_history);
 
     spdf_launch_mark("win-init-begin");
     g_action_map_add_action_entries(G_ACTION_MAP(self), k_window_actions, G_N_ELEMENTS(k_window_actions), self);
@@ -1157,11 +1245,11 @@ static void spdf_window_init(SpdfWindow* self) {
         g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(nearest));
         g_object_unref(nearest);
     }
-    spdf_annot_install(self);     // win.rotate-cw/ccw, win.save-as, context-menu actions
-    spdf_print_install(self);     // win.print (GtkPrintOperation, Fit/Actual/Custom)
-    spdf_props_install(self);     // win.properties (Ctrl+I) — spdf_props.c (Wave B)
-    spdf_ocr_install(self);       // win.ocr (Wave C)
-    spdf_translate_install(self); // win.translate (Wave C)
+    spdf_annot_install(self);          // win.rotate-cw/ccw, win.save-as, context-menu actions
+    spdf_print_install(self);          // win.print (GtkPrintOperation, Fit/Actual/Custom)
+    spdf_props_install(self);          // win.properties (Ctrl+I) — spdf_props.c (Wave B)
+    spdf_ocr_install(self);            // win.ocr (Wave C)
+    spdf_translate_install(self);      // win.translate (Wave C)
     spdf_default_reader_install(self); // win.make-default (Wave D)
 
     self->tab_view = ADW_TAB_VIEW(adw_tab_view_new());
@@ -1279,6 +1367,7 @@ static void spdf_window_dispose(GObject* object) {
     self->search_toggle = NULL;
     self->menu_button = NULL;
     self->context_page = NULL;
+    spdf_window_tab_history_clear(&self->tab_history);
     G_OBJECT_CLASS(spdf_window_parent_class)->dispose(object);
     g_slist_free_full(orphan_tabs, (GDestroyNotify)spdf_tab_close);
     g_clear_pointer(&self->session_id, g_free);

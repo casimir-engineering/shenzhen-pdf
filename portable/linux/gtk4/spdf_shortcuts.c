@@ -75,6 +75,7 @@ static const SpdfShortcutEntry k_shortcuts[] = {
     {"win.save-page-pdf", {NULL, NULL, NULL}, NULL, "Save the page as a single-page PDF"},
     // --- Tab context menu
     {"win.tab-show-in-folder", {NULL, NULL, NULL}, NULL, "Show this tab's document in its folder"},
+    {"win.tab-copy-document", {NULL, NULL, NULL}, NULL, "Copy this tab's document as a file"},
     {"win.tab-copy-path", {NULL, NULL, NULL}, NULL, "Copy this tab's document path"},
     {"win.tab-copy-title", {NULL, NULL, NULL}, NULL, "Copy this tab's title"},
     // --- Application
