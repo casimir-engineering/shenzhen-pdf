@@ -364,6 +364,38 @@ static inline double spdf_minimap_document_top_for_strip_scroll(double current_d
     return MAX(0.0, MIN(current_doc_top + delta, max_doc_scroll));
 }
 
+/* Directional page stride for a discrete wheel cap. Adjacent page origins
+ * include the layout gap; document edges fall back to the current page height. */
+static inline double spdf_minimap_directional_page_stride(int current_page, double proposed_doc_delta,
+                                                          const double* doc_y, const double* doc_h, int page_count) {
+    int page;
+    int adjacent;
+    double stride = 0.0;
+
+    if (!doc_y || !doc_h || page_count <= 0 || fabs(proposed_doc_delta) <= 0.0001) return 0.0;
+    page = CLAMP(current_page, 0, page_count - 1);
+    adjacent = proposed_doc_delta > 0.0 ? page + 1 : page - 1;
+    if (adjacent >= 0 && adjacent < page_count)
+        stride = proposed_doc_delta > 0.0 ? doc_y[adjacent] - doc_y[page] : doc_y[page] - doc_y[adjacent];
+    if (!isfinite(stride) || stride <= 0.0) stride = doc_h[page];
+    return isfinite(stride) ? MAX(0.0, stride) : 0.0;
+}
+
+/* Limit one discrete wheel event to one directional page stride. Precise
+ * trackpad input and the kinetic tail do not call this helper. */
+static inline double spdf_minimap_document_top_capped_for_discrete_wheel(double current_doc_top,
+                                                                         double proposed_doc_top, int current_page,
+                                                                         const double* doc_y, const double* doc_h,
+                                                                         int page_count, double doc_height,
+                                                                         double doc_visible_height) {
+    double delta = proposed_doc_top - current_doc_top;
+    double stride = spdf_minimap_directional_page_stride(current_page, delta, doc_y, doc_h, page_count);
+    double max_doc_scroll = MAX(0.0, doc_height - doc_visible_height);
+
+    if (stride > 0.0 && fabs(delta) > stride) proposed_doc_top = current_doc_top + copysign(stride, delta);
+    return MAX(0.0, MIN(proposed_doc_top, max_doc_scroll));
+}
+
 /* ---------------------------------------------------------------------------
  * Kinetic strip-scroll momentum. The Mac gets momentum for free (AppKit
  * feeds momentumPhase scroll events through the same

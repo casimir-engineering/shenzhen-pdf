@@ -240,6 +240,39 @@ static void test_strip_scroll_clamping(void) {
                  20000.0 + 50.0 * maxDocScroll / (contentHeight - available));
 }
 
+static void test_discrete_wheel_page_stride_cap(void) {
+    NSArray<NSValue*>* pageRects = @[
+        [NSValue valueWithRect:NSMakeRect(20.0, 20.0, 600.0, 700.0)],
+        [NSValue valueWithRect:NSMakeRect(20.0, 740.0, 900.0, 1000.0)],
+        [NSValue valueWithRect:NSMakeRect(20.0, 1760.0, 600.0, 500.0)]
+    ];
+    const CGFloat documentHeight = 10000.0;
+    const CGFloat visibleHeight = 800.0;
+
+    expect_close(@"directional stride toward next page", spdf_minimap_directional_page_stride(1, 5000.0, pageRects),
+                 1020.0);
+    expect_close(@"directional stride toward previous page",
+                 spdf_minimap_directional_page_stride(1, -5000.0, pageRects), 720.0);
+    expect_close(@"last page falls back to its height", spdf_minimap_directional_page_stride(2, 5000.0, pageRects),
+                 500.0);
+    expect_close(@"large wheel event capped toward document end",
+                 spdf_minimap_document_top_capped_for_discrete_wheel(4000.0, 9000.0, 1, pageRects, documentHeight,
+                                                                     visibleHeight),
+                 5020.0);
+    expect_close(
+        @"large wheel event capped toward document start",
+        spdf_minimap_document_top_capped_for_discrete_wheel(4000.0, 0.0, 1, pageRects, documentHeight, visibleHeight),
+        3280.0);
+    expect_close(@"sub-page wheel movement is unchanged",
+                 spdf_minimap_document_top_capped_for_discrete_wheel(4000.0, 4400.0, 1, pageRects, documentHeight,
+                                                                     visibleHeight),
+                 4400.0);
+    expect_close(@"discrete cap still honors document end",
+                 spdf_minimap_document_top_capped_for_discrete_wheel(9000.0, 9900.0, 2, pageRects, documentHeight,
+                                                                     visibleHeight),
+                 9200.0);
+}
+
 static void test_strip_scroll_tiny_document(void) {
     // Whole strip fits (no strip overflow): the strip itself cannot move, so
     // the gesture moves the viewport indicator by the gesture distance at the
@@ -321,6 +354,7 @@ int main(int argc, char** argv) {
         test_no_thrash_single_page_moves();
         test_strip_scroll_scale();
         test_strip_scroll_clamping();
+        test_discrete_wheel_page_stride_cap();
         test_strip_scroll_tiny_document();
         test_strip_scroll_window_interaction();
     }

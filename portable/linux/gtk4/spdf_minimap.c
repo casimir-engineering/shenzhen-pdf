@@ -696,7 +696,7 @@ static void minimap_kinetic_cancel(SpdfMinimap* self) {
  * db9515802 spdf_minimap_document_top_for_strip_scroll). Returns -1 without
  * a frame (no document/degenerate layout), 0 when the document position did
  * not move (clamped at an end), 1 when it moved. */
-static int minimap_apply_strip_scroll(SpdfMinimap* self, double strip_dy) {
+static int minimap_apply_strip_scroll(SpdfMinimap* self, double strip_dy, gboolean discrete_wheel) {
     minimap_frame f;
     double available;
     double new_top;
@@ -704,8 +704,13 @@ static int minimap_apply_strip_scroll(SpdfMinimap* self, double strip_dy) {
 
     if (!minimap_frame_acquire(self, &f)) return -1;
     available = MAX(1.0, f.height - SPDF_MINIMAP_EDGE_INSET);
-    new_top = spdf_minimap_document_top_for_strip_scroll(f.doc_top, strip_dy, f.strip.content_h, available,
-                                                         f.doc_upper, f.doc_visible_h);
+    new_top = spdf_minimap_document_top_for_strip_scroll(f.doc_top, strip_dy, f.strip.content_h, available, f.doc_upper,
+                                                         f.doc_visible_h);
+    if (discrete_wheel) {
+        new_top = spdf_minimap_document_top_capped_for_discrete_wheel(f.doc_top, new_top,
+                                                                      spdf_doc_view_current_page(f.view), f.doc_y,
+                                                                      f.doc_h, f.count, f.doc_upper, f.doc_visible_h);
+    }
     moved = fabs(new_top - f.doc_top) > 0.001 ? 1 : 0;
     if (f.vadj) gtk_adjustment_set_value(f.vadj, new_top);
     gtk_widget_queue_draw(GTK_WIDGET(self));
@@ -727,7 +732,7 @@ static gboolean minimap_kinetic_tick(GtkWidget* widget, GdkFrameClock* clock, gp
     strip_dy = spdf_minimap_kinetic_step(&self->kinetic_velocity, dt_s);
     /* Stop at the decay threshold or when the document stopped moving (the
      * strip-scroll clamp caught an end of the document). */
-    if (minimap_apply_strip_scroll(self, strip_dy) != 1 || spdf_minimap_kinetic_done(self->kinetic_velocity)) {
+    if (minimap_apply_strip_scroll(self, strip_dy, FALSE) != 1 || spdf_minimap_kinetic_done(self->kinetic_velocity)) {
         self->kinetic_tick_id = 0;
         self->kinetic_velocity = 0.0;
         return G_SOURCE_REMOVE;
@@ -795,14 +800,15 @@ static gboolean minimap_scroll(GtkEventControllerScroll* controller, double dx, 
     SpdfMinimap* self = SPDF_MINIMAP(user_data);
     GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
     double strip_dy = dy;
+    gboolean discrete_wheel;
 
     (void)dx;
     minimap_kinetic_cancel(self); /* any new scroll input supersedes the tail */
     if (state & GDK_CONTROL_MASK) return minimap_forward_zoom_scroll(self, dy);
-    if (gtk_event_controller_scroll_get_unit(controller) == GDK_SCROLL_UNIT_WHEEL)
-        strip_dy *= SPDF_MINIMAP_WHEEL_POINTS_PER_LINE;
+    discrete_wheel = gtk_event_controller_scroll_get_unit(controller) == GDK_SCROLL_UNIT_WHEEL;
+    if (discrete_wheel) strip_dy *= SPDF_MINIMAP_WHEEL_POINTS_PER_LINE;
     /* No frame (no document): keep the historical fall-through to siblings. */
-    return minimap_apply_strip_scroll(self, strip_dy) < 0 ? GDK_EVENT_PROPAGATE : GDK_EVENT_STOP;
+    return minimap_apply_strip_scroll(self, strip_dy, discrete_wheel) < 0 ? GDK_EVENT_PROPAGATE : GDK_EVENT_STOP;
 }
 
 static void minimap_motion(GtkEventControllerMotion* controller, double x, double y, gpointer user_data) {

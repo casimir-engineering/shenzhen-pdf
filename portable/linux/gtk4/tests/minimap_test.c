@@ -279,6 +279,29 @@ static void test_strip_scroll_clamps(void) {
     g_assert_cmpfloat(spdf_minimap_document_delta_for_strip_scroll(10.0, 2000.0, 400.0, 900.0, 900.0), ==, 0.0);
 }
 
+static void test_discrete_wheel_page_stride_cap(void) {
+    const double doc_y[] = {20.0, 740.0, 1760.0};
+    const double doc_h[] = {700.0, 1000.0, 500.0};
+    const double doc_height = 10000.0;
+    const double visible_height = 800.0;
+
+    g_assert_cmpfloat(spdf_minimap_directional_page_stride(1, 5000.0, doc_y, doc_h, 3), ==, 1020.0);
+    g_assert_cmpfloat(spdf_minimap_directional_page_stride(1, -5000.0, doc_y, doc_h, 3), ==, 720.0);
+    g_assert_cmpfloat(spdf_minimap_directional_page_stride(2, 5000.0, doc_y, doc_h, 3), ==, 500.0);
+    g_assert_cmpfloat(spdf_minimap_document_top_capped_for_discrete_wheel(4000.0, 9000.0, 1, doc_y, doc_h, 3,
+                                                                          doc_height, visible_height),
+                      ==, 5020.0);
+    g_assert_cmpfloat(spdf_minimap_document_top_capped_for_discrete_wheel(4000.0, 0.0, 1, doc_y, doc_h, 3, doc_height,
+                                                                          visible_height),
+                      ==, 3280.0);
+    g_assert_cmpfloat(spdf_minimap_document_top_capped_for_discrete_wheel(4000.0, 4400.0, 1, doc_y, doc_h, 3,
+                                                                          doc_height, visible_height),
+                      ==, 4400.0);
+    g_assert_cmpfloat(spdf_minimap_document_top_capped_for_discrete_wheel(9000.0, 9900.0, 2, doc_y, doc_h, 3,
+                                                                          doc_height, visible_height),
+                      ==, 9200.0);
+}
+
 /* --------------------------------------------------------------------------
  * Kinetic strip-scroll momentum (GtkKineticScrolling decay model). */
 
@@ -449,6 +472,7 @@ int main(int argc, char** argv) {
     g_test_add_func("/minimap/strip-scroll-overflow", test_strip_scroll_overflowing_strip);
     g_test_add_func("/minimap/strip-scroll-fallback", test_strip_scroll_fitting_strip_falls_back);
     g_test_add_func("/minimap/strip-scroll-clamps", test_strip_scroll_clamps);
+    g_test_add_func("/minimap/discrete-wheel-page-stride-cap", test_discrete_wheel_page_stride_cap);
     g_test_add_func("/minimap/kinetic-step-decay", test_kinetic_step_decay);
     g_test_add_func("/minimap/kinetic-total-travel", test_kinetic_total_travel);
     g_test_add_func("/minimap/kinetic-duration", test_kinetic_duration);

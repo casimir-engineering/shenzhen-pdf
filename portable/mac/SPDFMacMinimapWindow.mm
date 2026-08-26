@@ -1,5 +1,7 @@
 #import "SPDFMacMinimapWindow.h"
 
+#include <math.h>
+
 const NSInteger kSPDFMinimapWindowExtraPages = 30;
 const NSInteger kSPDFMinimapWindowRecenterMarginPages = 15;
 const NSInteger kSPDFMinimapWindowEvictSlackPages = 30;
@@ -107,4 +109,33 @@ CGFloat spdf_minimap_document_top_for_strip_scroll(CGFloat currentDocumentTop,
                                                                  documentVisibleHeight);
     CGFloat maxDocumentScroll = MAX(0.0, documentHeight - documentVisibleHeight);
     return MAX(0.0, MIN(currentDocumentTop + delta, maxDocumentScroll));
+}
+
+CGFloat spdf_minimap_directional_page_stride(NSInteger currentPageIndex, CGFloat proposedDocumentDelta,
+                                             NSArray<NSValue*>* documentPageRects) {
+    NSInteger count = (NSInteger)documentPageRects.count;
+    if (count <= 0 || fabs(proposedDocumentDelta) <= 0.0001) return 0.0;
+
+    NSInteger pageIndex = MAX((NSInteger)0, MIN(currentPageIndex, count - 1));
+    NSRect currentRect = documentPageRects[(NSUInteger)pageIndex].rectValue;
+    NSInteger adjacentIndex = proposedDocumentDelta > 0.0 ? pageIndex + 1 : pageIndex - 1;
+    CGFloat stride = 0.0;
+    if (adjacentIndex >= 0 && adjacentIndex < count) {
+        NSRect adjacentRect = documentPageRects[(NSUInteger)adjacentIndex].rectValue;
+        stride = proposedDocumentDelta > 0.0 ? NSMinY(adjacentRect) - NSMinY(currentRect)
+                                             : NSMinY(currentRect) - NSMinY(adjacentRect);
+    }
+    if (!isfinite(stride) || stride <= 0.0) stride = NSHeight(currentRect);
+    return isfinite(stride) ? MAX(0.0, stride) : 0.0;
+}
+
+CGFloat spdf_minimap_document_top_capped_for_discrete_wheel(CGFloat currentDocumentTop, CGFloat proposedDocumentTop,
+                                                            NSInteger currentPageIndex,
+                                                            NSArray<NSValue*>* documentPageRects,
+                                                            CGFloat documentHeight, CGFloat documentVisibleHeight) {
+    CGFloat delta = proposedDocumentTop - currentDocumentTop;
+    CGFloat stride = spdf_minimap_directional_page_stride(currentPageIndex, delta, documentPageRects);
+    if (stride > 0.0 && fabs(delta) > stride) proposedDocumentTop = currentDocumentTop + copysign(stride, delta);
+    CGFloat maxDocumentScroll = MAX(0.0, documentHeight - documentVisibleHeight);
+    return MAX(0.0, MIN(proposedDocumentTop, maxDocumentScroll));
 }

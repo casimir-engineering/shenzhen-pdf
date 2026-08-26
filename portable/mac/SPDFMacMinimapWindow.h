@@ -70,9 +70,20 @@ CGFloat spdf_minimap_document_delta_for_strip_scroll(CGFloat stripDeltaY,
 
 // New document top after a strip scroll: currentDocumentTop plus the delta
 // above, clamped to [0, documentHeight - documentVisibleHeight].
-CGFloat spdf_minimap_document_top_for_strip_scroll(CGFloat currentDocumentTop,
-                                                   CGFloat stripDeltaY,
-                                                   CGFloat stripContentHeight,
-                                                   CGFloat stripAvailableHeight,
-                                                   CGFloat documentHeight,
-                                                   CGFloat documentVisibleHeight);
+CGFloat spdf_minimap_document_top_for_strip_scroll(CGFloat currentDocumentTop, CGFloat stripDeltaY,
+                                                   CGFloat stripContentHeight, CGFloat stripAvailableHeight,
+                                                   CGFloat documentHeight, CGFloat documentVisibleHeight);
+
+// Maximum document-space movement for one discrete wheel event. The stride is
+// directional: toward the document end it is the current-to-next page-origin
+// distance; toward the start it is the previous-to-current distance. At a
+// document edge it falls back to the current page height.
+CGFloat spdf_minimap_directional_page_stride(NSInteger currentPageIndex, CGFloat proposedDocumentDelta,
+                                             NSArray<NSValue*>* documentPageRects);
+
+// Clamp a proposed strip-scroll destination to one directional page stride.
+// Precise trackpad and momentum scrolling continue to use the uncapped mapping.
+CGFloat spdf_minimap_document_top_capped_for_discrete_wheel(CGFloat currentDocumentTop, CGFloat proposedDocumentTop,
+                                                            NSInteger currentPageIndex,
+                                                            NSArray<NSValue*>* documentPageRects,
+                                                            CGFloat documentHeight, CGFloat documentVisibleHeight);
