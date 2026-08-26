@@ -1313,6 +1313,7 @@ static void collect_outline(spdf_document* doc, outline_builder* builder, fz_out
 
     for (item = outline; item; item = item->next) {
         int page_index = -1;
+        fz_location location = item->page;
         /* fz_outline.x/y carry the destination point for the outline link. For
          * /Fit-style destinations mupdf leaves them as 0 (or non-finite); only
          * treat the point as usable when it is finite and not the (0,0) sentinel
@@ -1320,7 +1321,14 @@ static void collect_outline(spdf_document* doc, outline_builder* builder, fz_out
         float dest_x = item->x;
         float dest_y = item->y;
         int has_dest = isfinite(dest_x) && isfinite(dest_y) && !(dest_x == 0.0f && dest_y == 0.0f);
-        if (item->page.page >= 0) page_index = fz_page_number_from_location(doc->ctx, doc->doc, item->page);
+        /* EPUB outlines are returned as internal URIs with an unresolved
+         * (-1,-1) location. Resolve only that fallback case: PDF destinations
+         * remain untouched, while external and invalid links stay unresolved. */
+        if ((location.chapter < 0 || location.page < 0) && item->uri && *item->uri &&
+            !fz_is_external_link(doc->ctx, item->uri))
+            location = fz_resolve_link(doc->ctx, doc->doc, item->uri, NULL, NULL);
+        if (location.chapter >= 0 && location.page >= 0)
+            page_index = fz_page_number_from_location(doc->ctx, doc->doc, location);
         if (!append_outline_item(builder, item->title, page_index, level, dest_x, dest_y, has_dest))
             fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
         if (item->down) collect_outline(doc, builder, item->down, level + 1);
