@@ -155,6 +155,7 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 
 @interface SPDFWindow : NSWindow
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
+- (void)handleChromeMouseDown:(NSEvent*)event;
 @end
 
 @interface SPDFShortcutHelpPanel : NSPanel
