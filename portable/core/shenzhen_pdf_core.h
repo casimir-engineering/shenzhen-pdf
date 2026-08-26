@@ -60,6 +60,30 @@ typedef struct spdf_rect {
     float y1;
 } spdf_rect;
 
+typedef enum spdf_selection_status {
+    SPDF_SELECTION_ERROR = -1,
+    SPDF_SELECTION_NONE = 0,
+    SPDF_SELECTION_OK = 1
+} spdf_selection_status;
+
+typedef enum spdf_selection_granularity {
+    SPDF_SELECTION_RANGE = 0,
+    SPDF_SELECTION_WORD = 1,
+    SPDF_SELECTION_BLOCK = 2
+} spdf_selection_granularity;
+
+enum {
+    SPDF_SELECTION_GEOMETRY_INCOMPLETE = 1 << 0,
+    SPDF_SELECTION_UNICODE_INCOMPLETE = 1 << 1
+};
+
+typedef struct spdf_text_selection {
+    char* text;
+    spdf_rect* rects;
+    int rect_count;
+    unsigned flags;
+} spdf_text_selection;
+
 typedef struct spdf_comment_item {
     char* author;
     char* text;
@@ -192,6 +216,15 @@ int spdf_search_page_options(spdf_document* doc, int page_index, const char* nee
                              char* err, size_t err_len);
 int spdf_search_page_rects_options(spdf_document* doc, int page_index, const char* needle, int regex,
                                    int regex_multiline, spdf_rect* rects, int rect_max, char* err, size_t err_len);
+/* RANGE uses both endpoints. WORD and BLOCK use only (ax, ay), require a hit
+ * inside real glyph geometry, and never snap across image/OCR gaps. OK returns
+ * owned UTF-8 text plus all finite, non-empty rectangles. NONE is a valid
+ * request without selectable geometry. ERROR zeroes out and fills err. */
+spdf_selection_status spdf_select_text(spdf_document* doc, int page_index, spdf_selection_granularity granularity,
+                                       float ax, float ay, float bx, float by, spdf_text_selection* out, char* err,
+                                       size_t err_len);
+/* Frees text and rectangles and zeroes the structure. */
+void spdf_free_text_selection(spdf_text_selection* selection);
 int spdf_select_page_text(spdf_document* doc, int page_index, float ax, float ay, float bx, float by, spdf_rect* rects,
                           int rect_max, char** text_out, char* err, size_t err_len);
 void spdf_free_string(char* text);

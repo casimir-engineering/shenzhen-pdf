@@ -1,5 +1,7 @@
 #include "shenzhen_pdf_core.h"
 
+#include "spdf_selection.h"
+
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
 
@@ -233,6 +235,23 @@ void spdf_close(spdf_document* doc) {
 
 int spdf_page_count(spdf_document* doc) {
     return doc ? doc->page_count : 0;
+}
+
+int spdf_selection_document_access(spdf_document* doc, int page_index, fz_context** ctx_out, fz_document** doc_out,
+                                   char* err, size_t err_len) {
+    if (ctx_out) *ctx_out = NULL;
+    if (doc_out) *doc_out = NULL;
+    if (!doc || page_index < 0 || page_index >= doc->page_count) {
+        set_error(err, err_len, "Page index is out of range.");
+        return 0;
+    }
+    if (!ctx_out || !doc_out) {
+        set_error(err, err_len, "Selection document output is required.");
+        return 0;
+    }
+    *ctx_out = doc->ctx;
+    *doc_out = doc->doc;
+    return 1;
 }
 
 const char* spdf_title(spdf_document* doc) {
@@ -1053,13 +1072,14 @@ int spdf_search_page_rects_options(spdf_document* doc, int page_index, const cha
 int spdf_select_page_text(spdf_document* doc, int page_index, float ax, float ay, float bx, float by, spdf_rect* rects,
                           int rect_max, char** text_out, char* err, size_t err_len) {
     fz_stext_page* text = NULL;
-    fz_quad quads[256];
+    fz_quad* quads = NULL;
     fz_point a;
     fz_point b;
     int max_hits;
     int count = 0;
     int i;
     char* copied = NULL;
+    int failed = 0;
 
     set_error(err, err_len, "");
     if (text_out) *text_out = NULL;
@@ -1068,8 +1088,18 @@ int spdf_select_page_text(spdf_document* doc, int page_index, float ax, float ay
         return -1;
     }
 
-    max_hits = rect_max < 256 ? rect_max : 256;
-    if (!rects || max_hits <= 0) max_hits = 0;
+    max_hits = rects && rect_max > 0 ? rect_max : 0;
+    if (max_hits > 0) {
+        if ((size_t)max_hits > SIZE_MAX / sizeof(fz_quad)) {
+            set_error(err, err_len, "Selection geometry is too large.");
+            return -1;
+        }
+        quads = (fz_quad*)malloc((size_t)max_hits * sizeof(fz_quad));
+        if (!quads) {
+            set_error(err, err_len, "Out of memory");
+            return -1;
+        }
+    }
 
     fz_try(doc->ctx) {
         text = fz_new_stext_page_from_page_number(doc->ctx, doc->doc, page_index, NULL);
@@ -1091,21 +1121,19 @@ int spdf_select_page_text(spdf_document* doc, int page_index, float ax, float ay
             *text_out = copy_string(copied ? copied : "");
             if (!*text_out) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
         }
-        if (copied) {
-            fz_free(doc->ctx, copied);
-            copied = NULL;
-        }
-        fz_drop_stext_page(doc->ctx, text);
-        text = NULL;
+    }
+    fz_always(doc->ctx) {
+        if (copied) fz_free(doc->ctx, copied);
+        if (text) fz_drop_stext_page(doc->ctx, text);
+        free(quads);
     }
     fz_catch(doc->ctx) {
         set_error(err, err_len, fz_caught_message(doc->ctx));
-        if (copied) fz_free(doc->ctx, copied);
-        if (text) fz_drop_stext_page(doc->ctx, text);
-        if (text_out) {
-            free(*text_out);
-            *text_out = NULL;
-        }
+        failed = 1;
+    }
+    if (failed) {
+        if (text_out) free(*text_out);
+        if (text_out) *text_out = NULL;
         return -1;
     }
 

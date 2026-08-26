@@ -12,9 +12,9 @@ stapled, and compatible with the existing GitHub auto-updater.
 
 | ID | Request | Acceptance criteria | Status | Evidence / commit |
 |---|---|---|---|---|
-| UF-01 | Native text multi-click selection | Double-click over selectable document text selects one word. Triple-click selects the containing text block/paragraph. Plain left-drag selection and link clicking remain unchanged. | Investigating | Text/interaction agent |
+| UF-01 | Native text multi-click selection | Double-click over selectable document text selects one word. Triple-click selects the containing text block/paragraph. Plain left-drag selection and link clicking remain unchanged. | Shared core implemented; UI pending | Typed range/word/block selection tests cover real glyph hits, multiline block isolation, adjacent columns, rotation, and dynamic geometry. |
 | UF-02 | Close-tab shortcut | `Cmd+W` on macOS and `Ctrl+W` on Linux close the active tab. A tab whose source file was moved/deleted closes through the same path without an error or disabled command. The last-tab/window behavior remains unchanged. | Implemented on macOS and Linux | GTK4 coverage in `4c1989be2`; macOS close-policy tests cover selected missing-source tabs and invalid selections. |
-| UF-03 | Intermittently unselectable PDF text | Selection works on the reported connector datasheet when its PDF text layer is valid. Image-only/scanned regions remain honestly non-selectable and can use OCR. Add a regression fixture for the identified geometry/text-order failure. | Reproduced | The sampled connector PDF has an incomplete OCR layer: some visible labels have no selectable glyphs. Error handling and a synthetic OCR fixture remain. |
+| UF-03 | Intermittently unselectable PDF text | Selection works on the reported connector datasheet when its PDF text layer is valid. Image-only/scanned regions remain honestly non-selectable and can use OCR. Add a regression fixture for the identified geometry/text-order failure. | Shared core implemented; UI pending | Synthetic OCR gaps and image-only regions return `NONE`; incomplete Unicode/geometry is flagged, finite glyphs remain selectable, and the sampled connector limitation is documented. |
 | UF-04 | Configurable file explorer | General settings offer the system file manager and Shenzhen Files when installed. Reveal/show-in-folder actions use the selection, persist it, and fall back to Finder/default file manager if the chosen app is unavailable. | Implemented and tested on macOS | The isolated preference/menu/launch-route suite covers persistence, both choices, files/directories, missing-app fallback, and launch-failure fallback; the full app build passes. Linux retains its system file manager. |
 | UF-05 | Clear tab copy wording | The tab context menu command is named `Copy Document`; it still puts the file URL on the pasteboard and preserves `Copy Path`. | Implemented on macOS and Linux | GTK4 real-file clipboard coverage in `4c1989be2`; macOS label uses the existing file-URL pasteboard action and preserves `Copy Path`. |
 | UF-06 | Correct source tab after detaching | Detaching the selected PDF tab never opens or selects an unrelated text document in the source window. The source window selects the document that was active immediately before the detached document, with a deterministic adjacent-tab fallback. | Implemented on macOS and Linux | GTK4 MRU restoration in `4c1989be2`; macOS identity-based MRU/adjacent fallback tests pass. |
@@ -89,3 +89,10 @@ stapled, and compatible with the existing GitHub auto-updater.
   tested Finder fallback when Shenzhen Files is absent or rejects the launch.
   The implementation is isolated in a 143-line helper and reduces the legacy
   macOS coordinator by five lines.
+- 2026-08-27: completed the shared dynamic text-selection engine. Word and
+  paragraph/block selection require a hit inside real glyph geometry, while
+  OCR gaps and image-only areas return a non-error `NONE`. Generated fixtures
+  cover separated columns, multiline blocks, invisible OCR text, large gaps,
+  rotation, incomplete geometry, and more than 256 highlight rectangles. The
+  focused suite passes normally and under AddressSanitizer/UBSan; macOS and
+  GTK event integration remains a separate reviewable slice.
