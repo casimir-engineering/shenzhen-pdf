@@ -959,9 +959,17 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
         // convention, see scrollDocumentClipViewByDeltaX:deltaY:), i.e. the
         // strip content moves toward its start.
         CGFloat available = MAX(1.0, NSHeight(self.bounds) - 16.0);
-        CGFloat documentTop = spdf_minimap_document_top_for_strip_scroll(
-            NSMinY(self.documentVisibleRect), -deltaY, contentHeight, available, self.documentHeight,
-            NSHeight(self.documentVisibleRect));
+        CGFloat currentDocumentTop = NSMinY(self.documentVisibleRect);
+        CGFloat documentTop =
+            spdf_minimap_document_top_for_strip_scroll(currentDocumentTop, -deltaY, contentHeight, available,
+                                                       self.documentHeight, NSHeight(self.documentVisibleRect));
+        BOOL discreteWheel = !event.hasPreciseScrollingDeltas && event.phase == NSEventPhaseNone &&
+                             event.momentumPhase == NSEventPhaseNone;
+        if (discreteWheel) {
+            documentTop = spdf_minimap_document_top_capped_for_discrete_wheel(
+                currentDocumentTop, documentTop, self.currentPageIndex, self.documentPageRects, self.documentHeight,
+                NSHeight(self.documentVisibleRect));
+        }
         _scrollWheelDrivingViewport = YES;
         // NAN center-x keeps the current horizontal position; the reader's
         // precision path defers full viewport maintenance until the finish
