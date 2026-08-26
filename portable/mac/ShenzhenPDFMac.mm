@@ -26,6 +26,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
 #import "SPDFMacPaletteResults.h"
+#import "SPDFMacPassword.h"
 #import "SPDFMacPrintView.h"
 #import "SPDFMacPropertiesPanel.h"
 #import "SPDFMacSupport.h"
@@ -558,6 +559,7 @@ static BOOL spdf_stat_is_read_only(const struct stat* st) {
 @end
 
 static SPDFLaunchPrerenderResult* gSPDFLaunchPrerender;
+static char kSPDFPasswordPromptClosesNewTabKey;
 
 // Backing scale of the main display without touching AppKit (the worker runs
 // before/while NSApplication initializes). Adoption later compares against
@@ -589,6 +591,11 @@ static void spdf_discard_launch_prerender(void) {
       }
     });
 }
+
+@interface ShenzhenMacDelegate ()
+@property(nonatomic, strong) SPDFPasswordSheetController* passwordSheetController;
+@property(nonatomic, copy) NSString* pendingPasswordPromptToken;
+@end
 
 @implementation ShenzhenMacDelegate
 
@@ -723,7 +730,11 @@ static void spdf_discard_launch_prerender(void) {
       }
       double openStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
       char err[1024];
-      spdf_document* doc = [self openSpdfDocumentAtPath:openedPath error:err errorLength:sizeof(err)];
+      spdf_document* doc = [self openSpdfDocumentAtPath:openedPath
+                                             sourcePath:path
+                                                 status:NULL
+                                                  error:err
+                                            errorLength:sizeof(err)];
       if (openStart > 0.0) {
           spdf_launch_profile_log(@"prerender spdf_open %@ %.1fms [bg]", path.lastPathComponent,
                                   spdf_zoom_profile_now_ms() - openStart);
@@ -1352,6 +1363,8 @@ static void spdf_discard_launch_prerender(void) {
 
 - (void)applicationWillTerminate:(NSNotification*)notification {
     (void)notification;
+    [self dismissPendingPasswordPrompt];
+    [SPDFPasswordCredentialStore.sharedStore removeAllCredentials];
     [self stopKeyboardScrollAnimation];
     [self dismissTabHoverPanel];
     [self removeWindowArrangementShortcutMonitor];
@@ -1893,9 +1906,16 @@ static void spdf_discard_launch_prerender(void) {
 // with "Operation not permitted". ensureSecurityAccessForPath is a no-op when
 // there is no stored bookmark (fresh opens already hold access; non-sandboxed
 // builds open by path directly), so this is safe on every open path and thread.
-- (spdf_document*)openSpdfDocumentAtPath:(NSString*)path error:(char*)err errorLength:(size_t)errLen {
-    [self ensureSecurityAccessForPath:path];
-    return spdf_open(path.fileSystemRepresentation, err, errLen);
+- (spdf_document*)openSpdfDocumentAtPath:(NSString*)path
+                              sourcePath:(NSString*)sourcePath
+                                  status:(spdf_open_status*)status
+                                   error:(char*)err
+                             errorLength:(size_t)errLen {
+    NSString* source = sourcePath.length ? sourcePath : path;
+    [self ensureSecurityAccessForPath:source];
+    if (![source.stringByStandardizingPath isEqualToString:path.stringByStandardizingPath])
+        [self ensureSecurityAccessForPath:path];
+    return SPDFOpenDocumentWithStoredCredential(path, source, status, NULL, err, errLen);
 }
 
 - (void)loadSecurityBookmarks {
@@ -3643,16 +3663,22 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return page;
 }
 
-- (spdf_document*)workerDocumentForPath:(NSString*)path error:(char*)err errorLength:(size_t)errLen {
-    if (!path.length) return NULL;
+- (spdf_document*)workerDocumentForPath:(NSString*)path
+                             sourcePath:(NSString*)sourcePath
+                                  error:(char*)err
+                            errorLength:(size_t)errLen {
+    if (!path.length || !sourcePath.length) return NULL;
 
     NSDictionary* attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
     NSDate* modificationDate = attributes[NSFileModificationDate];
     unsigned long long fileSize = [attributes[NSFileSize] unsignedLongLongValue];
     NSString* standardizedPath = path.stringByStandardizingPath ?: path;
-    NSString* cacheKey = modificationDate ? [NSString stringWithFormat:@"%@:%llu:%.6f", standardizedPath, fileSize,
-                                                                       modificationDate.timeIntervalSinceReferenceDate]
-                                          : standardizedPath;
+    NSString* credentialToken = [SPDFPasswordCredentialStore.sharedStore cacheTokenForSourcePath:sourcePath];
+    NSString* cacheKey = modificationDate
+                             ? [NSString stringWithFormat:@"%@:%llu:%.6f:%@", standardizedPath, fileSize,
+                                                          modificationDate.timeIntervalSinceReferenceDate,
+                                                          credentialToken]
+                             : [NSString stringWithFormat:@"%@:%@", standardizedPath, credentialToken];
 
     NSMutableDictionary* threadDictionary = NSThread.currentThread.threadDictionary;
     SPDFWorkerDocument* holder = threadDictionary[@"ShenzhenPDFWorkerDocument"];
@@ -3661,8 +3687,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
     holder = [[SPDFWorkerDocument alloc] init];
     holder.path = path;
     holder.cacheKey = cacheKey;
-    [self ensureSecurityAccessForPath:path];
-    holder.document = spdf_open(path.fileSystemRepresentation, err, errLen);
+    spdf_open_status status = SPDF_OPEN_ERROR;
+    holder.document = [self openSpdfDocumentAtPath:path
+                                       sourcePath:sourcePath
+                                           status:&status
+                                            error:err
+                                      errorLength:errLen];
     if (!holder.document) return NULL;
     threadDictionary[@"ShenzhenPDFWorkerDocument"] = holder;
     return holder.document;
@@ -3967,7 +3997,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
                   return;
               }
               char err[1024];
-              spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
+              spdf_document* workerDoc = [self workerDocumentForPath:workingPath
+                                                          sourcePath:path
+                                                               error:err
+                                                         errorLength:sizeof(err)];
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedBaseRenderPages removeObject:number];
@@ -4092,7 +4125,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
                   return;
               }
               char err[1024];
-              spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
+              spdf_document* workerDoc = [self workerDocumentForPath:workingPath
+                                                          sourcePath:path
+                                                               error:err
+                                                         errorLength:sizeof(err)];
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedHighQualityRenderPages removeObject:number];
@@ -4181,6 +4217,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                       forceHighPriority:(BOOL)forceHighPriority {
     if (!_doc || !_path.length) return;
 
+    NSString* sourcePath = [_path copy];
     NSString* workingPath = [self activeWorkingPath];  // temp copy for read-only source
     CGFloat zoom = _zoom;
     CGFloat displayScale = [self backingScale];
@@ -4212,7 +4249,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
                   return;
               }
               char err[1024];
-              spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
+              spdf_document* workerDoc = [self workerDocumentForPath:workingPath
+                                                          sourcePath:sourcePath
+                                                               error:err
+                                                         errorLength:sizeof(err)];
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     [self->_queuedRenderPages removeObject:number];
@@ -4397,7 +4437,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
                   return;
               }
               char err[512];
-              spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
+              spdf_document* workerDoc = [self workerDocumentForPath:workingPath
+                                                          sourcePath:path
+                                                               error:err
+                                                         errorLength:sizeof(err)];
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue]
                       addOperationWithBlock:^{ [self->_queuedMinimapThumbnailPages removeObject:number]; }];
@@ -4730,7 +4773,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
               cropRenderSequence != self->_visibleCropRenderSequence)
               return;
           char err[512];
-          spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
+          spdf_document* workerDoc = [self workerDocumentForPath:workingPath
+                                                      sourcePath:path
+                                                           error:err
+                                                     errorLength:sizeof(err)];
           NSMutableArray<NSDictionary*>* results = [NSMutableArray arrayWithCapacity:tasks.count];
           if (workerDoc) {
               for (NSDictionary* task in tasks) {
@@ -4984,7 +5030,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
       @autoreleasepool {
           char err[512];
-          spdf_document* workerDoc = [self workerDocumentForPath:workingPath error:err errorLength:sizeof(err)];
+          spdf_document* workerDoc = [self workerDocumentForPath:workingPath
+                                                      sourcePath:path
+                                                           error:err
+                                                     errorLength:sizeof(err)];
           NSMutableArray<NSDictionary*>* results = [NSMutableArray arrayWithCapacity:tasks.count];
           if (workerDoc) {
               for (NSDictionary* task in tasks) {
@@ -7410,8 +7459,20 @@ static BOOL spdf_page_list_cache_disabled(void) {
               }
 
               char err[1024];
-              spdf_document* doc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
+              spdf_open_status openStatus = SPDF_OPEN_ERROR;
+              spdf_document* doc = [self openSpdfDocumentAtPath:workingPath
+                                                     sourcePath:path
+                                                         status:&openStatus
+                                                          error:err
+                                                    errorLength:sizeof(err)];
               if (!doc) {
+                  if (openStatus == SPDF_OPEN_PASSWORD_REQUIRED || openStatus == SPDF_OPEN_BAD_PASSWORD) {
+                      [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                        if ([self preloadToken:preloadToken isCurrentForPath:standardized])
+                            [self finishPreloadForPath:standardized token:preloadToken];
+                      }];
+                      return;
+                  }
                   NSString* message = @"Could not open document";
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     if (![self preloadToken:preloadToken isCurrentForPath:standardized]) return;
@@ -7504,7 +7565,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 [self updateTabStrip];
               }];
 
-              spdf_document* renderDoc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
+              spdf_document* renderDoc = [self openSpdfDocumentAtPath:workingPath
+                                                           sourcePath:path
+                                                               status:NULL
+                                                                error:err
+                                                          errorLength:sizeof(err)];
               if (!renderDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                     if ([self preloadToken:preloadToken isCurrentForPath:standardized])
@@ -7599,7 +7664,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
           __block spdf_comments comments;
           memset(&comments, 0, sizeof(comments));
           char err[1024];
-          spdf_document* doc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
+          spdf_document* doc = [self openSpdfDocumentAtPath:workingPath
+                                                 sourcePath:standardizedPath
+                                                     status:NULL
+                                                      error:err
+                                                errorLength:sizeof(err)];
           BOOL ok = doc && spdf_load_comments(doc, &comments, err, sizeof(err));
           if (doc) spdf_close(doc);
 
@@ -7643,7 +7712,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
           __block spdf_outline outline;
           memset(&outline, 0, sizeof(outline));
           char err[1024];
-          spdf_document* doc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
+          spdf_document* doc = [self openSpdfDocumentAtPath:workingPath
+                                                 sourcePath:standardizedPath
+                                                     status:NULL
+                                                      error:err
+                                                errorLength:sizeof(err)];
           BOOL ok = doc && spdf_load_outline(doc, &outline, err, sizeof(err));
           if (doc) spdf_close(doc);
 
@@ -8267,6 +8340,21 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (BOOL)ensureActivePDFCanBeModifiedForOperation:(NSString*)operationName {
+    if (spdf_is_password_protected(_doc)) {
+        BOOL annotationOperation = [operationName rangeOfString:@"comment" options:NSCaseInsensitiveSearch].location !=
+                                   NSNotFound;
+        int requiredPermission = annotationOperation ? 'n' : 'e';
+        BOOL needsCopyPermission = [operationName caseInsensitiveCompare:@"OCR"] == NSOrderedSame ||
+                                   [operationName caseInsensitiveCompare:@"translation"] == NSOrderedSame;
+        if (!spdf_has_permission(_doc, requiredPermission) ||
+            (needsCopyPermission && !spdf_has_permission(_doc, 'c'))) {
+            [self showError:@"Operation is not allowed"
+                     detail:[NSString stringWithFormat:
+                                          @"This PDF's user permissions do not allow %@. Open it with the owner password to continue.",
+                                          operationName ?: @"this modification"]];
+            return NO;
+        }
+    }
     NSString* reason = nil;
     if (![self activePDFNeedsSaveAsBeforeModificationWithReason:&reason]) return YES;
 
@@ -8418,6 +8506,109 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return strcasecmp(fs.f_fstypename, "apfs") != 0 && strcasecmp(fs.f_fstypename, "hfs") != 0;
 }
 
+- (void)dismissPendingPasswordPrompt {
+    self.pendingPasswordPromptToken = nil;
+    SPDFPasswordSheetController* controller = self.passwordSheetController;
+    self.passwordSheetController = nil;
+    [controller cancel];
+}
+
+- (void)promptForPasswordForTab:(SPDFDocumentTab*)tab
+                       openPath:(NSString*)openPath
+                     sourcePath:(NSString*)sourcePath
+                     attributes:(NSDictionary*)attributes
+            savedFindMatchIndex:(NSInteger)savedFindMatchIndex {
+    if (!tab || !openPath.length || !sourcePath.length || !_window) return;
+    [self dismissPendingPasswordPrompt];
+
+    tab.missingFile = NO;
+    tab.missingMessage = @"Password required";
+    [self showUnavailableSelectedTab:tab
+                                path:sourcePath
+                             message:tab.missingMessage
+                       showOpenError:NO
+                               error:NULL];
+
+    NSString* token = NSUUID.UUID.UUIDString;
+    self.pendingPasswordPromptToken = token;
+    NSString* standardizedSource = sourcePath.stringByStandardizingPath;
+    NSString* sourceIdentityToken =
+        [SPDFPasswordCredentialStore.sharedStore sourceIdentityTokenForSourcePath:sourcePath];
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    SPDFPasswordSheetController* controller = [[SPDFPasswordSheetController alloc]
+        initWithParentWindow:_window
+                 displayName:[self displayNameForPathConsideringOpenTabs:sourcePath]
+              attemptHandler:^(SPDFPasswordCredential* credential, SPDFPasswordAttemptCompletion completion) {
+                dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                  @autoreleasepool {
+                      char err[1024];
+                      spdf_open_status status = SPDF_OPEN_ERROR;
+                      spdf_document* document =
+                          SPDFOpenDocumentWithCredential(openPath, credential, &status, NULL, err, sizeof(err));
+                      NSString* detail =
+                          status == SPDF_OPEN_ERROR
+                              ? ([NSString stringWithUTF8String:err[0] ? err : "The PDF could not be opened."] ?: @"")
+                              : nil;
+                      dispatch_async(dispatch_get_main_queue(), ^{
+                        ShenzhenMacDelegate* self = weakSelf;
+                        if (!self || ![self.pendingPasswordPromptToken isEqualToString:token] ||
+                            [self selectedTab] != tab ||
+                            ![tab.path.stringByStandardizingPath isEqualToString:standardizedSource]) {
+                            if (document) spdf_close(document);
+                            return;
+                        }
+                        NSString* currentIdentityToken =
+                            [SPDFPasswordCredentialStore.sharedStore sourceIdentityTokenForSourcePath:sourcePath];
+                        if (![currentIdentityToken isEqualToString:sourceIdentityToken]) {
+                            if (document) spdf_close(document);
+                            completion(SPDFPasswordAttemptFailed, @"The PDF changed on disk. Try again.");
+                            return;
+                        }
+                        if (!document) {
+                            completion(status == SPDF_OPEN_BAD_PASSWORD ? SPDFPasswordAttemptIncorrect
+                                                                        : SPDFPasswordAttemptFailed,
+                                       detail);
+                            return;
+                        }
+
+                        [SPDFPasswordCredentialStore.sharedStore setCredential:credential forSourcePath:sourcePath];
+                        objc_setAssociatedObject(tab, &kSPDFPasswordPromptClosesNewTabKey, @NO,
+                                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                        completion(SPDFPasswordAttemptSucceeded, nil);
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                          ShenzhenMacDelegate* strongSelf = weakSelf;
+                          if (!strongSelf || ![strongSelf.pendingPasswordPromptToken isEqualToString:token] ||
+                              [strongSelf selectedTab] != tab) {
+                              spdf_close(document);
+                              return;
+                          }
+                          strongSelf.pendingPasswordPromptToken = nil;
+                          strongSelf.passwordSheetController = nil;
+                          [strongSelf presentOpenedDocument:document
+                                                    forTab:tab
+                                                      path:sourcePath
+                                                attributes:attributes
+                                       savedFindMatchIndex:savedFindMatchIndex];
+                        });
+                      });
+                  }
+                });
+              }
+               cancelHandler:^{
+                 ShenzhenMacDelegate* self = weakSelf;
+                 if (!self || ![self.pendingPasswordPromptToken isEqualToString:token]) return;
+                 self.pendingPasswordPromptToken = nil;
+                 self.passwordSheetController = nil;
+                 if ([self selectedTab] != tab) return;
+                 if ([objc_getAssociatedObject(tab, &kSPDFPasswordPromptClosesNewTabKey) boolValue]) {
+                     NSInteger tabIndex = [self->_tabs indexOfObjectIdenticalTo:tab];
+                     if (tabIndex != NSNotFound) [self closeTabAtIndex:tabIndex];
+                 }
+               }];
+    self.passwordSheetController = controller;
+    [controller begin];
+}
+
 // Launch-only fast path for a cloud-backed restored active tab: put up the
 // full chrome (tabs, toolbar, sidebar, empty document area) so the window
 // paints immediately, then stat+open off the main thread and finish the
@@ -8485,8 +8676,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
               resolution = [self resolveWorkingPathForTab:tab sourcePath:path attributes:attributes];
               openPath = resolution.workingPath ?: path;
           }
-          spdf_document* newDoc =
-              attributes ? [self openSpdfDocumentAtPath:openPath error:err errorLength:sizeof(err)] : NULL;
+          spdf_open_status openStatus = SPDF_OPEN_ERROR;
+          spdf_document* newDoc = attributes ? [self openSpdfDocumentAtPath:openPath
+                                                                          sourcePath:path
+                                                                              status:&openStatus
+                                                                               error:err
+                                                                         errorLength:sizeof(err)]
+                                                 : NULL;
           if (openStart > 0.0) {
               spdf_launch_profile_log(@"cloud-deferred stat+spdf_open %@ ok=%d %.1fms", path.lastPathComponent,
                                       newDoc != NULL, spdf_zoom_profile_now_ms() - openStart);
@@ -8504,6 +8700,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                               attributes:attributes
                                               resolution:resolution
                                                openError:openError
+                                              openStatus:openStatus
                                      savedFindMatchIndex:savedFindMatchIndex];
           });
       }
@@ -8514,8 +8711,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
                         standardizedPath:(NSString*)standardizedPath
                                 document:(spdf_document*)newDoc
                               attributes:(NSDictionary*)attributes
-                              resolution:(SPDFReadOnlyCopyResolution)resolution
-                               openError:(NSString*)openError
+                               resolution:(SPDFReadOnlyCopyResolution)resolution
+                                openError:(NSString*)openError
+                               openStatus:(spdf_open_status)openStatus
                      savedFindMatchIndex:(NSInteger)savedFindMatchIndex {
     // Stale if anything loaded since the deferral (tab switch, new open,
     // close, reload): loadSelectedTab clears the token on entry.
@@ -8533,6 +8731,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // main thread and have confirmed this tab is still the live target.
     [self applyReadOnlyCopyResolution:resolution toTab:tab];
     NSString* path = [tab.path copy];
+    NSString* openPath = resolution.workingPath.length ? resolution.workingPath : path;
     spdf_launch_profile_log(@"cloud-deferred open landing %@", path.lastPathComponent);
     if (!attributes) {
         if (newDoc) spdf_close(newDoc);
@@ -8542,6 +8741,14 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
     if (!newDoc) {
+        if (openStatus == SPDF_OPEN_PASSWORD_REQUIRED || openStatus == SPDF_OPEN_BAD_PASSWORD) {
+            [self promptForPasswordForTab:tab
+                                 openPath:openPath
+                               sourcePath:path
+                               attributes:attributes
+                      savedFindMatchIndex:savedFindMatchIndex];
+            return;
+        }
         NSString* message = @"Could not open document";
         tab.missingFile = NO;
         tab.missingMessage = message;
@@ -8560,6 +8767,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // Any new load supersedes a pending deferred cloud open; its completion
     // sees a stale token and abandons silently.
     _pendingDeferredCloudOpenToken = nil;
+    [self dismissPendingPasswordPrompt];
     [self cancelDocumentTransientInteraction];
     [self clearToolbarFieldFocusForTabSwitch];
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
@@ -8620,15 +8828,28 @@ static BOOL spdf_page_list_cache_disabled(void) {
     err[0] = '\0';
     spdf_document* newDoc = [self takeLaunchPrerenderedDocumentForPath:workingPath attributes:attributes];
     if (newDoc) spdf_launch_profile_log(@"spdf_open %@ adopted from prerender", path.lastPathComponent);
+    spdf_open_status openStatus = SPDF_OPEN_OK;
     if (!newDoc) {
         double launchOpenStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-        newDoc = [self openSpdfDocumentAtPath:workingPath error:err errorLength:sizeof(err)];
+        newDoc = [self openSpdfDocumentAtPath:workingPath
+                                   sourcePath:path
+                                       status:&openStatus
+                                        error:err
+                                  errorLength:sizeof(err)];
         if (launchOpenStart > 0.0) {
             spdf_launch_profile_log(@"spdf_open %@ %.1fms", path.lastPathComponent,
                                     spdf_zoom_profile_now_ms() - launchOpenStart);
         }
     }
     if (!newDoc) {
+        if (openStatus == SPDF_OPEN_PASSWORD_REQUIRED || openStatus == SPDF_OPEN_BAD_PASSWORD) {
+            [self promptForPasswordForTab:tab
+                                 openPath:workingPath
+                               sourcePath:path
+                               attributes:attributes
+                      savedFindMatchIndex:savedFindMatchIndex];
+            return;
+        }
         NSString* message = @"Could not open document";
         tab.missingFile = NO;
         tab.missingMessage = message;
@@ -8652,6 +8873,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
           savedFindMatchIndex:(NSInteger)savedFindMatchIndex {
     tab.missingFile = NO;
     tab.missingMessage = @"";
+    objc_setAssociatedObject(tab, &kSPDFPasswordPromptClosesNewTabKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     tab.cachedDocument = newDoc;
     [self recordFileAttributes:attributes forTab:tab];
     [self primePageGeometryCacheForDocument:newDoc
@@ -8782,6 +9004,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // the no-chapters/no-comments side-panel gate in -rebuildSidebar.
     tab.showSidebar = _defaultSidebarVisibleForNewDocuments;
     tab.showMinimap = _defaultMinimapVisibleForNewDocuments;
+    objc_setAssociatedObject(tab, &kSPDFPasswordPromptClosesNewTabKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return tab;
 }
 
@@ -10520,6 +10743,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     }
 
     NSString* path = [self activeWorkingPath];  // temp copy for read-only source
+    NSString* sourcePath = [_path copy];
     NSInteger preferredPage = _pendingFindPreferredPage;
     _pendingFindPreferredPage = -1;
     NSInteger preferredMatchIndex = _pendingFindPreferredMatchIndex;
@@ -10534,7 +10758,11 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
           NSMutableArray<NSDictionary*>* matches = [NSMutableArray array];
           __block NSString* searchError = nil;
           char openErr[1024];
-          spdf_document* doc = [self openSpdfDocumentAtPath:path error:openErr errorLength:sizeof(openErr)];
+          spdf_document* doc = [self openSpdfDocumentAtPath:path
+                                                 sourcePath:sourcePath
+                                                     status:NULL
+                                                      error:openErr
+                                                errorLength:sizeof(openErr)];
           if (!doc) {
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                 if (generation != self->_findGeneration) return;
@@ -10808,11 +11036,22 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         NSBeep();
         return;
     }
+    if (_doc && !spdf_has_permission(_doc, 'c')) {
+        [self showError:@"Copying is not allowed" detail:@"This PDF's permissions do not allow content copying."];
+        return;
+    }
     NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
     [pasteboard clearContents];
     NSString* text = _collapseWhitespaceWhenCopyingText ? SPDFTextByCollapsingWhitespace(_selectedText) : _selectedText;
     [pasteboard setString:text ?: @"" forType:NSPasteboardTypeString];
     _statusLabel.stringValue = @"Selected text copied.";
+}
+
+- (BOOL)ensureContentCopyPermissionForOperation:(NSString*)operationName {
+    if (_doc && spdf_has_permission(_doc, 'c')) return YES;
+    [self showError:[NSString stringWithFormat:@"%@ is not allowed", operationName ?: @"Copying"]
+             detail:@"This PDF's permissions do not allow content copying. Open it with the owner password to continue."];
+    return NO;
 }
 
 - (NSString*)trimmedSelectedTextForCommand {
@@ -10832,6 +11071,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         NSBeep();
         return;
     }
+    if (![self ensureContentCopyPermissionForOperation:@"Web search"]) return;
 
     if (SPDFPerformSystemTextSearchService(query)) {
         _statusLabel.stringValue = @"Opened selected text in browser search.";
@@ -10994,6 +11234,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         NSBeep();
         return;
     }
+    if (![self ensureContentCopyPermissionForOperation:@"Translation"]) return;
 
     [self buildSelectionTranslationPanelIfNeeded];
     [self syncSelectionTranslationLanguagePopups];
@@ -11240,7 +11481,8 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     NSNumber* number = @(pageIndex);
     if (_cursorRegionCache[number] || [_cursorRegionPagesBuilding containsObject:number]) return;
     NSString* path = [self activeWorkingPath];
-    if (!path.length) return;
+    NSString* sourcePath = [_path copy];
+    if (!path.length || !sourcePath.length) return;
     [_cursorRegionPagesBuilding addObject:number];
     NSUInteger generation = _cursorRegionGeneration;
     [_cursorRegionQueue addOperationWithBlock:^{
@@ -11249,7 +11491,10 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
           NSMutableArray<NSValue*>* textValues = [NSMutableArray array];
           NSMutableArray<NSValue*>* linkValues = [NSMutableArray array];
           spdf_document* workerDoc = generation == self->_cursorRegionGeneration
-                                         ? [self workerDocumentForPath:path error:err errorLength:sizeof(err)]
+                                         ? [self workerDocumentForPath:path
+                                                           sourcePath:sourcePath
+                                                                error:err
+                                                          errorLength:sizeof(err)]
                                          : NULL;
           if (workerDoc) {
               spdf_text_lines lines;
@@ -12763,7 +13008,11 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
               // and the result identity stay keyed to the SOURCE path.
               NSString* openPath = tab.workingPath.length ? tab.workingPath : path;
               char openErr[512];
-              spdf_document* doc = [self openSpdfDocumentAtPath:openPath error:openErr errorLength:sizeof(openErr)];
+              spdf_document* doc = [self openSpdfDocumentAtPath:openPath
+                                                     sourcePath:path
+                                                         status:NULL
+                                                          error:openErr
+                                                    errorLength:sizeof(openErr)];
               if (!doc) continue;
               NSInteger pageCount = spdf_page_count(doc);
               for (NSInteger page = 0; page < pageCount && results.count < 220; ++page) {
@@ -14402,6 +14651,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         NSBeep();
         return;
     }
+    if (![self ensureContentCopyPermissionForOperation:@"Translation"]) return;
     if ([self trimmedSelectedTextForCommand].length > 0) {
         [self showSelectionTranslationPanel:sender];
         return;
@@ -14872,7 +15122,11 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     }
 
     char err[1024];
-    spdf_document* doc = [self openSpdfDocumentAtPath:path error:err errorLength:sizeof(err)];
+    spdf_document* doc = [self openSpdfDocumentAtPath:path
+                                           sourcePath:path
+                                               status:NULL
+                                                error:err
+                                          errorLength:sizeof(err)];
     if (!doc) {
         if (errorOut) *errorOut = [NSString stringWithUTF8String:err[0] ? err : "Could not open PDF."];
         return -1;
@@ -15072,6 +15326,11 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         NSBeep();
         return;
     }
+    if (spdf_is_password_protected(_doc)) {
+        [self showError:@"OCR is unavailable for password-protected PDFs"
+                 detail:@"To OCR this document, intentionally create and open an unprotected copy first. Shenzhen PDF will not decrypt a protected PDF into a temporary file or silently replace it with an unprotected result."];
+        return;
+    }
     if (![self ensureActivePDFCanBeModifiedForOperation:@"OCR"]) return;
 
     NSString* tool = [self ocrToolPath];
@@ -15169,6 +15428,10 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         NSBeep();
         return;
     }
+    if (!spdf_has_permission(_doc, 'p')) {
+        [self showError:@"Printing is not allowed" detail:@"This PDF's permissions do not allow printing."];
+        return;
+    }
 
     NSPrintInfo* info = [NSPrintInfo.sharedPrintInfo copy];
     info.horizontalPagination = NSPrintingPaginationModeClip;
@@ -15176,7 +15439,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     info.horizontallyCentered = YES;
     info.verticallyCentered = YES;
 
-    if ([_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
+    if (!spdf_is_password_protected(_doc) && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
         // Read-only shadow copy: PDFKit reads the file CONTENT here, which would
         // trigger the macOS prompt for a read-only source. Read the working path
         // (temp copy when read-only) instead; the source stays the identity.
@@ -15214,7 +15477,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         [[SPDFPrintView alloc] initWithFrame:NSMakeRect(0, 0, paper.width, paper.height * MAX(1, pageCount))];
     printView.document = _doc;
     printView.pageCount = pageCount;
-    printView.targetDPI = 1200.0;
+    printView.targetDPI = spdf_has_permission(_doc, 'h') ? 1200.0 : 150.0;
     printView.fallbackPages = _renderedPages;
 
     NSPrintOperation* operation = [NSPrintOperation printOperationWithView:printView printInfo:info];
@@ -15583,6 +15846,10 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         NSBeep();
         return;
     }
+    if (!spdf_has_permission(_doc, 'c')) {
+        [self showError:@"Copying is not allowed" detail:@"This PDF's permissions do not allow content copying."];
+        return;
+    }
 
     NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
     [pasteboard clearContents];
@@ -15597,6 +15864,10 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     NSInteger pageIndex = _contextPageIndex >= 0 ? _contextPageIndex : _pageIndex;
     if (!_doc || !_path.length || pageIndex < 0 || pageIndex >= spdf_page_count(_doc)) {
         NSBeep();
+        return;
+    }
+    if (!spdf_has_permission(_doc, 'c')) {
+        [self showError:@"Copying is not allowed" detail:@"This PDF's permissions do not allow content copying."];
         return;
     }
 
@@ -15646,6 +15917,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     }
 
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
+    BOOL contentCopyAllowed = _doc && spdf_has_permission(_doc, 'c');
     if (_selectedText.length > 0) {
         NSString* preview = [self shortSelectedTextForMenuTitle];
         NSMenuItem* translateSelection =
@@ -15654,18 +15926,18 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                             action:@selector(showSelectionTranslationPanel:)
                      keyEquivalent:@""];
         translateSelection.target = self;
-        translateSelection.enabled = !_translationRunning && !_translationInstallRunning;
+        translateSelection.enabled = contentCopyAllowed && !_translationRunning && !_translationInstallRunning;
         NSMenuItem* webSearch =
             [menu addItemWithTitle:preview.length ? [NSString stringWithFormat:@"Search Web for \"%@\"", preview]
                                                   : @"Search Web"
                             action:@selector(searchSelectedTextInBrowser:)
                      keyEquivalent:@""];
         webSearch.target = self;
-        webSearch.enabled = YES;
+        webSearch.enabled = contentCopyAllowed;
         [menu addItem:[NSMenuItem separatorItem]];
     }
     NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(copySelection:) keyEquivalent:@""];
-    copy.enabled = _selectedText.length > 0;
+    copy.enabled = contentCopyAllowed && _selectedText.length > 0;
     if (_contextCommentIndex >= 0) {
         NSMenuItem* editComment = [menu addItemWithTitle:@"Edit Comment..."
                                                   action:@selector(editComment:)
@@ -15701,11 +15973,11 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     NSMenuItem* copyPage = [menu addItemWithTitle:@"Copy Page"
                                            action:@selector(copyCurrentPageAsPDF:)
                                     keyEquivalent:@""];
-    copyPage.enabled = _doc != NULL && _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
+    copyPage.enabled = contentCopyAllowed && _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
     NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
                                             action:@selector(copyCurrentPageImage:)
                                      keyEquivalent:@""];
-    copyImage.enabled = _doc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
+    copyImage.enabled = contentCopyAllowed && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
                         _renderedPages[(NSUInteger)_pageIndex].image != nil;
     NSMenuItem* copyPath = [menu addItemWithTitle:@"Copy Path"
                                            action:@selector(copyCurrentDocumentPath:)
@@ -16521,10 +16793,12 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         menuItem.state = _preventSleepInPresentation ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
-    if (action == @selector(searchSelectedTextInBrowser:)) return _selectedText.length > 0;
+    if (action == @selector(searchSelectedTextInBrowser:))
+        return _selectedText.length > 0 && spdf_has_permission(_doc, 'c');
     if (action == @selector(showSelectionTranslationPanel:))
-        return _selectedText.length > 0 && !_translationRunning && !_translationInstallRunning;
-    if (action == @selector(copySelection:)) return _selectedText.length > 0;
+        return _selectedText.length > 0 && spdf_has_permission(_doc, 'c') && !_translationRunning &&
+               !_translationInstallRunning;
+    if (action == @selector(copySelection:)) return _selectedText.length > 0 && spdf_has_permission(_doc, 'c');
     if (action == @selector(addComment:)) return hasDoc && (_selectedText.length > 0 || _contextPageIndex >= 0);
     if (action == @selector(editComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(deleteComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
@@ -16532,15 +16806,18 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(ocrDocument:) || action == @selector(deleteAllTextFromDocument:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
-    if (action == @selector(translateDocument:)) return hasDoc && !_translationRunning && !_translationInstallRunning;
+    if (action == @selector(translateDocument:))
+        return hasDoc && spdf_has_permission(_doc, 'c') && !_translationRunning && !_translationInstallRunning;
     if (action == @selector(saveDocumentAs:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(showInFolder:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentPath:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentFile:)) return hasDoc && _path.length > 0;
-    if (action == @selector(copyCurrentPageAsPDF:)) return hasDoc && _path.length > 0;
+    if (action == @selector(copyCurrentPageAsPDF:))
+        return hasDoc && _path.length > 0 && spdf_has_permission(_doc, 'c');
     if (action == @selector(copyCurrentPageImage:))
-        return hasDoc && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
+        return hasDoc && spdf_has_permission(_doc, 'c') && _pageIndex >= 0 &&
+               _pageIndex < (NSInteger)_renderedPages.count &&
                _renderedPages[(NSUInteger)_pageIndex].image != nil;
     if (!hasDoc) return action == @selector(unimplementedMenuItem:);
 

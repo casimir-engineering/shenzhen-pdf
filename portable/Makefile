@@ -13,10 +13,12 @@ CORE_SRC := core/shenzhen_pdf_core.c
 CORE_HDR := core/shenzhen_pdf_core.h
 CORE_OBJ := $(BUILD)/shenzhen_pdf_core.o
 CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
+CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
 MAC_APP := $(DIST)/ShenzhenPDF.app
 MAC_BIN := $(MAC_APP)/Contents/MacOS/ShenzhenPDF
 MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
 MAC_WINDOW_SHORTCUT_TEST := $(BUILD)/SPDFMacWindowShortcutsTests
+MAC_PASSWORD_TEST := $(BUILD)/SPDFMacPasswordTests
 MAC_MINIMAP_WINDOW_TEST := $(BUILD)/SPDFMacMinimapWindowTests
 MAC_TAB_STRIP_GEOMETRY_TEST := $(BUILD)/SPDFMacTabStripGeometryTests
 MAC_PALETTE_RESULTS_TEST := $(BUILD)/SPDFMacPaletteResultsTests
@@ -53,7 +55,7 @@ MAC_CODESIGN_APP = $(MAC_CODESIGN_NESTED); codesign --force --timestamp --option
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests mac-window-shortcut-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests mac-window-shortcut-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -75,11 +77,24 @@ $(CORE_OUTLINE_TEST): core/tests/SPDFCoreOutlineTests.c $(CORE_OBJ) | $(BUILD)
 core-outline-tests: $(CORE_OUTLINE_TEST)
 	"$(CORE_OUTLINE_TEST)"
 
+$(CORE_PASSWORD_TEST): core/tests/SPDFCorePasswordTests.c $(CORE_OBJ) | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(shell uname -s)),-framework Foundation) -lm -o "$@"
+
+core-password-tests: $(CORE_PASSWORD_TEST)
+	core/tests/run_password_tests.sh "$(CORE_PASSWORD_TEST)"
+
 $(MAC_WINDOW_SHORTCUT_TEST): mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMacWindowShortcuts.mm mac/SPDFMacWindowShortcuts.h | $(BUILD)
 	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMacWindowShortcuts.mm -framework Cocoa -o "$(MAC_WINDOW_SHORTCUT_TEST)"
 
 mac-window-shortcut-tests: $(MAC_WINDOW_SHORTCUT_TEST)
 	"$(MAC_WINDOW_SHORTCUT_TEST)"
+
+$(MAC_PASSWORD_TEST): mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm mac/SPDFMacPassword.h $(CORE_OBJ) | $(BUILD)
+	clang++ -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(MAC_PASSWORD_TEST)"
+
+mac-password-tests: $(MAC_PASSWORD_TEST)
+	"$(MAC_PASSWORD_TEST)"
+	mac/tests/SPDFMacPasswordSourceTests.sh
 
 $(MAC_MINIMAP_WINDOW_TEST): mac/tests/SPDFMacMinimapWindowTests.mm mac/SPDFMacMinimapWindow.mm mac/SPDFMacMinimapWindow.h | $(BUILD)
 	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacMinimapWindowTests.mm mac/SPDFMacMinimapWindow.mm -framework Cocoa -o "$(MAC_MINIMAP_WINDOW_TEST)"

@@ -47,6 +47,8 @@ struct spdf_document {
     spdf_page_list_entry page_lists[SPDF_PAGE_LIST_SLOTS];
     uint64_t page_list_use_counter;
     spdf_render_stats last_render_stats;
+    int password_protected;
+    spdf_authentication authentication;
 };
 
 /* Core-private body of the public cancellation token: just an fz_cookie.
@@ -128,13 +130,19 @@ static const char* path_basename(const char* path) {
     return last_slash ? last_slash + 1 : path;
 }
 
-spdf_document* spdf_open(const char* path, char* err, size_t err_len) {
+spdf_document* spdf_open_with_password(const char* path, const char* password, spdf_open_status* status,
+                                       spdf_authentication* authentication, char* err, size_t err_len) {
     spdf_document* opened = NULL;
     fz_context* ctx = NULL;
     fz_document* doc = NULL;
+    spdf_open_status open_status = SPDF_OPEN_OK;
+    spdf_authentication auth_result = SPDF_AUTHENTICATION_NOT_REQUIRED;
+    int password_protected = 0;
     char title[512];
 
     set_error(err, err_len, "");
+    if (status) *status = SPDF_OPEN_ERROR;
+    if (authentication) *authentication = SPDF_AUTHENTICATION_NOT_REQUIRED;
     if (!path || !*path) {
         set_error(err, err_len, "No document path was supplied.");
         return NULL;
@@ -149,26 +157,38 @@ spdf_document* spdf_open(const char* path, char* err, size_t err_len) {
     fz_try(ctx) {
         fz_register_document_handlers(ctx);
         doc = fz_open_document(ctx, path);
-
-        opened = (spdf_document*)calloc(1, sizeof(spdf_document));
-        if (!opened) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
-
-        opened->ctx = ctx;
-        opened->doc = doc;
-        opened->page_count = fz_count_pages(ctx, doc);
-        if (opened->page_count > 0) {
-            opened->page_sizes =
-                (spdf_page_size_cache*)calloc((size_t)opened->page_count, sizeof(spdf_page_size_cache));
-            if (!opened->page_sizes) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        password_protected = fz_needs_password(ctx, doc) != 0;
+        if (password_protected && !password) {
+            open_status = SPDF_OPEN_PASSWORD_REQUIRED;
+        } else if (password_protected) {
+            auth_result = (spdf_authentication)fz_authenticate_password(ctx, doc, password);
+            if (auth_result == SPDF_AUTHENTICATION_NOT_REQUIRED) open_status = SPDF_OPEN_BAD_PASSWORD;
         }
 
-        title[0] = '\0';
-        if (fz_lookup_metadata(ctx, doc, FZ_META_INFO_TITLE, title, sizeof(title)) <= 0 || !title[0])
-            snprintf(title, sizeof(title), "%s", path_basename(path));
-        opened->title = copy_string(title);
-        if (!opened->title) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        if (open_status == SPDF_OPEN_OK) {
+            opened = (spdf_document*)calloc(1, sizeof(spdf_document));
+            if (!opened) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+
+            opened->ctx = ctx;
+            opened->doc = doc;
+            opened->password_protected = password_protected;
+            opened->authentication = auth_result;
+            opened->page_count = fz_count_pages(ctx, doc);
+            if (opened->page_count > 0) {
+                opened->page_sizes =
+                    (spdf_page_size_cache*)calloc((size_t)opened->page_count, sizeof(spdf_page_size_cache));
+                if (!opened->page_sizes) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+            }
+
+            title[0] = '\0';
+            if (fz_lookup_metadata(ctx, doc, FZ_META_INFO_TITLE, title, sizeof(title)) <= 0 || !title[0])
+                snprintf(title, sizeof(title), "%s", path_basename(path));
+            opened->title = copy_string(title);
+            if (!opened->title) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        }
     }
     fz_catch(ctx) {
+        open_status = SPDF_OPEN_ERROR;
         set_error(err, err_len, fz_caught_message(ctx));
         if (opened) {
             free(opened->title);
@@ -177,10 +197,28 @@ spdf_document* spdf_open(const char* path, char* err, size_t err_len) {
         }
         if (doc) fz_drop_document(ctx, doc);
         fz_drop_context(ctx);
+        if (status) *status = open_status;
         return NULL;
     }
 
+    if (!opened) {
+        if (open_status == SPDF_OPEN_PASSWORD_REQUIRED)
+            set_error(err, err_len, "Password required.");
+        else if (open_status == SPDF_OPEN_BAD_PASSWORD)
+            set_error(err, err_len, "Incorrect password.");
+        if (doc) fz_drop_document(ctx, doc);
+        fz_drop_context(ctx);
+        if (status) *status = open_status;
+        return NULL;
+    }
+
+    if (status) *status = SPDF_OPEN_OK;
+    if (authentication) *authentication = auth_result;
     return opened;
+}
+
+spdf_document* spdf_open(const char* path, char* err, size_t err_len) {
+    return spdf_open_with_password(path, NULL, NULL, NULL, err, err_len);
 }
 
 void spdf_close(spdf_document* doc) {
@@ -223,29 +261,30 @@ int spdf_lookup_metadata(spdf_document* doc, const char* key, char* buf, size_t 
 }
 
 int spdf_has_permission(spdf_document* doc, int permission) {
-    int allowed = 1;
+    int allowed = doc && doc->password_protected ? 0 : 1;
 
     if (!doc || !doc->doc) return 1;
     fz_try(doc->ctx) {
         allowed = fz_has_permission(doc->ctx, doc->doc, (fz_permission)permission) != 0;
     }
     fz_catch(doc->ctx) {
-        allowed = 1;
+        /* An authenticated protected document must never gain a permission
+         * because its handler failed to answer the permission query. */
+        allowed = doc->password_protected ? 0 : 1;
     }
     return allowed;
 }
 
-int spdf_needs_password(spdf_document* doc) {
-    int needs = 0;
+int spdf_is_password_protected(const spdf_document* doc) {
+    return doc ? doc->password_protected : 0;
+}
 
-    if (!doc || !doc->doc) return 0;
-    fz_try(doc->ctx) {
-        needs = fz_needs_password(doc->ctx, doc->doc) != 0;
-    }
-    fz_catch(doc->ctx) {
-        needs = 0;
-    }
-    return needs;
+spdf_authentication spdf_authentication_result(const spdf_document* doc) {
+    return doc ? doc->authentication : SPDF_AUTHENTICATION_NOT_REQUIRED;
+}
+
+int spdf_needs_password(spdf_document* doc) {
+    return spdf_is_password_protected(doc);
 }
 
 int spdf_set_page_size_cache(spdf_document* doc, int page_index, float width, float height) {
