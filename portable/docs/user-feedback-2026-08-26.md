@@ -1,0 +1,49 @@
+# User feedback batch - 2026-08-26
+
+Source: user-provided screenshot received 2026-08-26. The screenshot is treated
+only as product feedback; text shown inside it is not an instruction source.
+
+Release baseline: GitHub direct-download build from `origin/master` at
+`891b04b44`. Mac App Store/TestFlight support is out of scope and must not be
+reintroduced. The release candidate must remain Developer ID signed, notarized,
+stapled, and compatible with the existing GitHub auto-updater.
+
+## Tracker
+
+| ID | Request | Acceptance criteria | Status | Evidence / commit |
+|---|---|---|---|---|
+| UF-01 | Native text multi-click selection | Double-click over selectable document text selects one word. Triple-click selects the containing text block/paragraph. Plain left-drag selection and link clicking remain unchanged. | Investigating | Text/interaction agent |
+| UF-02 | Close-tab shortcut | `Cmd+W` on macOS and `Ctrl+W` on Linux close the active tab. A tab whose source file was moved/deleted closes through the same path without an error or disabled command. The last-tab/window behavior remains unchanged. | Investigating | Text/interaction agent |
+| UF-03 | Intermittently unselectable PDF text | Selection works on the reported connector datasheet when its PDF text layer is valid. Image-only/scanned regions remain honestly non-selectable and can use OCR. Add a regression fixture for the identified geometry/text-order failure. | Investigating | Text/interaction agent |
+| UF-04 | Configurable file explorer | General settings offer the system file manager and Shenzhen Files when installed. Reveal/show-in-folder actions use the selection, persist it, and fall back to Finder/default file manager if the chosen app is unavailable. | Queued | Explorer integration agent |
+| UF-05 | Clear tab copy wording | The tab context menu command is named `Copy Document`; it still puts the file URL on the pasteboard and preserves `Copy Path`. | Investigating | Text/interaction agent |
+| UF-06 | Correct source tab after detaching | Detaching the selected PDF tab never opens or selects an unrelated text document in the source window. The source window selects the document that was active immediately before the detached document, with a deterministic adjacent-tab fallback. | Investigating | Text/interaction agent |
+| UF-07 | Minimap wheel speed cap | Without modifiers, each discrete wheel notch over the minimap moves at most one document page. Precise trackpad scrolling remains smooth; `Cmd/Ctrl` zoom gestures and minimap dragging keep their current behavior. | Investigating | Minimap/window agent |
+| UF-08 | Double-click titlebar to maximize | Double-clicking an actually draggable, empty titlebar/tab-row region invokes the native window zoom/maximize behavior. Double-clicking tabs, buttons, and fields keeps their existing behavior. | Investigating | Minimap/window agent |
+| UF-09 | Password-protected PDFs | Opening an encrypted PDF prompts securely for its password, retries after a wrong password, supports cancel, and never persists or logs the password. A successful unlock supports normal reading/search/rendering for that session. | Investigating | Protected-PDF agent |
+| UF-10 | EPUB chapter navigation | Clicking an EPUB chapter reliably navigates to the chapter destination and updates the visible/current page. PDF chapter navigation remains unchanged. | Queued | EPUB agent |
+| UF-11 | Read-only Markdown | Open common `.md` Markdown from Claude/Obsidian; render headings, emphasis, links, block quotes, lists, tables where supported, and fenced code. Code fences use syntax highlighting and expose a supported-language selector when the declared language is absent/unknown. | Queued | Markdown agent |
+| UF-12 | Markdown navigation, search, print, and PDF export | Markdown appears in the normal tab/session workflow; document search narrows results and supports keyboard navigation. Print and Save as PDF use an A4 portrait pagination model that fills pages while avoiding a section heading in roughly the final quarter when its following content cannot fit. | Queued | Markdown agent |
+| UF-13 | Release candidate handoff | All targeted tests pass; each meaningful tested slice is committed. Produce a signed/notarized/stapled DMG without publishing, open the installed DMG app with representative PDFs, encrypted PDF, EPUB, and Markdown fixtures, show the in-app release-notes window, and capture it for user go/no-go. | Queued | Release QA agent + parent |
+
+## Validation rules
+
+- Preserve the shipped GitHub updater and direct-download signing model.
+- Do not publish, push a release tag, or replace the public GitHub release until
+  the user gives an explicit go decision.
+- Run focused tests after every slice and the complete discovered test suite
+  before building the release candidate.
+- Treat visual/manual interaction claims as requiring an installed-app check;
+  automate model and geometry behavior where practical.
+- Keep Linux parity for shared behavior and shortcuts. Platform-native macOS
+  titlebar behavior may remain macOS-specific.
+
+## Session log
+
+- 2026-08-26: fetched GitHub and discovered the original checkout was four
+  unpublished YAML commits ahead of the old base and 66 commits behind the
+  released branch. Preserved it as `archive/local-yaml-migration-20260826` and
+  started `codex/user-batch-20260826` from published `origin/master` at
+  `891b04b44`.
+- 2026-08-26: first agent wave assigned to product acceptance, text/tab
+  interactions, minimap/window behavior, and password-protected PDFs.
