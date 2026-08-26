@@ -13,17 +13,17 @@ stapled, and compatible with the existing GitHub auto-updater.
 | ID | Request | Acceptance criteria | Status | Evidence / commit |
 |---|---|---|---|---|
 | UF-01 | Native text multi-click selection | Double-click over selectable document text selects one word. Triple-click selects the containing text block/paragraph. Plain left-drag selection and link clicking remain unchanged. | Investigating | Text/interaction agent |
-| UF-02 | Close-tab shortcut | `Cmd+W` on macOS and `Ctrl+W` on Linux close the active tab. A tab whose source file was moved/deleted closes through the same path without an error or disabled command. The last-tab/window behavior remains unchanged. | Investigating | Text/interaction agent |
-| UF-03 | Intermittently unselectable PDF text | Selection works on the reported connector datasheet when its PDF text layer is valid. Image-only/scanned regions remain honestly non-selectable and can use OCR. Add a regression fixture for the identified geometry/text-order failure. | Investigating | Text/interaction agent |
+| UF-02 | Close-tab shortcut | `Cmd+W` on macOS and `Ctrl+W` on Linux close the active tab. A tab whose source file was moved/deleted closes through the same path without an error or disabled command. The last-tab/window behavior remains unchanged. | Linux implemented; macOS pending | GTK4 coverage in `4c1989be2`; macOS menu validation still needs correction. |
+| UF-03 | Intermittently unselectable PDF text | Selection works on the reported connector datasheet when its PDF text layer is valid. Image-only/scanned regions remain honestly non-selectable and can use OCR. Add a regression fixture for the identified geometry/text-order failure. | Reproduced | The sampled connector PDF has an incomplete OCR layer: some visible labels have no selectable glyphs. Error handling and a synthetic OCR fixture remain. |
 | UF-04 | Configurable file explorer | General settings offer the system file manager and Shenzhen Files when installed. Reveal/show-in-folder actions use the selection, persist it, and fall back to Finder/default file manager if the chosen app is unavailable. | Queued | Explorer integration agent |
-| UF-05 | Clear tab copy wording | The tab context menu command is named `Copy Document`; it still puts the file URL on the pasteboard and preserves `Copy Path`. | Investigating | Text/interaction agent |
-| UF-06 | Correct source tab after detaching | Detaching the selected PDF tab never opens or selects an unrelated text document in the source window. The source window selects the document that was active immediately before the detached document, with a deterministic adjacent-tab fallback. | Investigating | Text/interaction agent |
-| UF-07 | Minimap wheel speed cap | Without modifiers, each discrete wheel notch over the minimap moves at most one document page. Precise trackpad scrolling remains smooth; `Cmd/Ctrl` zoom gestures and minimap dragging keep their current behavior. | Investigating | Minimap/window agent |
-| UF-08 | Double-click titlebar to maximize | Double-clicking an actually draggable, empty titlebar/tab-row region invokes the native window zoom/maximize behavior. Double-clicking tabs, buttons, and fields keeps their existing behavior. | Investigating | Minimap/window agent |
-| UF-09 | Password-protected PDFs | Opening an encrypted PDF prompts securely for its password, retries after a wrong password, supports cancel, and never persists or logs the password. A successful unlock supports normal reading/search/rendering for that session. | Investigating | Protected-PDF agent |
-| UF-10 | EPUB chapter navigation | Clicking an EPUB chapter reliably navigates to the chapter destination and updates the visible/current page. PDF chapter navigation remains unchanged. | Queued | EPUB agent |
+| UF-05 | Clear tab copy wording | The tab context menu command is named `Copy Document`; it still puts the file URL on the pasteboard and preserves `Copy Path`. | Linux implemented; macOS implementing | GTK4 real-file clipboard coverage in `4c1989be2`; macOS label changed and awaits grouped tab commit. |
+| UF-06 | Correct source tab after detaching | Detaching the selected PDF tab never opens or selects an unrelated text document in the source window. The source window selects the document that was active immediately before the detached document, with a deterministic adjacent-tab fallback. | Linux implemented; macOS pending | GTK4 MRU restoration and notification-order tests in `4c1989be2`. |
+| UF-07 | Minimap wheel speed cap | Without modifiers, each discrete wheel notch over the minimap moves at most one document page. Precise trackpad scrolling remains smooth; `Cmd/Ctrl` zoom gestures and minimap dragging keep their current behavior. | Implemented and tested | `ecdbd73d7`; macOS minimap suite and complete GTK4 test sweep pass. |
+| UF-08 | Double-click titlebar to maximize | Double-clicking an actually draggable, empty titlebar/tab-row region invokes the native window zoom/maximize behavior. Double-clicking tabs, buttons, and fields keeps their existing behavior. | Linux implemented; macOS implementing | GTK4 empty-header tests in `4c1989be2`; macOS pure chrome-action model added and controller integration remains. |
+| UF-09 | Password-protected PDFs | Opening an encrypted PDF prompts securely for its password, retries after a wrong password, supports cancel, and never persists or logs the password. A successful unlock supports normal reading/search/rendering for that session. | macOS/core implemented; Linux pending | Generated encrypted-PDF tests cover plain, wrong-password, user, owner, owner-only, and restricted cases. macOS secure asynchronous prompting, credential-aware workers, fail-closed permissions, printing, and no-plaintext-temp guards pass. |
+| UF-10 | EPUB chapter navigation | Clicking an EPUB chapter reliably navigates to the chapter destination and updates the visible/current page. PDF chapter navigation remains unchanged. | Implemented and tested | `d5cb2965b`; generated nested EPUB outline test passes, including invalid and external targets. |
 | UF-11 | Read-only Markdown | Open common `.md` Markdown from Claude/Obsidian; render headings, emphasis, links, block quotes, lists, tables where supported, and fenced code. Code fences use syntax highlighting and expose a supported-language selector when the declared language is absent/unknown. | Queued | Markdown agent |
-| UF-12 | Markdown navigation, search, print, and PDF export | Markdown appears in the normal tab/session workflow; document search narrows results and supports keyboard navigation. Print and Save as PDF use an A4 portrait pagination model that fills pages while avoiding a section heading in roughly the final quarter when its following content cannot fit. | Queued | Markdown agent |
+| UF-12 | Markdown language search, print, and PDF export | Markdown appears in the normal tab/session workflow. The syntax-language selector has a narrowing search field and full keyboard navigation. Print and Save as PDF use an A4 portrait pagination model that fills pages while avoiding a section heading in roughly the final quarter when its following content cannot fit. | Queued | Markdown agent |
 | UF-13 | Release candidate handoff | All targeted tests pass; each meaningful tested slice is committed. Produce a signed/notarized/stapled DMG without publishing, open the installed DMG app with representative PDFs, encrypted PDF, EPUB, and Markdown fixtures, show the in-app release-notes window, and capture it for user go/no-go. | Queued | Release QA agent + parent |
 
 ## Validation rules
@@ -47,3 +47,32 @@ stapled, and compatible with the existing GitHub auto-updater.
   `891b04b44`.
 - 2026-08-26: first agent wave assigned to product acceptance, text/tab
   interactions, minimap/window behavior, and password-protected PDFs.
+- 2026-08-26: committed EPUB internal-outline URI resolution and a generated
+  nested EPUB regression fixture as `d5cb2965b`.
+- 2026-08-26: committed the one-page discrete minimap wheel cap for macOS and
+  GTK4 as `ecdbd73d7`. Precise trackpad input and momentum retain their existing
+  paths. The focused macOS suite and all GTK4 tests pass.
+- 2026-08-26: confirmed that the sampled connector datasheet contains an
+  incomplete Tesseract OCR layer. Selectable OCR text must remain selectable;
+  visible raster labels with no glyph geometry cannot be selected without OCR.
+- 2026-08-26: clarified the screenshot's search request: it belongs to the
+  supported syntax-language picker, not to a second Markdown document-search
+  interface. Ordinary document Find remains part of normal tab integration.
+- 2026-08-27: release audit selected `26.8.27-1` (no existing tag) and verified
+  the GitHub updater contract: exact `ShenzhenPDF-mac-arm64.dmg` asset name,
+  Developer ID Team `66LJ4BV7Q3`, bundle ID `com.intuition.shenzhenpdf`, hardened
+  runtime, notarization, and a stapled ticket. The unpublished RC will be built
+  from a clean detached worktree and will not run the publishing path.
+- 2026-08-27: release audit also confirmed stale TestFlight tooling remains in
+  the repository despite the product's completed App Store removal. It will be
+  removed as an isolated release-tooling slice while retaining the generic
+  sandbox guard used against third-party repackaging.
+- 2026-08-27: committed GTK4 missing-source `Ctrl+W`, real-file tab copy,
+  MRU restoration after detach, and empty-header maximize as `4c1989be2`.
+  The complete GTK4 test sweep, including eight new interaction tests, passes.
+- 2026-08-27: completed the macOS/core encrypted-PDF security gate. The
+  generated qpdf fixture suite, credential/source-identity tests, permission
+  source contracts, properties/translation regressions, window-chrome test,
+  and full macOS application build pass. Passwords remain process-memory only;
+  encrypted OCR is blocked instead of creating a plaintext temporary copy, and
+  protected printing uses the authenticated MuPDF path.

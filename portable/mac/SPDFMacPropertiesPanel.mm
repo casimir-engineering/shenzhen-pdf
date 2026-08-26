@@ -1,5 +1,6 @@
 #import "SPDFMacPropertiesPanel.h"
 
+#import "SPDFMacPassword.h"
 #import "SPDFMacPropertiesFormat.h"
 
 // Panel subclass so Escape and Cmd+W close the panel itself (Cmd+W would
@@ -122,7 +123,7 @@ static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value
                          annotationCount:annotationCount];
     [controller buildPanelWithSourcePath:sourcePath parentWindow:parentWindow];
     [spdf_properties_visible_controllers() addObject:controller];
-    [controller startWordCountForPath:workingPath.length ? workingPath : sourcePath];
+    [controller startWordCountForPath:workingPath.length ? workingPath : sourcePath sourcePath:sourcePath];
 }
 
 - (void)buildSectionsForDocument:(spdf_document*)doc
@@ -148,7 +149,7 @@ static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value
     }
     NSString* encryption = spdf_properties_metadata(doc, "encryption");
     if ([encryption isEqualToString:@"None"]) encryption = @"";
-    if (encryption.length && spdf_needs_password(doc))
+    if (encryption.length && spdf_is_password_protected(doc))
         encryption = [encryption stringByAppendingString:@" (password protected)"];
     NSString* security =
         spdf_properties_security_summary(encryption, spdf_has_permission(doc, 'p'), spdf_has_permission(doc, 'c'),
@@ -458,8 +459,8 @@ static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value
 // working path (the core's one-thread-per-document contract), checking the
 // cancellation flag between pages so closing the panel stops the walk quickly
 // even on 1000-page documents.
-- (void)startWordCountForPath:(NSString*)path {
-    if (!path.length || !_textStatsField) {
+- (void)startWordCountForPath:(NSString*)path sourcePath:(NSString*)sourcePath {
+    if (!path.length || !sourcePath.length || !_textStatsField) {
         [self finishWordCountWithValue:@"Unavailable"];
         return;
     }
@@ -467,7 +468,7 @@ static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
       @autoreleasepool {
           char err[1024];
-          spdf_document* doc = spdf_open(path.fileSystemRepresentation, err, sizeof(err));
+          spdf_document* doc = SPDFOpenDocumentWithStoredCredential(path, sourcePath, NULL, NULL, err, sizeof(err));
           if (!doc) {
               dispatch_async(dispatch_get_main_queue(),
                              ^{ [weakSelf finishWordCountWithValue:@"Unavailable"]; });

@@ -9,6 +9,22 @@ extern "C" {
 
 typedef struct spdf_document spdf_document;
 
+typedef enum spdf_open_status {
+    SPDF_OPEN_OK = 0,
+    SPDF_OPEN_PASSWORD_REQUIRED = 1,
+    SPDF_OPEN_BAD_PASSWORD = 2,
+    SPDF_OPEN_ERROR = 3
+} spdf_open_status;
+
+/* Authentication classes returned by MuPDF. They are flags because a
+ * document handler may report more than one successful class. */
+typedef enum spdf_authentication {
+    SPDF_AUTHENTICATION_NOT_REQUIRED = 0,
+    SPDF_AUTHENTICATION_WITHOUT_PASSWORD = 1 << 0,
+    SPDF_AUTHENTICATION_USER_PASSWORD = 1 << 1,
+    SPDF_AUTHENTICATION_OWNER_PASSWORD = 1 << 2
+} spdf_authentication;
+
 typedef struct spdf_bitmap {
     int width;
     int height;
@@ -125,6 +141,13 @@ typedef struct spdf_render_stats {
     double build_ms; /* display-list build time for that render, 0 when not built */
 } spdf_render_stats;
 
+/* Open and, when needed, authenticate a document. A NULL password means no
+ * credential was supplied; an empty string is a supplied empty password.
+ * Locked documents never produce a partially initialized document. */
+spdf_document* spdf_open_with_password(const char* path, const char* password, spdf_open_status* status,
+                                       spdf_authentication* authentication, char* err, size_t err_len);
+/* Compatibility opener. It opens unprotected documents and returns NULL with
+ * "Password required." for locked documents. */
 spdf_document* spdf_open(const char* path, char* err, size_t err_len);
 void spdf_close(spdf_document* doc);
 
@@ -139,9 +162,14 @@ const char* spdf_title(spdf_document* doc);
 int spdf_lookup_metadata(spdf_document* doc, const char* key, char* buf, size_t buf_len);
 /* Permission check. `permission` is an fz_permission character constant:
  * 'p' print, 'c' copy, 'e' edit, 'n' annotate. Returns 1 when allowed (also
- * for formats without a permission model), 0 when the document denies it. */
+ * for formats without a permission model), 0 when the document denies it.
+ * Permission-query failures on password-protected documents fail closed. */
 int spdf_has_permission(spdf_document* doc, int permission);
-/* Returns 1 when the document is encrypted with a non-blank password. */
+/* Non-mutating snapshots captured during open. Unlike MuPDF's
+ * fz_needs_password(), these calls cannot reset an authenticated PDF. */
+int spdf_is_password_protected(const spdf_document* doc);
+spdf_authentication spdf_authentication_result(const spdf_document* doc);
+/* Compatibility alias for spdf_is_password_protected(). */
 int spdf_needs_password(spdf_document* doc);
 int spdf_set_page_size_cache(spdf_document* doc, int page_index, float width, float height);
 int spdf_page_size(spdf_document* doc, int page_index, float* width, float* height, char* err, size_t err_len);
