@@ -30,6 +30,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacPrintView.h"
 #import "SPDFMacPropertiesPanel.h"
 #import "SPDFMacSupport.h"
+#import "SPDFMacTabLifecycle.h"
 #import "SPDFMacTabStripView.h"
 #import "SPDFMacUIHelpers.h"
 #import "SPDFUpdater.h"
@@ -595,6 +596,7 @@ static void spdf_discard_launch_prerender(void) {
 @interface ShenzhenMacDelegate ()
 @property(nonatomic, strong) SPDFPasswordSheetController* passwordSheetController;
 @property(nonatomic, copy) NSString* pendingPasswordPromptToken;
+@property(nonatomic, strong) SPDFMacTabLifecycle* tabLifecycle;
 @end
 
 @implementation ShenzhenMacDelegate
@@ -878,6 +880,7 @@ static void spdf_discard_launch_prerender(void) {
     _sidebarItems = [NSMutableArray array];
     _renderedPages = [NSMutableArray array];
     _tabs = [NSMutableArray array];
+    self.tabLifecycle = [[SPDFMacTabLifecycle alloc] init];
     _favorites = [NSMutableArray array];
     _documentStates = [NSMutableDictionary dictionary];
     _recentlyOpenedPaths = [NSMutableArray array];
@@ -1737,6 +1740,7 @@ static void spdf_discard_launch_prerender(void) {
     }
 
     NSArray* tabs = [windowState[@"tabs"] isKindOfClass:NSArray.class] ? windowState[@"tabs"] : @[];
+    [self.tabLifecycle reset];
     [_tabs removeAllObjects];
     for (NSDictionary* item in tabs) {
         SPDFDocumentTab* tab = spdf_tab_from_dictionary(item);
@@ -8768,6 +8772,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self cancelDocumentTransientInteraction];
     [self clearToolbarFieldFocusForTabSwitch];
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
+    [self.tabLifecycle recordActivationOfIdentifier:tab];
     if (!tab.path.length) return;
     NSString* path = [tab.path copy];
     NSInteger savedFindMatchIndex = tab.findMatchIndex;
@@ -9085,10 +9090,19 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)closeTabAtIndex:(NSInteger)index {
+    [self closeTabAtIndex:index preferMostRecentActive:NO];
+}
+
+- (void)closeTabAtIndex:(NSInteger)index preferMostRecentActive:(BOOL)preferMostRecentActive {
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
     BOOL closingActive = index == _selectedTabIndex;
     if (closingActive) [self cancelDocumentTransientInteraction];
     SPDFDocumentTab* closingTab = _tabs[(NSUInteger)index];
+    if (_selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count)
+        [self.tabLifecycle recordActivationOfIdentifier:_tabs[(NSUInteger)_selectedTabIndex]];
+    SPDFDocumentTab* replacementTab = [self.tabLifecycle removeIdentifier:closingTab
+                                                   fromOrderedIdentifiers:[_tabs copy]
+                                                   preferMostRecentActive:preferMostRecentActive];
     NSString* closedPath = [closingTab.path copy];
     // Read-only shadow copy: a deliberately-closed tab's private temp copy is
     // deleted here (NOT in -discardCachedRuntimeForTab:, which runs on reopen).
@@ -9139,7 +9153,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
 
     if (closingActive) {
-        _selectedTabIndex = MIN(index, (NSInteger)_tabs.count - 1);
+        NSInteger replacementIndex = [_tabs indexOfObjectIdenticalTo:replacementTab];
+        _selectedTabIndex = replacementIndex == NSNotFound ? MIN(index, (NSInteger)_tabs.count - 1) : replacementIndex;
         [self loadSelectedTab];
     } else {
         [self updateTabStrip];
@@ -9256,7 +9271,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
-    [self closeTabAtIndex:index];
+    [self closeTabAtIndex:index preferMostRecentActive:index == _selectedTabIndex];
 }
 
 - (void)newTabRequested:(id)sender {
@@ -16717,6 +16732,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
     SEL action = menuItem.action;
     BOOL hasDoc = _doc != NULL;
+    if (action == @selector(closeDocument:))
+        return spdf_mac_tab_close_action_enabled((NSInteger)_tabs.count, _selectedTabIndex, hasDoc);
     if (action == @selector(paste:))
         return hasDoc && !_presentationMode &&
                [NSPasteboard.generalPasteboard canReadObjectForClasses:@[ NSString.class ] options:@{}];
