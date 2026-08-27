@@ -43,6 +43,7 @@
 
 #include "spdf_docview_internal.h"
 #include "spdf_internal.h"
+#include "spdf_password.h"
 #include "spdf_search.h" /* declares this file's search-integration section */
 
 #define ZOOM_WHEEL_STEP 1.1
@@ -59,7 +60,7 @@ typedef struct {
     double full_scale;
     guint64 full_token; /* outstanding request; 0 = none */
     double full_pending_scale;
-    GdkTexture* crop; /* viewport crop for pages in the crop regime */
+    GdkTexture* crop;       /* viewport crop for pages in the crop regime */
     GdkRectangle crop_rect; /* page-space device px at crop_scale */
     double crop_scale;
     guint64 crop_token;
@@ -76,7 +77,11 @@ typedef struct {
     gboolean is_crop;
 } render_ctx;
 
-typedef enum { ANCHOR_AT_POINT, ANCHOR_AT_CENTER, ANCHOR_REUSE } anchor_mode;
+typedef enum {
+    ANCHOR_AT_POINT,
+    ANCHOR_AT_CENTER,
+    ANCHOR_REUSE
+} anchor_mode;
 
 struct _SpdfDocView {
     GtkWidget parent_instance;
@@ -160,8 +165,19 @@ struct _SpdfDocView {
     GArray* comment_markers; /* SpdfCommentMarker */
 };
 
-enum { PROP_0, PROP_HADJUSTMENT, PROP_VADJUSTMENT, PROP_HSCROLL_POLICY, PROP_VSCROLL_POLICY };
-enum { SIG_PAGE_CHANGED, SIG_ZOOM_CHANGED, SIG_SELECTION_CHANGED, N_SIGNALS };
+enum {
+    PROP_0,
+    PROP_HADJUSTMENT,
+    PROP_VADJUSTMENT,
+    PROP_HSCROLL_POLICY,
+    PROP_VSCROLL_POLICY
+};
+enum {
+    SIG_PAGE_CHANGED,
+    SIG_ZOOM_CHANGED,
+    SIG_SELECTION_CHANGED,
+    N_SIGNALS
+};
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE_WITH_CODE(SpdfDocView, spdf_doc_view, GTK_TYPE_WIDGET,
@@ -200,8 +216,8 @@ static double view_render_scale(SpdfDocView* view) {
 }
 
 static void view_relayout(SpdfDocView* view) {
-    spdf_layout_compute(&view->layout, view->sizes, view->page_count, view->zoom, view->viewport_w,
-                        view_margin_h(view), view_margin_v(view));
+    spdf_layout_compute(&view->layout, view->sizes, view->page_count, view->zoom, view->viewport_w, view_margin_h(view),
+                        view_margin_v(view));
 }
 
 static void view_configure_adjustment(SpdfDocView* view, GtkAdjustment* adj, double upper, double page_size) {
@@ -561,8 +577,8 @@ static double view_fit_zoom(SpdfDocView* view) {
     size = &view->sizes[view->current_page];
     if (view->fit == SPDF_FIT_WIDTH) return spdf_fit_width_zoom(size->width, view->viewport_w);
     if (view->fit == SPDF_FIT_HEIGHT) return spdf_fit_height_zoom(size->height, view->viewport_h);
-    if (view->fit == SPDF_FIT_PAGE) return spdf_fit_page_zoom(size->width, size->height, view->viewport_w,
-                                                              view->viewport_h);
+    if (view->fit == SPDF_FIT_PAGE)
+        return spdf_fit_page_zoom(size->width, size->height, view->viewport_w, view->viewport_h);
     return 0.0;
 }
 
@@ -580,8 +596,10 @@ static gboolean view_page_point_at(SpdfDocView* view, double widget_x, double wi
     p = spdf_layout_page_nearest_center(&view->layout, cy);
     if (p < 0) return FALSE;
     /* nearest-center can land one page off right at a boundary */
-    if (cy < view->layout.rects[p].y && p > 0) p--;
-    else if (cy > view->layout.rects[p].y + view->layout.rects[p].h && p < view->layout.count - 1) p++;
+    if (cy < view->layout.rects[p].y && p > 0)
+        p--;
+    else if (cy > view->layout.rects[p].y + view->layout.rects[p].h && p < view->layout.count - 1)
+        p++;
     rect = &view->layout.rects[p];
     if (cx < rect->x || cx > rect->x + rect->w || cy < rect->y || cy > rect->y + rect->h) return FALSE;
     if (page) *page = p;
@@ -631,8 +649,8 @@ static void view_update_selection(SpdfDocView* view, double end_x, double end_y)
 
     if (!view_doc(view) || view->selection_page < 0) return;
     count = spdf_select_page_text(view_doc(view), view->selection_page, (float)view->selection_start_x,
-                                  (float)view->selection_start_y, (float)end_x, (float)end_y, rects,
-                                  SELECTION_RECT_MAX, &text, err, sizeof(err));
+                                  (float)view->selection_start_y, (float)end_x, (float)end_y, rects, SELECTION_RECT_MAX,
+                                  &text, err, sizeof(err));
     view->selected_text = NULL;
     view->selection_rect_count = 0;
     if (count > 0 && text && text[0] != '\0') {
@@ -748,14 +766,13 @@ static void region_entry_free(gpointer data) {
  * view reference is strong, so the done step always finds a live object; the
  * dispose guard is region_cache = NULL. */
 typedef struct {
-    SpdfDocView* view; /* strong ref */
-    char* path;        /* working path snapshot (worker doc key) */
+    SpdfDocView* view;         /* strong ref */
+    SpdfPasswordSource source; /* working path + credential snapshot */
     int page;
     guint generation;
     GArray* links;
     GArray* text;
 } region_build_ctx;
-
 static void view_refresh_cursor_at_pointer(SpdfDocView* view);
 
 /* Main-thread tail: cache the result (empty arrays on failure too — unlike
@@ -778,7 +795,7 @@ static gboolean region_build_done(gpointer data) {
     if (ctx->links) g_array_free(ctx->links, TRUE);
     if (ctx->text) g_array_free(ctx->text, TRUE);
     g_object_unref(ctx->view);
-    g_free(ctx->path);
+    spdf_password_source_clear(&ctx->source);
     g_free(ctx);
     return G_SOURCE_REMOVE;
 }
@@ -789,7 +806,7 @@ static gboolean region_build_done(gpointer data) {
 static void region_build_worker(gpointer data, gpointer user_data) {
     region_build_ctx* ctx = (region_build_ctx*)data;
     char err[1024];
-    spdf_document* doc = spdf_render_worker_document(ctx->path, err, sizeof(err));
+    spdf_document* doc = spdf_render_worker_document(&ctx->source, err, sizeof(err));
     (void)user_data;
 
     if (doc) {
@@ -805,8 +822,8 @@ static void region_build_worker(gpointer data, gpointer user_data) {
             }
             spdf_free_text_lines(&lines);
         }
-        count = spdf_page_link_rects(doc, ctx->page, /*detect_text_links=*/1, rects,
-                                     SPDF_CURSOR_REGION_MAX_LINK_RECTS, err, sizeof(err));
+        count = spdf_page_link_rects(doc, ctx->page, /*detect_text_links=*/1, rects, SPDF_CURSOR_REGION_MAX_LINK_RECTS,
+                                     err, sizeof(err));
         for (int i = 0; i < count; ++i) spdf_cursor_region_append_rect(ctx->links, &rects[i]);
     }
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, region_build_done, ctx, NULL);
@@ -847,7 +864,7 @@ static region_entry* view_ensure_cursor_regions(SpdfDocView* view, int page) {
     {
         region_build_ctx* ctx = g_new0(region_build_ctx, 1);
         ctx->view = g_object_ref(view);
-        ctx->path = g_strdup(path);
+        spdf_password_source_init(&ctx->source, path, view->tab->credential);
         ctx->page = page;
         ctx->generation = view->region_generation;
         ctx->links = g_array_new(FALSE, FALSE, sizeof(spdf_rect));
@@ -896,8 +913,10 @@ void spdf_doc_view_zoom_scroll(SpdfDocView* view, double dy, gboolean has_anchor
     if (!view_doc(view)) return;
     factor = dy != 0.0 ? pow(ZOOM_WHEEL_STEP, -dy) : 0.0;
     if (factor <= 0.0) return;
-    if (has_anchor) view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_POINT, anchor_x, anchor_y);
-    else view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_CENTER, 0.0, 0.0);
+    if (has_anchor)
+        view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_POINT, anchor_x, anchor_y);
+    else
+        view_apply_zoom(view, view->zoom * factor, ANCHOR_AT_CENTER, 0.0, 0.0);
 }
 
 static gboolean on_scroll(GtkEventControllerScroll* controller, double dx, double dy, gpointer user_data) {
@@ -1046,7 +1065,8 @@ static void view_refresh_cursor_at_pointer(SpdfDocView* view) {
     const char* cursor = NULL;
 
     if (!view->pointer_valid || view->panning) return;
-    if (view->selecting && (view->dragged_beyond_threshold || view->selection_created)) return; /* I-beam until release */
+    if (view->selecting && (view->dragged_beyond_threshold || view->selection_created))
+        return; /* I-beam until release */
     if (view_doc(view) && view_page_point_at(view, view->pointer_x, view->pointer_y, &page, &page_x, &page_y))
         cursor = view_cursor_name_at(view, page, page_x, page_y);
     gtk_widget_set_cursor_from_name(GTK_WIDGET(view), cursor);
@@ -1114,8 +1134,8 @@ static gboolean on_key_pressed(GtkEventControllerKey* controller, guint keyval, 
     (void)keycode;
 
     if (!view_doc(view) || (state & GDK_CONTROL_MASK) != 0) return FALSE;
-    page_step = MAX(ARROW_SCROLL_STEP, (view->vadj ? gtk_adjustment_get_page_size(view->vadj) : view->viewport_h) -
-                                           ARROW_SCROLL_STEP);
+    page_step = MAX(ARROW_SCROLL_STEP,
+                    (view->vadj ? gtk_adjustment_get_page_size(view->vadj) : view->viewport_h) - ARROW_SCROLL_STEP);
 
     switch (keyval) {
         case GDK_KEY_Left:
@@ -1151,8 +1171,8 @@ static gboolean on_key_pressed(GtkEventControllerKey* controller, guint keyval, 
         case GDK_KEY_End:
         case GDK_KEY_KP_End:
             if (view->vadj)
-                gtk_adjustment_set_value(view->vadj, gtk_adjustment_get_upper(view->vadj) -
-                                                         gtk_adjustment_get_page_size(view->vadj));
+                gtk_adjustment_set_value(
+                    view->vadj, gtk_adjustment_get_upper(view->vadj) - gtk_adjustment_get_page_size(view->vadj));
             return TRUE;
         default:
             return FALSE;
@@ -1197,8 +1217,8 @@ static void spdf_doc_view_size_allocate(GtkWidget* widget, int width, int height
             {
                 double sx;
                 double sy;
-                if (spdf_zoom_anchor_apply(&view->anchor, &view->layout, view->zoom, view->viewport_w,
-                                           view->viewport_h, &sx, &sy))
+                if (spdf_zoom_anchor_apply(&view->anchor, &view->layout, view->zoom, view->viewport_w, view->viewport_h,
+                                           &sx, &sy))
                     view_set_scroll_values(view, sx, sy);
             }
             view->anchor.valid = FALSE;
@@ -1248,8 +1268,7 @@ static void spdf_doc_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot) {
         for (int p = first; p <= last; ++p) {
             const SpdfPageRect* rect = &view->layout.rects[p];
             page_slot* slot = &view->slots[p];
-            graphene_rect_t bounds =
-                GRAPHENE_RECT_INIT((float)rect->x, (float)rect->y, (float)rect->w, (float)rect->h);
+            graphene_rect_t bounds = GRAPHENE_RECT_INIT((float)rect->x, (float)rect->y, (float)rect->w, (float)rect->h);
 
             /* Light placeholder under everything: rendered pages are opaque
              * white anyway, pending ones read as an empty sheet. */
@@ -1316,10 +1335,9 @@ static void spdf_doc_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot) {
                     graphene_rect_t br;
                     if (m->page != p) continue;
                     badge = spdf_comment_marker_badge(&m->bounds);
-                    br = GRAPHENE_RECT_INIT((float)(rect->x + badge.x0 * view->zoom),
-                                            (float)(rect->y + badge.y0 * view->zoom),
-                                            (float)((badge.x1 - badge.x0) * view->zoom),
-                                            (float)((badge.y1 - badge.y0) * view->zoom));
+                    br = GRAPHENE_RECT_INIT(
+                        (float)(rect->x + badge.x0 * view->zoom), (float)(rect->y + badge.y0 * view->zoom),
+                        (float)((badge.x1 - badge.x0) * view->zoom), (float)((badge.y1 - badge.y0) * view->zoom));
                     gtk_snapshot_append_color(snapshot, &marker_fill, &br);
                     snapshot_page_border(snapshot, &br, &marker_border);
                 }
@@ -1349,10 +1367,9 @@ static void view_set_adjustment(SpdfDocView* view, GtkAdjustment* adjustment, gb
     }
     g_set_object(slot, adjustment);
     if (*slot) {
-        *handler = g_signal_connect_swapped(*slot, "value-changed",
-                                            horizontal ? G_CALLBACK(on_hadj_value_changed)
-                                                       : G_CALLBACK(on_vadj_value_changed),
-                                            view);
+        *handler = g_signal_connect_swapped(
+            *slot, "value-changed", horizontal ? G_CALLBACK(on_hadj_value_changed) : G_CALLBACK(on_vadj_value_changed),
+            view);
         view_configure_adjustments(view);
     }
 }

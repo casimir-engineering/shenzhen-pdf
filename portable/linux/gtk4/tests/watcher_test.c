@@ -6,7 +6,7 @@
  * copy-reuse / stat-differs comparisons and the orphan-sweep rule. */
 #define SPDF_WATCHER_TESTING 1
 
-#include "../spdf_watcher.c"
+#include "../spdf_watcher_logic.c"
 
 #include <unistd.h>
 
@@ -89,8 +89,8 @@ static void test_path_is_shadow_in(void) {
     /* Must match the ro-<32 hex>.<ext> shape. */
     g_assert_false(spdf_watcher_path_is_shadow_in("/home/u/.local/share/shenzhenpdf/ReadOnlyCopies/x.pdf", dir));
     g_assert_false(spdf_watcher_path_is_shadow_in("/home/u/.local/share/shenzhenpdf/ReadOnlyCopies/ro-zz.pdf", dir));
-    g_assert_false(
-        spdf_watcher_path_is_shadow_in("/home/u/.local/share/shenzhenpdf/ReadOnlyCopies/ro-0123456789abcdef0123456789abcdef", dir));
+    g_assert_false(spdf_watcher_path_is_shadow_in(
+        "/home/u/.local/share/shenzhenpdf/ReadOnlyCopies/ro-0123456789abcdef0123456789abcdef", dir));
     g_assert_false(spdf_watcher_path_is_shadow_in(NULL, dir));
     g_assert_false(spdf_watcher_path_is_shadow_in(good, NULL));
     g_assert_false(spdf_watcher_path_is_shadow_in("", dir));

@@ -117,11 +117,22 @@ double spdf_print_render_zoom(double mode_scale, double dpi_x, double dpi_y, dou
     return MAX(zoom, 0.05);
 }
 
+double spdf_print_permission_render_zoom(double render_zoom, double mode_scale, gboolean high_quality_allowed) {
+    double restricted_zoom;
+
+    if (!isfinite(render_zoom) || render_zoom <= 0.0) return 0.05;
+    if (high_quality_allowed) return render_zoom;
+    if (!isfinite(mode_scale) || mode_scale <= 0.0) mode_scale = 1.0;
+    restricted_zoom = MAX(0.05, mode_scale * SPDF_PRINT_RESTRICTED_DPI / 72.0);
+    return MIN(render_zoom, restricted_zoom);
+}
+
 #ifndef SPDF_PRINT_TESTING
 
 #include <string.h>
 
 #include "spdf_app.h"
+#include "spdf_password_prompt.h"
 
 // ---------------------------------------------------------------------------
 // 2. GTK module.
@@ -130,12 +141,13 @@ double spdf_print_render_zoom(double mode_scale, double dpi_x, double dpi_y, dou
 // (g_object_set_data_full), so it outlives the async dialog + spool and dies
 // exactly when GTK drops its last ref on the operation.
 typedef struct {
-    SpdfWindow* win;   // ref'd: error reporting after async completion
+    SpdfWindow* win; // ref'd: error reporting after async completion
     char* path;
     spdf_document* doc; // private print doc (see strategy note above)
     int page_count;
-    int scaling_mode;   // live copy driving draw-page
+    int scaling_mode; // live copy driving draw-page
     double custom_scale;
+    gboolean high_quality_allowed;
     // Custom-tab controls; borrowed while the dialog is alive, cleared in
     // custom-widget-apply (the widgets die with the dialog).
     GtkCheckButton* mode_checks[3];
@@ -240,8 +252,12 @@ static void print_draw_page(GtkPrintOperation* op, GtkPrintContext* context, int
     }
     mode_scale = spdf_print_mode_scale(page_w, page_h, imageable_w, imageable_h,
                                        (SpdfPrintScalingMode)job->scaling_mode, job->custom_scale);
-    zoom = spdf_print_render_zoom(mode_scale, gtk_print_context_get_dpi_x(context),
-                                  gtk_print_context_get_dpi_y(context), src.w, src.h, SPDF_PRINT_RENDER_BYTE_CAP);
+    {
+        double dpi_x = gtk_print_context_get_dpi_x(context);
+        double dpi_y = gtk_print_context_get_dpi_y(context);
+        zoom = spdf_print_render_zoom(mode_scale, dpi_x, dpi_y, src.w, src.h, SPDF_PRINT_RENDER_BYTE_CAP);
+        zoom = spdf_print_permission_render_zoom(zoom, mode_scale, job->high_quality_allowed);
+    }
 
     // Halve on mupdf failure like the Mac print view — the zoom above already
     // respects the byte cap, so this only catches renderer errors.
@@ -325,8 +341,8 @@ static GObject* print_create_custom_widget(GtkPrintOperation* op, gpointer user_
         gtk_box_append(GTK_BOX(box), check);
     }
 
-    spin = gtk_spin_button_new_with_range(SPDF_PRINT_MIN_CUSTOM_SCALE * 100.0, SPDF_PRINT_MAX_CUSTOM_SCALE * 100.0,
-                                          1.0);
+    spin =
+        gtk_spin_button_new_with_range(SPDF_PRINT_MIN_CUSTOM_SCALE * 100.0, SPDF_PRINT_MAX_CUSTOM_SCALE * 100.0, 1.0);
     gtk_spin_button_set_digits(GTK_SPIN_BUTTON(spin), 0);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin), round(spdf_print_clamp_custom_scale(job->custom_scale) * 100.0));
     gtk_widget_set_sensitive(spin, active == SPDF_PRINT_SCALING_CUSTOM);
@@ -398,6 +414,7 @@ static void print_action(GSimpleAction* action, GVariant* parameter, gpointer us
     GtkPrintOperation* op;
     SpdfPrintJob* job;
     spdf_document* doc;
+    SpdfPasswordSource source = {0};
     GError* error = NULL;
     char* job_name;
     char err[1024] = "";
@@ -407,12 +424,11 @@ static void print_action(GSimpleAction* action, GVariant* parameter, gpointer us
     if (!tab || !tab->path) return;
 
     // Permission gate, like the Mac allowsPrinting check.
-    if (tab->doc && !spdf_has_permission(tab->doc, 'p')) {
-        print_show_error(win, "Printing is not allowed", "This PDF's permissions do not allow printing.");
-        return;
-    }
+    if (!spdf_password_require_permission(GTK_WINDOW(win), tab->doc, 'p', "Printing is not allowed")) return;
 
-    doc = spdf_open(tab->path, err, sizeof(err));
+    spdf_password_source_init(&source, tab->working_path ? tab->working_path : tab->path, tab->credential);
+    doc = spdf_password_source_open(&source, err, sizeof(err));
+    spdf_password_source_clear(&source);
     if (!doc) {
         print_show_error(win, "Could not print document", err);
         return;
@@ -430,6 +446,7 @@ static void print_action(GSimpleAction* action, GVariant* parameter, gpointer us
     job->page_count = spdf_page_count(doc);
     job->scaling_mode = settings ? CLAMP(settings->print_scaling_mode, 0, 2) : SPDF_PRINT_SCALING_FIT;
     job->custom_scale = spdf_print_clamp_custom_scale(settings ? settings->print_custom_scale : 1.0);
+    job->high_quality_allowed = spdf_has_permission(doc, 'h');
 
     op = gtk_print_operation_new();
     g_object_set_data_full(G_OBJECT(op), "spdf-print-job", job, print_job_free);

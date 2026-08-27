@@ -33,11 +33,12 @@
 #include <string.h>
 
 #include "spdf_app.h"
+#include "spdf_password.h"
 #include "spdf_search.h"
 
-#define SEARCH_DEBOUNCE_MS 120        /* GTK3 find_search_changed debounce */
-#define SEARCH_PAGE_RECT_MAX 256      /* GTK3 per-page rect cap */
-#define SEARCH_BATCH_MATCHES 128      /* worker->main delivery granularity */
+#define SEARCH_DEBOUNCE_MS 120   /* GTK3 find_search_changed debounce */
+#define SEARCH_PAGE_RECT_MAX 256 /* GTK3 per-page rect cap */
+#define SEARCH_BATCH_MATCHES 128 /* worker->main delivery granularity */
 #define SEARCH_MARKER_LANE_WIDTH 8
 
 // ---------------------------------------------------------------------------
@@ -64,7 +65,11 @@ struct _SpdfSearchController {
     int pending_page;  /* preferred page (regex toggle keeps the page), -1 */
 };
 
-enum { SIG_MATCHES_CHANGED, SIG_CURRENT_CHANGED, N_SIGNALS };
+enum {
+    SIG_MATCHES_CHANGED,
+    SIG_CURRENT_CHANGED,
+    N_SIGNALS
+};
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(SpdfSearchController, spdf_search_controller, G_TYPE_OBJECT)
@@ -122,8 +127,10 @@ static void controller_set_current_full(SpdfSearchController* c, int index, gboo
     int count = (int)spdf_search_match_list_count(&c->list);
     SpdfDocView* view = controller_view(c);
 
-    if (count == 0) index = -1;
-    else index = CLAMP(index, -1, count - 1);
+    if (count == 0)
+        index = -1;
+    else
+        index = CLAMP(index, -1, count - 1);
     c->current = index;
     if (c->tab) c->tab->find_match_index = index;
     if (view) {
@@ -202,7 +209,7 @@ static int controller_choose_current(SpdfSearchController* c) {
 typedef struct {
     SpdfSearchController* ctrl; /* strong ref; handed to the final delivery */
     int generation;
-    char* path;
+    SpdfPasswordSource source;
     char* query;
     gboolean regex;
     gboolean multiline;
@@ -283,7 +290,7 @@ static gpointer search_worker(gpointer data) {
     int total = 0;
 
     spdf_search_match_list_init(&batch);
-    doc = spdf_open(job->path, err, sizeof(err));
+    doc = spdf_password_source_open(&job->source, err, sizeof(err));
     if (!doc) {
         error = g_strdup(err[0] ? err : "Could not open the document for search.");
     } else {
@@ -346,11 +353,11 @@ static gpointer search_worker(gpointer data) {
         spdf_close(doc);
     }
 
-    if (error) spdf_search_match_list_clear(&batch); /* GTK3: a failed search shows no matches */
+    if (error) spdf_search_match_list_clear(&batch);                /* GTK3: a failed search shows no matches */
     post_delivery(job->ctrl, job->generation, &batch, error, TRUE); /* job's ref moves */
     spdf_search_match_list_deinit(&batch);
     g_free(chapter_pages);
-    g_free(job->path);
+    spdf_password_source_clear(&job->source);
     g_free(job->query);
     g_free(job);
     return NULL;
@@ -407,7 +414,7 @@ static void controller_restart(SpdfSearchController* c, gboolean reveal, int pre
     job = g_new0(SearchJob, 1);
     job->ctrl = g_object_ref(c);
     job->generation = g_atomic_int_get(&c->generation);
-    job->path = g_strdup(c->tab->path);
+    spdf_password_source_init(&job->source, c->tab->path, c->tab->credential);
     job->query = g_strdup(query);
     job->regex = c->tab->search_regex;
     job->multiline = c->tab->search_regex_multiline;
@@ -581,8 +588,8 @@ void spdf_search_controller_clear(SpdfSearchController* c) {
 
     g_return_if_fail(SPDF_IS_SEARCH_CONTROLLER(c));
     controller_cancel_debounce(c);
-    had = *controller_query(c) != '\0' || spdf_search_match_list_count(&c->list) > 0 || c->searching ||
-          c->error != NULL;
+    had =
+        *controller_query(c) != '\0' || spdf_search_match_list_count(&c->list) > 0 || c->searching || c->error != NULL;
     if (c->tab) {
         g_free(c->tab->search_text);
         c->tab->search_text = g_strdup("");
@@ -627,8 +634,7 @@ static void markers_update_visibility(GtkWidget* area) {
     SpdfTab* tab = g_object_get_data(G_OBJECT(area), "spdf-tab");
     SpdfSettings* settings = tab ? settings_for_tab(tab) : NULL;
     gboolean show = tab && tab->search && spdf_search_controller_match_count(tab->search) > 0 &&
-                    (!settings || settings->show_find_markers) &&
-                    !(tab->win && spdf_window_get_presentation(tab->win));
+                    (!settings || settings->show_find_markers) && !(tab->win && spdf_window_get_presentation(tab->win));
 
     gtk_widget_set_visible(area, show);
     gtk_widget_queue_draw(area);
@@ -655,8 +661,10 @@ static void markers_style_dark_changed(GObject* manager, GParamSpec* pspec, gpoi
 static void markers_draw_tick(cairo_t* cr, double lane_w, double lane_h, double fraction, gboolean active) {
     double y = spdf_search_marker_y(fraction, lane_h, SPDF_SEARCH_MARKER_TICK_H);
     /* GTK3 draw_find_marker colors: hot orange for the current match. */
-    if (active) cairo_set_source_rgba(cr, 1.0, 0.45, 0.02, 0.95);
-    else cairo_set_source_rgba(cr, 1.0, 0.86, 0.08, 0.90);
+    if (active)
+        cairo_set_source_rgba(cr, 1.0, 0.45, 0.02, 0.95);
+    else
+        cairo_set_source_rgba(cr, 1.0, 0.86, 0.08, 0.90);
     cairo_rectangle(cr, 1.0, y, MAX(1.0, lane_w - 2.0), SPDF_SEARCH_MARKER_TICK_H);
     cairo_fill(cr);
 }
@@ -996,8 +1004,10 @@ static void start_search_text(SpdfWindow* win, const char* text, gboolean select
     gtk_editable_set_text(GTK_EDITABLE(ui->entry), text);
     ui->suppress = FALSE;
     gtk_widget_grab_focus(GTK_WIDGET(ui->entry));
-    if (select_all) gtk_editable_select_region(GTK_EDITABLE(ui->entry), 0, -1);
-    else gtk_editable_set_position(GTK_EDITABLE(ui->entry), -1);
+    if (select_all)
+        gtk_editable_select_region(GTK_EDITABLE(ui->entry), 0, -1);
+    else
+        gtk_editable_set_position(GTK_EDITABLE(ui->entry), -1);
     spdf_search_controller_set_query(ctrl, text, TRUE);
     ui_refresh_counts(ui);
 }
@@ -1028,8 +1038,7 @@ static gboolean on_window_key_capture(GtkEventControllerKey* controller, guint k
     (void)keycode;
     if (!ui || !gtk_search_bar_get_search_mode(ui->bar)) return GDK_EVENT_PROPAGATE;
     if (g_get_monotonic_time() >= ui->reveal_grace_until_us) return GDK_EVENT_PROPAGATE;
-    if ((state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) != 0)
-        return GDK_EVENT_PROPAGATE;
+    if ((state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) != 0) return GDK_EVENT_PROPAGATE;
     ch = gdk_keyval_to_unicode(keyval);
     if (ch < 0x20 || ch == 0x7f) return GDK_EVENT_PROPAGATE;
     {
@@ -1079,8 +1088,7 @@ static gboolean on_window_key(GtkEventControllerKey* controller, guint keyval, g
         return GDK_EVENT_STOP;
     }
 
-    if ((state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) != 0)
-        return GDK_EVENT_PROPAGATE;
+    if ((state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK)) != 0) return GDK_EVENT_PROPAGATE;
     ch = gdk_keyval_to_unicode(keyval);
     if (ch >= 0x20 && ch != 0x7f) {
         char typed[8] = {0};
@@ -1236,8 +1244,7 @@ gboolean spdf_search_dismiss(SpdfWindow* win) {
     if (!ui) return FALSE;
     bar_open = gtk_search_bar_get_search_mode(ui->bar);
     search_active = ctrl && (*spdf_search_controller_get_query(ctrl) != '\0' ||
-                             spdf_search_controller_match_count(ctrl) > 0 ||
-                             spdf_search_controller_is_searching(ctrl));
+                             spdf_search_controller_match_count(ctrl) > 0 || spdf_search_controller_is_searching(ctrl));
     if (!bar_open && !search_active) return FALSE;
 
     if (bar_open) {

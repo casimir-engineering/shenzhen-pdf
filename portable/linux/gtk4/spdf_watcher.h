@@ -52,6 +52,10 @@ void spdf_watcher_tab_repoint(SpdfTab* tab);
 // write as an external change (Mac refreshActiveTabCachedFileAttributes...).
 void spdf_watcher_note_self_save(SpdfTab* tab);
 
+// Retry a changed protected source after the user explicitly returns to a
+// tab whose prior password prompt was canceled or failed.
+void spdf_watcher_retry_pending(SpdfTab* tab);
+
 // Open-path resolution (spdf_tab_open): returns TRUE when source_path is
 // read-only. On TRUE, *out carries the working-copy binding to install on
 // the tab; out->working_path may be NULL when the copy could not be written
@@ -67,8 +71,8 @@ gboolean spdf_watcher_resolve_open(const char* source_path, SpdfWatcherResolutio
 // spdf_watcher_resolve_open on it reuses the same copy when the source is
 // unchanged (Mac: loadSelectedTab's workingPath-keyed adoption). Consumed by
 // the first resolve; safe to call with empty/NULL working_path.
-void spdf_watcher_prime_restore(const char* source_path, const char* working_path,
-                                guint64 copy_file_size, double copy_modified_at);
+void spdf_watcher_prime_restore(const char* source_path, const char* working_path, guint64 copy_file_size,
+                                double copy_modified_at);
 
 // TRUE when path points into the shadow-copies directory (other modules use
 // this to keep temp copies out of recents/favorites/etc.).
@@ -123,8 +127,8 @@ gboolean spdf_watcher_read_only_verdict(gboolean exists, gboolean is_regular, gb
 // Copy-reuse rule (Mac resolveWorkingPath "unchanged" branch): the copy is
 // reusable iff it exists, a binding was recorded (bound_mtime > 0) and the
 // fresh source stat matches the stat the copy reflects.
-gboolean spdf_watcher_copy_reusable(gboolean copy_exists, guint64 bound_size, double bound_mtime,
-                                    guint64 source_size, double source_mtime);
+gboolean spdf_watcher_copy_reusable(gboolean copy_exists, guint64 bound_size, double bound_mtime, guint64 source_size,
+                                    double source_mtime);
 
 // Authoritative "did the file really change" comparison (size + mtime within
 // tolerance). The debounced callback checks this against the baseline so the

@@ -171,11 +171,19 @@ static void update_page_controls(SpdfWindow* win) {
         const char* fit_label = "Zoom";
         if (tab && tab->view) {
             switch (spdf_doc_view_get_fit(tab->view)) {
-                case SPDF_FIT_PAGE: fit_label = "Fit Page"; break;
-                case SPDF_FIT_WIDTH: fit_label = "Fit Width"; break;
-                case SPDF_FIT_HEIGHT: fit_label = "Fit Height"; break;
+                case SPDF_FIT_PAGE:
+                    fit_label = "Fit Page";
+                    break;
+                case SPDF_FIT_WIDTH:
+                    fit_label = "Fit Width";
+                    break;
+                case SPDF_FIT_HEIGHT:
+                    fit_label = "Fit Height";
+                    break;
                 case SPDF_FIT_CUSTOM:
-                default: fit_label = "Zoom"; break;
+                default:
+                    fit_label = "Zoom";
+                    break;
             }
         }
         gtk_menu_button_set_label(win->fit_button, fit_label);
@@ -269,55 +277,20 @@ static gboolean refresh_recents_idle(gpointer user_data) {
 // ---------------------------------------------------------------------------
 // Opening documents
 
-static void show_open_error(SpdfWindow* win, const char* path, const char* message) {
-    GtkAlertDialog* alert = gtk_alert_dialog_new("Could not open document");
-    char* detail = g_strdup_printf("%s\n%s", path ? path : "", message && *message ? message : "Unknown error.");
-    gtk_alert_dialog_set_detail(alert, detail);
-    gtk_alert_dialog_show(alert, GTK_WINDOW(win));
-    g_object_unref(alert);
-    g_free(detail);
-}
-
-SpdfTab* spdf_window_open_path(SpdfWindow* win, const char* path, int page_index, gboolean remember_recent) {
-    char* canonical;
-    char* error = NULL;
-    SpdfTab* tab;
+void spdf_window_accept_opened(SpdfWindow* win, SpdfTab* tab, const char* canonical, int page_index,
+                               gboolean remember_recent) {
     SpdfApp* app;
-    int count;
 
-    g_return_val_if_fail(SPDF_IS_WINDOW(win), NULL);
-    if (!path || !*path) return NULL;
-
-    canonical = g_canonicalize_filename(path, NULL);
-    count = adw_tab_view_get_n_pages(win->tab_view);
-    for (int i = 0; i < count; ++i) {
-        AdwTabPage* page = adw_tab_view_get_nth_page(win->tab_view, i);
-        SpdfTab* existing = tab_for_page(page);
-        if (existing && existing->path && strcmp(existing->path, canonical) == 0) {
-            adw_tab_view_set_selected_page(win->tab_view, page);
-            g_free(canonical);
-            return existing;
-        }
-    }
-
-    tab = spdf_tab_open(win, canonical, &error);
-    if (!tab) {
-        show_open_error(win, canonical, error);
-        g_free(error);
-        g_free(canonical);
-        return NULL;
-    }
+    if (!tab) return;
     if (page_index > 0 && tab->view) spdf_doc_view_goto_page(tab->view, page_index);
     adw_tab_view_set_selected_page(win->tab_view, tab->page);
     app = window_app(win);
     if (remember_recent && app) spdf_app_remember_recent(app, canonical);
-    g_free(canonical);
     spdf_window_update_title(win);
     update_page_controls(win);
     // First document open of the run: schedule the default-reader prompt
     // check (Wave D; runs in a LOW idle, never on the open path itself).
     spdf_default_reader_note_document_opened(win);
-    return tab;
 }
 
 static void open_dialog_finished(GObject* source, GAsyncResult* result, gpointer user_data) {
@@ -381,8 +354,8 @@ void spdf_window_set_presentation(SpdfWindow* win, gboolean enable) {
         gtk_window_fullscreen(GTK_WINDOW(win));
         if (app && SPDF_IS_APP(app) &&
             spdf_state_settings(spdf_app_get_state(SPDF_APP(app)))->prevent_sleep_in_presentation) {
-            win->inhibit_cookie = gtk_application_inhibit(app, GTK_WINDOW(win), GTK_APPLICATION_INHIBIT_IDLE,
-                                                          "Presenting a document");
+            win->inhibit_cookie =
+                gtk_application_inhibit(app, GTK_WINDOW(win), GTK_APPLICATION_INHIBIT_IDLE, "Presenting a document");
         }
     } else {
         gtk_window_unfullscreen(GTK_WINDOW(win));
@@ -393,11 +366,8 @@ void spdf_window_set_presentation(SpdfWindow* win, gboolean enable) {
     if (action) g_simple_action_set_state(G_SIMPLE_ACTION(action), g_variant_new_boolean(enable));
 }
 
-static gboolean window_key_pressed(GtkEventControllerKey* controller,
-                                   guint keyval,
-                                   guint keycode,
-                                   GdkModifierType state,
-                                   gpointer user_data) {
+static gboolean window_key_pressed(GtkEventControllerKey* controller, guint keyval, guint keycode,
+                                   GdkModifierType state, gpointer user_data) {
     SpdfWindow* win = SPDF_WINDOW(user_data);
     (void)controller;
     (void)keycode;
@@ -526,8 +496,8 @@ static void tab_view_selected_page_changed(GObject* object, GParamSpec* pspec, g
     }
     spdf_window_update_title(win);
     update_page_controls(win);
+    spdf_watcher_retry_pending(tab_for_page(selected));
 }
-
 static void tab_view_setup_menu(AdwTabView* view, AdwTabPage* page, gpointer user_data) {
     SpdfWindow* win = SPDF_WINDOW(user_data);
     SpdfTab* tab = tab_for_page(page);
@@ -770,9 +740,12 @@ static void action_next_page(GSimpleAction* action, GVariant* parameter, gpointe
 static void action_copy(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
     SpdfWindow* win = SPDF_WINDOW(user_data);
     SpdfTab* tab = spdf_window_current_tab(win);
-    char* text = tab && tab->view ? spdf_doc_view_copy_selection(tab->view) : NULL;
+    char* text;
     (void)action;
     (void)parameter;
+    /* Keyboard copy obeys the same document permission as the context menu. */
+    if (!tab || !tab->doc || !spdf_has_permission(tab->doc, 'c')) return;
+    text = tab->view ? spdf_doc_view_copy_selection(tab->view) : NULL;
     if (text) {
         copy_text_to_clipboard(win, text);
         g_free(text);
