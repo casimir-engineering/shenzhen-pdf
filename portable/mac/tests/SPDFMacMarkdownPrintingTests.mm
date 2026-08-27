@@ -10,13 +10,15 @@
 int main(void) {
     @autoreleasepool {
         (void)NSApplication.sharedApplication;
-        NSString* path = [NSTemporaryDirectory() stringByAppendingPathComponent:
-                          [NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"md"]];
+        NSString* path = [NSTemporaryDirectory()
+            stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"md"]];
         NSString* markdown = @"# Release Notes\nThis text must remain selectable in the exported PDF.\n\n"
-                              @"## Details\nA second section verifies heading pagination.\n";
+                             @"## Details\nA second section verifies heading pagination.\n\n"
+                             @"```\nprint_safe();\n```\n";
         assert([markdown writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
-        SPDFMarkdownDocument* document = [SPDFMarkdownDocument
-            documentWithURL:[NSURL fileURLWithPath:path] options:nil error:nil];
+        SPDFMarkdownDocument* document = [SPDFMarkdownDocument documentWithURL:[NSURL fileURLWithPath:path]
+                                                                       options:nil
+                                                                         error:nil];
         assert(document);
 
         NSPrintInfo* info = [NSPrintInfo.sharedPrintInfo copy];
@@ -25,13 +27,18 @@ int main(void) {
         info.rightMargin = 42;
         info.topMargin = 42;
         info.bottomMargin = 42;
-        SPDFMarkdownPaginationPlan* plan = [SPDFMacMarkdownPrintAdapter
-            paginationPlanForRenderedDocument:document.renderedDocument printInfo:info];
+        SPDFMarkdownPaginationPlan* plan =
+            [SPDFMacMarkdownPrintAdapter paginationPlanForRenderedDocument:document.renderedDocument printInfo:info];
         assert(plan.pages.count >= 1);
         assert(NSEqualSizes(plan.configuration.paperSize, info.paperSize));
+        assert(!plan.configuration.includesCodeLanguageControlSpacing);
+        for (SPDFMarkdownPaginationItem* item in plan.items) {
+            if (item.kind != SPDFMarkdownBlockKindCode) continue;
+            assert(item.lines.firstObject.attributedRange.length > 0);
+        }
 
-        NSPrintOperation* operation = [SPDFMacMarkdownPrintAdapter
-            printOperationForRenderedDocument:document.renderedDocument printInfo:info];
+        NSPrintOperation* operation =
+            [SPDFMacMarkdownPrintAdapter printOperationForRenderedDocument:document.renderedDocument printInfo:info];
         assert(operation.printPanel.options & NSPrintPanelShowsPreview);
         assert(operation.printPanel.options & NSPrintPanelShowsPaperSize);
         SPDFMacMarkdownPrintView* view = (SPDFMacMarkdownPrintView*)operation.view;
@@ -39,12 +46,13 @@ int main(void) {
         assert([view knowsPageRange:&range]);
         assert(range.length == plan.pages.count);
 
-        NSString* output = [NSTemporaryDirectory() stringByAppendingPathComponent:
-                            [NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"pdf"]];
+        NSString* output = [NSTemporaryDirectory()
+            stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"pdf"]];
         NSError* error = nil;
         assert([SPDFMacMarkdownPrintAdapter writeRenderedDocument:document.renderedDocument
                                                             toURL:[NSURL fileURLWithPath:output]
-                                                        printInfo:info error:&error]);
+                                                        printInfo:info
+                                                            error:&error]);
         assert(!error);
         PDFDocument* PDF = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:output]];
         assert(PDF.pageCount == plan.pages.count);

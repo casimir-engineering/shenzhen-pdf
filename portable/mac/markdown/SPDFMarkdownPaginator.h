@@ -11,6 +11,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) NSSize paperSize;
 @property(nonatomic) NSRect printableRect;
 @property(nonatomic) CGFloat headingKeepThreshold;
+// Screen pagination can reserve space for its interactive code-language control.
+// Print and export configurations intentionally default to NO.
+@property(nonatomic) BOOL includesCodeLanguageControlSpacing;
 + (instancetype)A4PortraitConfiguration;
 + (instancetype)configurationForPaperSize:(NSSize)paperSize printableRect:(NSRect)printableRect;
 @end
@@ -21,9 +24,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) CGFloat xOffset;
 @property(nonatomic, readonly) CGFloat baselineOffset;
 - (instancetype)initWithAttributedRange:(NSRange)attributedRange
-                                  height:(CGFloat)height
-                                 xOffset:(CGFloat)xOffset
-                          baselineOffset:(CGFloat)baselineOffset NS_DESIGNATED_INITIALIZER;
+                                 height:(CGFloat)height
+                                xOffset:(CGFloat)xOffset
+                         baselineOffset:(CGFloat)baselineOffset NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
@@ -73,7 +76,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (SPDFMarkdownPaginationPlan*)paginateItems:(NSArray<SPDFMarkdownPaginationItem*>*)items
                                configuration:(SPDFMarkdownPageConfiguration*)configuration;
 - (NSArray<SPDFMarkdownPaginationItem*>*)measureRenderedDocument:(SPDFMarkdownRenderedDocument*)document
-                                                   containerWidth:(CGFloat)containerWidth;
+                                                  containerWidth:(CGFloat)containerWidth;
 @end
 
 NS_ASSUME_NONNULL_END

@@ -67,6 +67,7 @@ MAC_TAB_LIFECYCLE_TEST := $(BUILD)/SPDFMacTabLifecycleTests
 MAC_FILE_EXPLORER_TEST := $(BUILD)/SPDFMacFileExplorerPreferenceTests
 MAC_SELECTION_CLICK_TEST := $(BUILD)/SPDFMacSelectionClickTests
 MAC_SELECTION_ADAPTER_TEST := $(BUILD)/SPDFMacSelectionAdapterTests
+MAC_LAUNCH_WORK_POLICY_TEST := $(BUILD)/SPDFMacLaunchWorkPolicyTests
 MAC_RELEASE_NOTES_PREVIEW := $(BUILD)/SPDFReleaseNotesPreview
 # Exclude standalone test translation units (each defines its own main()).
 MAC_MARKDOWN_SRCS := $(sort $(wildcard mac/markdown/*.mm))
@@ -86,7 +87,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -250,6 +251,12 @@ $(MAC_SELECTION_ADAPTER_TEST): mac/tests/SPDFMacSelectionAdapterTests.mm mac/SPD
 
 mac-selection-adapter-tests: $(MAC_SELECTION_ADAPTER_TEST)
 	"$(MAC_SELECTION_ADAPTER_TEST)"
+
+$(MAC_LAUNCH_WORK_POLICY_TEST): mac/tests/launch/SPDFMacLaunchWorkPolicyTests.mm mac/SPDFMacInactivePreload.mm mac/SPDFMacInactivePreload.h mac/SPDFMacLaunchWorkPolicy.mm mac/SPDFMacLaunchWorkPolicy.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/launch/SPDFMacLaunchWorkPolicyTests.mm mac/SPDFMacInactivePreload.mm mac/SPDFMacLaunchWorkPolicy.mm -framework Cocoa -o "$(MAC_LAUNCH_WORK_POLICY_TEST)"
+
+mac-launch-work-policy-tests: $(MAC_LAUNCH_WORK_POLICY_TEST)
+	"$(MAC_LAUNCH_WORK_POLICY_TEST)"
 
 $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"

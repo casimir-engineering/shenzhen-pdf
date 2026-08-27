@@ -6,6 +6,7 @@
 
 void spdf_activate_window_for_view(NSView* view);
 void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName);
+void spdf_apply_system_icons_to_menu(NSMenu* menu);
 
 // Lazily install / tear down the CGEventTap that captures out-of-focus trackpad
 // pinch (magnify) gestures. The tap is placed at kCGHIDEventTap with
@@ -18,10 +19,10 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName);
 // the caller uses the result to guide the user to the right Settings pane.
 // Teardown releases the CFMachPort / run-loop source at app termination.
 typedef NS_ENUM(NSInteger, SPDFMagnifyTapResult) {
-    SPDFMagnifyTapResultArmed,         // tap created and confirmed enabled (or already armed)
-    SPDFMagnifyTapResultNoPermission,  // create failed, Accessibility not granted -> guide the user
-    SPDFMagnifyTapResultInert,         // tap created but reported disabled (rare; re-signed dev builds)
-    SPDFMagnifyTapResultCreateFailed,  // create failed despite trust, or source creation failed
+    SPDFMagnifyTapResultArmed,        // tap created and confirmed enabled (or already armed)
+    SPDFMagnifyTapResultNoPermission, // create failed, Accessibility not granted -> guide the user
+    SPDFMagnifyTapResultInert,        // tap created but reported disabled (rare; re-signed dev builds)
+    SPDFMagnifyTapResultCreateFailed, // create failed despite trust, or source creation failed
 };
 SPDFMagnifyTapResult spdf_install_inactive_magnify_tap(void);
 void spdf_teardown_inactive_magnify_tap(void);
@@ -59,6 +60,7 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 - (NSArray<NSDictionary*>*)commentAnnotationsForPage:(NSInteger)pageIndex;
 - (void)documentViewHoverComment:(NSDictionary*)comment atWindowPoint:(NSPoint)windowPoint;
 - (void)documentViewEndHoverComment;
+- (NSMenu*)contextMenuForDocumentView:(NSView*)view event:(NSEvent*)event;
 - (void)showContextMenuForDocumentView:(NSView*)view event:(NSEvent*)event;
 - (void)copySelection:(id)sender;
 - (void)closePalette:(id)sender;

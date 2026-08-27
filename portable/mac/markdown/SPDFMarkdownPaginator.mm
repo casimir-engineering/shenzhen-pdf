@@ -22,15 +22,16 @@
     copy.paperSize = self.paperSize;
     copy.printableRect = self.printableRect;
     copy.headingKeepThreshold = self.headingKeepThreshold;
+    copy.includesCodeLanguageControlSpacing = self.includesCodeLanguageControlSpacing;
     return copy;
 }
 @end
 
 @implementation SPDFMarkdownTextLine
 - (instancetype)initWithAttributedRange:(NSRange)attributedRange
-                                  height:(CGFloat)height
-                                 xOffset:(CGFloat)xOffset
-                          baselineOffset:(CGFloat)baselineOffset {
+                                 height:(CGFloat)height
+                                xOffset:(CGFloat)xOffset
+                         baselineOffset:(CGFloat)baselineOffset {
     self = [super init];
     if (self) {
         _attributedRange = attributedRange;
@@ -112,13 +113,13 @@
 
 @interface SPDFMarkdownPaginationPlan ()
 - (instancetype)initWithConfiguration:(SPDFMarkdownPageConfiguration*)configuration
-                                 items:(NSArray<SPDFMarkdownPaginationItem*>*)items
-                                 pages:(NSArray<SPDFMarkdownPage*>*)pages;
+                                items:(NSArray<SPDFMarkdownPaginationItem*>*)items
+                                pages:(NSArray<SPDFMarkdownPage*>*)pages;
 @end
 @implementation SPDFMarkdownPaginationPlan
 - (instancetype)initWithConfiguration:(SPDFMarkdownPageConfiguration*)configuration
-                                 items:(NSArray<SPDFMarkdownPaginationItem*>*)items
-                                 pages:(NSArray<SPDFMarkdownPage*>*)pages {
+                                items:(NSArray<SPDFMarkdownPaginationItem*>*)items
+                                pages:(NSArray<SPDFMarkdownPage*>*)pages {
     self = [super init];
     if (self) {
         _configuration = [configuration copy];
@@ -128,46 +129,45 @@
     return self;
 }
 
-static void SPDFDrawAttachments(NSAttributedString* lineString, CTLineRef line, CGContextRef context,
-                                CGFloat lineX, CGFloat baselineY, CGFloat lineHeight,
-                                CGFloat baselineOffset) {
+static void SPDFDrawAttachments(NSAttributedString* lineString, CTLineRef line, CGContextRef context, CGFloat lineX,
+                                CGFloat baselineY, CGFloat lineHeight, CGFloat baselineOffset) {
     [lineString enumerateAttribute:NSAttachmentAttributeName
                            inRange:NSMakeRange(0, lineString.length)
                            options:0
                         usingBlock:^(id value, NSRange range, BOOL* stop) {
-        (void)stop;
-        NSTextAttachment* attachment = value;
-        NSImage* image = attachment.image;
-        if (!image || range.length == 0) return;
-        NSRect bounds = attachment.bounds;
-        if (bounds.size.width <= 0 || bounds.size.height <= 0) {
-            bounds.size = image.size;
-        }
-        if (bounds.size.width <= 0 || bounds.size.height <= 0) return;
-        NSRect proposed = NSMakeRect(0, 0, bounds.size.width, bounds.size.height);
-        CGImageRef CGImage = [image CGImageForProposedRect:&proposed context:nil hints:nil];
-        if (!CGImage) return;
-        CGFloat offset = CTLineGetOffsetForStringIndex(line, (CFIndex)range.location, NULL);
-        CGFloat fragmentBottom = baselineY + baselineOffset - lineHeight;
-        CGFloat fragmentTop = baselineY + baselineOffset;
-        CGFloat drawHeight = MIN(bounds.size.height, lineHeight);
-        CGFloat drawWidth = bounds.size.width * drawHeight / bounds.size.height;
-        CGFloat desiredBottom = baselineY + bounds.origin.y;
-        CGFloat attachmentBottom = MIN(MAX(desiredBottom, fragmentBottom), fragmentTop - drawHeight);
-        CGRect destination = CGRectMake(lineX + offset + bounds.origin.x, attachmentBottom,
-                                        drawWidth, drawHeight);
-        CGContextSaveGState(context);
-        CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
-        CGContextDrawImage(context, destination, CGImage);
-        CGContextRestoreGState(context);
-    }];
+                          (void)stop;
+                          NSTextAttachment* attachment = value;
+                          NSImage* image = attachment.image;
+                          if (!image || range.length == 0) return;
+                          NSRect bounds = attachment.bounds;
+                          if (bounds.size.width <= 0 || bounds.size.height <= 0) {
+                              bounds.size = image.size;
+                          }
+                          if (bounds.size.width <= 0 || bounds.size.height <= 0) return;
+                          NSRect proposed = NSMakeRect(0, 0, bounds.size.width, bounds.size.height);
+                          CGImageRef CGImage = [image CGImageForProposedRect:&proposed context:nil hints:nil];
+                          if (!CGImage) return;
+                          CGFloat offset = CTLineGetOffsetForStringIndex(line, (CFIndex)range.location, NULL);
+                          CGFloat fragmentBottom = baselineY + baselineOffset - lineHeight;
+                          CGFloat fragmentTop = baselineY + baselineOffset;
+                          CGFloat drawHeight = MIN(bounds.size.height, lineHeight);
+                          CGFloat drawWidth = bounds.size.width * drawHeight / bounds.size.height;
+                          CGFloat desiredBottom = baselineY + bounds.origin.y;
+                          CGFloat attachmentBottom = MIN(MAX(desiredBottom, fragmentBottom), fragmentTop - drawHeight);
+                          CGRect destination =
+                              CGRectMake(lineX + offset + bounds.origin.x, attachmentBottom, drawWidth, drawHeight);
+                          CGContextSaveGState(context);
+                          CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
+                          CGContextDrawImage(context, destination, CGImage);
+                          CGContextRestoreGState(context);
+                        }];
 }
 
 static NSColor* SPDFConcretePrintColor(NSColor* color, NSColor* fallback) {
     __block NSColor* converted = nil;
     NSAppearance* appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
     [appearance performAsCurrentDrawingAppearance:^{
-        converted = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+      converted = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
     }];
     if (!converted) return fallback;
     CGFloat red = converted.redComponent;
@@ -181,19 +181,23 @@ static NSAttributedString* SPDFPrintableLine(NSAttributedString* source) {
     NSMutableAttributedString* result = [source mutableCopy];
     NSRange all = NSMakeRange(0, result.length);
     SPDFMarkdownRenderOptions* palette = SPDFMarkdownRenderOptions.printOptions;
-    [result enumerateAttribute:NSForegroundColorAttributeName inRange:all options:0
+    [result enumerateAttribute:NSForegroundColorAttributeName
+                       inRange:all
+                       options:0
                     usingBlock:^(NSColor* color, NSRange range, BOOL* stop) {
-        (void)stop;
-        NSColor* concrete = SPDFConcretePrintColor(color ?: palette.textColor, palette.textColor);
-        [result addAttribute:NSForegroundColorAttributeName value:concrete range:range];
-    }];
-    [result enumerateAttribute:NSBackgroundColorAttributeName inRange:all options:0
+                      (void)stop;
+                      NSColor* concrete = SPDFConcretePrintColor(color ?: palette.textColor, palette.textColor);
+                      [result addAttribute:NSForegroundColorAttributeName value:concrete range:range];
+                    }];
+    [result enumerateAttribute:NSBackgroundColorAttributeName
+                       inRange:all
+                       options:0
                     usingBlock:^(NSColor* color, NSRange range, BOOL* stop) {
-        (void)stop;
-        if (!color) return;
-        NSColor* concrete = SPDFConcretePrintColor(color, palette.codeBackgroundColor);
-        [result addAttribute:NSBackgroundColorAttributeName value:concrete range:range];
-    }];
+                      (void)stop;
+                      if (!color) return;
+                      NSColor* concrete = SPDFConcretePrintColor(color, palette.codeBackgroundColor);
+                      [result addAttribute:NSBackgroundColorAttributeName value:concrete range:range];
+                    }];
     return result;
 }
 
@@ -209,20 +213,20 @@ static NSAttributedString* SPDFPrintableLine(NSAttributedString* source) {
     CGContextSetTextMatrix(context, CGAffineTransformIdentity);
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (NSMaxRange(fragment.attributedRange) > attributedString.length) continue;
-        NSAttributedString* substring = SPDFPrintableLine(
-            [attributedString attributedSubstringFromRange:fragment.attributedRange]);
+        NSAttributedString* substring =
+            SPDFPrintableLine([attributedString attributedSubstringFromRange:fragment.attributedRange]);
         CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)substring);
         CGFloat x = NSMinX(self.configuration.printableRect) + fragment.xOffset;
-        CGFloat y = paperHeight - NSMinY(self.configuration.printableRect) - fragment.pageYOffset -
-                    fragment.baselineOffset;
+        CGFloat y =
+            paperHeight - NSMinY(self.configuration.printableRect) - fragment.pageYOffset - fragment.baselineOffset;
         CGContextSaveGState(context);
         CGContextTranslateCTM(context, x, y);
         CGContextScaleCTM(context, fragment.scale, fragment.scale);
         CGContextSetTextPosition(context, 0, 0);
         CTLineDraw(line, context);
         CGFloat localScale = MAX(fragment.scale, 0.001);
-        SPDFDrawAttachments(substring, line, context, 0, 0,
-                            fragment.height / localScale, fragment.baselineOffset / localScale);
+        SPDFDrawAttachments(substring, line, context, 0, 0, fragment.height / localScale,
+                            fragment.baselineOffset / localScale);
         CGContextRestoreGState(context);
         CFRelease(line);
     }
@@ -237,8 +241,8 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
     CGFloat height = 0;
     for (NSUInteger i = headingIndex; i < items.count; ++i) {
         SPDFMarkdownPaginationItem* item = items[i];
-        if (i > headingIndex && item.kind == SPDFMarkdownBlockKindHeading &&
-            item.headingLevel <= heading.headingLevel) break;
+        if (i > headingIndex && item.kind == SPDFMarkdownBlockKindHeading && item.headingLevel <= heading.headingLevel)
+            break;
         for (SPDFMarkdownTextLine* line in item.lines) {
             if (height + line.height > pageHeight + 0.01) return pageHeight;
             height += line.height;
@@ -247,9 +251,36 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
     return height;
 }
 
+static const CGFloat kSPDFMarkdownCodeLanguageControlHeight = 26.0;
+
+static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<SPDFMarkdownPaginationItem*>* items,
+                                                                       SPDFMarkdownPageConfiguration* configuration) {
+    if (!configuration.includesCodeLanguageControlSpacing) return items;
+    NSMutableArray<SPDFMarkdownPaginationItem*>* configuredItems = [NSMutableArray arrayWithCapacity:items.count];
+    for (SPDFMarkdownPaginationItem* item in items) {
+        if (item.kind != SPDFMarkdownBlockKindCode) {
+            [configuredItems addObject:item];
+            continue;
+        }
+        NSMutableArray<SPDFMarkdownTextLine*>* lines = [item.lines mutableCopy];
+        [lines insertObject:[[SPDFMarkdownTextLine alloc]
+                                initWithAttributedRange:NSMakeRange(item.lines.firstObject.attributedRange.location, 0)
+                                                 height:kSPDFMarkdownCodeLanguageControlHeight
+                                                xOffset:0
+                                         baselineOffset:0]
+                    atIndex:0];
+        [configuredItems addObject:[[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:item.blockIndex
+                                                                                     kind:item.kind
+                                                                             headingLevel:item.headingLevel
+                                                                                    lines:lines]];
+    }
+    return configuredItems;
+}
+
 @implementation SPDFMarkdownPaginator
 - (SPDFMarkdownPaginationPlan*)paginateItems:(NSArray<SPDFMarkdownPaginationItem*>*)items
                                configuration:(SPDFMarkdownPageConfiguration*)configuration {
+    items = SPDFItemsForConfiguration(items, configuration);
     CGFloat pageHeight = NSHeight(configuration.printableRect);
     if (pageHeight <= 0)
         return [[SPDFMarkdownPaginationPlan alloc] initWithConfiguration:configuration items:items pages:@[]];
@@ -257,9 +288,9 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
     NSMutableArray<SPDFMarkdownPageFragment*>* current = [NSMutableArray array];
     __block CGFloat used = 0;
     void (^finishPage)(void) = ^{
-        [pages addObject:[[SPDFMarkdownPage alloc] initWithIndex:pages.count fragments:[current copy]]];
-        [current removeAllObjects];
-        used = 0;
+      [pages addObject:[[SPDFMarkdownPage alloc] initWithIndex:pages.count fragments:[current copy]]];
+      [current removeAllObjects];
+      used = 0;
     };
 
     for (NSUInteger itemIndex = 0; itemIndex < items.count; ++itemIndex) {
@@ -270,7 +301,8 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
             if (freshLead > remaining + 0.01 && current.count) finishPage();
         }
         if (item.kind == SPDFMarkdownBlockKindHeading && item.measuredHeight <= pageHeight &&
-            item.measuredHeight > pageHeight - used + 0.01 && current.count) finishPage();
+            item.measuredHeight > pageHeight - used + 0.01 && current.count)
+            finishPage();
         for (NSUInteger lineIndex = 0; lineIndex < item.lines.count; ++lineIndex) {
             SPDFMarkdownTextLine* line = item.lines[lineIndex];
             CGFloat scale = MIN(1, pageHeight / line.height);
@@ -280,7 +312,7 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
                                                                         blockIndex:item.blockIndex
                                                                               line:line
                                                                        pageYOffset:used
-                                                                            scale:scale
+                                                                             scale:scale
                                                                       continuation:lineIndex > 0]];
             used += height;
         }
@@ -290,7 +322,7 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
 }
 
 - (NSArray<SPDFMarkdownPaginationItem*>*)measureRenderedDocument:(SPDFMarkdownRenderedDocument*)document
-                                                   containerWidth:(CGFloat)containerWidth {
+                                                  containerWidth:(CGFloat)containerWidth {
     if (containerWidth <= 0 || document.attributedString.length == 0) return @[];
     NSTextStorage* storage = [[NSTextStorage alloc] initWithAttributedString:document.attributedString];
     NSLayoutManager* layout = [NSLayoutManager new];
@@ -306,27 +338,30 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
         NSRange glyphRange = [layout glyphRangeForCharacterRange:block.attributedRange actualCharacterRange:nil];
         NSMutableArray* lines = [NSMutableArray array];
         [layout enumerateLineFragmentsForGlyphRange:glyphRange
-                                        usingBlock:^(NSRect rect, NSRect usedRect, NSTextContainer* textContainer,
-                                                     NSRange lineGlyphRange, BOOL* stop) {
-            (void)rect;
-            (void)textContainer;
-            (void)stop;
-            NSRange characterRange = [layout characterRangeForGlyphRange:lineGlyphRange actualGlyphRange:nil];
-            characterRange = NSIntersectionRange(characterRange, block.attributedRange);
-            if (!characterRange.length) return;
-            NSPoint glyphLocation = [layout locationForGlyphAtIndex:lineGlyphRange.location];
-            CGFloat lineHeight = MAX(NSHeight(rect), NSHeight(usedRect));
-            CGFloat baseline = MIN(lineHeight, MAX(0, glyphLocation.y - NSMinY(rect)));
-            [lines addObject:[[SPDFMarkdownTextLine alloc] initWithAttributedRange:characterRange
-                                                                           height:lineHeight
-                                                                          xOffset:NSMinX(usedRect)
-                                                                   baselineOffset:baseline]];
-        }];
+                                         usingBlock:^(NSRect rect, NSRect usedRect, NSTextContainer* textContainer,
+                                                      NSRange lineGlyphRange, BOOL* stop) {
+                                           (void)rect;
+                                           (void)textContainer;
+                                           (void)stop;
+                                           NSRange characterRange = [layout characterRangeForGlyphRange:lineGlyphRange
+                                                                                       actualGlyphRange:nil];
+                                           characterRange = NSIntersectionRange(characterRange, block.attributedRange);
+                                           if (!characterRange.length) return;
+                                           NSPoint glyphLocation =
+                                               [layout locationForGlyphAtIndex:lineGlyphRange.location];
+                                           CGFloat lineHeight = MAX(NSHeight(rect), NSHeight(usedRect));
+                                           CGFloat baseline = MIN(lineHeight, MAX(0, glyphLocation.y - NSMinY(rect)));
+                                           [lines addObject:[[SPDFMarkdownTextLine alloc]
+                                                                initWithAttributedRange:characterRange
+                                                                                 height:lineHeight
+                                                                                xOffset:NSMinX(usedRect)
+                                                                         baselineOffset:baseline]];
+                                         }];
         if (lines.count)
             [result addObject:[[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:block.blockIndex
-                                                                                 kind:block.kind
-                                                                         headingLevel:block.level
-                                                                                lines:lines]];
+                                                                                kind:block.kind
+                                                                        headingLevel:block.level
+                                                                               lines:lines]];
     }
     return result;
 }

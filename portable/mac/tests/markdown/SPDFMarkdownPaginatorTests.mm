@@ -4,11 +4,13 @@
 
 static SPDFMarkdownTextLine* SPDFLine(NSUInteger location, CGFloat height) {
     return [[SPDFMarkdownTextLine alloc] initWithAttributedRange:NSMakeRange(location, 5)
-                                                          height:height xOffset:0 baselineOffset:height * 0.8];
+                                                          height:height
+                                                         xOffset:0
+                                                  baselineOffset:height * 0.8];
 }
 
 static SPDFMarkdownPaginationItem* SPDFItem(NSUInteger index, SPDFMarkdownBlockKind kind, NSUInteger level,
-                                             NSArray<NSNumber*>* heights) {
+                                            NSArray<NSNumber*>* heights) {
     NSMutableArray* lines = [NSMutableArray array];
     NSUInteger location = index * 100;
     for (NSNumber* height in heights) {
@@ -20,13 +22,14 @@ static SPDFMarkdownPaginationItem* SPDFItem(NSUInteger index, SPDFMarkdownBlockK
 
 static SPDFMarkdownPageConfiguration* SPDFTestPage(void) {
     return [SPDFMarkdownPageConfiguration configurationForPaperSize:NSMakeSize(100, 100)
-                                                       printableRect:NSMakeRect(0, 0, 100, 100)];
+                                                      printableRect:NSMakeRect(0, 0, 100, 100)];
 }
 
 static void SPDFExpectExactLineRanges(SPDFMarkdownPaginationPlan* plan) {
     NSMutableSet* expected = [NSMutableSet set];
     for (SPDFMarkdownPaginationItem* item in plan.items)
-        for (SPDFMarkdownTextLine* line in item.lines) [expected addObject:[NSValue valueWithRange:line.attributedRange]];
+        for (SPDFMarkdownTextLine* line in item.lines)
+            [expected addObject:[NSValue valueWithRange:line.attributedRange]];
     NSMutableSet* actual = [NSMutableSet set];
     for (SPDFMarkdownPage* page in plan.pages)
         for (SPDFMarkdownPageFragment* fragment in page.fragments)
@@ -38,19 +41,21 @@ int main(void) {
     @autoreleasepool {
         SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
         SPDFMarkdownPaginationPlan* threshold = [paginator paginateItems:@[
-            SPDFItem(1, SPDFMarkdownBlockKindParagraph, 0, @[@75]),
-            SPDFItem(2, SPDFMarkdownBlockKindHeading, 2, @[@10]),
-            SPDFItem(3, SPDFMarkdownBlockKindParagraph, 0, @[@15, @15]),
-        ] configuration:SPDFTestPage()];
+            SPDFItem(1, SPDFMarkdownBlockKindParagraph, 0, @[ @75 ]),
+            SPDFItem(2, SPDFMarkdownBlockKindHeading, 2, @[ @10 ]),
+            SPDFItem(3, SPDFMarkdownBlockKindParagraph, 0, @[ @15, @15 ]),
+        ]
+                                                           configuration:SPDFTestPage()];
         SPDFExpect(threshold.pages.count == 2, @"heading at 75 percent moves with fresh-page section lead");
         SPDFExpect(threshold.pages[1].fragments.firstObject.blockIndex == 2, @"new page begins with heading");
         SPDFExpectExactLineRanges(threshold);
 
         SPDFMarkdownPaginationPlan* before = [paginator paginateItems:@[
-            SPDFItem(1, SPDFMarkdownBlockKindParagraph, 0, @[@74]),
-            SPDFItem(2, SPDFMarkdownBlockKindHeading, 2, @[@10]),
-            SPDFItem(3, SPDFMarkdownBlockKindParagraph, 0, @[@15, @15]),
-        ] configuration:SPDFTestPage()];
+            SPDFItem(1, SPDFMarkdownBlockKindParagraph, 0, @[ @74 ]),
+            SPDFItem(2, SPDFMarkdownBlockKindHeading, 2, @[ @10 ]),
+            SPDFItem(3, SPDFMarkdownBlockKindParagraph, 0, @[ @15, @15 ]),
+        ]
+                                                        configuration:SPDFTestPage()];
         BOOL headingOnFirstPage = NO;
         for (SPDFMarkdownPageFragment* fragment in before.pages[0].fragments)
             if (fragment.blockIndex == 2) headingOnFirstPage = YES;
@@ -58,16 +63,18 @@ int main(void) {
         SPDFExpectExactLineRanges(before);
 
         SPDFMarkdownPaginationPlan* shortSection = [paginator paginateItems:@[
-            SPDFItem(1, SPDFMarkdownBlockKindParagraph, 0, @[@75]),
-            SPDFItem(2, SPDFMarkdownBlockKindHeading, 2, @[@10]),
-            SPDFItem(3, SPDFMarkdownBlockKindParagraph, 0, @[@10]),
-        ] configuration:SPDFTestPage()];
+            SPDFItem(1, SPDFMarkdownBlockKindParagraph, 0, @[ @75 ]),
+            SPDFItem(2, SPDFMarkdownBlockKindHeading, 2, @[ @10 ]),
+            SPDFItem(3, SPDFMarkdownBlockKindParagraph, 0, @[ @10 ]),
+        ]
+                                                              configuration:SPDFTestPage()];
         SPDFExpect(shortSection.pages[0].fragments.count == 3,
                    @"late heading stays when its complete short section fits the remainder");
 
         SPDFMarkdownPaginationPlan* overTall = [paginator paginateItems:@[
-            SPDFItem(9, SPDFMarkdownBlockKindParagraph, 0, @[@250]),
-        ] configuration:SPDFTestPage()];
+            SPDFItem(9, SPDFMarkdownBlockKindParagraph, 0, @[ @250 ]),
+        ]
+                                                          configuration:SPDFTestPage()];
         SPDFMarkdownPageFragment* scaled = overTall.pages.firstObject.fragments.firstObject;
         SPDFExpect(overTall.pages.count == 1 && overTall.pages.firstObject.fragments.count == 1 &&
                        fabs(scaled.scale - 0.4) < 0.001 && fabs(scaled.height - 100) < 0.001,
@@ -76,7 +83,8 @@ int main(void) {
 
         NSError* error = nil;
         SPDFMarkdownDocument* document = [SPDFMarkdownDocument documentWithURL:SPDFFixtureURL(@"obsidian.md")
-                                                                        options:nil error:&error];
+                                                                       options:nil
+                                                                         error:&error];
         NSArray* measured = [paginator measureRenderedDocument:document.renderedDocument containerWidth:220];
         BOOL foundCallout = NO;
         for (SPDFMarkdownPaginationItem* item in measured) {
@@ -87,15 +95,52 @@ int main(void) {
             if (item.kind == SPDFMarkdownBlockKindCallout) foundCallout = YES;
         }
         SPDFExpect(foundCallout, @"callout title is measured as pagination content");
-        SPDFMarkdownPaginationPlan* measuredPlan = [paginator paginateItems:measured
-                                                               configuration:SPDFMarkdownPageConfiguration.A4PortraitConfiguration];
+        SPDFMarkdownPaginationPlan* measuredPlan =
+            [paginator paginateItems:measured configuration:SPDFMarkdownPageConfiguration.A4PortraitConfiguration];
         SPDFExpectExactLineRanges(measuredPlan);
 
         SPDFMarkdownPageConfiguration* A4 = SPDFMarkdownPageConfiguration.A4PortraitConfiguration;
-        SPDFExpect(fabs(A4.paperSize.width - 595.2756) < 0.01 &&
-                       fabs(A4.paperSize.height - 841.8898) < 0.01,
+        SPDFExpect(fabs(A4.paperSize.width - 595.2756) < 0.01 && fabs(A4.paperSize.height - 841.8898) < 0.01,
                    @"A4 portrait uses exact point dimensions");
         SPDFExpect(A4.headingKeepThreshold == 0.75, @"A4 and printer plans share the 75 percent rule");
+        SPDFExpect(!A4.includesCodeLanguageControlSpacing, @"A4 pagination defaults to print-safe code spacing");
+
+        SPDFMarkdownParser* parser = [SPDFMarkdownParser new];
+        SPDFMarkdownDocumentModel* codeModel = [parser parseString:@"# Code\n\n```\nfirst();\nsecond();\n```\n"
+                                                         sourceURL:nil
+                                                             error:nil];
+        SPDFMarkdownRenderedDocument* codeDocument =
+            [[SPDFMarkdownRenderer new] renderModel:codeModel
+                                            options:SPDFMarkdownRenderOptions.defaultOptions
+                                  languageOverrides:nil];
+        NSArray<SPDFMarkdownPaginationItem*>* codeItems = [paginator measureRenderedDocument:codeDocument
+                                                                              containerWidth:NSWidth(A4.printableRect)];
+        SPDFMarkdownPaginationItem* measuredCode = nil;
+        for (SPDFMarkdownPaginationItem* item in codeItems)
+            if (item.kind == SPDFMarkdownBlockKindCode) measuredCode = item;
+        SPDFExpect(measuredCode != nil && measuredCode.lines.firstObject.attributedRange.length > 0,
+                   @"canonical code measurement has no synthetic control line");
+
+        SPDFMarkdownPaginationPlan* printPlan = [paginator paginateItems:codeItems configuration:A4];
+        SPDFMarkdownPaginationItem* printedCode = nil;
+        for (SPDFMarkdownPaginationItem* item in printPlan.items)
+            if (item.kind == SPDFMarkdownBlockKindCode) printedCode = item;
+        SPDFExpect(printedCode.lines.firstObject.attributedRange.length > 0,
+                   @"default print and export plans contain no code-control spacer");
+
+        SPDFMarkdownPageConfiguration* screenA4 = [A4 copy];
+        screenA4.includesCodeLanguageControlSpacing = YES;
+        SPDFMarkdownPaginationPlan* screenPlan = [paginator paginateItems:codeItems configuration:screenA4];
+        SPDFMarkdownPaginationItem* screenCode = nil;
+        for (SPDFMarkdownPaginationItem* item in screenPlan.items)
+            if (item.kind == SPDFMarkdownBlockKindCode) screenCode = item;
+        SPDFMarkdownTextLine* controlLine = screenCode.lines.firstObject;
+        SPDFExpect(controlLine.attributedRange.length == 0 && fabs(controlLine.height - 26.0) < 0.001,
+                   @"screen A4 opt-in adds exactly one 26pt code-language control space");
+        SPDFExpect(screenCode.lines.count == printedCode.lines.count + 1,
+                   @"screen spacing preserves the code fence as one pagination item");
+        SPDFExpect(screenPlan.configuration.includesCodeLanguageControlSpacing,
+                   @"pagination-plan configuration copy preserves the screen opt-in");
     }
     return SPDFFinishTests(@"SPDFMarkdownPaginatorTests");
 }

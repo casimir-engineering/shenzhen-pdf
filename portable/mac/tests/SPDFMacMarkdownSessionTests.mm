@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 
 #import "../SPDFMacMarkdownSession.h"
+#import "../SPDFMacMarkdownPagedView.h"
 #import "../markdown/SPDFMarkdown.h"
 
 #include <assert.h>
@@ -9,14 +10,13 @@
 static BOOL SpinUntil(BOOL (^condition)(void), NSTimeInterval timeout) {
     NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
     while (!condition() && deadline.timeIntervalSinceNow > 0)
-        [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode
-                              beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
     return condition();
 }
 
 static NSString* WriteMarkdown(NSString* text) {
-    NSString* path = [NSTemporaryDirectory() stringByAppendingPathComponent:
-                      [NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"md"]];
+    NSString* path = [NSTemporaryDirectory()
+        stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"md"]];
     assert([text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
     return path;
 }
@@ -31,24 +31,33 @@ int main(void) {
         NSString* path = WriteMarkdown(@"# Introduction\nAlpha beta alpha.\n\n# Finish\nOmega.\n\n"
                                         "```unknown\nlet value = 1\n```\n");
         NSView* host = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 640, 480)];
-        dispatch_queue_t sessionQueue =
-            dispatch_queue_create("markdown.session.test", DISPATCH_QUEUE_CONCURRENT);
-        SPDFMacMarkdownSession* session = [[SPDFMacMarkdownSession alloc]
-            initWithDocumentURL:[NSURL fileURLWithPath:path]];
+        dispatch_queue_t sessionQueue = dispatch_queue_create("markdown.session.test", DISPATCH_QUEUE_CONCURRENT);
+        SPDFMacMarkdownSession* session =
+            [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
+        NSObject* reader = [NSObject new];
+        session.reader = (id<SPDFMacUIReader>)reader;
+        assert(session.reader == (id<SPDFMacUIReader>)reader);
         __block BOOL loaded = NO;
         [session activateInHostView:host
                           workQueue:sessionQueue
                        scrollOrigin:NSZeroPoint
                       selectedRange:NSMakeRange(0, 0)
+                          pageIndex:0
+                               zoom:1.0
+                            fitMode:SPDFMacMarkdownPageFitPage
                              anchor:nil
                          completion:^(BOOL success, NSError* error) {
                            assert(success && !error);
                            loaded = YES;
                          }];
-        assert(SpinUntil(^BOOL { return loaded; }, 5.0));
+        assert(SpinUntil(
+            ^BOOL {
+              return loaded;
+            },
+            5.0));
         assert(session.state == SPDFMacMarkdownSessionReady);
-        assert(session.textView.selectable && !session.textView.editable);
-        assert([session.textView.string containsString:@"Alpha beta alpha"]);
+        assert(session.pageCount > 0);
+        assert([session.renderedDocument.attributedString.string containsString:@"Alpha beta alpha"]);
 
         __block NSUInteger count = NSNotFound;
         __block NSInteger index = -1;
@@ -59,12 +68,26 @@ int main(void) {
           }
         };
         [session searchForQuery:@"alpha" preferredIndex:0];
-        assert(SpinUntil(^BOOL { return count != NSNotFound; }, 5.0));
+        assert(SpinUntil(
+            ^BOOL {
+              return count != NSNotFound;
+            },
+            5.0));
         assert(count == 2 && index == 0);
         [session moveToNextMatch:YES];
         assert(session.currentMatchIndex == 1);
         assert([session scrollToHeadingAnchor:@"finish"]);
-        session.textView.selectedRange = NSMakeRange(0, 5);
+        SPDFMacMarkdownPagedView* pagedView = nil;
+        for (NSView* view in session.rootView.subviews)
+            if ([view isKindOfClass:SPDFMacMarkdownPagedView.class]) pagedView = (id)view;
+        assert(pagedView != nil);
+        assert(pagedView.reader == session.reader);
+        assert(session.visibleAttributedLocation == pagedView.visibleAttributedLocation);
+        assert(session.visibleAttributedLocation != NSNotFound);
+        NSObject* replacementReader = [NSObject new];
+        session.reader = (id<SPDFMacUIReader>)replacementReader;
+        assert(pagedView.reader == (id<SPDFMacUIReader>)replacementReader);
+        pagedView.selectedRange = NSMakeRange(0, 5);
         assert([session.selectedText isEqualToString:@"Intro"]);
 
         // A language rerender must not invalidate an overlapping Find. Suspending
@@ -84,7 +107,11 @@ int main(void) {
         [session searchForQuery:@"alpha" preferredIndex:0];
         [session applyLanguageIdentifier:@"python" toCodeBlock:codeBlock];
         dispatch_resume(sessionQueue);
-        assert(SpinUntil(^BOOL { return overlapSearchFinished && overlapRenderFinished; }, 5.0));
+        assert(SpinUntil(
+            ^BOOL {
+              return overlapSearchFinished && overlapRenderFinished;
+            },
+            5.0));
         assert(session.searchMatches.count == 2);
 
         // Replacing an in-flight search must only publish the latest query.
@@ -97,7 +124,11 @@ int main(void) {
         [session searchForQuery:@"alpha" preferredIndex:0];
         [session searchForQuery:@"omega" preferredIndex:0];
         dispatch_resume(sessionQueue);
-        assert(SpinUntil(^BOOL { return latestCount == 1; }, 5.0));
+        assert(SpinUntil(
+            ^BOOL {
+              return latestCount == 1;
+            },
+            5.0));
         assert(session.searchMatches.count == 1);
 
         // Replacing a queued language render must not let its stale completion
@@ -110,30 +141,45 @@ int main(void) {
         [session applyLanguageIdentifier:@"python" toCodeBlock:codeBlock];
         [session applyLanguageIdentifier:@"swift" toCodeBlock:codeBlock];
         dispatch_resume(sessionQueue);
-        assert(SpinUntil(^BOOL { return renderCompletions == 1; }, 5.0));
-        SPDFMarkdownRenderedBlock* renderedCode =
-            [session.renderedDocument renderedBlockWithIndex:codeBlock];
-        NSString* language = [session.renderedDocument.attributedString
-            attribute:SPDFMarkdownCodeLanguageAttribute
-              atIndex:renderedCode.attributedRange.location
-       effectiveRange:nil];
+        assert(SpinUntil(
+            ^BOOL {
+              return renderCompletions == 1;
+            },
+            5.0));
+        SPDFMarkdownRenderedBlock* renderedCode = [session.renderedDocument renderedBlockWithIndex:codeBlock];
+        NSString* language = [session.renderedDocument.attributedString attribute:SPDFMarkdownCodeLanguageAttribute
+                                                                          atIndex:renderedCode.attributedRange.location
+                                                                   effectiveRange:nil];
         assert([language isEqualToString:@"swift"]);
+        SPDFMacMarkdownPagedView* replacedPagedView = nil;
+        for (NSView* view in session.rootView.subviews)
+            if ([view isKindOfClass:SPDFMacMarkdownPagedView.class]) replacedPagedView = (id)view;
+        assert(replacedPagedView != nil && replacedPagedView != pagedView);
+        assert(replacedPagedView.reader == session.reader);
 
         // Block the worker before activation, switch away, then release it.
         // The stale completion must never attach or call back.
         dispatch_queue_t blockedQueue = dispatch_queue_create("markdown.stale.test", DISPATCH_QUEUE_SERIAL);
         dispatch_semaphore_t gate = dispatch_semaphore_create(0);
-        dispatch_async(blockedQueue, ^{ dispatch_semaphore_wait(gate, DISPATCH_TIME_FOREVER); });
-        SPDFMacMarkdownSession* stale = [[SPDFMacMarkdownSession alloc]
-            initWithDocumentURL:[NSURL fileURLWithPath:path]];
+        dispatch_async(blockedQueue, ^{
+          dispatch_semaphore_wait(gate, DISPATCH_TIME_FOREVER);
+        });
+        SPDFMacMarkdownSession* stale =
+            [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
         __block BOOL staleCompletion = NO;
-        [stale activateInHostView:host workQueue:blockedQueue scrollOrigin:NSZeroPoint
-                    selectedRange:NSMakeRange(0, 0) anchor:nil
-                        completion:^(BOOL success, NSError* error) {
-                          (void)success;
-                          (void)error;
-                          staleCompletion = YES;
-                        }];
+        [stale activateInHostView:host
+                        workQueue:blockedQueue
+                     scrollOrigin:NSZeroPoint
+                    selectedRange:NSMakeRange(0, 0)
+                        pageIndex:0
+                             zoom:1.0
+                          fitMode:SPDFMacMarkdownPageFitPage
+                           anchor:nil
+                       completion:^(BOOL success, NSError* error) {
+                         (void)success;
+                         (void)error;
+                         staleCompletion = YES;
+                       }];
         [stale deactivate];
         dispatch_semaphore_signal(gate);
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];

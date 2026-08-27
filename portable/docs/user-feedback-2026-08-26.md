@@ -26,6 +26,7 @@ stapled, and compatible with the existing GitHub auto-updater.
 | UF-12 | Markdown language search, print, and PDF export | Markdown appears in the normal tab/session workflow. The syntax-language selector has a narrowing search field and full keyboard navigation. Print and Save as PDF use an A4 portrait pagination model that fills pages while avoiding a section heading in roughly the final quarter when its following content cannot fit. | Implemented and independently reviewed on macOS | Bounded cancellable search, language filtering, TextKit pagination, PDF export, image budgets, descriptor-pinned resources, and smart heading placement are verified. `73ab26d08` connects the services to the native print panel and tab/session workflow, with overlapping search/render generation and atomic-file-replacement regressions covered. |
 | UF-13 | Release candidate handoff | All targeted tests pass; each meaningful tested slice is committed. Produce a signed/notarized/stapled DMG without publishing, open the installed DMG app with representative PDFs, encrypted PDF, EPUB, and Markdown fixtures, show the in-app release-notes window, and capture it for user go/no-go. | Release gates complete; full sweep and unpublished artifact pending | `56aa13d51` enforces exact source-size ratchets. `17e301ef4` adds native Markdown integration to the release test target and stages/verifies GitHub assets as drafts before public promotion. The signed/notarized/stapled RC remains intentionally unbuilt and unpublished until metadata preparation and the complete test sweep finish. |
 | UF-14 | Shenzhen family application logo | Replace the application logo everywhere with a Shenzhen Files sibling: a blue document marked `深圳` over `PDF`, using a white-to-orange background for product distinction. Cover macOS, DMG, Windows, Linux, dormant AppX/file assets, and documentation branding from one reproducible source. | Implemented; signed-DMG acceptance pending | A deterministic AppKit renderer generates native 16/32/48/64/128/256/512/1024 px artwork. Asset verification covers dimensions, mirrors, Windows ICO frames, AppX, and favicon surfaces; macOS now compiles true 64/512/1024 px renditions. |
+| UF-15 | Paginated Markdown and perceived-instant launch | Present Markdown as continuous A4 sheets in the same reader shell as PDFs. H1-H3 headings populate Chapters; Search uses the shared results panel; the existing minimap represents every A4 page and live viewport; page, zoom, keyboard, mouse, presentation, and menu navigation remain shared. Fenced code remains one block and exposes a directly visible language control above it, including when no language is declared. Increase perceived launch speed without visual or behavioral regressions, using lazy loading outside first paint. | Implemented and automated gates pass; installed-app acceptance pending | The canonical attributed-string renderer and exact A4 paginator remain the source of truth. `portable/mac/tests/markdown/fixtures/language-picker-demo.md` is parsed by the test suite and verifies H1-H3 chapters, H4 exclusion, one untyped multi-line fence, whole-block language switching, search, minimap geometry, pointer zoom, right/middle panning, and presentation chrome. Markdown uses the shared document context-menu builder and a tested keyboard policy matching PDF scrolling versus paging. Visible launch work has bounded deadlines; atomic prerender and inactive-tab handoffs prevent late speculative rendering or duplicate opens from blocking selected work. The complete Markdown suites, launch/tab/file/minimap policies, broad macOS/core regression sweep, optimized app build, and strict code-sign verification pass. |
 
 ## Validation rules
 
@@ -172,3 +173,40 @@ stapled, and compatible with the existing GitHub auto-updater.
   AppX/file-association, and documentation assets now derive from one renderer;
   the macOS build no longer substitutes 48 px for 64 px or upscales 256 px for
   Retina renditions.
+- 2026-08-27: started the paginated-Markdown and perceived-launch-performance
+  pass. The no-regression boundary keeps the canonical Markdown model,
+  selectable attributed text, link and code-language interactions, search
+  coordinates, print/export pagination, PDF visuals, and static first frame.
+  A virtualized A4 screen surface will consume the existing paginator; zoom is
+  geometry-only, page interaction layers are visible-range lazy, and launch
+  changes require before/after profiler evidence rather than speculative work.
+- 2026-08-28: completed the A4 Markdown reader integration. The existing PDF
+  shell now owns Markdown chapters, search results, page and zoom controls,
+  minimap viewport routing, keyboard and trackpad input, right/middle hand
+  panning, text selection, and presentation mode. H1-H3 are chapters; H4 and
+  deeper headings remain document content only. The directly visible code
+  language control is screen-only, while print and Save as PDF retain vector
+  text without synthetic control spacing.
+- 2026-08-28: repaired launch warming around explicit ownership and bounded
+  stages. Visible metadata starts independently of input, active-page caches
+  follow on a bounded delay, and only inactive tabs wait for idle. Foreground
+  loading cancels a speculative open before it starts or adopts the single
+  in-flight open; inactive work uses one background worker, checks cancellation
+  throughout, and waits for all foreground render queues to become idle.
+- 2026-08-28: the final automated gate passed the complete Markdown suites,
+  launch/tab/file/minimap policies, window shortcuts and chrome, tab-strip
+  interaction, text selection, updater, password, translation, properties,
+  core outline/password/selection, the 698-file source-size ratchet, an optimized
+  arm64 app build with no compiler warnings, and strict code-sign verification.
+  The installed-app demo and unpublished release artifact remain pending by
+  design until the final review and commit are complete.
+- 2026-08-28: the final independent audit found and drove four additional
+  repairs before commit. A foreground launch claim now abandons an in-progress
+  speculative bitmap render immediately; selecting an inactive tab atomically
+  adopts its one in-flight open; Markdown builds its right-click menu through
+  the shared PDF menu owner; and a pure tested keyboard policy leaves Page
+  Up/Down and Space/Return/Backspace to native scrolling outside presentation
+  mode, while plain arrows use the same 60 fps velocity ramp as PDF tabs. The
+  menu and preload state machines were extracted into 104-line and 124-line
+  owners, reducing the legacy delegate to 16,742 lines and tightening its
+  no-growth cap.
