@@ -1,0 +1,43 @@
+#pragma once
+
+#import "SPDFMarkdownPaginator.h"
+#import "SPDFMarkdownParser.h"
+#import "SPDFMarkdownAsync.h"
+
+NS_ASSUME_NONNULL_BEGIN
+
+// Read-only facade for later tab/session integration. Build it off the main
+// thread, then create the NSTextView on the main thread.
+@interface SPDFMarkdownDocument : NSObject
+@property(nonatomic, readonly) SPDFMarkdownDocumentModel* model;
+@property(nonatomic, readonly) SPDFMarkdownRenderedDocument* renderedDocument;
+@property(nonatomic, readonly) SPDFMarkdownRenderOptions* renderOptions;
+@property(nonatomic, readonly, copy) NSDictionary<NSNumber*, NSString*>* languageOverrides;
+
++ (nullable instancetype)documentWithURL:(NSURL*)URL
+                                 options:(nullable SPDFMarkdownRenderOptions*)options
+                                   error:(NSError**)error;
+- (instancetype)initWithModel:(SPDFMarkdownDocumentModel*)model
+                       options:(SPDFMarkdownRenderOptions*)options NS_DESIGNATED_INITIALIZER;
+- (instancetype)init NS_UNAVAILABLE;
+
+- (void)setLanguageIdentifier:(nullable NSString*)identifier forCodeBlock:(NSUInteger)blockIndex;
+- (NSArray<SPDFMarkdownSearchMatch*>*)searchForQuery:(NSString*)query caseSensitive:(BOOL)caseSensitive;
+- (SPDFMarkdownPaginationPlan*)paginationPlanForConfiguration:(SPDFMarkdownPageConfiguration*)configuration;
+- (NSTextView*)newSelectableTextView;
+
+- (SPDFMarkdownCancellationToken*)searchForQuery:(NSString*)query
+                                    caseSensitive:(BOOL)caseSensitive
+                                        workQueue:(nullable dispatch_queue_t)workQueue
+                                   completionQueue:(nullable dispatch_queue_t)completionQueue
+                                       completion:(void (^)(NSArray<SPDFMarkdownSearchMatch*>* matches,
+                                                            BOOL cancelled))completion;
+- (SPDFMarkdownCancellationToken*)renderWithLanguageOverrides:
+    (NSDictionary<NSNumber*, NSString*>*)languageOverrides
+                                                        workQueue:(nullable dispatch_queue_t)workQueue
+                                                   completionQueue:(nullable dispatch_queue_t)completionQueue
+                                                       completion:(void (^)(SPDFMarkdownRenderedDocument* _Nullable rendered,
+                                                                            BOOL cancelled))completion;
+@end
+
+NS_ASSUME_NONNULL_END
