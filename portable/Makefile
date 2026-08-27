@@ -49,6 +49,7 @@ CORE_SELECTION_TEST := $(BUILD)/SPDFCoreSelectionTests
 MAC_APP := $(DIST)/ShenzhenPDF.app
 MAC_BIN := $(MAC_APP)/Contents/MacOS/ShenzhenPDF
 MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
+MAC_ICON_SRCS := $(addprefix ../gfx/ShenzhenPDF-,$(addsuffix x32.png,16x16 32x32 64x64 128x128 256x256 512x512 1024x1024))
 MAC_WINDOW_SHORTCUT_TEST := $(BUILD)/SPDFMacWindowShortcutsTests
 MAC_WINDOW_CHROME_TEST := $(BUILD)/SPDFMacWindowChromeTests
 MAC_PASSWORD_TEST := $(BUILD)/SPDFMacPasswordTests
@@ -85,7 +86,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-selection-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -199,6 +200,9 @@ file-size-ratchet-tests:
 	../tools/test-file-size-ratchet.sh
 	../tools/check-file-sizes.sh --root ..
 
+icon-tests:
+	../gfx/verify-shenzhen-pdf-icons.sh
+
 $(MAC_PROPERTIES_FORMAT_TEST): mac/tests/SPDFMacPropertiesFormatTests.mm mac/SPDFMacPropertiesFormat.mm mac/SPDFMacPropertiesFormat.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacPropertiesFormatTests.mm mac/SPDFMacPropertiesFormat.mm -framework Foundation -o "$(MAC_PROPERTIES_FORMAT_TEST)"
 
@@ -247,7 +251,7 @@ $(MAC_SELECTION_ADAPTER_TEST): mac/tests/SPDFMacSelectionAdapterTests.mm mac/SPD
 mac-selection-adapter-tests: $(MAC_SELECTION_ADAPTER_TEST)
 	"$(MAC_SELECTION_ADAPTER_TEST)"
 
-$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
+$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
@@ -259,13 +263,13 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/
 	cp ../gfx/ShenzhenPDF-16x16x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_16x16.png"
 	cp ../gfx/ShenzhenPDF-32x32x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_16x16@2x.png"
 	cp ../gfx/ShenzhenPDF-32x32x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_32x32.png"
-	cp ../gfx/ShenzhenPDF-48x48x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_32x32@2x.png"
+	cp ../gfx/ShenzhenPDF-64x64x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_32x32@2x.png"
 	cp ../gfx/ShenzhenPDF-128x128x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_128x128.png"
 	cp ../gfx/ShenzhenPDF-256x256x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_128x128@2x.png"
 	cp ../gfx/ShenzhenPDF-256x256x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_256x256.png"
-	cp ../gfx/ShenzhenPDF-256x256x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_256x256@2x.png"
-	sips -z 512 512 ../gfx/ShenzhenPDF-256x256x32.png --out "$(BUILD)/ShenzhenPDF.iconset/icon_512x512.png" >/dev/null
-	sips -z 1024 1024 ../gfx/ShenzhenPDF-256x256x32.png --out "$(BUILD)/ShenzhenPDF.iconset/icon_512x512@2x.png" >/dev/null
+	cp ../gfx/ShenzhenPDF-512x512x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_256x256@2x.png"
+	cp ../gfx/ShenzhenPDF-512x512x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_512x512.png"
+	cp ../gfx/ShenzhenPDF-1024x1024x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_512x512@2x.png"
 	rm -rf "$(BUILD)/Assets.xcassets"
 	mkdir -p "$(BUILD)/Assets.xcassets/AppIcon.appiconset"
 	cp mac/Assets.xcassets/Contents.json "$(BUILD)/Assets.xcassets/"
