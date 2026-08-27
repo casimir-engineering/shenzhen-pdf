@@ -1,5 +1,6 @@
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacDelayedLinkActivation.h"
+#import "SPDFMacPageRendering.h"
 #import "SPDFMacSupport.h"
 
 #include <math.h>
@@ -7,7 +8,6 @@
 static const CGFloat kPageMargin = 44.0;
 static const CGFloat kPageGap = 26.0;
 static const CGFloat kSelectionOverlayAlpha = 0.20;
-static const NSUInteger kLiveZoomStaleFullPageDrawByteLimit = (NSUInteger)24 * 1024 * 1024;
 
 // Launch profiling (SPDF_LAUNCH_PROFILE=1): logs the first completed drawRect
 // that painted actual document pages — i.e. the first visible paint.
@@ -188,31 +188,6 @@ static NSColor* spdf_canvas_background_color(void) {
     if (fabs(oldSize.width - newSize.width) > 0.001) [self invalidateLayoutCache];
 }
 
-- (CGFloat)effectiveBackingScale {
-    CGFloat scale = self.backingScale;
-    if (scale <= 0) scale = self.window.backingScaleFactor;
-    if (scale <= 0) scale = NSScreen.mainScreen.backingScaleFactor;
-    return scale > 0 ? scale : 1.0;
-}
-
-- (CGFloat)pixelSnappedLength:(CGFloat)length {
-    CGFloat scale = [self effectiveBackingScale];
-    return ceil(length * scale - 0.001) / scale;
-}
-
-- (CGFloat)pixelSnappedOrigin:(CGFloat)origin {
-    CGFloat scale = [self effectiveBackingScale];
-    return floor(origin * scale + 0.001) / scale;
-}
-
-- (NSSize)viewSizeForPage:(SPDFRenderedPage*)page {
-    if (page.image && page.imagePointWidth > 0 && page.imagePointHeight > 0 &&
-        fabs(page.imageZoom - self.zoom) < 0.0001)
-        return NSMakeSize(page.imagePointWidth, page.imagePointHeight);
-    return NSMakeSize([self pixelSnappedLength:page.pageWidth * self.zoom],
-                      [self pixelSnappedLength:page.pageHeight * self.zoom]);
-}
-
 // drawRect: always fills its whole dirty rect with an opaque background, so the
 // view is opaque — telling AppKit lets it skip compositing anything behind it
 // during scroll.
@@ -238,7 +213,7 @@ static NSColor* spdf_canvas_background_color(void) {
 
 - (void)ensureLayoutCache {
     CGFloat viewportWidth = [self viewportWidth];
-    CGFloat effectiveBackingScale = [self effectiveBackingScale];
+    CGFloat effectiveBackingScale = spdf_mac_effective_backing_scale(self.backingScale, self.window);
     NSSize boundsSize = self.bounds.size;
     BOOL boundsWidthMatches = fabs(_layoutBoundsSize.width - boundsSize.width) <= 0.001;
     if (_layoutCacheValid && _layoutPages == self.pages && _layoutZoom == self.zoom &&
@@ -258,7 +233,7 @@ static NSColor* spdf_canvas_background_color(void) {
 
     CGFloat widestPage = 0.0;
     for (SPDFRenderedPage* page in self.pages) {
-        NSSize pageSize = [self viewSizeForPage:page];
+        NSSize pageSize = spdf_mac_view_size_for_page(page, self.zoom, effectiveBackingScale);
         [pageSizes addObject:[NSValue valueWithSize:pageSize]];
         widestPage = MAX(widestPage, pageSize.width);
     }
@@ -275,8 +250,10 @@ static NSColor* spdf_canvas_background_color(void) {
         NSSize pageSize = [pageSizes[i] sizeValue];
         CGFloat x = floor((layoutWidth - pageSize.width) / 2.0);
         CGFloat minX = pageSize.width >= layoutWidth - 0.5 ? 0.0 : pageMargin / 2.0;
-        NSRect continuousRect = NSMakeRect(MAX(minX, [self pixelSnappedOrigin:x]),
-                                           [self pixelSnappedOrigin:continuousY], pageSize.width, pageSize.height);
+        NSRect continuousRect =
+            NSMakeRect(MAX(minX, spdf_mac_pixel_snapped_origin(x, effectiveBackingScale)),
+                       spdf_mac_pixel_snapped_origin(continuousY, effectiveBackingScale), pageSize.width,
+                       pageSize.height);
         [continuousRects addObject:[NSValue valueWithRect:continuousRect]];
         continuousY += pageSize.height + pageGap;
     }
@@ -304,83 +281,6 @@ static NSColor* spdf_canvas_background_color(void) {
     [self ensureLayoutCache];
     if (pageIndex < 0 || pageIndex >= (NSInteger)_layoutContinuousPageRects.count) return NSZeroRect;
     return [_layoutContinuousPageRects[(NSUInteger)pageIndex] rectValue];
-}
-
-- (NSRect)convertPageRect:(NSRect)rect toViewRectInPageRect:(NSRect)pageRect page:(SPDFRenderedPage*)page {
-    CGFloat scaleX = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
-    CGFloat scaleY = NSHeight(pageRect) / MAX(1.0, page.pageHeight);
-    rect.origin.x = pageRect.origin.x + rect.origin.x * scaleX;
-    rect.origin.y = pageRect.origin.y + rect.origin.y * scaleY;
-    rect.size.width *= scaleX;
-    rect.size.height *= scaleY;
-    return rect;
-}
-
-- (NSPoint)convertViewPoint:(NSPoint)point toPagePointInPageRect:(NSRect)pageRect page:(SPDFRenderedPage*)page {
-    CGFloat scaleX = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
-    CGFloat scaleY = NSHeight(pageRect) / MAX(1.0, page.pageHeight);
-    return NSMakePoint((point.x - pageRect.origin.x) / MAX(0.001, scaleX),
-                       (point.y - pageRect.origin.y) / MAX(0.001, scaleY));
-}
-
-- (NSUInteger)estimatedFullPageImageByteCost:(SPDFRenderedPage*)page {
-    if (!page.image || page.imagePointWidth <= 0.0 || page.imagePointHeight <= 0.0) return 0;
-    CGFloat scale = page.imageScale > 0.0 ? page.imageScale : [self effectiveBackingScale];
-    double pixels = ceil(page.imagePointWidth * scale) * ceil(page.imagePointHeight * scale);
-    if (!isfinite(pixels) || pixels <= 0.0) return 0;
-    double bytes = pixels * 4.0;
-    if (bytes > (double)NSUIntegerMax) return NSUIntegerMax;
-    return (NSUInteger)bytes;
-}
-
-- (BOOL)shouldDrawStaleFullPageImageDuringLiveZoom:(SPDFRenderedPage*)page {
-    if (!page.image) return NO;
-    if (fabs(page.imageZoom - self.zoom) <= 0.001) return YES;
-    return [self estimatedFullPageImageByteCost:page] <= kLiveZoomStaleFullPageDrawByteLimit;
-}
-
-- (BOOL)pageSubrectCoversFullPage:(NSRect)pageSubrect page:(SPDFRenderedPage*)page {
-    if (NSIsEmptyRect(pageSubrect) || page.pageWidth <= 0.0 || page.pageHeight <= 0.0) return NO;
-    return fabs(NSMinX(pageSubrect)) <= 0.01 && fabs(NSMinY(pageSubrect)) <= 0.01 &&
-           fabs(NSWidth(pageSubrect) - page.pageWidth) <= 0.01 &&
-           fabs(NSHeight(pageSubrect) - page.pageHeight) <= 0.01;
-}
-
-- (BOOL)drawPageImage:(NSImage*)image
-          pageSubrect:(NSRect)pageSubrect
-               inRect:(NSRect)pageRect
-            dirtyRect:(NSRect)dirtyRect
-                 page:(SPDFRenderedPage*)page
-        interpolation:(NSImageInterpolation)interpolation {
-    if (!image || NSIsEmptyRect(pageSubrect)) return NO;
-    NSRect imageRect = [self convertPageRect:pageSubrect toViewRectInPageRect:pageRect page:page];
-    if (NSIsEmptyRect(imageRect)) return NO;
-    NSRect drawRect = NSIntersectionRect(imageRect, dirtyRect);
-    if (NSIsEmptyRect(drawRect)) return NO;
-
-    NSGraphicsContext* context = NSGraphicsContext.currentContext;
-    NSImageInterpolation oldInterpolation = context.imageInterpolation;
-    context.imageInterpolation = interpolation;
-    [NSGraphicsContext saveGraphicsState];
-    NSRectClip(drawRect);
-    double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-    [image drawInRect:imageRect
-             fromRect:NSZeroRect
-            operation:NSCompositingOperationSourceOver
-             fraction:1.0
-       respectFlipped:YES
-                hints:@{NSImageHintInterpolation : @(interpolation)}];
-    if (spdf_zoom_profile_enabled()) {
-        double elapsed = spdf_zoom_profile_now_ms() - profileStart;
-        if (elapsed > 2.0)
-            spdf_zoom_profile_log(@"drawPageImage page=%ld img=%p size=%.0fx%.0f imageRect=%.0fx%.0f draw=%.0fx%.0f %.2fms",
-                                  (long)page.pageIndex, image, image.size.width, image.size.height,
-                                  NSWidth(imageRect), NSHeight(imageRect), NSWidth(drawRect), NSHeight(drawRect),
-                                  elapsed);
-    }
-    [NSGraphicsContext restoreGraphicsState];
-    context.imageInterpolation = oldInterpolation;
-    return YES;
 }
 
 - (CGFloat)widestPage {
@@ -422,10 +322,13 @@ static NSColor* spdf_canvas_background_color(void) {
     // placed far offscreen so nothing else is drawn or hit-tested.
     NSInteger current = MAX(0, MIN(self.currentPageIndex, (NSInteger)self.pages.count - 1));
     if (pageIndex != current) return NSMakeRect(0.0, -1.0e7, 0.0, 0.0);
-    NSSize pageSize = [self viewSizeForPage:self.pages[(NSUInteger)current]];
+    CGFloat backingScale = spdf_mac_effective_backing_scale(self.backingScale, self.window);
+    NSSize pageSize = spdf_mac_view_size_for_page(self.pages[(NSUInteger)current], self.zoom, backingScale);
     NSRect bounds = self.bounds;
-    CGFloat x = [self pixelSnappedOrigin:NSMinX(bounds) + (NSWidth(bounds) - pageSize.width) / 2.0];
-    CGFloat y = [self pixelSnappedOrigin:NSMinY(bounds) + (NSHeight(bounds) - pageSize.height) / 2.0];
+    CGFloat x = spdf_mac_pixel_snapped_origin(NSMinX(bounds) + (NSWidth(bounds) - pageSize.width) / 2.0,
+                                               backingScale);
+    CGFloat y = spdf_mac_pixel_snapped_origin(NSMinY(bounds) + (NSHeight(bounds) - pageSize.height) / 2.0,
+                                               backingScale);
     return NSMakeRect(x, y, pageSize.width, pageSize.height);
 }
 
@@ -502,18 +405,16 @@ static NSColor* spdf_canvas_background_color(void) {
     NSRectFill(pageRect);
     [NSGraphicsContext restoreGraphicsState];
 
+    CGFloat backingScale = spdf_mac_effective_backing_scale(self.backingScale, self.window);
     BOOL hasLiveZoomSeed = self.liveZooming && page.zoomSeedImage && !NSIsEmptyRect(page.zoomSeedPageRect);
-    BOOL liveZoomSeedCoversFullPage = hasLiveZoomSeed && [self pageSubrectCoversFullPage:page.zoomSeedPageRect page:page];
+    BOOL liveZoomSeedCoversFullPage =
+        hasLiveZoomSeed && spdf_mac_page_subrect_covers_full_page(page.zoomSeedPageRect, page);
     BOOL drewLiveZoomSeed = liveZoomSeedCoversFullPage &&
-                            [self drawPageImage:page.zoomSeedImage
-                                    pageSubrect:page.zoomSeedPageRect
-                                         inRect:pageRect
-                                      dirtyRect:dirtyRect
-                                           page:page
-                                  interpolation:NSImageInterpolationHigh];
+                            spdf_mac_draw_page_image(page.zoomSeedImage, page.zoomSeedPageRect, pageRect,
+                                                     dirtyRect, page, NSImageInterpolationHigh);
 
     BOOL hasExactFullPageImage = page.image && fabs(page.imageZoom - self.zoom) <= 0.001 &&
-                                 fabs(page.imageScale - [self effectiveBackingScale]) <= 0.001;
+                                 fabs(page.imageScale - backingScale) <= 0.001;
     BOOL hasReusableViewportImage = page.viewportImage && !NSIsEmptyRect(page.viewportImagePageRect);
     BOOL hasHighQualityImage = page.highQualityImage && page.highQualityImagePointWidth > 0.0 &&
                                page.highQualityImagePointHeight > 0.0;
@@ -526,7 +427,7 @@ static NSColor* spdf_canvas_background_color(void) {
         image = page.highQualityImage;
     else if (self.liveZooming && hasBaseImage)
         image = page.baseImage;
-    else if (self.liveZooming && [self shouldDrawStaleFullPageImageDuringLiveZoom:page])
+    else if (self.liveZooming && spdf_mac_should_draw_stale_full_page_image(page, self.zoom, backingScale))
         image = page.image;
     else if (self.liveZooming && !hasReusableViewportImage)
         image = page.minimapImage;
@@ -538,45 +439,32 @@ static NSColor* spdf_canvas_background_color(void) {
         BOOL exactSize = drawingExactImage && fabs(NSWidth(pageRect) - page.imagePointWidth) < 0.01 &&
                          fabs(NSHeight(pageRect) - page.imagePointHeight) < 0.01;
         imageInterpolation = exactSize ? NSImageInterpolationNone : NSImageInterpolationHigh;
-        [self drawPageImage:image
-                pageSubrect:fullPageSubrect
-                     inRect:pageRect
-                  dirtyRect:dirtyRect
-                       page:page
-              interpolation:imageInterpolation];
+        spdf_mac_draw_page_image(image, fullPageSubrect, pageRect, dirtyRect, page, imageInterpolation);
     }
 
     BOOL hasCurrentViewportImage = page.viewportImage && fabs(page.viewportImageZoom - self.zoom) <= 0.001 &&
-                                   fabs(page.viewportImageScale - [self effectiveBackingScale]) <= 0.001;
+                                   fabs(page.viewportImageScale - backingScale) <= 0.001;
     BOOL canDrawViewportImage = hasCurrentViewportImage || (self.liveZooming && hasReusableViewportImage);
     if (!drewLiveZoomSeed && !hasExactFullPageImage && canDrawViewportImage) {
-        [self drawPageImage:page.viewportImage
-                pageSubrect:page.viewportImagePageRect
-                     inRect:pageRect
-                  dirtyRect:dirtyRect
-                       page:page
-              interpolation:NSImageInterpolationHigh];
+        spdf_mac_draw_page_image(page.viewportImage, page.viewportImagePageRect, pageRect, dirtyRect, page,
+                                 NSImageInterpolationHigh);
     }
 
     if (hasLiveZoomSeed && !drewLiveZoomSeed) {
-        [self drawPageImage:page.zoomSeedImage
-                pageSubrect:page.zoomSeedPageRect
-                     inRect:pageRect
-                  dirtyRect:dirtyRect
-                       page:page
-              interpolation:NSImageInterpolationHigh];
+        spdf_mac_draw_page_image(page.zoomSeedImage, page.zoomSeedPageRect, pageRect, dirtyRect, page,
+                                 NSImageInterpolationHigh);
     }
 
     if (page.highlights.count > 0 && self.zoom > 0) {
         [[NSColor colorWithCalibratedRed:1.0 green:0.84 blue:0.12 alpha:0.38] setFill];
         for (NSValue* value in page.highlights) {
-            NSRect r = [self convertPageRect:[value rectValue] toViewRectInPageRect:pageRect page:page];
+            NSRect r = spdf_mac_page_rect_to_view_rect([value rectValue], pageRect, page);
             [[NSBezierPath bezierPathWithRoundedRect:r xRadius:2.0 yRadius:2.0] fill];
         }
     }
 
     if (self.activeFindAlpha > 0 && page.pageIndex == self.activeFindPageIndex && self.zoom > 0) {
-        NSRect r = [self convertPageRect:self.activeFindRect toViewRectInPageRect:pageRect page:page];
+        NSRect r = spdf_mac_page_rect_to_view_rect(self.activeFindRect, pageRect, page);
         r = NSInsetRect(r, -2.0, -2.0);
         [[NSColor colorWithCalibratedRed:0.94 green:0.03 blue:0.02 alpha:self.activeFindAlpha] setStroke];
         NSBezierPath* path = [NSBezierPath bezierPathWithRect:r];
@@ -587,7 +475,7 @@ static NSColor* spdf_canvas_background_color(void) {
     if (page.selectionRects.count > 0 && self.zoom > 0) {
         [[NSColor colorWithCalibratedRed:0.40 green:0.62 blue:0.86 alpha:kSelectionOverlayAlpha] setFill];
         for (NSValue* value in page.selectionRects) {
-            NSRect r = [self convertPageRect:[value rectValue] toViewRectInPageRect:pageRect page:page];
+            NSRect r = spdf_mac_page_rect_to_view_rect([value rectValue], pageRect, page);
             NSRectFillUsingOperation(r, NSCompositingOperationSourceOver);
         }
     }
@@ -597,7 +485,7 @@ static NSColor* spdf_canvas_background_color(void) {
         [[NSColor colorWithCalibratedRed:1.0 green:0.76 blue:0.10 alpha:0.16] setFill];
         [[NSColor colorWithCalibratedRed:0.92 green:0.52 blue:0.0 alpha:0.95] setStroke];
         for (NSDictionary* comment in comments) {
-            NSRect r = [self convertPageRect:[comment[@"bounds"] rectValue] toViewRectInPageRect:pageRect page:page];
+            NSRect r = spdf_mac_page_rect_to_view_rect([comment[@"bounds"] rectValue], pageRect, page);
             r = NSInsetRect(r, -2.0, -2.0);
             NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r xRadius:3.0 yRadius:3.0];
             [path fill];
@@ -661,7 +549,7 @@ static NSColor* spdf_canvas_background_color(void) {
         if (NSMinY(pageRect) > point.y + 1.0) break;
         if (NSPointInRect(point, pageRect)) {
             if (pageIndex) *pageIndex = page.pageIndex;
-            if (pagePoint) *pagePoint = [self convertViewPoint:point toPagePointInPageRect:pageRect page:page];
+            if (pagePoint) *pagePoint = spdf_mac_view_point_to_page_point(point, pageRect, page);
             return YES;
         }
     }
@@ -825,7 +713,7 @@ static NSColor* spdf_canvas_background_color(void) {
     NSRect pageRect = [self rectForPageAtIndex:_selectionPageIndex];
     if (NSIsEmptyRect(pageRect)) return;
     SPDFRenderedPage* page = self.pages[(NSUInteger)_selectionPageIndex];
-    NSPoint pagePoint = [self convertViewPoint:point toPagePointInPageRect:pageRect page:page];
+    NSPoint pagePoint = spdf_mac_view_point_to_page_point(point, pageRect, page);
     BOOL selectionNonEmpty = [self.reader documentViewSelectionChangedOnPage:_selectionPageIndex
                                                                         from:_selectionStart
                                                                           to:pagePoint];
