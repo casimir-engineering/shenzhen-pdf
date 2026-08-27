@@ -32,3 +32,6 @@ CGFloat spdf_tab_strip_drop_indicator_center_x(NSInteger slot,
 // insertion indexes are clamped; degenerate inputs (empty strip, source out of
 // range) return sourceIndex so a bad slot never moves the tab.
 NSInteger spdf_tab_strip_same_window_move_index(NSInteger insertionIndex, NSInteger sourceIndex, NSInteger tabCount);
+
+// Expands a visible control rect to the strip's forgiving click target.
+NSRect spdf_tab_strip_control_interaction_rect(NSRect rect);

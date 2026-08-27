@@ -514,23 +514,14 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (BOOL)containsTabOrControlAtPoint:(NSPoint)point {
-    if (NSPointInRect(point, [self plusInteractionRect])) return YES;
+    if (NSPointInRect(point, spdf_tab_strip_control_interaction_rect([self plusRect]))) return YES;
     NSRect overflowRect = [self overflowRect];
-    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, [self overflowInteractionRect])) return YES;
+    if (NSPointInRect(point, spdf_tab_strip_control_interaction_rect(overflowRect))) return YES;
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
         if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, [self interactionRectForTabRect:tabRect])) return YES;
     }
     return NO;
-}
-
-- (NSRect)plusInteractionRect {
-    return NSInsetRect([self plusRect], -3.0, -4.0);
-}
-
-- (NSRect)overflowInteractionRect {
-    NSRect overflowRect = [self overflowRect];
-    return NSIsEmptyRect(overflowRect) ? NSZeroRect : NSInsetRect(overflowRect, -3.0, -4.0);
 }
 
 - (BOOL)isVisuallyReorderingTabs {
@@ -974,16 +965,14 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     _detachedTabDrag = NO;
     _mouseDownInsideTab = NO;
 
-    if (NSPointInRect(point, [self plusInteractionRect])) {
+    if (NSPointInRect(point, spdf_tab_strip_control_interaction_rect([self plusRect]))) {
         [self.reader newTabRequested:self];
         return;
     }
-
-    if (NSPointInRect(point, [self overflowInteractionRect])) {
+    if (NSPointInRect(point, spdf_tab_strip_control_interaction_rect([self overflowRect]))) {
         [self showOverflowMenuWithEvent:event];
         return;
     }
-
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
         if (NSIsEmptyRect(tabRect)) continue;
