@@ -23,17 +23,9 @@
  *     scroll_settle_timeout + evict_distant_page_surfaces;
  *   - current-page tracking: scroll_page_center_nearest binary search;
  *   - keys: the page/arrow branch of key_press_event;
- *   - selection: page_button_press/page_motion/page_button_release +
- *     update_text_selection, drawn as a translucent overlay in snapshot
- *     (decorate_page_surface's selection color) instead of re-rendering;
- *   - links + cursor regions: link_at_page_point/open_link_at_page_point +
- *     external_uri_scheme_allowed, with the Mac click-vs-drag model
- *     (SPDFMacCursorRegions.mm spdf_link_click_gesture_*, commit c61cc349f:
- *     a press that moves beyond the threshold or creates a selection never
- *     activates the link) and I-beam/hand cursor regions
- *     (spdf_cursor_region_at_point), built per page off the main thread
- *     including plain-text URLs (ShenzhenPDFMac.mm
- *     buildCursorRegionsForPageIfNeeded, detect_text_links=1);
+ *   - dynamic selection and deferred links: spdf_docview_selection;
+ *   - I-beam/hand cursor regions: spdf_cursor_region_at_point, built per page
+ *     off the main thread including plain-text URLs;
  *   - shift+arrow page flip preserving the in-page view:
  *     go_to_adjacent_page_preserving_view.
  */
@@ -42,6 +34,7 @@
 #include <string.h>
 
 #include "spdf_docview_internal.h"
+#include "spdf_docview_selection.h"
 #include "spdf_internal.h"
 #include "spdf_password.h"
 #include "spdf_search.h" /* declares this file's search-integration section */
@@ -53,7 +46,6 @@
 #define NEIGHBOR_RENDER_RADIUS 2
 #define TEXTURE_KEEP_RADIUS 10
 #define LINK_CLICK_DRAG_THRESHOLD 4.0
-#define SELECTION_RECT_MAX 256
 
 typedef struct {
     GdkTexture* full; /* whole-page texture (render scale may be byte-capped) */
@@ -117,22 +109,8 @@ struct _SpdfDocView {
     double pinch_begin_zoom;
     SpdfZoomAnchor anchor;
 
-    /* selection + click-vs-drag link gesture */
-    gboolean press_active;
-    double press_x;
-    double press_y;
-    gboolean dragged_beyond_threshold;
-    gboolean selection_created;
-    gboolean selecting;
-    int press_page;
-    double press_page_x;
-    double press_page_y;
-    int selection_page;
-    double selection_start_x;
-    double selection_start_y;
-    spdf_rect selection_rects[SELECTION_RECT_MAX];
-    int selection_rect_count;
-    char* selected_text;
+    /* dynamic selection + GTK multi-click/deferred-link arbitration */
+    SpdfDocViewSelection selection;
 
     /* middle-button pan */
     gboolean panning;
@@ -623,49 +601,7 @@ static void view_page_point_for_page(SpdfDocView* view, int page, double widget_
 /* Selection. */
 
 static gboolean view_has_selection(SpdfDocView* view) {
-    return view->selected_text && view->selected_text[0] != '\0' && view->selection_page >= 0 &&
-           view->selection_rect_count > 0;
-}
-
-static gboolean view_clear_selection(SpdfDocView* view) {
-    gboolean had = view->selected_text != NULL || view->selection_rect_count > 0 || view->selection_page >= 0;
-    g_free(view->selected_text);
-    view->selected_text = NULL;
-    view->selection_page = -1;
-    view->selection_rect_count = 0;
-    view->selecting = FALSE;
-    return had;
-}
-
-/* Port of update_text_selection, minus the re-render: the selection is a
- * snapshot overlay, so updating it just queues a redraw. */
-static void view_update_selection(SpdfDocView* view, double end_x, double end_y) {
-    char err[1024];
-    spdf_rect rects[SELECTION_RECT_MAX];
-    char* text = NULL;
-    int count;
-    char* previous = view->selected_text;
-    gboolean changed;
-
-    if (!view_doc(view) || view->selection_page < 0) return;
-    count = spdf_select_page_text(view_doc(view), view->selection_page, (float)view->selection_start_x,
-                                  (float)view->selection_start_y, (float)end_x, (float)end_y, rects, SELECTION_RECT_MAX,
-                                  &text, err, sizeof(err));
-    view->selected_text = NULL;
-    view->selection_rect_count = 0;
-    if (count > 0 && text && text[0] != '\0') {
-        view->selection_rect_count = MIN(count, SELECTION_RECT_MAX);
-        memcpy(view->selection_rects, rects, (gsize)view->selection_rect_count * sizeof(spdf_rect));
-        view->selected_text = g_strdup(text);
-        view->selection_created = TRUE;
-    }
-    if (text) spdf_free_string(text);
-    changed = g_strcmp0(previous, view->selected_text) != 0;
-    g_free(previous);
-    if (changed) {
-        g_signal_emit(view, signals[SIG_SELECTION_CHANGED], 0);
-        gtk_widget_queue_draw(GTK_WIDGET(view));
-    }
+    return spdf_docview_selection_has_text(&view->selection);
 }
 
 /* --------------------------------------------------------------------------- */
@@ -735,6 +671,10 @@ static gboolean view_open_link_at(SpdfDocView* view, int page, double page_x, do
     }
     spdf_free_link_target(&target);
     return FALSE;
+}
+
+static gboolean view_activate_delayed_link(gpointer user_data, int page, double page_x, double page_y) {
+    return view_open_link_at(SPDF_DOC_VIEW(user_data), page, page_x, page_y);
 }
 
 /* Cursor-region cache, per page, built off the main thread. Port of
@@ -965,64 +905,65 @@ static void on_pinch_scale_changed(GtkGestureZoom* gesture, double scale, gpoint
     view_apply_zoom(view, view->pinch_begin_zoom * scale, ANCHOR_REUSE, 0.0, 0.0);
 }
 
-static void on_drag_begin(GtkGestureDrag* gesture, double x, double y, gpointer user_data) {
+static void view_selection_changed(SpdfDocView* view) {
+    g_signal_emit(view, signals[SIG_SELECTION_CHANGED], 0);
+    gtk_widget_queue_draw(GTK_WIDGET(view));
+}
+
+static void on_click_pressed(GtkGestureClick* gesture, int press_count, double x, double y, gpointer user_data) {
     SpdfDocView* view = SPDF_DOC_VIEW(user_data);
     (void)gesture;
+    int page = -1;
+    double page_x = 0.0;
+    double page_y = 0.0;
 
     gtk_widget_grab_focus(GTK_WIDGET(view));
-    if (!view_doc(view)) return;
-    view->press_active = TRUE;
-    view->press_x = x;
-    view->press_y = y;
-    view->dragged_beyond_threshold = FALSE;
-    view->selection_created = FALSE;
-    if (view_clear_selection(view)) {
-        g_signal_emit(view, signals[SIG_SELECTION_CHANGED], 0);
-        gtk_widget_queue_draw(GTK_WIDGET(view));
-    }
-    if (view_page_point_at(view, x, y, &view->press_page, &view->press_page_x, &view->press_page_y)) {
-        view->selecting = TRUE;
-        view->selection_page = view->press_page;
-        view->selection_start_x = view->press_page_x;
-        view->selection_start_y = view->press_page_y;
-    } else {
-        view->press_page = -1;
-        view->selecting = FALSE;
-    }
+    if (view_doc(view)) view_page_point_at(view, x, y, &page, &page_x, &page_y);
+    if (spdf_docview_selection_press(&view->selection, view_doc(view), page, x, y, page_x, page_y,
+                                     (unsigned)MAX(1, press_count)))
+        view_selection_changed(view);
+}
+
+static void on_click_released(GtkGestureClick* gesture, int press_count, double x, double y, gpointer user_data) {
+    SpdfDocView* view = SPDF_DOC_VIEW(user_data);
+    int delay = 250;
+    (void)gesture;
+    (void)press_count;
+    (void)x;
+    (void)y;
+
+    if (!view->selection.active) return;
+    g_object_get(gtk_widget_get_settings(GTK_WIDGET(view)), "gtk-double-click-time", &delay, NULL);
+    spdf_docview_selection_release(&view->selection, (guint)CLAMP(delay, 1, 2000), view_activate_delayed_link, view);
+}
+
+static void on_selection_cancel(GtkGesture* gesture, GdkEventSequence* sequence, gpointer user_data) {
+    (void)gesture;
+    (void)sequence;
+    spdf_docview_selection_cancel(&SPDF_DOC_VIEW(user_data)->selection);
+}
+
+static void on_click_stopped(GtkGestureClick* gesture, gpointer user_data) {
+    (void)gesture;
+    spdf_docview_selection_click_stopped(&SPDF_DOC_VIEW(user_data)->selection);
 }
 
 static void on_drag_update(GtkGestureDrag* gesture, double offset_x, double offset_y, gpointer user_data) {
     SpdfDocView* view = SPDF_DOC_VIEW(user_data);
     (void)gesture;
 
-    if (!view->press_active) return;
-    /* Mac click-vs-drag model: >threshold movement means this press can never
-     * activate a link on release (spdf_link_click_gesture_drag). */
-    if (hypot(offset_x, offset_y) > LINK_CLICK_DRAG_THRESHOLD) view->dragged_beyond_threshold = TRUE;
-    if (view->selecting && view->dragged_beyond_threshold && view->selection_page >= 0) {
+    if (view->selection.active && view->selection.page >= 0) {
         double page_x;
         double page_y;
-        view_page_point_for_page(view, view->selection_page, view->press_x + offset_x, view->press_y + offset_y,
-                                 &page_x, &page_y);
-        view_update_selection(view, page_x, page_y);
-        gtk_widget_set_cursor_from_name(GTK_WIDGET(view), "text");
+        double widget_x = view->selection.start_widget_x + offset_x;
+        double widget_y = view->selection.start_widget_y + offset_y;
+        view_page_point_for_page(view, view->selection.page, widget_x, widget_y, &page_x, &page_y);
+        if (spdf_docview_selection_drag(&view->selection, view_doc(view), widget_x, widget_y, page_x, page_y,
+                                        LINK_CLICK_DRAG_THRESHOLD))
+            view_selection_changed(view);
+        if (spdf_docview_selection_is_dragging(&view->selection))
+            gtk_widget_set_cursor_from_name(GTK_WIDGET(view), "text");
     }
-}
-
-static void on_drag_end(GtkGestureDrag* gesture, double offset_x, double offset_y, gpointer user_data) {
-    SpdfDocView* view = SPDF_DOC_VIEW(user_data);
-    (void)gesture;
-    (void)offset_x;
-    (void)offset_y;
-
-    if (!view->press_active) return;
-    view->press_active = FALSE;
-    /* Only a press-and-release that never became a drag or a selection opens
-     * a link (spdf_link_click_gesture_activates_on_release). */
-    if (!view->dragged_beyond_threshold && !view->selection_created && view->press_page >= 0)
-        view_open_link_at(view, view->press_page, view->press_page_x, view->press_page_y);
-    view->selecting = FALSE;
-    if (!view_has_selection(view) && view_clear_selection(view)) gtk_widget_queue_draw(GTK_WIDGET(view));
 }
 
 static void on_pan_begin(GtkGestureDrag* gesture, double x, double y, gpointer user_data) {
@@ -1065,8 +1006,7 @@ static void view_refresh_cursor_at_pointer(SpdfDocView* view) {
     const char* cursor = NULL;
 
     if (!view->pointer_valid || view->panning) return;
-    if (view->selecting && (view->dragged_beyond_threshold || view->selection_created))
-        return; /* I-beam until release */
+    if (spdf_docview_selection_is_dragging(&view->selection)) return; /* I-beam until release */
     if (view_doc(view) && view_page_point_at(view, view->pointer_x, view->pointer_y, &page, &page_x, &page_y))
         cursor = view_cursor_name_at(view, page, page_x, page_y);
     gtk_widget_set_cursor_from_name(GTK_WIDGET(view), cursor);
@@ -1290,9 +1230,9 @@ static void spdf_doc_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot) {
             }
             snapshot_page_border(snapshot, &bounds, &border);
 
-            if (p == view->selection_page && view->selection_rect_count > 0) {
-                for (int i = 0; i < view->selection_rect_count; ++i) {
-                    const spdf_rect* r = &view->selection_rects[i];
+            if (p == view->selection.page && view->selection.result.rect_count > 0) {
+                for (size_t i = 0; i < view->selection.result.rect_count; ++i) {
+                    const spdf_rect* r = &view->selection.result.rects[i];
                     graphene_rect_t sel = GRAPHENE_RECT_INIT(
                         (float)(rect->x + r->x0 * view->zoom), (float)(rect->y + r->y0 * view->zoom),
                         (float)((r->x1 - r->x0) * view->zoom), (float)((r->y1 - r->y0) * view->zoom));
@@ -1456,8 +1396,7 @@ static void spdf_doc_view_dispose(GObject* object) {
         g_array_free(view->comment_markers, TRUE);
         view->comment_markers = NULL;
     }
-    g_free(view->selected_text);
-    view->selected_text = NULL;
+    spdf_docview_selection_reset(&view->selection);
     /* search-module overlay copies */
     g_clear_pointer(&view->search_pages, g_free);
     g_clear_pointer(&view->search_rects, g_free);
@@ -1504,13 +1443,14 @@ static void spdf_doc_view_init(SpdfDocView* view) {
     GtkEventController* motion;
     GtkEventController* key;
     GtkGesture* pinch;
+    GtkGesture* click;
     GtkGesture* drag;
     GtkGesture* pan;
 
     view->zoom = 1.0;
     view->fit = SPDF_FIT_CUSTOM;
     view->current_page = 0;
-    view->selection_page = -1;
+    spdf_docview_selection_init(&view->selection);
     view->search_current = -1;
     view->pending_ctxs = g_ptr_array_new();
     view->region_cache = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, region_entry_free);
@@ -1536,12 +1476,20 @@ static void spdf_doc_view_init(SpdfDocView* view) {
     g_signal_connect(pinch, "scale-changed", G_CALLBACK(on_pinch_scale_changed), view);
     gtk_widget_add_controller(GTK_WIDGET(view), GTK_EVENT_CONTROLLER(pinch));
 
+    click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(click, "pressed", G_CALLBACK(on_click_pressed), view);
+    g_signal_connect(click, "released", G_CALLBACK(on_click_released), view);
+    g_signal_connect(click, "stopped", G_CALLBACK(on_click_stopped), view);
+    g_signal_connect(click, "cancel", G_CALLBACK(on_selection_cancel), view);
+    gtk_widget_add_controller(GTK_WIDGET(view), GTK_EVENT_CONTROLLER(click));
+
     drag = gtk_gesture_drag_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), GDK_BUTTON_PRIMARY);
-    g_signal_connect(drag, "drag-begin", G_CALLBACK(on_drag_begin), view);
     g_signal_connect(drag, "drag-update", G_CALLBACK(on_drag_update), view);
-    g_signal_connect(drag, "drag-end", G_CALLBACK(on_drag_end), view);
+    g_signal_connect(drag, "cancel", G_CALLBACK(on_selection_cancel), view);
     gtk_widget_add_controller(GTK_WIDGET(view), GTK_EVENT_CONTROLLER(drag));
+    gtk_gesture_group(click, drag);
 
     pan = gtk_gesture_drag_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(pan), GDK_BUTTON_MIDDLE);
@@ -1678,8 +1626,7 @@ void spdf_doc_view_set_scroll(SpdfDocView* view, double x, double y) {
  * decision (Copy handler, per the collapse_whitespace_on_copy setting). */
 char* spdf_doc_view_copy_selection(SpdfDocView* view) {
     g_return_val_if_fail(SPDF_IS_DOC_VIEW(view), NULL);
-    if (!view_has_selection(view)) return NULL;
-    return g_strdup(view->selected_text);
+    return spdf_docview_selection_copy_text(&view->selection);
 }
 
 /* Contract addition (returned to the integrator): kick the first page render
@@ -1761,6 +1708,7 @@ void spdf_doc_view_scroll_to_match(SpdfDocView* view, int page, const spdf_rect*
  * service still delivers each done callback exactly once, which frees them. */
 void spdf_doc_view_document_changed(SpdfDocView* view) {
     int restore_page;
+    gboolean selection_changed;
 
     g_return_if_fail(SPDF_IS_DOC_VIEW(view));
     restore_page = view->current_page;
@@ -1785,7 +1733,9 @@ void spdf_doc_view_document_changed(SpdfDocView* view) {
     view->page_count = 0;
     spdf_layout_clear(&view->layout);
 
-    if (view_clear_selection(view)) g_signal_emit(view, signals[SIG_SELECTION_CHANGED], 0);
+    selection_changed = view_has_selection(view);
+    spdf_docview_selection_reset(&view->selection);
+    if (selection_changed) g_signal_emit(view, signals[SIG_SELECTION_CHANGED], 0);
     view_invalidate_cursor_regions(view); /* rotation/save/OCR moved every rect */
     if (view->comment_markers) g_array_set_size(view->comment_markers, 0);
     view->anchor.valid = FALSE;
@@ -1830,14 +1780,8 @@ gboolean spdf_doc_view_widget_point_to_page(SpdfDocView* view, double widget_x, 
 }
 
 int spdf_doc_view_get_selection_rects(SpdfDocView* view, int* page, spdf_rect* rects, int rect_max) {
-    int count;
-
     g_return_val_if_fail(SPDF_IS_DOC_VIEW(view), 0);
-    if (!view_has_selection(view)) return 0;
-    count = MIN(view->selection_rect_count, MAX(0, rect_max));
-    if (rects && count > 0) memcpy(rects, view->selection_rects, (gsize)count * sizeof(spdf_rect));
-    if (page) *page = view->selection_page;
-    return count;
+    return spdf_docview_selection_copy_rects(&view->selection, page, rects, rect_max);
 }
 
 void spdf_doc_view_set_comment_markers(SpdfDocView* view, const SpdfCommentMarker* markers, int count) {

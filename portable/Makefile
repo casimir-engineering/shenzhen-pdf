@@ -342,7 +342,7 @@ install: mac-app
 LINUX_GTK4_SRCS := $(sort $(wildcard linux/gtk4/*.c))
 
 linux-gtk4: mupdf-libs | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
+	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" "$(CORE_SELECTION_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
 
 linux-gtk4-tests: | $(BUILD)
 	@set -e; for t in $(sort $(wildcard linux/gtk4/tests/*_test.c)); do \
