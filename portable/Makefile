@@ -189,6 +189,7 @@ print-release-config:
 
 mac-markdown-tests:
 	mac/tests/markdown/run-tests.sh
+	mac/tests/run-markdown-integration-tests.sh
 
 linux-password-tests:
 	linux/gtk4/tests/password_source_test.sh

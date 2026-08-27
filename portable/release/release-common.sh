@@ -70,17 +70,18 @@ spdf_ensure_local_tag() {
   fi
 }
 
-spdf_verify_published_asset() {
+spdf_verify_release_asset() {
   local repository="$1"
   local tag="$2"
   local dmg="$3"
   local expected_name="$4"
+  local expected_draft="$5"
   local tmp remote_dmg expected_hash actual_hash metadata
 
   metadata="$(gh api "repos/$repository/releases/tags/$tag" \
     --jq '[.tag_name, .draft, .prerelease, ([.assets[] | select(.name == "'"$expected_name"'")] | length)] | @tsv')"
-  [[ "$metadata" == "$tag"$'\t'"false"$'\t'"false"$'\t'"1" ]] || \
-    spdf_release_fail "GitHub release $tag is not a public final release with exactly one $expected_name asset" || return 1
+  [[ "$metadata" == "$tag"$'\t'"$expected_draft"$'\t'"false"$'\t'"1" ]] || \
+    spdf_release_fail "GitHub release $tag is not in the expected draft=$expected_draft, prerelease=false state with exactly one $expected_name asset" || return 1
 
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/spdf-release-asset.XXXXXX")"
   remote_dmg="$tmp/$expected_name"
@@ -97,7 +98,15 @@ spdf_verify_published_asset() {
   actual_hash="$(shasum -a 256 "$remote_dmg" | awk '{print $1}')"
   rm -rf "$tmp"
   [[ "$actual_hash" == "$expected_hash" ]] || \
-    spdf_release_fail "Published $expected_name hash $actual_hash != local release hash $expected_hash"
+    spdf_release_fail "GitHub $expected_name hash $actual_hash != local release hash $expected_hash"
+}
+
+spdf_verify_draft_asset() {
+  spdf_verify_release_asset "$1" "$2" "$3" "$4" true
+}
+
+spdf_verify_published_asset() {
+  spdf_verify_release_asset "$1" "$2" "$3" "$4" false
 }
 
 spdf_publish_github_release() {
@@ -118,13 +127,29 @@ spdf_publish_github_release() {
       spdf_release_fail "GitHub returned an invalid draft state for $tag" || return 1
     [[ "$existing_prerelease" == "true" || "$existing_prerelease" == "false" ]] || \
       spdf_release_fail "GitHub returned an invalid prerelease state for $tag" || return 1
+    [[ "$existing_prerelease" == "false" ]] || \
+      spdf_release_fail "GitHub release $tag is unexpectedly a prerelease" || return 1
+
+    if [[ "$existing_draft" == "false" ]]; then
+      # Public releases are immutable here. An exact prior publication is an
+      # idempotent success; mismatched bytes fail before any replacement work.
+      spdf_verify_published_asset "$repository" "$tag" "$dmg" "$SPDF_RELEASE_ASSET_NAME"
+      return
+    fi
+
+    # Refresh recoverable draft metadata while explicitly retaining draft state.
     gh release edit "$tag" -R "$repository" --title "$tag" --notes-file "$notes" \
-      --draft=false --prerelease=false --latest
-    gh release upload "$tag" -R "$repository" "$dmg" --clobber
+      --draft=true --prerelease=false
   else
     gh release create "$tag" -R "$repository" --title "$tag" --notes-file "$notes" \
-      --draft=false --prerelease=false --latest "$dmg"
+      --draft --prerelease=false
   fi
+
+  gh release upload "$tag" -R "$repository" "$dmg" --clobber
+  spdf_verify_draft_asset "$repository" "$tag" "$dmg" "$SPDF_RELEASE_ASSET_NAME" || return 1
+
+  gh release edit "$tag" -R "$repository" --title "$tag" --notes-file "$notes" \
+    --draft=false --prerelease=false --latest
   spdf_verify_published_asset "$repository" "$tag" "$dmg" "$SPDF_RELEASE_ASSET_NAME"
 }
 

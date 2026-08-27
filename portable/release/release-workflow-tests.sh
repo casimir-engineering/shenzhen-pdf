@@ -52,8 +52,8 @@ expect_rejected() {
 assert_before() {
   local label="$1" file="$2" first="$3" second="$4"
   local first_line second_line
-  first_line="$(grep -nF "$first" "$file" | head -1 | cut -d: -f1)"
-  second_line="$(grep -nF "$second" "$file" | head -1 | cut -d: -f1)"
+  first_line="$(grep -nF -- "$first" "$file" | head -1 | cut -d: -f1)"
+  second_line="$(grep -nF -- "$second" "$file" | head -1 | cut -d: -f1)"
   if [[ -n "$first_line" && -n "$second_line" && "$first_line" -lt "$second_line" ]]; then
     pass "$label"
   else
@@ -90,6 +90,13 @@ for target in mac-markdown-tests linux-password-tests file-size-ratchet-tests \
   mac-selection-click-tests mac-selection-adapter-tests; do
   if grep -qxF "$target" <<<"$targets"; then pass "release discovery includes $target"; else fail "release discovery includes $target"; fi
 done
+markdown_gate="$(sed -n '/^mac-markdown-tests:/,/^[^[:space:]].*:/p' "$portable_dir/Makefile")"
+if grep -qF 'mac/tests/markdown/run-tests.sh' <<<"$markdown_gate" && \
+   grep -qF 'mac/tests/run-markdown-integration-tests.sh' <<<"$markdown_gate"; then
+  pass "mac-markdown-tests runs foundation and native integration suites"
+else
+  fail "mac-markdown-tests runs foundation and native integration suites"
+fi
 
 expect_pass "release command help is side-effect free" "$portable_dir/cut-release.sh" --help
 expect_rejected "release mode must be explicit" "$portable_dir/cut-release.sh"
@@ -146,6 +153,7 @@ read_release_state() {
 apply_visibility_flags() {
   for arg in "$@"; do
     case "$arg" in
+      --draft) state_draft=true ;;
       --draft=true) state_draft=true ;;
       --draft=false) state_draft=false ;;
       --prerelease=true) state_prerelease=true ;;
@@ -169,11 +177,18 @@ elif [[ "$1 $2" == "release edit" ]]; then
   apply_visibility_flags "$@"
   printf '%s\t%s\t%s\n' "$state_tag" "$state_draft" "$state_prerelease" >"$FAKE_RELEASE_STATE"
 elif [[ "$1 $2" == "release upload" ]]; then
+  [[ "${FAKE_GH_FAIL_UPLOAD:-0}" != "1" ]] || exit 42
   for arg in "$@"; do [[ "$arg" == *.dmg ]] && cp "$arg" "$FAKE_REMOTE_ASSET"; done
+  if [[ "${FAKE_GH_TAMPER_UPLOAD:-0}" == "1" ]]; then
+    printf 'tampered upload bytes\n' >"$FAKE_REMOTE_ASSET"
+  fi
 elif [[ "$1" == api ]]; then
   read_release_state
-  printf '%s\t%s\t%s\t1\n' "$state_tag" "$state_draft" "$state_prerelease"
+  asset_count=0
+  [[ -f "$FAKE_REMOTE_ASSET" ]] && asset_count=1
+  printf '%s\t%s\t%s\t%s\n' "$state_tag" "$state_draft" "$state_prerelease" "$asset_count"
 elif [[ "$1 $2" == "release download" ]]; then
+  [[ -f "$FAKE_REMOTE_ASSET" ]] || exit 43
   directory=""
   while (($#)); do
     if [[ "$1" == --dir ]]; then directory="$2"; shift 2; else shift; fi
@@ -205,35 +220,78 @@ verify_mock() {
 }
 
 expect_pass "first GitHub publication creates and verifies the exact asset" publish_mock
-expect_pass "rerun edits, replaces, and re-verifies the exact asset" publish_mock
 expect_equal "new release is explicitly public and final" "$(cat "$FAKE_RELEASE_STATE")" \
   "$FAKE_TAG"$'\t'"false"$'\t'"false"
+assert_before "new release is created as a draft before upload" "$FAKE_GH_LOG" \
+  "release create $FAKE_TAG" "release upload $FAKE_TAG"
+assert_before "draft upload is downloaded before promotion" "$FAKE_GH_LOG" \
+  "release download $FAKE_TAG" "release edit $FAKE_TAG"
+expect_equal "new release create is explicitly draft" \
+  "$(grep -c '^release create .*--draft ' "$FAKE_GH_LOG" || true)" "1"
+expect_equal "draft and public bytes are both verified" \
+  "$(grep -c '^release download ' "$FAKE_GH_LOG" || true)" "2"
+expect_equal "promotion happens only after draft verification" \
+  "$(grep -c '^release edit .*--draft=false --prerelease=false --latest' "$FAKE_GH_LOG" || true)" "1"
 
-printf '%s\ttrue\tfalse\n' "$FAKE_TAG" >"$FAKE_RELEASE_STATE"
-expect_rejected "verification rejects a draft release" verify_mock
-expect_pass "publication rerun recovers a draft release" publish_mock
-expect_equal "draft rerun becomes public" "$(cat "$FAKE_RELEASE_STATE")" \
-  "$FAKE_TAG"$'\t'"false"$'\t'"false"
+printf '' >"$FAKE_GH_LOG"
+expect_pass "exact public publication rerun is idempotent" publish_mock
+expect_equal "public rerun performs no release mutation" \
+  "$(grep -Ec '^release (create|edit|upload) ' "$FAKE_GH_LOG" || true)" "0"
+
+printf 'tampered public bytes\n' >"$FAKE_REMOTE_ASSET"
+printf '' >"$FAKE_GH_LOG"
+expect_rejected "mismatched public asset fails closed" publish_mock
+expect_equal "public mismatch performs no release mutation" \
+  "$(grep -Ec '^release (create|edit|upload) ' "$FAKE_GH_LOG" || true)" "0"
 
 printf '%s\tfalse\ttrue\n' "$FAKE_TAG" >"$FAKE_RELEASE_STATE"
-expect_rejected "verification rejects a prerelease" verify_mock
-expect_pass "publication rerun recovers a prerelease" publish_mock
-expect_equal "prerelease rerun becomes final" "$(cat "$FAKE_RELEASE_STATE")" \
+printf '' >"$FAKE_GH_LOG"
+expect_rejected "public prerelease fails closed" publish_mock
+expect_equal "public prerelease performs no release mutation" \
+  "$(grep -Ec '^release (create|edit|upload) ' "$FAKE_GH_LOG" || true)" "0"
+
+printf '%s\ttrue\tfalse\n' "$FAKE_TAG" >"$FAKE_RELEASE_STATE"
+printf 'stale draft bytes\n' >"$FAKE_REMOTE_ASSET"
+printf '' >"$FAKE_GH_LOG"
+expect_rejected "verification rejects a draft release" verify_mock
+expect_pass "publication rerun recovers and verifies an existing draft" publish_mock
+expect_equal "recovered draft becomes public" "$(cat "$FAKE_RELEASE_STATE")" \
   "$FAKE_TAG"$'\t'"false"$'\t'"false"
+assert_before "existing draft stays draft while its asset is replaced" "$FAKE_GH_LOG" \
+  "release edit $FAKE_TAG" "release upload $FAKE_TAG"
+assert_before "recovered draft bytes are downloaded before promotion" "$FAKE_GH_LOG" \
+  "release download $FAKE_TAG" "--draft=false --prerelease=false --latest"
+expect_equal "existing draft metadata retains draft state" \
+  "$(grep -c '^release edit .*--draft=true --prerelease=false' "$FAKE_GH_LOG" || true)" "1"
+
+printf '%s\ttrue\ttrue\n' "$FAKE_TAG" >"$FAKE_RELEASE_STATE"
+printf '' >"$FAKE_GH_LOG"
+expect_rejected "draft prerelease fails closed" publish_mock
+expect_equal "draft prerelease performs no release mutation" \
+  "$(grep -Ec '^release (create|edit|upload) ' "$FAKE_GH_LOG" || true)" "0"
+
+rm -f "$FAKE_RELEASE_STATE" "$FAKE_REMOTE_ASSET"
+printf '' >"$FAKE_GH_LOG"
+export FAKE_GH_FAIL_UPLOAD=1
+expect_rejected "upload failure leaves the new release as a draft" publish_mock
+unset FAKE_GH_FAIL_UPLOAD
+expect_equal "upload failure retains draft state" "$(cat "$FAKE_RELEASE_STATE")" \
+  "$FAKE_TAG"$'\t'"true"$'\t'"false"
+expect_equal "upload failure never promotes" \
+  "$(grep -c '^release edit .*--draft=false' "$FAKE_GH_LOG" || true)" "0"
+
+printf '%s\ttrue\tfalse\n' "$FAKE_TAG" >"$FAKE_RELEASE_STATE"
+printf '' >"$FAKE_GH_LOG"
+export FAKE_GH_TAMPER_UPLOAD=1
+expect_rejected "draft byte-verification failure leaves the release as a draft" publish_mock
+unset FAKE_GH_TAMPER_UPLOAD
+expect_equal "verification failure retains draft state" "$(cat "$FAKE_RELEASE_STATE")" \
+  "$FAKE_TAG"$'\t'"true"$'\t'"false"
+expect_equal "verification failure never promotes" \
+  "$(grep -c '^release edit .*--draft=false' "$FAKE_GH_LOG" || true)" "0"
 
 printf '%s\tunknown\tfalse\n' "$FAKE_TAG" >"$FAKE_RELEASE_STATE"
 expect_rejected "invalid GitHub visibility state fails closed" publish_mock
-printf '%s\tfalse\tfalse\n' "$FAKE_TAG" >"$FAKE_RELEASE_STATE"
-
-expect_equal "publication create occurs once" "$(grep -c '^release create ' "$FAKE_GH_LOG")" "1"
-expect_equal "publication reruns use edit" "$(grep -c '^release edit ' "$FAKE_GH_LOG")" "3"
-expect_equal "every edit forces public final visibility" \
-  "$(grep -c '^release edit .*--draft=false --prerelease=false' "$FAKE_GH_LOG")" "3"
-expect_equal "create forces public final visibility" \
-  "$(grep -c '^release create .*--draft=false --prerelease=false' "$FAKE_GH_LOG")" "1"
-expect_equal "publication reruns replace the asset" "$(grep -c '^release upload ' "$FAKE_GH_LOG")" "3"
-printf 'tampered bytes\n' >"$FAKE_REMOTE_ASSET"
-expect_rejected "published asset hash mismatch fails closed" verify_mock
 
 verifier="$script_dir/verify-mac-artifact.sh"
 # The literal snippets are source-order assertions, not shell expressions.
