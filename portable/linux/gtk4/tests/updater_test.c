@@ -7,6 +7,7 @@
 // update.json store round-trip.
 #define SPDF_UPDATER_TESTING 1
 
+#include "../spdf_update_version.c"
 #include "../spdf_updater.c"
 
 // Fixture files live next to this test; the Makefile runs test binaries from
@@ -56,11 +57,11 @@ static void test_version_compare(void) {
 
     // Relaunch health is stricter: the complete YY.M.DD-BUILD identity must
     // match before update_ok is written or the rollback binary is deleted.
-    g_assert_true(updater_versions_match_release_target("26.7.17-2", "26.7.17-2"));
-    g_assert_false(updater_versions_match_release_target("26.7.17-2", "26.7.17-1"));
-    g_assert_false(updater_versions_match_release_target("26.7.17-2", "26.7.17"));
-    g_assert_false(updater_versions_match_release_target("26.7.17-2", "26.7.18-2"));
-    g_assert_false(updater_versions_match_release_target("junk", "26.7.17-2"));
+    g_assert_true(spdf_update_versions_match_release_target("26.7.17-2", "26.7.17-2"));
+    g_assert_false(spdf_update_versions_match_release_target("26.7.17-2", "26.7.17-1"));
+    g_assert_false(spdf_update_versions_match_release_target("26.7.17-2", "26.7.17"));
+    g_assert_false(spdf_update_versions_match_release_target("26.7.17-2", "26.7.18-2"));
+    g_assert_false(spdf_update_versions_match_release_target("junk", "26.7.17-2"));
 }
 
 // 6. Downgrade feed: tag < highestVersionSeen -> no update even when
