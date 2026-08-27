@@ -86,7 +86,7 @@ expect_rejected "release-dmg rejects an unguarded direct invocation" \
   make -s --no-print-directory -C "$portable_dir" release-dmg SPDF_RELEASE_MODE=0
 
 targets="$(spdf_discover_test_targets "$portable_dir/Makefile")"
-for target in mac-markdown-tests linux-password-tests file-size-ratchet-tests \
+for target in icon-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests \
   mac-selection-click-tests mac-selection-adapter-tests; do
   if grep -qxF "$target" <<<"$targets"; then pass "release discovery includes $target"; else fail "release discovery includes $target"; fi
 done
