@@ -26,7 +26,7 @@ macOS uses AppKit:
 - `NSApplication`, `NSWindow`, `NSView`, native menus, sheets, and panels;
 - AppKit event handling for trackpad, mouse, keyboard, tab dragging, and
   presentation mode;
-- Apple-style app bundle, Info.plist, signing, DMG, and TestFlight packaging.
+- Apple-style app bundle, Info.plist, Developer ID signing, notarization, and DMG packaging.
 
 Linux uses GTK:
 

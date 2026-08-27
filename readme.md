@@ -59,7 +59,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 ## Files, printing & updates
 
-- **Verified daily auto-updater** — A once-a-day background check against GitHub Releases (off the launch path, disabled in the App Store build). Every update is verified offline against a pinned Apple Developer ID (Team 66LJ4BV7Q3), hardened runtime, bundle id, and stapled notarization before an atomic swap — with automatic rollback if the new build fails to launch.
+- **Verified daily auto-updater** — A once-a-day background check against GitHub Releases, kept off the launch path. Every update is verified offline against a pinned Apple Developer ID (Team 66LJ4BV7Q3), hardened runtime, bundle id, and stapled notarization before an atomic swap. An installation failure restores the working app immediately; a mismatched relaunch keeps and reveals the previous `.old` app for manual recovery.
 - **High-quality native printing** — Prints through the standard macOS pipeline with Fit / Actual Size / Custom scaling
 - **One-click default reader & readable JSON state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as pretty-printed JSON you can read, diff, and edit. <sub>macOS · Linux</sub>
 
@@ -92,7 +92,7 @@ dist/ShenzhenPDF-mac-arm64.dmg
 /Applications/ShenzhenPDF.app
 ```
 
-Local development builds are ad-hoc signed. Public downloads must be Developer ID signed and notarized. TestFlight builds use the App Store signing path.
+Local development builds are ad-hoc signed. Public GitHub downloads must be Developer ID signed, notarized, stapled, and verified from the mounted DMG payload.
 
 ### Linux
 
@@ -163,7 +163,7 @@ recent.json
 - `src/`: Windows C++/Win32 application code.
 - `mupdf/`: MuPDF dependency.
 - `ext/`: third-party dependencies.
-- `portable/docs/`: release, TestFlight, and portability notes.
+- `portable/docs/`: release, updater, and portability notes.
 
 </details>
 

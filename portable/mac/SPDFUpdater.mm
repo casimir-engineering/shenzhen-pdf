@@ -1,4 +1,5 @@
 #import "SPDFUpdater.h"
+#import "SPDFUpdaterRelease.h"
 
 #import <AppKit/AppKit.h>
 #import <Security/Security.h>
@@ -60,40 +61,6 @@ BOOL spdf_is_sandboxed(void) {
       CFRelease(self);
     });
     return sandboxed;
-}
-
-// ---------------------------------------------------------------------------
-// Version comparison (pure)
-// ---------------------------------------------------------------------------
-
-static NSArray<NSNumber*>* spdf_version_components(NSString* version) {
-    if (![version isKindOfClass:NSString.class] || version.length == 0) return nil;
-    NSCharacterSet* seps = [NSCharacterSet characterSetWithCharactersInString:@". -"];
-    NSArray<NSString*>* parts = [version componentsSeparatedByCharactersInSet:seps];
-    NSMutableArray<NSNumber*>* out = [NSMutableArray array];
-    for (NSString* part in parts) {
-        if (part.length == 0) continue;  // tolerate "v1..2" style noise
-        NSScanner* scanner = [NSScanner scannerWithString:part];
-        long long value = 0;
-        if (![scanner scanLongLong:&value] || !scanner.atEnd) return nil;  // non-numeric field => malformed
-        [out addObject:@(value)];
-    }
-    return out.count ? out : nil;
-}
-
-NSComparisonResult spdf_compare_versions(NSString* a, NSString* b) {
-    NSArray<NSNumber*>* ca = spdf_version_components(a);
-    NSArray<NSNumber*>* cb = spdf_version_components(b);
-    // Malformed input on either side => no ordering decision (treated as same).
-    if (!ca || !cb) return NSOrderedSame;
-    NSUInteger n = MAX(ca.count, cb.count);
-    for (NSUInteger i = 0; i < n; ++i) {
-        long long va = i < ca.count ? ca[i].longLongValue : 0;
-        long long vb = i < cb.count ? cb[i].longLongValue : 0;
-        if (va < vb) return NSOrderedAscending;
-        if (va > vb) return NSOrderedDescending;
-    }
-    return NSOrderedSame;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,10 +185,13 @@ BOOL spdf_verify_signed_bundle(NSURL* url, BOOL isApp, NSError** error) {
     return ok;
 }
 
-// Read CFBundleShortVersionString from a bundle's Info.plist on disk.
-static NSString* spdf_bundle_short_version(NSString* appPath) {
+static NSDictionary* spdf_bundle_version_fields(NSString* appPath) {
     NSBundle* bundle = [NSBundle bundleWithPath:appPath];
-    return bundle.infoDictionary[@"CFBundleShortVersionString"];
+    NSDictionary* info = bundle.infoDictionary;
+    NSString* shortVersion = info[@"CFBundleShortVersionString"];
+    NSString* build = info[(NSString*)kCFBundleVersionKey];
+    if (![shortVersion isKindOfClass:NSString.class] || ![build isKindOfClass:NSString.class]) return nil;
+    return @{@"version" : shortVersion, @"build" : build};
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +368,7 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
     // 5.9.5 Assert the relaunched instance runs from the real in-place path and
     //        was not translocated to a read-only shadow copy. If it is
     //        translocated, the in-place swap did not "take" for the user; leave
-    //        .old in place so the next launch can roll back, but log nothing
+    //        .old in place for manual recovery, but log nothing
     //        (Foundation-only helper). The pendingTag/update_ok handshake in the
     //        relaunched process is the authoritative health gate.
     NSString* launchedPath = launched.bundleURL.path;
@@ -406,8 +376,8 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
 
     // .old is retained until the relaunched process writes update_ok (§5.9.6 /
     // §5.10). The relaunched process's launch-time hook consumes pendingTag,
-    // writes update_ok, deletes .old on a version match, or rolls .old back on a
-    // mismatch. Do NOT delete .old here.
+    // writes update_ok and deletes .old on a version match, or preserves and
+    // reveals .old on a mismatch. Do NOT delete .old here.
     return 0;
 }
 
@@ -593,7 +563,7 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
 }
 
 - (void)scheduleDailyUpdateCheckIfNeeded {
-    if (spdf_is_sandboxed()) return;          // 1. App Store build never self-updates
+    if (spdf_is_sandboxed()) return;          // Unsupported sandboxed repackaging.
     if (![self claimDailyCheckSlot]) return;  // 2. persisted opt-out  3. 24h gate
 
     // On launch, sweep any stale staging dirs from an interrupted prior run.
@@ -606,7 +576,7 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
 }
 
 - (void)armRecurringUpdateCheck {
-    if (spdf_is_sandboxed()) return;  // App Store build never self-updates
+    if (spdf_is_sandboxed()) return;  // Unsupported sandboxed repackaging.
     static dispatch_once_t once;      // singleton; arm at most once per process
     dispatch_once(&once, ^{
       // Hourly cadence with generous leeway: every fire re-runs the full gate
@@ -815,20 +785,8 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
 
     NSString* tag = info[@"tag"];
     NSString* running = [self runningVersion] ?: @"";
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = @"A new version of Shenzhen PDF is available";
-    NSString* detail =
-        [NSString stringWithFormat:@"Shenzhen PDF %@ is available — you have %@. Would you like to install it now?",
-                                   tag, running];
     NSString* notes = info[@"notes"];
-    if ([notes isKindOfClass:NSString.class] && notes.length) {
-        NSString* plain = [self plainTextReleaseNotes:notes];
-        if (plain.length) detail = [detail stringByAppendingFormat:@"\n\n%@", plain];
-    }
-    alert.informativeText = detail;
-    [alert addButtonWithTitle:@"Install and Relaunch"];  // NSAlertFirstButtonReturn
-    [alert addButtonWithTitle:@"Skip This Version"];      // NSAlertSecondButtonReturn
-    [alert addButtonWithTitle:@"Later"];                  // NSAlertThirdButtonReturn
+    NSAlert* alert = spdf_make_update_available_alert(tag, running, notes);
 
     NSWindow* window = [self mainWindow];
     if (!userInitiated && window && NSApp.isActive) {
@@ -864,77 +822,6 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
     NSDictionary* info = _pendingPromptInfo;
     _pendingPromptInfo = nil;
     [self presentUpdateAvailable:info];
-}
-
-- (NSString*)plainTextReleaseNotes:(NSString*)body {
-    return spdf_format_release_notes_for_alert(body);
-}
-
-NSString* spdf_format_release_notes_for_alert(NSString* body) {
-    if (![body isKindOfClass:NSString.class] || body.length == 0) return @"";
-    NSCharacterSet* ws = NSCharacterSet.whitespaceCharacterSet;
-    NSString* text = [body stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"];
-    text = [text stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
-
-    NSMutableArray<NSString*>* lines = [NSMutableArray array];
-    for (NSString* rawLine in [text componentsSeparatedByString:@"\n"]) {
-        NSString* line = [rawLine stringByTrimmingCharactersInSet:ws];
-        // Release bodies put a brief highlights section above the first
-        // horizontal rule; the alert shows only that section.
-        if ([line hasPrefix:@"---"] || [line hasPrefix:@"***"] || [line hasPrefix:@"___"]) break;
-        while ([line hasPrefix:@"#"]) line = [line substringFromIndex:1];
-        if ([line hasPrefix:@"> "]) line = [line substringFromIndex:2];
-        line = [line stringByTrimmingCharactersInSet:ws];
-        BOOL isBullet = NO;
-        for (NSString* bullet in @[ @"- ", @"* ", @"+ " ]) {
-            if ([line hasPrefix:bullet]) {
-                line = [@"• " stringByAppendingString:[line substringFromIndex:2]];
-                isBullet = YES;
-                break;
-            }
-        }
-        for (NSString* marker in @[ @"**", @"`", @"_" ])
-            line = [line stringByReplacingOccurrencesOfString:marker withString:@""];
-        // Hard-wrapped continuation lines (indented in the raw body) rejoin
-        // their bullet so the alert wraps them naturally.
-        BOOL continuation = !isBullet && line.length && [rawLine hasPrefix:@"  "] && lines.count &&
-                            ((NSString*)lines.lastObject).length;
-        if (continuation) {
-            lines[lines.count - 1] = [lines.lastObject stringByAppendingFormat:@" %@", line];
-        } else if (line.length) {
-            [lines addObject:line];  // blank lines add nothing in the compact alert
-        }
-    }
-    text = [lines componentsJoinedByString:@"\n"];
-
-    // Neutralize control + format characters and bidi overrides so a crafted
-    // release body can't spoof the version/identity line that follows in the
-    // alert. NSAlert renders plain text (won't execute), but bidi/control chars
-    // could still reorder or hide text visually. Real line breaks survive.
-    NSMutableCharacterSet* strip = [NSMutableCharacterSet new];
-    [strip formUnionWithCharacterSet:NSCharacterSet.controlCharacterSet];
-    [strip addCharactersInRange:NSMakeRange(0x202A, 5)];   // U+202A-202E embeddings/overrides
-    [strip addCharactersInRange:NSMakeRange(0x2066, 4)];   // U+2066-2069 isolates
-    NSMutableString* cleaned = [NSMutableString stringWithCapacity:text.length];
-    [text enumerateSubstringsInRange:NSMakeRange(0, text.length)
-                             options:NSStringEnumerationByComposedCharacterSequences
-                          usingBlock:^(NSString* sub, NSRange r, NSRange er, BOOL* stop) {
-                            (void)r;
-                            (void)er;
-                            (void)stop;
-                            unichar c = sub.length ? [sub characterAtIndex:0] : 0;
-                            if (sub.length == 1 && [strip characterIsMember:c] && c != '\n') return;
-                            [cleaned appendString:sub];
-                          }];
-    text = [cleaned stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (text.length > 500) {
-        // Cut at the last complete line that fits, falling back to a hard cut.
-        NSRange lastBreak = [[text substringToIndex:500] rangeOfString:@"\n" options:NSBackwardsSearch];
-        NSUInteger cut = lastBreak.location != NSNotFound ? lastBreak.location : 500;
-        text = [[[text substringToIndex:cut] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
-            stringByAppendingString:@"\n…"];
-    }
-    return text;
 }
 
 // ----- download + install -----------------------------------------------------
@@ -1080,19 +967,13 @@ NSString* spdf_format_release_notes_for_alert(NSString* body) {
                 *outError = spdf_make_error(@"The update could not be verified and was not installed.");
             return;
         }
-        // Tag/version cross-check (catches swapped payload / asset-tag mismatch).
-        NSString* extractedVersion = spdf_bundle_short_version(extractedApp);
-        NSArray<NSNumber*>* tagPrimary = spdf_version_components(tag);
-        NSArray<NSNumber*>* appPrimary = spdf_version_components(extractedVersion);
-        // Compare only the YY.M.DD primary key (tag may carry -BUILD; plist may not).
-        if (tagPrimary.count >= 3 && appPrimary.count >= 3) {
-            if (!(tagPrimary[0].longLongValue == appPrimary[0].longLongValue &&
-                  tagPrimary[1].longLongValue == appPrimary[1].longLongValue &&
-                  tagPrimary[2].longLongValue == appPrimary[2].longLongValue)) {
-                if (outError)
-                    *outError = spdf_make_error(@"The update did not match the published version.");
-                return;
-            }
+        // Exact tag/version/build cross-check catches swapped payloads and
+        // prevents a same-day wrong-build asset from being offered forever.
+        NSDictionary* extractedFields = spdf_bundle_version_fields(extractedApp);
+        if (!spdf_release_tag_matches_bundle_version(tag, extractedFields[@"version"], extractedFields[@"build"])) {
+            if (outError)
+                *outError = spdf_make_error(@"The update did not match the published version.");
+            return;
         }
 
         // 5.7 Strip quarantine defensively.
@@ -1433,16 +1314,7 @@ NSString* spdf_format_release_notes_for_alert(NSString* body) {
         return;
     }
 
-    // Compare only the YY.M.DD primary key (tag may carry -BUILD; plist may not).
-    BOOL versionMatches = NO;
-    if (running.length) {
-        NSArray<NSNumber*>* tagP = spdf_version_components(pendingTag);
-        NSArray<NSNumber*>* runP = spdf_version_components(running);
-        if (tagP.count >= 3 && runP.count >= 3)
-            versionMatches = (tagP[0].longLongValue == runP[0].longLongValue &&
-                              tagP[1].longLongValue == runP[1].longLongValue &&
-                              tagP[2].longLongValue == runP[2].longLongValue);
-    }
+    BOOL versionMatches = spdf_release_tag_matches_running_version(pendingTag, running);
 
     if (versionMatches) {
         // Healthy: write update_ok, delete .old, clear pendingTag + lease.
@@ -1471,7 +1343,7 @@ NSString* spdf_format_release_notes_for_alert(NSString* body) {
     // launched once, failed, and the user reopened the OLD bundle. Do NOT
     // destructively rename the currently-running working bundle. Instead reveal
     // the retained .old (so a user whose update half-applied has the prior good
-    // copy to hand), remove it once revealed, and clear the lifecycle state.
+    // copy to hand), keep it available for recovery, and clear lifecycle state.
     if ([fm fileExistsAtPath:oldPath]) {
         dispatch_async(dispatch_get_main_queue(), ^{
           [NSWorkspace.sharedWorkspace

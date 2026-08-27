@@ -1,10 +1,35 @@
 BUILD := build
 DIST := ../dist
 MUPDF_DIR := ../mupdf
+UNAME_S := $(shell uname -s)
+SPDF_RELEASE_MODE ?= 0
+MAC_ARCH ?= arm64
+MACOSX_DEPLOYMENT_TARGET ?= 12.0
+MAC_BUNDLE_ID ?= com.intuition.shenzhenpdf
+MAC_TEAM_ID ?= 66LJ4BV7Q3
+PORTABLE_OPTFLAGS ?= -O2 -DNDEBUG
+
+ifeq ($(SPDF_RELEASE_MODE),1)
+override MAC_ARCH := arm64
+override MACOSX_DEPLOYMENT_TARGET := 12.0
+override MAC_BUNDLE_ID := com.intuition.shenzhenpdf
+override MAC_TEAM_ID := 66LJ4BV7Q3
+override PORTABLE_OPTFLAGS := -O2 -DNDEBUG
+endif
+
 # Where the mupdf static libs live, relative to $(MUPDF_DIR). Overridable so
 # builds for another distro's toolchain don't clobber the default output
 # (build-rpm.sh uses MUPDF_OUT=build/release-fedora).
+ifeq ($(UNAME_S),Darwin)
+MAC_TARGET_FLAGS := -arch $(MAC_ARCH) -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET)
+MUPDF_MAC_ARGS := ARCHFLAGS="-arch $(MAC_ARCH)" XCFLAGS="$(MAC_TARGET_FLAGS)"
+MUPDF_OUT ?= build/release-macos-$(MAC_ARCH)-$(MACOSX_DEPLOYMENT_TARGET)
+export MACOSX_DEPLOYMENT_TARGET
+else
+MAC_TARGET_FLAGS :=
+MUPDF_MAC_ARGS :=
 MUPDF_OUT ?= build/release
+endif
 MUPDF_BUILD := $(MUPDF_DIR)/$(MUPDF_OUT)
 MUPDF_LIBS := $(MUPDF_BUILD)/libmupdf.a $(MUPDF_BUILD)/libmupdf-third.a $(MUPDF_BUILD)/libmupdf-pkcs7.a
 CPU := $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
@@ -18,6 +43,7 @@ CORE_SELECTION_OBJ := $(BUILD)/spdf_selection.o
 CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ)
 CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
 CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
+CORE_SELECTION_TEST := $(BUILD)/SPDFCoreSelectionTests
 MAC_APP := $(DIST)/ShenzhenPDF.app
 MAC_BIN := $(MAC_APP)/Contents/MacOS/ShenzhenPDF
 MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
@@ -34,146 +60,189 @@ MAC_PROPERTIES_FORMAT_TEST := $(BUILD)/SPDFMacPropertiesFormatTests
 MAC_TRANSLATION_FILTER_TEST := $(BUILD)/SPDFTranslationChineseFilterTests
 MAC_TRANSLATION_COPY_TEST := $(BUILD)/SPDFTranslationCopyTests
 MAC_CURSOR_REGION_TEST := $(BUILD)/SPDFMacCursorRegionsTests
+MAC_TAB_LIFECYCLE_TEST := $(BUILD)/SPDFMacTabLifecycleTests
+MAC_FILE_EXPLORER_TEST := $(BUILD)/SPDFMacFileExplorerPreferenceTests
+MAC_SELECTION_CLICK_TEST := $(BUILD)/SPDFMacSelectionClickTests
+MAC_SELECTION_ADAPTER_TEST := $(BUILD)/SPDFMacSelectionAdapterTests
+MAC_RELEASE_NOTES_PREVIEW := $(BUILD)/SPDFReleaseNotesPreview
 # Exclude standalone test translation units (each defines its own main()).
 MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm)))
 MAC_HDRS := $(sort $(wildcard mac/*.h))
-MAC_BUNDLE_ID ?= com.intuition.shenzhenpdf
 MAC_VERSION ?= 26.7.17
 MAC_BUILD ?= 1
-MAC_TESTFLIGHT_PKG = $(DIST)/ShenzhenPDF-testflight-$(MAC_VERSION)-$(MAC_BUILD).pkg
-OPENSSL_LIBDIR ?= $(shell pkg-config --variable=libdir openssl 2>/dev/null || echo /opt/homebrew/opt/openssl@3/lib)
-OPENSSL_LIBCRYPTO ?= $(OPENSSL_LIBDIR)/libcrypto.3.dylib
 MAC_SIGN_IDENTITY ?= -
-MAC_APPSTORE_IDENTITY ?=
-MAC_INSTALLER_IDENTITY ?=
-MAC_CODESIGN_EXTRA ?=
-MAC_PROVISIONING_PROFILE ?=
 NOTARY_PROFILE ?=
-PORTABLE_OPTFLAGS ?= -O2 -DNDEBUG
+NOTARY_RESULT ?= $(DIST)/notarytool-$(MAC_VERSION)-$(MAC_BUILD).json
 
 ifeq ($(MAC_SIGN_IDENTITY),-)
-MAC_CODESIGN_NESTED = if [ -f "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib" ]; then codesign --force --sign - "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; fi
-MAC_CODESIGN_APP = $(MAC_CODESIGN_NESTED); codesign --force --sign - "$(MAC_APP)"
+MAC_CODESIGN_APP = codesign --force --sign - "$(MAC_APP)"
 MAC_CODESIGN_DMG = true
 else
-MAC_CODESIGN_NESTED = if [ -f "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib" ]; then codesign --force --timestamp --options runtime --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; fi
-MAC_CODESIGN_APP = $(MAC_CODESIGN_NESTED); codesign --force --timestamp --options runtime $(MAC_CODESIGN_EXTRA) --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_APP)"
+MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_APP)"
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-selection-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
 mupdf-libs:
-	@test -f "$(MUPDF_BUILD)/libmupdf.a" -a -f "$(MUPDF_BUILD)/libmupdf-third.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release OUT="$(MUPDF_OUT)" USE_SYSTEM_GLUT=yes brotli=no libs "$(MUPDF_OUT)/libmupdf-third.a"
-	@test -f "$(MUPDF_BUILD)/libmupdf-pkcs7.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release OUT="$(MUPDF_OUT)" USE_SYSTEM_GLUT=yes brotli=no "$(MUPDF_OUT)/libmupdf-pkcs7.a"
+	@test -f "$(MUPDF_BUILD)/libmupdf.a" -a -f "$(MUPDF_BUILD)/libmupdf-third.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release OUT="$(MUPDF_OUT)" $(MUPDF_MAC_ARGS) USE_SYSTEM_GLUT=yes brotli=no libs "$(MUPDF_OUT)/libmupdf-third.a"
+	@test -f "$(MUPDF_BUILD)/libmupdf-pkcs7.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release OUT="$(MUPDF_OUT)" $(MUPDF_MAC_ARGS) USE_SYSTEM_GLUT=yes brotli=no "$(MUPDF_OUT)/libmupdf-pkcs7.a"
 
 $(BUILD):
 	mkdir -p "$(BUILD)"
 
 $(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) Makefile | $(BUILD)
-	clang $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
 
 $(CORE_SELECTION_OBJ): $(CORE_SELECTION_SRC) $(CORE_SELECTION_HDR) $(CORE_HDR) Makefile | $(BUILD)
-	clang $(PORTABLE_OPTFLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SELECTION_SRC)" -o "$(CORE_SELECTION_OBJ)"
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SELECTION_SRC)" -o "$(CORE_SELECTION_OBJ)"
 
 mac-app: $(MAC_BIN)
 
-$(CORE_OUTLINE_TEST): core/tests/SPDFCoreOutlineTests.c $(CORE_OBJ) | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(shell uname -s)),-framework Foundation) -lm -o "$@"
+$(CORE_OUTLINE_TEST): core/tests/SPDFCoreOutlineTests.c $(CORE_OBJ) mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
 
 core-outline-tests: $(CORE_OUTLINE_TEST)
 	"$(CORE_OUTLINE_TEST)"
 
-$(CORE_PASSWORD_TEST): core/tests/SPDFCorePasswordTests.c $(CORE_OBJ) | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(shell uname -s)),-framework Foundation) -lm -o "$@"
+$(CORE_PASSWORD_TEST): core/tests/SPDFCorePasswordTests.c $(CORE_OBJ) mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
 
 core-password-tests: $(CORE_PASSWORD_TEST)
 	core/tests/run_password_tests.sh "$(CORE_PASSWORD_TEST)"
 
+$(CORE_SELECTION_TEST): core/tests/SPDFCoreSelectionTests.c $(CORE_OBJS) mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< $(CORE_OBJS) $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
+
+core-selection-tests: $(CORE_SELECTION_TEST)
+	"$(CORE_SELECTION_TEST)"
+
 $(MAC_WINDOW_SHORTCUT_TEST): mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMacWindowShortcuts.mm mac/SPDFMacWindowShortcuts.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMacWindowShortcuts.mm -framework Cocoa -o "$(MAC_WINDOW_SHORTCUT_TEST)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMacWindowShortcuts.mm -framework Cocoa -o "$(MAC_WINDOW_SHORTCUT_TEST)"
 
 mac-window-shortcut-tests: $(MAC_WINDOW_SHORTCUT_TEST)
 	"$(MAC_WINDOW_SHORTCUT_TEST)"
 
 $(MAC_WINDOW_CHROME_TEST): mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm -framework Foundation -o "$(MAC_WINDOW_CHROME_TEST)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm -framework Foundation -o "$(MAC_WINDOW_CHROME_TEST)"
 
 mac-window-chrome-tests: $(MAC_WINDOW_CHROME_TEST)
 	"$(MAC_WINDOW_CHROME_TEST)"
 
-$(MAC_PASSWORD_TEST): mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm mac/SPDFMacPassword.h $(CORE_OBJ) | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(MAC_PASSWORD_TEST)"
+$(MAC_PASSWORD_TEST): mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm mac/SPDFMacPassword.h $(CORE_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(MAC_PASSWORD_TEST)"
 
 mac-password-tests: $(MAC_PASSWORD_TEST)
 	"$(MAC_PASSWORD_TEST)"
 	mac/tests/SPDFMacPasswordSourceTests.sh
 
 $(MAC_MINIMAP_WINDOW_TEST): mac/tests/SPDFMacMinimapWindowTests.mm mac/SPDFMacMinimapWindow.mm mac/SPDFMacMinimapWindow.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacMinimapWindowTests.mm mac/SPDFMacMinimapWindow.mm -framework Cocoa -o "$(MAC_MINIMAP_WINDOW_TEST)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacMinimapWindowTests.mm mac/SPDFMacMinimapWindow.mm -framework Cocoa -o "$(MAC_MINIMAP_WINDOW_TEST)"
 
 mac-minimap-window-tests: $(MAC_MINIMAP_WINDOW_TEST)
 	"$(MAC_MINIMAP_WINDOW_TEST)"
 
 $(MAC_TAB_STRIP_GEOMETRY_TEST): mac/tests/SPDFMacTabStripGeometryTests.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripGeometry.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacTabStripGeometryTests.mm mac/SPDFMacTabStripGeometry.mm -framework Foundation -o "$(MAC_TAB_STRIP_GEOMETRY_TEST)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacTabStripGeometryTests.mm mac/SPDFMacTabStripGeometry.mm -framework Foundation -o "$(MAC_TAB_STRIP_GEOMETRY_TEST)"
 
 mac-tab-strip-geometry-tests: $(MAC_TAB_STRIP_GEOMETRY_TEST)
 	"$(MAC_TAB_STRIP_GEOMETRY_TEST)"
 
 $(MAC_TAB_STRIP_INTERACTION_TEST): mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabStripView.h mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripGeometry.h mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(MAC_TAB_STRIP_INTERACTION_TEST)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(MAC_TAB_STRIP_INTERACTION_TEST)"
 
 mac-tab-strip-interaction-tests: $(MAC_TAB_STRIP_INTERACTION_TEST)
 	"$(MAC_TAB_STRIP_INTERACTION_TEST)"
 
 $(MAC_PALETTE_RESULTS_TEST): mac/tests/SPDFMacPaletteResultsTests.mm mac/SPDFMacPaletteResults.mm mac/SPDFMacPaletteResults.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacPaletteResultsTests.mm mac/SPDFMacPaletteResults.mm -framework Cocoa -o "$(MAC_PALETTE_RESULTS_TEST)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacPaletteResultsTests.mm mac/SPDFMacPaletteResults.mm -framework Cocoa -o "$(MAC_PALETTE_RESULTS_TEST)"
 
 mac-palette-results-tests: $(MAC_PALETTE_RESULTS_TEST)
 	"$(MAC_PALETTE_RESULTS_TEST)"
 
 $(MAC_FIND_NEAREST_TEST): mac/tests/SPDFMacFindNearestTests.mm mac/SPDFMacFindNearest.mm mac/SPDFMacFindNearest.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacFindNearestTests.mm mac/SPDFMacFindNearest.mm -framework Cocoa -o "$(MAC_FIND_NEAREST_TEST)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacFindNearestTests.mm mac/SPDFMacFindNearest.mm -framework Cocoa -o "$(MAC_FIND_NEAREST_TEST)"
 
 mac-find-nearest-tests: $(MAC_FIND_NEAREST_TEST)
 	"$(MAC_FIND_NEAREST_TEST)"
 
-$(MAC_UPDATER_TEST): mac/SPDFUpdaterTests.mm mac/SPDFUpdater.mm mac/SPDFUpdater.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac mac/SPDFUpdaterTests.mm mac/SPDFUpdater.mm -framework Cocoa -framework Security -o "$(MAC_UPDATER_TEST)"
+$(MAC_UPDATER_TEST): mac/SPDFUpdaterTests.mm mac/SPDFUpdater.mm mac/SPDFUpdaterRelease.mm mac/SPDFUpdater.h mac/SPDFUpdaterRelease.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/SPDFUpdaterTests.mm mac/SPDFUpdater.mm mac/SPDFUpdaterRelease.mm -framework Cocoa -framework Security -o "$(MAC_UPDATER_TEST)"
 
 mac-updater-tests: $(MAC_UPDATER_TEST)
 	"$(MAC_UPDATER_TEST)"
 
+release-pipeline-tests:
+	release/release-common-tests.sh
+	release/release-workflow-tests.sh
+
+print-release-config:
+	@printf '%s\n' "$(MAC_TEAM_ID)|$(MAC_BUNDLE_ID)|$(MAC_ARCH)|$(MACOSX_DEPLOYMENT_TARGET)|$(PORTABLE_OPTFLAGS)"
+
+mac-markdown-tests:
+	mac/tests/markdown/run-tests.sh
+
+linux-password-tests:
+	linux/gtk4/tests/password_source_test.sh
+	linux/gtk4/tests/run_password_runtime_tests.sh
+
+file-size-ratchet-tests:
+	../tools/test-file-size-ratchet.sh
+	../tools/check-file-sizes.sh --root ..
+
 $(MAC_PROPERTIES_FORMAT_TEST): mac/tests/SPDFMacPropertiesFormatTests.mm mac/SPDFMacPropertiesFormat.mm mac/SPDFMacPropertiesFormat.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacPropertiesFormatTests.mm mac/SPDFMacPropertiesFormat.mm -framework Foundation -o "$(MAC_PROPERTIES_FORMAT_TEST)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacPropertiesFormatTests.mm mac/SPDFMacPropertiesFormat.mm -framework Foundation -o "$(MAC_PROPERTIES_FORMAT_TEST)"
 
 mac-properties-format-tests: $(MAC_PROPERTIES_FORMAT_TEST)
 	"$(MAC_PROPERTIES_FORMAT_TEST)"
 
-$(MAC_TRANSLATION_FILTER_TEST): mac/tests/SPDFTranslationChineseFilterTests.mm $(CORE_OBJ) | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFTranslationChineseFilterTests.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$(MAC_TRANSLATION_FILTER_TEST)"
+$(MAC_TRANSLATION_FILTER_TEST): mac/tests/SPDFTranslationChineseFilterTests.mm $(CORE_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFTranslationChineseFilterTests.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$(MAC_TRANSLATION_FILTER_TEST)"
 
 mac-translation-filter-tests: $(MAC_TRANSLATION_FILTER_TEST)
 	"$(MAC_TRANSLATION_FILTER_TEST)"
 
-$(MAC_TRANSLATION_COPY_TEST): mac/tests/SPDFTranslationCopyTests.mm $(CORE_OBJ) | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFTranslationCopyTests.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$(MAC_TRANSLATION_COPY_TEST)"
+$(MAC_TRANSLATION_COPY_TEST): mac/tests/SPDFTranslationCopyTests.mm $(CORE_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFTranslationCopyTests.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$(MAC_TRANSLATION_COPY_TEST)"
 
 mac-translation-copy-tests: $(MAC_TRANSLATION_COPY_TEST)
 	"$(MAC_TRANSLATION_COPY_TEST)"
 
 $(MAC_CURSOR_REGION_TEST): mac/tests/SPDFMacCursorRegionsTests.mm mac/SPDFMacCursorRegions.mm mac/SPDFMacCursorRegions.h | $(BUILD)
-	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacCursorRegionsTests.mm mac/SPDFMacCursorRegions.mm -framework Foundation -o "$(MAC_CURSOR_REGION_TEST)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacCursorRegionsTests.mm mac/SPDFMacCursorRegions.mm -framework Foundation -o "$(MAC_CURSOR_REGION_TEST)"
 
 mac-cursor-region-tests: $(MAC_CURSOR_REGION_TEST)
 	"$(MAC_CURSOR_REGION_TEST)"
 
+$(MAC_TAB_LIFECYCLE_TEST): mac/tests/SPDFMacTabLifecycleTests.mm mac/SPDFMacTabLifecycle.mm mac/SPDFMacTabLifecycle.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacTabLifecycleTests.mm mac/SPDFMacTabLifecycle.mm -framework Foundation -o "$(MAC_TAB_LIFECYCLE_TEST)"
+
+mac-tab-lifecycle-tests: $(MAC_TAB_LIFECYCLE_TEST)
+	"$(MAC_TAB_LIFECYCLE_TEST)"
+
+$(MAC_FILE_EXPLORER_TEST): mac/tests/SPDFMacFileExplorerPreferenceTests.mm mac/SPDFMacFileExplorerPreference.mm mac/SPDFMacFileExplorerPreference.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacFileExplorerPreferenceTests.mm mac/SPDFMacFileExplorerPreference.mm -framework Cocoa -o "$(MAC_FILE_EXPLORER_TEST)"
+
+mac-file-explorer-tests: $(MAC_FILE_EXPLORER_TEST)
+	"$(MAC_FILE_EXPLORER_TEST)"
+
+$(MAC_SELECTION_CLICK_TEST): mac/tests/SPDFMacSelectionClickTests.mm mac/SPDFMacDocumentView.mm mac/SPDFMacDocumentView.h mac/SPDFMacSelectionClick.mm mac/SPDFMacSelectionClick.h mac/SPDFMacDelayedLinkActivation.mm mac/SPDFMacDelayedLinkActivation.h mac/SPDFMacCursorRegions.mm mac/SPDFMacCursorRegions.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacSelectionClickTests.mm mac/SPDFMacDocumentView.mm mac/SPDFMacSelectionClick.mm mac/SPDFMacDelayedLinkActivation.mm mac/SPDFMacCursorRegions.mm -framework Cocoa -o "$(MAC_SELECTION_CLICK_TEST)"
+
+mac-selection-click-tests: $(MAC_SELECTION_CLICK_TEST)
+	"$(MAC_SELECTION_CLICK_TEST)"
+
+$(MAC_SELECTION_ADAPTER_TEST): mac/tests/SPDFMacSelectionAdapterTests.mm mac/SPDFMacSelectionAdapter.mm mac/SPDFMacSelectionAdapter.h mac/SPDFMacSelectionClick.h core/shenzhen_pdf_core.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacSelectionAdapterTests.mm mac/SPDFMacSelectionAdapter.mm -framework Cocoa -o "$(MAC_SELECTION_ADAPTER_TEST)"
+
+mac-selection-adapter-tests: $(MAC_SELECTION_ADAPTER_TEST)
+	"$(MAC_SELECTION_ADAPTER_TEST)"
+
 $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
-	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(MAC_APP)/Contents/Frameworks" "$(DIST)"
+	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $(MAC_BUNDLE_ID)" "$(MAC_APP)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(MAC_VERSION)" "$(MAC_APP)/Contents/Info.plist"
@@ -196,36 +265,20 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/A
 	cp mac/Assets.xcassets/AppIcon.appiconset/Contents.json "$(BUILD)/Assets.xcassets/AppIcon.appiconset/"
 	cp "$(BUILD)/ShenzhenPDF.iconset"/*.png "$(BUILD)/Assets.xcassets/AppIcon.appiconset/"
 	if xcrun --find actool >/dev/null 2>&1; then \
-		xcrun actool "$(BUILD)/Assets.xcassets" --compile "$(MAC_APP)/Contents/Resources" --platform macosx --minimum-deployment-target 12.0 --app-icon AppIcon --output-partial-info-plist "$(BUILD)/actool-partial.plist"; \
+		xcrun actool "$(BUILD)/Assets.xcassets" --compile "$(MAC_APP)/Contents/Resources" --platform macosx --minimum-deployment-target "$(MACOSX_DEPLOYMENT_TARGET)" --app-icon AppIcon --output-partial-info-plist "$(BUILD)/actool-partial.plist"; \
 	else \
 		echo "warning: actool not found; using .icns app icon fallback"; \
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
-	clang++ $(PORTABLE_OPTFLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -L"$(OPENSSL_LIBDIR)" -lcrypto -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
-	@if otool -L "$(MAC_BIN)" | grep -q 'libcrypto.3.dylib'; then \
-		cp "$(OPENSSL_LIBCRYPTO)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
-		crypto_path=$$(otool -L "$(MAC_BIN)" | awk '/libcrypto.3.dylib/ { print $$1; exit }'); \
-		install_name_tool -change "$$crypto_path" "@executable_path/../Frameworks/libcrypto.3.dylib" "$(MAC_BIN)"; \
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	@if otool -L "$(MAC_BIN)" | grep -Eq 'libcrypto|/opt/homebrew|/usr/local'; then \
+		echo "unexpected mutable runtime dependency in $(MAC_BIN)" >&2; \
+		otool -L "$(MAC_BIN)" >&2; \
+		exit 1; \
 	fi
-	@if [ -n "$(MAC_PROVISIONING_PROFILE)" ]; then \
-		cp "$(MAC_PROVISIONING_PROFILE)" "$(MAC_APP)/Contents/embedded.provisionprofile"; \
-		chmod u+w "$(MAC_APP)/Contents/embedded.provisionprofile"; \
-		xattr -c "$(MAC_APP)/Contents/embedded.provisionprofile"; \
-	fi
-	@if [ -n "$(MAC_PROVISIONING_PROFILE)" ] && echo "$(MAC_CODESIGN_EXTRA)" | grep -q "TestFlight.entitlements"; then \
-		mkdir -p "$(BUILD)"; \
-		cp mac/TestFlight.entitlements "$(BUILD)/TestFlight-signing.entitlements"; \
-		security cms -D -i "$(MAC_PROVISIONING_PROFILE)" -o "$(BUILD)/provision.plist"; \
-		/usr/libexec/PlistBuddy -x -c "Print Entitlements" "$(BUILD)/provision.plist" > "$(BUILD)/profile-entitlements.plist"; \
-		/usr/libexec/PlistBuddy -c "Merge $(BUILD)/profile-entitlements.plist" "$(BUILD)/TestFlight-signing.entitlements"; \
-		if [ -f "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib" ]; then \
-			codesign --force --timestamp --options runtime --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_APP)/Contents/Frameworks/libcrypto.3.dylib"; \
-		fi; \
-		codesign --force --timestamp --options runtime --entitlements "$(BUILD)/TestFlight-signing.entitlements" --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_APP)"; \
-	else \
-		$(MAC_CODESIGN_APP); \
-	fi
+	xattr -cr "$(MAC_APP)"
+	$(MAC_CODESIGN_APP)
 
 dmg: mac-app
 	mac/make-installer-dmg.sh "$(MAC_APP)" "$(MAC_DMG)" "Shenzhen PDF"
@@ -241,55 +294,39 @@ notarize: dmg
 		echo "Create one with: xcrun notarytool store-credentials <profile> --apple-id <id> --team-id <team> --password <app-password>" >&2; \
 		exit 2; \
 	fi
-	xcrun notarytool submit "$(MAC_DMG)" --keychain-profile "$(NOTARY_PROFILE)" --wait
+	release/notarize-mac-dmg.sh "$(MAC_DMG)" "$(NOTARY_PROFILE)" "$(NOTARY_RESULT)"
 
 staple: notarize
 	xcrun stapler staple "$(MAC_DMG)"
 	xcrun stapler validate "$(MAC_DMG)"
 
-release-dmg: staple verify-mac-release
+verify-mac-release: staple
+	release/verify-mac-artifact.sh --dmg "$(MAC_DMG)" --version "$(MAC_VERSION)" --build "$(MAC_BUILD)" --bundle-id "$(MAC_BUNDLE_ID)" --team-id "$(MAC_TEAM_ID)" --min-os "$(MACOSX_DEPLOYMENT_TARGET)"
 
-verify-mac-release:
-	codesign --verify --deep --strict --verbose=2 "$(MAC_APP)"
-	spctl -a -vv -t execute "$(MAC_APP)"
-	spctl -a -vv -t open --context context:primary-signature "$(MAC_DMG)"
+release-dmg:
+	@test "$(SPDF_RELEASE_MODE)" = "1" || (echo "release-dmg must be invoked through build-mac-release.sh" >&2; exit 2)
+	$(MAKE) release-dmg-artifact
 
-testflight-app:
-	@if [ -z "$(MAC_APPSTORE_IDENTITY)" ]; then \
-		echo "MAC_APPSTORE_IDENTITY must be an Apple Distribution certificate, e.g. Apple Distribution: Friend Name (TEAMID1234)." >&2; \
-		exit 2; \
-	fi
-	@if [ -z "$(MAC_PROVISIONING_PROFILE)" ]; then \
-		echo "MAC_PROVISIONING_PROFILE must point to the App Store Connect distribution provisioning profile for $(MAC_BUNDLE_ID)." >&2; \
-		exit 2; \
-	fi
-	$(MAKE) mac-app \
-		MAC_SIGN_IDENTITY="$(MAC_APPSTORE_IDENTITY)" \
-		MAC_CODESIGN_EXTRA="--entitlements mac/TestFlight.entitlements" \
-		MAC_PROVISIONING_PROFILE="$(MAC_PROVISIONING_PROFILE)" \
-		MAC_BUNDLE_ID="$(MAC_BUNDLE_ID)" \
-		MAC_VERSION="$(MAC_VERSION)" \
-		MAC_BUILD="$(MAC_BUILD)"
+ifeq ($(SPDF_RELEASE_MODE),1)
+release-dmg-artifact: verify-mac-release
+else
+release-dmg-artifact:
+	@echo "release-dmg-artifact requires SPDF_RELEASE_MODE=1" >&2
+	@exit 2
+endif
 
-testflight-pkg: testflight-app
-	@if [ -z "$(MAC_INSTALLER_IDENTITY)" ]; then \
-		echo "MAC_INSTALLER_IDENTITY must be a 3rd Party Mac Developer Installer certificate." >&2; \
-		exit 2; \
-	fi
-	rm -f "$(MAC_TESTFLIGHT_PKG)"
-	productbuild --component "$(MAC_APP)" /Applications --sign "$(MAC_INSTALLER_IDENTITY)" "$(MAC_TESTFLIGHT_PKG)"
-	pkgutil --check-signature "$(MAC_TESTFLIGHT_PKG)"
-	@echo "Created TestFlight upload package: $(MAC_TESTFLIGHT_PKG)"
+verify-mac-unsigned: dmg
+	release/verify-mac-artifact.sh --unsigned --dmg "$(MAC_DMG)" --version "$(MAC_VERSION)" --build "$(MAC_BUILD)" --bundle-id "$(MAC_BUNDLE_ID)" --min-os "$(MACOSX_DEPLOYMENT_TARGET)"
 
-open-transporter: testflight-pkg
-	@if ! open -Ra Transporter >/dev/null 2>&1; then \
-		echo "Install Apple's Transporter app from the Mac App Store, then rerun this target or drag $(MAC_TESTFLIGHT_PKG) into Transporter." >&2; \
-		exit 2; \
-	fi
-	open -a Transporter "$(MAC_TESTFLIGHT_PKG)"
+$(MAC_RELEASE_NOTES_PREVIEW): release/SPDFReleaseNotesPreview.mm mac/SPDFUpdaterRelease.mm mac/SPDFUpdater.h mac/SPDFUpdaterRelease.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac release/SPDFReleaseNotesPreview.mm mac/SPDFUpdaterRelease.mm -framework Cocoa -o "$(MAC_RELEASE_NOTES_PREVIEW)"
+
+release-notes-preview: $(MAC_RELEASE_NOTES_PREVIEW)
+	@test -n "$(NOTES_FILE)" || (echo "NOTES_FILE is required" >&2; exit 2)
+	"$(MAC_RELEASE_NOTES_PREVIEW)" "$(NOTES_FILE)" "$(MAC_VERSION)-$(MAC_BUILD)"
 
 print-mac-signing-identities:
-	@security find-identity -v | grep -E "Apple Distribution|Developer ID Application|3rd Party Mac Developer" || true
+	@security find-identity -v -p codesigning | grep "Developer ID Application" || true
 
 install: mac-app
 	rm -rf "/Applications/ShenzhenPDF.app"
@@ -309,4 +346,4 @@ linux-gtk4-tests: | $(BUILD)
 	done
 
 clean:
-	rm -rf "$(BUILD)" "$(MAC_APP)" "$(MAC_DMG)" "$(MAC_TESTFLIGHT_PKG)"
+	rm -rf "$(BUILD)" "$(MAC_APP)" "$(MAC_DMG)"

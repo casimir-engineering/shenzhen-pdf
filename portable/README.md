@@ -12,7 +12,7 @@ the platform UI instead of emulating the Windows application.
   pages, detecting text before OCR, and saving edited PDFs.
 - `mac/`: native AppKit application bundle frontend.
 - `linux/`: native GTK frontend using the same core API and JSON state shapes.
-- `docs/`: TestFlight handoff, release, and portability notes.
+- `docs/`: direct-GitHub release, updater, and portability notes.
 
 ## Frontend Snapshot
 
@@ -113,39 +113,41 @@ Readable state files live under:
 ~/.config/shenzhenpdf/
 ```
 
-## TestFlight Handoff
+## Direct-GitHub Releases
 
-TestFlight packages use the App Store signing path and require the publisher's
-Apple assets. Create the Bundle ID, App Store Connect app record, distribution
-provisioning profile, Apple Distribution certificate, and 3rd Party Mac
-Developer Installer certificate before building the upload package.
+Release metadata and notes are committed before a candidate is built. Prepare
+the metadata on a release branch without any publishing side effects:
 
 ```sh
-MAC_BUNDLE_ID=com.intuition.shenzhenpdf \
-MAC_VERSION=26.6.8 \
-MAC_BUILD=2 \
-MAC_APPSTORE_IDENTITY="Apple Distribution: Publisher Name (TEAMID1234)" \
-MAC_INSTALLER_IDENTITY="3rd Party Mac Developer Installer: Publisher Name (TEAMID1234)" \
-MAC_PROVISIONING_PROFILE="$HOME/Downloads/ShenzhenPDF_AppStore.provisionprofile" \
-./portable/build-mac-testflight.sh
+./portable/cut-release.sh --version 26.8.27 --build 1 --prepare-only \
+  "concise release summary"
 ```
 
-Expected output:
-
-```text
-dist/ShenzhenPDF-testflight-26.6.8-2.pkg
-```
-
-Open in Transporter:
+After reviewing that commit on `master`, explicitly publish the already-
+committed metadata. The command builds a clean arm64/macOS 12.0 DMG, signs it
+with Developer ID, submits it for notarization, authenticates it before mount,
+verifies the app before execution, then tags and publishes:
 
 ```sh
-OPEN_TRANSPORTER=1 ./portable/build-mac-testflight.sh
+./portable/cut-release.sh --publish
 ```
 
-The script and checklist are ready for handoff, but this repository cannot
-produce an upload-ready package until the publisher supplies the Apple signing
-identity, installer identity, provisioning profile, and optionally Transporter.
-See [docs/testflight.md](docs/testflight.md) for the complete checklist.
+Publication is resumable. Rerunning `--publish` accepts refs and a GitHub
+release only when they resolve to the exact prepared commit, replaces the
+named DMG asset when needed, and downloads it again for a SHA-256 comparison.
+Any conflicting tag or asset fails closed.
+
+To build the already committed metadata without tagging, pushing, or publishing:
+
+```sh
+./portable/build-mac-release.sh
+```
+
+Signing configuration is read from the ignored `portable/.release.env`; start
+from `.release.env.example`. Team ID `66LJ4BV7Q3`, bundle ID
+`com.intuition.shenzhenpdf`, arm64, macOS 12.0, and release optimization flags
+are pinned by the release path. Release notes are tracked under
+`portable/docs/releases/`.
 
 ## Notes For Contributors
 

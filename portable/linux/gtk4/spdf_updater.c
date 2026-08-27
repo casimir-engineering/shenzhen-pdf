@@ -54,11 +54,9 @@
 // 95F72498E795D0DD). cut-release.sh signs the Linux release assets with the
 // matching secret key (`minisign -S`); this constant is the only key the
 // updater will ever accept.
-static const char k_spdf_pinned_pubkey[] =
-    "RWTd0JXnmCT3lfku0las2n0Y63vQ1JN6xxfV7WRYdbOMoNX4on2o5azz";
+static const char k_spdf_pinned_pubkey[] = "RWTd0JXnmCT3lfku0las2n0Y63vQ1JN6xxfV7WRYdbOMoNX4on2o5azz";
 
-#define SPDF_UPDATER_RELEASES_LATEST_URL \
-    "https://api.github.com/repos/casimir-engineering/shenzhen-pdf/releases/latest"
+#define SPDF_UPDATER_RELEASES_LATEST_URL "https://api.github.com/repos/casimir-engineering/shenzhen-pdf/releases/latest"
 
 // Release asset names (same convention as ShenzhenPDF-mac-arm64.dmg). The
 // deb serves system installs; the tarball (containing the ShenzhenPDF-gtk4
@@ -67,11 +65,11 @@ static const char k_spdf_pinned_pubkey[] =
 #define SPDF_UPDATER_DEB_ASSET "ShenzhenPDF-linux-amd64.deb"
 #define SPDF_UPDATER_TAR_ASSET "ShenzhenPDF-linux-amd64.tar.gz"
 
-#define SPDF_UPDATER_DAILY_INTERVAL ((gint64)86400)   // 24h rolling gate
-#define SPDF_UPDATER_IDLE_DELAY_SECONDS 5             // post-launch settle
-#define SPDF_UPDATER_CADENCE_SECONDS 3600             // re-arm poll while running
-#define SPDF_UPDATER_NET_TIMEOUT_SECONDS 15           // API check
-#define SPDF_UPDATER_ASSET_TIMEOUT_SECONDS 600        // asset download
+#define SPDF_UPDATER_DAILY_INTERVAL ((gint64)86400) // 24h rolling gate
+#define SPDF_UPDATER_IDLE_DELAY_SECONDS 5           // post-launch settle
+#define SPDF_UPDATER_CADENCE_SECONDS 3600           // re-arm poll while running
+#define SPDF_UPDATER_NET_TIMEOUT_SECONDS 15         // API check
+#define SPDF_UPDATER_ASSET_TIMEOUT_SECONDS 600      // asset download
 #define SPDF_UPDATER_LEASE_STALE_SECONDS ((gint64)3600)
 #define SPDF_UPDATER_LATER_SNOOZE_SECONDS ((gint64)(7 * 86400))
 #define SPDF_UPDATER_MAX_ASSET_BYTES ((gint64)256 * 1024 * 1024)
@@ -120,8 +118,10 @@ int spdf_updater_compare_versions(const char* a, const char* b) {
         for (guint i = 0; i < n && result == 0; ++i) {
             gint64 va = i < ca->len ? g_array_index(ca, gint64, i) : 0;
             gint64 vb = i < cb->len ? g_array_index(cb, gint64, i) : 0;
-            if (va < vb) result = -1;
-            else if (va > vb) result = 1;
+            if (va < vb)
+                result = -1;
+            else if (va > vb)
+                result = 1;
         }
     }
     // Malformed input on either side => no ordering decision (0, no update).
@@ -145,8 +145,25 @@ gboolean spdf_updater_versions_match_primary(const char* a, const char* b) {
     return match;
 }
 
-gint64 spdf_updater_daily_check_delay(gboolean auto_update_enabled, gboolean have_last_check,
-                                      gint64 last_check_epoch, gint64 now_epoch) {
+static gboolean updater_versions_match_release_target(const char* target, const char* running) {
+    GArray* target_components = g_array_new(FALSE, FALSE, sizeof(gint64));
+    GArray* running_components = g_array_new(FALSE, FALSE, sizeof(gint64));
+    gboolean match = FALSE;
+
+    if (version_components(target, target_components) && version_components(running, running_components) &&
+        target_components->len == 4 && running_components->len == 4) {
+        match = TRUE;
+        for (guint i = 0; i < 4 && match; ++i) {
+            match = g_array_index(target_components, gint64, i) == g_array_index(running_components, gint64, i);
+        }
+    }
+    g_array_unref(target_components);
+    g_array_unref(running_components);
+    return match;
+}
+
+gint64 spdf_updater_daily_check_delay(gboolean auto_update_enabled, gboolean have_last_check, gint64 last_check_epoch,
+                                      gint64 now_epoch) {
     gint64 elapsed;
 
     if (!auto_update_enabled) return -1;
@@ -267,8 +284,7 @@ void spdf_minisign_sig_clear(SpdfMinisignSig* sig) {
     memset(sig, 0, sizeof(*sig));
 }
 
-static gboolean ed25519_verify(const guint8 key[32], const guint8 sig[64],
-                               const guint8* msg, gsize msg_len) {
+static gboolean ed25519_verify(const guint8 key[32], const guint8 sig[64], const guint8* msg, gsize msg_len) {
     EVP_PKEY* pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL, key, 32);
     EVP_MD_CTX* ctx = pkey ? EVP_MD_CTX_new() : NULL;
     gboolean ok = FALSE;
@@ -281,8 +297,8 @@ static gboolean ed25519_verify(const guint8 key[32], const guint8 sig[64],
     return ok;
 }
 
-gboolean spdf_minisign_verify_buffer(const SpdfMinisignKey* key, const SpdfMinisignSig* sig,
-                                     const guint8* data, gsize len, char** error) {
+gboolean spdf_minisign_verify_buffer(const SpdfMinisignKey* key, const SpdfMinisignSig* sig, const guint8* data,
+                                     gsize len, char** error) {
     guint8 digest[EVP_MAX_MD_SIZE];
     const guint8* msg;
     gsize msg_len;
@@ -297,8 +313,7 @@ gboolean spdf_minisign_verify_buffer(const SpdfMinisignKey* key, const SpdfMinis
     }
     if (sig->prehashed) { // "ED": Ed25519 over BLAKE2b-512(content)
         unsigned int digest_len = 0;
-        if (EVP_Digest(data, len, digest, &digest_len, EVP_blake2b512(), NULL) != 1 ||
-            digest_len != 64) {
+        if (EVP_Digest(data, len, digest, &digest_len, EVP_blake2b512(), NULL) != 1 || digest_len != 64) {
             set_error(error, "BLAKE2b-512 digest failed");
             return FALSE;
         }
@@ -337,8 +352,7 @@ gboolean spdf_minisign_verify_buffer(const SpdfMinisignKey* key, const SpdfMinis
     return TRUE;
 }
 
-gboolean spdf_minisign_verify_file(const SpdfMinisignKey* key, const char* sig_text,
-                                   const char* path, char** error) {
+gboolean spdf_minisign_verify_file(const SpdfMinisignKey* key, const char* sig_text, const char* path, char** error) {
     SpdfMinisignSig sig;
     char* contents = NULL;
     gsize len = 0;
@@ -370,8 +384,7 @@ typedef struct {
 } JsCursor;
 
 static void js_skip_ws(JsCursor* c) {
-    while (c->p < c->end && (*c->p == ' ' || *c->p == '\t' || *c->p == '\n' || *c->p == '\r'))
-        c->p++;
+    while (c->p < c->end && (*c->p == ' ' || *c->p == '\t' || *c->p == '\n' || *c->p == '\r')) c->p++;
 }
 
 // Cursor at '"'. Consumes through the closing quote; decoded content appended
@@ -389,14 +402,30 @@ static gboolean js_parse_string(JsCursor* c, GString* out) {
             c->p++;
             if (c->p >= c->end) return FALSE;
             switch (*c->p) {
-                case '"': if (out) g_string_append_c(out, '"'); break;
-                case '\\': if (out) g_string_append_c(out, '\\'); break;
-                case '/': if (out) g_string_append_c(out, '/'); break;
-                case 'b': if (out) g_string_append_c(out, '\b'); break;
-                case 'f': if (out) g_string_append_c(out, '\f'); break;
-                case 'n': if (out) g_string_append_c(out, '\n'); break;
-                case 'r': if (out) g_string_append_c(out, '\r'); break;
-                case 't': if (out) g_string_append_c(out, '\t'); break;
+                case '"':
+                    if (out) g_string_append_c(out, '"');
+                    break;
+                case '\\':
+                    if (out) g_string_append_c(out, '\\');
+                    break;
+                case '/':
+                    if (out) g_string_append_c(out, '/');
+                    break;
+                case 'b':
+                    if (out) g_string_append_c(out, '\b');
+                    break;
+                case 'f':
+                    if (out) g_string_append_c(out, '\f');
+                    break;
+                case 'n':
+                    if (out) g_string_append_c(out, '\n');
+                    break;
+                case 'r':
+                    if (out) g_string_append_c(out, '\r');
+                    break;
+                case 't':
+                    if (out) g_string_append_c(out, '\t');
+                    break;
                 case 'u': {
                     gunichar u = 0;
                     if (c->end - c->p < 5) return FALSE;
@@ -406,14 +435,15 @@ static gboolean js_parse_string(JsCursor* c, GString* out) {
                         u = (u << 4) | (gunichar)digit;
                     }
                     c->p += 4;
-                    if (u >= 0xD800 && u <= 0xDBFF && c->end - c->p >= 7 && c->p[1] == '\\' &&
-                        c->p[2] == 'u') {
+                    if (u >= 0xD800 && u <= 0xDBFF && c->end - c->p >= 7 && c->p[1] == '\\' && c->p[2] == 'u') {
                         gunichar lo = 0;
                         gboolean valid = TRUE;
                         for (int i = 3; i <= 6; ++i) {
                             int digit = g_ascii_xdigit_value(c->p[i]);
-                            if (digit < 0) valid = FALSE;
-                            else lo = (lo << 4) | (gunichar)digit;
+                            if (digit < 0)
+                                valid = FALSE;
+                            else
+                                lo = (lo << 4) | (gunichar)digit;
                         }
                         if (valid && lo >= 0xDC00 && lo <= 0xDFFF) {
                             u = 0x10000 + ((u - 0xD800) << 10) + (lo - 0xDC00);
@@ -423,7 +453,8 @@ static gboolean js_parse_string(JsCursor* c, GString* out) {
                     if (out && g_unichar_validate(u)) g_string_append_unichar(out, u);
                     break;
                 }
-                default: return FALSE;
+                default:
+                    return FALSE;
             }
             c->p++;
         } else {
@@ -473,13 +504,16 @@ static gboolean js_skip_value(JsCursor* c) {
     js_skip_ws(c);
     if (c->p >= c->end) return FALSE;
     switch (*c->p) {
-        case '"': return js_parse_string(c, NULL);
-        case '{': return js_skip_container(c, '{', '}');
-        case '[': return js_skip_container(c, '[', ']');
+        case '"':
+            return js_parse_string(c, NULL);
+        case '{':
+            return js_skip_container(c, '{', '}');
+        case '[':
+            return js_skip_container(c, '[', ']');
         default: {
             const char* start = c->p;
-            while (c->p < c->end && *c->p != ',' && *c->p != '}' && *c->p != ']' &&
-                   *c->p != ' ' && *c->p != '\t' && *c->p != '\n' && *c->p != '\r')
+            while (c->p < c->end && *c->p != ',' && *c->p != '}' && *c->p != ']' && *c->p != ' ' && *c->p != '\t' &&
+                   *c->p != '\n' && *c->p != '\r')
                 c->p++;
             return c->p > start;
         }
@@ -560,8 +594,8 @@ static gboolean js_read_int_value(JsCursor* c, gint64* out) {
         *out = value;
         c->p = end;
         // Consume any fraction/exponent tail so the scan stays aligned.
-        while (c->p < c->end && (*c->p == '.' || *c->p == 'e' || *c->p == 'E' || *c->p == '+' ||
-                                 *c->p == '-' || g_ascii_isdigit(*c->p)))
+        while (c->p < c->end &&
+               (*c->p == '.' || *c->p == 'e' || *c->p == 'E' || *c->p == '+' || *c->p == '-' || g_ascii_isdigit(*c->p)))
             c->p++;
         return TRUE;
     }
@@ -602,8 +636,7 @@ static gboolean js_parse_asset(JsCursor* c, JsAsset* asset) {
     return r == 0;
 }
 
-gboolean spdf_updater_parse_release(const char* json, gssize len, const char* asset_name,
-                                    SpdfReleaseInfo* out) {
+gboolean spdf_updater_parse_release(const char* json, gssize len, const char* asset_name, SpdfReleaseInfo* out) {
     JsCursor c;
     char* sig_name;
     char* key;
@@ -700,17 +733,14 @@ void spdf_release_info_clear(SpdfReleaseInfo* info) {
 // 4. Availability decision + release-notes formatting (pure)
 // ===========================================================================
 
-gboolean spdf_updater_release_available(const SpdfReleaseInfo* info, const char* running,
-                                        const char* highest_seen) {
+gboolean spdf_updater_release_available(const SpdfReleaseInfo* info, const char* running, const char* highest_seen) {
     if (!info || !info->tag || !*info->tag || !running || !*running) return FALSE;
     if (info->draft || info->prerelease) return FALSE;
     if (!info->asset_url || !*info->asset_url) return FALSE;
     if (!info->sig_url || !*info->sig_url) return FALSE; // unsigned release: never offer
     if (spdf_updater_compare_versions(info->tag, running) <= 0) return FALSE;
     // Downgrade/replay guard against the high-water mark.
-    if (highest_seen && *highest_seen &&
-        spdf_updater_compare_versions(info->tag, highest_seen) < 0)
-        return FALSE;
+    if (highest_seen && *highest_seen && spdf_updater_compare_versions(info->tag, highest_seen) < 0) return FALSE;
     return TRUE;
 }
 
@@ -752,8 +782,7 @@ char* spdf_updater_format_notes(const char* body) {
         char* stripped;
 
         // Highlights section only: stop at the first horizontal rule.
-        if (g_str_has_prefix(line, "---") || g_str_has_prefix(line, "***") ||
-            g_str_has_prefix(line, "___")) {
+        if (g_str_has_prefix(line, "---") || g_str_has_prefix(line, "***") || g_str_has_prefix(line, "___")) {
             g_free(line);
             break;
         }
@@ -765,8 +794,7 @@ char* spdf_updater_format_notes(const char* body) {
             g_free(line);
             line = stripped;
         }
-        if (g_str_has_prefix(line, "- ") || g_str_has_prefix(line, "* ") ||
-            g_str_has_prefix(line, "+ ")) {
+        if (g_str_has_prefix(line, "- ") || g_str_has_prefix(line, "* ") || g_str_has_prefix(line, "+ ")) {
             char* bullet = g_strconcat("\xE2\x80\xA2 ", line + 2, NULL); // "• "
             g_free(line);
             line = bullet;
@@ -862,9 +890,12 @@ static gboolean store_parse_mac_lease(JsCursor* c, SpdfUpdateStore* out) {
     if (!js_enter_object(c)) return js_skip_value(c);
     while ((r = js_next_member(c, &key)) > 0) {
         gboolean ok;
-        if (strcmp(key, "pid") == 0) ok = js_read_int_value(c, &out->lease_pid);
-        else if (strcmp(key, "timestamp") == 0) ok = js_read_int_value(c, &out->lease_ts);
-        else ok = js_skip_value(c);
+        if (strcmp(key, "pid") == 0)
+            ok = js_read_int_value(c, &out->lease_pid);
+        else if (strcmp(key, "timestamp") == 0)
+            ok = js_read_int_value(c, &out->lease_ts);
+        else
+            ok = js_skip_value(c);
         g_free(key);
         if (!ok) return FALSE;
     }
@@ -884,12 +915,18 @@ void spdf_update_store_parse(const char* json, gssize len, SpdfUpdateStore* out)
     if (!js_enter_object(&c)) return;
     while ((r = js_next_member(&c, &key)) > 0) {
         gboolean ok;
-        if (strcmp(key, "lastUpdateCheck") == 0) ok = js_read_int_value(&c, &out->last_check);
-        else if (strcmp(key, "remindAfter") == 0) ok = js_read_int_value(&c, &out->remind_after);
-        else if (strcmp(key, "leasePid") == 0) ok = js_read_int_value(&c, &out->lease_pid);
-        else if (strcmp(key, "leaseTimestamp") == 0) ok = js_read_int_value(&c, &out->lease_ts);
-        else if (strcmp(key, "updateInProgress") == 0) ok = store_parse_mac_lease(&c, out);
-        else if (strcmp(key, "etag") == 0) ok = (out->etag = js_read_string_value(&c)) != NULL;
+        if (strcmp(key, "lastUpdateCheck") == 0)
+            ok = js_read_int_value(&c, &out->last_check);
+        else if (strcmp(key, "remindAfter") == 0)
+            ok = js_read_int_value(&c, &out->remind_after);
+        else if (strcmp(key, "leasePid") == 0)
+            ok = js_read_int_value(&c, &out->lease_pid);
+        else if (strcmp(key, "leaseTimestamp") == 0)
+            ok = js_read_int_value(&c, &out->lease_ts);
+        else if (strcmp(key, "updateInProgress") == 0)
+            ok = store_parse_mac_lease(&c, out);
+        else if (strcmp(key, "etag") == 0)
+            ok = (out->etag = js_read_string_value(&c)) != NULL;
         else if (strcmp(key, "highestVersionSeen") == 0)
             ok = (out->highest_seen = js_read_string_value(&c)) != NULL;
         else if (strcmp(key, "deferredTag") == 0)
@@ -900,23 +937,28 @@ void spdf_update_store_parse(const char* json, gssize len, SpdfUpdateStore* out)
             // Mac spells the healthy-relaunch marker update_ok (snake_case).
             g_free(out->update_ok);
             ok = (out->update_ok = js_read_string_value(&c)) != NULL;
-        } else ok = js_skip_value(&c);
+        } else
+            ok = js_skip_value(&c);
         g_free(key);
         if (!ok) break;
     }
 }
 
-static void store_append_json_string(GString* out, const char* key, const char* value,
-                                     gboolean* first) {
+static void store_append_json_string(GString* out, const char* key, const char* value, gboolean* first) {
     if (!value || !*value) return;
     g_string_append_printf(out, "%s  \"%s\": \"", *first ? "" : ",\n", key);
     for (const unsigned char* p = (const unsigned char*)value; *p; ++p) {
         if (*p == '"' || *p == '\\') g_string_append_c(out, '\\');
-        if (*p == '\n') g_string_append(out, "\\n");
-        else if (*p == '\r') g_string_append(out, "\\r");
-        else if (*p == '\t') g_string_append(out, "\\t");
-        else if (*p < 0x20) g_string_append_printf(out, "\\u%04x", (unsigned int)*p);
-        else g_string_append_c(out, (char)*p);
+        if (*p == '\n')
+            g_string_append(out, "\\n");
+        else if (*p == '\r')
+            g_string_append(out, "\\r");
+        else if (*p == '\t')
+            g_string_append(out, "\\t");
+        else if (*p < 0x20)
+            g_string_append_printf(out, "\\u%04x", (unsigned int)*p);
+        else
+            g_string_append_c(out, (char)*p);
     }
     g_string_append_c(out, '"');
     *first = FALSE;
@@ -1017,8 +1059,7 @@ static gboolean mutator_claim_daily_slot(SpdfUpdateStore* store, gpointer user_d
     gboolean* claimed = user_data;
     gint64 now = g_get_real_time() / G_USEC_PER_SEC;
 
-    if (spdf_updater_daily_check_delay(TRUE, store->last_check != 0, store->last_check, now) != 0)
-        return FALSE;
+    if (spdf_updater_daily_check_delay(TRUE, store->last_check != 0, store->last_check, now) != 0) return FALSE;
     store->last_check = now;
     *claimed = TRUE;
     return TRUE;
@@ -1030,8 +1071,7 @@ static gboolean mutator_acquire_lease(SpdfUpdateStore* store, gpointer user_data
     gboolean* acquired = user_data;
     gint64 now = g_get_real_time() / G_USEC_PER_SEC;
 
-    if (store->lease_pid > 0 && store->lease_pid != (gint64)getpid() &&
-        kill((pid_t)store->lease_pid, 0) == 0 &&
+    if (store->lease_pid > 0 && store->lease_pid != (gint64)getpid() && kill((pid_t)store->lease_pid, 0) == 0 &&
         (now - store->lease_ts) < SPDF_UPDATER_LEASE_STALE_SECONDS)
         return FALSE; // genuinely held by a live, recent driver
     store->lease_pid = getpid();
@@ -1053,9 +1093,8 @@ static gboolean mutator_release_lease(SpdfUpdateStore* store, gpointer user_data
 // ===========================================================================
 
 static char* updater_user_agent(void) {
-    return g_strdup_printf(
-        "ShenzhenPDF/%s (GTK4 Linux; +https://github.com/casimir-engineering/shenzhen-pdf)",
-        updater_running_version());
+    return g_strdup_printf("ShenzhenPDF/%s (GTK4 Linux; +https://github.com/casimir-engineering/shenzhen-pdf)",
+                           updater_running_version());
 }
 
 // Returns the fetcher path, setting *is_curl. NULL when neither tool exists
@@ -1101,10 +1140,9 @@ static void updater_cancel_kill_subprocess(GCancellable* cancellable, gpointer u
 // redirect hop), bounded redirects, bounded time, size cap re-checked on the
 // resulting file. Returns TRUE when an HTTP status was obtained (the caller
 // interprets it); FALSE with *error_out on transport/tool failure.
-static gboolean updater_fetch(const char* url, const char* dest_path, const char* etag_in,
-                              gboolean api_request, gint64 max_bytes, guint timeout_secs,
-                              GCancellable* cancellable, int* status_out, char** etag_out,
-                              char** error_out) {
+static gboolean updater_fetch(const char* url, const char* dest_path, const char* etag_in, gboolean api_request,
+                              gint64 max_bytes, guint timeout_secs, GCancellable* cancellable, int* status_out,
+                              char** etag_out, char** error_out) {
     gboolean is_curl = FALSE;
     char* tool = updater_find_fetcher(&is_curl);
     char* headers_path = g_strconcat(dest_path, ".headers", NULL);
@@ -1120,8 +1158,7 @@ static gboolean updater_fetch(const char* url, const char* dest_path, const char
     *status_out = -1;
     if (etag_out) *etag_out = NULL;
     if (!tool) {
-        set_error(error_out,
-                  "neither curl nor wget was found in PATH; automatic updates are unavailable");
+        set_error(error_out, "neither curl nor wget was found in PATH; automatic updates are unavailable");
         goto out;
     }
     if (!g_str_has_prefix(url, "https://")) {
@@ -1173,17 +1210,15 @@ static gboolean updater_fetch(const char* url, const char* dest_path, const char
             g_ptr_array_add(argv, g_strdup("--header=Accept: application/vnd.github+json"));
             g_ptr_array_add(argv, g_strdup("--header=X-GitHub-Api-Version: 2022-11-28"));
         }
-        if (etag_in && *etag_in)
-            g_ptr_array_add(argv, g_strdup_printf("--header=If-None-Match: %s", etag_in));
+        if (etag_in && *etag_in) g_ptr_array_add(argv, g_strdup_printf("--header=If-None-Match: %s", etag_in));
         g_ptr_array_add(argv, g_strdup("-O"));
         g_ptr_array_add(argv, g_strdup(dest_path));
     }
     g_ptr_array_add(argv, g_strdup(url));
     g_ptr_array_add(argv, NULL);
 
-    launcher = g_subprocess_launcher_new(
-        G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
-        (is_curl ? G_SUBPROCESS_FLAGS_STDERR_SILENCE : G_SUBPROCESS_FLAGS_NONE));
+    launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+                                         (is_curl ? G_SUBPROCESS_FLAGS_STDERR_SILENCE : G_SUBPROCESS_FLAGS_NONE));
     // wget prints its --server-response header dump on stderr; curl writes
     // headers via -D and gets its stderr dropped (the exit code + parsed
     // status carry the outcome).
@@ -1196,8 +1231,8 @@ static gboolean updater_fetch(const char* url, const char* dest_path, const char
         goto out;
     }
     if (cancellable)
-        cancel_id = g_cancellable_connect(cancellable, G_CALLBACK(updater_cancel_kill_subprocess),
-                                          g_object_ref(proc), g_object_unref);
+        cancel_id = g_cancellable_connect(cancellable, G_CALLBACK(updater_cancel_kill_subprocess), g_object_ref(proc),
+                                          g_object_unref);
     g_subprocess_wait(proc, NULL, NULL);
     if (cancellable && cancel_id) g_cancellable_disconnect(cancellable, cancel_id);
     if (cancellable && g_cancellable_is_cancelled(cancellable)) {
@@ -1206,15 +1241,13 @@ static gboolean updater_fetch(const char* url, const char* dest_path, const char
         goto out;
     }
 
-    if (g_file_get_contents(headers_path, &headers, NULL, NULL))
-        updater_parse_headers(headers, status_out, etag_out);
+    if (g_file_get_contents(headers_path, &headers, NULL, NULL)) updater_parse_headers(headers, status_out, etag_out);
     g_free(headers);
 
     if (*status_out < 100) {
         // No HTTP status at all: transport-level failure (offline, DNS, TLS).
-        set_error(error_out, g_subprocess_get_if_exited(proc)
-                                 ? "could not reach the update server"
-                                 : "the download tool was interrupted");
+        set_error(error_out, g_subprocess_get_if_exited(proc) ? "could not reach the update server"
+                                                              : "the download tool was interrupted");
         g_object_unref(proc);
         goto out;
     }
@@ -1279,8 +1312,8 @@ static gboolean updater_can_install(void) {
 }
 
 typedef struct {
-    gboolean ok;            // an HTTP outcome was obtained and parsed
-    gboolean not_modified;  // 304
+    gboolean ok;           // an HTTP outcome was obtained and parsed
+    gboolean not_modified; // 304
     gboolean available;
     gboolean newer_but_missing_asset; // newer tag exists, no Linux asset/sig
     SpdfReleaseInfo release;
@@ -1351,9 +1384,8 @@ static void updater_check_sync(gboolean user_initiated, SpdfCheckOutcome* outcom
     memset(outcome, 0, sizeof(*outcome));
     with_locked_update_store(mutator_read_snapshot, &snap);
 
-    if (!updater_fetch(SPDF_UPDATER_RELEASES_LATEST_URL, body_path,
-                       user_initiated ? NULL : snap.etag, TRUE, (gint64)8 * 1024 * 1024,
-                       SPDF_UPDATER_NET_TIMEOUT_SECONDS, NULL, &status, &new_etag,
+    if (!updater_fetch(SPDF_UPDATER_RELEASES_LATEST_URL, body_path, user_initiated ? NULL : snap.etag, TRUE,
+                       (gint64)8 * 1024 * 1024, SPDF_UPDATER_NET_TIMEOUT_SECONDS, NULL, &status, &new_etag,
                        &outcome->error))
         goto out;
 
@@ -1367,8 +1399,7 @@ static void updater_check_sync(gboolean user_initiated, SpdfCheckOutcome* outcom
         goto out;
     }
     if (!g_file_get_contents(body_path, &body, &body_len, NULL) ||
-        !spdf_updater_parse_release(body, (gssize)body_len, updater_asset_name(),
-                                    &outcome->release)) {
+        !spdf_updater_parse_release(body, (gssize)body_len, updater_asset_name(), &outcome->release)) {
         set_error(&outcome->error, "the update server response was malformed");
         goto out;
     }
@@ -1379,9 +1410,8 @@ static void updater_check_sync(gboolean user_initiated, SpdfCheckOutcome* outcom
     }
 
     outcome->ok = TRUE;
-    outcome->available = spdf_updater_release_available(&outcome->release,
-                                                        updater_running_version(),
-                                                        snap.highest_seen);
+    outcome->available =
+        spdf_updater_release_available(&outcome->release, updater_running_version(), snap.highest_seen);
     outcome->newer_but_missing_asset =
         !outcome->available && !outcome->release.draft && !outcome->release.prerelease &&
         spdf_updater_compare_versions(outcome->release.tag, updater_running_version()) > 0 &&
@@ -1403,18 +1433,18 @@ out:
 // ===========================================================================
 
 static struct {
-    SpdfApp* app;                // owned ref taken in spdf_updater_start
+    SpdfApp* app; // owned ref taken in spdf_updater_start
     guint first_check_id;
     guint cadence_id;
-    gboolean check_running;      // in-process driver flags (main thread)
+    gboolean check_running; // in-process driver flags (main thread)
     gboolean install_running;
-    GCancellable* cancellable;   // cancels the in-flight download
+    GCancellable* cancellable; // cancels the in-flight download
 
     GtkWindow* progress_window;
     GtkProgressBar* progress_bar;
     GtkLabel* progress_label;
     guint progress_timer;
-    char* progress_path;         // file whose size drives the bar
+    char* progress_path; // file whose size drives the bar
     gint64 progress_total;
 } g_updater;
 
@@ -1441,8 +1471,7 @@ static gboolean progress_timer_tick(gpointer user_data) {
         double total = (double)g_updater.progress_total;
         char text[64];
         gtk_progress_bar_set_fraction(g_updater.progress_bar, CLAMP(written / total, 0.0, 1.0));
-        g_snprintf(text, sizeof(text), "%.1f MB of %.1f MB", written / (1024.0 * 1024.0),
-                   total / (1024.0 * 1024.0));
+        g_snprintf(text, sizeof(text), "%.1f MB of %.1f MB", written / (1024.0 * 1024.0), total / (1024.0 * 1024.0));
         gtk_label_set_text(g_updater.progress_label, text);
     } else {
         gtk_progress_bar_pulse(g_updater.progress_bar);
@@ -1467,8 +1496,7 @@ static void updater_show_progress(const char* tag) {
     gtk_window_set_title(g_updater.progress_window, "Software Update");
     gtk_window_set_resizable(g_updater.progress_window, FALSE);
     gtk_window_set_default_size(g_updater.progress_window, 420, -1);
-    if (updater_active_window())
-        gtk_window_set_transient_for(g_updater.progress_window, updater_active_window());
+    if (updater_active_window()) gtk_window_set_transient_for(g_updater.progress_window, updater_active_window());
 
     box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_margin_top(box, 16);
@@ -1529,10 +1557,10 @@ static gboolean updater_run_tool_sync(const char* const* argv, guint timeout_sec
     gint64 waited_ms = 0;
 
     if (exit_out) *exit_out = -1;
-    if (!g_spawn_async(NULL, (char**)argv, NULL,
-                       G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD |
-                           G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
-                       NULL, NULL, &pid, NULL))
+    if (!g_spawn_async(
+            NULL, (char**)argv, NULL,
+            G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
+            NULL, NULL, &pid, NULL))
         return FALSE;
     for (;;) {
         pid_t r = waitpid(pid, &wstatus, timeout_secs ? WNOHANG : 0);
@@ -1562,8 +1590,7 @@ static gboolean updater_run_tool_sync(const char* const* argv, guint timeout_sec
 static gboolean updater_health_probe(const char* exe_path) {
     const char* argv[] = {exe_path, "--updater-health-probe", NULL};
     int exit_status = -1;
-    if (!updater_run_tool_sync(argv, SPDF_UPDATER_HEALTH_PROBE_TIMEOUT_SECONDS, &exit_status))
-        return FALSE;
+    if (!updater_run_tool_sync(argv, SPDF_UPDATER_HEALTH_PROBE_TIMEOUT_SECONDS, &exit_status)) return FALSE;
     return exit_status == 0;
 }
 
@@ -1574,8 +1601,7 @@ static void updater_delete_tree(const char* path) {
     if (dir) {
         while ((name = g_dir_read_name(dir)) != NULL) {
             char* child = g_build_filename(path, name, NULL);
-            if (g_file_test(child, G_FILE_TEST_IS_DIR) &&
-                !g_file_test(child, G_FILE_TEST_IS_SYMLINK))
+            if (g_file_test(child, G_FILE_TEST_IS_DIR) && !g_file_test(child, G_FILE_TEST_IS_SYMLINK))
                 updater_delete_tree(child);
             else
                 g_unlink(child);
@@ -1597,7 +1623,8 @@ static void updater_prune_cache(void) {
     if (dir) {
         while ((name = g_dir_read_name(dir)) != NULL) {
             char* child = g_build_filename(cache_dir, name, NULL);
-            if (g_file_test(child, G_FILE_TEST_IS_DIR)) g_array_append_val(entries, child);
+            if (g_file_test(child, G_FILE_TEST_IS_DIR))
+                g_array_append_val(entries, child);
             else {
                 g_unlink(child); // stray files (release.json leftovers)
                 g_free(child);
@@ -1636,12 +1663,10 @@ static char* updater_find_extracted_binary(const char* root) {
     if (!dir) return NULL;
     while (!found && (name = g_dir_read_name(dir)) != NULL) {
         char* child = g_build_filename(root, name, NULL);
-        if (!g_file_test(child, G_FILE_TEST_IS_SYMLINK) &&
-            g_file_test(child, G_FILE_TEST_IS_DIR)) {
+        if (!g_file_test(child, G_FILE_TEST_IS_SYMLINK) && g_file_test(child, G_FILE_TEST_IS_DIR)) {
             found = updater_find_extracted_binary(child);
             g_free(child);
-        } else if (strcmp(name, "ShenzhenPDF-gtk4") == 0 &&
-                   g_file_test(child, G_FILE_TEST_IS_REGULAR)) {
+        } else if (strcmp(name, "ShenzhenPDF-gtk4") == 0 && g_file_test(child, G_FILE_TEST_IS_REGULAR)) {
             found = child; // ownership transferred
         } else {
             g_free(child);
@@ -1653,8 +1678,7 @@ static char* updater_find_extracted_binary(const char* root) {
 
 // Download the asset + its .minisig into cache/<tag>/ and verify against the
 // pinned pubkey. THE trust gate: returns the verified asset path or NULL.
-static char* updater_download_and_verify(const SpdfReleaseInfo* rel, GCancellable* cancellable,
-                                         char** error_out) {
+static char* updater_download_and_verify(const SpdfReleaseInfo* rel, GCancellable* cancellable, char** error_out) {
     char* cache_dir = updater_cache_dir();
     char* tag_dir = g_build_filename(cache_dir, rel->tag, NULL);
     const char* asset_name = updater_asset_name();
@@ -1701,9 +1725,8 @@ static char* updater_download_and_verify(const SpdfReleaseInfo* rel, GCancellabl
     }
     if (!spdf_minisign_verify_file(&key, sig_text, asset_path, error_out)) {
         char* detail = *error_out;
-        *error_out =
-            g_strdup_printf("The update could not be verified and was not installed (%s).",
-                            detail ? detail : "signature mismatch");
+        *error_out = g_strdup_printf("The update could not be verified and was not installed (%s).",
+                                     detail ? detail : "signature mismatch");
         g_free(detail);
         g_unlink(asset_path); // never leave an unverified artifact around
         g_unlink(sig_path);
@@ -1776,8 +1799,7 @@ static gboolean updater_install_user_local(const char* asset_path, char** error_
         GFile* src = g_file_new_for_path(extracted);
         GFile* dst = g_file_new_for_path(staged_new);
         GError* gerr = NULL;
-        gboolean copied =
-            g_file_copy(src, dst, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &gerr);
+        gboolean copied = g_file_copy(src, dst, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &gerr);
         g_object_unref(src);
         g_object_unref(dst);
         if (!copied) {
@@ -1811,8 +1833,7 @@ static gboolean updater_install_user_local(const char* asset_path, char** error_
         rename(old_path, exe);
         g_free(failed);
         moved_aside = FALSE;
-        set_error(error_out,
-                  "the updated binary failed its launch check; the previous version was restored");
+        set_error(error_out, "the updated binary failed its launch check; the previous version was restored");
         goto out;
     }
     // .old is retained until the relaunched process confirms the pending tag
@@ -1848,9 +1869,8 @@ static gboolean updater_install_deb(const char* deb_path, char** error_out) {
         goto out;
     }
     if (!pkexec) {
-        char* msg = g_strdup_printf(
-            "pkexec is not available. Install the update manually:\n  sudo dpkg -i %s",
-            deb_path);
+        char* msg =
+            g_strdup_printf("pkexec is not available. Install the update manually:\n  sudo dpkg -i %s", deb_path);
         set_error(error_out, msg);
         g_free(msg);
         goto out;
@@ -1906,8 +1926,7 @@ static gboolean mutator_set_pending_tag(SpdfUpdateStore* store, gpointer user_da
 
 // Shared by the GTK flow (worker thread) and the CLI. Returns TRUE on a
 // completed install (pendingTag recorded, cache pruned).
-static gboolean updater_install_sync(const SpdfReleaseInfo* rel, GCancellable* cancellable,
-                                     char** error_out) {
+static gboolean updater_install_sync(const SpdfReleaseInfo* rel, GCancellable* cancellable, char** error_out) {
     char* verified;
     gboolean installed;
     PendingTagArgs args;
@@ -1990,8 +2009,7 @@ static gboolean mutator_consume_pending(SpdfUpdateStore* store, gpointer user_da
 
     if (!store->pending_tag || !*store->pending_tag) return FALSE;
     args->pending = g_strdup(store->pending_tag);
-    args->confirmed =
-        spdf_updater_versions_match_primary(store->pending_tag, updater_running_version());
+    args->confirmed = updater_versions_match_release_target(store->pending_tag, updater_running_version());
     if (args->confirmed) {
         g_free(store->update_ok);
         store->update_ok = g_strdup(store->pending_tag);
@@ -2022,18 +2040,16 @@ static void updater_consume_pending_marker(void) {
                 g_free(msg);
             }
         } else {
-            g_message("shenzhenpdf: update to %s did not take (running %s); previous binary %s",
-                      args.pending, updater_running_version(),
-                      old_path && g_file_test(old_path, G_FILE_TEST_EXISTS)
-                          ? "kept alongside the install"
-                          : "not found");
+            g_message(
+                "shenzhenpdf: update to %s did not take (running %s); previous binary %s", args.pending,
+                updater_running_version(),
+                old_path && g_file_test(old_path, G_FILE_TEST_EXISTS) ? "kept alongside the install" : "not found");
         }
     } else if (old_path && g_file_test(old_path, G_FILE_TEST_EXISTS)) {
         // No update in flight: sweep an aged orphaned .old.
         GStatBuf st;
         gint64 now = g_get_real_time() / G_USEC_PER_SEC;
-        if (g_stat(old_path, &st) == 0 &&
-            now - (gint64)st.st_mtime > SPDF_UPDATER_LEASE_STALE_SECONDS)
+        if (g_stat(old_path, &st) == 0 && now - (gint64)st.st_mtime > SPDF_UPDATER_LEASE_STALE_SECONDS)
             g_unlink(old_path);
     }
     g_free(args.pending);
@@ -2146,8 +2162,7 @@ static gboolean mutator_snooze(SpdfUpdateStore* store, gpointer user_data) {
     SnoozeArgs* args = user_data;
     g_free(store->deferred_tag);
     store->deferred_tag = g_strdup(args->tag);
-    store->remind_after =
-        g_get_real_time() / G_USEC_PER_SEC + SPDF_UPDATER_LATER_SNOOZE_SECONDS;
+    store->remind_after = g_get_real_time() / G_USEC_PER_SEC + SPDF_UPDATER_LATER_SNOOZE_SECONDS;
     return TRUE;
 }
 
@@ -2175,16 +2190,15 @@ static void update_prompt_done(GObject* source, GAsyncResult* result, gpointer u
 }
 
 static void updater_present_update_available(PromptCtx* ctx) {
-    GtkAlertDialog* alert = gtk_alert_dialog_new(
-        ctx->can_install ? "Update %s ready" : "Update %s available", ctx->release.tag);
+    GtkAlertDialog* alert =
+        gtk_alert_dialog_new(ctx->can_install ? "Update %s ready" : "Update %s available", ctx->release.tag);
     const char* install_buttons[] = {"Install Now", "Skip This Version", "Later", NULL};
     const char* manual_buttons[] = {"OK", "Skip This Version", NULL};
     char* notes = spdf_updater_format_notes(ctx->release.notes);
     char* detail;
 
-    detail = g_strdup_printf("Shenzhen PDF %s is available — you have %s.%s%s",
-                             ctx->release.tag, updater_running_version(),
-                             *notes ? "\n\n" : "", notes);
+    detail = g_strdup_printf("Shenzhen PDF %s is available — you have %s.%s%s", ctx->release.tag,
+                             updater_running_version(), *notes ? "\n\n" : "", notes);
     if (!ctx->can_install) {
         // Announce only: this system install cannot take the .deb asset
         // (no dpkg — e.g. the rpm package), so never offer Install Now.
@@ -2221,8 +2235,7 @@ static gboolean check_finished_idle(gpointer user_data) {
 
     if (!o->ok) {
         if (ctx->user_initiated)
-            updater_show_message(NULL, "Software Update",
-                                 o->error ? o->error : "The update check failed.");
+            updater_show_message(NULL, "Software Update", o->error ? o->error : "The update check failed.");
         goto done; // silent on the daily path; lastUpdateCheck already stamped
     }
 
@@ -2236,8 +2249,7 @@ static gboolean check_finished_idle(gpointer user_data) {
                 g_strcmp0(settings->skipped_update_version, o->release.tag) == 0)
                 suppress = TRUE;
             with_locked_update_store(mutator_read_snapshot, &snap);
-            if (!suppress && snap.deferred_tag &&
-                g_strcmp0(snap.deferred_tag, o->release.tag) == 0 &&
+            if (!suppress && snap.deferred_tag && g_strcmp0(snap.deferred_tag, o->release.tag) == 0 &&
                 g_get_real_time() / G_USEC_PER_SEC < snap.remind_after)
                 suppress = TRUE;
             g_free(snap.etag);
@@ -2261,8 +2273,7 @@ static gboolean check_finished_idle(gpointer user_data) {
             updater_show_message(NULL, "Software Update", detail);
             g_free(detail);
         } else {
-            char* detail = g_strdup_printf("Shenzhen PDF %s is the latest version.",
-                                           updater_running_version());
+            char* detail = g_strdup_printf("Shenzhen PDF %s is the latest version.", updater_running_version());
             updater_show_message(NULL, "You're up to date.", detail);
             g_free(detail);
         }
@@ -2285,8 +2296,7 @@ static void updater_launch_check(gboolean user_initiated) {
     CheckCtx* ctx;
 
     if (g_updater.check_running || g_updater.install_running) {
-        if (user_initiated)
-            updater_show_message(NULL, "Software Update", "An update check is already running.");
+        if (user_initiated) updater_show_message(NULL, "Software Update", "An update check is already running.");
         return;
     }
     g_updater.check_running = TRUE;
@@ -2331,7 +2341,7 @@ static gboolean updater_first_idle(gpointer user_data) {
 // self-updating would fight the sandbox (read-only /app, no pkexec/dpkg) and
 // the store. Same disable-with-a-reason pattern as the missing-curl/wget
 // path: the silent cadence never arms, the manual check explains itself.
-#define SPDF_UPDATER_FLATPAK_REASON \
+#define SPDF_UPDATER_FLATPAK_REASON                                           \
     "This Shenzhen PDF was installed as a Flatpak; updates are delivered by " \
     "your software store (e.g. Flathub), not the built-in updater."
 
@@ -2348,10 +2358,8 @@ void spdf_updater_start(SpdfApp* app) {
     // thread after that. The hourly cadence timer re-arms the 24h gate so an
     // app left running for days keeps checking (GLib timers don't fire while
     // suspended; the hourly poll catches up naturally after resume).
-    g_updater.first_check_id =
-        g_timeout_add_seconds(SPDF_UPDATER_IDLE_DELAY_SECONDS, updater_first_idle, NULL);
-    g_updater.cadence_id =
-        g_timeout_add_seconds(SPDF_UPDATER_CADENCE_SECONDS, updater_cadence_tick, NULL);
+    g_updater.first_check_id = g_timeout_add_seconds(SPDF_UPDATER_IDLE_DELAY_SECONDS, updater_first_idle, NULL);
+    g_updater.cadence_id = g_timeout_add_seconds(SPDF_UPDATER_CADENCE_SECONDS, updater_cadence_tick, NULL);
 }
 
 void spdf_updater_check_interactive(SpdfApp* app, GtkWindow* parent) {
@@ -2378,8 +2386,7 @@ static int updater_cli_check(void) {
         g_print("update-available %s %s\n", outcome.release.tag, outcome.release.asset_url);
         status = 0;
     } else if (outcome.newer_but_missing_asset) {
-        g_print("update-unavailable %s (no %s asset)\n", outcome.release.tag,
-                updater_asset_name());
+        g_print("update-unavailable %s (no %s asset)\n", outcome.release.tag, updater_asset_name());
         status = 0;
     } else {
         g_print("up-to-date %s\n", updater_running_version());
@@ -2425,14 +2432,12 @@ int spdf_updater_handle_cli(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         if (strcmp(argv[i], "--updater-health-probe") == 0) return 0;
-        if (strcmp(argv[i], "--check-updates-now") == 0 ||
-            strcmp(argv[i], "--install-update") == 0) {
+        if (strcmp(argv[i], "--check-updates-now") == 0 || strcmp(argv[i], "--install-update") == 0) {
             if (spdf_running_in_flatpak()) {
                 g_print("updates-disabled: %s\n", SPDF_UPDATER_FLATPAK_REASON);
                 return 0;
             }
-            return strcmp(argv[i], "--check-updates-now") == 0 ? updater_cli_check()
-                                                               : updater_cli_install();
+            return strcmp(argv[i], "--check-updates-now") == 0 ? updater_cli_check() : updater_cli_install();
         }
     }
     return -1;

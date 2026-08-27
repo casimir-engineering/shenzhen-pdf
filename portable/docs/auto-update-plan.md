@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-Add a **lazy, once-per-day, very-low-priority** GitHub-release self-updater compiled into the single Objective-C++ binary but **gated at runtime to the non-sandboxed Developer ID build only** (the App Store / TestFlight build is updated by the App Store and must never self-update). At launch, strictly after first paint, the primary process checks the latest GitHub release at most once per machine per day. If a genuinely newer, non-skipped version exists, it asks the user; on consent it downloads the notarized DMG, **verifies it offline (Developer ID + Team ID `66LJ4BV7Q3` pin + stapled notarization ticket)**, extracts the inner `.app`, atomically swaps the running bundle, and relaunches — restoring the full multi-window session.
+Add a **lazy, once-per-day, very-low-priority** GitHub-release self-updater for the supported non-sandboxed Developer ID build. A runtime sandbox gate remains as a defense against unsupported third-party repackaging that cannot safely replace its own bundle. At launch, strictly after first paint, the primary process checks the latest GitHub release at most once per machine per day. If a genuinely newer, non-skipped version exists, it asks the user; on consent it downloads the notarized DMG, **verifies it offline (Developer ID + Team ID `66LJ4BV7Q3` pin + stapled notarization ticket)**, extracts the inner `.app`, atomically swaps the running bundle, and relaunches — restoring the full multi-window session.
 
 The single integrity boundary is the **code-signature + Team-ID + stapled-ticket gate on the downloaded file**. Everything else (size, optional SHA-256) is a corruption heuristic, never a trust decision.
 
@@ -22,7 +22,7 @@ Reasons, grounded in the real pipeline:
 
 2. **Correcting a common (wrong) justification — and an important caveat.** The reason is *not* "only the DMG is offline-stapled." I verified `Makefile:137` is exactly `xcrun stapler staple "$(MAC_DMG)"` — it staples **only the DMG**; `stapler` does **not** recurse into the DMG's contents, and there is no separate staple of the inner `.app` in the committed pipeline. So whether the *extracted* inner `.app` carries its own ticket depends on the build path and is **not guaranteed**. The DMG-only recommendation stands for the correct reasons (single canonical artifact, cheap one-time mount, no divergence) — and the verification design below is built so it **does not depend on the inner app being independently stapled** (see Security gates §5.6).
 
-3. **The shipped DMG layout has diverged from the committed Makefile — flagged for the user.** The live `dist/ShenzhenPDF-mac-arm64.dmg` mounts with **both `ShenzhenPDF.app` and an `Applications` symlink** plus a custom background, and its codesign Identifier is `ShenzhenPDF-installer`. But the committed `Makefile:121` (`hdiutil create -volname "Shenzhen PDF" -srcfolder "$(MAC_APP)" … UDZO`) produces a plain volume with no symlink/background. The installer-DMG pipeline is **uncommitted** (`portable/mac/dmg-background.swift`, `dmg-background.png`, `dmg-background@2x.png` are all untracked — confirmed via `git status`). Consequence: the verifier must **not** assume "volume root = just the app," must **never** pin the DMG's codesign Identifier (it's `ShenzhenPDF-installer`), and should discover the payload by globbing (§5.6). **Action for the user:** commit the installer-DMG script before shipping so the verifier's assumptions are source-pinned.
+3. **The installer DMG layout is source-pinned.** The committed installer builder creates one root `ShenzhenPDF.app`, an `Applications` symlink, the custom background, and `.DS_Store`. The verifier deliberately discovers exactly one non-symlink root app and never pins the hdiutil-generated DMG codesign Identifier.
 
 **Reconsider a zip only if** delta/binary-diff updates or a zip-only host appear later — neither applies today.
 
@@ -43,7 +43,7 @@ if (self.restoreWindowID.length == 0 && !self.detachedTabLaunch) {
 This runs **strictly after first paint** (the block is dispatched after `[_pageScrollView displayIfNeeded]`), **after** `resumePersistentStateSavesAfterLaunch` lifts the save suspension (`:1962`), and **only in the primary user-launched process**. Every restored/detached sibling is a separate process running the same `applicationDidFinishLaunching` (proven by `spawnPendingRestoredWindowsIfNeeded` `:1927–1943` + `--restore-window` / `--detached-tab` parsing in `main()` `:15199–15235`); without this gate, N windows = N checks.
 
 ### `scheduleDailyUpdateCheckIfNeeded` body (fail-closed order)
-1. `if (spdf_is_sandboxed()) return;` — App Store build never self-updates.
+1. `if (spdf_is_sandboxed()) return;` — unsupported sandboxed repackaging never self-updates.
 2. `if (!_autoUpdateEnabled) return;` — persisted opt-out.
 3. **Cross-process 24h gate.** Open `update.lock` (`O_CREAT|O_RDWR, 0600`), `flock(LOCK_EX)` — copying the exact idiom from `withLockedSessionStore:` (`:1816–1829`). Read `lastUpdateCheck` from `update.json` via `jsonObjectFromFile:` (`:1383`). If `now - lastUpdateCheck < 86400`, unlock and return. Otherwise **write `lastUpdateCheck = now` immediately** (`writeJSONObject:toFile:@"update.json"` `:1399`), then unlock. Stamping **before** the network call means a crash/abort/403 still consumes the day's slot — no hammering. (Note `writeJSONObject` is byte-idempotent and skips unchanged writes at `:1406–1408`; fine, the timestamp changes daily.)
 4. **Idle delay:** `dispatch_after(~5s)` on a Background-QoS queue, then run the network check.
@@ -140,7 +140,7 @@ If `bundlePath` contains `/AppTranslocation/` or is under `/private/var/folders`
 > **Adversary model:** `browser_download_url`, `size`, and any API `digest` all arrive over the **same channel**, so a full-channel MITM can lie about them consistently. These checks catch corruption, **never tampering**. **Never branch a trust decision on the API digest.** The only anti-tamper boundary is §5.4/§5.6.
 
 ### 5.4 Verify the DMG offline (BEFORE mounting) — exact gates
-Use **Security.framework in-process** (not PATH-hijackable in a non-sandboxed process). **`#import <Security/Security.h>`; this requires linking `-framework Security` (see Implementation outline) — without it the build fails to link.**
+Use **Security.framework in-process** (not PATH-hijackable in a non-sandboxed process). The app and updater tests link `-framework Security`; removing it is a build failure.
 
 - `SecStaticCodeCreateWithPath(dmgURL, …, &code)`.
 - `SecRequirementCreateWithString(req, …)` with a **full Developer ID requirement**, not just an OU match:
@@ -193,10 +193,10 @@ The detached helper:
    - `renamex_np(stagedApp, bundlePath, RENAME_SWAP)` is an **optional optimization** gated behind a same-volume + availability check; handle `EINVAL`/`ENOENT` (target missing) by falling through to the two-rename.
 4. **Re-register Launch Services on the FINAL path:** `LSRegisterURL((CFURLRef)finalBundleURL, true)` (idiom at `SPDFMacDefaultReader.mm:115`) or `lsregister -f` — before relaunch, so LS never resolves a stale record.
 5. **Relaunch** the new binary with **no path argument** so the standard restore path fans the **full multi-window session** back out (`:1499–1505` / `:1927–1943`): `NSWorkspace openApplicationAtURL:configuration:` (`:14191–14195`). Verify the relaunched app runs from the **real** `/Applications` path, not a translocated copy.
-6. **Health signal + `.old` cleanup:** the relaunched process, on a successful `applicationDidFinishLaunching`, writes `update_ok <newVersion>` to `update.json` (under `update.lock`) and shows the one-time "now on `<newTag>`" confirmation. The helper (or the next launch) deletes `bundlePath.old` **only after** seeing that marker; otherwise it rolls back.
+6. **Health signal + `.old` cleanup:** the relaunched process compares the complete date-and-build identity with `pendingTag`. On an exact match after `applicationDidFinishLaunching`, it writes `update_ok <newVersion>` to `update.json` (under `update.lock`), deletes `bundlePath.old`, and shows the one-time "now on `<newTag>`" confirmation. A mismatch keeps and reveals `bundlePath.old` for explicit manual recovery; it does not claim an automatic rollback.
 
 ### 5.10 Rollback
-If move-in fails after move-aside, `rename(bundlePath.old → bundlePath)` to restore the working install. Retain `.old` until the new version confirms healthy (§5.9.6); if the **new** version also fails to launch / never writes `update_ok` within a window, the next launch rolls `.old` back and reveals it in Finder. **Never** `rm -rf` the running bundle (unlike the `Makefile install:` target `:186`, which assumes the app isn't running).
+If move-in fails after move-aside, `rename(bundlePath.old → bundlePath)` restores the working install before relaunch. Retain `.old` until the new version confirms healthy (§5.9.6). If a later launch reports a different date or build than `pendingTag`, keep and reveal `.old` in Finder for manual recovery; the current updater has no watchdog that can safely replace a failed app after launch. **Never** `rm -rf` the running bundle (unlike the `Makefile install:` target, which assumes the app isn't running).
 
 ### 5.11 Not-writable fallback
 If the actual rename attempt fails on bundle or parent (installed by another admin / root-owned / hardened `/Applications`): **do not** attempt sudo (no privileged-helper infra exists). Re-mount the DMG, reveal it in Finder, and `showError:` instructions to drag `ShenzhenPDF.app` to `/Applications` (the manual-update gesture). A future `SMAppService` privileged helper is the path to silent privileged install.
@@ -239,7 +239,7 @@ The no-document fallthrough at `:15175` (`if (!hasDoc) return action == @selecto
 
 **F. Up to date** (explicit check only) — `NSAlert`: **"You're up to date."** / **"Shenzhen PDF `<displayVersion>` is the latest version."**
 
-**G. Failure** — every error funnels through `-showError:detail:` (`:15189`). The **verification failure** message must **not** offer to install: **"The update could not be verified and was not installed."** If a swap succeeds but relaunch fails (or rollback fires), reveal the restored bundle in Finder so the user is never left appless.
+**G. Failure** — every error funnels through `-showError:detail:` (`:15189`). The **verification failure** message must **not** offer to install: **"The update could not be verified and was not installed."** A failed swap restores the prior bundle immediately. A relaunch-version mismatch preserves and reveals `.old` in Finder for manual recovery.
 
 **H. Already in progress** — when the user clicks "Check for Updates…": take `update.lock`; if a **live, recent** lease exists, show **"An update is already in progress."** (the daily auto-path returns silently). This moves the cross-process check off the validate hot path.
 
@@ -249,7 +249,7 @@ The no-document fallthrough at `:15175` (`if (!hasDoc) return action == @selecto
 Under the version label (`:2380–2384`), **non-sandboxed only**, add a borderless link-style **"Check for Updates"** button calling `checkForUpdates:`. Give it an accessibility role of button + clear label, and make it keyboard-focusable. Tolerate `_window == nil` (`[panel center]`). `showAboutPanel:` is already whitelisted, so no validate change. **Do not** use `_statusLabel` (created `:3043`, never added to a view hierarchy) for any banner.
 
 ### Release notes (state B, optional)
-The GitHub release `body` is published manually (no `--notes` step in the Makefile pipeline), so it may be empty or arbitrary Markdown. **Plain-text only:** strip/escape Markdown, cap to ~500 chars + a "Read more on GitHub" button opening the release URL via `NSWorkspace`, and omit the section gracefully when empty. **Never** render untrusted Markdown as rich/attributed text.
+The GitHub release `body` comes from the tracked `portable/docs/releases/YY.M.DD-BUILD.md` file. The release gate validates bullet highlights above one `---` divider, requires detailed notes below it, and caps updater highlights at 500 characters. The updater still treats API content as untrusted plain text and never renders it as rich Markdown.
 
 **Accessibility:** all alert buttons have distinct self-describing titles; Esc → "Later"/"Cancel", Return → primary; post `NSAccessibility` announcements when indeterminate-phase detail text changes; set `accessibilityValue` on the progress indicator.
 
@@ -257,13 +257,13 @@ The GitHub release `body` is published manually (no `--notes` step in the Makefi
 
 ---
 
-## Settings, opt-out & build gating (Developer ID only; never in the sandboxed TestFlight build)
+## Settings, opt-out & repackaging defense (Developer ID distribution)
 
 **Sandbox detection — add `spdf_is_sandboxed()`** (none exists; only prose comments at `:1679–1729`):
-- Primary: `SecCodeCopySelf` → `SecCodeCopySigningInformation(self, kSecCSDynamicInformation, &info)` → inspect `info[kSecCodeInfoEntitlementsDict]` for `com.apple.security.app-sandbox == true`. The Dev ID app has **empty entitlements** (verified live); the App Store app signs with `mac/TestFlight.entitlements` + an embedded provisioning profile (`Makefile:102–104, 115`).
+- Primary: `SecCodeCopySelf` → `SecCodeCopySigningInformation(self, kSecCSDynamicInformation, &info)` → inspect `info[kSecCodeInfoEntitlementsDict]` for `com.apple.security.app-sandbox == true`. The supported Developer ID app has **empty entitlements** (verified live); an unexpected sandbox entitlement indicates an unsupported repackaging.
 - Cheap corroboration: `getenv("APP_SANDBOX_CONTAINER_ID") != NULL`.
 
-**Every** entry point — daily check, both menu items, About affordance, all action bodies, `--post-update` — early-returns when sandboxed. The gate is **runtime**, not just compile-time (one binary, two builds). Rationale: (a) the App Store updates MAS installs; (b) the sandbox forbids replacing `/Applications/*.app` and spawning the relaunch helper — *not* "no network" (TestFlight.entitlements grants `com.apple.security.network.client`).
+**Every** entry point — daily check, both menu items, About affordance, all action bodies, `--post-update` — early-returns when sandboxed. The gate is a runtime defense because a sandbox forbids replacing `/Applications/*.app` and spawning the relaunch helper.
 
 **Settings (user prefs, `settings.json`):**
 - `autoUpdateEnabled` (BOOL, default YES for Dev ID) — load `:1424–1448` (`NSNumber* x = settings[@"key"]; if (x) _ivar = x.boolValue;`), save `:2001–2005`, mirroring `showShortcutHelpOnLaunch`. Toggled by the menu checkbox (calls `savePersistentState`).
@@ -287,7 +287,7 @@ The GitHub release `body` is published manually (no `--notes` step in the Makefi
 | **Executing unverified staged code** | Swap helper runs from the **current trusted in-place binary**; staged binary exec'd only **after** §5.6 verification **and** after it's renamed into the final path. |
 | **Rate-limit abuse / launch impact** | flock'd once/day gate stamped pre-network; Background QoS; strictly post-first-paint. |
 | **Crash mid-update wedging all future updates** | `updateInProgress` is a **liveness lease** (pid + timestamp) that is reclaimed when the pid is dead or the lease is stale. |
-| **Sandboxed MAS build self-updating** | Hard runtime gate on `spdf_is_sandboxed()` at every entry point. |
+| **Unsupported sandboxed repackaging self-updating** | Hard runtime gate on `spdf_is_sandboxed()` at every entry point. |
 | **App Translocation corrupting the swap target** | Refuse to self-update from a translocated/DMG path; instruct user to move to `/Applications`. |
 | **Untrusted release-notes Markdown injection** | Plain-text only, escaped, length-capped. |
 
@@ -347,10 +347,10 @@ The GitHub release `body` is published manually (no `--notes` step in the Makefi
 - New delegate ivars: `BOOL _autoUpdateEnabled;` (init YES), `NSString* _skippedUpdateVersion;`.
 - *(Optional)* fix the hard-coded `--version` printf at `:15203` to read the plist.
 
-### Edits to `portable/Makefile`
-- **`:95`** add **`-framework Security`** to the `$(MAC_BIN)` link line (**required**, not optional — verified absent; `SecStaticCode`/`SecRequirement`/`SecCode`/`SecAssessment` won't link without it). Keep `-framework CoreServices` (LaunchServices).
-- Add `SPDFUpdater.mm` to `MAC_SRCS`; add a `SPDFUpdaterTests` target linking `-framework Cocoa -framework Security` (mirror the test target at `:59`).
-- No release-pipeline change: continue shipping only the DMG. *(Separately recommended: commit the installer-DMG script; optionally add `xcrun stapler staple "$(MAC_APP)"` before `hdiutil create` at `:121`.)*
+### Implemented `portable/Makefile` integration
+- The app link includes `-framework Security` and keeps `-framework CoreServices`.
+- `SPDFUpdater.mm` is in `MAC_SRCS`; `mac-updater-tests` links Cocoa and Security.
+- The canonical release remains the single signed, notarized, stapled DMG.
 
 ---
 
@@ -358,7 +358,7 @@ The GitHub release `body` is published manually (no `--notes` step in the Makefi
 
 1. **Comparator unit tests** — build/run `SPDFUpdaterTests`: the 6 cases (non-padded, multi-digit day, build tiebreaker, equality, malformed, downgrade-feed). Pure functions, no I/O.
 
-2. **Sandbox gate** — temporary debug log in `spdf_is_sandboxed()`; run the Dev ID build (expect `NO`, updater present) and a locally sandbox-signed build (`codesign --entitlements mac/TestFlight.entitlements`, expect `YES`, updater absent from menu).
+2. **Sandbox gate** — test `spdf_is_sandboxed()` as a pure repackaging defense: the supported Developer ID build must return `NO`; an isolated temporary test fixture carrying the sandbox entitlement must return `YES` and expose no updater entry point.
 
 3. **Network check in isolation (no install)** — hidden `--check-updates-now` argv flag (Dev ID only) running `performNetworkCheck` with `userInitiated=YES`, logging parsed `tag_name`/asset/decision and **stopping before download**. Verify ETag/304 by running twice; verify the 24h gate by inspecting `update.json`.
 
@@ -367,7 +367,7 @@ The GitHub release `body` is published manually (no `--notes` step in the Makefi
 5. **Install/swap against a throwaway target — never `/Applications` first:**
    - Copy the app to `/tmp/ShenzhenTest/ShenzhenPDF.app`, launch from there (updater targets `NSBundle.mainBundle.bundlePath`).
    - Stage a fake "newer" DMG: bump `CFBundleShortVersionString`, **re-sign with the same Developer ID + staple**, host on `python3 -m http.server`, point a debug `updateFeedURL` override at a hand-written `releases/latest` JSON.
-   - Exercise the full flow: move-aside swap, `.old` retention, `update_ok` health marker, relaunch from the new binary, post-update success banner, and rollback (make the staged app unverifiable mid-swap).
+   - Exercise the full flow: move-aside swap, install-time restoration on failure, `.old` retention, exact date-and-build `update_ok` health marker, relaunch from the new binary, post-update success banner, and manual-recovery reveal after a relaunch mismatch.
    - Liveness lease: kill the driver mid-download, confirm the next run reclaims the stale lease.
    - Not-writable fallback: `chmod a-w /tmp/ShenzhenTest` → expect the drag-to-Applications instruction, no crash.
    - **Multi-process:** open 2–3 windows (separate processes), trigger install from one; confirm siblings terminate (with a wedged-sibling timeout/forceTerminate test), only one process drives the swap (others see "already in progress"), and the **full multi-window session is restored** after relaunch.
@@ -379,4 +379,4 @@ Only after all of the above passes against `/tmp` should you test a real `/Appli
 
 ---
 
-**Key load-bearing facts verified live this session:** `Makefile:137` staples only the DMG (no inner-app recursion); `-framework Security` is **absent** from the link line (`Makefile:95`); the installer-DMG assets (`dmg-background.swift`/`.png`/`@2x.png`) are **untracked**; DMG codesign `Identifier = ShenzhenPDF-installer` and `stapler validate <dmg>` succeeds (stapled, Dev ID, Team `66LJ4BV7Q3`).
+**Current load-bearing facts:** the pipeline staples and authenticates the DMG before mounting; verifies the contained app before executing it; links Security.framework; source-controls the installer layout; pins Team `66LJ4BV7Q3`, bundle `com.intuition.shenzhenpdf`, arm64, and macOS 12.0; and publishes one exact-name DMG asset from tracked notes.

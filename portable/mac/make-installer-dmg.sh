@@ -36,15 +36,22 @@ if [[ -d "/Volumes/$VOLNAME" ]]; then
   exit 1
 fi
 
-STAGING="$(mktemp -d /tmp/spdf-dmg-staging.XXXXXX)"
-RW_DMG="$(mktemp -u /tmp/spdf-dmg-rw.XXXXXX).dmg"
+WORK_DIR="$(mktemp -d /tmp/spdf-dmg-build.XXXXXX)"
+STAGING="$WORK_DIR/staging"
+RW_DMG="$WORK_DIR/read-write.dmg"
 MOUNT_POINT=""
+mkdir "$STAGING"
+
+detach_mount() {
+  [[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]] || return 0
+  hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || \
+    hdiutil detach -force "$MOUNT_POINT" >/dev/null 2>&1
+  MOUNT_POINT=""
+}
 
 cleanup() {
-  if [[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]]; then
-    hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || hdiutil detach -force "$MOUNT_POINT" >/dev/null 2>&1 || true
-  fi
-  rm -rf "$STAGING" "$RW_DMG"
+  detach_mount || true
+  rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
 
@@ -99,8 +106,7 @@ done
 sync
 
 echo "==> Detaching and converting to compressed UDZO"
-hdiutil detach "$MOUNT_POINT" >/dev/null
-MOUNT_POINT=""
+detach_mount
 rm -f "$OUT_DMG"
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$OUT_DMG" >/dev/null
 
@@ -116,8 +122,7 @@ fail=0
 [[ -f "$MOUNT_POINT/.DS_Store" ]] || { echo "MISSING: .DS_Store" >&2; fail=1; }
 app_count="$(find "$MOUNT_POINT" -maxdepth 1 -name '*.app' ! -type l | wc -l | tr -d ' ')"
 [[ "$app_count" == "1" ]] || { echo "EXPECTED exactly 1 non-symlink .app at root, found $app_count" >&2; fail=1; }
-hdiutil detach "$MOUNT_POINT" >/dev/null
-MOUNT_POINT=""
+detach_mount
 [[ $fail -eq 0 ]] || exit 1
 
 echo "==> Installer DMG ready: $OUT_DMG"
