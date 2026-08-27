@@ -12,126 +12,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* ---------------------------------------------------------------------------
- * Pure logic (glib only). */
-
-gint64 spdf_watcher_debounce_event(SpdfWatcherDebounce* d, gint64 now_us, gint64 delay_us) {
-    d->fire_at_us = now_us + delay_us;
-    return d->fire_at_us;
-}
-
-gboolean spdf_watcher_debounce_fire(SpdfWatcherDebounce* d, gint64 now_us) {
-    if (d->fire_at_us == 0 || now_us < d->fire_at_us) return FALSE;
-    d->fire_at_us = 0;
-    return TRUE;
-}
-
-/* Extension after the last '.' of the basename; a leading dot is a hidden
- * file, not an extension separator (same rule as spdf_annot.c / Mac
- * pathExtension). Returns "" when there is none. */
-static const char* watcher_path_extension(const char* path) {
-    const char* base = strrchr(path, '/');
-    const char* dot;
-
-    base = base ? base + 1 : path;
-    dot = strrchr(base, '.');
-    if (!dot || dot == base || !dot[1]) return "";
-    return dot + 1;
-}
-
-char* spdf_watcher_shadow_copy_name(const char* source_path) {
-    char* canonical;
-    char* checksum;
-    const char* ext;
-    char* name;
-
-    if (!source_path || !*source_path) return NULL;
-    canonical = g_canonicalize_filename(source_path, "/");
-    checksum = g_compute_checksum_for_string(G_CHECKSUM_SHA256, canonical, -1);
-    ext = watcher_path_extension(canonical);
-    /* First 16 digest bytes (32 hex chars): collision-resistant here, and the
-     * same truncation the Mac uses, so the naming is portable. */
-    name = g_strdup_printf("ro-%.32s.%s", checksum, *ext ? ext : "pdf");
-    g_free(checksum);
-    g_free(canonical);
-    return name;
-}
-
-gboolean spdf_watcher_path_is_shadow_in(const char* path, const char* copies_dir) {
-    char* canonical;
-    char* dir;
-    char* parent;
-    char* base;
-    gboolean match = FALSE;
-
-    if (!path || !*path || !copies_dir || !*copies_dir) return FALSE;
-    canonical = g_canonicalize_filename(path, "/");
-    dir = g_canonicalize_filename(copies_dir, "/");
-    parent = g_path_get_dirname(canonical);
-    base = g_path_get_basename(canonical);
-    if (strcmp(parent, dir) == 0 && g_str_has_prefix(base, "ro-")) {
-        /* ro-<32 hex>.<ext> */
-        const char* hex = base + 3;
-        int n = 0;
-        while (g_ascii_isxdigit(hex[n])) n++;
-        match = n == 32 && hex[n] == '.' && hex[n + 1] != '\0';
-    }
-    g_free(base);
-    g_free(parent);
-    g_free(dir);
-    g_free(canonical);
-    return match;
-}
-
-gboolean spdf_watcher_read_only_verdict(gboolean exists, gboolean is_regular, gboolean writable) {
-    return exists && is_regular && !writable;
-}
-
-gboolean spdf_watcher_stat_differs(guint64 a_size, double a_mtime, guint64 b_size, double b_mtime) {
-    if (a_size != b_size) return TRUE;
-    return fabs(a_mtime - b_mtime) > SPDF_WATCHER_MTIME_TOLERANCE;
-}
-
-gboolean spdf_watcher_copy_reusable(gboolean copy_exists, guint64 bound_size, double bound_mtime,
-                                    guint64 source_size, double source_mtime) {
-    if (!copy_exists) return FALSE;
-    if (bound_mtime <= 0.0) return FALSE; /* no recorded binding to compare */
-    return !spdf_watcher_stat_differs(bound_size, bound_mtime, source_size, source_mtime);
-}
-
-gboolean spdf_watcher_sweep_should_delete(gboolean referenced, double copy_mtime, double now) {
-    if (referenced) return FALSE;
-    return (now - copy_mtime) > SPDF_WATCHER_SWEEP_RECENCY_S;
-}
-
-/* --- probing wrappers ------------------------------------------------------ */
-
-gboolean spdf_watcher_stat_path(const char* path, guint64* size, double* modified_at) {
-    GStatBuf st;
-
-    if (!path || !*path || g_stat(path, &st) != 0) return FALSE;
-    if (size) *size = (guint64)st.st_size;
-#ifdef __linux__
-    if (modified_at) *modified_at = (double)st.st_mtim.tv_sec + (double)st.st_mtim.tv_nsec / 1e9;
-#else
-    if (modified_at) *modified_at = (double)st.st_mtime;
-#endif
-    return TRUE;
-}
-
-gboolean spdf_watcher_source_is_read_only(const char* path) {
-    GStatBuf st;
-    gboolean exists;
-    gboolean regular;
-
-    if (!path || !*path) return FALSE;
-    exists = g_stat(path, &st) == 0;
-    regular = exists && S_ISREG(st.st_mode);
-    /* g_access(W_OK) covers mode bits, ACLs and read-only mounts (EROFS). */
-    return spdf_watcher_read_only_verdict(exists, regular, exists && g_access(path, W_OK) == 0);
-}
-
-#ifndef SPDF_WATCHER_TESTING
+#include "spdf_password_lifecycle.h"
+#include "spdf_password_prompt.h"
 
 /* ===========================================================================
  * Live module (GIO monitors + tab plumbing). Everything below runs on the
@@ -144,18 +26,40 @@ gboolean spdf_watcher_source_is_read_only(const char* path) {
 /* Per-tab watch state, owned here, riding on SpdfTab::watch. */
 typedef struct _SpdfTabWatch SpdfTabWatch;
 struct _SpdfTabWatch {
-    SpdfTab* tab;             /* borrowed; the tab outlives its watch */
-    GFileMonitor* monitor;    /* NULL when the monitor could not start */
+    gint refs;
+    SpdfTab* tab;          /* borrowed; the tab outlives its watch */
+    GFileMonitor* monitor; /* NULL when the monitor could not start */
     gulong changed_id;
-    guint debounce_id;        /* pending coalesced check */
+    guint debounce_id; /* pending coalesced check */
     SpdfWatcherDebounce debounce;
-    guint retry_id;           /* missing-file grace loop */
+    guint retry_id; /* missing-file grace loop */
     int retry_count;
-    guint64 baseline_size;    /* authoritative "unchanged" comparison input: */
-    double baseline_mtime;    /* shadow tab: source stat the copy reflects;  */
-    gboolean have_baseline;   /* writable tab: last known on-disk stat.      */
-    gboolean stale;           /* missing marker currently shown */
+    guint64 baseline_size;  /* authoritative "unchanged" comparison input: */
+    double baseline_mtime;  /* shadow tab: source stat the copy reflects;  */
+    gboolean have_baseline; /* writable tab: last known on-disk stat.      */
+    gboolean stale;         /* missing marker currently shown */
+    gboolean reload_pending;
+    gboolean detached;
+    SpdfPasswordPrompt* prompt;
+    char* candidate_path;
+    gboolean candidate_read_only;
+    guint64 candidate_size;
+    double candidate_mtime;
 };
+
+static SpdfTabWatch* watch_ref(SpdfTabWatch* w) {
+    g_atomic_int_inc(&w->refs);
+    return w;
+}
+
+static void watch_unref(gpointer data) {
+    SpdfTabWatch* w = data;
+
+    if (!w || !g_atomic_int_dec_and_test(&w->refs)) return;
+    if (w->candidate_path) g_unlink(w->candidate_path);
+    g_free(w->candidate_path);
+    g_free(w);
+}
 
 /* Session-restore adoptions: canonical source path -> persisted binding,
  * consumed by the first spdf_watcher_resolve_open on that path. */
@@ -205,8 +109,7 @@ static gboolean watcher_write_copy(const char* source_path, const char* copy_pat
         g_clear_error(&error);
         return FALSE;
     }
-    if (!g_file_set_contents_full(copy_path, contents, (gssize)length, G_FILE_SET_CONTENTS_CONSISTENT, 0600,
-                                  &error)) {
+    if (!g_file_set_contents_full(copy_path, contents, (gssize)length, G_FILE_SET_CONTENTS_CONSISTENT, 0600, &error)) {
         g_warning("shenzhenpdf: read-only copy write failed: %s", error ? error->message : "unknown error");
         g_clear_error(&error);
         g_free(contents);
@@ -255,8 +158,7 @@ gboolean spdf_watcher_resolve_open(const char* source_path, SpdfWatcherResolutio
     }
 
     copy_exists = g_file_test(copy_path, G_FILE_TEST_IS_REGULAR);
-    if (spdf_watcher_copy_reusable(copy_exists, binding ? binding->size : 0, binding ? binding->mtime : 0.0,
-                                   src_size, src_mtime)) {
+    if (binding && spdf_watcher_copy_reusable(copy_exists, binding->size, binding->mtime, src_size, src_mtime)) {
         /* Source unchanged vs the stat the copy reflects: reuse, no content
          * read (Mac "unchanged" branch — preserves the binding). */
         out->working_path = copy_path;
@@ -294,10 +196,10 @@ void spdf_watcher_prime_restore(const char* source_path, const char* working_pat
 /* Delete tab's copy unless another tab — in ANY window — still references the
  * same copy file (deterministic naming shares copies of one source; Mac
  * deleteReadOnlyCopyIfUnsharedForTab). */
-static void watcher_delete_copy_if_unshared(SpdfTab* tab) {
+static void watcher_delete_path_if_unshared(SpdfTab* tab, const char* path) {
     GApplication* app = g_application_get_default();
 
-    if (!tab->working_path || !*tab->working_path) return;
+    if (!path || !*path) return;
     if (app && GTK_IS_APPLICATION(app)) {
         for (GList* it = gtk_application_get_windows(GTK_APPLICATION(app)); it; it = it->next) {
             SpdfWindow* win;
@@ -309,11 +211,15 @@ static void watcher_delete_copy_if_unshared(SpdfTab* tab) {
             for (int t = 0; t < count; ++t) {
                 SpdfTab* other = spdf_window_tab_at(win, t);
                 if (!other || other == tab) continue;
-                if (g_strcmp0(other->working_path, tab->working_path) == 0) return; /* still in use */
+                if (g_strcmp0(other->working_path, path) == 0) return; /* still in use */
             }
         }
     }
-    g_unlink(tab->working_path);
+    g_unlink(path);
+}
+
+static void watcher_delete_copy_if_unshared(SpdfTab* tab) {
+    watcher_delete_path_if_unshared(tab, tab->working_path);
 }
 
 /* Clear the shadow binding on the tab (the copy file itself is handled by
@@ -447,7 +353,6 @@ static void watch_set_baseline(SpdfTabWatch* w) {
         w->have_baseline = spdf_watcher_stat_path(tab->path, &w->baseline_size, &w->baseline_mtime);
     }
 }
-
 static void watch_start_monitor(SpdfTabWatch* w) {
     GFile* file;
     GError* error = NULL;
@@ -470,107 +375,122 @@ static void watch_start_monitor(SpdfTabWatch* w) {
     w->changed_id = g_signal_connect(w->monitor, "changed", G_CALLBACK(watch_monitor_changed), w);
 }
 
-/* Reload the document in place, preserving page (spdf_doc_view_document_
- * changed), zoom (view state, untouched) and scroll (captured/restored).
- * Mac reloadSelectedTabFromDiskChange. */
-static void watch_reload(SpdfTabWatch* w) {
+static char* watcher_reload_copy_path(const char* source_path) {
+    char* dir = watcher_copies_dir(TRUE);
+    char* path = spdf_password_reload_staging_path(dir, source_path);
+    g_free(dir);
+    return path;
+}
+
+static void watch_candidate_clear(SpdfTabWatch* w) {
+    if (w->candidate_path) g_unlink(w->candidate_path);
+    g_clear_pointer(&w->candidate_path, g_free);
+    w->candidate_size = 0;
+    w->candidate_mtime = 0.0;
+}
+
+static void watch_reload_ready(spdf_document* candidate_doc, SpdfPasswordCredential* candidate_credential,
+                               gboolean cancelled, const char* error, gpointer user_data) {
+    SpdfTabWatch* w = user_data;
     SpdfTab* tab = w->tab;
-    char err[512] = "";
-    char* old_target = g_strdup(tab->working_path ? tab->working_path : tab->path);
-    gboolean read_only = spdf_watcher_source_is_read_only(tab->path);
+    SpdfRenderService* candidate_render;
+    SpdfPasswordReloadPolicy policy = spdf_password_reload_policy(candidate_doc != NULL, cancelled);
+    double scroll_x = 0.0, scroll_y = 0.0;
     const char* target;
-    spdf_document* doc;
-    double scroll_x = 0.0;
-    double scroll_y = 0.0;
 
-    if (read_only) {
-        /* Refresh (or create) the working copy from the new source content —
-         * the one source content read (Mac ensureWorkingPathForTab). */
-        guint64 src_size = 0;
-        double src_mtime = 0.0;
-
-        if (spdf_watcher_stat_path(tab->path, &src_size, &src_mtime)) {
-            char* copy_path = tab->working_path ? g_strdup(tab->working_path) : NULL;
-
-            if (!copy_path) {
-                char* dir = watcher_copies_dir(TRUE);
-                char* name = spdf_watcher_shadow_copy_name(tab->path);
-                copy_path = g_build_filename(dir, name, NULL);
-                g_free(name);
-                g_free(dir);
-            }
-            if (watcher_write_copy(tab->path, copy_path)) {
-                g_free(tab->working_path);
-                tab->working_path = copy_path;
-                tab->ro_copy_file_size = src_size;
-                tab->ro_copy_modified_at = src_mtime;
-            } else {
-                g_free(copy_path);
-                watcher_clear_binding(tab); /* fall back to the source */
-            }
-        }
-        spdf_tab_set_read_only_shadow(tab, TRUE);
-    } else {
-        /* The source became writable (or always was): render it directly. */
-        if (tab->working_path) watcher_delete_copy_if_unshared(tab);
-        watcher_clear_binding(tab);
-        spdf_tab_set_read_only_shadow(tab, FALSE);
-    }
-    target = tab->working_path ? tab->working_path : tab->path;
-
-    doc = spdf_open(target, err, sizeof(err));
-    if (!doc) {
-        /* Transient/garbled write: keep the current document; the next
-         * change event retries. */
-        g_warning("shenzhenpdf: reload after disk change failed for %s: %s", target,
-                  err[0] ? err : "unknown error");
-        g_free(old_target);
-        watch_set_baseline(w);
+    w->prompt = NULL;
+    if (w->detached || !tab) {
+        if (candidate_doc) spdf_close(candidate_doc);
+        spdf_password_credential_unref(candidate_credential);
+        watch_candidate_clear(w);
         return;
     }
-    if (tab->doc) spdf_close(tab->doc);
-    tab->doc = doc;
-
+    target = w->candidate_path ? w->candidate_path : tab->path;
+    if (!policy.replace_live_state) {
+        if (!cancelled)
+            g_warning("shenzhenpdf: reload after disk change failed for %s: %s", target,
+                      error && *error ? error : "unknown error");
+        else if (tab->win)
+            spdf_window_show_toast(tab->win, "Reload canceled; current view kept. Switch tabs to retry.");
+        spdf_password_credential_unref(candidate_credential);
+        watch_candidate_clear(w);
+        w->reload_pending = policy.retry_pending;
+        return;
+    }
+    if (!spdf_password_credential_refresh_source(candidate_credential, tab->path)) {
+        spdf_close(candidate_doc);
+        spdf_password_credential_unref(candidate_credential);
+        watch_candidate_clear(w);
+        w->reload_pending = TRUE;
+        return;
+    }
+    candidate_render = spdf_render_service_new(target, candidate_credential, NULL);
+    if (!candidate_render) {
+        spdf_close(candidate_doc);
+        spdf_password_credential_unref(candidate_credential);
+        watch_candidate_clear(w);
+        w->reload_pending = TRUE;
+        return;
+    }
     if (tab->view) spdf_doc_view_get_scroll(tab->view, &scroll_x, &scroll_y);
-    if (g_strcmp0(old_target, target) != 0) {
-        /* Render target moved (copy dropped/created): new service, same
-         * dance as the Save-As retarget in spdf_annot.c. */
-        SpdfRenderService* old = tab->render;
-        char* render_error = NULL;
-
-        tab->render = spdf_render_service_new(target, &render_error);
-        if (!tab->render)
-            g_warning("shenzhenpdf: no render service for %s: %s", target,
-                      render_error && *render_error ? render_error : "unknown error");
-        g_free(render_error);
+    {
+        spdf_document* old_doc = tab->doc;
+        SpdfRenderService* old_render = tab->render;
+        SpdfPasswordCredential* old_credential = tab->credential;
+        char* old_working_path = g_steal_pointer(&tab->working_path);
+        tab->doc = candidate_doc;
+        tab->render = candidate_render;
+        tab->credential = candidate_credential;
+        tab->working_path = g_steal_pointer(&w->candidate_path);
+        tab->ro_copy_file_size = tab->working_path ? w->candidate_size : 0;
+        tab->ro_copy_modified_at = tab->working_path ? w->candidate_mtime : 0.0;
+        spdf_tab_set_read_only_shadow(tab, w->candidate_read_only);
         if (tab->view) spdf_doc_view_document_changed(tab->view);
-        if (old) spdf_render_service_free(old);
-    } else {
-        if (tab->render) spdf_render_service_invalidate(tab->render);
-        if (tab->view) spdf_doc_view_document_changed(tab->view);
+        spdf_password_credential_revoke(old_credential);
+        if (old_render) spdf_render_service_free(old_render);
+        if (old_doc) spdf_close(old_doc);
+        spdf_password_credential_unref(old_credential);
+        watcher_delete_path_if_unshared(tab, old_working_path);
+        g_free(old_working_path);
     }
     if (tab->view) spdf_doc_view_set_scroll(tab->view, scroll_x, scroll_y);
     spdf_annot_document_reloaded(tab);
-    g_free(old_target);
-
+    w->reload_pending = FALSE;
     watch_set_baseline(w);
     watch_clear_stale(w);
     if (tab->page) {
-        /* Embedded metadata (the title source) may have changed. */
         char* title = spdf_tab_display_name(tab);
         adw_tab_page_set_title(tab->page, title);
         g_free(title);
     }
     if (tab->win) {
         spdf_window_update_title(tab->win);
-        /* Mac status label: "Reloaded after the file changed on disk." */
         spdf_window_show_toast(tab->win, "Reloaded after the file changed on disk.");
     }
 }
 
-/* Debounced authoritative check: only reload when the on-disk stat actually
- * differs from the baseline, so our own writes (which refresh the baseline)
- * never self-trigger. */
+/* Transactional asynchronous reload: live state and baseline change only in
+ * watch_reload_ready after authentication and renderer construction. */
+static void watch_reload(SpdfTabWatch* w) {
+    SpdfTab* tab = w->tab;
+    const char* target;
+    SpdfPasswordCredential* candidate;
+
+    if (!tab || w->detached || w->prompt) return;
+    watch_candidate_clear(w);
+    w->candidate_read_only = spdf_watcher_source_is_read_only(tab->path);
+    if (w->candidate_read_only && spdf_watcher_stat_path(tab->path, &w->candidate_size, &w->candidate_mtime)) {
+        w->candidate_path = watcher_reload_copy_path(tab->path);
+        if (!watcher_write_copy(tab->path, w->candidate_path)) g_clear_pointer(&w->candidate_path, g_free);
+    }
+    target = w->candidate_path ? w->candidate_path : tab->path;
+    candidate = spdf_password_credential_clone(tab->credential);
+    w->prompt = spdf_password_open_async(tab->win ? GTK_WINDOW(tab->win) : NULL, tab->path, target, candidate,
+                                         watch_reload_ready, watch_ref(w), watch_unref);
+    spdf_password_credential_unref(candidate);
+}
+
+/* Reload only when disk differs from baseline, avoiding self-save loops. */
 static void watch_check(SpdfTabWatch* w);
 
 static gboolean watch_missing_retry(gpointer user_data) {
@@ -618,6 +538,7 @@ static void watch_check(SpdfTabWatch* w) {
         return;
     }
     if (w->have_baseline && !spdf_watcher_stat_differs(size, mtime, w->baseline_size, w->baseline_mtime)) {
+        w->reload_pending = FALSE;
         watch_clear_stale(w);
         return;
     }
@@ -678,6 +599,7 @@ void spdf_watcher_tab_attached(SpdfTab* tab) {
 
     if (!tab || !tab->path || !*tab->path || tab->watch) return;
     w = g_new0(SpdfTabWatch, 1);
+    w->refs = 1;
     w->tab = tab;
     tab->watch = w;
     watch_set_baseline(w);
@@ -695,6 +617,9 @@ void spdf_watcher_tab_detached(SpdfTab* tab) {
     if (!tab) return;
     w = tab->watch;
     if (w) {
+        w->detached = TRUE;
+        w->tab = NULL;
+        tab->watch = NULL;
         if (w->debounce_id) g_source_remove(w->debounce_id);
         if (w->retry_id) g_source_remove(w->retry_id);
         if (w->monitor) {
@@ -702,8 +627,8 @@ void spdf_watcher_tab_detached(SpdfTab* tab) {
             g_file_monitor_cancel(w->monitor);
             g_object_unref(w->monitor);
         }
-        g_free(w);
-        tab->watch = NULL;
+        if (w->prompt) spdf_password_prompt_cancel(w->prompt);
+        watch_unref(w);
     }
     /* The copy file is NOT deleted here: it must survive quit so session
      * restore reopens it (deliberate close / Save-As delete it instead). */
@@ -744,4 +669,6 @@ void spdf_watcher_note_self_save(SpdfTab* tab) {
     watch_set_baseline(tab->watch);
 }
 
-#endif /* SPDF_WATCHER_TESTING */
+void spdf_watcher_retry_pending(SpdfTab* tab) {
+    if (tab && tab->watch && tab->watch->reload_pending) watch_check(tab->watch);
+}

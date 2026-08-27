@@ -75,11 +75,15 @@ gboolean spdf_app_has_closed(SpdfApp* app) {
 static int fit_mode_id_for_view(SpdfDocView* view) {
     // settings/session schema: 0 custom, 1 actual, 2 width, 3 height, 4 page
     switch (spdf_doc_view_get_fit(view)) {
-        case SPDF_FIT_PAGE: return 4;
-        case SPDF_FIT_HEIGHT: return 3;
-        case SPDF_FIT_WIDTH: return 2;
+        case SPDF_FIT_PAGE:
+            return 4;
+        case SPDF_FIT_HEIGHT:
+            return 3;
+        case SPDF_FIT_WIDTH:
+            return 2;
         case SPDF_FIT_CUSTOM:
-        default: return 0;
+        default:
+            return 0;
     }
 }
 
@@ -184,13 +188,11 @@ void spdf_app_save_session(SpdfApp* app) {
 
         if (!sw || !sw->id) continue;
         for (GList* it = windows; it && !live; it = it->next)
-            if (SPDF_IS_WINDOW(it->data) &&
-                g_strcmp0(spdf_window_get_session_id(SPDF_WINDOW(it->data)), sw->id) == 0)
+            if (SPDF_IS_WINDOW(it->data) && g_strcmp0(spdf_window_get_session_id(SPDF_WINDOW(it->data)), sw->id) == 0)
                 live = TRUE;
         if (!live) g_ptr_array_add(stale, g_strdup(sw->id));
     }
-    for (guint i = 0; i < stale->len; ++i)
-        spdf_state_remove_session_window(state, g_ptr_array_index(stale, i));
+    for (guint i = 0; i < stale->len; ++i) spdf_state_remove_session_window(state, g_ptr_array_index(stale, i));
     g_ptr_array_unref(stale);
     g_list_free(windows);
     spdf_state_save_session(state);
@@ -218,10 +220,7 @@ void spdf_app_close_all_windows(SpdfApp* app, SpdfWindow* keep) {
 }
 
 // ---------------------------------------------------------------------------
-// Session restore. The selected tab of the first window opens synchronously
-// so the first paint already shows the right document; everything else is
-// restored from an idle handler after the window is mapped.
-
+// Session restore starts only after each parent window is mapped.
 static void apply_session_geometry(SpdfWindow* win, const SpdfSessionWindow* stored) {
     GdkRectangle frame;
     GdkRectangle workarea = {0, 0, 0, 0}; // invalid => hard caps only; the
@@ -233,44 +232,64 @@ static void apply_session_geometry(SpdfWindow* win, const SpdfSessionWindow* sto
     gtk_window_set_default_size(GTK_WINDOW(win), frame.width, frame.height);
 }
 
-static SpdfTab* open_session_tab(SpdfWindow* win, const SpdfSessionTab* stored) {
-    SpdfTab* tab;
-
-    if (!stored || !stored->path || !*stored->path) return NULL;
-    // --- watcher (Wave C): a read_only entry reopens through its persisted
-    // working copy (no source content read when the source is unchanged)
-    // instead of the path directly; spdf_tab_open consumes the adoption.
-    if (stored->read_only)
-        spdf_watcher_prime_restore(stored->path, stored->working_path, stored->ro_copy_file_size,
-                                   stored->ro_copy_modified_at);
-    tab = spdf_window_open_path(win, stored->path, stored->page, FALSE);
-    if (!tab) return NULL;
+static void apply_session_tab(SpdfTab* tab, const SpdfSessionTab* stored) {
+    if (!tab || !stored) return;
     if (stored->search_text && *stored->search_text) {
         g_free(tab->search_text);
         tab->search_text = g_strdup(stored->search_text);
     }
-    // Search options restore into the tab fields only; the query re-runs
-    // lazily on first search-bar open (spdf_search.c, GTK3 deferred find).
     tab->search_regex = stored->search_regex;
     tab->search_regex_multiline = stored->search_regex_multiline;
     tab->find_match_index = stored->find_match_index;
-    // --- minimap module (wave B): a stored session value overrides the
-    // documents.json / settings-default resolution done in spdf_minimap_new;
-    // persist=FALSE keeps the restore from rewriting documents.json.
     if (stored->has_show_minimap) spdf_minimap_set_visible(tab, stored->show_minimap, FALSE);
     if (tab->view) {
         switch (stored->fit_mode) {
-            case 4: spdf_doc_view_set_fit(tab->view, SPDF_FIT_PAGE); break;
-            case 3: spdf_doc_view_set_fit(tab->view, SPDF_FIT_HEIGHT); break;
-            case 2: spdf_doc_view_set_fit(tab->view, SPDF_FIT_WIDTH); break;
-            case 1: spdf_doc_view_set_zoom(tab->view, 1.0, FALSE, 0, 0); break;
+            case 4:
+                spdf_doc_view_set_fit(tab->view, SPDF_FIT_PAGE);
+                break;
+            case 3:
+                spdf_doc_view_set_fit(tab->view, SPDF_FIT_HEIGHT);
+                break;
+            case 2:
+                spdf_doc_view_set_fit(tab->view, SPDF_FIT_WIDTH);
+                break;
+            case 1:
+                spdf_doc_view_set_zoom(tab->view, 1.0, FALSE, 0, 0);
+                break;
             default:
                 if (stored->zoom > 0.0) spdf_doc_view_set_zoom(tab->view, stored->zoom, FALSE, 0, 0);
                 break;
         }
         if (stored->has_scroll_origin) spdf_doc_view_set_scroll(tab->view, stored->scroll_x, stored->scroll_y);
     }
-    return tab;
+}
+
+typedef struct {
+    const SpdfSessionTab* stored;
+    int index;
+    gboolean selected;
+} session_tab_request;
+
+static void session_tab_opened(SpdfTab* tab, gboolean cancelled, gpointer user_data) {
+    session_tab_request* request = user_data;
+    AdwTabView* view;
+    (void)cancelled;
+    if (!tab) return;
+    apply_session_tab(tab, request->stored);
+    view = spdf_window_get_tab_view(tab->win);
+    adw_tab_view_reorder_page(view, tab->page, MIN(request->index, adw_tab_view_get_n_pages(view) - 1));
+    if (request->selected) adw_tab_view_set_selected_page(view, tab->page);
+}
+
+static void open_session_tab(SpdfWindow* win, const SpdfSessionTab* stored, int index, gboolean selected) {
+    session_tab_request* request;
+    if (!stored || !stored->path || !*stored->path) return;
+    if (stored->read_only)
+        spdf_watcher_prime_restore(stored->path, stored->working_path, stored->ro_copy_file_size,
+                                   stored->ro_copy_modified_at);
+    request = g_new0(session_tab_request, 1);
+    *request = (session_tab_request){stored, index, selected};
+    spdf_window_open_path_async(win, stored->path, stored->page, FALSE, session_tab_opened, request, g_free);
 }
 
 typedef struct session_restore_request {
@@ -285,23 +304,13 @@ static gboolean session_restore_idle(gpointer user_data) {
     SpdfApp* app = req->app;
     SpdfState* state = spdf_app_get_state(app);
     guint windows = spdf_state_session_window_count(state);
-
     if (req->first_window) {
         SpdfWindow* win = req->first_window;
-        AdwTabView* view = spdf_window_get_tab_view(win);
         const SpdfSessionWindow* stored = spdf_state_session_window(state, (guint)req->first_index);
-        AdwTabPage* first_page =
-            view && adw_tab_view_get_n_pages(view) > 0 ? adw_tab_view_get_nth_page(view, 0) : NULL;
-
-        if (stored && view) {
+        if (stored) {
             for (guint t = 0; t < stored->tabs->len; ++t) {
                 if ((int)t == req->first_selected) continue;
-                open_session_tab(win, g_ptr_array_index(stored->tabs, t));
-            }
-            if (first_page) {
-                if (req->first_selected > 0 && req->first_selected < adw_tab_view_get_n_pages(view))
-                    adw_tab_view_reorder_page(view, first_page, req->first_selected);
-                adw_tab_view_set_selected_page(view, first_page);
+                open_session_tab(win, g_ptr_array_index(stored->tabs, t), (int)t, FALSE);
             }
         }
     }
@@ -309,20 +318,16 @@ static gboolean session_restore_idle(gpointer user_data) {
     for (guint w = 0; w < windows; ++w) {
         const SpdfSessionWindow* stored = spdf_state_session_window(state, w);
         SpdfWindow* win;
-        SpdfTab* selected_tab = NULL;
 
         if ((int)w == req->first_index) continue;
         if (!stored || stored->tabs->len == 0) continue; // stale empty entry
         win = spdf_window_new(ADW_APPLICATION(app));
         spdf_window_set_session_id(win, stored->id);
         apply_session_geometry(win, stored);
-        for (guint t = 0; t < stored->tabs->len; ++t) {
-            SpdfTab* tab = open_session_tab(win, g_ptr_array_index(stored->tabs, t));
-            if ((int)t == stored->selected_tab) selected_tab = tab;
-        }
-        if (selected_tab && selected_tab->page)
-            adw_tab_view_set_selected_page(spdf_window_get_tab_view(win), selected_tab->page);
         gtk_window_present(GTK_WINDOW(win));
+        for (guint t = 0; t < stored->tabs->len; ++t) {
+            open_session_tab(win, g_ptr_array_index(stored->tabs, t), (int)t, (int)t == stored->selected_tab);
+        }
     }
 
     spdf_launch_mark("session-restored");
@@ -356,9 +361,10 @@ static void restore_session_or_open_empty(SpdfApp* app) {
 
         spdf_window_set_session_id(win, stored->id);
         apply_session_geometry(win, stored);
-        if (stored->tabs->len > 0) open_session_tab(win, g_ptr_array_index(stored->tabs, (guint)selected));
         gtk_window_present(GTK_WINDOW(win));
         spdf_launch_mark("first-window-present");
+        if (stored->tabs->len > 0)
+            open_session_tab(win, g_ptr_array_index(stored->tabs, (guint)selected), selected, TRUE);
 
         req = g_new0(session_restore_request, 1);
         req->app = g_object_ref(app);
@@ -469,12 +475,8 @@ static void action_about(GSimpleAction* action, GVariant* parameter, gpointer us
 
     (void)action;
     (void)parameter;
-    g_object_set(dialog,
-                 "application-name", SPDF_APP_DISPLAY_NAME,
-                 "application-icon", SPDF_APP_ID,
-                 "developer-name", "Intuition",
-                 "version", SPDF_APP_VERSION,
-                 NULL);
+    g_object_set(dialog, "application-name", SPDF_APP_DISPLAY_NAME, "application-icon", SPDF_APP_ID, "developer-name",
+                 "Intuition", "version", SPDF_APP_VERSION, NULL);
     adw_dialog_present(dialog, active ? GTK_WIDGET(active) : NULL);
 }
 
@@ -486,7 +488,8 @@ static void action_open_recent(GSimpleAction* action, GVariant* parameter, gpoin
     (void)action;
     if (!path || !*path) return;
     win = ensure_window_for_documents(app);
-    if (spdf_window_open_path(win, path, 0, TRUE)) gtk_window_present(GTK_WINDOW(win));
+    gtk_window_present(GTK_WINDOW(win));
+    spdf_window_open_path(win, path, 0, TRUE);
 }
 
 static const GActionEntry k_app_actions[] = {
@@ -637,7 +640,12 @@ static int spdf_app_command_line(GApplication* app, GApplicationCommandLine* cmd
         file = g_application_command_line_create_file_for_arg(cmdline, argv[i]);
         path = g_file_get_path(file);
         if (path && *path) {
-            if (!win) win = ensure_window_for_documents(self);
+            if (!win) {
+                win = ensure_window_for_documents(self);
+                spdf_launch_mark("present-begin");
+                gtk_window_present(GTK_WINDOW(win));
+                spdf_launch_mark("first-window-present");
+            }
             spdf_window_open_path(win, path, 0, TRUE);
         }
         g_free(path);
@@ -648,9 +656,6 @@ static int spdf_app_command_line(GApplication* app, GApplicationCommandLine* cmd
     if (win) {
         // Launched with documents: skip session restore (GTK3 behavior).
         self->opened_anything = TRUE;
-        spdf_launch_mark("present-begin");
-        gtk_window_present(GTK_WINDOW(win));
-        spdf_launch_mark("first-window-present");
     } else if (resident_flag) {
         // Fast path (spec: skip session restore, skip everything but gtk
         // init): no activate, no window. With the setting on, startup
@@ -716,8 +721,6 @@ static void spdf_app_class_init(SpdfAppClass* klass) {
 }
 
 SpdfApp* spdf_app_new(void) {
-    return g_object_new(SPDF_TYPE_APP,
-                        "application-id", SPDF_APP_ID,
-                        "flags", G_APPLICATION_HANDLES_COMMAND_LINE,
+    return g_object_new(SPDF_TYPE_APP, "application-id", SPDF_APP_ID, "flags", G_APPLICATION_HANDLES_COMMAND_LINE,
                         NULL);
 }

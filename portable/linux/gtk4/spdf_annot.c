@@ -106,6 +106,7 @@ gboolean spdf_annot_pdf_path_allows_same_folder_write(const char* path) {
 
 #include "spdf_app.h"
 #include "spdf_minimap.h" /* minimap module (wave B): thumbnail invalidation */
+#include "spdf_password_prompt.h"
 #include "spdf_watcher.h" /* self-save baseline + Save-As repoint (Wave C) */
 
 #define ANNOT_SELECTION_RECT_MAX 256
@@ -116,10 +117,10 @@ gboolean spdf_annot_pdf_path_allows_same_folder_write(const char* path) {
  * Small shared helpers. */
 
 typedef struct {
-    int context_page;             /* page under the last right-click, -1 = none */
-    double context_x;             /* PDF points on context_page */
+    int context_page; /* page under the last right-click, -1 = none */
+    double context_x; /* PDF points on context_page */
     double context_y;
-    int context_comment_index;    /* visible comment index under the click, -1 = none */
+    int context_comment_index; /* visible comment index under the click, -1 = none */
 } AnnotWinState;
 
 static AnnotWinState* annot_win_state(SpdfWindow* win) {
@@ -194,8 +195,7 @@ static void annot_push_markers(SpdfTab* tab) {
         marker.bounds = item->bounds;
         g_array_append_val(markers, marker);
     }
-    spdf_doc_view_set_comment_markers(tab->view, (const SpdfCommentMarker*)(gpointer)markers->data,
-                                      (int)markers->len);
+    spdf_doc_view_set_comment_markers(tab->view, (const SpdfCommentMarker*)(gpointer)markers->data, (int)markers->len);
     g_array_free(markers, TRUE);
 }
 
@@ -215,8 +215,10 @@ static void annot_refresh_comments(SpdfTab* tab) {
     spdf_free_comments(&tab->comments); /* zeroes the struct */
     tab->comments_loaded = FALSE;
     if (tab->doc) {
-        if (spdf_load_comments(tab->doc, &tab->comments, err, sizeof(err))) tab->comments_loaded = TRUE;
-        else g_warning("shenzhenpdf: could not load comments: %s", err[0] ? err : "unknown error");
+        if (spdf_load_comments(tab->doc, &tab->comments, err, sizeof(err)))
+            tab->comments_loaded = TRUE;
+        else
+            g_warning("shenzhenpdf: could not load comments: %s", err[0] ? err : "unknown error");
     }
     annot_push_markers(tab);
     if (annot_comments_hook) annot_comments_hook(tab, annot_comments_hook_data); /* sidebar refresh */
@@ -271,6 +273,7 @@ static const spdf_comment_item* annot_comment_item_for_index(SpdfTab* tab, int c
 static void annot_after_document_write(SpdfTab* tab) {
     SpdfApp* app;
 
+    spdf_password_credential_refresh_source(tab->credential, tab->path);
     if (tab->render) spdf_render_service_invalidate(tab->render);
     if (tab->view) spdf_doc_view_document_changed(tab->view);
     spdf_minimap_document_changed(tab); // minimap module (wave B): stale thumbnails
@@ -296,7 +299,7 @@ void spdf_annot_document_reloaded(SpdfTab* tab) {
  * geometry-changing save, re-open rather than trust cached page objects. */
 static void annot_reload_document(SpdfWindow* win, SpdfTab* tab, int page) {
     char err[512] = "";
-    spdf_document* doc = spdf_open(tab->path, err, sizeof(err));
+    spdf_document* doc = spdf_password_reopen_after_write(tab->path, tab->path, tab->credential, err, sizeof(err));
 
     if (doc) {
         if (tab->doc) spdf_close(tab->doc);
@@ -327,6 +330,7 @@ static gboolean annot_save_active_pdf_to_path(SpdfWindow* win, SpdfTab* tab, con
     canonical = g_canonicalize_filename(path, NULL);
     g_free(tab->path);
     tab->path = canonical;
+    spdf_password_credential_refresh_source(tab->credential, tab->path);
 
     /* Retarget the render pipeline: worker documents key on the service's
      * path, so the new file needs a new service. document_changed orphans the
@@ -336,7 +340,7 @@ static gboolean annot_save_active_pdf_to_path(SpdfWindow* win, SpdfTab* tab, con
     {
         SpdfRenderService* old = tab->render;
         char* render_error = NULL;
-        tab->render = spdf_render_service_new(tab->path, &render_error);
+        tab->render = spdf_render_service_new(tab->path, tab->credential, &render_error);
         if (!tab->render)
             g_warning("shenzhenpdf: no render service for %s: %s", tab->path,
                       render_error && *render_error ? render_error : "unknown error");
@@ -425,6 +429,7 @@ static void action_save_as(GSimpleAction* action, GVariant* parameter, gpointer 
     (void)action;
     (void)parameter;
     if (!tab || !tab->doc || !tab->path || !spdf_annot_path_has_pdf_extension(tab->path)) return;
+    if (!spdf_password_require_permission(GTK_WINDOW(win), tab->doc, 'c', "Save As is not allowed")) return;
     ctx = g_new0(annot_save_as_ctx, 1);
     ctx->win = g_object_ref(win);
     ctx->tab = tab;
@@ -445,7 +450,7 @@ typedef struct {
     SpdfWindow* win; /* ref held */
     SpdfTab* tab;
     char* action_name;
-    SpdfAnnotContinuation cont;  /* takes ownership of data when invoked */
+    SpdfAnnotContinuation cont; /* takes ownership of data when invoked */
     gpointer data;
     GDestroyNotify data_destroy; /* runs when the flow is abandoned instead */
 } annot_preflight;
@@ -468,8 +473,10 @@ static void annot_preflight_proceed(annot_preflight* pf) {
 
     g_free(pf->action_name);
     g_free(pf);
-    if (annot_tab_alive(win, tab)) cont(win, tab, data);
-    else if (data_destroy) data_destroy(data);
+    if (annot_tab_alive(win, tab))
+        cont(win, tab, data);
+    else if (data_destroy)
+        data_destroy(data);
     g_object_unref(win);
 }
 
@@ -477,8 +484,10 @@ static void annot_preflight_retry_response(GObject* source, GAsyncResult* result
     annot_preflight* pf = (annot_preflight*)user_data;
 
     adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
-    if (annot_tab_alive(pf->win, pf->tab)) annot_preflight_save_dialog(pf);
-    else annot_preflight_abandon(pf);
+    if (annot_tab_alive(pf->win, pf->tab))
+        annot_preflight_save_dialog(pf);
+    else
+        annot_preflight_abandon(pf);
 }
 
 static void annot_preflight_retry(annot_preflight* pf, const char* heading, const char* body) {
@@ -521,9 +530,11 @@ static void annot_preflight_save_finished(GObject* source, GAsyncResult* result,
         return;
     }
     g_free(path);
-    if (spdf_annot_pdf_path_allows_same_folder_write(pf->tab->path)) annot_preflight_proceed(pf);
-    else annot_preflight_retry(pf, "Choose another location",
-                               "The saved PDF is still not writable. Choose a writable folder.");
+    if (spdf_annot_pdf_path_allows_same_folder_write(pf->tab->path))
+        annot_preflight_proceed(pf);
+    else
+        annot_preflight_retry(pf, "Choose another location",
+                              "The saved PDF is still not writable. Choose a writable folder.");
 }
 
 static void annot_preflight_save_dialog(annot_preflight* pf) {
@@ -543,12 +554,16 @@ static void annot_preflight_alert_response(GObject* source, GAsyncResult* result
     annot_preflight_save_dialog(pf);
 }
 
-void spdf_annot_preflight(SpdfWindow* win, SpdfTab* tab, const char* action_name, SpdfAnnotContinuation cont,
-                          gpointer data, GDestroyNotify data_destroy) {
+void spdf_annot_preflight(SpdfWindow* win, SpdfTab* tab, const char* action_name, int permission,
+                          SpdfAnnotContinuation cont, gpointer data, GDestroyNotify data_destroy) {
     annot_preflight* pf;
     AdwDialog* dialog;
 
     if (!tab || !tab->doc || !tab->path || !spdf_annot_path_has_pdf_extension(tab->path)) {
+        if (data_destroy) data_destroy(data);
+        return;
+    }
+    if (!spdf_password_require_permission(GTK_WINDOW(win), tab->doc, permission, "Action is not allowed")) {
         if (data_destroy) data_destroy(data);
         return;
     }
@@ -602,7 +617,7 @@ static void annot_rotate_cont(SpdfWindow* win, SpdfTab* tab, gpointer data) {
 static void annot_rotate(SpdfWindow* win, int degrees) {
     SpdfTab* tab = spdf_window_current_tab(win);
     if (!tab || !tab->doc || !tab->path || !spdf_annot_path_has_pdf_extension(tab->path)) return;
-    spdf_annot_preflight(win, tab, "Rotate", annot_rotate_cont, GINT_TO_POINTER(degrees), NULL);
+    spdf_annot_preflight(win, tab, "Rotate", 'e', annot_rotate_cont, GINT_TO_POINTER(degrees), NULL);
 }
 
 static void action_rotate_cw(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
@@ -697,8 +712,10 @@ static void annot_add_comment_cont(SpdfWindow* win, SpdfTab* tab, gpointer data)
         ok = spdf_add_text_comment(tab->doc, ctx->page, (float)ctx->point_x, (float)ctx->point_y, ctx->text,
                                    annot_current_author(win), err, sizeof(err));
     if (ok) ok = spdf_save_document(tab->doc, tab->path, err, sizeof(err));
-    if (!ok) annot_show_error(win, "Could not add comment", err);
-    else annot_after_document_write(tab);
+    if (!ok)
+        annot_show_error(win, "Could not add comment", err);
+    else
+        annot_after_document_write(tab);
     annot_add_ctx_free(ctx);
 }
 
@@ -715,7 +732,7 @@ static void annot_add_comment_response(GObject* source, GAsyncResult* result, gp
         return;
     }
     ctx->text = text;
-    spdf_annot_preflight(ctx->win, ctx->tab, "Add comment", annot_add_comment_cont, ctx, annot_add_ctx_free);
+    spdf_annot_preflight(ctx->win, ctx->tab, "Add comment", 'n', annot_add_comment_cont, ctx, annot_add_ctx_free);
 }
 
 static void annot_add_comment_flow(SpdfWindow* win, gboolean require_selection) {
@@ -754,8 +771,7 @@ static void annot_add_comment_flow(SpdfWindow* win, gboolean require_selection) 
         return;
     }
 
-    dialog = adw_alert_dialog_new(sel_count > 0 ? "Add Highlight Comment" : "Add Comment",
-                                  "Enter the comment text.");
+    dialog = adw_alert_dialog_new(sel_count > 0 ? "Add Highlight Comment" : "Add Comment", "Enter the comment text.");
     ctx->text_view = annot_comment_text_view(sel_text);
     adw_alert_dialog_set_extra_child(ADW_ALERT_DIALOG(dialog), annot_comment_scroller(ctx->text_view));
     adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", "_Cancel", "add", "_Add", NULL);
@@ -815,8 +831,10 @@ static void annot_edit_comment_cont(SpdfWindow* win, SpdfTab* tab, gpointer data
     }
     ok = spdf_update_comment(tab->doc, ctx->comment_index, ctx->text, ctx->author, err, sizeof(err));
     if (ok) ok = spdf_save_document(tab->doc, tab->path, err, sizeof(err));
-    if (!ok) annot_show_error(win, "Could not edit comment", err);
-    else annot_after_document_write(tab);
+    if (!ok)
+        annot_show_error(win, "Could not edit comment", err);
+    else
+        annot_after_document_write(tab);
     annot_edit_ctx_free(ctx);
 }
 
@@ -841,7 +859,7 @@ static void annot_edit_comment_response(GObject* source, GAsyncResult* result, g
     }
     ctx->text = text;
     ctx->author = author;
-    spdf_annot_preflight(ctx->win, ctx->tab, "Edit comment", annot_edit_comment_cont, ctx, annot_edit_ctx_free);
+    spdf_annot_preflight(ctx->win, ctx->tab, "Edit comment", 'n', annot_edit_comment_cont, ctx, annot_edit_ctx_free);
 }
 
 static void annot_edit_comment_begin(SpdfWindow* win, SpdfTab* tab, int comment_index) {
@@ -916,7 +934,8 @@ static void annot_delete_comment_cont(SpdfWindow* win, SpdfTab* tab, gpointer da
 
     ok = spdf_delete_comment(tab->doc, ctx->comment_index, err, sizeof(err));
     if (ok) ok = spdf_save_document(tab->doc, tab->path, err, sizeof(err));
-    if (!ok) annot_show_error(win, "Could not delete comment", err);
+    if (!ok)
+        annot_show_error(win, "Could not delete comment", err);
     else {
         annot_win_state(win)->context_comment_index = -1;
         annot_after_document_write(tab);
@@ -932,8 +951,8 @@ static void annot_delete_comment_response(GObject* source, GAsyncResult* result,
         annot_delete_ctx_free(ctx);
         return;
     }
-    spdf_annot_preflight(ctx->win, ctx->tab, "Delete comment", annot_delete_comment_cont, ctx,
-                        annot_delete_ctx_free);
+    spdf_annot_preflight(ctx->win, ctx->tab, "Delete comment", 'n', annot_delete_comment_cont, ctx,
+                         annot_delete_ctx_free);
 }
 
 static void action_delete_comment(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
@@ -1003,6 +1022,7 @@ static void action_copy_page_pdf(GSimpleAction* action, GVariant* parameter, gpo
     (void)action;
     (void)parameter;
     if (!tab || !tab->doc || !tab->path) return;
+    if (!spdf_password_require_permission(GTK_WINDOW(win), tab->doc, 'c', "Copying is not allowed")) return;
     page = annot_export_page(win, tab);
     if (page < 0) return;
 
@@ -1013,7 +1033,8 @@ static void action_copy_page_pdf(GSimpleAction* action, GVariant* parameter, gpo
 
     if (spdf_save_single_page_pdf(tab->doc, page, temp_path, err, sizeof(err)))
         annot_copy_file_to_clipboard(win, temp_path);
-    else annot_show_error(win, "Could not copy page", err);
+    else
+        annot_show_error(win, "Could not copy page", err);
 
     g_free(temp_path);
     g_free(dir);
@@ -1059,6 +1080,7 @@ static void action_save_page_pdf(GSimpleAction* action, GVariant* parameter, gpo
     (void)action;
     (void)parameter;
     if (!tab || !tab->doc || !tab->path) return;
+    if (!spdf_password_require_permission(GTK_WINDOW(win), tab->doc, 'c', "Saving this page is not allowed")) return;
     page = annot_export_page(win, tab);
     if (page < 0) return;
 
@@ -1158,8 +1180,7 @@ static GtkWidget* annot_popover_for_view(SpdfDocView* view) {
     return popover;
 }
 
-static void annot_context_menu_pressed(GtkGestureClick* gesture, int n_press, double x, double y,
-                                       gpointer user_data) {
+static void annot_context_menu_pressed(GtkGestureClick* gesture, int n_press, double x, double y, gpointer user_data) {
     SpdfTab* tab = (SpdfTab*)user_data;
     SpdfWindow* win = tab->win;
     AnnotWinState* st;
@@ -1190,16 +1211,9 @@ static void annot_context_menu_pressed(GtkGestureClick* gesture, int n_press, do
         g_free(selected);
     }
     pdf = tab->doc && tab->path && spdf_annot_path_has_pdf_extension(tab->path);
-
-    annot_set_enabled(win, "copy", has_selection);
-    annot_set_enabled(win, "annot-add-comment", pdf && (has_selection || st->context_page >= 0));
-    annot_set_enabled(win, "annot-add-highlight", pdf && has_selection);
-    annot_set_enabled(win, "annot-edit-comment", pdf && st->context_comment_index >= 0);
-    annot_set_enabled(win, "annot-delete-comment", pdf && st->context_comment_index >= 0);
-    annot_set_enabled(win, "copy-page-pdf", tab->doc && tab->path && annot_export_page(win, tab) >= 0);
-    annot_set_enabled(win, "save-page-pdf", tab->doc && tab->path && annot_export_page(win, tab) >= 0);
-    annot_set_enabled(win, "rotate-cw", pdf);
-    annot_set_enabled(win, "rotate-ccw", pdf);
+    spdf_password_update_context_actions(G_ACTION_MAP(win), tab->doc, pdf, has_selection,
+                                         has_selection || st->context_page >= 0, st->context_comment_index >= 0,
+                                         tab->path && annot_export_page(win, tab) >= 0);
 
     popover = annot_popover_for_view(tab->view);
     gtk_popover_set_pointing_to(GTK_POPOVER(popover), &at);
@@ -1209,8 +1223,7 @@ static void annot_context_menu_pressed(GtkGestureClick* gesture, int n_press, do
 /* Click-to-edit on a comment marker badge. Runs in the capture phase and
  * claims the sequence, so the selection/link drag gesture never starts on a
  * badge. */
-static void annot_marker_click_pressed(GtkGestureClick* gesture, int n_press, double x, double y,
-                                       gpointer user_data) {
+static void annot_marker_click_pressed(GtkGestureClick* gesture, int n_press, double x, double y, gpointer user_data) {
     SpdfTab* tab = (SpdfTab*)user_data;
     int page = -1;
     double page_x = 0.0;

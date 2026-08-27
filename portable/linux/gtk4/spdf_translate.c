@@ -149,9 +149,12 @@ char* spdf_translate_batch_scope(const SpdfTranslateBatchItem* items, int count,
         pages = first_page == last_page ? g_strdup_printf("page %d", first_page + 1)
                                         : g_strdup_printf("pages %d-%d", first_page + 1, last_page + 1);
     }
-    if (has_outline && has_comment) extras = "chapters and comments";
-    else if (has_outline) extras = "chapter titles";
-    else if (has_comment) extras = "comments";
+    if (has_outline && has_comment)
+        extras = "chapters and comments";
+    else if (has_outline)
+        extras = "chapter titles";
+    else if (has_comment)
+        extras = "comments";
 
     if (pages && extras) {
         char* combined = g_strdup_printf("%s and %s", pages, extras);
@@ -192,6 +195,7 @@ void spdf_translate_apply_batch_output(char** result_lines, int start, int end, 
 }
 
 #ifndef SPDF_TRANSLATE_TESTING
+#include "spdf_password_prompt.h"
 
 /* ===========================================================================
  * GTK flow.
@@ -293,8 +297,10 @@ static GtkWidget* translate_language_dropdown(const char* selected_code, GPtrArr
     }
     dropdown = gtk_drop_down_new(G_LIST_MODEL(labels), NULL);
     gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), selected >= 0 ? (guint)selected : 0);
-    if (codes_out) *codes_out = codes;
-    else g_ptr_array_unref(codes);
+    if (codes_out)
+        *codes_out = codes;
+    else
+        g_ptr_array_unref(codes);
     return dropdown;
 }
 
@@ -385,9 +391,9 @@ static void selection_run_thread(GTask* task, gpointer source, gpointer task_dat
 
     (void)source;
     (void)cancellable;
-    if (!spdf_toolchain_run_capture(argv, NULL, run->text, NULL, &stdout_text, &stderr_text, &error) ||
-        !stdout_text || !stdout_text[0]) {
-        const char* detail = error && error->message ? error->message
+    if (!spdf_toolchain_run_capture(argv, NULL, run->text, NULL, &stdout_text, &stderr_text, &error) || !stdout_text ||
+        !stdout_text[0]) {
+        const char* detail = error && error->message       ? error->message
                              : stderr_text && *stderr_text ? stderr_text
                              : stdout_text && *stdout_text ? stdout_text
                                                            : "Argos Translate exited with an error.";
@@ -519,8 +525,10 @@ static void selection_argos_install_done(gboolean success, const char* output, g
 
     (void)output;
     if (panel) {
-        if (success && tool) selection_panel_run(panel, FALSE);
-        else selection_panel_set_status(panel, "Argos installation failed.");
+        if (success && tool)
+            selection_panel_run(panel, FALSE);
+        else
+            selection_panel_set_status(panel, "Argos installation failed.");
     }
     g_free(tool);
     selection_install_ctx_free(ctx);
@@ -658,8 +666,7 @@ static void translate_selection_open(SpdfWindow* win, const char* selected_text)
         settings && settings->translate_source_language ? settings->translate_source_language : "zh",
         &panel->from_codes);
     to_dd = translate_language_dropdown(
-        settings && settings->translate_target_language ? settings->translate_target_language : "en",
-        &panel->to_codes);
+        settings && settings->translate_target_language ? settings->translate_target_language : "en", &panel->to_codes);
     panel->from_dd = GTK_DROP_DOWN(from_dd);
     panel->to_dd = GTK_DROP_DOWN(to_dd);
     panel->status = GTK_LABEL(status);
@@ -730,7 +737,7 @@ typedef struct {
     SpdfWindow* win; /* ref held */
     SpdfTab* tab;    /* validated with translate_tab_alive before use */
     char* tool;
-    char* path;
+    SpdfPasswordSource source;
     char* from_lang;
     char* to_lang;
     char* output_path;
@@ -743,11 +750,10 @@ typedef struct {
     gboolean canceled;
     char* message;
 } TranslateDocJob;
-
 static void translate_doc_job_free(TranslateDocJob* job) {
     g_object_unref(job->win);
     g_free(job->tool);
-    g_free(job->path);
+    spdf_password_source_clear(&job->source);
     g_free(job->from_lang);
     g_free(job->to_lang);
     g_free(job->output_path);
@@ -792,9 +798,8 @@ static void translate_queue_progress(TranslateDocJob* job, double fraction, cons
 /* --- item collection (78072bf55: body lines + chapters + comments, all
  * through the per-item script filter) --------------------------------------- */
 
-static gboolean translate_collect_items(TranslateDocJob* job,
-                                        GArray* items,        /* TranslateDocItem */
-                                        GPtrArray* src_lines, /* char*, one per item */
+static gboolean translate_collect_items(TranslateDocJob* job, GArray* items, /* TranslateDocItem */
+                                        GPtrArray* src_lines,                /* char*, one per item */
                                         char** message_out) {
     char err[1024] = "";
     spdf_document* doc;
@@ -805,7 +810,7 @@ static gboolean translate_collect_items(TranslateDocJob* job,
     spdf_comments comments;
 
     if (message_out) *message_out = NULL;
-    doc = spdf_open(job->path, err, sizeof(err));
+    doc = spdf_password_source_open(&job->source, err, sizeof(err));
     if (!doc) {
         if (message_out) *message_out = g_strdup(err[0] ? err : "Could not open document for translation.");
         return FALSE;
@@ -942,11 +947,8 @@ static gboolean translate_fallback_next_line(cairo_t* cr, double* y, double page
 /* Port of the GTK3 write_translated_text_pdf cairo pipeline (@8243): a fresh
  * A4 text PDF with the translated paragraphs word-wrapped. Used only when the
  * core cannot extract positioned text lines from the source document. */
-static gboolean translate_fallback_write_pdf(const char* path,
-                                             const char* source_path,
-                                             const char* target_language,
-                                             const char* text,
-                                             char** message_out) {
+static gboolean translate_fallback_write_pdf(const char* path, const char* source_path, const char* target_language,
+                                             const char* text, char** message_out) {
     const double page_width = 595.0;
     const double page_height = 842.0;
     const double margin = 48.0;
@@ -1040,9 +1042,7 @@ static gboolean translate_fallback_write_pdf(const char* path,
 
 static gboolean translate_doc_finished(gpointer data); /* main-thread epilogue */
 
-static gboolean translate_run_argos(TranslateDocJob* job,
-                                    const char* input,
-                                    char** translated_out,
+static gboolean translate_run_argos(TranslateDocJob* job, const char* input, char** translated_out,
                                     char** failure_out) {
     const char* argv[] = {job->tool, "--from-lang", job->from_lang, "--to-lang", job->to_lang, NULL};
     char* stdout_text = NULL;
@@ -1057,7 +1057,7 @@ static gboolean translate_run_argos(TranslateDocJob* job,
         job->canceled = TRUE;
         *failure_out = g_strdup("Translation canceled.");
     } else if (!ok || !stdout_text || !stdout_text[0]) {
-        const char* detail = error && error->message ? error->message
+        const char* detail = error && error->message       ? error->message
                              : stderr_text && *stderr_text ? stderr_text
                              : stdout_text && *stdout_text ? stdout_text
                                                            : "Argos Translate exited with an error.";
@@ -1091,14 +1091,17 @@ static gpointer translate_doc_thread(gpointer data) {
     if (count == 0) {
         /* GTK3 fallback: some PDFs expose text only to external extractors.
          * One Argos spawn over the whole text, then a fresh cairo text PDF. */
-        char* text = translate_fallback_extract_text(job->path, job->cancellable, &detail);
+        char* text = job->source.credential
+                         ? NULL
+                         : translate_fallback_extract_text(job->source.path, job->cancellable, &detail);
         char* translated = NULL;
         char* failure = NULL;
 
         if (!text) {
             job->message = detail ? detail
-                                  : g_strdup("No text block, chapter title or comment in this document needs "
-                                             "translation for the selected languages.");
+                                  : g_strdup(
+                                        "No text block, chapter title or comment in this document needs "
+                                        "translation for the selected languages.");
             detail = NULL;
             goto done;
         }
@@ -1115,7 +1118,7 @@ static gpointer translate_doc_thread(gpointer data) {
         }
         g_free(text);
         translate_queue_progress(job, 0.93, "Writing translated PDF...");
-        if (!translate_fallback_write_pdf(job->tmp_pdf_path, job->path, job->to_lang, translated, &detail)) {
+        if (!translate_fallback_write_pdf(job->tmp_pdf_path, job->source.path, job->to_lang, translated, &detail)) {
             job->message = detail ? detail : g_strdup("Could not write translated PDF.");
             detail = NULL;
             g_free(translated);
@@ -1200,7 +1203,7 @@ static gpointer translate_doc_thread(gpointer data) {
         translate_queue_progress(job, 0.93, "Writing translated PDF...");
         {
             char err[1024] = "";
-            spdf_document* save_doc = spdf_open(job->path, err, sizeof(err));
+            spdf_document* save_doc = spdf_password_source_open(&job->source, err, sizeof(err));
             spdf_translated_line* lines;
             spdf_translated_text* outline_titles;
             spdf_translated_text* comment_texts;
@@ -1402,15 +1405,15 @@ static void translate_doc_start(SpdfWindow* win, SpdfTab* tab, char* tool_owned,
     job->win = g_object_ref(win);
     job->tab = tab;
     job->tool = tool_owned;
-    job->path = g_strdup(tab->path);
+    spdf_password_source_init(&job->source, tab->path, tab->credential);
     job->from_lang = g_strdup(from_lang);
     job->to_lang = g_strdup(to_lang);
     job->output_path = spdf_translate_output_path(tab->path, to_lang);
     job->tmp_pdf_path = spdf_translate_temp_path(tab->path, g_random_int());
     job->offered_installer = offered_installer;
     job->cancellable = g_cancellable_new();
-    job->progress = spdf_toolchain_progress_new(GTK_WINDOW(win), "Translating", "Translating with Argos",
-                                                job->cancellable);
+    job->progress =
+        spdf_toolchain_progress_new(GTK_WINDOW(win), "Translating", "Translating with Argos", job->cancellable);
     spdf_toolchain_progress_set_message(job->progress, "Preparing translation...");
     spdf_toolchain_progress_append_log(job->progress, "Preparing translation...\n");
     translate_set_busy(win, TRUE);
@@ -1551,8 +1554,8 @@ static void translate_argos_install_response(GObject* source, GAsyncResult* resu
     translate_set_busy(ctx->win, TRUE);
     script = spdf_toolchain_argos_install_script();
     spdf_toolchain_run_install_script(GTK_WINDOW(ctx->win), "Installing Translation Support",
-                                      "Installing Argos Translate", "Preparing Argos Translate installer...\n",
-                                      script, translate_argos_install_done, ctx);
+                                      "Installing Argos Translate", "Preparing Argos Translate installer...\n", script,
+                                      translate_argos_install_done, ctx);
     g_free(script);
 }
 
@@ -1572,6 +1575,7 @@ static void action_translate(GSimpleAction* action, GVariant* parameter, gpointe
     (void)parameter;
     if (!tab || !tab->doc || !tab->path || !spdf_annot_path_has_pdf_extension(tab->path)) return;
     if (translate_is_busy(win)) return;
+    if (!spdf_password_require_permission(GTK_WINDOW(win), tab->doc, 'c', "Translation is not allowed")) return;
 
     selected = tab->view ? spdf_doc_view_copy_selection(tab->view) : NULL;
     if (selected) {
@@ -1601,8 +1605,7 @@ static void action_translate(GSimpleAction* action, GVariant* parameter, gpointe
         adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "install", ADW_RESPONSE_SUGGESTED);
         adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "install");
         adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
-        adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), GTK_WIDGET(win), NULL, translate_argos_install_response,
-                                ctx);
+        adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), GTK_WIDGET(win), NULL, translate_argos_install_response, ctx);
         return;
     }
     g_free(argospm);
@@ -1613,7 +1616,7 @@ static void action_translate(GSimpleAction* action, GVariant* parameter, gpointe
     prompt->tool = tool;
     /* Writable preflight shared with rotate/comments/OCR (journal item 35):
      * the translated copy is written next to the source document. */
-    spdf_annot_preflight(win, tab, "Translate", translate_preflight_cont, prompt, translate_prompt_abandoned);
+    spdf_annot_preflight(win, tab, "Translate", 'c', translate_preflight_cont, prompt, translate_prompt_abandoned);
 }
 
 static const GActionEntry k_translate_actions[] = {

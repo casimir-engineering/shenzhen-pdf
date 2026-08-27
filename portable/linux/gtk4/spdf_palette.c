@@ -37,6 +37,7 @@
 #include <string.h>
 
 #include "spdf_palette.h"
+#include "spdf_password.h"
 
 // ---------------------------------------------------------------------------
 // Pure logic (glib only — unit-tested standalone).
@@ -117,9 +118,7 @@ static const char* palette_ascii_ci_strstr(const char* haystack, const char* nee
     if (needle_len == 0) return haystack;
     for (const char* h = haystack; *h; ++h) {
         size_t i = 0;
-        while (i < needle_len && h[i] &&
-               g_ascii_tolower((guchar)h[i]) == g_ascii_tolower((guchar)needle[i]))
-            ++i;
+        while (i < needle_len && h[i] && g_ascii_tolower((guchar)h[i]) == g_ascii_tolower((guchar)needle[i])) ++i;
         if (i == needle_len) return h;
     }
     return NULL;
@@ -252,6 +251,8 @@ char* spdf_palette_snippet_from_line(const char* line, const char* query) {
 }
 
 #ifndef SPDF_PALETTE_TESTING
+
+#include "spdf_palette_open.h"
 // ===========================================================================
 // GTK implementation.
 
@@ -268,8 +269,8 @@ typedef enum {
 } SpdfPaletteRowKind;
 
 typedef struct {
-    int kind;    // SpdfPaletteRowKind
-    int section; // SpdfPaletteSection, drives the header func
+    int kind;     // SpdfPaletteRowKind
+    int section;  // SpdfPaletteSection, drives the header func
     char* action; // command rows: detailed action name
     char* path;   // favorite/recent/match rows
     char* query;  // match rows: query to stash as the tab's search text
@@ -290,12 +291,12 @@ typedef struct {
     GtkSearchEntry* entry;
     GtkListBox* list;
     GtkScrolledWindow* scroll;
-    SpdfPaletteCancel* cancel;     // current search generation, NULL when idle
-    GtkListBoxRow* status_row;     // "Searching…" placeholder, owned by list
+    SpdfPaletteCancel* cancel; // current search generation, NULL when idle
+    GtkListBoxRow* status_row; // "Searching…" placeholder, owned by list
 } SpdfPalette;
 
 typedef struct {
-    char* path;
+    SpdfPasswordSource source;
     char* title;
 } SpdfPaletteSearchDoc;
 
@@ -347,7 +348,7 @@ static SpdfPaletteRowData* palette_row_data(GtkListBoxRow* row) {
 
 static void palette_search_doc_free(gpointer item) {
     SpdfPaletteSearchDoc* doc = item;
-    g_free(doc->path);
+    spdf_password_source_clear(&doc->source);
     g_free(doc->title);
     g_free(doc);
 }
@@ -397,12 +398,18 @@ static void palette_install_css(void) {
 
 static const char* palette_section_title(int section) {
     switch (section) {
-        case SPDF_PALETTE_SECTION_OPEN_DOCS: return "Open Documents";
-        case SPDF_PALETTE_SECTION_COMMANDS: return "Commands";
-        case SPDF_PALETTE_SECTION_FAVORITES: return "Favorites";
-        case SPDF_PALETTE_SECTION_RECENTS: return "Recently Opened";
-        case SPDF_PALETTE_SECTION_MATCHES: return "Text in Open Documents";
-        default: return "";
+        case SPDF_PALETTE_SECTION_OPEN_DOCS:
+            return "Open Documents";
+        case SPDF_PALETTE_SECTION_COMMANDS:
+            return "Commands";
+        case SPDF_PALETTE_SECTION_FAVORITES:
+            return "Favorites";
+        case SPDF_PALETTE_SECTION_RECENTS:
+            return "Recently Opened";
+        case SPDF_PALETTE_SECTION_MATCHES:
+            return "Text in Open Documents";
+        default:
+            return "";
     }
 }
 
@@ -538,67 +545,19 @@ static void palette_move_selection(SpdfPalette* palette, int step) {
     GtkListBoxRow* selected = gtk_list_box_get_selected_row(palette->list);
     int start;
 
-    if (selected) start = gtk_list_box_row_get_index(selected) + step;
-    else start = step > 0 ? 0 : palette_last_row_index(palette);
+    if (selected)
+        start = gtk_list_box_row_get_index(selected) + step;
+    else
+        start = step > 0 ? 0 : palette_last_row_index(palette);
     palette_select_row(palette, palette_selectable_row_from(palette, start, step));
 }
 
 // ---------------------------------------------------------------------------
 // Row activation
 
-static SpdfTab* palette_tab_in_window(SpdfWindow* win, const char* path) {
-    int count = spdf_window_tab_count(win);
-
-    for (int t = 0; t < count; ++t) {
-        SpdfTab* tab = spdf_window_tab_at(win, t);
-        if (tab && tab->path && strcmp(tab->path, path) == 0) return tab;
-    }
-    return NULL;
-}
-
-// Live-tab lookup across every window, preferring the palette's own window
-// when the document is open in several (Mac focusOpenDocumentTabForPath).
-static SpdfTab* palette_find_open_tab(SpdfWindow* prefer, const char* path, SpdfWindow** owner_out) {
-    GtkApplication* app = gtk_window_get_application(GTK_WINDOW(prefer));
-    SpdfTab* tab;
-
-    *owner_out = NULL;
-    if (!path || !*path) return NULL;
-    tab = palette_tab_in_window(prefer, path);
-    if (tab) {
-        *owner_out = prefer;
-        return tab;
-    }
-    for (GList* it = app ? gtk_application_get_windows(app) : NULL; it; it = it->next) {
-        if (!SPDF_IS_WINDOW(it->data) || it->data == (gpointer)prefer) continue;
-        tab = palette_tab_in_window(SPDF_WINDOW(it->data), path);
-        if (tab) {
-            *owner_out = SPDF_WINDOW(it->data);
-            return tab;
-        }
-    }
-    return NULL;
-}
-
 static void palette_jump_to_document(SpdfWindow* win, const char* path, int page, const char* search_text,
                                      gboolean remember_recent) {
-    SpdfWindow* owner = NULL;
-    SpdfTab* tab = palette_find_open_tab(win, path, &owner);
-
-    if (tab && owner) {
-        adw_tab_view_set_selected_page(spdf_window_get_tab_view(owner), tab->page);
-        if (owner != win) gtk_window_present(GTK_WINDOW(owner));
-    } else {
-        tab = spdf_window_open_path(win, path, page > 0 ? page : 0, remember_recent);
-    }
-    if (!tab) return;
-    if (tab->view && page >= 0) spdf_doc_view_goto_page(tab->view, page);
-    if (search_text && *search_text) {
-        // The search module (spdf_search.c) picks the per-tab query up from
-        // here — GTK3 parity: a palette text hit primes the find bar.
-        g_free(tab->search_text);
-        tab->search_text = g_strdup(search_text);
-    }
+    spdf_palette_open_document(win, path, page, search_text, remember_recent);
 }
 
 static void palette_activate_command(SpdfWindow* win, const char* detailed) {
@@ -686,8 +645,10 @@ static char* palette_page_snippet(spdf_document* doc, int page, const char* quer
     for (int i = 0; i < lines.count && found < SPDF_PALETTE_MAX_SNIPPETS_PER_PAGE; ++i) {
         char* snippet = spdf_palette_snippet_from_line(lines.items[i].text, query);
         if (!snippet) continue;
-        if (!out) out = g_string_new("");
-        else g_string_append(out, "  |  ");
+        if (!out)
+            out = g_string_new("");
+        else
+            g_string_append(out, "  |  ");
         g_string_append(out, snippet);
         g_free(snippet);
         found++;
@@ -750,7 +711,7 @@ static gpointer palette_search_worker(gpointer user_data) {
         if (g_atomic_int_get(&job->cancel->cancelled)) break;
         // A fresh document per worker pass: the tabs' main-thread docs are
         // not shareable across threads (same rule as the Mac palette).
-        doc = spdf_open(search_doc->path, err, sizeof(err));
+        doc = spdf_password_source_open(&search_doc->source, err, sizeof(err));
         if (!doc) continue;
         pages = spdf_page_count(doc);
         for (int page = 0; page < pages && searched_pages < SPDF_PALETTE_MAX_SEARCH_PAGES; ++page) {
@@ -762,7 +723,7 @@ static gpointer palette_search_worker(gpointer user_data) {
             if (hits <= 0) continue;
             {
                 SpdfPaletteSearchResult* result = g_new0(SpdfPaletteSearchResult, 1);
-                result->path = g_strdup(search_doc->path);
+                result->path = g_strdup(search_doc->source.path);
                 result->title = g_strdup(search_doc->title);
                 result->page = page;
                 result->hits = hits;
@@ -797,10 +758,10 @@ static GPtrArray* palette_open_docs_snapshot(SpdfWindow* win) {
             if (!tab || !tab->path || !*tab->path) continue;
             if (g_hash_table_contains(seen, tab->path)) continue;
             doc = g_new0(SpdfPaletteSearchDoc, 1);
-            doc->path = g_strdup(tab->path);
+            spdf_password_source_init(&doc->source, tab->path, tab->credential);
             doc->title = spdf_tab_display_name(tab);
             g_ptr_array_add(docs, doc);
-            g_hash_table_add(seen, doc->path); // key owned by the doc entry
+            g_hash_table_add(seen, doc->source.path); // key owned by the doc entry
         }
     }
     g_hash_table_unref(seen);
@@ -816,8 +777,7 @@ static void palette_start_search(SpdfPalette* palette, const char* query) {
         g_ptr_array_unref(docs);
         return;
     }
-    palette->status_row =
-        palette_append_status_row(palette, SPDF_PALETTE_SECTION_MATCHES, "Searching open documents…");
+    palette->status_row = palette_append_status_row(palette, SPDF_PALETTE_SECTION_MATCHES, "Searching open documents…");
     palette->cancel = palette_cancel_new();
     job = g_new0(SpdfPaletteSearchJob, 1);
     job->cancel = palette_cancel_ref(palette->cancel);
@@ -953,8 +913,8 @@ static void palette_append_commands(SpdfPalette* palette, const char* query) {
         data->section = SPDF_PALETTE_SECTION_COMMANDS;
         data->action = g_strdup(command->action);
         data->page = -1;
-        palette_append_row(palette, data, "system-run-symbolic", title ? title : command->title,
-                           command->breadcrumb, command->accel);
+        palette_append_row(palette, data, "system-run-symbolic", title ? title : command->title, command->breadcrumb,
+                           command->accel);
         g_free(title);
     }
     for (int i = 0; i < command_count; ++i) g_free(breadcrumbs[i]);
@@ -1008,12 +968,12 @@ static void palette_append_favorites(SpdfPalette* palette, SpdfState* state, con
     for (int i = 0; i < match_count; ++i) {
         const SpdfFavorite* favorite = spdf_state_favorite(state, (guint)matches[i].index);
         gboolean is_document = g_strcmp0(favorite->type, "document") == 0;
-        const char* title = favorite->name && *favorite->name ? favorite->name
+        const char* title = favorite->name && *favorite->name     ? favorite->name
                             : favorite->title && *favorite->title ? favorite->title
                                                                   : "Favorite";
-        char* subtitle = is_document ? g_strdup(favorite->path)
-                                     : g_strdup_printf("p.%d · %s", favorite->page + 1,
-                                                       favorite->path ? favorite->path : "");
+        char* subtitle = is_document
+                             ? g_strdup(favorite->path)
+                             : g_strdup_printf("p.%d · %s", favorite->page + 1, favorite->path ? favorite->path : "");
         SpdfPaletteRowData* data = g_new0(SpdfPaletteRowData, 1);
 
         data->kind = SPDF_PALETTE_ROW_FAVORITE;
@@ -1022,8 +982,8 @@ static void palette_append_favorites(SpdfPalette* palette, SpdfState* state, con
         data->page = is_document ? -1 : favorite->page;
         // The icon is the page/document distinction: a bookmark marks a page,
         // a star marks the whole document.
-        palette_append_row(palette, data, is_document ? "starred-symbolic" : "user-bookmark-symbolic", title,
-                           subtitle, NULL);
+        palette_append_row(palette, data, is_document ? "starred-symbolic" : "user-bookmark-symbolic", title, subtitle,
+                           NULL);
         g_free(subtitle);
     }
     g_free(matches);
@@ -1069,8 +1029,7 @@ static void palette_rebuild(SpdfPalette* palette) {
     }
     palette_append_commands(palette, query);
     if (state) palette_append_recents(palette, state, query);
-    if (query && strlen(query) >= SPDF_PALETTE_MIN_TEXT_QUERY_BYTES &&
-        strlen(query) < SPDF_STATE_MAX_FIND_QUERY_BYTES)
+    if (query && strlen(query) >= SPDF_PALETTE_MIN_TEXT_QUERY_BYTES && strlen(query) < SPDF_STATE_MAX_FIND_QUERY_BYTES)
         palette_start_search(palette, query);
 
     if (!gtk_list_box_get_row_at_index(palette->list, 0))

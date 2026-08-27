@@ -210,6 +210,16 @@ static void test_render_zoom_dimension_cap(void) {
     g_assert_cmpfloat(fabs(zoom - SPDF_PRINT_TARGET_DPI_FLOOR / 72.0), <, 1e-12);
 }
 
+static void test_render_zoom_permissions(void) {
+    double zoom = spdf_print_render_zoom(1.0, 1200.0, 1200.0, 595.0, 842.0, 0.0);
+    double restricted = spdf_print_permission_render_zoom(zoom, 1.0, FALSE);
+
+    g_assert_cmpfloat(fabs(restricted - SPDF_PRINT_RESTRICTED_DPI / 72.0), <, 1e-12);
+    g_assert_cmpfloat(spdf_print_permission_render_zoom(zoom, 1.0, TRUE), ==, zoom);
+    g_assert_cmpfloat(spdf_print_permission_render_zoom(1.0, 1.0, FALSE), ==, 1.0);
+    g_assert_cmpfloat(spdf_print_permission_render_zoom(zoom, 0.5, FALSE), ==, 0.5 * SPDF_PRINT_RESTRICTED_DPI / 72.0);
+}
+
 int main(int argc, char** argv) {
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/print/clamp_custom_scale", test_clamp_custom_scale);
@@ -226,5 +236,6 @@ int main(int argc, char** argv) {
     g_test_add_func("/print/render_zoom/dpi", test_render_zoom_dpi);
     g_test_add_func("/print/render_zoom/byte_cap", test_render_zoom_byte_cap);
     g_test_add_func("/print/render_zoom/dimension_cap", test_render_zoom_dimension_cap);
+    g_test_add_func("/print/render_zoom/permissions", test_render_zoom_permissions);
     return g_test_run();
 }

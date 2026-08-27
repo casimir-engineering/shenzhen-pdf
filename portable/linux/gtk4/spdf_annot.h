@@ -44,8 +44,8 @@ void spdf_annot_tab_closing(SpdfTab* tab);
 // failure, tab gone) data_destroy runs on data instead. Rotate and the
 // comment CRUD run through this; OCR/translate (Wave C) must share it.
 typedef void (*SpdfAnnotContinuation)(SpdfWindow* win, SpdfTab* tab, gpointer data);
-void spdf_annot_preflight(SpdfWindow* win, SpdfTab* tab, const char* action_name, SpdfAnnotContinuation cont,
-                          gpointer data, GDestroyNotify data_destroy);
+void spdf_annot_preflight(SpdfWindow* win, SpdfTab* tab, const char* action_name, int permission,
+                          SpdfAnnotContinuation cont, gpointer data, GDestroyNotify data_destroy);
 
 // The file watcher (Wave C) reloaded tab->doc in place: refresh the comment
 // cache + markers against the new document.

@@ -55,6 +55,8 @@ typedef enum {
 // …aim for at least 300 dpi even when the backend reports a nominal 72 dpi
 // (print-to-file / preview), instead of the Mac's flat 1200 dpi target…
 #define SPDF_PRINT_TARGET_DPI_FLOOR 300.0
+// PDF permissions may allow printing while disallowing high-quality printing.
+#define SPDF_PRINT_RESTRICTED_DPI 150.0
 // …and never hold more than this many bytes of RGBA for one page render
 // (the byte cap wins over the dpi target; the core's own hard cap is 512 MB).
 #define SPDF_PRINT_RENDER_BYTE_CAP (128.0 * 1024.0 * 1024.0)
@@ -99,5 +101,9 @@ gboolean spdf_print_visible_source(const SpdfPrintRect* dest, double page_w, dou
 // <= 0 disables the byte cap (tests).
 double spdf_print_render_zoom(double mode_scale, double dpi_x, double dpi_y, double src_w_pt, double src_h_pt,
                               double byte_cap);
+
+// Applies the PDF high-quality-print permission after the normal quality and
+// memory policy. Restricted jobs never exceed 150 effective DPI.
+double spdf_print_permission_render_zoom(double render_zoom, double mode_scale, gboolean high_quality_allowed);
 
 G_END_DECLS

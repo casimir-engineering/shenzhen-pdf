@@ -49,13 +49,8 @@ int spdf_ocr_language_index(const char* code) {
     return -1;
 }
 
-char** spdf_ocr_build_argv(const char* tool,
-                           const char* language,
-                           guint jobs,
-                           gboolean has_text,
-                           gboolean force_ocr,
-                           const char* input_path,
-                           const char* output_path) {
+char** spdf_ocr_build_argv(const char* tool, const char* language, guint jobs, gboolean has_text, gboolean force_ocr,
+                           const char* input_path, const char* output_path) {
     GPtrArray* argv = g_ptr_array_new();
 
     g_ptr_array_add(argv, g_strdup(tool));
@@ -78,9 +73,7 @@ char** spdf_ocr_build_argv(const char* tool,
     return (char**)g_ptr_array_free(argv, FALSE);
 }
 
-SpdfOcrVerdict spdf_ocr_validation_verdict(gboolean run_ok,
-                                           int output_has_text,
-                                           gboolean input_had_text,
+SpdfOcrVerdict spdf_ocr_validation_verdict(gboolean run_ok, int output_has_text, gboolean input_had_text,
                                            gboolean forced) {
     if (!run_ok) return SPDF_OCR_FAIL_ERROR;
     if (output_has_text > 0) return SPDF_OCR_SWAP;
@@ -126,8 +119,10 @@ char* spdf_ocr_backup_candidate(const char* path, int index) {
     dot = strrchr(base, '.');
     stem = dot ? g_strndup(base, (gsize)(dot - base)) : g_strdup(base);
     ext = dot && dot[1] ? dot + 1 : "pdf";
-    if (index <= 0) name = g_strdup_printf("%s_backup.%s", stem, ext);
-    else name = g_strdup_printf("%s_backup_%d.%s", stem, index + 1, ext);
+    if (index <= 0)
+        name = g_strdup_printf("%s_backup.%s", stem, ext);
+    else
+        name = g_strdup_printf("%s_backup_%d.%s", stem, index + 1, ext);
     candidate = g_build_filename(dir, name, NULL);
     g_free(name);
     g_free(stem);
@@ -154,6 +149,7 @@ char* spdf_ocr_temp_path(const char* path, guint32 nonce) {
 }
 
 #ifndef SPDF_OCR_TESTING
+#include "spdf_password_prompt.h"
 
 /* ===========================================================================
  * GTK flow.
@@ -203,7 +199,7 @@ static SpdfApp* ocr_window_app(SpdfWindow* win) {
  * spdf_annot.c's annot_reload_document (GTK3 open_path_at_page semantics). */
 static void ocr_reload_tab(SpdfWindow* win, SpdfTab* tab, int page) {
     char err[1024] = "";
-    spdf_document* doc = spdf_open(tab->path, err, sizeof(err));
+    spdf_document* doc = spdf_password_open_document(tab->path, tab->credential, NULL, NULL, err, sizeof(err));
     SpdfApp* app;
 
     if (doc) {
@@ -233,8 +229,8 @@ typedef struct {
     char* language_label;
     char* tessdata_parent; /* TESSDATA_PREFIX, or NULL */
     int page_index;
-    gboolean has_text; /* the source had a text layer (redo path) */
-    gboolean forced;   /* current attempt uses --force-ocr */
+    gboolean has_text;               /* the source had a text layer (redo path) */
+    gboolean forced;                 /* current attempt uses --force-ocr */
     SpdfToolchainProgress* progress; /* ref held */
     GCancellable* cancellable;       /* ref held */
 } OcrRun;
@@ -273,7 +269,7 @@ static void ocr_validate_thread(GTask* task, gpointer source, gpointer task_data
 
     (void)source;
     (void)cancellable;
-    doc = spdf_open(path, err, sizeof(err));
+    doc = spdf_password_open_document(path, NULL, NULL, NULL, err, sizeof(err));
     if (!doc) {
         g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s",
                                 err[0] ? err : "Could not open the OCR output.");
@@ -284,7 +280,8 @@ static void ocr_validate_thread(GTask* task, gpointer source, gpointer task_data
     if (has_text < 0)
         g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s",
                                 err[0] ? err : "Could not inspect the OCR output.");
-    else g_task_return_int(task, has_text);
+    else
+        g_task_return_int(task, has_text);
 }
 
 static void ocr_validated(GObject* source, GAsyncResult* result, gpointer user_data) {
@@ -303,33 +300,32 @@ static void ocr_validated(GObject* source, GAsyncResult* result, gpointer user_d
 
     verdict = spdf_ocr_validation_verdict(TRUE, (int)has_text, run->has_text, run->forced);
     switch (verdict) {
-    case SPDF_OCR_SWAP:
-        if (g_rename(run->tmp_path, run->path) != 0) {
-            ocr_run_fail(run, "OCR failed",
-                         g_strdup_printf("Could not install OCR output: %s", g_strerror(errno)));
+        case SPDF_OCR_SWAP:
+            if (g_rename(run->tmp_path, run->path) != 0) {
+                ocr_run_fail(run, "OCR failed", g_strdup_printf("Could not install OCR output: %s", g_strerror(errno)));
+                return;
+            }
+            spdf_toolchain_progress_close(run->progress);
+            if (ocr_tab_alive(run->win, run->tab)) {
+                ocr_reload_tab(run->win, run->tab, run->page_index);
+                spdf_window_add_toast(run->win, "OCR complete.");
+            }
+            ocr_run_free(run);
             return;
-        }
-        spdf_toolchain_progress_close(run->progress);
-        if (ocr_tab_alive(run->win, run->tab)) {
-            ocr_reload_tab(run->win, run->tab, run->page_index);
-            spdf_window_add_toast(run->win, "OCR complete.");
-        }
-        ocr_run_free(run);
-        return;
-    case SPDF_OCR_RETRY_FORCE:
-        g_remove(run->tmp_path);
-        run->forced = TRUE;
-        spdf_toolchain_progress_append_log(run->progress,
-                                           "\nNo selectable text was detected; retrying with forced image OCR...\n");
-        spdf_toolchain_progress_set_message(run->progress, "Retrying with forced image OCR...");
-        ocr_spawn_attempt(run);
-        return;
-    case SPDF_OCR_FAIL_NO_TEXT:
-    default:
-        ocr_run_fail(run, "OCR failed",
-                     g_strdup("OCRmyPDF completed, but no selectable text was detected in the output PDF. "
-                              "The original file was left unchanged."));
-        return;
+        case SPDF_OCR_RETRY_FORCE:
+            g_remove(run->tmp_path);
+            run->forced = TRUE;
+            spdf_toolchain_progress_append_log(
+                run->progress, "\nNo selectable text was detected; retrying with forced image OCR...\n");
+            spdf_toolchain_progress_set_message(run->progress, "Retrying with forced image OCR...");
+            ocr_spawn_attempt(run);
+            return;
+        case SPDF_OCR_FAIL_NO_TEXT:
+        default:
+            ocr_run_fail(run, "OCR failed",
+                         g_strdup("OCRmyPDF completed, but no selectable text was detected in the output PDF. "
+                                  "The original file was left unchanged."));
+            return;
     }
 }
 
@@ -367,9 +363,8 @@ static void ocr_exit_cb(gboolean success, const char* collected_output, gpointer
 }
 
 static void ocr_spawn_attempt(OcrRun* run) {
-    char** argv =
-        spdf_ocr_build_argv(run->tool, run->language, g_get_num_processors(), run->has_text, run->forced,
-                            run->path, run->tmp_path);
+    char** argv = spdf_ocr_build_argv(run->tool, run->language, g_get_num_processors(), run->has_text, run->forced,
+                                      run->path, run->tmp_path);
     char** envp = NULL;
     GError* error = NULL;
     gboolean spawned;
@@ -582,6 +577,9 @@ static void ocr_start_for_language(SpdfWindow* win, const char* language, const 
 
     if (!tab || !tab->doc || !tab->path || !spdf_annot_path_has_pdf_extension(tab->path)) return;
     if (ocr_is_running(win)) return;
+    /* Protected inputs never reach external OCR tooling: credentials stay in
+     * memory and are consumed only by typed core opens. */
+    if (!spdf_password_require_ocr(GTK_WINDOW(win), tab->doc)) return;
 
     tool = spdf_toolchain_find_tool("ocrmypdf");
     tesseract = spdf_toolchain_find_tool("tesseract");
@@ -593,8 +591,8 @@ static void ocr_start_for_language(SpdfWindow* win, const char* language, const 
         ctx->win = g_object_ref(win);
         ctx->language = g_strdup(language);
         ctx->language_label = g_strdup(language_label);
-        dialog = adw_alert_dialog_new(!tool || !tesseract ? "Install OCR support?" : "Install OCR language data?",
-                                      NULL);
+        dialog =
+            adw_alert_dialog_new(!tool || !tesseract ? "Install OCR support?" : "Install OCR language data?", NULL);
         adw_alert_dialog_format_body(ADW_ALERT_DIALOG(dialog),
                                      "Shenzhen PDF can install OCRmyPDF, Tesseract, and the %s traineddata, "
                                      "then continue OCR automatically when installation finishes.",
@@ -618,7 +616,7 @@ static void ocr_start_for_language(SpdfWindow* win, const char* language, const 
     pending->language_label = g_strdup(language_label);
     /* Writable preflight shared with rotate/comments/translate (GTK3
      * prompt_save_as_before_modification, journal item 35). */
-    spdf_annot_preflight(win, tab, "OCR", ocr_preflight_cont, pending, (GDestroyNotify)ocr_pending_free);
+    spdf_annot_preflight(win, tab, "OCR", 'e', ocr_preflight_cont, pending, (GDestroyNotify)ocr_pending_free);
 }
 
 /* --- language selector ------------------------------------------------------ */
@@ -669,6 +667,8 @@ static void action_ocr(GSimpleAction* action, GVariant* parameter, gpointer user
     (void)parameter;
     if (!tab || !tab->doc || !tab->path || !spdf_annot_path_has_pdf_extension(tab->path)) return;
     if (ocr_is_running(win)) return;
+    /* Recheck after installer and language-selection delays. */
+    if (!spdf_password_require_ocr(GTK_WINDOW(win), tab->doc)) return;
 
     labels = gtk_string_list_new(NULL);
     for (int i = 0; i < count; ++i) gtk_string_list_append(labels, languages[i].label);

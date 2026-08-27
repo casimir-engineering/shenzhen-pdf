@@ -7,6 +7,7 @@
 
 #include "spdf_annot.h"
 #include "spdf_minimap.h"
+#include "spdf_password.h"
 #include "spdf_search.h"
 #include "spdf_sidebar.h"
 #include "spdf_watcher.h"
@@ -105,46 +106,21 @@ void spdf_tab_set_read_only_shadow(SpdfTab* tab, gboolean read_only) {
     }
 }
 
-SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
-    char err[512] = "";
-    spdf_document* doc;
+SpdfTab* spdf_tab_attach_opened(SpdfWindow* win, char* canonical, char* working_path, guint64 copy_size,
+                                double copy_mtime, gboolean source_read_only, spdf_document* doc,
+                                SpdfPasswordCredential* credential) {
     SpdfTab* tab;
     GtkWidget* content;
     AdwTabView* view;
     char* title;
     char* tooltip;
-    char* canonical;
-    // --- read-only shadow copy (spdf_watcher.c, Wave C) ---------------------
-    // A read-only source opens through a private working copy; the tab's
-    // identity (path, title, session, recents) stays on the SOURCE, only
-    // open/render use the copy.
-    SpdfWatcherResolution shadow = {NULL, 0, 0.0};
-    gboolean source_read_only;
-
-    if (error) *error = NULL;
-    if (!win || !path || !*path) {
-        if (error) *error = g_strdup("No document path.");
-        return NULL;
-    }
-
-    canonical = g_canonicalize_filename(path, NULL);
-    spdf_launch_mark("tab-open-begin");
-    source_read_only = spdf_watcher_resolve_open(canonical, &shadow);
-    spdf_launch_mark("tab-watcher-resolved");
-    doc = spdf_open(shadow.working_path ? shadow.working_path : canonical, err, sizeof(err));
-    if (!doc) {
-        if (error) *error = g_strdup(err[0] ? err : "Could not open document.");
-        g_free(shadow.working_path);
-        g_free(canonical);
-        return NULL;
-    }
-
     tab = g_new0(SpdfTab, 1);
     tab->path = canonical;
-    tab->working_path = shadow.working_path; // owned; NULL when writable
-    tab->ro_copy_file_size = shadow.copy_file_size;
-    tab->ro_copy_modified_at = shadow.copy_modified_at;
+    tab->working_path = working_path; // owned; NULL when writable
+    tab->ro_copy_file_size = copy_size;
+    tab->ro_copy_modified_at = copy_mtime;
     tab->doc = doc;
+    tab->credential = credential;
     tab->win = win;
     tab->search_text = g_strdup("");
     tab->search_regex_multiline = TRUE; // GTK3/session default
@@ -152,7 +128,8 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
 
     {
         char* render_error = NULL;
-        tab->render = spdf_render_service_new(tab->working_path ? tab->working_path : tab->path, &render_error);
+        tab->render =
+            spdf_render_service_new(tab->working_path ? tab->working_path : tab->path, tab->credential, &render_error);
         if (!tab->render) {
             // The doc view tolerates a missing render service (blank canvas);
             // keep the tab usable for metadata/search rather than failing.
@@ -202,7 +179,7 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
     g_free(title);
     if (source_read_only) spdf_tab_set_read_only_shadow(tab, TRUE); // orange dot (Wave C)
     spdf_launch_mark("tab-page-appended");
-    spdf_annot_tab_attached(tab); // context menu, comment markers (Wave B)
+    spdf_annot_tab_attached(tab);   // context menu, comment markers (Wave B)
     spdf_watcher_tab_attached(tab); // file monitor on tab->path (Wave C)
     spdf_launch_mark("tab-open-end");
     return tab;
@@ -210,27 +187,30 @@ SpdfTab* spdf_tab_open(SpdfWindow* win, const char* path, char** error) {
 
 void spdf_tab_close(SpdfTab* tab) {
     if (!tab) return;
+    spdf_password_credential_revoke(tab->credential);
     if (tab->search) {
         // Cancels any in-flight search; late idle deliveries hold their own
         // controller refs and drop themselves on the generation check.
         spdf_search_controller_detach(tab->search);
         g_clear_object(&tab->search);
     }
-    spdf_annot_tab_closing(tab);   // comment cache + pending idle (Wave B)
-    spdf_sidebar_tab_closing(tab); // outline cache + sidebar refs (Wave B)
+    spdf_annot_tab_closing(tab);    // comment cache + pending idle (Wave B)
+    spdf_sidebar_tab_closing(tab);  // outline cache + sidebar refs (Wave B)
     spdf_watcher_tab_detached(tab); // monitor + timers + shadow fields (Wave C)
     g_clear_pointer(&tab->render, spdf_render_service_free);
     if (tab->doc) {
         spdf_close(tab->doc);
         tab->doc = NULL;
     }
+    spdf_password_credential_unref(tab->credential);
+    tab->credential = NULL;
     g_free(tab->path);
     g_free(tab->search_text);
     tab->page = NULL;
     tab->view = NULL;
     tab->scroller = NULL; // owned by the page's widget tree, like view
     tab->overlay = NULL;
-    tab->minimap = NULL;  // owned by the page's widget tree (spdf_minimap.c)
+    tab->minimap = NULL; // owned by the page's widget tree (spdf_minimap.c)
     tab->win = NULL;
     g_free(tab);
 }

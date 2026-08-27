@@ -16,6 +16,10 @@ SpdfWindow* spdf_window_new(AdwApplication* app);
 // reported to the user; returns NULL then. remember_recent is FALSE during
 // session restore so restoring does not reshuffle recent.json.
 SpdfTab* spdf_window_open_path(SpdfWindow* win, const char* path, int page_index, gboolean remember_recent);
+typedef void (*SpdfWindowOpenReady)(SpdfTab* tab, gboolean cancelled, gpointer user_data);
+SpdfPasswordPrompt* spdf_window_open_path_async(SpdfWindow* win, const char* path, int page_index,
+                                                gboolean remember_recent, SpdfWindowOpenReady ready, gpointer user_data,
+                                                GDestroyNotify destroy);
 
 AdwTabView* spdf_window_get_tab_view(SpdfWindow* win);
 SpdfTab* spdf_window_current_tab(SpdfWindow* win);

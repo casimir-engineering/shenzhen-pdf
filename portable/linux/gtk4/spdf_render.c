@@ -30,6 +30,7 @@
 
 #include "spdf_docview_internal.h"
 #include "spdf_internal.h"
+#include "spdf_password.h"
 
 /* Worker pool size: min(4, cores/2), at least 1. The Mac pipeline learned the
  * hard way that more concurrent page renders saturate memory bandwidth and
@@ -52,12 +53,15 @@ typedef struct worker_document_slot {
     gint64 mtime;
     gint64 size;
     spdf_document* doc;
+    SpdfPasswordCredential* credential;
+    guint64 credential_generation;
 } worker_document_slot;
 
 static void worker_document_slot_free(gpointer data) {
     worker_document_slot* slot = (worker_document_slot*)data;
     if (!slot) return;
     if (slot->doc) spdf_close(slot->doc);
+    spdf_password_credential_unref(slot->credential);
     g_free(slot->path);
     g_free(slot);
 }
@@ -76,16 +80,20 @@ static gboolean file_state_for_path(const char* path, gint64* mtime, gint64* siz
  * cursor-region builder runs on its own worker thread and needs the same
  * per-thread persistent document (the core's one-thread-per-spdf_document
  * contract forbids touching the tab's main-thread doc off-main). */
-static spdf_document* worker_document_for_path(const char* path, char* err, size_t err_len) {
+static spdf_document* worker_document_for_source(const SpdfPasswordSource* source, char* err, size_t err_len) {
     gint64 mtime = 0;
     gint64 size = 0;
     worker_document_slot* slot = g_private_get(&worker_document_slot_private);
+    const char* path = source ? source->path : NULL;
+    SpdfPasswordCredential* credential = source ? source->credential : NULL;
+    guint64 credential_generation = source ? source->generation : 0;
 
     if (!file_state_for_path(path, &mtime, &size)) {
         g_snprintf(err, err_len, "%s", "File moved or deleted.");
         return NULL;
     }
-    if (slot && slot->doc && g_strcmp0(slot->path, path) == 0 && slot->mtime == mtime && slot->size == size)
+    if (slot && slot->doc && g_strcmp0(slot->path, path) == 0 && slot->mtime == mtime && slot->size == size &&
+        slot->credential == credential && slot->credential_generation == credential_generation)
         return slot->doc;
     if (!slot) {
         slot = g_new0(worker_document_slot, 1);
@@ -96,15 +104,18 @@ static spdf_document* worker_document_for_path(const char* path, char* err, size
         slot->doc = NULL;
     }
     g_free(slot->path);
+    spdf_password_credential_unref(slot->credential);
     slot->path = g_strdup(path);
     slot->mtime = mtime;
     slot->size = size;
-    slot->doc = spdf_open(path, err, err_len);
+    slot->credential = spdf_password_credential_ref(credential);
+    slot->credential_generation = credential_generation;
+    slot->doc = spdf_password_source_open(source, err, err_len);
     return slot->doc;
 }
 
-spdf_document* spdf_render_worker_document(const char* path, char* err, size_t err_len) {
-    return worker_document_for_path(path, err, err_len);
+spdf_document* spdf_render_worker_document(const SpdfPasswordSource* source, char* err, size_t err_len) {
+    return worker_document_for_source(source, err, err_len);
 }
 
 static unsigned page_list_render_flags(void) {
@@ -138,8 +149,8 @@ static guint render_cache_key_hash(gconstpointer data) {
 static gboolean render_cache_key_equal(gconstpointer a, gconstpointer b) {
     const render_cache_key* ka = (const render_cache_key*)a;
     const render_cache_key* kb = (const render_cache_key*)b;
-    return ka->page == kb->page && ka->scale_q == kb->scale_q && ka->crop.x == kb->crop.x &&
-           ka->crop.y == kb->crop.y && ka->crop.width == kb->crop.width && ka->crop.height == kb->crop.height;
+    return ka->page == kb->page && ka->scale_q == kb->scale_q && ka->crop.x == kb->crop.x && ka->crop.y == kb->crop.y &&
+           ka->crop.width == kb->crop.width && ka->crop.height == kb->crop.height;
 }
 
 static render_cache_key* render_cache_key_for_spec(const SpdfRenderSpec* spec) {
@@ -161,6 +172,7 @@ struct _SpdfRenderService {
     guint64 next_token;
     guint64 next_seq;
     SpdfLruCache cache; /* render_cache_key* -> GdkTexture* (cache's own ref) */
+    SpdfPasswordCredential* credential;
     gboolean shutdown;
     gint first_render_marked;
 };
@@ -173,6 +185,7 @@ typedef struct {
     SpdfRenderDone done;
     gpointer user_data;
     spdf_render_token* core_token;
+    SpdfPasswordSource source;
     gint canceled; /* atomic */
 } render_task;
 
@@ -195,22 +208,25 @@ static void render_service_unref(SpdfRenderService* svc) {
     g_hash_table_destroy(svc->inflight);
     g_mutex_clear(&svc->lock);
     g_free(svc->path);
+    spdf_password_credential_unref(svc->credential);
     g_free(svc);
 }
 
 /* Main-thread tail of every request: exactly one callback per token. */
 static gboolean render_delivery_invoke(gpointer data) {
     render_delivery* delivery = (render_delivery*)data;
-    if (delivery->done) delivery->done(delivery->texture, &delivery->spec, delivery->user_data);
-    else if (delivery->texture) g_object_unref(delivery->texture);
+    if (delivery->done)
+        delivery->done(delivery->texture, &delivery->spec, delivery->user_data);
+    else if (delivery->texture)
+        g_object_unref(delivery->texture);
     render_service_unref(delivery->svc);
     g_free(delivery);
     return G_SOURCE_REMOVE;
 }
 
 /* texture: transfer full (may be NULL). */
-static void render_deliver(SpdfRenderService* svc, const SpdfRenderSpec* spec, GdkTexture* texture,
-                           SpdfRenderDone done, gpointer user_data) {
+static void render_deliver(SpdfRenderService* svc, const SpdfRenderSpec* spec, GdkTexture* texture, SpdfRenderDone done,
+                           gpointer user_data) {
     render_delivery* delivery = g_new0(render_delivery, 1);
     delivery->svc = render_service_ref(svc);
     delivery->spec = *spec;
@@ -309,8 +325,12 @@ static void render_worker(gpointer data, gpointer user_data) {
     (void)user_data;
 
     if (!g_atomic_int_get(&task->canceled) && !svc->shutdown) {
-        spdf_document* doc = worker_document_for_path(svc->path, err, sizeof(err));
+        spdf_document* doc = worker_document_for_source(&task->source, err, sizeof(err));
         if (doc) texture = render_task_texture(task, doc, err, sizeof(err));
+        if (texture && !spdf_password_credential_is_current(task->source.credential, task->source.generation)) {
+            g_object_unref(texture);
+            texture = NULL;
+        }
         if (!texture && err[0] && g_strcmp0(err, "Render canceled.") != 0)
             g_warning("spdf_render: page %d: %s", task->spec.page, err);
     }
@@ -322,8 +342,7 @@ static void render_worker(gpointer data, gpointer user_data) {
             spdf_lru_insert(&svc->cache, render_cache_key_for_spec(&task->spec), g_object_ref(texture), bytes);
         }
         g_mutex_unlock(&svc->lock);
-        if (g_atomic_int_compare_and_exchange(&svc->first_render_marked, 0, 1))
-            spdf_launch_mark("first-render-done");
+        if (g_atomic_int_compare_and_exchange(&svc->first_render_marked, 0, 1)) spdf_launch_mark("first-render-done");
     }
 
     /* Drop the in-flight registration before freeing the token: the core
@@ -336,6 +355,7 @@ static void render_worker(gpointer data, gpointer user_data) {
     task->core_token = NULL;
 
     render_deliver(svc, &task->spec, texture, task->done, task->user_data);
+    spdf_password_source_clear(&task->source);
     render_service_unref(task->svc);
     g_free(task);
 }
@@ -343,7 +363,7 @@ static void render_worker(gpointer data, gpointer user_data) {
 /* ---------------------------------------------------------------------------
  * Contract API. */
 
-SpdfRenderService* spdf_render_service_new(const char* path, char** error) {
+SpdfRenderService* spdf_render_service_new(const char* path, SpdfPasswordCredential* credential, char** error) {
     SpdfRenderService* svc;
 
     if (error) *error = NULL;
@@ -355,6 +375,10 @@ SpdfRenderService* spdf_render_service_new(const char* path, char** error) {
     svc = g_new0(SpdfRenderService, 1);
     svc->refcount = 1;
     svc->path = g_strdup(path);
+    /* Keep the shared authority, not a one-time clone. Worker opens take an
+     * isolated generation snapshot, so trusted edits refresh future renders
+     * while in-flight work from the old generation is discarded. */
+    svc->credential = spdf_password_credential_ref(credential);
     g_mutex_init(&svc->lock);
     svc->inflight = g_hash_table_new(g_direct_hash, g_direct_equal);
     svc->next_token = 1;
@@ -418,6 +442,7 @@ guint64 spdf_render_request(SpdfRenderService* svc, const SpdfRenderSpec* spec,
     task->done = done;
     task->user_data = user_data;
     task->core_token = spdf_render_token_new();
+    spdf_password_source_init(&task->source, svc->path, svc->credential);
     g_hash_table_insert(svc->inflight, (gpointer)(guintptr)token, task);
     g_mutex_unlock(&svc->lock);
 
