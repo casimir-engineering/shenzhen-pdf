@@ -3,274 +3,250 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Cut and publish a public ShenzhenPDF release in one command.
+Prepare, validate, or explicitly publish a direct-GitHub Shenzhen PDF release.
 
-Usage:  ./portable/cut-release.sh [--dry-run] ["short summary for the commit"]
+Usage:
+  ./portable/cut-release.sh [--version YY.M.DD] [--build N] --prepare-only ["summary"]
+  ./portable/cut-release.sh [--version YY.M.DD] [--build N] --dry-run
+  ./portable/cut-release.sh [--version YY.M.DD] [--build N] --publish
 
-What it does, in order (failing fast and loudly at each step):
-  1.  Derives the version from today's date (YY.M.DD, unpadded, e.g. 26.7.17)
-      and auto-picks the build number: 1, or highest same-day tag + 1.
-  2.  Verifies: on master, clean tree, gh authenticated, Developer ID signing
-      identity in the keychain, notary keychain profile working.
-  3.  Requires the release notes file  dist/release-notes-<ver>-<build>.md.
-      If it is missing, it is SEEDED from the "Next release" section of
-      portable/docs/release-notes-next.md and the script stops so you can
-      edit it — write the highlights, then re-run.
-  4.  Bumps the version in the five known locations (Makefile, Info.plist,
-      ShenzhenPDFMac.mm displayVersion fallback, readme.md badge,
-      release-notes-next.md header) and clears the "Next release" section.
-      Each edit is grep-verified.
-  5.  Runs every *-tests target discovered in portable/Makefile.
-  6.  Commits "Release <ver> (build <n>): <summary>".
-  7.  make release-dmg (sign -> notarize -> staple -> verify-mac-release),
-      then checks the built app's --version output.
-  8.  Tags <ver>-<build>, pushes master + tag, publishes the GitHub release
-      (title = tag, notes file as body, DMG asset, marked latest), and
-      confirms the /releases/latest/download/ URL resolves.
+Options:
+  --version VERSION  Date version. Preparation defaults to today's unpadded
+                     YY.M.DD; publication defaults to committed metadata.
+  --build BUILD      Positive build number. Preparation defaults to the highest
+                     matching local or origin tag plus one; publication defaults
+                     to committed metadata.
+  --prepare-only     Test, update, and commit release metadata. Never builds,
+                     signs, tags, pushes, notarizes, or publishes.
+  --dry-run          Validate notes and run release tests without modifying state.
+  --publish          Explicitly publish already-committed metadata from master.
+                     Exact existing tags/releases/assets are accepted and
+                     repaired; mismatched state fails closed.
 
---dry-run runs the checks and the test suite, prints what every remaining
-step WOULD do, and stops before modifying files, committing, tagging,
-pushing, or publishing.
+Release notes live in portable/docs/releases/<VERSION>-<BUILD>.md and are
+tracked. Highlights are markdown bullets above one standalone `---`; detailed
+notes below it must be non-empty. The in-app highlights limit is 500 characters.
 
-Release notes convention (dist/release-notes-<ver>-<build>.md):
-  - A short highlights section at the TOP: punchy one-line markdown bullets.
-  - A line containing only `---`, then the full detailed notes.
-  - The in-app update alert shows ONLY the section above the first `---`,
-    rendered as plain text with bullets, CAPPED AT 500 CHARACTERS — keep the
-    highlights under that or they will be truncated with an ellipsis.
-
-Prerequisites: see build-mac-release.sh (Developer ID certificate, notary
-profile, portable/.release.env with MAC_SIGN_IDENTITY and NOTARY_PROFILE).
+The normal go/no-go flow is: prepare on a release branch, validate the commit,
+merge it to master, then invoke --publish. Publication performs a clean signed,
+notarized, stapled build before atomically pushing master and its tag.
 USAGE
 }
 
-log()  { printf '==> %s\n' "$*"; }
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
-
-DRY_RUN=0
-SUMMARY=""
-for arg in "$@"; do
-  case "$arg" in
-    --help|-h) usage; exit 0 ;;
-    --dry-run) DRY_RUN=1 ;;
-    -*) fail "Unknown option: $arg (see --help)" ;;
-    *) SUMMARY="$arg" ;;
-  esac
-done
+log() { printf '==> %s\n' "$*"; }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck disable=SC1091
+source "$script_dir/release/release-common.sh"
 cd "$repo_root"
 
-# ---------------------------------------------------------------------------
-# 1. Version + build number from today's date and existing tags
-# ---------------------------------------------------------------------------
-VERSION="$((10#$(date +%y))).$((10#$(date +%m))).$((10#$(date +%d)))"
-BUILD=1
-existing_tags="$(git tag --list "${VERSION}-*")"
-if [[ -n "$existing_tags" ]]; then
-  highest="$(printf '%s\n' "$existing_tags" | sed "s/^${VERSION}-//" | sort -n | tail -1)"
-  BUILD=$((highest + 1))
-  log "Version $VERSION build $highest already tagged -> next is build $BUILD"
+requested_version=""
+requested_build=""
+summary=""
+mode=""
+
+set_mode() {
+  local requested="$1"
+  [[ -z "$mode" ]] || spdf_release_fail "Choose exactly one of --prepare-only, --dry-run, or --publish"
+  mode="$requested"
+}
+
+while (($#)); do
+  case "$1" in
+    --help|-h) usage; exit 0 ;;
+    --version)
+      (($# >= 2)) || spdf_release_fail "--version requires a value"
+      requested_version="$2"
+      shift 2
+      ;;
+    --build)
+      (($# >= 2)) || spdf_release_fail "--build requires a value"
+      requested_build="$2"
+      shift 2
+      ;;
+    --prepare-only) set_mode prepare; shift ;;
+    --dry-run) set_mode dry-run; shift ;;
+    --publish) set_mode publish; shift ;;
+    --*) spdf_release_fail "Unknown option: $1" ;;
+    *)
+      [[ -z "$summary" ]] || spdf_release_fail "Only one release summary is accepted"
+      summary="$1"
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$mode" ]] || spdf_release_fail "Choose --prepare-only, --dry-run, or --publish explicitly"
+if [[ "$mode" == publish && -n "$summary" ]]; then
+  spdf_release_fail "Release summaries belong to --prepare-only; --publish consumes committed metadata"
 fi
-TAG="${VERSION}-${BUILD}"
-NOTES_FILE="$repo_root/dist/release-notes-${TAG}.md"
-DMG="$repo_root/dist/ShenzhenPDF-mac-arm64.dmg"
-log "Cutting release $VERSION (build $BUILD), tag $TAG$([[ $DRY_RUN == 1 ]] && echo ' [DRY RUN]')"
 
-# ---------------------------------------------------------------------------
-# 2. Environment checks
-# ---------------------------------------------------------------------------
-branch="$(git rev-parse --abbrev-ref HEAD)"
-[[ "$branch" == "master" ]] || fail "Must be on master (currently on $branch)."
-[[ -z "$(git status --porcelain)" ]] || fail "Working tree is not clean. Commit or stash first."
-log "On master, working tree clean."
+run_release_tests() {
+  local targets=()
+  local target
+  while IFS= read -r target; do
+    [[ -n "$target" ]] && targets+=("$target")
+  done < <(spdf_discover_test_targets "$script_dir/Makefile")
+  ((${#targets[@]} > 0)) || spdf_release_fail "No *-tests targets found"
+  log "Running release tests: ${targets[*]}"
+  make -C "$script_dir" "${targets[@]}"
+}
 
-gh auth status >/dev/null 2>&1 || fail "gh is not authenticated. Run: gh auth login"
-log "gh authenticated."
-
-if [[ -f "$script_dir/.release.env" ]]; then
-  # shellcheck disable=SC1090,SC1091
-  source "$script_dir/.release.env"
-fi
-[[ -n "${MAC_SIGN_IDENTITY:-}" ]] || fail "MAC_SIGN_IDENTITY is not set (see portable/.release.env.example)."
-[[ -n "${NOTARY_PROFILE:-}" ]] || fail "NOTARY_PROFILE is not set (see portable/.release.env.example)."
-security find-identity -v -p codesigning | grep -qF "$MAC_SIGN_IDENTITY" \
-  || fail "Signing identity not found in keychain: $MAC_SIGN_IDENTITY"
-log "Signing identity present: $MAC_SIGN_IDENTITY"
-xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
-  || fail "Notary profile '$NOTARY_PROFILE' did not work (xcrun notarytool history failed)."
-log "Notary profile '$NOTARY_PROFILE' works."
-
-# ---------------------------------------------------------------------------
-# 3. Release notes file (seed from release-notes-next.md when missing)
-# ---------------------------------------------------------------------------
-NEXT_NOTES="$repo_root/portable/docs/release-notes-next.md"
-if [[ ! -f "$NOTES_FILE" ]]; then
-  if [[ $DRY_RUN == 1 ]]; then
-    log "WARNING: notes file $NOTES_FILE is missing."
-    log "         A real run would seed it from $NEXT_NOTES and stop for editing."
-  else
-    log "Notes file missing — seeding it from the 'Next release' section of release-notes-next.md."
-    mkdir -p "$repo_root/dist"
-    {
-      echo "- EDIT ME: 5-8 punchy one-line highlight bullets (the in-app update"
-      echo "- alert shows only this section, plain text, capped at 500 chars)"
-      echo
-      echo "---"
-      echo
-      # Everything after the "## Next release" heading.
-      sed -n '/^## Next release$/,$p' "$NEXT_NOTES" | tail -n +2
-    } > "$NOTES_FILE"
-    fail "Seeded $NOTES_FILE — edit it (write the highlights above the ---), then re-run."
+require_publish_credentials() {
+  gh auth status -h github.com >/dev/null 2>&1 || spdf_release_fail "gh is not authenticated for github.com"
+  if [[ -f "$script_dir/.release.env" ]]; then
+    # shellcheck disable=SC1090,SC1091
+    source "$script_dir/.release.env"
   fi
-else
-  log "Notes file found: $NOTES_FILE"
-  highlights_chars="$(sed '/^---$/q' "$NOTES_FILE" | sed '$d' | tr '\n' ' ' | wc -c | tr -d ' ')"
-  if (( highlights_chars > 500 )); then
-    log "WARNING: highlights section is ~${highlights_chars} chars; the update alert caps at 500."
+  [[ "${MAC_SIGN_IDENTITY:-}" == "Developer ID Application:"* ]] || \
+    spdf_release_fail "MAC_SIGN_IDENTITY must be a Developer ID Application identity"
+  [[ -n "${NOTARY_PROFILE:-}" ]] || spdf_release_fail "NOTARY_PROFILE is required"
+  security find-identity -v -p codesigning | grep -qF "$MAC_SIGN_IDENTITY" || \
+    spdf_release_fail "Developer ID identity is unavailable"
+  xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null || \
+    spdf_release_fail "Notary profile is unavailable"
+  export MAC_SIGN_IDENTITY NOTARY_PROFILE
+}
+
+if [[ "$mode" == publish ]]; then
+  branch="$(git symbolic-ref --quiet --short HEAD || true)"
+  [[ "$branch" == master ]] || spdf_release_fail "Publishing must run on master (currently ${branch:-detached})"
+  [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]] || \
+    spdf_release_fail "Publishing requires a clean worktree"
+
+  spdf_load_committed_release_metadata "$repo_root"
+  version="$SPDF_RELEASE_VERSION"
+  build="$SPDF_RELEASE_BUILD"
+  tag="$SPDF_RELEASE_TAG"
+  notes_file="$SPDF_RELEASE_NOTES"
+  [[ -z "$requested_version" || "$requested_version" == "$version" ]] || \
+    spdf_release_fail "Requested version $requested_version != committed version $version"
+  [[ -z "$requested_build" || "$requested_build" == "$build" ]] || \
+    spdf_release_fail "Requested build $requested_build != committed build $build"
+
+  head_commit="$(git rev-parse HEAD)"
+  local_tag_commit="$(spdf_commit_for_ref "$repo_root" "refs/tags/$tag" || true)"
+  remote_tag_commit="$(spdf_remote_tag_commit "$repo_root" origin "$tag")"
+  spdf_require_ref_at_commit "Local tag $tag" "$local_tag_commit" "$head_commit"
+  spdf_require_ref_at_commit "Origin tag $tag" "$remote_tag_commit" "$head_commit"
+
+  run_release_tests
+  require_publish_credentials
+  "$script_dir/build-mac-release.sh"
+  [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]] || \
+    spdf_release_fail "Release build changed the worktree"
+
+  spdf_ensure_local_tag "$repo_root" "$tag" "$head_commit"
+  remote_tag_commit="$(spdf_remote_tag_commit "$repo_root" origin "$tag")"
+  spdf_require_ref_at_commit "Origin tag $tag" "$remote_tag_commit" "$head_commit"
+  if [[ -z "$remote_tag_commit" ]]; then
+    log "Atomically publishing master and $tag"
+    git push --atomic origin "HEAD:refs/heads/master" "refs/tags/$tag:refs/tags/$tag"
   else
-    log "Highlights section ~${highlights_chars}/500 chars — fits the update alert."
+    log "Origin already has the exact $tag; publishing master idempotently"
+    git push origin "HEAD:refs/heads/master"
   fi
-fi
+  remote_tag_commit="$(spdf_remote_tag_commit "$repo_root" origin "$tag")"
+  [[ "$remote_tag_commit" == "$head_commit" ]] || \
+    spdf_release_fail "Origin tag $tag was not published at $head_commit"
 
-# ---------------------------------------------------------------------------
-# 4. Test suite (all *-tests targets discovered from the Makefile)
-# ---------------------------------------------------------------------------
-test_targets="$(sed -nE 's/^([a-z-]+-tests):.*/\1/p' "$script_dir/Makefile" | sort -u | tr '\n' ' ')"
-[[ -n "$test_targets" ]] || fail "No *-tests targets found in portable/Makefile."
-log "Running test targets: $test_targets"
-# shellcheck disable=SC2086
-make -C "$script_dir" $test_targets
-log "All tests passed."
-
-# ---------------------------------------------------------------------------
-# Dry run stops here
-# ---------------------------------------------------------------------------
-if [[ $DRY_RUN == 1 ]]; then
-  cat <<EOF
-==> DRY RUN complete. A real run would now:
-    1. Bump the version to $VERSION build $BUILD in:
-         portable/Makefile (MAC_VERSION / MAC_BUILD)
-         portable/mac/Info.plist (CFBundleShortVersionString / CFBundleVersion)
-         portable/mac/ShenzhenPDFMac.mm (displayVersion fallbacks)
-         readme.md (download badge line)
-         portable/docs/release-notes-next.md (header + clear 'Next release')
-    2. Commit "Release $VERSION (build $BUILD): <summary>"
-    3. make -C portable release-dmg (sign, notarize, staple, verify)
-    4. Verify the built app prints $TAG from --version
-    5. git tag $TAG && push master + tag
-    6. gh release create $TAG --title $TAG --notes-file $NOTES_FILE --latest $DMG
-    7. curl -I the /releases/latest/download/ URL to confirm it resolves
-EOF
+  dmg="$repo_root/dist/$SPDF_RELEASE_ASSET_NAME"
+  spdf_publish_github_release "$SPDF_RELEASE_GITHUB_REPOSITORY" "$tag" "$notes_file" "$dmg"
+  log "Published and byte-verified $tag"
   exit 0
 fi
 
-if [[ -z "$SUMMARY" ]]; then
-  read -r -p "Short summary for the release commit (Release $VERSION (build $BUILD): ...): " SUMMARY
-  [[ -n "$SUMMARY" ]] || fail "A commit summary is required."
+version="$requested_version"
+if [[ -z "$version" ]]; then
+  version="$((10#$(date +%y))).$((10#$(date +%m))).$((10#$(date +%d)))"
+fi
+spdf_validate_release_version "$version"
+
+remote_tags="$(git ls-remote --tags --refs origin "refs/tags/${version}-*" | awk '{sub("refs/tags/", "", $2); print $2}')"
+local_tags="$(git tag --list "${version}-*")"
+all_tags="$(printf '%s\n%s\n' "$local_tags" "$remote_tags" | sed '/^$/d' | sort -u)"
+build="$requested_build"
+if [[ -z "$build" ]]; then
+  build="$(spdf_next_build_for_tags "$version" "$all_tags")"
+fi
+[[ "$build" =~ ^[1-9][0-9]*$ ]] || spdf_release_fail "Build must be a positive integer: $build"
+
+tag="${version}-${build}"
+notes_file="$script_dir/docs/releases/${tag}.md"
+if printf '%s\n' "$all_tags" | grep -qxF "$tag"; then
+  spdf_release_fail "Release tag already exists locally or on origin: $tag"
 fi
 
-# ---------------------------------------------------------------------------
-# 5. Version bumps (grep-verified after each edit)
-# ---------------------------------------------------------------------------
-log "Bumping version to $VERSION build $BUILD."
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
+[[ -n "$branch" ]] || spdf_release_fail "Release preparation requires a named branch"
+status="$(git status --porcelain=v1 --untracked-files=all)"
+unexpected="$(printf '%s\n' "$status" | awk -v allowed="portable/docs/releases/${tag}.md" '
+  NF && substr($0, 4) != allowed { print }
+')"
+[[ -z "$unexpected" ]] || {
+  printf '%s\n' "$unexpected" >&2
+  spdf_release_fail "Working tree has changes outside the release notes for $tag"
+}
 
-sed -i '' -E "s/^MAC_VERSION \?= .*/MAC_VERSION ?= ${VERSION}/" "$script_dir/Makefile"
-sed -i '' -E "s/^MAC_BUILD \?= .*/MAC_BUILD ?= ${BUILD}/" "$script_dir/Makefile"
-grep -q "^MAC_VERSION ?= ${VERSION}$" "$script_dir/Makefile" || fail "Makefile MAC_VERSION bump failed."
-grep -q "^MAC_BUILD ?= ${BUILD}$" "$script_dir/Makefile" || fail "Makefile MAC_BUILD bump failed."
-log "  portable/Makefile OK"
+next_notes="$script_dir/docs/release-notes-next.md"
+if [[ ! -f "$notes_file" ]]; then
+  [[ "$mode" != dry-run ]] || spdf_release_fail "Missing tracked release notes: $notes_file"
+  mkdir -p "$(dirname "$notes_file")"
+  apply_body="$(sed -n '/^## Next release$/,$p' "$next_notes" | tail -n +2)"
+  {
+    printf '%s\n' '- REPLACE: concise user-visible highlight'
+    printf '\n---\n\n%s\n' "$apply_body"
+  } > "$notes_file"
+  spdf_release_fail "Seeded $notes_file; edit it, then rerun this command"
+fi
+spdf_validate_release_notes "$notes_file"
+git check-ignore -q "$notes_file" && spdf_release_fail "Release notes are ignored: $notes_file"
+log "Validated release notes for $tag"
+run_release_tests
 
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$script_dir/mac/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}" "$script_dir/mac/Info.plist"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$script_dir/mac/Info.plist")" == "$VERSION" ]] \
-  || fail "Info.plist CFBundleShortVersionString bump failed."
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$script_dir/mac/Info.plist")" == "$BUILD" ]] \
-  || fail "Info.plist CFBundleVersion bump failed."
-log "  portable/mac/Info.plist OK"
+if [[ "$mode" == dry-run ]]; then
+  log "Dry run complete for $tag; no files, refs, remotes, or releases were changed"
+  exit 0
+fi
 
-sed -i '' -E "s/if \(version\.length == 0\) version = @\"[^\"]*\";/if (version.length == 0) version = @\"${VERSION}\";/" \
-  "$script_dir/mac/ShenzhenPDFMac.mm"
-sed -i '' -E "s/if \(build\.length == 0\) build = @\"[^\"]*\";/if (build.length == 0) build = @\"${BUILD}\";/" \
-  "$script_dir/mac/ShenzhenPDFMac.mm"
-grep -q "version = @\"${VERSION}\";" "$script_dir/mac/ShenzhenPDFMac.mm" || fail "displayVersion fallback bump failed."
-grep -q "build = @\"${BUILD}\";" "$script_dir/mac/ShenzhenPDFMac.mm" || fail "displayVersion build fallback bump failed."
-log "  portable/mac/ShenzhenPDFMac.mm OK"
+if [[ -z "$summary" ]]; then
+  read -r -p "Release summary: " summary
+fi
+[[ -n "$summary" ]] || spdf_release_fail "A release summary is required"
 
-sed -i '' -E "s|<sub>Latest <b>[^<]*</b>|<sub>Latest <b>${TAG}</b>|" "$repo_root/readme.md"
-grep -q "<sub>Latest <b>${TAG}</b>" "$repo_root/readme.md" || fail "readme.md badge bump failed."
-log "  readme.md OK"
+log "Committing release metadata for $tag"
+sed -i '' -E "s/^MAC_VERSION \?= .*/MAC_VERSION ?= ${version}/" "$script_dir/Makefile"
+sed -i '' -E "s/^MAC_BUILD \?= .*/MAC_BUILD ?= ${build}/" "$script_dir/Makefile"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version}" "$script_dir/mac/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${build}" "$script_dir/mac/Info.plist"
+sed -i '' -E "s/if \(version\.length == 0\) version = @\"[^\"]*\";/if (version.length == 0) version = @\"${version}\";/" "$script_dir/mac/ShenzhenPDFMac.mm"
+sed -i '' -E "s/if \(build\.length == 0\) build = @\"[^\"]*\";/if (build.length == 0) build = @\"${build}\";/" "$script_dir/mac/ShenzhenPDFMac.mm"
+sed -i '' -E "s|<sub>Latest <b>[^<]*</b>|<sub>Latest <b>${tag}</b>|" "$repo_root/readme.md"
+sed -i '' -E "s/^#define SPDF_APP_VERSION \".*\"/#define SPDF_APP_VERSION \"${version}\"/" "$script_dir/linux/gtk4/spdf_app.h"
+sed -i '' -E "s/^#define SPDF_APP_BUILD \".*\"/#define SPDF_APP_BUILD \"${build}\"/" "$script_dir/linux/gtk4/spdf_app.h"
 
-sed -i '' -E "s/^#define SPDF_APP_VERSION \".*\"/#define SPDF_APP_VERSION \"${VERSION}\"/" "$script_dir/linux/gtk4/spdf_app.h"
-sed -i '' -E "s/^#define SPDF_APP_BUILD \".*\"/#define SPDF_APP_BUILD \"${BUILD}\"/" "$script_dir/linux/gtk4/spdf_app.h"
-grep -q "#define SPDF_APP_VERSION \"${VERSION}\"" "$script_dir/linux/gtk4/spdf_app.h" || fail "spdf_app.h version bump failed."
-grep -q "#define SPDF_APP_BUILD \"${BUILD}\"" "$script_dir/linux/gtk4/spdf_app.h" || fail "spdf_app.h build bump failed."
-log "  portable/linux/gtk4/spdf_app.h OK"
+cat > "$next_notes" <<EOF
+# Release notes
 
-{
-  echo "# Release notes"
-  echo
-  echo "User-facing notes for changes merged since the last release (${VERSION} build ${BUILD})."
-  echo "When cutting the next release, run ./portable/cut-release.sh — see \"Cutting a"
-  echo "release\" below. The in-app updater shows the section above the first ---"
-  echo "of the release body as plain text (500-char cap)."
-  echo
-  echo "## Cutting a release"
-  echo
-  echo "Run \`./portable/cut-release.sh [--dry-run] [\"commit summary\"]\`. It derives the"
-  echo "date-based version, bumps it everywhere, runs all tests, builds + notarizes the"
-  echo "DMG, tags, pushes, and publishes the GitHub release. Notes are read from"
-  echo "\`dist/release-notes-<ver>-<build>.md\` (highlights above a --- divider, details"
-  echo "below); if that file is missing the script seeds it from the section below and"
-  echo "stops so you can edit it."
-  echo
-  echo "## Next release"
-  echo
-  echo "Nothing yet."
-} > "$NEXT_NOTES"
-grep -q "since the last release (${VERSION} build ${BUILD})" "$NEXT_NOTES" || fail "release-notes-next.md header bump failed."
-log "  portable/docs/release-notes-next.md OK (Next release cleared)"
+User-facing notes for changes merged since the last release (${version} build ${build}).
 
-# ---------------------------------------------------------------------------
-# 6. Commit
-# ---------------------------------------------------------------------------
-git add "$script_dir/Makefile" "$script_dir/mac/Info.plist" "$script_dir/mac/ShenzhenPDFMac.mm" \
-        "$repo_root/readme.md" "$NEXT_NOTES"
-git commit -m "Release ${VERSION} (build ${BUILD}): ${SUMMARY}"
-log "Committed: $(git log -1 --format='%h %s')"
+Release notes are tracked in \`portable/docs/releases/\`. Prepare the next release
+with \`./portable/cut-release.sh --prepare-only ["summary"]\`; publish the
+validated metadata from master with \`./portable/cut-release.sh --publish\`.
 
-# ---------------------------------------------------------------------------
-# 7. Build, sign, notarize, staple, verify
-# ---------------------------------------------------------------------------
-log "Building + notarizing (submits to Apple and waits; can take a few minutes)..."
-make -C "$script_dir" release-dmg \
-  MAC_VERSION="$VERSION" \
-  MAC_BUILD="$BUILD" \
-  MAC_SIGN_IDENTITY="$MAC_SIGN_IDENTITY" \
-  NOTARY_PROFILE="$NOTARY_PROFILE"
+## Next release
 
-reported="$("$repo_root/dist/ShenzhenPDF.app/Contents/MacOS/ShenzhenPDF" --version)"
-[[ "$reported" == *"$TAG"* ]] || fail "Built app reports '$reported', expected version $TAG."
-log "Built app reports: $reported"
+Nothing yet.
+EOF
 
-# ---------------------------------------------------------------------------
-# 8. Tag, push, publish
-# ---------------------------------------------------------------------------
-git tag "$TAG"
-git push origin master
-git push origin "$TAG"
-log "Pushed master and tag $TAG."
-
-gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --latest "$DMG"
-log "Release published."
-
-latest_head="$(curl -sI "https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg")"
-echo "$latest_head" | grep -qi "location: .*${TAG}/ShenzhenPDF-mac-arm64.dmg" \
-  || fail "/releases/latest/download/ does not resolve to $TAG yet — check the release on GitHub."
-log "https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg -> $TAG"
-
-log "Done: https://github.com/casimir-engineering/shenzhen-pdf/releases/tag/$TAG"
-log "NEXT: on the Linux release machine, run portable/linux/pkg/cut-linux-assets.sh $TAG"
-log "      to build, minisign-sign and upload the Linux deb + tarball (in-app"
-log "      updater on Linux only offers releases that ship those assets)."
+git add -- "$script_dir/Makefile" "$script_dir/mac/Info.plist" \
+  "$script_dir/mac/ShenzhenPDFMac.mm" "$script_dir/linux/gtk4/spdf_app.h" \
+  "$repo_root/readme.md" "$next_notes" "$notes_file"
+git diff --check --cached
+git commit -m "Release ${version} (build ${build}): ${summary}"
+[[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]] || \
+  spdf_release_fail "Release metadata commit did not leave a clean tree"
+spdf_load_committed_release_metadata "$repo_root"
+[[ "$SPDF_RELEASE_TAG" == "$tag" ]] || spdf_release_fail "Committed metadata resolved to $SPDF_RELEASE_TAG"
+log "Prepared $tag on $branch. Stopped before build, tag, push, notarization, or publication."

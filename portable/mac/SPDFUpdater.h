@@ -1,10 +1,12 @@
 #import <Foundation/Foundation.h>
 
+@class NSAlert;
+
 NS_ASSUME_NONNULL_BEGIN
 
 /// Runtime-gated GitHub-release self-updater for the non-sandboxed Developer ID
-/// build. Every entry point early-returns when spdf_is_sandboxed() is YES, so the
-/// one binary that also ships to the App Store never self-updates.
+/// build. Every entry point early-returns when spdf_is_sandboxed() is YES so a
+/// third-party sandboxed repackaging cannot attempt to replace its own bundle.
 @interface SPDFUpdater : NSObject
 
 + (instancetype)shared;
@@ -46,8 +48,8 @@ NS_ASSUME_NONNULL_BEGIN
 extern "C" {
 #endif
 
-/// YES on the sandboxed (App Store / TestFlight) build, NO on the Developer ID
-/// build. Inspects the dynamic code-signing entitlements dict for
+/// YES when a third-party repackaging unexpectedly runs inside an application
+/// sandbox, NO for the supported Developer ID build. Inspects the dynamic code-signing entitlements dict for
 /// com.apple.security.app-sandbox, corroborated by APP_SANDBOX_CONTAINER_ID.
 BOOL spdf_is_sandboxed(void);
 
@@ -55,6 +57,18 @@ BOOL spdf_is_sandboxed(void);
 /// "[. -]". YY.M.DD is the primary key; -BUILD is a same-day tiebreaker.
 /// Malformed input compares as ordered-same. Never lexical.
 NSComparisonResult spdf_compare_versions(NSString* _Nullable a, NSString* _Nullable b);
+
+/// Requires an exact numeric YY.M.DD-BUILD match between a release tag and an
+/// extracted app's two plist version fields. Missing/malformed build fields
+/// fail closed so a same-day wrong-build asset cannot be installed repeatedly.
+BOOL spdf_release_tag_matches_bundle_version(NSString* _Nullable tag,
+                                             NSString* _Nullable shortVersion,
+                                             NSString* _Nullable build);
+
+/// Requires an exact four-component YY.M.DD-BUILD match for the launch-time
+/// health handshake. This deliberately rejects a same-day build mismatch.
+BOOL spdf_release_tag_matches_running_version(NSString* _Nullable tag,
+                                              NSString* _Nullable runningVersion);
 
 /// Pure fire/delay decision for the silent daily check (consumed under
 /// update.lock by the gate; every trigger source funnels through it). Returns
@@ -73,6 +87,11 @@ NSTimeInterval spdf_daily_check_delay(BOOL autoUpdateEnabled, BOOL haveLastCheck
 /// characters (anti-spoofing), drops blank lines, and caps the result at 500
 /// characters on a line boundary.
 NSString* spdf_format_release_notes_for_alert(NSString* _Nullable body);
+
+/// Constructs the exact alert used by the updater and the local release-notes
+/// preview harness. The caller presents the alert and handles its response.
+NSAlert* spdf_make_update_available_alert(NSString* tag, NSString* runningVersion,
+                                          NSString* _Nullable releaseBody);
 
 /// Offline Security.framework verification of a signed DMG (isApp == NO) or an
 /// extracted .app (isApp == YES). Requires the full Developer ID requirement

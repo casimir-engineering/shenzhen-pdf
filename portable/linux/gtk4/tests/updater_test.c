@@ -21,8 +21,10 @@ static char* fixture_text(const char* name) {
     char* path = fixture_path(name);
     char* contents = NULL;
     if (!g_file_get_contents(path, &contents, NULL, NULL))
-        g_error("fixture missing: %s (run from portable/, or set SPDF_FIXTURES_DIR; "
-                "regenerate with tests/fixtures/generate.sh)", path);
+        g_error(
+            "fixture missing: %s (run from portable/, or set SPDF_FIXTURES_DIR; "
+            "regenerate with tests/fixtures/generate.sh)",
+            path);
     g_free(path);
     return contents;
 }
@@ -46,11 +48,19 @@ static void test_version_compare(void) {
     // Missing build suffix is a zero field: 26.6.25 == 26.6.25-0 < 26.6.25-1
     g_assert_cmpint(spdf_updater_compare_versions("26.6.25", "26.6.25-1"), <, 0);
 
-    // Primary-key match (tag may carry -BUILD, the binary may not).
+    // The legacy primary-date matcher intentionally ignores -BUILD.
     g_assert_true(spdf_updater_versions_match_primary("26.7.17-2", "26.7.17-1"));
     g_assert_false(spdf_updater_versions_match_primary("26.7.18-1", "26.7.17-1"));
     g_assert_false(spdf_updater_versions_match_primary("26.7", "26.7.17"));
     g_assert_false(spdf_updater_versions_match_primary("junk", "26.7.17-1"));
+
+    // Relaunch health is stricter: the complete YY.M.DD-BUILD identity must
+    // match before update_ok is written or the rollback binary is deleted.
+    g_assert_true(updater_versions_match_release_target("26.7.17-2", "26.7.17-2"));
+    g_assert_false(updater_versions_match_release_target("26.7.17-2", "26.7.17-1"));
+    g_assert_false(updater_versions_match_release_target("26.7.17-2", "26.7.17"));
+    g_assert_false(updater_versions_match_release_target("26.7.17-2", "26.7.18-2"));
+    g_assert_false(updater_versions_match_release_target("junk", "26.7.17-2"));
 }
 
 // 6. Downgrade feed: tag < highestVersionSeen -> no update even when
@@ -62,7 +72,7 @@ static void test_downgrade_feed(void) {
     rel.sig_url = (char*)"https://example.invalid/a.deb.minisig";
 
     g_assert_true(spdf_updater_release_available(&rel, "26.6.4-1", NULL));
-    g_assert_true(spdf_updater_release_available(&rel, "26.6.4-1", "26.6.19-3")); // == high water
+    g_assert_true(spdf_updater_release_available(&rel, "26.6.4-1", "26.6.19-3"));  // == high water
     g_assert_false(spdf_updater_release_available(&rel, "26.6.4-1", "26.6.25-1")); // downgrade
 }
 
@@ -73,8 +83,8 @@ static void test_availability_gates(void) {
     rel.sig_url = (char*)"https://example.invalid/a.deb.minisig";
 
     g_assert_true(spdf_updater_release_available(&rel, "26.7.17-1", NULL));
-    g_assert_false(spdf_updater_release_available(&rel, "26.8.1-1", NULL));  // not newer
-    g_assert_false(spdf_updater_release_available(&rel, "26.9.1-1", NULL));  // older than running
+    g_assert_false(spdf_updater_release_available(&rel, "26.8.1-1", NULL)); // not newer
+    g_assert_false(spdf_updater_release_available(&rel, "26.9.1-1", NULL)); // older than running
 
     rel.draft = TRUE;
     g_assert_false(spdf_updater_release_available(&rel, "26.7.17-1", NULL));
@@ -135,8 +145,7 @@ static void test_format_notes(void) {
     // 10. Over-cap bodies cut on a line boundary with an ellipsis line.
     {
         GString* body = g_string_new("");
-        for (int i = 0; i < 40; ++i)
-            g_string_append_printf(body, "- highlight number %d padded out\n", i);
+        for (int i = 0; i < 40; ++i) g_string_append_printf(body, "- highlight number %d padded out\n", i);
         notes = spdf_updater_format_notes(body->str);
         g_assert_cmpint((int)g_utf8_strlen(notes, -1), <=, 502);
         g_assert_true(g_str_has_suffix(notes, "\n\xE2\x80\xA6"));
@@ -230,8 +239,7 @@ static void test_minisign_verify_prehashed(void) {
     {
         SpdfMinisignKey pinned;
         g_assert_true(spdf_minisign_parse_pubkey(k_spdf_pinned_pubkey, &pinned, NULL));
-        g_assert_false(
-            spdf_minisign_verify_buffer(&pinned, &sig, (const guint8*)blob, blob_len, &error));
+        g_assert_false(spdf_minisign_verify_buffer(&pinned, &sig, (const guint8*)blob, blob_len, &error));
         g_assert_nonnull(error);
         g_assert_nonnull(strstr(error, "key id"));
         g_clear_pointer(&error, g_free);
@@ -242,8 +250,7 @@ static void test_minisign_verify_prehashed(void) {
     {
         char* corrupt_text = fixture_text("blob.bin.corrupt.minisig");
         g_assert_true(spdf_minisign_parse_sig(corrupt_text, &sig, &error));
-        g_assert_false(
-            spdf_minisign_verify_buffer(&key, &sig, (const guint8*)blob, blob_len, &error));
+        g_assert_false(spdf_minisign_verify_buffer(&key, &sig, (const guint8*)blob, blob_len, &error));
         g_assert_nonnull(error);
         g_clear_pointer(&error, g_free);
         spdf_minisign_sig_clear(&sig);
@@ -314,9 +321,11 @@ static const char k_release_json[] =
     "    {\"name\": \"ShenzhenPDF-linux-amd64.deb\", \"size\": 41943040,\n"
     "     \"browser_download_url\": \"https://github.com/x/releases/download/26.8.2-1/ShenzhenPDF-linux-amd64.deb\"},\n"
     "    {\"name\": \"ShenzhenPDF-linux-amd64.deb.minisig\", \"size\": 313,\n"
-    "     \"browser_download_url\": \"https://github.com/x/releases/download/26.8.2-1/ShenzhenPDF-linux-amd64.deb.minisig\"},\n"
+    "     \"browser_download_url\": "
+    "\"https://github.com/x/releases/download/26.8.2-1/ShenzhenPDF-linux-amd64.deb.minisig\"},\n"
     "    {\"name\": \"ShenzhenPDF-linux-amd64.tar.gz\", \"size\": 39845888,\n"
-    "     \"browser_download_url\": \"https://github.com/x/releases/download/26.8.2-1/ShenzhenPDF-linux-amd64.tar.gz\"}\n"
+    "     \"browser_download_url\": "
+    "\"https://github.com/x/releases/download/26.8.2-1/ShenzhenPDF-linux-amd64.tar.gz\"}\n"
     "  ]\n"
     "}\n";
 
@@ -327,8 +336,7 @@ static void test_parse_release(void) {
     g_assert_cmpstr(rel.tag, ==, "26.8.2-1");
     g_assert_false(rel.draft);
     g_assert_false(rel.prerelease);
-    g_assert_cmpstr(rel.asset_url, ==,
-                    "https://github.com/x/releases/download/26.8.2-1/ShenzhenPDF-linux-amd64.deb");
+    g_assert_cmpstr(rel.asset_url, ==, "https://github.com/x/releases/download/26.8.2-1/ShenzhenPDF-linux-amd64.deb");
     g_assert_cmpint(rel.asset_size, ==, 41943040);
     g_assert_cmpstr(rel.sig_url, ==,
                     "https://github.com/x/releases/download/26.8.2-1/ShenzhenPDF-linux-amd64.deb.minisig");
@@ -357,8 +365,7 @@ static void test_parse_release(void) {
         char* draft_json = g_strdup(k_release_json);
         char* pos = strstr(draft_json, "\"draft\": false");
         memcpy(pos, "\"draft\": true ", strlen("\"draft\": true "));
-        g_assert_true(
-            spdf_updater_parse_release(draft_json, -1, "ShenzhenPDF-linux-amd64.deb", &rel));
+        g_assert_true(spdf_updater_parse_release(draft_json, -1, "ShenzhenPDF-linux-amd64.deb", &rel));
         g_assert_true(rel.draft);
         g_assert_false(spdf_updater_release_available(&rel, "26.7.17-1", NULL));
         spdf_release_info_clear(&rel);
@@ -457,7 +464,8 @@ int main(int argc, char** argv) {
     test_parse_release();
     test_store_roundtrip();
     test_store_parses_mac_format();
-    g_print("updater_test passed (version compare, daily gate, notes, minisign, "
-            "release parse, store)\n");
+    g_print(
+        "updater_test passed (version compare, daily gate, notes, minisign, "
+        "release parse, store)\n");
     return 0;
 }

@@ -151,13 +151,13 @@ Investigate launch-size reductions that do not change rendering:
 - Generate dSYM and strip the shipped app binary.
 - Add dead-strip linker options if safe.
 - Measure cold launch before and after strip/dead-strip.
-- Investigate whether `libcrypto.3.dylib` can be removed, weak-loaded, or delayed without losing user-visible PDF behavior.
+- Keep the executable free of mutable Homebrew runtime dependencies.
 - Do not remove MuPDF fonts/resources unless pixel-diff tests prove no document-rendering regression.
 
 Acceptance:
 
 - Bundle launches and codesigns cleanly.
-- TestFlight packaging still works.
+- The direct-GitHub signed/notarized DMG pipeline still works.
 - Rendering output unchanged.
 
 ### Phase 6: Portable Display Lists and Copy Reduction

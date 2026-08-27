@@ -364,7 +364,7 @@ the minimap early‑return path skips".
 - **`_renderQueue` concurrency is capped on purpose** (memory bandwidth).
 - **Profiling first.** `SPDF_ZOOM_PROFILE=1` already instruments the main
   suspects with thresholds; reach for it before theorising.
-- **TestFlight** is blocked only on the user's Apple signing certs; ad‑hoc
-  signing churns the signature on every reinstall, which resets TCC grants
+- **Direct GitHub release signing** depends on the publisher's Developer ID
+  certificate; ad-hoc signing churns the signature on every reinstall, which resets TCC grants
   (Full Disk Access / Accessibility) — relevant when the permissions wizard
   reports "not granted" after a reinstall.
