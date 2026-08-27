@@ -1,4 +1,5 @@
 #import "SPDFMacDocumentView.h"
+#import "SPDFMacDelayedLinkActivation.h"
 #import "SPDFMacSupport.h"
 
 #include <math.h>
@@ -72,6 +73,7 @@ static NSColor* spdf_canvas_background_color(void) {
     SPDFLinkClickGesture _linkGesture;
     NSInteger _linkGesturePageIndex;
     NSPoint _linkGesturePagePoint;
+    SPDFMacDelayedLinkActivation* _pendingLinkActivation;
     NSTrackingArea* _trackingArea;
     NSDictionary* _hoveredComment;
     BOOL _layoutCacheValid;
@@ -130,6 +132,7 @@ static NSColor* spdf_canvas_background_color(void) {
 }
 
 - (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
+    [_pendingLinkActivation cancel];
     _pages = [pages copy];
     [self invalidateLayoutCache];
     [self setNeedsDisplay:YES];
@@ -693,6 +696,7 @@ static NSColor* spdf_canvas_background_color(void) {
 - (void)mouseDown:(NSEvent*)event {
     spdf_activate_window_for_view(self);
     [self.reader clearFindFieldFocus];
+    [_pendingLinkActivation cancel];
     if (!self.reader) {
         [super mouseDown:event];
         return;
@@ -707,6 +711,16 @@ static NSColor* spdf_canvas_background_color(void) {
     NSPoint pagePoint = NSZeroPoint;
     NSInteger pageIndex = -1;
     if ([self point:point fallsInPage:&pageIndex pagePoint:&pagePoint]) {
+        SPDFMacSelectionGranularity granularity = spdf_mac_selection_granularity_for_event(event);
+        if (!spdf_mac_selection_uses_range_path(granularity)) {
+            _isSelecting = NO;
+            _linkGesture.active = NO;
+            [self.reader documentViewSelectionChangedOnPage:pageIndex
+                                                       from:pagePoint
+                                                         to:pagePoint
+                                                granularity:granularity];
+            return;
+        }
         // Link activation is decided on mouse-up (click vs drag-select), so a
         // drag that selects link text never opens the link. Mouse-down only
         // starts the selection gesture and records the press for that decision.
@@ -826,10 +840,20 @@ static NSColor* spdf_canvas_background_color(void) {
     }
     BOOL wasSelecting = _isSelecting;
     _isSelecting = NO;
-    // Only a press-and-release that never became a selection drag opens the
-    // link under the PRESS point (browser click semantics).
-    if (wasSelecting && spdf_link_click_gesture_activates_on_release(&_linkGesture))
-        [self.reader documentViewOpenLinkAtPageIndex:_linkGesturePageIndex pagePoint:_linkGesturePagePoint];
+    if (wasSelecting && spdf_link_click_gesture_activates_on_release(&_linkGesture)) {
+        SPDFCursorRegionKind kind = [self.reader documentViewCursorRegionAtPageIndex:_linkGesturePageIndex
+                                                                            pagePoint:_linkGesturePagePoint];
+        // Known text is not a link; unresolved regions defer the exact core hit-test.
+        if (kind != SPDFCursorRegionText) {
+            if (!_pendingLinkActivation) _pendingLinkActivation = [SPDFMacDelayedLinkActivation new];
+            __weak id<SPDFMacDocumentViewReader> reader = self.reader;
+            [_pendingLinkActivation schedulePageIndex:_linkGesturePageIndex
+                                            pagePoint:_linkGesturePagePoint
+                                              handler:^(NSInteger pageIndex, NSPoint pagePoint) {
+                                                [reader documentViewOpenLinkAtPageIndex:pageIndex pagePoint:pagePoint];
+                                              }];
+        }
+    }
     _linkGesture.active = NO;
     [self updateCursorForPointInWindow:event.locationInWindow];
 }
@@ -912,6 +936,7 @@ static NSColor* spdf_canvas_background_color(void) {
 }
 
 - (void)cancelTransientInteraction {
+    [_pendingLinkActivation cancel];
     [_inertiaTimer invalidate];
     _inertiaTimer = nil;
     _isPanning = NO;
@@ -922,7 +947,9 @@ static NSColor* spdf_canvas_background_color(void) {
     _selectionPageIndex = -1;
     [[NSCursor arrowCursor] set];
 }
-
+- (void)dealloc {
+    [_pendingLinkActivation cancel];
+}
 - (void)rightMouseDown:(NSEvent*)event {
     spdf_activate_window_for_view(self);
     _rightMouseMoved = NO;

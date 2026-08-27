@@ -1,7 +1,15 @@
 #import <Cocoa/Cocoa.h>
 
 #import "SPDFMacModels.h"
+#import "SPDFMacSelectionClick.h"
 #import "SPDFMacUIHelpers.h"
+
+@protocol SPDFMacDocumentViewReader <SPDFMacUIReader>
+- (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex
+                                      from:(NSPoint)start
+                                        to:(NSPoint)end
+                               granularity:(SPDFMacSelectionGranularity)granularity;
+@end
 
 @interface SPDFDocumentView : NSView <NSDraggingDestination>
 @property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
@@ -15,7 +23,7 @@
 @property(nonatomic) BOOL presentationMode;
 @property(nonatomic) BOOL liveZooming;
 @property(nonatomic, copy) NSString* emptyMessage;
-@property(nonatomic, weak) id<SPDFMacUIReader> reader;
+@property(nonatomic, weak) id<SPDFMacDocumentViewReader> reader;
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize;
 // Image-only page refresh: swaps in an updated pages array whose page SIZES are
 // unchanged (only a render image differs), keeping the layout cache valid and

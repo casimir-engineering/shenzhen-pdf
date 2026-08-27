@@ -30,6 +30,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacPassword.h"
 #import "SPDFMacPrintView.h"
 #import "SPDFMacPropertiesPanel.h"
+#import "SPDFMacSelectionAdapter.h"
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabLifecycle.h"
 #import "SPDFMacTabStripView.h"
@@ -1867,7 +1868,7 @@ static void spdf_discard_launch_prerender(void) {
 }
 
 // --- Security-scoped bookmarks (App Sandbox file access) --------------------
-// The Mac App Store build is sandboxed, so Full Disk Access does nothing and the
+// Unsupported sandboxed repackaging cannot benefit from Full Disk Access, so the
 // app may only read files the user picked through the Open panel / drag — which
 // grant a temporary extension that is lost on quit. To reopen a file later
 // (restored session tabs, recents, favorites, Open Path) we persist a
@@ -10963,35 +10964,31 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 }
 
 - (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end {
+    return [self documentViewSelectionChangedOnPage:pageIndex
+                                               from:start
+                                                 to:end
+                                        granularity:SPDFMacSelectionGranularityRange];
+}
+
+- (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex
+                                      from:(NSPoint)start
+                                        to:(NSPoint)end
+                               granularity:(SPDFMacSelectionGranularity)granularity {
     if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) return NO;
-
-    char err[1024];
-    spdf_rect rects[256];
-    char* text = NULL;
-    int count = spdf_select_page_text(_doc, (int)pageIndex, (float)start.x, (float)start.y, (float)end.x, (float)end.y,
-                                      rects, 256, &text, err, sizeof(err));
-
+    SPDFMacSelectionResult* selection = spdf_mac_select_text(_doc, pageIndex, granularity, start, end);
     for (SPDFRenderedPage* page in _renderedPages) page.selectionRects = @[];
-
-    if (count > 0) {
-        NSMutableArray<NSValue*>* values = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
-        for (int i = 0; i < count; ++i) {
-            NSRect r = NSMakeRect(rects[i].x0, rects[i].y0, rects[i].x1 - rects[i].x0, rects[i].y1 - rects[i].y0);
-            [values addObject:[NSValue valueWithRect:r]];
-        }
-        _renderedPages[(NSUInteger)pageIndex].selectionRects = values;
+    if (selection.hasSelection) {
+        _renderedPages[(NSUInteger)pageIndex].selectionRects = selection.rects;
         _selectionPageIndex = pageIndex;
-        _selectedText = text ? [NSString stringWithUTF8String:text] : @"";
+        _selectedText = selection.text;
     } else {
         _selectionPageIndex = -1;
         _selectedText = nil;
     }
-
-    if (text) spdf_free_string(text);
     _pageView.pages = _renderedPages;
     [_pageView setNeedsDisplay:YES];
     [self updateMinimap];
-    return count > 0 && _selectedText.length > 0;
+    return selection.hasSelection;
 }
 
 - (void)documentViewDidBeginPan {
