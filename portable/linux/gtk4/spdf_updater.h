@@ -12,6 +12,8 @@
 // standalone with SPDF_UPDATER_TESTING (glib + openssl only, no GTK).
 #pragma once
 
+#include "spdf_update_version.h"
+
 #ifdef SPDF_UPDATER_TESTING
 #include <glib.h>
 #else
@@ -34,10 +36,10 @@ typedef struct {
 } SpdfMinisignKey;
 
 typedef struct {
-    gboolean prehashed;       // "ED" (BLAKE2b-512 prehash) vs "Ed" (raw)
+    gboolean prehashed; // "ED" (BLAKE2b-512 prehash) vs "Ed" (raw)
     guint8 key_id[8];
     guint8 sig[64];
-    char* trusted_comment;    // owned; NULL when absent
+    char* trusted_comment; // owned; NULL when absent
     guint8 global_sig[64];
     gboolean has_global_sig;
 } SpdfMinisignSig;
@@ -51,51 +53,38 @@ void spdf_minisign_sig_clear(SpdfMinisignSig* sig);
 // Verify `data` against `sig` with `key` (keyid match + Ed25519 verify +
 // global-signature verify when present). The ONLY trust boundary of the
 // updater: nothing downloaded is installed unless this returns TRUE.
-gboolean spdf_minisign_verify_buffer(const SpdfMinisignKey* key, const SpdfMinisignSig* sig,
-                                     const guint8* data, gsize len, char** error);
+gboolean spdf_minisign_verify_buffer(const SpdfMinisignKey* key, const SpdfMinisignSig* sig, const guint8* data,
+                                     gsize len, char** error);
 // Convenience: read `path` fully and verify it against the .minisig text.
-gboolean spdf_minisign_verify_file(const SpdfMinisignKey* key, const char* sig_text,
-                                   const char* path, char** error);
-
-// ---------------------------------------------------------------------------
-// Version compare (pure; mirrors spdf_compare_versions in SPDFUpdater.mm).
-// Split on [.-], numeric per field, shorter side zero-padded. Returns
-// negative/0/positive like strcmp; malformed input on either side => 0
-// (no ordering decision => no update).
-int spdf_updater_compare_versions(const char* a, const char* b);
-// TRUE when both versions parse with >= 3 fields and share YY.M.DD (the
-// -BUILD suffix is ignored; the shipped binary may not carry one).
-gboolean spdf_updater_versions_match_primary(const char* a, const char* b);
+gboolean spdf_minisign_verify_file(const SpdfMinisignKey* key, const char* sig_text, const char* path, char** error);
 
 // Daily-gate delay decision (pure; mirrors spdf_daily_check_delay).
 // Returns -1 = never (disabled), 0 = due now, else seconds until due.
 // Rolling 24h window; a backwards clock keeps the gate closed.
-gint64 spdf_updater_daily_check_delay(gboolean auto_update_enabled, gboolean have_last_check,
-                                      gint64 last_check_epoch, gint64 now_epoch);
+gint64 spdf_updater_daily_check_delay(gboolean auto_update_enabled, gboolean have_last_check, gint64 last_check_epoch,
+                                      gint64 now_epoch);
 
 // ---------------------------------------------------------------------------
 // GitHub /releases/latest response parse (pure, structural — not fooled by
 // braces/quotes inside the release body). Picks the asset named `asset_name`
 // and its detached signature `<asset_name>.minisig`.
 typedef struct {
-    char* tag;          // "tag_name"
+    char* tag; // "tag_name"
     gboolean draft;
     gboolean prerelease;
-    char* notes;        // "body", may be NULL
-    char* asset_url;    // browser_download_url of `asset_name`, NULL if absent
-    gint64 asset_size;  // its "size", 0 if absent
-    char* sig_url;      // browser_download_url of `<asset_name>.minisig`
+    char* notes;       // "body", may be NULL
+    char* asset_url;   // browser_download_url of `asset_name`, NULL if absent
+    gint64 asset_size; // its "size", 0 if absent
+    char* sig_url;     // browser_download_url of `<asset_name>.minisig`
 } SpdfReleaseInfo;
 
-gboolean spdf_updater_parse_release(const char* json, gssize len, const char* asset_name,
-                                    SpdfReleaseInfo* out);
+gboolean spdf_updater_parse_release(const char* json, gssize len, const char* asset_name, SpdfReleaseInfo* out);
 void spdf_release_info_clear(SpdfReleaseInfo* info);
 
 // Update-available decision (pure; mirrors the Mac availability predicate):
 // newer than running AND not below the highest-seen high-water mark AND has
 // both payload and signature assets AND not draft/prerelease.
-gboolean spdf_updater_release_available(const SpdfReleaseInfo* info, const char* running,
-                                        const char* highest_seen);
+gboolean spdf_updater_release_available(const SpdfReleaseInfo* info, const char* running, const char* highest_seen);
 
 // Release-notes plain-text formatter for the update prompt (pure; port of
 // spdf_format_release_notes_for_alert): highlights above the first horizontal
@@ -109,14 +98,14 @@ char* spdf_updater_format_notes(const char* body);
 // update.lock in the same config dir; settings.json keeps autoUpdateEnabled /
 // skippedUpdateVersion, which belong to spdf_state.c).
 typedef struct {
-    gint64 last_check;     // "lastUpdateCheck" epoch seconds, 0 = never
-    char* etag;            // "etag" of the last 200 response
-    char* highest_seen;    // "highestVersionSeen" downgrade/replay high-water
-    char* deferred_tag;    // "deferredTag" ("Later" snooze target)
-    gint64 remind_after;   // "remindAfter" epoch seconds
-    char* pending_tag;     // "pendingTag" install awaiting the launch health check
-    char* update_ok;       // "updateOk" last confirmed-healthy tag
-    gint64 lease_pid;      // "leasePid"/"leaseTimestamp": single-driver liveness lease
+    gint64 last_check;   // "lastUpdateCheck" epoch seconds, 0 = never
+    char* etag;          // "etag" of the last 200 response
+    char* highest_seen;  // "highestVersionSeen" downgrade/replay high-water
+    char* deferred_tag;  // "deferredTag" ("Later" snooze target)
+    gint64 remind_after; // "remindAfter" epoch seconds
+    char* pending_tag;   // "pendingTag" install awaiting the launch health check
+    char* update_ok;     // "updateOk" last confirmed-healthy tag
+    gint64 lease_pid;    // "leasePid"/"leaseTimestamp": single-driver liveness lease
     gint64 lease_ts;
 } SpdfUpdateStore;
 
