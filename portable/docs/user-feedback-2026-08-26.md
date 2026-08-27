@@ -210,3 +210,9 @@ stapled, and compatible with the existing GitHub auto-updater.
   menu and preload state machines were extracted into 104-line and 124-line
   owners, reducing the legacy delegate to 16,742 lines and tightening its
   no-growth cap.
+- 2026-08-28: visual acceptance against the installed notarized candidate
+  confirmed the five-sheet A4 demo, H1-H3 Chapters hierarchy, shared map, and
+  untyped-fence language selector. It also caught insufficient breathing room
+  before the first code line. Screen pagination now reserves 34 points for the
+  22-point selector, while print and PDF export keep their unchanged vector
+  layout with no screen-control spacer.

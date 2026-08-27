@@ -135,8 +135,8 @@ int main(void) {
         for (SPDFMarkdownPaginationItem* item in screenPlan.items)
             if (item.kind == SPDFMarkdownBlockKindCode) screenCode = item;
         SPDFMarkdownTextLine* controlLine = screenCode.lines.firstObject;
-        SPDFExpect(controlLine.attributedRange.length == 0 && fabs(controlLine.height - 26.0) < 0.001,
-                   @"screen A4 opt-in adds exactly one 26pt code-language control space");
+        SPDFExpect(controlLine.attributedRange.length == 0 && fabs(controlLine.height - 34.0) < 0.001,
+                   @"screen A4 opt-in reserves clear space between the language control and code");
         SPDFExpect(screenCode.lines.count == printedCode.lines.count + 1,
                    @"screen spacing preserves the code fence as one pagination item");
         SPDFExpect(screenPlan.configuration.includesCodeLanguageControlSpacing,
