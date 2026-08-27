@@ -41,6 +41,7 @@ CORE_SELECTION_SRC := core/spdf_selection.c
 CORE_SELECTION_HDR := core/spdf_selection.h
 CORE_SELECTION_OBJ := $(BUILD)/spdf_selection.o
 CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ)
+MAC_MD4C_OBJ := $(BUILD)/md4c.o
 CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
 CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
 CORE_SELECTION_TEST := $(BUILD)/SPDFCoreSelectionTests
@@ -66,8 +67,9 @@ MAC_SELECTION_CLICK_TEST := $(BUILD)/SPDFMacSelectionClickTests
 MAC_SELECTION_ADAPTER_TEST := $(BUILD)/SPDFMacSelectionAdapterTests
 MAC_RELEASE_NOTES_PREVIEW := $(BUILD)/SPDFReleaseNotesPreview
 # Exclude standalone test translation units (each defines its own main()).
-MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm)))
-MAC_HDRS := $(sort $(wildcard mac/*.h))
+MAC_MARKDOWN_SRCS := $(sort $(wildcard mac/markdown/*.mm))
+MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm))) $(MAC_MARKDOWN_SRCS)
+MAC_HDRS := $(sort $(wildcard mac/*.h) $(wildcard mac/markdown/*.h))
 MAC_VERSION ?= 26.7.17
 MAC_BUILD ?= 1
 MAC_SIGN_IDENTITY ?= -
@@ -98,6 +100,9 @@ $(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) Makefile | $(BUILD)
 
 $(CORE_SELECTION_OBJ): $(CORE_SELECTION_SRC) $(CORE_SELECTION_HDR) $(CORE_HDR) Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SELECTION_SRC)" -o "$(CORE_SELECTION_OBJ)"
+
+$(MAC_MD4C_OBJ): ../ext/md4c/md4c.c ../ext/md4c/md4c.h Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c11 -I../ext/md4c -c ../ext/md4c/md4c.c -o "$(MAC_MD4C_OBJ)"
 
 mac-app: $(MAC_BIN)
 
@@ -240,7 +245,7 @@ $(MAC_SELECTION_ADAPTER_TEST): mac/tests/SPDFMacSelectionAdapterTests.mm mac/SPD
 mac-selection-adapter-tests: $(MAC_SELECTION_ADAPTER_TEST)
 	"$(MAC_SELECTION_ADAPTER_TEST)"
 
-$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
+$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
@@ -271,7 +276,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_SRCS) $(MAC_HDRS) mac/Info.plist mac/A
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
-	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -Eq 'libcrypto|/opt/homebrew|/usr/local'; then \
 		echo "unexpected mutable runtime dependency in $(MAC_BIN)" >&2; \
 		otool -L "$(MAC_BIN)" >&2; \
