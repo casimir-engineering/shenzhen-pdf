@@ -1,0 +1,109 @@
+# path<TAB>cap<TAB>kind<TAB>justification
+cmd/build-ci.ts	520	exception	Cohesive CI build orchestration; additions should move to focused helpers.
+cmd/build-with-mingw.ts	1838	legacy	Legacy MinGW build orchestration; freeze growth pending extraction.
+cmd/gen-settings.ts	1796	legacy	Legacy settings generator; freeze growth while generated outputs stay excluded.
+cmd/trans-dl.ts	517	exception	Translation download workflow is cohesive; additions should use separate modules.
+premake5.files.lua	1503	legacy	Legacy first-party Premake source manifest and project composition; freeze growth pending target-specific extraction.
+premake5.lua	1084	legacy	Legacy first-party Premake build configuration; freeze growth pending platform-target extraction.
+portable/core/shenzhen_pdf_core.c	3296	legacy	Legacy shared document core; freeze growth pending subsystem extraction.
+portable/linux/gtk4/spdf_annot.c	1301	legacy	Legacy GTK annotation controller; freeze growth pending extraction.
+portable/linux/gtk4/spdf_app.c	726	exception	GTK application lifecycle is cohesive and platform-specific.
+portable/linux/gtk4/spdf_docview.c	1793	legacy	Legacy GTK document view hot path; freeze growth pending extraction.
+portable/linux/gtk4/spdf_docview_internal.h	512	exception	Existing private document-view state contract; new state belongs in focused owners.
+portable/linux/gtk4/spdf_minimap.c	1095	legacy	Legacy GTK minimap component; freeze growth pending layout/input split.
+portable/linux/gtk4/spdf_minimap_internal.h	549	exception	Existing private minimap contract; new state belongs in focused owners.
+portable/linux/gtk4/spdf_ocr.c	707	exception	Cohesive GTK OCR workflow with platform integration.
+portable/linux/gtk4/spdf_palette.c	1267	legacy	Legacy GTK command palette; freeze growth pending model/view split.
+portable/linux/gtk4/spdf_search.c	1258	legacy	Legacy GTK search controller; freeze growth pending worker/view split.
+portable/linux/gtk4/spdf_sidebar.c	1246	legacy	Legacy GTK sidebar controller; freeze growth pending section extraction.
+portable/linux/gtk4/spdf_state.c	1786	legacy	Legacy GTK persistence and session state; freeze growth pending storage split.
+portable/linux/gtk4/spdf_toolchain.c	725	exception	Cohesive Linux toolchain discovery and package-manager integration.
+portable/linux/gtk4/spdf_translate.c	1631	legacy	Legacy GTK translation workflow; freeze growth pending service/UI split.
+portable/linux/gtk4/spdf_updater.c	2369	legacy	Legacy signed updater; freeze growth pending trust/transport/UI split.
+portable/linux/gtk4/spdf_watcher.c	674	exception	Cohesive Linux file-watcher implementation; reload policy lives in spdf_watcher_logic.
+portable/linux/gtk4/spdf_window.c	1357	legacy	Legacy GTK window shell; freeze growth pending action/menu extraction.
+portable/linux/gtk4/tests/spdf_state_test.c	986	exception	Cohesive persistence regression suite; new scenarios should use focused fixtures.
+portable/mac/SPDFMacDelegatePrivate.h	605	exception	Existing private coordinator state contract; new state belongs in focused modules.
+portable/mac/SPDFMacDocumentView.mm	888	exception	Cohesive AppKit document input and view implementation; rendering primitives live in SPDFMacPageRendering.
+portable/mac/SPDFMacMinimapView.mm	1014	legacy	Legacy AppKit minimap component; freeze growth pending layout/input split.
+portable/mac/SPDFMacPropertiesPanel.mm	555	exception	Cohesive AppKit document-properties panel.
+portable/mac/SPDFMacTabStripView.mm	1123	legacy	Legacy AppKit tab strip; freeze growth pending layout/input split.
+portable/mac/SPDFMacUIHelpers.mm	1324	legacy	Legacy mixed AppKit helper views; freeze growth pending class extraction.
+portable/mac/SPDFUpdater.mm	1586	legacy	Legacy signed updater; freeze growth pending trust/transport/UI split.
+portable/mac/ShenzhenPDFMac.mm	16851	legacy	Legacy macOS coordinator hotspot; no growth before staged extraction.
+src/Accelerators.cpp	773	exception	Inherited accelerator-table implementation is cohesive and stable.
+src/Annotation.cpp	1266	legacy	Legacy Windows annotation model; freeze growth pending extraction.
+src/AppSettings.cpp	642	exception	Inherited application-settings coordinator is cohesive and stable.
+src/AppTools.cpp	762	exception	Inherited external-tool integration is cohesive and stable.
+src/Canvas.cpp	3394	legacy	Legacy Windows canvas hot path; freeze growth pending extraction.
+src/ChmFile.cpp	599	exception	Inherited CHM file adapter is cohesive and format-specific.
+src/ChmModel.cpp	769	exception	Inherited CHM display model is cohesive and format-specific.
+src/CommandPalette.cpp	1642	legacy	Legacy Windows command palette; freeze growth pending model/view split.
+src/Commands.cpp	1247	legacy	Mixed generated command tables and maintained dispatch helpers; enforce the whole file until generation is split out.
+src/CrashHandler.cpp	935	exception	Inherited crash-handling subsystem is cohesive and platform-specific.
+src/DisplayModel.cpp	2105	legacy	Legacy display model hot path; freeze growth pending extraction.
+src/EbookDoc.cpp	1699	legacy	Legacy ebook document model; freeze growth pending parser/model split.
+src/EditAnnotations.cpp	1707	legacy	Legacy annotation editor; freeze growth pending command/UI split.
+src/EngineBase.h	547	exception	Established shared engine interface; additions require a focused interface review.
+src/EngineDjVu.cpp	1414	legacy	Legacy DjVu engine adapter; freeze growth pending extraction.
+src/EngineDump.cpp	547	exception	Cohesive diagnostic engine dumper.
+src/EngineEbook.cpp	1956	legacy	Legacy ebook engine adapter; freeze growth pending extraction.
+src/EngineImages.cpp	2509	legacy	Legacy image engine adapter; freeze growth pending extraction.
+src/EngineMupdf.cpp	4623	legacy	Legacy MuPDF engine hotspot; freeze growth pending subsystem extraction.
+src/ExternalViewers.cpp	570	exception	Cohesive external-viewer integration.
+src/Favorites.cpp	933	exception	Inherited favorites model and persistence are tightly coupled and stable.
+src/Flags.cpp	715	exception	Mixed generated flag definitions and maintained parsing logic; enforce the whole file until generation is split out.
+src/HomePage.cpp	1528	legacy	Legacy Windows home page; freeze growth pending model/view split.
+src/HtmlFormatter.cpp	1509	legacy	Legacy HTML formatter; freeze growth pending parser/layout split.
+src/ImageSaveCropResize.cpp	1865	legacy	Legacy image export editor; freeze growth pending operation split.
+src/Installer.cpp	1345	legacy	Legacy Windows installer flow; freeze growth pending extraction.
+src/InstallerCommon.cpp	803	exception	Shared installer primitives are cohesive and stable.
+src/MainWindow.cpp	801	exception	Inherited main-window primitives are cohesive and stable.
+src/Menu.cpp	2612	legacy	Legacy Windows menu controller; freeze growth pending command extraction.
+src/MobiDoc.cpp	1084	legacy	Legacy MOBI document parser; freeze growth pending extraction.
+src/Notifications.cpp	653	exception	Cohesive notification presentation subsystem.
+src/OverlayScrollbar.cpp	1002	legacy	Legacy overlay scrollbar implementation; freeze growth pending extraction.
+src/PdfSync.cpp	840	exception	Cohesive SyncTeX/PDF synchronization adapter.
+src/PdfTools.cpp	1797	legacy	Legacy PDF tool collection; freeze growth pending operation split.
+src/Print.cpp	1681	legacy	Legacy Windows print pipeline; freeze growth pending settings/render split.
+src/RegistryInstaller.cpp	637	exception	Cohesive Windows registry installation helper.
+src/RenderCache.cpp	1026	legacy	Legacy render cache hot path; freeze growth pending extraction.
+src/Screenshot.cpp	1455	legacy	Legacy screenshot workflow; freeze growth pending capture/UI split.
+src/SearchAndDDE.cpp	1416	legacy	Legacy search and DDE controller; freeze growth pending protocol split.
+src/StressTesting.cpp	1000	exception	Cohesive stress-test harness; production additions belong elsewhere.
+src/SumatraDialogs.cpp	1617	legacy	Legacy dialog collection; freeze growth pending per-dialog extraction.
+src/SumatraPDF.cpp	8782	legacy	Legacy Windows application coordinator; freeze growth pending staged extraction.
+src/SumatraProperties.cpp	846	exception	Cohesive Windows properties presentation.
+src/SumatraStartup.cpp	1887	legacy	Legacy startup coordinator; freeze growth pending phase extraction.
+src/TabGroupsManage.cpp	522	exception	Cohesive tab-group management workflow.
+src/TableOfContents.cpp	1333	legacy	Legacy table-of-contents controller; freeze growth pending model/view split.
+src/Tabs.cpp	804	exception	Inherited tab model and commands are cohesive and stable.
+src/Toolbar.cpp	1724	legacy	Legacy Windows toolbar controller; freeze growth pending command/layout split.
+src/Uninstaller.cpp	601	exception	Cohesive Windows uninstaller flow.
+src/UpdateCheck.cpp	685	exception	Cohesive update-check workflow.
+src/common/arena.cpp	519	exception	Cohesive arena allocator implementation.
+src/common/str_util.cpp	525	exception	Cohesive shared string utility implementation.
+src/mui/TextRender.cpp	561	exception	Cohesive MUI text-rendering component.
+src/uia/TextRange.cpp	854	exception	Cohesive UI Automation text-range implementation.
+src/utils/Archive.cpp	732	exception	Cohesive archive utility implementation.
+src/utils/BaseUtil.h	666	exception	Established low-level utility contract; additions should move to focused headers.
+src/utils/DbgHelpDyn.cpp	598	exception	Cohesive dynamic DbgHelp adapter.
+src/utils/FileUtil.cpp	1012	legacy	Legacy filesystem utility collection; freeze growth pending operation split.
+src/utils/FileWatcher.cpp	574	exception	Cohesive cross-platform file-watcher utility.
+src/utils/GdiPlusUtil.cpp	823	exception	Cohesive GDI+ utility implementation.
+src/utils/GuessFileType.cpp	548	exception	Cohesive file-type detection implementation.
+src/utils/SettingsUtil.cpp	594	exception	Cohesive settings serialization utility.
+src/utils/StrUtil.cpp	2703	legacy	Legacy string utility collection; freeze growth pending operation split.
+src/utils/StrVec.cpp	868	exception	Cohesive string-vector utility implementation.
+src/utils/WinUtil.cpp	3560	legacy	Legacy Win32 utility collection; freeze growth pending operation split.
+src/utils/tests/StrUtil_ut.cpp	599	exception	Cohesive string-utility regression suite.
+src/utils/tests/StrVec_ut.cpp	757	exception	Cohesive string-vector regression suite.
+src/wingui/HtmlWindow.cpp	2096	legacy	Legacy HTML window implementation; freeze growth pending browser/UI split.
+src/wingui/Layout.cpp	1228	legacy	Legacy Win32 layout engine; freeze growth pending primitive split.
+src/wingui/TabsCtrl.cpp	924	exception	Cohesive native tab-control wrapper.
+src/wingui/TreeView.cpp	585	exception	Cohesive native tree-view wrapper.
+src/wingui/WinGui.h	890	exception	Established Win32 UI interface surface; new components need focused headers.
+src/wingui/Wnd.cpp	1381	legacy	Legacy native window wrapper; freeze growth pending control extraction.
+tools/efi/Dia2Subset.h	571	exception	Intentional minimal DIA SDK subset kept local for the EFI diagnostic tool.
+tools/efi/main.cpp	663	exception	Cohesive EFI diagnostic command-line tool.
+tools/sizer/pdbfile.cpp	715	exception	Cohesive PDB parsing component for the size-analysis tool.
