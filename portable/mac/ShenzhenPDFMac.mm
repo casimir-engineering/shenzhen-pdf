@@ -21,11 +21,13 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacDefaultReader.h"
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacDocumentView.h"
-#import "SPDFMacFindNearest.h"
 #import "SPDFMacFileExplorerPreference.h"
+#import "SPDFMacFindNearest.h"
 #import "SPDFMacModels.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
+#import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacPaletteResults.h"
 #import "SPDFMacPassword.h"
 #import "SPDFMacPrintView.h"
@@ -691,7 +693,7 @@ static void spdf_discard_launch_prerender(void) {
       // cloud open (loadSelectedTab); do not race a second synchronous open
       // against it. Same predicate as that deferral (CloudStorage file
       // providers plus any non-apfs/hfs mount).
-      if (path.length == 0 || [self pathIsOnCloudStorage:path]) {
+      if (path.length == 0 || spdf_mac_path_is_markdown(path) || [self pathIsOnCloudStorage:path]) {
           @synchronized(result) {
               result.finished = YES;
           }
@@ -1987,6 +1989,8 @@ static void spdf_discard_launch_prerender(void) {
             @"searchRegex" : @(tab.searchRegex),
             @"searchRegexMultiline" : @(tab.searchRegexMultiline),
             @"findMatchIndex" : @(tab.findMatchIndex),
+            @"markdownSelectionLocation" : @(tab.markdownSelectionRange.location),
+            @"markdownSelectionLength" : @(tab.markdownSelectionRange.length),
             @"showSidebar" : @(tab.showSidebar),
             @"showMinimap" : @(tab.showMinimap),
             // Read-only shadow copy: persist the temp copy + the source stat it
@@ -3339,6 +3343,7 @@ static void spdf_discard_launch_prerender(void) {
         [_minimapView.trailingAnchor constraintEqualToAnchor:_documentContainer.trailingAnchor],
         [_minimapView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor], _minimapWidthConstraint
     ]];
+    [self installMarkdownHostInDocumentContainer];
 
     [_splitView addSubview:_sidebarContainer];
     [_splitView addSubview:_documentContainer];
@@ -6499,6 +6504,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)rememberActiveTabState {
     if (_selectedTabIndex < 0 || _selectedTabIndex >= (NSInteger)_tabs.count) return;
+    if ([self isMarkdownActive]) {
+        [self rememberActiveMarkdownStateForTab:_tabs[(NSUInteger)_selectedTabIndex]];
+        return;
+    }
     if (!_doc || !_path.length) return;
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
     tab.path = _path;
@@ -7407,6 +7416,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         SPDFDocumentTab* tab = _tabs[(NSUInteger)i];
         NSString* path = [tab.path copy];
         if (!path.length) continue;
+        // Markdown tabs are intentionally lazy: only the selected tab parses
+        // and renders, so session restore never turns a large Markdown set into
+        // launch work.
+        if (spdf_mac_path_is_markdown(path)) continue;
         NSString* standardized = [path.stringByStandardizingPath copy];
         if ([_preloadingPaths containsObject:standardized]) continue;
 
@@ -8343,6 +8356,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)saveDocumentAs:(id)sender {
     (void)sender;
+    if ([self isMarkdownActive]) {
+        [self saveActiveMarkdownAsPDF];
+        return;
+    }
     [self saveActiveDocumentAsWithPanelTitle:@"Save PDF As" statusMessage:@"Document saved."];
 }
 
@@ -8789,7 +8806,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [_queuedRenderOperations removeAllObjects];
     [_queuedMinimapThumbnailPages removeAllObjects];
 
+    [self deactivateActiveMarkdownView];
     [self closeActiveDocumentIfUnowned];
+
+    if (spdf_mac_path_is_markdown(path)) {
+        [self loadSelectedMarkdownTab:tab];
+        return;
+    }
 
     // Launch only: a restored active tab on cloud storage (DriveFS & co.) can
     // stall stat+open for ~1s on cache revalidation. Show the full window
@@ -9012,6 +9035,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // the no-chapters/no-comments side-panel gate in -rebuildSidebar.
     tab.showSidebar = _defaultSidebarVisibleForNewDocuments;
     tab.showMinimap = _defaultMinimapVisibleForNewDocuments;
+    if (spdf_mac_path_is_markdown(path)) {
+        tab.showSidebar = NO;
+        tab.showMinimap = NO;
+    }
     objc_setAssociatedObject(tab, &kSPDFPasswordPromptClosesNewTabKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return tab;
 }
@@ -9047,13 +9074,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
 
     if (targetIndex >= 0) {
-        if (targetIndex == _selectedTabIndex && _doc) {
+        if (targetIndex == _selectedTabIndex && [self hasActiveDocument]) {
             if (_path.length > 0) [self rememberRecentlyOpenedPath:_path];
             [self savePersistentState];
             return;
         }
         [self selectTabAtIndex:targetIndex];
-        if (_doc && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
+        if ([self hasActiveDocument] && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
         [self savePersistentState];
     }
 }
@@ -9082,12 +9109,13 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [_tabs insertObject:tab atIndex:(NSUInteger)index];
     _selectedTabIndex = index;
     [self loadSelectedTab];
-    if (_doc && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
+    if ([self hasActiveDocument] && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
     [self savePersistentState];
 }
 
 - (void)selectTabAtIndex:(NSInteger)index {
-    if (index < 0 || index >= (NSInteger)_tabs.count || (index == _selectedTabIndex && _doc)) return;
+    if (index < 0 || index >= (NSInteger)_tabs.count ||
+        (index == _selectedTabIndex && [self hasActiveDocument])) return;
     [self clearToolbarFieldFocusForTabSwitch];
     [self rememberActiveTabState];
     _selectedTabIndex = index;
@@ -9129,6 +9157,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self cancelInactiveTabPreloads];
         [self clearActiveMetadata];
         [self teardownActiveFileWatcher];
+        [self deactivateActiveMarkdownView];
         [self closeActiveDocumentIfUnowned];
         _path = nil;
         _workingPath = nil;  // keep working/source paths in sync when the doc clears
@@ -9326,7 +9355,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     for (NSURL* url in urls) {
         NSString* ext = url.pathExtension.lowercaseString;
         if ([ext isEqualToString:@"pdf"] || [ext isEqualToString:@"xps"] || [ext isEqualToString:@"cbz"] ||
-            [ext isEqualToString:@"epub"]) {
+            [ext isEqualToString:@"epub"] || [ext isEqualToString:@"md"] ||
+            [ext isEqualToString:@"markdown"]) {
             [paths addObject:url.path];
         }
     }
@@ -10502,6 +10532,10 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
 - (void)updateControls {
     SPDFScopedProfileLog spdfScopedProfile("updateControls", 4.0);
+    if ([self isMarkdownActive]) {
+        [self updateControlsForActiveMarkdown];
+        return;
+    }
     NSInteger pageCount = spdf_page_count(_doc);
     BOOL hasDoc = _doc != NULL;
     _prevButton.enabled = hasDoc && _pageIndex > 0;
@@ -10566,7 +10600,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
 - (void)updateFindCountLabel {
     if (!_findCountLabel) return;
-    if (!_doc || _searchField.stringValue.length == 0) {
+    if (![self hasActiveDocument] || _searchField.stringValue.length == 0) {
         _findCountLabel.stringValue = @"";
         return;
     }
@@ -10727,6 +10761,22 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 }
 
 - (void)startFindForCurrentQueryResetSavedIndex:(BOOL)resetSavedIndex revealMatch:(BOOL)revealMatch {
+    if ([self isMarkdownActive]) {
+        NSString* query = [_searchField.stringValue copy] ?: @"";
+        SPDFDocumentTab* tab = [self selectedTab];
+        NSInteger preferred = resetSavedIndex ? 0 : MAX(0, tab.findMatchIndex);
+        tab.searchText = query;
+        tab.searchRegex = NO;
+        if (!query.length) {
+            [self clearMarkdownFindResults];
+            [self updateFindControls];
+            _statusLabel.stringValue = @"Ready";
+            return;
+        }
+        (void)revealMatch;
+        [self startMarkdownFindForQuery:query preferredIndex:preferred];
+        return;
+    }
     if (!_doc || !_path.length) {
         [self clearFindResults];
         return;
@@ -11046,6 +11096,12 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
 - (void)copySelection:(id)sender {
     (void)sender;
+    if ([self isMarkdownActive]) {
+        NSTextView* textView = self.activeMarkdownSession.textView;
+        if (textView.selectedRange.length == 0) NSBeep();
+        else [textView copy:nil];
+        return;
+    }
     if (_selectedText.length == 0) {
         NSBeep();
         return;
@@ -11062,6 +11118,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 }
 
 - (BOOL)ensureContentCopyPermissionForOperation:(NSString*)operationName {
+    if ([self isMarkdownActive]) return YES;
     if (_doc && spdf_has_permission(_doc, 'c')) return YES;
     [self showError:[NSString stringWithFormat:@"%@ is not allowed", operationName ?: @"Copying"]
              detail:@"This PDF's permissions do not allow content copying. Open it with the owner password to continue."];
@@ -11069,7 +11126,8 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 }
 
 - (NSString*)trimmedSelectedTextForCommand {
-    return [_selectedText ?: @"" stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString* selected = [self isMarkdownActive] ? [self markdownSelectedText] : (_selectedText ?: @"");
+    return [selected stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
 - (NSString*)shortSelectedTextForMenuTitle {
@@ -12396,7 +12454,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 // document viewer.
 - (void)paste:(id)sender {
     (void)sender;
-    if (!_doc || _presentationMode || !_searchField) return;
+    if (![self hasActiveDocument] || _presentationMode || !_searchField) return;
     NSString* clip = [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];
     NSString* query = SPDFTextByCollapsingWhitespace(
         [clip stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]);
@@ -15438,6 +15496,10 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 - (void)printDocument:(id)sender {
     (void)sender;
+    if ([self isMarkdownActive]) {
+        [self printActiveMarkdown];
+        return;
+    }
     if (!_doc) {
         NSBeep();
         return;
@@ -15791,127 +15853,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     [self promptToMakeDefaultPDFReaderFromLaunch:NO];
 }
 
-- (void)openInExternalReader:(id)sender {
-    (void)sender;
-    if (!_path.length) {
-        NSBeep();
-        return;
-    }
-
-    NSURL* fileURL = [NSURL fileURLWithPath:_path];
-    NSURL* acrobat = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"com.adobe.Reader"];
-    if (!acrobat)
-        acrobat = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"com.adobe.Acrobat.Pro"];
-    if (acrobat) {
-        NSWorkspaceOpenConfiguration* config = [NSWorkspaceOpenConfiguration configuration];
-        [NSWorkspace.sharedWorkspace openURLs:@[ fileURL ]
-                         withApplicationAtURL:acrobat
-                                configuration:config
-                            completionHandler:nil];
-    } else {
-        [NSWorkspace.sharedWorkspace openURL:fileURL];
-    }
-}
-
-- (void)showPathInFolder:(NSString*)path {
-    if (!SPDFMacRevealPathUsingPreference(path)) NSBeep();
-}
-
-- (void)showInFolder:(id)sender {
-    (void)sender;
-    if (!_doc || !_path.length) {
-        NSBeep();
-        return;
-    }
-
-    [self showPathInFolder:_path];
-}
-
-- (void)copyCurrentDocumentPath:(id)sender {
-    (void)sender;
-    if (!_doc || !_path.length) {
-        NSBeep();
-        return;
-    }
-    [self copyPathStringToPasteboard:_path statusMessage:@"Path copied."];
-}
-
-// Copy the whole document file to the clipboard — same as the tab strip's
-// "Copy", reusing copyTabFileToPasteboardAtIndex: for the active tab.
-- (void)copyCurrentDocumentFile:(id)sender {
-    (void)sender;
-    if (!_doc || !_path.length) {
-        NSBeep();
-        return;
-    }
-    [self copyTabFileToPasteboardAtIndex:_selectedTabIndex];
-}
-
-- (void)copyCurrentPageImage:(id)sender {
-    (void)sender;
-    if (!_doc || _pageIndex < 0 || _pageIndex >= (NSInteger)_renderedPages.count ||
-        !_renderedPages[(NSUInteger)_pageIndex].image) {
-        NSBeep();
-        return;
-    }
-    if (!spdf_has_permission(_doc, 'c')) {
-        [self showError:@"Copying is not allowed" detail:@"This PDF's permissions do not allow content copying."];
-        return;
-    }
-
-    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
-    [pasteboard clearContents];
-    [pasteboard writeObjects:@[ _renderedPages[(NSUInteger)_pageIndex].image ]];
-    _statusLabel.stringValue = @"Page image copied.";
-}
-
-// Copy the right-clicked (or current) page to the clipboard as a standalone
-// single-page PDF file.
-- (void)copyCurrentPageAsPDF:(id)sender {
-    (void)sender;
-    NSInteger pageIndex = _contextPageIndex >= 0 ? _contextPageIndex : _pageIndex;
-    if (!_doc || !_path.length || pageIndex < 0 || pageIndex >= spdf_page_count(_doc)) {
-        NSBeep();
-        return;
-    }
-    if (!spdf_has_permission(_doc, 'c')) {
-        [self showError:@"Copying is not allowed" detail:@"This PDF's permissions do not allow content copying."];
-        return;
-    }
-
-    NSString* base = _path.lastPathComponent.stringByDeletingPathExtension;
-    NSString* fileName =
-        [NSString stringWithFormat:@"%@ - page %ld.pdf", base.length ? base : @"Page", (long)(pageIndex + 1)];
-    NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ShenzhenPDF-copy"];
-    [NSFileManager.defaultManager createDirectoryAtPath:directory
-                            withIntermediateDirectories:YES
-                                             attributes:nil
-                                                  error:nil];
-    NSString* tempPath = [directory stringByAppendingPathComponent:fileName];
-
-    char err[1024];
-    if (!spdf_save_single_page_pdf(_doc, (int)pageIndex, tempPath.fileSystemRepresentation, err, sizeof(err))) {
-        [self showError:@"Could not copy page"
-                 detail:[NSString stringWithFormat:@"%s", err[0] ? err : "The page could not be written as a PDF."]];
-        return;
-    }
-
-    // One pasteboard item carrying two representations: the raw PDF bytes (so
-    // Preview/Pages/Keynote paste the page directly) and a file-URL (so Finder,
-    // Mail and chat apps paste it as a .pdf file).
-    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
-    [pasteboard clearContents];
-    NSPasteboardItem* item = [[NSPasteboardItem alloc] init];
-    NSData* pdfData = [NSData dataWithContentsOfFile:tempPath];
-    if (pdfData) [item setData:pdfData forType:NSPasteboardTypePDF];
-    [item setString:[NSURL fileURLWithPath:tempPath].absoluteString forType:NSPasteboardTypeFileURL];
-    if (![pasteboard writeObjects:@[ item ]]) {
-        NSBeep();
-        return;
-    }
-    _statusLabel.stringValue = @"Page copied.";
-}
-
 - (void)showContextMenuForDocumentView:(NSView*)view event:(NSEvent*)event {
     [self documentViewEndHoverComment];
     _contextPageIndex = -1;
@@ -16058,6 +15999,12 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 }
 
 - (void)findFromCurrentForward:(BOOL)forward {
+    if ([self isMarkdownActive]) {
+        if (_searchField.stringValue.length == 0) return;
+        if (self.activeMarkdownSession.searchMatches.count == 0) [self startFindForCurrentQuery];
+        else [self moveMarkdownFindForward:forward];
+        return;
+    }
     if (!_doc || _searchField.stringValue.length == 0) return;
 
     if (_findMatches.count == 0) {
@@ -16723,7 +16670,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
     SEL action = menuItem.action;
-    BOOL hasDoc = _doc != NULL;
+    BOOL hasDoc = [self hasActiveDocument];
+    BOOL markdown = [self isMarkdownActive];
     if (action == @selector(closeDocument:))
         return spdf_mac_tab_close_action_enabled((NSInteger)_tabs.count, _selectedTabIndex, hasDoc);
     if (action == @selector(paste:))
@@ -16764,7 +16712,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(toggleSidebar:)) {
         menuItem.title = _sidebarVisible ? @"Hide Side Panel" : @"Show Side Panel";
         menuItem.state = _sidebarVisible ? NSControlStateValueOn : NSControlStateValueOff;
-        return hasDoc;
+        return hasDoc && !markdown;
     }
     if (action == @selector(toggleChaptersPanel:) || action == @selector(toggleCommentsPanel:)) {
         BOOL chapters = action == @selector(toggleChaptersPanel:);
@@ -16780,16 +16728,16 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         // "(F5)" advertises the second shortcut; ⇧⌘F shows in the key column.
         menuItem.title = _presentationMode ? @"Exit Presentation Mode (F5)" : @"Presentation Mode (F5)";
         menuItem.state = _presentationMode ? NSControlStateValueOn : NSControlStateValueOff;
-        return hasDoc;
+        return hasDoc && !markdown;
     }
     if (action == @selector(toggleMinimap:)) {
         menuItem.title = _minimapVisible ? @"Hide Minimap" : @"Show Minimap";
         menuItem.state = _minimapVisible ? NSControlStateValueOn : NSControlStateValueOff;
-        return hasDoc;
+        return hasDoc && !markdown;
     }
     if (action == @selector(toggleFindRegexMultiline:)) {
         menuItem.state = _findRegexMultiline ? NSControlStateValueOn : NSControlStateValueOff;
-        return YES;
+        return !markdown;
     }
     if (action == @selector(toggleCollapseWhitespaceWhenCopyingText:)) {
         menuItem.state = _collapseWhitespaceWhenCopyingText ? NSControlStateValueOn : NSControlStateValueOff;
@@ -16800,11 +16748,14 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return YES;
     }
     if (action == @selector(searchSelectedTextInBrowser:))
-        return _selectedText.length > 0 && spdf_has_permission(_doc, 'c');
+        return [self trimmedSelectedTextForCommand].length > 0 &&
+               (markdown || (_doc && spdf_has_permission(_doc, 'c')));
     if (action == @selector(showSelectionTranslationPanel:))
         return _selectedText.length > 0 && spdf_has_permission(_doc, 'c') && !_translationRunning &&
                !_translationInstallRunning;
-    if (action == @selector(copySelection:)) return _selectedText.length > 0 && spdf_has_permission(_doc, 'c');
+    if (action == @selector(copySelection:))
+        return [self trimmedSelectedTextForCommand].length > 0 &&
+               (markdown || (_doc && spdf_has_permission(_doc, 'c')));
     if (action == @selector(addComment:)) return hasDoc && (_selectedText.length > 0 || _contextPageIndex >= 0);
     if (action == @selector(editComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(deleteComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
@@ -16813,9 +16764,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(ocrDocument:) || action == @selector(deleteAllTextFromDocument:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(translateDocument:))
-        return hasDoc && spdf_has_permission(_doc, 'c') && !_translationRunning && !_translationInstallRunning;
+        return _doc && spdf_has_permission(_doc, 'c') && !_translationRunning && !_translationInstallRunning;
     if (action == @selector(saveDocumentAs:))
-        return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+        return markdown || (hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"]);
     if (action == @selector(showInFolder:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentPath:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentFile:)) return hasDoc && _path.length > 0;
@@ -16825,6 +16776,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return hasDoc && spdf_has_permission(_doc, 'c') && _pageIndex >= 0 &&
                _pageIndex < (NSInteger)_renderedPages.count &&
                _renderedPages[(NSUInteger)_pageIndex].image != nil;
+    if (action == @selector(showProperties:)) return _doc != NULL;
     if (!hasDoc) return action == @selector(unimplementedMenuItem:);
 
     if (action == @selector(fitWidth:))

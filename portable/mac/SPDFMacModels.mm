@@ -1,5 +1,7 @@
 #import "SPDFMacModels.h"
 
+#import "SPDFMacMarkdownSession.h"
+
 @implementation SPDFRenderedPage
 @end
 
@@ -18,6 +20,7 @@
         _showSidebar = YES;
         _showMinimap = YES;
         _missingMessage = @"";
+        _markdownSelectionRange = NSMakeRange(0, 0);
     }
     return self;
 }
@@ -29,6 +32,9 @@
 }
 
 - (void)clearCachedRuntime {
+    [_cachedMarkdownSession cancelAllOperations];
+    self.cachedMarkdownSession = nil;
+    self.cachedMarkdownFileIdentity = nil;
     self.cachedDocument = NULL;
     self.cachedRenderedPages = nil;
     self.cachedModificationDate = nil;
@@ -80,6 +86,8 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     copy.hasMinimapPreference = source.hasMinimapPreference;
     copy.missingFile = source.missingFile;
     copy.missingMessage = source.missingMessage;
+    copy.markdownSelectionRange = source.markdownSelectionRange;
+    copy.markdownAnchor = source.markdownAnchor;
     copy.readOnly = source.readOnly;
     copy.workingPath = source.workingPath;
     copy.copiedSourceFileSize = source.copiedSourceFileSize;
@@ -107,6 +115,8 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
         @"searchRegex" : @(tab.searchRegex),
         @"searchRegexMultiline" : @(tab.searchRegexMultiline),
         @"findMatchIndex" : @(tab.findMatchIndex),
+        @"markdownSelectionLocation" : @(tab.markdownSelectionRange.location),
+        @"markdownSelectionLength" : @(tab.markdownSelectionRange.length),
         @"showSidebar" : @(tab.showSidebar),
         @"showMinimap" : @(tab.showMinimap),
         @"sourcePID" : @(NSProcessInfo.processInfo.processIdentifier),
@@ -139,6 +149,9 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     tab.searchRegex = [item[@"searchRegex"] boolValue];
     tab.searchRegexMultiline = item[@"searchRegexMultiline"] ? [item[@"searchRegexMultiline"] boolValue] : YES;
     tab.findMatchIndex = item[@"findMatchIndex"] ? [item[@"findMatchIndex"] integerValue] : -1;
+    NSUInteger markdownSelectionLocation = [item[@"markdownSelectionLocation"] unsignedIntegerValue];
+    NSUInteger markdownSelectionLength = [item[@"markdownSelectionLength"] unsignedIntegerValue];
+    tab.markdownSelectionRange = NSMakeRange(markdownSelectionLocation, markdownSelectionLength);
     tab.showSidebar = item[@"showSidebar"] ? [item[@"showSidebar"] boolValue] : YES;
     tab.showMinimap = item[@"showMinimap"] ? [item[@"showMinimap"] boolValue] : YES;
     tab.hasMinimapPreference = item[@"showMinimap"] != nil;

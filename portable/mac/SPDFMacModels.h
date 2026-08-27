@@ -2,6 +2,8 @@
 
 #include "shenzhen_pdf_core.h"
 
+@class SPDFMacMarkdownSession;
+
 typedef NS_ENUM(NSInteger, SPDFFitMode) {
     SPDFFitModeCustom = 0,
     SPDFFitModeActual,
@@ -68,6 +70,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) BOOL hasMinimapPreference;
 @property(nonatomic) BOOL missingFile;
 @property(nonatomic, copy) NSString* missingMessage;
+@property(nonatomic) NSRange markdownSelectionRange;
+@property(nonatomic, copy) NSString* markdownAnchor;
+@property(nonatomic, strong) SPDFMacMarkdownSession* cachedMarkdownSession;
+@property(nonatomic, copy) NSString* cachedMarkdownFileIdentity;
 // Read-only shadow copy: when the SOURCE (path) is read-only we render a
 // private temp copy so opening never reads the source (no macOS prompt).
 // path stays the SOURCE everywhere the user perceives the file; workingPath is
