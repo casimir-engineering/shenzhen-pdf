@@ -233,8 +233,8 @@ $(MAC_FILE_EXPLORER_TEST): mac/tests/SPDFMacFileExplorerPreferenceTests.mm mac/S
 mac-file-explorer-tests: $(MAC_FILE_EXPLORER_TEST)
 	"$(MAC_FILE_EXPLORER_TEST)"
 
-$(MAC_SELECTION_CLICK_TEST): mac/tests/SPDFMacSelectionClickTests.mm mac/SPDFMacDocumentView.mm mac/SPDFMacDocumentView.h mac/SPDFMacSelectionClick.mm mac/SPDFMacSelectionClick.h mac/SPDFMacDelayedLinkActivation.mm mac/SPDFMacDelayedLinkActivation.h mac/SPDFMacCursorRegions.mm mac/SPDFMacCursorRegions.h | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacSelectionClickTests.mm mac/SPDFMacDocumentView.mm mac/SPDFMacSelectionClick.mm mac/SPDFMacDelayedLinkActivation.mm mac/SPDFMacCursorRegions.mm -framework Cocoa -o "$(MAC_SELECTION_CLICK_TEST)"
+$(MAC_SELECTION_CLICK_TEST): mac/tests/SPDFMacSelectionClickTests.mm mac/SPDFMacDocumentView.mm mac/SPDFMacDocumentView.h mac/SPDFMacPageRendering.mm mac/SPDFMacPageRendering.h mac/SPDFMacSelectionClick.mm mac/SPDFMacSelectionClick.h mac/SPDFMacDelayedLinkActivation.mm mac/SPDFMacDelayedLinkActivation.h mac/SPDFMacCursorRegions.mm mac/SPDFMacCursorRegions.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacSelectionClickTests.mm mac/SPDFMacDocumentView.mm mac/SPDFMacPageRendering.mm mac/SPDFMacSelectionClick.mm mac/SPDFMacDelayedLinkActivation.mm mac/SPDFMacCursorRegions.mm -framework Cocoa -o "$(MAC_SELECTION_CLICK_TEST)"
 
 mac-selection-click-tests: $(MAC_SELECTION_CLICK_TEST)
 	"$(MAC_SELECTION_CLICK_TEST)"
