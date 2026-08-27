@@ -2362,7 +2362,7 @@ static void spdf_discard_launch_prerender(void) {
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.8.27";
+    if (version.length == 0) version = @"26.8.28";
     if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
