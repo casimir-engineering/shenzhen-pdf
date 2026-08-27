@@ -126,3 +126,19 @@ stapled, and compatible with the existing GitHub auto-updater.
   gate dispatched events through `NSWindow` into `SPDFTabStripView`, repeated the
   focused suite 25 times and its ASan/UBSan build 20 times, and confirmed that
   tab reorder/detach and padded control hit regions never enter window chrome.
+- 2026-08-27: extracted tab-strip control geometry into its existing focused
+  owner in `1f72a8427`, returning the legacy tab view to its exact 1,123-line
+  cap without changing the independently exercised event behavior.
+- 2026-08-27: removed the obsolete App Store/TestFlight path and committed the
+  hardened direct-GitHub release pipeline as `faf75339f`. Prepare and publish
+  are separate operations; publication requires committed metadata, a clean
+  release branch, the exact signed asset name, and explicit final visibility.
+  No tag, push, notarization, or release publication was performed.
+- 2026-08-27: extracted Linux updater version parsing and exact relaunch-health
+  matching into a 75-line policy module in `033d1cae4`. The focused updater
+  suite passes and the legacy updater shrank from 2,441 to 2,369 lines.
+- 2026-08-27: committed the independently approved GTK selection ownership and
+  gesture policy boundary as `a0815a048`. It retains all dynamic selection
+  rectangles, including a 513-rectangle regression case. Live GTK click-count
+  and delayed-link integration remains open until the password work releases
+  its overlapping document-view files.
