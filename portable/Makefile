@@ -8,6 +8,7 @@ MACOSX_DEPLOYMENT_TARGET ?= 12.0
 MAC_BUNDLE_ID ?= com.intuition.shenzhenpdf
 MAC_TEAM_ID ?= 66LJ4BV7Q3
 PORTABLE_OPTFLAGS ?= -O2 -DNDEBUG
+PORTABLE_TEST_OPTFLAGS := $(filter-out -DNDEBUG,$(PORTABLE_OPTFLAGS))
 
 ifeq ($(SPDF_RELEASE_MODE),1)
 override MAC_ARCH := arm64
@@ -346,7 +347,7 @@ linux-gtk4: mupdf-libs | $(BUILD)
 linux-gtk4-tests: | $(BUILD)
 	@set -e; for t in $(sort $(wildcard linux/gtk4/tests/*_test.c)); do \
 		bin="$(BUILD)/$$(basename $$t .c)"; \
-		$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 $$(pkg-config --cflags glib-2.0 openssl) $$t $$(pkg-config --libs glib-2.0 openssl) -lm -o "$$bin"; \
+		$(CC) $(PORTABLE_TEST_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 $$(pkg-config --cflags glib-2.0 openssl) $$t $$(pkg-config --libs glib-2.0 openssl) -lm -o "$$bin"; \
 		"$$bin"; \
 	done
 
