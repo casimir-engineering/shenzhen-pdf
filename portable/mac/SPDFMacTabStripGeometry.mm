@@ -27,3 +27,7 @@ NSInteger spdf_tab_strip_same_window_move_index(NSInteger insertionIndex, NSInte
     NSInteger target = clamped > sourceIndex ? clamped - 1 : clamped;
     return MAX((NSInteger)0, MIN(target, tabCount - 1));
 }
+
+NSRect spdf_tab_strip_control_interaction_rect(NSRect rect) {
+    return NSIsEmptyRect(rect) ? NSZeroRect : NSInsetRect(rect, -3.0, -4.0);
+}
