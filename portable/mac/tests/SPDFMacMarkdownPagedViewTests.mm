@@ -58,7 +58,7 @@ int main(void) {
         SPDFMarkdownPaginationItem* codeItem = configuredCodeItems.firstObject;
         assert(codeItem.lines.count == measuredCodeItem.lines.count + 1);
         assert(codeItem.lines.firstObject.attributedRange.length == 0);
-        assert(fabs(codeItem.lines.firstObject.height - 26.0) < 0.001);
+        assert(fabs(codeItem.lines.firstObject.height - 34.0) < 0.001);
         SPDFMacMarkdownPageCanvas* codeCanvas =
             [[SPDFMacMarkdownPageCanvas alloc] initWithPaginationPlan:codePlan
                                                      attributedString:codeRendered.attributedString];

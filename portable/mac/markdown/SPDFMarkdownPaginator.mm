@@ -251,7 +251,7 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
     return height;
 }
 
-static const CGFloat kSPDFMarkdownCodeLanguageControlHeight = 26.0;
+static const CGFloat kSPDFMarkdownCodeLanguageControlHeight = 34.0;
 
 static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<SPDFMarkdownPaginationItem*>* items,
                                                                        SPDFMarkdownPageConfiguration* configuration) {
