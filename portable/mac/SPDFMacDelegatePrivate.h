@@ -593,7 +593,7 @@
                             preferredRenderPage:(NSInteger)preferredRenderPage;
 @end
 
-@interface ShenzhenMacDelegate (SPDFMacUIReaderConformance) <SPDFMacUIReader>
+@interface ShenzhenMacDelegate (SPDFMacUIReaderConformance) <SPDFMacDocumentViewReader>
 @end
 
 @interface ShenzhenMacDelegate (ShortcutHelp)
