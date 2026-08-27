@@ -392,7 +392,6 @@
 - (void)searchSelectedTextInBrowser:(id)sender;
 - (void)showSelectionTranslationPanel:(id)sender;
 - (void)runSelectionTranslationFromPanel:(id)sender;
-- (void)copyCurrentDocumentPath:(id)sender;
 - (void)saveDocumentAs:(id)sender;
 - (BOOL)saveActiveDocumentAsWithPanelTitle:(NSString*)panelTitle statusMessage:(NSString*)statusMessage;
 - (BOOL)ensureActivePDFCanBeModifiedForOperation:(NSString*)operationName;
@@ -537,7 +536,6 @@
 - (BOOL)hasOtherShenzhenWindows;
 - (void)activateWindowForExternalOpen;
 - (void)spawnPendingRestoredWindowsIfNeeded;
-- (void)showPathInFolder:(NSString*)path;
 - (NSArray<NSDictionary*>*)commentAnnotationsForPage:(NSInteger)pageIndex;
 - (void)documentViewHoverComment:(NSDictionary*)comment atWindowPoint:(NSPoint)windowPoint;
 - (void)documentViewEndHoverComment;
@@ -547,6 +545,7 @@
 - (void)minimapDividerDraggedByDeltaX:(CGFloat)deltaX;
 - (void)minimapDividerDidFinishDragging;
 - (void)clearFindFieldFocus;
+
 - (void)clearPageFieldFocus;
 - (void)clearToolbarFieldFocusForTabSwitch;
 - (void)restoreSidebarWidth;
