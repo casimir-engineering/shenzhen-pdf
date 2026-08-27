@@ -13,7 +13,6 @@
 #include "shenzhen_pdf_core.h"
 
 @class SPDFRenderOperation; /* NSBlockOperation + spdf_render_token, defined in ShenzhenPDFMac.mm */
-
 @interface ShenzhenMacDelegate : NSObject <NSApplicationDelegate,
                                            NSWindowDelegate,
                                            NSSplitViewDelegate,
@@ -174,6 +173,7 @@
     NSMutableArray<NSDictionary*>* _findMatches;
     NSMutableSet<NSString*>* _preloadingPaths;
     NSMutableDictionary<NSString*, NSString*>* _preloadTokens;
+    NSMutableDictionary* _preloadResults;
     // Launch-only deferred open of a cloud-backed active tab (see
     // loadSelectedTab): set while performStartupDocumentWork runs so the
     // restored active document can be opened off the main thread when it
@@ -231,10 +231,10 @@
     // +right/-left in clip-view origin space). Axis 0 = vertical, 1 = horizontal.
     NSTimer* _keyScrollTimer;
     CGFloat _keyScrollVelocity;
-    CGFloat _keyScrollDirection;  // -1 / +1 along the active axis, or 0 (idle)
-    NSInteger _keyScrollAxis;     // 0 = vertical (y), 1 = horizontal (x)
-    BOOL _keyScrollKeyDown;       // YES from keyDown until the matching keyUp
-    unsigned short _keyScrollKeyCode;  // keyCode of the held arrow
+    CGFloat _keyScrollDirection;      // -1 / +1 along the active axis, or 0 (idle)
+    NSInteger _keyScrollAxis;         // 0 = vertical (y), 1 = horizontal (x)
+    BOOL _keyScrollKeyDown;           // YES from keyDown until the matching keyUp
+    unsigned short _keyScrollKeyCode; // keyCode of the held arrow
     NSTimeInterval _keyScrollLastEventTime;
     NSTimeInterval _keyScrollLastTickTime;
     NSUInteger _liveZoomSequence;
@@ -383,11 +383,7 @@
 - (void)documentViewDidBeginPan;
 - (void)documentViewDidFinishPanMotion;
 - (void)cancelDocumentTransientInteraction;
-- (BOOL)documentViewHandlePresentationMouseDown:(NSEvent*)event;
-- (BOOL)handlePresentationEvent:(NSEvent*)event;
-- (NSInteger)presentationMouseActionForEvent:(NSEvent*)event;
 - (BOOL)handleTabStripMouseEvent:(NSEvent*)event;
-- (BOOL)documentViewInPresentationMode;
 - (void)copySelection:(id)sender;
 - (void)searchSelectedTextInBrowser:(id)sender;
 - (void)showSelectionTranslationPanel:(id)sender;

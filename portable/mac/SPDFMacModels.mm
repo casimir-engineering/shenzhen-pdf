@@ -2,9 +2,6 @@
 
 #import "SPDFMacMarkdownSession.h"
 
-@implementation SPDFRenderedPage
-@end
-
 @implementation SPDFDocumentTab
 
 - (instancetype)init {
@@ -124,7 +121,8 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
         @"readOnly" : @(tab.readOnly),
         @"workingPath" : tab.workingPath ?: @"",
         @"roCopyFileSize" : @(tab.copiedSourceFileSize),
-        @"roCopyModifiedAt" : @(tab.copiedSourceModificationDate ? tab.copiedSourceModificationDate.timeIntervalSince1970 : 0.0)
+        @"roCopyModifiedAt" :
+            @(tab.copiedSourceModificationDate ? tab.copiedSourceModificationDate.timeIntervalSince1970 : 0.0)
     };
 }
 
@@ -143,8 +141,10 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
      * the app is always continuous. Old sessions that stored viewMode=0 (single)
      * open fine as continuous. */
     tab.scrollOrigin = NSMakePoint([item[@"scrollX"] doubleValue], [item[@"scrollY"] doubleValue]);
-    if (item[@"hasScrollOrigin"] != nil) tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue];
-    else tab.hasScrollOrigin = item[@"scrollX"] != nil || item[@"scrollY"] != nil;
+    if (item[@"hasScrollOrigin"] != nil)
+        tab.hasScrollOrigin = [item[@"hasScrollOrigin"] boolValue];
+    else
+        tab.hasScrollOrigin = item[@"scrollX"] != nil || item[@"scrollY"] != nil;
     if ([item[@"searchText"] isKindOfClass:NSString.class]) tab.searchText = item[@"searchText"];
     tab.searchRegex = [item[@"searchRegex"] boolValue];
     tab.searchRegexMultiline = item[@"searchRegexMultiline"] ? [item[@"searchRegexMultiline"] boolValue] : YES;

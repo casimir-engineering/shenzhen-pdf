@@ -23,14 +23,15 @@ portable/linux/gtk4/spdf_updater.c	2369	legacy	Legacy signed updater; freeze gro
 portable/linux/gtk4/spdf_watcher.c	674	exception	Cohesive Linux file-watcher implementation; reload policy lives in spdf_watcher_logic.
 portable/linux/gtk4/spdf_window.c	1357	legacy	Legacy GTK window shell; freeze growth pending action/menu extraction.
 portable/linux/gtk4/tests/spdf_state_test.c	986	exception	Cohesive persistence regression suite; new scenarios should use focused fixtures.
-portable/mac/SPDFMacDelegatePrivate.h	605	exception	Existing private coordinator state contract; new state belongs in focused modules.
+portable/mac/SPDFMacDelegatePrivate.h	601	exception	Existing private coordinator state contract; new state belongs in focused modules.
 portable/mac/SPDFMacDocumentView.mm	888	exception	Cohesive AppKit document input and view implementation; rendering primitives live in SPDFMacPageRendering.
 portable/mac/SPDFMacMinimapView.mm	1014	legacy	Legacy AppKit minimap component; freeze growth pending layout/input split.
 portable/mac/SPDFMacPropertiesPanel.mm	555	exception	Cohesive AppKit document-properties panel.
 portable/mac/SPDFMacTabStripView.mm	1123	legacy	Legacy AppKit tab strip; freeze growth pending layout/input split.
 portable/mac/SPDFMacUIHelpers.mm	1324	legacy	Legacy mixed AppKit helper views; freeze growth pending class extraction.
 portable/mac/SPDFUpdater.mm	1586	legacy	Legacy signed updater; freeze growth pending trust/transport/UI split.
-portable/mac/ShenzhenPDFMac.mm	16851	legacy	Legacy macOS coordinator hotspot; no growth before staged extraction.
+portable/mac/ShenzhenPDFMac.mm	16742	legacy	Legacy macOS coordinator hotspot; no growth before staged extraction.
+portable/mac/SPDFMacMarkdownSession.mm	514	exception	Cohesive Markdown document-session lifecycle and asynchronous state boundary.
 src/Accelerators.cpp	773	exception	Inherited accelerator-table implementation is cohesive and stable.
 src/Annotation.cpp	1266	legacy	Legacy Windows annotation model; freeze growth pending extraction.
 src/AppSettings.cpp	642	exception	Inherited application-settings coordinator is cohesive and stable.

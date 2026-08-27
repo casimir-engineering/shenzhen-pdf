@@ -1,20 +1,22 @@
 #import "SPDFMacMarkdownSession.h"
-
 #import "SPDFMacMarkdownLanguagePicker.h"
+#import "SPDFMacMarkdownMinimapModel.h"
+#import "SPDFMacMarkdownPagedView.h"
 #import "SPDFMacMarkdownRouting.h"
+#import "SPDFMacMarkdownSidebarModel.h"
 #import "SPDFMacMarkdownView.h"
 #import "markdown/SPDFMarkdown.h"
-
-@interface SPDFMacMarkdownSession () <SPDFMacMarkdownTextViewEventDelegate>
+@interface SPDFMacMarkdownSession ()
 @property(nonatomic) SPDFMacMarkdownSessionState state;
 @property(nonatomic, strong, nullable) SPDFMarkdownDocument* document;
 @property(nonatomic, strong, nullable) SPDFMarkdownRenderedDocument* renderedDocument;
 @end
-
 @implementation SPDFMacMarkdownSession {
-    NSScrollView* _scrollView;
+    NSView* _rootView;
     NSTextField* _placeholder;
-    SPDFMacMarkdownTextView* _textView;
+    SPDFMacMarkdownPagedView* _pagedView;
+    SPDFMarkdownPaginationPlan* _paginationPlan;
+    NSAttributedString* _interactiveString;
     NSArray<SPDFMarkdownSearchMatch*>* _searchMatches;
     NSInteger _currentMatchIndex;
     SPDFMarkdownCancellationToken* _searchToken;
@@ -28,7 +30,13 @@
     BOOL _active;
     NSPoint _pendingScrollOrigin;
     NSRange _pendingSelectedRange;
+    NSInteger _pendingPageIndex;
+    CGFloat _pendingZoom;
+    SPDFMacMarkdownPageFitMode _pendingFitMode;
     NSString* _pendingAnchor;
+    __weak id<SPDFMacUIReader> _reader;
+    SPDFMacMarkdownMinimapModel* _minimapModel;
+    SPDFMacMarkdownSidebarModel* _sidebarModel;
 }
 
 - (instancetype)initWithDocumentURL:(NSURL*)URL {
@@ -45,41 +53,87 @@
 
 - (void)buildRootView {
     NSAssert(NSThread.isMainThread, @"Markdown AppKit views must be created on the main thread");
-    _scrollView = [[NSScrollView alloc] init];
-    _scrollView.translatesAutoresizingMaskIntoConstraints = NO;
-    _scrollView.hasVerticalScroller = YES;
-    _scrollView.hasHorizontalScroller = NO;
-    _scrollView.autohidesScrollers = YES;
-    _scrollView.borderType = NSNoBorder;
-    _scrollView.drawsBackground = YES;
-    _scrollView.backgroundColor = NSColor.textBackgroundColor;
+    _rootView = [[NSView alloc] init];
+    _rootView.translatesAutoresizingMaskIntoConstraints = NO;
     _placeholder = [NSTextField labelWithString:@"Loading Markdown..."];
+    _placeholder.translatesAutoresizingMaskIntoConstraints = NO;
     _placeholder.alignment = NSTextAlignmentCenter;
     _placeholder.textColor = NSColor.secondaryLabelColor;
-    _placeholder.frame = NSMakeRect(0, 0, 420, 80);
-    _scrollView.documentView = _placeholder;
+    [_rootView addSubview:_placeholder];
+    [NSLayoutConstraint activateConstraints:@[
+        [_placeholder.centerXAnchor constraintEqualToAnchor:_rootView.centerXAnchor],
+        [_placeholder.centerYAnchor constraintEqualToAnchor:_rootView.centerYAnchor],
+    ]];
 }
 
-- (NSView*)rootView { return _scrollView; }
-- (NSTextView*)textView { return _textView; }
-- (NSArray<SPDFMarkdownSearchMatch*>*)searchMatches { return _searchMatches ?: @[]; }
-- (NSInteger)currentMatchIndex { return _currentMatchIndex; }
-- (NSPoint)scrollOrigin { return _scrollView.contentView.bounds.origin; }
-- (NSRange)selectedRange { return _textView ? _textView.selectedRange : NSMakeRange(0, 0); }
+- (NSView*)rootView {
+    return _rootView;
+}
+- (id<SPDFMacUIReader>)reader {
+    return _reader;
+}
+- (void)setReader:(id<SPDFMacUIReader>)reader {
+    _reader = reader;
+    _pagedView.reader = reader;
+}
+- (NSTextView*)textView {
+    return nil;
+}
+- (NSArray<SPDFMarkdownSearchMatch*>*)searchMatches {
+    return _searchMatches ?: @[];
+}
+- (NSInteger)currentMatchIndex {
+    return _currentMatchIndex;
+}
+- (NSPoint)scrollOrigin {
+    return _pagedView ? _pagedView.contentView.bounds.origin : _pendingScrollOrigin;
+}
+- (NSRange)selectedRange {
+    return _pagedView ? _pagedView.selectedRange : _pendingSelectedRange;
+}
 - (NSString*)selectedText {
-    NSRange range = self.selectedRange;
-    return _textView && NSMaxRange(range) <= _textView.string.length ? [_textView.string substringWithRange:range] : @"";
+    return _pagedView.selectedText ?: @"";
+}
+- (NSUInteger)pageCount {
+    return _pagedView.pageCount;
+}
+- (NSInteger)currentPageIndex {
+    return _pagedView ? _pagedView.currentPageIndex : _pendingPageIndex;
+}
+- (NSUInteger)visibleAttributedLocation {
+    return _pagedView ? _pagedView.visibleAttributedLocation : NSNotFound;
+}
+- (CGFloat)zoom {
+    return _pagedView ? _pagedView.magnification : MAX(0.1, _pendingZoom);
+}
+- (SPDFMacMarkdownPageFitMode)fitMode {
+    return _pagedView ? _pagedView.fitMode : _pendingFitMode;
+}
+- (NSArray<NSValue*>*)documentPageRects {
+    return _pagedView.documentPageRects ?: @[];
+}
+- (NSRect)documentVisibleRect {
+    return _pagedView ? _pagedView.documentVisibleRect : NSZeroRect;
+}
+- (NSSize)documentCanvasSize {
+    return _pagedView ? _pagedView.documentCanvasSize : NSZeroSize;
+}
+- (SPDFMacMarkdownMinimapModel*)minimapModel {
+    return _minimapModel;
+}
+- (SPDFMacMarkdownSidebarModel*)sidebarModel {
+    return _sidebarModel;
 }
 
 - (void)attachToHostView:(NSView*)hostView {
-    if (_scrollView.superview != hostView) {
-        [_scrollView removeFromSuperview];
-        [hostView addSubview:_scrollView];
+    if (_rootView.superview != hostView) {
+        [_rootView removeFromSuperview];
+        [hostView addSubview:_rootView];
         [NSLayoutConstraint activateConstraints:@[
-            [_scrollView.topAnchor constraintEqualToAnchor:hostView.topAnchor],
-            [_scrollView.leadingAnchor constraintEqualToAnchor:hostView.leadingAnchor],
-            [_scrollView.trailingAnchor constraintEqualToAnchor:hostView.trailingAnchor],
-            [_scrollView.bottomAnchor constraintEqualToAnchor:hostView.bottomAnchor],
+            [_rootView.topAnchor constraintEqualToAnchor:hostView.topAnchor],
+            [_rootView.leadingAnchor constraintEqualToAnchor:hostView.leadingAnchor],
+            [_rootView.trailingAnchor constraintEqualToAnchor:hostView.trailingAnchor],
+            [_rootView.bottomAnchor constraintEqualToAnchor:hostView.bottomAnchor],
         ]];
     }
 }
@@ -88,6 +142,9 @@
                  workQueue:(dispatch_queue_t)workQueue
               scrollOrigin:(NSPoint)scrollOrigin
              selectedRange:(NSRange)selectedRange
+                 pageIndex:(NSInteger)pageIndex
+                      zoom:(CGFloat)zoom
+                   fitMode:(SPDFMacMarkdownPageFitMode)fitMode
                     anchor:(NSString*)anchor
                 completion:(void (^)(BOOL, NSError*))completion {
     NSAssert(NSThread.isMainThread, @"Markdown activation must occur on the main thread");
@@ -97,79 +154,117 @@
     _workQueue = workQueue ?: dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     _pendingScrollOrigin = scrollOrigin;
     _pendingSelectedRange = selectedRange;
+    _pendingPageIndex = MAX(0, pageIndex);
+    _pendingZoom = MAX(0.1, zoom);
+    _pendingFitMode = fitMode;
     _pendingAnchor = [anchor copy];
     [self attachToHostView:hostView];
     if (self.document && self.renderedDocument) {
-        [self installRenderedDocument:self.renderedDocument preserveCurrentState:NO];
+        [self installRenderedDocument:self.renderedDocument
+                       paginationPlan:_paginationPlan
+                    interactiveString:_interactiveString
+                 preserveCurrentState:NO];
         if (completion) completion(YES, nil);
         return;
     }
 
     self.state = SPDFMacMarkdownSessionLoading;
     _placeholder.stringValue = @"Loading Markdown...";
-    _scrollView.documentView = _placeholder;
+    _placeholder.hidden = NO;
+    [_pagedView removeFromSuperview];
+    _pagedView = nil;
     NSURL* URL = self.documentURL;
     dispatch_async(_workQueue, ^{
       NSError* error = nil;
       SPDFMarkdownDocument* document = [SPDFMarkdownDocument documentWithURL:URL options:nil error:&error];
+      SPDFMarkdownPaginationPlan* plan = nil;
+      NSAttributedString* interactive = nil;
+      if (document) {
+          SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
+          SPDFMarkdownPageConfiguration* configuration = [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
+          configuration.includesCodeLanguageControlSpacing = YES;
+          NSArray* items = [paginator measureRenderedDocument:document.renderedDocument
+                                               containerWidth:NSWidth(configuration.printableRect)];
+          plan = [paginator paginateItems:items configuration:configuration];
+          interactive = SPDFMacMarkdownInteractiveString(document.model, document.renderedDocument);
+      }
       dispatch_async(dispatch_get_main_queue(), ^{
         if (!self->_active || activationGeneration != self->_activationGeneration) return;
         if (!document) {
             self.state = SPDFMacMarkdownSessionFailed;
             self->_placeholder.stringValue = error.localizedDescription ?: @"Could not open Markdown document.";
-            self->_scrollView.documentView = self->_placeholder;
             if (completion) completion(NO, error);
             return;
         }
         self.document = document;
         self.renderedDocument = document.renderedDocument;
+        self->_paginationPlan = plan;
+        self->_interactiveString = interactive;
         self.state = SPDFMacMarkdownSessionReady;
-        [self installRenderedDocument:self.renderedDocument preserveCurrentState:NO];
+        [self installRenderedDocument:self.renderedDocument
+                       paginationPlan:plan
+                    interactiveString:interactive
+                 preserveCurrentState:NO];
         if (completion) completion(YES, nil);
       });
     });
 }
 
-- (SPDFMacMarkdownTextView*)newTextViewForRenderedDocument:(SPDFMarkdownRenderedDocument*)rendered {
-    SPDFMacMarkdownTextView* view = [[SPDFMacMarkdownTextView alloc] initWithFrame:NSMakeRect(0, 0, 600, 10)];
-    view.editable = NO;
-    view.selectable = YES;
-    view.richText = YES;
-    view.importsGraphics = YES;
-    view.drawsBackground = YES;
-    view.backgroundColor = NSColor.textBackgroundColor;
-    view.textContainerInset = NSMakeSize(self.document.renderOptions.contentInset,
-                                        self.document.renderOptions.contentInset);
-    view.verticallyResizable = YES;
-    view.horizontallyResizable = NO;
-    view.autoresizingMask = NSViewWidthSizable;
-    view.minSize = NSMakeSize(0, 0);
-    view.maxSize = NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX);
-    view.textContainer.widthTracksTextView = YES;
-    view.textContainer.containerSize = NSMakeSize(MAX(1, _scrollView.contentSize.width), CGFLOAT_MAX);
-    view.markdownEventDelegate = self;
-    [view.textStorage setAttributedString:SPDFMacMarkdownInteractiveString(self.document.model, rendered)];
-    [view sizeToFit];
-    return view;
-}
-
-- (void)installRenderedDocument:(SPDFMarkdownRenderedDocument*)rendered preserveCurrentState:(BOOL)preserve {
-    if (!_active || !rendered) return;
-    NSPoint origin = preserve && _textView ? self.scrollOrigin : _pendingScrollOrigin;
-    NSRange selection = preserve && _textView ? self.selectedRange : _pendingSelectedRange;
-    _textView = [self newTextViewForRenderedDocument:rendered];
-    _scrollView.documentView = _textView;
+- (void)installRenderedDocument:(SPDFMarkdownRenderedDocument*)rendered
+                 paginationPlan:(SPDFMarkdownPaginationPlan*)plan
+              interactiveString:(NSAttributedString*)interactive
+           preserveCurrentState:(BOOL)preserve {
+    if (!_active || !rendered || !plan || !interactive) return;
+    NSPoint origin = preserve && _pagedView ? self.scrollOrigin : _pendingScrollOrigin;
+    NSRange selection = preserve && _pagedView ? self.selectedRange : _pendingSelectedRange;
+    NSInteger page = preserve && _pagedView ? self.currentPageIndex : _pendingPageIndex;
+    CGFloat zoom = preserve && _pagedView ? self.zoom : _pendingZoom;
+    SPDFMacMarkdownPageFitMode fit = preserve && _pagedView ? self.fitMode : _pendingFitMode;
+    [_pagedView removeFromSuperview];
+    _pagedView = [[SPDFMacMarkdownPagedView alloc] initWithPaginationPlan:plan attributedString:interactive];
+    _pagedView.reader = _reader;
+    _minimapModel = [[SPDFMacMarkdownMinimapModel alloc] initWithPaginationPlan:plan attributedString:interactive];
+    _sidebarModel = [[SPDFMacMarkdownSidebarModel alloc] initWithRenderedDocument:rendered paginationPlan:plan];
+    _pagedView.translatesAutoresizingMaskIntoConstraints = NO;
+    __weak SPDFMacMarkdownSession* weakSelf = self;
+    _pagedView.viewportChangedHandler = ^(NSInteger pageIndex, CGFloat currentZoom) {
+      SPDFMacMarkdownSession* strongSelf = weakSelf;
+      if (strongSelf.viewportUpdateHandler)
+          strongSelf.viewportUpdateHandler(pageIndex, currentZoom, strongSelf->_pagedView.fitMode);
+    };
+    _pagedView.activateDestinationHandler = ^(NSString* destination, BOOL wikiLink) {
+      [weakSelf activateDestination:destination wikiLink:wikiLink];
+    };
+    _pagedView.chooseCodeLanguageHandler = ^(NSUInteger blockIndex) {
+      SPDFMacMarkdownSession* strongSelf = weakSelf;
+      [strongSelf showLanguagePickerForCodeBlock:blockIndex parentWindow:strongSelf->_pagedView.window];
+    };
+    [_rootView addSubview:_pagedView];
+    [NSLayoutConstraint activateConstraints:@[
+        [_pagedView.topAnchor constraintEqualToAnchor:_rootView.topAnchor],
+        [_pagedView.leadingAnchor constraintEqualToAnchor:_rootView.leadingAnchor],
+        [_pagedView.trailingAnchor constraintEqualToAnchor:_rootView.trailingAnchor],
+        [_pagedView.bottomAnchor constraintEqualToAnchor:_rootView.bottomAnchor],
+    ]];
+    _placeholder.hidden = YES;
     if (_searchMatches.count) [self applySearchHighlights];
-    if (selection.location != NSNotFound && NSMaxRange(selection) <= _textView.string.length)
-        _textView.selectedRange = selection;
+    _pagedView.selectedRange = selection;
     dispatch_async(dispatch_get_main_queue(), ^{
-      if (!self->_active || self->_scrollView.documentView != self->_textView) return;
+      if (!self->_active || !self->_pagedView.superview) return;
+      [self->_rootView layoutSubtreeIfNeeded];
       if (self->_pendingAnchor.length) {
           [self scrollToHeadingAnchor:self->_pendingAnchor];
           self->_pendingAnchor = nil;
       } else {
-          [self->_scrollView.contentView scrollToPoint:origin];
-          [self->_scrollView reflectScrolledClipView:self->_scrollView.contentView];
+          if (fit == SPDFMacMarkdownPageFitCustom)
+              [self->_pagedView setZoom:zoom centeredAtPoint:NSZeroPoint];
+          else
+              [self->_pagedView applyFitMode:fit];
+          [self->_pagedView goToPageAtIndex:page alignTop:NO];
+          if (fit == SPDFMacMarkdownPageFitCustom) {
+              [self->_pagedView.contentView scrollToPoint:origin];
+              [self->_pagedView reflectScrolledClipView:self->_pagedView.contentView];
+          }
       }
     });
 }
@@ -177,9 +272,12 @@
 - (void)deactivate {
     _pendingScrollOrigin = self.scrollOrigin;
     _pendingSelectedRange = self.selectedRange;
+    _pendingPageIndex = self.currentPageIndex;
+    _pendingZoom = self.zoom;
+    _pendingFitMode = self.fitMode;
     _active = NO;
     [self cancelAllOperations];
-    [_scrollView removeFromSuperview];
+    [_rootView removeFromSuperview];
 }
 
 - (void)cancelAllOperations {
@@ -195,24 +293,18 @@
         self.searchUpdateHandler(_searchMatches.count, _currentMatchIndex, NO);
 }
 
-- (void)dealloc { [self cancelAllOperations]; }
+- (void)dealloc {
+    [self cancelAllOperations];
+}
 
 - (void)removeSearchHighlights {
-    NSLayoutManager* layout = _textView.layoutManager;
-    if (layout && _textView.textStorage.length)
-        [layout removeTemporaryAttribute:NSBackgroundColorAttributeName
-                       forCharacterRange:NSMakeRange(0, _textView.textStorage.length)];
+    _pagedView.searchRanges = @[];
 }
 
 - (void)applySearchHighlights {
-    [self removeSearchHighlights];
-    NSLayoutManager* layout = _textView.layoutManager;
-    for (SPDFMarkdownSearchMatch* match in _searchMatches) {
-        if (NSMaxRange(match.range) <= _textView.textStorage.length)
-            [layout addTemporaryAttribute:NSBackgroundColorAttributeName
-                                    value:[NSColor.systemYellowColor colorWithAlphaComponent:0.42]
-                        forCharacterRange:match.range];
-    }
+    NSMutableArray<NSValue*>* ranges = [NSMutableArray arrayWithCapacity:_searchMatches.count];
+    for (SPDFMarkdownSearchMatch* match in _searchMatches) [ranges addObject:[NSValue valueWithRange:match.range]];
+    _pagedView.searchRanges = ranges;
 }
 
 - (void)clearSearch {
@@ -247,8 +339,8 @@
         if (!self->_active || token.isCancelled || searchGeneration != self->_searchGeneration) return;
         self->_searchToken = nil;
         self->_searchMatches = matches ?: @[];
-        self->_currentMatchIndex = self->_searchMatches.count
-            ? MAX(0, MIN(preferredIndex, (NSInteger)self->_searchMatches.count - 1)) : -1;
+        self->_currentMatchIndex =
+            self->_searchMatches.count ? MAX(0, MIN(preferredIndex, (NSInteger)self->_searchMatches.count - 1)) : -1;
         [self applySearchHighlights];
         if (self->_currentMatchIndex >= 0) [self revealCurrentMatch];
         if (self.searchUpdateHandler)
@@ -260,16 +352,21 @@
 - (void)revealCurrentMatch {
     if (_currentMatchIndex < 0 || _currentMatchIndex >= (NSInteger)_searchMatches.count) return;
     NSRange range = _searchMatches[(NSUInteger)_currentMatchIndex].range;
-    [_textView scrollRangeToVisible:range];
-    [_textView showFindIndicatorForRange:range];
+    [_pagedView revealRange:range];
     if (self.searchUpdateHandler) self.searchUpdateHandler(_searchMatches.count, _currentMatchIndex, NO);
 }
 
 - (void)moveToNextMatch:(BOOL)forward {
     if (_searchMatches.count == 0) return;
     NSInteger count = (NSInteger)_searchMatches.count;
-    _currentMatchIndex = _currentMatchIndex < 0 ? (forward ? 0 : count - 1)
-        : (_currentMatchIndex + (forward ? 1 : -1) + count) % count;
+    _currentMatchIndex =
+        _currentMatchIndex < 0 ? (forward ? 0 : count - 1) : (_currentMatchIndex + (forward ? 1 : -1) + count) % count;
+    [self revealCurrentMatch];
+}
+
+- (void)goToSearchMatchAtIndex:(NSInteger)matchIndex {
+    if (matchIndex < 0 || matchIndex >= (NSInteger)_searchMatches.count) return;
+    _currentMatchIndex = matchIndex;
     [self revealCurrentMatch];
 }
 
@@ -277,7 +374,7 @@
     NSString* slug = spdf_mac_markdown_heading_slug(anchor);
     for (SPDFMarkdownRenderedHeading* heading in self.renderedDocument.headings) {
         if ([spdf_mac_markdown_heading_slug(heading.title) isEqualToString:slug]) {
-            [_textView scrollRangeToVisible:heading.attributedRange];
+            [_pagedView revealRange:heading.attributedRange];
             return YES;
         }
     }
@@ -290,10 +387,7 @@
         _pendingAnchor = nil;
 }
 
-- (void)markdownTextView:(NSTextView*)textView
-       activateDestination:(NSString*)destination
-                  wikiLink:(BOOL)wikiLink {
-    (void)textView;
+- (void)activateDestination:(NSString*)destination wikiLink:(BOOL)wikiLink {
     SPDFMacMarkdownLinkResolution* resolution = spdf_mac_resolve_markdown_link(destination, self.documentURL, wikiLink);
     if (resolution.kind == SPDFMacMarkdownLinkExternal) {
         if (self.openExternalURLHandler) self.openExternalURLHandler(resolution.URL);
@@ -302,22 +396,20 @@
     } else if (resolution.kind == SPDFMacMarkdownLinkAnchor) {
         if (![self scrollToHeadingAnchor:resolution.anchor] && self.statusHandler)
             self.statusHandler(@"Heading not found.");
-    } else if (self.statusHandler) self.statusHandler(@"Blocked unsafe or unsupported Markdown link.");
-}
-
-- (void)markdownTextView:(NSTextView*)textView chooseLanguageForCodeBlock:(NSUInteger)blockIndex {
-    [self showLanguagePickerForCodeBlock:blockIndex parentWindow:textView.window];
+    } else if (self.statusHandler)
+        self.statusHandler(@"Blocked unsafe or unsupported Markdown link.");
 }
 
 - (void)showLanguagePickerForCodeBlock:(NSUInteger)blockIndex parentWindow:(NSWindow*)window {
     if (!window || ![self.document.model blockWithIndex:blockIndex]) return;
     if (!_languagePicker) _languagePicker = [SPDFMacMarkdownLanguagePickerController new];
     __weak SPDFMacMarkdownSession* weakSelf = self;
-    [_languagePicker presentForWindow:window completion:^(SPDFMarkdownLanguage* language) {
-      SPDFMacMarkdownSession* strongSelf = weakSelf;
-      if (!strongSelf || !language || !strongSelf->_active) return;
-      [strongSelf applyLanguageIdentifier:language.identifier toCodeBlock:blockIndex];
-    }];
+    [_languagePicker presentForWindow:window
+                           completion:^(SPDFMarkdownLanguage* language) {
+                             SPDFMacMarkdownSession* strongSelf = weakSelf;
+                             if (!strongSelf || !language || !strongSelf->_active) return;
+                             [strongSelf applyLanguageIdentifier:language.identifier toCodeBlock:blockIndex];
+                           }];
 }
 
 - (void)applyLanguageIdentifier:(NSString*)identifier toCodeBlock:(NSUInteger)blockIndex {
@@ -332,19 +424,91 @@
     NSUInteger renderGeneration = _renderGeneration;
     NSDictionary* overrides = [_languageOverrides copy];
     __weak SPDFMacMarkdownSession* weakSelf = self;
-    _renderToken = [self.document renderWithLanguageOverrides:overrides
-                                                    workQueue:_workQueue
-                                               completionQueue:dispatch_get_main_queue()
-                                                   completion:^(SPDFMarkdownRenderedDocument* rendered, BOOL cancelled) {
-      SPDFMacMarkdownSession* strongSelf = weakSelf;
-      if (!strongSelf || cancelled || !strongSelf->_active ||
-          renderGeneration != strongSelf->_renderGeneration || !rendered)
-          return;
-      strongSelf->_renderToken = nil;
-      strongSelf.renderedDocument = rendered;
-      [strongSelf installRenderedDocument:rendered preserveCurrentState:YES];
-      if (strongSelf.statusHandler) strongSelf.statusHandler(@"Code language updated.");
-    }];
+    _renderToken = [self.document
+        renderWithLanguageOverrides:overrides
+                          workQueue:_workQueue
+                    completionQueue:_workQueue
+                         completion:^(SPDFMarkdownRenderedDocument* rendered, BOOL cancelled) {
+                           SPDFMacMarkdownSession* strongSelf = weakSelf;
+                           if (!strongSelf || cancelled || !strongSelf->_active ||
+                               renderGeneration != strongSelf->_renderGeneration || !rendered)
+                               return;
+                           SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
+                           SPDFMarkdownPageConfiguration* configuration =
+                               [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
+                           configuration.includesCodeLanguageControlSpacing = YES;
+                           NSArray* items = [paginator measureRenderedDocument:rendered
+                                                                containerWidth:NSWidth(configuration.printableRect)];
+                           SPDFMarkdownPaginationPlan* plan = [paginator paginateItems:items
+                                                                         configuration:configuration];
+                           NSAttributedString* interactive =
+                               SPDFMacMarkdownInteractiveString(strongSelf.document.model, rendered);
+                           dispatch_async(dispatch_get_main_queue(), ^{
+                             SPDFMacMarkdownSession* mainSelf = weakSelf;
+                             if (!mainSelf || cancelled || !mainSelf->_active ||
+                                 renderGeneration != mainSelf->_renderGeneration)
+                                 return;
+                             mainSelf->_renderToken = nil;
+                             mainSelf.renderedDocument = rendered;
+                             mainSelf->_paginationPlan = plan;
+                             mainSelf->_interactiveString = interactive;
+                             [mainSelf installRenderedDocument:rendered
+                                                paginationPlan:plan
+                                             interactiveString:interactive
+                                          preserveCurrentState:YES];
+                             if (mainSelf.statusHandler) mainSelf.statusHandler(@"Code language updated.");
+                           });
+                         }];
+}
+
+- (void)goToPageAtIndex:(NSInteger)pageIndex {
+    [_pagedView goToPageAtIndex:pageIndex alignTop:YES];
+}
+- (void)zoomByFactor:(CGFloat)factor {
+    [_pagedView zoomByFactor:factor];
+}
+- (void)setZoom:(CGFloat)zoom {
+    NSRect visible = _pagedView.documentVisibleRect;
+    [_pagedView setZoom:zoom centeredAtPoint:NSMakePoint(NSMidX(visible), NSMidY(visible))];
+}
+- (void)applyFitMode:(SPDFMacMarkdownPageFitMode)fitMode {
+    [_pagedView applyFitMode:fitMode];
+}
+- (void)setPresentationMode:(BOOL)presentationMode {
+    _pagedView.presentationMode = presentationMode;
+}
+- (NSUInteger)pageIndexForRange:(NSRange)range {
+    return [_pagedView pageIndexForRange:range];
+}
+- (void)revealRange:(NSRange)range {
+    [_pagedView revealRange:range];
+}
+- (void)centerAtDocumentPoint:(NSPoint)point {
+    [_pagedView centerAtDocumentPoint:point];
+}
+- (void)centerOnPageAtIndex:(NSInteger)pageIndex xFraction:(CGFloat)xFraction yFraction:(CGFloat)yFraction {
+    [_pagedView centerOnPageAtIndex:pageIndex xFraction:xFraction yFraction:yFraction];
+}
+- (void)scrollByDocumentDeltaX:(CGFloat)deltaX deltaY:(CGFloat)deltaY {
+    [_pagedView scrollByDocumentDeltaX:deltaX deltaY:deltaY];
+}
+- (void)forwardScrollWheelEvent:(NSEvent*)event {
+    [_pagedView forwardScrollWheelEvent:event];
+}
+- (void)magnifyByDelta:(CGFloat)delta {
+    [_pagedView magnifyByDelta:delta];
+}
+- (BOOL)zoomWithScrollWheelEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint {
+    return [_pagedView zoomWithScrollWheelEvent:event centeredAtWindowPoint:windowPoint];
+}
+- (void)magnifyByDelta:(CGFloat)delta centeredAtWindowPoint:(NSPoint)windowPoint {
+    [_pagedView magnifyByDelta:delta centeredAtWindowPoint:windowPoint];
+}
+- (void)magnifyByDelta:(CGFloat)delta centeredAtDocumentPoint:(NSPoint)documentPoint {
+    [_pagedView magnifyByDelta:delta centeredAtDocumentPoint:documentPoint];
+}
+- (void)noteExternalScrollPositionChanged {
+    [_pagedView noteExternalScrollPositionChanged];
 }
 
 @end

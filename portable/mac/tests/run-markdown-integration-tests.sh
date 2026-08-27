@@ -29,16 +29,29 @@ $PORTABLE/mac/markdown/SPDFMarkdownAsync.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDocument.mm
 "
 UI_SOURCES="
+$PORTABLE/mac/tests/SPDFMacMarkdownScrollViewTestSupport.mm
 $PORTABLE/mac/SPDFMacMarkdownCache.mm
+$PORTABLE/mac/SPDFMacMarkdownKeyboardPolicy.mm
 $PORTABLE/mac/SPDFMacMarkdownRouting.mm
 $PORTABLE/mac/SPDFMacMarkdownView.mm
+$PORTABLE/mac/SPDFMacMarkdownPanController.mm
+$PORTABLE/mac/SPDFMacMarkdownPageCanvas.mm
+$PORTABLE/mac/SPDFMacMarkdownPageCanvas+Pan.mm
+$PORTABLE/mac/SPDFMacMarkdownPagedView.mm
+$PORTABLE/mac/SPDFMacRenderedPage.mm
+$PORTABLE/mac/SPDFMacMarkdownMinimapModel.mm
+$PORTABLE/mac/SPDFMacMarkdownSidebarModel.mm
 $PORTABLE/mac/SPDFMacMarkdownLanguagePicker.mm
 $PORTABLE/mac/SPDFMacMarkdownPrinting.mm
 $PORTABLE/mac/SPDFMacMarkdownSession.mm
 "
 
 for TEST in \
+    SPDFMacMarkdownKeyboardPolicyTests \
     SPDFMacMarkdownRoutingTests \
+    SPDFMacMarkdownPagedViewTests \
+    SPDFMacMarkdownMinimapModelTests \
+    SPDFMacMarkdownSidebarModelTests \
     SPDFMacMarkdownSessionTests \
     SPDFMacMarkdownLanguagePickerTests \
     SPDFMacMarkdownPrintingTests
@@ -46,7 +59,7 @@ do
     # Source lists and sanitizer flags intentionally use shell word splitting.
     # shellcheck disable=SC2086
     "$CXX" -isysroot "$SDKROOT" -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror \
-        $SANITIZER_FLAGS -I"$PORTABLE/mac" -I"$PORTABLE/mac/markdown" \
+        $SANITIZER_FLAGS -I"$PORTABLE/core" -I"$PORTABLE/mac" -I"$PORTABLE/mac/markdown" \
         $FOUNDATION_SOURCES $UI_SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" \
         -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
         -framework UniformTypeIdentifiers -o "$BUILD_DIR/$TEST"

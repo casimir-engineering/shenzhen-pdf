@@ -1,10 +1,13 @@
 #pragma once
 
 #import <AppKit/AppKit.h>
+#import "SPDFMacMarkdownPagedView.h"
 
 @class SPDFMarkdownDocument;
 @class SPDFMarkdownRenderedDocument;
 @class SPDFMarkdownSearchMatch;
+@class SPDFMacMarkdownMinimapModel;
+@class SPDFMacMarkdownSidebarModel;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -18,6 +21,7 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @interface SPDFMacMarkdownSession : NSObject
 @property(nonatomic, readonly, copy) NSURL* documentURL;
 @property(nonatomic, readonly) NSView* rootView;
+@property(nonatomic, weak, nullable) id<SPDFMacUIReader> reader;
 @property(nonatomic, readonly, nullable) NSTextView* textView;
 @property(nonatomic, readonly, nullable) SPDFMarkdownDocument* document;
 @property(nonatomic, readonly, nullable) SPDFMarkdownRenderedDocument* renderedDocument;
@@ -27,12 +31,23 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @property(nonatomic, readonly) NSPoint scrollOrigin;
 @property(nonatomic, readonly) NSRange selectedRange;
 @property(nonatomic, readonly, copy) NSString* selectedText;
+@property(nonatomic, readonly) NSUInteger pageCount;
+@property(nonatomic, readonly) NSInteger currentPageIndex;
+@property(nonatomic, readonly) NSUInteger visibleAttributedLocation;
+@property(nonatomic, readonly) CGFloat zoom;
+@property(nonatomic, readonly) SPDFMacMarkdownPageFitMode fitMode;
+@property(nonatomic, readonly, copy) NSArray<NSValue*>* documentPageRects;
+@property(nonatomic, readonly) NSRect documentVisibleRect;
+@property(nonatomic, readonly) NSSize documentCanvasSize;
+@property(nonatomic, readonly, nullable) SPDFMacMarkdownMinimapModel* minimapModel;
+@property(nonatomic, readonly, nullable) SPDFMacMarkdownSidebarModel* sidebarModel;
 @property(nonatomic, copy, nullable) void (^openDocumentHandler)(NSURL* URL, NSString* _Nullable anchor);
 @property(nonatomic, copy, nullable) void (^openExternalURLHandler)(NSURL* URL);
 @property(nonatomic, copy, nullable) void (^statusHandler)(NSString* status);
-@property(nonatomic, copy, nullable) void (^searchUpdateHandler)(NSUInteger count,
-                                                                    NSInteger currentIndex,
-                                                                    BOOL searching);
+@property(nonatomic, copy, nullable) void (^searchUpdateHandler)
+    (NSUInteger count, NSInteger currentIndex, BOOL searching);
+@property(nonatomic, copy, nullable) void (^viewportUpdateHandler)
+    (NSInteger pageIndex, CGFloat zoom, SPDFMacMarkdownPageFitMode fitMode);
 
 - (instancetype)initWithDocumentURL:(NSURL*)URL NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
@@ -40,6 +55,9 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
                  workQueue:(dispatch_queue_t)workQueue
               scrollOrigin:(NSPoint)scrollOrigin
              selectedRange:(NSRange)selectedRange
+                 pageIndex:(NSInteger)pageIndex
+                      zoom:(CGFloat)zoom
+                   fitMode:(SPDFMacMarkdownPageFitMode)fitMode
                     anchor:(nullable NSString*)anchor
                 completion:(void (^)(BOOL success, NSError* _Nullable error))completion;
 - (void)deactivate;
@@ -47,9 +65,26 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 - (void)searchForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex;
 - (void)clearSearch;
 - (void)moveToNextMatch:(BOOL)forward;
+- (void)goToSearchMatchAtIndex:(NSInteger)matchIndex;
 - (BOOL)scrollToHeadingAnchor:(NSString*)anchor;
 - (void)navigateToAnchorWhenReady:(NSString*)anchor;
 - (void)showLanguagePickerForCodeBlock:(NSUInteger)blockIndex parentWindow:(NSWindow*)window;
+- (void)goToPageAtIndex:(NSInteger)pageIndex;
+- (void)zoomByFactor:(CGFloat)factor;
+- (void)setZoom:(CGFloat)zoom;
+- (void)applyFitMode:(SPDFMacMarkdownPageFitMode)fitMode;
+- (void)setPresentationMode:(BOOL)presentationMode;
+- (NSUInteger)pageIndexForRange:(NSRange)range;
+- (void)revealRange:(NSRange)range;
+- (void)centerAtDocumentPoint:(NSPoint)point;
+- (void)centerOnPageAtIndex:(NSInteger)pageIndex xFraction:(CGFloat)xFraction yFraction:(CGFloat)yFraction;
+- (void)scrollByDocumentDeltaX:(CGFloat)deltaX deltaY:(CGFloat)deltaY;
+- (void)forwardScrollWheelEvent:(NSEvent*)event;
+- (void)magnifyByDelta:(CGFloat)delta;
+- (BOOL)zoomWithScrollWheelEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
+- (void)magnifyByDelta:(CGFloat)delta centeredAtWindowPoint:(NSPoint)windowPoint;
+- (void)magnifyByDelta:(CGFloat)delta centeredAtDocumentPoint:(NSPoint)documentPoint;
+- (void)noteExternalScrollPositionChanged;
 @end
 
 NS_ASSUME_NONNULL_END
