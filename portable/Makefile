@@ -26,6 +26,7 @@ MAC_WINDOW_CHROME_TEST := $(BUILD)/SPDFMacWindowChromeTests
 MAC_PASSWORD_TEST := $(BUILD)/SPDFMacPasswordTests
 MAC_MINIMAP_WINDOW_TEST := $(BUILD)/SPDFMacMinimapWindowTests
 MAC_TAB_STRIP_GEOMETRY_TEST := $(BUILD)/SPDFMacTabStripGeometryTests
+MAC_TAB_STRIP_INTERACTION_TEST := $(BUILD)/SPDFMacTabStripInteractionTests
 MAC_PALETTE_RESULTS_TEST := $(BUILD)/SPDFMacPaletteResultsTests
 MAC_FIND_NEAREST_TEST := $(BUILD)/SPDFMacFindNearestTests
 MAC_UPDATER_TEST := $(BUILD)/SPDFUpdaterTests
@@ -60,7 +61,7 @@ MAC_CODESIGN_APP = $(MAC_CODESIGN_NESTED); codesign --force --timestamp --option
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests dmg notarize staple release-dmg verify-mac-release testflight-app testflight-pkg open-transporter print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -121,6 +122,12 @@ $(MAC_TAB_STRIP_GEOMETRY_TEST): mac/tests/SPDFMacTabStripGeometryTests.mm mac/SP
 
 mac-tab-strip-geometry-tests: $(MAC_TAB_STRIP_GEOMETRY_TEST)
 	"$(MAC_TAB_STRIP_GEOMETRY_TEST)"
+
+$(MAC_TAB_STRIP_INTERACTION_TEST): mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabStripView.h mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripGeometry.h mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
+	clang++ -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(MAC_TAB_STRIP_INTERACTION_TEST)"
+
+mac-tab-strip-interaction-tests: $(MAC_TAB_STRIP_INTERACTION_TEST)
+	"$(MAC_TAB_STRIP_INTERACTION_TEST)"
 
 $(MAC_PALETTE_RESULTS_TEST): mac/tests/SPDFMacPaletteResultsTests.mm mac/SPDFMacPaletteResults.mm mac/SPDFMacPaletteResults.h | $(BUILD)
 	clang++ -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacPaletteResultsTests.mm mac/SPDFMacPaletteResults.mm -framework Cocoa -o "$(MAC_PALETTE_RESULTS_TEST)"

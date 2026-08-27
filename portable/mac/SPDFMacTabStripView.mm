@@ -2,6 +2,7 @@
 
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabStripGeometry.h"
+#import "SPDFMacWindowChrome.h"
 
 #include <math.h>
 
@@ -513,14 +514,23 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (BOOL)containsTabOrControlAtPoint:(NSPoint)point {
-    if (NSPointInRect(point, NSInsetRect([self plusRect], -3.0, -4.0))) return YES;
+    if (NSPointInRect(point, [self plusInteractionRect])) return YES;
     NSRect overflowRect = [self overflowRect];
-    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, NSInsetRect(overflowRect, -3.0, -4.0))) return YES;
+    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, [self overflowInteractionRect])) return YES;
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];
         if (!NSIsEmptyRect(tabRect) && NSPointInRect(point, [self interactionRectForTabRect:tabRect])) return YES;
     }
     return NO;
+}
+
+- (NSRect)plusInteractionRect {
+    return NSInsetRect([self plusRect], -3.0, -4.0);
+}
+
+- (NSRect)overflowInteractionRect {
+    NSRect overflowRect = [self overflowRect];
+    return NSIsEmptyRect(overflowRect) ? NSZeroRect : NSInsetRect(overflowRect, -3.0, -4.0);
 }
 
 - (BOOL)isVisuallyReorderingTabs {
@@ -964,13 +974,12 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     _detachedTabDrag = NO;
     _mouseDownInsideTab = NO;
 
-    if (NSPointInRect(point, [self plusRect])) {
+    if (NSPointInRect(point, [self plusInteractionRect])) {
         [self.reader newTabRequested:self];
         return;
     }
 
-    NSRect overflowRect = [self overflowRect];
-    if (!NSIsEmptyRect(overflowRect) && NSPointInRect(point, overflowRect)) {
+    if (NSPointInRect(point, [self overflowInteractionRect])) {
         [self showOverflowMenuWithEvent:event];
         return;
     }
@@ -991,6 +1000,8 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     }
 
     [self hideHoverPanel];
+    id<SPDFWindowChromeHandling> chromeWindow = (id<SPDFWindowChromeHandling>)self.window;
+    if ([chromeWindow respondsToSelector:@selector(handleChromeMouseDown:)]) [chromeWindow handleChromeMouseDown:event];
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
