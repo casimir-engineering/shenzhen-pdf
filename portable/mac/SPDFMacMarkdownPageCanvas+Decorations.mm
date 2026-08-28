@@ -61,8 +61,11 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
                     kSPDFMarkdownCodeControlHorizontalPadding * 2.0;
     width =
         MIN(width, MAX(kSPDFMarkdownCodeControlHeight, NSWidth(printable) - kSPDFMarkdownCodeControlRightInset * 2.0));
-    CGFloat bandTop = NSMinY(pageFrame) + NSMinY(printable) + fragment.pageYOffset;
-    CGFloat y = round(bandTop + (fragment.height - kSPDFMarkdownCodeControlHeight) * 0.5);
+    // The leading band starts with the unpainted outer margin above the box;
+    // the control centers in the in-box header portion below it.
+    CGFloat outerMargin = MIN(SPDFMarkdownCodeBoxOuterMargin * fragment.scale, fragment.height);
+    CGFloat bandTop = NSMinY(pageFrame) + NSMinY(printable) + fragment.pageYOffset + outerMargin;
+    CGFloat y = round(bandTop + (fragment.height - outerMargin - kSPDFMarkdownCodeControlHeight) * 0.5);
     CGFloat maxX = NSMinX(pageFrame) + NSMinX(printable) + NSWidth(printable) - kSPDFMarkdownCodeControlRightInset;
     return NSMakeRect(maxX - width, y, width, kSPDFMarkdownCodeControlHeight);
 }
