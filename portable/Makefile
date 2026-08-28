@@ -41,11 +41,14 @@ CORE_OBJ := $(BUILD)/shenzhen_pdf_core.o
 CORE_SELECTION_SRC := core/spdf_selection.c
 CORE_SELECTION_HDR := core/spdf_selection.h
 CORE_SELECTION_OBJ := $(BUILD)/spdf_selection.o
-CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ)
+CORE_SELECTION_SUPPORT_SRC := core/spdf_selection_support.c
+CORE_SELECTION_SUPPORT_OBJ := $(BUILD)/spdf_selection_support.o
+CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ) $(CORE_SELECTION_SUPPORT_OBJ)
 MAC_MD4C_OBJ := $(BUILD)/md4c.o
 CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
 CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
 CORE_SELECTION_TEST := $(BUILD)/SPDFCoreSelectionTests
+CORE_CJK_SELECTION_TEST := $(BUILD)/SPDFCoreCJKSelectionTests
 MAC_APP := $(DIST)/ShenzhenPDF.app
 MAC_BIN := $(MAC_APP)/Contents/MacOS/ShenzhenPDF
 MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
@@ -104,6 +107,9 @@ $(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) Makefile | $(BUILD)
 $(CORE_SELECTION_OBJ): $(CORE_SELECTION_SRC) $(CORE_SELECTION_HDR) $(CORE_HDR) Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SELECTION_SRC)" -o "$(CORE_SELECTION_OBJ)"
 
+$(CORE_SELECTION_SUPPORT_OBJ): $(CORE_SELECTION_SUPPORT_SRC) $(CORE_SELECTION_HDR) $(CORE_HDR) Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SELECTION_SUPPORT_SRC)" -o "$(CORE_SELECTION_SUPPORT_OBJ)"
+
 $(MAC_MD4C_OBJ): ../ext/md4c/md4c.c ../ext/md4c/md4c.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c11 -I../ext/md4c -c ../ext/md4c/md4c.c -o "$(MAC_MD4C_OBJ)"
 
@@ -124,8 +130,12 @@ core-password-tests: $(CORE_PASSWORD_TEST)
 $(CORE_SELECTION_TEST): core/tests/SPDFCoreSelectionTests.c $(CORE_OBJS) mupdf-libs | $(BUILD)
 	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< $(CORE_OBJS) $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
 
-core-selection-tests: $(CORE_SELECTION_TEST)
+$(CORE_CJK_SELECTION_TEST): core/tests/SPDFCoreCJKSelectionTests.c $(CORE_OBJS) mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< $(CORE_OBJS) $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
+
+core-selection-tests: $(CORE_SELECTION_TEST) $(CORE_CJK_SELECTION_TEST)
 	"$(CORE_SELECTION_TEST)"
+	"$(CORE_CJK_SELECTION_TEST)"
 
 $(MAC_WINDOW_SHORTCUT_TEST): mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMacWindowShortcuts.mm mac/SPDFMacWindowShortcuts.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMacWindowShortcuts.mm -framework Cocoa -o "$(MAC_WINDOW_SHORTCUT_TEST)"
@@ -354,7 +364,7 @@ install: mac-app
 LINUX_GTK4_SRCS := $(sort $(wildcard linux/gtk4/*.c))
 
 linux-gtk4: mupdf-libs | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" "$(CORE_SELECTION_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
+	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" "$(CORE_SELECTION_SRC)" "$(CORE_SELECTION_SUPPORT_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
 
 linux-gtk4-tests: | $(BUILD)
 	@set -e; for t in $(sort $(wildcard linux/gtk4/tests/*_test.c)); do \

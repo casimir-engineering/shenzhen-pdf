@@ -62,8 +62,26 @@ static char* copy_text(const char* text) {
     return copied;
 }
 
-static fz_stext_char* hit_blocks(fz_stext_block* first, fz_point point, fz_stext_block** block_out, int depth,
-                                 int* depth_exceeded) {
+static float segment_side(fz_point a, fz_point b, fz_point p) {
+    return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+}
+
+/* fz_is_point_inside_quad splits the quad into two triangles, so a point that
+   lies exactly on the shared diagonal (e.g. a click at the exact center of a
+   glyph) can be rejected by both halves through independent float rounding.
+   Test the whole convex polygon with a rounding-scale tolerance instead. */
+static int point_in_quad(fz_point p, fz_quad q) {
+    float d1 = segment_side(q.ul, q.ur, p);
+    float d2 = segment_side(q.ur, q.lr, p);
+    float d3 = segment_side(q.lr, q.ll, p);
+    float d4 = segment_side(q.ll, q.ul, p);
+    float eps = 1e-4f * fz_max(fz_max(fabsf(d1), fabsf(d2)), fz_max(fabsf(d3), fabsf(d4)));
+    return (d1 >= -eps && d2 >= -eps && d3 >= -eps && d4 >= -eps) ||
+           (d1 <= eps && d2 <= eps && d3 <= eps && d4 <= eps);
+}
+
+static fz_stext_char* hit_blocks(fz_stext_block* first, fz_point point, fz_stext_block** block_out,
+                                 fz_stext_line** line_out, int depth, int* depth_exceeded) {
     fz_stext_block* block;
     fz_stext_line* line;
     fz_stext_char* ch;
@@ -74,15 +92,16 @@ static fz_stext_char* hit_blocks(fz_stext_block* first, fz_point point, fz_stext
     }
     for (block = first; block; block = block->next) {
         if (block->type == FZ_STEXT_BLOCK_STRUCT && block->u.s.down) {
-            ch = hit_blocks(block->u.s.down->first_block, point, block_out, depth + 1, depth_exceeded);
+            ch = hit_blocks(block->u.s.down->first_block, point, block_out, line_out, depth + 1, depth_exceeded);
             if (ch) return ch;
         }
         if (block->type != FZ_STEXT_BLOCK_TEXT) continue;
         for (line = block->u.t.first_line; line; line = line->next) {
             for (ch = line->first_char; ch; ch = ch->next) {
                 if (fz_is_unicode_whitespace(ch->c) || !valid_quad(ch->quad)) continue;
-                if (fz_is_point_inside_quad(point, ch->quad)) {
+                if (point_in_quad(point, ch->quad)) {
                     if (block_out) *block_out = block;
+                    if (line_out) *line_out = line;
                     return ch;
                 }
             }
@@ -92,8 +111,8 @@ static fz_stext_char* hit_blocks(fz_stext_block* first, fz_point point, fz_stext
 }
 
 static fz_stext_char* hit_character(fz_stext_page* page, fz_point point, fz_stext_block** block_out,
-                                    int* depth_exceeded) {
-    return hit_blocks(page->first_block, point, block_out, 0, depth_exceeded);
+                                    fz_stext_line** line_out, int* depth_exceeded) {
+    return hit_blocks(page->first_block, point, block_out, line_out, 0, depth_exceeded);
 }
 
 static void mark_unicode_flags(fz_stext_page* page, const spdf_text_selection* result, unsigned* flags) {
@@ -227,6 +246,152 @@ static void select_block(fz_context* ctx, fz_stext_block* block, spdf_text_selec
     }
 }
 
+static void select_word(fz_context* ctx, fz_stext_line* line, fz_stext_char* hit, spdf_text_selection* result) {
+    selection_rect_builder builder = {0};
+    fz_buffer* buffer = NULL;
+    fz_stext_char* ch;
+    fz_stext_char* prev = NULL;
+    fz_stext_char* run_start = line->first_char;
+    unsigned char* extracted = NULL;
+    fz_rect bounds = fz_empty_rect;
+
+    /* Locate the start of the word run containing the hit character. Runs are
+       same-class stretches: space-delimited tokens for Latin text, contiguous
+       ideograph/kana/Hangul runs for CJK, and lone CJK punctuation marks. */
+    for (ch = line->first_char; ch; ch = ch->next) {
+        if (!prev || !spdf_word_chars_join(prev->c, ch->c)) run_start = ch;
+        if (ch == hit) break;
+        prev = ch;
+    }
+
+    fz_var(buffer);
+    fz_var(extracted);
+    fz_var(builder.items);
+    fz_try(ctx) {
+        buffer = fz_new_buffer(ctx, 64);
+        prev = NULL;
+        for (ch = run_start; ch; ch = ch->next) {
+            if (prev && !spdf_word_chars_join(prev->c, ch->c)) break;
+            fz_append_rune(ctx, buffer, ch->c < 32 ? FZ_REPLACEMENT_CHARACTER : ch->c);
+            if (ch->flags & (FZ_STEXT_UNICODE_IS_CID | FZ_STEXT_UNICODE_IS_GID))
+                result->flags |= SPDF_SELECTION_UNICODE_INCOMPLETE;
+            if (valid_quad(ch->quad))
+                bounds = fz_union_rect(bounds, fz_rect_from_quad(ch->quad));
+            else
+                result->flags |= SPDF_SELECTION_GEOMETRY_INCOMPLETE;
+            prev = ch;
+        }
+        if (append_rect(&builder, bounds) < 0) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        fz_terminate_buffer(ctx, buffer);
+        fz_buffer_extract(ctx, buffer, &extracted);
+        result->text = copy_text((const char*)extracted);
+        if (!result->text) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        result->rects = builder.items;
+        result->rect_count = builder.count;
+        builder.items = NULL;
+        fz_free(ctx, extracted);
+        extracted = NULL;
+        fz_drop_buffer(ctx, buffer);
+        buffer = NULL;
+    }
+    fz_catch(ctx) {
+        fz_free(ctx, extracted);
+        fz_drop_buffer(ctx, buffer);
+        free(builder.items);
+        fz_rethrow(ctx);
+    }
+}
+
+static int segments_cross(fz_point a, fz_point b, fz_point c, fz_point d) {
+    float d1 = segment_side(c, d, a);
+    float d2 = segment_side(c, d, b);
+    float d3 = segment_side(a, b, c);
+    float d4 = segment_side(a, b, d);
+    return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0));
+}
+
+static int segment_touches_quad(fz_point a, fz_point b, fz_quad q) {
+    if (point_in_quad(a, q) || point_in_quad(b, q)) return 1;
+    return segments_cross(a, b, q.ul, q.ur) || segments_cross(a, b, q.ur, q.lr) || segments_cross(a, b, q.lr, q.ll) ||
+           segments_cross(a, b, q.ll, q.ul);
+}
+
+typedef struct selection_sweep {
+    fz_buffer* buffer;
+    selection_rect_builder builder;
+    fz_point a;
+    fz_point b;
+    unsigned* flags;
+    int wrote_line;
+} selection_sweep;
+
+static void sweep_blocks(fz_context* ctx, fz_stext_block* first, selection_sweep* sweep, int depth) {
+    fz_stext_block* block;
+    fz_stext_line* line;
+    fz_stext_char* ch;
+
+    if (depth > 64) return;
+    for (block = first; block; block = block->next) {
+        if (block->type == FZ_STEXT_BLOCK_STRUCT && block->u.s.down)
+            sweep_blocks(ctx, block->u.s.down->first_block, sweep, depth + 1);
+        if (block->type != FZ_STEXT_BLOCK_TEXT) continue;
+        for (line = block->u.t.first_line; line; line = line->next) {
+            fz_rect bounds = fz_empty_rect;
+            int line_has_text = 0;
+            for (ch = line->first_char; ch; ch = ch->next) {
+                if (!valid_quad(ch->quad) || !segment_touches_quad(sweep->a, sweep->b, ch->quad)) continue;
+                if (fz_is_unicode_whitespace(ch->c) && !line_has_text) continue;
+                if (sweep->wrote_line && !line_has_text) fz_append_byte(ctx, sweep->buffer, '\n');
+                fz_append_rune(ctx, sweep->buffer, ch->c < 32 ? FZ_REPLACEMENT_CHARACTER : ch->c);
+                if (ch->flags & (FZ_STEXT_UNICODE_IS_CID | FZ_STEXT_UNICODE_IS_GID))
+                    *sweep->flags |= SPDF_SELECTION_UNICODE_INCOMPLETE;
+                bounds = fz_union_rect(bounds, fz_rect_from_quad(ch->quad));
+                line_has_text = 1;
+                sweep->wrote_line = 1;
+            }
+            if (line_has_text && append_rect(&sweep->builder, bounds) < 0)
+                fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        }
+    }
+}
+
+/* Direct geometric fallback for drags fz_copy_selection cannot resolve, e.g.
+   perpendicular drags across rotated OCR lines: select every character whose
+   quad the drag segment actually touches. */
+static void select_range_sweep(fz_context* ctx, fz_stext_page* page, fz_point a, fz_point b,
+                               spdf_text_selection* result) {
+    selection_sweep sweep = {0};
+    unsigned char* extracted = NULL;
+
+    sweep.a = a;
+    sweep.b = b;
+    sweep.flags = &result->flags;
+    fz_var(extracted);
+    fz_var(sweep.buffer);
+    fz_var(sweep.builder.items);
+    fz_try(ctx) {
+        sweep.buffer = fz_new_buffer(ctx, 64);
+        sweep_blocks(ctx, page->first_block, &sweep, 0);
+        fz_terminate_buffer(ctx, sweep.buffer);
+        fz_buffer_extract(ctx, sweep.buffer, &extracted);
+        result->text = copy_text((const char*)extracted);
+        if (!result->text) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        result->rects = sweep.builder.items;
+        result->rect_count = sweep.builder.count;
+        sweep.builder.items = NULL;
+        fz_free(ctx, extracted);
+        extracted = NULL;
+        fz_drop_buffer(ctx, sweep.buffer);
+        sweep.buffer = NULL;
+    }
+    fz_catch(ctx) {
+        fz_free(ctx, extracted);
+        fz_drop_buffer(ctx, sweep.buffer);
+        free(sweep.builder.items);
+        fz_rethrow(ctx);
+    }
+}
+
 void spdf_free_text_selection(spdf_text_selection* selection) {
     if (!selection) return;
     free(selection->text);
@@ -241,6 +406,8 @@ spdf_selection_status spdf_select_text(spdf_document* doc, int page_index, spdf_
     fz_document* mupdf_doc = NULL;
     fz_stext_page* page = NULL;
     fz_stext_block* hit_block = NULL;
+    fz_stext_line* hit_line = NULL;
+    fz_stext_char* hit_char = NULL;
     fz_stext_options options = {0};
     fz_point a = fz_make_point(ax, ay);
     fz_point b = fz_make_point(bx, by);
@@ -264,23 +431,23 @@ spdf_selection_status spdf_select_text(spdf_document* doc, int page_index, spdf_
     fz_var(page);
     fz_try(ctx) {
         page = fz_new_stext_page_from_page_number(ctx, mupdf_doc, page_index, &options);
-        if (granularity != SPDF_SELECTION_RANGE && !hit_character(page, a, &hit_block, &depth_exceeded)) {
+        spdf_selection_repair_collapsed_quads(page);
+        if (granularity != SPDF_SELECTION_RANGE &&
+            !(hit_char = hit_character(page, a, &hit_block, &hit_line, &depth_exceeded))) {
             if (depth_exceeded) fz_throw(ctx, FZ_ERROR_LIMIT, "Structured text nesting is too deep");
             no_hit = 1;
         } else if (granularity == SPDF_SELECTION_WORD) {
-            fz_stext_page isolated_page = *page;
-            fz_stext_block isolated_block = *hit_block;
-            isolated_block.prev = NULL;
-            isolated_block.next = NULL;
-            isolated_page.first_block = &isolated_block;
-            isolated_page.last_block = &isolated_block;
-            b = a;
-            (void)fz_snap_selection(ctx, &isolated_page, &a, &b, FZ_SELECT_WORDS);
-            select_range(ctx, &isolated_page, a, b, out);
+            select_word(ctx, hit_line, hit_char, out);
         } else if (granularity == SPDF_SELECTION_BLOCK) {
             select_block(ctx, hit_block, out);
         } else {
             select_range(ctx, page, a, b, out);
+            if (!text_has_content(out->text) || out->rect_count == 0) {
+                unsigned flags = out->flags;
+                spdf_free_text_selection(out);
+                out->flags = flags;
+                select_range_sweep(ctx, page, a, b, out);
+            }
         }
         fz_drop_stext_page(ctx, page);
         page = NULL;
