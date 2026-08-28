@@ -1104,6 +1104,10 @@ static void spdf_discard_launch_prerender(void) {
     } else {
         [self showEmptyDocumentViewWithMessage:@"Open a document"];
     }
+    // Restore backstop: whatever path ran above, the selected markdown tab
+    // must end with content installed or work in flight (idempotent no-op
+    // otherwise) — a cancel landing during restore must not strand it.
+    [self ensureActiveMarkdownTabHasContent];
     _startupDocumentWorkInProgress = NO;
     // Sibling-window restore processes are spawned from the post-first-paint
     // block in applicationDidFinishLaunching: each spawn pages in another
@@ -8996,6 +9000,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
     if (targetIndex >= 0) {
         if (targetIndex == _selectedTabIndex && [self hasActiveDocument]) {
+            // A stranded Loading markdown session still counts as an active
+            // document: re-kick it instead of early-returning into the strand.
+            [self ensureActiveMarkdownTabHasContent];
             if (_path.length > 0) [self rememberRecentlyOpenedPath:_path];
             [self savePersistentState];
             [self focusActiveDocumentViewAfterTabSelection];
@@ -9039,6 +9046,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)selectTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
     if (index == _selectedTabIndex && [self hasActiveDocument]) {
+        // A stranded Loading markdown session still counts as an active
+        // document: re-kick it instead of early-returning into the strand.
+        [self ensureActiveMarkdownTabHasContent];
         // Re-clicking the active tab still plants keyboard focus on the document.
         [self focusActiveDocumentViewAfterTabSelection];
         return;

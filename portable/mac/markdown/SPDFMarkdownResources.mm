@@ -52,18 +52,28 @@ static BOOL SPDFSameFile(struct stat left, struct stat right) {
     return left.st_dev == right.st_dev && left.st_ino == right.st_ino;
 }
 
-static int SPDFOpenVerifiedDocumentRoot(NSURL* documentURL, NSString** rootPath) {
+// Pins the document's identity at store creation: an O_RDONLY descriptor on
+// the document file itself (covered by the open-file grant the app already
+// holds — never TCC-gated the way its parent directory is) plus its dev/ino.
+static int SPDFOpenPinnedDocumentDescriptor(NSURL* documentURL, struct stat* documentInfo) {
     if (!documentURL.isFileURL) return -1;
     int document = open(documentURL.fileSystemRepresentation, O_RDONLY | O_CLOEXEC);
     if (document < 0) return -1;
-    struct stat documentInfo = {};
-    char canonicalPath[PATH_MAX] = {};
-    BOOL identified = fstat(document, &documentInfo) == 0 && S_ISREG(documentInfo.st_mode) &&
-                      fcntl(document, F_GETPATH, canonicalPath) == 0;
-    if (!identified) {
+    if (fstat(document, documentInfo) != 0 || !S_ISREG(documentInfo->st_mode)) {
         close(document);
         return -1;
     }
+    return document;
+}
+
+// Opens (and verifies) the directory that currently contains the pinned
+// document descriptor's file. The descriptor tracks the ORIGINAL file across
+// renames, so a pathname replacement between parse and this open can never
+// redirect resource loads: F_GETPATH names where that very file lives now,
+// and the openat + dev/ino comparison proves the directory really holds it.
+static int SPDFOpenVerifiedRootOfDocument(int document, struct stat documentInfo, NSString** rootPath) {
+    char canonicalPath[PATH_MAX] = {};
+    if (document < 0 || fcntl(document, F_GETPATH, canonicalPath) != 0) return -1;
 
     NSString* canonical = [NSFileManager.defaultManager stringWithFileSystemRepresentation:canonicalPath
                                                                                      length:strlen(canonicalPath)];
@@ -78,7 +88,6 @@ static int SPDFOpenVerifiedDocumentRoot(NSURL* documentURL, NSString** rootPath)
     BOOL matches = verified >= 0 && fstat(verified, &verifiedInfo) == 0 &&
                    SPDFSameFile(documentInfo, verifiedInfo);
     if (verified >= 0) close(verified);
-    close(document);
     if (!matches) {
         if (directory >= 0) close(directory);
         return -1;
@@ -124,6 +133,18 @@ static NSData* SPDFReadDescriptor(int fileDescriptor, NSUInteger maximumBytes) {
 @implementation SPDFMarkdownResourceStore {
     int _rootDescriptor;
     NSString* _rootPath;
+    // Lazy root: the verified directory open is deferred to the first LOCAL
+    // resource lookup. Opening the document's parent directory is TCC-gated
+    // for protected folders (Downloads, Desktop, Documents), so an eager open
+    // during the initial parse could block the launch render pipeline
+    // indefinitely behind a consent prompt — a document that references no
+    // local resources must never touch its directory at all. The document
+    // descriptor pinned at creation keeps the pathname-replacement guarantee
+    // across the deferral (see SPDFOpenVerifiedRootOfDocument); it is closed
+    // once the root open has been attempted.
+    int _documentDescriptor;
+    struct stat _documentInfo;
+    BOOL _rootOpenAttempted;
     NSUInteger _maximumResourceBytes;
     NSUInteger _maximumDecodedImagePixels;
     NSMutableDictionary<NSString*, SPDFMarkdownCachedResource*>* _cache;
@@ -140,6 +161,7 @@ static NSData* SPDFReadDescriptor(int fileDescriptor, NSUInteger maximumBytes) {
     }
     _rootDescriptor = rootDescriptor;
     _rootPath = [rootPath copy];
+    _documentDescriptor = -1;
     _maximumResourceBytes = maximumResourceBytes;
     _maximumDecodedImagePixels = maximumDecodedImagePixels;
     _cache = [NSMutableDictionary dictionary];
@@ -163,17 +185,40 @@ static NSData* SPDFReadDescriptor(int fileDescriptor, NSUInteger maximumBytes) {
 - (instancetype)initWithDocumentURL:(NSURL*)documentURL
                 maximumResourceBytes:(NSUInteger)maximumResourceBytes
            maximumDecodedImagePixels:(NSUInteger)maximumDecodedImagePixels {
-    NSString* rootPath = nil;
-    int descriptor = SPDFOpenVerifiedDocumentRoot(documentURL, &rootPath);
-    if (descriptor < 0) return nil;
-    return [self initWithRootDescriptor:descriptor
-                              rootPath:rootPath
-                  maximumResourceBytes:maximumResourceBytes
-             maximumDecodedImagePixels:maximumDecodedImagePixels];
+    struct stat documentInfo = {};
+    int document = SPDFOpenPinnedDocumentDescriptor(documentURL, &documentInfo);
+    if (document < 0) return nil;
+    self = [self initWithRootDescriptor:-1
+                               rootPath:@""
+                   maximumResourceBytes:maximumResourceBytes
+              maximumDecodedImagePixels:maximumDecodedImagePixels];
+    if (!self) {
+        close(document);
+        return nil;
+    }
+    _documentDescriptor = document;
+    _documentInfo = documentInfo;
+    return self;
+}
+
+// The lazily opened (and verified) document-root descriptor; see the ivar
+// comments. One attempt per store: a failed open (missing directory, denied
+// consent) caches the failure so a render never re-prompts per target.
+- (int)verifiedRootDescriptor {
+    if (_rootDescriptor < 0 && !_rootOpenAttempted && _documentDescriptor >= 0) {
+        _rootOpenAttempted = YES;
+        NSString* rootPath = nil;
+        _rootDescriptor = SPDFOpenVerifiedRootOfDocument(_documentDescriptor, _documentInfo, &rootPath);
+        if (_rootDescriptor >= 0) _rootPath = [rootPath copy];
+        close(_documentDescriptor);
+        _documentDescriptor = -1;
+    }
+    return _rootDescriptor;
 }
 
 - (void)dealloc {
     if (_rootDescriptor >= 0) close(_rootDescriptor);
+    if (_documentDescriptor >= 0) close(_documentDescriptor);
 }
 
 - (NSUInteger)cachedResourceCount { return _cache.count; }
@@ -181,14 +226,30 @@ static NSData* SPDFReadDescriptor(int fileDescriptor, NSUInteger maximumBytes) {
 - (SPDFMarkdownResourceStore*)storeWithMaximumResourceBytes:(NSUInteger)maximumResourceBytes
                                   maximumDecodedImagePixels:(NSUInteger)maximumDecodedImagePixels {
     int descriptor = -1;
+    int document = -1;
     if (_rootDescriptor >= 0) {
         descriptor = dup(_rootDescriptor);
         if (descriptor < 0) return nil;
+    } else if (_documentDescriptor >= 0) {
+        // Keep the lazy root AND the pinned document identity: the child
+        // opens the verified directory itself on its first local lookup.
+        document = dup(_documentDescriptor);
+        if (document < 0) return nil;
     }
-    return [[SPDFMarkdownResourceStore alloc] initWithRootDescriptor:descriptor
-                                                           rootPath:_rootPath
-                                               maximumResourceBytes:maximumResourceBytes
-                                          maximumDecodedImagePixels:maximumDecodedImagePixels];
+    SPDFMarkdownResourceStore* store =
+        [[SPDFMarkdownResourceStore alloc] initWithRootDescriptor:descriptor
+                                                         rootPath:_rootPath
+                                             maximumResourceBytes:maximumResourceBytes
+                                        maximumDecodedImagePixels:maximumDecodedImagePixels];
+    if (!store) {
+        if (document >= 0) close(document);
+        return nil;
+    }
+    if (document >= 0) {
+        store->_documentDescriptor = document;
+        store->_documentInfo = _documentInfo;
+    }
+    return store;
 }
 
 - (NSString*)currentRootPath {
@@ -227,7 +288,7 @@ static NSData* SPDFReadDescriptor(int fileDescriptor, NSUInteger maximumBytes) {
 
     cached = [SPDFMarkdownCachedResource new];
     _cache[key] = cached;  // Failed resources are cached too.
-    int descriptor = dup(_rootDescriptor);
+    int descriptor = dup([self verifiedRootDescriptor]);
     if (descriptor < 0) return cached;
     for (NSUInteger index = 0; index < components.count; ++index) {
         BOOL final = index + 1 == components.count;

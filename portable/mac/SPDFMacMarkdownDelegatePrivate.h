@@ -51,6 +51,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isMarkdownActive;
 - (BOOL)hasActiveDocument;
 - (void)deactivateActiveMarkdownView;
+- (void)ensureActiveMarkdownTabHasContent;
 - (void)loadSelectedMarkdownTab:(SPDFDocumentTab*)tab;
 - (void)rememberActiveMarkdownStateForTab:(SPDFDocumentTab*)tab;
 - (NSString*)markdownSelectedText;

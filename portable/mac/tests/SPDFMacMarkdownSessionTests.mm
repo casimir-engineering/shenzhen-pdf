@@ -464,6 +464,80 @@ int main(void) {
         dispatch_semaphore_signal(parseGate);
         [inflight deactivate];
 
+        // Launch shape: a cancel that lands BEFORE the session's first
+        // activation (a restored tab's cached-runtime sweep can cancel a
+        // session that was never shown) arms no self-heal — and must not: the
+        // session is not on screen, so healing must stay a no-op. The later
+        // first activation must still run the full pipeline to Ready with
+        // exactly one completion.
+        SPDFMacMarkdownSession* preCancelled =
+            [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
+        [preCancelled cancelAllOperations];
+        [preCancelled ensureActiveSessionHasContent]; // inactive: must not start a load
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+        assert(preCancelled.state == SPDFMacMarkdownSessionIdle && preCancelled.renderedDocument == nil);
+        __block NSUInteger preCancelledCompletions = 0;
+        [preCancelled activateInHostView:host
+                               workQueue:sessionQueue
+                            scrollOrigin:NSZeroPoint
+                           selectedRange:NSMakeRange(0, 0)
+                               pageIndex:0
+                                    zoom:1.0
+                                 fitMode:SPDFMacMarkdownPageFitPage
+                                  anchor:nil
+                              completion:^(BOOL success, NSError* error) {
+                                assert(success && !error);
+                                preCancelledCompletions++;
+                              }];
+        assert(SpinUntil(
+            ^BOOL {
+              return preCancelled.state == SPDFMacMarkdownSessionReady;
+            },
+            5.0));
+        assert(preCancelled.pageCount > 0 && preCancelledCompletions == 1);
+        [preCancelled deactivate];
+
+        // Integration shape of the launch strand: the restore selects the tab
+        // (initial parse in flight) and an immediate re-open of the same path
+        // arrives. The re-open's cached-runtime sweep cancels the very session
+        // on screen, then the open early-returns because the selected tab
+        // already counts as an active document — its backstop now calls
+        // ensureActiveSessionHasContent, which must restart the dropped load.
+        // Once Ready, further backstop passes must not re-render or re-report.
+        dispatch_queue_t reopenQueue = dispatch_queue_create("markdown.reopen.test", DISPATCH_QUEUE_SERIAL);
+        SPDFMacMarkdownSession* reopened =
+            [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
+        __block NSUInteger reopenedCompletions = 0;
+        dispatch_suspend(reopenQueue);
+        [reopened activateInHostView:host
+                           workQueue:reopenQueue
+                        scrollOrigin:NSZeroPoint
+                       selectedRange:NSMakeRange(0, 0)
+                           pageIndex:0
+                                zoom:1.0
+                             fitMode:SPDFMacMarkdownPageFitPage
+                              anchor:nil
+                          completion:^(BOOL success, NSError* error) {
+                            assert(success && !error);
+                            reopenedCompletions++;
+                          }];
+        assert(reopened.state == SPDFMacMarkdownSessionLoading);
+        [reopened cancelAllOperations];           // the re-open's cache sweep
+        [reopened ensureActiveSessionHasContent]; // the openPaths early-return backstop
+        dispatch_resume(reopenQueue);
+        assert(SpinUntil(
+            ^BOOL {
+              return reopened.state == SPDFMacMarkdownSessionReady;
+            },
+            5.0));
+        assert(reopened.renderedDocument != nil && reopened.pageCount > 0);
+        assert(reopenedCompletions == 1); // sync backstop + cancel's async heal restart ONE load
+        SPDFMarkdownRenderedDocument* reopenedRendered = reopened.renderedDocument;
+        [reopened ensureActiveSessionHasContent];
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
+        assert(reopened.renderedDocument == reopenedRendered && reopenedCompletions == 1);
+        [reopened deactivate];
+
         [session deactivate];
         assert(session.rootView.superview == nil);
         [NSFileManager.defaultManager removeItemAtPath:path error:nil];
