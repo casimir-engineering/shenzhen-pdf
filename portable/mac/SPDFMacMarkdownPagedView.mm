@@ -100,7 +100,11 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
 }
 - (NSUInteger)visibleAttributedLocation {
     NSRect visible = self.documentVisibleRect;
-    return [_canvas attributedLocationNearestToPoint:NSMakePoint(NSMidX(visible), NSMinY(visible))];
+    // Sample just below the top edge so a heading revealed with its 12pt
+    // lead-in counts as visible; sampling the exact edge lands in the lead-in
+    // and makes the chapter sidebar highlight the preceding section.
+    CGFloat probeY = NSMinY(visible) + MIN(16.0, NSHeight(visible) * 0.5);
+    return [_canvas attributedLocationNearestToPoint:NSMakePoint(NSMidX(visible), probeY)];
 }
 - (NSArray<NSValue*>*)documentPageRects {
     NSMutableArray<NSValue*>* rects = [NSMutableArray arrayWithCapacity:self.pageCount];
