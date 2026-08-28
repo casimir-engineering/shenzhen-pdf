@@ -14,10 +14,15 @@ static void SPDFAppend(SPDFMarkdownRenderContext* context, NSString* string, NSD
     }
 }
 
+static CGFloat SPDFScale(SPDFMarkdownRenderContext* context) {
+    CGFloat scale = context.options.fontScale;
+    return scale > 0 ? scale : 1;
+}
+
 static NSMutableParagraphStyle* SPDFStyle(SPDFMarkdownRenderContext* context, NSUInteger depth) {
     NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
-    style.lineSpacing = context.options.lineSpacing;
-    style.paragraphSpacing = context.options.paragraphSpacing;
+    style.lineSpacing = context.options.lineSpacing * SPDFScale(context);
+    style.paragraphSpacing = context.options.paragraphSpacing * SPDFScale(context);
     style.headIndent = depth * 22;
     style.firstLineHeadIndent = depth * 22;
     return style;
@@ -235,15 +240,22 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
     NSMutableParagraphStyle* style = SPDFStyle(context, depth);
     if (block.kind == SPDFMarkdownBlockKindHeading) {
         CGFloat size = MAX(context.options.textSize + 2,
-                           context.options.textSize + (7 - MIN(block.level, 6)) * 2);
+                           context.options.textSize + (7 - MIN(block.level, 6)) * 2) * SPDFScale(context);
         [context.output addAttribute:NSFontAttributeName value:[NSFont boldSystemFontOfSize:size] range:range];
-        style.paragraphSpacingBefore = block.level <= 2 ? 18 : 12;
-        style.paragraphSpacing = 8;
+        style.paragraphSpacingBefore = (block.level <= 2 ? 20 : 12) * SPDFScale(context);
+        style.paragraphSpacing = 8 * SPDFScale(context);
     } else if (block.kind == SPDFMarkdownBlockKindCode) {
-        [context.output addAttributes:@{
-            NSFontAttributeName: context.codeFont,
-            NSBackgroundColorAttributeName: context.options.codeBackgroundColor,
-        } range:range];
+        // Fenced code flows as one continuous block: tight line spacing, no
+        // inter-line paragraph gaps, and a 12pt inset so the text sits inside
+        // the unified code box drawn behind it. The box background itself is a
+        // page decoration, not a per-character attribute.
+        [context.output addAttribute:NSFontAttributeName value:context.codeFont range:range];
+        style.lineSpacing = 2 * SPDFScale(context);
+        style.paragraphSpacing = 0;
+        style.paragraphSpacingBefore = 0;
+        style.firstLineHeadIndent = depth * 22 + 12;
+        style.headIndent = depth * 22 + 12;
+        style.tailIndent = -12;
         NSString* identifier = context.overrides[@(block.blockIndex)] ?: block.codeLanguage;
         SPDFMarkdownLanguage* language = [context.catalog languageForFenceIdentifier:identifier];
         if (language) {

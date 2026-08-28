@@ -9,12 +9,19 @@ NSAttributedStringKey const SPDFMarkdownImageTargetAttribute = @"SPDFMarkdownIma
 NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCodeLanguage";
 
 @implementation SPDFMarkdownRenderOptions
+- (instancetype)init {
+    self = [super init];
+    if (self) _fontScale = 1.0;
+    return self;
+}
+- (void)setFontScale:(CGFloat)fontScale { _fontScale = MAX(0.5, MIN(3.0, fontScale)); }
 + (instancetype)defaultOptions {
     SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions new];
     options.textSize = 15;
     options.codeSize = 13;
     options.lineSpacing = 3;
     options.paragraphSpacing = 10;
+    options.fontScale = 1.0;
     options.contentInset = 24;
     options.maximumImageWidth = 480;
     options.maximumImageHeight = 320;
@@ -42,6 +49,7 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     copy.codeSize = self.codeSize;
     copy.lineSpacing = self.lineSpacing;
     copy.paragraphSpacing = self.paragraphSpacing;
+    copy.fontScale = self.fontScale;
     copy.contentInset = self.contentInset;
     copy.maximumImageWidth = self.maximumImageWidth;
     copy.maximumImageHeight = self.maximumImageHeight;
@@ -276,8 +284,9 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
             storeWithMaximumResourceBytes:options.maximumResourceBytes
                  maximumDecodedImagePixels:options.maximumDecodedImagePixels];
     }
-    context.bodyFont = [NSFont systemFontOfSize:options.textSize];
-    context.codeFont = [NSFont monospacedSystemFontOfSize:options.codeSize weight:NSFontWeightRegular];
+    CGFloat fontScale = options.fontScale > 0 ? options.fontScale : 1;
+    context.bodyFont = [NSFont systemFontOfSize:options.textSize * fontScale];
+    context.codeFont = [NSFont monospacedSystemFontOfSize:options.codeSize * fontScale weight:NSFontWeightRegular];
     SPDFRenderMarkdownBlocks(context, model.blocks);
     if (cancellationToken.isCancelled) return nil;
     return [[SPDFMarkdownRenderedDocument alloc] initWithString:context.output blocks:context.blocks];

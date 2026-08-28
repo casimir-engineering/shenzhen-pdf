@@ -125,8 +125,13 @@ int main(void) {
         SPDFMarkdownPaginationItem* printedCode = nil;
         for (SPDFMarkdownPaginationItem* item in printPlan.items)
             if (item.kind == SPDFMarkdownBlockKindCode) printedCode = item;
-        SPDFExpect(printedCode.lines.firstObject.attributedRange.length > 0,
-                   @"default print and export plans contain no code-control spacer");
+        SPDFMarkdownTextLine* printLead = printedCode.lines.firstObject;
+        SPDFMarkdownTextLine* printTail = printedCode.lines.lastObject;
+        SPDFExpect(printLead.attributedRange.length == 0 && fabs(printLead.height - 8.0) < 0.001 &&
+                       printTail.attributedRange.length == 0 && fabs(printTail.height - 8.0) < 0.001,
+                   @"print and export plans reserve 8pt code-box padding bands");
+        SPDFExpect(printedCode.lines.count == measuredCode.lines.count + 2,
+                   @"code-box padding wraps the measured code lines as one pagination item");
 
         SPDFMarkdownPageConfiguration* screenA4 = [A4 copy];
         screenA4.includesCodeLanguageControlSpacing = YES;
@@ -137,10 +142,66 @@ int main(void) {
         SPDFMarkdownTextLine* controlLine = screenCode.lines.firstObject;
         SPDFExpect(controlLine.attributedRange.length == 0 && fabs(controlLine.height - 34.0) < 0.001,
                    @"screen A4 opt-in reserves clear space between the language control and code");
-        SPDFExpect(screenCode.lines.count == printedCode.lines.count + 1,
+        SPDFExpect(fabs(screenCode.lines.lastObject.height - 8.0) < 0.001 &&
+                       screenCode.lines.lastObject.attributedRange.length == 0,
+                   @"screen plans keep the trailing code-box padding band");
+        SPDFExpect(screenCode.lines.count == printedCode.lines.count,
                    @"screen spacing preserves the code fence as one pagination item");
         SPDFExpect(screenPlan.configuration.includesCodeLanguageControlSpacing,
                    @"pagination-plan configuration copy preserves the screen opt-in");
+
+        SPDFMarkdownPageDecoration* screenBox = nil;
+        for (SPDFMarkdownPageDecoration* decoration in [screenPlan decorationsForPageIndex:0])
+            if (decoration.type == SPDFMarkdownPageDecorationTypeCodeBox) screenBox = decoration;
+        SPDFExpect(screenBox != nil &&
+                       fabs(NSHeight(screenBox.rect) - (measuredCode.measuredHeight + 34.0 + 8.0)) < 0.01 &&
+                       fabs(NSWidth(screenBox.rect) - NSWidth(A4.printableRect)) < 0.01,
+                   @"the screen code box covers both reserved spacer bands at full printable width");
+
+        SPDFMarkdownPaginationPlan* decorated = [paginator paginateItems:@[
+            SPDFItem(1, SPDFMarkdownBlockKindParagraph, 0, @[ @20 ]),
+            SPDFItem(2, SPDFMarkdownBlockKindCode, 0, @[ @10, @10 ]),
+            SPDFItem(3, SPDFMarkdownBlockKindHeading, 2, @[ @10 ]),
+            SPDFItem(4, SPDFMarkdownBlockKindHeading, 3, @[ @10 ]),
+        ]
+                                                           configuration:SPDFTestPage()];
+        SPDFExpect(decorated.pages.count == 1, @"decoration scenario fits one page");
+        NSArray<SPDFMarkdownPageDecoration*>* decorations = [decorated decorationsForPageIndex:0];
+        SPDFMarkdownPageDecoration* codeBox = nil;
+        SPDFMarkdownPageDecoration* headingRule = nil;
+        BOOL unexpectedRule = NO;
+        for (SPDFMarkdownPageDecoration* decoration in decorations) {
+            if (decoration.type == SPDFMarkdownPageDecorationTypeCodeBox) codeBox = decoration;
+            else if (decoration.blockIndex == 3) headingRule = decoration;
+            else unexpectedRule = YES;
+        }
+        SPDFExpect(decorations.count == 2 && !unexpectedRule,
+                   @"one code box and one H2 rule; level-3 headings and paragraphs get no decoration");
+        SPDFExpect(codeBox.blockIndex == 2 && fabs(NSMinX(codeBox.rect)) < 0.001 &&
+                       fabs(NSWidth(codeBox.rect) - 100) < 0.001 && fabs(NSMinY(codeBox.rect) - 20) < 0.001 &&
+                       fabs(NSHeight(codeBox.rect) - 36) < 0.001,
+                   @"the code box spans the printable width and covers the reserved padding bands");
+        SPDFExpect(headingRule != nil && headingRule.type == SPDFMarkdownPageDecorationTypeHeadingRule &&
+                       fabs(NSHeight(headingRule.rect) - 1) < 0.001 &&
+                       fabs(NSWidth(headingRule.rect) - 100) < 0.001 && NSMinY(headingRule.rect) > 56 &&
+                       NSMaxY(headingRule.rect) <= 66.001,
+                   @"H1/H2 headings get a 1px full-width underline rule beneath their last fragment");
+        SPDFExpect([decorated decorationsForPageIndex:1].count == 0,
+                   @"out-of-range decoration queries return an empty array");
+
+        SPDFMarkdownPaginationPlan* splitPlan = [paginator paginateItems:@[
+            SPDFItem(7, SPDFMarkdownBlockKindCode, 0, @[ @60, @60 ]),
+        ]
+                                                           configuration:SPDFTestPage()];
+        SPDFExpect(splitPlan.pages.count == 2, @"tall code splits across two pages");
+        NSArray<SPDFMarkdownPageDecoration*>* splitFirst = [splitPlan decorationsForPageIndex:0];
+        NSArray<SPDFMarkdownPageDecoration*>* splitSecond = [splitPlan decorationsForPageIndex:1];
+        SPDFExpect(splitFirst.count == 1 && splitSecond.count == 1 &&
+                       splitFirst.firstObject.type == SPDFMarkdownPageDecorationTypeCodeBox &&
+                       splitSecond.firstObject.type == SPDFMarkdownPageDecorationTypeCodeBox &&
+                       fabs(NSHeight(splitFirst.firstObject.rect) - 68) < 0.001 &&
+                       fabs(NSHeight(splitSecond.firstObject.rect) - 68) < 0.001,
+                   @"a code block continuing across pages gets one box per page portion");
     }
     return SPDFFinishTests(@"SPDFMarkdownPaginatorTests");
 }

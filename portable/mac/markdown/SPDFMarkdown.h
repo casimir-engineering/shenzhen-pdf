@@ -1,6 +1,7 @@
 #pragma once
 
 #import "SPDFMarkdownAsync.h"
+#import "SPDFMarkdownDecorations.h"
 #import "SPDFMarkdownDocument.h"
 #import "SPDFMarkdownLanguage.h"
 #import "SPDFMarkdownModel.h"

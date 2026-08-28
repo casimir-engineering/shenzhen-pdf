@@ -38,6 +38,15 @@ NS_ASSUME_NONNULL_BEGIN
                                                    completionQueue:(nullable dispatch_queue_t)completionQueue
                                                        completion:(void (^)(SPDFMarkdownRenderedDocument* _Nullable rendered,
                                                                             BOOL cancelled))completion;
+// Renders with caller-supplied options (for example a different fontScale)
+// without mutating the document's stored renderOptions. nil options means the
+// stored options.
+- (SPDFMarkdownCancellationToken*)renderWithOptions:(nullable SPDFMarkdownRenderOptions*)options
+                                   languageOverrides:(NSDictionary<NSNumber*, NSString*>*)languageOverrides
+                                           workQueue:(nullable dispatch_queue_t)workQueue
+                                      completionQueue:(nullable dispatch_queue_t)completionQueue
+                                          completion:(void (^)(SPDFMarkdownRenderedDocument* _Nullable rendered,
+                                                               BOOL cancelled))completion;
 @end
 
 NS_ASSUME_NONNULL_END
