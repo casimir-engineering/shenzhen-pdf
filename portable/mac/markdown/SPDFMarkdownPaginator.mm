@@ -9,7 +9,8 @@
 + (instancetype)A4PortraitConfiguration {
     SPDFMarkdownPageConfiguration* value = [SPDFMarkdownPageConfiguration new];
     value.paperSize = NSMakeSize(595.2756, 841.8898);
-    value.printableRect = NSMakeRect(36, 36, value.paperSize.width - 72, value.paperSize.height - 72);
+    // Word-standard one-inch margins all around.
+    value.printableRect = NSMakeRect(72, 72, value.paperSize.width - 144, value.paperSize.height - 144);
     value.headingKeepThreshold = 0.75;
     return value;
 }
