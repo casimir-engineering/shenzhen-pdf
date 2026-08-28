@@ -48,7 +48,7 @@
 
 - (void)handleChromeMouseDown:(NSEvent*)event {
     self.chromeEventCount += 1;
-    self.lastChromeAction = spdf_window_chrome_action(event.clickCount, NO, NO);
+    self.lastChromeAction = spdf_window_chrome_action(event.clickCount, NO, NO, NO);
 }
 
 @end
