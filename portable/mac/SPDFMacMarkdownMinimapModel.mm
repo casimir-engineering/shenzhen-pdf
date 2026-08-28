@@ -148,6 +148,16 @@ static BOOL SPDFMarkdownPixelSizeSatisfies(NSSize available, NSSize requested) {
     [_stateLock unlock];
 }
 
+- (void)updateSearchHighlightRects:(NSDictionary<NSNumber*, NSArray<NSValue*>*>*)rectsByPage {
+    NSAssert(NSThread.isMainThread, @"Search highlights are published on the main thread");
+    NSMutableArray<SPDFRenderedPage*>* pages = [NSMutableArray arrayWithCapacity:_pages.count];
+    for (SPDFRenderedPage* page in _pages) {
+        page.highlights = rectsByPage[@((NSUInteger)page.pageIndex)] ?: @[];
+        [pages addObject:page];
+    }
+    _pages = [pages copy];
+}
+
 - (NSImage*)renderThumbnailForPageIndex:(NSUInteger)pageIndex pixelSize:(NSSize)pixelSize {
     size_t width = (size_t)MAX(1.0, pixelSize.width);
     size_t height = (size_t)MAX(1.0, pixelSize.height);

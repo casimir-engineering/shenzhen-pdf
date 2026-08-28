@@ -51,6 +51,10 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownPageFitMode) {
 // PAGE-LOCAL coordinates (relative to that page's frame origin, flipped like
 // the canvas) — minimap marker geometry. Pages without a match are absent.
 - (NSDictionary<NSNumber*, NSArray<NSValue*>*>*)pageLocalRectsForRanges:(NSArray<NSValue*>*)ranges;
+// First glyph-run rect of the range in CANVAS coordinates (the space of
+// documentPageRects / documentVisibleRect). NSZeroRect when unmapped — search
+// match geometry for scrollbar markers and nearest-match selection.
+- (NSRect)firstRectForRange:(NSRange)range;
 - (void)centerAtDocumentPoint:(NSPoint)point;
 - (void)centerOnPageAtIndex:(NSInteger)pageIndex xFraction:(CGFloat)xFraction yFraction:(CGFloat)yFraction;
 - (void)scrollByDocumentDeltaX:(CGFloat)deltaX deltaY:(CGFloat)deltaY;

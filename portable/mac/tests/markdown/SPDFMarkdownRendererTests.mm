@@ -55,6 +55,53 @@ int main(void) {
         SPDFExpectSearchCorrespondence(document, @"Finished task");
         SPDFExpectSearchCorrespondence(document, @"Alpha");
         SPDFExpectSearchCorrespondence(document, @"Local diagram");
+
+        NSError* regexError = nil;
+        NSArray<SPDFMarkdownSearchMatch*>* regexMatches = [document.renderedDocument searchForQuery:@"fin\\w+ task"
+                                                                                      caseSensitive:NO
+                                                                                              regex:YES
+                                                                                  cancellationToken:nil
+                                                                                              error:&regexError];
+        SPDFExpect(regexError == nil && regexMatches.count > 0, @"regex search matches case-insensitively");
+        for (SPDFMarkdownSearchMatch* match in regexMatches)
+            SPDFExpect([[canonical substringWithRange:match.range] isEqualToString:@"Finished task"],
+                       @"regex match ranges exactly select the canonical text");
+        SPDFExpect([document.renderedDocument searchForQuery:@"fin\\w+ task"
+                                               caseSensitive:YES
+                                                       regex:YES
+                                           cancellationToken:nil
+                                                       error:&regexError].count == 0 && regexError == nil,
+                   @"case-sensitive regex search respects case like the plain path");
+        SPDFExpect([document.renderedDocument searchForQuery:@"Alpha"
+                                               caseSensitive:NO
+                                                       regex:NO
+                                           cancellationToken:nil
+                                                       error:&regexError].count ==
+                       [document.renderedDocument searchForQuery:@"Alpha" caseSensitive:NO].count,
+                   @"regex:NO passes through to the plain search");
+        SPDFMarkdownCancellationToken* cancelledToken = [SPDFMarkdownCancellationToken new];
+        [cancelledToken cancel];
+        NSArray* cancelledMatches = [document.renderedDocument searchForQuery:@"fin\\w+"
+                                                                caseSensitive:NO
+                                                                        regex:YES
+                                                            cancellationToken:cancelledToken
+                                                                        error:&regexError];
+        SPDFExpect(cancelledMatches != nil && cancelledMatches.count == 0 && regexError == nil,
+                   @"a cancelled regex search returns no matches, matching the plain contract");
+        SPDFExpect([document.renderedDocument searchForQuery:@"(["
+                                               caseSensitive:NO
+                                                       regex:YES
+                                           cancellationToken:nil
+                                                       error:&regexError] == nil && regexError != nil,
+                   @"an invalid regex pattern returns nil and reports the parse error");
+        regexError = nil;
+        NSString* oversizedQuery = [@"" stringByPaddingToLength:4097 withString:@"a" startingAtIndex:0];
+        SPDFExpect([document.renderedDocument searchForQuery:oversizedQuery
+                                               caseSensitive:NO
+                                                       regex:YES
+                                           cancellationToken:nil
+                                                       error:&regexError].count == 0 && regexError == nil,
+                   @"regex keeps the 4096-code-unit interactive query rejection");
         NSRange tableText = [canonical rangeOfString:@"Alpha\t42"];
         NSParagraphStyle* tableStyle = [document.renderedDocument.attributedString
             attribute:NSParagraphStyleAttributeName atIndex:tableText.location effectiveRange:nil];

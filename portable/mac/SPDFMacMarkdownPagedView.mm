@@ -30,6 +30,11 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     self.drawsBackground = YES;
     self.backgroundColor = NSColor.windowBackgroundColor;
     self.hasVerticalScroller = YES;
+    // Same find-marker scroller as the PDF document scroll view: the trough
+    // draws [reader findScrollbarMarkers] (delegate-routed to this session's
+    // matches while a Markdown tab is active).
+    SPDFFindMarkerScroller* markerScroller = [[SPDFFindMarkerScroller alloc] initWithFrame:NSZeroRect];
+    self.verticalScroller = markerScroller;
     self.hasHorizontalScroller = NO;
     self.autohidesScrollers = NO;
     self.usesPredominantAxisScrolling = NO;
@@ -91,6 +96,8 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
 - (void)setReader:(id<SPDFMacUIReader>)reader {
     [super setReader:reader];
     _canvas.reader = reader;
+    if ([self.verticalScroller isKindOfClass:SPDFFindMarkerScroller.class])
+        ((SPDFFindMarkerScroller*)self.verticalScroller).reader = reader;
 }
 - (NSUInteger)pageCount {
     return _canvas.pageCount;
@@ -141,6 +148,9 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
 }
 - (NSDictionary<NSNumber*, NSArray<NSValue*>*>*)pageLocalRectsForRanges:(NSArray<NSValue*>*)ranges {
     return [_canvas pageLocalRectsForRanges:ranges];
+}
+- (NSRect)firstRectForRange:(NSRange)range {
+    return [_canvas firstRectForRange:range];
 }
 - (NSString*)selectedText {
     NSRange range = self.selectedRange;

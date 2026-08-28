@@ -125,6 +125,31 @@ int main(void) {
             [NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
         assert(!cancelledCompletionCalled);
         assert(model.pendingThumbnailRequestCount == 0);
+
+        // Search highlights publish per page in page-local points, and `pages`
+        // is republished as a FRESH array of the same proxies so the minimap
+        // strip cache (keyed on the pages array identity) invalidates.
+        NSArray<SPDFRenderedPage*>* pagesBeforeHighlights = model.pages;
+        NSRect firstRect = NSMakeRect(72, 90, 120, 16);
+        NSRect thirdRect = NSMakeRect(60, 200, 80, 14);
+        [model updateSearchHighlightRects:@{
+            @0 : @[ [NSValue valueWithRect:firstRect] ],
+            @2 : @[ [NSValue valueWithRect:thirdRect] ],
+        }];
+        assert(model.pages != pagesBeforeHighlights);
+        assert(model.pages.count == pagesBeforeHighlights.count);
+        for (NSUInteger index = 0; index < model.pages.count; ++index)
+            assert(model.pages[index] == pagesBeforeHighlights[index]);
+        assert(model.pages[0].highlights.count == 1 &&
+               NSEqualRects(model.pages[0].highlights.firstObject.rectValue, firstRect));
+        assert(model.pages[1].highlights.count == 0);
+        assert(model.pages[2].highlights.count == 1 &&
+               NSEqualRects(model.pages[2].highlights.firstObject.rectValue, thirdRect));
+        assert(model.pages[0].minimapImage == firstImage); // proxies (and thumbnails) survive republication
+        NSArray<SPDFRenderedPage*>* pagesWithHighlights = model.pages;
+        [model updateSearchHighlightRects:nil];
+        assert(model.pages != pagesWithHighlights);
+        for (SPDFRenderedPage* page in model.pages) assert(page.highlights.count == 0);
         puts("SPDFMacMarkdownMinimapModelTests passed");
     }
     return 0;

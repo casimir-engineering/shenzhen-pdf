@@ -28,6 +28,19 @@ static NSMapTable<SPDFScrollView*, id<SPDFMacUIReader>>* TestScrollViewReaders(v
 }
 @end
 
+// The production marker drawing lives in SPDFMacUIHelpers.mm; focused test
+// executables only need the class and its reader wiring to exist.
+@implementation SPDFFindMarkerScroller {
+    __weak id<SPDFMacUIReader> _testReader;
+}
+- (id<SPDFMacUIReader>)reader {
+    return _testReader;
+}
+- (void)setReader:(id<SPDFMacUIReader>)reader {
+    _testReader = reader;
+}
+@end
+
 // Same clamp behavior as the production SPDFDocumentClipView in
 // SPDFMacUIHelpers.mm, which these focused executables do not link.
 @implementation SPDFDocumentClipView

@@ -55,6 +55,13 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @property(nonatomic, copy, nullable) void (^statusHandler)(NSString* status);
 @property(nonatomic, copy, nullable) void (^searchUpdateHandler)
     (NSUInteger count, NSInteger currentIndex, BOOL searching);
+// Fired by next/previous/explicit match jumps (never by searchUpdateHandler's
+// search lifecycle), so index-only changes can refresh controls without
+// rebuilding the sidebar — the PDF jump path's split.
+@property(nonatomic, copy, nullable) void (^matchIndexChangedHandler)(NSInteger currentIndex, NSUInteger count);
+// Human-readable engine failure from the last completed search (an invalid
+// regex pattern); nil after a successful search or clear.
+@property(nonatomic, readonly, copy, nullable) NSString* searchErrorDescription;
 @property(nonatomic, copy, nullable) void (^viewportUpdateHandler)
     (NSInteger pageIndex, CGFloat zoom, SPDFMacMarkdownPageFitMode fitMode);
 
@@ -73,10 +80,6 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
                 completion:(void (^)(BOOL success, NSError* _Nullable error))completion;
 - (void)deactivate;
 - (void)cancelAllOperations;
-- (void)searchForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex;
-- (void)clearSearch;
-- (void)moveToNextMatch:(BOOL)forward;
-- (void)goToSearchMatchAtIndex:(NSInteger)matchIndex;
 - (BOOL)scrollToHeadingAnchor:(NSString*)anchor;
 - (void)navigateToAnchorWhenReady:(NSString*)anchor;
 - (void)showLanguagePickerForCodeBlock:(NSUInteger)blockIndex parentWindow:(NSWindow*)window;
@@ -96,6 +99,32 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 - (void)magnifyByDelta:(CGFloat)delta centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)magnifyByDelta:(CGFloat)delta centeredAtDocumentPoint:(NSPoint)documentPoint;
 - (void)noteExternalScrollPositionChanged;
+@end
+
+// Implemented in SPDFMacMarkdownSession+Search.mm: the PDF-parity find half of
+// the session (nearest-match selection, centered reveal with the animated red
+// flash, regex support, and scrollbar trough markers).
+@interface SPDFMacMarkdownSession (Search)
+// Convenience for the full search below: plain (non-regex) query, no
+// nearest-match preference, revealing the selected match.
+- (void)searchForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex;
+// PDF-parity search. preferredIndex < 0 means "no explicit target": the match
+// nearest the current viewport is selected when jumpToNearest is set, else the
+// first match. reveal == NO keeps the viewport still (no scroll, no flash) —
+// the toolbar's non-revealing restore path.
+- (void)searchForQuery:(NSString*)query
+                 regex:(BOOL)regex
+        preferredIndex:(NSInteger)preferredIndex
+         jumpToNearest:(BOOL)jumpToNearest
+                reveal:(BOOL)reveal;
+- (void)clearSearch;
+- (void)moveToNextMatch:(BOOL)forward;
+- (void)goToSearchMatchAtIndex:(NSInteger)matchIndex;
+// PDF-parity scrollbar trough markers: one {fraction, active} entry per search
+// match (fraction = match center Y / canvas height), the shape
+// [reader findScrollbarMarkers] serves to SPDFFindMarkerScroller.
+- (NSArray<NSDictionary*>*)searchScrollbarMarkers;
+- (void)invalidateSearchScrollbarMarkers;
 @end
 
 NS_ASSUME_NONNULL_END

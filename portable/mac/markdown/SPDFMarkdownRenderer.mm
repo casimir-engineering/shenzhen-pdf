@@ -231,8 +231,52 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     return cancellationToken.isCancelled ? @[] : matches;
 }
 
+// NSRegularExpression over the canonical text. NSMatchingReportProgress gives
+// the block periodic control between matches, so cancellation is honored at a
+// cadence comparable to the plain path's per-chunk checks.
+- (NSArray<SPDFMarkdownSearchMatch*>*)regexSearchForQuery:(NSString*)query
+                                            caseSensitive:(BOOL)caseSensitive
+                                                canonical:(NSString*)canonical
+                                        cancellationToken:(SPDFMarkdownCancellationToken*)cancellationToken
+                                                    error:(NSError**)error {
+    NSRegularExpressionOptions options = caseSensitive ? 0 : NSRegularExpressionCaseInsensitive;
+    NSRegularExpression* expression = [NSRegularExpression regularExpressionWithPattern:query
+                                                                                 options:options
+                                                                                   error:error];
+    if (!expression) return nil;
+    NSMutableArray<SPDFMarkdownSearchMatch*>* matches = [NSMutableArray array];
+    [expression enumerateMatchesInString:canonical
+                                 options:NSMatchingReportProgress
+                                   range:NSMakeRange(0, canonical.length)
+                              usingBlock:^(NSTextCheckingResult* result, NSMatchingFlags flags, BOOL* stop) {
+                                (void)flags;
+                                if (cancellationToken.isCancelled) {
+                                    *stop = YES;
+                                    return;
+                                }
+                                if (result.range.length == 0) return;
+                                [self appendSearchMatch:result.range canonical:canonical matches:matches];
+                              }];
+    return cancellationToken.isCancelled ? @[] : matches;
+}
+
 - (NSArray<SPDFMarkdownSearchMatch*>*)searchForQuery:(NSString*)query caseSensitive:(BOOL)caseSensitive {
     return [self searchForQuery:query caseSensitive:caseSensitive cancellationToken:nil];
+}
+- (NSArray<SPDFMarkdownSearchMatch*>*)searchForQuery:(NSString*)query
+                                       caseSensitive:(BOOL)caseSensitive
+                                               regex:(BOOL)regex
+                                   cancellationToken:(SPDFMarkdownCancellationToken*)cancellationToken
+                                               error:(NSError**)error {
+    if (error) *error = nil;
+    if (!regex) return [self searchForQuery:query caseSensitive:caseSensitive cancellationToken:cancellationToken];
+    static const NSUInteger maximumInteractiveQueryLength = 4096;
+    if (query.length == 0 || query.length > maximumInteractiveQueryLength) return @[];
+    return [self regexSearchForQuery:query
+                       caseSensitive:caseSensitive
+                           canonical:self.attributedString.string
+                   cancellationToken:cancellationToken
+                               error:error];
 }
 - (NSArray<SPDFMarkdownSearchMatch*>*)searchForQuery:(NSString*)query
                                        caseSensitive:(BOOL)caseSensitive

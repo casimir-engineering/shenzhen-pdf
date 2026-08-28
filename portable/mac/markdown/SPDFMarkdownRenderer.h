@@ -80,6 +80,16 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 - (NSArray<SPDFMarkdownSearchMatch*>*)searchForQuery:(NSString*)query
                                        caseSensitive:(BOOL)caseSensitive
                                    cancellationToken:(nullable SPDFMarkdownCancellationToken*)cancellationToken;
+// Superset of the plain search with an NSRegularExpression path (regex == YES).
+// Result shape, non-overlapping semantics, the interactive 4096-code-unit query
+// cap, and the cancellation contract (cancelled searches return @[]) match the
+// plain path; zero-length regex matches are skipped. An INVALID pattern is the
+// one case that returns nil, with the parse failure in `error`.
+- (nullable NSArray<SPDFMarkdownSearchMatch*>*)searchForQuery:(NSString*)query
+                                                caseSensitive:(BOOL)caseSensitive
+                                                        regex:(BOOL)regex
+                                            cancellationToken:(nullable SPDFMarkdownCancellationToken*)cancellationToken
+                                                        error:(NSError* _Nullable* _Nullable)error;
 @end
 
 @interface SPDFMarkdownRenderer : NSObject
