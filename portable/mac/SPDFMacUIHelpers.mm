@@ -877,7 +877,7 @@ static void spdf_install_inactive_magnify_monitor(void) {
     if (!event) return;
     BOOL fullScreen = (self.styleMask & NSWindowStyleMaskFullScreen) != 0;
     BOOL presentation = self.reader && [self.reader documentViewInPresentationMode];
-    switch (spdf_window_chrome_action(event.clickCount, fullScreen, presentation)) {
+    switch (spdf_window_chrome_action_for_event(self, event, fullScreen, presentation)) {
         case SPDFWindowChromeActionDrag: {
             BOOL wasMovable = self.movable;
             self.movable = YES;

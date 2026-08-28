@@ -23,7 +23,7 @@ portable/linux/gtk4/spdf_updater.c	2369	legacy	Legacy signed updater; freeze gro
 portable/linux/gtk4/spdf_watcher.c	674	exception	Cohesive Linux file-watcher implementation; reload policy lives in spdf_watcher_logic.
 portable/linux/gtk4/spdf_window.c	1357	legacy	Legacy GTK window shell; freeze growth pending action/menu extraction.
 portable/linux/gtk4/tests/spdf_state_test.c	986	exception	Cohesive persistence regression suite; new scenarios should use focused fixtures.
-portable/mac/SPDFMacDelegatePrivate.h	603	exception	Existing private coordinator state contract; new state belongs in focused modules.
+portable/mac/SPDFMacDelegatePrivate.h	602	exception	Existing private coordinator state contract; new state belongs in focused modules.
 portable/mac/SPDFMacDocumentView.mm	888	exception	Cohesive AppKit document input and view implementation; rendering primitives live in SPDFMacPageRendering.
 portable/mac/SPDFMacMinimapView.mm	1014	legacy	Legacy AppKit minimap component; freeze growth pending layout/input split.
 portable/mac/SPDFMacPropertiesPanel.mm	555	exception	Cohesive AppKit document-properties panel.

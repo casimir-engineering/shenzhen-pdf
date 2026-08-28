@@ -57,8 +57,7 @@
     NSButton* _translateButton;
     NSSegmentedControl* _markdownFontSizeSegments;
     NSBox* _ocrSeparator;
-    NSButton* _findPrevButton;
-    NSButton* _findNextButton;
+    NSSegmentedControl* _findSegments;
     NSTextField* _findCountLabel;
     NSView* _toolbarSpacer;
     NSButton* _toolbarOverflowButton;

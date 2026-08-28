@@ -2569,6 +2569,13 @@ static void spdf_discard_launch_prerender(void) {
         [self zoomIn:sender];
 }
 
+- (void)findSegmentsClicked:(id)sender {
+    if (_findSegments.selectedSegment == 0)
+        [self findPrevious:sender];
+    else
+        [self findNext:sender];
+}
+
 - (void)markdownFontSizeSegmentsClicked:(id)sender {
     if (_markdownFontSizeSegments.selectedSegment == 0)
         [self decreaseMarkdownFontSize:sender];
@@ -2695,18 +2702,18 @@ static void spdf_discard_launch_prerender(void) {
         NSMenuItem* countItem = [menu addItemWithTitle:_findCountLabel.stringValue action:nil keyEquivalent:@""];
         countItem.enabled = NO;
     }
-    if ([hiddenViews containsObject:_findPrevButton])
+    if ([hiddenViews containsObject:_findSegments]) {
         [self addOverflowItemWithTitle:@"Find Previous"
                                 action:@selector(findPrevious:)
                                   menu:menu
                                  state:NSControlStateValueOff
-                               enabled:_findPrevButton.enabled];
-    if ([hiddenViews containsObject:_findNextButton])
+                               enabled:[_findSegments isEnabledForSegment:0]];
         [self addOverflowItemWithTitle:@"Find Next"
                                 action:@selector(findNext:)
                                   menu:menu
                                  state:NSControlStateValueOff
-                               enabled:_findNextButton.enabled];
+                               enabled:[_findSegments isEnabledForSegment:1]];
+    }
     if ([hiddenViews containsObject:_markdownFontSizeSegments]) {
         [self addOverflowItemWithTitle:@"Decrease Markdown Text Size"
                                 action:@selector(decreaseMarkdownFontSize:)
@@ -2776,7 +2783,7 @@ static void spdf_discard_launch_prerender(void) {
     NSArray<NSArray<NSView*>*>* groups = @[
         @[ _ocrButton, _translateButton, _ocrSeparator ],
         @[ _findCountLabel ],
-        @[ _findPrevButton, _findNextButton ],
+        @[ _findSegments ],
         @[ _findRegexCheckbox ],
         @[ _markdownFontSizeSegments ],
         @[ _fitModePopup, _zoomSegments ],
@@ -2789,8 +2796,7 @@ static void spdf_discard_launch_prerender(void) {
     [self updateMarkdownFontControls];
     BOOL hasQuery = _searchField.stringValue.length > 0;
     _findCountLabel.hidden = !hasQuery;
-    _findPrevButton.hidden = !hasQuery;
-    _findNextButton.hidden = !hasQuery;
+    _findSegments.hidden = !hasQuery;
     _toolbarOverflowButton.hidden = YES;
     [_toolbar layoutSubtreeIfNeeded];
 
@@ -2974,8 +2980,12 @@ static void spdf_discard_launch_prerender(void) {
                                  forOrientation:NSLayoutConstraintOrientationHorizontal];
     [_translateButton setContentCompressionResistancePriority:NSLayoutPriorityRequired
                                                forOrientation:NSLayoutConstraintOrientationHorizontal];
-    _findPrevButton = [self buttonWithTitle:@"<" action:@selector(findPrevious:)];
-    _findNextButton = [self buttonWithTitle:@">" action:@selector(findNext:)];
+    _findSegments = spdf_paired_toolbar_segments(
+        self, @selector(findSegmentsClicked:),
+        [NSImage imageWithSystemSymbolName:@"chevron.left" accessibilityDescription:@"Previous Match"],
+        [NSImage imageWithSystemSymbolName:@"chevron.right" accessibilityDescription:@"Next Match"]);
+    [_findSegments setToolTip:@"Previous match" forSegment:0];
+    [_findSegments setToolTip:@"Next match" forSegment:1];
     _minimapToggleButton = [[SPDFToolbarToggleButton alloc] initWithTitle:@"Map"
                                                                    target:self
                                                                    action:@selector(toggleMinimap:)];
@@ -2985,8 +2995,6 @@ static void spdf_discard_launch_prerender(void) {
     _findCountLabel.alignment = NSTextAlignmentCenter;
     _findCountLabel.textColor = NSColor.secondaryLabelColor;
     _findCountLabel.font = [NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
-    [_findPrevButton.widthAnchor constraintEqualToConstant:30].active = YES;
-    [_findNextButton.widthAnchor constraintEqualToConstant:30].active = YES;
     [_findCountLabel.widthAnchor constraintEqualToConstant:64].active = YES;
 
     _ocrSeparator = [[NSBox alloc] init];
@@ -3020,8 +3028,7 @@ static void spdf_discard_launch_prerender(void) {
     [_toolbar addArrangedSubview:_searchField];
     [_toolbar addArrangedSubview:_findRegexCheckbox];
     [_toolbar addArrangedSubview:_findCountLabel];
-    [_toolbar addArrangedSubview:_findPrevButton];
-    [_toolbar addArrangedSubview:_findNextButton];
+    [_toolbar addArrangedSubview:_findSegments];
     [_toolbar addArrangedSubview:_toolbarSpacer];
     [_toolbar addArrangedSubview:_toolbarOverflowButton];
     [_toolbar addArrangedSubview:_minimapToggleButton];
@@ -10488,8 +10495,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     }
     NSInteger pageCount = spdf_page_count(_doc);
     BOOL hasDoc = _doc != NULL;
-    [_pageSegments setEnabled:hasDoc && _pageIndex > 0 forSegment:0];
-    [_pageSegments setEnabled:hasDoc && _pageIndex + 1 < pageCount forSegment:1];
+    [self updatePageIndicatorControls];
     _sidebarToggleButton.enabled = hasDoc;
     _pageField.enabled = hasDoc;
     [_zoomSegments setEnabled:hasDoc forSegment:0];
@@ -10501,9 +10507,8 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     _translateButton.enabled = hasDoc && !_translationRunning && !_translationInstallRunning;
     _minimapToggleButton.enabled = hasDoc;
     [self updateFindControls];
-    _pageField.stringValue = hasDoc ? [NSString stringWithFormat:@"%ld", (long)_pageIndex + 1] : @"";
     _pageCountLabel.stringValue = [NSString stringWithFormat:@"/ %ld", (long)pageCount];
-    [self syncToolbarState];
+    [self syncToolbarState]; // ends with this sync's updateToolbarOverflow pass
 
     if (hasDoc) {
         NSString* displayName = _path.length ? [self displayNameForPathConsideringOpenTabs:_path]
@@ -10512,7 +10517,6 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         _statusLabel.stringValue = [NSString
             stringWithFormat:@"Page %ld of %ld    Zoom %.0f%%", (long)_pageIndex + 1, (long)pageCount, _zoom * 100.0];
     }
-    [self updateToolbarOverflow];
 }
 
 - (void)selectCurrentSidebarRow {
@@ -10562,28 +10566,24 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     if (!_findCountLabel) return;
     if (![self hasActiveDocument] || _searchField.stringValue.length == 0) {
         _findCountLabel.stringValue = @"";
-        return;
-    }
-    if (_findSearchInProgress) {
+    } else if (_findSearchInProgress) {
         _findCountLabel.stringValue = @"...";
-        return;
-    }
-    if (_findMatches.count == 0) {
+    } else if (_findMatches.count == 0) {
         _findCountLabel.stringValue = @"0 / 0";
-        return;
+    } else {
+        NSInteger current = _findMatchIndex >= 0 ? _findMatchIndex + 1 : 1;
+        _findCountLabel.stringValue =
+            [NSString stringWithFormat:@"%ld / %ld", (long)current, (long)_findMatches.count];
     }
-    NSInteger current = _findMatchIndex >= 0 ? _findMatchIndex + 1 : 1;
-    _findCountLabel.stringValue = [NSString stringWithFormat:@"%ld / %ld", (long)current, (long)_findMatches.count];
 }
 
 - (void)updateFindControls {
     BOOL hasMatches = _findMatches.count > 0;
     BOOL hasQuery = _searchField.stringValue.length > 0;
-    _findPrevButton.hidden = !hasQuery;
-    _findNextButton.hidden = !hasQuery;
+    _findSegments.hidden = !hasQuery;
     _findCountLabel.hidden = !hasQuery;
-    _findPrevButton.enabled = hasMatches;
-    _findNextButton.enabled = hasMatches;
+    [_findSegments setEnabled:hasMatches forSegment:0];
+    [_findSegments setEnabled:hasMatches forSegment:1];
     [self updateFindCountLabel];
     [self invalidateFindMarkers];
 }
