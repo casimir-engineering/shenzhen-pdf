@@ -30,7 +30,10 @@
             if (!line) {
                 NSAttributedString* lineString =
                     [attributedString attributedSubstringFromRange:fragment.attributedRange];
-                line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
+                // The shared constructor keeps inline-attachment advances in
+                // sync with the NSLayoutManager measurement pass, so text
+                // after an image x-maps at the image's real width.
+                line = SPDFMarkdownCreateFragmentLine(lineString);
                 // The fragment band (fragment.height) includes line and
                 // paragraph spacing, so band-tall rects looked vertically
                 // oversized next to the PDF view's glyph-hugging highlights.
