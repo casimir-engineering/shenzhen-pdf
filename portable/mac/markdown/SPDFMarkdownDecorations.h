@@ -56,7 +56,7 @@ FOUNDATION_EXPORT const CGFloat SPDFMarkdownCodeBoxOuterMargin;
 + (NSColor*)thematicBreakRuleColor;
 // Table chrome roles, Primer-flavored like the code box.
 + (NSColor*)tableGridColor;        // #D1D9E0 1px hairline grid
-+ (NSColor*)tableHeaderFillColor;  // #F6F8FA header-row band
++ (NSColor*)tableHeaderFillColor;  // #EAEEF2 header-row band, darker than the stripe
 + (NSColor*)tableStripeFillColor;  // #FAFBFC alternating body rows
 + (NSColor*)printCodeBoxFillColor;
 + (NSColor*)printCodeBoxStrokeColor;

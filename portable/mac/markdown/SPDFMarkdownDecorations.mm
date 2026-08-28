@@ -32,7 +32,7 @@ const CGFloat SPDFMarkdownCodeBoxOuterMargin = 14.0;
 + (NSColor*)headingRuleColor { return SPDFRGB(0xD1D9E0); }
 + (NSColor*)thematicBreakRuleColor { return SPDFRGB(0xD1D9E0); }
 + (NSColor*)tableGridColor { return SPDFRGB(0xD1D9E0); }
-+ (NSColor*)tableHeaderFillColor { return SPDFRGB(0xF6F8FA); }
++ (NSColor*)tableHeaderFillColor { return SPDFRGB(0xEAEEF2); }
 + (NSColor*)tableStripeFillColor { return SPDFRGB(0xFAFBFC); }
 + (NSColor*)codeControlFillColor { return SPDFRGB(0xEAEEF2); }
 + (NSColor*)codeControlStrokeColor { return SPDFRGB(0xD0D7DE); }
@@ -56,7 +56,7 @@ const CGFloat SPDFMarkdownCodeBoxOuterMargin = 14.0;
 }
 @end
 
-static const CGFloat kSPDFMarkdownHeadingRuleGap = 6.0;
+static const CGFloat kSPDFMarkdownHeadingRuleGap = 9.0;
 
 NSArray<SPDFMarkdownPageDecoration*>* SPDFMarkdownDecorationsForPage(SPDFMarkdownPage* page,
                                                                      NSArray<SPDFMarkdownPaginationItem*>* items,

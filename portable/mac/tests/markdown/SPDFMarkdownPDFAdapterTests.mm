@@ -269,8 +269,8 @@ int main(void) {
                                                     lround(probeTop + plainRowMidY), plainRGB);
         BOOL stripeSampled = SPDFPDFPixelOnFirstPage(tablePDF, lround(probeX),
                                                      lround(probeTop + NSMidY(stripeBand.rect)), stripeRGB);
-        SPDFExpect(headerSampled && SPDFPixelNear(headerRGB, 246, 248, 250, 3),
-                   @"the exported header row paints the concrete #F6F8FA band");
+        SPDFExpect(headerSampled && SPDFPixelNear(headerRGB, 234, 238, 242, 3),
+                   @"the exported header row paints the concrete #EAEEF2 band, darker than the stripe");
         SPDFExpect(plainSampled && SPDFPixelNear(plainRGB, 255, 255, 255, 2),
                    @"an unstriped body row stays paper white in the exported PDF");
         SPDFExpect(stripeSampled && SPDFPixelNear(stripeRGB, 250, 251, 252, 2),
