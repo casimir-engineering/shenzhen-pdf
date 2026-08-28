@@ -11107,14 +11107,13 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 - (void)copySelection:(id)sender {
     (void)sender;
     if ([self isMarkdownActive]) {
-        NSString* selected = [self markdownSelectedText];
-        if (selected.length == 0)
+        // Image-aware copy: see the canvas (Copy) category for the contract.
+        NSString* (^collapse)(NSString*) = nil;
+        if (_collapseWhitespaceWhenCopyingText)
+            collapse = ^NSString*(NSString* text) { return SPDFTextByCollapsingWhitespace(text); };
+        if (![self.activeMarkdownSession copySelectionToPasteboard:NSPasteboard.generalPasteboard
+                                                plainTextTransform:collapse])
             NSBeep();
-        else {
-            [NSPasteboard.generalPasteboard clearContents];
-            NSString* text = _collapseWhitespaceWhenCopyingText ? SPDFTextByCollapsingWhitespace(selected) : selected;
-            [NSPasteboard.generalPasteboard setString:text forType:NSPasteboardTypeString];
-        }
         return;
     }
     if (_selectedText.length == 0) {
@@ -16769,8 +16768,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                (markdown || (_doc && spdf_has_permission(_doc, 'c'))) && !_translationRunning &&
                !_translationInstallRunning;
     if (action == @selector(copySelection:))
-        return
-            [self trimmedSelectedTextForCommand].length > 0 && (markdown || (_doc && spdf_has_permission(_doc, 'c')));
+        return (markdown || (_doc && spdf_has_permission(_doc, 'c'))) &&
+               ([self trimmedSelectedTextForCommand].length > 0 ||
+                (markdown && [self.activeMarkdownSession selectionContainsImage]));
     if (action == @selector(addComment:)) return hasDoc && (_selectedText.length > 0 || _contextPageIndex >= 0);
     if (action == @selector(editComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(deleteComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;

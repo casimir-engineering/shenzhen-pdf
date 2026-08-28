@@ -49,6 +49,7 @@ $PORTABLE/mac/SPDFMacCursorRegions.mm
 $PORTABLE/mac/SPDFMacFindNearest.mm
 $PORTABLE/mac/SPDFMacMarkdownPanController.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas.mm
+$PORTABLE/mac/SPDFMacMarkdownPageCanvas+Copy.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Cursor.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Decorations.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Navigation.mm
@@ -71,6 +72,7 @@ for TEST in \
     SPDFMacMarkdownKeyboardPolicyTests \
     SPDFMacMarkdownRoutingTests \
     SPDFMacMarkdownPagedViewTests \
+    SPDFMacMarkdownCopySelectionTests \
     SPDFMacMarkdownMinimapModelTests \
     SPDFMacMarkdownSidebarModelTests \
     SPDFMacMarkdownSessionTests \

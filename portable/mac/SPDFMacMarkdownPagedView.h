@@ -37,6 +37,14 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownPageFitMode) {
                       attributedString:(NSAttributedString*)attributedString NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
 - (instancetype)initWithCoder:(NSCoder*)coder NS_UNAVAILABLE;
+// Image-aware copy of the current selection (see the canvas's (Copy)
+// category): an image-only selection writes the attachment's image at its
+// natural decoded size, a mixed selection plain text plus RTFD, plain text
+// otherwise. `transform` maps the plain text before it is written (the
+// collapse-whitespace preference hook); NO when nothing was written.
+- (BOOL)selectionContainsImage;
+- (BOOL)writeSelectionToPasteboard:(NSPasteboard*)pasteboard
+                plainTextTransform:(NSString* (^_Nullable)(NSString* text))transform;
 - (void)setZoom:(CGFloat)zoom centeredAtPoint:(NSPoint)point;
 - (void)zoomByFactor:(CGFloat)factor;
 - (void)applyFitMode:(SPDFMacMarkdownPageFitMode)fitMode;

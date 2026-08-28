@@ -16,6 +16,12 @@
 // YES while a left-button selection drag is in flight (forces the I-beam in
 // updateCursorForPointInWindow:, matching the PDF view's selection drag).
 @property(nonatomic, readonly, getter=isDraggingSelection) BOOL draggingSelection;
+// Double-click word selection: the word containing `index`, else the image
+// attachment character at (or just before — CTLine hit-testing returns the
+// caret index, which lands after the character for a right-half click) the
+// index, so double-clicking an image selects exactly its attachment
+// character. Zero length when neither resolves.
+- (NSRange)wordRangeAtIndex:(NSUInteger)index;
 @end
 
 // Implemented in SPDFMacMarkdownPageCanvas+Pan.mm: the lazily created hand-pan

@@ -114,6 +114,12 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 - (NSString*)selectedText {
     return _pagedView.selectedText ?: @"";
 }
+- (BOOL)selectionContainsImage {
+    return [_pagedView selectionContainsImage];
+}
+- (BOOL)copySelectionToPasteboard:(NSPasteboard*)pasteboard plainTextTransform:(NSString* (^)(NSString*))transform {
+    return [_pagedView writeSelectionToPasteboard:pasteboard plainTextTransform:transform];
+}
 - (NSUInteger)pageCount {
     return _pagedView.pageCount;
 }
