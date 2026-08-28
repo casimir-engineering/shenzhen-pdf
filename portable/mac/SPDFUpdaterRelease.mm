@@ -148,27 +148,26 @@ NSAlert* spdf_make_update_available_alert(NSString* tag, NSString* runningVersio
         [NSString stringWithFormat:@"Shenzhen PDF %@ is available — you have %@. Would you like to install it now?",
                                    tag, runningVersion];
     NSString* plainNotes = spdf_format_release_notes_for_alert(releaseBody);
-    // The full body stays in the informative text: NSAlert keeps its roomy
-    // legacy layout for long informative text, and the attributed setter
-    // preserves the notes' bold spans at the standard informative size. A
-    // paragraph style caps the wrap width so the window stays narrow and
-    // grows in height instead. If the attributed seam ever goes away, the
-    // plain text below still renders the identical content.
+    // The full body stays in the informative text: long informative text keeps
+    // NSAlert's wide layout with horizontal buttons (an accessory view flips
+    // it to the narrow stacked style — deliberately avoided), the window's
+    // height adapts to the wrapped content, and the attributed setter
+    // preserves the notes' bold spans one point above the standard informative
+    // size for readability. If the attributed seam ever goes away, the plain
+    // text below still renders the identical content.
     alert.informativeText = plainNotes.length ? [sentence stringByAppendingFormat:@"\n\n%@", plainNotes] : sentence;
-    NSAttributedString* notes = spdf_attributed_release_notes_for_alert(releaseBody, NSFont.smallSystemFontSize);
+    CGFloat noteSize = NSFont.smallSystemFontSize + 1;
+    NSAttributedString* notes = spdf_attributed_release_notes_for_alert(releaseBody, noteSize);
     if (notes.length) {
         NSMutableAttributedString* body = [[NSMutableAttributedString alloc]
             initWithString:[sentence stringByAppendingString:@"\n\n"]
-                attributes:@{NSFontAttributeName : [NSFont systemFontOfSize:NSFont.smallSystemFontSize]}];
+                attributes:@{NSFontAttributeName : [NSFont systemFontOfSize:noteSize]}];
         [body appendAttributedString:notes];
         @try {
             [alert setValue:body forKey:@"attributedInformativeText"];
         } @catch (NSException* exception) {
             // Plain informativeText above remains the complete fallback.
         }
-        // A zero-height accessory pins the layout width; text wraps to it and
-        // the alert adapts in height.
-        alert.accessoryView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 0)];
     }
     [alert addButtonWithTitle:@"Install and Relaunch"];
     [alert addButtonWithTitle:@"Skip This Version"];
