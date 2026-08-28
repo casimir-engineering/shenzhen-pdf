@@ -1,3 +1,4 @@
+#import "SPDFMarkdownDecorations.h"
 #import "SPDFMarkdownRenderInternal.h"
 
 @implementation SPDFMarkdownRenderContext
@@ -91,12 +92,12 @@ static void SPDFRenderRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
 
 static NSColor* SPDFTokenColor(SPDFMarkdownSyntaxTokenKind kind) {
     switch (kind) {
-        case SPDFMarkdownSyntaxTokenComment: return NSColor.systemGreenColor;
-        case SPDFMarkdownSyntaxTokenString: return NSColor.systemRedColor;
-        case SPDFMarkdownSyntaxTokenNumber: return NSColor.systemBlueColor;
-        case SPDFMarkdownSyntaxTokenKey: return NSColor.systemTealColor;
-        case SPDFMarkdownSyntaxTokenMarkup: return NSColor.systemOrangeColor;
-        case SPDFMarkdownSyntaxTokenKeyword: return NSColor.systemPurpleColor;
+        case SPDFMarkdownSyntaxTokenComment: return SPDFMarkdownTheme.syntaxCommentColor;
+        case SPDFMarkdownSyntaxTokenString: return SPDFMarkdownTheme.syntaxStringColor;
+        case SPDFMarkdownSyntaxTokenNumber: return SPDFMarkdownTheme.syntaxNumberColor;
+        case SPDFMarkdownSyntaxTokenKey: return SPDFMarkdownTheme.syntaxKeyColor;
+        case SPDFMarkdownSyntaxTokenMarkup: return SPDFMarkdownTheme.syntaxMarkupColor;
+        case SPDFMarkdownSyntaxTokenKeyword: return SPDFMarkdownTheme.syntaxKeywordColor;
     }
 }
 
@@ -230,8 +231,15 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
                            BOOL record) {
     NSUInteger start = context.output.length;
     if (block.kind == SPDFMarkdownBlockKindThematicBreak) {
-        SPDFAppend(context, @"────────────────\n",
-                   @{NSForegroundColorAttributeName: context.options.secondaryTextColor});
+        // The break contributes an invisible blank line that reserves layout
+        // space; the visible hairline is a page decoration
+        // (SPDFMarkdownPageDecorationTypeThematicBreakRule), so it prints as a
+        // real rule instead of a run of box-drawing characters.
+        SPDFAppend(context, @"\n",
+                   @{
+                       NSFontAttributeName: context.bodyFont,
+                       NSForegroundColorAttributeName: context.options.secondaryTextColor,
+                   });
     } else {
         SPDFRenderRuns(context, block);
         if (![context.output.string hasSuffix:@"\n"]) SPDFAppend(context, @"\n", @{});
@@ -239,11 +247,22 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
     NSRange range = NSMakeRange(start, context.output.length - start);
     NSMutableParagraphStyle* style = SPDFStyle(context, depth);
     if (block.kind == SPDFMarkdownBlockKindHeading) {
-        CGFloat size = MAX(context.options.textSize + 2,
-                           context.options.textSize + (7 - MIN(block.level, 6)) * 2) * SPDFScale(context);
-        [context.output addAttribute:NSFontAttributeName value:[NSFont boldSystemFontOfSize:size] range:range];
-        style.paragraphSpacingBefore = (block.level <= 2 ? 20 : 12) * SPDFScale(context);
-        style.paragraphSpacing = 8 * SPDFScale(context);
+        // GitHub-style em ladder on the body size, set in semibold — full bold
+        // reads heavy at display sizes. H6 drops below body and goes muted,
+        // Primer's caption-like smallest heading.
+        static const CGFloat ratios[] = {1.75, 1.5, 1.25, 1.1, 1.0, 0.9};
+        NSUInteger level = MIN(MAX(block.level, (NSUInteger)1), (NSUInteger)6);
+        CGFloat size = context.options.textSize * ratios[level - 1] * SPDFScale(context);
+        [context.output addAttribute:NSFontAttributeName
+                               value:[NSFont systemFontOfSize:size weight:NSFontWeightSemibold]
+                               range:range];
+        if (level == 6) {
+            [context.output addAttribute:NSForegroundColorAttributeName
+                                   value:context.options.secondaryTextColor
+                                   range:range];
+        }
+        style.paragraphSpacingBefore = (level <= 2 ? 22 : 16) * SPDFScale(context);
+        style.paragraphSpacing = (level <= 2 ? 10 : 8) * SPDFScale(context);
     } else if (block.kind == SPDFMarkdownBlockKindCode) {
         // Fenced code flows as one continuous block: tight line spacing, no
         // inter-line paragraph gaps, and a 12pt inset so the text sits inside
@@ -275,7 +294,26 @@ static void SPDFRenderBlock(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
     } else if (block.kind == SPDFMarkdownBlockKindTable) {
         SPDFRenderTable(context, block, depth, record);
     } else if (block.kind == SPDFMarkdownBlockKindBlockQuote) {
+        // Quoted prose reads muted, GitHub-style. Only runs still in the plain
+        // body color are recolored, so links, inline code chips, and syntax
+        // tokens inside the quote keep their own roles.
+        NSUInteger start = context.output.length;
         for (SPDFMarkdownBlock* child in block.children) SPDFRenderBlock(context, child, depth + 1, record);
+        NSRange quoteRange = NSMakeRange(start, context.output.length - start);
+        NSMutableArray<NSValue*>* bodyRanges = [NSMutableArray array];
+        [context.output enumerateAttribute:NSForegroundColorAttributeName
+                                   inRange:quoteRange
+                                   options:0
+                                usingBlock:^(NSColor* color, NSRange colorRange, BOOL* stop) {
+                                  (void)stop;
+                                  if ([color isEqual:context.options.textColor])
+                                      [bodyRanges addObject:[NSValue valueWithRange:colorRange]];
+                                }];
+        for (NSValue* value in bodyRanges) {
+            [context.output addAttribute:NSForegroundColorAttributeName
+                                   value:context.options.quoteColor
+                                   range:value.rangeValue];
+        }
     } else if (block.kind == SPDFMarkdownBlockKindCallout) {
         NSUInteger start = context.output.length;
         SPDFAppend(context, [(block.calloutTitle ?: block.calloutKind ?: @"Note") stringByAppendingString:@"\n"],
