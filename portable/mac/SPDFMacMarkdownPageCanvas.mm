@@ -306,6 +306,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
                 [self addCursorRect:[self codeLanguageControlHitRectForFragment:fragment pageFrame:pageFrame]
                              cursor:NSCursor.pointingHandCursor];
         }
+        [self addLinkCursorRectsForPage:page pageFrame:pageFrame];
     }
 }
 
