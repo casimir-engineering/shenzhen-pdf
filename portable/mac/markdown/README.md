@@ -115,7 +115,15 @@ text attribute — it is drawn as a page decoration behind the code (inline code
 spans keep their subtle background chip). `SPDFMarkdownTheme` in
 `SPDFMarkdownDecorations.h` exposes the shared box/rule colors, both as
 appearance-dynamic colors for the screen canvas and as the concrete light
-palette used on paper. `SPDFMarkdownRenderOptions.fontScale` (clamped to
+palette used on paper. An images-only paragraph (one or more images with nothing but
+whitespace/soft breaks between them) renders each image as its own centered
+figure, GitHub-style: the attachment centered on its own line with the alt
+text as a muted centered caption line below it, consecutive images stacking as
+independent figures that paginate line by line. Pending remote placeholder
+boxes and `[Image: alt]` text placeholders follow the same figure layout. An
+image genuinely mixed into sentence text keeps inline flow and shows no
+visible alt text — the alt survives only as the attachment's tooltip/target
+metadata. `SPDFMarkdownRenderOptions.fontScale` (clamped to
 [0.5, 3.0]) uniformly scales fonts and vertical spacing without touching indent
 constants or image budgets, and
 `renderWithOptions:languageOverrides:workQueue:completionQueue:completion:` on

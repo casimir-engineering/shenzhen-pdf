@@ -32,11 +32,14 @@ CGFloat SPDFMarkdownRenderScale(SPDFMarkdownRenderContext* context);
 // alt-text captions (SPDFMarkdownInlineRenderer.mm).
 void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block);
 
-// A standalone image paragraph (an image that is its paragraph's only
-// meaningful content) renders GitHub-style as a centered figure with the alt
-// text as a centered caption line below the artwork. The roles are recorded on
-// the affected characters so the leaf renderer can re-derive the centered
-// paragraph styles after it applies the block's base style to the whole range.
+// An images-only paragraph (images are its only meaningful content — one or
+// several, separated by nothing but whitespace/soft breaks) renders each image
+// GitHub-style as its own centered figure with the alt text as a centered
+// caption line below the artwork; consecutive images stack as independent
+// figures. Images mixed into sentence text keep inline flow and show no
+// visible alt text. The roles are recorded on the affected characters so the
+// leaf renderer can re-derive the centered paragraph styles after it applies
+// the block's base style to the whole range.
 typedef NS_ENUM(NSInteger, SPDFMarkdownImageLayoutRole) {
     SPDFMarkdownImageLayoutRoleFigure = 1,
     SPDFMarkdownImageLayoutRoleCaption = 2,

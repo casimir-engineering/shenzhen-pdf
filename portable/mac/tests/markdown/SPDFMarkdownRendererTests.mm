@@ -21,28 +21,6 @@ static void SPDFExpectSearchCorrespondence(SPDFMarkdownDocument* document, NSStr
     }
 }
 
-static NSURL* SPDFCreateImageDocument(void) {
-    NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
-    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES
-                                               attributes:nil error:nil];
-    NSBitmapImageRep* bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
-                                                                      pixelsWide:4 pixelsHigh:2 bitsPerSample:8
-                                                                    samplesPerPixel:4 hasAlpha:YES isPlanar:NO
-                                                                    colorSpaceName:NSCalibratedRGBColorSpace
-                                                                       bytesPerRow:0 bitsPerPixel:0];
-    memset(bitmap.bitmapData, 0x7f, bitmap.bytesPerRow * bitmap.pixelsHigh);
-    NSData* PNG = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-    [PNG writeToFile:[directory stringByAppendingPathComponent:@"local.png"] atomically:YES];
-    [PNG writeToFile:[directory stringByAppendingPathComponent:@"second.png"] atomically:YES];
-    NSMutableString* source = [NSMutableString stringWithString:@"# Image\n\n"];
-    for (NSUInteger index = 0; index < 200; ++index)
-        [source appendString:@"![Local pixels](local.png)\n\n"];
-    [source appendString:@"![Budgeted out](second.png)\n"];
-    [source writeToFile:[directory stringByAppendingPathComponent:@"image.md"]
-             atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    return [NSURL fileURLWithPath:[directory stringByAppendingPathComponent:@"image.md"]];
-}
-
 int main(void) {
     @autoreleasepool {
         NSError* error = nil;
@@ -229,92 +207,8 @@ int main(void) {
             attribute:SPDFMarkdownCodeLanguageAttribute atIndex:unknown.attributedRange.location effectiveRange:nil];
         SPDFExpect([language isEqualToString:@"python"], @"picker override re-renders an untagged fence");
 
-        SPDFMarkdownRenderOptions* imageOptions = SPDFMarkdownRenderOptions.defaultOptions;
-        imageOptions.maximumDecodedImagePixels = 8;
-        SPDFMarkdownDocument* imageDocument = [SPDFMarkdownDocument documentWithURL:SPDFCreateImageDocument()
-                                                                             options:imageOptions error:&error];
-        __block NSImage* sharedImage = nil;
-        __block NSUInteger attachmentCount = 0;
-        __block BOOL allAttachmentsShared = YES;
-        [imageDocument.renderedDocument.attributedString enumerateAttribute:NSAttachmentAttributeName
-                                                                     inRange:NSMakeRange(0, imageDocument.renderedDocument.attributedString.length)
-                                                                     options:0
-                                                                  usingBlock:^(id value, NSRange range, BOOL* stop) {
-            (void)stop;
-            NSTextAttachment* attachment = value;
-            if (attachment && range.length == 1) {
-                ++attachmentCount;
-                if (!sharedImage) sharedImage = attachment.image;
-                else if (sharedImage != attachment.image) allAttachmentsShared = NO;
-                SPDFExpect(attachment.bounds.size.width <= 480 && attachment.bounds.size.height <= 320,
-                           @"each cached image remains constrained to render bounds");
-            }
-        }];
-        SPDFExpect(attachmentCount == 200 && allAttachmentsShared,
-                   @"repeated image references reuse one decoded image rather than multiplying memory");
-        SPDFExpect([imageDocument.renderedDocument.attributedString.string containsString:@"[Image: Budgeted out]"],
-                   @"an image beyond the aggregate pixel budget becomes a graceful placeholder");
-        SPDFExpectSearchCorrespondence(imageDocument, @"Local pixels");
-
-        // Standalone images render as GitHub-style figures: the alt text is a
-        // muted caption on its own centered line below the artwork (never
-        // beside it), and the attachment paragraph centers within the page.
-        NSAttributedString* figureString = imageDocument.renderedDocument.attributedString;
-        NSRange figureRange = [figureString.string rangeOfString:@"\uFFFC\nLocal pixels"];
-        SPDFExpect(figureRange.location != NSNotFound,
-                   @"a standalone image's alt text renders on its own line below the attachment");
-        SPDFExpect((NSUInteger)[figureString.string componentsSeparatedByString:@"Local pixels"].count == 201,
-                   @"alt text still appears exactly once per image");
-        NSUInteger captionIndex = figureRange.location + 2;
-        NSFont* captionFont = [figureString attribute:NSFontAttributeName atIndex:captionIndex effectiveRange:nil];
-        NSColor* captionColor = [figureString attribute:NSForegroundColorAttributeName
-                                                atIndex:captionIndex
-                                         effectiveRange:nil];
-        SPDFExpect(fabs(captionFont.pointSize - 13.5) < 0.01 &&
-                       [captionColor isEqual:imageOptions.secondaryTextColor],
-                   @"figure captions drop below body size and go muted, caption-style");
-        NSParagraphStyle* figureStyle = [figureString attribute:NSParagraphStyleAttributeName
-                                                        atIndex:figureRange.location
-                                                 effectiveRange:nil];
-        NSParagraphStyle* captionStyle = [figureString attribute:NSParagraphStyleAttributeName
-                                                         atIndex:captionIndex
-                                                  effectiveRange:nil];
-        SPDFExpect(figureStyle.alignment == NSTextAlignmentCenter && captionStyle.alignment == NSTextAlignmentCenter,
-                   @"figure and caption paragraphs are center-aligned");
-        SPDFMarkdownPageConfiguration* figureConfiguration = SPDFMarkdownPageConfiguration.A4PortraitConfiguration;
-        SPDFMarkdownPaginationPlan* figurePlan = [imageDocument paginationPlanForConfiguration:figureConfiguration];
-        SPDFMarkdownPageFragment* attachmentFragment = nil;
-        SPDFMarkdownPageFragment* captionFragment = nil;
-        for (SPDFMarkdownPageFragment* fragment in figurePlan.pages.firstObject.fragments) {
-            if (!fragment.attributedRange.length) continue;
-            if (NSLocationInRange(figureRange.location, fragment.attributedRange)) attachmentFragment = fragment;
-            if (NSLocationInRange(captionIndex, fragment.attributedRange) &&
-                !NSLocationInRange(figureRange.location, fragment.attributedRange))
-                captionFragment = fragment;
-            if (attachmentFragment && captionFragment) break;
-        }
-        SPDFExpect(attachmentFragment != nil && captionFragment != nil,
-                   @"the attachment and its caption paginate as two separate fragments");
-        SPDFExpect(attachmentFragment && captionFragment &&
-                       captionFragment.pageYOffset >
-                           attachmentFragment.pageYOffset + attachmentFragment.height - 0.5,
-                   @"the caption fragment sits strictly below the attachment fragment");
-        NSTextAttachment* figureAttachment = [figureString attribute:NSAttachmentAttributeName
-                                                             atIndex:figureRange.location
-                                                      effectiveRange:nil];
-        CGFloat printableWidth = NSWidth(figureConfiguration.printableRect);
-        SPDFExpect(attachmentFragment &&
-                       fabs(attachmentFragment.xOffset -
-                            (printableWidth - figureAttachment.bounds.size.width) / 2) < 1.0,
-                   @"a standalone image centers within the printable width");
-        NSAttributedString* captionText = [figureString
-            attributedSubstringFromRange:NSMakeRange(captionIndex, [@"Local pixels" length])];
-        CGFloat captionWidth = NSWidth([captionText boundingRectWithSize:NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX)
-                                                                  options:NSStringDrawingUsesLineFragmentOrigin
-                                                                  context:nil]);
-        SPDFExpect(captionFragment && captionFragment.xOffset > 8.0 &&
-                       fabs(captionFragment.xOffset + captionWidth / 2 - printableWidth / 2) < 2.0,
-                   @"the caption centers within the printable width instead of hanging at the image's right");
+        // Local-image figure layout (standalone figures, stacked multi-image
+        // paragraphs, inline images) is covered by SPDFMarkdownImageFigureTests.
 
         SPDFMarkdownParser* parser = [SPDFMarkdownParser new];
         SPDFMarkdownDocumentModel* centeredTableModel =
