@@ -76,12 +76,26 @@ document's stored ones.
 
 ## Code languages
 
-The picker deliberately advertises only languages with dedicated offline
-lexers: JavaScript, JSON, Markdown, Python and Swift. Each lexer has its own
-comment/string/number/keyword or markup grammar. Rules run in precedence order,
-and accepted token ranges cannot overlap, preventing later token classes from
-corrupting strings or comments. Missing/unknown fences remain uncolored and can
-be assigned through `SPDFMarkdownLanguagePickerModel`.
+The picker only advertises languages with dedicated offline lexers. The
+catalog covers the mainstream set: C, C#, C++, CSS, Dart, Go, Haskell, HTML,
+Java, JavaScript, JSON, Kotlin, LaTeX, Lua, Markdown, Objective-C, Perl, PHP,
+Python, R, Ruby, Rust, Scala, Shell, SQL, Swift, TOML, TypeScript, XML and
+YAML, with generous fence aliases (`c++`, `yml`, `bash`, `golang`, …) resolved
+case-insensitively.
+
+Every lexer keeps the same rule-based architecture: rules run in precedence
+order (comments, then strings, then numbers/keywords), and accepted token
+ranges cannot overlap, preventing later token classes from corrupting strings
+or comments. Most braces-and-keywords languages share one parameterized
+grammar scanner (`SPDFMarkdownLexerSupport.mm`), instantiated per language
+with its comment delimiters, string quote styles, sigils and keyword set in
+`SPDFMarkdownLexersCFamily.mm` and `SPDFMarkdownLexersScripting.mm`. HTML/XML,
+CSS and LaTeX have dedicated markup scanners in `SPDFMarkdownLexersMarkup.mm`;
+YAML and TOML have line-oriented key/section scanners in
+`SPDFMarkdownLexersData.mm`. JavaScript, TypeScript, Swift, Python, JSON and
+Markdown keep their original lexers in `SPDFMarkdownHighlighter.mm`.
+Missing/unknown fences remain uncolored and can be assigned through
+`SPDFMarkdownLanguagePickerModel`.
 
 ## Pagination and drawing
 

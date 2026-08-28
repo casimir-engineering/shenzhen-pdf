@@ -32,13 +32,39 @@ static SPDFMarkdownLanguage* SPDFLanguage(NSString* identifier, NSString* name, 
 - (instancetype)init {
     self = [super init];
     if (!self) return nil;
-    // Each advertised entry has a dedicated offline lexer.
+    // Each advertised entry has a dedicated offline lexer (or a parameterized
+    // grammar instance of one). Kept sorted by display name for the picker.
     _languages = @[
+        SPDFLanguage(@"c", @"C", @[@"h"]),
+        SPDFLanguage(@"csharp", @"C#", @[@"cs", @"c#"]),
+        SPDFLanguage(@"cpp", @"C++", @[@"c++", @"cc", @"cxx", @"hpp", @"hxx", @"hh"]),
+        SPDFLanguage(@"css", @"CSS", @[@"scss", @"less"]),
+        SPDFLanguage(@"dart", @"Dart", @[]),
+        SPDFLanguage(@"go", @"Go", @[@"golang"]),
+        SPDFLanguage(@"haskell", @"Haskell", @[@"hs"]),
+        SPDFLanguage(@"html", @"HTML", @[@"htm", @"xhtml"]),
+        SPDFLanguage(@"java", @"Java", @[]),
         SPDFLanguage(@"javascript", @"JavaScript", @[@"js", @"jsx", @"mjs"]),
         SPDFLanguage(@"json", @"JSON", @[@"jsonc"]),
+        SPDFLanguage(@"kotlin", @"Kotlin", @[@"kt", @"kts"]),
+        SPDFLanguage(@"latex", @"LaTeX", @[@"tex", @"sty"]),
+        SPDFLanguage(@"lua", @"Lua", @[]),
         SPDFLanguage(@"markdown", @"Markdown", @[@"md"]),
+        SPDFLanguage(@"objc", @"Objective-C", @[@"objective-c", @"objectivec", @"m", @"mm"]),
+        SPDFLanguage(@"perl", @"Perl", @[@"pl", @"pm"]),
+        SPDFLanguage(@"php", @"PHP", @[]),
         SPDFLanguage(@"python", @"Python", @[@"py"]),
+        SPDFLanguage(@"r", @"R", @[@"rscript"]),
+        SPDFLanguage(@"ruby", @"Ruby", @[@"rb"]),
+        SPDFLanguage(@"rust", @"Rust", @[@"rs"]),
+        SPDFLanguage(@"scala", @"Scala", @[@"sbt"]),
+        SPDFLanguage(@"shell", @"Shell", @[@"sh", @"bash", @"zsh", @"ksh", @"console", @"shellsession"]),
+        SPDFLanguage(@"sql", @"SQL", @[@"mysql", @"postgres", @"postgresql", @"sqlite", @"tsql", @"plsql"]),
         SPDFLanguage(@"swift", @"Swift", @[]),
+        SPDFLanguage(@"toml", @"TOML", @[@"ini"]),
+        SPDFLanguage(@"typescript", @"TypeScript", @[@"ts", @"tsx", @"mts", @"cts"]),
+        SPDFLanguage(@"xml", @"XML", @[@"svg", @"plist", @"xsl", @"xsd", @"rss"]),
+        SPDFLanguage(@"yaml", @"YAML", @[@"yml"]),
     ];
     NSMutableDictionary* aliases = [NSMutableDictionary dictionary];
     for (SPDFMarkdownLanguage* language in _languages) {

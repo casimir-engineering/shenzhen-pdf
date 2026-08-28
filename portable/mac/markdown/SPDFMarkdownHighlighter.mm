@@ -1,5 +1,7 @@
 #import "SPDFMarkdownHighlighter.h"
 
+#import "SPDFMarkdownLexers.h"
+
 @implementation SPDFMarkdownSyntaxToken
 - (instancetype)initWithRange:(NSRange)range kind:(SPDFMarkdownSyntaxTokenKind)kind {
     self = [super init];
@@ -11,43 +13,45 @@
 }
 @end
 
-static BOOL SPDFCancelled(SPDFMarkdownCancellationToken* token, NSUInteger offset) {
+// The scanning primitives below are shared with the grammar-driven lexer
+// families (SPDFMarkdownLexers*.mm) through SPDFMarkdownLexers.h.
+BOOL SPDFCancelled(SPDFMarkdownCancellationToken* token, NSUInteger offset) {
     return (offset & 255) == 0 && token.isCancelled;
 }
 
-static BOOL SPDFScanCancelled(SPDFMarkdownCancellationToken* token, NSUInteger start, NSUInteger offset) {
+BOOL SPDFScanCancelled(SPDFMarkdownCancellationToken* token, NSUInteger start, NSUInteger offset) {
     NSUInteger distance = offset - start;
     return distance >= 256 && (distance & 255) < 2 && token.isCancelled;
 }
 
-static BOOL SPDFIsIdentifierStart(unichar character) {
+BOOL SPDFIsIdentifierStart(unichar character) {
     return character == '_' || character == '$' ||
            [NSCharacterSet.letterCharacterSet characterIsMember:character];
 }
 
-static BOOL SPDFIsIdentifierContinue(unichar character) {
+BOOL SPDFIsIdentifierContinue(unichar character) {
     return SPDFIsIdentifierStart(character) ||
            [NSCharacterSet.decimalDigitCharacterSet characterIsMember:character];
 }
 
-static BOOL SPDFIsDigit(unichar character) {
+BOOL SPDFIsDigit(unichar character) {
     return character >= '0' && character <= '9';
 }
 
-static BOOL SPDFIsWhitespace(unichar character) {
+BOOL SPDFIsWhitespace(unichar character) {
     return [NSCharacterSet.whitespaceAndNewlineCharacterSet characterIsMember:character];
 }
 
-static void SPDFAddToken(NSMutableArray<SPDFMarkdownSyntaxToken*>* tokens, NSUInteger start, NSUInteger end,
-                         SPDFMarkdownSyntaxTokenKind kind) {
+void SPDFAddToken(NSMutableArray<SPDFMarkdownSyntaxToken*>* tokens, NSUInteger start, NSUInteger end,
+                  SPDFMarkdownSyntaxTokenKind kind) {
     if (end > start) {
         [tokens addObject:[[SPDFMarkdownSyntaxToken alloc] initWithRange:NSMakeRange(start, end - start)
                                                                     kind:kind]];
     }
 }
 
-static NSUInteger SPDFScanLineComment(NSString* code, NSUInteger start,
-                                      SPDFMarkdownCancellationToken* cancellationToken) {
+NSUInteger SPDFScanLineComment(NSString* code, NSUInteger start,
+                               SPDFMarkdownCancellationToken* cancellationToken) {
     NSUInteger index = start;
     while (index < code.length && [code characterAtIndex:index] != '\n') {
         if (SPDFScanCancelled(cancellationToken, start, index)) return NSNotFound;
@@ -67,8 +71,8 @@ static NSUInteger SPDFScanBlockComment(NSString* code, NSUInteger start,
     return code.length;
 }
 
-static NSUInteger SPDFScanQuoted(NSString* code, NSUInteger start, unichar quote, BOOL allowTriple,
-                                 SPDFMarkdownCancellationToken* cancellationToken) {
+NSUInteger SPDFScanQuoted(NSString* code, NSUInteger start, unichar quote, BOOL allowTriple,
+                          SPDFMarkdownCancellationToken* cancellationToken) {
     BOOL triple = allowTriple && start + 2 < code.length && [code characterAtIndex:start + 1] == quote &&
                   [code characterAtIndex:start + 2] == quote;
     NSUInteger index = start + (triple ? 3 : 1);
@@ -90,8 +94,8 @@ static NSUInteger SPDFScanQuoted(NSString* code, NSUInteger start, unichar quote
     return code.length;
 }
 
-static NSUInteger SPDFScanNumber(NSString* code, NSUInteger start,
-                                 SPDFMarkdownCancellationToken* cancellationToken) {
+NSUInteger SPDFScanNumber(NSString* code, NSUInteger start,
+                          SPDFMarkdownCancellationToken* cancellationToken) {
     NSUInteger index = start;
     if (start + 1 < code.length && [code characterAtIndex:start] == '0') {
         unichar prefix = [code characterAtIndex:start + 1];
@@ -147,8 +151,8 @@ static NSUInteger SPDFScanNumber(NSString* code, NSUInteger start,
     return index;
 }
 
-static NSUInteger SPDFScanIdentifier(NSString* code, NSUInteger start,
-                                     SPDFMarkdownCancellationToken* cancellationToken) {
+NSUInteger SPDFScanIdentifier(NSString* code, NSUInteger start,
+                              SPDFMarkdownCancellationToken* cancellationToken) {
     NSUInteger index = start + 1;
     while (index < code.length && SPDFIsIdentifierContinue([code characterAtIndex:index])) {
         if (SPDFScanCancelled(cancellationToken, start, index)) return NSNotFound;
@@ -170,6 +174,14 @@ static NSSet<NSString*>* SPDFKeywordSet(NSString* language) {
         for (NSString* key in words) {
             result[key] = [NSSet setWithArray:[words[key] componentsSeparatedByString:@" "]];
         }
+        // TypeScript extends the JavaScript grammar with its type keywords.
+        NSMutableSet* typescript = [result[@"javascript"] mutableCopy];
+        [typescript addObjectsFromArray:[@"abstract any as asserts bigint boolean declare enum "
+                                          "implements infer interface is keyof module namespace "
+                                          "never number object override private protected public "
+                                          "readonly satisfies string symbol type unique unknown"
+                                            componentsSeparatedByString:@" "]];
+        result[@"typescript"] = [typescript copy];
         sets = [result copy];
     });
     return sets[language] ?: [NSSet set];
@@ -369,9 +381,15 @@ static NSArray<SPDFMarkdownSyntaxToken*>* SPDFScanMarkdown(NSString* code,
 - (NSArray<SPDFMarkdownSyntaxToken*>*)tokensForCode:(NSString*)code
                                            language:(SPDFMarkdownLanguage*)language
                                   cancellationToken:(SPDFMarkdownCancellationToken*)cancellationToken {
-    if ([language.identifier isEqualToString:@"python"]) return SPDFScanPython(code, cancellationToken);
-    if ([language.identifier isEqualToString:@"json"]) return SPDFScanJSON(code, cancellationToken);
-    if ([language.identifier isEqualToString:@"markdown"]) return SPDFScanMarkdown(code, cancellationToken);
-    return SPDFScanCLike(code, language.identifier, cancellationToken);
+    NSString* identifier = language.identifier;
+    if ([identifier isEqualToString:@"python"]) return SPDFScanPython(code, cancellationToken);
+    if ([identifier isEqualToString:@"json"]) return SPDFScanJSON(code, cancellationToken);
+    if ([identifier isEqualToString:@"markdown"]) return SPDFScanMarkdown(code, cancellationToken);
+    NSArray* tokens = SPDFMarkdownScanCFamily(identifier, code, cancellationToken);
+    if (!tokens) tokens = SPDFMarkdownScanScripting(identifier, code, cancellationToken);
+    if (!tokens) tokens = SPDFMarkdownScanMarkupFamily(identifier, code, cancellationToken);
+    if (!tokens) tokens = SPDFMarkdownScanDataFamily(identifier, code, cancellationToken);
+    // JavaScript, TypeScript and Swift keep the original C-like lexer.
+    return tokens ?: SPDFScanCLike(code, identifier, cancellationToken);
 }
 @end
