@@ -23,8 +23,11 @@ static SPDFMarkdownPaginationItem* SPDFItem(NSUInteger index, SPDFMarkdownBlockK
 
 static SPDFMarkdownPaginationItem* SPDFTableRowItem(NSUInteger index, BOOL header, NSUInteger bodyRowIndex,
                                                     NSArray<NSNumber*>* boundaries, CGFloat height) {
+    // Synthetic rows model mid-table portions: headerRow drives the band fill
+    // but lastRow stays NO so the geometry keeps flush, uninset edges.
     SPDFMarkdownTableRowInfo* info = [[SPDFMarkdownTableRowInfo alloc] initWithTableBlockIndex:100
                                                                                      headerRow:header
+                                                                                       lastRow:NO
                                                                                   bodyRowIndex:bodyRowIndex
                                                                               columnBoundaries:boundaries];
     return [[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:index
@@ -331,10 +334,14 @@ int main(void) {
         SPDFExpect(tablePlan.pages.count == 1, @"table decoration scenario fits one page");
         SPDFTableDecorationBuckets table = SPDFBucketTableDecorations([tablePlan decorationsForPageIndex:0]);
         SPDFMarkdownPageDecoration* headerBand = table.headerBands.firstObject;
+        // The header row leads the table, so the grid insets the outer margin
+        // away from its band top.
         SPDFExpect(table.headerBands.count == 1 && fabs(NSMinX(headerBand.rect)) < 0.001 &&
-                       fabs(NSMinY(headerBand.rect)) < 0.001 && fabs(NSWidth(headerBand.rect) - 180) < 0.001 &&
-                       fabs(NSHeight(headerBand.rect) - 20) < 0.001 && headerBand.blockIndex == 10,
-                   @"the header row contributes one fill band covering its full row band and table width");
+                       fabs(NSMinY(headerBand.rect) - SPDFMarkdownTableOuterMargin) < 0.001 &&
+                       fabs(NSWidth(headerBand.rect) - 180) < 0.001 &&
+                       fabs(NSHeight(headerBand.rect) - (20 - SPDFMarkdownTableOuterMargin)) < 0.001 &&
+                       headerBand.blockIndex == 10,
+                   @"the header row contributes one fill band inset by the table outer margin");
         SPDFExpect(SPDFDecorationValues(table.stripes, @[ @40, @80 ],
                                         ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
                                           return NSMinY(decoration.rect);
@@ -342,15 +349,17 @@ int main(void) {
                        fabs(NSWidth(table.stripes.firstObject.rect) - 180) < 0.001 &&
                        fabs(NSHeight(table.stripes.firstObject.rect) - 20) < 0.001,
                    @"only the second and fourth body rows get zebra stripes; the first stays paper");
-        SPDFExpect(SPDFDecorationValues(table.horizontalLines, @[ @0, @20, @40, @60, @80, @99 ],
+        SPDFExpect(SPDFDecorationValues(table.horizontalLines,
+                                        @[ @(SPDFMarkdownTableOuterMargin), @20, @40, @60, @80, @99 ],
                                         ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
                                           return NSMinY(decoration.rect);
                                         }) &&
                        fabs(NSWidth(table.horizontalLines.firstObject.rect) - 180) < 0.001,
-                   @"1px horizontal grid lines sit at every row boundary and around the table");
+                   @"1px horizontal grid lines sit at every row boundary and around the inset table");
         BOOL verticalSpansTable = table.verticalLines.count > 0;
         for (SPDFMarkdownPageDecoration* line in table.verticalLines)
-            if (fabs(NSMinY(line.rect)) > 0.001 || fabs(NSHeight(line.rect) - 100) > 0.001 ||
+            if (fabs(NSMinY(line.rect) - SPDFMarkdownTableOuterMargin) > 0.001 ||
+                fabs(NSHeight(line.rect) - (100 - SPDFMarkdownTableOuterMargin)) > 0.001 ||
                 fabs(NSWidth(line.rect) - 1) > 0.001)
                 verticalSpansTable = NO;
         SPDFExpect(SPDFDecorationValues(table.verticalLines, tableBoundaries,
@@ -378,7 +387,8 @@ int main(void) {
         SPDFTableDecorationBuckets secondPortion =
             SPDFBucketTableDecorations([splitTablePlan decorationsForPageIndex:1]);
         SPDFExpect(firstPortion.headerBands.count == 1 && firstPortion.stripes.count == 0 &&
-                       SPDFDecorationValues(firstPortion.horizontalLines, @[ @0, @20, @39 ],
+                       SPDFDecorationValues(firstPortion.horizontalLines,
+                                            @[ @(SPDFMarkdownTableOuterMargin), @20, @39 ],
                                             ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
                                               return NSMinY(decoration.rect);
                                             }),
@@ -429,10 +439,13 @@ int main(void) {
             SPDFMarkdownTableRowInfo* info = gridPlan.items[fragment.itemIndex].tableRowInfo;
             if (info && !info.headerRow && info.bodyRowIndex == 1) stripedRowFragment = fragment;
         }
+        // The second body row is also the table's last row, so its band gives
+        // the outer margin back to the page below the closed grid.
         SPDFExpect(stripedRowFragment != nil &&
                        fabs(NSMinY(grid.stripes.firstObject.rect) - stripedRowFragment.pageYOffset) < 0.001 &&
-                       fabs(NSHeight(grid.stripes.firstObject.rect) - stripedRowFragment.height) < 0.001,
-                   @"the stripe band covers exactly the second body row's line fragment band");
+                       fabs(NSHeight(grid.stripes.firstObject.rect) -
+                            (stripedRowFragment.height - SPDFMarkdownTableOuterMargin)) < 0.001,
+                   @"the stripe band covers the last body row's band minus the outer margin");
     }
     return SPDFFinishTests(@"SPDFMarkdownPaginatorTests");
 }

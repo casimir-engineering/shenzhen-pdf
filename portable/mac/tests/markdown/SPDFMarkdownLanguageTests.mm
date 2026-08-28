@@ -108,6 +108,9 @@ static NSDictionary<NSString*, NSDictionary*>* SPDFLanguageSamples(void) {
                         @{@"\"value\"": key, @"42": number, @"true": keyword}),
         @"markdown": sample(@"## Heading\n**strong** and [link](target)",
                             @{@"##": markup, @"**": markup}),
+        // Plain Text is the explicit "no highlighting" picker choice: its
+        // scanner must emit zero tokens even for code-looking input.
+        @"plain": sample(@"int value = 42; // would be tokens in C\n\"text\"", @{}),
     };
 }
 
@@ -115,7 +118,7 @@ int main(void) {
     @autoreleasepool {
         SPDFMarkdownLanguageCatalog* catalog = SPDFMarkdownLanguageCatalog.sharedCatalog;
         NSDictionary<NSString*, NSDictionary*>* samples = SPDFLanguageSamples();
-        SPDFExpect(catalog.languages.count == 30, @"the catalog advertises the mainstream languages");
+        SPDFExpect(catalog.languages.count == 31, @"the catalog advertises the mainstream languages plus Plain Text");
         SPDFExpect(catalog.languages.count == samples.count, @"every advertised language has a smoke sample");
         SPDFExpect([[catalog languageForFenceIdentifier:@"  JS extra"].identifier isEqualToString:@"javascript"],
                    @"aliases and fence info suffixes resolve");
@@ -164,6 +167,10 @@ int main(void) {
             if (!sample) continue;
             NSString* code = sample[@"code"];
             NSArray* tokens = [highlighter tokensForCode:code language:language];
+            if ([language.identifier isEqualToString:@"plain"]) {
+                SPDFExpect(tokens.count == 0, @"Plain Text emits no tokens");
+                continue;
+            }
             SPDFExpect(tokens.count >= 2, [language.displayName stringByAppendingString:@" has a dedicated lexer"]);
             SPDFExpectNoOverlap(tokens, language.displayName);
             NSDictionary* expected = sample[@"expected"];

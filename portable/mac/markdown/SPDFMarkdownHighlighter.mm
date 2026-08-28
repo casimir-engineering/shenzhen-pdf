@@ -382,6 +382,8 @@ static NSArray<SPDFMarkdownSyntaxToken*>* SPDFScanMarkdown(NSString* code,
                                            language:(SPDFMarkdownLanguage*)language
                                   cancellationToken:(SPDFMarkdownCancellationToken*)cancellationToken {
     NSString* identifier = language.identifier;
+    // Plain Text is the explicit "no highlighting" choice in the picker.
+    if ([identifier isEqualToString:@"plain"]) return @[];
     if ([identifier isEqualToString:@"python"]) return SPDFScanPython(code, cancellationToken);
     if ([identifier isEqualToString:@"json"]) return SPDFScanJSON(code, cancellationToken);
     if ([identifier isEqualToString:@"markdown"]) return SPDFScanMarkdown(code, cancellationToken);
