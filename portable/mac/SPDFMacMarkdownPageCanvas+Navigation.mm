@@ -35,6 +35,32 @@
     return page ? page.pageIndex : 0;
 }
 
+- (NSRect)firstRectForRange:(NSRange)range {
+    if (!self.pageCount || range.location == NSNotFound) return NSZeroRect;
+    NSUInteger location = MIN(range.location, self.attributedString.length);
+    SPDFMarkdownPageFragment* fragment = nil;
+    SPDFMarkdownPage* page = [self pageContainingAttributedLocation:location fragment:&fragment];
+    if (!page || !fragment) return NSZeroRect;
+    NSRect pageFrame = [self frameForPageAtIndex:page.pageIndex];
+    NSRect printable = self.plan.configuration.printableRect;
+    if (range.length) {
+        // Narrow to the range's first glyph run so centering targets the match
+        // itself (the same CTLine mapping the highlight drawing uses).
+        __block NSRect glyphRect = NSZeroRect;
+        [self enumeratePageLocalRectsForRanges:@[ [NSValue valueWithRange:range] ]
+                                        onPage:page
+                                    usingBlock:^(NSRect rect) {
+                                      if (NSIsEmptyRect(glyphRect)) glyphRect = rect;
+                                    }];
+        if (!NSIsEmptyRect(glyphRect)) return NSOffsetRect(glyphRect, NSMinX(pageFrame), NSMinY(pageFrame));
+    }
+    // Zero-length anchors (and spacer fragments) fall back to the fragment's
+    // full line band.
+    return NSMakeRect(NSMinX(pageFrame) + NSMinX(printable) + fragment.xOffset,
+                      NSMinY(pageFrame) + self.plan.configuration.topContentInset + fragment.pageYOffset,
+                      MAX(2.0, NSWidth(printable) - fragment.xOffset), MAX(1.0, fragment.height));
+}
+
 - (BOOL)scrollRangeToVisible:(NSRange)range {
     if (!self.pageCount || range.location == NSNotFound) return NO;
     NSUInteger location = MIN(range.location, self.attributedString.length);

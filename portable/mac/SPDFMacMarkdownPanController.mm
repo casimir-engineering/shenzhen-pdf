@@ -84,6 +84,7 @@
     _panning = NO;
     _moved = NO;
     [NSCursor.arrowCursor set];
+    if (self.panDidEndHandler) self.panDidEndHandler();
     if (hypot(_panVelocity.x, _panVelocity.y) <= 90.0) {
         _panVelocity = NSZeroPoint;
         return;
@@ -97,11 +98,13 @@
 }
 
 - (void)cancel {
+    BOOL wasPanning = _panning;
     [_inertiaTimer invalidate];
     _inertiaTimer = nil;
     _panning = NO;
     _panVelocity = NSZeroPoint;
     [NSCursor.arrowCursor set];
+    if (wasPanning && self.panDidEndHandler) self.panDidEndHandler();
 }
 
 - (void)dealloc {

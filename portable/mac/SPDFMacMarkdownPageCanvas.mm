@@ -3,6 +3,7 @@
 #import <CoreText/CoreText.h>
 
 #import "SPDFMacUIHelpers.h"
+#import "SPDFMacMarkdownPanController.h"
 #import "SPDFMacMarkdownView.h"
 #import "markdown/SPDFMarkdown.h"
 
@@ -12,6 +13,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 @implementation SPDFMacMarkdownPageCanvas {
     SPDFMarkdownPaginationPlan* _plan;
     NSAttributedString* _attributedString;
+    NSTrackingArea* _trackingArea;
     NSUInteger _dragAnchor;
     BOOL _draggingSelection;
 }
@@ -31,7 +33,15 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     _attributedString = [attributedString copy];
     _selectedRange = NSMakeRange(0, 0);
     _searchRanges = @[];
+    _activeSearchRange = NSMakeRange(0, 0);
+    _activeSearchAlpha = 0.0;
     self.wantsLayer = YES;
+    // PDF parity: when a hand pan releases the pointer, the hover cursor is
+    // re-resolved for the current mouse location (endPan does the same).
+    __weak SPDFMacMarkdownPageCanvas* weakSelf = self;
+    self.spdf_panController.panDidEndHandler = ^{
+      [weakSelf refreshCursorForMouseLocation];
+    };
     return self;
 }
 
@@ -64,6 +74,27 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 - (void)setSearchRanges:(NSArray<NSValue*>*)searchRanges {
     _searchRanges = [searchRanges copy] ?: @[];
     [self setNeedsDisplay:YES];
+}
+
+// Setting the active match (or its outline alpha) repaints only — scrolling to
+// a match is the paged view's centerRange: responsibility.
+- (void)setActiveSearchRange:(NSRange)activeSearchRange {
+    if (activeSearchRange.location == NSNotFound || NSMaxRange(activeSearchRange) > _attributedString.length)
+        activeSearchRange = NSMakeRange(0, 0);
+    if (NSEqualRanges(_activeSearchRange, activeSearchRange)) return;
+    _activeSearchRange = activeSearchRange;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)setActiveSearchAlpha:(CGFloat)activeSearchAlpha {
+    activeSearchAlpha = MAX(0.0, MIN(1.0, activeSearchAlpha));
+    if (fabs(activeSearchAlpha - _activeSearchAlpha) < 0.0001) return;
+    _activeSearchAlpha = activeSearchAlpha;
+    [self setNeedsDisplay:YES];
+}
+
+- (BOOL)isDraggingSelection {
+    return _draggingSelection;
 }
 
 - (NSRect)frameForPageAtIndex:(NSUInteger)pageIndex {
@@ -103,31 +134,21 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 
 - (void)drawRanges:(NSArray<NSValue*>*)ranges
              color:(NSColor*)color
+           rounded:(BOOL)rounded
             onPage:(SPDFMarkdownPage*)page
          pageFrame:(NSRect)pageFrame {
     if (!ranges.count) return;
-    NSRect printable = _plan.configuration.printableRect;
     [color setFill];
-    for (SPDFMarkdownPageFragment* fragment in page.fragments) {
-        if (!fragment.attributedRange.length || NSMaxRange(fragment.attributedRange) > _attributedString.length)
-            continue;
-        NSAttributedString* lineString = [_attributedString attributedSubstringFromRange:fragment.attributedRange];
-        CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
-        for (NSValue* value in ranges) {
-            NSRange intersection = NSIntersectionRange(fragment.attributedRange, value.rangeValue);
-            if (!intersection.length) continue;
-            CFIndex start = (CFIndex)(intersection.location - fragment.attributedRange.location);
-            CFIndex end = (CFIndex)(NSMaxRange(intersection) - fragment.attributedRange.location);
-            CGFloat x0 = CTLineGetOffsetForStringIndex(line, start, NULL) * fragment.scale;
-            CGFloat x1 = CTLineGetOffsetForStringIndex(line, end, NULL) * fragment.scale;
-            NSRect highlight =
-                NSMakeRect(NSMinX(pageFrame) + NSMinX(printable) + fragment.xOffset + MIN(x0, x1),
-                           NSMinY(pageFrame) + _plan.configuration.topContentInset + fragment.pageYOffset,
-                           MAX(2.0, fabs(x1 - x0)), fragment.height);
-            NSRectFillUsingOperation(highlight, NSCompositingOperationSourceOver);
-        }
-        CFRelease(line);
-    }
+    [self enumeratePageLocalRectsForRanges:ranges
+                                    onPage:page
+                                usingBlock:^(NSRect rect) {
+                                  NSRect highlight = NSOffsetRect(rect, NSMinX(pageFrame), NSMinY(pageFrame));
+                                  if (rounded)
+                                      [[NSBezierPath bezierPathWithRoundedRect:highlight xRadius:2.0
+                                                                       yRadius:2.0] fill];
+                                  else
+                                      NSRectFillUsingOperation(highlight, NSCompositingOperationSourceOver);
+                                }];
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
@@ -158,15 +179,20 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
         [_plan drawPageAtIndex:(NSUInteger)pageIndex attributedString:_attributedString inContext:context];
         CGContextRestoreGState(context);
         SPDFMarkdownPage* page = _plan.pages[(NSUInteger)pageIndex];
+        // PDF-parity all-matches highlight: same calibrated fill and rounded
+        // 2pt shape as SPDFDocumentView's page.highlights pass.
         [self drawRanges:_searchRanges
-                   color:[NSColor.systemYellowColor colorWithAlphaComponent:0.32]
+                   color:[NSColor colorWithCalibratedRed:1.0 green:0.84 blue:0.12 alpha:0.38]
+                 rounded:YES
                   onPage:page
                pageFrame:pageFrame];
         if (_selectedRange.length)
             [self drawRanges:@[ [NSValue valueWithRange:_selectedRange] ]
                        color:[NSColor.selectedTextBackgroundColor colorWithAlphaComponent:0.42]
+                     rounded:NO
                       onPage:page
                    pageFrame:pageFrame];
+        [self drawActiveSearchOnPage:page pageFrame:pageFrame];
         [self drawCodeLanguageControlsOnPage:page pageFrame:pageFrame];
     }
 }
@@ -288,27 +314,21 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
         self.selectedRange = NSMakeRange(index, 0);
 }
 
-- (void)resetCursorRects {
-    [super resetCursorRects];
-    NSRect visible = self.visibleRect;
-    if (!self.pageCount || NSIsEmptyRect(visible)) return;
-    NSSize paper = _plan.configuration.paperSize;
-    NSInteger first =
-        MAX(0, (NSInteger)floor((NSMinY(visible) - kSPDFMarkdownCanvasInset) / (paper.height + kSPDFMarkdownPageGap)));
-    NSInteger last = MIN((NSInteger)self.pageCount - 1, (NSInteger)ceil((NSMaxY(visible) - kSPDFMarkdownCanvasInset) /
-                                                                        (paper.height + kSPDFMarkdownPageGap)));
-    for (NSInteger pageIndex = first; pageIndex <= last; ++pageIndex) {
-        SPDFMarkdownPage* page = _plan.pages[(NSUInteger)pageIndex];
-        NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];
-        for (SPDFMarkdownPageFragment* fragment in page.fragments) {
-            if (fragment.itemIndex >= _plan.items.count) continue;
-            SPDFMarkdownPaginationItem* item = _plan.items[fragment.itemIndex];
-            if (item.kind == SPDFMarkdownBlockKindCode && !fragment.isContinuation)
-                [self addCursorRect:[self codeLanguageControlHitRectForFragment:fragment pageFrame:pageFrame]
-                             cursor:NSCursor.pointingHandCursor];
-        }
-        [self addLinkCursorRectsForPage:page pageFrame:pageFrame];
-    }
+// The tracking-area/mouseMoved: path is the single owner of the pointer
+// cursor (see SPDFMacMarkdownPageCanvas+Cursor.mm), same mechanism as the PDF
+// document view — cursor rects would fight it, so none are installed.
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_trackingArea) [self removeTrackingArea:_trackingArea];
+    // ActiveAlways (matching SPDFDocumentView) so cursor feedback works over
+    // unfocused windows; updateCursorForPointInWindow: guards against touching
+    // the cursor when another window covers this one.
+    _trackingArea = [[NSTrackingArea alloc]
+        initWithRect:self.bounds
+             options:NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways
+               owner:self
+            userInfo:nil];
+    [self addTrackingArea:_trackingArea];
 }
 
 - (void)mouseDragged:(NSEvent*)event {

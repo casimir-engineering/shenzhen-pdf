@@ -287,13 +287,55 @@ NSImage* spdf_markdown_font_size_toolbar_image(BOOL larger) {
     NSImage* image = images[larger ? 1 : 0];
     if (image) return image;
 
+    // Rendered text instead of the textformat.size.* SF Symbols: those glyphs
+    // show only a bare letter, so the pair reads as two mystery "A" buttons.
+    // "A−" / "A＋" with a size hierarchy on the letter keeps both the subject
+    // and the direction visible in each segment.
     NSString* description = larger ? @"Increase Text Size" : @"Decrease Text Size";
-    image = [NSImage imageWithSystemSymbolName:larger ? @"textformat.size.larger" : @"textformat.size.smaller"
-                      accessibilityDescription:description];
-    if (!image) image = [NSImage imageWithSystemSymbolName:@"textformat.size" accessibilityDescription:description];
+    NSFont* letterFont = [NSFont systemFontOfSize:larger ? 15.0 : 11.0 weight:NSFontWeightMedium];
+    NSFont* signFont = [NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium];
+    NSMutableAttributedString* glyphs = [[NSMutableAttributedString alloc]
+        initWithString:@"A"
+            attributes:@{NSFontAttributeName : letterFont, NSForegroundColorAttributeName : NSColor.blackColor}];
+    [glyphs appendAttributedString:[[NSAttributedString alloc]
+                                       initWithString:larger ? @"+" : @"−"
+                                           attributes:@{
+                                               NSFontAttributeName : signFont,
+                                               NSForegroundColorAttributeName : NSColor.blackColor
+                                           }]];
+    NSSize textSize = glyphs.size;
+    NSSize imageSize = NSMakeSize(ceil(textSize.width) + 2.0, ceil(textSize.height));
+    image = [NSImage imageWithSize:imageSize
+                           flipped:NO
+                    drawingHandler:^BOOL(NSRect dstRect) {
+                      (void)dstRect;
+                      [glyphs drawAtPoint:NSMakePoint(1.0, 0.0)];
+                      return YES;
+                    }];
     [image setTemplate:YES];
+    image.accessibilityDescription = description;
     images[larger ? 1 : 0] = image;
     return image;
+}
+
+// Compact two-segment momentary "pill" for a paired back/forward style toolbar
+// action; the shared action switches on selectedSegment (0 = leading,
+// 1 = trailing).
+NSSegmentedControl* spdf_paired_toolbar_segments(id target, SEL action, NSImage* leadingImage, NSImage* trailingImage) {
+    NSSegmentedControl* control = [[NSSegmentedControl alloc] init];
+    control.segmentCount = 2;
+    control.segmentStyle = NSSegmentStyleRounded;
+    control.trackingMode = NSSegmentSwitchTrackingMomentary;
+    control.target = target;
+    control.action = action;
+    control.translatesAutoresizingMaskIntoConstraints = NO;
+    [control setImage:leadingImage forSegment:0];
+    [control setImage:trailingImage forSegment:1];
+    [control setContentHuggingPriority:NSLayoutPriorityRequired
+                        forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [control setContentCompressionResistancePriority:NSLayoutPriorityRequired
+                                      forOrientation:NSLayoutConstraintOrientationHorizontal];
+    return control;
 }
 
 BOOL spdf_is_allowed_external_url(NSURL* url) {
