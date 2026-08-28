@@ -14,7 +14,7 @@ static const CGFloat kSPDFMarkdownCodeControlHitSlop = 7.0;
 static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(void) {
     return @{
         NSFontAttributeName : [NSFont systemFontOfSize:11 weight:NSFontWeightMedium],
-        NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
+        NSForegroundColorAttributeName : SPDFMarkdownTheme.codeControlTextColor,
     };
 }
 
@@ -94,71 +94,6 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
             return @(fragment.blockIndex);
     }
     return nil;
-}
-
-// Repaint the code lines of one block portion over the freshly filled box. The
-// shared plan draw already painted them in the concrete print palette; drawing
-// the raw interactive string here resolves its dynamic colors against the
-// canvas's current appearance. Code fragments carry no attachments, so plain
-// CTLineDraw reproduces the plan's text pass exactly.
-- (void)drawCodeTextForBlockIndex:(NSUInteger)blockIndex page:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {
-    NSRect printable = self.plan.configuration.printableRect;
-    CGFloat paperHeight = self.plan.configuration.paperSize.height;
-    CGContextRef context = NSGraphicsContext.currentContext.CGContext;
-    CGContextSaveGState(context);
-    // Same page transform as the plan draw: paper coordinates, y up.
-    CGContextTranslateCTM(context, NSMinX(pageFrame), NSMaxY(pageFrame));
-    CGContextScaleCTM(context, 1, -1);
-    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
-    for (SPDFMarkdownPageFragment* fragment in page.fragments) {
-        if (fragment.blockIndex != blockIndex || !fragment.attributedRange.length ||
-            NSMaxRange(fragment.attributedRange) > self.attributedString.length)
-            continue;
-        NSAttributedString* substring = [self.attributedString attributedSubstringFromRange:fragment.attributedRange];
-        CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)substring);
-        CGContextSaveGState(context);
-        CGContextTranslateCTM(context, NSMinX(printable) + fragment.xOffset,
-                              paperHeight - NSMinY(printable) - fragment.pageYOffset - fragment.baselineOffset);
-        CGContextScaleCTM(context, fragment.scale, fragment.scale);
-        CGContextSetTextPosition(context, 0, 0);
-        CTLineDraw(line, context);
-        CGContextRestoreGState(context);
-        CFRelease(line);
-    }
-    CGContextRestoreGState(context);
-}
-
-// The shared plan draw paints the page (paper fill, print-palette decorations,
-// text). This screen pass then repaints the same decoration geometry with the
-// dynamic SPDFMarkdownTheme colors: the opaque code-box fill replaces the print
-// box and its print-palette code lines, which are redrawn appearance-correct on
-// top, so the box stays beneath its text.
-- (void)drawDecorationsForPageAtIndex:(NSUInteger)pageIndex pageFrame:(NSRect)pageFrame {
-    NSArray<SPDFMarkdownPageDecoration*>* decorations = [self.plan decorationsForPageIndex:pageIndex];
-    if (!decorations.count) return;
-    SPDFMarkdownPage* page = self.plan.pages[pageIndex];
-    NSRect printable = self.plan.configuration.printableRect;
-    CGFloat contentX = NSMinX(pageFrame) + NSMinX(printable);
-    CGFloat contentY = NSMinY(pageFrame) + NSMinY(printable);
-    for (SPDFMarkdownPageDecoration* decoration in decorations) {
-        NSRect rect = NSOffsetRect(decoration.rect, contentX, contentY);
-        if (decoration.type == SPDFMarkdownPageDecorationTypeCodeBox) {
-            // Half-pixel inset keeps the 1px stroke crisp at 1x and 2x.
-            NSRect boxRect = NSInsetRect(rect, 0.5, 0.5);
-            if (NSWidth(boxRect) <= 0 || NSHeight(boxRect) <= 0) continue;
-            CGFloat radius = MIN(6.0, MIN(NSWidth(boxRect), NSHeight(boxRect)) / 2.0);
-            NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:boxRect xRadius:radius yRadius:radius];
-            [SPDFMarkdownTheme.codeBoxFillColor setFill];
-            [path fill];
-            [SPDFMarkdownTheme.codeBoxStrokeColor setStroke];
-            path.lineWidth = 1.0;
-            [path stroke];
-            [self drawCodeTextForBlockIndex:decoration.blockIndex page:page pageFrame:pageFrame];
-        } else {
-            [SPDFMarkdownTheme.headingRuleColor setFill];
-            NSRectFillUsingOperation(rect, NSCompositingOperationSourceOver);
-        }
-    }
 }
 
 - (void)drawCodeLanguageControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {

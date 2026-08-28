@@ -157,7 +157,6 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
         [_plan drawPageAtIndex:(NSUInteger)pageIndex attributedString:_attributedString inContext:context];
         CGContextRestoreGState(context);
         SPDFMarkdownPage* page = _plan.pages[(NSUInteger)pageIndex];
-        [self drawDecorationsForPageAtIndex:(NSUInteger)pageIndex pageFrame:pageFrame];
         [self drawRanges:_searchRanges
                    color:[NSColor.systemYellowColor colorWithAlphaComponent:0.32]
                   onPage:page
