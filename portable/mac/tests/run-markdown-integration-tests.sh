@@ -40,11 +40,14 @@ $PORTABLE/mac/SPDFMacMarkdownCache.mm
 $PORTABLE/mac/SPDFMacMarkdownKeyboardPolicy.mm
 $PORTABLE/mac/SPDFMacMarkdownRouting.mm
 $PORTABLE/mac/SPDFMacMarkdownView.mm
+$PORTABLE/mac/SPDFMacCursorRegions.mm
 $PORTABLE/mac/SPDFMacMarkdownPanController.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas.mm
+$PORTABLE/mac/SPDFMacMarkdownPageCanvas+Cursor.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Decorations.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Navigation.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Pan.mm
+$PORTABLE/mac/SPDFMacMarkdownPageCanvas+Search.mm
 $PORTABLE/mac/SPDFMacMarkdownPagedView.mm
 $PORTABLE/mac/SPDFMacRenderedPage.mm
 $PORTABLE/mac/SPDFMacMarkdownMinimapModel.mm
