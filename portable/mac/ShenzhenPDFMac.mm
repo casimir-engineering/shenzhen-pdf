@@ -2443,12 +2443,11 @@ static void spdf_discard_launch_prerender(void) {
         _aboutPanel.contentView = content;
 
         NSImageView* iconView = [[NSImageView alloc] initWithFrame:NSZeroRect];
-        // Load the icon from this bundle's own resources: applicationIconImage
-        // can resolve through the LaunchServices icon cache, which may carry a
-        // stale prohibitory badge from a mid-rebuild registration.
-        NSString* iconPath = [NSBundle.mainBundle pathForResource:@"AppIcon" ofType:@"icns"];
-        NSImage* bundleIcon = iconPath ? [[NSImage alloc] initWithContentsOfFile:iconPath] : nil;
-        iconView.image = bundleIcon ?: NSApp.applicationIconImage;
+        // applicationIconImage carries the system squircle treatment. On a dev
+        // machine a stale LaunchServices registration from a mid-rebuild can
+        // badge it with the prohibitory sign; `lsregister -f <app>` clears
+        // that. Field installs come from signed DMGs and never hit it.
+        iconView.image = NSApp.applicationIconImage;
         iconView.imageScaling = NSImageScaleProportionallyUpOrDown;
         iconView.translatesAutoresizingMaskIntoConstraints = NO;
 
