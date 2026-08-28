@@ -127,6 +127,21 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
 - (void)setSearchRanges:(NSArray<NSValue*>*)searchRanges {
     _canvas.searchRanges = searchRanges;
 }
+- (NSRange)activeSearchRange {
+    return _canvas.activeSearchRange;
+}
+- (void)setActiveSearchRange:(NSRange)activeSearchRange {
+    _canvas.activeSearchRange = activeSearchRange;
+}
+- (CGFloat)activeSearchAlpha {
+    return _canvas.activeSearchAlpha;
+}
+- (void)setActiveSearchAlpha:(CGFloat)activeSearchAlpha {
+    _canvas.activeSearchAlpha = activeSearchAlpha;
+}
+- (NSDictionary<NSNumber*, NSArray<NSValue*>*>*)pageLocalRectsForRanges:(NSArray<NSValue*>*)ranges {
+    return [_canvas pageLocalRectsForRanges:ranges];
+}
 - (NSString*)selectedText {
     NSRange range = self.selectedRange;
     if (!range.length || NSMaxRange(range) > _attributedString.length) return @"";
@@ -200,6 +215,10 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     NSInteger page = [_canvas pageIndexForVisibleRect:_canvas.visibleRect];
     if (page >= 0) _currentPageIndex = page;
     [self updateHorizontalScrollLock];
+    // Content moved under a stationary pointer (scroll wheel, zoom, reveal):
+    // re-resolve the hover cursor without waiting for a mouse move, matching
+    // the PDF path's refreshCursorForMouseLocation calls.
+    [_canvas refreshCursorForMouseLocation];
     if (self.viewportChangedHandler) self.viewportChangedHandler(_currentPageIndex, self.magnification);
 }
 
@@ -295,6 +314,19 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
         if (self.viewportChangedHandler) self.viewportChangedHandler(_currentPageIndex, self.magnification);
     }
     return revealed;
+}
+
+// PDF parity with scrollToPageRect: — the find match is CENTERED in the
+// viewport (revealRange: stays top-aligned for chapter/anchor navigation).
+- (BOOL)centerRange:(NSRange)range {
+    NSRect target = [_canvas firstRectForRange:range];
+    if (NSIsEmptyRect(target)) return NO;
+    NSRect visible = self.documentVisibleRect;
+    [self scrollToDocumentOrigin:NSMakePoint(NSMidX(target) - NSWidth(visible) * 0.5,
+                                             NSMidY(target) - NSHeight(visible) * 0.5)];
+    _currentPageIndex = (NSInteger)[_canvas pageIndexForRange:range];
+    if (self.viewportChangedHandler) self.viewportChangedHandler(_currentPageIndex, self.magnification);
+    return YES;
 }
 
 - (NSUInteger)pageIndexForRange:(NSRange)range {

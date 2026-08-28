@@ -13,6 +13,7 @@ BOOL spdf_ocr_language_uses_extra_traineddata(NSString* language);
 NSImage* spdf_translate_toolbar_image(void);
 NSImage* spdf_ocr_toolbar_image(void);
 NSImage* spdf_markdown_font_size_toolbar_image(BOOL larger);
+NSSegmentedControl* spdf_paired_toolbar_segments(id target, SEL action, NSImage* leadingImage, NSImage* trailingImage);
 BOOL spdf_is_allowed_external_url(NSURL* url);
 
 BOOL spdf_zoom_profile_enabled(void);

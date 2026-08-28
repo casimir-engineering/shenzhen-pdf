@@ -101,10 +101,12 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
     return nil;
 }
 
-// PDF parity: links show the pointing-hand cursor on hover. Adds one cursor
-// rect per link run portion inside each of the page's line fragments, using
-// the same CTLine offset mapping the highlight drawing uses.
-- (void)addLinkCursorRectsForPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {
+// PDF parity: links show the pointing-hand cursor on hover. Returns one rect
+// per link run portion inside each of the page's line fragments, using the
+// same CTLine offset mapping the highlight drawing uses; the tracking-area
+// cursor path (SPDFMacMarkdownPageCanvas+Cursor.mm) hit-tests these.
+- (NSArray<NSValue*>*)linkRectsForPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {
+    NSMutableArray<NSValue*>* linkRects = [NSMutableArray array];
     NSRect printable = self.plan.configuration.printableRect;
     NSAttributedString* attributedString = self.attributedString;
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
@@ -132,12 +134,13 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
                     NSMakeRect(NSMinX(pageFrame) + NSMinX(printable) + fragment.xOffset + MIN(x0, x1),
                                NSMinY(pageFrame) + self.plan.configuration.topContentInset + fragment.pageYOffset,
                                fabs(x1 - x0), fragment.height);
-                if (!NSIsEmptyRect(linkRect)) [self addCursorRect:linkRect cursor:NSCursor.pointingHandCursor];
+                if (!NSIsEmptyRect(linkRect)) [linkRects addObject:[NSValue valueWithRect:linkRect]];
             }
             cursor = NSMaxRange(effective);
         }
         if (line) CFRelease(line);
     }
+    return linkRects;
 }
 
 - (void)drawCodeLanguageControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {

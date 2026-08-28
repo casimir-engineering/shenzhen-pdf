@@ -4,6 +4,7 @@
 #import "../SPDFMacMarkdownPanController.h"
 #import "../SPDFMacMarkdownPagedView.h"
 #import "../SPDFMacMarkdownSidebarModel.h"
+#import "../SPDFMacMarkdownView.h"
 #import "../markdown/SPDFMarkdown.h"
 
 #include <assert.h>
@@ -356,6 +357,119 @@ int main(void) {
         [chapterView scrollByDocumentDeltaX:0.0 deltaY:300.0];
         NSRect zoomedPageFrame = [chapterCanvas frameForPageAtIndex:(NSUInteger)chapterView.currentPageIndex];
         assert(fabs(NSMidX(zoomedPageFrame) - NSMidX(chapterView.contentView.bounds)) < 1.0);
+
+        // --- Search parity: page-local rects, repaint-only active match, and
+        // the centered find reveal ---
+        SPDFMacMarkdownPageCanvas* pagedCanvas = (SPDFMacMarkdownPageCanvas*)view.documentView;
+        [view applyFitMode:SPDFMacMarkdownPageFitPage];
+        NSRange centerMatch = [rendered.attributedString.string rangeOfString:@"Line 100"];
+        assert(centerMatch.location != NSNotFound);
+        NSUInteger centerPage = [view pageIndexForRange:centerMatch];
+        assert(centerPage > 0);
+        NSDictionary* rectsByPage = [view pageLocalRectsForRanges:@[ [NSValue valueWithRange:centerMatch] ]];
+        assert(rectsByPage.count == 1);  // the match renders on exactly one page
+        NSArray* matchRects = rectsByPage[@(centerPage)];
+        assert(matchRects.count == 1);
+        NSRect matchLocal = [matchRects.firstObject rectValue];
+        NSRect printableRect = configuration.printableRect;
+        assert(NSMinX(matchLocal) >= NSMinX(printableRect) - 0.5);         // inside the printable area
+        assert(NSMaxX(matchLocal) <= NSMaxX(printableRect) + 0.5);
+        assert(NSWidth(matchLocal) > 8.0 && NSWidth(matchLocal) < NSWidth(printableRect) * 0.5);
+        assert(NSHeight(matchLocal) > 4.0);
+        assert([view pageLocalRectsForRanges:@[]].count == 0);
+
+        // Setting the active match repaints only — no scrolling side effects.
+        [view.contentView scrollToPoint:NSMakePoint(0, 40)];
+        [view reflectScrolledClipView:view.contentView];
+        NSPoint originBefore = view.documentVisibleRect.origin;
+        view.activeSearchRange = centerMatch;
+        view.activeSearchAlpha = 0.85;
+        assert(NSEqualRanges(pagedCanvas.activeSearchRange, centerMatch));
+        assert(fabs(pagedCanvas.activeSearchAlpha - 0.85) < 0.0001);
+        assert(NSEqualPoints(view.documentVisibleRect.origin, originBefore));
+
+        // centerRange: centers the match in the viewport and reports the page.
+        __block NSInteger reportedPage = -1;
+        view.viewportChangedHandler = ^(NSInteger pageIndex, CGFloat zoom) {
+          (void)zoom;
+          reportedPage = pageIndex;
+        };
+        assert([view centerRange:centerMatch]);
+        NSRect matchPageFrame = [pagedCanvas frameForPageAtIndex:centerPage];
+        CGFloat matchMidY = NSMinY(matchPageFrame) + NSMidY(matchLocal);
+        assert(fabs(NSMidY(view.documentVisibleRect) - matchMidY) < 1.5);
+        assert(view.currentPageIndex == (NSInteger)centerPage);
+        assert(reportedPage == (NSInteger)centerPage);
+        view.viewportChangedHandler = nil;
+        // ...and clamps at both document edges (the small zoom makes the half
+        // viewport taller than the distance from either end's line to the edge).
+        [view setZoom:0.4 centeredAtPoint:NSMakePoint(NSMidX(matchPageFrame), matchMidY)];
+        assert([view centerRange:[rendered.attributedString.string rangeOfString:@"A4 document"]]);
+        assert(NSMinY(view.documentVisibleRect) < 0.5);
+        assert([view centerRange:[rendered.attributedString.string rangeOfString:@"Line 239"]]);
+        assert(fabs(NSMaxY(view.documentVisibleRect) - view.documentCanvasSize.height) < 1.0);
+
+        // --- Cursor region resolution (PDF pointer parity, no NSCursor) ---
+        NSString* cursorSource =
+            @"# Cursor\n\nHover paragraph with a [visit example](https://example.com) link inside plain text.\n\n"
+            @"```\nlet cursorDemo = true;\n```\n";
+        SPDFMarkdownDocumentModel* cursorModel = [parser parseString:cursorSource sourceURL:nil error:nil];
+        SPDFMarkdownRenderedDocument* cursorRendered =
+            [[SPDFMarkdownRenderer new] renderModel:cursorModel
+                                            options:[SPDFMarkdownRenderOptions defaultOptions]
+                                  languageOverrides:nil];
+        NSAttributedString* cursorInteractive = SPDFMacMarkdownInteractiveString(cursorModel, cursorRendered);
+        SPDFMarkdownPaginationPlan* cursorPlan =
+            [paginator paginateItems:[paginator measureRenderedDocument:cursorRendered
+                                                         containerWidth:NSWidth(configuration.printableRect)]
+                       configuration:configuration];
+        SPDFMacMarkdownPageCanvas* cursorCanvas =
+            [[SPDFMacMarkdownPageCanvas alloc] initWithPaginationPlan:cursorPlan
+                                                     attributedString:cursorInteractive];
+        [cursorCanvas resizeForWidth:800];
+        NSRect cursorPage0 = [cursorCanvas frameForPageAtIndex:0];
+        NSRange hoverTextRange = [cursorInteractive.string rangeOfString:@"Hover paragraph"];
+        assert(hoverTextRange.location != NSNotFound);
+        NSRect hoverLocal =
+            [[cursorCanvas pageLocalRectsForRanges:@[ [NSValue valueWithRange:hoverTextRange] ]][@0].firstObject
+                rectValue];
+        NSPoint hoverPoint =
+            NSMakePoint(NSMinX(cursorPage0) + NSMidX(hoverLocal), NSMinY(cursorPage0) + NSMidY(hoverLocal));
+        assert([cursorCanvas cursorRegionAtPoint:hoverPoint] == SPDFCursorRegionText);
+        NSRange linkTextRange = [cursorInteractive.string rangeOfString:@"visit example"];
+        assert([cursorInteractive attribute:SPDFMacMarkdownDestinationAttribute
+                                    atIndex:linkTextRange.location
+                             effectiveRange:NULL] != nil);
+        NSRect linkLocal =
+            [[cursorCanvas pageLocalRectsForRanges:@[ [NSValue valueWithRange:linkTextRange] ]][@0].firstObject
+                rectValue];
+        NSPoint linkPoint =
+            NSMakePoint(NSMinX(cursorPage0) + NSMidX(linkLocal), NSMinY(cursorPage0) + NSMidY(linkLocal));
+        assert([cursorCanvas cursorRegionAtPoint:linkPoint] == SPDFCursorRegionLink);
+        // The code-language pill resolves to the link/control region.
+        NSUInteger cursorBlockIndex = cursorModel.codeFences.firstObject.blockIndex;
+        NSRect pillFrame = [cursorCanvas codeLanguageControlFrameForBlockIndex:cursorBlockIndex];
+        assert(!NSIsEmptyRect(pillFrame));
+        assert([cursorCanvas cursorRegionAtPoint:NSMakePoint(NSMidX(pillFrame), NSMidY(pillFrame))] ==
+               SPDFCursorRegionLink);
+        // Page margins and the canvas gutter resolve to none (arrow).
+        assert([cursorCanvas cursorRegionAtPoint:NSMakePoint(NSMinX(cursorPage0) + 3.0, hoverPoint.y)] ==
+               SPDFCursorRegionNone);
+        assert([cursorCanvas cursorRegionAtPoint:NSMakePoint(NSMinX(cursorPage0) - 6.0, hoverPoint.y)] ==
+               SPDFCursorRegionNone);
+        // The gap between two pages resolves to none (multi-page canvas).
+        NSRect gapPage0 = [pagedCanvas frameForPageAtIndex:0];
+        NSRect gapPage1 = [pagedCanvas frameForPageAtIndex:1];
+        NSPoint gapPoint = NSMakePoint(NSMidX(gapPage0), (NSMaxY(gapPage0) + NSMinY(gapPage1)) * 0.5);
+        assert([pagedCanvas cursorRegionAtPoint:gapPoint] == SPDFCursorRegionNone);
+        // Presentation mode forces the arrow path for every region.
+        cursorCanvas.presentationMode = YES;
+        assert([cursorCanvas cursorRegionAtPoint:hoverPoint] == SPDFCursorRegionNone);
+        assert([cursorCanvas cursorRegionAtPoint:linkPoint] == SPDFCursorRegionNone);
+        cursorCanvas.presentationMode = NO;
+        assert([cursorCanvas cursorRegionAtPoint:hoverPoint] == SPDFCursorRegionText);
+        // No window: the refresh entry point must be a safe no-op.
+        [cursorCanvas refreshCursorForMouseLocation];
         puts("SPDFMacMarkdownPagedViewTests passed");
     }
     return 0;

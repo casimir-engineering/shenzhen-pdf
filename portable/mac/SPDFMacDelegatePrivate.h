@@ -43,12 +43,10 @@
     NSLayoutConstraint* _pageScrollFullWidthConstraint;
     NSLayoutConstraint* _tabStripHeightConstraint;
     NSLayoutConstraint* _toolbarHeightConstraint;
-    NSButton* _prevButton;
-    NSButton* _nextButton;
+    NSSegmentedControl* _pageSegments;
     NSTextField* _pageField;
     NSTextField* _pageCountLabel;
-    NSButton* _zoomOutButton;
-    NSButton* _zoomInButton;
+    NSSegmentedControl* _zoomSegments;
     NSPopUpButton* _fitModePopup;
     NSButton* _sidebarToggleButton;
     NSButton* _minimapToggleButton;
@@ -57,8 +55,7 @@
     BOOL _findRegexMultiline;
     NSButton* _ocrButton;
     NSButton* _translateButton;
-    NSButton* _markdownFontDecreaseButton;
-    NSButton* _markdownFontIncreaseButton;
+    NSSegmentedControl* _markdownFontSizeSegments;
     NSBox* _ocrSeparator;
     NSButton* _findPrevButton;
     NSButton* _findNextButton;

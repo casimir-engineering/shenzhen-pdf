@@ -6,12 +6,23 @@
 
 @class SPDFMarkdownPage;
 @class SPDFMarkdownPageFragment;
+@class SPDFMacMarkdownPanController;
 
 // Shared between SPDFMacMarkdownPageCanvas.mm and its categories
 // (SPDFMacMarkdownPageCanvas+Navigation.mm); not part of the public canvas API.
 @interface SPDFMacMarkdownPageCanvas ()
 @property(nonatomic, readonly) SPDFMarkdownPaginationPlan* plan;
 @property(nonatomic, readonly) NSAttributedString* attributedString;
+// YES while a left-button selection drag is in flight (forces the I-beam in
+// updateCursorForPointInWindow:, matching the PDF view's selection drag).
+@property(nonatomic, readonly, getter=isDraggingSelection) BOOL draggingSelection;
+@end
+
+// Implemented in SPDFMacMarkdownPageCanvas+Pan.mm: the lazily created hand-pan
+// controller shared by the right-/middle-button pan handlers and the cursor
+// precedence logic (an active pan grab owns the cursor).
+@interface SPDFMacMarkdownPageCanvas (Pan)
+@property(nonatomic, readonly) SPDFMacMarkdownPanController* spdf_panController;
 @end
 
 // Drawing/geometry internals implemented alongside the public (Decorations)
@@ -21,5 +32,20 @@
 - (NSRect)codeLanguageControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
 - (NSRect)codeLanguageControlHitRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
 - (void)drawCodeLanguageControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;
-- (void)addLinkCursorRectsForPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;
+// Canvas-space rects of every link-run portion inside the page's line
+// fragments, using the same CTLine offset mapping the highlight drawing uses.
+- (NSArray<NSValue*>*)linkRectsForPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;
+@end
+
+// Search/highlight geometry internals implemented alongside the public
+// (Search) category in SPDFMacMarkdownPageCanvas+Search.mm.
+@interface SPDFMacMarkdownPageCanvas (SearchInternal)
+// The single source of truth for range-to-rect mapping: PAGE-LOCAL rects
+// (relative to the page frame origin, flipped like the canvas) for every
+// portion of `ranges` rendered by `page`, in fragment order.
+- (void)enumeratePageLocalRectsForRanges:(NSArray<NSValue*>*)ranges
+                                  onPage:(SPDFMarkdownPage*)page
+                              usingBlock:(void (^)(NSRect rect))block;
+// PDF-parity animated red outline around the active find match.
+- (void)drawActiveSearchOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;
 @end

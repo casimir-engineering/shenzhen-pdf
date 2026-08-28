@@ -74,19 +74,20 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     return MAX((CGFloat)0.5, MIN((CGFloat)3.0, scale));
 }
 
-// The Markdown text-size controls are the only markdown-exclusive toolbar
-// views: hidden for PDF tabs, visible (and clamped at the limits) for the
-// active Markdown tab. Tooltips carry the current percentage.
+// The Markdown text-size pill is the only markdown-exclusive toolbar view:
+// hidden for PDF tabs, visible (and clamped at the limits) for the active
+// Markdown tab. Segment tooltips carry the current percentage.
 - (void)updateMarkdownFontControls {
     BOOL markdownActive = [self isMarkdownActive];
-    _markdownFontDecreaseButton.hidden = !markdownActive;
-    _markdownFontIncreaseButton.hidden = !markdownActive;
+    _markdownFontSizeSegments.hidden = !markdownActive;
     if (!markdownActive) return;
     double percent = round(_markdownFontScale * 100.0);
-    _markdownFontDecreaseButton.enabled = _markdownFontScale > 0.5;
-    _markdownFontIncreaseButton.enabled = _markdownFontScale < 3.0;
-    _markdownFontDecreaseButton.toolTip = [NSString stringWithFormat:@"Decrease Markdown Text Size (%.0f%%)", percent];
-    _markdownFontIncreaseButton.toolTip = [NSString stringWithFormat:@"Increase Markdown Text Size (%.0f%%)", percent];
+    [_markdownFontSizeSegments setEnabled:_markdownFontScale > 0.5 forSegment:0];
+    [_markdownFontSizeSegments setEnabled:_markdownFontScale < 3.0 forSegment:1];
+    [_markdownFontSizeSegments setToolTip:[NSString stringWithFormat:@"Decrease Markdown Text Size (%.0f%%)", percent]
+                               forSegment:0];
+    [_markdownFontSizeSegments setToolTip:[NSString stringWithFormat:@"Increase Markdown Text Size (%.0f%%)", percent]
+                               forSegment:1];
 }
 
 - (void)changeMarkdownFontScaleByFactor:(CGFloat)factor {
@@ -349,18 +350,16 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     _zoom = session.zoom;
     _fitMode = (SPDFFitMode)session.fitMode;
     NSInteger pageCount = (NSInteger)session.pageCount;
-    _prevButton.enabled = _pageIndex > 0;
-    _nextButton.enabled = _pageIndex + 1 < pageCount;
+    [_pageSegments setEnabled:_pageIndex > 0 forSegment:0];
+    [_pageSegments setEnabled:_pageIndex + 1 < pageCount forSegment:1];
     _pageField.hidden = NO;
     _pageCountLabel.hidden = NO;
-    _prevButton.hidden = NO;
-    _nextButton.hidden = NO;
+    _pageSegments.hidden = NO;
     _fitModePopup.hidden = NO;
-    _zoomOutButton.hidden = NO;
-    _zoomInButton.hidden = NO;
+    _zoomSegments.hidden = NO;
     _pageField.enabled = pageCount > 0;
-    _zoomOutButton.enabled = pageCount > 0;
-    _zoomInButton.enabled = pageCount > 0;
+    [_zoomSegments setEnabled:pageCount > 0 forSegment:0];
+    [_zoomSegments setEnabled:pageCount > 0 forSegment:1];
     _fitModePopup.enabled = pageCount > 0;
     _pageField.stringValue = pageCount ? [NSString stringWithFormat:@"%ld", (long)_pageIndex + 1] : @"";
     _pageCountLabel.stringValue = [NSString stringWithFormat:@"/ %ld", (long)pageCount];

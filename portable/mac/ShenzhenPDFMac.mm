@@ -2555,6 +2555,27 @@ static void spdf_discard_launch_prerender(void) {
     return button;
 }
 
+- (void)pageSegmentsClicked:(id)sender {
+    if (_pageSegments.selectedSegment == 0)
+        [self previousPage:sender];
+    else
+        [self nextPage:sender];
+}
+
+- (void)zoomSegmentsClicked:(id)sender {
+    if (_zoomSegments.selectedSegment == 0)
+        [self zoomOut:sender];
+    else
+        [self zoomIn:sender];
+}
+
+- (void)markdownFontSizeSegmentsClicked:(id)sender {
+    if (_markdownFontSizeSegments.selectedSegment == 0)
+        [self decreaseMarkdownFontSize:sender];
+    else
+        [self increaseMarkdownFontSize:sender];
+}
+
 - (void)styleToolbarTextButton:(NSButton*)button {
     NSFont* font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightLight];
     NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
@@ -2686,34 +2707,32 @@ static void spdf_discard_launch_prerender(void) {
                                   menu:menu
                                  state:NSControlStateValueOff
                                enabled:_findNextButton.enabled];
-    if ([hiddenViews containsObject:_markdownFontDecreaseButton] ||
-        [hiddenViews containsObject:_markdownFontIncreaseButton]) {
+    if ([hiddenViews containsObject:_markdownFontSizeSegments]) {
         [self addOverflowItemWithTitle:@"Decrease Markdown Text Size"
                                 action:@selector(decreaseMarkdownFontSize:)
                                   menu:menu
                                  state:NSControlStateValueOff
-                               enabled:_markdownFontDecreaseButton.enabled];
+                               enabled:[_markdownFontSizeSegments isEnabledForSegment:0]];
         [self addOverflowItemWithTitle:@"Increase Markdown Text Size"
                                 action:@selector(increaseMarkdownFontSize:)
                                   menu:menu
                                  state:NSControlStateValueOff
-                               enabled:_markdownFontIncreaseButton.enabled];
+                               enabled:[_markdownFontSizeSegments isEnabledForSegment:1]];
     }
-    if ([hiddenViews containsObject:_fitModePopup] || [hiddenViews containsObject:_zoomOutButton] ||
-        [hiddenViews containsObject:_zoomInButton]) {
+    if ([hiddenViews containsObject:_fitModePopup] || [hiddenViews containsObject:_zoomSegments]) {
         [menu addItem:[NSMenuItem separatorItem]];
-        if ([hiddenViews containsObject:_zoomOutButton])
+        if ([hiddenViews containsObject:_zoomSegments]) {
             [self addOverflowItemWithTitle:@"Zoom Out"
                                     action:@selector(zoomOut:)
                                       menu:menu
                                      state:NSControlStateValueOff
-                                   enabled:_zoomOutButton.enabled];
-        if ([hiddenViews containsObject:_zoomInButton])
+                                   enabled:[_zoomSegments isEnabledForSegment:0]];
             [self addOverflowItemWithTitle:@"Zoom In"
                                     action:@selector(zoomIn:)
                                       menu:menu
                                      state:NSControlStateValueOff
-                                   enabled:_zoomInButton.enabled];
+                                   enabled:[_zoomSegments isEnabledForSegment:1]];
+        }
         [self addOverflowItemWithTitle:@"Actual Size"
                                 action:@selector(actualSize:)
                                   menu:menu
@@ -2759,8 +2778,8 @@ static void spdf_discard_launch_prerender(void) {
         @[ _findCountLabel ],
         @[ _findPrevButton, _findNextButton ],
         @[ _findRegexCheckbox ],
-        @[ _markdownFontDecreaseButton, _markdownFontIncreaseButton ],
-        @[ _fitModePopup, _zoomOutButton, _zoomInButton ],
+        @[ _markdownFontSizeSegments ],
+        @[ _fitModePopup, _zoomSegments ],
     ];
     NSMutableSet<NSView*>* hiddenViews = [NSMutableSet set];
     for (NSArray<NSView*>* group in groups)
@@ -2858,8 +2877,12 @@ static void spdf_discard_launch_prerender(void) {
     _toolbar.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:_toolbar];
 
-    _prevButton = [self buttonWithTitle:@"<" action:@selector(previousPage:)];
-    _nextButton = [self buttonWithTitle:@">" action:@selector(nextPage:)];
+    _pageSegments = spdf_paired_toolbar_segments(
+        self, @selector(pageSegmentsClicked:),
+        [NSImage imageWithSystemSymbolName:@"chevron.left" accessibilityDescription:@"Previous Page"],
+        [NSImage imageWithSystemSymbolName:@"chevron.right" accessibilityDescription:@"Next Page"]);
+    [_pageSegments setToolTip:@"Go to the previous page" forSegment:0];
+    [_pageSegments setToolTip:@"Go to the next page" forSegment:1];
     _sidebarToggleButton = [[SPDFToolbarToggleButton alloc] initWithTitle:@"Side Panel"
                                                                    target:self
                                                                    action:@selector(toggleSidebar:)];
@@ -2874,22 +2897,16 @@ static void spdf_discard_launch_prerender(void) {
     [_pageField.widthAnchor constraintEqualToConstant:50].active = YES;
     _pageCountLabel = [SPDFToolbarDragLabel labelWithString:@"/ 0"];
     _pageCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    _zoomOutButton = [self buttonWithTitle:@"-" action:@selector(zoomOut:)];
-    _zoomInButton = [self buttonWithTitle:@"+" action:@selector(zoomIn:)];
-    _markdownFontDecreaseButton = [self buttonWithTitle:@"" action:@selector(decreaseMarkdownFontSize:)];
-    _markdownFontIncreaseButton = [self buttonWithTitle:@"" action:@selector(increaseMarkdownFontSize:)];
-    _markdownFontDecreaseButton.accessibilityLabel = @"Decrease Markdown Text Size";
-    _markdownFontIncreaseButton.accessibilityLabel = @"Increase Markdown Text Size";
-    for (NSButton* fontButton in @[ _markdownFontDecreaseButton, _markdownFontIncreaseButton ]) {
-        fontButton.image = spdf_markdown_font_size_toolbar_image(fontButton == _markdownFontIncreaseButton);
-        fontButton.imagePosition = NSImageOnly;
-        fontButton.hidden = YES; // markdown-only; updateMarkdownFontControls reveals them
-        [fontButton.widthAnchor constraintEqualToConstant:32].active = YES;
-        [fontButton setContentHuggingPriority:NSLayoutPriorityRequired
-                               forOrientation:NSLayoutConstraintOrientationHorizontal];
-        [fontButton setContentCompressionResistancePriority:NSLayoutPriorityRequired
-                                             forOrientation:NSLayoutConstraintOrientationHorizontal];
-    }
+    _zoomSegments = spdf_paired_toolbar_segments(
+        self, @selector(zoomSegmentsClicked:),
+        [NSImage imageWithSystemSymbolName:@"minus" accessibilityDescription:@"Zoom Out"],
+        [NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:@"Zoom In"]);
+    [_zoomSegments setToolTip:@"Zoom out" forSegment:0];
+    [_zoomSegments setToolTip:@"Zoom in" forSegment:1];
+    _markdownFontSizeSegments = spdf_paired_toolbar_segments(self, @selector(markdownFontSizeSegmentsClicked:),
+                                                             spdf_markdown_font_size_toolbar_image(NO),
+                                                             spdf_markdown_font_size_toolbar_image(YES));
+    _markdownFontSizeSegments.hidden = YES; // markdown-only; updateMarkdownFontControls reveals it
     [self updateMarkdownFontControls];
 
     _fitModePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
@@ -2996,13 +3013,10 @@ static void spdf_discard_launch_prerender(void) {
     [_toolbar addArrangedSubview:_ocrSeparator];
     [_toolbar addArrangedSubview:_pageField];
     [_toolbar addArrangedSubview:_pageCountLabel];
-    [_toolbar addArrangedSubview:_prevButton];
-    [_toolbar addArrangedSubview:_nextButton];
+    [_toolbar addArrangedSubview:_pageSegments];
     [_toolbar addArrangedSubview:_fitModePopup];
-    [_toolbar addArrangedSubview:_zoomOutButton];
-    [_toolbar addArrangedSubview:_zoomInButton];
-    [_toolbar addArrangedSubview:_markdownFontDecreaseButton];
-    [_toolbar addArrangedSubview:_markdownFontIncreaseButton];
+    [_toolbar addArrangedSubview:_zoomSegments];
+    [_toolbar addArrangedSubview:_markdownFontSizeSegments];
     [_toolbar addArrangedSubview:_searchField];
     [_toolbar addArrangedSubview:_findRegexCheckbox];
     [_toolbar addArrangedSubview:_findCountLabel];
@@ -3011,8 +3025,8 @@ static void spdf_discard_launch_prerender(void) {
     [_toolbar addArrangedSubview:_toolbarSpacer];
     [_toolbar addArrangedSubview:_toolbarOverflowButton];
     [_toolbar addArrangedSubview:_minimapToggleButton];
-    [_toolbar setCustomSpacing:8.0 afterView:_zoomInButton];
-    [_toolbar setCustomSpacing:8.0 afterView:_markdownFontIncreaseButton];
+    [_toolbar setCustomSpacing:8.0 afterView:_zoomSegments];
+    [_toolbar setCustomSpacing:8.0 afterView:_markdownFontSizeSegments];
     [_toolbar setCustomSpacing:8.0 afterView:_searchField];
 
     if (launchWindowStart > 0.0)
@@ -10434,8 +10448,8 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 - (void)updatePageIndicatorControls {
     NSInteger pageCount = spdf_page_count(_doc);
     BOOL hasDoc = _doc != NULL;
-    _prevButton.enabled = hasDoc && _pageIndex > 0;
-    _nextButton.enabled = hasDoc && _pageIndex + 1 < pageCount;
+    [_pageSegments setEnabled:hasDoc && _pageIndex > 0 forSegment:0];
+    [_pageSegments setEnabled:hasDoc && _pageIndex + 1 < pageCount forSegment:1];
     _pageField.stringValue = hasDoc ? [NSString stringWithFormat:@"%ld", (long)_pageIndex + 1] : @"";
 }
 
@@ -10472,12 +10486,12 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     }
     NSInteger pageCount = spdf_page_count(_doc);
     BOOL hasDoc = _doc != NULL;
-    _prevButton.enabled = hasDoc && _pageIndex > 0;
-    _nextButton.enabled = hasDoc && _pageIndex + 1 < pageCount;
+    [_pageSegments setEnabled:hasDoc && _pageIndex > 0 forSegment:0];
+    [_pageSegments setEnabled:hasDoc && _pageIndex + 1 < pageCount forSegment:1];
     _sidebarToggleButton.enabled = hasDoc;
     _pageField.enabled = hasDoc;
-    _zoomOutButton.enabled = hasDoc;
-    _zoomInButton.enabled = hasDoc;
+    [_zoomSegments setEnabled:hasDoc forSegment:0];
+    [_zoomSegments setEnabled:hasDoc forSegment:1];
     _fitModePopup.enabled = hasDoc;
     _searchField.enabled = hasDoc;
     _findRegexCheckbox.enabled = hasDoc;
