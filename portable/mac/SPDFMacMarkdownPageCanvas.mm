@@ -2,6 +2,7 @@
 
 #import <CoreText/CoreText.h>
 
+#import "SPDFMacFitGeometry.h"
 #import "SPDFMacUIHelpers.h"
 #import "SPDFMacMarkdownPanController.h"
 #import "SPDFMacMarkdownView.h"
@@ -97,27 +98,36 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     return _draggingSelection;
 }
 
+// Exact-fit vertical inset (see SPDFMacFitGeometry.h): the decorative canvas
+// inset while pages are much shorter than the viewport, 0 at and beyond exact
+// fit, and the vertical-centering split for a one-page document below fit.
+- (CGFloat)verticalCanvasInset {
+    return spdf_mac_vertical_canvas_inset(self.pageCount, _plan.configuration.paperSize.height,
+                                          self.layoutViewportSize.height, kSPDFMarkdownCanvasInset);
+}
+
 - (NSRect)frameForPageAtIndex:(NSUInteger)pageIndex {
     if (pageIndex >= self.pageCount) return NSZeroRect;
     NSSize paper = _plan.configuration.paperSize;
     CGFloat x = floor(MAX(kSPDFMarkdownCanvasInset, (NSWidth(self.bounds) - paper.width) * 0.5));
-    CGFloat y = kSPDFMarkdownCanvasInset + pageIndex * (paper.height + kSPDFMarkdownPageGap);
+    CGFloat y = [self verticalCanvasInset] + pageIndex * (paper.height + kSPDFMarkdownPageGap);
     return NSMakeRect(x, y, paper.width, paper.height);
 }
 
 - (void)resizeForWidth:(CGFloat)width {
     NSSize paper = _plan.configuration.paperSize;
-    CGFloat height = kSPDFMarkdownCanvasInset * 2.0 + self.pageCount * paper.height +
+    CGFloat height = [self verticalCanvasInset] * 2.0 + self.pageCount * paper.height +
                      (self.pageCount ? self.pageCount - 1 : 0) * kSPDFMarkdownPageGap;
     self.frame = NSMakeRect(0, 0, MAX(width, paper.width + kSPDFMarkdownCanvasInset * 2.0), height);
 }
 
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect {
     if (!self.pageCount) return -1;
-    NSInteger first = MAX(0, (NSInteger)floor((NSMinY(visibleRect) - kSPDFMarkdownCanvasInset) /
+    CGFloat inset = [self verticalCanvasInset];
+    NSInteger first = MAX(0, (NSInteger)floor((NSMinY(visibleRect) - inset) /
                                               (_plan.configuration.paperSize.height + kSPDFMarkdownPageGap)));
     NSInteger last = MIN((NSInteger)self.pageCount - 1,
-                         (NSInteger)ceil((NSMaxY(visibleRect) - kSPDFMarkdownCanvasInset) /
+                         (NSInteger)ceil((NSMaxY(visibleRect) - inset) /
                                          (_plan.configuration.paperSize.height + kSPDFMarkdownPageGap)));
     NSInteger best = first;
     CGFloat bestArea = -1.0;
@@ -156,10 +166,11 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     NSRectFill(dirtyRect);
     if (!self.pageCount) return;
     NSSize paper = _plan.configuration.paperSize;
-    NSInteger first = MAX(
-        0, (NSInteger)floor((NSMinY(dirtyRect) - kSPDFMarkdownCanvasInset) / (paper.height + kSPDFMarkdownPageGap)));
-    NSInteger last = MIN((NSInteger)self.pageCount - 1, (NSInteger)ceil((NSMaxY(dirtyRect) - kSPDFMarkdownCanvasInset) /
-                                                                        (paper.height + kSPDFMarkdownPageGap)));
+    CGFloat inset = [self verticalCanvasInset];
+    NSInteger first =
+        MAX(0, (NSInteger)floor((NSMinY(dirtyRect) - inset) / (paper.height + kSPDFMarkdownPageGap)));
+    NSInteger last = MIN((NSInteger)self.pageCount - 1,
+                         (NSInteger)ceil((NSMaxY(dirtyRect) - inset) / (paper.height + kSPDFMarkdownPageGap)));
     CGContextRef context = NSGraphicsContext.currentContext.CGContext;
     for (NSInteger pageIndex = first; pageIndex <= last; ++pageIndex) {
         NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];
@@ -219,7 +230,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 - (NSUInteger)characterIndexAtPoint:(NSPoint)point {
     NSSize paper = _plan.configuration.paperSize;
     NSInteger pageIndex =
-        (NSInteger)floor((point.y - kSPDFMarkdownCanvasInset) / (paper.height + kSPDFMarkdownPageGap));
+        (NSInteger)floor((point.y - [self verticalCanvasInset]) / (paper.height + kSPDFMarkdownPageGap));
     if (pageIndex < 0 || pageIndex >= (NSInteger)self.pageCount) return NSNotFound;
     NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];
     if (!NSPointInRect(point, pageFrame)) return NSNotFound;
@@ -263,7 +274,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     if (!self.pageCount || !_attributedString.length) return NSNotFound;
     NSSize paper = _plan.configuration.paperSize;
     NSInteger pageIndex =
-        (NSInteger)floor((point.y - kSPDFMarkdownCanvasInset) / (paper.height + kSPDFMarkdownPageGap));
+        (NSInteger)floor((point.y - [self verticalCanvasInset]) / (paper.height + kSPDFMarkdownPageGap));
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)self.pageCount - 1));
     if (pageIndex + 1 < (NSInteger)self.pageCount) {
         NSRect currentPage = [self frameForPageAtIndex:(NSUInteger)pageIndex];

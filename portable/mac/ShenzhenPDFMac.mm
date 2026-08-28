@@ -5350,6 +5350,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [_pageScrollView tile];
     NSSize clipSize = [self documentClipSizeForLayout];
     _pageView.viewportWidthHint = MAX(1.0, clipSize.width);
+    _pageView.viewportHeightHint = MAX(1.0, clipSize.height);
     _pageView.backingScale = [self backingScale];
     if (!_doc) {
         _pageScrollView.hasVerticalScroller = NO;
@@ -5361,6 +5362,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         if (clipSize.width <= 1.0 || clipSize.height <= 1.0) clipSize = _pageScrollView.contentSize;
         if (clipSize.width <= 1.0 || clipSize.height <= 1.0) clipSize = _pageScrollView.frame.size;
         _pageView.viewportWidthHint = MAX(1.0, clipSize.width);
+        _pageView.viewportHeightHint = MAX(1.0, clipSize.height);
         [_pageView setFrame:NSMakeRect(0.0, 0.0, MAX(1.0, clipSize.width), MAX(1.0, clipSize.height))];
         if (fabs(NSMinX(clipView.bounds)) > 0.01 || fabs(NSMinY(clipView.bounds)) > 0.01) {
             [clipView setBoundsOrigin:NSZeroPoint];
@@ -5376,17 +5378,24 @@ static BOOL spdf_page_list_cache_disabled(void) {
         _pageScrollView.verticalScroller = nil;
     else if (_pageScrollView.verticalScroller != _markerScroller)
         _pageScrollView.verticalScroller = _markerScroller;
-    _pageScrollView.hasVerticalScroller = !_presentationMode;
     NSSize size = [_pageView documentSizeForClipSize:clipSize];
+    // Both scrollers show only when there is something to scroll on their axis:
+    // a document that fits the viewport at the current zoom (e.g. a single page
+    // at Fit Page) shows no vertical scroller at all.
+    BOOL needsVerticalScroller = !_presentationMode && size.height > clipSize.height + 0.5;
     BOOL needsHorizontalScroller = size.width > clipSize.width + 0.5;
-    if (_pageScrollView.hasHorizontalScroller != needsHorizontalScroller) {
+    if (_pageScrollView.hasHorizontalScroller != needsHorizontalScroller ||
+        _pageScrollView.hasVerticalScroller != needsVerticalScroller) {
         _pageScrollView.hasHorizontalScroller = needsHorizontalScroller;
+        _pageScrollView.hasVerticalScroller = needsVerticalScroller;
         [_pageScrollView tile];
         clipSize = [self documentClipSizeForLayout];
         _pageView.viewportWidthHint = MAX(1.0, clipSize.width);
+        _pageView.viewportHeightHint = MAX(1.0, clipSize.height);
         size = [_pageView documentSizeForClipSize:clipSize];
         needsHorizontalScroller = size.width > clipSize.width + 0.5;
         _pageScrollView.hasHorizontalScroller = needsHorizontalScroller;
+        _pageScrollView.hasVerticalScroller = !_presentationMode && size.height > clipSize.height + 0.5;
     }
     if (!needsHorizontalScroller) size.width = MAX(size.width, clipSize.width);
     [_pageView setFrame:NSMakeRect(0.0, 0.0, size.width, size.height)];
@@ -5400,6 +5409,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (!_liveZooming) [self updateMinimap];
     [self invalidateFindMarkers];
     [self updateHorizontalScrollLockAnimated:NO];
+    [self updateVerticalScrollLock];
 }
 
 - (void)resizeDocumentViewForWindowLiveResize {
@@ -5425,11 +5435,14 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (clipSize.width <= 1.0 || clipSize.height <= 1.0) clipSize = [self documentClipSizeForLayout];
 
     _pageView.viewportWidthHint = MAX(1.0, clipSize.width);
+    _pageView.viewportHeightHint = MAX(1.0, clipSize.height);
     _pageView.backingScale = [self backingScale];
 
     NSSize size = [_pageView documentSizeForClipSize:clipSize];
     BOOL needsHorizontalScroller = size.width > clipSize.width + 0.5;
-    if (_pageScrollView.hasHorizontalScroller != needsHorizontalScroller) {
+    BOOL needsVerticalScroller = !_presentationMode && size.height > clipSize.height + 0.5;
+    if (_pageScrollView.hasHorizontalScroller != needsHorizontalScroller ||
+        _pageScrollView.hasVerticalScroller != needsVerticalScroller) {
         [self resizeDocumentView];
         return NO;
     }
@@ -5446,6 +5459,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [_pageScrollView reflectScrolledClipView:clipView];
         _suppressScrollCallbacks = previousSuppressScrollCallbacks;
     }
+    [self updateVerticalScrollLock];  // released while live zooming, re-engaged at the end
     return YES;
 }
 
@@ -5629,6 +5643,28 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
     [self setHorizontalScrollLockX:[self centeredHorizontalScrollOriginXForPageRect:pageRect] animated:animated];
+}
+
+// Vertical mirror of the horizontal lock, for the fits-vertically case: when the
+// whole document fits the viewport at the current zoom (a single page at or
+// below Fit Page — the layout centers it vertically, see ensureLayoutCache),
+// there is nothing to scroll, so pin y (min==max) and drop the elastic bounce.
+// Presentation mode and live pinch-zoom release the lock like the horizontal one.
+- (void)updateVerticalScrollLock {
+    if (![_pageScrollView.contentView isKindOfClass:[SPDFDocumentClipView class]]) return;
+    SPDFDocumentClipView* clip = (SPDFDocumentClipView*)_pageScrollView.contentView;
+    BOOL fitsVertically = _doc && _renderedPages.count > 0 && !_presentationMode && !_liveZooming &&
+                          NSHeight(_pageView.bounds) <= NSHeight(clip.bounds) + 0.5;
+    _pageScrollView.verticalScrollElasticity = fitsVertically ? NSScrollElasticityNone : NSScrollElasticityAllowed;
+    clip.verticalLockMinY = fitsVertically ? 0.0 : NAN;
+    clip.verticalLockMaxY = fitsVertically ? 0.0 : NAN;
+    if (fitsVertically && fabs(NSMinY(clip.bounds)) > 0.01) {
+        BOOL wasSuppressing = _suppressScrollCallbacks;
+        _suppressScrollCallbacks = YES;
+        [clip setBoundsOrigin:NSMakePoint(NSMinX(clip.bounds), 0.0)];
+        [_pageScrollView reflectScrolledClipView:clip];
+        _suppressScrollCallbacks = wasSuppressing;
+    }
 }
 
 - (NSPoint)clampedDocumentScrollOrigin:(NSPoint)origin forPageIndex:(NSInteger)pageIndex {
@@ -9314,6 +9350,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     view.currentPageIndex = _pageIndex;
     view.backingScale = [self backingScale];
     view.viewportWidthHint = MAX(1.0, _pageScrollView.contentSize.width);
+    view.viewportHeightHint = MAX(1.0, _pageScrollView.contentSize.height);
     view.activeFindPageIndex = -1;
     view.emptyMessage = @"Open a document";
     return view;

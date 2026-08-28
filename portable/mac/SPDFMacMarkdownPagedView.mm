@@ -164,6 +164,9 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     NSPoint center = NSMakePoint(NSMidX(self.contentView.bounds), NSMidY(self.contentView.bounds));
     // contentView.bounds is expressed in canvas/magnified coordinates (its width
     // is contentSize.width / magnification), so this stays correct at any zoom.
+    // The canvas needs the viewport size in the same space for the exact-fit
+    // vertical inset (collapsed at fit, centering a single short page).
+    _canvas.layoutViewportSize = self.contentView.bounds.size;
     CGFloat width = MAX(_plan.configuration.paperSize.width + kSPDFMarkdownFitInset, NSWidth(self.contentView.bounds));
     [_canvas resizeForWidth:width];
     if (preserveCenter) {
@@ -184,6 +187,10 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
 // page wider than the viewport pans within its own bounds only; presentation
 // mode and live pinch-zoom release the lock. All math is in canvas/magnified
 // coordinates, the space of both the clip view's bounds and the page frames.
+// The vertical axis gets the same treatment for the fits-vertically case: a
+// canvas that fits the viewport (a one-page document at or below Fit Page —
+// the canvas centers the page vertically) is pinned at y=0 with no elastic
+// bounce and shows no vertical scroller, since there is nothing to scroll.
 - (void)updateHorizontalScrollLock {
     if (_updatingScrollLock) return;
     if (![self.contentView isKindOfClass:SPDFDocumentClipView.class]) return;
@@ -191,7 +198,10 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     if (_presentationMode || _liveMagnifying || !self.pageCount) {
         clip.horizontalLockMinX = NAN;
         clip.horizontalLockMaxX = NAN;
+        clip.verticalLockMinY = NAN;
+        clip.verticalLockMaxY = NAN;
         self.horizontalScrollElasticity = NSScrollElasticityAllowed;
+        self.verticalScrollElasticity = NSScrollElasticityAllowed;
         return;
     }
     _updatingScrollLock = YES;
@@ -209,11 +219,15 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
         clip.horizontalLockMinX = MAX(0.0, MIN(NSMinX(page), maxOriginX));
         clip.horizontalLockMaxX = MAX(clip.horizontalLockMinX, MAX(0.0, MIN(NSMaxX(page) - clipWidth, maxOriginX)));
     }
+    BOOL fitsVertically = NSHeight(_canvas.frame) <= NSHeight(clip.bounds) + 0.5;
+    self.verticalScrollElasticity = fitsVertically ? NSScrollElasticityNone : NSScrollElasticityAllowed;
+    clip.verticalLockMinY = fitsVertically ? 0.0 : NAN;
+    clip.verticalLockMaxY = fitsVertically ? 0.0 : NAN;
+    if (self.hasVerticalScroller != !fitsVertically) self.hasVerticalScroller = !fitsVertically;
     CGFloat clamped = MAX(clip.horizontalLockMinX, MIN(NSMinX(clip.bounds), clip.horizontalLockMaxX));
-    if (fabs(clamped - NSMinX(clip.bounds)) > 0.01) {
-        NSPoint origin = clip.bounds.origin;
-        origin.x = clamped;
-        [clip scrollToPoint:origin];
+    CGFloat clampedY = fitsVertically ? 0.0 : NSMinY(clip.bounds);
+    if (fabs(clamped - NSMinX(clip.bounds)) > 0.01 || fabs(clampedY - NSMinY(clip.bounds)) > 0.01) {
+        [clip scrollToPoint:NSMakePoint(clamped, clampedY)];
         [self reflectScrolledClipView:clip];
     }
     _updatingScrollLock = NO;
@@ -280,11 +294,16 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     [self setZoom:self.magnification * factor centeredAtPoint:NSMakePoint(NSMidX(visible), NSMidY(visible))];
 }
 
+// Exact-viewport fit (PDF parity): fits are computed against the raw viewport
+// with no decorative inset — Fit Width fills the viewport width exactly and
+// Fit Page makes the page height equal the viewport height exactly, page top
+// at the viewport top (the canvas inset collapses at exact fit, see
+// SPDFMacMarkdownPageCanvas's layoutViewportSize).
 - (CGFloat)zoomForFitMode:(SPDFMacMarkdownPageFitMode)fitMode {
     NSSize viewport = self.contentSize;
     NSSize paper = _plan.configuration.paperSize;
-    CGFloat width = MAX(1, viewport.width - kSPDFMarkdownFitInset) / paper.width;
-    CGFloat height = MAX(1, viewport.height - kSPDFMarkdownFitInset) / paper.height;
+    CGFloat width = MAX(1, viewport.width) / paper.width;
+    CGFloat height = MAX(1, viewport.height) / paper.height;
     if (fitMode == SPDFMacMarkdownPageFitWidth) return width;
     if (fitMode == SPDFMacMarkdownPageFitHeight) return height;
     if (fitMode == SPDFMacMarkdownPageFitPage) return MIN(width, height);
@@ -294,11 +313,18 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
 
 - (void)applyFitMode:(SPDFMacMarkdownPageFitMode)fitMode {
     _fitMode = fitMode;
-    CGFloat zoom = MAX(kSPDFMarkdownMinimumZoom, MIN(kSPDFMarkdownMaximumZoom, [self zoomForFitMode:fitMode]));
-    NSRect page = [_canvas frameForPageAtIndex:(NSUInteger)MAX(0, _currentPageIndex)];
-    [self setMagnification:zoom centeredAtPoint:NSMakePoint(NSMidX(page), NSMidY(page))];
-    _fitMode = fitMode;
-    [self updateCanvasGeometryPreservingCenter:YES];
+    // Two passes, PDF parity with the tab-switch fit reconciliation: applying a
+    // fit can show/hide the vertical scroller, which (with legacy scrollers)
+    // changes the viewport the fit was computed against. The second pass
+    // recomputes against the settled viewport so the fit stays exact.
+    for (int pass = 0; pass < 2; ++pass) {
+        CGFloat zoom = MAX(kSPDFMarkdownMinimumZoom, MIN(kSPDFMarkdownMaximumZoom, [self zoomForFitMode:fitMode]));
+        if (pass > 0 && fabs(zoom - self.magnification) < 0.0001) break;
+        NSRect page = [_canvas frameForPageAtIndex:(NSUInteger)MAX(0, _currentPageIndex)];
+        [self setMagnification:zoom centeredAtPoint:NSMakePoint(NSMidX(page), NSMidY(page))];
+        _fitMode = fitMode;
+        [self updateCanvasGeometryPreservingCenter:YES];
+    }
     [self viewportDidChange:nil];
 }
 

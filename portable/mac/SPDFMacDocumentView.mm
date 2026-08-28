@@ -1,5 +1,6 @@
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacDelayedLinkActivation.h"
+#import "SPDFMacFitGeometry.h"
 #import "SPDFMacPageRendering.h"
 #import "SPDFMacSupport.h"
 
@@ -82,6 +83,7 @@ static NSColor* spdf_canvas_background_color(void) {
     NSArray<NSValue*>* _layoutContinuousPageRects;
     NSSize _layoutBoundsSize;
     CGFloat _layoutViewportWidth;
+    CGFloat _layoutViewportHeight;
     CGFloat _layoutEffectiveBackingScale;
     CGFloat _layoutZoom;
     BOOL _layoutPresentationMode;
@@ -164,6 +166,12 @@ static NSColor* spdf_canvas_background_color(void) {
     [self invalidateLayoutCache];
 }
 
+- (void)setViewportHeightHint:(CGFloat)viewportHeightHint {
+    if (_viewportHeightHint == viewportHeightHint) return;
+    _viewportHeightHint = viewportHeightHint;
+    [self invalidateLayoutCache];
+}
+
 - (void)setBackingScale:(CGFloat)backingScale {
     if (_backingScale == backingScale) return;
     _backingScale = backingScale;
@@ -211,15 +219,27 @@ static NSColor* spdf_canvas_background_color(void) {
     return width;
 }
 
+// Viewport height for the vertical-inset math. Unlike viewportWidth there is no
+// bounds fallback — this view's own height IS the laid-out canvas height — so
+// with no hint and no scroll view this returns 0 and the layout keeps the full
+// decorative inset (spdf_mac_vertical_canvas_inset's viewport-unknown case).
+- (CGFloat)viewportHeight {
+    CGFloat height = self.viewportHeightHint > 1.0 ? self.viewportHeightHint : 0.0;
+    NSScrollView* scrollView = self.enclosingScrollView;
+    if (scrollView) height = MAX(height, scrollView.contentSize.height);
+    return height;
+}
+
 - (void)ensureLayoutCache {
     CGFloat viewportWidth = [self viewportWidth];
+    CGFloat viewportHeight = [self viewportHeight];
     CGFloat effectiveBackingScale = spdf_mac_effective_backing_scale(self.backingScale, self.window);
     NSSize boundsSize = self.bounds.size;
     BOOL boundsWidthMatches = fabs(_layoutBoundsSize.width - boundsSize.width) <= 0.001;
     if (_layoutCacheValid && _layoutPages == self.pages && _layoutZoom == self.zoom &&
         _layoutPresentationMode == self.presentationMode &&
-        _layoutViewportWidth == viewportWidth && _layoutEffectiveBackingScale == effectiveBackingScale &&
-        boundsWidthMatches)
+        _layoutViewportWidth == viewportWidth && _layoutViewportHeight == viewportHeight &&
+        _layoutEffectiveBackingScale == effectiveBackingScale && boundsWidthMatches)
         return;
     // About to rebuild the layout — the page rects change, so the page-index memo
     // is stale.
@@ -232,10 +252,12 @@ static NSColor* spdf_canvas_background_color(void) {
     NSMutableArray<NSValue*>* continuousRects = [NSMutableArray arrayWithCapacity:self.pages.count];
 
     CGFloat widestPage = 0.0;
+    CGFloat tallestPage = 0.0;
     for (SPDFRenderedPage* page in self.pages) {
         NSSize pageSize = spdf_mac_view_size_for_page(page, self.zoom, effectiveBackingScale);
         [pageSizes addObject:[NSValue valueWithSize:pageSize]];
         widestPage = MAX(widestPage, pageSize.width);
+        tallestPage = MAX(tallestPage, pageSize.height);
     }
 
     // Center every page on the same vertical axis — the canvas midline — so a
@@ -245,11 +267,19 @@ static NSColor* spdf_canvas_background_color(void) {
     // widest page, so center within max(viewportWidth, widestPage); for a uniform
     // document this equals viewportWidth, leaving the prior layout unchanged.
     CGFloat layoutWidth = MAX(viewportWidth, widestPage);
-    CGFloat continuousY = pageMargin / 2.0;
+    // Exact-viewport fit: the outer top/bottom inset collapses to 0 as the
+    // tallest page reaches the viewport height (a fit page's top sits at the
+    // viewport top), and a single page shorter than the viewport is centered
+    // vertically. See SPDFMacFitGeometry.h.
+    CGFloat verticalInset =
+        spdf_mac_vertical_canvas_inset(self.pages.count, tallestPage, viewportHeight, pageMargin / 2.0);
+    CGFloat continuousY = verticalInset;
     for (NSUInteger i = 0; i < self.pages.count; ++i) {
         NSSize pageSize = [pageSizes[i] sizeValue];
         CGFloat x = floor((layoutWidth - pageSize.width) / 2.0);
-        CGFloat minX = pageSize.width >= layoutWidth - 0.5 ? 0.0 : pageMargin / 2.0;
+        // The decorative side margin collapses within one margin of exact fit,
+        // so a near-fit page stays centered instead of being pushed off-axis.
+        CGFloat minX = MIN(spdf_mac_horizontal_canvas_margin(pageSize.width, layoutWidth, pageMargin) / 2.0, x);
         NSRect continuousRect =
             NSMakeRect(MAX(minX, spdf_mac_pixel_snapped_origin(x, effectiveBackingScale)),
                        spdf_mac_pixel_snapped_origin(continuousY, effectiveBackingScale), pageSize.width,
@@ -263,11 +293,15 @@ static NSColor* spdf_canvas_background_color(void) {
     _layoutContinuousPageRects = continuousRects;
     _layoutBoundsSize = boundsSize;
     _layoutViewportWidth = viewportWidth;
+    _layoutViewportHeight = viewportHeight;
     _layoutEffectiveBackingScale = effectiveBackingScale;
     _layoutZoom = self.zoom;
     _layoutPresentationMode = self.presentationMode;
     _layoutWidestPage = widestPage;
-    _layoutContinuousDocumentHeight = self.pages.count == 0 ? 0.0 : continuousY + pageMargin / 2.0;
+    // Symmetric outer chrome: content ends at (continuousY - pageGap); the same
+    // collapsed inset closes the canvas below, so at exact fit the document
+    // height equals the page stack exactly (a single fit page is unscrollable).
+    _layoutContinuousDocumentHeight = self.pages.count == 0 ? 0.0 : continuousY - pageGap + verticalInset;
     _layoutCacheValid = YES;
 }
 
@@ -301,8 +335,11 @@ static NSColor* spdf_canvas_background_color(void) {
 - (NSSize)documentSizeForClipSize:(NSSize)clipSize {
     CGFloat pageMargin = self.presentationMode ? 0.0 : kPageMargin;
     CGFloat widestPage = [self widestPage];
-    CGFloat width = widestPage >= clipSize.width - 0.5 ? MAX(clipSize.width, widestPage)
-                                                       : MAX(clipSize.width, widestPage + pageMargin);
+    // The decorative side margin collapses near exact fit (see
+    // SPDFMacFitGeometry.h) so a fit-width/fit-page document never gains a
+    // horizontal scroller from chrome alone.
+    CGFloat width =
+        MAX(clipSize.width, widestPage + spdf_mac_horizontal_canvas_margin(widestPage, clipSize.width, pageMargin));
     CGFloat height = pageMargin;
 
     if (self.pages.count == 0) return NSMakeSize(MAX(clipSize.width, 600), MAX(clipSize.height, 500));

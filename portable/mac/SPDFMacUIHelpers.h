@@ -147,12 +147,16 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 // horizontalLockMaxX]: min==max pins a viewport-fit page centered (no horizontal
 // panning); min<max confines panning to a page wider than the viewport but
 // narrower than the canvas (so you can't scroll off the page into empty canvas);
-// NaN leaves horizontal scrolling free. This is the AppKit-native clamp point —
-// constrainBoundsRect: is consulted for every scroll, elastic bounce, and
-// programmatic bounds change.
+// NaN leaves horizontal scrolling free. The vertical lock is the same mechanism
+// for the y axis: min==max pins a document that fits the viewport vertically
+// (nothing to scroll, no elastic wiggle); NaN leaves vertical scrolling free.
+// This is the AppKit-native clamp point — constrainBoundsRect: is consulted for
+// every scroll, elastic bounce, and programmatic bounds change.
 @interface SPDFDocumentClipView : NSClipView
 @property(nonatomic) CGFloat horizontalLockMinX;
 @property(nonatomic) CGFloat horizontalLockMaxX;
+@property(nonatomic) CGFloat verticalLockMinY;
+@property(nonatomic) CGFloat verticalLockMaxY;
 @end
 
 @interface SPDFWindow : NSWindow

@@ -10,8 +10,10 @@
 #include <assert.h>
 #include <stdio.h>
 
-// SPDFMacMarkdownScrollViewTestSupport.mm: goToPageAtIndex: regression (partial pages, alignTop values, clamping).
+// SPDFMacMarkdownScrollViewTestSupport.mm: goToPageAtIndex: regression, and the
+// exact-viewport fit / no-scrollbar / vertical-centering suite (+ PDF inset math).
 void spdf_assert_paged_view_go_to_page_scrolls(SPDFMacMarkdownPagedView* view);
+void spdf_assert_markdown_exact_fit_and_vertical_centering(SPDFMacMarkdownPagedView* multiPageView);
 
 @interface SPDFMarkdownPagedTestReader : NSObject
 @property(nonatomic) NSUInteger menuRequests;
@@ -19,16 +21,13 @@ void spdf_assert_paged_view_go_to_page_scrolls(SPDFMacMarkdownPagedView* view);
 
 @implementation SPDFMarkdownPagedTestReader
 - (NSMenu*)contextMenuForDocumentView:(NSView*)view event:(NSEvent*)event {
-    (void)view;
-    (void)event;
+    (void)view, (void)event;
     self.menuRequests++;
     NSMenu* menu = [NSMenu new];
     [menu addItemWithTitle:@"Shared Reader Action" action:nil keyEquivalent:@""];
     return menu;
 }
-- (void)copySelection:(id)sender {
-    (void)sender;
-}
+- (void)copySelection:(id)sender { (void)sender; }
 @end
 
 int main(void) {
@@ -494,6 +493,7 @@ int main(void) {
         assert([cursorCanvas cursorRegionAtPoint:hoverPoint] == SPDFCursorRegionText);
         // No window: the refresh entry point must be a safe no-op.
         [cursorCanvas refreshCursorForMouseLocation];
+        spdf_assert_markdown_exact_fit_and_vertical_centering(view);
         puts("SPDFMacMarkdownPagedViewTests passed");
     }
     return 0;

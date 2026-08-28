@@ -27,6 +27,13 @@ NS_ASSUME_NONNULL_BEGIN
                       attributedString:(NSAttributedString*)attributedString NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
 - (instancetype)initWithCoder:(NSCoder*)coder NS_UNAVAILABLE;
+// Viewport size in CANVAS coordinates (the paged view's clip bounds size, which
+// is contentSize / magnification). Drives the exact-fit vertical inset: the
+// outer canvas inset collapses to 0 as the page height reaches the viewport
+// (Fit Page puts the page top at the viewport top with nothing to scroll on a
+// one-page document) and a single page shorter than the viewport is centered
+// vertically. NSZeroSize (standalone canvases) keeps the full decorative inset.
+@property(nonatomic) NSSize layoutViewportSize;
 - (NSRect)frameForPageAtIndex:(NSUInteger)pageIndex;
 - (void)resizeForWidth:(CGFloat)width;
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect;
