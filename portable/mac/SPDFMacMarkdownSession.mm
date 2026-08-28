@@ -6,6 +6,11 @@
 #import "SPDFMacMarkdownSidebarModel.h"
 #import "SPDFMacMarkdownView.h"
 #import "markdown/SPDFMarkdown.h"
+
+static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
+    return MAX((CGFloat)0.5, MIN((CGFloat)3.0, scale));
+}
+
 @interface SPDFMacMarkdownSession ()
 @property(nonatomic) SPDFMacMarkdownSessionState state;
 @property(nonatomic, strong, nullable) SPDFMarkdownDocument* document;
@@ -37,9 +42,17 @@
     __weak id<SPDFMacUIReader> _reader;
     SPDFMacMarkdownMinimapModel* _minimapModel;
     SPDFMacMarkdownSidebarModel* _sidebarModel;
+    // fontScale of the currently installed renderedDocument; when it trails
+    // _fontScale (the scale changed while inactive or mid-load) activation
+    // schedules a catch-up rerender.
+    CGFloat _renderedFontScale;
 }
 
 - (instancetype)initWithDocumentURL:(NSURL*)URL {
+    return [self initWithDocumentURL:URL fontScale:1.0];
+}
+
+- (instancetype)initWithDocumentURL:(NSURL*)URL fontScale:(CGFloat)fontScale {
     NSParameterAssert(URL.isFileURL);
     self = [super init];
     if (!self) return nil;
@@ -47,8 +60,32 @@
     _searchMatches = @[];
     _currentMatchIndex = -1;
     _languageOverrides = [NSMutableDictionary dictionary];
+    _fontScale = SPDFMacMarkdownClampFontScale(fontScale);
+    _renderedFontScale = _fontScale;
     [self buildRootView];
     return self;
+}
+
+- (SPDFMarkdownRenderOptions*)renderOptionsForCurrentScale {
+    SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions defaultOptions];
+    options.fontScale = _fontScale;
+    return options;
+}
+
+- (void)applyFontScale:(CGFloat)scale {
+    CGFloat clamped = SPDFMacMarkdownClampFontScale(scale);
+    if (clamped == _fontScale) return;
+    _fontScale = clamped;
+    if (_active && self.document) [self rerenderDocumentWithStatus:@"Markdown text size updated."];
+}
+
+- (SPDFMarkdownRenderedDocument*)renderedDocumentForExport {
+    if (_renderedFontScale == 1.0 || !self.document) return self.renderedDocument;
+    SPDFMarkdownRenderedDocument* rendered =
+        [[SPDFMarkdownRenderer new] renderModel:self.document.model
+                                        options:SPDFMarkdownRenderOptions.defaultOptions
+                              languageOverrides:[_languageOverrides copy]];
+    return rendered ?: self.renderedDocument;
 }
 
 - (void)buildRootView {
@@ -164,6 +201,8 @@
                        paginationPlan:_paginationPlan
                     interactiveString:_interactiveString
                  preserveCurrentState:NO];
+        // Catch up with a font scale changed while this session was cached.
+        if (_renderedFontScale != _fontScale) [self rerenderDocumentWithStatus:nil];
         if (completion) completion(YES, nil);
         return;
     }
@@ -174,9 +213,10 @@
     [_pagedView removeFromSuperview];
     _pagedView = nil;
     NSURL* URL = self.documentURL;
+    SPDFMarkdownRenderOptions* renderOptions = [self renderOptionsForCurrentScale];
     dispatch_async(_workQueue, ^{
       NSError* error = nil;
-      SPDFMarkdownDocument* document = [SPDFMarkdownDocument documentWithURL:URL options:nil error:&error];
+      SPDFMarkdownDocument* document = [SPDFMarkdownDocument documentWithURL:URL options:renderOptions error:&error];
       SPDFMarkdownPaginationPlan* plan = nil;
       NSAttributedString* interactive = nil;
       if (document) {
@@ -200,11 +240,14 @@
         self.renderedDocument = document.renderedDocument;
         self->_paginationPlan = plan;
         self->_interactiveString = interactive;
+        self->_renderedFontScale = renderOptions.fontScale;
         self.state = SPDFMacMarkdownSessionReady;
         [self installRenderedDocument:self.renderedDocument
                        paginationPlan:plan
                     interactiveString:interactive
                  preserveCurrentState:NO];
+        // Catch up with a font scale applied while the first render was in flight.
+        if (self->_renderedFontScale != self->_fontScale) [self rerenderDocumentWithStatus:nil];
         if (completion) completion(YES, nil);
       });
     });
@@ -252,14 +295,16 @@
     dispatch_async(dispatch_get_main_queue(), ^{
       if (!self->_active || !self->_pagedView.superview) return;
       [self->_rootView layoutSubtreeIfNeeded];
+      // Restore the zoom / fit mode first so a pending anchor scrolls within
+      // the restored viewport instead of silently discarding it.
+      if (fit == SPDFMacMarkdownPageFitCustom)
+          [self->_pagedView setZoom:zoom centeredAtPoint:NSZeroPoint];
+      else
+          [self->_pagedView applyFitMode:fit];
       if (self->_pendingAnchor.length) {
           [self scrollToHeadingAnchor:self->_pendingAnchor];
           self->_pendingAnchor = nil;
       } else {
-          if (fit == SPDFMacMarkdownPageFitCustom)
-              [self->_pagedView setZoom:zoom centeredAtPoint:NSZeroPoint];
-          else
-              [self->_pagedView applyFitMode:fit];
           [self->_pagedView goToPageAtIndex:page alignTop:NO];
           if (fit == SPDFMacMarkdownPageFitCustom) {
               [self->_pagedView.contentView scrollToPoint:origin];
@@ -426,50 +471,53 @@
 - (void)applyLanguageIdentifier:(NSString*)identifier toCodeBlock:(NSUInteger)blockIndex {
     if (!identifier.length || ![self.document.model blockWithIndex:blockIndex]) return;
     _languageOverrides[@(blockIndex)] = identifier;
-    [self rerenderWithLanguageOverrides];
+    [self rerenderDocumentWithStatus:@"Code language updated."];
 }
 
-- (void)rerenderWithLanguageOverrides {
+// Shared rerender flow for language overrides and font-scale changes: every
+// pass renders with the session's current font scale so either kind of change
+// survives the other. A nil/empty status skips the status callback.
+- (void)rerenderDocumentWithStatus:(NSString*)status {
     [_renderToken cancel];
     _renderGeneration++;
     NSUInteger renderGeneration = _renderGeneration;
+    CGFloat fontScale = _fontScale;
     NSDictionary* overrides = [_languageOverrides copy];
     __weak SPDFMacMarkdownSession* weakSelf = self;
     _renderToken = [self.document
-        renderWithLanguageOverrides:overrides
-                          workQueue:_workQueue
-                    completionQueue:_workQueue
-                         completion:^(SPDFMarkdownRenderedDocument* rendered, BOOL cancelled) {
-                           SPDFMacMarkdownSession* strongSelf = weakSelf;
-                           if (!strongSelf || cancelled || !strongSelf->_active ||
-                               renderGeneration != strongSelf->_renderGeneration || !rendered)
-                               return;
-                           SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
-                           SPDFMarkdownPageConfiguration* configuration =
-                               [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
-                           configuration.includesCodeLanguageControlSpacing = YES;
-                           NSArray* items = [paginator measureRenderedDocument:rendered
-                                                                containerWidth:NSWidth(configuration.printableRect)];
-                           SPDFMarkdownPaginationPlan* plan = [paginator paginateItems:items
-                                                                         configuration:configuration];
-                           NSAttributedString* interactive =
-                               SPDFMacMarkdownInteractiveString(strongSelf.document.model, rendered);
-                           dispatch_async(dispatch_get_main_queue(), ^{
-                             SPDFMacMarkdownSession* mainSelf = weakSelf;
-                             if (!mainSelf || cancelled || !mainSelf->_active ||
-                                 renderGeneration != mainSelf->_renderGeneration)
-                                 return;
-                             mainSelf->_renderToken = nil;
-                             mainSelf.renderedDocument = rendered;
-                             mainSelf->_paginationPlan = plan;
-                             mainSelf->_interactiveString = interactive;
-                             [mainSelf installRenderedDocument:rendered
-                                                paginationPlan:plan
-                                             interactiveString:interactive
-                                          preserveCurrentState:YES];
-                             if (mainSelf.statusHandler) mainSelf.statusHandler(@"Code language updated.");
-                           });
-                         }];
+        renderWithOptions:[self renderOptionsForCurrentScale]
+        languageOverrides:overrides
+                workQueue:_workQueue
+          completionQueue:_workQueue
+               completion:^(SPDFMarkdownRenderedDocument* rendered, BOOL cancelled) {
+                 SPDFMacMarkdownSession* strongSelf = weakSelf;
+                 if (!strongSelf || cancelled || !strongSelf->_active ||
+                     renderGeneration != strongSelf->_renderGeneration || !rendered)
+                     return;
+                 SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
+                 SPDFMarkdownPageConfiguration* configuration = [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
+                 configuration.includesCodeLanguageControlSpacing = YES;
+                 NSArray* items = [paginator measureRenderedDocument:rendered
+                                                      containerWidth:NSWidth(configuration.printableRect)];
+                 SPDFMarkdownPaginationPlan* plan = [paginator paginateItems:items configuration:configuration];
+                 NSAttributedString* interactive =
+                     SPDFMacMarkdownInteractiveString(strongSelf.document.model, rendered);
+                 dispatch_async(dispatch_get_main_queue(), ^{
+                   SPDFMacMarkdownSession* mainSelf = weakSelf;
+                   if (!mainSelf || cancelled || !mainSelf->_active || renderGeneration != mainSelf->_renderGeneration)
+                       return;
+                   mainSelf->_renderToken = nil;
+                   mainSelf.renderedDocument = rendered;
+                   mainSelf->_paginationPlan = plan;
+                   mainSelf->_interactiveString = interactive;
+                   mainSelf->_renderedFontScale = fontScale;
+                   [mainSelf installRenderedDocument:rendered
+                                      paginationPlan:plan
+                                   interactiveString:interactive
+                                preserveCurrentState:YES];
+                   if (status.length && mainSelf.statusHandler) mainSelf.statusHandler(status);
+                 });
+               }];
 }
 
 - (void)goToPageAtIndex:(NSInteger)pageIndex {

@@ -849,6 +849,7 @@ static void spdf_discard_launch_prerender(void) {
     _minimapWidth = kDefaultMinimapWidth;
     _printScalingMode = SPDFPrintScalingModeFit;
     _printCustomScale = 1.0;
+    _markdownFontScale = 1.0;
     _findRegexMultiline = YES;
     _translationSourceLanguage = @"zh";
     _translationTargetLanguage = @"en";
@@ -1380,6 +1381,7 @@ static void spdf_discard_launch_prerender(void) {
         NSNumber* permissionsWizardShown = settings[@"permissionsWizardShown"];
         NSNumber* printScalingMode = settings[@"printScalingMode"];
         NSNumber* printCustomScale = settings[@"printCustomScale"];
+        NSNumber* markdownFontScale = settings[@"markdownFontScale"];
         NSDictionary* windowSize = settings[@"windowSize"];
         NSString* commentAuthor = settings[@"commentAuthor"];
         NSString* translateSource = settings[@"translateSourceLanguage"];
@@ -1404,6 +1406,7 @@ static void spdf_discard_launch_prerender(void) {
         if (permissionsWizardShown) _permissionsWizardShown = permissionsWizardShown.boolValue;
         if (printScalingMode) _printScalingMode = (SPDFPrintScalingMode)MAX(0, MIN(2, printScalingMode.integerValue));
         if (printCustomScale) _printCustomScale = SPDFClampPrintCustomScale(printCustomScale.doubleValue);
+        if (markdownFontScale) _markdownFontScale = MAX(0.5, MIN(3.0, markdownFontScale.doubleValue));
         if ([windowSize isKindOfClass:NSDictionary.class]) {
             _restoredWindowContentSize = spdf_sane_window_content_size(
                 NSMakeSize([windowSize[@"width"] doubleValue], [windowSize[@"height"] doubleValue]),
@@ -2009,6 +2012,7 @@ static void spdf_discard_launch_prerender(void) {
         @"permissionsWizardShown" : @(_permissionsWizardShown),
         @"printScalingMode" : @(_printScalingMode),
         @"printCustomScale" : @(SPDFClampPrintCustomScale(_printCustomScale)),
+        @"markdownFontScale" : @(round(MAX(0.5, MIN(3.0, _markdownFontScale)) * 100.0) / 100.0),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
     }
                    toFile:@"settings.json"];
@@ -2682,6 +2686,19 @@ static void spdf_discard_launch_prerender(void) {
                                   menu:menu
                                  state:NSControlStateValueOff
                                enabled:_findNextButton.enabled];
+    if ([hiddenViews containsObject:_markdownFontDecreaseButton] ||
+        [hiddenViews containsObject:_markdownFontIncreaseButton]) {
+        [self addOverflowItemWithTitle:@"Decrease Markdown Text Size"
+                                action:@selector(decreaseMarkdownFontSize:)
+                                  menu:menu
+                                 state:NSControlStateValueOff
+                               enabled:_markdownFontDecreaseButton.enabled];
+        [self addOverflowItemWithTitle:@"Increase Markdown Text Size"
+                                action:@selector(increaseMarkdownFontSize:)
+                                  menu:menu
+                                 state:NSControlStateValueOff
+                               enabled:_markdownFontIncreaseButton.enabled];
+    }
     if ([hiddenViews containsObject:_fitModePopup] || [hiddenViews containsObject:_zoomOutButton] ||
         [hiddenViews containsObject:_zoomInButton]) {
         [menu addItem:[NSMenuItem separatorItem]];
@@ -2742,11 +2759,15 @@ static void spdf_discard_launch_prerender(void) {
         @[ _findCountLabel ],
         @[ _findPrevButton, _findNextButton ],
         @[ _findRegexCheckbox ],
+        @[ _markdownFontDecreaseButton, _markdownFontIncreaseButton ],
         @[ _fitModePopup, _zoomOutButton, _zoomInButton ],
     ];
     NSMutableSet<NSView*>* hiddenViews = [NSMutableSet set];
     for (NSArray<NSView*>* group in groups)
         for (NSView* view in group) view.hidden = NO;
+    // The Markdown text-size buttons are markdown-only: re-hide them for PDF
+    // tabs after the blanket reset above so their group never claims width.
+    [self updateMarkdownFontControls];
     BOOL hasQuery = _searchField.stringValue.length > 0;
     _findCountLabel.hidden = !hasQuery;
     _findPrevButton.hidden = !hasQuery;
@@ -2855,6 +2876,21 @@ static void spdf_discard_launch_prerender(void) {
     _pageCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _zoomOutButton = [self buttonWithTitle:@"-" action:@selector(zoomOut:)];
     _zoomInButton = [self buttonWithTitle:@"+" action:@selector(zoomIn:)];
+    _markdownFontDecreaseButton = [self buttonWithTitle:@"" action:@selector(decreaseMarkdownFontSize:)];
+    _markdownFontIncreaseButton = [self buttonWithTitle:@"" action:@selector(increaseMarkdownFontSize:)];
+    _markdownFontDecreaseButton.accessibilityLabel = @"Decrease Markdown Text Size";
+    _markdownFontIncreaseButton.accessibilityLabel = @"Increase Markdown Text Size";
+    for (NSButton* fontButton in @[ _markdownFontDecreaseButton, _markdownFontIncreaseButton ]) {
+        fontButton.image = spdf_markdown_font_size_toolbar_image(fontButton == _markdownFontIncreaseButton);
+        fontButton.imagePosition = NSImageOnly;
+        fontButton.hidden = YES; // markdown-only; updateMarkdownFontControls reveals them
+        [fontButton.widthAnchor constraintEqualToConstant:32].active = YES;
+        [fontButton setContentHuggingPriority:NSLayoutPriorityRequired
+                               forOrientation:NSLayoutConstraintOrientationHorizontal];
+        [fontButton setContentCompressionResistancePriority:NSLayoutPriorityRequired
+                                             forOrientation:NSLayoutConstraintOrientationHorizontal];
+    }
+    [self updateMarkdownFontControls];
 
     _fitModePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     NSArray<NSDictionary*>* fitItems = @[
@@ -2965,6 +3001,8 @@ static void spdf_discard_launch_prerender(void) {
     [_toolbar addArrangedSubview:_fitModePopup];
     [_toolbar addArrangedSubview:_zoomOutButton];
     [_toolbar addArrangedSubview:_zoomInButton];
+    [_toolbar addArrangedSubview:_markdownFontDecreaseButton];
+    [_toolbar addArrangedSubview:_markdownFontIncreaseButton];
     [_toolbar addArrangedSubview:_searchField];
     [_toolbar addArrangedSubview:_findRegexCheckbox];
     [_toolbar addArrangedSubview:_findCountLabel];
@@ -2974,6 +3012,7 @@ static void spdf_discard_launch_prerender(void) {
     [_toolbar addArrangedSubview:_toolbarOverflowButton];
     [_toolbar addArrangedSubview:_minimapToggleButton];
     [_toolbar setCustomSpacing:8.0 afterView:_zoomInButton];
+    [_toolbar setCustomSpacing:8.0 afterView:_markdownFontIncreaseButton];
     [_toolbar setCustomSpacing:8.0 afterView:_searchField];
 
     if (launchWindowStart > 0.0)
