@@ -11,9 +11,12 @@ cd "$repo_root"
 if [ "$(uname -s)" = Darwin ]; then
     frameworks="-framework Foundation"
 fi
-"${CC:-cc}" -O2 -Wall -Wextra -Iportable/core -Imupdf/include \
-    portable/core/tests/SPDFCoreSelectionTests.c \
-    portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c \
-    "$library_dir/libmupdf.a" "$library_dir/libmupdf-third.a" \
-    "$library_dir/libmupdf-pkcs7.a" $frameworks -lm -o "$output"
-"$output"
+for test_source in SPDFCoreSelectionTests.c SPDFCoreCJKSelectionTests.c; do
+    "${CC:-cc}" -O2 -Wall -Wextra -Iportable/core -Imupdf/include \
+        "portable/core/tests/$test_source" \
+        portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c \
+        portable/core/spdf_selection_support.c \
+        "$library_dir/libmupdf.a" "$library_dir/libmupdf-third.a" \
+        "$library_dir/libmupdf-pkcs7.a" $frameworks -lm -o "$output"
+    "$output"
+done
