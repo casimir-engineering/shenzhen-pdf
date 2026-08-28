@@ -80,6 +80,11 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
                 completion:(void (^)(BOOL success, NSError* _Nullable error))completion;
 - (void)deactivate;
 - (void)cancelAllOperations;
+@end
+
+// Implemented in SPDFMacMarkdownSession+Interaction.mm: heading anchors, the
+// code-language picker, and the viewport forwarding onto the paged view.
+@interface SPDFMacMarkdownSession (Interaction)
 - (BOOL)scrollToHeadingAnchor:(NSString*)anchor;
 - (void)navigateToAnchorWhenReady:(NSString*)anchor;
 - (void)showLanguagePickerForCodeBlock:(NSUInteger)blockIndex parentWindow:(NSWindow*)window;
