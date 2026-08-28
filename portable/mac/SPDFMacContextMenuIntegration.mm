@@ -81,14 +81,15 @@
     NSMenuItem* copyPage = [menu addItemWithTitle:@"Copy Page"
                                            action:@selector(copyCurrentPageAsPDF:)
                                     keyEquivalent:@""];
-    copyPage.enabled =
-        !markdown && contentCopyAllowed && _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
+    copyPage.enabled = markdown ? [self canCopyCurrentPageAsPDF]
+                                : contentCopyAllowed && _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
     NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
                                             action:@selector(copyCurrentPageImage:)
                                      keyEquivalent:@""];
-    copyImage.enabled = !markdown && contentCopyAllowed && _pageIndex >= 0 &&
-                        _pageIndex < (NSInteger)_renderedPages.count &&
-                        _renderedPages[(NSUInteger)_pageIndex].image != nil;
+    copyImage.enabled = markdown ? [self canCopyCurrentPageImage]
+                                 : contentCopyAllowed && _pageIndex >= 0 &&
+                                       _pageIndex < (NSInteger)_renderedPages.count &&
+                                       _renderedPages[(NSUInteger)_pageIndex].image != nil;
     NSMenuItem* copyPath = [menu addItemWithTitle:@"Copy Path"
                                            action:@selector(copyCurrentDocumentPath:)
                                     keyEquivalent:@""];

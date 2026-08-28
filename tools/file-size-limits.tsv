@@ -30,7 +30,7 @@ portable/mac/SPDFMacPropertiesPanel.mm	555	exception	Cohesive AppKit document-pr
 portable/mac/SPDFMacTabStripView.mm	1123	legacy	Legacy AppKit tab strip; freeze growth pending layout/input split.
 portable/mac/SPDFMacUIHelpers.mm	1324	legacy	Legacy mixed AppKit helper views; freeze growth pending class extraction.
 portable/mac/SPDFUpdater.mm	1586	legacy	Legacy signed updater; freeze growth pending trust/transport/UI split.
-portable/mac/ShenzhenPDFMac.mm	16784	legacy	Legacy macOS coordinator hotspot; Markdown find branches delegated to SPDFMacMarkdownFindIntegration, no further growth before staged extraction.
+portable/mac/ShenzhenPDFMac.mm	16782	legacy	Legacy macOS coordinator hotspot; Markdown find branches delegated to SPDFMacMarkdownFindIntegration, no further growth before staged extraction.
 src/Accelerators.cpp	773	exception	Inherited accelerator-table implementation is cohesive and stable.
 src/Annotation.cpp	1266	legacy	Legacy Windows annotation model; freeze growth pending extraction.
 src/AppSettings.cpp	642	exception	Inherited application-settings coordinator is cohesive and stable.

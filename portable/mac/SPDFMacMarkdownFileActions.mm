@@ -1,8 +1,36 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 
 #import "SPDFMacFileExplorerPreference.h"
+#import "SPDFMacMarkdownPrinting.h"
+#import "markdown/SPDFMarkdown.h"
 
 @implementation ShenzhenMacDelegate (SPDFMacMarkdownFileActions)
+
+// The active Markdown session can serve single-page copies once its live
+// pagination plan and rendered text exist and pageIndex names a planned page.
+- (BOOL)markdownSessionCanCopyPageAtIndex:(NSInteger)pageIndex {
+    SPDFMacMarkdownSession* session = self.activeMarkdownSession;
+    return session.paginationPlan != nil && session.renderedDocument.attributedString != nil && pageIndex >= 0 &&
+           pageIndex < (NSInteger)session.paginationPlan.pages.count;
+}
+
+// Copy Page honors the context-clicked page when the context menu set one,
+// falling back to the current page — mirroring the PDF tab's behavior.
+- (NSInteger)markdownCopyPageIndex {
+    return _contextPageIndex >= 0 ? _contextPageIndex : self.activeMarkdownSession.currentPageIndex;
+}
+
+- (BOOL)canCopyCurrentPageAsPDF {
+    if ([self isMarkdownActive]) return [self markdownSessionCanCopyPageAtIndex:[self markdownCopyPageIndex]];
+    return _doc != NULL && _path.length > 0 && spdf_has_permission(_doc, 'c');
+}
+
+- (BOOL)canCopyCurrentPageImage {
+    if ([self isMarkdownActive])
+        return [self markdownSessionCanCopyPageAtIndex:self.activeMarkdownSession.currentPageIndex];
+    return _doc != NULL && spdf_has_permission(_doc, 'c') && _pageIndex >= 0 &&
+           _pageIndex < (NSInteger)_renderedPages.count && _renderedPages[(NSUInteger)_pageIndex].image != nil;
+}
 
 - (void)openInExternalReader:(id)sender {
     (void)sender;
@@ -59,6 +87,20 @@
 
 - (void)copyCurrentPageImage:(id)sender {
     (void)sender;
+    if ([self isMarkdownActive]) {
+        SPDFMacMarkdownSession* session = self.activeMarkdownSession;
+        NSInteger pageIndex = session.currentPageIndex;
+        if (![self markdownSessionCanCopyPageAtIndex:pageIndex] ||
+            ![SPDFMacMarkdownPrintAdapter copyPageImageAtIndex:(NSUInteger)pageIndex
+                                                paginationPlan:session.paginationPlan
+                                              attributedString:session.renderedDocument.attributedString
+                                                  toPasteboard:NSPasteboard.generalPasteboard]) {
+            NSBeep();
+            return;
+        }
+        _statusLabel.stringValue = @"Page image copied.";
+        return;
+    }
     if (!_doc || _pageIndex < 0 || _pageIndex >= (NSInteger)_renderedPages.count ||
         !_renderedPages[(NSUInteger)_pageIndex].image) {
         NSBeep();
@@ -78,6 +120,27 @@
 
 - (void)copyCurrentPageAsPDF:(id)sender {
     (void)sender;
+    if ([self isMarkdownActive]) {
+        SPDFMacMarkdownSession* session = self.activeMarkdownSession;
+        NSInteger pageIndex = [self markdownCopyPageIndex];
+        if (![self markdownSessionCanCopyPageAtIndex:pageIndex]) {
+            NSBeep();
+            return;
+        }
+        NSString* base = _path.lastPathComponent.stringByDeletingPathExtension;
+        NSString* fileName =
+            [NSString stringWithFormat:@"%@ - page %ld.pdf", base.length ? base : @"Page", (long)(pageIndex + 1)];
+        if (![SPDFMacMarkdownPrintAdapter copyPageAtIndex:(NSUInteger)pageIndex
+                                           paginationPlan:session.paginationPlan
+                                         attributedString:session.renderedDocument.attributedString
+                                                 fileName:fileName
+                                             toPasteboard:NSPasteboard.generalPasteboard]) {
+            NSBeep();
+            return;
+        }
+        _statusLabel.stringValue = @"Page copied.";
+        return;
+    }
     NSInteger pageIndex = _contextPageIndex >= 0 ? _contextPageIndex : _pageIndex;
     if (!_doc || !_path.length || pageIndex < 0 || pageIndex >= spdf_page_count(_doc)) {
         NSBeep();

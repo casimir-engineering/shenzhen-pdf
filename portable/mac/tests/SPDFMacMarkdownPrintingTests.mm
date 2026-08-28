@@ -47,9 +47,18 @@ int main(void) {
         (void)NSApplication.sharedApplication;
         NSString* path = [NSTemporaryDirectory()
             stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"md"]];
-        NSString* markdown = @"# Release Notes\nZanzibar anchors the geometry probe of this exported page.\n\n"
-                             @"```\nprint_safe();\n```\n\n"
-                             @"## Details\nA second section verifies heading pagination stays selectable.\n";
+        NSMutableString* markdown =
+            [NSMutableString stringWithString:@"# Release Notes\n"
+                                              @"Zanzibar anchors the geometry probe of this exported page.\n\n"
+                                              @"```\nprint_safe();\n```\n\n"
+                                              @"## Details\nA second section verifies heading pagination stays "
+                                              @"selectable.\n\n## Appendix\n"];
+        // Enough filler to overflow onto later pages, so single-page copies
+        // can prove they capture exactly one page. Yggdrasil ends the text.
+        for (int paragraph = 1; paragraph <= 40; ++paragraph)
+            [markdown appendFormat:@"Filler paragraph %d keeps the appendix flowing toward another page.\n\n",
+                                   paragraph];
+        [markdown appendString:@"Yggdrasil closes the appendix on the final page.\n"];
         assert([markdown writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
 
         // Build the exact rendition + plan the on-screen session uses: the
@@ -191,6 +200,82 @@ int main(void) {
             PixelAt(pixels, rasterWidth, rasterHeight, plan.configuration.paperSize.width * 0.5, topInset * 0.5);
         assert(margin[0] >= 250 && margin[1] >= 250 && margin[2] >= 250);
         free(pixels);
+
+        // Copy Page: a single-page PDF containing exactly the asked-for page
+        // at the plan's paper size — last page's probe word, no first-page one.
+        assert(plan.pages.count >= 2);
+        NSUInteger lastPage = plan.pages.count - 1;
+        NSData* lastPageData = [SPDFMacMarkdownPrintAdapter PDFDataForPageAtIndex:lastPage
+                                                                   paginationPlan:plan
+                                                                 attributedString:rendered.attributedString];
+        PDFDocument* lastPagePDF = [[PDFDocument alloc] initWithData:lastPageData];
+        assert(lastPagePDF.pageCount == 1);
+        NSRect copyBox = [[lastPagePDF pageAtIndex:0] boundsForBox:kPDFDisplayBoxMediaBox];
+        assert(fabs(NSWidth(copyBox) - plan.configuration.paperSize.width) < 0.5 &&
+               fabs(NSHeight(copyBox) - plan.configuration.paperSize.height) < 0.5);
+        NSString* lastPageText = [lastPagePDF pageAtIndex:0].string ?: @"";
+        assert([lastPageText containsString:@"Yggdrasil"] && ![lastPageText containsString:@"Zanzibar"]);
+        NSData* firstPageData = [SPDFMacMarkdownPrintAdapter PDFDataForPageAtIndex:0
+                                                                    paginationPlan:plan
+                                                                  attributedString:rendered.attributedString];
+        NSString* firstPageText = [[[PDFDocument alloc] initWithData:firstPageData] pageAtIndex:0].string ?: @"";
+        assert([firstPageText containsString:@"Zanzibar"] && ![firstPageText containsString:@"Yggdrasil"]);
+        assert(![SPDFMacMarkdownPrintAdapter PDFDataForPageAtIndex:plan.pages.count
+                                                    paginationPlan:plan
+                                                  attributedString:rendered.attributedString]);
+
+        // Copy Page Image: a 2x raster of the same draw call — paper-sized in
+        // points, white unpainted margins, and dark text pixels somewhere.
+        NSBitmapImageRep* rep = [SPDFMacMarkdownPrintAdapter imageRepForPageAtIndex:0
+                                                                     paginationPlan:plan
+                                                                   attributedString:rendered.attributedString
+                                                                              scale:2.0];
+        assert(rep != nil);
+        assert(rep.pixelsWide == (NSInteger)lround(plan.configuration.paperSize.width * 2.0));
+        assert(rep.pixelsHigh == (NSInteger)lround(plan.configuration.paperSize.height * 2.0));
+        assert(fabs(rep.size.width - plan.configuration.paperSize.width) < 0.5 &&
+               fabs(rep.size.height - plan.configuration.paperSize.height) < 0.5);
+        NSInteger cornerXs[] = {1, rep.pixelsWide - 2};
+        NSInteger cornerYs[] = {1, rep.pixelsHigh - 2};
+        for (NSInteger cornerX : cornerXs)
+            for (NSInteger cornerY : cornerYs) {
+                NSColor* corner = [rep colorAtX:cornerX y:cornerY];
+                assert(corner.redComponent > 0.97 && corner.greenComponent > 0.97 && corner.blueComponent > 0.97);
+            }
+        BOOL foundDarkPixel = NO;
+        for (NSInteger y = 0; y < rep.pixelsHigh && !foundDarkPixel; y += 2)
+            for (NSInteger x = 0; x < rep.pixelsWide && !foundDarkPixel; x += 2) {
+                NSColor* color = [rep colorAtX:x y:y];
+                foundDarkPixel = color.redComponent < 0.35 && color.greenComponent < 0.35 &&
+                                 color.blueComponent < 0.35;
+            }
+        assert(foundDarkPixel);
+
+        // Pasteboard conventions match the PDF tab: Copy Page declares PDF
+        // data plus a temp-file URL, Copy Page Image an NSImage (TIFF-backed).
+        NSPasteboard* pagePasteboard = [NSPasteboard pasteboardWithUniqueName];
+        assert([SPDFMacMarkdownPrintAdapter copyPageAtIndex:lastPage
+                                             paginationPlan:plan
+                                           attributedString:rendered.attributedString
+                                                   fileName:@"printing-tests - page 2.pdf"
+                                               toPasteboard:pagePasteboard]);
+        NSData* pastedPDFData = [pagePasteboard dataForType:NSPasteboardTypePDF];
+        PDFDocument* pastedPDF = [[PDFDocument alloc] initWithData:pastedPDFData];
+        assert(pastedPDF.pageCount == 1 && [[pastedPDF pageAtIndex:0].string containsString:@"Yggdrasil"]);
+        NSString* pastedURLString = [pagePasteboard stringForType:NSPasteboardTypeFileURL];
+        NSURL* pastedURL = pastedURLString.length ? [NSURL URLWithString:pastedURLString] : nil;
+        assert(pastedURL.isFileURL && [NSFileManager.defaultManager fileExistsAtPath:pastedURL.path]);
+        NSPasteboard* imagePasteboard = [NSPasteboard pasteboardWithUniqueName];
+        assert([SPDFMacMarkdownPrintAdapter copyPageImageAtIndex:0
+                                                  paginationPlan:plan
+                                                attributedString:rendered.attributedString
+                                                    toPasteboard:imagePasteboard]);
+        NSBitmapImageRep* pastedRep =
+            [NSBitmapImageRep imageRepWithData:[imagePasteboard dataForType:NSPasteboardTypeTIFF]];
+        assert(pastedRep != nil && pastedRep.pixelsWide == rep.pixelsWide && pastedRep.pixelsHigh == rep.pixelsHigh);
+        [pagePasteboard releaseGlobally];
+        [imagePasteboard releaseGlobally];
+        [NSFileManager.defaultManager removeItemAtURL:pastedURL error:nil];
 
         [NSFileManager.defaultManager removeItemAtPath:path error:nil];
         [NSFileManager.defaultManager removeItemAtPath:output error:nil];
