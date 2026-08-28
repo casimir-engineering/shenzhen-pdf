@@ -24,13 +24,13 @@ portable/linux/gtk4/spdf_watcher.c	674	exception	Cohesive Linux file-watcher imp
 portable/linux/gtk4/spdf_window.c	1357	legacy	Legacy GTK window shell; freeze growth pending action/menu extraction.
 portable/linux/gtk4/tests/spdf_state_test.c	986	exception	Cohesive persistence regression suite; new scenarios should use focused fixtures.
 portable/mac/SPDFMacDelegatePrivate.h	602	exception	Existing private coordinator state contract; new state belongs in focused modules.
-portable/mac/SPDFMacDocumentView.mm	888	exception	Cohesive AppKit document input and view implementation; rendering primitives live in SPDFMacPageRendering.
+portable/mac/SPDFMacDocumentView.mm	925	exception	Cohesive AppKit document input and view implementation; rendering primitives live in SPDFMacPageRendering, exact-viewport fit insets in SPDFMacFitGeometry.
 portable/mac/SPDFMacMinimapView.mm	1014	legacy	Legacy AppKit minimap component; freeze growth pending layout/input split.
 portable/mac/SPDFMacPropertiesPanel.mm	555	exception	Cohesive AppKit document-properties panel.
 portable/mac/SPDFMacTabStripView.mm	1123	legacy	Legacy AppKit tab strip; freeze growth pending layout/input split.
-portable/mac/SPDFMacUIHelpers.mm	1324	legacy	Legacy mixed AppKit helper views; freeze growth pending class extraction.
+portable/mac/SPDFMacUIHelpers.mm	1331	legacy	Legacy mixed AppKit helper views; +7 lines for the document clip view's vertical scroll lock (exact-fit no-scroll parity with the horizontal lock), freeze growth pending class extraction.
 portable/mac/SPDFUpdater.mm	1586	legacy	Legacy signed updater; freeze growth pending trust/transport/UI split.
-portable/mac/ShenzhenPDFMac.mm	16825	legacy	Legacy macOS coordinator hotspot; Markdown find branches delegated to SPDFMacMarkdownFindIntegration, deterministic About squircle mask, +10 lines for the stranded-markdown-tab backstop on the openPaths/selectTabAtIndex/restore early-return paths, no further growth before staged extraction.
+portable/mac/ShenzhenPDFMac.mm	16862	legacy	Legacy macOS coordinator hotspot; Markdown find branches delegated to SPDFMacMarkdownFindIntegration, deterministic About squircle mask, +10 lines for the stranded-markdown-tab backstop on the openPaths/selectTabAtIndex/restore early-return paths, +37 lines for exact-viewport fit (viewport-height hints, fit-only vertical scroller, vertical scroll lock), no further growth before staged extraction.
 portable/mac/tests/SPDFMacMarkdownSessionTests.mm	547	exception	Single-binary session lifecycle regression suite; cancellation/self-heal orderings stay cohesive in one deterministic harness.
 src/Accelerators.cpp	773	exception	Inherited accelerator-table implementation is cohesive and stable.
 src/Annotation.cpp	1266	legacy	Legacy Windows annotation model; freeze growth pending extraction.

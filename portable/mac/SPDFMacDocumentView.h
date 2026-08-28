@@ -16,6 +16,7 @@
 @property(nonatomic) NSInteger currentPageIndex;
 @property(nonatomic) CGFloat zoom;
 @property(nonatomic) CGFloat viewportWidthHint;
+@property(nonatomic) CGFloat viewportHeightHint;
 @property(nonatomic) CGFloat backingScale;
 @property(nonatomic) NSInteger activeFindPageIndex;
 @property(nonatomic) NSRect activeFindRect;

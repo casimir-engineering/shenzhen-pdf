@@ -1088,15 +1088,18 @@ static const CGFloat kSPDFMouseWheelPointsPerLine = 32.0;
     NSPoint origin = visible.origin;
     origin.x = spdf_ui_clamp_cg(origin.x - deltaX, 0.0, maxX);
     origin.y = spdf_ui_clamp_cg(origin.y - deltaY, 0.0, maxY);
-    // scrollToPoint: bypasses constrainBoundsRect:, so honor the horizontal lock
-    // range here: a viewport-fit page is pinned centered (min==max); a page wider
-    // than the viewport pans only within its own bounds (min<max), not across the
-    // whole canvas.
+    // scrollToPoint: bypasses constrainBoundsRect:, so honor the lock ranges
+    // here: a viewport-fit page is pinned centered (min==max); a page wider
+    // than the viewport pans only within its own bounds (min<max), not across
+    // the whole canvas; a document that fits vertically is pinned on y too.
     if ([clipView isKindOfClass:[SPDFDocumentClipView class]]) {
         SPDFDocumentClipView* docClip = (SPDFDocumentClipView*)clipView;
         if (isfinite(docClip.horizontalLockMinX))
             origin.x = spdf_ui_clamp_cg(origin.x, docClip.horizontalLockMinX,
                                         MAX(docClip.horizontalLockMinX, docClip.horizontalLockMaxX));
+        if (isfinite(docClip.verticalLockMinY))
+            origin.y = spdf_ui_clamp_cg(origin.y, docClip.verticalLockMinY,
+                                        MAX(docClip.verticalLockMinY, docClip.verticalLockMaxY));
     }
     if (fabs(origin.x - NSMinX(visible)) < 0.0001 && fabs(origin.y - NSMinY(visible)) < 0.0001) return YES;
 
@@ -1257,6 +1260,8 @@ static const CGFloat kSPDFMouseWheelPointsPerLine = 32.0;
     if ((self = [super initWithFrame:frameRect])) {
         _horizontalLockMinX = NAN;
         _horizontalLockMaxX = NAN;
+        _verticalLockMinY = NAN;
+        _verticalLockMaxY = NAN;
     }
     return self;
 }
@@ -1265,6 +1270,8 @@ static const CGFloat kSPDFMouseWheelPointsPerLine = 32.0;
     NSRect bounds = [super constrainBoundsRect:proposedBounds];
     if (isfinite(_horizontalLockMinX))
         bounds.origin.x = spdf_ui_clamp_cg(bounds.origin.x, _horizontalLockMinX, MAX(_horizontalLockMinX, _horizontalLockMaxX));
+    if (isfinite(_verticalLockMinY))
+        bounds.origin.y = spdf_ui_clamp_cg(bounds.origin.y, _verticalLockMinY, MAX(_verticalLockMinY, _verticalLockMaxY));
     return bounds;
 }
 
