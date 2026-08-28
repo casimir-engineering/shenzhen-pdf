@@ -42,6 +42,24 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
 
 - Strict UTF-8 CommonMark with GFM tables, task lists, strikethrough and
   autolinks through vendored MD4C 0.5.3.
+- LaTeX math spans (`MD_FLAG_LATEXMATHSPANS`): `$inline$` and `$$display$$`.
+  The parser strips the dollar delimiters and stores the raw LaTeX as an
+  inline run carrying `SPDFMarkdownInlineTraitMath` (display math additionally
+  carries `SPDFMarkdownInlineTraitDisplayMath`). MD4C's flanking rules keep
+  prose dollars (`$5 and $10`) out of math. Rendering is a native LaTeX-subset
+  typesetter (`SPDFMarkdownMathTypesetter.mm`) — no WebKit, JS, network, or
+  drawing layer: Greek letters and common operator/relation/arrow symbols map
+  to Unicode, `x^2`/`a_{ij}` become smaller raised/lowered runs (one nested
+  level), `\frac` collapses to a vulgar fraction when trivial and a
+  fraction-slash form otherwise, `\sqrt` degrades to `√(...)`, `\text` sets
+  upright, single-letter variables set in math italic, spacing commands map to
+  Unicode spaces, and an unknown command degrades to its visible `\name` in
+  the code font — content is never dropped. Whatever visible text the
+  typesetter emits IS the canonical searchable text (`x^2` is searchable as
+  `x2`). Inline math flows baseline-aligned in its paragraph; display math
+  renders centered on its own line, slightly larger, with vertical margin
+  (via `SPDFMarkdownMathLayoutAttribute`, the image-figure re-derivation
+  pattern). Math uses the body text color and scales with `fontScale`.
 - Conservative Obsidian YAML front matter, wikilinks/aliases, and callouts.
 - Raw/inline HTML disabled. Scripts and active content are never evaluated.
 - `loadURL:` accepts local file URLs only.

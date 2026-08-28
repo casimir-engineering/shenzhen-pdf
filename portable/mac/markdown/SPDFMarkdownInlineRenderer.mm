@@ -1,4 +1,5 @@
 #import "SPDFMarkdownDecorations.h"
+#import "SPDFMarkdownMathTypesetter.h"
 #import "SPDFMarkdownRenderInternal.h"
 
 // Inline-run rendering: styled text runs, links, and image attachments with
@@ -195,6 +196,13 @@ void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdo
     for (SPDFMarkdownInlineRun* run in block.runs) {
         if (context.cancellationToken.isCancelled) return;
         if (!(run.traits & SPDFMarkdownInlineTraitImage)) {
+            if (run.traits & SPDFMarkdownInlineTraitMath) {
+                // LaTeX math spans go through the native subset typesetter
+                // (SPDFMarkdownMathTypesetter.mm); inline math flows in the
+                // paragraph, display math becomes its own centered line.
+                SPDFMarkdownRenderMathRun(context, run);
+                continue;
+            }
             // Whitespace padding around figure images would keep a figure
             // paragraph from starting at its attachment (and carry the
             // uncentered base style), so figure paragraphs drop it.

@@ -1,4 +1,5 @@
 #import "SPDFMarkdownDecorations.h"
+#import "SPDFMarkdownMathTypesetter.h"
 #import "SPDFMarkdownRenderInternal.h"
 #import "SPDFMarkdownTableDecorations.h"
 #import "SPDFMarkdownTableLayout.h"
@@ -302,6 +303,7 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
     }
     [context.output addAttribute:NSParagraphStyleAttributeName value:style range:range];
     SPDFMarkdownApplyImageBlockStyles(context, range, style);
+    SPDFMarkdownApplyMathBlockStyles(context, range, style);
     if (record) SPDFRecord(context, block, range, depth);
 }
 

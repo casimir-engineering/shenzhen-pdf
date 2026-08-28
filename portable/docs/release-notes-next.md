@@ -8,4 +8,8 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
-Nothing yet.
+- Markdown tabs now render LaTeX math: `$inline$` and `$$display$$` spans
+  typeset natively (Greek letters and common symbols, super/subscripts,
+  fractions, roots, `\text`, spacing commands) with GitHub-style centered
+  display equations; unknown commands stay visible instead of disappearing,
+  and math text remains searchable and prints exactly as shown.

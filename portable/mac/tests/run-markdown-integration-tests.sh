@@ -18,6 +18,7 @@ SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
 
 FOUNDATION_SOURCES="
 $PORTABLE/mac/markdown/SPDFMarkdownModel.mm
+$PORTABLE/mac/markdown/SPDFMarkdownMathTypesetter.mm
 $PORTABLE/mac/markdown/SPDFMarkdownParser.mm
 $PORTABLE/mac/markdown/SPDFMarkdownResources.mm
 $PORTABLE/mac/markdown/SPDFMarkdownLanguage.mm

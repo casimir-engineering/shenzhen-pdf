@@ -41,6 +41,12 @@ typedef NS_OPTIONS(NSUInteger, SPDFMarkdownInlineTraits) {
     SPDFMarkdownInlineTraitLink = 1 << 4,
     SPDFMarkdownInlineTraitWikiLink = 1 << 5,
     SPDFMarkdownInlineTraitImage = 1 << 6,
+    // LaTeX math span content ($...$ / $$...$$, delimiters stripped by the
+    // parser). The run's text is the raw LaTeX; the renderer typesets it via
+    // SPDFMarkdownMathTypesetter. Display math carries both Math and
+    // DisplayMath.
+    SPDFMarkdownInlineTraitMath = 1 << 7,
+    SPDFMarkdownInlineTraitDisplayMath = 1 << 8,
 };
 
 @interface SPDFMarkdownInlineRun : NSObject
