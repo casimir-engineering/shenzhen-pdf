@@ -247,6 +247,48 @@ int main(void) {
         SPDFExpect(foundScaledFragment && SPDFPDFContainsMagentaImage(smallPDF),
                    @"over-tall local images are scaled into small printable pages and remain visible");
         [NSFileManager.defaultManager removeItemAtPath:temporaryRoot error:nil];
+
+        // Asymmetric printable rects (NSPrintInfo-style top != bottom margins)
+        // must anchor content to the TOP margin. Paper 500x700 with printable
+        // (40, 30, 420, 600): top margin 70, bottom margin 30, so the first
+        // baseline sits at NSMaxY(printable) - baselineOffset = 630 - 15 = 615.
+        // The old NSMinY-based math drew it 40pt higher, at 700 - 30 - 15 = 655.
+        SPDFMarkdownPageConfiguration* asymmetric =
+            [SPDFMarkdownPageConfiguration configurationForPaperSize:NSMakeSize(500, 700)
+                                                        printableRect:NSMakeRect(40, 30, 420, 600)];
+        SPDFExpect(fabs(asymmetric.topContentInset - 70) < 0.001 &&
+                       fabs(SPDFMarkdownPageConfiguration.A4PortraitConfiguration.topContentInset - 36) < 0.001,
+                   @"topContentInset reports the true top margin, not the bottom one");
+        NSString* probeText = @"BaselineProbe";
+        NSAttributedString* probeString = [[NSAttributedString alloc]
+            initWithString:probeText
+                attributes:@{
+                    NSFontAttributeName : [NSFont systemFontOfSize:14],
+                    NSForegroundColorAttributeName : NSColor.blackColor,
+                }];
+        SPDFMarkdownTextLine* probeLine =
+            [[SPDFMarkdownTextLine alloc] initWithAttributedRange:NSMakeRange(0, probeText.length)
+                                                           height:20
+                                                          xOffset:0
+                                                   baselineOffset:15];
+        SPDFMarkdownPaginationItem* probeItem =
+            [[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:0
+                                                              kind:SPDFMarkdownBlockKindParagraph
+                                                      headingLevel:0
+                                                             lines:@[ probeLine ]];
+        SPDFMarkdownPaginationPlan* asymmetricPlan = [[SPDFMarkdownPaginator new] paginateItems:@[ probeItem ]
+                                                                                  configuration:asymmetric];
+        PDFDocument* asymmetricPDF = [[PDFDocument alloc] initWithData:SPDFCreatePDF(asymmetricPlan, probeString)];
+        PDFSelection* probeSelection = [asymmetricPDF findString:probeText withOptions:0].firstObject;
+        NSRect probeBounds = probeSelection
+                                 ? [probeSelection boundsForPage:probeSelection.pages.firstObject]
+                                 : NSZeroRect;
+        CGFloat expectedBaseline = NSMaxY(asymmetric.printableRect) - probeLine.baselineOffset;
+        SPDFExpect(probeSelection != nil && NSMaxY(probeBounds) <= NSMaxY(asymmetric.printableRect) + 2 &&
+                       NSMinY(probeBounds) >= NSMaxY(asymmetric.printableRect) - probeLine.height - 2 &&
+                       NSMinY(probeBounds) <= expectedBaseline + 1 && NSMaxY(probeBounds) > expectedBaseline &&
+                       fabs(NSMinX(probeBounds) - NSMinX(asymmetric.printableRect)) < 3,
+                   @"asymmetric margins draw the first baseline at NSMaxY(printable) - baselineOffset");
     }
     return SPDFFinishTests(@"SPDFMarkdownPDFAdapterTests");
 }

@@ -64,7 +64,8 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
     // The leading band starts with the unpainted outer margin above the box;
     // the control centers in the in-box header portion below it.
     CGFloat outerMargin = MIN(SPDFMarkdownCodeBoxOuterMargin * fragment.scale, fragment.height);
-    CGFloat bandTop = NSMinY(pageFrame) + NSMinY(printable) + fragment.pageYOffset + outerMargin;
+    CGFloat bandTop =
+        NSMinY(pageFrame) + self.plan.configuration.topContentInset + fragment.pageYOffset + outerMargin;
     CGFloat y = round(bandTop + (fragment.height - outerMargin - kSPDFMarkdownCodeControlHeight) * 0.5);
     CGFloat maxX = NSMinX(pageFrame) + NSMinX(printable) + NSWidth(printable) - kSPDFMarkdownCodeControlRightInset;
     return NSMakeRect(maxX - width, y, width, kSPDFMarkdownCodeControlHeight);
@@ -127,9 +128,10 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
                 CFIndex end = (CFIndex)(NSMaxRange(effective) - fragment.attributedRange.location);
                 CGFloat x0 = CTLineGetOffsetForStringIndex(line, start, NULL) * fragment.scale;
                 CGFloat x1 = CTLineGetOffsetForStringIndex(line, end, NULL) * fragment.scale;
-                NSRect linkRect = NSMakeRect(NSMinX(pageFrame) + NSMinX(printable) + fragment.xOffset + MIN(x0, x1),
-                                             NSMinY(pageFrame) + NSMinY(printable) + fragment.pageYOffset,
-                                             fabs(x1 - x0), fragment.height);
+                NSRect linkRect =
+                    NSMakeRect(NSMinX(pageFrame) + NSMinX(printable) + fragment.xOffset + MIN(x0, x1),
+                               NSMinY(pageFrame) + self.plan.configuration.topContentInset + fragment.pageYOffset,
+                               fabs(x1 - x0), fragment.height);
                 if (!NSIsEmptyRect(linkRect)) [self addCursorRect:linkRect cursor:NSCursor.pointingHandCursor];
             }
             cursor = NSMaxRange(effective);

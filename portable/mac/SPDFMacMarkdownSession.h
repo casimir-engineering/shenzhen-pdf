@@ -4,6 +4,7 @@
 #import "SPDFMacMarkdownPagedView.h"
 
 @class SPDFMarkdownDocument;
+@class SPDFMarkdownPaginationPlan;
 @class SPDFMarkdownRenderedDocument;
 @class SPDFMarkdownSearchMatch;
 @class SPDFMacMarkdownMinimapModel;
@@ -25,6 +26,10 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @property(nonatomic, readonly, nullable) NSTextView* textView;
 @property(nonatomic, readonly, nullable) SPDFMarkdownDocument* document;
 @property(nonatomic, readonly, nullable) SPDFMarkdownRenderedDocument* renderedDocument;
+// The live on-screen pagination plan (current font scale, language overrides,
+// reserved language-control band). Print and Save-as-PDF consume this plan
+// with renderedDocument so exports match the reader page for page.
+@property(nonatomic, readonly, nullable) SPDFMarkdownPaginationPlan* paginationPlan;
 @property(nonatomic, readonly) SPDFMacMarkdownSessionState state;
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownSearchMatch*>* searchMatches;
 @property(nonatomic, readonly) NSInteger currentMatchIndex;
@@ -57,9 +62,6 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 - (instancetype)initWithDocumentURL:(NSURL*)URL fontScale:(CGFloat)fontScale NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 - (void)applyFontScale:(CGFloat)scale;
-// Print/export rendition: the current language overrides at font scale 1.0,
-// so the reading-size preference never changes printed or exported output.
-- (nullable SPDFMarkdownRenderedDocument*)renderedDocumentForExport;
 - (void)activateInHostView:(NSView*)hostView
                  workQueue:(dispatch_queue_t)workQueue
               scrollOrigin:(NSPoint)scrollOrigin

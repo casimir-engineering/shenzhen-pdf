@@ -79,13 +79,8 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     if (_active && self.document) [self rerenderDocumentWithStatus:@"Markdown text size updated."];
 }
 
-- (SPDFMarkdownRenderedDocument*)renderedDocumentForExport {
-    if (_renderedFontScale == 1.0 || !self.document) return self.renderedDocument;
-    SPDFMarkdownRenderedDocument* rendered =
-        [[SPDFMarkdownRenderer new] renderModel:self.document.model
-                                        options:SPDFMarkdownRenderOptions.defaultOptions
-                              languageOverrides:[_languageOverrides copy]];
-    return rendered ?: self.renderedDocument;
+- (SPDFMarkdownPaginationPlan*)paginationPlan {
+    return _paginationPlan;
 }
 
 - (void)buildRootView {

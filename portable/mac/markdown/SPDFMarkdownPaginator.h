@@ -15,6 +15,11 @@ NS_ASSUME_NONNULL_BEGIN
 // Screen pagination can reserve space for its interactive code-language control.
 // Print and export configurations intentionally default to NO.
 @property(nonatomic) BOOL includesCodeLanguageControlSpacing;
+// Distance from the paper's top edge down to the printable area — the TOP
+// margin. Equal to NSMinY(printableRect) (the bottom margin) only when the
+// vertical margins are symmetric, so every top-anchored coordinate must use
+// this instead of NSMinY(printableRect).
+@property(nonatomic, readonly) CGFloat topContentInset;
 + (instancetype)A4PortraitConfiguration;
 + (instancetype)configurationForPaperSize:(NSSize)paperSize printableRect:(NSRect)printableRect;
 @end

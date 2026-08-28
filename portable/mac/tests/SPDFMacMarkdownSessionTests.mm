@@ -234,19 +234,34 @@ int main(void) {
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
         assert(fontScaleRenders == 2 && session.renderedDocument == renderedBeforeNoop);
 
-        // Print/export stays at scale 1.0 while keeping the language override.
-        SPDFMarkdownRenderedDocument* exportRendered = [session renderedDocumentForExport];
-        assert(exportRendered != nil && exportRendered != session.renderedDocument);
-        NSRange exportRange = [exportRendered.attributedString.string rangeOfString:@"Alpha beta alpha"];
-        NSFont* exportFont = [exportRendered.attributedString attribute:NSFontAttributeName
-                                                                atIndex:exportRange.location
-                                                         effectiveRange:nil];
-        assert(fabs(exportFont.pointSize - baseFont.pointSize) < 0.01);
-        SPDFMarkdownRenderedBlock* exportCode = [exportRendered renderedBlockWithIndex:codeBlock];
-        NSString* exportLanguage = [exportRendered.attributedString attribute:SPDFMarkdownCodeLanguageAttribute
-                                                                      atIndex:exportCode.attributedRange.location
-                                                               effectiveRange:nil];
+        // Print/export consumes the live screen plan: same A4 page geometry,
+        // the reserved language-control band, and the current scaled rendition
+        // with its language override.
+        SPDFMarkdownPaginationPlan* exportPlan = session.paginationPlan;
+        assert(exportPlan != nil && exportPlan.configuration.includesCodeLanguageControlSpacing);
+        assert(NSEqualSizes(exportPlan.configuration.paperSize,
+                            SPDFMarkdownPageConfiguration.A4PortraitConfiguration.paperSize));
+        SPDFMarkdownPaginationItem* exportCodeItem = nil;
+        SPDFMarkdownPaginationItem* exportParagraphItem = nil;
+        for (SPDFMarkdownPaginationItem* item in exportPlan.items) {
+            if (item.kind == SPDFMarkdownBlockKindCode) exportCodeItem = item;
+            if (item.kind == SPDFMarkdownBlockKindParagraph && !exportParagraphItem) exportParagraphItem = item;
+        }
+        assert(exportCodeItem != nil && exportCodeItem.lines.firstObject.attributedRange.length == 0 &&
+               fabs(exportCodeItem.lines.firstObject.height - 48.0) < 0.001);
+        // The plan tracks the scaled rendition (3.0 here): line heights exceed
+        // anything an unscaled render would measure.
+        assert(exportParagraphItem != nil &&
+               exportParagraphItem.lines.firstObject.height > baseFont.pointSize * 2.0);
+        NSRange exportCodeRange = [session.renderedDocument renderedBlockWithIndex:codeBlock].attributedRange;
+        NSString* exportLanguage =
+            [session.renderedDocument.attributedString attribute:SPDFMarkdownCodeLanguageAttribute
+                                                         atIndex:exportCodeRange.location
+                                                  effectiveRange:nil];
         assert([exportLanguage isEqualToString:@"python"]);
+        for (SPDFMarkdownPage* exportPage in exportPlan.pages)
+            for (SPDFMarkdownPageFragment* fragment in exportPage.fragments)
+                assert(NSMaxRange(fragment.attributedRange) <= session.renderedDocument.attributedString.length);
 
         // A session created with an initial font scale renders scaled from the
         // first pass, and a pending anchor no longer discards the restored zoom.

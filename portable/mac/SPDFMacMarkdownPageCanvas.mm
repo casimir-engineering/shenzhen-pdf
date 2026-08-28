@@ -120,9 +120,10 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
             CFIndex end = (CFIndex)(NSMaxRange(intersection) - fragment.attributedRange.location);
             CGFloat x0 = CTLineGetOffsetForStringIndex(line, start, NULL) * fragment.scale;
             CGFloat x1 = CTLineGetOffsetForStringIndex(line, end, NULL) * fragment.scale;
-            NSRect highlight = NSMakeRect(NSMinX(pageFrame) + NSMinX(printable) + fragment.xOffset + MIN(x0, x1),
-                                          NSMinY(pageFrame) + NSMinY(printable) + fragment.pageYOffset,
-                                          MAX(2.0, fabs(x1 - x0)), fragment.height);
+            NSRect highlight =
+                NSMakeRect(NSMinX(pageFrame) + NSMinX(printable) + fragment.xOffset + MIN(x0, x1),
+                           NSMinY(pageFrame) + _plan.configuration.topContentInset + fragment.pageYOffset,
+                           MAX(2.0, fabs(x1 - x0)), fragment.height);
             NSRectFillUsingOperation(highlight, NSCompositingOperationSourceOver);
         }
         CFRelease(line);
@@ -178,7 +179,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];
     if (!NSPointInRect(point, pageFrame)) return NSNotFound;
     NSRect printable = _plan.configuration.printableRect;
-    CGFloat localY = point.y - NSMinY(pageFrame) - NSMinY(printable);
+    CGFloat localY = point.y - NSMinY(pageFrame) - _plan.configuration.topContentInset;
     SPDFMarkdownPage* page = _plan.pages[(NSUInteger)pageIndex];
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (localY < fragment.pageYOffset || localY > fragment.pageYOffset + fragment.height) continue;
@@ -216,7 +217,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (!fragment.attributedRange.length || NSMaxRange(fragment.attributedRange) > _attributedString.length)
             continue;
-        CGFloat fragmentY = NSMinY(pageFrame) + NSMinY(printable) + fragment.pageYOffset;
+        CGFloat fragmentY = NSMinY(pageFrame) + _plan.configuration.topContentInset + fragment.pageYOffset;
         CGFloat distance =
             point.y < fragmentY ? fragmentY - point.y : MAX(0.0, point.y - (fragmentY + fragment.height));
         if (distance < nearestDistance) {

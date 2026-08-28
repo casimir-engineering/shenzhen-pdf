@@ -42,7 +42,7 @@
     SPDFMarkdownPage* page = [self pageContainingAttributedLocation:location fragment:&fragment];
     if (!page || !fragment) return NO;
     NSRect pageFrame = [self frameForPageAtIndex:page.pageIndex];
-    CGFloat fragmentTop = NSMinY(pageFrame) + NSMinY(self.plan.configuration.printableRect) + fragment.pageYOffset;
+    CGFloat fragmentTop = NSMinY(pageFrame) + self.plan.configuration.topContentInset + fragment.pageYOffset;
     NSScrollView* scrollView = self.enclosingScrollView;
     NSClipView* clipView = scrollView.contentView;
     if (!clipView) {

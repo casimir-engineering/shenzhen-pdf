@@ -17,6 +17,9 @@
     value.headingKeepThreshold = 0.75;
     return value;
 }
+- (CGFloat)topContentInset {
+    return self.paperSize.height - NSMaxY(self.printableRect);
+}
 - (id)copyWithZone:(NSZone*)zone {
     SPDFMarkdownPageConfiguration* copy = [[[self class] allocWithZone:zone] init];
     copy.paperSize = self.paperSize;
@@ -222,9 +225,8 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
 // boxes and #D1D9E0 heading/thematic-break rules, drawn beneath the planned
 // text lines.
 - (void)drawDecorationsForPageIndex:(NSUInteger)pageIndex inContext:(CGContextRef)context {
-    CGFloat paperHeight = self.configuration.paperSize.height;
     CGFloat printableLeft = NSMinX(self.configuration.printableRect);
-    CGFloat printableTop = paperHeight - NSMinY(self.configuration.printableRect);
+    CGFloat printableTop = self.configuration.paperSize.height - self.configuration.topContentInset;
     for (SPDFMarkdownPageDecoration* decoration in [self decorationsForPageIndex:pageIndex]) {
         CGRect rect = CGRectMake(printableLeft + NSMinX(decoration.rect), printableTop - NSMaxY(decoration.rect),
                                  NSWidth(decoration.rect), NSHeight(decoration.rect));
@@ -257,6 +259,7 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
     if (pageIndex >= self.pages.count || !context) return NO;
     SPDFMarkdownPage* page = self.pages[pageIndex];
     CGFloat paperHeight = self.configuration.paperSize.height;
+    CGFloat printableTop = paperHeight - self.configuration.topContentInset;
     CGContextSaveGState(context);
     CGContextSetRGBFillColor(context, 1, 1, 1, 1);
     CGContextFillRect(context, CGRectMake(0, 0, self.configuration.paperSize.width, paperHeight));
@@ -268,8 +271,7 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
             SPDFPrintableLine([attributedString attributedSubstringFromRange:fragment.attributedRange]);
         CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)substring);
         CGFloat x = NSMinX(self.configuration.printableRect) + fragment.xOffset;
-        CGFloat y =
-            paperHeight - NSMinY(self.configuration.printableRect) - fragment.pageYOffset - fragment.baselineOffset;
+        CGFloat y = printableTop - fragment.pageYOffset - fragment.baselineOffset;
         CGContextSaveGState(context);
         CGContextTranslateCTM(context, x, y);
         CGContextScaleCTM(context, fragment.scale, fragment.scale);
