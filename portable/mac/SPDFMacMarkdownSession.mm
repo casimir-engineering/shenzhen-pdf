@@ -1,7 +1,5 @@
 #import "SPDFMacMarkdownSessionPrivate.h"
 
-#import "SPDFMacMarkdownLanguagePicker.h"
-#import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacMarkdownSidebarModel.h"
 #import "SPDFMacMarkdownView.h"
 
@@ -15,16 +13,20 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     SPDFMarkdownPaginationPlan* _paginationPlan;
     NSAttributedString* _interactiveString;
     SPDFMarkdownCancellationToken* _renderToken;
-    NSMutableDictionary<NSNumber*, NSString*>* _languageOverrides;
-    SPDFMacMarkdownLanguagePickerController* _languagePicker;
     NSUInteger _activationGeneration;
     NSUInteger _renderGeneration;
+    // The current activation generation's initial parse+paginate pass is in
+    // flight. Cleared by that pass's completion or by cancelAllOperations.
+    BOOL _loadInFlight;
+    // The live activation's completion, retained until the initial load (or
+    // the fast install path) finishes so a cancelled-and-self-healed load
+    // still reports back to the reader. Cleared by deactivate.
+    void (^_pendingActivationCompletion)(BOOL, NSError*);
     NSPoint _pendingScrollOrigin;
     NSRange _pendingSelectedRange;
     NSInteger _pendingPageIndex;
     CGFloat _pendingZoom;
     SPDFMacMarkdownPageFitMode _pendingFitMode;
-    NSString* _pendingAnchor;
     __weak id<SPDFMacUIReader> _reader;
     SPDFMacMarkdownSidebarModel* _sidebarModel;
     // fontScale of the currently installed renderedDocument; when it trails
@@ -165,9 +167,12 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                     anchor:(NSString*)anchor
                 completion:(void (^)(BOOL, NSError*))completion {
     NSAssert(NSThread.isMainThread, @"Markdown activation must occur on the main thread");
-    [self cancelAllOperations];
+    // Activating again while the initial load is already in flight must not
+    // cancel and restart it: adopt the new viewport/completion and let the
+    // running load install with them (idempotent activation).
+    BOOL adoptInFlightLoad = _active && _loadInFlight && !self.document;
+    if (!adoptInFlightLoad) [self cancelAllOperations];
     _active = YES;
-    NSUInteger activationGeneration = _activationGeneration;
     _workQueue = workQueue ?: dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     _pendingScrollOrigin = scrollOrigin;
     _pendingSelectedRange = selectedRange;
@@ -175,6 +180,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     _pendingZoom = MAX(0.1, zoom);
     _pendingFitMode = fitMode;
     _pendingAnchor = [anchor copy];
+    _pendingActivationCompletion = [completion copy];
     [self attachToHostView:hostView];
     if (self.document && self.renderedDocument) {
         [self installRenderedDocument:self.renderedDocument
@@ -183,18 +189,27 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                  preserveCurrentState:NO];
         // Catch up with a font scale changed while this session was cached.
         if (_renderedFontScale != _fontScale) [self rerenderDocumentWithStatus:nil];
-        if (completion) completion(YES, nil);
+        [self finishActivationWithSuccess:YES error:nil];
         return;
     }
+    if (adoptInFlightLoad) return;
+    [self startInitialDocumentLoad];
+}
 
+// The initial parse+measure+paginate pass for the current activation
+// generation. Callers guarantee no initial load is already in flight.
+- (void)startInitialDocumentLoad {
     self.state = SPDFMacMarkdownSessionLoading;
     _placeholder.stringValue = @"Loading Markdown...";
     _placeholder.hidden = NO;
     [_pagedView removeFromSuperview];
     _pagedView = nil;
+    _loadInFlight = YES;
+    NSUInteger activationGeneration = _activationGeneration;
     NSURL* URL = self.documentURL;
     SPDFMarkdownRenderOptions* renderOptions = [self renderOptionsForCurrentScale];
-    dispatch_async(_workQueue, ^{
+    dispatch_queue_t workQueue = _workQueue ?: dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    dispatch_async(workQueue, ^{
       NSError* error = nil;
       SPDFMarkdownDocument* document = [SPDFMarkdownDocument documentWithURL:URL options:renderOptions error:&error];
       SPDFMarkdownPaginationPlan* plan = nil;
@@ -209,11 +224,15 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
           interactive = SPDFMacMarkdownInteractiveString(document.model, document.renderedDocument);
       }
       dispatch_async(dispatch_get_main_queue(), ^{
-        if (!self->_active || activationGeneration != self->_activationGeneration) return;
+        // Only the live generation's load may clear the in-flight flag or
+        // install: a cancel or a newer activation owns the session otherwise.
+        if (activationGeneration != self->_activationGeneration) return;
+        self->_loadInFlight = NO;
+        if (!self->_active) return;
         if (!document) {
             self.state = SPDFMacMarkdownSessionFailed;
             self->_placeholder.stringValue = error.localizedDescription ?: @"Could not open Markdown document.";
-            if (completion) completion(NO, error);
+            [self finishActivationWithSuccess:NO error:error];
             return;
         }
         self.document = document;
@@ -228,9 +247,38 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                  preserveCurrentState:NO];
         // Catch up with a font scale applied while the first render was in flight.
         if (self->_renderedFontScale != self->_fontScale) [self rerenderDocumentWithStatus:nil];
-        if (completion) completion(YES, nil);
+        [self finishActivationWithSuccess:YES error:nil];
       });
     });
+}
+
+- (void)finishActivationWithSuccess:(BOOL)success error:(NSError*)error {
+    void (^activationCompletion)(BOOL, NSError*) = _pendingActivationCompletion;
+    _pendingActivationCompletion = nil;
+    if (activationCompletion) activationCompletion(success, error);
+}
+
+// Self-healing activation invariant: an active session must either have its
+// rendered document installed or work actually in flight. Idempotent; main
+// thread only. Cancels that land while the session stays on screen (e.g. the
+// tab cache dropping its runtime cancels the very session the reader is
+// displaying) re-enter here to restart whatever the cancel killed — without
+// this the dropped load completion would strand the visible tab on the
+// "Loading Markdown..." placeholder forever.
+- (void)ensureActiveSessionHasContent {
+    NSAssert(NSThread.isMainThread, @"Markdown session healing must occur on the main thread");
+    if (!_active || _loadInFlight) return;
+    if (self.document && self.renderedDocument) {
+        if (!_pagedView)
+            [self installRenderedDocument:self.renderedDocument
+                           paginationPlan:_paginationPlan
+                        interactiveString:_interactiveString
+                     preserveCurrentState:NO];
+        // Restart a cancelled font-scale catch-up rerender.
+        if (!_renderToken && _renderedFontScale != _fontScale) [self rerenderDocumentWithStatus:nil];
+        return;
+    }
+    [self startInitialDocumentLoad];
 }
 
 - (void)installRenderedDocument:(SPDFMarkdownRenderedDocument*)rendered
@@ -309,6 +357,9 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     _pendingZoom = self.zoom;
     _pendingFitMode = self.fitMode;
     _active = NO;
+    // The activation intent dies with the deactivation: its completion must
+    // never fire late (the next activation supplies a fresh one).
+    _pendingActivationCompletion = nil;
     [self clearMatchFlash];
     [self cancelAllOperations];
     [_rootView removeFromSuperview];
@@ -320,74 +371,26 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     [_renderToken cancel];
     _searchToken = nil;
     _renderToken = nil;
+    _loadInFlight = NO;
     _activationGeneration++;
     _searchGeneration++;
     _renderGeneration++;
     if (searchWasRunning && self.searchUpdateHandler)
         self.searchUpdateHandler(_searchMatches.count, _currentMatchIndex, NO);
+    // A cancel that leaves this session active (anything but deactivation)
+    // must not strand the on-screen tab: the generation bump silently drops
+    // every queued completion, so schedule an idempotent healing pass. It
+    // no-ops whenever an activation restarted or reinstalled work first.
+    if (_active) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [self ensureActiveSessionHasContent];
+        });
+    }
 }
 
 - (void)dealloc {
+    _active = NO; // teardown must never schedule the healing pass
     [self cancelAllOperations];
-}
-
-- (BOOL)scrollToHeadingAnchor:(NSString*)anchor {
-    NSString* slug = spdf_mac_markdown_heading_slug(anchor);
-    for (SPDFMarkdownRenderedHeading* heading in self.renderedDocument.headings) {
-        if ([spdf_mac_markdown_heading_slug(heading.title) isEqualToString:slug]) {
-            [_pagedView revealRange:heading.attributedRange];
-            return YES;
-        }
-    }
-    return NO;
-}
-
-- (void)navigateToAnchorWhenReady:(NSString*)anchor {
-    _pendingAnchor = [anchor copy];
-    if (_active && self.state == SPDFMacMarkdownSessionReady && [self scrollToHeadingAnchor:_pendingAnchor])
-        _pendingAnchor = nil;
-}
-
-- (void)activateDestination:(NSString*)destination wikiLink:(BOOL)wikiLink {
-    SPDFMacMarkdownLinkResolution* resolution = spdf_mac_resolve_markdown_link(destination, self.documentURL, wikiLink);
-    if (resolution.kind == SPDFMacMarkdownLinkExternal) {
-        if (self.openExternalURLHandler) self.openExternalURLHandler(resolution.URL);
-    } else if (resolution.kind == SPDFMacMarkdownLinkDocument) {
-        if (self.openDocumentHandler) self.openDocumentHandler(resolution.URL, resolution.anchor);
-    } else if (resolution.kind == SPDFMacMarkdownLinkAnchor) {
-        if (![self scrollToHeadingAnchor:resolution.anchor] && self.statusHandler)
-            self.statusHandler(@"Heading not found.");
-    } else if (self.statusHandler)
-        self.statusHandler(@"Blocked unsafe or unsupported Markdown link.");
-}
-
-- (void)showLanguagePickerForCodeBlock:(NSUInteger)blockIndex parentWindow:(NSWindow*)window {
-    if (!window || ![self.document.model blockWithIndex:blockIndex]) return;
-    if (!_languagePicker) _languagePicker = [SPDFMacMarkdownLanguagePickerController new];
-    NSRect anchor = [_pagedView codeLanguageControlFrameInViewForBlockIndex:blockIndex];
-    if (NSIsEmptyRect(anchor)) {
-        // Scrolled away or invoked from the context menu: reveal the block's
-        // page so its language control can anchor the popover.
-        SPDFMarkdownRenderedBlock* block = [self.renderedDocument renderedBlockWithIndex:blockIndex];
-        if (block) [_pagedView revealRange:block.attributedRange];
-        anchor = [_pagedView codeLanguageControlFrameInViewForBlockIndex:blockIndex];
-    }
-    if (NSIsEmptyRect(anchor))
-        anchor = NSMakeRect(NSMidX(_pagedView.bounds) - 4.0, NSMinY(_pagedView.bounds) + 4.0, 8.0, 8.0);
-    __weak SPDFMacMarkdownSession* weakSelf = self;
-    [_languagePicker presentFromView:_pagedView
-                          anchorRect:anchor
-                          completion:^(SPDFMarkdownLanguage* language) {
-                            SPDFMacMarkdownSession* strongSelf = weakSelf;
-                            if (!strongSelf || !language || !strongSelf->_active) return;
-                            [strongSelf applyLanguageIdentifier:language.identifier toCodeBlock:blockIndex];
-                          }];
-}
-
-- (void)applyLanguageIdentifier:(NSString*)identifier toCodeBlock:(NSUInteger)blockIndex {
-    if (!identifier.length || ![self.document.model blockWithIndex:blockIndex]) return;
-    _languageOverrides[@(blockIndex)] = identifier;
-    [self rerenderDocumentWithStatus:@"Code language updated."];
 }
 
 // Shared rerender flow for language overrides and font-scale changes: every
@@ -444,56 +447,6 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                    if (status.length && mainSelf.statusHandler) mainSelf.statusHandler(status);
                  });
                }];
-}
-
-- (void)goToPageAtIndex:(NSInteger)pageIndex {
-    [_pagedView goToPageAtIndex:pageIndex alignTop:YES];
-}
-- (void)zoomByFactor:(CGFloat)factor {
-    [_pagedView zoomByFactor:factor];
-}
-- (void)setZoom:(CGFloat)zoom {
-    NSRect visible = _pagedView.documentVisibleRect;
-    [_pagedView setZoom:zoom centeredAtPoint:NSMakePoint(NSMidX(visible), NSMidY(visible))];
-}
-- (void)applyFitMode:(SPDFMacMarkdownPageFitMode)fitMode {
-    [_pagedView applyFitMode:fitMode];
-}
-- (void)setPresentationMode:(BOOL)presentationMode {
-    _pagedView.presentationMode = presentationMode;
-}
-- (NSUInteger)pageIndexForRange:(NSRange)range {
-    return [_pagedView pageIndexForRange:range];
-}
-- (void)revealRange:(NSRange)range {
-    [_pagedView revealRange:range];
-}
-- (void)centerAtDocumentPoint:(NSPoint)point {
-    [_pagedView centerAtDocumentPoint:point];
-}
-- (void)centerOnPageAtIndex:(NSInteger)pageIndex xFraction:(CGFloat)xFraction yFraction:(CGFloat)yFraction {
-    [_pagedView centerOnPageAtIndex:pageIndex xFraction:xFraction yFraction:yFraction];
-}
-- (void)scrollByDocumentDeltaX:(CGFloat)deltaX deltaY:(CGFloat)deltaY {
-    [_pagedView scrollByDocumentDeltaX:deltaX deltaY:deltaY];
-}
-- (void)forwardScrollWheelEvent:(NSEvent*)event {
-    [_pagedView forwardScrollWheelEvent:event];
-}
-- (void)magnifyByDelta:(CGFloat)delta {
-    [_pagedView magnifyByDelta:delta];
-}
-- (BOOL)zoomWithScrollWheelEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint {
-    return [_pagedView zoomWithScrollWheelEvent:event centeredAtWindowPoint:windowPoint];
-}
-- (void)magnifyByDelta:(CGFloat)delta centeredAtWindowPoint:(NSPoint)windowPoint {
-    [_pagedView magnifyByDelta:delta centeredAtWindowPoint:windowPoint];
-}
-- (void)magnifyByDelta:(CGFloat)delta centeredAtDocumentPoint:(NSPoint)documentPoint {
-    [_pagedView magnifyByDelta:delta centeredAtDocumentPoint:documentPoint];
-}
-- (void)noteExternalScrollPositionChanged {
-    [_pagedView noteExternalScrollPositionChanged];
 }
 
 @end

@@ -329,6 +329,141 @@ int main(void) {
         assert(!staleCompletion);
         assert(stale.rootView.superview == nil);
 
+        // Deactivated mid-parse, then re-activated: the session must restart
+        // the pipeline and reach Ready (the deactivation dropped the first
+        // load's completion for good).
+        __block BOOL staleReloaded = NO;
+        [stale activateInHostView:host
+                        workQueue:sessionQueue
+                     scrollOrigin:NSZeroPoint
+                    selectedRange:NSMakeRange(0, 0)
+                        pageIndex:0
+                             zoom:1.0
+                          fitMode:SPDFMacMarkdownPageFitPage
+                           anchor:nil
+                       completion:^(BOOL success, NSError* error) {
+                         assert(success && !error);
+                         staleReloaded = YES;
+                       }];
+        assert(SpinUntil(
+            ^BOOL {
+              return staleReloaded;
+            },
+            5.0));
+        assert(stale.state == SPDFMacMarkdownSessionReady && stale.renderedDocument != nil && stale.pageCount > 0);
+        assert(!staleCompletion); // the first activation's completion stays dropped
+        [stale deactivate];
+
+        // Regression: a cancelAllOperations landing while the session stays
+        // active (SPDFDocumentTab.clearCachedRuntime cancels the very object
+        // the reader is displaying) used to strand the tab on the "Loading
+        // Markdown..." placeholder forever — the generation bump dropped the
+        // parse completion and nothing ever re-kicked the pipeline. The active
+        // session must self-heal to Ready and fire its activation completion
+        // exactly once.
+        dispatch_queue_t healQueue = dispatch_queue_create("markdown.heal.test", DISPATCH_QUEUE_SERIAL);
+        SPDFMacMarkdownSession* healed =
+            [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
+        __block NSUInteger healedCompletions = 0;
+        dispatch_suspend(healQueue);
+        [healed activateInHostView:host
+                         workQueue:healQueue
+                      scrollOrigin:NSZeroPoint
+                     selectedRange:NSMakeRange(0, 0)
+                         pageIndex:0
+                              zoom:1.0
+                           fitMode:SPDFMacMarkdownPageFitPage
+                            anchor:nil
+                        completion:^(BOOL success, NSError* error) {
+                          assert(success && !error);
+                          healedCompletions++;
+                        }];
+        assert(healed.state == SPDFMacMarkdownSessionLoading);
+        [healed cancelAllOperations]; // drops the still-queued initial parse
+        dispatch_resume(healQueue);
+        assert(SpinUntil(
+            ^BOOL {
+              return healed.state == SPDFMacMarkdownSessionReady;
+            },
+            5.0));
+        assert(healed.renderedDocument != nil && healed.pageCount > 0);
+        assert(healedCompletions == 1);
+
+        // A cancel on a Ready active session must not reparse or replace the
+        // installed render.
+        SPDFMarkdownRenderedDocument* healedRendered = healed.renderedDocument;
+        [healed cancelAllOperations];
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
+        assert(healed.state == SPDFMacMarkdownSessionReady && healed.renderedDocument == healedRendered);
+
+        // Re-activating a Ready session reinstalls the SAME rendered document:
+        // no second parse or render pass.
+        [healed deactivate];
+        __block BOOL healedReactivated = NO;
+        [healed activateInHostView:host
+                         workQueue:healQueue
+                      scrollOrigin:NSZeroPoint
+                     selectedRange:NSMakeRange(0, 0)
+                         pageIndex:0
+                              zoom:1.0
+                           fitMode:SPDFMacMarkdownPageFitPage
+                            anchor:nil
+                        completion:^(BOOL success, NSError* error) {
+                          assert(success && !error);
+                          healedReactivated = YES;
+                        }];
+        assert(healedReactivated); // the cached-document fast path is synchronous
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
+        assert(healed.renderedDocument == healedRendered);
+        [healed deactivate];
+
+        // Activating again while the initial parse is in flight must not
+        // cancel and restart it. Gate the serial queue directly behind the
+        // first parse: a restarted parse could never run, so reaching Ready
+        // proves the FIRST parse's completion still installed (a cancel would
+        // have generation-dropped it, stranding the session at Loading).
+        dispatch_queue_t gateQueue = dispatch_queue_create("markdown.gate.test", DISPATCH_QUEUE_SERIAL);
+        dispatch_semaphore_t parseGate = dispatch_semaphore_create(0);
+        SPDFMacMarkdownSession* inflight =
+            [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
+        __block NSUInteger inflightCompletions = 0;
+        void (^inflightCompletion)(BOOL, NSError*) = ^(BOOL success, NSError* error) {
+          assert(success && !error);
+          inflightCompletions++;
+        };
+        dispatch_suspend(gateQueue);
+        [inflight activateInHostView:host
+                           workQueue:gateQueue
+                        scrollOrigin:NSZeroPoint
+                       selectedRange:NSMakeRange(0, 0)
+                           pageIndex:0
+                                zoom:1.0
+                             fitMode:SPDFMacMarkdownPageFitPage
+                              anchor:nil
+                          completion:inflightCompletion];
+        dispatch_async(gateQueue, ^{
+          dispatch_semaphore_wait(parseGate, DISPATCH_TIME_FOREVER);
+        });
+        [inflight activateInHostView:host
+                           workQueue:gateQueue
+                        scrollOrigin:NSZeroPoint
+                       selectedRange:NSMakeRange(0, 0)
+                           pageIndex:0
+                                zoom:1.0
+                             fitMode:SPDFMacMarkdownPageFitPage
+                              anchor:nil
+                          completion:inflightCompletion];
+        dispatch_resume(gateQueue);
+        assert(SpinUntil(
+            ^BOOL {
+              return inflight.state == SPDFMacMarkdownSessionReady;
+            },
+            5.0));
+        assert(inflight.pageCount > 0);
+        assert(inflightCompletions == 1); // only the latest activation reports
+        dispatch_semaphore_signal(parseGate);
+        [inflight deactivate];
+
         [session deactivate];
         assert(session.rootView.superview == nil);
         [NSFileManager.defaultManager removeItemAtPath:path error:nil];
