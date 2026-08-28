@@ -48,6 +48,11 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownPageFitMode) {
 - (void)magnifyByDelta:(CGFloat)delta centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)magnifyByDelta:(CGFloat)delta centeredAtDocumentPoint:(NSPoint)documentPoint;
 - (void)noteExternalScrollPositionChanged;
+// The code-language control's frame in this view's coordinate space (the
+// magnified canvas rect run through the standard convertRect: chain), for
+// anchoring popovers. NSZeroRect when the block has no control or the control
+// is scrolled outside the viewport.
+- (NSRect)codeLanguageControlFrameInViewForBlockIndex:(NSUInteger)blockIndex;
 @end
 
 NS_ASSUME_NONNULL_END

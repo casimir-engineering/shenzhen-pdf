@@ -403,13 +403,24 @@
 - (void)showLanguagePickerForCodeBlock:(NSUInteger)blockIndex parentWindow:(NSWindow*)window {
     if (!window || ![self.document.model blockWithIndex:blockIndex]) return;
     if (!_languagePicker) _languagePicker = [SPDFMacMarkdownLanguagePickerController new];
+    NSRect anchor = [_pagedView codeLanguageControlFrameInViewForBlockIndex:blockIndex];
+    if (NSIsEmptyRect(anchor)) {
+        // Scrolled away or invoked from the context menu: reveal the block's
+        // page so its language control can anchor the popover.
+        SPDFMarkdownRenderedBlock* block = [self.renderedDocument renderedBlockWithIndex:blockIndex];
+        if (block) [_pagedView revealRange:block.attributedRange];
+        anchor = [_pagedView codeLanguageControlFrameInViewForBlockIndex:blockIndex];
+    }
+    if (NSIsEmptyRect(anchor))
+        anchor = NSMakeRect(NSMidX(_pagedView.bounds) - 4.0, NSMinY(_pagedView.bounds) + 4.0, 8.0, 8.0);
     __weak SPDFMacMarkdownSession* weakSelf = self;
-    [_languagePicker presentForWindow:window
-                           completion:^(SPDFMarkdownLanguage* language) {
-                             SPDFMacMarkdownSession* strongSelf = weakSelf;
-                             if (!strongSelf || !language || !strongSelf->_active) return;
-                             [strongSelf applyLanguageIdentifier:language.identifier toCodeBlock:blockIndex];
-                           }];
+    [_languagePicker presentFromView:_pagedView
+                          anchorRect:anchor
+                          completion:^(SPDFMarkdownLanguage* language) {
+                            SPDFMacMarkdownSession* strongSelf = weakSelf;
+                            if (!strongSelf || !language || !strongSelf->_active) return;
+                            [strongSelf applyLanguageIdentifier:language.identifier toCodeBlock:blockIndex];
+                          }];
 }
 
 - (void)applyLanguageIdentifier:(NSString*)identifier toCodeBlock:(NSUInteger)blockIndex {

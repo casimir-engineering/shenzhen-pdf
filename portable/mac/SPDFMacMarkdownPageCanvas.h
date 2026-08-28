@@ -25,14 +25,23 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)resizeForWidth:(CGFloat)width;
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect;
 - (NSUInteger)attributedLocationNearestToPoint:(NSPoint)point;
-- (nullable NSNumber*)codeLanguageBlockAtPoint:(NSPoint)point;
-- (nullable NSString*)codeLanguageLabelForBlockIndex:(NSUInteger)blockIndex;
 @end
 
 // Implemented in SPDFMacMarkdownPageCanvas+Navigation.mm.
 @interface SPDFMacMarkdownPageCanvas (Navigation)
 - (BOOL)scrollRangeToVisible:(NSRange)range;
 - (NSUInteger)pageIndexForRange:(NSRange)range;
+@end
+
+// Implemented in SPDFMacMarkdownPageCanvas+Decorations.mm: the dynamic-color
+// page chrome (code boxes, heading rules) and the code-language control that
+// lives in each code box's header band.
+@interface SPDFMacMarkdownPageCanvas (Decorations)
+- (nullable NSNumber*)codeLanguageBlockAtPoint:(NSPoint)point;
+- (nullable NSString*)codeLanguageLabelForBlockIndex:(NSUInteger)blockIndex;
+// Canvas-space frame of the language control for a code block, or NSZeroRect
+// when the block index has no code-language control in the plan.
+- (NSRect)codeLanguageControlFrameForBlockIndex:(NSUInteger)blockIndex;
 @end
 
 NS_ASSUME_NONNULL_END

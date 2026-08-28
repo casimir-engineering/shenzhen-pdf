@@ -31,7 +31,7 @@ portable/mac/SPDFMacTabStripView.mm	1123	legacy	Legacy AppKit tab strip; freeze 
 portable/mac/SPDFMacUIHelpers.mm	1324	legacy	Legacy mixed AppKit helper views; freeze growth pending class extraction.
 portable/mac/SPDFUpdater.mm	1586	legacy	Legacy signed updater; freeze growth pending trust/transport/UI split.
 portable/mac/ShenzhenPDFMac.mm	16742	legacy	Legacy macOS coordinator hotspot; no growth before staged extraction.
-portable/mac/SPDFMacMarkdownSession.mm	514	exception	Cohesive Markdown document-session lifecycle and asynchronous state boundary.
+portable/mac/SPDFMacMarkdownSession.mm	525	exception	Cohesive Markdown document-session lifecycle and asynchronous state boundary.
 src/Accelerators.cpp	773	exception	Inherited accelerator-table implementation is cohesive and stable.
 src/Annotation.cpp	1266	legacy	Legacy Windows annotation model; freeze growth pending extraction.
 src/AppSettings.cpp	642	exception	Inherited application-settings coordinator is cohesive and stable.

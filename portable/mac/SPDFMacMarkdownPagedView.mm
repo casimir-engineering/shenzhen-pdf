@@ -373,4 +373,11 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     [self viewportDidChange:nil];
 }
 
+- (NSRect)codeLanguageControlFrameInViewForBlockIndex:(NSUInteger)blockIndex {
+    NSRect canvasRect = [_canvas codeLanguageControlFrameForBlockIndex:blockIndex];
+    if (NSIsEmptyRect(canvasRect)) return NSZeroRect;
+    NSRect viewRect = [self convertRect:canvasRect fromView:_canvas];
+    return NSIntersectsRect(viewRect, self.bounds) ? viewRect : NSZeroRect;
+}
+
 @end

@@ -28,6 +28,12 @@ static NSColor* SPDFDynamicColor(NSString* name, NSColor* light, NSColor* dark) 
 + (NSColor*)codeBoxStrokeColor {
     return SPDFDynamicColor(@"SPDFMarkdownCodeBoxStroke", SPDFRGB(0xD0D7DE), SPDFRGB(0x3D444D));
 }
++ (NSColor*)codeControlFillColor {
+    return SPDFDynamicColor(@"SPDFMarkdownCodeControlFill", SPDFRGB(0xEAEEF2), SPDFRGB(0x212830));
+}
++ (NSColor*)codeControlStrokeColor {
+    return SPDFDynamicColor(@"SPDFMarkdownCodeControlStroke", SPDFRGB(0xD0D7DE), SPDFRGB(0x3D444D));
+}
 + (NSColor*)headingRuleColor {
     return SPDFDynamicColor(@"SPDFMarkdownHeadingRule", SPDFRGB(0xD8DEE4), SPDFRGB(0x3D444D));
 }
