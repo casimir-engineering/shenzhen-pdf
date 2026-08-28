@@ -2443,12 +2443,16 @@ static void spdf_discard_launch_prerender(void) {
         _aboutPanel.contentView = content;
 
         NSImageView* iconView = [[NSImageView alloc] initWithFrame:NSZeroRect];
-        // applicationIconImage carries the system squircle treatment. On a dev
-        // machine a stale LaunchServices registration from a mid-rebuild can
-        // badge it with the prohibitory sign; `lsregister -f <app>` clears
-        // that. Field installs come from signed DMGs and never hit it.
         iconView.image = NSApp.applicationIconImage;
         iconView.imageScaling = NSImageScaleProportionallyUpOrDown;
+        // Mask to the app-icon squircle ourselves: whether the system icon
+        // pipeline returns themed or raw artwork varies with LaunchServices
+        // cache state, so the About panel applies the continuous-corner mask
+        // deterministically (radius ≈ 22.37% of the 56pt icon side).
+        iconView.wantsLayer = YES;
+        iconView.layer.cornerRadius = 56.0 * 0.2237;
+        iconView.layer.cornerCurve = kCACornerCurveContinuous;
+        iconView.layer.masksToBounds = YES;
         iconView.translatesAutoresizingMaskIntoConstraints = NO;
 
         NSTextField* titleLabel = [NSTextField labelWithString:@"Shenzhen PDF"];
