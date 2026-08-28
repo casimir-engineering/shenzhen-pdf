@@ -15,7 +15,13 @@
 
 - (BOOL)markdownArrowKeyDown:(NSEvent*)event {
     SPDFMacMarkdownSession* session = self.activeMarkdownSession;
-    BOOL horizontallyScrollable = session.documentCanvasSize.width > NSWidth(session.documentVisibleRect) + 1.0;
+    // Gate horizontal arrow-key scrolling on the current PAGE width, not the
+    // canvas width: a page that fits the viewport is center-locked, so left and
+    // right arrows should page instead of attempting a no-op horizontal scroll.
+    NSArray<NSValue*>* pageRects = session.documentPageRects;
+    NSUInteger pageIndex = (NSUInteger)MAX(session.currentPageIndex, 0);
+    NSRect pageRect = pageIndex < pageRects.count ? pageRects[pageIndex].rectValue : NSZeroRect;
+    BOOL horizontallyScrollable = NSWidth(pageRect) > NSWidth(session.documentVisibleRect) + 1.0;
     SPDFMacMarkdownKeyAction action =
         spdf_mac_markdown_key_action(event.keyCode, event.modifierFlags, _presentationMode, horizontallyScrollable);
     switch (action) {

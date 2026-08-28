@@ -13,6 +13,8 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     NSAttributedString* _attributedString;
     NSInteger _currentPageIndex;
     BOOL _updatingGeometry;
+    BOOL _updatingScrollLock;
+    BOOL _liveMagnifying;
 }
 
 - (instancetype)initWithPaginationPlan:(SPDFMarkdownPaginationPlan*)plan
@@ -36,6 +38,13 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     self.allowsMagnification = YES;
     self.minMagnification = kSPDFMarkdownMinimumZoom;
     self.maxMagnification = kSPDFMarkdownMaximumZoom;
+    // Custom clip view so horizontal panning can be locked on pages that fit the
+    // viewport — same mechanism as the PDF document scroll view (see
+    // updateHorizontalScrollLock).
+    SPDFDocumentClipView* clipView = [[SPDFDocumentClipView alloc] init];
+    clipView.drawsBackground = YES;
+    clipView.backgroundColor = self.backgroundColor;
+    self.contentView = clipView;
     _canvas = [[SPDFMacMarkdownPageCanvas alloc] initWithPaginationPlan:plan attributedString:attributedString];
     self.documentView = _canvas;
     self.contentView.postsBoundsChangedNotifications = YES;
@@ -63,6 +72,10 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     [center addObserver:self
                selector:@selector(viewportFrameDidChange:)
                    name:NSViewFrameDidChangeNotification
+                 object:self];
+    [center addObserver:self
+               selector:@selector(liveMagnifyWillStart:)
+                   name:NSScrollViewWillStartLiveMagnifyNotification
                  object:self];
     [center addObserver:self
                selector:@selector(magnificationDidChange:)
@@ -120,14 +133,61 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     if (_updatingGeometry) return;
     _updatingGeometry = YES;
     NSPoint center = NSMakePoint(NSMidX(self.contentView.bounds), NSMidY(self.contentView.bounds));
+    // contentView.bounds is expressed in canvas/magnified coordinates (its width
+    // is contentSize.width / magnification), so this stays correct at any zoom.
     CGFloat width = MAX(_plan.configuration.paperSize.width + kSPDFMarkdownFitInset, NSWidth(self.contentView.bounds));
     [_canvas resizeForWidth:width];
     if (preserveCenter) {
-        [self.contentView scrollToPoint:NSMakePoint(MAX(0, center.x - NSWidth(self.contentView.bounds) * 0.5),
-                                                    MAX(0, center.y - NSHeight(self.contentView.bounds) * 0.5))];
+        NSRect bounds = self.contentView.bounds;
+        NSSize canvas = _canvas.frame.size;
+        NSPoint origin = NSMakePoint(center.x - NSWidth(bounds) * 0.5, center.y - NSHeight(bounds) * 0.5);
+        origin.x = MAX(0.0, MIN(origin.x, MAX(0.0, canvas.width - NSWidth(bounds))));
+        origin.y = MAX(0.0, MIN(origin.y, MAX(0.0, canvas.height - NSHeight(bounds))));
+        [self.contentView scrollToPoint:origin];
         [self reflectScrolledClipView:self.contentView];
     }
     _updatingGeometry = NO;
+    [self updateHorizontalScrollLock];
+}
+
+// Mirror of the PDF path's updateHorizontalScrollLockAnimated: — a page that
+// fits the viewport is pinned centered (min==max, no horizontal elasticity); a
+// page wider than the viewport pans within its own bounds only; presentation
+// mode and live pinch-zoom release the lock. All math is in canvas/magnified
+// coordinates, the space of both the clip view's bounds and the page frames.
+- (void)updateHorizontalScrollLock {
+    if (_updatingScrollLock) return;
+    if (![self.contentView isKindOfClass:SPDFDocumentClipView.class]) return;
+    SPDFDocumentClipView* clip = (SPDFDocumentClipView*)self.contentView;
+    if (_presentationMode || _liveMagnifying || !self.pageCount) {
+        clip.horizontalLockMinX = NAN;
+        clip.horizontalLockMaxX = NAN;
+        self.horizontalScrollElasticity = NSScrollElasticityAllowed;
+        return;
+    }
+    _updatingScrollLock = YES;
+    NSUInteger pageIndex = MIN((NSUInteger)MAX(_currentPageIndex, 0), self.pageCount - 1);
+    NSRect page = [_canvas frameForPageAtIndex:pageIndex];
+    CGFloat clipWidth = NSWidth(clip.bounds);
+    CGFloat maxOriginX = MAX(0.0, NSWidth(_canvas.frame) - clipWidth);
+    if (NSWidth(page) <= clipWidth + 0.5) {
+        CGFloat x = MAX(0.0, MIN(NSMidX(page) - clipWidth * 0.5, maxOriginX));
+        self.horizontalScrollElasticity = NSScrollElasticityNone;
+        clip.horizontalLockMinX = x;
+        clip.horizontalLockMaxX = x;
+    } else {
+        self.horizontalScrollElasticity = NSScrollElasticityAllowed;
+        clip.horizontalLockMinX = MAX(0.0, MIN(NSMinX(page), maxOriginX));
+        clip.horizontalLockMaxX = MAX(clip.horizontalLockMinX, MAX(0.0, MIN(NSMaxX(page) - clipWidth, maxOriginX)));
+    }
+    CGFloat clamped = MAX(clip.horizontalLockMinX, MIN(NSMinX(clip.bounds), clip.horizontalLockMaxX));
+    if (fabs(clamped - NSMinX(clip.bounds)) > 0.01) {
+        NSPoint origin = clip.bounds.origin;
+        origin.x = clamped;
+        [clip scrollToPoint:origin];
+        [self reflectScrolledClipView:clip];
+    }
+    _updatingScrollLock = NO;
 }
 
 - (void)viewportDidChange:(NSNotification*)notification {
@@ -135,19 +195,31 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     if (_updatingGeometry) return;
     NSInteger page = [_canvas pageIndexForVisibleRect:_canvas.visibleRect];
     if (page >= 0) _currentPageIndex = page;
+    [self updateHorizontalScrollLock];
     if (self.viewportChangedHandler) self.viewportChangedHandler(_currentPageIndex, self.magnification);
 }
 
 - (void)viewportFrameDidChange:(NSNotification*)notification {
     (void)notification;
-    [self updateCanvasGeometryPreservingCenter:YES];
+    // Apply the fit mode first so the canvas is resized against the final
+    // magnification — resizing first left the canvas width one step stale after
+    // every window resize.
     if (_fitMode != SPDFMacMarkdownPageFitCustom && _fitMode != SPDFMacMarkdownPageFitActual)
         [self applyFitMode:_fitMode];
+    [self updateCanvasGeometryPreservingCenter:YES];
+}
+
+- (void)liveMagnifyWillStart:(NSNotification*)notification {
+    (void)notification;
+    _liveMagnifying = YES;
+    [self updateHorizontalScrollLock]; // release the lock while pinching
 }
 
 - (void)magnificationDidChange:(NSNotification*)notification {
     (void)notification;
+    _liveMagnifying = NO;
     _fitMode = SPDFMacMarkdownPageFitCustom;
+    [self updateCanvasGeometryPreservingCenter:YES];
     [self viewportDidChange:nil];
 }
 
@@ -160,11 +232,13 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     self.contentView.backgroundColor = self.backgroundColor;
     _canvas.presentationMode = presentationMode;
     [_canvas setNeedsDisplay:YES];
+    [self updateHorizontalScrollLock];
 }
 
 - (void)setZoom:(CGFloat)zoom centeredAtPoint:(NSPoint)point {
     _fitMode = fabs(zoom - 1.0) < 0.0001 ? SPDFMacMarkdownPageFitActual : SPDFMacMarkdownPageFitCustom;
     [self setMagnification:MAX(kSPDFMarkdownMinimumZoom, MIN(kSPDFMarkdownMaximumZoom, zoom)) centeredAtPoint:point];
+    [self updateCanvasGeometryPreservingCenter:YES];
     [self viewportDidChange:nil];
 }
 
@@ -191,6 +265,7 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     NSRect page = [_canvas frameForPageAtIndex:(NSUInteger)MAX(0, _currentPageIndex)];
     [self setMagnification:zoom centeredAtPoint:NSMakePoint(NSMidX(page), NSMidY(page))];
     _fitMode = fitMode;
+    [self updateCanvasGeometryPreservingCenter:YES];
     [self viewportDidChange:nil];
 }
 
@@ -222,9 +297,24 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     return [_canvas pageIndexForRange:range];
 }
 
+// Page-aware scroll, mirroring the PDF path's clampedDocumentScrollOrigin:. A
+// page that fits the viewport stays centered (origin.x is overwritten with the
+// centered x); a wider page keeps origin.x within its own bounds; both axes are
+// finally clamped to the canvas.
 - (void)scrollToDocumentOrigin:(NSPoint)origin {
     NSRect visible = self.documentVisibleRect;
     NSSize canvas = self.documentCanvasSize;
+    if (self.pageCount) {
+        NSRect proposed = NSMakeRect(origin.x, origin.y, NSWidth(visible), NSHeight(visible));
+        NSInteger pageIndex = [_canvas pageIndexForVisibleRect:proposed];
+        NSRect page = [_canvas frameForPageAtIndex:(NSUInteger)MAX(pageIndex, 0)];
+        if (!NSIsEmptyRect(page)) {
+            if (NSWidth(page) <= NSWidth(visible) + 0.5)
+                origin.x = NSMidX(page) - NSWidth(visible) * 0.5;
+            else
+                origin.x = MAX(NSMinX(page), MIN(origin.x, NSMaxX(page) - NSWidth(visible)));
+        }
+    }
     origin.x = MAX(0.0, MIN(origin.x, MAX(0.0, canvas.width - NSWidth(visible))));
     origin.y = MAX(0.0, MIN(origin.y, MAX(0.0, canvas.height - NSHeight(visible))));
     [self.contentView scrollToPoint:origin];

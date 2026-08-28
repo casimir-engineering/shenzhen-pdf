@@ -27,3 +27,24 @@ static NSMapTable<SPDFScrollView*, id<SPDFMacUIReader>>* TestScrollViewReaders(v
         [TestScrollViewReaders() removeObjectForKey:self];
 }
 @end
+
+// Same clamp behavior as the production SPDFDocumentClipView in
+// SPDFMacUIHelpers.mm, which these focused executables do not link.
+@implementation SPDFDocumentClipView
+
+- (instancetype)initWithFrame:(NSRect)frameRect {
+    if ((self = [super initWithFrame:frameRect])) {
+        _horizontalLockMinX = NAN;
+        _horizontalLockMaxX = NAN;
+    }
+    return self;
+}
+
+- (NSRect)constrainBoundsRect:(NSRect)proposedBounds {
+    NSRect bounds = [super constrainBoundsRect:proposedBounds];
+    if (isfinite(_horizontalLockMinX))
+        bounds.origin.x = MAX(_horizontalLockMinX, MIN(bounds.origin.x, MAX(_horizontalLockMinX, _horizontalLockMaxX)));
+    return bounds;
+}
+
+@end

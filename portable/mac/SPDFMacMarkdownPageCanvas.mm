@@ -1,4 +1,4 @@
-#import "SPDFMacMarkdownPageCanvas.h"
+#import "SPDFMacMarkdownPageCanvasPrivate.h"
 
 #import <CoreText/CoreText.h>
 
@@ -17,6 +17,11 @@ static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
     NSUInteger _dragAnchor;
     BOOL _draggingSelection;
 }
+
+// Expose the plan and rendered string to the canvas categories (see
+// SPDFMacMarkdownPageCanvasPrivate.h).
+@synthesize plan = _plan;
+@synthesize attributedString = _attributedString;
 
 - (instancetype)initWithPaginationPlan:(SPDFMarkdownPaginationPlan*)plan
                       attributedString:(NSAttributedString*)attributedString {
@@ -465,28 +470,6 @@ static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
 - (void)chooseCodeLanguage:(NSMenuItem*)sender {
     NSNumber* block = sender.representedObject;
     if (block && self.chooseCodeLanguageHandler) self.chooseCodeLanguageHandler(block.unsignedIntegerValue);
-}
-
-- (NSUInteger)pageIndexForRange:(NSRange)range {
-    NSUInteger location = range.location == NSNotFound ? 0 : MIN(range.location, _attributedString.length);
-    for (SPDFMarkdownPage* page in _plan.pages)
-        for (SPDFMarkdownPageFragment* fragment in page.fragments)
-            if (location <= NSMaxRange(fragment.attributedRange)) return page.pageIndex;
-    return self.pageCount ? self.pageCount - 1 : 0;
-}
-
-- (BOOL)scrollRangeToVisible:(NSRange)range {
-    if (!self.pageCount || range.location == NSNotFound) return NO;
-    NSUInteger page = [self pageIndexForRange:range];
-    SPDFMarkdownPage* pagePlan = _plan.pages[page];
-    for (SPDFMarkdownPageFragment* fragment in pagePlan.fragments) {
-        if (range.location > NSMaxRange(fragment.attributedRange)) continue;
-        NSRect pageFrame = [self frameForPageAtIndex:page];
-        CGFloat y = NSMinY(pageFrame) + NSMinY(_plan.configuration.printableRect) + fragment.pageYOffset;
-        [self scrollRectToVisible:NSMakeRect(NSMinX(pageFrame), y, NSWidth(pageFrame), fragment.height)];
-        return YES;
-    }
-    return NO;
 }
 
 @end

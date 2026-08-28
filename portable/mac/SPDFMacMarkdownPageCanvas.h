@@ -25,10 +25,14 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)resizeForWidth:(CGFloat)width;
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect;
 - (NSUInteger)attributedLocationNearestToPoint:(NSPoint)point;
-- (BOOL)scrollRangeToVisible:(NSRange)range;
-- (NSUInteger)pageIndexForRange:(NSRange)range;
 - (nullable NSNumber*)codeLanguageBlockAtPoint:(NSPoint)point;
 - (nullable NSString*)codeLanguageLabelForBlockIndex:(NSUInteger)blockIndex;
+@end
+
+// Implemented in SPDFMacMarkdownPageCanvas+Navigation.mm.
+@interface SPDFMacMarkdownPageCanvas (Navigation)
+- (BOOL)scrollRangeToVisible:(NSRange)range;
+- (NSUInteger)pageIndexForRange:(NSRange)range;
 @end
 
 NS_ASSUME_NONNULL_END
