@@ -48,10 +48,17 @@ typedef NS_OPTIONS(NSUInteger, SPDFMarkdownInlineTraits) {
 @property(nonatomic, readonly, copy) NSString* text;
 @property(nonatomic, readonly) SPDFMarkdownInlineTraits traits;
 @property(nonatomic, readonly, copy, nullable) NSString* destination;
+// Markdown title attribute (`![alt](src "title")` / `[text](href "title")`),
+// surfaced as a tooltip on rendered links and image attachments.
+@property(nonatomic, readonly, copy, nullable) NSString* title;
 
 - (instancetype)initWithText:(NSString*)text
                       traits:(SPDFMarkdownInlineTraits)traits
-                 destination:(nullable NSString*)destination NS_DESIGNATED_INITIALIZER;
+                 destination:(nullable NSString*)destination
+                       title:(nullable NSString*)title NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithText:(NSString*)text
+                      traits:(SPDFMarkdownInlineTraits)traits
+                 destination:(nullable NSString*)destination;
 - (instancetype)init NS_UNAVAILABLE;
 
 @end

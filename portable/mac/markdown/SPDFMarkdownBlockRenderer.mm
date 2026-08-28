@@ -56,7 +56,61 @@ static NSDictionary* SPDFRunAttributes(SPDFMarkdownRenderContext* context, SPDFM
     if (run.traits & SPDFMarkdownInlineTraitWikiLink) {
         attributes[SPDFMarkdownWikiLinkAttribute] = run.destination ?: @"";
     }
+    if (run.title.length) attributes[NSToolTipAttributeName] = run.title;
     return attributes;
+}
+
+// A remote image whose bytes have not arrived yet renders as a fixed-size
+// GitHub-gray box carrying the alt text, so the download landing later only
+// swaps the attachment instead of reflowing the whole document from nothing.
+// The box is drawn with concrete light-palette colors (like print decoration
+// colors) via a deferred drawing handler, keeping render passes thread-safe.
+static NSTextAttachment* SPDFPendingRemoteImageAttachment(SPDFMarkdownRenderContext* context, NSString* altText) {
+    CGFloat width = MAX(64.0, context.options.maximumImageWidth);
+    CGFloat height = MAX(48.0, context.options.remoteImagePlaceholderHeight);
+    NSString* caption = altText.length ? altText : @"Loading image";
+    NSFont* font = context.bodyFont;
+    NSImage* image = [NSImage
+         imageWithSize:NSMakeSize(width, height)
+               flipped:NO
+        drawingHandler:^BOOL(NSRect rect) {
+          NSBezierPath* box = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(rect, 0.5, 0.5)
+                                                              xRadius:6
+                                                              yRadius:6];
+          [[NSColor colorWithSRGBRed:0xF6 / 255.0 green:0xF8 / 255.0 blue:0xFA / 255.0 alpha:1] setFill];
+          [box fill];
+          [[NSColor colorWithSRGBRed:0xD1 / 255.0 green:0xD9 / 255.0 blue:0xE0 / 255.0 alpha:1] setStroke];
+          [box stroke];
+          NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
+          style.alignment = NSTextAlignmentCenter;
+          style.lineBreakMode = NSLineBreakByTruncatingTail;
+          NSDictionary* attributes = @{
+              NSFontAttributeName: font,
+              NSForegroundColorAttributeName:
+                  [NSColor colorWithSRGBRed:0x59 / 255.0 green:0x63 / 255.0 blue:0x6E / 255.0 alpha:1],
+              NSParagraphStyleAttributeName: style,
+          };
+          CGFloat lineHeight = ceil(font.ascender - font.descender + font.leading);
+          NSRect textRect = NSInsetRect(rect, 12, 0);
+          textRect.origin.y = NSMidY(rect) - lineHeight / 2;
+          textRect.size.height = lineHeight;
+          [caption drawWithRect:textRect options:NSStringDrawingUsesLineFragmentOrigin attributes:attributes context:nil];
+          return YES;
+        }];
+    NSTextAttachment* attachment = [NSTextAttachment new];
+    attachment.image = image;
+    attachment.bounds = NSMakeRect(0, 0, width, height);
+    return attachment;
+}
+
+static void SPDFAppendImageAttachment(SPDFMarkdownRenderContext* context, SPDFMarkdownInlineRun* run,
+                                      NSTextAttachment* attachment, NSString* target) {
+    NSMutableAttributedString* attached = [[NSMutableAttributedString alloc]
+        initWithAttributedString:[NSAttributedString attributedStringWithAttachment:attachment]];
+    [attached addAttribute:SPDFMarkdownImageTargetAttribute value:target range:NSMakeRange(0, 1)];
+    if (run.title.length) [attached addAttribute:NSToolTipAttributeName value:run.title range:NSMakeRange(0, 1)];
+    [context.output appendAttributedString:attached];
+    if (run.text.length) SPDFAppend(context, [@" " stringByAppendingString:run.text], SPDFRunAttributes(context, run));
 }
 
 static void SPDFRenderRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block) {
@@ -66,15 +120,30 @@ static void SPDFRenderRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
             SPDFAppend(context, run.text, SPDFRunAttributes(context, run));
             continue;
         }
+        NSString* destination = run.destination ?: @"";
         NSURL* resolvedURL = nil;
-        NSImage* image = [context.resourceStore imageForTarget:run.destination ?: @"" resolvedURL:&resolvedURL];
+        NSImage* image = [context.resourceStore imageForTarget:destination resolvedURL:&resolvedURL];
         if (!image || image.size.width <= 0 || image.size.height <= 0) {
+            // A well-formed https target with no fetched bytes yet is pending:
+            // reserve real layout space for the asynchronous download. Fetched
+            // bytes that fail to decode, session-reported fetch failures, and
+            // every non-https remote scheme keep the stable text placeholder.
+            NSString* remoteKey = SPDFMarkdownRemoteImageKeyForTarget(destination);
+            BOOL pending = remoteKey != nil && context.resourceStore.remoteImageData[remoteKey] == nil &&
+                           ![context.options.failedRemoteImageTargets containsObject:remoteKey];
+            if (pending) {
+                SPDFAppendImageAttachment(context, run, SPDFPendingRemoteImageAttachment(context, run.text),
+                                          destination);
+                continue;
+            }
+            NSMutableDictionary* attributes = [@{
+                NSFontAttributeName: context.bodyFont,
+                NSForegroundColorAttributeName: context.options.secondaryTextColor,
+                SPDFMarkdownImageTargetAttribute: destination,
+            } mutableCopy];
+            if (run.title.length) attributes[NSToolTipAttributeName] = run.title;
             SPDFAppend(context, [NSString stringWithFormat:@"[Image: %@]", run.text.length ? run.text : @"untitled"],
-                       @{
-                           NSFontAttributeName: context.bodyFont,
-                           NSForegroundColorAttributeName: context.options.secondaryTextColor,
-                           SPDFMarkdownImageTargetAttribute: run.destination ?: @"",
-                       });
+                       attributes);
             continue;
         }
         CGFloat scale = MIN(1.0, MIN(context.options.maximumImageWidth / image.size.width,
@@ -82,13 +151,8 @@ static void SPDFRenderRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
         NSTextAttachment* attachment = [NSTextAttachment new];
         attachment.image = image;
         attachment.bounds = NSMakeRect(0, 0, image.size.width * scale, image.size.height * scale);
-        NSMutableAttributedString* attached = [[NSMutableAttributedString alloc]
-            initWithAttributedString:[NSAttributedString attributedStringWithAttachment:attachment]];
-        [attached addAttribute:SPDFMarkdownImageTargetAttribute
-                         value:resolvedURL.path ?: run.destination ?: @""
-                         range:NSMakeRange(0, 1)];
-        [context.output appendAttributedString:attached];
-        if (run.text.length) SPDFAppend(context, [@" " stringByAppendingString:run.text], SPDFRunAttributes(context, run));
+        SPDFAppendImageAttachment(context, run, attachment,
+                                  resolvedURL.isFileURL ? resolvedURL.path : (resolvedURL.absoluteString ?: destination));
     }
 }
 

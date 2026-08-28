@@ -36,6 +36,7 @@ NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdo
 @interface SPDFMarkdownSpanFrame : NSObject
 @property(nonatomic) SPDFMarkdownInlineTraits previousTraits;
 @property(nonatomic, copy, nullable) NSString* previousDestination;
+@property(nonatomic, copy, nullable) NSString* previousTitle;
 @property(nonatomic, weak) SPDFMarkdownBlockBuilder* block;
 @property(nonatomic) NSUInteger firstRun;
 @property(nonatomic, copy, nullable) NSString* wikiAlias;
@@ -49,6 +50,7 @@ NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdo
 @property(nonatomic) NSMutableArray<SPDFMarkdownSpanFrame*>* spans;
 @property(nonatomic) SPDFMarkdownInlineTraits traits;
 @property(nonatomic, copy, nullable) NSString* destination;
+@property(nonatomic, copy, nullable) NSString* title;
 @property(nonatomic) NSUInteger nextIndex;
 @property(nonatomic) NSUInteger nodeCount;
 @property(nonatomic) NSUInteger maximumNodeCount;
@@ -178,14 +180,20 @@ static int SPDFEnterSpan(MD_SPANTYPE type, void* detail, void* opaque) {
     SPDFMarkdownSpanFrame* frame = [SPDFMarkdownSpanFrame new];
     frame.previousTraits = context.traits;
     frame.previousDestination = context.destination;
+    frame.previousTitle = context.title;
     frame.block = context.stack.lastObject;
     frame.firstRun = frame.block.runs.count;
     context.traits |= SPDFSpanTrait(type);
     if (type == MD_SPAN_A) {
         context.destination = SPDFAttributeString(((MD_SPAN_A_DETAIL*)detail)->href);
+        NSString* title = SPDFAttributeString(((MD_SPAN_A_DETAIL*)detail)->title);
+        context.title = title.length ? title : nil;
     } else if (type == MD_SPAN_IMG) {
         context.destination = SPDFAttributeString(((MD_SPAN_IMG_DETAIL*)detail)->src);
+        NSString* title = SPDFAttributeString(((MD_SPAN_IMG_DETAIL*)detail)->title);
+        context.title = title.length ? title : nil;
     } else if (type == MD_SPAN_WIKILINK) {
+        context.title = nil;
         NSString* raw = SPDFAttributeString(((MD_SPAN_WIKILINK_DETAIL*)detail)->target);
         NSRange pipe = [raw rangeOfString:@"|" options:NSBackwardsSearch];
         if (pipe.location != NSNotFound) {
@@ -213,6 +221,7 @@ static int SPDFLeaveSpan(MD_SPANTYPE type, void* detail, void* opaque) {
     }
     context.traits = frame.previousTraits;
     context.destination = frame.previousDestination;
+    context.title = frame.previousTitle;
     if (frame) [context.spans removeLastObject];
     return 0;
 }
@@ -248,17 +257,20 @@ static int SPDFText(MD_TEXTTYPE type, const MD_CHAR* bytes, MD_SIZE size, void* 
     if (text.length == 0) return 0;
     SPDFMarkdownInlineRun* last = block.runs.lastObject;
     if (last && last.traits == context.traits &&
-        ((last.destination == nil && context.destination == nil) || [last.destination isEqualToString:context.destination])) {
+        ((last.destination == nil && context.destination == nil) || [last.destination isEqualToString:context.destination]) &&
+        ((last.title == nil && context.title == nil) || [last.title isEqualToString:context.title])) {
         SPDFMarkdownInlineRun* merged = [[SPDFMarkdownInlineRun alloc]
             initWithText:[last.text stringByAppendingString:text]
                   traits:last.traits
-             destination:last.destination];
+             destination:last.destination
+                   title:last.title];
         [block.runs removeLastObject];
         [block.runs addObject:merged];
     } else {
         [block.runs addObject:[[SPDFMarkdownInlineRun alloc] initWithText:text
                                                                   traits:context.traits
-                                                             destination:context.destination]];
+                                                             destination:context.destination
+                                                                   title:context.title]];
     }
     return 0;
 }
@@ -278,7 +290,8 @@ static void SPDFStripRunPrefix(SPDFMarkdownBlockBuilder* block, NSUInteger count
             NSString* remainder = [run.text substringFromIndex:count];
             block.runs[0] = [[SPDFMarkdownInlineRun alloc] initWithText:remainder
                                                                traits:run.traits
-                                                          destination:run.destination];
+                                                          destination:run.destination
+                                                                  title:run.title];
             count = 0;
         }
     }
@@ -315,7 +328,8 @@ static SPDFMarkdownBlock* SPDFFreezeBlock(SPDFMarkdownBlockBuilder* source) {
         NSString* normalized = [run.text stringByReplacingOccurrencesOfString:@"\u001e" withString:@" "];
         [runs addObject:[[SPDFMarkdownInlineRun alloc] initWithText:normalized
                                                            traits:run.traits
-                                                      destination:run.destination]];
+                                                      destination:run.destination
+                                                              title:run.title]];
     }
     return [[SPDFMarkdownBlock alloc] initWithKind:source.kind
                                        blockIndex:source.index
