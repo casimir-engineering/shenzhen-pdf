@@ -86,25 +86,111 @@
     return operation;
 }
 
-+ (BOOL)writePaginationPlan:(SPDFMarkdownPaginationPlan*)plan
-           attributedString:(NSAttributedString*)attributedString
-                      toURL:(NSURL*)URL
-                      error:(NSError**)error {
-    if (!plan || !attributedString || !URL.isFileURL) return NO;
+// Draws the plan's pages in pageRange into a fresh PDF at the plan's paper
+// size; both the full-document write and the single-page copy consume this.
+static NSData* SPDFMarkdownPlanPDFData(SPDFMarkdownPaginationPlan* plan, NSAttributedString* attributedString,
+                                       NSRange pageRange) {
+    if (!plan || !attributedString || pageRange.length == 0) return nil;
+    if (NSMaxRange(pageRange) > plan.pages.count) return nil;
     NSMutableData* data = [NSMutableData data];
     CGDataConsumerRef consumer = CGDataConsumerCreateWithCFData((__bridge CFMutableDataRef)data);
     CGRect mediaBox = CGRectMake(0, 0, plan.configuration.paperSize.width, plan.configuration.paperSize.height);
     CGContextRef context = CGPDFContextCreate(consumer, &mediaBox, NULL);
     CGDataConsumerRelease(consumer);
-    if (!context) return NO;
-    for (NSUInteger page = 0; page < plan.pages.count; ++page) {
+    if (!context) return nil;
+    for (NSUInteger page = pageRange.location; page < NSMaxRange(pageRange); ++page) {
         CGPDFContextBeginPage(context, NULL);
         [plan drawPageAtIndex:page attributedString:attributedString inContext:context];
         CGPDFContextEndPage(context);
     }
     CGPDFContextClose(context);
     CGContextRelease(context);
-    return [data writeToURL:URL options:NSDataWritingAtomic error:error];
+    return data;
+}
+
++ (BOOL)writePaginationPlan:(SPDFMarkdownPaginationPlan*)plan
+           attributedString:(NSAttributedString*)attributedString
+                      toURL:(NSURL*)URL
+                      error:(NSError**)error {
+    if (!URL.isFileURL) return NO;
+    NSData* data = SPDFMarkdownPlanPDFData(plan, attributedString, NSMakeRange(0, plan.pages.count));
+    return data && [data writeToURL:URL options:NSDataWritingAtomic error:error];
+}
+
++ (NSData*)PDFDataForPageAtIndex:(NSUInteger)pageIndex
+                  paginationPlan:(SPDFMarkdownPaginationPlan*)plan
+                attributedString:(NSAttributedString*)attributedString {
+    return SPDFMarkdownPlanPDFData(plan, attributedString, NSMakeRange(pageIndex, 1));
+}
+
++ (NSBitmapImageRep*)imageRepForPageAtIndex:(NSUInteger)pageIndex
+                             paginationPlan:(SPDFMarkdownPaginationPlan*)plan
+                           attributedString:(NSAttributedString*)attributedString
+                                      scale:(CGFloat)scale {
+    if (!plan || !attributedString || pageIndex >= plan.pages.count || scale <= 0) return nil;
+    NSSize paper = plan.configuration.paperSize;
+    NSInteger pixelsWide = (NSInteger)lround(paper.width * scale);
+    NSInteger pixelsHigh = (NSInteger)lround(paper.height * scale);
+    if (pixelsWide < 1 || pixelsHigh < 1) return nil;
+    NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                                                    pixelsWide:pixelsWide
+                                                                    pixelsHigh:pixelsHigh
+                                                                 bitsPerSample:8
+                                                               samplesPerPixel:4
+                                                                      hasAlpha:YES
+                                                                      isPlanar:NO
+                                                                colorSpaceName:NSCalibratedRGBColorSpace
+                                                                   bytesPerRow:0
+                                                                  bitsPerPixel:0];
+    NSGraphicsContext* graphicsContext = rep ? [NSGraphicsContext graphicsContextWithBitmapImageRep:rep] : nil;
+    if (!graphicsContext) return nil;
+    [NSGraphicsContext saveGraphicsState];
+    NSGraphicsContext.currentContext = graphicsContext;
+    CGContextRef context = graphicsContext.CGContext;
+    CGContextScaleCTM(context, scale, scale);
+    CGContextSetRGBFillColor(context, 1, 1, 1, 1);
+    CGContextFillRect(context, CGRectMake(0, 0, paper.width, paper.height));
+    [plan drawPageAtIndex:pageIndex attributedString:attributedString inContext:context];
+    [graphicsContext flushGraphics];
+    [NSGraphicsContext restoreGraphicsState];
+    rep.size = paper;
+    return rep;
+}
+
++ (BOOL)copyPageAtIndex:(NSUInteger)pageIndex
+         paginationPlan:(SPDFMarkdownPaginationPlan*)plan
+       attributedString:(NSAttributedString*)attributedString
+               fileName:(NSString*)fileName
+           toPasteboard:(NSPasteboard*)pasteboard {
+    NSData* data = [self PDFDataForPageAtIndex:pageIndex paginationPlan:plan attributedString:attributedString];
+    if (!data || !pasteboard || !fileName.length) return NO;
+    NSPasteboardItem* item = [[NSPasteboardItem alloc] init];
+    [item setData:data forType:NSPasteboardTypePDF];
+    NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ShenzhenPDF-copy"];
+    [NSFileManager.defaultManager createDirectoryAtPath:directory
+                            withIntermediateDirectories:YES
+                                             attributes:nil
+                                                  error:nil];
+    NSString* tempPath = [directory stringByAppendingPathComponent:fileName];
+    if ([data writeToFile:tempPath atomically:YES])
+        [item setString:[NSURL fileURLWithPath:tempPath].absoluteString forType:NSPasteboardTypeFileURL];
+    [pasteboard clearContents];
+    return [pasteboard writeObjects:@[ item ]];
+}
+
++ (BOOL)copyPageImageAtIndex:(NSUInteger)pageIndex
+              paginationPlan:(SPDFMarkdownPaginationPlan*)plan
+            attributedString:(NSAttributedString*)attributedString
+                toPasteboard:(NSPasteboard*)pasteboard {
+    NSBitmapImageRep* rep = [self imageRepForPageAtIndex:pageIndex
+                                          paginationPlan:plan
+                                        attributedString:attributedString
+                                                   scale:2.0];
+    if (!rep || !pasteboard) return NO;
+    NSImage* image = [[NSImage alloc] initWithSize:rep.size];
+    [image addRepresentation:rep];
+    [pasteboard clearContents];
+    return [pasteboard writeObjects:@[ image ]];
 }
 
 @end

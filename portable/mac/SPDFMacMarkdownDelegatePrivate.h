@@ -109,6 +109,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)copyCurrentDocumentFile:(nullable id)sender;
 - (void)copyCurrentPageImage:(nullable id)sender;
 - (void)copyCurrentPageAsPDF:(nullable id)sender;
+// Shared enablement for the copy-page actions: PDF tabs need a saved path,
+// permission, and a rendered page; Markdown tabs need the session's live
+// pagination plan with a valid target page.
+- (BOOL)canCopyCurrentPageAsPDF;
+- (BOOL)canCopyCurrentPageImage;
 @end
 
 NS_ASSUME_NONNULL_END

@@ -26,6 +26,29 @@ NS_ASSUME_NONNULL_BEGIN
            attributedString:(NSAttributedString*)attributedString
                       toURL:(NSURL*)URL
                       error:(NSError**)error;
+
+// Single-page exports reuse the exact drawPageAtIndex path and the plan's
+// paper size, so a copied page matches the corresponding printed/saved page.
++ (nullable NSData*)PDFDataForPageAtIndex:(NSUInteger)pageIndex
+                           paginationPlan:(SPDFMarkdownPaginationPlan*)plan
+                         attributedString:(NSAttributedString*)attributedString;
++ (nullable NSBitmapImageRep*)imageRepForPageAtIndex:(NSUInteger)pageIndex
+                                      paginationPlan:(SPDFMarkdownPaginationPlan*)plan
+                                    attributedString:(NSAttributedString*)attributedString
+                                               scale:(CGFloat)scale;
+
+// Pasteboard writers mirror the PDF tab's copy actions: Copy Page declares
+// PDF data plus a temp-file URL named fileName; Copy Page Image writes an
+// NSImage rasterized at 2x. Both clear the pasteboard first.
++ (BOOL)copyPageAtIndex:(NSUInteger)pageIndex
+         paginationPlan:(SPDFMarkdownPaginationPlan*)plan
+       attributedString:(NSAttributedString*)attributedString
+               fileName:(NSString*)fileName
+           toPasteboard:(NSPasteboard*)pasteboard;
++ (BOOL)copyPageImageAtIndex:(NSUInteger)pageIndex
+              paginationPlan:(SPDFMarkdownPaginationPlan*)plan
+            attributedString:(NSAttributedString*)attributedString
+                toPasteboard:(NSPasteboard*)pasteboard;
 @end
 
 NS_ASSUME_NONNULL_END

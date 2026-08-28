@@ -16705,10 +16705,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(showInFolder:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentPath:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentFile:)) return hasDoc && _path.length > 0;
-    if (action == @selector(copyCurrentPageAsPDF:)) return hasDoc && _path.length > 0 && spdf_has_permission(_doc, 'c');
-    if (action == @selector(copyCurrentPageImage:))
-        return hasDoc && spdf_has_permission(_doc, 'c') && _pageIndex >= 0 &&
-               _pageIndex < (NSInteger)_renderedPages.count && _renderedPages[(NSUInteger)_pageIndex].image != nil;
+    if (action == @selector(copyCurrentPageAsPDF:)) return [self canCopyCurrentPageAsPDF];
+    if (action == @selector(copyCurrentPageImage:)) return [self canCopyCurrentPageImage];
     if (action == @selector(showProperties:)) return _doc != NULL;
     if (!hasDoc) return action == @selector(unimplementedMenuItem:);
 
