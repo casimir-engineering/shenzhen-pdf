@@ -212,8 +212,52 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
     SPDFAppendImageAttachment(context, run, attachment, target, flow);
 }
 
+// A row only reads side by side when it actually fits one line, but two
+// typical images at the per-image caps (480 x 320 by default) already exceed
+// any realistic page width and would wrap into a vertical stack. So after the
+// per-image caps, a row whose total width (attachments plus the spaces between
+// them, one space ~ the body font's space advance) exceeds the row budget
+// scales ALL of its images down by one COMMON factor until the row fits —
+// never below 0.45x of the capped size: a row that would need less (six large
+// images) keeps the floor and wraps instead. Badge strips of small images
+// stay untouched because their total is already under the budget. Pending
+// remote placeholder boxes participate with their placeholder size, so the
+// layout doesn't jump while downloads land (a rerender re-fits from the
+// decoded, capped sizes). The renderer never learns the paginator's printable
+// width — render options carry no container width — so the budget is
+// maximumImageWidth, which sits safely inside every supported page.
+static const CGFloat SPDFImageRowMinimumFitFactor = 0.45;
+
+static void SPDFFitImageRowToBudget(SPDFMarkdownRenderContext* context, NSRange range) {
+    CGFloat budget = context.options.maximumImageWidth;
+    if (budget <= 0 || range.length == 0) return;
+    NSMutableArray<NSTextAttachment*>* attachments = [NSMutableArray array];
+    __block CGFloat imagesWidth = 0;
+    [context.output enumerateAttribute:NSAttachmentAttributeName
+                               inRange:range
+                               options:0
+                            usingBlock:^(NSTextAttachment* attachment, NSRange attachmentRange, BOOL* stop) {
+                              (void)attachmentRange;
+                              (void)stop;
+                              if (!attachment) return;
+                              [attachments addObject:attachment];
+                              imagesWidth += attachment.bounds.size.width;
+                            }];
+    if (imagesWidth <= 0) return;
+    CGFloat spaceAdvance = [@" " sizeWithAttributes:@{NSFontAttributeName: context.bodyFont}].width;
+    CGFloat gapsWidth = (range.length - attachments.count) * spaceAdvance;
+    if (imagesWidth + gapsWidth <= budget) return;
+    CGFloat factor = MAX(SPDFImageRowMinimumFitFactor, (budget - gapsWidth) / imagesWidth);
+    if (factor >= 1) return;
+    for (NSTextAttachment* attachment in attachments) {
+        NSSize size = attachment.bounds.size;
+        attachment.bounds = NSMakeRect(0, 0, size.width * factor, size.height * factor);
+    }
+}
+
 void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block) {
     SPDFMarkdownImageFlow flow = SPDFBlockImageFlow(block);
+    NSUInteger rowStart = context.output.length;
     for (SPDFMarkdownInlineRun* run in block.runs) {
         if (context.cancellationToken.isCancelled) return;
         if (!(run.traits & SPDFMarkdownInlineTraitImage)) {
@@ -238,6 +282,8 @@ void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdo
         // apply below it; rows stay one paragraph and wrap naturally.
         if (flow == SPDFMarkdownImageFlowFigure) SPDFMarkdownAppend(context, @"\n", @{});
     }
+    if (flow == SPDFMarkdownImageFlowRow)
+        SPDFFitImageRowToBudget(context, NSMakeRange(rowStart, context.output.length - rowStart));
 }
 
 // Re-derives the centered figure/caption/row paragraph styles after the leaf

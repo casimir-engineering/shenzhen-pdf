@@ -18,19 +18,39 @@ static void SPDFExpectSearchCorrespondence(SPDFMarkdownDocument* document, NSStr
     }
 }
 
-static NSURL* SPDFCreateImageDocument(void) {
-    NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
-    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES
-                                               attributes:nil error:nil];
+static void SPDFWritePNG(NSString* path, NSInteger width, NSInteger height) {
     NSBitmapImageRep* bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
-                                                                      pixelsWide:4 pixelsHigh:2 bitsPerSample:8
+                                                                      pixelsWide:width pixelsHigh:height
+                                                                    bitsPerSample:8
                                                                     samplesPerPixel:4 hasAlpha:YES isPlanar:NO
                                                                     colorSpaceName:NSCalibratedRGBColorSpace
                                                                        bytesPerRow:0 bitsPerPixel:0];
     memset(bitmap.bitmapData, 0x7f, bitmap.bytesPerRow * bitmap.pixelsHigh);
     NSData* PNG = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-    [PNG writeToFile:[directory stringByAppendingPathComponent:@"local.png"] atomically:YES];
-    [PNG writeToFile:[directory stringByAppendingPathComponent:@"second.png"] atomically:YES];
+    [PNG writeToFile:path atomically:YES];
+}
+
+static NSString* SPDFCreateFixtureDirectory(void) {
+    NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES
+                                               attributes:nil error:nil];
+    return directory;
+}
+
+static SPDFMarkdownPageFragment* SPDFFragmentForIndex(SPDFMarkdownPaginationPlan* plan, NSUInteger characterIndex) {
+    for (SPDFMarkdownPage* page in plan.pages) {
+        for (SPDFMarkdownPageFragment* fragment in page.fragments) {
+            if (fragment.attributedRange.length && NSLocationInRange(characterIndex, fragment.attributedRange))
+                return fragment;
+        }
+    }
+    return nil;
+}
+
+static NSURL* SPDFCreateImageDocument(void) {
+    NSString* directory = SPDFCreateFixtureDirectory();
+    SPDFWritePNG([directory stringByAppendingPathComponent:@"local.png"], 4, 2);
+    SPDFWritePNG([directory stringByAppendingPathComponent:@"second.png"], 4, 2);
     NSMutableString* source = [NSMutableString stringWithString:@"# Image\n\n"];
     for (NSUInteger index = 0; index < 200; ++index)
         [source appendString:@"![Local pixels](local.png)\n\n"];
@@ -160,19 +180,8 @@ int main(void) {
                                         atIndex:secondImageIndex
                                  effectiveRange:nil] hasSuffix:@"local.png"],
                        @"row images keep their target metadata");
-            SPDFMarkdownPageFragment* (^fragmentForIndex)(NSUInteger) =
-                ^SPDFMarkdownPageFragment*(NSUInteger characterIndex) {
-                  for (SPDFMarkdownPage* page in figurePlan.pages) {
-                      for (SPDFMarkdownPageFragment* fragment in page.fragments) {
-                          if (fragment.attributedRange.length &&
-                              NSLocationInRange(characterIndex, fragment.attributedRange))
-                              return fragment;
-                      }
-                  }
-                  return nil;
-                };
-            SPDFMarkdownPageFragment* firstRowFragment = fragmentForIndex(firstImageIndex);
-            SPDFMarkdownPageFragment* secondRowFragment = fragmentForIndex(secondImageIndex);
+            SPDFMarkdownPageFragment* firstRowFragment = SPDFFragmentForIndex(figurePlan, firstImageIndex);
+            SPDFMarkdownPageFragment* secondRowFragment = SPDFFragmentForIndex(figurePlan, secondImageIndex);
             SPDFExpect(firstRowFragment != nil && secondRowFragment != nil,
                        @"both row images land in pagination fragments");
             SPDFExpect(firstRowFragment && secondRowFragment && firstRowFragment == secondRowFragment,
@@ -220,6 +229,103 @@ int main(void) {
                                               effectiveRange:nil];
             SPDFExpect([inlineTarget hasSuffix:@"local.png"],
                        @"the inline image keeps its target metadata");
+        }
+
+        // Row width fitting. Two images at the default per-image caps (480
+        // wide each after capping) cannot sit side by side within the row
+        // budget, so the row scales both attachments down by ONE common
+        // factor until the line fits; a badge strip of small images already
+        // fits and keeps its natural sizes; a row that would need less than
+        // the 0.45x floor keeps the floor and wraps instead.
+        NSString* fitDirectory = SPDFCreateFixtureDirectory();
+        SPDFWritePNG([fitDirectory stringByAppendingPathComponent:@"wide.png"], 960, 320);
+        SPDFWritePNG([fitDirectory stringByAppendingPathComponent:@"badge.png"], 60, 20);
+        NSMutableString* fitSource = [NSMutableString string];
+        [fitSource appendString:@"![Wide left](wide.png)\n![Wide right](wide.png)\n\n"];
+        [fitSource appendString:@"![B1](badge.png) ![B2](badge.png) ![B3](badge.png) "
+                                 "![B4](badge.png) ![B5](badge.png)\n\n"];
+        for (NSUInteger index = 0; index < 6; ++index)
+            [fitSource appendFormat:@"![Wall %lu](wide.png)\n", (unsigned long)index];
+        NSString* fitPath = [fitDirectory stringByAppendingPathComponent:@"fit.md"];
+        [fitSource writeToFile:fitPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        error = nil;
+        SPDFMarkdownDocument* fitDocument =
+            [SPDFMarkdownDocument documentWithURL:[NSURL fileURLWithPath:fitPath]
+                                          options:SPDFMarkdownRenderOptions.defaultOptions error:&error];
+        SPDFExpect(fitDocument != nil && error == nil, @"row-fit document loads and renders");
+        NSAttributedString* fitString = fitDocument.renderedDocument.attributedString;
+        SPDFMarkdownPaginationPlan* fitPlan = [fitDocument paginationPlanForConfiguration:figureConfiguration];
+
+        NSRange pairRow = [fitString.string rangeOfString:@"\uFFFC \uFFFC"];
+        SPDFExpect(pairRow.location != NSNotFound, @"the two-image row keeps its side-by-side shape");
+        if (pairRow.location != NSNotFound) {
+            NSTextAttachment* pairLeft = [fitString attribute:NSAttachmentAttributeName
+                                                      atIndex:pairRow.location
+                                               effectiveRange:nil];
+            NSTextAttachment* pairRight = [fitString attribute:NSAttachmentAttributeName
+                                                       atIndex:pairRow.location + 2
+                                                effectiveRange:nil];
+            CGFloat pairFactor = pairLeft.bounds.size.width / 480.0;
+            SPDFExpect(pairLeft != nil && pairRight != nil && pairFactor < 1.0 && pairFactor >= 0.45,
+                       @"two cap-width row images scale below the cap but never below the 0.45x floor");
+            SPDFExpect(pairLeft && pairRight &&
+                           fabs(pairRight.bounds.size.width - pairLeft.bounds.size.width) < 0.001 &&
+                           fabs(pairLeft.bounds.size.height - 160.0 * pairFactor) < 0.01 &&
+                           fabs(pairRight.bounds.size.height - 160.0 * pairFactor) < 0.01,
+                       @"both row attachments shrink by one common factor and keep their aspect ratio");
+            CGFloat pairSpaceWidth =
+                [[fitString attributedSubstringFromRange:NSMakeRange(pairRow.location + 1, 1)] size].width;
+            SPDFExpect(pairLeft && pairRight &&
+                           pairLeft.bounds.size.width + pairSpaceWidth + pairRight.bounds.size.width <=
+                               480.0 + 0.5,
+                       @"the fitted row's total width stays within the row budget");
+            SPDFMarkdownPageFragment* pairFragment = SPDFFragmentForIndex(fitPlan, pairRow.location);
+            SPDFMarkdownPageFragment* pairSecondFragment = SPDFFragmentForIndex(fitPlan, pairRow.location + 2);
+            SPDFExpect(pairFragment != nil && pairFragment == pairSecondFragment,
+                       @"the fitted pair shares one line fragment band instead of stacking");
+            if (pairFragment && pairFragment == pairSecondFragment) {
+                NSAttributedString* pairLine =
+                    [fitString attributedSubstringFromRange:pairFragment.attributedRange];
+                CTLineRef pairCTLine = SPDFMarkdownCreateFragmentLine(pairLine);
+                CGFloat pairLineWidth = (CGFloat)CTLineGetTypographicBounds(pairCTLine, NULL, NULL, NULL) -
+                                        (CGFloat)CTLineGetTrailingWhitespaceWidth(pairCTLine);
+                CFRelease(pairCTLine);
+                SPDFExpect(fabs(pairFragment.xOffset + pairLineWidth / 2 - printableWidth / 2) < 2.0,
+                           @"the fitted pair still centers as a group within the printable width");
+            }
+            SPDFExpect(![fitString.string containsString:@"Wide left"] &&
+                           ![fitString.string containsString:@"Wide right"],
+                       @"the fitted row still shows no visible alt captions");
+        }
+
+        NSRange badgeRow = [fitString.string rangeOfString:@"\uFFFC \uFFFC \uFFFC \uFFFC \uFFFC"];
+        SPDFExpect(badgeRow.location != NSNotFound, @"the five-badge row keeps its side-by-side shape");
+        if (badgeRow.location != NSNotFound) {
+            for (NSUInteger offset = 0; offset < 9; offset += 2) {
+                NSTextAttachment* badge = [fitString attribute:NSAttachmentAttributeName
+                                                       atIndex:badgeRow.location + offset
+                                                effectiveRange:nil];
+                SPDFExpect(badge != nil && fabs(badge.bounds.size.width - 60.0) < 0.001 &&
+                               fabs(badge.bounds.size.height - 20.0) < 0.001,
+                           @"a badge strip already under the budget keeps its natural sizes");
+            }
+        }
+
+        NSRange wallRow = [fitString.string rangeOfString:@"\uFFFC \uFFFC \uFFFC \uFFFC \uFFFC \uFFFC"];
+        SPDFExpect(wallRow.location != NSNotFound, @"the six-image row renders as one row paragraph");
+        if (wallRow.location != NSNotFound) {
+            for (NSUInteger offset = 0; offset < 11; offset += 2) {
+                NSTextAttachment* wall = [fitString attribute:NSAttachmentAttributeName
+                                                      atIndex:wallRow.location + offset
+                                               effectiveRange:nil];
+                SPDFExpect(wall != nil && fabs(wall.bounds.size.width - 480.0 * 0.45) < 0.01 &&
+                               fabs(wall.bounds.size.height - 160.0 * 0.45) < 0.01,
+                           @"a row that cannot fit even at the floor stops shrinking at 0.45x");
+            }
+            SPDFMarkdownPageFragment* wallFirst = SPDFFragmentForIndex(fitPlan, wallRow.location);
+            SPDFMarkdownPageFragment* wallLast = SPDFFragmentForIndex(fitPlan, wallRow.location + 10);
+            SPDFExpect(wallFirst != nil && wallLast != nil && wallFirst != wallLast,
+                       @"a floored row wraps onto further lines instead of overflowing the page");
         }
     }
     return SPDFFinishTests(@"SPDFMarkdownImageFigureTests");

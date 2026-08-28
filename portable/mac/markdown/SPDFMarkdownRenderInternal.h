@@ -39,7 +39,10 @@ void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdo
 // says they are: they flow side by side in one center-aligned paragraph,
 // separated by the source's spaces/soft breaks and wrapping when the
 // printable width runs out, with no visible captions (badge rows read as one
-// line). Images mixed into sentence text keep plain inline flow and show no
+// line). A row whose capped images would overflow the width budget
+// (maximumImageWidth) scales them all down by one common factor — never below
+// 0.45x — so typical two-image rows fit a single line instead of stacking.
+// Images mixed into sentence text keep plain inline flow and show no
 // visible alt text either. The roles are recorded on the affected characters
 // so the leaf renderer can re-derive the centered paragraph styles after it
 // applies the block's base style to the whole range.
