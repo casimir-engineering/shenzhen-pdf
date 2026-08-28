@@ -454,6 +454,15 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 }
 
 - (NSMenu*)menuForEvent:(NSEvent*)event {
+    // Right-clicking an image selects it (unless the click is inside the
+    // current selection), so the menu's Copy is enabled and copies the image.
+    NSUInteger hitIndex = [self characterIndexAtPoint:[self convertPoint:event.locationInWindow fromView:nil]];
+    if (hitIndex != NSNotFound && hitIndex < _attributedString.length &&
+        !NSLocationInRange(hitIndex, _selectedRange) &&
+        [_attributedString attribute:SPDFMarkdownImageTargetAttribute atIndex:hitIndex effectiveRange:NULL]) {
+        NSRange attachmentRange = [self wordRangeAtIndex:hitIndex];
+        if (attachmentRange.length) self.selectedRange = attachmentRange;
+    }
     NSMenu* menu = self.reader ? [self.reader contextMenuForDocumentView:self event:event] : [NSMenu new];
     if (!self.reader) {
         NSMenuItem* copy = [[NSMenuItem alloc] initWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@""];

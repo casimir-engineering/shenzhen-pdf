@@ -45,7 +45,8 @@
     }
     NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(copySelection:) keyEquivalent:@""];
     copy.target = self;
-    copy.enabled = contentCopyAllowed && selectedText.length > 0;
+    copy.enabled = contentCopyAllowed &&
+                   (selectedText.length > 0 || (markdown && [self.activeMarkdownSession selectionContainsImage]));
     if (!markdown && _contextCommentIndex >= 0) {
         NSMenuItem* editComment = [menu addItemWithTitle:@"Edit Comment..."
                                                   action:@selector(editComment:)
