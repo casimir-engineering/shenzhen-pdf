@@ -59,9 +59,9 @@ int main(void) {
         SPDFMarkdownPaginationItem* codeItem = configuredCodeItems.firstObject;
         assert(codeItem.lines.count == measuredCodeItem.lines.count + 2);
         assert(codeItem.lines.firstObject.attributedRange.length == 0);
-        assert(fabs(codeItem.lines.firstObject.height - 34.0) < 0.001);
+        assert(fabs(codeItem.lines.firstObject.height - (SPDFMarkdownCodeBoxOuterMargin + 34.0)) < 0.001);
         assert(codeItem.lines.lastObject.attributedRange.length == 0);
-        assert(fabs(codeItem.lines.lastObject.height - 8.0) < 0.001);
+        assert(fabs(codeItem.lines.lastObject.height - (SPDFMarkdownCodeBoxOuterMargin + 8.0)) < 0.001);
         SPDFMacMarkdownPageCanvas* codeCanvas =
             [[SPDFMacMarkdownPageCanvas alloc] initWithPaginationPlan:codePlan
                                                      attributedString:codeRendered.attributedString];
@@ -84,13 +84,17 @@ int main(void) {
         assert(!NSIsEmptyRect(controlFrame));
         CGFloat boxLeft = NSMinX(codePageFrame) + NSMinX(printable);
         CGFloat boxRight = boxLeft + NSWidth(printable);
-        CGFloat bandTop = NSMinY(codePageFrame) + NSMinY(printable) + controlFragment.pageYOffset;
+        // The leading band opens with the unpainted outer margin above the box;
+        // the control centers in the in-box header portion below it.
+        CGFloat bandTop =
+            NSMinY(codePageFrame) + NSMinY(printable) + controlFragment.pageYOffset + SPDFMarkdownCodeBoxOuterMargin;
+        CGFloat headerHeight = controlFragment.height - SPDFMarkdownCodeBoxOuterMargin;
         assert(fabs(NSMaxX(controlFrame) - (boxRight - 10.0)) < 0.001); // 10pt off the box's right edge
         assert(NSMinX(controlFrame) > boxLeft);
-        assert(NSMinY(controlFrame) >= bandTop);                          // inside the header band...
-        assert(NSMaxY(controlFrame) <= bandTop + controlFragment.height); // ...reserved by the layout
+        assert(NSMinY(controlFrame) >= bandTop);                 // inside the in-box header band...
+        assert(NSMaxY(controlFrame) <= bandTop + headerHeight);  // ...reserved by the layout
         assert(fabs(NSHeight(controlFrame) - 20.0) < 0.001);
-        assert(fabs(NSMidY(controlFrame) - (bandTop + controlFragment.height * 0.5)) < 1.0); // centered
+        assert(fabs(NSMidY(controlFrame) - (bandTop + headerHeight * 0.5)) < 1.0); // centered
         // Non-code blocks expose no control anchor.
         assert(codeBlockIndex != 0);
         assert(NSIsEmptyRect([codeCanvas codeLanguageControlFrameForBlockIndex:0]));

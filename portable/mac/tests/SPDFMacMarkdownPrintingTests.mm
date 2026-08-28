@@ -34,12 +34,12 @@ int main(void) {
         assert(!plan.configuration.includesCodeLanguageControlSpacing);
         for (SPDFMarkdownPaginationItem* item in plan.items) {
             if (item.kind != SPDFMarkdownBlockKindCode) continue;
-            // Print plans reserve plain 8pt code-box padding bands (no 34pt
-            // interactive language-control band).
+            // Print plans reserve the outer margin plus plain 8pt code-box
+            // padding bands (no 34pt interactive language-control band).
             assert(item.lines.firstObject.attributedRange.length == 0);
-            assert(fabs(item.lines.firstObject.height - 8.0) < 0.001);
+            assert(fabs(item.lines.firstObject.height - (SPDFMarkdownCodeBoxOuterMargin + 8.0)) < 0.001);
             assert(item.lines.lastObject.attributedRange.length == 0);
-            assert(fabs(item.lines.lastObject.height - 8.0) < 0.001);
+            assert(fabs(item.lines.lastObject.height - (SPDFMarkdownCodeBoxOuterMargin + 8.0)) < 0.001);
         }
 
         NSPrintOperation* operation =
