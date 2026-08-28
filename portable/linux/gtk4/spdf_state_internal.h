@@ -1,9 +1,9 @@
-// spdf_state.c extended contract — JSON state persistence for the GTK4
-// frontend. Schema-compatible with the Mac app's state files
-// (settings.json / session.json / favorites.json / documents.json) and
-// read-compatible with the retired GTK3 frontend's files, which live in the
-// same directory ($XDG_CONFIG_HOME/shenzhenpdf) so upgrading users keep
-// their state.
+// spdf_state.c extended contract — state persistence for the GTK4 frontend.
+// Schema-compatible with the Mac app's YAML state files
+// (settings.yaml / session.yaml / favorites.yaml / documents.yaml) and
+// migration-compatible with the retired GTK3 frontend's JSON files, which
+// live in the same directory ($XDG_CONFIG_HOME/shenzhenpdf) so upgrading
+// users keep their state.
 //
 // Contract additions in this header are candidates for promotion into
 // spdf_internal.h by integrator decision; spdf_state.c is the only
@@ -169,12 +169,12 @@ typedef struct {
 
 // ---------------------------------------------------------------------------
 // Lifecycle. spdf_state_load() (declared in spdf_internal.h) reads ONLY
-// settings.json and session.json — one stat+read each — so it stays cheap on
-// the launch path. favorites.json / documents.json load lazily on first use.
+// settings.yaml and session.yaml — one stat+read each — so it stays cheap on
+// the launch path. favorites.yaml / documents.yaml load lazily on first use.
 SpdfState* spdf_state_load_from_dir(const char* config_dir); // tests, detached launches
 void spdf_state_free(SpdfState* s);
 const char* spdf_state_config_dir(SpdfState* s);
-const char* spdf_state_file_path(SpdfState* s, const char* name); // "settings.json" etc.
+const char* spdf_state_file_path(SpdfState* s, const char* name); // "settings.yaml" etc.
 
 // Coalesced writes: the save_* entry points only mark dirty and arm a
 // SPDF_STATE_WRITE_DELAY_MS timer; the timer serializes on the caller's

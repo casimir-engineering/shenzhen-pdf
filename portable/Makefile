@@ -44,6 +44,9 @@ CORE_SELECTION_OBJ := $(BUILD)/spdf_selection.o
 CORE_SELECTION_SUPPORT_SRC := core/spdf_selection_support.c
 CORE_SELECTION_SUPPORT_OBJ := $(BUILD)/spdf_selection_support.o
 CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ) $(CORE_SELECTION_SUPPORT_OBJ)
+YAML_SRC := core/spdf_yaml.c
+YAML_HDR := core/spdf_yaml.h
+YAML_OBJ := $(BUILD)/spdf_yaml.o
 MAC_MD4C_OBJ := $(BUILD)/md4c.o
 CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
 CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
@@ -71,6 +74,7 @@ MAC_FILE_EXPLORER_TEST := $(BUILD)/SPDFMacFileExplorerPreferenceTests
 MAC_SELECTION_CLICK_TEST := $(BUILD)/SPDFMacSelectionClickTests
 MAC_SELECTION_ADAPTER_TEST := $(BUILD)/SPDFMacSelectionAdapterTests
 MAC_LAUNCH_WORK_POLICY_TEST := $(BUILD)/SPDFMacLaunchWorkPolicyTests
+MAC_STATE_YAML_TEST := $(BUILD)/SPDFStateYamlTests
 MAC_RELEASE_NOTES_PREVIEW := $(BUILD)/SPDFReleaseNotesPreview
 # Exclude standalone test translation units (each defines its own main()).
 MAC_MARKDOWN_SRCS := $(sort $(wildcard mac/markdown/*.mm))
@@ -90,7 +94,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -112,6 +116,9 @@ $(CORE_SELECTION_SUPPORT_OBJ): $(CORE_SELECTION_SUPPORT_SRC) $(CORE_SELECTION_HD
 
 $(MAC_MD4C_OBJ): ../ext/md4c/md4c.c ../ext/md4c/md4c.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c11 -I../ext/md4c -c ../ext/md4c/md4c.c -o "$(MAC_MD4C_OBJ)"
+
+$(YAML_OBJ): $(YAML_SRC) $(YAML_HDR) Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -c "$(YAML_SRC)" -o "$(YAML_OBJ)"
 
 mac-app: $(MAC_BIN)
 
@@ -268,7 +275,13 @@ $(MAC_LAUNCH_WORK_POLICY_TEST): mac/tests/launch/SPDFMacLaunchWorkPolicyTests.mm
 mac-launch-work-policy-tests: $(MAC_LAUNCH_WORK_POLICY_TEST)
 	"$(MAC_LAUNCH_WORK_POLICY_TEST)"
 
-$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
+$(MAC_STATE_YAML_TEST): mac/tests/SPDFStateYamlTests.mm $(YAML_OBJ) | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore mac/tests/SPDFStateYamlTests.mm "$(YAML_OBJ)" -framework Foundation -o "$(MAC_STATE_YAML_TEST)"
+
+mac-state-yaml-tests: $(MAC_STATE_YAML_TEST)
+	"$(MAC_STATE_YAML_TEST)"
+
+$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
@@ -299,7 +312,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) $(MA
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
-	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) "$(YAML_OBJ)" $(MAC_MD4C_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -Eq 'libcrypto|/opt/homebrew|/usr/local'; then \
 		echo "unexpected mutable runtime dependency in $(MAC_BIN)" >&2; \
 		otool -L "$(MAC_BIN)" >&2; \
@@ -364,12 +377,12 @@ install: mac-app
 LINUX_GTK4_SRCS := $(sort $(wildcard linux/gtk4/*.c))
 
 linux-gtk4: mupdf-libs | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" "$(CORE_SELECTION_SRC)" "$(CORE_SELECTION_SUPPORT_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
+	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" "$(CORE_SELECTION_SRC)" "$(CORE_SELECTION_SUPPORT_SRC)" "$(YAML_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
 
 linux-gtk4-tests: | $(BUILD)
 	@set -e; for t in $(sort $(wildcard linux/gtk4/tests/*_test.c)); do \
 		bin="$(BUILD)/$$(basename $$t .c)"; \
-		$(CC) $(PORTABLE_TEST_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 $$(pkg-config --cflags glib-2.0 openssl) $$t $$(pkg-config --libs glib-2.0 openssl) -lm -o "$$bin"; \
+		$(CC) $(PORTABLE_TEST_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 $$(pkg-config --cflags glib-2.0 openssl) $$t "$(YAML_SRC)" $$(pkg-config --libs glib-2.0 openssl) -lm -o "$$bin"; \
 		"$$bin"; \
 	done
 

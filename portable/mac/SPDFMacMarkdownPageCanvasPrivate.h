@@ -22,6 +22,10 @@
 // index, so double-clicking an image selects exactly its attachment
 // character. Zero length when neither resolves.
 - (NSRange)wordRangeAtIndex:(NSUInteger)index;
+// Character index under a canvas-space point (a caret index: a click on a
+// character's right half resolves to the following index), NSNotFound when
+// the point is not over a drawn line fragment.
+- (NSUInteger)characterIndexAtPoint:(NSPoint)point;
 @end
 
 // Implemented in SPDFMacMarkdownPageCanvas+Pan.mm: the lazily created hand-pan

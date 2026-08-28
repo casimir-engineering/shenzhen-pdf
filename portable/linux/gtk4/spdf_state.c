@@ -1,22 +1,26 @@
-// spdf_state.c — JSON state persistence for the GTK4 frontend.
+// spdf_state.c — state persistence for the GTK4 frontend.
 //
 // Files live in $XDG_CONFIG_HOME/shenzhenpdf (same directory the GTK3 app
-// used, so upgrading users keep their state) and follow the Mac app's JSON
-// schemas: settings.json, session.json, favorites.json, documents.json.
-// The reader also accepts the GTK3 frontend's legacy shapes (1-based session
-// pages, {"favorites": [...]} wrapper, windowWidth/windowHeight settings) and
-// migrates them on the next write.
+// used, so upgrading users keep their state) and follow the Mac app's state
+// schemas: settings.yaml, session.yaml, favorites.yaml, documents.yaml. On
+// disk the files are YAML (shared codec in core/spdf_yaml.h); internally this
+// module keeps building and scanning JSON text, converting at the file
+// boundary. Legacy .json files are auto-migrated (flock-guarded, originals
+// kept as <name>.json.migrated-backup) on load. The reader also accepts the
+// GTK3 frontend's legacy shapes (1-based session pages, {"favorites": [...]}
+// wrapper, windowWidth/windowHeight settings) and migrates them on the next
+// write.
 //
 // Launch speed: spdf_state_load() performs exactly two stat+read pairs
-// (settings.json + session.json, both size-capped) and hand-rolled string
-// parsing — no json-glib, no new dependencies. favorites.json and
-// documents.json load lazily on first use.
+// (settings.yaml + session.yaml, both size-capped) and hand-rolled string
+// parsing — no json-glib, no new dependencies. favorites.yaml and
+// documents.yaml load lazily on first use.
 //
 // Writes are coalesced (dirty flags + one 1s timer — the June 2026 batching
 // fix, so scroll ticks never hit the disk) and executed off the main thread
-// with atomic-rename semantics via g_file_set_contents_full. session.json is
-// merged under an flock on session.lock, the same protocol the GTK3 and Mac
-// apps use, so concurrent windows/processes never clobber each other.
+// with atomic-rename semantics via g_file_set_contents_full. session.yaml is
+// merged under an flock on session.lock, the same protocol the Mac app
+// uses, so concurrent windows/processes never clobber each other.
 #ifdef SPDF_STATE_TESTING
 #include <glib.h>
 #include <glib/gstdio.h>
@@ -27,6 +31,8 @@
 #endif
 
 #include "spdf_state_internal.h"
+
+#include "spdf_yaml.h"
 
 #include <ctype.h>
 #include <fcntl.h>
@@ -333,6 +339,42 @@ static gboolean read_limited_text_file(const char* path, char** contents, gsize*
 
 static gboolean write_text_file_atomic(const char* path, const char* text) {
     return g_file_set_contents_full(path, text, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, NULL);
+}
+
+// State files are YAML on disk (shared codec in core/spdf_yaml.h); this
+// frontend keeps building and scanning JSON text internally, converting at
+// the file boundary. A YAML file that fails to parse behaves exactly like
+// the old corrupt-JSON path: the file is ignored and defaults apply.
+static gboolean read_state_file_as_json(const char* path, char** json_out) {
+    char* yaml = NULL;
+    gsize len = 0;
+    char* json;
+
+    if (json_out) *json_out = NULL;
+    if (!json_out) return FALSE;
+    if (!read_limited_text_file(path, &yaml, &len)) return FALSE;
+    json = spdf_json_from_yaml(yaml);
+    g_free(yaml);
+    if (!json) return FALSE;
+    /* Copy into glib-owned memory so callers keep using g_free. */
+    *json_out = g_strdup(json);
+    free(json);
+    return TRUE;
+}
+
+/* Converts internally-built JSON text to YAML (with the standard header
+ * comment) and writes it atomically to the state file. */
+static gboolean write_state_file_from_json(const char* path, const char* json_text) {
+    char header[128];
+    char* yaml;
+    gboolean ok;
+
+    spdf_state_header_for_file(path, header, sizeof(header));
+    yaml = spdf_yaml_from_json(json_text, header);
+    if (!yaml) return FALSE;
+    ok = write_text_file_atomic(path, yaml);
+    free(yaml);
+    return ok;
 }
 
 static char* dup_limited_utf8(const char* text, gsize max_bytes) {
@@ -916,13 +958,12 @@ static void merge_session_store(const char* session_path,
                                 GPtrArray* window_texts,
                                 GHashTable* owned_ids) {
     char* existing = NULL;
-    gsize len = 0;
     GString* out;
     session_merge_context context;
     int lock_fd;
 
     lock_fd = lock_session_store(lock_path);
-    read_limited_text_file(session_path, &existing, &len);
+    read_state_file_as_json(session_path, &existing);
     context.windows_json = g_string_new("");
     context.skip_ids = owned_ids;
     context.wrote_any = FALSE;
@@ -936,7 +977,7 @@ static void merge_session_store(const char* session_path,
     out = g_string_new("{\n  \"version\": 2,\n  \"windows\": [\n");
     g_string_append(out, context.windows_json->str);
     g_string_append(out, "\n  ]\n}\n");
-    write_text_file_atomic(session_path, out->str);
+    write_state_file_from_json(session_path, out->str);
     g_string_free(out, TRUE);
     g_string_free(context.windows_json, TRUE);
     g_free(existing);
@@ -1032,11 +1073,10 @@ static void parse_favorites_payload(SpdfState* state, const char* json) {
 
 static void ensure_favorites_loaded(SpdfState* state) {
     char* json = NULL;
-    gsize len = 0;
 
     if (state->favorites_loaded) return;
     state->favorites_loaded = TRUE;
-    if (!read_limited_text_file(state->favorites_path, &json, &len)) return;
+    if (!read_state_file_as_json(state->favorites_path, &json)) return;
     parse_favorites_payload(state, json);
     g_free(json);
 }
@@ -1139,12 +1179,11 @@ static void parse_document_object(SpdfState* state, const char* key, const char*
 
 static void ensure_documents_loaded(SpdfState* state) {
     char* json = NULL;
-    gsize len = 0;
     const char* pos;
 
     if (state->documents_loaded) return;
     state->documents_loaded = TRUE;
-    if (!read_limited_text_file(state->documents_path, &json, &len)) return;
+    if (!read_state_file_as_json(state->documents_path, &json)) return;
     pos = json;
     while (*pos && isspace((unsigned char)*pos)) pos++;
     if (*pos == '{') {
@@ -1245,7 +1284,7 @@ static void write_batch_free(write_batch* batch) {
 static void write_batch_run(write_batch* batch) {
     for (guint i = 0; i < batch->jobs->len; ++i) {
         write_job* job = g_ptr_array_index(batch->jobs, i);
-        write_text_file_atomic(job->path, job->contents);
+        write_state_file_from_json(job->path, job->contents);
     }
     if (batch->has_session)
         merge_session_store(batch->session_path, batch->session_lock_path, batch->session_windows, batch->owned_ids);
@@ -1347,18 +1386,22 @@ void spdf_state_flush(SpdfState* state) {
 // --- lifecycle -------------------------------------------------------------------
 
 SpdfState* spdf_state_load_from_dir(const char* config_dir) {
+    static const char* const migrate_stems[] = {"settings", "session", "documents", "favorites"};
     SpdfState* state = g_new0(SpdfState, 1);
     char* json = NULL;
-    gsize len = 0;
     int lock_fd;
 
     state->config_dir = g_strdup(config_dir);
-    state->settings_path = g_build_filename(config_dir, "settings.json", NULL);
-    state->session_path = g_build_filename(config_dir, "session.json", NULL);
+    state->settings_path = g_build_filename(config_dir, "settings.yaml", NULL);
+    state->session_path = g_build_filename(config_dir, "session.yaml", NULL);
     state->session_lock_path = g_build_filename(config_dir, "session.lock", NULL);
-    state->favorites_path = g_build_filename(config_dir, "favorites.json", NULL);
-    state->documents_path = g_build_filename(config_dir, "documents.json", NULL);
+    state->favorites_path = g_build_filename(config_dir, "favorites.yaml", NULL);
+    state->documents_path = g_build_filename(config_dir, "documents.yaml", NULL);
     g_mkdir_with_parents(config_dir, 0700);
+    /* One-time per-file JSON -> YAML migration, flock-guarded across the
+     * app's window processes inside the codec (see core/spdf_yaml.h). Must
+     * run before anything below reads state. */
+    spdf_state_migrate_dir(config_dir, migrate_stems, 4);
 
     state->loaded_windows = g_ptr_array_new_with_free_func((GDestroyNotify)spdf_session_window_free);
     state->live_windows = g_ptr_array_new_with_free_func((GDestroyNotify)spdf_session_window_free);
@@ -1367,14 +1410,14 @@ SpdfState* spdf_state_load_from_dir(const char* config_dir) {
     state->documents = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)doc_state_free);
 
     settings_init_defaults(&state->settings);
-    if (read_limited_text_file(state->settings_path, &json, &len)) {
+    if (read_state_file_as_json(state->settings_path, &json)) {
         parse_settings(state, json);
         g_free(json);
         json = NULL;
     }
 
     lock_fd = lock_session_store(state->session_lock_path);
-    if (read_limited_text_file(state->session_path, &json, &len)) {
+    if (read_state_file_as_json(state->session_path, &json)) {
         parse_session(state, json);
         g_free(json);
     }
@@ -1427,10 +1470,12 @@ const char* spdf_state_config_dir(SpdfState* state) {
 
 const char* spdf_state_file_path(SpdfState* state, const char* name) {
     if (!state) return NULL;
-    if (!name || !*name || strcmp(name, "settings.json") == 0) return state->settings_path;
-    if (strcmp(name, "session.json") == 0) return state->session_path;
-    if (strcmp(name, "favorites.json") == 0) return state->favorites_path;
-    if (strcmp(name, "documents.json") == 0) return state->documents_path;
+    /* Legacy .json names keep resolving to the (now YAML) live file. */
+    if (!name || !*name || strcmp(name, "settings.yaml") == 0 || strcmp(name, "settings.json") == 0)
+        return state->settings_path;
+    if (strcmp(name, "session.yaml") == 0 || strcmp(name, "session.json") == 0) return state->session_path;
+    if (strcmp(name, "favorites.yaml") == 0 || strcmp(name, "favorites.json") == 0) return state->favorites_path;
+    if (strcmp(name, "documents.yaml") == 0 || strcmp(name, "documents.json") == 0) return state->documents_path;
     return state->settings_path;
 }
 

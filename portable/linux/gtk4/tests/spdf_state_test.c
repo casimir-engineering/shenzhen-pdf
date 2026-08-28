@@ -1,12 +1,14 @@
 // Pure-logic tests for spdf_state.c (glib only, no GTK). The GTK bits of the
 // module are compiled out via SPDF_STATE_TESTING; everything else — the JSON
-// readers/writers, the session merge, geometry clamping, mtime/size
-// validation — runs against a temp config dir.
+// readers/writers, the YAML file boundary + legacy-JSON migration, the
+// session merge, geometry clamping, mtime/size validation — runs against a
+// temp config dir.
 //
 // Schema fixtures below are byte-copies of what the GTK3 writer
-// (portable/linux/ShenzhenPDFGtk.c save_settings/write_session/save_favorites)
-// and the Mac writer (portable/mac/ShenzhenPDFMac.mm savePersistentState,
-// NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys) produce.
+// (portable/linux/ShenzhenPDFGtk.c save_settings/write_session/save_favorites,
+// retired) and the Mac writer (portable/mac/ShenzhenPDFMac.mm
+// savePersistentState) produced as JSON; writing them as .json files also
+// exercises the auto-migration that runs inside spdf_state_load_from_dir.
 #define SPDF_STATE_TESTING 1
 
 #include "../spdf_state.c"
@@ -173,17 +175,17 @@ static void test_settings_mac_fixture(void) {
     g_assert_true(settings->has_mac_permissions_wizard_shown);
     g_assert_true(settings->mac_permissions_wizard_shown);
 
-    // ...and round-tripped by the Linux writer: rewriting a Mac settings.json
+    // ...and round-tripped by the Linux writer: rewriting a Mac settings file
     // must not wipe them (the Mac app would re-run its permission prompts).
     {
-        char* path = g_build_filename(dir, "settings.json", NULL);
+        char* path = g_build_filename(dir, "settings.yaml", NULL);
         char* text = NULL;
 
         spdf_state_save_settings(state);
         spdf_state_flush(state);
         g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
-        g_assert_nonnull(strstr(text, "\"fullDiskAccessPromptDismissed\": false"));
-        g_assert_nonnull(strstr(text, "\"permissionsWizardShown\": true"));
+        g_assert_nonnull(strstr(text, "fullDiskAccessPromptDismissed: false"));
+        g_assert_nonnull(strstr(text, "permissionsWizardShown: true"));
         g_free(text);
         g_free(path);
     }
@@ -228,12 +230,14 @@ static void test_settings_round_trip(void) {
     spdf_state_save_settings(state);
     spdf_state_flush(state);
 
-    // The written file carries the Mac schema markers.
-    text = test_read_state_file(dir, "settings.json");
-    g_assert_nonnull(strstr(text, "\"windowSize\": { \"height\": 1000, \"width\": 1600 }"));
-    g_assert_nonnull(strstr(text, "\"viewMode\": 1"));
-    g_assert_nonnull(strstr(text, "\"version\": 1"));
-    g_assert_null(strstr(text, "\"windowWidth\"")); // legacy flat keys migrated away
+    // The written file is YAML and carries the Mac schema markers.
+    text = test_read_state_file(dir, "settings.yaml");
+    g_assert_nonnull(strstr(text, "windowSize:"));
+    g_assert_nonnull(strstr(text, "height: 1000"));
+    g_assert_nonnull(strstr(text, "width: 1600"));
+    g_assert_nonnull(strstr(text, "viewMode: 1"));
+    g_assert_nonnull(strstr(text, "version: 1"));
+    g_assert_null(strstr(text, "windowWidth")); // legacy flat keys migrated away
     g_free(text);
 
     reloaded = spdf_state_load_from_dir(dir);
@@ -524,7 +528,7 @@ static void test_session_merge_preserves_foreign_windows(void) {
     spdf_state_update_session_window(state, win);
     spdf_state_flush(state);
 
-    text = test_read_state_file(dir, "session.json");
+    text = test_read_state_file(dir, "session.yaml");
     g_assert_nonnull(strstr(text, "\"foreign-1\"")); // untouched
     g_assert_nonnull(strstr(text, "/elsewhere/x.pdf"));
     g_assert_nonnull(strstr(text, "/fresh/new.pdf")); // replaced, not duplicated
@@ -534,7 +538,7 @@ static void test_session_merge_preserves_foreign_windows(void) {
     // Deliberate close removes our window but keeps the foreign one.
     spdf_state_remove_session_window(state, "mine-1");
     spdf_state_flush(state);
-    text = test_read_state_file(dir, "session.json");
+    text = test_read_state_file(dir, "session.yaml");
     g_assert_nonnull(strstr(text, "\"foreign-1\""));
     g_assert_null(strstr(text, "\"mine-1\""));
     g_free(text);
@@ -772,7 +776,14 @@ static void test_documents_round_trip_and_version_gate(void) {
     g_assert_true(spdf_doc_state_geometry_valid(doc_state, 777, 1750009999.125, 2));
     spdf_state_free(reloaded);
 
-    // A future/unknown geometryVersion must invalidate the cache.
+    // A future/unknown geometryVersion must invalidate the cache. Drop the
+    // live YAML file first so the legacy-JSON fixture is the one migrated
+    // and loaded (migration never overwrites an existing .yaml).
+    {
+        char* yaml_path = g_build_filename(dir, "documents.yaml", NULL);
+        g_unlink(yaml_path);
+        g_free(yaml_path);
+    }
     test_write_state_file(dir, "documents.json",
                           "{\n"
                           "  \"/tmp/docs/board.pdf\" : {\n"
@@ -861,7 +872,7 @@ static void test_closed_ring(void) {
 static void test_writes_are_coalesced_until_flush(void) {
     char* dir = test_make_config_dir();
     SpdfState* state = spdf_state_load_from_dir(dir);
-    char* path = g_build_filename(dir, "settings.json", NULL);
+    char* path = g_build_filename(dir, "settings.yaml", NULL);
 
     spdf_state_save_settings(state);
     spdf_state_save_settings(state); // marking dirty twice arms one timer
@@ -881,7 +892,7 @@ static void test_suppressed_session_writes(void) {
     SpdfState* state = spdf_state_load_from_dir(dir);
     SpdfSessionWindow* win = spdf_session_window_new(NULL);
     SpdfSessionTab* tab = spdf_session_window_add_tab(win);
-    char* path = g_build_filename(dir, "session.json", NULL);
+    char* path = g_build_filename(dir, "session.yaml", NULL);
 
     tab->path = g_strdup("/tmp/x.pdf");
     g_assert_nonnull(win->id); // NULL id gets a "gtk-<pid>-<us>" identity

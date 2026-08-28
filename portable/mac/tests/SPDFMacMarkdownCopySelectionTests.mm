@@ -170,6 +170,45 @@ int main(void) {
         // Past-the-end and out-of-range indices stay empty.
         assert([canvas wordRangeAtIndex:line.length + 5].length == 0);
 
+        // --- Right-click copy: the image under the pointer is copied
+        // directly, with the selection neither read nor disturbed ---
+        NSRect canvasPage = [canvas frameForPageAtIndex:0];
+        NSRect printable = configuration.printableRect;
+        // Image A occupies the first 320pt after "Alpha " on the line; probe
+        // its middle, well inside the attachment.
+        CGFloat lineY = NSMinY(canvasPage) + configuration.topContentInset + 15.0;
+        NSPoint overImage = NSMakePoint(NSMinX(canvasPage) + NSMinX(printable) + 200.0, lineY);
+        NSPoint overText = NSMakePoint(NSMinX(canvasPage) + NSMinX(printable) + 2.0, lineY);
+        assert([canvas imageAtPoint:overImage] != nil);
+        assert([canvas imageAtPoint:overText] == nil);
+        // A text selection is deliberately left in place: the right-click copy
+        // path must not consult or rewrite it (the earlier select-then-copy
+        // approach failed exactly here).
+        NSRange textSelection = [line.string rangeOfString:@"Alpha"];
+        view.selectedRange = textSelection;
+        NSMenu* contextMenu = [NSMenu new];
+        NSMenuItem* copyItem = [[NSMenuItem alloc] initWithTitle:@"Copy"
+                                                          action:@selector(copySelection:)
+                                                   keyEquivalent:@""];
+        [contextMenu addItem:copyItem];
+        [canvas spdf_retargetCopyItemInMenu:contextMenu forImageAtPoint:overImage];
+        assert(copyItem.target == canvas);
+        assert(copyItem.action == @selector(spdf_copyContextImage:));
+        NSImage* carried = copyItem.representedObject;
+        assert([carried isKindOfClass:NSImage.class]);
+        NSBitmapImageRep* carriedRep = [NSBitmapImageRep imageRepWithData:carried.TIFFRepresentation];
+        assert(carriedRep.pixelsWide == 64 && carriedRep.pixelsHigh == 40);  // image A at natural size
+        assert(NSEqualRanges(view.selectedRange, textSelection));            // selection untouched
+        // Off an image the Copy item keeps its original selection-copy wiring.
+        NSMenu* textMenu = [NSMenu new];
+        NSMenuItem* textCopyItem = [[NSMenuItem alloc] initWithTitle:@"Copy"
+                                                              action:@selector(copySelection:)
+                                                       keyEquivalent:@""];
+        [textMenu addItem:textCopyItem];
+        [canvas spdf_retargetCopyItemInMenu:textMenu forImageAtPoint:overText];
+        assert(textCopyItem.action == @selector(copySelection:));
+        assert(textCopyItem.representedObject == nil);
+
         [imagePasteboard releaseGlobally];
         [mixedPasteboard releaseGlobally];
         [twoImagePasteboard releaseGlobally];
