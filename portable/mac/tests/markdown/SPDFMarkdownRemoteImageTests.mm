@@ -93,10 +93,14 @@ int main(void) {
         SPDFExpect(![pendingText containsString:@"[Image: Minion]"] && ![pendingText containsString:@"[Image: Dojo]"],
                    @"pending https images are boxes, not text placeholders");
 
-        // The pending placeholder is a standalone figure: alt text on its own
-        // centered caption line below the box, so the layout matches the
-        // fetched image's figure and never jumps when the download lands.
-        NSRange minionRange = [pending.attributedString.string rangeOfString:@"\uFFFC\nMinion"];
+        // The pending placeholder is a standalone figure with its caption on
+        // its own centered line below the box \u2014 the markdown title when
+        // present, the alt otherwise \u2014 so the layout matches the fetched
+        // image's figure and never jumps when the download lands.
+        NSRange minionRange = [pending.attributedString.string rangeOfString:@"\uFFFC\nThe Minion"];
+        SPDFExpect(minionRange.location != NSNotFound &&
+                       [pendingText rangeOfString:@"\uFFFC\nMinion"].location == NSNotFound,
+                   @"a titled pending figure captions with the title, not the alt");
         if (minionRange.location != NSNotFound) {
             NSParagraphStyle* pendingStyle = [pending.attributedString attribute:NSParagraphStyleAttributeName
                                                                          atIndex:minionRange.location
@@ -108,13 +112,14 @@ int main(void) {
         // A paragraph of several pending remote images follows the same shape
         // rules as decoded images: CommonMark images are inline, so the
         // placeholder boxes flow side by side in one center-aligned paragraph
-        // (the soft break renders as a space) with no visible alt captions;
-        // the alt lives inside the drawn box and as attachment metadata.
+        // (the soft break renders as a space), and each box captions below
+        // itself with its title-or-alt \u2014 the caption is known at parse time,
+        // so nothing changes when the download lands.
         NSRange pairRange = [pendingText rangeOfString:@"\uFFFC \uFFFC"];
         SPDFExpect(pairRange.location != NSNotFound,
                    @"multiple pending images in one paragraph flow side by side, separated by a space");
-        SPDFExpect(![pendingText containsString:@"Pair one"] && ![pendingText containsString:@"Pair two"],
-                   @"a pending image row emits no visible alt captions");
+        SPDFExpect([pendingText containsString:@"\uFFFC \uFFFC\nPair one Pair two"],
+                   @"a pending image row captions each box below the row, each caption exactly once");
         if (pairRange.location != NSNotFound) {
             NSParagraphStyle* firstBoxStyle = [pending.attributedString attribute:NSParagraphStyleAttributeName
                                                                           atIndex:pairRange.location
@@ -157,6 +162,57 @@ int main(void) {
                            pairOneBox.bounds.size.width + boxSpaceWidth + pairTwoBox.bounds.size.width <=
                                options.maximumImageWidth + 0.5,
                        @"the fitted placeholder row's total width stays within the row budget");
+            // The pending row's captions already lay out exactly like the
+            // decoded row's will: one caption line below the boxes, each
+            // caption's fragment centered under its own box's x-span.
+            SPDFMarkdownPaginator* pendingPaginator = [SPDFMarkdownPaginator new];
+            SPDFMarkdownPageConfiguration* pendingConfiguration =
+                SPDFMarkdownPageConfiguration.A4PortraitConfiguration;
+            NSArray<SPDFMarkdownPaginationItem*>* pendingItems =
+                [pendingPaginator measureRenderedDocument:pending
+                                           containerWidth:NSWidth(pendingConfiguration.printableRect)];
+            SPDFMarkdownPaginationPlan* pendingPlan = [pendingPaginator paginateItems:pendingItems
+                                                                        configuration:pendingConfiguration];
+            SPDFMarkdownPageFragment* boxLineFragment = nil;
+            SPDFMarkdownPageFragment* pairOneCaptionFragment = nil;
+            NSRange pairOneCaption = [pendingText rangeOfString:@"Pair one"];
+            for (SPDFMarkdownPage* page in pendingPlan.pages) {
+                for (SPDFMarkdownPageFragment* fragment in page.fragments) {
+                    if (!fragment.attributedRange.length) continue;
+                    if (NSLocationInRange(pairRange.location, fragment.attributedRange)) boxLineFragment = fragment;
+                    if (NSLocationInRange(pairOneCaption.location, fragment.attributedRange))
+                        pairOneCaptionFragment = fragment;
+                }
+            }
+            SPDFExpect(boxLineFragment != nil && pairOneCaptionFragment != nil &&
+                           boxLineFragment != pairOneCaptionFragment &&
+                           pairOneCaptionFragment.pageYOffset >
+                               boxLineFragment.pageYOffset + boxLineFragment.height - 0.5,
+                       @"a pending row's caption paginates on its own line strictly below the boxes");
+            if (boxLineFragment && pairOneCaptionFragment && pairOneBox) {
+                CTLineRef boxLine = SPDFMarkdownCreateFragmentLine(
+                    [pending.attributedString attributedSubstringFromRange:boxLineFragment.attributedRange]);
+                CFIndex local = (CFIndex)(pairRange.location - boxLineFragment.attributedRange.location);
+                CGFloat x0 = CTLineGetOffsetForStringIndex(boxLine, local, NULL);
+                CGFloat x1 = CTLineGetOffsetForStringIndex(boxLine, local + 1, NULL);
+                CFRelease(boxLine);
+                CGFloat boxCenter = boxLineFragment.xOffset + (x0 + x1) / 2;
+                CTLineRef captionLine = SPDFMarkdownCreateFragmentLine([pending.attributedString
+                    attributedSubstringFromRange:pairOneCaptionFragment.attributedRange]);
+                CGFloat captionWidth = (CGFloat)CTLineGetTypographicBounds(captionLine, NULL, NULL, NULL);
+                CFRelease(captionLine);
+                SPDFExpect(fabs(pairOneCaptionFragment.xOffset + captionWidth / 2 - boxCenter) < 2.0,
+                           @"a pending box's caption centers under the box's x-span before the download lands");
+            }
+            NSFont* pendingCaptionFont = [pending.attributedString attribute:NSFontAttributeName
+                                                                     atIndex:pairOneCaption.location
+                                                              effectiveRange:nil];
+            NSColor* pendingCaptionColor = [pending.attributedString attribute:NSForegroundColorAttributeName
+                                                                       atIndex:pairOneCaption.location
+                                                                effectiveRange:nil];
+            SPDFExpect(fabs(pendingCaptionFont.pointSize - options.textSize * 0.9) < 0.01 &&
+                           [pendingCaptionColor isEqual:options.secondaryTextColor],
+                       @"pending row captions style like figure captions, muted at 0.9x body");
         }
 
         // Title attributes surface as tooltips on the attachment and on links.
@@ -191,6 +247,8 @@ int main(void) {
                    @"fed-in https bytes decode into a real attachment at natural size");
         SPDFExpect(SPDFAttachmentForTarget(fetched.attributedString, @"https://example.test/images/dojocat.jpg") != nil,
                    @"images without bytes keep their pending placeholder");
+        SPDFExpect([fetched.attributedString.string containsString:@"￼ ￼\nPair one Pair two"],
+                   @"the row's canonical caption line is byte-identical across download passes");
 
         // Oversized decoded images stay constrained by the render caps.
         NSData* widePNG = SPDFMakePNG(2000, 400);

@@ -210,10 +210,18 @@ static int SPDFEnterSpan(MD_SPANTYPE type, void* detail, void* opaque) {
 }
 
 static int SPDFLeaveSpan(MD_SPANTYPE type, void* detail, void* opaque) {
-    (void)type;
     (void)detail;
     SPDFMarkdownParseContext* context = (__bridge SPDFMarkdownParseContext*)opaque;
     SPDFMarkdownSpanFrame* frame = context.spans.lastObject;
+    if (type == MD_SPAN_IMG && frame.block && frame.block.runs.count == frame.firstRun) {
+        // `![](src)` carries no alt text, so no text callback fired inside the
+        // span and no run exists yet — but the image itself must still render:
+        // synthesize the image run with empty text.
+        [frame.block.runs addObject:[[SPDFMarkdownInlineRun alloc] initWithText:@""
+                                                                         traits:context.traits
+                                                                    destination:context.destination
+                                                                          title:context.title]];
+    }
     if (frame.wikiAlias.length && frame.block && frame.firstRun <= frame.block.runs.count) {
         NSRange runs = NSMakeRange(frame.firstRun, frame.block.runs.count - frame.firstRun);
         [frame.block.runs removeObjectsInRange:runs];

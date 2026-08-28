@@ -2,6 +2,7 @@
 
 #import <CoreText/CoreText.h>
 
+#import "SPDFMarkdownRenderInternal.h"
 #import "SPDFMarkdownTableDecorations.h"
 #import "SPDFMarkdownTableLayout.h"
 
@@ -9,8 +10,8 @@
 + (instancetype)A4PortraitConfiguration {
     SPDFMarkdownPageConfiguration* value = [SPDFMarkdownPageConfiguration new];
     value.paperSize = NSMakeSize(595.2756, 841.8898);
-    // Word-standard one-inch margins all around.
-    value.printableRect = NSMakeRect(72, 72, value.paperSize.width - 144, value.paperSize.height - 144);
+    // Word-standard one-inch margins reduced 15% per user preference.
+    value.printableRect = NSMakeRect(61.2, 61.2, value.paperSize.width - 122.4, value.paperSize.height - 122.4);
     value.headingKeepThreshold = 0.75;
     return value;
 }
@@ -67,6 +68,7 @@
                               kind:(SPDFMarkdownBlockKind)kind
                       headingLevel:(NSUInteger)headingLevel
                       tableRowInfo:(SPDFMarkdownTableRowInfo*)tableRowInfo
+                        bandLayout:(BOOL)bandLayout
                              lines:(NSArray<SPDFMarkdownTextLine*>*)lines {
     self = [super init];
     if (self) {
@@ -74,11 +76,13 @@
         _kind = kind;
         _headingLevel = headingLevel;
         _tableRowInfo = tableRowInfo;
+        _bandLayout = bandLayout || tableRowInfo != nil;
         _lines = [lines copy];
         CGFloat height = 0;
-        if (tableRowInfo) {
-            // A table row's lines share the row band side by side; the row is
-            // as tall as its tallest cell extent, not the sum of every line.
+        if (_bandLayout) {
+            // A band's lines share it side by side (table cells, an image
+            // row's captions under their images); the band is as tall as its
+            // deepest line extent, not the sum of every line.
             for (SPDFMarkdownTextLine* line in lines)
                 height = MAX(height, line.rowLocalYOffset + line.height);
         } else {
@@ -87,6 +91,18 @@
         _measuredHeight = height;
     }
     return self;
+}
+- (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
+                              kind:(SPDFMarkdownBlockKind)kind
+                      headingLevel:(NSUInteger)headingLevel
+                      tableRowInfo:(SPDFMarkdownTableRowInfo*)tableRowInfo
+                             lines:(NSArray<SPDFMarkdownTextLine*>*)lines {
+    return [self initWithBlockIndex:blockIndex
+                                kind:kind
+                        headingLevel:headingLevel
+                        tableRowInfo:tableRowInfo
+                          bandLayout:tableRowInfo != nil
+                               lines:lines];
 }
 - (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
                               kind:(SPDFMarkdownBlockKind)kind
@@ -182,9 +198,9 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
         SPDFMarkdownPaginationItem* item = items[i];
         if (i > headingIndex && item.kind == SPDFMarkdownBlockKindHeading && item.headingLevel <= heading.headingLevel)
             break;
-        if (item.tableRowInfo) {
-            // Row lines share the row band; the atomic row contributes its
-            // band height once.
+        if (item.bandLayout) {
+            // Band lines share their band; the atomic band contributes its
+            // height once.
             if (height + item.measuredHeight > pageHeight + 0.01) return pageHeight;
             height += item.measuredHeight;
             continue;
@@ -262,8 +278,8 @@ static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<S
         if (item.kind == SPDFMarkdownBlockKindHeading && item.measuredHeight <= pageHeight &&
             item.measuredHeight > pageHeight - used + 0.01 && current.count)
             finishPage();
-        SPDFMarkdownTableRowInfo* rowInfo = item.tableRowInfo;
-        if (rowInfo) {
+        if (item.bandLayout) {
+            SPDFMarkdownTableRowInfo* rowInfo = item.tableRowInfo;
             CGFloat rowScale = MIN(1, pageHeight / MAX(item.measuredHeight, 0.5));
             CGFloat rowHeight = item.measuredHeight * rowScale;
             // Keep-with-next mirrors the heading rule: a table header row must
@@ -311,6 +327,97 @@ static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<S
     }
     if (current.count || pages.count == 0) finishPage();
     return [[SPDFMarkdownPaginationPlan alloc] initWithConfiguration:configuration items:items pages:pages];
+}
+
+// Image rows caption each image below itself. The renderer keeps the captions
+// canonical — one trailing caption paragraph, each caption's text exactly
+// once, image and caption spans linked by SPDFMarkdownImageRowIndexAttribute
+// — and this pass turns that paragraph into custom-positioned lines: the
+// default centered caption line(s) are replaced by one line per caption whose
+// center x matches its image's measured x-span, emitted right below the image
+// line the image actually landed on (wrapped rows get one caption band per
+// wrapped image line). The whole row becomes one atomic band so the captions
+// keep riding their images across page breaks. Returns nil when the block
+// carries no row captions.
+static SPDFMarkdownPaginationItem* SPDFImageRowItemWithCaptions(SPDFMarkdownRenderedBlock* block,
+                                                                NSAttributedString* text, NSLayoutManager* layout,
+                                                                NSTextContainer* container,
+                                                                NSArray<SPDFMarkdownTextLine*>* lines) {
+    if (block.kind != SPDFMarkdownBlockKindParagraph) return nil;
+    NSMutableDictionary<NSNumber*, NSValue*>* captionRanges = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber*, NSValue*>* imageRanges = [NSMutableDictionary dictionary];
+    [text enumerateAttribute:SPDFMarkdownImageRowIndexAttribute
+                     inRange:block.attributedRange
+                     options:0
+                  usingBlock:^(NSNumber* ordinal, NSRange range, BOOL* stop) {
+                    (void)stop;
+                    if (!ordinal || !range.length) return;
+                    NSNumber* role = [text attribute:SPDFMarkdownImageLayoutAttribute
+                                             atIndex:range.location
+                                      effectiveRange:NULL];
+                    if (role.integerValue == SPDFMarkdownImageLayoutRoleCaption)
+                        captionRanges[ordinal] = [NSValue valueWithRange:range];
+                    else
+                        imageRanges[ordinal] = [NSValue valueWithRange:range];
+                  }];
+    if (!captionRanges.count) return nil;
+    NSRange captionParagraph =
+        [text.string paragraphRangeForRange:[captionRanges.allValues.firstObject rangeValue]];
+
+    // Every caption shares one style, so the default-measured caption line
+    // supplies the band height and baseline for all of them.
+    CGFloat captionHeight = 0;
+    CGFloat captionBaseline = 0;
+    for (SPDFMarkdownTextLine* line in lines) {
+        if (!NSLocationInRange(line.attributedRange.location, captionParagraph)) continue;
+        captionHeight = line.height;
+        captionBaseline = line.baselineOffset;
+        break;
+    }
+    if (captionHeight <= 0) return nil;
+
+    NSArray<NSNumber*>* ordinals = [captionRanges.allKeys sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableArray<SPDFMarkdownTextLine*>* bandLines = [NSMutableArray arrayWithCapacity:lines.count];
+    CGFloat y = 0;
+    for (SPDFMarkdownTextLine* line in lines) {
+        if (NSLocationInRange(line.attributedRange.location, captionParagraph)) continue;
+        [bandLines addObject:[[SPDFMarkdownTextLine alloc] initWithAttributedRange:line.attributedRange
+                                                                            height:line.height
+                                                                           xOffset:line.xOffset
+                                                                    baselineOffset:line.baselineOffset
+                                                                   rowLocalYOffset:y]];
+        BOOL captionsBelow = NO;
+        for (NSNumber* ordinal in ordinals) {
+            NSValue* imageValue = imageRanges[ordinal];
+            if (!imageValue || !NSLocationInRange(imageValue.rangeValue.location, line.attributedRange)) continue;
+            NSRange captionRange = captionRanges[ordinal].rangeValue;
+            NSRange imageGlyphs = [layout glyphRangeForCharacterRange:imageValue.rangeValue
+                                                 actualCharacterRange:NULL];
+            NSRect imageRect = [layout boundingRectForGlyphRange:imageGlyphs inTextContainer:container];
+            // The caption draws as one CTLine at an explicit x, so its center
+            // comes from the same typographic width the drawing pass will use.
+            CTLineRef captionLine =
+                SPDFMarkdownCreateFragmentLine([text attributedSubstringFromRange:captionRange]);
+            CGFloat captionWidth = (CGFloat)CTLineGetTypographicBounds(captionLine, NULL, NULL, NULL);
+            CFRelease(captionLine);
+            [bandLines addObject:[[SPDFMarkdownTextLine alloc]
+                                     initWithAttributedRange:captionRange
+                                                      height:captionHeight
+                                                     xOffset:NSMidX(imageRect) - captionWidth / 2
+                                              baselineOffset:captionBaseline
+                                             rowLocalYOffset:y + line.height]];
+            captionsBelow = YES;
+        }
+        y += line.height;
+        if (captionsBelow) y += captionHeight;
+    }
+    if (!bandLines.count) return nil;
+    return [[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:block.blockIndex
+                                                             kind:block.kind
+                                                     headingLevel:block.level
+                                                     tableRowInfo:nil
+                                                       bandLayout:YES
+                                                            lines:bandLines];
 }
 
 - (NSArray<SPDFMarkdownPaginationItem*>*)measureRenderedDocument:(SPDFMarkdownRenderedDocument*)document
@@ -363,12 +470,18 @@ static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<S
                                                                                 xOffset:NSMinX(usedRect)
                                                                          baselineOffset:baseline]];
                                          }];
-        if (lines.count)
-            [result addObject:[[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:block.blockIndex
-                                                                                kind:block.kind
-                                                                        headingLevel:block.level
-                                                                        tableRowInfo:block.tableRowInfo
-                                                                               lines:lines]];
+        if (lines.count) {
+            // An image row with captions re-shapes into an atomic band whose
+            // caption lines sit centered under their own images.
+            SPDFMarkdownPaginationItem* item =
+                SPDFImageRowItemWithCaptions(block, document.attributedString, layout, container, lines)
+                    ?: [[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:block.blockIndex
+                                                                         kind:block.kind
+                                                                 headingLevel:block.level
+                                                                 tableRowInfo:block.tableRowInfo
+                                                                        lines:lines];
+            [result addObject:item];
+        }
     }
     return result;
 }
