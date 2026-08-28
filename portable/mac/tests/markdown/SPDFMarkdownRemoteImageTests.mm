@@ -129,6 +129,34 @@ int main(void) {
                                                     atIndex:pairRange.location + 2
                                              effectiveRange:nil] isEqual:@"https://example.test/images/two.png"],
                        @"row placeholders keep their target metadata");
+            // Pending boxes participate in the row-width fit at their
+            // placeholder size: two maximumImageWidth boxes cannot share one
+            // line, so both scale down by one common factor to fit the row
+            // budget — the layout holds steady while the downloads land, and
+            // the rerender re-fits from the decoded, capped sizes.
+            NSTextAttachment* pairOneBox = [pending.attributedString attribute:NSAttachmentAttributeName
+                                                                        atIndex:pairRange.location
+                                                                 effectiveRange:nil];
+            NSTextAttachment* pairTwoBox = [pending.attributedString attribute:NSAttachmentAttributeName
+                                                                        atIndex:pairRange.location + 2
+                                                                 effectiveRange:nil];
+            CGFloat boxFactor = pairOneBox.bounds.size.width / options.maximumImageWidth;
+            SPDFExpect(pairOneBox != nil && pairTwoBox != nil && boxFactor < 1.0 && boxFactor >= 0.45,
+                       @"a pending placeholder row scales below the placeholder width, never below the floor");
+            SPDFExpect(pairOneBox && pairTwoBox &&
+                           fabs(pairTwoBox.bounds.size.width - pairOneBox.bounds.size.width) < 0.001 &&
+                           fabs(pairOneBox.bounds.size.height -
+                                options.remoteImagePlaceholderHeight * boxFactor) < 0.01 &&
+                           fabs(pairTwoBox.bounds.size.height -
+                                options.remoteImagePlaceholderHeight * boxFactor) < 0.01,
+                       @"both pending boxes shrink by one common factor from their placeholder size");
+            CGFloat boxSpaceWidth =
+                [[pending.attributedString attributedSubstringFromRange:NSMakeRange(pairRange.location + 1, 1)]
+                    size].width;
+            SPDFExpect(pairOneBox && pairTwoBox &&
+                           pairOneBox.bounds.size.width + boxSpaceWidth + pairTwoBox.bounds.size.width <=
+                               options.maximumImageWidth + 0.5,
+                       @"the fitted placeholder row's total width stays within the row budget");
         }
 
         // Title attributes surface as tooltips on the attachment and on links.
