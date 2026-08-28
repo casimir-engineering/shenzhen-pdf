@@ -9,34 +9,18 @@ static NSColor* SPDFRGB(unsigned int hex) {
                                alpha:1];
 }
 
-static NSColor* SPDFDynamicColor(NSString* name, NSColor* light, NSColor* dark) {
-    return [NSColor colorWithName:name
-                  dynamicProvider:^NSColor*(NSAppearance* appearance) {
-                    NSAppearanceName best = [appearance
-                        bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]];
-                    return [best isEqualToString:NSAppearanceNameDarkAqua] ? dark : light;
-                  }];
-}
-
+// The Markdown page is white paper in every app appearance (PDF parity), so
+// screen, print and export decorations share one concrete light palette.
 @implementation SPDFMarkdownTheme
-+ (NSColor*)printCodeBoxFillColor { return SPDFRGB(0xF6F8FA); }
-+ (NSColor*)printCodeBoxStrokeColor { return SPDFRGB(0xD0D7DE); }
-+ (NSColor*)printHeadingRuleColor { return SPDFRGB(0xD8DEE4); }
-+ (NSColor*)codeBoxFillColor {
-    return SPDFDynamicColor(@"SPDFMarkdownCodeBoxFill", SPDFRGB(0xF6F8FA), SPDFRGB(0x151B23));
-}
-+ (NSColor*)codeBoxStrokeColor {
-    return SPDFDynamicColor(@"SPDFMarkdownCodeBoxStroke", SPDFRGB(0xD0D7DE), SPDFRGB(0x3D444D));
-}
-+ (NSColor*)codeControlFillColor {
-    return SPDFDynamicColor(@"SPDFMarkdownCodeControlFill", SPDFRGB(0xEAEEF2), SPDFRGB(0x212830));
-}
-+ (NSColor*)codeControlStrokeColor {
-    return SPDFDynamicColor(@"SPDFMarkdownCodeControlStroke", SPDFRGB(0xD0D7DE), SPDFRGB(0x3D444D));
-}
-+ (NSColor*)headingRuleColor {
-    return SPDFDynamicColor(@"SPDFMarkdownHeadingRule", SPDFRGB(0xD8DEE4), SPDFRGB(0x3D444D));
-}
++ (NSColor*)codeBoxFillColor { return SPDFRGB(0xF6F8FA); }
++ (NSColor*)codeBoxStrokeColor { return SPDFRGB(0xD0D7DE); }
++ (NSColor*)headingRuleColor { return SPDFRGB(0xD8DEE4); }
++ (NSColor*)codeControlFillColor { return SPDFRGB(0xEAEEF2); }
++ (NSColor*)codeControlStrokeColor { return SPDFRGB(0xD0D7DE); }
++ (NSColor*)codeControlTextColor { return SPDFRGB(0x59636E); }
++ (NSColor*)printCodeBoxFillColor { return self.codeBoxFillColor; }
++ (NSColor*)printCodeBoxStrokeColor { return self.codeBoxStrokeColor; }
++ (NSColor*)printHeadingRuleColor { return self.headingRuleColor; }
 @end
 
 @implementation SPDFMarkdownPageDecoration

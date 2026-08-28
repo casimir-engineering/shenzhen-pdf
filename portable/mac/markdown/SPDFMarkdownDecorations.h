@@ -12,16 +12,17 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownPageDecorationType) {
     SPDFMarkdownPageDecorationTypeHeadingRule,
 };
 
-// GitHub-flavored page chrome colors. The dynamic colors resolve per appearance
-// for the screen canvas; the print variants are the concrete light palette that
-// export and Print always use on white paper.
+// GitHub-flavored page chrome colors. The Markdown page renders as white paper
+// in every app appearance (PDF parity), so screen, print and export all use
+// this one concrete light palette. The print-prefixed names are aliases kept
+// for the export/Print call sites.
 @interface SPDFMarkdownTheme : NSObject
 + (NSColor*)codeBoxFillColor;
 + (NSColor*)codeBoxStrokeColor;
-// Quiet chrome for interactive controls drawn inside a code box: a touch
-// darker than the box fill in light mode and a touch lighter in dark mode.
+// Quiet chrome for the interactive language control drawn inside a code box.
 + (NSColor*)codeControlFillColor;
 + (NSColor*)codeControlStrokeColor;
++ (NSColor*)codeControlTextColor;
 + (NSColor*)headingRuleColor;
 + (NSColor*)printCodeBoxFillColor;
 + (NSColor*)printCodeBoxStrokeColor;

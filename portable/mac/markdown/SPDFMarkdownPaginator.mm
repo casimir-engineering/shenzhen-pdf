@@ -403,10 +403,13 @@ static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<S
                                                                                        actualGlyphRange:nil];
                                            characterRange = NSIntersectionRange(characterRange, block.attributedRange);
                                            if (!characterRange.length) return;
+                                           // locationForGlyphAtIndex: is already relative to the line
+                                           // fragment origin; subtracting NSMinY(rect) again would zero
+                                           // the baseline of every line after the document's first.
                                            NSPoint glyphLocation =
                                                [layout locationForGlyphAtIndex:lineGlyphRange.location];
                                            CGFloat lineHeight = MAX(NSHeight(rect), NSHeight(usedRect));
-                                           CGFloat baseline = MIN(lineHeight, MAX(0, glyphLocation.y - NSMinY(rect)));
+                                           CGFloat baseline = MIN(lineHeight, MAX(0, glyphLocation.y));
                                            [lines addObject:[[SPDFMarkdownTextLine alloc]
                                                                 initWithAttributedRange:characterRange
                                                                                  height:lineHeight
