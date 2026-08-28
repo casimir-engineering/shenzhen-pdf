@@ -61,6 +61,8 @@ int main(void) {
                             "![Insecure](http://example.test/images/no.png)\n\n"
                             "![Inline data](data:image/png;base64,AAAA)\n\n"
                             "[safe link](https://example.test/page \"Link tip\")\n\n"
+                            "![Pair one](https://example.test/images/one.png)\n"
+                            "![Pair two](https://example.test/images/two.png)\n\n"
                             "[id]: https://example.test/images/dojocat.jpg \"The Dojocat\"\n";
         NSError* error = nil;
         SPDFMarkdownParser* parser = [SPDFMarkdownParser new];
@@ -101,6 +103,24 @@ int main(void) {
                                                                   effectiveRange:nil];
             SPDFExpect(pendingStyle.alignment == NSTextAlignmentCenter,
                        @"a pending placeholder centers like the real image will");
+        }
+
+        // A paragraph of several pending remote images follows the same figure
+        // rules as decoded images: each placeholder box stacks as its own
+        // centered figure with its caption below it.
+        NSRange pairRange = [pendingText rangeOfString:@"\uFFFC\nPair one\n\uFFFC\nPair two"];
+        SPDFExpect(pairRange.location != NSNotFound,
+                   @"multiple pending images in one paragraph stack as figures with captions below");
+        if (pairRange.location != NSNotFound) {
+            NSParagraphStyle* pairBoxStyle = [pending.attributedString attribute:NSParagraphStyleAttributeName
+                                                                         atIndex:pairRange.location
+                                                                  effectiveRange:nil];
+            NSParagraphStyle* pairCaptionStyle = [pending.attributedString attribute:NSParagraphStyleAttributeName
+                                                                             atIndex:pairRange.location + 2
+                                                                      effectiveRange:nil];
+            SPDFExpect(pairBoxStyle.alignment == NSTextAlignmentCenter &&
+                           pairCaptionStyle.alignment == NSTextAlignmentCenter,
+                       @"stacked pending placeholders and their captions center like real figures");
         }
 
         // Title attributes surface as tooltips on the attachment and on links.

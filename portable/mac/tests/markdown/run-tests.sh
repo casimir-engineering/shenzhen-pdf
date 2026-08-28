@@ -46,6 +46,7 @@ for TEST in \
     SPDFMarkdownParserTests \
     SPDFMarkdownLanguageTests \
     SPDFMarkdownRendererTests \
+    SPDFMarkdownImageFigureTests \
     SPDFMarkdownRemoteImageTests \
     SPDFMarkdownPaginatorTests \
     SPDFMarkdownTableLayoutTests \
