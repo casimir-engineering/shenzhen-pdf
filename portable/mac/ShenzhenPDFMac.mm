@@ -2443,7 +2443,12 @@ static void spdf_discard_launch_prerender(void) {
         _aboutPanel.contentView = content;
 
         NSImageView* iconView = [[NSImageView alloc] initWithFrame:NSZeroRect];
-        iconView.image = NSApp.applicationIconImage;
+        // Load the icon from this bundle's own resources: applicationIconImage
+        // can resolve through the LaunchServices icon cache, which may carry a
+        // stale prohibitory badge from a mid-rebuild registration.
+        NSString* iconPath = [NSBundle.mainBundle pathForResource:@"AppIcon" ofType:@"icns"];
+        NSImage* bundleIcon = iconPath ? [[NSImage alloc] initWithContentsOfFile:iconPath] : nil;
+        iconView.image = bundleIcon ?: NSApp.applicationIconImage;
         iconView.imageScaling = NSImageScaleProportionallyUpOrDown;
         iconView.translatesAutoresizingMaskIntoConstraints = NO;
 
