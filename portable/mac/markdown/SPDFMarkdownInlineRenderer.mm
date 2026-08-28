@@ -109,24 +109,43 @@ static NSDictionary* SPDFCaptionAttributes(SPDFMarkdownRenderContext* context) {
     };
 }
 
+// How a paragraph's images flow, decided by the paragraph's shape. A
+// paragraph whose only meaningful content is ONE image is a centered figure
+// with the alt text as a caption line below the artwork. A paragraph whose
+// only meaningful content is TWO OR MORE images keeps them inline (CommonMark
+// images are inline elements): they flow side by side in one center-aligned
+// paragraph, separated by the source's spaces/soft breaks and wrapping when
+// the printable width runs out — badge rows depend on this — with no visible
+// captions. Images mixed into sentence text keep plain inline flow, also
+// caption-free.
+typedef NS_ENUM(NSInteger, SPDFMarkdownImageFlow) {
+    SPDFMarkdownImageFlowInline = 0,
+    SPDFMarkdownImageFlowFigure,
+    SPDFMarkdownImageFlowRow,
+};
+
+static NSNumber* SPDFImageLayoutRoleForFlow(SPDFMarkdownImageFlow flow) {
+    if (flow == SPDFMarkdownImageFlowFigure) return @(SPDFMarkdownImageLayoutRoleFigure);
+    if (flow == SPDFMarkdownImageFlowRow) return @(SPDFMarkdownImageLayoutRoleImageRow);
+    return nil;
+}
+
 static void SPDFAppendImageAttachment(SPDFMarkdownRenderContext* context, SPDFMarkdownInlineRun* run,
-                                      NSTextAttachment* attachment, NSString* target, BOOL figure) {
+                                      NSTextAttachment* attachment, NSString* target,
+                                      SPDFMarkdownImageFlow flow) {
     NSMutableAttributedString* attached = [[NSMutableAttributedString alloc]
         initWithAttributedString:[NSAttributedString attributedStringWithAttachment:attachment]];
     [attached addAttribute:SPDFMarkdownImageTargetAttribute value:target range:NSMakeRange(0, 1)];
     if (run.title.length) [attached addAttribute:NSToolTipAttributeName value:run.title range:NSMakeRange(0, 1)];
-    if (figure) {
-        [attached addAttribute:SPDFMarkdownImageLayoutAttribute
-                         value:@(SPDFMarkdownImageLayoutRoleFigure)
-                         range:NSMakeRange(0, 1)];
-    }
+    NSNumber* role = SPDFImageLayoutRoleForFlow(flow);
+    if (role) [attached addAttribute:SPDFMarkdownImageLayoutAttribute value:role range:NSMakeRange(0, 1)];
     [context.output appendAttributedString:attached];
-    if (figure && run.text.length) {
+    if (flow == SPDFMarkdownImageFlowFigure && run.text.length) {
         // GitHub renders figure images with the alt text as a real caption on
         // its own line below the artwork instead of flowing to the artwork's
-        // right. Genuinely inline images (mixed into sentence text) show no
-        // visible alt text at all, GitHub-style: the alt survives as the
-        // attachment's tooltip/target metadata only.
+        // right. Row and genuinely inline images show no visible alt text at
+        // all, GitHub-style: the alt survives as the attachment's
+        // tooltip/target metadata only.
         SPDFMarkdownAppend(context, @"\n",
                            @{SPDFMarkdownImageLayoutAttribute: @(SPDFMarkdownImageLayoutRoleFigure)});
         SPDFMarkdownAppend(context, run.text, SPDFCaptionAttributes(context));
@@ -137,21 +156,22 @@ static BOOL SPDFIsWhitespaceRun(SPDFMarkdownInlineRun* run) {
     return [run.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length == 0;
 }
 
-// A paragraph whose only meaningful content is images (one or several,
-// separated by nothing but whitespace and soft breaks) renders each image as
-// its own standalone centered figure; images embedded mid-sentence keep
-// inline flow.
-static BOOL SPDFBlockIsImageFigureParagraph(SPDFMarkdownBlock* block) {
-    if (block.kind != SPDFMarkdownBlockKindParagraph) return NO;
+// Classifies a paragraph by its image shape: images-only paragraphs (nothing
+// but images and whitespace/soft breaks) become a single-image figure or a
+// multi-image inline row; anything else keeps plain inline flow.
+static SPDFMarkdownImageFlow SPDFBlockImageFlow(SPDFMarkdownBlock* block) {
+    if (block.kind != SPDFMarkdownBlockKindParagraph) return SPDFMarkdownImageFlowInline;
     NSUInteger imageRuns = 0;
     for (SPDFMarkdownInlineRun* run in block.runs) {
         if (run.traits & SPDFMarkdownInlineTraitImage) ++imageRuns;
-        else if (!SPDFIsWhitespaceRun(run)) return NO;
+        else if (!SPDFIsWhitespaceRun(run)) return SPDFMarkdownImageFlowInline;
     }
-    return imageRuns >= 1;
+    if (imageRuns == 0) return SPDFMarkdownImageFlowInline;
+    return imageRuns == 1 ? SPDFMarkdownImageFlowFigure : SPDFMarkdownImageFlowRow;
 }
 
-static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownInlineRun* run, BOOL figure) {
+static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownInlineRun* run,
+                               SPDFMarkdownImageFlow flow) {
     NSString* destination = run.destination ?: @"";
     NSURL* resolvedURL = nil;
     NSImage* image = [context.resourceStore imageForTarget:destination resolvedURL:&resolvedURL];
@@ -165,7 +185,7 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
                        ![context.options.failedRemoteImageTargets containsObject:remoteKey];
         if (pending) {
             SPDFAppendImageAttachment(context, run, SPDFPendingRemoteImageAttachment(context, run.text),
-                                      destination, figure);
+                                      destination, flow);
             return;
         }
         NSMutableDictionary* attributes = [@{
@@ -175,8 +195,9 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
         } mutableCopy];
         if (run.title.length) attributes[NSToolTipAttributeName] = run.title;
         // The text placeholder follows the same layout rules as the artwork it
-        // stands in for: centered inside a figure, inline flow otherwise.
-        if (figure) attributes[SPDFMarkdownImageLayoutAttribute] = @(SPDFMarkdownImageLayoutRoleFigure);
+        // stands in for: centered inside a figure or row, inline flow
+        // otherwise.
+        attributes[SPDFMarkdownImageLayoutAttribute] = SPDFImageLayoutRoleForFlow(flow);
         SPDFMarkdownAppend(context,
                            [NSString stringWithFormat:@"[Image: %@]", run.text.length ? run.text : @"untitled"],
                            attributes);
@@ -188,11 +209,11 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
     attachment.image = image;
     attachment.bounds = NSMakeRect(0, 0, image.size.width * scale, image.size.height * scale);
     NSString* target = resolvedURL.isFileURL ? resolvedURL.path : (resolvedURL.absoluteString ?: destination);
-    SPDFAppendImageAttachment(context, run, attachment, target, figure);
+    SPDFAppendImageAttachment(context, run, attachment, target, flow);
 }
 
 void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block) {
-    BOOL figures = SPDFBlockIsImageFigureParagraph(block);
+    SPDFMarkdownImageFlow flow = SPDFBlockImageFlow(block);
     for (SPDFMarkdownInlineRun* run in block.runs) {
         if (context.cancellationToken.isCancelled) return;
         if (!(run.traits & SPDFMarkdownInlineTraitImage)) {
@@ -203,25 +224,27 @@ void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdo
                 SPDFMarkdownRenderMathRun(context, run);
                 continue;
             }
-            // Whitespace padding around figure images would keep a figure
+            // Whitespace padding around a figure image would keep the figure
             // paragraph from starting at its attachment (and carry the
-            // uncentered base style), so figure paragraphs drop it.
-            if (!figures) SPDFMarkdownAppend(context, run.text, SPDFRunAttributes(context, run));
+            // uncentered base style), so figures drop it. Rows keep the
+            // source's spaces/soft breaks (a soft break is already a space by
+            // now) so their images flow side by side, exactly like words.
+            if (flow != SPDFMarkdownImageFlowFigure)
+                SPDFMarkdownAppend(context, run.text, SPDFRunAttributes(context, run));
             continue;
         }
-        SPDFRenderImageRun(context, run, figures);
-        // Every figure ends its own paragraph, so several images in one source
-        // paragraph stack as independent centered figures (with each caption
-        // below its own artwork) and paginate line by line instead of moving
-        // as one giant atomic paragraph.
-        if (figures) SPDFMarkdownAppend(context, @"\n", @{});
+        SPDFRenderImageRun(context, run, flow);
+        // A figure ends its own paragraph so the caption line's spacing rules
+        // apply below it; rows stay one paragraph and wrap naturally.
+        if (flow == SPDFMarkdownImageFlowFigure) SPDFMarkdownAppend(context, @"\n", @{});
     }
 }
 
-// Re-derives the centered figure/caption paragraph styles after the leaf
+// Re-derives the centered figure/caption/row paragraph styles after the leaf
 // renderer has applied the block's base style across its whole range. The
 // figure paragraph keeps only a small gap above its caption; the caption
-// paragraph keeps the block's own spacing below the figure.
+// paragraph keeps the block's own spacing below the figure; a multi-image row
+// paragraph simply centers.
 void SPDFMarkdownApplyImageBlockStyles(SPDFMarkdownRenderContext* context, NSRange range,
                                        NSParagraphStyle* baseStyle) {
     [context.output

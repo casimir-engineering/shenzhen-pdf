@@ -207,8 +207,8 @@ int main(void) {
             attribute:SPDFMarkdownCodeLanguageAttribute atIndex:unknown.attributedRange.location effectiveRange:nil];
         SPDFExpect([language isEqualToString:@"python"], @"picker override re-renders an untagged fence");
 
-        // Local-image figure layout (standalone figures, stacked multi-image
-        // paragraphs, inline images) is covered by SPDFMarkdownImageFigureTests.
+        // Local-image layout (standalone figures, side-by-side multi-image
+        // rows, inline images) is covered by SPDFMarkdownImageFigureTests.
 
         SPDFMarkdownParser* parser = [SPDFMarkdownParser new];
         SPDFMarkdownDocumentModel* centeredTableModel =

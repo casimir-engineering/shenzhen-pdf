@@ -2,10 +2,12 @@
 
 #import "../../markdown/SPDFMarkdownDocument.h"
 
-// Local-image figure layout: standalone and images-only paragraphs render as
-// centered figures with the alt text as a centered caption line below the
-// artwork, several images in one paragraph stack as independent figures, and
-// images mixed into sentence text keep inline flow with no visible caption.
+// Local-image layout by paragraph shape: a single-image paragraph renders as
+// a centered figure with the alt text as a centered caption line below the
+// artwork; a paragraph of several images keeps them inline, CommonMark-style,
+// flowing side by side in one center-aligned paragraph with no visible
+// captions; and images mixed into sentence text keep plain inline flow, also
+// caption-free.
 
 static void SPDFExpectSearchCorrespondence(SPDFMarkdownDocument* document, NSString* query) {
     NSArray* matches = [document searchForQuery:query caseSensitive:YES];
@@ -33,7 +35,7 @@ static NSURL* SPDFCreateImageDocument(void) {
     for (NSUInteger index = 0; index < 200; ++index)
         [source appendString:@"![Local pixels](local.png)\n\n"];
     [source appendString:@"![Budgeted out](second.png)\n\n"];
-    [source appendString:@"![First stacked](local.png)\n![Second stacked](local.png)\n\n"];
+    [source appendString:@"![Badge one](local.png)\n![Badge two](local.png)\n\n"];
     [source appendString:@"Inline sentence with ![Inline art](local.png) image continues.\n"];
     [source writeToFile:[directory stringByAppendingPathComponent:@"image.md"]
              atomically:YES encoding:NSUTF8StringEncoding error:nil];
@@ -65,8 +67,8 @@ int main(void) {
                            @"each cached image remains constrained to render bounds");
             }
         }];
-        // 200 repeated figures + the two stacked figures + the inline image
-        // all reference local.png and share one decoded NSImage.
+        // 200 repeated figures + the two row images + the inline image all
+        // reference local.png and share one decoded NSImage.
         SPDFExpect(attachmentCount == 203 && allAttachmentsShared,
                    @"repeated image references reuse one decoded image rather than multiplying memory");
         SPDFExpect([imageDocument.renderedDocument.attributedString.string containsString:@"[Image: Budgeted out]"],
@@ -133,75 +135,68 @@ int main(void) {
                        fabs(captionFragment.xOffset + captionWidth / 2 - printableWidth / 2) < 2.0,
                    @"the caption centers within the printable width instead of hanging at the image's right");
 
-        // A paragraph containing several images (with nothing but whitespace
-        // between them) stacks each image as its own centered figure with its
-        // caption directly below it, in order — never as one giant inline
-        // paragraph whose captions float beside the artwork.
-        NSRange stackedRange =
-            [figureString.string rangeOfString:@"\uFFFC\nFirst stacked\n\uFFFC\nSecond stacked"];
-        SPDFExpect(stackedRange.location != NSNotFound,
-                   @"a multi-image paragraph renders each image with its own caption below it, in order");
-        NSUInteger firstStackedIndex = stackedRange.location;
-        NSUInteger firstStackedCaption = firstStackedIndex + 2;
-        NSUInteger secondStackedIndex = firstStackedCaption + [@"First stacked" length] + 1;
-        NSUInteger secondStackedCaption = secondStackedIndex + 2;
-        if (stackedRange.location != NSNotFound) {
-            for (NSNumber* index in @[
-                     @(firstStackedIndex), @(firstStackedCaption), @(secondStackedIndex), @(secondStackedCaption)
-                 ]) {
-                NSParagraphStyle* stackedStyle = [figureString attribute:NSParagraphStyleAttributeName
-                                                                 atIndex:index.unsignedIntegerValue
-                                                          effectiveRange:nil];
-                SPDFExpect(stackedStyle.alignment == NSTextAlignmentCenter,
-                           @"every stacked figure and caption paragraph is center-aligned");
+        // A paragraph containing several images (with nothing but whitespace/
+        // soft breaks between them) keeps them inline, CommonMark-style: the
+        // images flow side by side in one paragraph -- the soft break renders
+        // as a plain space -- with no visible alt captions, and the row
+        // paragraph center-aligns as a group.
+        NSRange rowRange = [figureString.string rangeOfString:@"\uFFFC \uFFFC"];
+        SPDFExpect(rowRange.location != NSNotFound,
+                   @"a multi-image paragraph flows its images side by side separated by a space");
+        SPDFExpect(![figureString.string containsString:@"Badge one"] &&
+                       ![figureString.string containsString:@"Badge two"],
+                   @"a multi-image paragraph shows no visible alt captions");
+        if (rowRange.location != NSNotFound) {
+            NSUInteger firstImageIndex = rowRange.location;
+            NSUInteger secondImageIndex = rowRange.location + 2;
+            for (NSNumber* index in @[ @(firstImageIndex), @(secondImageIndex) ]) {
+                NSParagraphStyle* rowStyle = [figureString attribute:NSParagraphStyleAttributeName
+                                                             atIndex:index.unsignedIntegerValue
+                                                      effectiveRange:nil];
+                SPDFExpect(rowStyle.alignment == NSTextAlignmentCenter,
+                           @"the multi-image row paragraph is center-aligned");
             }
-            SPDFMarkdownPageFragment* (^fragmentForIndex)(NSUInteger, NSUInteger*) =
-                ^SPDFMarkdownPageFragment*(NSUInteger characterIndex, NSUInteger* pageIndexOut) {
-                  for (NSUInteger pageIndex = 0; pageIndex < figurePlan.pages.count; ++pageIndex) {
-                      for (SPDFMarkdownPageFragment* fragment in figurePlan.pages[pageIndex].fragments) {
+            SPDFExpect([[figureString attribute:SPDFMarkdownImageTargetAttribute
+                                        atIndex:secondImageIndex
+                                 effectiveRange:nil] hasSuffix:@"local.png"],
+                       @"row images keep their target metadata");
+            SPDFMarkdownPageFragment* (^fragmentForIndex)(NSUInteger) =
+                ^SPDFMarkdownPageFragment*(NSUInteger characterIndex) {
+                  for (SPDFMarkdownPage* page in figurePlan.pages) {
+                      for (SPDFMarkdownPageFragment* fragment in page.fragments) {
                           if (fragment.attributedRange.length &&
-                              NSLocationInRange(characterIndex, fragment.attributedRange)) {
-                              if (pageIndexOut) *pageIndexOut = pageIndex;
+                              NSLocationInRange(characterIndex, fragment.attributedRange))
                               return fragment;
-                          }
                       }
                   }
                   return nil;
                 };
-            NSUInteger stackedPages[4] = {0, 0, 0, 0};
-            SPDFMarkdownPageFragment* firstArt = fragmentForIndex(firstStackedIndex, &stackedPages[0]);
-            SPDFMarkdownPageFragment* firstStackedCaptionFragment =
-                fragmentForIndex(firstStackedCaption, &stackedPages[1]);
-            SPDFMarkdownPageFragment* secondArt = fragmentForIndex(secondStackedIndex, &stackedPages[2]);
-            SPDFMarkdownPageFragment* secondStackedCaptionFragment =
-                fragmentForIndex(secondStackedCaption, &stackedPages[3]);
-            SPDFExpect(firstArt && firstStackedCaptionFragment && secondArt && secondStackedCaptionFragment &&
-                           firstArt != firstStackedCaptionFragment && secondArt != secondStackedCaptionFragment &&
-                           firstStackedCaptionFragment != secondArt,
-                       @"each stacked image and each stacked caption paginates as its own fragment");
-            SPDFExpect(firstArt && firstStackedCaptionFragment &&
-                           (stackedPages[1] > stackedPages[0] ||
-                            firstStackedCaptionFragment.pageYOffset >
-                                firstArt.pageYOffset + firstArt.height - 0.5),
-                       @"the first stacked caption sits strictly below its own image");
-            SPDFExpect(secondArt && secondStackedCaptionFragment &&
-                           (stackedPages[3] > stackedPages[2] ||
-                            secondStackedCaptionFragment.pageYOffset >
-                                secondArt.pageYOffset + secondArt.height - 0.5),
-                       @"the second stacked caption sits strictly below its own image");
-            SPDFExpect(firstStackedCaptionFragment && secondArt &&
-                           (stackedPages[2] > stackedPages[1] ||
-                            secondArt.pageYOffset > firstStackedCaptionFragment.pageYOffset - 0.5),
-                       @"the second figure starts below the first figure's caption");
-            NSTextAttachment* stackedAttachment = [figureString attribute:NSAttachmentAttributeName
-                                                                  atIndex:firstStackedIndex
+            SPDFMarkdownPageFragment* firstRowFragment = fragmentForIndex(firstImageIndex);
+            SPDFMarkdownPageFragment* secondRowFragment = fragmentForIndex(secondImageIndex);
+            SPDFExpect(firstRowFragment != nil && secondRowFragment != nil,
+                       @"both row images land in pagination fragments");
+            SPDFExpect(firstRowFragment && secondRowFragment && firstRowFragment == secondRowFragment,
+                       @"both row images share one line fragment band");
+            if (firstRowFragment && firstRowFragment == secondRowFragment) {
+                NSAttributedString* rowLine =
+                    [figureString attributedSubstringFromRange:firstRowFragment.attributedRange];
+                CTLineRef line = SPDFMarkdownCreateFragmentLine(rowLine);
+                CGFloat lineWidth = (CGFloat)CTLineGetTypographicBounds(line, NULL, NULL, NULL) -
+                                    (CGFloat)CTLineGetTrailingWhitespaceWidth(line);
+                CGFloat firstX = CTLineGetOffsetForStringIndex(
+                    line, (CFIndex)(firstImageIndex - firstRowFragment.attributedRange.location), NULL);
+                CGFloat secondX = CTLineGetOffsetForStringIndex(
+                    line, (CFIndex)(secondImageIndex - firstRowFragment.attributedRange.location), NULL);
+                CFRelease(line);
+                NSTextAttachment* rowAttachment = [figureString attribute:NSAttachmentAttributeName
+                                                                  atIndex:firstImageIndex
                                                            effectiveRange:nil];
-            SPDFExpect(firstArt && secondArt && stackedAttachment &&
-                           fabs(firstArt.xOffset -
-                                (printableWidth - stackedAttachment.bounds.size.width) / 2) < 1.0 &&
-                           fabs(secondArt.xOffset -
-                                (printableWidth - stackedAttachment.bounds.size.width) / 2) < 1.0,
-                       @"both stacked images center within the printable width");
+                SPDFExpect(rowAttachment != nil && firstX < 0.5 &&
+                               secondX > firstX + rowAttachment.bounds.size.width + 0.5,
+                           @"the second image sits to the first image's right, past its width plus the space");
+                SPDFExpect(fabs(firstRowFragment.xOffset + lineWidth / 2 - printableWidth / 2) < 2.0,
+                           @"the image row centers as a group within the printable width");
+            }
         }
 
         // An image genuinely mixed into sentence text keeps inline flow and
