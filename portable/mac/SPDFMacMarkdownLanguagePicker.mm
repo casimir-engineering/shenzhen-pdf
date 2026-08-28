@@ -2,35 +2,34 @@
 
 #import "markdown/SPDFMarkdownLanguage.h"
 
+static const CGFloat kSPDFLanguagePickerWidth = 240.0;
+static const CGFloat kSPDFLanguagePickerHeight = 300.0;
+
 @interface SPDFMacMarkdownLanguagePickerController () <NSTableViewDataSource,
                                                        NSTableViewDelegate,
-                                                       NSSearchFieldDelegate>
+                                                       NSSearchFieldDelegate,
+                                                       NSPopoverDelegate>
 @end
 
 @implementation SPDFMacMarkdownLanguagePickerController {
     SPDFMarkdownLanguagePickerModel* _model;
     NSSearchField* _searchField;
     NSTableView* _tableView;
+    NSPopover* _popover;
     void (^_completion)(SPDFMarkdownLanguage*);
-    __weak NSWindow* _parentWindow;
 }
 
 - (instancetype)init {
-    NSPanel* panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 360, 290)
-                                                styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-                                                  backing:NSBackingStoreBuffered
-                                                    defer:NO];
-    self = [super initWithWindow:panel];
+    self = [super initWithNibName:nil bundle:nil];
     if (!self) return nil;
     _model = [SPDFMarkdownLanguagePickerModel new];
-    panel.title = @"Code Language";
-    panel.releasedWhenClosed = NO;
-    [self buildContent];
+    (void)self.view; // keep the keyboard/model machinery usable before any presentation
     return self;
 }
 
-- (void)buildContent {
-    NSView* content = self.window.contentView;
+- (void)loadView {
+    NSView* content =
+        [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kSPDFLanguagePickerWidth, kSPDFLanguagePickerHeight)];
     _searchField = [[NSSearchField alloc] init];
     _searchField.placeholderString = @"Search languages";
     _searchField.delegate = self;
@@ -39,77 +38,100 @@
 
     NSScrollView* scroll = [[NSScrollView alloc] init];
     scroll.hasVerticalScroller = YES;
-    scroll.borderType = NSBezelBorder;
+    scroll.borderType = NSNoBorder;
+    scroll.drawsBackground = NO;
     scroll.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:scroll];
     _tableView = [[NSTableView alloc] init];
     _tableView.headerView = nil;
-    _tableView.rowHeight = 30.0;
+    _tableView.rowHeight = 24.0;
+    _tableView.backgroundColor = NSColor.clearColor;
     _tableView.dataSource = self;
     _tableView.delegate = self;
     _tableView.target = self;
+    _tableView.action = @selector(tableClicked:);
     _tableView.doubleAction = @selector(acceptSelection:);
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"language"];
     column.resizingMask = NSTableColumnAutoresizingMask;
     [_tableView addTableColumn:column];
     scroll.documentView = _tableView;
 
-    NSButton* cancel = [NSButton buttonWithTitle:@"Cancel" target:self action:@selector(cancel:)];
-    cancel.translatesAutoresizingMaskIntoConstraints = NO;
-    cancel.keyEquivalent = @"\e";
-    [content addSubview:cancel];
-    NSButton* choose = [NSButton buttonWithTitle:@"Choose" target:self action:@selector(acceptSelection:)];
-    choose.translatesAutoresizingMaskIntoConstraints = NO;
-    choose.keyEquivalent = @"\r";
-    [content addSubview:choose];
-
     [NSLayoutConstraint activateConstraints:@[
-        [_searchField.topAnchor constraintEqualToAnchor:content.topAnchor constant:16],
-        [_searchField.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:16],
-        [_searchField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-16],
-        [scroll.topAnchor constraintEqualToAnchor:_searchField.bottomAnchor constant:10],
-        [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:16],
-        [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-16],
-        [scroll.bottomAnchor constraintEqualToAnchor:cancel.topAnchor constant:-14],
-        [cancel.leadingAnchor constraintGreaterThanOrEqualToAnchor:content.leadingAnchor constant:16],
-        [cancel.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-14],
-        [choose.leadingAnchor constraintEqualToAnchor:cancel.trailingAnchor constant:8],
-        [choose.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-16],
-        [choose.centerYAnchor constraintEqualToAnchor:cancel.centerYAnchor],
+        [_searchField.topAnchor constraintEqualToAnchor:content.topAnchor constant:8],
+        [_searchField.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:8],
+        [_searchField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-8],
+        [scroll.topAnchor constraintEqualToAnchor:_searchField.bottomAnchor constant:6],
+        [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+        [scroll.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-4],
     ]];
+    self.preferredContentSize = NSMakeSize(kSPDFLanguagePickerWidth, kSPDFLanguagePickerHeight);
+    self.view = content;
 }
 
 - (NSArray<SPDFMarkdownLanguage*>*)visibleLanguages { return _model.filteredLanguages; }
 - (NSInteger)selectedIndex { return _model.selectedIndex; }
 
-- (void)presentForWindow:(NSWindow*)window completion:(void (^)(SPDFMarkdownLanguage*))completion {
-    if (!window || !completion) return;
+- (void)presentFromView:(NSView*)view
+             anchorRect:(NSRect)anchorRect
+             completion:(void (^)(SPDFMarkdownLanguage*))completion {
+    if (!view || !completion) return;
+    if (_completion) [self finishWithLanguage:nil]; // a pending presentation resolves before re-arming
     _completion = [completion copy];
-    _parentWindow = window;
     [self updateQuery:@""];
-    [window beginSheet:self.window completionHandler:nil];
-    [self.window makeFirstResponder:_searchField];
+    // Without a window there is nothing to anchor to (headless tests); the
+    // keyboard machinery still drives the armed completion.
+    if (!view.window) return;
+    if (!_popover) {
+        _popover = [NSPopover new];
+        _popover.behavior = NSPopoverBehaviorTransient;
+        _popover.delegate = self;
+        _popover.contentViewController = self;
+        _popover.contentSize = NSMakeSize(kSPDFLanguagePickerWidth, kSPDFLanguagePickerHeight);
+    }
+    [_popover showRelativeToRect:(NSIsEmptyRect(anchorRect) ? view.bounds : anchorRect)
+                          ofView:view
+                   preferredEdge:NSRectEdgeMaxY];
+    [_searchField.window makeFirstResponder:_searchField];
 }
 
-- (void)finish:(SPDFMarkdownLanguage*)language {
+- (void)finishWithLanguage:(SPDFMarkdownLanguage*)language {
     void (^completion)(SPDFMarkdownLanguage*) = _completion;
-    _completion = nil;
-    NSWindow* parent = _parentWindow;
-    if (parent && self.window.sheetParent == parent) [parent endSheet:self.window];
-    else [self.window orderOut:nil];
+    _completion = nil; // popoverDidClose: re-enters finishWithLanguage: with nothing left to fire
+    if (_popover.isShown) [_popover close];
     if (completion) completion(language);
+}
+
+// NSPopoverDelegate: clicking outside a transient popover (or Esc) closes it
+// without going through cancel:, so a still-pending completion resolves to nil
+// here — exactly once, because finishWithLanguage: clears it first.
+- (void)popoverDidClose:(NSNotification*)notification {
+    (void)notification;
+    [self finishWithLanguage:nil];
+    // Break the popover <-> contentViewController retain cycle between
+    // presentations; presentFromView: rebuilds the popover on demand.
+    _popover.contentViewController = nil;
+    _popover = nil;
 }
 
 - (void)acceptSelection:(id)sender {
     (void)sender;
     SPDFMarkdownLanguage* language = _model.selectedLanguage;
-    if (language) [self finish:language];
+    if (language) [self finishWithLanguage:language];
     else NSBeep();
 }
 
 - (void)cancel:(id)sender {
     (void)sender;
-    [self finish:nil];
+    [self finishWithLanguage:nil];
+}
+
+- (void)tableClicked:(id)sender {
+    (void)sender;
+    NSInteger row = _tableView.clickedRow;
+    if (row < 0 || row >= (NSInteger)_model.filteredLanguages.count) return;
+    _model.selectedIndex = row;
+    [self acceptSelection:nil];
 }
 
 - (void)updateQuery:(NSString*)query {
@@ -165,6 +187,7 @@
     if (!field) {
         field = [NSTextField labelWithString:@""];
         field.identifier = @"language";
+        field.font = [NSFont systemFontOfSize:13];
     }
     SPDFMarkdownLanguage* language = _model.filteredLanguages[(NSUInteger)row];
     field.stringValue = language.displayName;

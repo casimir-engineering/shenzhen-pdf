@@ -8,8 +8,6 @@
 
 static const CGFloat kSPDFMarkdownPageGap = 18.0;
 static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
-static const CGFloat kSPDFMarkdownCodeControlHeight = 22.0;
-static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
 
 @implementation SPDFMacMarkdownPageCanvas {
     SPDFMarkdownPaginationPlan* _plan;
@@ -66,66 +64,6 @@ static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
 - (void)setSearchRanges:(NSArray<NSValue*>*)searchRanges {
     _searchRanges = [searchRanges copy] ?: @[];
     [self setNeedsDisplay:YES];
-}
-
-- (SPDFMarkdownPageFragment*)codeControlFragmentOnPage:(SPDFMarkdownPage*)page blockIndex:(NSUInteger)blockIndex {
-    for (SPDFMarkdownPageFragment* fragment in page.fragments) {
-        if (fragment.blockIndex != blockIndex || fragment.itemIndex >= _plan.items.count) continue;
-        SPDFMarkdownPaginationItem* item = _plan.items[fragment.itemIndex];
-        if (item.kind == SPDFMarkdownBlockKindCode && !fragment.isContinuation) return fragment;
-    }
-    return nil;
-}
-
-- (NSString*)codeLanguageLabelForBlockIndex:(NSUInteger)blockIndex {
-    for (SPDFMarkdownPage* page in _plan.pages) {
-        for (SPDFMarkdownPageFragment* fragment in page.fragments) {
-            if (fragment.blockIndex != blockIndex || !fragment.attributedRange.length ||
-                NSMaxRange(fragment.attributedRange) > _attributedString.length)
-                continue;
-            NSString* identifier = [_attributedString attribute:SPDFMarkdownCodeLanguageAttribute
-                                                        atIndex:fragment.attributedRange.location
-                                                 effectiveRange:NULL];
-            SPDFMarkdownLanguage* language =
-                [SPDFMarkdownLanguageCatalog.sharedCatalog languageForFenceIdentifier:identifier];
-            return language.displayName ?: (identifier.length ? identifier : @"Plain Text");
-        }
-    }
-    return @"Plain Text";
-}
-
-- (NSRect)codeLanguageControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame {
-    NSString* label = [[self codeLanguageLabelForBlockIndex:fragment.blockIndex] stringByAppendingString:@"  ▾"];
-    NSDictionary* attributes = @{NSFontAttributeName : [NSFont systemFontOfSize:11 weight:NSFontWeightMedium]};
-    CGFloat width = ceil([label sizeWithAttributes:attributes].width) + kSPDFMarkdownCodeControlHorizontalPadding * 2.0;
-    NSRect printable = _plan.configuration.printableRect;
-    return NSMakeRect(NSMinX(pageFrame) + NSMinX(printable),
-                      NSMinY(pageFrame) + NSMinY(printable) + fragment.pageYOffset + 2.0,
-                      MIN(MAX(82.0, width), NSWidth(printable)), kSPDFMarkdownCodeControlHeight);
-}
-
-- (void)drawCodeLanguageControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {
-    for (SPDFMarkdownPageFragment* fragment in page.fragments) {
-        if (fragment.itemIndex >= _plan.items.count) continue;
-        SPDFMarkdownPaginationItem* item = _plan.items[fragment.itemIndex];
-        if (item.kind != SPDFMarkdownBlockKindCode || fragment.isContinuation) continue;
-        NSRect controlRect = [self codeLanguageControlRectForFragment:fragment pageFrame:pageFrame];
-        NSBezierPath* background = [NSBezierPath bezierPathWithRoundedRect:controlRect xRadius:6.0 yRadius:6.0];
-        [NSColor.controlBackgroundColor setFill];
-        [background fill];
-        [NSColor.separatorColor setStroke];
-        background.lineWidth = 0.75;
-        [background stroke];
-        NSString* label = [[self codeLanguageLabelForBlockIndex:fragment.blockIndex] stringByAppendingString:@"  ▾"];
-        NSDictionary* attributes = @{
-            NSFontAttributeName : [NSFont systemFontOfSize:11 weight:NSFontWeightMedium],
-            NSForegroundColorAttributeName : NSColor.labelColor,
-        };
-        NSSize labelSize = [label sizeWithAttributes:attributes];
-        NSPoint origin = NSMakePoint(NSMinX(controlRect) + kSPDFMarkdownCodeControlHorizontalPadding,
-                                     floor(NSMidY(controlRect) - labelSize.height * 0.5));
-        [label drawAtPoint:origin withAttributes:attributes];
-    }
 }
 
 - (NSRect)frameForPageAtIndex:(NSUInteger)pageIndex {
@@ -219,6 +157,7 @@ static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
         [_plan drawPageAtIndex:(NSUInteger)pageIndex attributedString:_attributedString inContext:context];
         CGContextRestoreGState(context);
         SPDFMarkdownPage* page = _plan.pages[(NSUInteger)pageIndex];
+        [self drawDecorationsForPageAtIndex:(NSUInteger)pageIndex pageFrame:pageFrame];
         [self drawRanges:_searchRanges
                    color:[NSColor.systemYellowColor colorWithAlphaComponent:0.32]
                   onPage:page
@@ -230,23 +169,6 @@ static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
                    pageFrame:pageFrame];
         [self drawCodeLanguageControlsOnPage:page pageFrame:pageFrame];
     }
-}
-
-- (NSNumber*)codeLanguageBlockAtPoint:(NSPoint)point {
-    NSSize paper = _plan.configuration.paperSize;
-    NSInteger pageIndex =
-        (NSInteger)floor((point.y - kSPDFMarkdownCanvasInset) / (paper.height + kSPDFMarkdownPageGap));
-    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pageCount) return nil;
-    SPDFMarkdownPage* page = _plan.pages[(NSUInteger)pageIndex];
-    NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];
-    for (SPDFMarkdownPageFragment* fragment in page.fragments) {
-        if (fragment.itemIndex >= _plan.items.count) continue;
-        SPDFMarkdownPaginationItem* item = _plan.items[fragment.itemIndex];
-        if (item.kind != SPDFMarkdownBlockKindCode || fragment.isContinuation) continue;
-        if (NSPointInRect(point, [self codeLanguageControlRectForFragment:fragment pageFrame:pageFrame]))
-            return @(fragment.blockIndex);
-    }
-    return nil;
 }
 
 - (NSUInteger)characterIndexAtPoint:(NSPoint)point {
@@ -382,7 +304,7 @@ static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
             if (fragment.itemIndex >= _plan.items.count) continue;
             SPDFMarkdownPaginationItem* item = _plan.items[fragment.itemIndex];
             if (item.kind == SPDFMarkdownBlockKindCode && !fragment.isContinuation)
-                [self addCursorRect:[self codeLanguageControlRectForFragment:fragment pageFrame:pageFrame]
+                [self addCursorRect:[self codeLanguageControlHitRectForFragment:fragment pageFrame:pageFrame]
                              cursor:NSCursor.pointingHandCursor];
         }
     }
@@ -414,6 +336,13 @@ static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
         wiki = destination != nil;
     }
     if (destination.length && self.activateDestinationHandler) self.activateDestinationHandler(destination, wiki);
+}
+
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    // The page decorations and the code-language control use dynamic theme
+    // colors that must repaint when the system appearance flips.
+    [self setNeedsDisplay:YES];
 }
 
 - (void)keyDown:(NSEvent*)event {

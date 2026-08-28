@@ -37,6 +37,7 @@ $PORTABLE/mac/SPDFMacMarkdownRouting.mm
 $PORTABLE/mac/SPDFMacMarkdownView.mm
 $PORTABLE/mac/SPDFMacMarkdownPanController.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas.mm
+$PORTABLE/mac/SPDFMacMarkdownPageCanvas+Decorations.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Navigation.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Pan.mm
 $PORTABLE/mac/SPDFMacMarkdownPagedView.mm

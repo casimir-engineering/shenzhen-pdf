@@ -76,10 +76,52 @@ int main(void) {
         }
         assert(controlFragment != nil);
         NSRect codePageFrame = [codeCanvas frameForPageAtIndex:0];
-        NSPoint controlPoint =
-            NSMakePoint(NSMinX(codePageFrame) + NSMinX(configuration.printableRect) + 8,
-                        NSMinY(codePageFrame) + NSMinY(configuration.printableRect) + controlFragment.pageYOffset + 10);
+
+        // --- GitHub-style language control: right-aligned inside the code
+        // box's reserved header band ---
+        NSRect printable = configuration.printableRect;
+        NSRect controlFrame = [codeCanvas codeLanguageControlFrameForBlockIndex:codeBlockIndex];
+        assert(!NSIsEmptyRect(controlFrame));
+        CGFloat boxLeft = NSMinX(codePageFrame) + NSMinX(printable);
+        CGFloat boxRight = boxLeft + NSWidth(printable);
+        CGFloat bandTop = NSMinY(codePageFrame) + NSMinY(printable) + controlFragment.pageYOffset;
+        assert(fabs(NSMaxX(controlFrame) - (boxRight - 10.0)) < 0.001); // 10pt off the box's right edge
+        assert(NSMinX(controlFrame) > boxLeft);
+        assert(NSMinY(controlFrame) >= bandTop);                          // inside the header band...
+        assert(NSMaxY(controlFrame) <= bandTop + controlFragment.height); // ...reserved by the layout
+        assert(fabs(NSHeight(controlFrame) - 20.0) < 0.001);
+        assert(fabs(NSMidY(controlFrame) - (bandTop + controlFragment.height * 0.5)) < 1.0); // centered
+        // Non-code blocks expose no control anchor.
+        assert(codeBlockIndex != 0);
+        assert(NSIsEmptyRect([codeCanvas codeLanguageControlFrameForBlockIndex:0]));
+        assert(NSIsEmptyRect([codeCanvas codeLanguageControlFrameForBlockIndex:codeBlockIndex + 999]));
+        NSPoint controlPoint = NSMakePoint(NSMidX(controlFrame), NSMidY(controlFrame));
         assert([[codeCanvas codeLanguageBlockAtPoint:controlPoint] unsignedIntegerValue] == codeBlockIndex);
+        // The control no longer sits at the box's left edge.
+        assert([codeCanvas codeLanguageBlockAtPoint:NSMakePoint(boxLeft + 8, NSMidY(controlFrame))] == nil);
+
+        // --- Popover anchor geometry surfaced through the paged view ---
+        SPDFMacMarkdownPagedView* codeView =
+            [[SPDFMacMarkdownPagedView alloc] initWithPaginationPlan:codePlan
+                                                    attributedString:codeRendered.attributedString];
+        codeView.frame = NSMakeRect(0, 0, 900, 700);
+        [codeView layoutSubtreeIfNeeded];
+        [codeView applyFitMode:SPDFMacMarkdownPageFitPage];
+        SPDFMacMarkdownPageCanvas* codeViewCanvas = (SPDFMacMarkdownPageCanvas*)codeView.documentView;
+        NSRect anchorRect = [codeView codeLanguageControlFrameInViewForBlockIndex:codeBlockIndex];
+        assert(!NSIsEmptyRect(anchorRect));
+        assert(NSIntersectsRect(anchorRect, codeView.bounds));
+        NSRect canvasAnchor = [codeViewCanvas codeLanguageControlFrameForBlockIndex:codeBlockIndex];
+        // The conversion runs through the standard convertRect: chain, so the
+        // anchor scales with the fit magnification.
+        assert(fabs(NSWidth(anchorRect) - NSWidth(canvasAnchor) * codeView.magnification) < 0.5);
+        assert(NSIsEmptyRect([codeView codeLanguageControlFrameInViewForBlockIndex:0]));
+        // A control scrolled outside the viewport stops anchoring.
+        [codeView setZoom:4.0 centeredAtPoint:NSMakePoint(NSMidX(codePageFrame), NSMaxY(codePageFrame))];
+        [codeView.contentView
+            scrollToPoint:NSMakePoint(0, NSHeight(codeViewCanvas.bounds) - NSHeight(codeView.contentView.bounds))];
+        [codeView reflectScrolledClipView:codeView.contentView];
+        assert(NSIsEmptyRect([codeView codeLanguageControlFrameInViewForBlockIndex:codeBlockIndex]));
         SPDFMarkdownPagedTestReader* menuReader = [SPDFMarkdownPagedTestReader new];
         codeCanvas.reader = (id<SPDFMacUIReader>)menuReader;
         NSEvent* contextEvent = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown

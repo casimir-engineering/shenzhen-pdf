@@ -18,6 +18,10 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownPageDecorationType) {
 @interface SPDFMarkdownTheme : NSObject
 + (NSColor*)codeBoxFillColor;
 + (NSColor*)codeBoxStrokeColor;
+// Quiet chrome for interactive controls drawn inside a code box: a touch
+// darker than the box fill in light mode and a touch lighter in dark mode.
++ (NSColor*)codeControlFillColor;
++ (NSColor*)codeControlStrokeColor;
 + (NSColor*)headingRuleColor;
 + (NSColor*)printCodeBoxFillColor;
 + (NSColor*)printCodeBoxStrokeColor;
