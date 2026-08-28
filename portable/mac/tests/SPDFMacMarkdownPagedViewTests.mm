@@ -10,8 +10,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-// SPDFMacMarkdownScrollViewTestSupport.mm: deterministic goToPageAtIndex:
-// regression (partially-visible pages, both alignTop values, clamping).
+// SPDFMacMarkdownScrollViewTestSupport.mm: goToPageAtIndex: regression (partial pages, alignTop values, clamping).
 void spdf_assert_paged_view_go_to_page_scrolls(SPDFMacMarkdownPagedView* view);
 
 @interface SPDFMarkdownPagedTestReader : NSObject
@@ -82,15 +81,13 @@ int main(void) {
         assert(controlFragment != nil);
         NSRect codePageFrame = [codeCanvas frameForPageAtIndex:0];
 
-        // --- GitHub-style language control: right-aligned inside the code
-        // box's reserved header band ---
+        // --- GitHub-style language control: right-aligned inside the code box's reserved header band ---
         NSRect printable = configuration.printableRect;
         NSRect controlFrame = [codeCanvas codeLanguageControlFrameForBlockIndex:codeBlockIndex];
         assert(!NSIsEmptyRect(controlFrame));
         CGFloat boxLeft = NSMinX(codePageFrame) + NSMinX(printable);
         CGFloat boxRight = boxLeft + NSWidth(printable);
-        // The leading band opens with the unpainted outer margin above the box;
-        // the control centers in the in-box header portion below it.
+        // The band opens with the unpainted outer margin above the box; the control centers in the in-box header.
         CGFloat bandTop =
             NSMinY(codePageFrame) + NSMinY(printable) + controlFragment.pageYOffset + SPDFMarkdownCodeBoxOuterMargin;
         CGFloat headerHeight = controlFragment.height - SPDFMarkdownCodeBoxOuterMargin;
@@ -121,8 +118,7 @@ int main(void) {
         assert(!NSIsEmptyRect(anchorRect));
         assert(NSIntersectsRect(anchorRect, codeView.bounds));
         NSRect canvasAnchor = [codeViewCanvas codeLanguageControlFrameForBlockIndex:codeBlockIndex];
-        // The conversion runs through the standard convertRect: chain, so the
-        // anchor scales with the fit magnification.
+        // The conversion runs through the standard convertRect: chain, so the anchor scales with the magnification.
         assert(fabs(NSWidth(anchorRect) - NSWidth(canvasAnchor) * codeView.magnification) < 0.5);
         assert(NSIsEmptyRect([codeView codeLanguageControlFrameInViewForBlockIndex:0]));
         // A control scrolled outside the viewport stops anchoring.
@@ -133,15 +129,9 @@ int main(void) {
         assert(NSIsEmptyRect([codeView codeLanguageControlFrameInViewForBlockIndex:codeBlockIndex]));
         SPDFMarkdownPagedTestReader* menuReader = [SPDFMarkdownPagedTestReader new];
         codeCanvas.reader = (id<SPDFMacUIReader>)menuReader;
-        NSEvent* contextEvent = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown
-                                                   location:controlPoint
-                                              modifierFlags:0
-                                                  timestamp:1.0
-                                               windowNumber:0
-                                                    context:nil
-                                                eventNumber:1
-                                                 clickCount:1
-                                                   pressure:1.0];
+        NSEvent* contextEvent = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown location:controlPoint
+                                              modifierFlags:0 timestamp:1.0 windowNumber:0 context:nil
+                                                eventNumber:1 clickCount:1 pressure:1.0];
         NSMenu* contextMenu = [codeCanvas menuForEvent:contextEvent];
         assert(menuReader.menuRequests == 1);
         assert([contextMenu itemWithTitle:@"Shared Reader Action"] != nil);
@@ -297,9 +287,8 @@ int main(void) {
         for (NSDictionary* chapter in sidebarModel.chapterItems) {
             NSRange chapterRange = [chapter[@"range"] rangeValue];
             NSInteger sidebarPage = [chapter[@"page"] integerValue];
-            // The canvas and the sidebar model must agree on the page for every
-            // heading — the old inclusive range predicate reported the previous
-            // page whenever a heading started a fresh page.
+            // The canvas and the sidebar model must agree on the page for every heading — the old
+            // inclusive range predicate reported the previous page for a heading starting a fresh page.
             assert((NSInteger)[chapterView pageIndexForRange:chapterRange] == sidebarPage);
             if (pageStartChapter || sidebarPage <= 0) continue;
             SPDFMarkdownPageFragment* firstFragment = nil;
@@ -311,8 +300,7 @@ int main(void) {
             if (firstFragment && firstFragment.attributedRange.location == chapterRange.location)
                 pageStartChapter = chapter;
         }
-        // The fixture must contain a heading that starts a new page — the exact
-        // scenario the regression covers.
+        // The fixture must contain a heading that starts a new page — the exact regression scenario.
         assert(pageStartChapter != nil);
         NSRange headingRange = [pageStartChapter[@"range"] rangeValue];
         NSInteger headingPage = [pageStartChapter[@"page"] integerValue];
@@ -330,8 +318,7 @@ int main(void) {
         NSRect headingPageFrame = [chapterCanvas frameForPageAtIndex:(NSUInteger)headingPage];
         CGFloat headingTop =
             NSMinY(headingPageFrame) + NSMinY(configuration.printableRect) + headingFragment.pageYOffset;
-        // The reveal is deterministic and top-aligned, matching the PDF path's
-        // 12pt breathing room above the target.
+        // The reveal is deterministic and top-aligned, matching the PDF path's 12pt breathing room.
         assert(fabs(NSMinY(chapterView.documentVisibleRect) - (headingTop - 12.0)) < 1.5);
 
         // --- Horizontal center lock parity with the PDF view ---
@@ -344,7 +331,7 @@ int main(void) {
         CGFloat centeredX =
             MAX(0.0, MIN(NSMidX(lockPageFrame) - clipWidth * 0.5, chapterView.documentCanvasSize.width - clipWidth));
         // A page narrower than the viewport is pinned centered: an attempted
-        // horizontal scroll must leave the origin at the centered x.
+        // horizontal scroll leaves the origin at the centered x.
         [chapterView scrollByDocumentDeltaX:50.0 deltaY:0.0];
         assert(fabs(NSMinX(chapterView.documentVisibleRect) - centeredX) < 0.5);
         assert(chapterView.horizontalScrollElasticity == NSScrollElasticityNone);
@@ -354,17 +341,15 @@ int main(void) {
         NSRect constrainedBounds = [chapterView.contentView constrainBoundsRect:proposedBounds];
         assert(fabs(NSMinX(constrainedBounds) - centeredX) < 0.5);
 
-        // Zooming out must resize the canvas with the viewport (the stale-width
-        // bug parked the page at the left edge on the next vertical scroll) and
-        // keep the page horizontally centered afterwards.
+        // Zooming out must resize the canvas with the viewport (the stale-width bug parked the page
+        // at the left edge on the next vertical scroll) and keep the page horizontally centered.
         [chapterView setZoom:0.5 centeredAtPoint:NSMakePoint(NSMidX(lockPageFrame), NSMidY(lockPageFrame))];
         assert(chapterView.documentCanvasSize.width >= NSWidth(chapterView.contentView.bounds) - 0.5);
         [chapterView scrollByDocumentDeltaX:0.0 deltaY:300.0];
         NSRect zoomedPageFrame = [chapterCanvas frameForPageAtIndex:(NSUInteger)chapterView.currentPageIndex];
         assert(fabs(NSMidX(zoomedPageFrame) - NSMidX(chapterView.contentView.bounds)) < 1.0);
 
-        // --- Search parity: page-local rects, repaint-only active match, and
-        // the centered find reveal ---
+        // --- Search parity: page-local rects, repaint-only active match, and the centered find reveal ---
         SPDFMacMarkdownPageCanvas* pagedCanvas = (SPDFMacMarkdownPageCanvas*)view.documentView;
         [view applyFitMode:SPDFMacMarkdownPageFitPage];
         NSRange centerMatch = [rendered.attributedString.string rangeOfString:@"Line 100"];
@@ -382,10 +367,9 @@ int main(void) {
         assert(NSWidth(matchLocal) > 8.0 && NSWidth(matchLocal) < NSWidth(printableRect) * 0.5);
         assert(NSHeight(matchLocal) > 4.0);
         assert([view pageLocalRectsForRanges:@[]].count == 0);
-        // Highlight rects hug the glyphs (PDF parity): the fragment band adds
-        // line and paragraph spacing below the text, so a band-tall rect looked
-        // vertically oversized. The rect must stay close to the typographic
-        // ascent+descent (1pt padding) and still contain the baseline band.
+        // Highlight rects hug the glyphs (PDF parity): the fragment band adds line and paragraph
+        // spacing below the text, so a band-tall rect looked vertically oversized. The rect must
+        // stay close to the typographic ascent+descent (1pt padding) and contain the baseline band.
         SPDFMarkdownPageFragment* matchFragment = nil;
         for (SPDFMarkdownPageFragment* fragment in plan.pages[centerPage].fragments)
             if (NSLocationInRange(centerMatch.location, fragment.attributedRange)) matchFragment = fragment;
@@ -423,13 +407,31 @@ int main(void) {
         assert(view.currentPageIndex == (NSInteger)centerPage);
         assert(reportedPage == (NSInteger)centerPage);
         view.viewportChangedHandler = nil;
-        // ...and clamps at both document edges (the small zoom makes the half
-        // viewport taller than the distance from either end's line to the edge).
+        // ...and clamps at both document edges (the small zoom makes the half viewport
+        // taller than the distance from either end's line to the edge).
         [view setZoom:0.4 centeredAtPoint:NSMakePoint(NSMidX(matchPageFrame), matchMidY)];
         assert([view centerRange:[rendered.attributedString.string rangeOfString:@"A4 document"]]);
         assert(NSMinY(view.documentVisibleRect) < 0.5);
         assert([view centerRange:[rendered.attributedString.string rangeOfString:@"Line 239"]]);
         assert(fabs(NSMaxY(view.documentVisibleRect) - view.documentCanvasSize.height) < 1.0);
+
+        // --- CTRunDelegate parity: text after an inline attachment x-maps at its 320pt TextKit
+        // advance (the NSLayoutManager measurement), not at CoreText's tiny default U+FFFC advance ---
+        NSTextAttachment* wideAttachment = [NSTextAttachment new];
+        wideAttachment.bounds = NSMakeRect(0, 0, 320, 24);
+        NSMutableAttributedString* inlineLine =
+            [[NSAttributedString attributedStringWithAttachment:wideAttachment] mutableCopy];
+        [inlineLine appendAttributedString:[[NSAttributedString alloc] initWithString:@"beside\n" attributes:@{}]];
+        SPDFMarkdownTextLine* inlineTextLine = [[SPDFMarkdownTextLine alloc]
+            initWithAttributedRange:NSMakeRange(0, inlineLine.length) height:30 xOffset:0 baselineOffset:24];
+        SPDFMarkdownPaginationItem* inlineItem = [[SPDFMarkdownPaginationItem alloc]
+            initWithBlockIndex:0 kind:SPDFMarkdownBlockKindParagraph headingLevel:0 lines:@[ inlineTextLine ]];
+        SPDFMacMarkdownPageCanvas* inlineCanvas = [[SPDFMacMarkdownPageCanvas alloc]
+            initWithPaginationPlan:[paginator paginateItems:@[ inlineItem ] configuration:configuration]
+                  attributedString:inlineLine];
+        NSArray* beside = [inlineCanvas pageLocalRectsForRanges:@[ [NSValue valueWithRange:NSMakeRange(1, 6)] ]][@0];
+        assert(beside.count == 1);
+        assert(NSMinX([beside.firstObject rectValue]) >= NSMinX(printableRect) + 320.0 - 0.5);
 
         // --- Cursor region resolution (PDF pointer parity, no NSCursor) ---
         NSString* cursorSource =

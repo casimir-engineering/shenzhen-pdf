@@ -32,6 +32,7 @@ $ROOT/portable/mac/markdown/SPDFMarkdownLexersMarkup.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownLexersData.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownRenderer.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownBlockRenderer.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownInlineRenderer.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDecorations.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownTableDecorations.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownTableLayout.mm

@@ -6,154 +6,13 @@
 @implementation SPDFMarkdownRenderContext
 @end
 
-static NSFont* SPDFFontWithTraits(NSFont* font, NSFontTraitMask traits) {
-    return [NSFontManager.sharedFontManager convertFont:font toHaveTrait:traits] ?: font;
-}
-
-static void SPDFAppend(SPDFMarkdownRenderContext* context, NSString* string, NSDictionary* attributes) {
-    if (string.length) {
-        [context.output appendAttributedString:[[NSAttributedString alloc] initWithString:string
-                                                                               attributes:attributes]];
-    }
-}
-
-static CGFloat SPDFScale(SPDFMarkdownRenderContext* context) {
-    CGFloat scale = context.options.fontScale;
-    return scale > 0 ? scale : 1;
-}
-
 static NSMutableParagraphStyle* SPDFStyle(SPDFMarkdownRenderContext* context, NSUInteger depth) {
     NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
-    style.lineSpacing = context.options.lineSpacing * SPDFScale(context);
-    style.paragraphSpacing = context.options.paragraphSpacing * SPDFScale(context);
+    style.lineSpacing = context.options.lineSpacing * SPDFMarkdownRenderScale(context);
+    style.paragraphSpacing = context.options.paragraphSpacing * SPDFMarkdownRenderScale(context);
     style.headIndent = depth * 22;
     style.firstLineHeadIndent = depth * 22;
     return style;
-}
-
-static NSDictionary* SPDFRunAttributes(SPDFMarkdownRenderContext* context, SPDFMarkdownInlineRun* run) {
-    NSFont* font = (run.traits & SPDFMarkdownInlineTraitCode) ? context.codeFont : context.bodyFont;
-    if (run.traits & SPDFMarkdownInlineTraitStrong) font = SPDFFontWithTraits(font, NSBoldFontMask);
-    if (run.traits & SPDFMarkdownInlineTraitEmphasis) font = SPDFFontWithTraits(font, NSItalicFontMask);
-    NSMutableDictionary* attributes = [@{
-        NSFontAttributeName: font,
-        NSForegroundColorAttributeName: context.options.textColor,
-    } mutableCopy];
-    if (run.traits & SPDFMarkdownInlineTraitStrikethrough) attributes[NSStrikethroughStyleAttributeName] = @1;
-    if (run.traits & SPDFMarkdownInlineTraitCode) {
-        attributes[NSBackgroundColorAttributeName] = context.options.codeBackgroundColor;
-    }
-    if (run.traits & SPDFMarkdownInlineTraitLink) {
-        NSURL* URL = [NSURL URLWithString:run.destination ?: @""];
-        NSString* scheme = URL.scheme.lowercaseString;
-        attributes[NSForegroundColorAttributeName] = context.options.linkColor;
-        attributes[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
-        if ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] ||
-            [scheme isEqualToString:@"mailto"]) {
-            attributes[NSLinkAttributeName] = URL;
-        }
-    }
-    if (run.traits & SPDFMarkdownInlineTraitWikiLink) {
-        attributes[SPDFMarkdownWikiLinkAttribute] = run.destination ?: @"";
-    }
-    if (run.title.length) attributes[NSToolTipAttributeName] = run.title;
-    return attributes;
-}
-
-// A remote image whose bytes have not arrived yet renders as a fixed-size
-// GitHub-gray box carrying the alt text, so the download landing later only
-// swaps the attachment instead of reflowing the whole document from nothing.
-// The box is drawn with concrete light-palette colors (like print decoration
-// colors) via a deferred drawing handler, keeping render passes thread-safe.
-static NSTextAttachment* SPDFPendingRemoteImageAttachment(SPDFMarkdownRenderContext* context, NSString* altText) {
-    CGFloat width = MAX(64.0, context.options.maximumImageWidth);
-    CGFloat height = MAX(48.0, context.options.remoteImagePlaceholderHeight);
-    NSString* caption = altText.length ? altText : @"Loading image";
-    NSFont* font = context.bodyFont;
-    NSImage* image = [NSImage
-         imageWithSize:NSMakeSize(width, height)
-               flipped:NO
-        drawingHandler:^BOOL(NSRect rect) {
-          NSBezierPath* box = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(rect, 0.5, 0.5)
-                                                              xRadius:6
-                                                              yRadius:6];
-          [[NSColor colorWithSRGBRed:0xF6 / 255.0 green:0xF8 / 255.0 blue:0xFA / 255.0 alpha:1] setFill];
-          [box fill];
-          [[NSColor colorWithSRGBRed:0xD1 / 255.0 green:0xD9 / 255.0 blue:0xE0 / 255.0 alpha:1] setStroke];
-          [box stroke];
-          NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
-          style.alignment = NSTextAlignmentCenter;
-          style.lineBreakMode = NSLineBreakByTruncatingTail;
-          NSDictionary* attributes = @{
-              NSFontAttributeName: font,
-              NSForegroundColorAttributeName:
-                  [NSColor colorWithSRGBRed:0x59 / 255.0 green:0x63 / 255.0 blue:0x6E / 255.0 alpha:1],
-              NSParagraphStyleAttributeName: style,
-          };
-          CGFloat lineHeight = ceil(font.ascender - font.descender + font.leading);
-          NSRect textRect = NSInsetRect(rect, 12, 0);
-          textRect.origin.y = NSMidY(rect) - lineHeight / 2;
-          textRect.size.height = lineHeight;
-          [caption drawWithRect:textRect options:NSStringDrawingUsesLineFragmentOrigin attributes:attributes context:nil];
-          return YES;
-        }];
-    NSTextAttachment* attachment = [NSTextAttachment new];
-    attachment.image = image;
-    attachment.bounds = NSMakeRect(0, 0, width, height);
-    return attachment;
-}
-
-static void SPDFAppendImageAttachment(SPDFMarkdownRenderContext* context, SPDFMarkdownInlineRun* run,
-                                      NSTextAttachment* attachment, NSString* target) {
-    NSMutableAttributedString* attached = [[NSMutableAttributedString alloc]
-        initWithAttributedString:[NSAttributedString attributedStringWithAttachment:attachment]];
-    [attached addAttribute:SPDFMarkdownImageTargetAttribute value:target range:NSMakeRange(0, 1)];
-    if (run.title.length) [attached addAttribute:NSToolTipAttributeName value:run.title range:NSMakeRange(0, 1)];
-    [context.output appendAttributedString:attached];
-    if (run.text.length) SPDFAppend(context, [@" " stringByAppendingString:run.text], SPDFRunAttributes(context, run));
-}
-
-static void SPDFRenderRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block) {
-    for (SPDFMarkdownInlineRun* run in block.runs) {
-        if (context.cancellationToken.isCancelled) return;
-        if (!(run.traits & SPDFMarkdownInlineTraitImage)) {
-            SPDFAppend(context, run.text, SPDFRunAttributes(context, run));
-            continue;
-        }
-        NSString* destination = run.destination ?: @"";
-        NSURL* resolvedURL = nil;
-        NSImage* image = [context.resourceStore imageForTarget:destination resolvedURL:&resolvedURL];
-        if (!image || image.size.width <= 0 || image.size.height <= 0) {
-            // A well-formed https target with no fetched bytes yet is pending:
-            // reserve real layout space for the asynchronous download. Fetched
-            // bytes that fail to decode, session-reported fetch failures, and
-            // every non-https remote scheme keep the stable text placeholder.
-            NSString* remoteKey = SPDFMarkdownRemoteImageKeyForTarget(destination);
-            BOOL pending = remoteKey != nil && context.resourceStore.remoteImageData[remoteKey] == nil &&
-                           ![context.options.failedRemoteImageTargets containsObject:remoteKey];
-            if (pending) {
-                SPDFAppendImageAttachment(context, run, SPDFPendingRemoteImageAttachment(context, run.text),
-                                          destination);
-                continue;
-            }
-            NSMutableDictionary* attributes = [@{
-                NSFontAttributeName: context.bodyFont,
-                NSForegroundColorAttributeName: context.options.secondaryTextColor,
-                SPDFMarkdownImageTargetAttribute: destination,
-            } mutableCopy];
-            if (run.title.length) attributes[NSToolTipAttributeName] = run.title;
-            SPDFAppend(context, [NSString stringWithFormat:@"[Image: %@]", run.text.length ? run.text : @"untitled"],
-                       attributes);
-            continue;
-        }
-        CGFloat scale = MIN(1.0, MIN(context.options.maximumImageWidth / image.size.width,
-                                     context.options.maximumImageHeight / image.size.height));
-        NSTextAttachment* attachment = [NSTextAttachment new];
-        attachment.image = image;
-        attachment.bounds = NSMakeRect(0, 0, image.size.width * scale, image.size.height * scale);
-        SPDFAppendImageAttachment(context, run, attachment,
-                                  resolvedURL.isFileURL ? resolvedURL.path : (resolvedURL.absoluteString ?: destination));
-    }
 }
 
 static NSColor* SPDFTokenColor(SPDFMarkdownSyntaxTokenKind kind) {
@@ -214,12 +73,12 @@ static void SPDFRenderList(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
             NSForegroundColorAttributeName: context.options.secondaryTextColor,
             NSParagraphStyleAttributeName: SPDFStyle(context, depth),
         } mutableCopy];
-        SPDFAppend(context, marker, markerAttributes);
+        SPDFMarkdownAppend(context, marker, markerAttributes);
 
         BOOL recordedFirstContent = NO;
         if (item.runs.count) {
-            SPDFRenderRuns(context, item);
-            SPDFAppend(context, @"\n", @{});
+            SPDFMarkdownRenderInlineRuns(context, item);
+            SPDFMarkdownAppend(context, @"\n", @{});
             if (record) SPDFRecord(context, item, NSMakeRange(itemStart, context.output.length - itemStart), depth);
             recordedFirstContent = YES;
         }
@@ -243,7 +102,7 @@ static void SPDFRenderList(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
             }
         }
         if (!recordedFirstContent) {
-            SPDFAppend(context, @"\n", @{});
+            SPDFMarkdownAppend(context, @"\n", @{});
             if (record) SPDFRecord(context, item, NSMakeRange(itemStart, context.output.length - itemStart), depth);
         }
     }
@@ -292,7 +151,7 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
                             BOOL record) {
     NSUInteger columnCount = MAX((NSUInteger)1, table.tableColumnCount);
     CGFloat depthIndent = depth * 22;
-    CGFloat rowPadding = kSPDFMarkdownTableRowPadding * SPDFScale(context);
+    CGFloat rowPadding = kSPDFMarkdownTableRowPadding * SPDFMarkdownRenderScale(context);
     NSMutableArray<NSNumber*>* naturalWidths = [NSMutableArray arrayWithCapacity:columnCount];
     for (NSUInteger i = 0; i < columnCount; ++i) [naturalWidths addObject:@(SPDFMarkdownTableMinimumColumnWidth)];
 
@@ -309,14 +168,14 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
             NSMutableArray<NSValue*>* cellRanges = [NSMutableArray arrayWithCapacity:row.children.count];
             NSMutableArray<NSNumber*>* alignments = [NSMutableArray arrayWithCapacity:row.children.count];
             for (NSUInteger i = 0; i < row.children.count; ++i) {
-                SPDFAppend(context, @"\t", @{});
+                SPDFMarkdownAppend(context, @"\t", @{});
                 NSUInteger cellStart = context.output.length;
                 SPDFMarkdownBlock* cell = row.children[i];
-                SPDFRenderRuns(context, cell);
+                SPDFMarkdownRenderInlineRuns(context, cell);
                 NSRange cellRange = NSMakeRange(cellStart, context.output.length - cellStart);
                 if (cell.kind == SPDFMarkdownBlockKindTableHeaderCell) {
                     [context.output addAttribute:NSFontAttributeName
-                                           value:SPDFFontWithTraits(context.bodyFont, NSBoldFontMask)
+                                           value:SPDFMarkdownFontWithTraits(context.bodyFont, NSBoldFontMask)
                                            range:cellRange];
                 }
                 [cellRanges addObject:[NSValue valueWithRange:cellRange]];
@@ -326,7 +185,7 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
                     if (natural > naturalWidths[i].doubleValue) naturalWidths[i] = @(natural);
                 }
             }
-            SPDFAppend(context, @"\n", @{});
+            SPDFMarkdownAppend(context, @"\n", @{});
             [rowBlocks addObject:row];
             [rowRanges addObject:[NSValue valueWithRange:NSMakeRange(start, context.output.length - start)]];
             [rowCellRanges addObject:cellRanges];
@@ -392,14 +251,14 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
         // space; the visible hairline is a page decoration
         // (SPDFMarkdownPageDecorationTypeThematicBreakRule), so it prints as a
         // real rule instead of a run of box-drawing characters.
-        SPDFAppend(context, @"\n",
-                   @{
-                       NSFontAttributeName: context.bodyFont,
-                       NSForegroundColorAttributeName: context.options.secondaryTextColor,
-                   });
+        SPDFMarkdownAppend(context, @"\n",
+                           @{
+                               NSFontAttributeName: context.bodyFont,
+                               NSForegroundColorAttributeName: context.options.secondaryTextColor,
+                           });
     } else {
-        SPDFRenderRuns(context, block);
-        if (![context.output.string hasSuffix:@"\n"]) SPDFAppend(context, @"\n", @{});
+        SPDFMarkdownRenderInlineRuns(context, block);
+        if (![context.output.string hasSuffix:@"\n"]) SPDFMarkdownAppend(context, @"\n", @{});
     }
     NSRange range = NSMakeRange(start, context.output.length - start);
     NSMutableParagraphStyle* style = SPDFStyle(context, depth);
@@ -409,7 +268,7 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
         // Primer's caption-like smallest heading.
         static const CGFloat ratios[] = {1.75, 1.5, 1.25, 1.1, 1.0, 0.9};
         NSUInteger level = MIN(MAX(block.level, (NSUInteger)1), (NSUInteger)6);
-        CGFloat size = context.options.textSize * ratios[level - 1] * SPDFScale(context);
+        CGFloat size = context.options.textSize * ratios[level - 1] * SPDFMarkdownRenderScale(context);
         [context.output addAttribute:NSFontAttributeName
                                value:[NSFont systemFontOfSize:size weight:NSFontWeightSemibold]
                                range:range];
@@ -418,17 +277,17 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
                                    value:context.options.secondaryTextColor
                                    range:range];
         }
-        style.paragraphSpacingBefore = (level <= 2 ? 22 : 16) * SPDFScale(context);
+        style.paragraphSpacingBefore = (level <= 2 ? 22 : 16) * SPDFMarkdownRenderScale(context);
         // H1/H2 carry the underline rule inside their line box, anchored to the
         // baseline — the extra after-spacing is the air below the rule.
-        style.paragraphSpacing = (level <= 2 ? 12 : 8) * SPDFScale(context);
+        style.paragraphSpacing = (level <= 2 ? 12 : 8) * SPDFMarkdownRenderScale(context);
     } else if (block.kind == SPDFMarkdownBlockKindCode) {
         // Fenced code flows as one continuous block: tight line spacing, no
         // inter-line paragraph gaps, and a 12pt inset so the text sits inside
         // the unified code box drawn behind it. The box background itself is a
         // page decoration, not a per-character attribute.
         [context.output addAttribute:NSFontAttributeName value:context.codeFont range:range];
-        style.lineSpacing = 2 * SPDFScale(context);
+        style.lineSpacing = 2 * SPDFMarkdownRenderScale(context);
         style.paragraphSpacing = 0;
         style.paragraphSpacingBefore = 0;
         style.firstLineHeadIndent = depth * 22 + 12;
@@ -442,6 +301,7 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
         }
     }
     [context.output addAttribute:NSParagraphStyleAttributeName value:style range:range];
+    SPDFMarkdownApplyImageBlockStyles(context, range, style);
     if (record) SPDFRecord(context, block, range, depth);
 }
 
@@ -475,9 +335,10 @@ static void SPDFRenderBlock(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
         }
     } else if (block.kind == SPDFMarkdownBlockKindCallout) {
         NSUInteger start = context.output.length;
-        SPDFAppend(context, [(block.calloutTitle ?: block.calloutKind ?: @"Note") stringByAppendingString:@"\n"],
+        SPDFMarkdownAppend(context,
+                           [(block.calloutTitle ?: block.calloutKind ?: @"Note") stringByAppendingString:@"\n"],
                    @{
-                       NSFontAttributeName: SPDFFontWithTraits(context.bodyFont, NSBoldFontMask),
+                       NSFontAttributeName: SPDFMarkdownFontWithTraits(context.bodyFont, NSBoldFontMask),
                        NSForegroundColorAttributeName: context.options.quoteColor,
                    });
         NSRange titleRange = NSMakeRange(start, context.output.length - start);

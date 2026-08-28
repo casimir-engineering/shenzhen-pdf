@@ -91,8 +91,19 @@ int main(void) {
         SPDFExpect(![pendingText containsString:@"[Image: Minion]"] && ![pendingText containsString:@"[Image: Dojo]"],
                    @"pending https images are boxes, not text placeholders");
 
+        // The pending placeholder is a standalone figure: alt text on its own
+        // centered caption line below the box, so the layout matches the
+        // fetched image's figure and never jumps when the download lands.
+        NSRange minionRange = [pending.attributedString.string rangeOfString:@"\uFFFC\nMinion"];
+        if (minionRange.location != NSNotFound) {
+            NSParagraphStyle* pendingStyle = [pending.attributedString attribute:NSParagraphStyleAttributeName
+                                                                         atIndex:minionRange.location
+                                                                  effectiveRange:nil];
+            SPDFExpect(pendingStyle.alignment == NSTextAlignmentCenter,
+                       @"a pending placeholder centers like the real image will");
+        }
+
         // Title attributes surface as tooltips on the attachment and on links.
-        NSRange minionRange = [pending.attributedString.string rangeOfString:@" Minion"];
         __block BOOL attachmentTooltip = NO;
         [pending.attributedString enumerateAttribute:NSToolTipAttributeName
                                              inRange:NSMakeRange(0, pending.attributedString.length)

@@ -2,11 +2,24 @@
 
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreText/CoreText.h>
 
 #import "SPDFMarkdownDecorations.h"
 #import "SPDFMarkdownRenderer.h"
 
 NS_ASSUME_NONNULL_BEGIN
+
+// CoreText gives U+FFFC backed by an NSTextAttachment (which carries no
+// CTRunDelegate) a tiny default advance, so a plain
+// CTLineCreateWithAttributedString would place everything after an inline
+// attachment far left of where the NSLayoutManager measurement that produced
+// the pagination fragments put it. Every CTLine built from a fragment
+// substring — drawing, hit-testing, highlight/selection x-mapping, and the
+// attachment offset math — must go through this shared constructor, which
+// mirrors each attachment's bounds into a CTRunDelegate (width = bounds width,
+// ascent = the bounds' extent above the baseline, descent = any part below),
+// matching how TextKit places attachments on the baseline. Caller releases.
+FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* lineString) CF_RETURNS_RETAINED;
 
 @class SPDFMarkdownTableRowInfo;
 

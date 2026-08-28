@@ -9,6 +9,60 @@
 // paginator: it consumes exactly the fragments and decoration geometry the
 // plan produced, so every consumer stays page-for-page identical.
 
+typedef struct {
+    CGFloat ascent;
+    CGFloat descent;
+    CGFloat width;
+} SPDFAttachmentRunMetrics;
+
+static void SPDFAttachmentRunDealloc(void* metrics) { free(metrics); }
+static CGFloat SPDFAttachmentRunAscent(void* metrics) { return ((SPDFAttachmentRunMetrics*)metrics)->ascent; }
+static CGFloat SPDFAttachmentRunDescent(void* metrics) { return ((SPDFAttachmentRunMetrics*)metrics)->descent; }
+static CGFloat SPDFAttachmentRunWidth(void* metrics) { return ((SPDFAttachmentRunMetrics*)metrics)->width; }
+
+// See SPDFMarkdownPaginator.h: the one shared CTLine constructor for fragment
+// substrings. NSTextAttachment runs get a CTRunDelegate mirroring their bounds
+// so CoreText advances agree with the NSLayoutManager measurement pass.
+CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* lineString) {
+    __block NSMutableAttributedString* adjusted = nil;
+    [lineString enumerateAttribute:NSAttachmentAttributeName
+                           inRange:NSMakeRange(0, lineString.length)
+                           options:0
+                        usingBlock:^(NSTextAttachment* attachment, NSRange range, BOOL* stop) {
+                          (void)stop;
+                          if (!attachment) return;
+                          NSRect bounds = attachment.bounds;
+                          if (bounds.size.width <= 0 || bounds.size.height <= 0) bounds.size = attachment.image.size;
+                          if (bounds.size.width <= 0 || bounds.size.height <= 0) return;
+                          SPDFAttachmentRunMetrics* metrics =
+                              (SPDFAttachmentRunMetrics*)malloc(sizeof(SPDFAttachmentRunMetrics));
+                          if (!metrics) return;
+                          metrics->ascent = MAX(0.0, NSMaxY(bounds));
+                          metrics->descent = MAX(0.0, -NSMinY(bounds));
+                          metrics->width = bounds.size.width;
+                          CTRunDelegateCallbacks callbacks = {
+                              .version = kCTRunDelegateVersion1,
+                              .dealloc = SPDFAttachmentRunDealloc,
+                              .getAscent = SPDFAttachmentRunAscent,
+                              .getDescent = SPDFAttachmentRunDescent,
+                              .getWidth = SPDFAttachmentRunWidth,
+                          };
+                          CTRunDelegateRef delegate = CTRunDelegateCreate(&callbacks, metrics);
+                          if (!delegate) {
+                              free(metrics);
+                              return;
+                          }
+                          if (!adjusted) adjusted = [lineString mutableCopy];
+                          // The attributed string retains the delegate; the
+                          // delegate frees its metrics on its own dealloc.
+                          [adjusted addAttribute:(__bridge NSAttributedStringKey)kCTRunDelegateAttributeName
+                                           value:(__bridge id)delegate
+                                           range:range];
+                          CFRelease(delegate);
+                        }];
+    return CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)(adjusted ?: lineString));
+}
+
 static void SPDFDrawAttachments(NSAttributedString* lineString, CTLineRef line, CGContextRef context, CGFloat lineX,
                                 CGFloat baselineY, CGFloat lineHeight, CGFloat baselineOffset) {
     [lineString enumerateAttribute:NSAttachmentAttributeName
@@ -146,7 +200,7 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
         if (NSMaxRange(fragment.attributedRange) > attributedString.length) continue;
         NSAttributedString* substring =
             SPDFPrintableLine([attributedString attributedSubstringFromRange:fragment.attributedRange]);
-        CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)substring);
+        CTLineRef line = SPDFMarkdownCreateFragmentLine(substring);
         CGFloat x = NSMinX(self.configuration.printableRect) + fragment.xOffset;
         CGFloat y = printableTop - fragment.pageYOffset - fragment.baselineOffset;
         CGContextSaveGState(context);
