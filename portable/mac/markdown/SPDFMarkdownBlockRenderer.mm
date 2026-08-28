@@ -215,6 +215,8 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
     NSMutableArray<NSNumber*>* boundaries = [NSMutableArray arrayWithCapacity:columnCount + 1];
     for (NSUInteger i = 0; i <= columnCount; ++i) [boundaries addObject:@(depth * 22 + i * columnWidth)];
     NSUInteger bodyRowIndex = 0;
+    SPDFMarkdownBlock* firstRowBlock = table.children.firstObject.children.firstObject;
+    SPDFMarkdownBlock* lastRowBlock = table.children.lastObject.children.lastObject;
     for (SPDFMarkdownBlock* section in table.children) {
         BOOL headerSection = section.kind == SPDFMarkdownBlockKindTableHead;
         for (SPDFMarkdownBlock* row in section.children) {
@@ -235,8 +237,14 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
             NSRange range = NSMakeRange(start, context.output.length - start);
             NSMutableParagraphStyle* style = SPDFStyle(context, depth);
             style.alignment = NSTextAlignmentLeft;
-            style.paragraphSpacingBefore = kSPDFMarkdownTableRowPadding * SPDFScale(context);
-            style.paragraphSpacing = kSPDFMarkdownTableRowPadding * SPDFScale(context);
+            // The table's first and last rows also reserve the outer margin
+            // the decoration grid insets away from (unpainted page around the
+            // closed grid).
+            style.paragraphSpacingBefore =
+                kSPDFMarkdownTableRowPadding * SPDFScale(context) +
+                (row == firstRowBlock ? SPDFMarkdownTableOuterMargin : 0);
+            style.paragraphSpacing = kSPDFMarkdownTableRowPadding * SPDFScale(context) +
+                                     (row == lastRowBlock ? SPDFMarkdownTableOuterMargin : 0);
             NSMutableArray<NSTextTab*>* tabs = [NSMutableArray array];
             for (NSUInteger i = 0; i < row.children.count; ++i) {
                 NSTextAlignment alignment = SPDFTextAlignment(row.children[i].tableAlignment);
@@ -251,6 +259,7 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
                 SPDFMarkdownTableRowInfo* info =
                     [[SPDFMarkdownTableRowInfo alloc] initWithTableBlockIndex:table.blockIndex
                                                                     headerRow:headerSection
+                                                                      lastRow:row == lastRowBlock
                                                                  bodyRowIndex:headerSection ? 0 : bodyRowIndex
                                                              columnBoundaries:boundaries];
                 SPDFRecordWithTableRow(context, row, range, depth, info);
@@ -295,7 +304,9 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
                                    range:range];
         }
         style.paragraphSpacingBefore = (level <= 2 ? 22 : 16) * SPDFScale(context);
-        style.paragraphSpacing = (level <= 2 ? 10 : 8) * SPDFScale(context);
+        // H1/H2 carry the underline rule inside their line box, anchored to the
+        // baseline — the extra after-spacing is the air below the rule.
+        style.paragraphSpacing = (level <= 2 ? 12 : 8) * SPDFScale(context);
     } else if (block.kind == SPDFMarkdownBlockKindCode) {
         // Fenced code flows as one continuous block: tight line spacing, no
         // inter-line paragraph gaps, and a 12pt inset so the text sits inside

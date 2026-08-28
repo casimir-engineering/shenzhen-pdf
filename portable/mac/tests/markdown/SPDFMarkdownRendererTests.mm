@@ -108,8 +108,11 @@ int main(void) {
         SPDFExpect(tableStyle.tabStops.count == 2 && tableStyle.tabStops.firstObject.alignment == NSTextAlignmentLeft &&
                        tableStyle.tabStops.lastObject.alignment == NSTextAlignmentRight,
                    @"rendered table gives every column an explicit alignment tab");
-        SPDFExpect(fabs(tableStyle.paragraphSpacingBefore - 6) < 0.001 && fabs(tableStyle.paragraphSpacing - 6) < 0.001,
-                   @"table rows reserve symmetric vertical padding so grid hairlines never touch glyphs");
+        // "Alpha | 42" is the fixture table's only (hence last) body row: it
+        // carries the 6pt row padding plus the table's 10pt outer margin after.
+        SPDFExpect(fabs(tableStyle.paragraphSpacingBefore - 6) < 0.001 &&
+                       fabs(tableStyle.paragraphSpacing - (6 + SPDFMarkdownTableOuterMargin)) < 0.001,
+                   @"table rows reserve row padding, and the last row adds the table outer margin");
         SPDFMarkdownRenderedBlock* headerRowBlock = nil;
         SPDFMarkdownRenderedBlock* bodyRowBlock = nil;
         for (SPDFMarkdownRenderedBlock* block in document.renderedDocument.renderedBlocks) {
@@ -164,8 +167,8 @@ int main(void) {
         NSRange h2 = [canonical rangeOfString:@"Lists and tables"];
         NSParagraphStyle* h2Style = [document.renderedDocument.attributedString
             attribute:NSParagraphStyleAttributeName atIndex:h2.location effectiveRange:nil];
-        SPDFExpect(fabs(h2Style.paragraphSpacingBefore - 22) < 0.001 && fabs(h2Style.paragraphSpacing - 10) < 0.001,
-                   @"H1/H2 headings get 22pt leading and 10pt trailing space");
+        SPDFExpect(fabs(h2Style.paragraphSpacingBefore - 22) < 0.001 && fabs(h2Style.paragraphSpacing - 12) < 0.001,
+                   @"H1/H2 headings get 22pt leading and 12pt trailing space below the underline");
         NSFont* h2Font = [document.renderedDocument.attributedString attribute:NSFontAttributeName
                                                                         atIndex:h2.location
                                                                  effectiveRange:nil];

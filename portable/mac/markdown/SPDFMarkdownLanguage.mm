@@ -53,6 +53,8 @@ static SPDFMarkdownLanguage* SPDFLanguage(NSString* identifier, NSString* name, 
         SPDFLanguage(@"objc", @"Objective-C", @[@"objective-c", @"objectivec", @"m", @"mm"]),
         SPDFLanguage(@"perl", @"Perl", @[@"pl", @"pm"]),
         SPDFLanguage(@"php", @"PHP", @[]),
+        // Selecting Plain Text clears highlighting: its scanner emits no tokens.
+        SPDFLanguage(@"plain", @"Plain Text", @[ @"text", @"txt", @"plaintext", @"plain-text", @"none" ]),
         SPDFLanguage(@"python", @"Python", @[@"py"]),
         SPDFLanguage(@"r", @"R", @[@"rscript"]),
         SPDFLanguage(@"ruby", @"Ruby", @[@"rb"]),

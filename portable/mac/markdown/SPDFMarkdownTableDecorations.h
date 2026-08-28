@@ -20,14 +20,23 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SPDFMarkdownTableRowInfo : NSObject
 @property(nonatomic, readonly) NSUInteger tableBlockIndex;
 @property(nonatomic, readonly, getter=isHeaderRow) BOOL headerRow;
+@property(nonatomic, readonly, getter=isLastRow) BOOL lastRow;
 @property(nonatomic, readonly) NSUInteger bodyRowIndex;
 @property(nonatomic, readonly, copy) NSArray<NSNumber*>* columnBoundaries;
 - (instancetype)initWithTableBlockIndex:(NSUInteger)tableBlockIndex
                               headerRow:(BOOL)headerRow
+                                lastRow:(BOOL)lastRow
                            bodyRowIndex:(NSUInteger)bodyRowIndex
                        columnBoundaries:(NSArray<NSNumber*>*)columnBoundaries NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 @end
+
+// Unpainted page margin kept between the table's closed grid and its
+// neighbors. The block renderer reserves it in the first row's spacing-before
+// and the last row's spacing-after; the decoration geometry insets the grid by
+// the same amount at the table's true top and bottom (page-split portions keep
+// flush edges at the break).
+FOUNDATION_EXPORT const CGFloat SPDFMarkdownTableOuterMargin;
 
 // Appends the GitHub-style table decorations for one table portion on one page:
 // a header-row fill band, subtle stripe fills on odd body rows, then the 1px

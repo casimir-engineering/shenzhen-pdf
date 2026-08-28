@@ -2,15 +2,19 @@
 
 #import "SPDFMarkdownPaginator.h"
 
+const CGFloat SPDFMarkdownTableOuterMargin = 10.0;
+
 @implementation SPDFMarkdownTableRowInfo
 - (instancetype)initWithTableBlockIndex:(NSUInteger)tableBlockIndex
                               headerRow:(BOOL)headerRow
+                                lastRow:(BOOL)lastRow
                            bodyRowIndex:(NSUInteger)bodyRowIndex
                        columnBoundaries:(NSArray<NSNumber*>*)columnBoundaries {
     self = [super init];
     if (self) {
         _tableBlockIndex = tableBlockIndex;
         _headerRow = headerRow;
+        _lastRow = lastRow;
         _bodyRowIndex = bodyRowIndex;
         _columnBoundaries = [columnBoundaries copy];
     }
@@ -51,6 +55,16 @@ NSUInteger SPDFMarkdownAppendTableDecorations(NSArray<SPDFMarkdownPageFragment*>
         index = runEnd + 1;
     }
 
+    // The table's true first row (GFM tables always lead with the header)
+    // reserves the outer margin in its spacing-before; the true last row in its
+    // spacing-after. Inset the grid so that margin stays unpainted page. A
+    // portion that starts or ends at a page split keeps flush edges.
+    if (rowInfos.firstObject.isHeaderRow)
+        rowTops[0] = @(MIN(rowTops.firstObject.doubleValue + SPDFMarkdownTableOuterMargin,
+                           rowBottoms.firstObject.doubleValue));
+    if (rowInfos.lastObject.isLastRow)
+        rowBottoms[rowBottoms.count - 1] = @(MAX(rowBottoms.lastObject.doubleValue - SPDFMarkdownTableOuterMargin,
+                                                 rowTops.lastObject.doubleValue));
     CGFloat tableTop = rowTops.firstObject.doubleValue;
     CGFloat tableBottom = rowBottoms.lastObject.doubleValue;
     NSArray<NSNumber*>* boundaries = tableInfo.columnBoundaries;
