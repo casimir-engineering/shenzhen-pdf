@@ -21,6 +21,7 @@ SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
 
 SOURCES="
 $ROOT/portable/mac/markdown/SPDFMarkdownModel.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownMathTypesetter.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownParser.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownResources.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownLanguage.mm
@@ -44,6 +45,7 @@ $ROOT/portable/mac/markdown/SPDFMarkdownDocument.mm
 
 for TEST in \
     SPDFMarkdownParserTests \
+    SPDFMarkdownMathTests \
     SPDFMarkdownLanguageTests \
     SPDFMarkdownRendererTests \
     SPDFMarkdownImageFigureTests \

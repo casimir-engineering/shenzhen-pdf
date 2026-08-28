@@ -167,6 +167,9 @@ static SPDFMarkdownInlineTraits SPDFSpanTrait(MD_SPANTYPE type) {
         case MD_SPAN_CODE: return SPDFMarkdownInlineTraitCode;
         case MD_SPAN_DEL: return SPDFMarkdownInlineTraitStrikethrough;
         case MD_SPAN_WIKILINK: return SPDFMarkdownInlineTraitWikiLink;
+        case MD_SPAN_LATEXMATH: return SPDFMarkdownInlineTraitMath;
+        case MD_SPAN_LATEXMATH_DISPLAY:
+            return SPDFMarkdownInlineTraitMath | SPDFMarkdownInlineTraitDisplayMath;
         default: return SPDFMarkdownInlineTraitNone;
     }
 }
@@ -447,7 +450,7 @@ static NSString* SPDFExtractFrontMatter(NSString* input, NSDictionary** metadata
     context.maximumNestingDepth = self.maximumNestingDepth;
     MD_PARSER parser = {};
     parser.abi_version = 0;
-    parser.flags = MD_DIALECT_GITHUB | MD_FLAG_WIKILINKS | MD_FLAG_NOHTML;
+    parser.flags = MD_DIALECT_GITHUB | MD_FLAG_WIKILINKS | MD_FLAG_NOHTML | MD_FLAG_LATEXMATHSPANS;
     parser.enter_block = SPDFEnterBlock;
     parser.leave_block = SPDFLeaveBlock;
     parser.enter_span = SPDFEnterSpan;
