@@ -3,6 +3,7 @@
 #import "../SPDFMacMarkdownPageCanvas.h"
 #import "../SPDFMacMarkdownPanController.h"
 #import "../SPDFMacMarkdownPagedView.h"
+#import "../SPDFMacMarkdownSidebarModel.h"
 #import "../markdown/SPDFMarkdown.h"
 
 #include <assert.h>
@@ -56,9 +57,11 @@ int main(void) {
         NSArray* configuredCodeItems = [codePlan.items filteredArrayUsingPredicate:codeItemPredicate];
         assert(configuredCodeItems.count == 1);
         SPDFMarkdownPaginationItem* codeItem = configuredCodeItems.firstObject;
-        assert(codeItem.lines.count == measuredCodeItem.lines.count + 1);
+        assert(codeItem.lines.count == measuredCodeItem.lines.count + 2);
         assert(codeItem.lines.firstObject.attributedRange.length == 0);
         assert(fabs(codeItem.lines.firstObject.height - 34.0) < 0.001);
+        assert(codeItem.lines.lastObject.attributedRange.length == 0);
+        assert(fabs(codeItem.lines.lastObject.height - 8.0) < 0.001);
         SPDFMacMarkdownPageCanvas* codeCanvas =
             [[SPDFMacMarkdownPageCanvas alloc] initWithPaginationPlan:codePlan
                                                      attributedString:codeRendered.attributedString];
@@ -206,6 +209,107 @@ int main(void) {
         assert(!pan.isPanning);
         [view noteExternalScrollPositionChanged];
         assert(view.currentPageIndex >= 0 && view.currentPageIndex < (NSInteger)view.pageCount);
+
+        // --- Chapter reveal parity with the sidebar model (fix for chapter
+        // jumps landing one page early when a heading starts a new page) ---
+        NSMutableString* chapterSource = [NSMutableString string];
+        NSUInteger paragraphsPerSection[] = {18, 21, 24, 27, 30, 33};
+        for (NSUInteger section = 0; section < 6; ++section) {
+            [chapterSource appendFormat:@"## Section %lu\n\n", (unsigned long)section];
+            for (NSUInteger line = 0; line < paragraphsPerSection[section]; ++line)
+                [chapterSource appendFormat:@"Section %lu paragraph %lu carries enough words to fill page space.\n\n",
+                                            (unsigned long)section, (unsigned long)line];
+        }
+        SPDFMarkdownDocumentModel* chapterModel = [parser parseString:chapterSource sourceURL:nil error:nil];
+        SPDFMarkdownRenderedDocument* chapterRendered =
+            [[SPDFMarkdownRenderer new] renderModel:chapterModel
+                                            options:[SPDFMarkdownRenderOptions defaultOptions]
+                                  languageOverrides:nil];
+        NSArray* chapterMeasuredItems = [paginator measureRenderedDocument:chapterRendered
+                                                            containerWidth:NSWidth(configuration.printableRect)];
+        SPDFMarkdownPaginationPlan* chapterPlan = [paginator paginateItems:chapterMeasuredItems
+                                                             configuration:configuration];
+        assert(chapterPlan.pages.count > 2);
+        SPDFMacMarkdownSidebarModel* sidebarModel =
+            [[SPDFMacMarkdownSidebarModel alloc] initWithRenderedDocument:chapterRendered paginationPlan:chapterPlan];
+        assert(sidebarModel.chapterItems.count == 6);
+        SPDFMacMarkdownPagedView* chapterView =
+            [[SPDFMacMarkdownPagedView alloc] initWithPaginationPlan:chapterPlan
+                                                    attributedString:chapterRendered.attributedString];
+        assert([chapterView.contentView isKindOfClass:SPDFDocumentClipView.class]);
+        chapterView.frame = NSMakeRect(0, 0, 900, 700);
+        [chapterView layoutSubtreeIfNeeded];
+        [chapterView applyFitMode:SPDFMacMarkdownPageFitPage];
+        SPDFMacMarkdownPageCanvas* chapterCanvas = (SPDFMacMarkdownPageCanvas*)chapterView.documentView;
+        NSDictionary* pageStartChapter = nil;
+        for (NSDictionary* chapter in sidebarModel.chapterItems) {
+            NSRange chapterRange = [chapter[@"range"] rangeValue];
+            NSInteger sidebarPage = [chapter[@"page"] integerValue];
+            // The canvas and the sidebar model must agree on the page for every
+            // heading — the old inclusive range predicate reported the previous
+            // page whenever a heading started a fresh page.
+            assert((NSInteger)[chapterView pageIndexForRange:chapterRange] == sidebarPage);
+            if (pageStartChapter || sidebarPage <= 0) continue;
+            SPDFMarkdownPageFragment* firstFragment = nil;
+            for (SPDFMarkdownPageFragment* fragment in chapterPlan.pages[(NSUInteger)sidebarPage].fragments) {
+                if (!fragment.attributedRange.length) continue;
+                firstFragment = fragment;
+                break;
+            }
+            if (firstFragment && firstFragment.attributedRange.location == chapterRange.location)
+                pageStartChapter = chapter;
+        }
+        // The fixture must contain a heading that starts a new page — the exact
+        // scenario the regression covers.
+        assert(pageStartChapter != nil);
+        NSRange headingRange = [pageStartChapter[@"range"] rangeValue];
+        NSInteger headingPage = [pageStartChapter[@"page"] integerValue];
+        assert([chapterView revealRange:headingRange]);
+        assert(chapterView.currentPageIndex == headingPage);
+        SPDFMarkdownPageFragment* headingFragment = nil;
+        for (SPDFMarkdownPageFragment* fragment in chapterPlan.pages[(NSUInteger)headingPage].fragments) {
+            if (headingRange.location < fragment.attributedRange.location ||
+                headingRange.location >= NSMaxRange(fragment.attributedRange))
+                continue;
+            headingFragment = fragment;
+            break;
+        }
+        assert(headingFragment != nil);
+        NSRect headingPageFrame = [chapterCanvas frameForPageAtIndex:(NSUInteger)headingPage];
+        CGFloat headingTop =
+            NSMinY(headingPageFrame) + NSMinY(configuration.printableRect) + headingFragment.pageYOffset;
+        // The reveal is deterministic and top-aligned, matching the PDF path's
+        // 12pt breathing room above the target.
+        assert(fabs(NSMinY(chapterView.documentVisibleRect) - (headingTop - 12.0)) < 1.5);
+
+        // --- Horizontal center lock parity with the PDF view ---
+        NSRect lockPageFrame = [chapterCanvas frameForPageAtIndex:(NSUInteger)headingPage];
+        [chapterView setZoom:1.45 centeredAtPoint:NSMakePoint(NSMidX(lockPageFrame), NSMidY(lockPageFrame))];
+        lockPageFrame = [chapterCanvas frameForPageAtIndex:(NSUInteger)chapterView.currentPageIndex];
+        CGFloat clipWidth = NSWidth(chapterView.contentView.bounds);
+        assert(NSWidth(lockPageFrame) <= clipWidth + 0.5);              // page fits the viewport
+        assert(chapterView.documentCanvasSize.width > clipWidth + 0.5); // canvas is pannable
+        CGFloat centeredX =
+            MAX(0.0, MIN(NSMidX(lockPageFrame) - clipWidth * 0.5, chapterView.documentCanvasSize.width - clipWidth));
+        // A page narrower than the viewport is pinned centered: an attempted
+        // horizontal scroll must leave the origin at the centered x.
+        [chapterView scrollByDocumentDeltaX:50.0 deltaY:0.0];
+        assert(fabs(NSMinX(chapterView.documentVisibleRect) - centeredX) < 0.5);
+        assert(chapterView.horizontalScrollElasticity == NSScrollElasticityNone);
+        // The clip view clamp guards the wheel/elastic paths too.
+        NSRect proposedBounds = chapterView.contentView.bounds;
+        proposedBounds.origin.x = 0.0;
+        NSRect constrainedBounds = [chapterView.contentView constrainBoundsRect:proposedBounds];
+        assert(fabs(NSMinX(constrainedBounds) - centeredX) < 0.5);
+
+        // Zooming out must resize the canvas with the viewport (the stale-width
+        // bug parked the page at the left edge on the next vertical scroll) and
+        // keep the page horizontally centered afterwards.
+        [chapterView setZoom:0.5 centeredAtPoint:NSMakePoint(NSMidX(lockPageFrame), NSMidY(lockPageFrame))];
+        assert(chapterView.documentCanvasSize.width >= NSWidth(chapterView.contentView.bounds) - 0.5);
+        [chapterView scrollByDocumentDeltaX:0.0 deltaY:300.0];
+        NSRect zoomedPageFrame = [chapterCanvas frameForPageAtIndex:(NSUInteger)chapterView.currentPageIndex];
+        assert(fabs(NSMidX(zoomedPageFrame) - NSMidX(chapterView.contentView.bounds)) < 1.0);
         puts("SPDFMacMarkdownPagedViewTests passed");
     }
     return 0;

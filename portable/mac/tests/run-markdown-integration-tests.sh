@@ -24,6 +24,7 @@ $PORTABLE/mac/markdown/SPDFMarkdownLanguage.mm
 $PORTABLE/mac/markdown/SPDFMarkdownHighlighter.mm
 $PORTABLE/mac/markdown/SPDFMarkdownRenderer.mm
 $PORTABLE/mac/markdown/SPDFMarkdownBlockRenderer.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDecorations.mm
 $PORTABLE/mac/markdown/SPDFMarkdownPaginator.mm
 $PORTABLE/mac/markdown/SPDFMarkdownAsync.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDocument.mm
@@ -36,6 +37,7 @@ $PORTABLE/mac/SPDFMacMarkdownRouting.mm
 $PORTABLE/mac/SPDFMacMarkdownView.mm
 $PORTABLE/mac/SPDFMacMarkdownPanController.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas.mm
+$PORTABLE/mac/SPDFMacMarkdownPageCanvas+Navigation.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Pan.mm
 $PORTABLE/mac/SPDFMacMarkdownPagedView.mm
 $PORTABLE/mac/SPDFMacRenderedPage.mm
