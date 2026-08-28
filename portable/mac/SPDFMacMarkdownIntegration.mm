@@ -446,21 +446,26 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
 }
 
 - (void)printActiveMarkdown {
-    SPDFMarkdownRenderedDocument* rendered = [self.markdownState.activeSession renderedDocumentForExport];
-    if (![self isMarkdownActive] || !rendered) {
+    SPDFMacMarkdownSession* session = self.markdownState.activeSession;
+    SPDFMarkdownRenderedDocument* rendered = session.renderedDocument;
+    SPDFMarkdownPaginationPlan* plan = session.paginationPlan;
+    if (![self isMarkdownActive] || !rendered || !plan) {
         NSBeep();
         return;
     }
     NSPrintOperation* operation =
-        [SPDFMacMarkdownPrintAdapter printOperationForRenderedDocument:rendered
-                                                             printInfo:[NSPrintInfo.sharedPrintInfo copy]];
+        [SPDFMacMarkdownPrintAdapter printOperationForPaginationPlan:plan
+                                                    attributedString:rendered.attributedString
+                                                           printInfo:[NSPrintInfo.sharedPrintInfo copy]];
     operation.jobTitle = _path.lastPathComponent ?: @"Markdown Document";
     [operation runOperationModalForWindow:_window delegate:nil didRunSelector:NULL contextInfo:NULL];
 }
 
 - (void)saveActiveMarkdownAsPDF {
-    SPDFMarkdownRenderedDocument* rendered = [self.markdownState.activeSession renderedDocumentForExport];
-    if (![self isMarkdownActive] || !rendered) {
+    SPDFMacMarkdownSession* session = self.markdownState.activeSession;
+    SPDFMarkdownRenderedDocument* rendered = session.renderedDocument;
+    SPDFMarkdownPaginationPlan* plan = session.paginationPlan;
+    if (![self isMarkdownActive] || !rendered || !plan) {
         NSBeep();
         return;
     }
@@ -472,10 +477,10 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     panel.allowedContentTypes = @[ UTTypePDF ];
     if ([panel runModal] != NSModalResponseOK) return;
     NSError* error = nil;
-    if (![SPDFMacMarkdownPrintAdapter writeRenderedDocument:rendered
-                                                      toURL:panel.URL
-                                                  printInfo:[NSPrintInfo.sharedPrintInfo copy]
-                                                      error:&error]) {
+    if (![SPDFMacMarkdownPrintAdapter writePaginationPlan:plan
+                                         attributedString:rendered.attributedString
+                                                    toURL:panel.URL
+                                                    error:&error]) {
         [self showError:@"Could not save Markdown as PDF"
                  detail:error.localizedDescription ?: @"The PDF could not be written."];
         return;

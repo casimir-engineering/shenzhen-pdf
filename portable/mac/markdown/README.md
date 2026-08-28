@@ -127,9 +127,11 @@ item portion on that page (covering the spacer bands; a block continuing
 across pages gets one box per portion), and a 1px underline rule beneath level
 1 and 2 headings.
 
-Use `A4PortraitConfiguration` for export or build a configuration from the
-selected printer's paper and printable rectangle. Save as PDF, preview and
-Print should all use the same `SPDFMarkdownPaginationPlan`. Its
+Save as PDF, preview and Print all reuse the session's live on-screen
+`SPDFMarkdownPaginationPlan` (A4 portrait, current font scale, reserved
+language-control band) — a differing printer paper only scales the finished
+page, it never repaginates. Configurations built from asymmetric printable
+rectangles anchor content to `topContentInset`, the true top margin. The plan's
 `drawPageAtIndex:attributedString:inContext:` method draws the decorations
 first (concrete light palette: #F6F8FA/#D0D7DE code boxes, #D8DEE4 rules) and
 then the exact planned ranges into any PDF/print Core Graphics context,

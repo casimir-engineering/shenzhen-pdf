@@ -4,56 +4,45 @@
 
 #import "markdown/SPDFMarkdown.h"
 
-static SPDFMarkdownPageConfiguration* SPDFConfigurationForPrintInfo(NSPrintInfo* info) {
-    NSSize paper = info.paperSize;
-    NSRect printable = info.imageablePageBounds;
-    if (paper.width < 72 || paper.height < 72 || !isfinite(paper.width) || !isfinite(paper.height))
-        return SPDFMarkdownPageConfiguration.A4PortraitConfiguration;
-    if (printable.size.width < 36 || printable.size.height < 36 || NSMaxX(printable) > paper.width + 1 ||
-        NSMaxY(printable) > paper.height + 1)
-        printable = NSMakeRect(36, 36, paper.width - 72, paper.height - 72);
-    return [SPDFMarkdownPageConfiguration configurationForPaperSize:paper printableRect:printable];
-}
+@interface SPDFMacMarkdownPrintView ()
+- (void)fitPlanPaperToPrintInfo:(NSPrintInfo*)info;
+@end
 
-@implementation SPDFMacMarkdownPrintView {
-    NSPrintInfo* _sourcePrintInfo;
-    SPDFMarkdownPaginationPlan* _paginationPlan;
-    NSString* _configurationKey;
-}
+@implementation SPDFMacMarkdownPrintView
 
-- (instancetype)initWithRenderedDocument:(SPDFMarkdownRenderedDocument*)document printInfo:(NSPrintInfo*)printInfo {
-    self = [super initWithFrame:NSMakeRect(0, 0, 595, 842)];
+- (instancetype)initWithPaginationPlan:(SPDFMarkdownPaginationPlan*)plan
+                      attributedString:(NSAttributedString*)attributedString {
+    NSSize paper = plan.configuration.paperSize;
+    NSUInteger pageCount = MAX((NSUInteger)1, plan.pages.count);
+    self = [super initWithFrame:NSMakeRect(0, 0, MAX(1.0, paper.width), MAX(1.0, paper.height) * pageCount)];
     if (self) {
-        _renderedDocument = document;
-        _sourcePrintInfo = [printInfo copy] ?: [NSPrintInfo.sharedPrintInfo copy];
-        [self rebuildPlanForPrintInfo:_sourcePrintInfo];
+        _paginationPlan = plan;
+        _attributedString = [attributedString copy];
     }
     return self;
 }
 
 - (BOOL)isFlipped { return NO; }
-- (SPDFMarkdownPaginationPlan*)paginationPlan { return _paginationPlan; }
 
-- (NSString*)keyForPrintInfo:(NSPrintInfo*)info {
-    NSRect rect = info.imageablePageBounds;
-    return [NSString stringWithFormat:@"%.3f:%.3f:%.3f:%.3f:%.3f:%.3f", info.paperSize.width,
-                                      info.paperSize.height, rect.origin.x, rect.origin.y,
-                                      rect.size.width, rect.size.height];
-}
-
-- (void)rebuildPlanForPrintInfo:(NSPrintInfo*)info {
-    NSString* key = [self keyForPrintInfo:info];
-    if ([key isEqualToString:_configurationKey] && _paginationPlan) return;
-    _configurationKey = key;
-    _paginationPlan = [SPDFMacMarkdownPrintAdapter paginationPlanForRenderedDocument:_renderedDocument
-                                                                            printInfo:info];
+// The plan's paper is authoritative; a differing printer paper only scales
+// the finished page (centered), it never re-flows or re-margins the content.
+- (void)fitPlanPaperToPrintInfo:(NSPrintInfo*)info {
     NSSize paper = _paginationPlan.configuration.paperSize;
-    self.frame = NSMakeRect(0, 0, paper.width, paper.height * MAX((NSUInteger)1, _paginationPlan.pages.count));
+    if (!info || paper.width <= 0 || paper.height <= 0) return;
+    CGFloat savedScaling = info.scalingFactor;
+    info.scalingFactor = 1.0;
+    NSRect imageable = info.imageablePageBounds;
+    info.scalingFactor = savedScaling;
+    if (NSWidth(imageable) < 1 || NSHeight(imageable) < 1) return;
+    CGFloat scale = MIN(NSWidth(imageable) / paper.width, NSHeight(imageable) / paper.height);
+    if (!isfinite(scale) || scale <= 0) return;
+    info.scalingFactor = MIN(1.0, scale);
+    info.horizontallyCentered = YES;
+    info.verticallyCentered = YES;
 }
 
 - (BOOL)knowsPageRange:(NSRangePointer)range {
-    NSPrintInfo* info = NSPrintOperation.currentOperation.printInfo ?: _sourcePrintInfo;
-    [self rebuildPlanForPrintInfo:info];
+    [self fitPlanPaperToPrintInfo:NSPrintOperation.currentOperation.printInfo];
     range->location = 1;
     range->length = MAX((NSUInteger)1, _paginationPlan.pages.count);
     return YES;
@@ -74,7 +63,7 @@ static SPDFMarkdownPageConfiguration* SPDFConfigurationForPrintInfo(NSPrintInfo*
     CGContextRef context = NSGraphicsContext.currentContext.CGContext;
     CGContextSaveGState(context);
     CGContextTranslateCTM(context, pageRect.origin.x, pageRect.origin.y);
-    [_paginationPlan drawPageAtIndex:index attributedString:_renderedDocument.attributedString inContext:context];
+    [_paginationPlan drawPageAtIndex:index attributedString:_attributedString inContext:context];
     CGContextRestoreGState(context);
 }
 
@@ -82,20 +71,13 @@ static SPDFMarkdownPageConfiguration* SPDFConfigurationForPrintInfo(NSPrintInfo*
 
 @implementation SPDFMacMarkdownPrintAdapter
 
-+ (SPDFMarkdownPaginationPlan*)paginationPlanForRenderedDocument:(SPDFMarkdownRenderedDocument*)document
-                                                       printInfo:(NSPrintInfo*)printInfo {
-    SPDFMarkdownPageConfiguration* configuration = SPDFConfigurationForPrintInfo(printInfo ?: NSPrintInfo.sharedPrintInfo);
-    SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
-    NSArray* items = [paginator measureRenderedDocument:document
-                                         containerWidth:NSWidth(configuration.printableRect)];
-    return [paginator paginateItems:items configuration:configuration];
-}
-
-+ (NSPrintOperation*)printOperationForRenderedDocument:(SPDFMarkdownRenderedDocument*)document
-                                             printInfo:(NSPrintInfo*)printInfo {
++ (NSPrintOperation*)printOperationForPaginationPlan:(SPDFMarkdownPaginationPlan*)plan
+                                    attributedString:(NSAttributedString*)attributedString
+                                           printInfo:(NSPrintInfo*)printInfo {
     NSPrintInfo* effectiveInfo = [printInfo copy] ?: [NSPrintInfo.sharedPrintInfo copy];
-    SPDFMacMarkdownPrintView* view = [[SPDFMacMarkdownPrintView alloc] initWithRenderedDocument:document
-                                                                                       printInfo:effectiveInfo];
+    SPDFMacMarkdownPrintView* view = [[SPDFMacMarkdownPrintView alloc] initWithPaginationPlan:plan
+                                                                             attributedString:attributedString];
+    [view fitPlanPaperToPrintInfo:effectiveInfo];
     NSPrintOperation* operation = [NSPrintOperation printOperationWithView:view printInfo:effectiveInfo];
     operation.printPanel.options |= NSPrintPanelShowsPreview | NSPrintPanelShowsPaperSize |
                                     NSPrintPanelShowsOrientation;
@@ -104,12 +86,11 @@ static SPDFMarkdownPageConfiguration* SPDFConfigurationForPrintInfo(NSPrintInfo*
     return operation;
 }
 
-+ (BOOL)writeRenderedDocument:(SPDFMarkdownRenderedDocument*)document
-                        toURL:(NSURL*)URL
-                    printInfo:(NSPrintInfo*)printInfo
-                        error:(NSError**)error {
-    if (!document || !URL.isFileURL) return NO;
-    SPDFMarkdownPaginationPlan* plan = [self paginationPlanForRenderedDocument:document printInfo:printInfo];
++ (BOOL)writePaginationPlan:(SPDFMarkdownPaginationPlan*)plan
+           attributedString:(NSAttributedString*)attributedString
+                      toURL:(NSURL*)URL
+                      error:(NSError**)error {
+    if (!plan || !attributedString || !URL.isFileURL) return NO;
     NSMutableData* data = [NSMutableData data];
     CGDataConsumerRef consumer = CGDataConsumerCreateWithCFData((__bridge CFMutableDataRef)data);
     CGRect mediaBox = CGRectMake(0, 0, plan.configuration.paperSize.width, plan.configuration.paperSize.height);
@@ -118,7 +99,7 @@ static SPDFMarkdownPageConfiguration* SPDFConfigurationForPrintInfo(NSPrintInfo*
     if (!context) return NO;
     for (NSUInteger page = 0; page < plan.pages.count; ++page) {
         CGPDFContextBeginPage(context, NULL);
-        [plan drawPageAtIndex:page attributedString:document.attributedString inContext:context];
+        [plan drawPageAtIndex:page attributedString:attributedString inContext:context];
         CGPDFContextEndPage(context);
     }
     CGPDFContextClose(context);
