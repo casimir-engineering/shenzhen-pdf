@@ -78,8 +78,13 @@ spdf_verify_release_asset() {
   local expected_draft="$5"
   local tmp remote_dmg expected_hash actual_hash metadata
 
-  metadata="$(gh api "repos/$repository/releases/tags/$tag" \
-    --jq '[.tag_name, .draft, .prerelease, ([.assets[] | select(.name == "'"$expected_name"'")] | length)] | @tsv')"
+  # `gh release view` resolves drafts, which the REST "release by tag name"
+  # endpoint never returns: GitHub only associates a draft with its tag once
+  # the release is published, so verifying a staged draft through that
+  # endpoint always 404s.
+  metadata="$(gh release view "$tag" -R "$repository" \
+    --json tagName,isDraft,isPrerelease,assets \
+    --jq '[.tagName, .isDraft, .isPrerelease, ([.assets[] | select(.name == "'"$expected_name"'")] | length)] | @tsv')"
   [[ "$metadata" == "$tag"$'\t'"$expected_draft"$'\t'"false"$'\t'"1" ]] || \
     spdf_release_fail "GitHub release $tag is not in the expected draft=$expected_draft, prerelease=false state with exactly one $expected_name asset" || return 1
 

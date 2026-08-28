@@ -164,7 +164,17 @@ apply_visibility_flags() {
 
 if [[ "$1 $2" == "release view" ]]; then
   [[ -f "$FAKE_RELEASE_STATE" ]] || exit 1
-  cat "$FAKE_RELEASE_STATE"
+  # `gh release view` resolves drafts as well as published releases. Asking
+  # for the asset list yields the four-field verification tuple; the metadata
+  # form stays three fields.
+  if [[ "$*" == *assets* ]]; then
+    read_release_state
+    asset_count=0
+    [[ -f "$FAKE_REMOTE_ASSET" ]] && asset_count=1
+    printf '%s\t%s\t%s\t%s\n' "$state_tag" "$state_draft" "$state_prerelease" "$asset_count"
+  else
+    cat "$FAKE_RELEASE_STATE"
+  fi
 elif [[ "$1 $2" == "release create" ]]; then
   state_tag="$3"
   state_draft=false
@@ -184,6 +194,13 @@ elif [[ "$1 $2" == "release upload" ]]; then
   fi
 elif [[ "$1" == api ]]; then
   read_release_state
+  # Real GitHub: "get a release by tag name" never resolves a draft, because a
+  # draft carries no server-side tag until it is published. Mirroring that 404
+  # keeps the verification path off this endpoint.
+  if [[ "$*" == */releases/tags/* && "$state_draft" == true ]]; then
+    printf 'gh: Not Found (HTTP 404)\n' >&2
+    exit 1
+  fi
   asset_count=0
   [[ -f "$FAKE_REMOTE_ASSET" ]] && asset_count=1
   printf '%s\t%s\t%s\t%s\n' "$state_tag" "$state_draft" "$state_prerelease" "$asset_count"
