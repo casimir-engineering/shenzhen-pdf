@@ -166,7 +166,12 @@ int main(int argc, char** argv) {
             // The seam is optional: without it the plain informativeText above
             // is the entire contract.
         }
-        expectBool(@"alert has no accessory", alert.accessoryView == nil, YES);
+        // A zero-height accessory pins the wrap width so the alert grows in
+        // height rather than width.
+        expectBool(@"alert width-pinning accessory",
+                   alert.accessoryView != nil && NSWidth(alert.accessoryView.frame) == 380 &&
+                       NSHeight(alert.accessoryView.frame) == 0,
+                   YES);
         expectString(@"alert primary action", alert.buttons.firstObject.title, @"Install and Relaunch");
 
         // 28. Attributed notes: **spans** become bold runs, markers never leak,

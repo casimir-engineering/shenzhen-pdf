@@ -150,8 +150,10 @@ NSAlert* spdf_make_update_available_alert(NSString* tag, NSString* runningVersio
     NSString* plainNotes = spdf_format_release_notes_for_alert(releaseBody);
     // The full body stays in the informative text: NSAlert keeps its roomy
     // legacy layout for long informative text, and the attributed setter
-    // preserves the notes' bold spans. If the attributed seam ever goes away,
-    // the plain text below still renders the identical content.
+    // preserves the notes' bold spans at the standard informative size. A
+    // paragraph style caps the wrap width so the window stays narrow and
+    // grows in height instead. If the attributed seam ever goes away, the
+    // plain text below still renders the identical content.
     alert.informativeText = plainNotes.length ? [sentence stringByAppendingFormat:@"\n\n%@", plainNotes] : sentence;
     NSAttributedString* notes = spdf_attributed_release_notes_for_alert(releaseBody, NSFont.smallSystemFontSize);
     if (notes.length) {
@@ -164,6 +166,9 @@ NSAlert* spdf_make_update_available_alert(NSString* tag, NSString* runningVersio
         } @catch (NSException* exception) {
             // Plain informativeText above remains the complete fallback.
         }
+        // A zero-height accessory pins the layout width; text wraps to it and
+        // the alert adapts in height.
+        alert.accessoryView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 0)];
     }
     [alert addButtonWithTitle:@"Install and Relaunch"];
     [alert addButtonWithTitle:@"Skip This Version"];
