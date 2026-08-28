@@ -3,6 +3,8 @@ cmd/build-ci.ts	520	exception	Cohesive CI build orchestration; additions should 
 cmd/build-with-mingw.ts	1838	legacy	Legacy MinGW build orchestration; freeze growth pending extraction.
 cmd/gen-settings.ts	1796	legacy	Legacy settings generator; freeze growth while generated outputs stay excluded.
 cmd/trans-dl.ts	517	exception	Translation download workflow is cohesive; additions should use separate modules.
+portable/core/spdf_yaml.c	1147	legacy	Shared strict-YAML-subset state codec (parser + emitter + JSON bridge + flock-guarded migration) serving both frontends, +17 lines for mtime-aware re-migration when a pre-YAML build wrote newer JSON; freeze growth pending parse/emit split.
+portable/mac/tests/SPDFStateYamlTests.mm	672	exception	Cohesive YAML codec regression suite (round-trips, emit shape, migration incl. downgrade re-migration, rejection cases) in one deterministic harness.
 premake5.files.lua	1503	legacy	Legacy first-party Premake source manifest and project composition; freeze growth pending target-specific extraction.
 premake5.lua	1084	legacy	Legacy first-party Premake build configuration; freeze growth pending platform-target extraction.
 portable/core/shenzhen_pdf_core.c	3296	legacy	Legacy shared document core; freeze growth pending subsystem extraction.
@@ -16,21 +18,21 @@ portable/linux/gtk4/spdf_ocr.c	707	exception	Cohesive GTK OCR workflow with plat
 portable/linux/gtk4/spdf_palette.c	1267	legacy	Legacy GTK command palette; freeze growth pending model/view split.
 portable/linux/gtk4/spdf_search.c	1258	legacy	Legacy GTK search controller; freeze growth pending worker/view split.
 portable/linux/gtk4/spdf_sidebar.c	1246	legacy	Legacy GTK sidebar controller; freeze growth pending section extraction.
-portable/linux/gtk4/spdf_state.c	1786	legacy	Legacy GTK persistence and session state; freeze growth pending storage split.
+portable/linux/gtk4/spdf_state.c	1831	legacy	Legacy GTK persistence and session state; +45 lines for the YAML state-file boundary (shared codec conversion + legacy JSON auto-migration), freeze growth pending storage split.
 portable/linux/gtk4/spdf_toolchain.c	725	exception	Cohesive Linux toolchain discovery and package-manager integration.
 portable/linux/gtk4/spdf_translate.c	1631	legacy	Legacy GTK translation workflow; freeze growth pending service/UI split.
 portable/linux/gtk4/spdf_updater.c	2369	legacy	Legacy signed updater; freeze growth pending trust/transport/UI split.
 portable/linux/gtk4/spdf_watcher.c	674	exception	Cohesive Linux file-watcher implementation; reload policy lives in spdf_watcher_logic.
 portable/linux/gtk4/spdf_window.c	1357	legacy	Legacy GTK window shell; freeze growth pending action/menu extraction.
-portable/linux/gtk4/tests/spdf_state_test.c	986	exception	Cohesive persistence regression suite; new scenarios should use focused fixtures.
-portable/mac/SPDFMacDelegatePrivate.h	602	exception	Existing private coordinator state contract; new state belongs in focused modules.
+portable/linux/gtk4/tests/spdf_state_test.c	997	exception	Cohesive persistence regression suite; +11 lines for the YAML boundary/migration coverage; new scenarios should use focused fixtures.
+portable/mac/SPDFMacDelegatePrivate.h	605	exception	Existing private coordinator state contract; +3 lines for the YAML state-file migration hook; new state belongs in focused modules.
 portable/mac/SPDFMacDocumentView.mm	925	exception	Cohesive AppKit document input and view implementation; rendering primitives live in SPDFMacPageRendering, exact-viewport fit insets in SPDFMacFitGeometry.
 portable/mac/SPDFMacMinimapView.mm	1014	legacy	Legacy AppKit minimap component; freeze growth pending layout/input split.
 portable/mac/SPDFMacPropertiesPanel.mm	555	exception	Cohesive AppKit document-properties panel.
 portable/mac/SPDFMacTabStripView.mm	1123	legacy	Legacy AppKit tab strip; freeze growth pending layout/input split.
 portable/mac/SPDFMacUIHelpers.mm	1331	legacy	Legacy mixed AppKit helper views; +7 lines for the document clip view's vertical scroll lock (exact-fit no-scroll parity with the horizontal lock), freeze growth pending class extraction.
 portable/mac/SPDFUpdater.mm	1586	legacy	Legacy signed updater; freeze growth pending trust/transport/UI split.
-portable/mac/ShenzhenPDFMac.mm	16862	legacy	Legacy macOS coordinator hotspot; Markdown find branches delegated to SPDFMacMarkdownFindIntegration, deterministic About squircle mask, +10 lines for the stranded-markdown-tab backstop on the openPaths/selectTabAtIndex/restore early-return paths, +37 lines for exact-viewport fit (viewport-height hints, fit-only vertical scroller, vertical scroll lock), no further growth before staged extraction.
+portable/mac/ShenzhenPDFMac.mm	16903	legacy	Legacy macOS coordinator hotspot; Markdown find branches delegated to SPDFMacMarkdownFindIntegration, deterministic About squircle mask, +10 lines for the stranded-markdown-tab backstop on the openPaths/selectTabAtIndex/restore early-return paths, +37 lines for exact-viewport fit (viewport-height hints, fit-only vertical scroller, vertical scroll lock), +39 lines for the YAML state-file boundary (codec conversion + flock-guarded JSON migration), no further growth before staged extraction.
 portable/mac/tests/SPDFMacMarkdownSessionTests.mm	547	exception	Single-binary session lifecycle regression suite; cancellation/self-heal orderings stay cohesive in one deterministic harness.
 src/Accelerators.cpp	773	exception	Inherited accelerator-table implementation is cohesive and stable.
 src/Annotation.cpp	1266	legacy	Legacy Windows annotation model; freeze growth pending extraction.

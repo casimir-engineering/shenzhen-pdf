@@ -43,6 +43,11 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFUpdater.h"
 
 #include "shenzhen_pdf_core.h"
+#include "spdf_yaml.h"
+
+// Defined next to stateObjectFromFile:; declared here because the launch
+// prerender peeks at session.yaml before that point in the file.
+static id spdf_state_object_from_yaml_data(NSData* data);
 
 #include <math.h>
 #include <fcntl.h>
@@ -248,7 +253,7 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
     if (action == @selector(toggleDefaultSidebarForNewDocuments:)) return @"sidebar.left";
     if (action == @selector(toggleDefaultMinimapForNewDocuments:)) return @"map";
     if (action == @selector(toggleSearchJumpsToNearestResult:)) return @"scope";
-    if (action == @selector(openStateJSONFile:)) return @"curlybraces";
+    if (action == @selector(openStateFile:)) return @"curlybraces";
     if (action == @selector(revealSettingsFolder:)) return @"folder";
     if (action == @selector(showShortcutHelp:)) return @"keyboard";
     if (action == @selector(addComment:)) return @"text.bubble";
@@ -609,10 +614,10 @@ static void spdf_discard_launch_prerender(void) {
           // viewport-dependent (fit mode), so prewarm the open only.
           path = initialPath.stringByStandardizingPath;
       } else {
-          // Peek at session.json the same way loadPersistentState resolves the
+          // Peek at session.yaml the same way loadPersistentState resolves the
           // restored window and selected tab.
-          NSData* data = [NSData dataWithContentsOfFile:[self pathForStateFile:@"session.json"]];
-          NSDictionary* session = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+          NSData* data = [NSData dataWithContentsOfFile:[self pathForStateFile:@"session.yaml"]];
+          NSDictionary* session = spdf_state_object_from_yaml_data(data);
           if (![session isKindOfClass:NSDictionary.class]) session = nil;
           NSArray* rawWindows = [session[@"windows"] isKindOfClass:NSArray.class] ? session[@"windows"] : @[];
           NSDictionary* windowState = nil;
@@ -963,7 +968,7 @@ static void spdf_discard_launch_prerender(void) {
     // Read-only shadow copy: the orphaned-temp-copy sweep is deferred to
     // -resumePersistentStateSavesAfterLaunch (after first paint, after tabs are
     // restored, after the catch-up save). Running it here against the stale
-    // on-disk session.json races copy (re)creation on the main thread and could
+    // on-disk session.yaml races copy (re)creation on the main thread and could
     // delete an in-use / just-created copy. See -sweepOrphanedReadOnlyCopies.
     if (!gSPDFWindowControllers) gSPDFWindowControllers = [NSMutableArray array];
     if (![gSPDFWindowControllers containsObject:self]) [gSPDFWindowControllers addObject:self];
@@ -971,7 +976,7 @@ static void spdf_discard_launch_prerender(void) {
     // Suspend persistent-state saves across the whole launch sequence: window
     // construction fires windowDidResize (and sidebar restoration fires split
     // view delegate callbacks) which each trigger a full savePersistentState
-    // cycle (session.lock flock + session.json read + serialize + compare)
+    // cycle (session.lock flock + session.yaml read + serialize + compare)
     // before the first paint. Item 68 batched these into one save at the end
     // of the launch block, but that single flock/read/serialize cycle still
     // ran before the first paint; nothing about the saved state is needed for
@@ -1015,7 +1020,7 @@ static void spdf_discard_launch_prerender(void) {
     // onto screen if it has not drawn yet, and only then does the timer for
     // the non-paint work start. Everything in the timer block was previously
     // queued with plain dispatch_async and could execute before the first
-    // draw: the launch-end persistent-state save (flock + JSON serialize),
+    // draw: the launch-end persistent-state save (flock + state serialize),
     // the default-reader LaunchServices query, and — on first run — the
     // whole shortcut-help panel construction.
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -1334,27 +1339,48 @@ static void spdf_discard_launch_prerender(void) {
     return [[self supportDirectory] stringByAppendingPathComponent:name];
 }
 
-- (id)jsonObjectFromFile:(NSString*)name {
+// State files are YAML on disk (see core/spdf_yaml.h); in memory the app keeps
+// using NSJSONSerialization object graphs, converting at this file boundary.
+// A YAML file that fails to parse behaves exactly like the old corrupt-JSON
+// path: the file is ignored and defaults apply.
+static id spdf_state_object_from_yaml_data(NSData* data) {
+    if (!data) return nil;
+    NSMutableData* terminated = [data mutableCopy];
+    [terminated appendBytes:"" length:1];
+    char* json = spdf_json_from_yaml((const char*)terminated.bytes);
+    if (!json) return nil;
+    NSData* jsonData = [NSData dataWithBytesNoCopy:json length:strlen(json) freeWhenDone:YES];
+    return [NSJSONSerialization JSONObjectWithData:jsonData options:NSJSONReadingMutableContainers error:nil];
+}
+
+- (id)stateObjectFromFile:(NSString*)name {
     double launchStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     NSData* data = [NSData dataWithContentsOfFile:[self pathForStateFile:name]];
     if (!data) {
         if (launchStart > 0.0)
-            spdf_launch_profile_log(@"json %@ missing %.1fms", name, spdf_zoom_profile_now_ms() - launchStart);
+            spdf_launch_profile_log(@"state %@ missing %.1fms", name, spdf_zoom_profile_now_ms() - launchStart);
         return nil;
     }
-    id object = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
+    id object = spdf_state_object_from_yaml_data(data);
     if (launchStart > 0.0) {
-        spdf_launch_profile_log(@"json %@ %lu bytes %.1fms", name, (unsigned long)data.length,
+        spdf_launch_profile_log(@"state %@ %lu bytes %.1fms", name, (unsigned long)data.length,
                                 spdf_zoom_profile_now_ms() - launchStart);
     }
     return object;
 }
 
-- (void)writeJSONObject:(id)object toFile:(NSString*)name {
-    NSData* data = [NSJSONSerialization dataWithJSONObject:object
-                                                   options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys
-                                                     error:nil];
-    if (!data) return;
+- (void)writeStateObject:(id)object toFile:(NSString*)name {
+    // Sorted-keys JSON keeps the converted YAML key order stable across saves,
+    // so the files stay diffable just like the pretty-printed JSON used to be.
+    NSData* jsonData = [NSJSONSerialization dataWithJSONObject:object options:NSJSONWritingSortedKeys error:nil];
+    if (!jsonData) return;
+    NSMutableData* terminated = [jsonData mutableCopy];
+    [terminated appendBytes:"" length:1];
+    char header[128];
+    spdf_state_header_for_file(name.UTF8String, header, sizeof(header));
+    char* yaml = spdf_yaml_from_json((const char*)terminated.bytes, header);
+    if (!yaml) return;
+    NSData* data = [NSData dataWithBytesNoCopy:yaml length:strlen(yaml) freeWhenDone:YES];
     NSString* path = [self pathForStateFile:name];
     if (path.length > 0) {
         NSData* existing = [NSData dataWithContentsOfFile:path];
@@ -1363,12 +1389,23 @@ static void spdf_discard_launch_prerender(void) {
     [data writeToFile:path atomically:YES];
 }
 
+// One-time per-file JSON -> YAML migration, run before anything reads state
+// (including the launch prerender's session peek). Serialized across the
+// app's processes by flock inside spdf_state_migrate_dir, and idempotent: an
+// existing YAML file wins and its JSON sibling is left untouched, unless the
+// JSON is strictly newer (a pre-YAML build ran after the YAML was written) —
+// then it is re-migrated so the user's most recent state wins.
+- (void)migrateStateFilesIfNeeded {
+    static const char* const stems[] = {"settings", "session", "documents", "favorites", "bookmarks"};
+    spdf_state_migrate_dir([self supportDirectory].fileSystemRepresentation, stems, 5);
+}
+
 - (void)loadPersistentState {
-    NSDictionary* settings = [self jsonObjectFromFile:@"settings.json"];
+    NSDictionary* settings = [self stateObjectFromFile:@"settings.yaml"];
     if ([settings isKindOfClass:NSDictionary.class]) {
         NSNumber* fit = settings[@"fitMode"];
         /* viewMode is intentionally not read: single-page view mode was removed
-         * and the app is always continuous. Old settings.json with viewMode=0
+         * and the app is always continuous. Old settings.yaml with viewMode=0
          * (single) are ignored and open as continuous. */
         NSNumber* sidebarWidth = settings[@"sidebarWidth"];
         NSNumber* minimapWidth = settings[@"minimapWidth"];
@@ -1398,7 +1435,7 @@ static void spdf_discard_launch_prerender(void) {
         if (defaultMinimapVisible) _defaultMinimapVisibleForNewDocuments = defaultMinimapVisible.boolValue;
         if (collapseWhitespaceWhenCopyingText)
             _collapseWhitespaceWhenCopyingText = collapseWhitespaceWhenCopyingText.boolValue;
-        /* Missing key (settings.json from an older build) keeps the enabled default. */
+        /* Missing key (settings.yaml from an older build) keeps the enabled default. */
         if (searchJumpsToNearestResult) _searchJumpsToNearestResult = searchJumpsToNearestResult.boolValue;
         if (showShortcutHelp) _showShortcutHelpOnLaunch = showShortcutHelp.boolValue;
         if (autoUpdateEnabled) _autoUpdateEnabled = autoUpdateEnabled.boolValue;
@@ -1439,10 +1476,10 @@ static void spdf_discard_launch_prerender(void) {
         }
     }
 
-    NSArray* favorites = [self jsonObjectFromFile:@"favorites.json"];
+    NSArray* favorites = [self stateObjectFromFile:@"favorites.yaml"];
     if ([favorites isKindOfClass:NSArray.class]) [_favorites addObjectsFromArray:favorites];
 
-    NSDictionary* documents = [self jsonObjectFromFile:@"documents.json"];
+    NSDictionary* documents = [self stateObjectFromFile:@"documents.yaml"];
     if ([documents isKindOfClass:NSDictionary.class])
         _documentStates = [documents mutableCopy];
     else
@@ -1452,7 +1489,7 @@ static void spdf_discard_launch_prerender(void) {
     if (self.detachedTabLaunch) return;
 
     NSMutableDictionary* session =
-        [self normalizedMultiWindowSessionFromObject:[self jsonObjectFromFile:@"session.json"]];
+        [self normalizedMultiWindowSessionFromObject:[self stateObjectFromFile:@"session.yaml"]];
     NSArray* windows = session[@"windows"];
     NSDictionary* windowState = nil;
     if (self.restoreWindowID.length > 0) {
@@ -1656,7 +1693,7 @@ static void spdf_discard_launch_prerender(void) {
 // grant a temporary extension that is lost on quit. To reopen a file later
 // (restored session tabs, recents, favorites, Open Path) we persist a
 // security-scoped bookmark and re-acquire access on the next launch. A single
-// path -> bookmark side table (bookmarks.json) covers every reopen surface
+// path -> bookmark side table (bookmarks.yaml) covers every reopen surface
 // because they all key on the file path. On a non-sandboxed build these are
 // inert: bookmark creation returns nil (no entitlement), so nothing is stored
 // and files open straight from their path.
@@ -1714,7 +1751,7 @@ static void spdf_discard_launch_prerender(void) {
 }
 
 - (void)loadSecurityBookmarks {
-    id stored = [self jsonObjectFromFile:@"bookmarks.json"];
+    id stored = [self stateObjectFromFile:@"bookmarks.yaml"];
     if (![stored isKindOfClass:NSDictionary.class]) return;
     @synchronized(_securityBookmarks) {
         for (NSString* path in (NSDictionary*)stored) {
@@ -1732,7 +1769,7 @@ static void spdf_discard_launch_prerender(void) {
         for (NSString* path in _securityBookmarks)
             out[path] = [_securityBookmarks[path] base64EncodedStringWithOptions:0];
     }
-    [self writeJSONObject:out toFile:@"bookmarks.json"];
+    [self writeStateObject:out toFile:@"bookmarks.yaml"];
 }
 
 - (void)saveDocumentStateForTab:(SPDFDocumentTab*)tab {
@@ -1818,9 +1855,9 @@ static void spdf_discard_launch_prerender(void) {
     int fd = open(lockPath.fileSystemRepresentation, O_CREAT | O_RDWR, 0600);
     if (fd >= 0) flock(fd, LOCK_EX);
     NSMutableDictionary* session =
-        [self normalizedMultiWindowSessionFromObject:[self jsonObjectFromFile:@"session.json"]];
+        [self normalizedMultiWindowSessionFromObject:[self stateObjectFromFile:@"session.yaml"]];
     BOOL changed = block(session);
-    if (changed) [self writeJSONObject:session toFile:@"session.json"];
+    if (changed) [self writeStateObject:session toFile:@"session.yaml"];
     if (fd >= 0) {
         flock(fd, LOCK_UN);
         close(fd);
@@ -1992,7 +2029,7 @@ static void spdf_discard_launch_prerender(void) {
 
     if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
     CGFloat sidebarWidth = spdf_sane_sidebar_width(_sidebarWidth, _splitView ? NSWidth(_splitView.bounds) : 0);
-    [self writeJSONObject:@{
+    [self writeStateObject:@{
         @"version" : @1,
         @"fitMode" : @(_fitMode),
         /* Always continuous now; kept for backward compat (see SPDFMacModels.mm). */
@@ -2019,9 +2056,9 @@ static void spdf_discard_launch_prerender(void) {
         @"markdownFontScale" : @(round(MAX(0.5, MIN(3.0, _markdownFontScale)) * 100.0) / 100.0),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
     }
-                   toFile:@"settings.json"];
-    [self writeJSONObject:_favorites toFile:@"favorites.json"];
-    [self writeJSONObject:_documentStates ?: @{} toFile:@"documents.json"];
+                   toFile:@"settings.yaml"];
+    [self writeStateObject:_favorites toFile:@"favorites.yaml"];
+    [self writeStateObject:_documentStates ?: @{} toFile:@"documents.yaml"];
     [self saveSecurityBookmarks];
 }
 
@@ -2327,12 +2364,12 @@ static void spdf_discard_launch_prerender(void) {
     SPDFMacInstallFileExplorerSettingsMenu(settingsMenu);
     [settingsMenu addItem:[NSMenuItem separatorItem]];
     NSArray<NSString*>* stateFiles =
-        @[ @"settings.json", @"session.json", @"documents.json", @"favorites.json", @"bookmarks.json" ];
+        @[ @"settings.yaml", @"session.yaml", @"documents.yaml", @"favorites.yaml", @"bookmarks.yaml" ];
     for (NSString* stateFile in stateFiles) {
         NSMenuItem* stateItem =
             [settingsMenu addItemWithTitle:[NSString stringWithFormat:@"Open %@...", stateFile]
-                                    action:@selector(openStateJSONFile:)
-                             keyEquivalent:[stateFile isEqualToString:@"settings.json"] ? @"," : @""];
+                                    action:@selector(openStateFile:)
+                             keyEquivalent:[stateFile isEqualToString:@"settings.yaml"] ? @"," : @""];
         stateItem.target = self;
         stateItem.representedObject = stateFile;
     }
@@ -15944,18 +15981,18 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 - (void)openSettingsFile:(id)sender {
     NSMenuItem* item = [NSMenuItem new];
-    item.representedObject = @"settings.json";
-    [self openStateJSONFile:item];
+    item.representedObject = @"settings.yaml";
+    [self openStateFile:item];
 }
 
-- (void)openStateJSONFile:(id)sender {
+- (void)openStateFile:(id)sender {
     [self savePersistentState];
     NSString* name = [sender respondsToSelector:@selector(representedObject)] ? [sender representedObject] : nil;
-    if (![name isKindOfClass:NSString.class] || name.length == 0) name = @"settings.json";
+    if (![name isKindOfClass:NSString.class] || name.length == 0) name = @"settings.yaml";
     NSString* path = [self pathForStateFile:name];
     if (![NSFileManager.defaultManager fileExistsAtPath:path]) {
-        id empty = [name isEqualToString:@"favorites.json"] ? @[] : @{};
-        [self writeJSONObject:empty toFile:name];
+        id empty = [name isEqualToString:@"favorites.yaml"] ? @[] : @{};
+        [self writeStateObject:empty toFile:name];
     }
     NSURL* url = [NSURL fileURLWithPath:path];
     if (![NSWorkspace.sharedWorkspace openURL:url]) {
@@ -16694,7 +16731,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         action == @selector(toggleFullScreen:) || action == @selector(showFavoritesPalette:) ||
         action == @selector(showFindPalette:) || action == @selector(focusFind:) ||
         action == @selector(setCommentAuthor:) || action == @selector(openRecentDocument:) ||
-        action == @selector(openSettingsFile:) || action == @selector(openStateJSONFile:) ||
+        action == @selector(openSettingsFile:) || action == @selector(openStateFile:) ||
         action == @selector(revealSettingsFolder:) || action == @selector(showShortcutHelp:) ||
         action == @selector(makeDefaultPDFReader:) || action == @selector(showPermissionsWizard:) ||
         action == @selector(showAboutPanel:) || action == @selector(checkForUpdates:))
@@ -16848,6 +16885,10 @@ int main(int argc, const char* argv[]) {
                 break;
             }
         }
+        // Migrate any JSON state files to YAML before the first state read
+        // (the prerender below peeks at session.yaml).
+        [delegate migrateStateFilesIfNeeded];
+
         // Start the document prerender before NSApplication init so the
         // background open/render overlaps AppKit startup and window build.
         [delegate startLaunchPrerender];

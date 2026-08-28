@@ -64,6 +64,13 @@ NS_ASSUME_NONNULL_BEGIN
 // an empty selection or when the pasteboard rejects the write.
 - (BOOL)writeSelectionToPasteboard:(NSPasteboard*)pasteboard
                 plainTextTransform:(NSString* (^_Nullable)(NSString* text))transform;
+// The image drawn at `point`, or nil when the point is not over one. Probes
+// the hit character and the one before it (CTLine hit-testing returns a caret
+// index, which lands after the character on a right-half click).
+- (nullable NSImage*)imageAtPoint:(NSPoint)point;
+// Retargets `menu`'s Copy item to copy the image at `point` directly, leaving
+// the selection untouched. No-op when the point is not over an image.
+- (void)spdf_retargetCopyItemInMenu:(NSMenu*)menu forImageAtPoint:(NSPoint)point;
 @end
 
 // Implemented in SPDFMacMarkdownPageCanvas+Decorations.mm: the dynamic-color

@@ -98,4 +98,46 @@ static NSImage* SPDFMarkdownAttachmentImage(NSTextAttachment* attachment) {
     return [pasteboard writeObjects:@[ item ]];
 }
 
+- (NSImage*)imageAtPoint:(NSPoint)point {
+    NSUInteger index = [self characterIndexAtPoint:point];
+    if (index == NSNotFound) return nil;
+    NSAttributedString* string = self.attributedString;
+    // CTLine hit-testing returns a caret index, which lands after the
+    // character for a click on its right half, so probe the index and the one
+    // before it. No selection is read or written: right-click copy is
+    // independent of whatever the user had selected.
+    NSUInteger candidates[2] = {index, index > 0 ? index - 1 : index};
+    for (NSUInteger i = 0; i < 2; ++i) {
+        if (candidates[i] >= string.length) continue;
+        NSImage* image = SPDFMarkdownAttachmentImage([string attribute:NSAttachmentAttributeName
+                                                               atIndex:candidates[i]
+                                                        effectiveRange:NULL]);
+        if (image) return image;
+    }
+    return nil;
+}
+
+- (void)spdf_retargetCopyItemInMenu:(NSMenu*)menu forImageAtPoint:(NSPoint)point {
+    NSImage* image = [self imageAtPoint:point];
+    if (!image) return;
+    for (NSMenuItem* item in menu.itemArray) {
+        if (item.action != @selector(copySelection:) && item.action != @selector(copy:)) continue;
+        item.action = @selector(spdf_copyContextImage:);
+        item.target = self;
+        item.representedObject = image;
+        return;
+    }
+}
+
+- (void)spdf_copyContextImage:(id)sender {
+    NSImage* image = [sender isKindOfClass:NSMenuItem.class] ? ((NSMenuItem*)sender).representedObject : nil;
+    if (![image isKindOfClass:NSImage.class]) {
+        NSBeep();
+        return;
+    }
+    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
+    [pasteboard clearContents];
+    if (![pasteboard writeObjects:@[ image ]]) NSBeep();
+}
+
 @end

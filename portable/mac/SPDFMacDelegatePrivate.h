@@ -340,7 +340,7 @@
     SPDFPrintScalingMode _printScalingMode;
     CGFloat _printCustomScale;
     // Persisted Markdown typography multiplier applied to every Markdown
-    // document (settings.json "markdownFontScale", clamped [0.5, 3.0]).
+    // document (settings.yaml "markdownFontScale", clamped [0.5, 3.0]).
     CGFloat _markdownFontScale;
     NSSize _restoredWindowContentSize;
     NSRect _restoredWindowFrame;
@@ -367,6 +367,9 @@
    Adopted later only on exact (path, attributes, page, zoom, scale) match;
    any mismatch falls back to the existing synchronous path. */
 - (void)startLaunchPrerender;
+/* One-time flock-guarded JSON -> YAML state-file migration; must run before
+   anything reads state, including startLaunchPrerender's session peek. */
+- (void)migrateStateFilesIfNeeded;
 - (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event;
 - (BOOL)zoomWithScrollWheelEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
 - (void)zoomWithMagnifyEvent:(NSEvent*)event centeredAtWindowPoint:(NSPoint)windowPoint;
@@ -422,7 +425,7 @@
 - (void)toggleFindRegex:(id)sender;
 - (void)toggleFindRegexMultiline:(id)sender;
 - (void)toggleCollapseWhitespaceWhenCopyingText:(id)sender;
-- (void)openStateJSONFile:(id)sender;
+- (void)openStateFile:(id)sender;
 - (void)revealSettingsFolder:(id)sender;
 - (void)toggleDefaultSidebarForNewDocuments:(id)sender;
 - (void)toggleDefaultMinimapForNewDocuments:(id)sender;
