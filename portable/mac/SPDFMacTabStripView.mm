@@ -33,10 +33,6 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     return [object isKindOfClass:NSDictionary.class] ? object : nil;
 }
 
-@interface SPDFTabStripView ()
-- (void)hideHoverPanel;
-@end
-
 @implementation SPDFTabStripView {
     NSTrackingArea* _trackingArea;
     NSPanel* _hoverPanel;
@@ -84,19 +80,15 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (void)dealloc {
-    [self hideHoverPanel];
+    [self dismissHoverPanel];
 }
 
 - (void)viewWillMoveToWindow:(NSWindow*)newWindow {
     if (!newWindow) {
         [self restoreWindowMovementForTabGesture];
-        [self hideHoverPanel];
+        [self dismissHoverPanel];
     }
     [super viewWillMoveToWindow:newWindow];
-}
-
-- (BOOL)isFlipped {
-    return NO;
 }
 
 - (BOOL)acceptsFirstMouse:(NSEvent*)event {
@@ -123,7 +115,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 
 - (void)setHidden:(BOOL)hidden {
     if (hidden) {
-        [self hideHoverPanel];
+        [self dismissHoverPanel];
         [self clearDropIndicator];
     }
     [super setHidden:hidden];
@@ -297,15 +289,11 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
            @"(and on reopen). Editing will ask to save a copy.";
 }
 
-- (void)hideHoverPanel {
+- (void)dismissHoverPanel {
     _hoverTabIndex = -1;
     _hasLastHoverPoint = NO;
     if (_hoverPanel.parentWindow) [_hoverPanel.parentWindow removeChildWindow:_hoverPanel];
     [_hoverPanel orderOut:nil];
-}
-
-- (void)dismissHoverPanel {
-    [self hideHoverPanel];
 }
 
 - (void)updateHoverForPoint:(NSPoint)point {
@@ -322,19 +310,19 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     }
     if (hovered == _hoverTabIndex) return;
     if (hovered >= 0) [self showHoverPanelForTabAtIndex:hovered];
-    else [self hideHoverPanel];
+    else [self dismissHoverPanel];
 }
 
 - (void)showHoverPanelForTabAtIndex:(NSInteger)index {
     NSString* title = [self titleForTabAtIndex:index];
     if (!title.length || !self.window) {
-        [self hideHoverPanel];
+        [self dismissHoverPanel];
         return;
     }
 
     NSRect tabRect = [self rectForTabAtIndex:index];
     if (NSWidth(tabRect) <= 0) {
-        [self hideHoverPanel];
+        [self dismissHoverPanel];
         return;
     }
 
@@ -397,7 +385,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     [self setNeedsDisplay:YES];
     [self rebuildReadOnlyTooltips];
     if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint, self.bounds)) [self updateHoverForPoint:_lastHoverPoint];
-    else [self hideHoverPanel];
+    else [self dismissHoverPanel];
 }
 
 - (void)setSelectedIndex:(NSInteger)selectedIndex {
@@ -713,9 +701,9 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 
 - (void)showOverflowMenuWithEvent:(NSEvent*)event {
     NSArray<NSNumber*>* hiddenIndexes = [self hiddenTabIndexes];
-    if (!hiddenIndexes.count) return;
+    if (!hiddenIndexes.count || !event) return;
 
-    [self hideHoverPanel];
+    [self dismissHoverPanel];
 
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Hidden Tabs"];
     for (NSNumber* indexNumber in hiddenIndexes) {
@@ -733,21 +721,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
         [menu addItem:item];
     }
 
-    NSRect overflowRect = [self overflowRect];
-    NSEvent* menuEvent = event;
-    if (!menuEvent) {
-        NSPoint windowPoint = [self convertPoint:NSMakePoint(NSMinX(overflowRect), NSMinY(overflowRect)) toView:nil];
-        menuEvent = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
-                                       location:windowPoint
-                                  modifierFlags:0
-                                      timestamp:NSProcessInfo.processInfo.systemUptime
-                                   windowNumber:self.window.windowNumber
-                                        context:nil
-                                    eventNumber:0
-                                     clickCount:1
-                                       pressure:1.0];
-    }
-    [NSMenu popUpContextMenu:menu withEvent:menuEvent forView:self];
+    [NSMenu popUpContextMenu:menu withEvent:event forView:self];
 }
 
 - (void)overflowTabMenuItemSelected:(NSMenuItem*)sender {
@@ -988,7 +962,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
         return;
     }
 
-    [self hideHoverPanel];
+    [self dismissHoverPanel];
     id<SPDFWindowChromeHandling> chromeWindow = (id<SPDFWindowChromeHandling>)self.window;
     if ([chromeWindow respondsToSelector:@selector(handleChromeMouseDown:)]) [chromeWindow handleChromeMouseDown:event];
 }
@@ -997,12 +971,12 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     NSInteger tabIndex = [self tabIndexAtPoint:point];
     if (tabIndex < 0) {
-        [self hideHoverPanel];
+        [self dismissHoverPanel];
         [super rightMouseDown:event];
         return;
     }
 
-    [self hideHoverPanel];
+    [self dismissHoverPanel];
     NSNumber* indexNumber = @(tabIndex);
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Tab"];
     NSMenuItem* showInFolder = [menu addItemWithTitle:@"Show in Folder"
@@ -1037,7 +1011,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     CGFloat dy = point.y - _dragStartPoint.y;
     if (!_draggingTab && hypot(dx, dy) < 3.0) return;
     _draggingTab = YES;
-    [self hideHoverPanel];
+    [self dismissHoverPanel];
 
     BOOL outsideTabStrip = point.y < -24.0 || point.y > NSHeight(self.bounds) + 24.0 ||
                            point.x < [self leftInset] - 18.0 || point.x > NSMaxX([self plusRect]) + 18.0;
@@ -1103,7 +1077,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     // the pressed index.
     NSString* currentPath = self.tabs[(NSUInteger)pressedIndex].path ?: @"";
     if (![currentPath isEqualToString:pressedPath ?: @""]) return;
-    [self hideHoverPanel];
+    [self dismissHoverPanel];
     [self.reader closeTabAtIndex:pressedIndex];
 }
 
@@ -1117,7 +1091,33 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 
 - (void)mouseExited:(NSEvent*)event {
     (void)event;
-    [self hideHoverPanel];
+    [self dismissHoverPanel];
+}
+
+// Belt-and-braces for unforeseen focus states: if a keyDown lands on the strip,
+// printable keys start the same type-to-search the document views run
+// (SPDFScrollView keyDown parity). The reader rejects modified / control /
+// function keys itself, so Escape and Cmd shortcuts keep their behavior.
+- (void)keyDown:(NSEvent*)event {
+    if ([self.reader respondsToSelector:@selector(documentTypeToSearchKeyDown:)] &&
+        [self.reader documentTypeToSearchKeyDown:event])
+        return;
+    [super keyDown:event];
+}
+
+// See SPDFMacTabStripView.h. Class-level so the reader's tab-selection
+// chokepoint and the focused interaction tests share one guard.
++ (BOOL)claimFocusOnDocumentKeyView:(NSView*)documentKeyView
+                             window:(NSWindow*)window
+                           tabStrip:(NSView*)tabStrip
+                   parkedResponders:(NSArray<NSResponder*>*)parkedResponders {
+    if (!window || !documentKeyView) return NO;
+    NSResponder* current = window.firstResponder;
+    BOOL passive = !current || current == window || (tabStrip && current == tabStrip);
+    for (NSResponder* parked in parkedResponders)
+        if (current == parked) passive = YES;
+    if (!passive) return NO;
+    return [window makeFirstResponder:documentKeyView];
 }
 
 @end

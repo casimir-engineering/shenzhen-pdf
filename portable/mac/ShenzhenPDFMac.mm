@@ -8998,6 +8998,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         if (targetIndex == _selectedTabIndex && [self hasActiveDocument]) {
             if (_path.length > 0) [self rememberRecentlyOpenedPath:_path];
             [self savePersistentState];
+            [self focusActiveDocumentViewAfterTabSelection];
             return;
         }
         [self selectTabAtIndex:targetIndex];
@@ -9032,16 +9033,22 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self loadSelectedTab];
     if ([self hasActiveDocument] && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
     [self savePersistentState];
+    [self focusActiveDocumentViewAfterTabSelection];
 }
 
 - (void)selectTabAtIndex:(NSInteger)index {
-    if (index < 0 || index >= (NSInteger)_tabs.count || (index == _selectedTabIndex && [self hasActiveDocument]))
+    if (index < 0 || index >= (NSInteger)_tabs.count) return;
+    if (index == _selectedTabIndex && [self hasActiveDocument]) {
+        // Re-clicking the active tab still plants keyboard focus on the document.
+        [self focusActiveDocumentViewAfterTabSelection];
         return;
+    }
     [self clearToolbarFieldFocusForTabSwitch];
     [self rememberActiveTabState];
     _selectedTabIndex = index;
     [self loadSelectedTab];
     [self savePersistentState];
+    [self focusActiveDocumentViewAfterTabSelection];
 }
 
 - (void)closeTabAtIndex:(NSInteger)index {
@@ -9114,6 +9121,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSInteger replacementIndex = [_tabs indexOfObjectIdenticalTo:replacementTab];
         _selectedTabIndex = replacementIndex == NSNotFound ? MIN(index, (NSInteger)_tabs.count - 1) : replacementIndex;
         [self loadSelectedTab];
+        [self focusActiveDocumentViewAfterTabSelection];
     } else {
         [self updateTabStrip];
         [self scheduleNearbyPageRendersAfterFirstPaintForGeneration:_renderGeneration preferredPage:_pageIndex];
@@ -10358,27 +10366,19 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event {
     if (![self hasActiveDocument] || _presentationMode || !_searchField) return NO;
-    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption |
-                 NSEventModifierFlagFunction))
+    if (event.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption |
+                               NSEventModifierFlagFunction))
         return NO;
-
     id firstResponder = _window.firstResponder;
     if ([firstResponder isKindOfClass:[NSTextView class]] || firstResponder == _searchField ||
         firstResponder == _pageField || firstResponder == _paletteSearchField || firstResponder == _sidebarFilterField)
         return NO;
-
     NSString* typed = event.characters ?: @"";
-    if (typed.length == 0) return NO;
-    NSCharacterSet* controls = NSCharacterSet.controlCharacterSet;
-    for (NSUInteger i = 0; i < typed.length; ++i) {
-        if ([controls characterIsMember:[typed characterAtIndex:i]]) return NO;
-    }
-
+    if (typed.length == 0 || [typed rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location != NSNotFound)
+        return NO;
     [_window makeFirstResponder:_searchField];
     _searchField.stringValue = typed;
-    NSText* editor = _searchField.currentEditor;
-    if (editor) [editor setSelectedRange:NSMakeRange(typed.length, 0)];
+    [_searchField.currentEditor setSelectedRange:NSMakeRange(typed.length, 0)];
     [self startFindForCurrentQueryResetSavedIndex:YES revealMatch:YES];
     return YES;
 }
@@ -12419,27 +12419,53 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
 - (void)clearFindFieldFocus {
     if (_window.firstResponder == _searchField || _window.firstResponder == _searchField.currentEditor)
-        [_window makeFirstResponder:_pageView];
+        [_window makeFirstResponder:[self activeDocumentKeyView]];
 }
 
 - (void)clearPageFieldFocus {
     if (_window.firstResponder == _pageField || _window.firstResponder == _pageField.currentEditor ||
-        _pageField.currentEditor) {
-        [_window makeFirstResponder:_pageView ?: _pageScrollView];
-    }
+        _pageField.currentEditor)
+        [_window makeFirstResponder:[self activeDocumentKeyView]];
 }
 
 - (void)clearToolbarFieldFocusForTabSwitch {
     if (!_window) return;
-
     BOOL toolbarHasFocus = _window.firstResponder == _pageField || _window.firstResponder == _searchField ||
                            _window.firstResponder == _pageField.currentEditor ||
                            _window.firstResponder == _searchField.currentEditor || _pageField.currentEditor ||
                            _searchField.currentEditor;
     if (toolbarHasFocus) [_pageField abortEditing];
-    NSResponder* target = _pageView ? (NSResponder*)_pageView : (NSResponder*)_pageScrollView;
+    NSResponder* target = [self activeDocumentKeyView];
     if (target) [_window makeFirstResponder:target];
     if (_pageField.currentEditor) [_pageField abortEditing];
+}
+
+// The view keyboard input belongs to for the ACTIVE tab: the markdown page
+// canvas when a markdown tab is showing (its keyDown routes through the same
+// type-to-search entry as the PDF views), else the PDF page view.
+- (NSView*)activeDocumentKeyView {
+    NSView* root = [self isMarkdownActive] ? self.activeMarkdownSession.rootView : nil;
+    for (NSView* subview in root.subviews) {
+        NSView* canvas = [subview isKindOfClass:NSScrollView.class] ? [(NSScrollView*)subview documentView] : nil;
+        if (canvas.acceptsFirstResponder) return canvas;
+    }
+    return _pageView ? (NSView*)_pageView : (NSView*)_pageScrollView;
+}
+
+// Tab-activation focus chokepoint: after selecting a tab (strip click — even on
+// the already-selected tab — Cmd+number, reorder, overflow menu, dragged-tab
+// drop, closing onto a neighbor) typing must search the document immediately.
+// The claim is guarded (see SPDFTabStripView): only passive focus holders give
+// way, so a deliberately focused find/page/sidebar-filter editor keeps typing.
+- (void)focusActiveDocumentViewAfterTabSelection {
+    if (_presentationMode) return;
+    NSMutableArray<NSResponder*>* parked = [NSMutableArray arrayWithCapacity:2];
+    if (_pageView) [parked addObject:_pageView];
+    if (_pageScrollView) [parked addObject:_pageScrollView];
+    [SPDFTabStripView claimFocusOnDocumentKeyView:[self activeDocumentKeyView]
+                                           window:_window
+                                         tabStrip:_tabStrip
+                                 parkedResponders:parked];
 }
 
 - (void)showFindPalette:(id)sender {
@@ -15992,8 +16018,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
             // field's action), returns focus to the document, and clears the
             // active search like Escape everywhere else in the viewer.
             [_pageField abortEditing];
-            NSResponder* target = _pageView ? (NSResponder*)_pageView : (NSResponder*)_pageScrollView;
-            if (target) [_window makeFirstResponder:target];
+            [_window makeFirstResponder:[self activeDocumentKeyView]];
             [self documentEscapeKeyDown:NSApp.currentEvent];
             return YES;
         }
