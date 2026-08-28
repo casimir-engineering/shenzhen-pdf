@@ -201,6 +201,52 @@ static NSAttributedString* SPDFPrintableLine(NSAttributedString* source) {
     return result;
 }
 
+- (NSArray<SPDFMarkdownPageDecoration*>*)decorationsForPageIndex:(NSUInteger)pageIndex {
+    if (pageIndex >= self.pages.count) return @[];
+    return SPDFMarkdownDecorationsForPage(self.pages[pageIndex], self.items,
+                                          NSWidth(self.configuration.printableRect));
+}
+
+static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL stroke) {
+    NSColor* sRGB = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace] ?: NSColor.blackColor;
+    if (stroke) {
+        CGContextSetRGBStrokeColor(context, sRGB.redComponent, sRGB.greenComponent, sRGB.blueComponent,
+                                   sRGB.alphaComponent);
+    } else {
+        CGContextSetRGBFillColor(context, sRGB.redComponent, sRGB.greenComponent, sRGB.blueComponent,
+                                 sRGB.alphaComponent);
+    }
+}
+
+// Print always paints the concrete light palette: rounded #F6F8FA/#D0D7DE code
+// boxes and #D8DEE4 heading rules, drawn beneath the planned text lines.
+- (void)drawDecorationsForPageIndex:(NSUInteger)pageIndex inContext:(CGContextRef)context {
+    CGFloat paperHeight = self.configuration.paperSize.height;
+    CGFloat printableLeft = NSMinX(self.configuration.printableRect);
+    CGFloat printableTop = paperHeight - NSMinY(self.configuration.printableRect);
+    for (SPDFMarkdownPageDecoration* decoration in [self decorationsForPageIndex:pageIndex]) {
+        CGRect rect = CGRectMake(printableLeft + NSMinX(decoration.rect), printableTop - NSMaxY(decoration.rect),
+                                 NSWidth(decoration.rect), NSHeight(decoration.rect));
+        if (decoration.type == SPDFMarkdownPageDecorationTypeCodeBox) {
+            CGRect boxRect = CGRectInset(rect, 0.5, 0.5);
+            if (boxRect.size.width <= 0 || boxRect.size.height <= 0) continue;
+            CGFloat radius = MIN(6, MIN(boxRect.size.width, boxRect.size.height) / 2);
+            CGPathRef path = CGPathCreateWithRoundedRect(boxRect, radius, radius, NULL);
+            SPDFSetContextColor(context, SPDFMarkdownTheme.printCodeBoxFillColor, NO);
+            CGContextAddPath(context, path);
+            CGContextFillPath(context);
+            SPDFSetContextColor(context, SPDFMarkdownTheme.printCodeBoxStrokeColor, YES);
+            CGContextSetLineWidth(context, 1);
+            CGContextAddPath(context, path);
+            CGContextStrokePath(context);
+            CGPathRelease(path);
+        } else {
+            SPDFSetContextColor(context, SPDFMarkdownTheme.printHeadingRuleColor, NO);
+            CGContextFillRect(context, rect);
+        }
+    }
+}
+
 - (BOOL)drawPageAtIndex:(NSUInteger)pageIndex
        attributedString:(NSAttributedString*)attributedString
               inContext:(CGContextRef)context {
@@ -210,6 +256,7 @@ static NSAttributedString* SPDFPrintableLine(NSAttributedString* source) {
     CGContextSaveGState(context);
     CGContextSetRGBFillColor(context, 1, 1, 1, 1);
     CGContextFillRect(context, CGRectMake(0, 0, self.configuration.paperSize.width, paperHeight));
+    [self drawDecorationsForPageIndex:pageIndex inContext:context];
     CGContextSetTextMatrix(context, CGAffineTransformIdentity);
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (NSMaxRange(fragment.attributedRange) > attributedString.length) continue;
@@ -252,23 +299,32 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
 }
 
 static const CGFloat kSPDFMarkdownCodeLanguageControlHeight = 34.0;
+static const CGFloat kSPDFMarkdownCodeBoxPadding = 8.0;
 
+static SPDFMarkdownTextLine* SPDFSpacerLine(NSUInteger location, CGFloat height) {
+    return [[SPDFMarkdownTextLine alloc] initWithAttributedRange:NSMakeRange(location, 0)
+                                                          height:height
+                                                         xOffset:0
+                                                  baselineOffset:0];
+}
+
+// Every configuration reserves real layout space around fenced code so the
+// drawn code box has genuine padding bands instead of overdraw. The screen
+// opt-in grows the leading band to fit its interactive language control.
 static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<SPDFMarkdownPaginationItem*>* items,
                                                                        SPDFMarkdownPageConfiguration* configuration) {
-    if (!configuration.includesCodeLanguageControlSpacing) return items;
     NSMutableArray<SPDFMarkdownPaginationItem*>* configuredItems = [NSMutableArray arrayWithCapacity:items.count];
+    CGFloat leadingHeight = configuration.includesCodeLanguageControlSpacing ? kSPDFMarkdownCodeLanguageControlHeight
+                                                                             : kSPDFMarkdownCodeBoxPadding;
     for (SPDFMarkdownPaginationItem* item in items) {
-        if (item.kind != SPDFMarkdownBlockKindCode) {
+        if (item.kind != SPDFMarkdownBlockKindCode || !item.lines.count) {
             [configuredItems addObject:item];
             continue;
         }
         NSMutableArray<SPDFMarkdownTextLine*>* lines = [item.lines mutableCopy];
-        [lines insertObject:[[SPDFMarkdownTextLine alloc]
-                                initWithAttributedRange:NSMakeRange(item.lines.firstObject.attributedRange.location, 0)
-                                                 height:kSPDFMarkdownCodeLanguageControlHeight
-                                                xOffset:0
-                                         baselineOffset:0]
-                    atIndex:0];
+        [lines insertObject:SPDFSpacerLine(item.lines.firstObject.attributedRange.location, leadingHeight) atIndex:0];
+        [lines addObject:SPDFSpacerLine(NSMaxRange(item.lines.lastObject.attributedRange),
+                                        kSPDFMarkdownCodeBoxPadding)];
         [configuredItems addObject:[[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:item.blockIndex
                                                                                      kind:item.kind
                                                                              headingLevel:item.headingLevel

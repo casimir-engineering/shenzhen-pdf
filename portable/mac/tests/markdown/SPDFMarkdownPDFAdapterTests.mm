@@ -96,6 +96,38 @@ static BOOL SPDFPDFContainsMagentaImage(NSData* data) {
     return !CGRectIsNull(SPDFPDFMagentaBounds(data));
 }
 
+// Counts raster pixels close to the concrete #F6F8FA code-box fill on page 1.
+static NSUInteger SPDFPDFCodeBoxFillPixelCount(NSData* data) {
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
+    CGPDFDocumentRef document = provider ? CGPDFDocumentCreateWithProvider(provider) : NULL;
+    CGPDFPageRef page = document ? CGPDFDocumentGetPage(document, 1) : NULL;
+    size_t width = 596;
+    size_t height = 842;
+    unsigned char* pixels = (unsigned char*)calloc(width * height, 4);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = pixels ? CGBitmapContextCreate(pixels, width, height, 8, width * 4, colorSpace,
+                                                           kCGImageAlphaPremultipliedLast) : NULL;
+    if (context && page) {
+        CGContextSetRGBFillColor(context, 1, 1, 1, 1);
+        CGContextFillRect(context, CGRectMake(0, 0, width, height));
+        CGContextDrawPDFPage(context, page);
+    }
+    NSUInteger filled = 0;
+    if (context && page) {
+        for (size_t index = 0; index < width * height; ++index) {
+            unsigned char* pixel = pixels + index * 4;
+            if (abs((int)pixel[0] - 246) <= 6 && abs((int)pixel[1] - 248) <= 6 && abs((int)pixel[2] - 250) <= 5)
+                ++filled;
+        }
+    }
+    if (context) CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
+    free(pixels);
+    if (document) CGPDFDocumentRelease(document);
+    if (provider) CGDataProviderRelease(provider);
+    return filled;
+}
+
 static NSUInteger SPDFPDFDarkPixelCount(NSData* data) {
     CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
     CGPDFDocumentRef document = provider ? CGPDFDocumentCreateWithProvider(provider) : NULL;
@@ -146,6 +178,15 @@ int main(void) {
                    @"PDF text remains vector/selectable and extractable");
         SPDFExpect([extracted containsString:@"Finished task"],
                    @"structural content remains selectable in the PDF adapter");
+        SPDFExpect(SPDFPDFCodeBoxFillPixelCount(data) > 2000,
+                   @"exported fenced code paints one continuous filled box behind the code lines");
+        BOOL plannedCodeBox = NO;
+        for (NSUInteger pageIndex = 0; pageIndex < plan.pages.count; ++pageIndex)
+            for (SPDFMarkdownPageDecoration* decoration in [plan decorationsForPageIndex:pageIndex])
+                if (decoration.type == SPDFMarkdownPageDecorationTypeCodeBox &&
+                    fabs(NSWidth(decoration.rect) - NSWidth(configuration.printableRect)) < 0.01)
+                    plannedCodeBox = YES;
+        SPDFExpect(plannedCodeBox, @"the export plan exposes full-width code-box decoration geometry");
         __block NSData* darkAppearancePDF = nil;
         [[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua] performAsCurrentDrawingAppearance:^{
             darkAppearancePDF = SPDFCreatePDF(plan, document.renderedDocument.attributedString);

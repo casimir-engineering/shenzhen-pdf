@@ -69,6 +69,30 @@ int main(void) {
             if (block.kind == SPDFMarkdownBlockKindCallout) calloutRecorded = YES;
         SPDFExpect(calloutRecorded, @"callout title participates in layout and pagination");
 
+        NSRange fencedCode = [canonical rangeOfString:@"let greeting"];
+        SPDFExpect([document.renderedDocument.attributedString attribute:NSBackgroundColorAttributeName
+                                                                 atIndex:fencedCode.location
+                                                          effectiveRange:nil] == nil,
+                   @"fenced code paints no per-character background; the code box is a page decoration");
+        NSParagraphStyle* codeStyle = [document.renderedDocument.attributedString
+            attribute:NSParagraphStyleAttributeName atIndex:fencedCode.location effectiveRange:nil];
+        SPDFExpect(codeStyle.paragraphSpacing == 0 && codeStyle.paragraphSpacingBefore == 0 &&
+                       fabs(codeStyle.lineSpacing - 2) < 0.001,
+                   @"fenced code lines flow as one continuous block without inter-line gaps");
+        SPDFExpect(fabs(codeStyle.firstLineHeadIndent - 12) < 0.001 && fabs(codeStyle.headIndent - 12) < 0.001 &&
+                       fabs(codeStyle.tailIndent - -12) < 0.001,
+                   @"fenced code text is inset 12pt within its box");
+        NSRange inlineCode = [canonical rangeOfString:@"inline code"];
+        SPDFExpect([document.renderedDocument.attributedString attribute:NSBackgroundColorAttributeName
+                                                                 atIndex:inlineCode.location
+                                                          effectiveRange:nil] != nil,
+                   @"inline code spans keep their subtle chip background");
+        NSRange h2 = [canonical rangeOfString:@"Lists and tables"];
+        NSParagraphStyle* h2Style = [document.renderedDocument.attributedString
+            attribute:NSParagraphStyleAttributeName atIndex:h2.location effectiveRange:nil];
+        SPDFExpect(fabs(h2Style.paragraphSpacingBefore - 20) < 0.001 && fabs(h2Style.paragraphSpacing - 8) < 0.001,
+                   @"H1/H2 headings get 20pt leading and 8pt trailing space");
+
         NSUInteger unknownBlock = document.model.codeFences.lastObject.blockIndex;
         [document setLanguageIdentifier:@"python" forCodeBlock:unknownBlock];
         SPDFMarkdownRenderedBlock* unknown = [document.renderedDocument renderedBlockWithIndex:unknownBlock];
@@ -150,6 +174,42 @@ int main(void) {
         SPDFExpect([depths containsObject:@0] && [depths containsObject:@1], @"nested list indentation is stable");
         SPDFExpect([indents[@1] doubleValue] > [indents[@0] doubleValue],
                    @"nested list paragraph indentation increases by depth");
+
+        SPDFMarkdownRenderOptions* scaledOptions = SPDFMarkdownRenderOptions.defaultOptions;
+        scaledOptions.fontScale = 1.5;
+        SPDFMarkdownDocument* scaled = [SPDFMarkdownDocument documentWithURL:SPDFFixtureURL(@"commonmark-gfm.md")
+                                                                     options:scaledOptions
+                                                                       error:&error];
+        NSString* scaledText = scaled.renderedDocument.attributedString.string;
+        NSRange scaledBody = [scaledText rangeOfString:@"First item"];
+        NSFont* scaledBodyFont = [scaled.renderedDocument.attributedString attribute:NSFontAttributeName
+                                                                             atIndex:scaledBody.location
+                                                                      effectiveRange:nil];
+        NSRange scaledCode = [scaledText rangeOfString:@"let greeting"];
+        NSFont* scaledCodeFont = [scaled.renderedDocument.attributedString attribute:NSFontAttributeName
+                                                                             atIndex:scaledCode.location
+                                                                      effectiveRange:nil];
+        SPDFExpect(fabs(scaledBodyFont.pointSize - 22.5) < 0.01 && fabs(scaledCodeFont.pointSize - 19.5) < 0.01,
+                   @"fontScale multiplies body and code font sizes in the attributed output");
+        NSRange scaledParagraph = [scaledText rangeOfString:@"This is"];
+        NSParagraphStyle* scaledBodyStyle = [scaled.renderedDocument.attributedString
+            attribute:NSParagraphStyleAttributeName atIndex:scaledParagraph.location effectiveRange:nil];
+        SPDFExpect(fabs(scaledBodyStyle.lineSpacing - 4.5) < 0.01 && fabs(scaledBodyStyle.paragraphSpacing - 15) < 0.01,
+                   @"fontScale multiplies line and paragraph spacing");
+        NSParagraphStyle* scaledCodeStyle = [scaled.renderedDocument.attributedString
+            attribute:NSParagraphStyleAttributeName atIndex:scaledCode.location effectiveRange:nil];
+        SPDFExpect(fabs(scaledCodeStyle.firstLineHeadIndent - 12) < 0.001,
+                   @"indent constants stay unscaled under fontScale");
+        scaledOptions.fontScale = 99;
+        SPDFExpect(fabs(scaledOptions.fontScale - 3.0) < 0.001, @"fontScale clamps to at most 3.0");
+        scaledOptions.fontScale = 0.1;
+        SPDFExpect(fabs(scaledOptions.fontScale - 0.5) < 0.001, @"fontScale clamps to at least 0.5");
+        scaledOptions.fontScale = 1.5;
+        SPDFMarkdownRenderOptions* copiedOptions = [scaledOptions copy];
+        SPDFExpect(fabs(copiedOptions.fontScale - 1.5) < 0.001, @"copyWithZone preserves fontScale");
+        SPDFExpect(fabs(SPDFMarkdownRenderOptions.defaultOptions.fontScale - 1.0) < 0.001 &&
+                       fabs([SPDFMarkdownRenderOptions new].fontScale - 1.0) < 0.001,
+                   @"fontScale defaults to 1.0");
 
         NSTextView* view = [document newSelectableTextView];
         SPDFExpect(view.isSelectable && !view.isEditable && view.importsGraphics,

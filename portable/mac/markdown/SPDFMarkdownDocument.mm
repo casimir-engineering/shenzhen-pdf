@@ -74,9 +74,21 @@
                                                     workQueue:(dispatch_queue_t)workQueue
                                                completionQueue:(dispatch_queue_t)completionQueue
                                                    completion:(void (^)(SPDFMarkdownRenderedDocument*, BOOL))completion {
+    return [self renderWithOptions:nil
+                 languageOverrides:languageOverrides
+                         workQueue:workQueue
+                   completionQueue:completionQueue
+                        completion:completion];
+}
+
+- (SPDFMarkdownCancellationToken*)renderWithOptions:(SPDFMarkdownRenderOptions*)renderOptions
+                                   languageOverrides:(NSDictionary<NSNumber*, NSString*>*)languageOverrides
+                                           workQueue:(dispatch_queue_t)workQueue
+                                      completionQueue:(dispatch_queue_t)completionQueue
+                                          completion:(void (^)(SPDFMarkdownRenderedDocument*, BOOL))completion {
     SPDFMarkdownCancellationToken* token = [SPDFMarkdownCancellationToken new];
     SPDFMarkdownDocumentModel* model = _model;
-    SPDFMarkdownRenderOptions* options = [_renderOptions copy];
+    SPDFMarkdownRenderOptions* options = [(renderOptions ?: _renderOptions) copy];
     SPDFMarkdownRenderer* renderer = _renderer;
     NSDictionary* overrides = [languageOverrides copy];
     dispatch_async(workQueue ?: dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{

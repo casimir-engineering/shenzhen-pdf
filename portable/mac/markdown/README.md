@@ -58,6 +58,22 @@ Tables retain column count and per-cell left/center/right alignment in the
 model. Native rendering uses stable tab stops with the declared alignment.
 Nested lists retain depth and increasing paragraph indentation.
 
+## Styling
+
+Rendering is GitHub-flavored. Fenced code flows as one continuous block: tight
+line spacing, zero paragraph spacing between code lines, and a 12pt horizontal
+inset so the text sits inside the unified code box. The box background is not a
+text attribute — it is drawn as a page decoration behind the code (inline code
+spans keep their subtle background chip). `SPDFMarkdownTheme` in
+`SPDFMarkdownDecorations.h` exposes the shared box/rule colors, both as
+appearance-dynamic colors for the screen canvas and as the concrete light
+palette used on paper. `SPDFMarkdownRenderOptions.fontScale` (clamped to
+[0.5, 3.0]) uniformly scales fonts and vertical spacing without touching indent
+constants or image budgets, and
+`renderWithOptions:languageOverrides:workQueue:completionQueue:completion:` on
+the facade re-renders with caller-supplied options without mutating the
+document's stored ones.
+
 ## Code languages
 
 The picker deliberately advertises only languages with dedicated offline
@@ -87,14 +103,25 @@ UTF-16 code units. Interactive queries longer than 4096 code units are rejected
 without scanning the document; this keeps pasted pathological queries bounded
 while preserving normal Find semantics.
 
+Every configuration reserves real spacer bands around each fenced-code item —
+a trailing 8pt band always, plus a leading band of 8pt (print/export) or the
+34pt interactive language-control height when
+`includesCodeLanguageControlSpacing` is set. The plan's
+`decorationsForPageIndex:` returns per-page decoration geometry in
+page-content coordinates: one full-printable-width rounded code box per code
+item portion on that page (covering the spacer bands; a block continuing
+across pages gets one box per portion), and a 1px underline rule beneath level
+1 and 2 headings.
+
 Use `A4PortraitConfiguration` for export or build a configuration from the
 selected printer's paper and printable rectangle. Save as PDF, preview and
 Print should all use the same `SPDFMarkdownPaginationPlan`. Its
-`drawPageAtIndex:attributedString:inContext:` method draws the exact planned
-ranges into any PDF/print Core Graphics context, preserving vector/selectable
-text. Drawing resolves dynamic AppKit colors through a concrete light print
-palette on white paper, so a dark application appearance cannot produce
-white-on-white output.
+`drawPageAtIndex:attributedString:inContext:` method draws the decorations
+first (concrete light palette: #F6F8FA/#D0D7DE code boxes, #D8DEE4 rules) and
+then the exact planned ranges into any PDF/print Core Graphics context,
+preserving vector/selectable text. Drawing resolves dynamic AppKit colors
+through a concrete light print palette on white paper, so a dark application
+appearance cannot produce white-on-white output.
 
 ## Compile and test
 
@@ -113,8 +140,10 @@ emoji, language-specific non-overlapping tokens, local image attachments,
 table alignment, exact interleaved list order, bounded image memory, pinned-root
 replacement between parse and render, large-search cancellation and long-query
 rejection, exact TextKit ranges, the 75% rule, callout pagination, over-tall
-content scaling, and PDFKit/raster probes for selectable text, concrete print
-colors, and image containment within its line fragment.
+content scaling, code-box/heading-rule decoration geometry (including blocks
+split across pages), font scaling, and PDFKit/raster probes for selectable
+text, concrete print colors, the filled code-box background, and image
+containment within its line fragment.
 
 ## Recommended Makefile fragment
 

@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 
+#import "SPDFMarkdownDecorations.h"
 #import "SPDFMarkdownRenderer.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -66,7 +67,13 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownPaginationItem*>* items;
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownPage*>* pages;
 
+// Per-page decoration geometry (code boxes, heading rules) in page-content
+// coordinates. Print/export draws these itself; the screen canvas consumes the
+// same geometry with the dynamic SPDFMarkdownTheme colors.
+- (NSArray<SPDFMarkdownPageDecoration*>*)decorationsForPageIndex:(NSUInteger)pageIndex;
+
 // Draws the same exact line-fragment plan used by print preview/pagination.
+// Decorations are painted first, beneath the planned text.
 - (BOOL)drawPageAtIndex:(NSUInteger)pageIndex
        attributedString:(NSAttributedString*)attributedString
               inContext:(CGContextRef)context;

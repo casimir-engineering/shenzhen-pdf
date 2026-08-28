@@ -51,6 +51,29 @@ int main(void) {
         SPDFExpect(dispatch_semaphore_wait(renderDone, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) == 0,
                    @"async rerender does not block indefinitely");
 
+        SPDFMarkdownRenderOptions* scaledOptions = [document.renderOptions copy];
+        scaledOptions.fontScale = 1.5;
+        dispatch_semaphore_t scaledDone = dispatch_semaphore_create(0);
+        [document renderWithOptions:scaledOptions
+                  languageOverrides:@{}
+                          workQueue:work
+                    completionQueue:completionQueue
+                         completion:^(SPDFMarkdownRenderedDocument* rendered, BOOL cancelled) {
+            NSRange body = [rendered.attributedString.string rangeOfString:@"First item"];
+            NSFont* font = body.location == NSNotFound
+                               ? nil
+                               : [rendered.attributedString attribute:NSFontAttributeName
+                                                              atIndex:body.location
+                                                       effectiveRange:nil];
+            SPDFExpect(!cancelled && font && fabs(font.pointSize - 22.5) < 0.01,
+                       @"renderWithOptions honors a caller-supplied font scale");
+            dispatch_semaphore_signal(scaledDone);
+        }];
+        SPDFExpect(dispatch_semaphore_wait(scaledDone, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) == 0,
+                   @"scaled async render does not block indefinitely");
+        SPDFExpect(fabs(document.renderOptions.fontScale - 1.0) < 0.001,
+                   @"caller-supplied render options never mutate the document's stored options");
+
         dispatch_queue_t suspendedRender = dispatch_queue_create("spdf.markdown.test.render.cancel",
                                                                   DISPATCH_QUEUE_SERIAL);
         dispatch_suspend(suspendedRender);

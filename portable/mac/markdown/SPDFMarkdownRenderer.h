@@ -20,6 +20,9 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 @property(nonatomic) CGFloat codeSize;
 @property(nonatomic) CGFloat lineSpacing;
 @property(nonatomic) CGFloat paragraphSpacing;
+// Uniform typography multiplier, clamped to [0.5, 3.0] (default 1.0). Fonts and
+// vertical spacing scale with it; indent constants and image budgets do not.
+@property(nonatomic) CGFloat fontScale;
 @property(nonatomic) CGFloat contentInset;
 @property(nonatomic) CGFloat maximumImageWidth;
 @property(nonatomic) CGFloat maximumImageHeight;
