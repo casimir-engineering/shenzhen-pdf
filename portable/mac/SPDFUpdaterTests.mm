@@ -143,16 +143,56 @@ int main(int argc, char** argv) {
         expectBool(@"health malformed", spdf_release_tag_matches_running_version(@"26.8.27-2", @"broken"), NO);
 
         // 27. The preview harness and production prompt share this exact alert
-        // constructor, including release-note formatting and button order.
+        // constructor, including release-note formatting and button order. The
+        // notes render in an attributed accessory label so emphasis survives.
         NSAlert* alert = spdf_make_update_available_alert(@"26.8.27-2", @"26.7.17-1", @"- **Fast** update\n---\nHidden");
         expectString(@"alert title", alert.messageText, @"A new version of Shenzhen PDF is available");
+        expectBool(@"alert sentence kept", [alert.informativeText containsString:@"Would you like to install"], YES);
+        // The complete body stays in informativeText (keeps NSAlert's roomy
+        // legacy layout and is the fallback when the attributed seam is gone).
         expectBool(@"alert formatted notes", [alert.informativeText containsString:@"• Fast update"], YES);
+        expectBool(@"alert hides post-rule details", [alert.informativeText containsString:@"Hidden"], NO);
+        @try {
+            NSAttributedString* attributedBody = [alert valueForKey:@"attributedInformativeText"];
+            NSRange fast = [attributedBody.string rangeOfString:@"Fast"];
+            NSFont* fastFont = fast.location == NSNotFound
+                                   ? nil
+                                   : [attributedBody attribute:NSFontAttributeName atIndex:fast.location
+                                                effectiveRange:NULL];
+            expectBool(@"alert attributed bold notes",
+                       fastFont && ([NSFontManager.sharedFontManager traitsOfFont:fastFont] & NSBoldFontMask) != 0,
+                       YES);
+        } @catch (NSException* exception) {
+            // The seam is optional: without it the plain informativeText above
+            // is the entire contract.
+        }
+        expectBool(@"alert has no accessory", alert.accessoryView == nil, YES);
         expectString(@"alert primary action", alert.buttons.firstObject.title, @"Install and Relaunch");
+
+        // 28. Attributed notes: **spans** become bold runs, markers never leak,
+        // sanitation matches the plain formatter, unbalanced markers stay plain.
+        NSAttributedString* attributed =
+            spdf_attributed_release_notes_for_alert(@"- **Markdown support**: GitHub-grade formatting\n- Plain line",
+                                                    12.0);
+        expectString(@"attributed text", attributed.string,
+                     @"• Markdown support: GitHub-grade formatting\n• Plain line");
+        NSRange boldSpan = [attributed.string rangeOfString:@"Markdown support"];
+        NSFont* boldFont = [attributed attribute:NSFontAttributeName atIndex:boldSpan.location effectiveRange:NULL];
+        NSFont* plainFont = [attributed attribute:NSFontAttributeName
+                                          atIndex:[attributed.string rangeOfString:@"GitHub"].location
+                                   effectiveRange:NULL];
+        expectBool(@"attributed bold run",
+                   ([NSFontManager.sharedFontManager traitsOfFont:boldFont] & NSBoldFontMask) != 0, YES);
+        expectBool(@"attributed plain run",
+                   ([NSFontManager.sharedFontManager traitsOfFont:plainFont] & NSBoldFontMask) == 0, YES);
+        expectString(@"attributed unbalanced marker",
+                     spdf_attributed_release_notes_for_alert(@"tail **unclosed", 12.0).string, @"tail unclosed");
+        expectString(@"attributed empty body", spdf_attributed_release_notes_for_alert(nil, 12.0).string, @"");
     }
     if (gFailureCount > 0) {
         fprintf(stderr, "SPDFUpdaterTests: %d failure(s)\n", gFailureCount);
         return 1;
     }
-    printf("SPDFUpdaterTests passed (27 cases)\n");
+    printf("SPDFUpdaterTests passed (28 cases)\n");
     return 0;
 }

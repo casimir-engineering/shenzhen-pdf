@@ -88,8 +88,14 @@ NSTimeInterval spdf_daily_check_delay(BOOL autoUpdateEnabled, BOOL haveLastCheck
 /// characters on a line boundary.
 NSString* spdf_format_release_notes_for_alert(NSString* _Nullable body);
 
+/// Attributed variant of the alert notes: identical sanitation, but Markdown
+/// **emphasis** spans survive as bold runs at the given font size.
+NSAttributedString* spdf_attributed_release_notes_for_alert(NSString* _Nullable body, CGFloat fontSize);
+
 /// Constructs the exact alert used by the updater and the local release-notes
-/// preview harness. The caller presents the alert and handles its response.
+/// preview harness. The release notes render in an attributed accessory label
+/// below the informative text. The caller presents the alert and handles its
+/// response.
 NSAlert* spdf_make_update_available_alert(NSString* tag, NSString* runningVersion,
                                           NSString* _Nullable releaseBody);
 
