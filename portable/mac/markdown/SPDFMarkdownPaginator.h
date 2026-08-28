@@ -68,13 +68,25 @@ FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* l
 // Non-nil only for table rows: role and column geometry carried from the
 // rendered block so decoration planning can draw the table grid.
 @property(nonatomic, readonly, nullable) SPDFMarkdownTableRowInfo* tableRowInfo;
+// Band layout: the item's lines are positioned explicitly inside one atomic
+// band via rowLocalYOffset instead of stacking, the band's height is its
+// deepest line extent, and the band never splits across a page break (an
+// over-tall band scales into one page). Always YES for table rows; also YES
+// for image rows whose captions sit centered under their own images.
+@property(nonatomic, readonly) BOOL bandLayout;
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownTextLine*>* lines;
 @property(nonatomic, readonly) CGFloat measuredHeight;
 - (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
                               kind:(SPDFMarkdownBlockKind)kind
                       headingLevel:(NSUInteger)headingLevel
                       tableRowInfo:(nullable SPDFMarkdownTableRowInfo*)tableRowInfo
+                        bandLayout:(BOOL)bandLayout
                              lines:(NSArray<SPDFMarkdownTextLine*>*)lines NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
+                              kind:(SPDFMarkdownBlockKind)kind
+                      headingLevel:(NSUInteger)headingLevel
+                      tableRowInfo:(nullable SPDFMarkdownTableRowInfo*)tableRowInfo
+                             lines:(NSArray<SPDFMarkdownTextLine*>*)lines;
 - (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
                               kind:(SPDFMarkdownBlockKind)kind
                       headingLevel:(NSUInteger)headingLevel

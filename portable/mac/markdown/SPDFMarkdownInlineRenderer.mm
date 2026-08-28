@@ -8,6 +8,7 @@
 // inside a single block's runs.
 
 NSAttributedStringKey const SPDFMarkdownImageLayoutAttribute = @"SPDFMarkdownImageLayout";
+NSAttributedStringKey const SPDFMarkdownImageRowIndexAttribute = @"SPDFMarkdownImageRowIndex";
 
 NSFont* SPDFMarkdownFontWithTraits(NSFont* font, NSFontTraitMask traits) {
     return [NSFontManager.sharedFontManager convertFont:font toHaveTrait:traits] ?: font;
@@ -98,6 +99,13 @@ static NSTextAttachment* SPDFPendingRemoteImageAttachment(SPDFMarkdownRenderCont
     return attachment;
 }
 
+// An image's visible caption is its markdown TITLE (`![alt](src "title")`)
+// when one is present — matching how the title reads as the author's display
+// caption — falling back to the alt text. The title stays a tooltip as well.
+static NSString* SPDFImageCaptionText(SPDFMarkdownInlineRun* run) {
+    return run.title.length ? run.title : run.text;
+}
+
 // Figure captions read like GitHub's smallest heading role: below body size
 // and muted, but regular weight.
 static NSDictionary* SPDFCaptionAttributes(SPDFMarkdownRenderContext* context) {
@@ -111,13 +119,15 @@ static NSDictionary* SPDFCaptionAttributes(SPDFMarkdownRenderContext* context) {
 
 // How a paragraph's images flow, decided by the paragraph's shape. A
 // paragraph whose only meaningful content is ONE image is a centered figure
-// with the alt text as a caption line below the artwork. A paragraph whose
-// only meaningful content is TWO OR MORE images keeps them inline (CommonMark
-// images are inline elements): they flow side by side in one center-aligned
-// paragraph, separated by the source's spaces/soft breaks and wrapping when
-// the printable width runs out — badge rows depend on this — with no visible
-// captions. Images mixed into sentence text keep plain inline flow, also
-// caption-free.
+// with the title-or-alt text as a caption line below the artwork. A paragraph
+// whose only meaningful content is TWO OR MORE images keeps them inline
+// (CommonMark images are inline elements): they flow side by side in one
+// center-aligned paragraph, separated by the source's spaces/soft breaks and
+// wrapping when the printable width runs out — badge rows depend on this.
+// Each row image captions below itself: the row's captions render once, as a
+// trailing caption paragraph whose spans the paginator re-positions under
+// their images (see SPDFAppendImageRowCaptions). Images mixed into sentence
+// text keep plain inline flow, caption-free.
 typedef NS_ENUM(NSInteger, SPDFMarkdownImageFlow) {
     SPDFMarkdownImageFlowInline = 0,
     SPDFMarkdownImageFlowFigure,
@@ -140,15 +150,17 @@ static void SPDFAppendImageAttachment(SPDFMarkdownRenderContext* context, SPDFMa
     NSNumber* role = SPDFImageLayoutRoleForFlow(flow);
     if (role) [attached addAttribute:SPDFMarkdownImageLayoutAttribute value:role range:NSMakeRange(0, 1)];
     [context.output appendAttributedString:attached];
-    if (flow == SPDFMarkdownImageFlowFigure && run.text.length) {
-        // GitHub renders figure images with the alt text as a real caption on
-        // its own line below the artwork instead of flowing to the artwork's
-        // right. Row and genuinely inline images show no visible alt text at
-        // all, GitHub-style: the alt survives as the attachment's
-        // tooltip/target metadata only.
+    NSString* caption = SPDFImageCaptionText(run);
+    if (flow == SPDFMarkdownImageFlowFigure && caption.length) {
+        // GitHub renders figure images with a real caption on its own line
+        // below the artwork instead of flowing to the artwork's right —
+        // title-preferred, alt as the fallback. Row images caption via
+        // SPDFAppendImageRowCaptions; genuinely inline images show no visible
+        // caption at all, GitHub-style: alt and title survive as the
+        // attachment's tooltip/target metadata only.
         SPDFMarkdownAppend(context, @"\n",
                            @{SPDFMarkdownImageLayoutAttribute: @(SPDFMarkdownImageLayoutRoleFigure)});
-        SPDFMarkdownAppend(context, run.text, SPDFCaptionAttributes(context));
+        SPDFMarkdownAppend(context, caption, SPDFCaptionAttributes(context));
     }
 }
 
@@ -255,9 +267,39 @@ static void SPDFFitImageRowToBudget(SPDFMarkdownRenderContext* context, NSRange 
     }
 }
 
+// The row's caption paragraph: one "\n" ending the image line, then each
+// captioned image's title-or-alt text exactly once, in image order, separated
+// by plain spaces — so the canonical string stays searchable with exact
+// ranges. Every caption span carries the caption style plus the
+// SPDFMarkdownImageRowIndexAttribute ordinal of its image; the paginator's
+// measurement pass replaces the default centered caption line with one
+// custom-positioned line per caption, centered under its image's x-span.
+// Images that rendered as text placeholders (or with neither title nor alt)
+// contribute no caption, and their neighbors keep theirs.
+static void SPDFAppendImageRowCaptions(SPDFMarkdownRenderContext* context, NSArray<NSNumber*>* ordinals,
+                                       NSArray<NSString*>* captions) {
+    if (!ordinals.count) return;
+    NSDictionary* captionAttributes = SPDFCaptionAttributes(context);
+    // The newline ends the image paragraph carrying the row role, so the
+    // style re-derivation can spot "row followed by captions" and keep only a
+    // small gap above the caption band, exactly like figures.
+    SPDFMarkdownAppend(context, @"\n", @{SPDFMarkdownImageLayoutAttribute: @(SPDFMarkdownImageLayoutRoleImageRow)});
+    NSMutableDictionary* separatorAttributes = [captionAttributes mutableCopy];
+    [separatorAttributes removeObjectForKey:SPDFMarkdownImageLayoutAttribute];
+    for (NSUInteger i = 0; i < ordinals.count; ++i) {
+        if (i > 0) SPDFMarkdownAppend(context, @" ", separatorAttributes);
+        NSMutableDictionary* attributes = [captionAttributes mutableCopy];
+        attributes[SPDFMarkdownImageRowIndexAttribute] = ordinals[i];
+        SPDFMarkdownAppend(context, captions[i], attributes);
+    }
+}
+
 void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block) {
     SPDFMarkdownImageFlow flow = SPDFBlockImageFlow(block);
     NSUInteger rowStart = context.output.length;
+    NSUInteger imageOrdinal = 0;
+    NSMutableArray<NSNumber*>* captionOrdinals = [NSMutableArray array];
+    NSMutableArray<NSString*>* captionTexts = [NSMutableArray array];
     for (SPDFMarkdownInlineRun* run in block.runs) {
         if (context.cancellationToken.isCancelled) return;
         if (!(run.traits & SPDFMarkdownInlineTraitImage)) {
@@ -277,20 +319,42 @@ void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdo
                 SPDFMarkdownAppend(context, run.text, SPDFRunAttributes(context, run));
             continue;
         }
+        NSUInteger imageStart = context.output.length;
         SPDFRenderImageRun(context, run, flow);
+        if (flow == SPDFMarkdownImageFlowRow && context.output.length > imageStart) {
+            // Stamp the image's rendered span with its row ordinal so the
+            // caption span emitted below can be matched back to this image's
+            // measured x-span. Only attachment-rendered images (real artwork
+            // or pending placeholder boxes) caption; the `[Image: alt]` text
+            // placeholder already shows its text and captions nothing.
+            NSNumber* ordinal = @(imageOrdinal++);
+            NSRange imageRange = NSMakeRange(imageStart, context.output.length - imageStart);
+            [context.output addAttribute:SPDFMarkdownImageRowIndexAttribute value:ordinal range:imageRange];
+            NSString* caption = SPDFImageCaptionText(run);
+            if (caption.length && [context.output attribute:NSAttachmentAttributeName
+                                                    atIndex:imageStart
+                                             effectiveRange:NULL]) {
+                [captionOrdinals addObject:ordinal];
+                [captionTexts addObject:caption];
+            }
+        }
         // A figure ends its own paragraph so the caption line's spacing rules
         // apply below it; rows stay one paragraph and wrap naturally.
         if (flow == SPDFMarkdownImageFlowFigure) SPDFMarkdownAppend(context, @"\n", @{});
     }
-    if (flow == SPDFMarkdownImageFlowRow)
+    if (flow == SPDFMarkdownImageFlowRow) {
+        // Fit first, captions after: the fit walks the row range counting only
+        // attachments and the spaces between them.
         SPDFFitImageRowToBudget(context, NSMakeRange(rowStart, context.output.length - rowStart));
+        SPDFAppendImageRowCaptions(context, captionOrdinals, captionTexts);
+    }
 }
 
 // Re-derives the centered figure/caption/row paragraph styles after the leaf
 // renderer has applied the block's base style across its whole range. The
-// figure paragraph keeps only a small gap above its caption; the caption
-// paragraph keeps the block's own spacing below the figure; a multi-image row
-// paragraph simply centers.
+// figure or row image paragraph keeps only a small gap above its caption; the
+// caption paragraph keeps the block's own spacing below the artwork; a
+// caption-less row paragraph simply centers.
 void SPDFMarkdownApplyImageBlockStyles(SPDFMarkdownRenderContext* context, NSRange range,
                                        NSParagraphStyle* baseStyle) {
     [context.output
@@ -302,7 +366,8 @@ void SPDFMarkdownApplyImageBlockStyles(SPDFMarkdownRenderContext* context, NSRan
                   if (!role) return;
                   NSMutableParagraphStyle* style = [baseStyle mutableCopy];
                   style.alignment = NSTextAlignmentCenter;
-                  if (role.integerValue == SPDFMarkdownImageLayoutRoleFigure &&
+                  if ((role.integerValue == SPDFMarkdownImageLayoutRoleFigure ||
+                       role.integerValue == SPDFMarkdownImageLayoutRoleImageRow) &&
                       NSMaxRange(markedRange) < context.output.length) {
                       NSNumber* next = [context.output attribute:SPDFMarkdownImageLayoutAttribute
                                                          atIndex:NSMaxRange(markedRange)

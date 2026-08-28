@@ -344,7 +344,7 @@ int main(void) {
             [SPDFMarkdownPageConfiguration configurationForPaperSize:NSMakeSize(500, 700)
                                                         printableRect:NSMakeRect(40, 30, 420, 600)];
         SPDFExpect(fabs(asymmetric.topContentInset - 70) < 0.001 &&
-                       fabs(SPDFMarkdownPageConfiguration.A4PortraitConfiguration.topContentInset - 72) < 0.001,
+                       fabs(SPDFMarkdownPageConfiguration.A4PortraitConfiguration.topContentInset - 61.2) < 0.001,
                    @"topContentInset reports the true top margin, not the bottom one");
         NSString* probeText = @"BaselineProbe";
         NSAttributedString* probeString = [[NSAttributedString alloc]

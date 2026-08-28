@@ -135,16 +135,29 @@ spans keep their subtle background chip). `SPDFMarkdownTheme` in
 appearance-dynamic colors for the screen canvas and as the concrete light
 palette used on paper. An images-only paragraph (nothing but images and
 whitespace/soft breaks) renders by its shape. A single image becomes a
-centered figure, GitHub-style: the attachment centered on its own line with
-the alt text as a muted centered caption line below it. Two or more images
-stay the inline elements CommonMark says they are: they flow side by side in
-one center-aligned paragraph, separated by the source's spaces (a soft break
+centered figure, GitHub-style: the attachment centered on its own line with a
+muted centered caption line below it. The caption text is the markdown title
+(`![alt](src "title")`) when one is present, falling back to the alt text;
+the title also stays a tooltip on the attachment. Two or more images stay the
+inline elements CommonMark says they are: they flow side by side in one
+center-aligned paragraph, separated by the source's spaces (a soft break
 renders as a space), wrapping onto further lines when the printable width
-runs out — badge rows read as one line — and show no visible captions.
-Pending remote placeholder boxes and `[Image: alt]` text placeholders follow
-the same rules by paragraph shape. An image genuinely mixed into sentence
-text keeps inline flow and shows no visible alt text. In every caption-free
-flow the alt survives only as the attachment's tooltip/target
+runs out — badge rows read as one line. Each row image captions below itself:
+the row renders its image line(s), then a caption line where every
+attachment-rendered image's title-or-alt caption centers under that image's
+own horizontal span (wrapped rows get one caption band per wrapped image
+line, and the whole row paginates as one atomic band). The captions live
+exactly once in the canonical string, as a trailing caption paragraph, so
+search ranges stay exact; the paginator's measurement pass re-positions each
+caption span under its image via the shared
+`SPDFMarkdownImageRowIndexAttribute` ordinal. An image with neither title nor
+alt gets no caption, and its neighbors keep theirs. Pending remote
+placeholder boxes follow the same rules by paragraph shape and caption
+identically before their download lands (the caption is known at parse time,
+so nothing jumps); `[Image: alt]` text placeholders already show their text
+and caption nothing. An image genuinely mixed into sentence text keeps inline
+flow and shows no visible alt text. In every caption-free flow the alt
+survives only as the attachment's tooltip/target
 metadata. `SPDFMarkdownRenderOptions.fontScale` (clamped to
 [0.5, 3.0]) uniformly scales fonts and vertical spacing without touching indent
 constants or image budgets, and

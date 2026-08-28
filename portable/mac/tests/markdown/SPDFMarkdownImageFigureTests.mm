@@ -3,11 +3,12 @@
 #import "../../markdown/SPDFMarkdownDocument.h"
 
 // Local-image layout by paragraph shape: a single-image paragraph renders as
-// a centered figure with the alt text as a centered caption line below the
-// artwork; a paragraph of several images keeps them inline, CommonMark-style,
-// flowing side by side in one center-aligned paragraph with no visible
-// captions; and images mixed into sentence text keep plain inline flow, also
-// caption-free.
+// a centered figure with a centered caption line below the artwork — the
+// markdown title when present, the alt text otherwise; a paragraph of several
+// images keeps them inline, CommonMark-style, flowing side by side in one
+// center-aligned paragraph, and each row image captions below itself with its
+// caption centered under that image's own x-span; and images mixed into
+// sentence text keep plain inline flow, caption-free.
 
 static void SPDFExpectSearchCorrespondence(SPDFMarkdownDocument* document, NSString* query) {
     NSArray* matches = [document searchForQuery:query caseSensitive:YES];
@@ -47,6 +48,27 @@ static SPDFMarkdownPageFragment* SPDFFragmentForIndex(SPDFMarkdownPaginationPlan
     return nil;
 }
 
+// Center x (page-content coordinates) of the attachment character at
+// characterIndex inside its pagination fragment's line.
+static CGFloat SPDFImageCenterX(NSAttributedString* text, SPDFMarkdownPageFragment* fragment,
+                                NSUInteger characterIndex) {
+    CTLineRef line = SPDFMarkdownCreateFragmentLine([text attributedSubstringFromRange:fragment.attributedRange]);
+    CFIndex local = (CFIndex)(characterIndex - fragment.attributedRange.location);
+    CGFloat x0 = CTLineGetOffsetForStringIndex(line, local, NULL);
+    CGFloat x1 = CTLineGetOffsetForStringIndex(line, local + 1, NULL);
+    CFRelease(line);
+    return fragment.xOffset + (x0 + x1) / 2;
+}
+
+// Center x of a caption fragment, from the same typographic width the
+// drawing pass uses.
+static CGFloat SPDFCaptionCenterX(NSAttributedString* text, SPDFMarkdownPageFragment* fragment) {
+    CTLineRef line = SPDFMarkdownCreateFragmentLine([text attributedSubstringFromRange:fragment.attributedRange]);
+    CGFloat width = (CGFloat)CTLineGetTypographicBounds(line, NULL, NULL, NULL);
+    CFRelease(line);
+    return fragment.xOffset + width / 2;
+}
+
 static NSURL* SPDFCreateImageDocument(void) {
     NSString* directory = SPDFCreateFixtureDirectory();
     SPDFWritePNG([directory stringByAppendingPathComponent:@"local.png"], 4, 2);
@@ -54,6 +76,7 @@ static NSURL* SPDFCreateImageDocument(void) {
     NSMutableString* source = [NSMutableString stringWithString:@"# Image\n\n"];
     for (NSUInteger index = 0; index < 200; ++index)
         [source appendString:@"![Local pixels](local.png)\n\n"];
+    [source appendString:@"![AltOnly](local.png \"Titled figure caption\")\n\n"];
     [source appendString:@"![Budgeted out](second.png)\n\n"];
     [source appendString:@"![Badge one](local.png)\n![Badge two](local.png)\n\n"];
     [source appendString:@"Inline sentence with ![Inline art](local.png) image continues.\n"];
@@ -87,9 +110,9 @@ int main(void) {
                            @"each cached image remains constrained to render bounds");
             }
         }];
-        // 200 repeated figures + the two row images + the inline image all
-        // reference local.png and share one decoded NSImage.
-        SPDFExpect(attachmentCount == 203 && allAttachmentsShared,
+        // 200 repeated figures + the titled figure + the two row images + the
+        // inline image all reference local.png and share one decoded NSImage.
+        SPDFExpect(attachmentCount == 204 && allAttachmentsShared,
                    @"repeated image references reuse one decoded image rather than multiplying memory");
         SPDFExpect([imageDocument.renderedDocument.attributedString.string containsString:@"[Image: Budgeted out]"],
                    @"an image beyond the aggregate pixel budget becomes a graceful placeholder");
@@ -155,17 +178,35 @@ int main(void) {
                        fabs(captionFragment.xOffset + captionWidth / 2 - printableWidth / 2) < 2.0,
                    @"the caption centers within the printable width instead of hanging at the image's right");
 
+        // The caption text prefers the markdown title: a titled figure
+        // captions with the title, the alt survives only as tooltip/metadata,
+        // and untitled figures (the 200 above) keep captioning with the alt.
+        NSRange titledRange = [figureString.string rangeOfString:@"\uFFFC\nTitled figure caption"];
+        SPDFExpect(titledRange.location != NSNotFound,
+                   @"a figure with a markdown title uses the title as its caption");
+        SPDFExpect(![figureString.string containsString:@"AltOnly"],
+                   @"the alt text stays out of the visible text when the title captions the figure");
+        if (titledRange.location != NSNotFound) {
+            SPDFExpect([[figureString attribute:NSToolTipAttributeName
+                                        atIndex:titledRange.location
+                                 effectiveRange:nil] isEqualToString:@"Titled figure caption"],
+                       @"the titled figure keeps its title tooltip on the attachment");
+        }
+
         // A paragraph containing several images (with nothing but whitespace/
         // soft breaks between them) keeps them inline, CommonMark-style: the
         // images flow side by side in one paragraph -- the soft break renders
-        // as a plain space -- with no visible alt captions, and the row
-        // paragraph center-aligns as a group.
+        // as a plain space -- the row paragraph center-aligns as a group, and
+        // each image's title-or-alt caption renders once, in a caption line
+        // below the row.
         NSRange rowRange = [figureString.string rangeOfString:@"\uFFFC \uFFFC"];
         SPDFExpect(rowRange.location != NSNotFound,
                    @"a multi-image paragraph flows its images side by side separated by a space");
-        SPDFExpect(![figureString.string containsString:@"Badge one"] &&
-                       ![figureString.string containsString:@"Badge two"],
-                   @"a multi-image paragraph shows no visible alt captions");
+        SPDFExpect([figureString.string containsString:@"\uFFFC \uFFFC\nBadge one Badge two"],
+                   @"row images caption below the row, each caption exactly once, in image order");
+        SPDFExpect((NSUInteger)[figureString.string componentsSeparatedByString:@"Badge one"].count == 2,
+                   @"a row caption appears exactly once in the canonical text");
+        SPDFExpectSearchCorrespondence(imageDocument, @"Badge one");
         if (rowRange.location != NSNotFound) {
             NSUInteger firstImageIndex = rowRange.location;
             NSUInteger secondImageIndex = rowRange.location + 2;
@@ -206,6 +247,25 @@ int main(void) {
                 SPDFExpect(fabs(firstRowFragment.xOffset + lineWidth / 2 - printableWidth / 2) < 2.0,
                            @"the image row centers as a group within the printable width");
             }
+            // The row captions style like figure captions (muted, 0.9x body)
+            // and paginate as their own fragments strictly below the image
+            // line.
+            NSUInteger badgeCaptionIndex = [figureString.string rangeOfString:@"Badge one"].location;
+            NSFont* rowCaptionFont = [figureString attribute:NSFontAttributeName
+                                                     atIndex:badgeCaptionIndex
+                                              effectiveRange:nil];
+            NSColor* rowCaptionColor = [figureString attribute:NSForegroundColorAttributeName
+                                                       atIndex:badgeCaptionIndex
+                                                effectiveRange:nil];
+            SPDFExpect(fabs(rowCaptionFont.pointSize - 13.5) < 0.01 &&
+                           [rowCaptionColor isEqual:imageOptions.secondaryTextColor],
+                       @"row captions drop below body size and go muted like figure captions");
+            SPDFMarkdownPageFragment* badgeCaptionFragment = SPDFFragmentForIndex(figurePlan, badgeCaptionIndex);
+            SPDFExpect(badgeCaptionFragment != nil && firstRowFragment &&
+                           badgeCaptionFragment != firstRowFragment &&
+                           badgeCaptionFragment.pageYOffset >
+                               firstRowFragment.pageYOffset + firstRowFragment.height - 0.5,
+                       @"a row caption paginates as its own fragment strictly below the image line");
         }
 
         // An image genuinely mixed into sentence text keeps inline flow and
@@ -241,17 +301,21 @@ int main(void) {
         SPDFWritePNG([fitDirectory stringByAppendingPathComponent:@"wide.png"], 960, 320);
         SPDFWritePNG([fitDirectory stringByAppendingPathComponent:@"badge.png"], 60, 20);
         NSMutableString* fitSource = [NSMutableString string];
-        [fitSource appendString:@"![Wide left](wide.png)\n![Wide right](wide.png)\n\n"];
+        [fitSource appendString:@"![Wide left](wide.png \"Left title\")\n"
+                                 "![Wide right](wide.png \"Right title\")\n\n"];
         [fitSource appendString:@"![B1](badge.png) ![B2](badge.png) ![B3](badge.png) "
                                  "![B4](badge.png) ![B5](badge.png)\n\n"];
+        [fitSource appendString:@"![Cap A](badge.png \"First badge caption\") ![](badge.png) "
+                                 "![Cap C](badge.png \"Third badge caption\")\n\n"];
         for (NSUInteger index = 0; index < 6; ++index)
             [fitSource appendFormat:@"![Wall %lu](wide.png)\n", (unsigned long)index];
         NSString* fitPath = [fitDirectory stringByAppendingPathComponent:@"fit.md"];
         [fitSource writeToFile:fitPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
         error = nil;
+        SPDFMarkdownRenderOptions* fitOptions = SPDFMarkdownRenderOptions.defaultOptions;
         SPDFMarkdownDocument* fitDocument =
             [SPDFMarkdownDocument documentWithURL:[NSURL fileURLWithPath:fitPath]
-                                          options:SPDFMarkdownRenderOptions.defaultOptions error:&error];
+                                          options:fitOptions error:&error];
         SPDFExpect(fitDocument != nil && error == nil, @"row-fit document loads and renders");
         NSAttributedString* fitString = fitDocument.renderedDocument.attributedString;
         SPDFMarkdownPaginationPlan* fitPlan = [fitDocument paginationPlanForConfiguration:figureConfiguration];
@@ -295,7 +359,64 @@ int main(void) {
             }
             SPDFExpect(![fitString.string containsString:@"Wide left"] &&
                            ![fitString.string containsString:@"Wide right"],
-                       @"the fitted row still shows no visible alt captions");
+                       @"a titled row image keeps its alt text out of the visible string");
+            // The titled pair captions below itself: one image line, then one
+            // caption line whose fragments each center under their own image.
+            SPDFExpect([fitString.string containsString:@"￼ ￼\nLeft title Right title"],
+                       @"a titled two-image row renders one image line then one caption line, titles preferred");
+            NSRange leftCaption = [fitString.string rangeOfString:@"Left title"];
+            NSRange rightCaption = [fitString.string rangeOfString:@"Right title"];
+            SPDFMarkdownPageFragment* leftCaptionFragment =
+                leftCaption.location != NSNotFound ? SPDFFragmentForIndex(fitPlan, leftCaption.location) : nil;
+            SPDFMarkdownPageFragment* rightCaptionFragment =
+                rightCaption.location != NSNotFound ? SPDFFragmentForIndex(fitPlan, rightCaption.location) : nil;
+            SPDFExpect(leftCaptionFragment != nil && rightCaptionFragment != nil &&
+                           leftCaptionFragment != rightCaptionFragment,
+                       @"each row caption paginates as its own custom-positioned fragment");
+            if (pairFragment && leftCaptionFragment && rightCaptionFragment) {
+                SPDFExpect(fabs(leftCaptionFragment.pageYOffset - rightCaptionFragment.pageYOffset) < 0.001 &&
+                               leftCaptionFragment.pageYOffset >
+                                   pairFragment.pageYOffset + pairFragment.height - 0.5,
+                           @"both captions share one caption line strictly below the image line");
+                CGFloat leftImageCenter = SPDFImageCenterX(fitString, pairFragment, pairRow.location);
+                CGFloat rightImageCenter = SPDFImageCenterX(fitString, pairFragment, pairRow.location + 2);
+                SPDFExpect(fabs(SPDFCaptionCenterX(fitString, leftCaptionFragment) - leftImageCenter) < 2.0,
+                           @"the left caption centers under the left image's x-span");
+                SPDFExpect(fabs(SPDFCaptionCenterX(fitString, rightCaptionFragment) - rightImageCenter) < 2.0,
+                           @"the right caption centers under the right image's x-span");
+                NSFont* pairCaptionFont = [fitString attribute:NSFontAttributeName
+                                                       atIndex:leftCaption.location
+                                                effectiveRange:nil];
+                NSColor* pairCaptionColor = [fitString attribute:NSForegroundColorAttributeName
+                                                         atIndex:leftCaption.location
+                                                  effectiveRange:nil];
+                SPDFExpect(fabs(pairCaptionFont.pointSize - 13.5) < 0.01 &&
+                               [pairCaptionColor isEqual:fitOptions.secondaryTextColor],
+                           @"row captions render muted at 0.9x body size");
+            }
+        }
+
+        // An image with neither title nor alt contributes no caption; its
+        // neighbors keep theirs, still centered under their own images.
+        NSRange mixedRow =
+            [fitString.string rangeOfString:@"￼ ￼ ￼\nFirst badge caption Third badge caption"];
+        SPDFExpect(mixedRow.location != NSNotFound,
+                   @"a caption-less image drops out of the caption line without disturbing its neighbors");
+        if (mixedRow.location != NSNotFound) {
+            SPDFMarkdownPageFragment* mixedImages = SPDFFragmentForIndex(fitPlan, mixedRow.location);
+            NSRange firstCaption = [fitString.string rangeOfString:@"First badge caption"];
+            NSRange thirdCaption = [fitString.string rangeOfString:@"Third badge caption"];
+            SPDFMarkdownPageFragment* firstCaptionFragment = SPDFFragmentForIndex(fitPlan, firstCaption.location);
+            SPDFMarkdownPageFragment* thirdCaptionFragment = SPDFFragmentForIndex(fitPlan, thirdCaption.location);
+            SPDFExpect(mixedImages != nil && firstCaptionFragment != nil && thirdCaptionFragment != nil,
+                       @"the mixed row's images and captions all paginate");
+            if (mixedImages && firstCaptionFragment && thirdCaptionFragment) {
+                CGFloat firstCenter = SPDFImageCenterX(fitString, mixedImages, mixedRow.location);
+                CGFloat thirdCenter = SPDFImageCenterX(fitString, mixedImages, mixedRow.location + 4);
+                SPDFExpect(fabs(SPDFCaptionCenterX(fitString, firstCaptionFragment) - firstCenter) < 2.0 &&
+                               fabs(SPDFCaptionCenterX(fitString, thirdCaptionFragment) - thirdCenter) < 2.0,
+                           @"captions still center under their own images around the caption-less neighbor");
+            }
         }
 
         NSRange badgeRow = [fitString.string rangeOfString:@"\uFFFC \uFFFC \uFFFC \uFFFC \uFFFC"];
@@ -326,6 +447,22 @@ int main(void) {
             SPDFMarkdownPageFragment* wallLast = SPDFFragmentForIndex(fitPlan, wallRow.location + 10);
             SPDFExpect(wallFirst != nil && wallLast != nil && wallFirst != wallLast,
                        @"a floored row wraps onto further lines instead of overflowing the page");
+            // A wrapped row captions per wrapped image line: the first line's
+            // captions sit below it and above the later image lines, each
+            // still centered under its own image.
+            NSRange wallCaption = [fitString.string rangeOfString:@"Wall 0"];
+            SPDFMarkdownPageFragment* wallCaptionFragment =
+                wallCaption.location != NSNotFound ? SPDFFragmentForIndex(fitPlan, wallCaption.location) : nil;
+            SPDFExpect(wallFirst && wallLast && wallCaptionFragment != nil &&
+                           wallCaptionFragment.pageYOffset >
+                               wallFirst.pageYOffset + wallFirst.height - 0.5 &&
+                           wallCaptionFragment.pageYOffset < wallLast.pageYOffset + 0.5,
+                       @"a wrapped row's captions follow their own image line instead of collecting at the bottom");
+            if (wallFirst && wallCaptionFragment) {
+                CGFloat wallImageCenter = SPDFImageCenterX(fitString, wallFirst, wallRow.location);
+                SPDFExpect(fabs(SPDFCaptionCenterX(fitString, wallCaptionFragment) - wallImageCenter) < 2.0,
+                           @"a wrapped row's caption still centers under its own image");
+            }
         }
     }
     return SPDFFinishTests(@"SPDFMarkdownImageFigureTests");
