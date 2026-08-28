@@ -285,6 +285,13 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
       if (self->_pendingAnchor.length) {
           [self scrollToHeadingAnchor:self->_pendingAnchor];
           self->_pendingAnchor = nil;
+      } else if (preserve) {
+          // An in-place rerender (language choice, font scale) captured the
+          // live origin: restore it exactly for every fit mode so the viewport
+          // does not drift to a page boundary. The bounds-change notification
+          // re-derives the current page index.
+          [self->_pagedView.contentView scrollToPoint:origin];
+          [self->_pagedView reflectScrolledClipView:self->_pagedView.contentView];
       } else {
           [self->_pagedView goToPageAtIndex:page alignTop:NO];
           if (fit == SPDFMacMarkdownPageFitCustom) {
