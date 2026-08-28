@@ -26,7 +26,7 @@
         if (!fragment.attributedRange.length || NSMaxRange(fragment.attributedRange) > attributedString.length)
             continue;
         NSAttributedString* lineString = [attributedString attributedSubstringFromRange:fragment.attributedRange];
-        CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
+        CTLineRef line = SPDFMarkdownCreateFragmentLine(lineString);
         CGFloat width = (CGFloat)CTLineGetTypographicBounds(line, NULL, NULL, NULL) * fragment.scale;
         CFRelease(line);
         if (width <= 0.0) continue;

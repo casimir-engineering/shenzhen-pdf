@@ -201,7 +201,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 // (its scale applied).
 - (CGFloat)contentWidthOfFragment:(SPDFMarkdownPageFragment*)fragment {
     NSAttributedString* lineString = [_attributedString attributedSubstringFromRange:fragment.attributedRange];
-    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
+    CTLineRef line = SPDFMarkdownCreateFragmentLine(lineString);
     double width = CTLineGetTypographicBounds(line, NULL, NULL, NULL);
     CFRelease(line);
     return width * MAX(fragment.scale, 0.001);
@@ -251,7 +251,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     }
     if (!best) return spacer ? spacer.attributedRange.location : NSNotFound;
     NSAttributedString* lineString = [_attributedString attributedSubstringFromRange:best.attributedRange];
-    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
+    CTLineRef line = SPDFMarkdownCreateFragmentLine(lineString);
     CGFloat localX = (pageLocalX - best.xOffset) / MAX(best.scale, 0.001);
     CFIndex index = CTLineGetStringIndexForPosition(line, CGPointMake(localX, 0));
     CFRelease(line);
@@ -298,7 +298,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     if (!nearest) return NSNotFound;
 
     NSAttributedString* lineString = [_attributedString attributedSubstringFromRange:nearest.attributedRange];
-    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
+    CTLineRef line = SPDFMarkdownCreateFragmentLine(lineString);
     CGFloat localX = (point.x - NSMinX(pageFrame) - NSMinX(printable) - nearest.xOffset) / MAX(nearest.scale, 0.001);
     CFIndex lineIndex = CTLineGetStringIndexForPosition(line, CGPointMake(localX, 0));
     CFRelease(line);
