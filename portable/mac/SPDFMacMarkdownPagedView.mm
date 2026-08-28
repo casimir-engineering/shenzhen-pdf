@@ -307,14 +307,21 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     [self applyFitMode:fitMode];
 }
 
+// Deterministic page jump, PDF parity with scrollToPage:alignTop: (page
+// stepping and direct page entry both land on the page's top with the PDF
+// path's 12pt breathing room, x centered). scrollRectToVisible: performed
+// AppKit's MINIMUM scroll — it moved nothing whenever the target page was
+// already partially visible, while the toolbar page number still advanced.
+// Routing through the page-aware scrollToDocumentOrigin: keeps the horizontal
+// center-lock correct and sets _currentPageIndex from the actual scroll
+// outcome (viewportDidChange:), so the number always matches the viewport.
 - (void)goToPageAtIndex:(NSInteger)pageIndex alignTop:(BOOL)alignTop {
+    (void)alignTop;
     if (!self.pageCount) return;
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)self.pageCount - 1));
     NSRect page = [_canvas frameForPageAtIndex:(NSUInteger)pageIndex];
-    NSRect target = alignTop ? NSMakeRect(NSMinX(page), NSMinY(page), NSWidth(page), 1.0) : page;
-    [_canvas scrollRectToVisible:target];
-    _currentPageIndex = pageIndex;
-    if (self.viewportChangedHandler) self.viewportChangedHandler(_currentPageIndex, self.magnification);
+    NSRect visible = self.documentVisibleRect;
+    [self scrollToDocumentOrigin:NSMakePoint(NSMidX(page) - NSWidth(visible) * 0.5, NSMinY(page) - 12.0)];
 }
 
 - (BOOL)revealRange:(NSRange)range {

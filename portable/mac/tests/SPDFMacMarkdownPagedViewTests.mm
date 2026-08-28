@@ -10,6 +10,10 @@
 #include <assert.h>
 #include <stdio.h>
 
+// SPDFMacMarkdownScrollViewTestSupport.mm: deterministic goToPageAtIndex:
+// regression (partially-visible pages, both alignTop values, clamping).
+void spdf_assert_paged_view_go_to_page_scrolls(SPDFMacMarkdownPagedView* view);
+
 @interface SPDFMarkdownPagedTestReader : NSObject
 @property(nonatomic) NSUInteger menuRequests;
 @end
@@ -196,6 +200,7 @@ int main(void) {
         assert(view.magnification > 0.1 && view.magnification <= 1.0);
         [view goToPageAtIndex:2 alignTop:YES];
         assert(view.currentPageIndex == 2);
+        spdf_assert_paged_view_go_to_page_scrolls(view);
         view.presentationMode = YES;
         assert(!view.hasVerticalScroller);
         assert(((SPDFMacMarkdownPageCanvas*)view.documentView).presentationMode);
@@ -377,6 +382,23 @@ int main(void) {
         assert(NSWidth(matchLocal) > 8.0 && NSWidth(matchLocal) < NSWidth(printableRect) * 0.5);
         assert(NSHeight(matchLocal) > 4.0);
         assert([view pageLocalRectsForRanges:@[]].count == 0);
+        // Highlight rects hug the glyphs (PDF parity): the fragment band adds
+        // line and paragraph spacing below the text, so a band-tall rect looked
+        // vertically oversized. The rect must stay close to the typographic
+        // ascent+descent (1pt padding) and still contain the baseline band.
+        SPDFMarkdownPageFragment* matchFragment = nil;
+        for (SPDFMarkdownPageFragment* fragment in plan.pages[centerPage].fragments)
+            if (NSLocationInRange(centerMatch.location, fragment.attributedRange)) matchFragment = fragment;
+        assert(matchFragment != nil);
+        NSFont* matchFont = [rendered.attributedString attribute:NSFontAttributeName
+                                                         atIndex:centerMatch.location
+                                                  effectiveRange:NULL];
+        assert(matchFont != nil);
+        assert(NSHeight(matchLocal) < matchFragment.height - 8.0); // clearly less than the spacing band
+        assert(fabs(NSHeight(matchLocal) - (matchFont.ascender - matchFont.descender + 2.0)) < 1.5);
+        CGFloat baselineY =
+            configuration.topContentInset + matchFragment.pageYOffset + matchFragment.baselineOffset;
+        assert(NSMinY(matchLocal) < baselineY - 1.0 && NSMaxY(matchLocal) > baselineY + 0.5);
 
         // Setting the active match repaints only — no scrolling side effects.
         [view.contentView scrollToPoint:NSMakePoint(0, 40)];
