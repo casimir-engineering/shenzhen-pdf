@@ -31,7 +31,9 @@ $PORTABLE/mac/markdown/SPDFMarkdownRenderer.mm
 $PORTABLE/mac/markdown/SPDFMarkdownBlockRenderer.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDecorations.mm
 $PORTABLE/mac/markdown/SPDFMarkdownTableDecorations.mm
+$PORTABLE/mac/markdown/SPDFMarkdownTableLayout.mm
 $PORTABLE/mac/markdown/SPDFMarkdownPaginator.mm
+$PORTABLE/mac/markdown/SPDFMarkdownPaginatorDrawing.mm
 $PORTABLE/mac/markdown/SPDFMarkdownAsync.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDocument.mm
 "

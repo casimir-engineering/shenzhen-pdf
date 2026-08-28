@@ -3,6 +3,7 @@
 #import <PDFKit/PDFKit.h>
 
 #import "../../markdown/SPDFMarkdownDocument.h"
+#import "../../markdown/SPDFMarkdownTableDecorations.h"
 
 static NSData* SPDFCreatePDF(SPDFMarkdownPaginationPlan* plan, NSAttributedString* string) {
     NSMutableData* data = [NSMutableData data];
@@ -233,9 +234,9 @@ int main(void) {
 
         // Table chrome raster probe: the header band paints its Primer gray on
         // paper, unstriped body rows stay paper white, and the striped row
-        // carries its very subtle fill. Sample x sits in the last third of the
-        // first 160pt column, well clear of the short cell glyphs and of the
-        // column-boundary hairlines.
+        // carries its very subtle fill. Sample x sits just inside the table's
+        // measured right edge, well clear of the short left-aligned cell
+        // glyphs and of the column-boundary hairlines.
         SPDFMarkdownParser* tableParser = [SPDFMarkdownParser new];
         SPDFMarkdownDocumentModel* tableModel =
             [tableParser parseString:@"| A | B | C |\n| --- | --- | --- |\n| a1 | b1 | c1 |\n| a2 | b2 | c2 |\n"
@@ -256,7 +257,13 @@ int main(void) {
         SPDFExpect(headerBand != nil && stripeBand != nil && tableGridLines == 8,
                    @"the exported table plan holds a header band, one stripe, and the full 8-line grid");
         NSData* tablePDF = SPDFCreatePDF(tablePlan, tableDocument.renderedDocument.attributedString);
-        CGFloat probeX = NSMinX(configuration.printableRect) + NSMinX(headerBand.rect) + 120;
+        NSArray<NSNumber*>* tableColumnBoundaries = nil;
+        for (SPDFMarkdownPaginationItem* item in tablePlan.items)
+            if (item.tableRowInfo) tableColumnBoundaries = item.tableRowInfo.columnBoundaries;
+        SPDFExpect(tableColumnBoundaries.count == 4 &&
+                       fabs(NSWidth(headerBand.rect) - tableColumnBoundaries.lastObject.doubleValue) < 0.001,
+                   @"the exported header band spans the measured column boundaries");
+        CGFloat probeX = NSMinX(configuration.printableRect) + tableColumnBoundaries.lastObject.doubleValue - 6;
         CGFloat probeTop = configuration.topContentInset;
         unsigned char headerRGB[3] = {0, 0, 0};
         unsigned char plainRGB[3] = {0, 0, 0};

@@ -34,7 +34,9 @@ $ROOT/portable/mac/markdown/SPDFMarkdownRenderer.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownBlockRenderer.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDecorations.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownTableDecorations.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownTableLayout.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownPaginator.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownPaginatorDrawing.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownAsync.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDocument.mm
 "
@@ -44,6 +46,7 @@ for TEST in \
     SPDFMarkdownLanguageTests \
     SPDFMarkdownRendererTests \
     SPDFMarkdownPaginatorTests \
+    SPDFMarkdownTableLayoutTests \
     SPDFMarkdownAsyncTests \
     SPDFMarkdownPDFAdapterTests \
     SPDFMarkdownPerformanceTests

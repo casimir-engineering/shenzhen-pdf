@@ -2,6 +2,7 @@
 
 #import "../../markdown/SPDFMarkdownDocument.h"
 #import "../../markdown/SPDFMarkdownTableDecorations.h"
+#import "../../markdown/SPDFMarkdownTableLayout.h"
 
 static BOOL SPDFColorMatchesHex(NSColor* color, unsigned int hex) {
     NSColor* sRGB = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
@@ -124,11 +125,29 @@ int main(void) {
                        bodyRowBlock.tableRowInfo.bodyRowIndex == 0 &&
                        headerRowBlock.tableRowInfo.tableBlockIndex == bodyRowBlock.tableRowInfo.tableBlockIndex,
                    @"table rows record their role and shared table identity for the grid decoration");
+        // Content-aware columns: short cells produce compact natural widths
+        // (never the old fixed 240pt splits), every column keeps at least the
+        // minimum width, and the widest cell of each column fits its box.
         NSArray<NSNumber*>* rowBoundaries = headerRowBlock.tableRowInfo.columnBoundaries;
         SPDFExpect(rowBoundaries.count == 3 && fabs(rowBoundaries[0].doubleValue) < 0.001 &&
-                       fabs(rowBoundaries[1].doubleValue - 240) < 0.001 &&
-                       fabs(rowBoundaries[2].doubleValue - 480) < 0.001,
-                   @"a two-column table records its exact column boundary positions");
+                       rowBoundaries[1].doubleValue > rowBoundaries[0].doubleValue &&
+                       rowBoundaries[2].doubleValue > rowBoundaries[1].doubleValue &&
+                       rowBoundaries[2].doubleValue < 300,
+                   @"a two-column table of short cells records compact ascending column boundaries");
+        NSArray<NSNumber*>* naturalWidths = headerRowBlock.tableRowInfo.naturalColumnWidths;
+        SPDFExpect(naturalWidths.count == 2 &&
+                       naturalWidths[0].doubleValue >= SPDFMarkdownTableMinimumColumnWidth - 0.001 &&
+                       fabs(rowBoundaries[1].doubleValue - naturalWidths[0].doubleValue) < 0.001 &&
+                       fabs(rowBoundaries[2].doubleValue -
+                            (naturalWidths[0].doubleValue + naturalWidths[1].doubleValue)) < 0.001,
+                   @"a table narrower than the width budget keeps its measured natural column widths");
+        NSArray<NSValue*>* bodyCellRanges = bodyRowBlock.tableRowInfo.cellRanges;
+        SPDFExpect(bodyCellRanges.count == 2 &&
+                       [[canonical substringWithRange:bodyCellRanges[0].rangeValue] isEqualToString:@"Alpha"] &&
+                       [[canonical substringWithRange:bodyCellRanges[1].rangeValue] isEqualToString:@"42"] &&
+                       bodyRowBlock.tableRowInfo.cellAlignments.count == 2 &&
+                       bodyRowBlock.tableRowInfo.cellAlignments[1].integerValue == NSTextAlignmentRight,
+                   @"row info records each cell's exact canonical range and its column alignment");
         for (SPDFMarkdownRenderedHeading* heading in document.renderedDocument.headings) {
             NSString* selected = [[canonical substringWithRange:heading.attributedRange]
                 stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
