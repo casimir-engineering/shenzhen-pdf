@@ -2,6 +2,8 @@
 
 #import <CoreText/CoreText.h>
 
+#import "SPDFMarkdownTableDecorations.h"
+
 @implementation SPDFMarkdownPageConfiguration
 + (instancetype)A4PortraitConfiguration {
     SPDFMarkdownPageConfiguration* value = [SPDFMarkdownPageConfiguration new];
@@ -50,18 +52,26 @@
 - (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
                               kind:(SPDFMarkdownBlockKind)kind
                       headingLevel:(NSUInteger)headingLevel
+                      tableRowInfo:(SPDFMarkdownTableRowInfo*)tableRowInfo
                              lines:(NSArray<SPDFMarkdownTextLine*>*)lines {
     self = [super init];
     if (self) {
         _blockIndex = blockIndex;
         _kind = kind;
         _headingLevel = headingLevel;
+        _tableRowInfo = tableRowInfo;
         _lines = [lines copy];
         CGFloat height = 0;
         for (SPDFMarkdownTextLine* line in lines) height += line.height;
         _measuredHeight = height;
     }
     return self;
+}
+- (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
+                              kind:(SPDFMarkdownBlockKind)kind
+                      headingLevel:(NSUInteger)headingLevel
+                             lines:(NSArray<SPDFMarkdownTextLine*>*)lines {
+    return [self initWithBlockIndex:blockIndex kind:kind headingLevel:headingLevel tableRowInfo:nil lines:lines];
 }
 @end
 
@@ -243,6 +253,10 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
             CGContextAddPath(context, path);
             CGContextStrokePath(context);
             CGPathRelease(path);
+        } else if (decoration.type == SPDFMarkdownPageDecorationTypeTableHeaderBand ||
+                   decoration.type == SPDFMarkdownPageDecorationTypeTableStripe ||
+                   decoration.type == SPDFMarkdownPageDecorationTypeTableGridLine) {
+            SPDFMarkdownDrawTableDecoration(context, decoration.type, rect);
         } else {
             NSColor* ruleColor = decoration.type == SPDFMarkdownPageDecorationTypeThematicBreakRule
                                      ? SPDFMarkdownTheme.thematicBreakRuleColor
@@ -430,6 +444,7 @@ static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<S
             [result addObject:[[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:block.blockIndex
                                                                                 kind:block.kind
                                                                         headingLevel:block.level
+                                                                        tableRowInfo:block.tableRowInfo
                                                                                lines:lines]];
     }
     return result;

@@ -8,6 +8,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class SPDFMarkdownTableRowInfo;
+
 @interface SPDFMarkdownPageConfiguration : NSObject <NSCopying>
 @property(nonatomic) NSSize paperSize;
 @property(nonatomic) NSRect printableRect;
@@ -40,12 +42,20 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) NSUInteger blockIndex;
 @property(nonatomic, readonly) SPDFMarkdownBlockKind kind;
 @property(nonatomic, readonly) NSUInteger headingLevel;
+// Non-nil only for table rows: role and column geometry carried from the
+// rendered block so decoration planning can draw the table grid.
+@property(nonatomic, readonly, nullable) SPDFMarkdownTableRowInfo* tableRowInfo;
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownTextLine*>* lines;
 @property(nonatomic, readonly) CGFloat measuredHeight;
 - (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
                               kind:(SPDFMarkdownBlockKind)kind
                       headingLevel:(NSUInteger)headingLevel
+                      tableRowInfo:(nullable SPDFMarkdownTableRowInfo*)tableRowInfo
                              lines:(NSArray<SPDFMarkdownTextLine*>*)lines NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
+                              kind:(SPDFMarkdownBlockKind)kind
+                      headingLevel:(NSUInteger)headingLevel
+                             lines:(NSArray<SPDFMarkdownTextLine*>*)lines;
 - (instancetype)init NS_UNAVAILABLE;
 @end
 

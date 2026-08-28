@@ -1,6 +1,7 @@
 #import "SPDFMarkdownTestSupport.h"
 
 #import "../../markdown/SPDFMarkdownDocument.h"
+#import "../../markdown/SPDFMarkdownTableDecorations.h"
 
 static SPDFMarkdownTextLine* SPDFLine(NSUInteger location, CGFloat height) {
     return [[SPDFMarkdownTextLine alloc] initWithAttributedRange:NSMakeRange(location, 5)
@@ -18,6 +19,56 @@ static SPDFMarkdownPaginationItem* SPDFItem(NSUInteger index, SPDFMarkdownBlockK
         location += 5;
     }
     return [[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:index kind:kind headingLevel:level lines:lines];
+}
+
+static SPDFMarkdownPaginationItem* SPDFTableRowItem(NSUInteger index, BOOL header, NSUInteger bodyRowIndex,
+                                                    NSArray<NSNumber*>* boundaries, CGFloat height) {
+    SPDFMarkdownTableRowInfo* info = [[SPDFMarkdownTableRowInfo alloc] initWithTableBlockIndex:100
+                                                                                     headerRow:header
+                                                                                  bodyRowIndex:bodyRowIndex
+                                                                              columnBoundaries:boundaries];
+    return [[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:index
+                                                             kind:SPDFMarkdownBlockKindTableRow
+                                                     headingLevel:0
+                                                     tableRowInfo:info
+                                                            lines:@[ SPDFLine(index * 100, height) ]];
+}
+
+typedef struct {
+    NSMutableArray<SPDFMarkdownPageDecoration*>* headerBands;
+    NSMutableArray<SPDFMarkdownPageDecoration*>* stripes;
+    NSMutableArray<SPDFMarkdownPageDecoration*>* horizontalLines;
+    NSMutableArray<SPDFMarkdownPageDecoration*>* verticalLines;
+} SPDFTableDecorationBuckets;
+
+static SPDFTableDecorationBuckets SPDFBucketTableDecorations(NSArray<SPDFMarkdownPageDecoration*>* decorations) {
+    SPDFTableDecorationBuckets buckets = {
+        [NSMutableArray array], [NSMutableArray array], [NSMutableArray array], [NSMutableArray array]
+    };
+    for (SPDFMarkdownPageDecoration* decoration in decorations) {
+        if (decoration.type == SPDFMarkdownPageDecorationTypeTableHeaderBand)
+            [buckets.headerBands addObject:decoration];
+        else if (decoration.type == SPDFMarkdownPageDecorationTypeTableStripe)
+            [buckets.stripes addObject:decoration];
+        else if (decoration.type == SPDFMarkdownPageDecorationTypeTableGridLine)
+            [(NSHeight(decoration.rect) <= 1.001 ? buckets.horizontalLines : buckets.verticalLines)
+                addObject:decoration];
+    }
+    return buckets;
+}
+
+static BOOL SPDFDecorationValues(NSArray<SPDFMarkdownPageDecoration*>* decorations, NSArray<NSNumber*>* expected,
+                                 CGFloat (^value)(SPDFMarkdownPageDecoration*)) {
+    if (decorations.count != expected.count) return NO;
+    NSMutableSet* remaining = [NSMutableSet setWithArray:expected];
+    for (SPDFMarkdownPageDecoration* decoration in decorations) {
+        NSNumber* matched = nil;
+        for (NSNumber* candidate in remaining)
+            if (fabs(candidate.doubleValue - value(decoration)) < 0.001) matched = candidate;
+        if (!matched) return NO;
+        [remaining removeObject:matched];
+    }
+    return remaining.count == 0;
 }
 
 static SPDFMarkdownPageConfiguration* SPDFTestPage(void) {
@@ -261,6 +312,127 @@ int main(void) {
         for (SPDFMarkdownPageDecoration* decoration in [breakPlan decorationsForPageIndex:0])
             if (decoration.type == SPDFMarkdownPageDecorationTypeThematicBreakRule) plannedBreakRule = YES;
         SPDFExpect(plannedBreakRule, @"an end-to-end thematic break contributes a rule decoration");
+
+        // GitHub-style table chrome: a 3-column table (boundaries 0/60/120/180)
+        // with a header row and four body rows, one 20pt line each, on a
+        // 200x100 printable page.
+        NSArray<NSNumber*>* tableBoundaries = @[ @0, @60, @120, @180 ];
+        SPDFMarkdownPageConfiguration* tablePage =
+            [SPDFMarkdownPageConfiguration configurationForPaperSize:NSMakeSize(200, 100)
+                                                        printableRect:NSMakeRect(0, 0, 200, 100)];
+        SPDFMarkdownPaginationPlan* tablePlan = [paginator paginateItems:@[
+            SPDFTableRowItem(10, YES, 0, tableBoundaries, 20),
+            SPDFTableRowItem(11, NO, 0, tableBoundaries, 20),
+            SPDFTableRowItem(12, NO, 1, tableBoundaries, 20),
+            SPDFTableRowItem(13, NO, 2, tableBoundaries, 20),
+            SPDFTableRowItem(14, NO, 3, tableBoundaries, 20),
+        ]
+                                                           configuration:tablePage];
+        SPDFExpect(tablePlan.pages.count == 1, @"table decoration scenario fits one page");
+        SPDFTableDecorationBuckets table = SPDFBucketTableDecorations([tablePlan decorationsForPageIndex:0]);
+        SPDFMarkdownPageDecoration* headerBand = table.headerBands.firstObject;
+        SPDFExpect(table.headerBands.count == 1 && fabs(NSMinX(headerBand.rect)) < 0.001 &&
+                       fabs(NSMinY(headerBand.rect)) < 0.001 && fabs(NSWidth(headerBand.rect) - 180) < 0.001 &&
+                       fabs(NSHeight(headerBand.rect) - 20) < 0.001 && headerBand.blockIndex == 10,
+                   @"the header row contributes one fill band covering its full row band and table width");
+        SPDFExpect(SPDFDecorationValues(table.stripes, @[ @40, @80 ],
+                                        ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
+                                          return NSMinY(decoration.rect);
+                                        }) &&
+                       fabs(NSWidth(table.stripes.firstObject.rect) - 180) < 0.001 &&
+                       fabs(NSHeight(table.stripes.firstObject.rect) - 20) < 0.001,
+                   @"only the second and fourth body rows get zebra stripes; the first stays paper");
+        SPDFExpect(SPDFDecorationValues(table.horizontalLines, @[ @0, @20, @40, @60, @80, @99 ],
+                                        ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
+                                          return NSMinY(decoration.rect);
+                                        }) &&
+                       fabs(NSWidth(table.horizontalLines.firstObject.rect) - 180) < 0.001,
+                   @"1px horizontal grid lines sit at every row boundary and around the table");
+        BOOL verticalSpansTable = table.verticalLines.count > 0;
+        for (SPDFMarkdownPageDecoration* line in table.verticalLines)
+            if (fabs(NSMinY(line.rect)) > 0.001 || fabs(NSHeight(line.rect) - 100) > 0.001 ||
+                fabs(NSWidth(line.rect) - 1) > 0.001)
+                verticalSpansTable = NO;
+        SPDFExpect(SPDFDecorationValues(table.verticalLines, tableBoundaries,
+                                        ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
+                                          return NSMinX(decoration.rect);
+                                        }) &&
+                       verticalSpansTable,
+                   @"1px vertical grid lines sit at every column boundary and span the table height");
+
+        // A table split across pages closes its grid at the break, resumes on
+        // the next page, and keeps zebra parity per table, not per page.
+        SPDFMarkdownPageConfiguration* splitTablePage =
+            [SPDFMarkdownPageConfiguration configurationForPaperSize:NSMakeSize(200, 50)
+                                                        printableRect:NSMakeRect(0, 0, 200, 50)];
+        SPDFMarkdownPaginationPlan* splitTablePlan = [paginator paginateItems:@[
+            SPDFTableRowItem(10, YES, 0, tableBoundaries, 20),
+            SPDFTableRowItem(11, NO, 0, tableBoundaries, 20),
+            SPDFTableRowItem(12, NO, 1, tableBoundaries, 20),
+            SPDFTableRowItem(13, NO, 2, tableBoundaries, 20),
+        ]
+                                                                configuration:splitTablePage];
+        SPDFExpect(splitTablePlan.pages.count == 2, @"the split table spans two pages");
+        SPDFTableDecorationBuckets firstPortion =
+            SPDFBucketTableDecorations([splitTablePlan decorationsForPageIndex:0]);
+        SPDFTableDecorationBuckets secondPortion =
+            SPDFBucketTableDecorations([splitTablePlan decorationsForPageIndex:1]);
+        SPDFExpect(firstPortion.headerBands.count == 1 && firstPortion.stripes.count == 0 &&
+                       SPDFDecorationValues(firstPortion.horizontalLines, @[ @0, @20, @39 ],
+                                            ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
+                                              return NSMinY(decoration.rect);
+                                            }),
+                   @"page one holds the header and unstriped first body row, grid closed at the break");
+        SPDFExpect(secondPortion.headerBands.count == 0 && secondPortion.stripes.count == 1 &&
+                       fabs(NSMinY(secondPortion.stripes.firstObject.rect)) < 0.001 &&
+                       SPDFDecorationValues(secondPortion.horizontalLines, @[ @0, @20, @39 ],
+                                            ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
+                                              return NSMinY(decoration.rect);
+                                            }) &&
+                       secondPortion.verticalLines.count == 4 &&
+                       fabs(NSHeight(secondPortion.verticalLines.firstObject.rect) - 40) < 0.001,
+                   @"page two resumes the grid and stripes its first row, keeping per-table parity");
+
+        // End to end: a rendered GFM table records real column geometry that
+        // flows through measurement into full-width plan decorations.
+        SPDFMarkdownDocumentModel* gridModel =
+            [parser parseString:@"| A | B | C |\n| --- | :---: | ---: |\n| a1 | b1 | c1 |\n| a2 | b2 | c2 |\n"
+                      sourceURL:nil
+                          error:nil];
+        SPDFMarkdownRenderedDocument* gridDocument =
+            [[SPDFMarkdownRenderer new] renderModel:gridModel
+                                            options:SPDFMarkdownRenderOptions.defaultOptions
+                                  languageOverrides:nil];
+        NSArray<SPDFMarkdownPaginationItem*>* gridItems =
+            [paginator measureRenderedDocument:gridDocument containerWidth:NSWidth(A4.printableRect)];
+        NSUInteger measuredRows = 0;
+        BOOL singleLineRows = YES;
+        for (SPDFMarkdownPaginationItem* item in gridItems) {
+            if (!item.tableRowInfo) continue;
+            ++measuredRows;
+            if (item.lines.count != 1) singleLineRows = NO;
+        }
+        SPDFExpect(measuredRows == 3, @"measurement carries table row metadata onto every row item");
+        SPDFExpect(singleLineRows,
+                   @"inset tab stops keep each short row on one line instead of wrapping the last cell");
+        SPDFMarkdownPaginationPlan* gridPlan = [paginator paginateItems:gridItems configuration:A4];
+        SPDFTableDecorationBuckets grid = SPDFBucketTableDecorations([gridPlan decorationsForPageIndex:0]);
+        SPDFExpect(grid.headerBands.count == 1 && fabs(NSWidth(grid.headerBands.firstObject.rect) - 480) < 0.001 &&
+                       grid.stripes.count == 1 &&
+                       SPDFDecorationValues(grid.verticalLines, @[ @0, @160, @320, @480 ],
+                                            ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
+                                              return NSMinX(decoration.rect);
+                                            }),
+                   @"a real 3-column table plans its header band, one stripe, and column-boundary grid lines");
+        SPDFMarkdownPageFragment* stripedRowFragment = nil;
+        for (SPDFMarkdownPageFragment* fragment in gridPlan.pages.firstObject.fragments) {
+            SPDFMarkdownTableRowInfo* info = gridPlan.items[fragment.itemIndex].tableRowInfo;
+            if (info && !info.headerRow && info.bodyRowIndex == 1) stripedRowFragment = fragment;
+        }
+        SPDFExpect(stripedRowFragment != nil &&
+                       fabs(NSMinY(grid.stripes.firstObject.rect) - stripedRowFragment.pageYOffset) < 0.001 &&
+                       fabs(NSHeight(grid.stripes.firstObject.rect) - stripedRowFragment.height) < 0.001,
+                   @"the stripe band covers exactly the second body row's line fragment band");
     }
     return SPDFFinishTests(@"SPDFMarkdownPaginatorTests");
 }

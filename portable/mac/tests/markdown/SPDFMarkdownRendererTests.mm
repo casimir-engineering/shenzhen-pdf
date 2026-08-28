@@ -1,6 +1,7 @@
 #import "SPDFMarkdownTestSupport.h"
 
 #import "../../markdown/SPDFMarkdownDocument.h"
+#import "../../markdown/SPDFMarkdownTableDecorations.h"
 
 static BOOL SPDFColorMatchesHex(NSColor* color, unsigned int hex) {
     NSColor* sRGB = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
@@ -60,6 +61,24 @@ int main(void) {
         SPDFExpect(tableStyle.tabStops.count == 2 && tableStyle.tabStops.firstObject.alignment == NSTextAlignmentLeft &&
                        tableStyle.tabStops.lastObject.alignment == NSTextAlignmentRight,
                    @"rendered table gives every column an explicit alignment tab");
+        SPDFExpect(fabs(tableStyle.paragraphSpacingBefore - 6) < 0.001 && fabs(tableStyle.paragraphSpacing - 6) < 0.001,
+                   @"table rows reserve symmetric vertical padding so grid hairlines never touch glyphs");
+        SPDFMarkdownRenderedBlock* headerRowBlock = nil;
+        SPDFMarkdownRenderedBlock* bodyRowBlock = nil;
+        for (SPDFMarkdownRenderedBlock* block in document.renderedDocument.renderedBlocks) {
+            if (block.kind != SPDFMarkdownBlockKindTableRow) continue;
+            if (block.tableRowInfo.isHeaderRow && !headerRowBlock) headerRowBlock = block;
+            if (!block.tableRowInfo.isHeaderRow && !bodyRowBlock) bodyRowBlock = block;
+        }
+        SPDFExpect(headerRowBlock.tableRowInfo != nil && bodyRowBlock.tableRowInfo != nil &&
+                       bodyRowBlock.tableRowInfo.bodyRowIndex == 0 &&
+                       headerRowBlock.tableRowInfo.tableBlockIndex == bodyRowBlock.tableRowInfo.tableBlockIndex,
+                   @"table rows record their role and shared table identity for the grid decoration");
+        NSArray<NSNumber*>* rowBoundaries = headerRowBlock.tableRowInfo.columnBoundaries;
+        SPDFExpect(rowBoundaries.count == 3 && fabs(rowBoundaries[0].doubleValue) < 0.001 &&
+                       fabs(rowBoundaries[1].doubleValue - 240) < 0.001 &&
+                       fabs(rowBoundaries[2].doubleValue - 480) < 0.001,
+                   @"a two-column table records its exact column boundary positions");
         for (SPDFMarkdownRenderedHeading* heading in document.renderedDocument.headings) {
             NSString* selected = [[canonical substringWithRange:heading.attributedRange]
                 stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];

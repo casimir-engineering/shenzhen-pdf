@@ -11,6 +11,12 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownPageDecorationType) {
     SPDFMarkdownPageDecorationTypeCodeBox,
     SPDFMarkdownPageDecorationTypeHeadingRule,
     SPDFMarkdownPageDecorationTypeThematicBreakRule,
+    // GitHub-style table chrome: a header-row fill band, a subtle fill on
+    // alternating body rows, and the 1px hairline grid (horizontal row
+    // boundaries plus vertical column boundaries).
+    SPDFMarkdownPageDecorationTypeTableHeaderBand,
+    SPDFMarkdownPageDecorationTypeTableStripe,
+    SPDFMarkdownPageDecorationTypeTableGridLine,
 };
 
 // Unpainted page margin kept between a code box edge and its neighbors. The
@@ -48,6 +54,10 @@ FOUNDATION_EXPORT const CGFloat SPDFMarkdownCodeBoxOuterMargin;
 + (NSColor*)codeControlTextColor;
 + (NSColor*)headingRuleColor;
 + (NSColor*)thematicBreakRuleColor;
+// Table chrome roles, Primer-flavored like the code box.
++ (NSColor*)tableGridColor;        // #D1D9E0 1px hairline grid
++ (NSColor*)tableHeaderFillColor;  // #F6F8FA header-row band
++ (NSColor*)tableStripeFillColor;  // #FAFBFC alternating body rows
 + (NSColor*)printCodeBoxFillColor;
 + (NSColor*)printCodeBoxStrokeColor;
 + (NSColor*)printHeadingRuleColor;

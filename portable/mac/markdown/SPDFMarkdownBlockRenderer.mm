@@ -1,5 +1,6 @@
 #import "SPDFMarkdownDecorations.h"
 #import "SPDFMarkdownRenderInternal.h"
+#import "SPDFMarkdownTableDecorations.h"
 
 @implementation SPDFMarkdownRenderContext
 @end
@@ -113,8 +114,8 @@ static void SPDFApplyCodeTokens(SPDFMarkdownRenderContext* context, NSRange rang
     }
 }
 
-static void SPDFRecord(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block, NSRange range,
-                       NSUInteger depth) {
+static void SPDFRecordWithTableRow(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block, NSRange range,
+                                   NSUInteger depth, SPDFMarkdownTableRowInfo* tableRowInfo) {
     if (!range.length) return;
     [context.output addAttribute:SPDFMarkdownBlockIndexAttribute value:@(block.blockIndex) range:range];
     [context.output addAttribute:SPDFMarkdownBlockKindAttribute value:@(block.kind) range:range];
@@ -122,7 +123,13 @@ static void SPDFRecord(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* bl
                                                                                 kind:block.kind
                                                                      attributedRange:range
                                                                                level:block.level
-                                                                               depth:depth]];
+                                                                               depth:depth
+                                                                        tableRowInfo:tableRowInfo]];
+}
+
+static void SPDFRecord(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block, NSRange range,
+                       NSUInteger depth) {
+    SPDFRecordWithTableRow(context, block, range, depth, nil);
 }
 
 static void SPDFRenderBlock(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block, NSUInteger depth,
@@ -183,17 +190,33 @@ static NSTextAlignment SPDFTextAlignment(SPDFMarkdownTableAlignment alignment) {
     return NSTextAlignmentLeft;
 }
 
+// Horizontal padding kept between a cell's tab stop and its column edges, so
+// glyphs never touch the vertical grid hairlines. It also keeps every stop
+// strictly inside its column: a stop at exactly the paragraph origin (a
+// left-aligned first column at location 0) would never satisfy TextKit's
+// "next tab stop" rule, shifting every cell one stop over and wrapping the
+// last cell onto its own line.
+static const CGFloat kSPDFMarkdownTableCellInset = 8.0;
+
 static CGFloat SPDFTabLocation(CGFloat left, CGFloat width, NSTextAlignment alignment) {
     if (alignment == NSTextAlignmentCenter) return left + width / 2;
-    if (alignment == NSTextAlignmentRight) return left + width;
-    return left;
+    if (alignment == NSTextAlignmentRight) return left + width - kSPDFMarkdownTableCellInset;
+    return left + kSPDFMarkdownTableCellInset;
 }
+
+// Symmetric vertical padding reserved inside every table row so the drawn grid
+// hairlines never touch glyphs. Scaled by fontScale like all vertical spacing.
+static const CGFloat kSPDFMarkdownTableRowPadding = 6.0;
 
 static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* table, NSUInteger depth,
                             BOOL record) {
     NSUInteger columnCount = MAX((NSUInteger)1, table.tableColumnCount);
     CGFloat columnWidth = MAX(80.0, context.options.maximumImageWidth / columnCount);
+    NSMutableArray<NSNumber*>* boundaries = [NSMutableArray arrayWithCapacity:columnCount + 1];
+    for (NSUInteger i = 0; i <= columnCount; ++i) [boundaries addObject:@(depth * 22 + i * columnWidth)];
+    NSUInteger bodyRowIndex = 0;
     for (SPDFMarkdownBlock* section in table.children) {
+        BOOL headerSection = section.kind == SPDFMarkdownBlockKindTableHead;
         for (SPDFMarkdownBlock* row in section.children) {
             if (context.cancellationToken.isCancelled) return;
             NSUInteger start = context.output.length;
@@ -212,6 +235,8 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
             NSRange range = NSMakeRange(start, context.output.length - start);
             NSMutableParagraphStyle* style = SPDFStyle(context, depth);
             style.alignment = NSTextAlignmentLeft;
+            style.paragraphSpacingBefore = kSPDFMarkdownTableRowPadding * SPDFScale(context);
+            style.paragraphSpacing = kSPDFMarkdownTableRowPadding * SPDFScale(context);
             NSMutableArray<NSTextTab*>* tabs = [NSMutableArray array];
             for (NSUInteger i = 0; i < row.children.count; ++i) {
                 NSTextAlignment alignment = SPDFTextAlignment(row.children[i].tableAlignment);
@@ -222,7 +247,15 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
             }
             style.tabStops = tabs;
             [context.output addAttribute:NSParagraphStyleAttributeName value:style range:range];
-            if (record) SPDFRecord(context, row, range, depth);
+            if (record) {
+                SPDFMarkdownTableRowInfo* info =
+                    [[SPDFMarkdownTableRowInfo alloc] initWithTableBlockIndex:table.blockIndex
+                                                                    headerRow:headerSection
+                                                                 bodyRowIndex:headerSection ? 0 : bodyRowIndex
+                                                             columnBoundaries:boundaries];
+                SPDFRecordWithTableRow(context, row, range, depth, info);
+            }
+            if (!headerSection) ++bodyRowIndex;
         }
     }
 }

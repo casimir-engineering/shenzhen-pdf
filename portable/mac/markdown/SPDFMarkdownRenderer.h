@@ -9,6 +9,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class SPDFMarkdownTableRowInfo;
+
 FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownBlockIndexAttribute;
 FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownBlockKindAttribute;
 FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownWikiLinkAttribute;
@@ -43,11 +45,21 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 @property(nonatomic, readonly) NSRange attributedRange;
 @property(nonatomic, readonly) NSUInteger level;
 @property(nonatomic, readonly) NSUInteger depth;
+// Non-nil only for table rows: the row's role and column geometry, recorded by
+// the renderer so the pagination plan can draw the table grid decoration
+// without re-deriving tab-stop math (see SPDFMarkdownTableDecorations.h).
+@property(nonatomic, readonly, nullable) SPDFMarkdownTableRowInfo* tableRowInfo;
 - (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
                               kind:(SPDFMarkdownBlockKind)kind
                    attributedRange:(NSRange)attributedRange
                              level:(NSUInteger)level
-                             depth:(NSUInteger)depth NS_DESIGNATED_INITIALIZER;
+                             depth:(NSUInteger)depth
+                      tableRowInfo:(nullable SPDFMarkdownTableRowInfo*)tableRowInfo NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
+                              kind:(SPDFMarkdownBlockKind)kind
+                   attributedRange:(NSRange)attributedRange
+                             level:(NSUInteger)level
+                             depth:(NSUInteger)depth;
 - (instancetype)init NS_UNAVAILABLE;
 @end
 

@@ -1,6 +1,7 @@
 #import "SPDFMarkdownDecorations.h"
 
 #import "SPDFMarkdownPaginator.h"
+#import "SPDFMarkdownTableDecorations.h"
 
 static NSColor* SPDFRGB(unsigned int hex) {
     return [NSColor colorWithSRGBRed:((hex >> 16) & 0xff) / 255.0
@@ -30,6 +31,9 @@ const CGFloat SPDFMarkdownCodeBoxOuterMargin = 14.0;
 + (NSColor*)codeBoxStrokeColor { return SPDFRGB(0xD0D7DE); }
 + (NSColor*)headingRuleColor { return SPDFRGB(0xD1D9E0); }
 + (NSColor*)thematicBreakRuleColor { return SPDFRGB(0xD1D9E0); }
++ (NSColor*)tableGridColor { return SPDFRGB(0xD1D9E0); }
++ (NSColor*)tableHeaderFillColor { return SPDFRGB(0xF6F8FA); }
++ (NSColor*)tableStripeFillColor { return SPDFRGB(0xFAFBFC); }
 + (NSColor*)codeControlFillColor { return SPDFRGB(0xEAEEF2); }
 + (NSColor*)codeControlStrokeColor { return SPDFRGB(0xD0D7DE); }
 + (NSColor*)codeControlTextColor { return SPDFRGB(0x59636E); }
@@ -62,10 +66,18 @@ NSArray<SPDFMarkdownPageDecoration*>* SPDFMarkdownDecorationsForPage(SPDFMarkdow
     NSUInteger index = 0;
     while (index < fragments.count) {
         SPDFMarkdownPageFragment* first = fragments[index];
+        SPDFMarkdownPaginationItem* tableItem = first.itemIndex < items.count ? items[first.itemIndex] : nil;
+        if (tableItem.tableRowInfo) {
+            // Table rows are separate items; the table planner consumes every
+            // consecutive row of the same table and emits its band, stripe and
+            // grid decorations in one pass.
+            index = SPDFMarkdownAppendTableDecorations(fragments, index, items, printableWidth, decorations);
+            continue;
+        }
         NSUInteger runEnd = index;
         while (runEnd + 1 < fragments.count && fragments[runEnd + 1].itemIndex == first.itemIndex) ++runEnd;
         SPDFMarkdownPageFragment* last = fragments[runEnd];
-        SPDFMarkdownPaginationItem* item = first.itemIndex < items.count ? items[first.itemIndex] : nil;
+        SPDFMarkdownPaginationItem* item = tableItem;
         if (item.kind == SPDFMarkdownBlockKindCode) {
             // The reserved spacer bands are fragments of the code item, so the
             // box covers them and each page portion gets its own box. The
