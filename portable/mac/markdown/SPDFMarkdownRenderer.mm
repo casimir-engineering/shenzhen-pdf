@@ -71,7 +71,8 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
                               kind:(SPDFMarkdownBlockKind)kind
                    attributedRange:(NSRange)attributedRange
                              level:(NSUInteger)level
-                             depth:(NSUInteger)depth {
+                             depth:(NSUInteger)depth
+                      tableRowInfo:(SPDFMarkdownTableRowInfo*)tableRowInfo {
     self = [super init];
     if (self) {
         _blockIndex = blockIndex;
@@ -79,8 +80,21 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
         _attributedRange = attributedRange;
         _level = level;
         _depth = depth;
+        _tableRowInfo = tableRowInfo;
     }
     return self;
+}
+- (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
+                              kind:(SPDFMarkdownBlockKind)kind
+                   attributedRange:(NSRange)attributedRange
+                             level:(NSUInteger)level
+                             depth:(NSUInteger)depth {
+    return [self initWithBlockIndex:blockIndex
+                               kind:kind
+                    attributedRange:attributedRange
+                              level:level
+                              depth:depth
+                       tableRowInfo:nil];
 }
 @end
 

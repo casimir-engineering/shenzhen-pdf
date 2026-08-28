@@ -128,6 +128,41 @@ static NSUInteger SPDFPDFCodeBoxFillPixelCount(NSData* data) {
     return filled;
 }
 
+// Rasterizes page 1 and reads the RGB value at one top-down pixel coordinate.
+static BOOL SPDFPDFPixelOnFirstPage(NSData* data, NSInteger x, NSInteger y, unsigned char rgb[3]) {
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
+    CGPDFDocumentRef document = provider ? CGPDFDocumentCreateWithProvider(provider) : NULL;
+    CGPDFPageRef page = document ? CGPDFDocumentGetPage(document, 1) : NULL;
+    size_t width = 596;
+    size_t height = 842;
+    unsigned char* pixels = (unsigned char*)calloc(width * height, 4);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = pixels ? CGBitmapContextCreate(pixels, width, height, 8, width * 4, colorSpace,
+                                                           kCGImageAlphaPremultipliedLast) : NULL;
+    BOOL sampled = NO;
+    if (context && page && x >= 0 && y >= 0 && (size_t)x < width && (size_t)y < height) {
+        CGContextSetRGBFillColor(context, 1, 1, 1, 1);
+        CGContextFillRect(context, CGRectMake(0, 0, width, height));
+        CGContextDrawPDFPage(context, page);
+        unsigned char* pixel = pixels + ((size_t)y * width + (size_t)x) * 4;
+        rgb[0] = pixel[0];
+        rgb[1] = pixel[1];
+        rgb[2] = pixel[2];
+        sampled = YES;
+    }
+    if (context) CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
+    free(pixels);
+    if (document) CGPDFDocumentRelease(document);
+    if (provider) CGDataProviderRelease(provider);
+    return sampled;
+}
+
+static BOOL SPDFPixelNear(const unsigned char rgb[3], int red, int green, int blue, int tolerance) {
+    return abs((int)rgb[0] - red) <= tolerance && abs((int)rgb[1] - green) <= tolerance &&
+           abs((int)rgb[2] - blue) <= tolerance;
+}
+
 static NSUInteger SPDFPDFDarkPixelCount(NSData* data) {
     CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
     CGPDFDocumentRef document = provider ? CGPDFDocumentCreateWithProvider(provider) : NULL;
@@ -195,6 +230,51 @@ int main(void) {
         SPDFExpect([(darkPDF.string ?: @"") containsString:@"Shenzhen PDF Markdown"] &&
                        SPDFPDFDarkPixelCount(darkAppearancePDF) > 500,
                    @"dark appearance exports selectable dark text through a concrete print palette");
+
+        // Table chrome raster probe: the header band paints its Primer gray on
+        // paper, unstriped body rows stay paper white, and the striped row
+        // carries its very subtle fill. Sample x sits in the last third of the
+        // first 160pt column, well clear of the short cell glyphs and of the
+        // column-boundary hairlines.
+        SPDFMarkdownParser* tableParser = [SPDFMarkdownParser new];
+        SPDFMarkdownDocumentModel* tableModel =
+            [tableParser parseString:@"| A | B | C |\n| --- | --- | --- |\n| a1 | b1 | c1 |\n| a2 | b2 | c2 |\n"
+                           sourceURL:nil
+                               error:&error];
+        SPDFMarkdownDocument* tableDocument =
+            [[SPDFMarkdownDocument alloc] initWithModel:tableModel
+                                                 options:SPDFMarkdownRenderOptions.defaultOptions];
+        SPDFMarkdownPaginationPlan* tablePlan = [tableDocument paginationPlanForConfiguration:configuration];
+        SPDFMarkdownPageDecoration* headerBand = nil;
+        SPDFMarkdownPageDecoration* stripeBand = nil;
+        NSUInteger tableGridLines = 0;
+        for (SPDFMarkdownPageDecoration* decoration in [tablePlan decorationsForPageIndex:0]) {
+            if (decoration.type == SPDFMarkdownPageDecorationTypeTableHeaderBand) headerBand = decoration;
+            if (decoration.type == SPDFMarkdownPageDecorationTypeTableStripe) stripeBand = decoration;
+            if (decoration.type == SPDFMarkdownPageDecorationTypeTableGridLine) ++tableGridLines;
+        }
+        SPDFExpect(headerBand != nil && stripeBand != nil && tableGridLines == 8,
+                   @"the exported table plan holds a header band, one stripe, and the full 8-line grid");
+        NSData* tablePDF = SPDFCreatePDF(tablePlan, tableDocument.renderedDocument.attributedString);
+        CGFloat probeX = NSMinX(configuration.printableRect) + NSMinX(headerBand.rect) + 120;
+        CGFloat probeTop = configuration.topContentInset;
+        unsigned char headerRGB[3] = {0, 0, 0};
+        unsigned char plainRGB[3] = {0, 0, 0};
+        unsigned char stripeRGB[3] = {0, 0, 0};
+        BOOL headerSampled = SPDFPDFPixelOnFirstPage(tablePDF, lround(probeX),
+                                                     lround(probeTop + NSMidY(headerBand.rect)), headerRGB);
+        // The unstriped first body row sits between the header band and stripe.
+        CGFloat plainRowMidY = (NSMaxY(headerBand.rect) + NSMinY(stripeBand.rect)) / 2;
+        BOOL plainSampled = SPDFPDFPixelOnFirstPage(tablePDF, lround(probeX),
+                                                    lround(probeTop + plainRowMidY), plainRGB);
+        BOOL stripeSampled = SPDFPDFPixelOnFirstPage(tablePDF, lround(probeX),
+                                                     lround(probeTop + NSMidY(stripeBand.rect)), stripeRGB);
+        SPDFExpect(headerSampled && SPDFPixelNear(headerRGB, 246, 248, 250, 3),
+                   @"the exported header row paints the concrete #F6F8FA band");
+        SPDFExpect(plainSampled && SPDFPixelNear(plainRGB, 255, 255, 255, 2),
+                   @"an unstriped body row stays paper white in the exported PDF");
+        SPDFExpect(stripeSampled && SPDFPixelNear(stripeRGB, 250, 251, 252, 2),
+                   @"the striped body row carries the subtle #FAFBFC fill in the exported PDF");
 
         NSString* temporaryRoot = nil;
         SPDFMarkdownDocument* imageDocument = [SPDFMarkdownDocument documentWithURL:SPDFCreateImageDocument(&temporaryRoot)

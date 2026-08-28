@@ -55,8 +55,20 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   images become stable text placeholders rather than consuming unbounded memory.
 
 Tables retain column count and per-cell left/center/right alignment in the
-model. Native rendering uses stable tab stops with the declared alignment.
-Nested lists retain depth and increasing paragraph indentation.
+model. Native rendering uses stable tab stops with the declared alignment,
+inset 8pt inside each column so glyphs clear the drawn grid (GFM's `| --- |`
+separator line is consumed by the parser and never rendered). Each row records
+an `SPDFMarkdownTableRowInfo` (table identity, header/body role, body-row
+ordinal, column boundary x positions) on its rendered block; the paginator
+carries it onto the row's pagination item so decoration planning draws
+GitHub-style table chrome without re-deriving tab-stop math: a
+`tableHeaderFillColor` (#F6F8FA) band behind the header row, a subtle
+`tableStripeFillColor` (#FAFBFC) on alternating body rows (parity is
+per-table, so a split table keeps its striping across the page break), and a
+1px `tableGridColor` (#D1D9E0) hairline grid at every row and column boundary.
+The grid closes at a page break and resumes on the next page. Rows reserve 6pt
+of symmetric vertical padding so hairlines never touch glyphs. Nested lists
+retain depth and increasing paragraph indentation.
 
 ## Styling
 
@@ -124,8 +136,9 @@ a trailing 8pt band always, plus a leading band of 8pt (print/export) or the
 `decorationsForPageIndex:` returns per-page decoration geometry in
 page-content coordinates: one full-printable-width rounded code box per code
 item portion on that page (covering the spacer bands; a block continuing
-across pages gets one box per portion), and a 1px underline rule beneath level
-1 and 2 headings.
+across pages gets one box per portion), a 1px underline rule beneath level
+1 and 2 headings, and the table chrome (header band, zebra stripes, hairline
+grid) described in the styling section above.
 
 Save as PDF, preview and Print all reuse the session's live on-screen
 `SPDFMarkdownPaginationPlan` (A4 portrait, current font scale, reserved
