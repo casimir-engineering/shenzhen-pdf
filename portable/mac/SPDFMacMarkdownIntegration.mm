@@ -162,25 +162,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
       destinationTab.markdownAnchor = anchor;
       [strongSelf.markdownState.activeSession navigateToAnchorWhenReady:anchor ?: @""];
     };
-    session.searchUpdateHandler = ^(NSUInteger count, NSInteger currentIndex, BOOL searching) {
-      ShenzhenMacDelegate* strongSelf = weakSelf;
-      if (!strongSelf || strongSelf.markdownState.activeSession != weakSession || [strongSelf selectedTab] != tab)
-          return;
-      strongSelf->_findSearchInProgress = searching;
-      [strongSelf->_findMatches removeAllObjects];
-      for (NSUInteger index = 0; index < count; ++index)
-          [strongSelf->_findMatches addObject:@{@"markdownIndex" : @(index)}];
-      strongSelf->_findMatchIndex = currentIndex;
-      tab.findMatchIndex = currentIndex;
-      [strongSelf updateFindControls];
-      [strongSelf rebuildSidebar];
-      NSString* query = strongSelf->_searchField.stringValue ?: @"";
-      if (!searching && query.length) {
-          strongSelf->_statusLabel.stringValue =
-              count ? [NSString stringWithFormat:@"%lu matches for \"%@\"", (unsigned long)count, query]
-                    : [NSString stringWithFormat:@"No matches for \"%@\"", query];
-      }
-    };
+    [self configureMarkdownFindHandlersForSession:session tab:tab];
     session.viewportUpdateHandler = ^(NSInteger pageIndex, CGFloat zoom, SPDFMacMarkdownPageFitMode fitMode) {
       ShenzhenMacDelegate* strongSelf = weakSelf;
       if (!strongSelf || strongSelf.markdownState.activeSession != weakSession || [strongSelf selectedTab] != tab)
@@ -281,8 +263,12 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                            [strongSelf recordFileAttributes:attributes forTab:tab];
                            tab.cachedMarkdownFileIdentity = fileIdentity;
                            strongSelf->_statusLabel.stringValue = @"Markdown document ready.";
+                           // Restored searches must not scroll away from the
+                           // restored viewport (the PDF restore's revealMatch:NO).
                            if (tab.searchText.length)
-                               [strongSelf startMarkdownFindForQuery:tab.searchText preferredIndex:tab.findMatchIndex];
+                               [strongSelf startMarkdownFindForQuery:tab.searchText
+                                                      preferredIndex:tab.findMatchIndex
+                                                              reveal:NO];
                            [strongSelf rebuildSidebar];
                            [strongSelf updateMarkdownMinimap];
                        }
@@ -308,34 +294,10 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     if (session.fitMode == SPDFMacMarkdownPageFitCustom) tab.customZoom = session.zoom;
     tab.fitMode = (SPDFFitMode)session.fitMode;
     tab.searchText = _searchField.stringValue ?: @"";
-    tab.searchRegex = NO;
+    tab.searchRegex = _findRegexCheckbox.state == NSControlStateValueOn;
     tab.findMatchIndex = session.currentMatchIndex;
     tab.showSidebar = _sidebarPreferredVisible;
     tab.showMinimap = _minimapPreferredVisible;
-}
-
-- (void)startMarkdownFindForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex {
-    SPDFDocumentTab* tab = [self selectedTab];
-    if (![self isMarkdownActive] || !tab) return;
-    tab.searchText = query ?: @"";
-    tab.searchRegex = NO;
-    tab.findMatchIndex = preferredIndex;
-    [self.markdownState.activeSession searchForQuery:query ?: @"" preferredIndex:MAX(0, preferredIndex)];
-}
-
-- (void)moveMarkdownFindForward:(BOOL)forward {
-    [self.markdownState.activeSession moveToNextMatch:forward];
-    _findMatchIndex = self.markdownState.activeSession.currentMatchIndex;
-    [self selectedTab].findMatchIndex = _findMatchIndex;
-    [self updateFindControls];
-}
-
-- (void)clearMarkdownFindResults {
-    [self.markdownState.activeSession clearSearch];
-    [_findMatches removeAllObjects];
-    _findMatchIndex = -1;
-    _findSearchInProgress = NO;
-    [self rebuildSidebar];
 }
 
 - (NSString*)markdownSelectedText {
@@ -367,7 +329,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     _searchField.enabled = session.state == SPDFMacMarkdownSessionReady;
     _sidebarToggleButton.enabled = session.state == SPDFMacMarkdownSessionReady;
     _minimapToggleButton.enabled = session.state == SPDFMacMarkdownSessionReady;
-    _findRegexCheckbox.enabled = NO;
+    _findRegexCheckbox.enabled = session.state == SPDFMacMarkdownSessionReady;
     _ocrButton.enabled = NO;
     _translateButton.enabled = NO;
     [self updateFindControls];

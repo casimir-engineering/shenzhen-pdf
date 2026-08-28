@@ -42,6 +42,7 @@ $PORTABLE/mac/SPDFMacMarkdownKeyboardPolicy.mm
 $PORTABLE/mac/SPDFMacMarkdownRouting.mm
 $PORTABLE/mac/SPDFMacMarkdownView.mm
 $PORTABLE/mac/SPDFMacCursorRegions.mm
+$PORTABLE/mac/SPDFMacFindNearest.mm
 $PORTABLE/mac/SPDFMacMarkdownPanController.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Cursor.mm
@@ -56,6 +57,7 @@ $PORTABLE/mac/SPDFMacMarkdownSidebarModel.mm
 $PORTABLE/mac/SPDFMacMarkdownLanguagePicker.mm
 $PORTABLE/mac/SPDFMacMarkdownPrinting.mm
 $PORTABLE/mac/SPDFMacMarkdownSession.mm
+$PORTABLE/mac/SPDFMacMarkdownSession+Search.mm
 "
 
 for TEST in \
@@ -65,6 +67,7 @@ for TEST in \
     SPDFMacMarkdownMinimapModelTests \
     SPDFMacMarkdownSidebarModelTests \
     SPDFMacMarkdownSessionTests \
+    SPDFMacMarkdownSessionFindTests \
     SPDFMacMarkdownLanguagePickerTests \
     SPDFMacMarkdownPrintingTests
 do

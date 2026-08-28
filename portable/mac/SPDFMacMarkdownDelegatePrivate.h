@@ -53,9 +53,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)deactivateActiveMarkdownView;
 - (void)loadSelectedMarkdownTab:(SPDFDocumentTab*)tab;
 - (void)rememberActiveMarkdownStateForTab:(SPDFDocumentTab*)tab;
-- (void)startMarkdownFindForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex;
-- (void)moveMarkdownFindForward:(BOOL)forward;
-- (void)clearMarkdownFindResults;
 - (NSString*)markdownSelectedText;
 - (void)printActiveMarkdown;
 - (void)saveActiveMarkdownAsPDF;
@@ -67,6 +64,15 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)markdownHasSearchSidebar;
 - (void)rebuildMarkdownSidebar;
 - (void)activateMarkdownSidebarItem:(NSDictionary*)item;
+@end
+
+@interface ShenzhenMacDelegate (SPDFMacMarkdownFindIntegration)
+- (void)configureMarkdownFindHandlersForSession:(SPDFMacMarkdownSession*)session tab:(SPDFDocumentTab*)tab;
+// Markdown branch of startFindForCurrentQueryResetSavedIndex:revealMatch:.
+- (void)startMarkdownFindForCurrentQueryResetSavedIndex:(BOOL)resetSavedIndex revealMatch:(BOOL)revealMatch;
+- (void)startMarkdownFindForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex reveal:(BOOL)reveal;
+- (void)moveMarkdownFindForward:(BOOL)forward;
+- (void)clearMarkdownFindResults;
 @end
 
 @interface ShenzhenMacDelegate (SPDFMacMarkdownInteractionIntegration)

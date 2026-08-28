@@ -6087,9 +6087,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)invalidateFindMarkers {
     [_pageScrollView.verticalScroller setNeedsDisplay:YES];
+    [self.activeMarkdownSession invalidateSearchScrollbarMarkers];
 }
 
 - (NSArray<NSDictionary*>*)findScrollbarMarkers {
+    if ([self isMarkdownActive]) return self.activeMarkdownSession.searchScrollbarMarkers;
     if (!_doc || _findMatches.count == 0 || _renderedPages.count == 0) return @[];
 
     CGFloat documentHeight = MAX(1.0, [self continuousDocumentHeightForMinimap]);
@@ -10720,20 +10722,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
 - (void)startFindForCurrentQueryResetSavedIndex:(BOOL)resetSavedIndex revealMatch:(BOOL)revealMatch {
     if ([self isMarkdownActive]) {
-        NSString* query = [_searchField.stringValue copy] ?: @"";
-        SPDFDocumentTab* tab = [self selectedTab];
-        NSInteger preferred = resetSavedIndex ? 0 : MAX(0, tab.findMatchIndex);
-        tab.searchText = query;
-        tab.searchRegex = NO;
-        if (!query.length) {
-            [self clearMarkdownFindResults];
-            [self updateFindControls];
-            _statusLabel.stringValue = @"Ready";
-            return;
-        }
-        (void)revealMatch;
-        [self startMarkdownFindForQuery:query preferredIndex:preferred];
-        [self showSearchSidebarForFind];
+        [self startMarkdownFindForCurrentQueryResetSavedIndex:resetSavedIndex revealMatch:revealMatch];
         return;
     }
     if (!_doc || !_path.length) {

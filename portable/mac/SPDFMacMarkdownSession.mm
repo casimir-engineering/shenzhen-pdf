@@ -1,38 +1,24 @@
-#import "SPDFMacMarkdownSession.h"
+#import "SPDFMacMarkdownSessionPrivate.h"
+
 #import "SPDFMacMarkdownLanguagePicker.h"
-#import "SPDFMacMarkdownMinimapModel.h"
-#import "SPDFMacMarkdownPagedView.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacMarkdownSidebarModel.h"
 #import "SPDFMacMarkdownView.h"
-#import "markdown/SPDFMarkdown.h"
 
 static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     return MAX((CGFloat)0.5, MIN((CGFloat)3.0, scale));
 }
 
-@interface SPDFMacMarkdownSession ()
-@property(nonatomic) SPDFMacMarkdownSessionState state;
-@property(nonatomic, strong, nullable) SPDFMarkdownDocument* document;
-@property(nonatomic, strong, nullable) SPDFMarkdownRenderedDocument* renderedDocument;
-@end
 @implementation SPDFMacMarkdownSession {
     NSView* _rootView;
     NSTextField* _placeholder;
-    SPDFMacMarkdownPagedView* _pagedView;
     SPDFMarkdownPaginationPlan* _paginationPlan;
     NSAttributedString* _interactiveString;
-    NSArray<SPDFMarkdownSearchMatch*>* _searchMatches;
-    NSInteger _currentMatchIndex;
-    SPDFMarkdownCancellationToken* _searchToken;
     SPDFMarkdownCancellationToken* _renderToken;
     NSMutableDictionary<NSNumber*, NSString*>* _languageOverrides;
     SPDFMacMarkdownLanguagePickerController* _languagePicker;
-    dispatch_queue_t _workQueue;
     NSUInteger _activationGeneration;
-    NSUInteger _searchGeneration;
     NSUInteger _renderGeneration;
-    BOOL _active;
     NSPoint _pendingScrollOrigin;
     NSRange _pendingSelectedRange;
     NSInteger _pendingPageIndex;
@@ -40,7 +26,6 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     SPDFMacMarkdownPageFitMode _pendingFitMode;
     NSString* _pendingAnchor;
     __weak id<SPDFMacUIReader> _reader;
-    SPDFMacMarkdownMinimapModel* _minimapModel;
     SPDFMacMarkdownSidebarModel* _sidebarModel;
     // fontScale of the currently installed renderedDocument; when it trails
     // _fontScale (the scale changed while inactive or mid-load) activation
@@ -258,6 +243,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     NSInteger page = preserve && _pagedView ? self.currentPageIndex : _pendingPageIndex;
     CGFloat zoom = preserve && _pagedView ? self.zoom : _pendingZoom;
     SPDFMacMarkdownPageFitMode fit = preserve && _pagedView ? self.fitMode : _pendingFitMode;
+    [self clearMatchFlash]; // the flash timer must not drive the outgoing view
     [_pagedView removeFromSuperview];
     _pagedView = [[SPDFMacMarkdownPagedView alloc] initWithPaginationPlan:plan attributedString:interactive];
     _pagedView.reader = _reader;
@@ -316,6 +302,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     _pendingZoom = self.zoom;
     _pendingFitMode = self.fitMode;
     _active = NO;
+    [self clearMatchFlash];
     [self cancelAllOperations];
     [_rootView removeFromSuperview];
 }
@@ -335,79 +322,6 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 
 - (void)dealloc {
     [self cancelAllOperations];
-}
-
-- (void)removeSearchHighlights {
-    _pagedView.searchRanges = @[];
-}
-
-- (void)applySearchHighlights {
-    NSMutableArray<NSValue*>* ranges = [NSMutableArray arrayWithCapacity:_searchMatches.count];
-    for (SPDFMarkdownSearchMatch* match in _searchMatches) [ranges addObject:[NSValue valueWithRange:match.range]];
-    _pagedView.searchRanges = ranges;
-}
-
-- (void)clearSearch {
-    [_searchToken cancel];
-    _searchToken = nil;
-    _searchGeneration++;
-    _searchMatches = @[];
-    _currentMatchIndex = -1;
-    [self removeSearchHighlights];
-    if (self.searchUpdateHandler) self.searchUpdateHandler(0, -1, NO);
-}
-
-- (void)searchForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex {
-    [_searchToken cancel];
-    _searchToken = nil;
-    _searchGeneration++;
-    NSUInteger searchGeneration = _searchGeneration;
-    if (!query.length || !self.renderedDocument || !_active) {
-        _searchMatches = @[];
-        _currentMatchIndex = -1;
-        [self removeSearchHighlights];
-        if (self.searchUpdateHandler) self.searchUpdateHandler(0, -1, NO);
-        return;
-    }
-    if (self.searchUpdateHandler) self.searchUpdateHandler(0, -1, YES);
-    SPDFMarkdownCancellationToken* token = [SPDFMarkdownCancellationToken new];
-    _searchToken = token;
-    SPDFMarkdownRenderedDocument* snapshot = self.renderedDocument;
-    dispatch_async(_workQueue ?: dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      NSArray* matches = [snapshot searchForQuery:query caseSensitive:NO cancellationToken:token];
-      dispatch_async(dispatch_get_main_queue(), ^{
-        if (!self->_active || token.isCancelled || searchGeneration != self->_searchGeneration) return;
-        self->_searchToken = nil;
-        self->_searchMatches = matches ?: @[];
-        self->_currentMatchIndex =
-            self->_searchMatches.count ? MAX(0, MIN(preferredIndex, (NSInteger)self->_searchMatches.count - 1)) : -1;
-        [self applySearchHighlights];
-        if (self->_currentMatchIndex >= 0) [self revealCurrentMatch];
-        if (self.searchUpdateHandler)
-            self.searchUpdateHandler(self->_searchMatches.count, self->_currentMatchIndex, NO);
-      });
-    });
-}
-
-- (void)revealCurrentMatch {
-    if (_currentMatchIndex < 0 || _currentMatchIndex >= (NSInteger)_searchMatches.count) return;
-    NSRange range = _searchMatches[(NSUInteger)_currentMatchIndex].range;
-    [_pagedView revealRange:range];
-    if (self.searchUpdateHandler) self.searchUpdateHandler(_searchMatches.count, _currentMatchIndex, NO);
-}
-
-- (void)moveToNextMatch:(BOOL)forward {
-    if (_searchMatches.count == 0) return;
-    NSInteger count = (NSInteger)_searchMatches.count;
-    _currentMatchIndex =
-        _currentMatchIndex < 0 ? (forward ? 0 : count - 1) : (_currentMatchIndex + (forward ? 1 : -1) + count) % count;
-    [self revealCurrentMatch];
-}
-
-- (void)goToSearchMatchAtIndex:(NSInteger)matchIndex {
-    if (matchIndex < 0 || matchIndex >= (NSInteger)_searchMatches.count) return;
-    _currentMatchIndex = matchIndex;
-    [self revealCurrentMatch];
 }
 
 - (BOOL)scrollToHeadingAnchor:(NSString*)anchor {
@@ -510,6 +424,16 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                                       paginationPlan:plan
                                    interactiveString:interactive
                                 preserveCurrentState:YES];
+                   // The attributed string changed: re-run the active search so
+                   // match ranges can't go stale (the same match index is kept
+                   // when the count still fits, else it clamps), without
+                   // scrolling away from the preserved viewport.
+                   if (mainSelf->_activeSearchQuery.length)
+                       [mainSelf searchForQuery:mainSelf->_activeSearchQuery
+                                          regex:mainSelf->_activeSearchRegex
+                                 preferredIndex:mainSelf->_currentMatchIndex
+                                  jumpToNearest:NO
+                                         reveal:NO];
                    if (status.length && mainSelf.statusHandler) mainSelf.statusHandler(status);
                  });
                }];

@@ -23,6 +23,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSDictionary<NSString*, id>*>*)searchSidebarItemsForMatches:(NSArray<SPDFMarkdownSearchMatch*>*)matches
                                                                  query:(NSString*)query
                                                              searching:(BOOL)searching;
+// Plan page rendering the range (intersection first, nearest preceding
+// fragment as the fallback); -1 when the plan is empty. Shared by the sidebar
+// items and the find-match metadata.
+- (NSInteger)pageIndexForRange:(NSRange)range;
 
 @end
 

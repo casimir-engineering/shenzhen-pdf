@@ -46,6 +46,15 @@ typedef void (^SPDFMarkdownMinimapThumbnailCompletion)(SPDFRenderedPage* _Nullab
                    documentSize:(NSSize)documentSize
                   documentScale:(CGFloat)documentScale;
 
+// Publishes per-page search-match rects onto the page proxies' `highlights`
+// (page-local points with y growing down from the page top — the space
+// SPDFMinimapView draws page.highlights in; the paged view's
+// pageLocalRectsForRanges: output can be passed straight through). `pages` is
+// republished as a FRESH array of the same proxies so the minimap's cached
+// strip, keyed on the pages array identity, repaints. nil clears every page.
+// Main thread only.
+- (void)updateSearchHighlightRects:(nullable NSDictionary<NSNumber*, NSArray<NSValue*>*>*)rectsByPage;
+
 // targetPixelSize is a bounding box. The rendered image always preserves the
 // A4 aspect ratio and is hard-capped by maximumThumbnailPixelDimension.
 // Duplicate requests for an equal or smaller image share one render. Completion
