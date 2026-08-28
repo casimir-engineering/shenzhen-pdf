@@ -2,6 +2,7 @@
 
 #import <CoreText/CoreText.h>
 
+#import "SPDFMacMarkdownView.h"
 #import "markdown/SPDFMarkdown.h"
 
 // GitHub-style code-language control anchored inside the code box header band.
@@ -94,6 +95,44 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
             return @(fragment.blockIndex);
     }
     return nil;
+}
+
+// PDF parity: links show the pointing-hand cursor on hover. Adds one cursor
+// rect per link run portion inside each of the page's line fragments, using
+// the same CTLine offset mapping the highlight drawing uses.
+- (void)addLinkCursorRectsForPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {
+    NSRect printable = self.plan.configuration.printableRect;
+    NSAttributedString* attributedString = self.attributedString;
+    for (SPDFMarkdownPageFragment* fragment in page.fragments) {
+        if (!fragment.attributedRange.length || NSMaxRange(fragment.attributedRange) > attributedString.length)
+            continue;
+        CTLineRef line = NULL;
+        NSUInteger cursor = fragment.attributedRange.location;
+        while (cursor < NSMaxRange(fragment.attributedRange)) {
+            NSRange effective = NSMakeRange(0, 0);
+            NSDictionary* attributes = [attributedString attributesAtIndex:cursor
+                                                      longestEffectiveRange:&effective
+                                                                    inRange:fragment.attributedRange];
+            if (attributes[SPDFMacMarkdownDestinationAttribute] ||
+                attributes[SPDFMacMarkdownWikiDestinationAttribute]) {
+                if (!line) {
+                    NSAttributedString* lineString =
+                        [attributedString attributedSubstringFromRange:fragment.attributedRange];
+                    line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
+                }
+                CFIndex start = (CFIndex)(effective.location - fragment.attributedRange.location);
+                CFIndex end = (CFIndex)(NSMaxRange(effective) - fragment.attributedRange.location);
+                CGFloat x0 = CTLineGetOffsetForStringIndex(line, start, NULL) * fragment.scale;
+                CGFloat x1 = CTLineGetOffsetForStringIndex(line, end, NULL) * fragment.scale;
+                NSRect linkRect = NSMakeRect(NSMinX(pageFrame) + NSMinX(printable) + fragment.xOffset + MIN(x0, x1),
+                                             NSMinY(pageFrame) + NSMinY(printable) + fragment.pageYOffset,
+                                             fabs(x1 - x0), fragment.height);
+                if (!NSIsEmptyRect(linkRect)) [self addCursorRect:linkRect cursor:NSCursor.pointingHandCursor];
+            }
+            cursor = NSMaxRange(effective);
+        }
+        if (line) CFRelease(line);
+    }
 }
 
 - (void)drawCodeLanguageControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {

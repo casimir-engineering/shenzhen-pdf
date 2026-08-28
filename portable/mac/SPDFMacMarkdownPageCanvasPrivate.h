@@ -21,4 +21,5 @@
 - (NSRect)codeLanguageControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
 - (NSRect)codeLanguageControlHitRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
 - (void)drawCodeLanguageControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;
+- (void)addLinkCursorRectsForPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;
 @end
