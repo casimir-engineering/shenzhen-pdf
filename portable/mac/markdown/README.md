@@ -133,14 +133,18 @@ text attribute — it is drawn as a page decoration behind the code (inline code
 spans keep their subtle background chip). `SPDFMarkdownTheme` in
 `SPDFMarkdownDecorations.h` exposes the shared box/rule colors, both as
 appearance-dynamic colors for the screen canvas and as the concrete light
-palette used on paper. An images-only paragraph (one or more images with nothing but
-whitespace/soft breaks between them) renders each image as its own centered
-figure, GitHub-style: the attachment centered on its own line with the alt
-text as a muted centered caption line below it, consecutive images stacking as
-independent figures that paginate line by line. Pending remote placeholder
-boxes and `[Image: alt]` text placeholders follow the same figure layout. An
-image genuinely mixed into sentence text keeps inline flow and shows no
-visible alt text — the alt survives only as the attachment's tooltip/target
+palette used on paper. An images-only paragraph (nothing but images and
+whitespace/soft breaks) renders by its shape. A single image becomes a
+centered figure, GitHub-style: the attachment centered on its own line with
+the alt text as a muted centered caption line below it. Two or more images
+stay the inline elements CommonMark says they are: they flow side by side in
+one center-aligned paragraph, separated by the source's spaces (a soft break
+renders as a space), wrapping onto further lines when the printable width
+runs out — badge rows read as one line — and show no visible captions.
+Pending remote placeholder boxes and `[Image: alt]` text placeholders follow
+the same rules by paragraph shape. An image genuinely mixed into sentence
+text keeps inline flow and shows no visible alt text. In every caption-free
+flow the alt survives only as the attachment's tooltip/target
 metadata. `SPDFMarkdownRenderOptions.fontScale` (clamped to
 [0.5, 3.0]) uniformly scales fonts and vertical spacing without touching indent
 constants or image budgets, and

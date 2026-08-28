@@ -32,17 +32,21 @@ CGFloat SPDFMarkdownRenderScale(SPDFMarkdownRenderContext* context);
 // alt-text captions (SPDFMarkdownInlineRenderer.mm).
 void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block);
 
-// An images-only paragraph (images are its only meaningful content — one or
-// several, separated by nothing but whitespace/soft breaks) renders each image
-// GitHub-style as its own centered figure with the alt text as a centered
-// caption line below the artwork; consecutive images stack as independent
-// figures. Images mixed into sentence text keep inline flow and show no
-// visible alt text. The roles are recorded on the affected characters so the
-// leaf renderer can re-derive the centered paragraph styles after it applies
-// the block's base style to the whole range.
+// An images-only paragraph (images are its only meaningful content, separated
+// by nothing but whitespace/soft breaks) renders by its shape. A single image
+// becomes a centered figure with the alt text as a centered caption line
+// below the artwork. Two or more images stay the inline elements CommonMark
+// says they are: they flow side by side in one center-aligned paragraph,
+// separated by the source's spaces/soft breaks and wrapping when the
+// printable width runs out, with no visible captions (badge rows read as one
+// line). Images mixed into sentence text keep plain inline flow and show no
+// visible alt text either. The roles are recorded on the affected characters
+// so the leaf renderer can re-derive the centered paragraph styles after it
+// applies the block's base style to the whole range.
 typedef NS_ENUM(NSInteger, SPDFMarkdownImageLayoutRole) {
     SPDFMarkdownImageLayoutRoleFigure = 1,
     SPDFMarkdownImageLayoutRoleCaption = 2,
+    SPDFMarkdownImageLayoutRoleImageRow = 3,
 };
 FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownImageLayoutAttribute;
 void SPDFMarkdownApplyImageBlockStyles(SPDFMarkdownRenderContext* context, NSRange range,

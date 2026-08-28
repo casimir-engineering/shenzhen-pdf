@@ -105,22 +105,30 @@ int main(void) {
                        @"a pending placeholder centers like the real image will");
         }
 
-        // A paragraph of several pending remote images follows the same figure
-        // rules as decoded images: each placeholder box stacks as its own
-        // centered figure with its caption below it.
-        NSRange pairRange = [pendingText rangeOfString:@"\uFFFC\nPair one\n\uFFFC\nPair two"];
+        // A paragraph of several pending remote images follows the same shape
+        // rules as decoded images: CommonMark images are inline, so the
+        // placeholder boxes flow side by side in one center-aligned paragraph
+        // (the soft break renders as a space) with no visible alt captions;
+        // the alt lives inside the drawn box and as attachment metadata.
+        NSRange pairRange = [pendingText rangeOfString:@"\uFFFC \uFFFC"];
         SPDFExpect(pairRange.location != NSNotFound,
-                   @"multiple pending images in one paragraph stack as figures with captions below");
+                   @"multiple pending images in one paragraph flow side by side, separated by a space");
+        SPDFExpect(![pendingText containsString:@"Pair one"] && ![pendingText containsString:@"Pair two"],
+                   @"a pending image row emits no visible alt captions");
         if (pairRange.location != NSNotFound) {
-            NSParagraphStyle* pairBoxStyle = [pending.attributedString attribute:NSParagraphStyleAttributeName
-                                                                         atIndex:pairRange.location
-                                                                  effectiveRange:nil];
-            NSParagraphStyle* pairCaptionStyle = [pending.attributedString attribute:NSParagraphStyleAttributeName
-                                                                             atIndex:pairRange.location + 2
-                                                                      effectiveRange:nil];
-            SPDFExpect(pairBoxStyle.alignment == NSTextAlignmentCenter &&
-                           pairCaptionStyle.alignment == NSTextAlignmentCenter,
-                       @"stacked pending placeholders and their captions center like real figures");
+            NSParagraphStyle* firstBoxStyle = [pending.attributedString attribute:NSParagraphStyleAttributeName
+                                                                          atIndex:pairRange.location
+                                                                   effectiveRange:nil];
+            NSParagraphStyle* secondBoxStyle = [pending.attributedString attribute:NSParagraphStyleAttributeName
+                                                                           atIndex:pairRange.location + 2
+                                                                    effectiveRange:nil];
+            SPDFExpect(firstBoxStyle.alignment == NSTextAlignmentCenter &&
+                           secondBoxStyle.alignment == NSTextAlignmentCenter,
+                       @"a pending placeholder row center-aligns like a real image row");
+            SPDFExpect([[pending.attributedString attribute:SPDFMarkdownImageTargetAttribute
+                                                    atIndex:pairRange.location + 2
+                                             effectiveRange:nil] isEqual:@"https://example.test/images/two.png"],
+                       @"row placeholders keep their target metadata");
         }
 
         // Title attributes surface as tooltips on the attachment and on links.
