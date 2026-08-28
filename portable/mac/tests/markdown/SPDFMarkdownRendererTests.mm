@@ -2,6 +2,14 @@
 
 #import "../../markdown/SPDFMarkdownDocument.h"
 
+static BOOL SPDFColorMatchesHex(NSColor* color, unsigned int hex) {
+    NSColor* sRGB = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (!sRGB) return NO;
+    return fabs(sRGB.redComponent - ((hex >> 16) & 0xff) / 255.0) < 0.002 &&
+           fabs(sRGB.greenComponent - ((hex >> 8) & 0xff) / 255.0) < 0.002 &&
+           fabs(sRGB.blueComponent - (hex & 0xff) / 255.0) < 0.002;
+}
+
 static void SPDFExpectSearchCorrespondence(SPDFMarkdownDocument* document, NSString* query) {
     NSArray* matches = [document searchForQuery:query caseSensitive:YES];
     SPDFExpect(matches.count > 0, [@"search finds " stringByAppendingString:query]);
@@ -90,8 +98,41 @@ int main(void) {
         NSRange h2 = [canonical rangeOfString:@"Lists and tables"];
         NSParagraphStyle* h2Style = [document.renderedDocument.attributedString
             attribute:NSParagraphStyleAttributeName atIndex:h2.location effectiveRange:nil];
-        SPDFExpect(fabs(h2Style.paragraphSpacingBefore - 20) < 0.001 && fabs(h2Style.paragraphSpacing - 8) < 0.001,
-                   @"H1/H2 headings get 20pt leading and 8pt trailing space");
+        SPDFExpect(fabs(h2Style.paragraphSpacingBefore - 22) < 0.001 && fabs(h2Style.paragraphSpacing - 10) < 0.001,
+                   @"H1/H2 headings get 22pt leading and 10pt trailing space");
+        NSFont* h2Font = [document.renderedDocument.attributedString attribute:NSFontAttributeName
+                                                                        atIndex:h2.location
+                                                                 effectiveRange:nil];
+        SPDFExpect(fabs(h2Font.pointSize - 22.5) < 0.01 &&
+                       [h2Font isEqual:[NSFont systemFontOfSize:h2Font.pointSize weight:NSFontWeightSemibold]],
+                   @"H2 renders at 1.5em in semibold rather than full bold");
+        NSRange h1 = [canonical rangeOfString:@"Shenzhen PDF Markdown"];
+        NSFont* h1Font = [document.renderedDocument.attributedString attribute:NSFontAttributeName
+                                                                        atIndex:h1.location
+                                                                 effectiveRange:nil];
+        SPDFExpect(fabs(h1Font.pointSize - 26.25) < 0.01, @"H1 renders at 1.75em of the body size");
+
+        NSRange bodyRun = [canonical rangeOfString:@"This is"];
+        NSColor* bodyColor = [document.renderedDocument.attributedString attribute:NSForegroundColorAttributeName
+                                                                            atIndex:bodyRun.location
+                                                                     effectiveRange:nil];
+        SPDFExpect(SPDFColorMatchesHex(bodyColor, 0x1F2328),
+                   @"body text uses the concrete near-black reading color, never pure black");
+        NSColor* h2Color = [document.renderedDocument.attributedString attribute:NSForegroundColorAttributeName
+                                                                          atIndex:h2.location
+                                                                   effectiveRange:nil];
+        SPDFExpect(SPDFColorMatchesHex(h2Color, 0x1F2328), @"heading text shares the body near-black");
+        NSRange linkRun = [canonical rangeOfString:@"safe link"];
+        NSColor* linkColor = [document.renderedDocument.attributedString attribute:NSForegroundColorAttributeName
+                                                                            atIndex:linkRun.location
+                                                                     effectiveRange:nil];
+        SPDFExpect(SPDFColorMatchesHex(linkColor, 0x0969DA), @"links use the concrete accent blue");
+        NSString* obsidianText = obsidian.renderedDocument.attributedString.string;
+        NSRange quoteRun = [obsidianText rangeOfString:@"A normal block quote"];
+        NSColor* quoteTextColor = [obsidian.renderedDocument.attributedString
+            attribute:NSForegroundColorAttributeName atIndex:quoteRun.location effectiveRange:nil];
+        SPDFExpect(SPDFColorMatchesHex(quoteTextColor, 0x59636E),
+                   @"block quote prose reads in the muted secondary color");
 
         NSUInteger unknownBlock = document.model.codeFences.lastObject.blockIndex;
         [document setLanguageIdentifier:@"python" forCodeBlock:unknownBlock];
@@ -140,6 +181,27 @@ int main(void) {
                        centeredStyle.tabStops.firstObject.alignment == NSTextAlignmentCenter &&
                        centeredStyle.tabStops.lastObject.alignment == NSTextAlignmentRight,
                    @"first-column alignment is scoped to its own tab instead of the whole row");
+
+        SPDFMarkdownDocumentModel* breakModel =
+            [parser parseString:@"Above\n\n***\n\nBelow\n\n###### Tiny heading\n" sourceURL:nil error:&error];
+        SPDFMarkdownDocument* breakDocument = [[SPDFMarkdownDocument alloc]
+            initWithModel:breakModel options:SPDFMarkdownRenderOptions.defaultOptions];
+        NSString* breakText = breakDocument.renderedDocument.attributedString.string;
+        SPDFExpect(![breakText containsString:@"─"],
+                   @"a thematic break reserves a blank line; the visible rule is a page decoration");
+        SPDFMarkdownRenderedBlock* breakBlock = nil;
+        for (SPDFMarkdownRenderedBlock* block in breakDocument.renderedDocument.renderedBlocks)
+            if (block.kind == SPDFMarkdownBlockKindThematicBreak) breakBlock = block;
+        SPDFExpect(breakBlock != nil && breakBlock.attributedRange.length == 1,
+                   @"the thematic break stays a recorded block so pagination can place its rule");
+        NSRange h6 = [breakText rangeOfString:@"Tiny heading"];
+        NSFont* h6Font = [breakDocument.renderedDocument.attributedString attribute:NSFontAttributeName
+                                                                             atIndex:h6.location
+                                                                      effectiveRange:nil];
+        NSColor* h6Color = [breakDocument.renderedDocument.attributedString
+            attribute:NSForegroundColorAttributeName atIndex:h6.location effectiveRange:nil];
+        SPDFExpect(fabs(h6Font.pointSize - 13.5) < 0.01 && SPDFColorMatchesHex(h6Color, 0x59636E),
+                   @"H6 drops below body size and goes muted, caption-style");
 
         NSString* listSource = @"- first paragraph\n\n  - nested before\n\n  after nested\n\n  ```swift\n  let x = 1\n  ```\n";
         SPDFMarkdownDocumentModel* nestedModel = [parser parseString:listSource sourceURL:nil error:&error];
@@ -194,7 +256,7 @@ int main(void) {
         NSRange scaledParagraph = [scaledText rangeOfString:@"This is"];
         NSParagraphStyle* scaledBodyStyle = [scaled.renderedDocument.attributedString
             attribute:NSParagraphStyleAttributeName atIndex:scaledParagraph.location effectiveRange:nil];
-        SPDFExpect(fabs(scaledBodyStyle.lineSpacing - 4.5) < 0.01 && fabs(scaledBodyStyle.paragraphSpacing - 15) < 0.01,
+        SPDFExpect(fabs(scaledBodyStyle.lineSpacing - 6) < 0.01 && fabs(scaledBodyStyle.paragraphSpacing - 18) < 0.01,
                    @"fontScale multiplies line and paragraph spacing");
         NSParagraphStyle* scaledCodeStyle = [scaled.renderedDocument.attributedString
             attribute:NSParagraphStyleAttributeName atIndex:scaledCode.location effectiveRange:nil];

@@ -9,12 +9,27 @@ static NSColor* SPDFRGB(unsigned int hex) {
                                alpha:1];
 }
 
+const CGFloat SPDFMarkdownCodeBoxOuterMargin = 14.0;
+
 // The Markdown page is white paper in every app appearance (PDF parity), so
-// screen, print and export decorations share one concrete light palette.
+// screen, print and export share one concrete sRGB light palette. Text sits in
+// GitHub's near-black #1F2328 rather than pure black; everything muted uses
+// #59636E; chrome hairlines use the #D0D7DE/#D1D9E0 border grays.
 @implementation SPDFMarkdownTheme
++ (NSColor*)bodyTextColor { return SPDFRGB(0x1F2328); }
++ (NSColor*)secondaryTextColor { return SPDFRGB(0x59636E); }
++ (NSColor*)linkColor { return SPDFRGB(0x0969DA); }
++ (NSColor*)inlineCodeChipColor { return SPDFRGB(0xEFF1F2); }
++ (NSColor*)syntaxCommentColor { return SPDFRGB(0x59636E); }
++ (NSColor*)syntaxStringColor { return SPDFRGB(0x0A3069); }
++ (NSColor*)syntaxNumberColor { return SPDFRGB(0x0550AE); }
++ (NSColor*)syntaxKeyColor { return SPDFRGB(0x953800); }
++ (NSColor*)syntaxMarkupColor { return SPDFRGB(0x8250DF); }
++ (NSColor*)syntaxKeywordColor { return SPDFRGB(0xCF222E); }
 + (NSColor*)codeBoxFillColor { return SPDFRGB(0xF6F8FA); }
 + (NSColor*)codeBoxStrokeColor { return SPDFRGB(0xD0D7DE); }
-+ (NSColor*)headingRuleColor { return SPDFRGB(0xD8DEE4); }
++ (NSColor*)headingRuleColor { return SPDFRGB(0xD1D9E0); }
++ (NSColor*)thematicBreakRuleColor { return SPDFRGB(0xD1D9E0); }
 + (NSColor*)codeControlFillColor { return SPDFRGB(0xEAEEF2); }
 + (NSColor*)codeControlStrokeColor { return SPDFRGB(0xD0D7DE); }
 + (NSColor*)codeControlTextColor { return SPDFRGB(0x59636E); }
@@ -53,12 +68,30 @@ NSArray<SPDFMarkdownPageDecoration*>* SPDFMarkdownDecorationsForPage(SPDFMarkdow
         SPDFMarkdownPaginationItem* item = first.itemIndex < items.count ? items[first.itemIndex] : nil;
         if (item.kind == SPDFMarkdownBlockKindCode) {
             // The reserved spacer bands are fragments of the code item, so the
-            // box covers them and each page portion gets its own box.
+            // box covers them and each page portion gets its own box. The
+            // outer margin stays unpainted: the box is inset at the item's
+            // true top (a non-continuation lead band) and true bottom (the
+            // trailing band), while mid-item page splits run edge to edge.
             CGFloat top = first.pageYOffset;
             CGFloat bottom = last.pageYOffset + last.height;
+            if (!first.isContinuation) top += SPDFMarkdownCodeBoxOuterMargin;
+            if (NSEqualRanges(last.attributedRange, item.lines.lastObject.attributedRange))
+                bottom -= SPDFMarkdownCodeBoxOuterMargin;
+            if (bottom - top >= 1) {
+                [decorations addObject:[[SPDFMarkdownPageDecoration alloc]
+                                           initWithType:SPDFMarkdownPageDecorationTypeCodeBox
+                                                   rect:NSMakeRect(0, top, printableWidth, bottom - top)
+                                             blockIndex:item.blockIndex]];
+            }
+        } else if (item.kind == SPDFMarkdownBlockKindThematicBreak) {
+            // The break renders as an invisible blank line; the visible rule is
+            // this 2px hairline centered in the reserved space.
+            CGFloat top = first.pageYOffset;
+            CGFloat bottom = last.pageYOffset + last.height;
+            CGFloat y = MIN(MAX(top, top + (bottom - top) / 2 - 1), MAX(top, bottom - 2));
             [decorations addObject:[[SPDFMarkdownPageDecoration alloc]
-                                       initWithType:SPDFMarkdownPageDecorationTypeCodeBox
-                                               rect:NSMakeRect(0, top, printableWidth, bottom - top)
+                                       initWithType:SPDFMarkdownPageDecorationTypeThematicBreakRule
+                                               rect:NSMakeRect(0, y, printableWidth, 2)
                                          blockIndex:item.blockIndex]];
         } else if (item.kind == SPDFMarkdownBlockKindHeading && item.headingLevel >= 1 && item.headingLevel <= 2 &&
                    NSEqualRanges(last.attributedRange, item.lines.lastObject.attributedRange)) {

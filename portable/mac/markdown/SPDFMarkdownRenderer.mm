@@ -1,5 +1,6 @@
 #import "SPDFMarkdownRenderer.h"
 
+#import "SPDFMarkdownDecorations.h"
 #import "SPDFMarkdownRenderInternal.h"
 
 NSAttributedStringKey const SPDFMarkdownBlockIndexAttribute = @"SPDFMarkdownBlockIndex";
@@ -15,33 +16,34 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     return self;
 }
 - (void)setFontScale:(CGFloat)fontScale { _fontScale = MAX(0.5, MIN(3.0, fontScale)); }
+// The reading palette lives in SPDFMarkdownTheme: body text is a softened
+// near-black on the white paper, secondary roles share one muted gray, and all
+// values are concrete sRGB so screen, print and export match exactly. Body
+// metrics follow GitHub's reader: ~1.45 line-height and a paragraph gap of
+// roughly 0.8em.
 + (instancetype)defaultOptions {
     SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions new];
     options.textSize = 15;
     options.codeSize = 13;
-    options.lineSpacing = 3;
-    options.paragraphSpacing = 10;
+    options.lineSpacing = 4;
+    options.paragraphSpacing = 12;
     options.fontScale = 1.0;
     options.contentInset = 24;
     options.maximumImageWidth = 480;
     options.maximumImageHeight = 320;
     options.maximumResourceBytes = 64 * 1024 * 1024;
     options.maximumDecodedImagePixels = 32 * 1024 * 1024;
-    options.textColor = NSColor.labelColor;
-    options.secondaryTextColor = NSColor.secondaryLabelColor;
-    options.linkColor = NSColor.linkColor;
-    options.codeBackgroundColor = [NSColor.quaternaryLabelColor colorWithAlphaComponent:0.10];
-    options.quoteColor = NSColor.secondaryLabelColor;
+    options.textColor = SPDFMarkdownTheme.bodyTextColor;
+    options.secondaryTextColor = SPDFMarkdownTheme.secondaryTextColor;
+    options.linkColor = SPDFMarkdownTheme.linkColor;
+    options.codeBackgroundColor = SPDFMarkdownTheme.inlineCodeChipColor;
+    options.quoteColor = SPDFMarkdownTheme.secondaryTextColor;
     return options;
 }
+// Print parity is the point of the concrete palette: the exported page uses
+// exactly the colors the screen shows.
 + (instancetype)printOptions {
-    SPDFMarkdownRenderOptions* options = self.defaultOptions;
-    options.textColor = [NSColor colorWithSRGBRed:0.05 green:0.05 blue:0.05 alpha:1];
-    options.secondaryTextColor = [NSColor colorWithSRGBRed:0.30 green:0.30 blue:0.30 alpha:1];
-    options.linkColor = [NSColor colorWithSRGBRed:0.0 green:0.30 blue:0.72 alpha:1];
-    options.codeBackgroundColor = [NSColor colorWithSRGBRed:0.94 green:0.94 blue:0.94 alpha:1];
-    options.quoteColor = [NSColor colorWithSRGBRed:0.28 green:0.28 blue:0.28 alpha:1];
-    return options;
+    return self.defaultOptions;
 }
 - (id)copyWithZone:(NSZone*)zone {
     SPDFMarkdownRenderOptions* copy = [[[self class] allocWithZone:zone] init];

@@ -219,7 +219,8 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
 }
 
 // Print always paints the concrete light palette: rounded #F6F8FA/#D0D7DE code
-// boxes and #D8DEE4 heading rules, drawn beneath the planned text lines.
+// boxes and #D1D9E0 heading/thematic-break rules, drawn beneath the planned
+// text lines.
 - (void)drawDecorationsForPageIndex:(NSUInteger)pageIndex inContext:(CGContextRef)context {
     CGFloat paperHeight = self.configuration.paperSize.height;
     CGFloat printableLeft = NSMinX(self.configuration.printableRect);
@@ -241,7 +242,10 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
             CGContextStrokePath(context);
             CGPathRelease(path);
         } else {
-            SPDFSetContextColor(context, SPDFMarkdownTheme.printHeadingRuleColor, NO);
+            NSColor* ruleColor = decoration.type == SPDFMarkdownPageDecorationTypeThematicBreakRule
+                                     ? SPDFMarkdownTheme.thematicBreakRuleColor
+                                     : SPDFMarkdownTheme.printHeadingRuleColor;
+            SPDFSetContextColor(context, ruleColor, NO);
             CGContextFillRect(context, rect);
         }
     }
@@ -310,12 +314,17 @@ static SPDFMarkdownTextLine* SPDFSpacerLine(NSUInteger location, CGFloat height)
 
 // Every configuration reserves real layout space around fenced code so the
 // drawn code box has genuine padding bands instead of overdraw. The screen
-// opt-in grows the leading band to fit its interactive language control.
+// opt-in grows the leading band to fit its interactive language control. Each
+// band also reserves SPDFMarkdownCodeBoxOuterMargin of unpainted page outside
+// the drawn box, so code boxes never sit flush against neighboring text or
+// against each other (the decoration insets the box by the same margin).
 static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<SPDFMarkdownPaginationItem*>* items,
                                                                        SPDFMarkdownPageConfiguration* configuration) {
     NSMutableArray<SPDFMarkdownPaginationItem*>* configuredItems = [NSMutableArray arrayWithCapacity:items.count];
-    CGFloat leadingHeight = configuration.includesCodeLanguageControlSpacing ? kSPDFMarkdownCodeLanguageControlHeight
-                                                                             : kSPDFMarkdownCodeBoxPadding;
+    CGFloat leadingHeight = (configuration.includesCodeLanguageControlSpacing ? kSPDFMarkdownCodeLanguageControlHeight
+                                                                              : kSPDFMarkdownCodeBoxPadding) +
+                            SPDFMarkdownCodeBoxOuterMargin;
+    CGFloat trailingHeight = kSPDFMarkdownCodeBoxPadding + SPDFMarkdownCodeBoxOuterMargin;
     for (SPDFMarkdownPaginationItem* item in items) {
         if (item.kind != SPDFMarkdownBlockKindCode || !item.lines.count) {
             [configuredItems addObject:item];
@@ -323,8 +332,7 @@ static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<S
         }
         NSMutableArray<SPDFMarkdownTextLine*>* lines = [item.lines mutableCopy];
         [lines insertObject:SPDFSpacerLine(item.lines.firstObject.attributedRange.location, leadingHeight) atIndex:0];
-        [lines addObject:SPDFSpacerLine(NSMaxRange(item.lines.lastObject.attributedRange),
-                                        kSPDFMarkdownCodeBoxPadding)];
+        [lines addObject:SPDFSpacerLine(NSMaxRange(item.lines.lastObject.attributedRange), trailingHeight)];
         [configuredItems addObject:[[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:item.blockIndex
                                                                                      kind:item.kind
                                                                              headingLevel:item.headingLevel
