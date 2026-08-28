@@ -289,7 +289,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) $(MA
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
-	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -Eq 'libcrypto|/opt/homebrew|/usr/local'; then \
 		echo "unexpected mutable runtime dependency in $(MAC_BIN)" >&2; \
 		otool -L "$(MAC_BIN)" >&2; \
