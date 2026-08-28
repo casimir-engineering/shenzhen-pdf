@@ -7,6 +7,7 @@
 #import "markdown/SPDFMarkdown.h"
 
 @class SPDFMacMarkdownLanguagePickerController;
+@class SPDFMacMarkdownSessionImageLoader;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -38,6 +39,9 @@ NS_ASSUME_NONNULL_BEGIN
     NSUInteger _searchGeneration;
     dispatch_queue_t _Nullable _workQueue;
     BOOL _active;
+    // Lazily created by the RemoteImages half; nil until the document's first
+    // active render encounters a remote image target.
+    SPDFMacMarkdownSessionImageLoader* _Nullable _imageLoader;
 }
 @property(nonatomic) SPDFMacMarkdownSessionState state;
 @property(nonatomic, strong, nullable) SPDFMarkdownDocument* document;
@@ -65,6 +69,23 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SPDFMacMarkdownSession (InteractionInternal)
 - (void)activateDestination:(NSString*)destination wikiLink:(BOOL)wikiLink;
 - (void)applyLanguageIdentifier:(NSString*)identifier toCodeBlock:(NSUInteger)blockIndex;
+@end
+
+// Remote-image lazy loading, implemented in
+// SPDFMacMarkdownSession+RemoteImages.mm. Downloads start only once an ACTIVE
+// session installs a render containing https image targets; arrivals feed
+// SPDFMarkdownRenderOptions.remoteImageData and trigger one coalesced
+// viewport-preserving rerender per batch.
+@interface SPDFMacMarkdownSession (RemoteImages)
+// The session's lazily created loader; tests inject their fetcher seam here
+// before activating.
+- (SPDFMacMarkdownSessionImageLoader*)remoteImageLoader;
+// Replaces the loader (tests supply one with a private cache directory) and
+// rebinds its update handler to this session's coalesced rerender.
+- (void)installRemoteImageLoader:(SPDFMacMarkdownSessionImageLoader*)loader;
+- (void)applyRemoteImageState:(SPDFMarkdownRenderOptions*)options;
+- (void)startRemoteImageFetchesIfNeeded;
+- (void)cancelQueuedRemoteImageFetches;
 @end
 
 NS_ASSUME_NONNULL_END

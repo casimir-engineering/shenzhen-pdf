@@ -56,6 +56,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 - (SPDFMarkdownRenderOptions*)renderOptionsForCurrentScale {
     SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions defaultOptions];
     options.fontScale = _fontScale;
+    [self applyRemoteImageState:options];  // already-fetched remote image bytes
     return options;
 }
 
@@ -320,6 +321,9 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     ]];
     _placeholder.hidden = YES;
     if (_searchMatches.count) [self applySearchHighlights];
+    // Every install of an active render is the lazy-load trigger for any
+    // remote images the document references (idempotent for known targets).
+    [self startRemoteImageFetchesIfNeeded];
     _pagedView.selectedRange = selection;
     dispatch_async(dispatch_get_main_queue(), ^{
       if (!self->_active || !self->_pagedView.superview) return;
@@ -362,6 +366,9 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     _pendingActivationCompletion = nil;
     [self clearMatchFlash];
     [self cancelAllOperations];
+    // Downloads must not keep starting for a background tab; fetched bytes
+    // stay cached so reactivation never re-downloads.
+    [self cancelQueuedRemoteImageFetches];
     [_rootView removeFromSuperview];
 }
 

@@ -60,7 +60,9 @@ $PORTABLE/mac/SPDFMacMarkdownLanguagePicker.mm
 $PORTABLE/mac/SPDFMacMarkdownPrinting.mm
 $PORTABLE/mac/SPDFMacMarkdownSession.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Interaction.mm
+$PORTABLE/mac/SPDFMacMarkdownSession+RemoteImages.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Search.mm
+$PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
 "
 
 for TEST in \
@@ -71,6 +73,7 @@ for TEST in \
     SPDFMacMarkdownSidebarModelTests \
     SPDFMacMarkdownSessionTests \
     SPDFMacMarkdownSessionFindTests \
+    SPDFMacMarkdownRemoteImageSessionTests \
     SPDFMacMarkdownLanguagePickerTests \
     SPDFMacMarkdownPrintingTests
 do

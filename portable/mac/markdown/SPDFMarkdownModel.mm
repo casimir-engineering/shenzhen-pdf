@@ -6,14 +6,22 @@
 
 - (instancetype)initWithText:(NSString*)text
                       traits:(SPDFMarkdownInlineTraits)traits
-                 destination:(NSString*)destination {
+                 destination:(NSString*)destination
+                       title:(NSString*)title {
     self = [super init];
     if (self) {
         _text = [text copy];
         _traits = traits;
         _destination = [destination copy];
+        _title = [title copy];
     }
     return self;
+}
+
+- (instancetype)initWithText:(NSString*)text
+                      traits:(SPDFMarkdownInlineTraits)traits
+                 destination:(NSString*)destination {
+    return [self initWithText:text traits:traits destination:destination title:nil];
 }
 
 @end

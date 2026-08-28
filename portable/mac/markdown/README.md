@@ -2,7 +2,10 @@
 
 This directory is a self-contained, read-only AppKit Markdown pipeline. It is
 kept separate from the PDF/MuPDF tab path and does not use HTML, WebKit,
-temporary PDFs, network fetches, or executable content.
+temporary PDFs, or executable content. The engine itself never performs
+network fetches: remote image bytes are downloaded by the session layer and
+fed in through render options (see below), so parse/render/pagination stay
+deterministic and never block on the network.
 
 ## Public entry point
 
@@ -49,10 +52,32 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   directory. The parsed model pins that directory by descriptor after checking
   the opened document identity. Each render duplicates the pinned descriptor
   instead of reopening the pathname, then walks children with no-follow `openat`
-  calls. Absolute, parent-traversal, data and remote URLs are rejected.
+  calls. Absolute, parent-traversal, and data URLs are rejected.
+- Remote images are https-only (http, data:, file: and every other scheme keep
+  the text placeholder) and are GitHub-style: inline and reference-style
+  syntax both resolve, and title attributes become tooltips on links and image
+  attachments. The engine consults
+  `SPDFMarkdownRenderOptions.remoteImageData`, a map of raw bytes keyed by
+  `SPDFMarkdownRemoteImageKeyForTarget` output, synchronously; it never opens
+  a connection. A remote target with no bytes yet renders as a fixed-size
+  pending placeholder box (maximumImageWidth x remoteImagePlaceholderHeight,
+  GitHub-gray with the alt text) that reserves layout space; targets in
+  `failedRemoteImageTargets`, undecodable bytes, and over-budget bytes render
+  the stable `[Image: alt]` text placeholder.
+- The session layer (`SPDFMacMarkdownSession+RemoteImages.mm` +
+  `SPDFMacMarkdownSessionImageLoader`) downloads lazily: fetches start only
+  when a document containing remote images is the ACTIVE tab, run at most 4 at
+  a time over an ephemeral no-cookie NSURLSession with a ~20s timeout, a 20 MB
+  per-image cap, an image/* content-type requirement, and https-only
+  redirects. Bytes are kept in memory for the session and persisted in an LRU
+  disk cache (`~/Library/Caches/ShenzhenPDF/markdown-images/`, ~100 MB) so a
+  URL downloads at most once; arrivals coalesce (~300 ms or batch completion)
+  into a single viewport-preserving rerender. Print/export/copy reuse the live
+  plan, so they include exactly the images loaded at that moment.
 - A render caches each unique decoded image. The default aggregate budgets are
-  64 MiB of resource bytes and 32 million decoded pixels; over-budget or invalid
-  images become stable text placeholders rather than consuming unbounded memory.
+  64 MiB of resource bytes and 32 million decoded pixels, shared between local
+  and remote images; over-budget or invalid images become stable text
+  placeholders rather than consuming unbounded memory.
 
 Tables retain column count and per-cell left/center/right alignment in the
 model, and lay out content-aware columns (GFM's `| --- |` separator line is

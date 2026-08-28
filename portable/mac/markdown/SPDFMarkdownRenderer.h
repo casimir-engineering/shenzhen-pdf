@@ -30,6 +30,19 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 @property(nonatomic) CGFloat maximumImageHeight;
 @property(nonatomic) NSUInteger maximumResourceBytes;
 @property(nonatomic) NSUInteger maximumDecodedImagePixels;
+// Raw bytes for remote (https-only) images, keyed by
+// SPDFMarkdownRemoteImageKeyForTarget output. The session layer downloads
+// asynchronously and feeds completed bytes in here; the render consults the
+// map synchronously and never performs network work itself. A remote target
+// with no entry renders as a fixed-size pending placeholder box (reserving
+// layout space for the download), an entry that fails to decode or a target
+// in failedRemoteImageTargets renders as the stable "[Image: alt]" text
+// placeholder, and non-https remote schemes are always rejected.
+@property(nonatomic, copy, nullable) NSDictionary<NSString*, NSData*>* remoteImageData;
+@property(nonatomic, copy, nullable) NSSet<NSString*>* failedRemoteImageTargets;
+// Height of the pending remote-image placeholder box (width is
+// maximumImageWidth). Unscaled by fontScale, like the image budgets.
+@property(nonatomic) CGFloat remoteImagePlaceholderHeight;
 @property(nonatomic, strong) NSColor* textColor;
 @property(nonatomic, strong) NSColor* secondaryTextColor;
 @property(nonatomic, strong) NSColor* linkColor;

@@ -33,6 +33,7 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     options.maximumImageHeight = 320;
     options.maximumResourceBytes = 64 * 1024 * 1024;
     options.maximumDecodedImagePixels = 32 * 1024 * 1024;
+    options.remoteImagePlaceholderHeight = 150;
     options.textColor = SPDFMarkdownTheme.bodyTextColor;
     options.secondaryTextColor = SPDFMarkdownTheme.secondaryTextColor;
     options.linkColor = SPDFMarkdownTheme.linkColor;
@@ -57,6 +58,9 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     copy.maximumImageHeight = self.maximumImageHeight;
     copy.maximumResourceBytes = self.maximumResourceBytes;
     copy.maximumDecodedImagePixels = self.maximumDecodedImagePixels;
+    copy.remoteImageData = self.remoteImageData;
+    copy.failedRemoteImageTargets = self.failedRemoteImageTargets;
+    copy.remoteImagePlaceholderHeight = self.remoteImagePlaceholderHeight;
     copy.textColor = self.textColor;
     copy.secondaryTextColor = self.secondaryTextColor;
     copy.linkColor = self.linkColor;
@@ -339,11 +343,13 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     context.cancellationToken = cancellationToken;
     context.overrides = languageOverrides ?: @{};
     context.sourceURL = model.sourceURL;
-    if (model.resourceStore) {
-        context.resourceStore = [model.resourceStore
-            storeWithMaximumResourceBytes:options.maximumResourceBytes
-                 maximumDecodedImagePixels:options.maximumDecodedImagePixels];
-    }
+    context.resourceStore = model.resourceStore
+        ? [model.resourceStore storeWithMaximumResourceBytes:options.maximumResourceBytes
+                                   maximumDecodedImagePixels:options.maximumDecodedImagePixels]
+        : [SPDFMarkdownResourceStore
+              remoteOnlyStoreWithMaximumResourceBytes:options.maximumResourceBytes
+                            maximumDecodedImagePixels:options.maximumDecodedImagePixels];
+    context.resourceStore.remoteImageData = options.remoteImageData;
     CGFloat fontScale = options.fontScale > 0 ? options.fontScale : 1;
     context.bodyFont = [NSFont systemFontOfSize:options.textSize * fontScale];
     context.codeFont = [NSFont monospacedSystemFontOfSize:options.codeSize * fontScale weight:NSFontWeightRegular];

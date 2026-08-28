@@ -18,6 +18,13 @@ static BOOL SPDFContainsNullCharacter(NSString* value) {
     return [value rangeOfString:needle].location != NSNotFound;
 }
 
+NSString* SPDFMarkdownRemoteImageKeyForTarget(NSString* target) {
+    if (!target.length || SPDFContainsNullCharacter(target)) return nil;
+    NSURL* URL = [NSURL URLWithString:target];
+    if (!URL || ![URL.scheme.lowercaseString isEqualToString:@"https"] || !URL.host.length) return nil;
+    return URL.absoluteString;
+}
+
 static NSArray<NSString*>* SPDFLocalPathComponents(NSString* target) {
     NSString* decoded = [target stringByRemovingPercentEncoding] ?: target;
     NSURLComponents* URLParts = [NSURLComponents componentsWithString:decoded];
@@ -145,6 +152,14 @@ static NSData* SPDFReadDescriptor(int fileDescriptor, NSUInteger maximumBytes) {
            maximumDecodedImagePixels:32 * 1024 * 1024];
 }
 
++ (instancetype)remoteOnlyStoreWithMaximumResourceBytes:(NSUInteger)maximumResourceBytes
+                              maximumDecodedImagePixels:(NSUInteger)maximumDecodedImagePixels {
+    return [[self alloc] initWithRootDescriptor:-1
+                                       rootPath:@""
+                           maximumResourceBytes:maximumResourceBytes
+                      maximumDecodedImagePixels:maximumDecodedImagePixels];
+}
+
 - (instancetype)initWithDocumentURL:(NSURL*)documentURL
                 maximumResourceBytes:(NSUInteger)maximumResourceBytes
            maximumDecodedImagePixels:(NSUInteger)maximumDecodedImagePixels {
@@ -165,8 +180,11 @@ static NSData* SPDFReadDescriptor(int fileDescriptor, NSUInteger maximumBytes) {
 
 - (SPDFMarkdownResourceStore*)storeWithMaximumResourceBytes:(NSUInteger)maximumResourceBytes
                                   maximumDecodedImagePixels:(NSUInteger)maximumDecodedImagePixels {
-    int descriptor = dup(_rootDescriptor);
-    if (descriptor < 0) return nil;
+    int descriptor = -1;
+    if (_rootDescriptor >= 0) {
+        descriptor = dup(_rootDescriptor);
+        if (descriptor < 0) return nil;
+    }
     return [[SPDFMarkdownResourceStore alloc] initWithRootDescriptor:descriptor
                                                            rootPath:_rootPath
                                                maximumResourceBytes:maximumResourceBytes
@@ -179,7 +197,28 @@ static NSData* SPDFReadDescriptor(int fileDescriptor, NSUInteger maximumBytes) {
     return [NSFileManager.defaultManager stringWithFileSystemRepresentation:path length:strlen(path)];
 }
 
+// Remote https images resolve exclusively against the preloaded byte map —
+// never the network — under the same aggregate byte budget as local files.
+// A key without bytes (not fetched yet, fetch failed, over budget) caches the
+// miss so every reference in the render agrees.
+- (SPDFMarkdownCachedResource*)loadRemoteTarget:(NSString*)key {
+    SPDFMarkdownCachedResource* cached = _cache[key];
+    if (cached) return cached;
+    cached = [SPDFMarkdownCachedResource new];
+    _cache[key] = cached;
+    NSData* data = _remoteImageData[key];
+    NSUInteger remaining = _loadedResourceBytes < _maximumResourceBytes
+        ? _maximumResourceBytes - _loadedResourceBytes : 0;
+    if (!data.length || data.length > MIN(remaining, SPDFMarkdownMaximumSingleResourceBytes)) return cached;
+    cached.data = data;
+    _loadedResourceBytes += data.length;
+    cached.resolvedURL = [NSURL URLWithString:key];
+    return cached;
+}
+
 - (SPDFMarkdownCachedResource*)loadTarget:(NSString*)target {
+    NSString* remoteKey = SPDFMarkdownRemoteImageKeyForTarget(target);
+    if (remoteKey) return [self loadRemoteTarget:remoteKey];
     NSArray<NSString*>* components = SPDFLocalPathComponents(target);
     if (!components.count) return nil;
     NSString* key = [components componentsJoinedByString:@"/"];
