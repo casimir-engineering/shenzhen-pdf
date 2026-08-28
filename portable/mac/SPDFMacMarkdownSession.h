@@ -80,6 +80,14 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
                 completion:(void (^)(BOOL success, NSError* _Nullable error))completion;
 - (void)deactivate;
 - (void)cancelAllOperations;
+// Idempotent self-heal (main thread): an ACTIVE session must either have its
+// rendered document installed or work actually in flight; restarts whatever a
+// cancel killed. No-ops for inactive sessions, in-flight loads, and installed
+// documents — safe to call from any "is this tab actually showing something"
+// checkpoint (cancelAllOperations schedules it itself for cancels that land
+// while the session stays active; app-level open/select early-return paths
+// call it directly so a stranded Loading tab can never lock in).
+- (void)ensureActiveSessionHasContent;
 @end
 
 // Implemented in SPDFMacMarkdownSession+Interaction.mm: heading anchors, the

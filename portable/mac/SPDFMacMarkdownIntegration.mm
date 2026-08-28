@@ -110,6 +110,18 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     [self changeMarkdownFontScaleByFactor:1.1];
 }
 
+// Launch/reopen backstop. openPaths/selectTabAtIndex early-return when the
+// target already is the selected tab and a document is "active" — but a
+// stranded Loading markdown session still counts as an active document, so
+// without this re-kick the strand would lock in behind those early returns
+// (the exact lock-in the launch+open-restored-tab path used to hit).
+// Idempotent: no-ops whenever the session has its render installed or work
+// actually in flight.
+- (void)ensureActiveMarkdownTabHasContent {
+    if (![self isMarkdownActive]) return;
+    [self.markdownState.activeSession ensureActiveSessionHasContent];
+}
+
 - (void)deactivateActiveMarkdownView {
     SPDFMacMarkdownDelegateState* state = self.markdownState;
     [state.activeSession deactivate];
