@@ -124,7 +124,7 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
                 if (!line) {
                     NSAttributedString* lineString =
                         [attributedString attributedSubstringFromRange:fragment.attributedRange];
-                    line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
+                    line = SPDFMarkdownCreateFragmentLine(lineString);
                 }
                 CFIndex start = (CFIndex)(effective.location - fragment.attributedRange.location);
                 CFIndex end = (CFIndex)(NSMaxRange(effective) - fragment.attributedRange.location);
