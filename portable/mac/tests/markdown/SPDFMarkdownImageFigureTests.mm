@@ -83,7 +83,7 @@ int main(void) {
                 ++attachmentCount;
                 if (!sharedImage) sharedImage = attachment.image;
                 else if (sharedImage != attachment.image) allAttachmentsShared = NO;
-                SPDFExpect(attachment.bounds.size.width <= 480 && attachment.bounds.size.height <= 320,
+                SPDFExpect(attachment.bounds.size.width <= 440 && attachment.bounds.size.height <= 320,
                            @"each cached image remains constrained to render bounds");
             }
         }];
@@ -231,7 +231,7 @@ int main(void) {
                        @"the inline image keeps its target metadata");
         }
 
-        // Row width fitting. Two images at the default per-image caps (480
+        // Row width fitting. Two images at the default per-image caps (440
         // wide each after capping) cannot sit side by side within the row
         // budget, so the row scales both attachments down by ONE common
         // factor until the line fits; a badge strip of small images already
@@ -265,19 +265,19 @@ int main(void) {
             NSTextAttachment* pairRight = [fitString attribute:NSAttachmentAttributeName
                                                        atIndex:pairRow.location + 2
                                                 effectiveRange:nil];
-            CGFloat pairFactor = pairLeft.bounds.size.width / 480.0;
+            CGFloat pairFactor = pairLeft.bounds.size.width / 440.0;
             SPDFExpect(pairLeft != nil && pairRight != nil && pairFactor < 1.0 && pairFactor >= 0.45,
                        @"two cap-width row images scale below the cap but never below the 0.45x floor");
             SPDFExpect(pairLeft && pairRight &&
                            fabs(pairRight.bounds.size.width - pairLeft.bounds.size.width) < 0.001 &&
-                           fabs(pairLeft.bounds.size.height - 160.0 * pairFactor) < 0.01 &&
-                           fabs(pairRight.bounds.size.height - 160.0 * pairFactor) < 0.01,
+                           fabs(pairLeft.bounds.size.height - (440.0 / 3.0) * pairFactor) < 0.01 &&
+                           fabs(pairRight.bounds.size.height - (440.0 / 3.0) * pairFactor) < 0.01,
                        @"both row attachments shrink by one common factor and keep their aspect ratio");
             CGFloat pairSpaceWidth =
                 [[fitString attributedSubstringFromRange:NSMakeRange(pairRow.location + 1, 1)] size].width;
             SPDFExpect(pairLeft && pairRight &&
                            pairLeft.bounds.size.width + pairSpaceWidth + pairRight.bounds.size.width <=
-                               480.0 + 0.5,
+                               440.0 + 0.5,
                        @"the fitted row's total width stays within the row budget");
             SPDFMarkdownPageFragment* pairFragment = SPDFFragmentForIndex(fitPlan, pairRow.location);
             SPDFMarkdownPageFragment* pairSecondFragment = SPDFFragmentForIndex(fitPlan, pairRow.location + 2);
@@ -318,8 +318,8 @@ int main(void) {
                 NSTextAttachment* wall = [fitString attribute:NSAttachmentAttributeName
                                                       atIndex:wallRow.location + offset
                                                effectiveRange:nil];
-                SPDFExpect(wall != nil && fabs(wall.bounds.size.width - 480.0 * 0.45) < 0.01 &&
-                               fabs(wall.bounds.size.height - 160.0 * 0.45) < 0.01,
+                SPDFExpect(wall != nil && fabs(wall.bounds.size.width - 440.0 * 0.45) < 0.01 &&
+                               fabs(wall.bounds.size.height - (440.0 / 3.0) * 0.45) < 0.01,
                            @"a row that cannot fit even at the floor stops shrinking at 0.45x");
             }
             SPDFMarkdownPageFragment* wallFirst = SPDFFragmentForIndex(fitPlan, wallRow.location);

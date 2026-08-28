@@ -213,7 +213,7 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
 }
 
 // A row only reads side by side when it actually fits one line, but two
-// typical images at the per-image caps (480 x 320 by default) already exceed
+// typical images at the per-image caps (440 x 320 by default) already exceed
 // any realistic page width and would wrap into a vertical stack. So after the
 // per-image caps, a row whose total width (attachments plus the spaces between
 // them, one space ~ the body font's space advance) exceeds the row budget
