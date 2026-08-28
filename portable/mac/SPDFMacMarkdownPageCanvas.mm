@@ -318,19 +318,29 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 }
 
 - (NSRange)wordRangeAtIndex:(NSUInteger)index {
-    if (index >= _attributedString.length) return NSMakeRange(index, 0);
+    NSString* string = _attributedString.string;
     __block NSRange found = NSMakeRange(index, 0);
-    [_attributedString.string
-        enumerateSubstringsInRange:NSMakeRange(0, _attributedString.length)
-                           options:NSStringEnumerationByWords
-                        usingBlock:^(NSString* substring, NSRange substringRange, NSRange enclosingRange, BOOL* stop) {
-                          (void)substring;
-                          (void)enclosingRange;
-                          if (NSLocationInRange(index, substringRange)) {
-                              found = substringRange;
-                              *stop = YES;
-                          }
-                        }];
+    if (index < string.length)
+        [string
+            enumerateSubstringsInRange:NSMakeRange(0, string.length)
+                               options:NSStringEnumerationByWords
+                            usingBlock:^(NSString* substring, NSRange substringRange, NSRange enclosing, BOOL* stop) {
+                              (void)substring;
+                              (void)enclosing;
+                              if (NSLocationInRange(index, substringRange)) {
+                                  found = substringRange;
+                                  *stop = YES;
+                              }
+                            }];
+    if (found.length) return found;
+    // Word enumeration skips the attachment character (U+FFFC), so a
+    // double-click on an image resolves to exactly its attachment character —
+    // checking just before the index too, since CTLine hit-testing returns
+    // the caret index (after the character) for a right-half click.
+    if (index < string.length && [string characterAtIndex:index] == NSAttachmentCharacter)
+        return NSMakeRange(index, 1);
+    if (index > 0 && index <= string.length && [string characterAtIndex:index - 1] == NSAttachmentCharacter)
+        return NSMakeRange(index - 1, 1);
     return found;
 }
 
@@ -440,9 +450,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
         [self.reader copySelection:self];
         return;
     }
-    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
-    [pasteboard clearContents];
-    [pasteboard setString:[_attributedString.string substringWithRange:_selectedRange] forType:NSPasteboardTypeString];
+    if (![self writeSelectionToPasteboard:NSPasteboard.generalPasteboard plainTextTransform:nil]) NSBeep();
 }
 
 - (NSMenu*)menuForEvent:(NSEvent*)event {

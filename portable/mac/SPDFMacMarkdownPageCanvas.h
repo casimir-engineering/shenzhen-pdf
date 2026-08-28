@@ -50,6 +50,22 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSRect)firstRectForRange:(NSRange)range;
 @end
 
+// Implemented in SPDFMacMarkdownPageCanvas+Copy.mm: the image-aware selection
+// copy backing the Cmd+C / Copy chain.
+@interface SPDFMacMarkdownPageCanvas (Copy)
+// YES when the selection intersects at least one image attachment run.
+- (BOOL)selectionContainsImageAttachment;
+// Writes the selection to `pasteboard`: an image-only selection (one
+// attachment character, optionally with surrounding whitespace) writes the
+// attachment's image at its natural decoded size; a mixed selection writes
+// the plain text plus an RTFD rendition keeping the attachments; a plain-text
+// selection writes just the string. `transform` (when given) maps the plain
+// text before it is written — the collapse-whitespace preference hook. NO for
+// an empty selection or when the pasteboard rejects the write.
+- (BOOL)writeSelectionToPasteboard:(NSPasteboard*)pasteboard
+                plainTextTransform:(NSString* (^_Nullable)(NSString* text))transform;
+@end
+
 // Implemented in SPDFMacMarkdownPageCanvas+Decorations.mm: the dynamic-color
 // page chrome (code boxes, heading rules) and the code-language control that
 // lives in each code box's header band.

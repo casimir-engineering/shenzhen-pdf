@@ -65,6 +65,13 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @property(nonatomic, copy, nullable) void (^viewportUpdateHandler)
     (NSInteger pageIndex, CGFloat zoom, SPDFMacMarkdownPageFitMode fitMode);
 
+// Image-aware selection copy, forwarded to the paged view (see
+// SPDFMacMarkdownPagedView's writeSelectionToPasteboard:plainTextTransform:).
+// Both answer NO/false while the session has no live paged view.
+- (BOOL)selectionContainsImage;
+- (BOOL)copySelectionToPasteboard:(NSPasteboard*)pasteboard
+               plainTextTransform:(NSString* (^_Nullable)(NSString* text))transform;
+
 - (instancetype)initWithDocumentURL:(NSURL*)URL;
 - (instancetype)initWithDocumentURL:(NSURL*)URL fontScale:(CGFloat)fontScale NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;

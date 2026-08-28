@@ -157,6 +157,12 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     if (!range.length || NSMaxRange(range) > _attributedString.length) return @"";
     return [_attributedString.string substringWithRange:range];
 }
+- (BOOL)selectionContainsImage {
+    return [_canvas selectionContainsImageAttachment];
+}
+- (BOOL)writeSelectionToPasteboard:(NSPasteboard*)pasteboard plainTextTransform:(NSString* (^)(NSString*))transform {
+    return [_canvas writeSelectionToPasteboard:pasteboard plainTextTransform:transform];
+}
 
 - (void)updateCanvasGeometryPreservingCenter:(BOOL)preserveCenter {
     if (_updatingGeometry) return;
