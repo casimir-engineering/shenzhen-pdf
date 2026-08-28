@@ -12,7 +12,7 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 ## Next release
 
 - **Markdown support**: GitHub-grade formatting
-- Markdown documents have the same navigation as PDFs and can export as PDFs
+- Markdown documents have the same navigation and can export as PDF
 - Password-protected PDF support
 - Double click to select a word, triple a text block. Double click to expand the window.
 - Bug fixes: Cmd/Ctrl+W to close a file-not-found tab
