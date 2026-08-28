@@ -39,8 +39,16 @@ if grep -n 'spdf_open(' "$app_impl" "$properties_impl"; then
     echo "macOS reopen path bypasses the credential-aware opener" >&2
     exit 1
 fi
-if [ "$(grep -c "spdf_has_permission(_doc, 'c')" "$app_impl")" -lt 8 ]; then
+# Copy Page / Copy Page Image enablement and action bodies moved to the shared
+# file-actions module; count enforcement across both homes so a refactor cannot
+# silently drop a check.
+file_actions_impl="$root/portable/mac/SPDFMacMarkdownFileActions.mm"
+if [ "$(grep -c "spdf_has_permission(_doc, 'c')" "$app_impl")" -lt 7 ]; then
     echo "encrypted-PDF copy actions do not consistently enforce copy permission" >&2
+    exit 1
+fi
+if [ "$(grep -c "spdf_has_permission(_doc, 'c')" "$file_actions_impl")" -lt 4 ]; then
+    echo "copy-page file actions must enforce copy permission in enablement and action bodies" >&2
     exit 1
 fi
 grep -q 'ensureContentCopyPermissionForOperation:@"Web search"' "$app_impl"
