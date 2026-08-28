@@ -60,6 +60,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)printActiveMarkdown;
 - (void)saveActiveMarkdownAsPDF;
 - (void)updateControlsForActiveMarkdown;
+- (void)updateMarkdownFontControls;
+- (void)decreaseMarkdownFontSize:(nullable id)sender;
+- (void)increaseMarkdownFontSize:(nullable id)sender;
 - (BOOL)markdownHasChapters;
 - (BOOL)markdownHasSearchSidebar;
 - (void)rebuildMarkdownSidebar;

@@ -282,6 +282,20 @@ NSImage* spdf_ocr_toolbar_image(void) {
     return image;
 }
 
+NSImage* spdf_markdown_font_size_toolbar_image(BOOL larger) {
+    static NSImage* images[2] = {nil, nil};
+    NSImage* image = images[larger ? 1 : 0];
+    if (image) return image;
+
+    NSString* description = larger ? @"Increase Text Size" : @"Decrease Text Size";
+    image = [NSImage imageWithSystemSymbolName:larger ? @"textformat.size.larger" : @"textformat.size.smaller"
+                      accessibilityDescription:description];
+    if (!image) image = [NSImage imageWithSystemSymbolName:@"textformat.size" accessibilityDescription:description];
+    [image setTemplate:YES];
+    images[larger ? 1 : 0] = image;
+    return image;
+}
+
 BOOL spdf_is_allowed_external_url(NSURL* url) {
     NSString* scheme = url.scheme.lowercaseString;
     return [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] ||

@@ -36,6 +36,10 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @property(nonatomic, readonly) NSUInteger visibleAttributedLocation;
 @property(nonatomic, readonly) CGFloat zoom;
 @property(nonatomic, readonly) SPDFMacMarkdownPageFitMode fitMode;
+// Uniform typography multiplier applied to every render, clamped to
+// [0.5, 3.0]. Set at creation for the first render; applyFontScale: rerenders
+// the active session while preserving its viewport state.
+@property(nonatomic, readonly) CGFloat fontScale;
 @property(nonatomic, readonly, copy) NSArray<NSValue*>* documentPageRects;
 @property(nonatomic, readonly) NSRect documentVisibleRect;
 @property(nonatomic, readonly) NSSize documentCanvasSize;
@@ -49,8 +53,13 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @property(nonatomic, copy, nullable) void (^viewportUpdateHandler)
     (NSInteger pageIndex, CGFloat zoom, SPDFMacMarkdownPageFitMode fitMode);
 
-- (instancetype)initWithDocumentURL:(NSURL*)URL NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithDocumentURL:(NSURL*)URL;
+- (instancetype)initWithDocumentURL:(NSURL*)URL fontScale:(CGFloat)fontScale NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
+- (void)applyFontScale:(CGFloat)scale;
+// Print/export rendition: the current language overrides at font scale 1.0,
+// so the reading-size preference never changes printed or exported output.
+- (nullable SPDFMarkdownRenderedDocument*)renderedDocumentForExport;
 - (void)activateInHostView:(NSView*)hostView
                  workQueue:(dispatch_queue_t)workQueue
               scrollOrigin:(NSPoint)scrollOrigin

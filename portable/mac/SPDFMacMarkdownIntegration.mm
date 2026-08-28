@@ -67,6 +67,46 @@ static char kSPDFMacMarkdownDelegateStateKey;
              _sidebarToggleButton, _ocrButton, _translateButton, _ocrSeparator, _findRegexCheckbox, _minimapToggleButton
          ])
         view.hidden = NO;
+    [self updateMarkdownFontControls];
+}
+
+static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
+    return MAX((CGFloat)0.5, MIN((CGFloat)3.0, scale));
+}
+
+// The Markdown text-size controls are the only markdown-exclusive toolbar
+// views: hidden for PDF tabs, visible (and clamped at the limits) for the
+// active Markdown tab. Tooltips carry the current percentage.
+- (void)updateMarkdownFontControls {
+    BOOL markdownActive = [self isMarkdownActive];
+    _markdownFontDecreaseButton.hidden = !markdownActive;
+    _markdownFontIncreaseButton.hidden = !markdownActive;
+    if (!markdownActive) return;
+    double percent = round(_markdownFontScale * 100.0);
+    _markdownFontDecreaseButton.enabled = _markdownFontScale > 0.5;
+    _markdownFontIncreaseButton.enabled = _markdownFontScale < 3.0;
+    _markdownFontDecreaseButton.toolTip = [NSString stringWithFormat:@"Decrease Markdown Text Size (%.0f%%)", percent];
+    _markdownFontIncreaseButton.toolTip = [NSString stringWithFormat:@"Increase Markdown Text Size (%.0f%%)", percent];
+}
+
+- (void)changeMarkdownFontScaleByFactor:(CGFloat)factor {
+    if (![self isMarkdownActive]) return;
+    CGFloat scale = spdf_mac_clamped_markdown_font_scale(round(_markdownFontScale * factor * 100.0) / 100.0);
+    if (scale == _markdownFontScale) return;
+    _markdownFontScale = scale;
+    [self savePersistentState];
+    [self.markdownState.activeSession applyFontScale:scale];
+    [self updateControlsForActiveMarkdown];
+}
+
+- (void)decreaseMarkdownFontSize:(id)sender {
+    (void)sender;
+    [self changeMarkdownFontScaleByFactor:1.0 / 1.1];
+}
+
+- (void)increaseMarkdownFontSize:(id)sender {
+    (void)sender;
+    [self changeMarkdownFontScaleByFactor:1.1];
 }
 
 - (void)deactivateActiveMarkdownView {
@@ -191,9 +231,14 @@ static char kSPDFMacMarkdownDelegateStateKey;
 
     SPDFMacMarkdownSession* session = tab.cachedMarkdownSession;
     if (!session) {
-        session = [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
+        session = [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]
+                                                            fontScale:_markdownFontScale];
         tab.cachedMarkdownSession = session;
     }
+    // Cached sessions may predate a font-scale change made in another tab;
+    // adopting the global preference here (before activation) lets activation
+    // rerender the stale session once it is on screen.
+    [session applyFontScale:_markdownFontScale];
     state.activeSession = session;
     [self configureMarkdownSession:session forTab:tab];
     if (!state.workQueue)
@@ -401,7 +446,7 @@ static char kSPDFMacMarkdownDelegateStateKey;
 }
 
 - (void)printActiveMarkdown {
-    SPDFMarkdownRenderedDocument* rendered = self.markdownState.activeSession.renderedDocument;
+    SPDFMarkdownRenderedDocument* rendered = [self.markdownState.activeSession renderedDocumentForExport];
     if (![self isMarkdownActive] || !rendered) {
         NSBeep();
         return;
@@ -414,7 +459,7 @@ static char kSPDFMacMarkdownDelegateStateKey;
 }
 
 - (void)saveActiveMarkdownAsPDF {
-    SPDFMarkdownRenderedDocument* rendered = self.markdownState.activeSession.renderedDocument;
+    SPDFMarkdownRenderedDocument* rendered = [self.markdownState.activeSession renderedDocumentForExport];
     if (![self isMarkdownActive] || !rendered) {
         NSBeep();
         return;
