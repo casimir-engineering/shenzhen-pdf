@@ -197,6 +197,25 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     }
 }
 
+// The typographic extent of a fragment's line in page-content coordinates
+// (its scale applied).
+- (CGFloat)contentWidthOfFragment:(SPDFMarkdownPageFragment*)fragment {
+    NSAttributedString* lineString = [_attributedString attributedSubstringFromRange:fragment.attributedRange];
+    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
+    double width = CTLineGetTypographicBounds(line, NULL, NULL, NULL);
+    CFRelease(line);
+    return width * MAX(fragment.scale, 0.001);
+}
+
+// Distance from a page-local x to the fragment's horizontal span (0 inside).
+- (CGFloat)horizontalDistanceFromX:(CGFloat)localX toFragment:(SPDFMarkdownPageFragment*)fragment {
+    CGFloat left = fragment.xOffset;
+    CGFloat right = left + [self contentWidthOfFragment:fragment];
+    if (localX < left) return left - localX;
+    if (localX > right) return localX - right;
+    return 0;
+}
+
 - (NSUInteger)characterIndexAtPoint:(NSPoint)point {
     NSSize paper = _plan.configuration.paperSize;
     NSInteger pageIndex =
@@ -206,20 +225,38 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     if (!NSPointInRect(point, pageFrame)) return NSNotFound;
     NSRect printable = _plan.configuration.printableRect;
     CGFloat localY = point.y - NSMinY(pageFrame) - _plan.configuration.topContentInset;
+    CGFloat pageLocalX = point.x - NSMinX(pageFrame) - NSMinX(printable);
     SPDFMarkdownPage* page = _plan.pages[(NSUInteger)pageIndex];
+    // Fragments can share a vertical band (wrapped table cells sit side by
+    // side within their row), so the hit target is the horizontally nearest
+    // text fragment in the band; a band holding only zero-length spacers
+    // resolves to the first spacer's location, matching the pre-table-layout
+    // behavior for reserved bands.
+    SPDFMarkdownPageFragment* best = nil;
+    CGFloat bestDistance = CGFLOAT_MAX;
+    SPDFMarkdownPageFragment* spacer = nil;
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (localY < fragment.pageYOffset || localY > fragment.pageYOffset + fragment.height) continue;
         if (NSMaxRange(fragment.attributedRange) > _attributedString.length) continue;
-        NSAttributedString* lineString = [_attributedString attributedSubstringFromRange:fragment.attributedRange];
-        CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
-        CGFloat localX =
-            (point.x - NSMinX(pageFrame) - NSMinX(printable) - fragment.xOffset) / MAX(fragment.scale, 0.001);
-        CFIndex index = CTLineGetStringIndexForPosition(line, CGPointMake(localX, 0));
-        CFRelease(line);
-        if (index == kCFNotFound) return NSNotFound;
-        return MIN(NSMaxRange(fragment.attributedRange), fragment.attributedRange.location + (NSUInteger)index);
+        if (!fragment.attributedRange.length) {
+            if (!spacer) spacer = fragment;
+            continue;
+        }
+        CGFloat distance = [self horizontalDistanceFromX:pageLocalX toFragment:fragment];
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = fragment;
+            if (distance <= 0) break;
+        }
     }
-    return NSNotFound;
+    if (!best) return spacer ? spacer.attributedRange.location : NSNotFound;
+    NSAttributedString* lineString = [_attributedString attributedSubstringFromRange:best.attributedRange];
+    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)lineString);
+    CGFloat localX = (pageLocalX - best.xOffset) / MAX(best.scale, 0.001);
+    CFIndex index = CTLineGetStringIndexForPosition(line, CGPointMake(localX, 0));
+    CFRelease(line);
+    if (index == kCFNotFound) return NSNotFound;
+    return MIN(NSMaxRange(best.attributedRange), best.attributedRange.location + (NSUInteger)index);
 }
 
 - (NSUInteger)attributedLocationNearestToPoint:(NSPoint)point {
@@ -237,18 +274,25 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 
     SPDFMarkdownPageFragment* nearest = nil;
     CGFloat nearestDistance = CGFLOAT_MAX;
+    CGFloat nearestHorizontal = CGFLOAT_MAX;
     SPDFMarkdownPage* page = _plan.pages[(NSUInteger)pageIndex];
     NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];
     NSRect printable = _plan.configuration.printableRect;
+    CGFloat pageLocalX = point.x - NSMinX(pageFrame) - NSMinX(printable);
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (!fragment.attributedRange.length || NSMaxRange(fragment.attributedRange) > _attributedString.length)
             continue;
         CGFloat fragmentY = NSMinY(pageFrame) + _plan.configuration.topContentInset + fragment.pageYOffset;
         CGFloat distance =
             point.y < fragmentY ? fragmentY - point.y : MAX(0.0, point.y - (fragmentY + fragment.height));
-        if (distance < nearestDistance) {
+        if (distance > nearestDistance + 0.5) continue;
+        // Fragments sharing the vertical band (side-by-side table cells) tie
+        // vertically; the horizontally nearest one wins.
+        CGFloat horizontal = [self horizontalDistanceFromX:pageLocalX toFragment:fragment];
+        if (distance < nearestDistance - 0.5 || horizontal < nearestHorizontal) {
             nearest = fragment;
-            nearestDistance = distance;
+            nearestDistance = MIN(nearestDistance, distance);
+            nearestHorizontal = horizontal;
         }
     }
     if (!nearest) return NSNotFound;

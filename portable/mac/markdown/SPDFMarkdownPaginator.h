@@ -31,10 +31,20 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) CGFloat height;
 @property(nonatomic, readonly) CGFloat xOffset;
 @property(nonatomic, readonly) CGFloat baselineOffset;
+// Vertical offset of this line from the top of its own pagination item. Zero
+// for ordinary stacked lines. Table rows place cell lines side by side inside
+// the row band, so their lines carry real row-local offsets and the row is
+// paginated atomically (see paginateItems:).
+@property(nonatomic, readonly) CGFloat rowLocalYOffset;
 - (instancetype)initWithAttributedRange:(NSRange)attributedRange
                                  height:(CGFloat)height
                                 xOffset:(CGFloat)xOffset
-                         baselineOffset:(CGFloat)baselineOffset NS_DESIGNATED_INITIALIZER;
+                         baselineOffset:(CGFloat)baselineOffset
+                        rowLocalYOffset:(CGFloat)rowLocalYOffset NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithAttributedRange:(NSRange)attributedRange
+                                 height:(CGFloat)height
+                                xOffset:(CGFloat)xOffset
+                         baselineOffset:(CGFloat)baselineOffset;
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
@@ -86,7 +96,10 @@ NS_ASSUME_NONNULL_BEGIN
 // coordinates. Print/export draws these itself; the screen canvas consumes the
 // same geometry with the dynamic SPDFMarkdownTheme colors.
 - (NSArray<SPDFMarkdownPageDecoration*>*)decorationsForPageIndex:(NSUInteger)pageIndex;
+@end
 
+// Concrete-palette page drawing, implemented in SPDFMarkdownPaginatorDrawing.mm.
+@interface SPDFMarkdownPaginationPlan (SPDFDrawing)
 // Draws the same exact line-fragment plan used by print preview/pagination.
 // Decorations are painted first, beneath the planned text.
 - (BOOL)drawPageAtIndex:(NSUInteger)pageIndex

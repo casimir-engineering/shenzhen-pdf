@@ -9,7 +9,12 @@ const CGFloat SPDFMarkdownTableOuterMargin = 10.0;
                               headerRow:(BOOL)headerRow
                                 lastRow:(BOOL)lastRow
                            bodyRowIndex:(NSUInteger)bodyRowIndex
-                       columnBoundaries:(NSArray<NSNumber*>*)columnBoundaries {
+                       columnBoundaries:(NSArray<NSNumber*>*)columnBoundaries
+                             cellRanges:(NSArray<NSValue*>*)cellRanges
+                         cellAlignments:(NSArray<NSNumber*>*)cellAlignments
+                    naturalColumnWidths:(NSArray<NSNumber*>*)naturalColumnWidths
+                        verticalPadding:(CGFloat)verticalPadding
+                            depthIndent:(CGFloat)depthIndent {
     self = [super init];
     if (self) {
         _tableBlockIndex = tableBlockIndex;
@@ -17,8 +22,41 @@ const CGFloat SPDFMarkdownTableOuterMargin = 10.0;
         _lastRow = lastRow;
         _bodyRowIndex = bodyRowIndex;
         _columnBoundaries = [columnBoundaries copy];
+        _cellRanges = [cellRanges copy];
+        _cellAlignments = [cellAlignments copy];
+        _naturalColumnWidths = [naturalColumnWidths copy];
+        _verticalPadding = verticalPadding;
+        _depthIndent = depthIndent;
     }
     return self;
+}
+- (instancetype)initWithTableBlockIndex:(NSUInteger)tableBlockIndex
+                              headerRow:(BOOL)headerRow
+                                lastRow:(BOOL)lastRow
+                           bodyRowIndex:(NSUInteger)bodyRowIndex
+                       columnBoundaries:(NSArray<NSNumber*>*)columnBoundaries {
+    return [self initWithTableBlockIndex:tableBlockIndex
+                               headerRow:headerRow
+                                 lastRow:lastRow
+                            bodyRowIndex:bodyRowIndex
+                        columnBoundaries:columnBoundaries
+                              cellRanges:@[]
+                          cellAlignments:@[]
+                     naturalColumnWidths:@[]
+                         verticalPadding:6.0
+                             depthIndent:columnBoundaries.firstObject.doubleValue];
+}
+- (instancetype)rowInfoWithColumnBoundaries:(NSArray<NSNumber*>*)columnBoundaries {
+    return [[SPDFMarkdownTableRowInfo alloc] initWithTableBlockIndex:self.tableBlockIndex
+                                                           headerRow:self.headerRow
+                                                             lastRow:self.lastRow
+                                                        bodyRowIndex:self.bodyRowIndex
+                                                    columnBoundaries:columnBoundaries
+                                                          cellRanges:self.cellRanges
+                                                      cellAlignments:self.cellAlignments
+                                                 naturalColumnWidths:self.naturalColumnWidths
+                                                     verticalPadding:self.verticalPadding
+                                                         depthIndent:self.depthIndent];
 }
 @end
 
@@ -33,8 +71,10 @@ NSUInteger SPDFMarkdownAppendTableDecorations(NSArray<SPDFMarkdownPageFragment*>
     SPDFMarkdownTableRowInfo* tableInfo = items[fragments[startIndex].itemIndex].tableRowInfo;
     NSUInteger tableIndex = tableInfo.tableBlockIndex;
 
-    // One run per row item portion on this page: a wrapped cell keeps its row's
-    // fragments consecutive, so the row band spans them all.
+    // One run per row item portion on this page. A row's fragments share the
+    // row's vertical band (wrapped cells sit side by side within it), so the
+    // band is the min/max envelope over the run — the row's full-band spacer
+    // fragment extends it to the true row top and bottom including padding.
     NSMutableArray<SPDFMarkdownTableRowInfo*>* rowInfos = [NSMutableArray array];
     NSMutableArray<NSNumber*>* rowTops = [NSMutableArray array];
     NSMutableArray<NSNumber*>* rowBottoms = [NSMutableArray array];
@@ -46,11 +86,17 @@ NSUInteger SPDFMarkdownAppendTableDecorations(NSArray<SPDFMarkdownPageFragment*>
         SPDFMarkdownTableRowInfo* info = item.tableRowInfo;
         if (!info || info.tableBlockIndex != tableIndex) break;
         NSUInteger runEnd = index;
-        while (runEnd + 1 < fragments.count && fragments[runEnd + 1].itemIndex == first.itemIndex) ++runEnd;
-        SPDFMarkdownPageFragment* last = fragments[runEnd];
+        CGFloat top = first.pageYOffset;
+        CGFloat bottom = first.pageYOffset + first.height;
+        while (runEnd + 1 < fragments.count && fragments[runEnd + 1].itemIndex == first.itemIndex) {
+            ++runEnd;
+            SPDFMarkdownPageFragment* fragment = fragments[runEnd];
+            top = MIN(top, fragment.pageYOffset);
+            bottom = MAX(bottom, fragment.pageYOffset + fragment.height);
+        }
         [rowInfos addObject:info];
-        [rowTops addObject:@(first.pageYOffset)];
-        [rowBottoms addObject:@(last.pageYOffset + last.height)];
+        [rowTops addObject:@(top)];
+        [rowBottoms addObject:@(bottom)];
         [rowBlockIndexes addObject:@(item.blockIndex)];
         index = runEnd + 1;
     }

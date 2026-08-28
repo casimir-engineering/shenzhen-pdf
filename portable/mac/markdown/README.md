@@ -55,13 +55,24 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   images become stable text placeholders rather than consuming unbounded memory.
 
 Tables retain column count and per-cell left/center/right alignment in the
-model. Native rendering uses stable tab stops with the declared alignment,
-inset 8pt inside each column so glyphs clear the drawn grid (GFM's `| --- |`
-separator line is consumed by the parser and never rendered). Each row records
-an `SPDFMarkdownTableRowInfo` (table identity, header/body role, body-row
-ordinal, column boundary x positions) on its rendered block; the paginator
-carries it onto the row's pagination item so decoration planning draws
-GitHub-style table chrome without re-deriving tab-stop math: a
+model, and lay out content-aware columns (GFM's `| --- |` separator line is
+consumed by the parser and never rendered). The renderer measures each
+column's natural width (its widest cell plus the 8pt cell insets that keep
+glyphs clear of the drawn grid) and `SPDFMarkdownTableLayout` distributes the
+widths: a table narrower than the width budget keeps its compact natural
+columns; a wider one caps at the budget with a fair-share waterfall — columns
+at or below their fair share keep their natural width, and only the over-wide
+columns split the rest, so long cells wrap inside their own column box while
+short columns never wrap. Alignment applies per cell inside its column, so a
+right-aligned
+column flushes to its own edge and never bleeds into a neighbor. A row is as
+tall as its tallest cell. Each row records an `SPDFMarkdownTableRowInfo`
+(table identity, header/body role, body-row ordinal, column boundary x
+positions, per-cell canonical ranges and alignments, natural widths, row
+padding) on its rendered block; the paginator re-distributes the natural
+widths at the real printable width, rebinds the boundaries on the row's
+pagination item, and decoration planning draws GitHub-style table chrome from
+that measured geometry: a
 `tableHeaderFillColor` (#F6F8FA) band behind the header row, a subtle
 `tableStripeFillColor` (#FAFBFC) on alternating body rows (parity is
 per-table, so a split table keeps its striping across the page break), and a
@@ -116,6 +127,15 @@ printable width. A page fragment always carries an exact attributed character
 range for one complete TextKit line plus its x, baseline and page offsets.
 There is no proportional range splitting or arbitrary pixel clipping.
 
+Table rows are measured per cell: each cell wraps inside its own column box
+and its lines carry a row-local y offset, so wrapped cells sit side by side
+within the row band (a zero-length spacer line spans the exact band). Rows
+paginate atomically — a row never splits at a page break, and a row taller
+than the printable page scales into one page like any over-tall line. A table
+header row keeps-with-next: when the header plus the first body row do not
+both fit the page remainder, the table start moves to a fresh page, so a
+header is never stranded as the last line of a page.
+
 At or after 75% of printable height, a heading moves when the portion of its
 following section that fits on a fresh page would not fit in the current
 remainder. The lookahead stops at the next heading of equal or higher level.
@@ -166,7 +186,10 @@ SPDF_MARKDOWN_SANITIZER_FLAGS='-fsanitize=address,undefined -fno-omit-frame-poin
 The direct suite covers canonical search/selection correspondence after
 structural content, input/path budgets, pathological nesting, CRLF/BOM/CJK and
 emoji, language-specific non-overlapping tokens, local image attachments,
-table alignment, exact interleaved list order, bounded image memory, pinned-root
+table alignment, content-aware column distribution and in-column cell wrapping
+(including per-cell fragment containment, header keep-with-next, atomic rows,
+grid/stripe alignment with measured boundaries, and wrapped-cell search
+correspondence), exact interleaved list order, bounded image memory, pinned-root
 replacement between parse and render, large-search cancellation and long-query
 rejection, exact TextKit ranges, the 75% rule, callout pagination, over-tall
 content scaling, code-box/heading-rule decoration geometry (including blocks

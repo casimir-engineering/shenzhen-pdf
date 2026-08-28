@@ -2,6 +2,7 @@
 
 #import "../../markdown/SPDFMarkdownDocument.h"
 #import "../../markdown/SPDFMarkdownTableDecorations.h"
+#import "../../markdown/SPDFMarkdownTableLayout.h"
 
 static SPDFMarkdownTextLine* SPDFLine(NSUInteger location, CGFloat height) {
     return [[SPDFMarkdownTextLine alloc] initWithAttributedRange:NSMakeRange(location, 5)
@@ -416,35 +417,55 @@ int main(void) {
         NSArray<SPDFMarkdownPaginationItem*>* gridItems =
             [paginator measureRenderedDocument:gridDocument containerWidth:NSWidth(A4.printableRect)];
         NSUInteger measuredRows = 0;
-        BOOL singleLineRows = YES;
+        BOOL rowShapesHold = YES;
+        NSArray<NSNumber*>* measuredBoundaries = nil;
         for (SPDFMarkdownPaginationItem* item in gridItems) {
             if (!item.tableRowInfo) continue;
             ++measuredRows;
-            if (item.lines.count != 1) singleLineRows = NO;
+            measuredBoundaries = item.tableRowInfo.columnBoundaries;
+            // One full-band spacer line plus one single line per short cell,
+            // every cell line inside its own column box.
+            if (item.lines.count != 4 || item.lines.firstObject.attributedRange.length != 0 ||
+                fabs(item.lines.firstObject.height - item.measuredHeight) > 0.001)
+                rowShapesHold = NO;
+            for (NSUInteger cell = 1; cell < item.lines.count && rowShapesHold; ++cell) {
+                SPDFMarkdownTextLine* line = item.lines[cell];
+                if (line.xOffset < measuredBoundaries[cell - 1].doubleValue ||
+                    line.xOffset > measuredBoundaries[cell].doubleValue)
+                    rowShapesHold = NO;
+            }
         }
         SPDFExpect(measuredRows == 3, @"measurement carries table row metadata onto every row item");
-        SPDFExpect(singleLineRows,
-                   @"inset tab stops keep each short row on one line instead of wrapping the last cell");
+        SPDFExpect(rowShapesHold,
+                   @"each short row measures one spacer band plus one in-column line per cell");
+        SPDFExpect(measuredBoundaries.count == 4 &&
+                       measuredBoundaries.lastObject.doubleValue < NSWidth(A4.printableRect) &&
+                       measuredBoundaries.lastObject.doubleValue > 3 * SPDFMarkdownTableMinimumColumnWidth - 0.001,
+                   @"short columns keep compact content widths instead of fixed printable-width splits");
         SPDFMarkdownPaginationPlan* gridPlan = [paginator paginateItems:gridItems configuration:A4];
         SPDFTableDecorationBuckets grid = SPDFBucketTableDecorations([gridPlan decorationsForPageIndex:0]);
-        SPDFExpect(grid.headerBands.count == 1 && fabs(NSWidth(grid.headerBands.firstObject.rect) - 480) < 0.001 &&
+        SPDFExpect(grid.headerBands.count == 1 &&
+                       fabs(NSWidth(grid.headerBands.firstObject.rect) -
+                            measuredBoundaries.lastObject.doubleValue) < 0.001 &&
                        grid.stripes.count == 1 &&
-                       SPDFDecorationValues(grid.verticalLines, @[ @0, @160, @320, @480 ],
+                       SPDFDecorationValues(grid.verticalLines, measuredBoundaries,
                                             ^CGFloat(SPDFMarkdownPageDecoration* decoration) {
                                               return NSMinX(decoration.rect);
                                             }),
                    @"a real 3-column table plans its header band, one stripe, and column-boundary grid lines");
-        SPDFMarkdownPageFragment* stripedRowFragment = nil;
+        // The second body row is also the table's last row, so its band gives
+        // the outer margin back to the page below the closed grid. The row's
+        // spacer fragment spans the exact band.
+        SPDFMarkdownPageFragment* stripedRowBand = nil;
         for (SPDFMarkdownPageFragment* fragment in gridPlan.pages.firstObject.fragments) {
             SPDFMarkdownTableRowInfo* info = gridPlan.items[fragment.itemIndex].tableRowInfo;
-            if (info && !info.headerRow && info.bodyRowIndex == 1) stripedRowFragment = fragment;
+            if (info && !info.headerRow && info.bodyRowIndex == 1 && !fragment.attributedRange.length)
+                stripedRowBand = fragment;
         }
-        // The second body row is also the table's last row, so its band gives
-        // the outer margin back to the page below the closed grid.
-        SPDFExpect(stripedRowFragment != nil &&
-                       fabs(NSMinY(grid.stripes.firstObject.rect) - stripedRowFragment.pageYOffset) < 0.001 &&
+        SPDFExpect(stripedRowBand != nil &&
+                       fabs(NSMinY(grid.stripes.firstObject.rect) - stripedRowBand.pageYOffset) < 0.001 &&
                        fabs(NSHeight(grid.stripes.firstObject.rect) -
-                            (stripedRowFragment.height - SPDFMarkdownTableOuterMargin)) < 0.001,
+                            (stripedRowBand.height - SPDFMarkdownTableOuterMargin)) < 0.001,
                    @"the stripe band covers the last body row's band minus the outer margin");
     }
     return SPDFFinishTests(@"SPDFMarkdownPaginatorTests");
