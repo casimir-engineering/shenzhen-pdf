@@ -1,5 +1,5 @@
 <h1 align="center">ShenzhenPDF</h1>
-<p align="center"><b>A fast, tabbed native Mac PDF reader with on-device OCR and offline translation built in.</b></p>
+<p align="center"><b>A fast, tabbed native Mac reader for PDFs and Markdown, with on-device OCR and offline translation built in.</b></p>
 
 <div align="center">
 
@@ -17,7 +17,7 @@
 
 ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and does the heavy work - OCR and translation - entirely on-device. **Inspired by SumatraPDF, a separate project, not affiliated with it.**
 
-<sub><a href="#reading">Reading</a> · <a href="#search">Search &amp; map</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a></sub>
+<sub><a href="#reading">Reading</a> · <a href="#markdown">Markdown</a> · <a href="#search">Search &amp; map</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a></sub>
 
 ---
 
@@ -31,6 +31,15 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 - **Presentation mode** — Present full-screen with chrome-free advance and optional sleep prevention (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>).
 
 <p align="center"><img src="docs/images/portable/macos-multi-window.webp" alt="Two ShenzhenPDF windows side by side, each with its own tabs, outline sidebar, and document map" width="880"></p>
+
+## <a id="markdown"></a>Markdown, read like a document <sub>macOS</sub>
+
+- **GitHub-grade formatting, paginated** — Markdown opens as real A4 sheets in the same reader as PDFs: GitHub-flavored typography and palette, tables with grids, header bands and zebra striping, and fenced code in continuous rounded boxes. Same tabs, chapters, map, zoom presets, and presentation mode.
+- **Identical navigation, identical search** — Chapter jumps, page stepping, find with in-page highlights, map and scrollbar markers, chapter-grouped results, regex — all the PDF behavior, including an I-beam over text and a pointing hand over links.
+- **31 syntax languages, chosen in place** — C, C++, Rust, Go, TypeScript, SQL, HTML, CSS, YAML, LaTeX, shell and more, picked from a searchable list anchored to the code block; Plain Text clears highlighting.
+- **LaTeX math** — `$inline$` and `$$display$$` typeset natively — Greek letters, symbols, super/subscripts, fractions, roots — with display math centered. No web engine, no network.
+- **Images, local and remote** — `https` images load lazily into a shared disk cache and render as centered figures with captions; right-click copies the image. Local images stay inside the document's verified directory.
+- **Exports exactly what you see** — Save as PDF, Print, Copy Page, and Copy Page Image reproduce the on-screen pages: same margins, pagination, and text size. Adjustable text size (<kbd>A−</kbd> / <kbd>A＋</kbd>) is remembered across documents.
 
 ## <a id="search"></a>Search-oriented architecture
 
@@ -55,7 +64,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Snappy native rendering** — The page you're viewing renders first at high priority while nearby pages and inactive tabs warm up quietly — tab-switching is instant. Cached display lists and crop-to-viewport rendering make repeat renders cheap; stale renders abort within milliseconds. <sub>macOS · Linux</sub>
 - **MuPDF-backed C core** — A compact ~93 KB C core wraps statically-linked MuPDF 1.27.2 behind a small stable ABI shared by both frontends — no Win32 emulation. Adds highlights/comments, page rotate, and single-page PDF export on top of viewing.
-- **Far more than PDF** — Opens everything MuPDF recognizes — XPS, CBZ comics, EPUB/MOBI e-books, images, FB2, and HTML. PDF is the primary, most-polished path.
+- **Far more than PDF** — Opens everything MuPDF recognizes — XPS, CBZ comics, EPUB/MOBI e-books, images, FB2, and HTML — plus Markdown through a native paginated renderer. PDF is the primary, most-polished path.
 
 ## Files, printing & updates
 
