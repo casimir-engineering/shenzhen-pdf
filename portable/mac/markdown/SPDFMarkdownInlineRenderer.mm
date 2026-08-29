@@ -28,15 +28,27 @@ CGFloat SPDFMarkdownRenderScale(SPDFMarkdownRenderContext* context) {
 }
 
 static NSDictionary* SPDFRunAttributes(SPDFMarkdownRenderContext* context, SPDFMarkdownInlineRun* run) {
-    NSFont* font = (run.traits & SPDFMarkdownInlineTraitCode) ? context.codeFont : context.bodyFont;
+    BOOL mono = (run.traits & (SPDFMarkdownInlineTraitCode | SPDFMarkdownInlineTraitKeyboard)) != 0;
+    NSFont* font = mono ? context.codeFont : context.bodyFont;
     if (run.traits & SPDFMarkdownInlineTraitStrong) font = SPDFMarkdownFontWithTraits(font, NSBoldFontMask);
     if (run.traits & SPDFMarkdownInlineTraitEmphasis) font = SPDFMarkdownFontWithTraits(font, NSItalicFontMask);
-    NSMutableDictionary* attributes = [@{
-        NSFontAttributeName: font,
-        NSForegroundColorAttributeName: context.options.textColor,
-    } mutableCopy];
+    CGFloat baseSize = font.pointSize;
+    NSMutableDictionary* attributes = [NSMutableDictionary dictionary];
+    if (run.traits & (SPDFMarkdownInlineTraitSubscript | SPDFMarkdownInlineTraitSuperscript)) {
+        // <sub>/<sup> mirror the math typesetter's scripts: one visible step
+        // smaller, shifted off the baseline.
+        font = [NSFontManager.sharedFontManager convertFont:font toSize:MAX(6.0, baseSize * 0.75)] ?: font;
+        BOOL superscript = (run.traits & SPDFMarkdownInlineTraitSuperscript) != 0;
+        attributes[NSBaselineOffsetAttributeName] = @((superscript ? 0.35 : -0.18) * baseSize);
+    } else if (run.traits & SPDFMarkdownInlineTraitKeyboard) {
+        // <kbd> renders as a key-cap chip: slightly smaller mono type on the
+        // inline-code background (v1; no drawn border).
+        font = [NSFontManager.sharedFontManager convertFont:font toSize:MAX(6.0, baseSize * 0.85)] ?: font;
+    }
+    attributes[NSFontAttributeName] = font;
+    attributes[NSForegroundColorAttributeName] = context.options.textColor;
     if (run.traits & SPDFMarkdownInlineTraitStrikethrough) attributes[NSStrikethroughStyleAttributeName] = @1;
-    if (run.traits & SPDFMarkdownInlineTraitCode) {
+    if (run.traits & (SPDFMarkdownInlineTraitCode | SPDFMarkdownInlineTraitKeyboard)) {
         attributes[NSBackgroundColorAttributeName] = context.options.codeBackgroundColor;
     }
     if (run.traits & SPDFMarkdownInlineTraitLink) {
@@ -215,11 +227,26 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
                            attributes);
         return;
     }
-    CGFloat scale = MIN(1.0, MIN(context.options.maximumImageWidth / image.size.width,
-                                 context.options.maximumImageHeight / image.size.height));
+    // HTML width/height attributes are display-size hints: they set the
+    // preferred display size (proportional when only one is given), and the
+    // existing image caps stay the maxima.
+    CGFloat displayWidth = image.size.width;
+    CGFloat displayHeight = image.size.height;
+    if (run.preferredImageWidth > 0 && run.preferredImageHeight > 0) {
+        displayWidth = run.preferredImageWidth;
+        displayHeight = run.preferredImageHeight;
+    } else if (run.preferredImageWidth > 0) {
+        displayHeight *= run.preferredImageWidth / displayWidth;
+        displayWidth = run.preferredImageWidth;
+    } else if (run.preferredImageHeight > 0) {
+        displayWidth *= run.preferredImageHeight / displayHeight;
+        displayHeight = run.preferredImageHeight;
+    }
+    CGFloat scale = MIN(1.0, MIN(context.options.maximumImageWidth / displayWidth,
+                                 context.options.maximumImageHeight / displayHeight));
     NSTextAttachment* attachment = [NSTextAttachment new];
     attachment.image = image;
-    attachment.bounds = NSMakeRect(0, 0, image.size.width * scale, image.size.height * scale);
+    attachment.bounds = NSMakeRect(0, 0, displayWidth * scale, displayHeight * scale);
     NSString* target = resolvedURL.isFileURL ? resolvedURL.path : (resolvedURL.absoluteString ?: destination);
     SPDFAppendImageAttachment(context, run, attachment, target, flow);
 }

@@ -47,6 +47,13 @@ typedef NS_OPTIONS(NSUInteger, SPDFMarkdownInlineTraits) {
     // DisplayMath.
     SPDFMarkdownInlineTraitMath = 1 << 7,
     SPDFMarkdownInlineTraitDisplayMath = 1 << 8,
+    // Whitelisted inline HTML styling: <sub>/<sup> render as smaller
+    // baseline-shifted runs (mirroring the math typesetter's scripts) and
+    // <kbd> renders as a key-cap chip (smaller mono font on the inline-code
+    // background). The visible text stays plain canonical text.
+    SPDFMarkdownInlineTraitSubscript = 1 << 9,
+    SPDFMarkdownInlineTraitSuperscript = 1 << 10,
+    SPDFMarkdownInlineTraitKeyboard = 1 << 11,
 };
 
 @interface SPDFMarkdownInlineRun : NSObject
@@ -57,11 +64,22 @@ typedef NS_OPTIONS(NSUInteger, SPDFMarkdownInlineTraits) {
 // Markdown title attribute (`![alt](src "title")` / `[text](href "title")`),
 // surfaced as a tooltip on rendered links and image attachments.
 @property(nonatomic, readonly, copy, nullable) NSString* title;
+// HTML `<img width=… height=…>` display-size hints in points (0 = no hint).
+// The renderer treats them as the preferred display size, keeps the existing
+// image caps as maxima, and scales proportionally when only one is given.
+@property(nonatomic, readonly) CGFloat preferredImageWidth;
+@property(nonatomic, readonly) CGFloat preferredImageHeight;
 
 - (instancetype)initWithText:(NSString*)text
                       traits:(SPDFMarkdownInlineTraits)traits
                  destination:(nullable NSString*)destination
-                       title:(nullable NSString*)title NS_DESIGNATED_INITIALIZER;
+                       title:(nullable NSString*)title
+         preferredImageWidth:(CGFloat)preferredImageWidth
+        preferredImageHeight:(CGFloat)preferredImageHeight NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithText:(NSString*)text
+                      traits:(SPDFMarkdownInlineTraits)traits
+                 destination:(nullable NSString*)destination
+                       title:(nullable NSString*)title;
 - (instancetype)initWithText:(NSString*)text
                       traits:(SPDFMarkdownInlineTraits)traits
                  destination:(nullable NSString*)destination;
@@ -77,6 +95,10 @@ typedef NS_OPTIONS(NSUInteger, SPDFMarkdownInlineTraits) {
 @property(nonatomic, readonly) NSInteger orderedStart;
 @property(nonatomic, readonly) NSInteger taskState;
 @property(nonatomic, readonly) SPDFMarkdownTableAlignment tableAlignment;
+// Paragraph/heading alignment requested by whitelisted HTML (`align`
+// attributes, `<center>`, and container islands like `<div align="center">`
+// that span multiple markdown blocks). Default means natural alignment.
+@property(nonatomic, readonly) SPDFMarkdownTableAlignment blockAlignment;
 @property(nonatomic, readonly) NSUInteger tableColumnCount;
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownInlineRun*>* runs;
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownBlock*>* children;
@@ -92,6 +114,7 @@ typedef NS_OPTIONS(NSUInteger, SPDFMarkdownInlineTraits) {
                  orderedStart:(NSInteger)orderedStart
                     taskState:(NSInteger)taskState
                tableAlignment:(SPDFMarkdownTableAlignment)tableAlignment
+               blockAlignment:(SPDFMarkdownTableAlignment)blockAlignment
              tableColumnCount:(NSUInteger)tableColumnCount
                          runs:(NSArray<SPDFMarkdownInlineRun*>*)runs
                      children:(NSArray<SPDFMarkdownBlock*>*)children
@@ -99,6 +122,19 @@ typedef NS_OPTIONS(NSUInteger, SPDFMarkdownInlineTraits) {
                      codeInfo:(nullable NSString*)codeInfo
                   calloutKind:(nullable NSString*)calloutKind
                  calloutTitle:(nullable NSString*)calloutTitle NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithKind:(SPDFMarkdownBlockKind)kind
+                   blockIndex:(NSUInteger)blockIndex
+                        level:(NSUInteger)level
+                 orderedStart:(NSInteger)orderedStart
+                    taskState:(NSInteger)taskState
+               tableAlignment:(SPDFMarkdownTableAlignment)tableAlignment
+             tableColumnCount:(NSUInteger)tableColumnCount
+                         runs:(NSArray<SPDFMarkdownInlineRun*>*)runs
+                     children:(NSArray<SPDFMarkdownBlock*>*)children
+                 codeLanguage:(nullable NSString*)codeLanguage
+                     codeInfo:(nullable NSString*)codeInfo
+                  calloutKind:(nullable NSString*)calloutKind
+                 calloutTitle:(nullable NSString*)calloutTitle;
 - (instancetype)init NS_UNAVAILABLE;
 
 @end

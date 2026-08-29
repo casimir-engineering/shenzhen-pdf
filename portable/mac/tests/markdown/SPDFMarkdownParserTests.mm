@@ -186,7 +186,11 @@ int main(void) {
                    @"wikilink alias and target are retained separately");
 
         SPDFMarkdownDocumentModel* unsafe = [parser loadURL:SPDFFixtureURL(@"unsafe.md") error:&error];
-        SPDFExpect([SPDFDirectText(unsafe.blocks) containsString:@"<script>"], @"raw HTML is inert literal text");
+        NSString* unsafeText = SPDFDirectText(unsafe.blocks);
+        SPDFExpect(![unsafeText containsString:@"<script>"] && ![unsafeText containsString:@"alert"] &&
+                       ![unsafeText containsString:@"onerror"] &&
+                       ![unsafeText containsString:@"window.location"],
+                   @"raw HTML is sanitized: scripts and event handlers never become text");
         NSString* temporaryRoot = nil;
         NSURL* fixture = SPDFCreateResourceFixture(&temporaryRoot);
         SPDFExpect([SPDFMarkdownParser localResourceDataForTarget:@"https://example.com/a.png"

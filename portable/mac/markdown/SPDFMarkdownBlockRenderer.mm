@@ -263,6 +263,11 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
     }
     NSRange range = NSMakeRange(start, context.output.length - start);
     NSMutableParagraphStyle* style = SPDFStyle(context, depth);
+    // Alignment requested by whitelisted HTML (`align` attributes, <center>,
+    // and container islands spanning markdown blocks).
+    if (block.blockAlignment == SPDFMarkdownTableAlignmentCenter) style.alignment = NSTextAlignmentCenter;
+    else if (block.blockAlignment == SPDFMarkdownTableAlignmentRight) style.alignment = NSTextAlignmentRight;
+    else if (block.blockAlignment == SPDFMarkdownTableAlignmentLeft) style.alignment = NSTextAlignmentLeft;
     if (block.kind == SPDFMarkdownBlockKindHeading) {
         // GitHub-style em ladder on the body size, set in semibold — full bold
         // reads heavy at display sizes. H6 drops below body and goes muted,

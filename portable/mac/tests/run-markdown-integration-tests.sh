@@ -16,10 +16,23 @@ SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
 "$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
     $SANITIZER_FLAGS -I"$REPO/ext/md4c" -c "$REPO/ext/md4c/md4c.c" -o "$BUILD_DIR/md4c.o"
 
+# Vendored Gumbo HTML5 parser backing the sanitizing HTML-island whitelist.
+# Third-party sources compile without -Werror.
+GUMBO_OBJS=""
+for GUMBO_SRC in "$REPO/ext/gumbo-parser/src"/*.c; do
+    GUMBO_OBJ="$BUILD_DIR/gumbo-$(basename "$GUMBO_SRC" .c).o"
+    # shellcheck disable=SC2086
+    "$CC" -isysroot "$SDKROOT" -std=c99 -O0 -g $SANITIZER_FLAGS \
+        -I"$REPO/ext/gumbo-parser/src" -c "$GUMBO_SRC" -o "$GUMBO_OBJ"
+    GUMBO_OBJS="$GUMBO_OBJS $GUMBO_OBJ"
+done
+
 FOUNDATION_SOURCES="
 $PORTABLE/mac/markdown/SPDFMarkdownModel.mm
 $PORTABLE/mac/markdown/SPDFMarkdownMathTypesetter.mm
 $PORTABLE/mac/markdown/SPDFMarkdownParser.mm
+$PORTABLE/mac/markdown/SPDFMarkdownHTML.mm
+$PORTABLE/mac/markdown/SPDFMarkdownHTMLBlocks.mm
 $PORTABLE/mac/markdown/SPDFMarkdownResources.mm
 $PORTABLE/mac/markdown/SPDFMarkdownLanguage.mm
 $PORTABLE/mac/markdown/SPDFMarkdownHighlighter.mm
@@ -85,7 +98,7 @@ do
     # shellcheck disable=SC2086
     "$CXX" -isysroot "$SDKROOT" -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror \
         $SANITIZER_FLAGS -I"$PORTABLE/core" -I"$PORTABLE/mac" -I"$PORTABLE/mac/markdown" \
-        $FOUNDATION_SOURCES $UI_SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" \
+        $FOUNDATION_SOURCES $UI_SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" $GUMBO_OBJS \
         -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
         -framework UniformTypeIdentifiers -o "$BUILD_DIR/$TEST"
     "$BUILD_DIR/$TEST"

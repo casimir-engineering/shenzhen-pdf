@@ -7,15 +7,27 @@
 - (instancetype)initWithText:(NSString*)text
                       traits:(SPDFMarkdownInlineTraits)traits
                  destination:(NSString*)destination
-                       title:(NSString*)title {
+                       title:(NSString*)title
+         preferredImageWidth:(CGFloat)preferredImageWidth
+        preferredImageHeight:(CGFloat)preferredImageHeight {
     self = [super init];
     if (self) {
         _text = [text copy];
         _traits = traits;
         _destination = [destination copy];
         _title = [title copy];
+        _preferredImageWidth = MAX(0, preferredImageWidth);
+        _preferredImageHeight = MAX(0, preferredImageHeight);
     }
     return self;
+}
+
+- (instancetype)initWithText:(NSString*)text
+                      traits:(SPDFMarkdownInlineTraits)traits
+                 destination:(NSString*)destination
+                       title:(NSString*)title {
+    return [self initWithText:text traits:traits destination:destination title:title
+          preferredImageWidth:0 preferredImageHeight:0];
 }
 
 - (instancetype)initWithText:(NSString*)text
@@ -41,9 +53,31 @@
                      codeInfo:(NSString*)codeInfo
                   calloutKind:(NSString*)calloutKind
                  calloutTitle:(NSString*)calloutTitle {
+    return [self initWithKind:kind blockIndex:blockIndex level:level orderedStart:orderedStart
+                    taskState:taskState tableAlignment:tableAlignment
+               blockAlignment:SPDFMarkdownTableAlignmentDefault tableColumnCount:tableColumnCount
+                         runs:runs children:children codeLanguage:codeLanguage codeInfo:codeInfo
+                  calloutKind:calloutKind calloutTitle:calloutTitle];
+}
+
+- (instancetype)initWithKind:(SPDFMarkdownBlockKind)kind
+                   blockIndex:(NSUInteger)blockIndex
+                        level:(NSUInteger)level
+                 orderedStart:(NSInteger)orderedStart
+                    taskState:(NSInteger)taskState
+               tableAlignment:(SPDFMarkdownTableAlignment)tableAlignment
+               blockAlignment:(SPDFMarkdownTableAlignment)blockAlignment
+             tableColumnCount:(NSUInteger)tableColumnCount
+                         runs:(NSArray<SPDFMarkdownInlineRun*>*)runs
+                     children:(NSArray<SPDFMarkdownBlock*>*)children
+                 codeLanguage:(NSString*)codeLanguage
+                     codeInfo:(NSString*)codeInfo
+                  calloutKind:(NSString*)calloutKind
+                 calloutTitle:(NSString*)calloutTitle {
     self = [super init];
     if (self) {
         _kind = kind;
+        _blockAlignment = blockAlignment;
         _blockIndex = blockIndex;
         _level = level;
         _orderedStart = orderedStart;
