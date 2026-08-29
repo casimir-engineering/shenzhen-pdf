@@ -215,6 +215,11 @@ if [[ -z "$summary" ]]; then
 fi
 [[ -n "$summary" ]] || spdf_release_fail "A release summary is required"
 
+# Release checklist: README content must be current for this release (the
+# version badge below is automated; the feature sections are not).
+previous_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+spdf_require_fresh_readme "$repo_root" "$previous_tag"
+
 log "Committing release metadata for $tag"
 sed -i '' -E "s/^MAC_VERSION \?= .*/MAC_VERSION ?= ${version}/" "$script_dir/Makefile"
 sed -i '' -E "s/^MAC_BUILD \?= .*/MAC_BUILD ?= ${build}/" "$script_dir/Makefile"
