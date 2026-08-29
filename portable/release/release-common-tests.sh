@@ -43,6 +43,28 @@ expect_rejected "placeholder" spdf_validate_release_notes "$tmp/placeholder.md"
 printf '%s\n' 'not a bullet' '' '---' '' 'Detailed change.' > "$tmp/not-bullets.md"
 expect_rejected "non-bullet highlights" spdf_validate_release_notes "$tmp/not-bullets.md"
 
+# README release checklist: badge-only churn is stale, content changes or the
+# explicit SPDF_README_UNCHANGED=1 acknowledgement pass, and repos with no
+# prior tag are exempt.
+readme_repo="$tmp/readme-repo"
+git init -q "$readme_repo"
+git -C "$readme_repo" -c user.name=t -c user.email=t@t config commit.gpgsign false
+printf '%s\n%s\n' '<sub>Latest <b>26.8.1-1</b></sub>' 'Feature list.' > "$readme_repo/readme.md"
+git -C "$readme_repo" add readme.md
+git -C "$readme_repo" -c user.name=t -c user.email=t@t commit -qm base
+spdf_require_fresh_readme "$readme_repo" "" >/dev/null  # no prior tag: exempt
+git -C "$readme_repo" tag 26.8.1-1
+sed -i '' 's/26.8.1-1/26.8.2-1/' "$readme_repo/readme.md"
+git -C "$readme_repo" add readme.md
+git -C "$readme_repo" -c user.name=t -c user.email=t@t commit -qm badge-only
+expect_rejected "badge-only readme churn" spdf_require_fresh_readme "$readme_repo" "26.8.1-1"
+expect_equal "explicit unchanged acknowledgement" \
+  "$(SPDF_README_UNCHANGED=1 spdf_require_fresh_readme "$readme_repo" "26.8.1-1" && echo ok)" "ok"
+printf '%s\n' 'New feature paragraph.' >> "$readme_repo/readme.md"
+git -C "$readme_repo" add readme.md
+git -C "$readme_repo" -c user.name=t -c user.email=t@t commit -qm content
+spdf_require_fresh_readme "$readme_repo" "26.8.1-1" >/dev/null
+
 if ((failures)); then
   printf 'release-common-tests: %d failure(s)\n' "$failures" >&2
   exit 1

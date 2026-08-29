@@ -20,6 +20,23 @@ spdf_release_fail() {
   return 1
 }
 
+# Release checklist: the README's CONTENT (not just the auto-bumped version
+# badge) must have been revisited since the previous release, so a headline
+# feature can never ship undocumented. A release that genuinely changes no
+# user-visible README content passes SPDF_README_UNCHANGED=1 explicitly.
+spdf_require_fresh_readme() {
+  local repo_root="$1"
+  local previous_tag="$2"
+  [[ "${SPDF_README_UNCHANGED:-0}" == "1" ]] && return 0
+  [[ -n "$previous_tag" ]] || return 0  # first release ever: nothing to diff
+  git -C "$repo_root" rev-parse -q --verify "refs/tags/$previous_tag" >/dev/null || return 0
+  if git -C "$repo_root" diff "$previous_tag"..HEAD -- readme.md \
+      | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -vqF 'Latest <b>'; then
+    return 0
+  fi
+  spdf_release_fail "README checklist: readme.md content is unchanged since $previous_tag (only the version badge moved). Update the README for this release, or set SPDF_README_UNCHANGED=1 to state that nothing user-visible changed."
+}
+
 spdf_read_make_var() {
   local file="$1"
   local name="$2"
