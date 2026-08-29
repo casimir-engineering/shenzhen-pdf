@@ -69,15 +69,20 @@ static NSDictionary* SPDFRunAttributes(SPDFMarkdownRenderContext* context, SPDFM
 }
 
 // A remote image whose bytes have not arrived yet renders as a fixed-size
-// GitHub-gray box carrying the alt text, so the download landing later only
+// theme-gray box carrying the alt text, so the download landing later only
 // swaps the attachment instead of reflowing the whole document from nothing.
-// The box is drawn with concrete light-palette colors (like print decoration
-// colors) via a deferred drawing handler, keeping render passes thread-safe.
+// The box is drawn with the active theme's concrete placeholder-role colors
+// (like print decoration colors) via a deferred drawing handler; the concrete
+// NSColors are captured up front, keeping render passes thread-safe.
 static NSTextAttachment* SPDFPendingRemoteImageAttachment(SPDFMarkdownRenderContext* context, NSString* altText) {
     CGFloat width = MAX(64.0, context.options.maximumImageWidth);
     CGFloat height = MAX(48.0, context.options.remoteImagePlaceholderHeight);
     NSString* caption = altText.length ? altText : @"Loading image";
     NSFont* font = context.bodyFont;
+    SPDFMarkdownTheme* theme = [SPDFMarkdownTheme themeForVariant:context.options.themeVariant];
+    NSColor* boxFill = theme.imagePlaceholderFillColor;
+    NSColor* boxStroke = theme.imagePlaceholderStrokeColor;
+    NSColor* captionColor = theme.secondaryTextColor;
     NSImage* image = [NSImage
          imageWithSize:NSMakeSize(width, height)
                flipped:NO
@@ -85,17 +90,16 @@ static NSTextAttachment* SPDFPendingRemoteImageAttachment(SPDFMarkdownRenderCont
           NSBezierPath* box = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(rect, 0.5, 0.5)
                                                               xRadius:6
                                                               yRadius:6];
-          [[NSColor colorWithSRGBRed:0xF6 / 255.0 green:0xF8 / 255.0 blue:0xFA / 255.0 alpha:1] setFill];
+          [boxFill setFill];
           [box fill];
-          [[NSColor colorWithSRGBRed:0xD1 / 255.0 green:0xD9 / 255.0 blue:0xE0 / 255.0 alpha:1] setStroke];
+          [boxStroke setStroke];
           [box stroke];
           NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
           style.alignment = NSTextAlignmentCenter;
           style.lineBreakMode = NSLineBreakByTruncatingTail;
           NSDictionary* attributes = @{
               NSFontAttributeName: font,
-              NSForegroundColorAttributeName:
-                  [NSColor colorWithSRGBRed:0x59 / 255.0 green:0x63 / 255.0 blue:0x6E / 255.0 alpha:1],
+              NSForegroundColorAttributeName: captionColor,
               NSParagraphStyleAttributeName: style,
           };
           CGFloat lineHeight = ceil(font.ascender - font.descender + font.leading);

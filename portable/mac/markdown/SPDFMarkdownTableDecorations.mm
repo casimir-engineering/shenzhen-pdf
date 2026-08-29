@@ -157,10 +157,11 @@ NSUInteger SPDFMarkdownAppendTableDecorations(NSArray<SPDFMarkdownPageFragment*>
     return index;
 }
 
-void SPDFMarkdownDrawTableDecoration(CGContextRef context, SPDFMarkdownPageDecorationType type, CGRect rect) {
-    NSColor* color = SPDFMarkdownTheme.tableGridColor;
-    if (type == SPDFMarkdownPageDecorationTypeTableHeaderBand) color = SPDFMarkdownTheme.tableHeaderFillColor;
-    if (type == SPDFMarkdownPageDecorationTypeTableStripe) color = SPDFMarkdownTheme.tableStripeFillColor;
+void SPDFMarkdownDrawTableDecoration(CGContextRef context, SPDFMarkdownPageDecorationType type, CGRect rect,
+                                     SPDFMarkdownTheme* theme) {
+    NSColor* color = theme.tableGridColor;
+    if (type == SPDFMarkdownPageDecorationTypeTableHeaderBand) color = theme.tableHeaderFillColor;
+    if (type == SPDFMarkdownPageDecorationTypeTableStripe) color = theme.tableStripeFillColor;
     NSColor* sRGB = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace] ?: NSColor.blackColor;
     CGContextSetRGBFillColor(context, sRGB.redComponent, sRGB.greenComponent, sRGB.blueComponent,
                              sRGB.alphaComponent);

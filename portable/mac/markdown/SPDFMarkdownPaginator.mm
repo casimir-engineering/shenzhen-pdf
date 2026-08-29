@@ -31,6 +31,7 @@
     copy.printableRect = self.printableRect;
     copy.headingKeepThreshold = self.headingKeepThreshold;
     copy.includesCodeLanguageControlSpacing = self.includesCodeLanguageControlSpacing;
+    copy.themeVariant = self.themeVariant;
     return copy;
 }
 @end

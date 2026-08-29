@@ -16,11 +16,23 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     return self;
 }
 - (void)setFontScale:(CGFloat)fontScale { _fontScale = MAX(0.5, MIN(3.0, fontScale)); }
+// The one theme knob: assigning the variant re-derives every palette role
+// color, so the rendered output is deterministic per (options.themeVariant).
+// Custom color overrides go on top, AFTER the variant.
+- (void)setThemeVariant:(SPDFMarkdownThemeVariant)themeVariant {
+    _themeVariant = themeVariant;
+    SPDFMarkdownTheme* theme = [SPDFMarkdownTheme themeForVariant:themeVariant];
+    self.textColor = theme.bodyTextColor;
+    self.secondaryTextColor = theme.secondaryTextColor;
+    self.linkColor = theme.linkColor;
+    self.codeBackgroundColor = theme.inlineCodeChipColor;
+    self.quoteColor = theme.secondaryTextColor;
+}
 // The reading palette lives in SPDFMarkdownTheme: body text is a softened
-// near-black on the white paper, secondary roles share one muted gray, and all
-// values are concrete sRGB so screen, print and export match exactly. Body
-// metrics follow GitHub's reader: ~1.45 line-height and a paragraph gap of
-// roughly 0.8em.
+// near-black on the default light theme's white paper, secondary roles share
+// one muted gray, and all values are concrete sRGB so screen, print and
+// export match exactly. Body metrics follow GitHub's reader: ~1.45
+// line-height and a paragraph gap of roughly 0.8em.
 + (instancetype)defaultOptions {
     SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions new];
     options.textSize = 15;
@@ -34,20 +46,25 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     options.maximumResourceBytes = 64 * 1024 * 1024;
     options.maximumDecodedImagePixels = 32 * 1024 * 1024;
     options.remoteImagePlaceholderHeight = 150;
-    options.textColor = SPDFMarkdownTheme.bodyTextColor;
-    options.secondaryTextColor = SPDFMarkdownTheme.secondaryTextColor;
-    options.linkColor = SPDFMarkdownTheme.linkColor;
-    options.codeBackgroundColor = SPDFMarkdownTheme.inlineCodeChipColor;
-    options.quoteColor = SPDFMarkdownTheme.secondaryTextColor;
+    options.themeVariant = SPDFMarkdownThemeVariantLight;  // derives the palette roles
     return options;
 }
-// Print parity is the point of the concrete palette: the exported page uses
-// exactly the colors the screen shows.
++ (instancetype)defaultOptionsForThemeVariant:(SPDFMarkdownThemeVariant)variant {
+    SPDFMarkdownRenderOptions* options = [self defaultOptions];
+    options.themeVariant = variant;
+    return options;
+}
+// Print parity is the point of the concrete palettes: the exported page uses
+// exactly the colors the screen shows (the live plan carries the active
+// variant to the export drawing).
 + (instancetype)printOptions {
     return self.defaultOptions;
 }
 - (id)copyWithZone:(NSZone*)zone {
     SPDFMarkdownRenderOptions* copy = [[[self class] allocWithZone:zone] init];
+    // The variant first (it rewrites the palette roles), then every explicit
+    // color, so custom overrides survive the copy.
+    copy.themeVariant = self.themeVariant;
     copy.textSize = self.textSize;
     copy.codeSize = self.codeSize;
     copy.lineSpacing = self.lineSpacing;

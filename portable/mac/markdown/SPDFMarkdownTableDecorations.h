@@ -79,11 +79,12 @@ FOUNDATION_EXPORT NSUInteger SPDFMarkdownAppendTableDecorations(
     NSArray<SPDFMarkdownPaginationItem*>* items, CGFloat printableWidth,
     NSMutableArray<SPDFMarkdownPageDecoration*>* decorations);
 
-// Paints one table decoration (header band, stripe, or grid hairline) with its
-// concrete SPDFMarkdownTheme color. rect is in the drawing context's own
+// Paints one table decoration (header band, stripe, or grid hairline) with the
+// given theme's concrete role color. rect is in the drawing context's own
 // coordinates; the caller has already mapped page-content geometry.
 FOUNDATION_EXPORT void SPDFMarkdownDrawTableDecoration(CGContextRef context,
                                                        SPDFMarkdownPageDecorationType type,
-                                                       CGRect rect);
+                                                       CGRect rect,
+                                                       SPDFMarkdownTheme* theme);
 
 NS_ASSUME_NONNULL_END
