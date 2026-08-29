@@ -38,6 +38,14 @@
 // Drawing/geometry internals implemented alongside the public (Decorations)
 // category in SPDFMacMarkdownPageCanvas+Decorations.mm.
 @interface SPDFMacMarkdownPageCanvas (DecorationsInternal)
+// Paper presentation for the plan's theme variant: the light theme keeps the
+// white sheet + drop shadow, the dark theme paints the theme paper with a 1px
+// border instead. paperFillColor/drawsPaperShadow expose the decision to
+// headless tests.
+- (NSColor*)paperFillColor;
+- (BOOL)drawsPaperShadow;
+- (void)drawPaperBackgroundInFrame:(NSRect)pageFrame;
+- (void)drawPaperBorderInFrame:(NSRect)pageFrame;
 - (SPDFMarkdownPageFragment*)codeControlFragmentOnPage:(SPDFMarkdownPage*)page blockIndex:(NSUInteger)blockIndex;
 - (NSRect)codeLanguageControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
 - (NSRect)codeLanguageControlHitRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;

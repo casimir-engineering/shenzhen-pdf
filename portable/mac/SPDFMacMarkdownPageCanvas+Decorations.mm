@@ -12,14 +12,56 @@ static const CGFloat kSPDFMarkdownCodeControlRightInset = 10.0;
 static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
 static const CGFloat kSPDFMarkdownCodeControlHitSlop = 7.0;
 
-static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(void) {
+static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(SPDFMarkdownTheme* theme) {
     return @{
         NSFontAttributeName : [NSFont systemFontOfSize:11 weight:NSFontWeightMedium],
-        NSForegroundColorAttributeName : SPDFMarkdownTheme.codeControlTextColor,
+        NSForegroundColorAttributeName : theme.codeControlTextColor,
     };
 }
 
 @implementation SPDFMacMarkdownPageCanvas (Decorations)
+
+// The plan's theme variant is the single source of the page chrome palette,
+// so canvas chrome always matches the page content drawn from the same plan.
+- (SPDFMarkdownTheme*)pageTheme {
+    return [SPDFMarkdownTheme themeForVariant:self.plan.configuration.themeVariant];
+}
+
+// Paper presentation: light paper keeps the classic white sheet with a soft
+// drop shadow; dark paper is the theme's #1E1E1E sheet separated from the
+// canvas gutter by a subtle 1px #333333 border instead of a shadow (a dark
+// shadow reads as mud on dark gutters). Split into fill/shadow decisions so a
+// headless test can probe the choice without rasterizing.
+- (NSColor*)paperFillColor {
+    return self.pageTheme.paperColor;
+}
+
+- (BOOL)drawsPaperShadow {
+    return self.plan.configuration.themeVariant != SPDFMarkdownThemeVariantDark;
+}
+
+- (void)drawPaperBackgroundInFrame:(NSRect)pageFrame {
+    [NSGraphicsContext saveGraphicsState];
+    if (self.drawsPaperShadow) {
+        NSShadow* shadow = [NSShadow new];
+        shadow.shadowColor = [NSColor.blackColor colorWithAlphaComponent:0.22];
+        shadow.shadowBlurRadius = 4.0;
+        shadow.shadowOffset = NSMakeSize(0, -1);
+        [shadow set];
+    }
+    [self.paperFillColor setFill];
+    NSRectFill(pageFrame);
+    [NSGraphicsContext restoreGraphicsState];
+}
+
+// Drawn after the page content so the hairline stays crisp at the page edge.
+- (void)drawPaperBorderInFrame:(NSRect)pageFrame {
+    if (self.drawsPaperShadow) return;
+    [self.pageTheme.paperBorderColor setStroke];
+    NSBezierPath* border = [NSBezierPath bezierPathWithRect:NSInsetRect(pageFrame, 0.5, 0.5)];
+    border.lineWidth = 1.0;
+    [border stroke];
+}
 
 - (NSString*)codeLanguageLabelForBlockIndex:(NSUInteger)blockIndex {
     for (SPDFMarkdownPage* page in self.plan.pages) {
@@ -57,7 +99,7 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
 - (NSRect)codeLanguageControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame {
     NSRect printable = self.plan.configuration.printableRect;
     NSString* title = [self codeLanguageControlTitleForBlockIndex:fragment.blockIndex];
-    CGFloat width = ceil([title sizeWithAttributes:SPDFCodeControlTitleAttributes()].width) +
+    CGFloat width = ceil([title sizeWithAttributes:SPDFCodeControlTitleAttributes(self.pageTheme)].width) +
                     kSPDFMarkdownCodeControlHorizontalPadding * 2.0;
     width =
         MIN(width, MAX(kSPDFMarkdownCodeControlHeight, NSWidth(printable) - kSPDFMarkdownCodeControlRightInset * 2.0));
@@ -144,6 +186,7 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
 }
 
 - (void)drawCodeLanguageControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {
+    SPDFMarkdownTheme* theme = self.pageTheme;
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (fragment.itemIndex >= self.plan.items.count) continue;
         SPDFMarkdownPaginationItem* item = self.plan.items[fragment.itemIndex];
@@ -153,13 +196,13 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(v
         NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:boxRect
                                                              xRadius:kSPDFMarkdownCodeControlCornerRadius
                                                              yRadius:kSPDFMarkdownCodeControlCornerRadius];
-        [SPDFMarkdownTheme.codeControlFillColor setFill];
+        [theme.codeControlFillColor setFill];
         [path fill];
-        [SPDFMarkdownTheme.codeControlStrokeColor setStroke];
+        [theme.codeControlStrokeColor setStroke];
         path.lineWidth = 1.0;
         [path stroke];
         NSString* title = [self codeLanguageControlTitleForBlockIndex:fragment.blockIndex];
-        NSDictionary* attributes = SPDFCodeControlTitleAttributes();
+        NSDictionary* attributes = SPDFCodeControlTitleAttributes(theme);
         NSSize titleSize = [title sizeWithAttributes:attributes];
         [title drawAtPoint:NSMakePoint(NSMinX(controlRect) + kSPDFMarkdownCodeControlHorizontalPadding,
                                        round(NSMidY(controlRect) - titleSize.height * 0.5))

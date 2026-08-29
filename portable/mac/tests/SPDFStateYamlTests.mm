@@ -142,6 +142,7 @@ static NSDictionary* settings_fixture(void) {
         @"printScalingMode" : @0,
         @"printCustomScale" : @1.25,
         @"markdownFontScale" : @1.15,
+        @"markdownTheme" : @"dark",
         @"recentlyOpened" : @[
             @"/Users/raph/Downloads/HRO catalogue韩荣新目录.pdf",
             @"/Users/raph/Documents/deep: dive.pdf",

@@ -40,7 +40,8 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 - **31 syntax languages, chosen in place** — C, C++, Rust, Go, TypeScript, SQL, HTML, CSS, YAML, LaTeX, shell and more, picked from a searchable list anchored to the code block; Plain Text clears highlighting.
 - **LaTeX math** — `$inline$` and `$$display$$` typeset natively — Greek letters, symbols, super/subscripts, fractions, roots — with display math centered. No web engine, no network.
 - **Images, local and remote** — `https` images load lazily into a shared disk cache and render as centered figures with captions; right-click copies the image. Local images stay inside the document's verified directory.
-- **Exports exactly what you see** — Save as PDF, Print, Copy Page, and Copy Page Image reproduce the on-screen pages: same margins, pagination, and text size. Adjustable text size (<kbd>A−</kbd> / <kbd>A＋</kbd>) is remembered across documents.
+- **Light or dark reading theme** — One toolbar toggle switches every Markdown document between the GitHub-light palette and an Obsidian-flavored dark one — dark paper, purple accents, dark-tuned syntax colors — remembered across documents and sessions.
+- **Exports exactly what you see** — Save as PDF, Print, Copy Page, and Copy Page Image reproduce the on-screen pages: same margins, pagination, text size, and reading theme. Adjustable text size (<kbd>A−</kbd> / <kbd>A＋</kbd>) is remembered across documents.
 
 ## <a id="search"></a>Search-oriented architecture
 

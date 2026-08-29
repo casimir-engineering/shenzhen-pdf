@@ -113,7 +113,7 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   `SPDFMarkdownRemoteImageKeyForTarget` output, synchronously; it never opens
   a connection. A remote target with no bytes yet renders as a fixed-size
   pending placeholder box (maximumImageWidth x remoteImagePlaceholderHeight,
-  GitHub-gray with the alt text) that reserves layout space; targets in
+  theme-gray with the alt text) that reserves layout space; targets in
   `failedRemoteImageTargets`, undecodable bytes, and over-budget bytes render
   the stable `[Image: alt]` text placeholder.
 - The session layer (`SPDFMacMarkdownSession+RemoteImages.mm` +
@@ -169,9 +169,22 @@ line spacing, zero paragraph spacing between code lines, and a 12pt horizontal
 inset so the text sits inside the unified code box. The box background is not a
 text attribute — it is drawn as a page decoration behind the code (inline code
 spans keep their subtle background chip). `SPDFMarkdownTheme` in
-`SPDFMarkdownDecorations.h` exposes the shared box/rule colors, both as
-appearance-dynamic colors for the screen canvas and as the concrete light
-palette used on paper. An images-only paragraph (nothing but images and
+`SPDFMarkdownDecorations.h` exposes every color as a named role of a reading
+theme. Two variants exist (`SPDFMarkdownThemeVariant`): the default LIGHT
+GitHub-Primer palette, and an Obsidian-default DARK palette (#1E1E1E paper,
+#DCDDDE text, the #7F6DF2 purple accent, #333333 hairlines, #262626/#2A2A2A
+code surfaces, a dark-tuned syntax token set). Both are concrete sRGB
+constants — a theme is a set of constants, not a subsystem, and nothing is
+appearance-dynamic. The variant threads explicitly:
+`SPDFMarkdownRenderOptions.themeVariant` re-derives the render's palette-role
+colors, and `SPDFMarkdownPageConfiguration.themeVariant` carries the palette
+into every drawing consumer of the plan. The mac app persists the choice as
+`markdownTheme` ("light"/"dark") in settings.yaml, toggles it from a
+markdown-only toolbar button beside the text-size pill, and applies it to the
+active session through the same viewport-preserving rerender as the font
+scale (cached sessions catch up on activation). On the screen canvas, light
+paper keeps the white sheet + drop shadow while dark paper draws a subtle
+1px #333333 border instead. An images-only paragraph (nothing but images and
 whitespace/soft breaks) renders by its shape. A single image becomes a
 centered figure, GitHub-style: the attachment centered on its own line with a
 muted centered caption line below it. The caption text is the markdown title
@@ -267,16 +280,20 @@ across pages gets one box per portion), a 1px underline rule beneath level
 grid) described in the styling section above.
 
 Save as PDF, preview and Print all reuse the session's live on-screen
-`SPDFMarkdownPaginationPlan` (A4 portrait, current font scale, reserved
-language-control band) — a differing printer paper only scales the finished
-page, it never repaginates. Configurations built from asymmetric printable
-rectangles anchor content to `topContentInset`, the true top margin. The plan's
-`drawPageAtIndex:attributedString:inContext:` method draws the decorations
-first (concrete light palette: #F6F8FA/#D0D7DE code boxes, #D8DEE4 rules) and
-then the exact planned ranges into any PDF/print Core Graphics context,
-preserving vector/selectable text. Drawing resolves dynamic AppKit colors
-through a concrete light print palette on white paper, so a dark application
-appearance cannot produce white-on-white output.
+`SPDFMarkdownPaginationPlan` (A4 portrait, current font scale and reading
+theme, reserved language-control band) — a differing printer paper only
+scales the finished page, it never repaginates. Configurations built from
+asymmetric printable rectangles anchor content to `topContentInset`, the true
+top margin. The plan's `drawPageAtIndex:attributedString:inContext:` method
+draws the decorations first (the active theme's concrete palette — light:
+#F6F8FA/#D0D7DE code boxes and #D1D9E0 rules on white paper; dark:
+#262626/#363636 boxes and #333333 rules on #1E1E1E paper) and then the exact
+planned ranges into any PDF/print Core Graphics context, preserving
+vector/selectable text. Exports are WYSIWYG by design: a dark reading theme
+exports dark pages, exactly what the screen shows. Drawing resolves dynamic
+AppKit colors through the active theme's concrete palette with a
+paper-appropriate luminance guard, so an application-appearance flip can
+never produce white-on-white (or black-on-black) output.
 
 ## Compile and test
 
@@ -302,8 +319,9 @@ replacement between parse and render, large-search cancellation and long-query
 rejection, exact TextKit ranges, the 75% rule, callout pagination, over-tall
 content scaling, code-box/heading-rule decoration geometry (including blocks
 split across pages), font scaling, and PDFKit/raster probes for selectable
-text, concrete print colors, the filled code-box background, and image
-containment within its line fragment.
+text, concrete print colors for both reading themes (including the dark-paper
+raster probes), the filled code-box background, and image containment within
+its line fragment.
 
 ## Recommended Makefile fragment
 
