@@ -48,6 +48,10 @@ YAML_SRC := core/spdf_yaml.c
 YAML_HDR := core/spdf_yaml.h
 YAML_OBJ := $(BUILD)/spdf_yaml.o
 MAC_MD4C_OBJ := $(BUILD)/md4c.o
+# Vendored Gumbo HTML5 parser (pure C, no dependencies) backing the Markdown
+# reader's sanitizing HTML-island whitelist (portable/mac/markdown/SPDFMarkdownHTML*.mm).
+MAC_GUMBO_SRCS := $(sort $(wildcard ../ext/gumbo-parser/src/*.c))
+MAC_GUMBO_OBJS := $(patsubst ../ext/gumbo-parser/src/%.c,$(BUILD)/gumbo-%.o,$(MAC_GUMBO_SRCS))
 CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
 CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
 CORE_SELECTION_TEST := $(BUILD)/SPDFCoreSelectionTests
@@ -116,6 +120,9 @@ $(CORE_SELECTION_SUPPORT_OBJ): $(CORE_SELECTION_SUPPORT_SRC) $(CORE_SELECTION_HD
 
 $(MAC_MD4C_OBJ): ../ext/md4c/md4c.c ../ext/md4c/md4c.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c11 -I../ext/md4c -c ../ext/md4c/md4c.c -o "$(MAC_MD4C_OBJ)"
+
+$(BUILD)/gumbo-%.o: ../ext/gumbo-parser/src/%.c Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c99 -I../ext/gumbo-parser/src -c $< -o $@
 
 $(YAML_OBJ): $(YAML_SRC) $(YAML_HDR) Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -c "$(YAML_SRC)" -o "$(YAML_OBJ)"
@@ -281,7 +288,7 @@ $(MAC_STATE_YAML_TEST): mac/tests/SPDFStateYamlTests.mm $(YAML_OBJ) | $(BUILD)
 mac-state-yaml-tests: $(MAC_STATE_YAML_TEST)
 	"$(MAC_STATE_YAML_TEST)"
 
-$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
+$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
@@ -312,7 +319,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_SRCS) $(MA
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
-	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) "$(YAML_OBJ)" $(MAC_MD4C_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) "$(YAML_OBJ)" $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -Eq 'libcrypto|/opt/homebrew|/usr/local'; then \
 		echo "unexpected mutable runtime dependency in $(MAC_BIN)" >&2; \
 		otool -L "$(MAC_BIN)" >&2; \
