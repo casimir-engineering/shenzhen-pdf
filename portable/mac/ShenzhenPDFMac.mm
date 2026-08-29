@@ -1423,6 +1423,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
         NSNumber* printScalingMode = settings[@"printScalingMode"];
         NSNumber* printCustomScale = settings[@"printCustomScale"];
         NSNumber* markdownFontScale = settings[@"markdownFontScale"];
+        _markdownDarkTheme = [settings[@"markdownTheme"] isEqual:@"dark"];
         NSDictionary* windowSize = settings[@"windowSize"];
         NSString* commentAuthor = settings[@"commentAuthor"];
         NSString* translateSource = settings[@"translateSourceLanguage"];
@@ -2054,6 +2055,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
         @"printScalingMode" : @(_printScalingMode),
         @"printCustomScale" : @(SPDFClampPrintCustomScale(_printCustomScale)),
         @"markdownFontScale" : @(round(MAX(0.5, MIN(3.0, _markdownFontScale)) * 100.0) / 100.0),
+        @"markdownTheme" : _markdownDarkTheme ? @"dark" : @"light",
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
     }
                    toFile:@"settings.yaml"];
@@ -2775,6 +2777,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
                                  state:NSControlStateValueOff
                                enabled:[_markdownFontSizeSegments isEnabledForSegment:1]];
     }
+    [self addMarkdownThemeOverflowItemsToMenu:menu hiddenViews:hiddenViews];
     if ([hiddenViews containsObject:_fitModePopup] || [hiddenViews containsObject:_zoomSegments]) {
         [menu addItem:[NSMenuItem separatorItem]];
         if ([hiddenViews containsObject:_zoomSegments]) {
@@ -2834,7 +2837,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
         @[ _findCountLabel ],
         @[ _findSegments ],
         @[ _findRegexCheckbox ],
-        @[ _markdownFontSizeSegments ],
+        @[ _markdownFontSizeSegments, _markdownThemeButton ],
         @[ _fitModePopup, _zoomSegments ],
     ];
     NSMutableSet<NSView*>* hiddenViews = [NSMutableSet set];
@@ -2962,6 +2965,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
                                                              spdf_markdown_font_size_toolbar_image(NO),
                                                              spdf_markdown_font_size_toolbar_image(YES));
     _markdownFontSizeSegments.hidden = YES; // markdown-only; updateMarkdownFontControls reveals it
+    [self buildMarkdownThemeToolbarButton]; // markdown-only reading-theme toggle, right of the pill
     [self updateMarkdownFontControls];
 
     _fitModePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
@@ -3074,6 +3078,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
     [_toolbar addArrangedSubview:_fitModePopup];
     [_toolbar addArrangedSubview:_zoomSegments];
     [_toolbar addArrangedSubview:_markdownFontSizeSegments];
+    [_toolbar addArrangedSubview:_markdownThemeButton];
     [_toolbar addArrangedSubview:_searchField];
     [_toolbar addArrangedSubview:_findRegexCheckbox];
     [_toolbar addArrangedSubview:_findCountLabel];
@@ -3082,7 +3087,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
     [_toolbar addArrangedSubview:_toolbarOverflowButton];
     [_toolbar addArrangedSubview:_minimapToggleButton];
     [_toolbar setCustomSpacing:8.0 afterView:_zoomSegments];
-    [_toolbar setCustomSpacing:8.0 afterView:_markdownFontSizeSegments];
+    [_toolbar setCustomSpacing:8.0 afterView:_markdownThemeButton];
     [_toolbar setCustomSpacing:8.0 afterView:_searchField];
 
     if (launchWindowStart > 0.0)

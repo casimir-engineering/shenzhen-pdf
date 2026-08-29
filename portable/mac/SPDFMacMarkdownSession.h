@@ -2,6 +2,7 @@
 
 #import <AppKit/AppKit.h>
 #import "SPDFMacMarkdownPagedView.h"
+#import "markdown/SPDFMarkdownDecorations.h"
 
 @class SPDFMarkdownDocument;
 @class SPDFMarkdownPaginationPlan;
@@ -45,6 +46,10 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 // [0.5, 3.0]. Set at creation for the first render; applyFontScale: rerenders
 // the active session while preserving its viewport state.
 @property(nonatomic, readonly) CGFloat fontScale;
+// The reading theme applied to every render (default Light). Set at creation
+// for the first render; applyThemeVariant: rerenders the active session while
+// preserving its viewport state, exactly like applyFontScale:.
+@property(nonatomic, readonly) SPDFMarkdownThemeVariant themeVariant;
 @property(nonatomic, readonly, copy) NSArray<NSValue*>* documentPageRects;
 @property(nonatomic, readonly) NSRect documentVisibleRect;
 @property(nonatomic, readonly) NSSize documentCanvasSize;
@@ -73,9 +78,13 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
                plainTextTransform:(NSString* (^_Nullable)(NSString* text))transform;
 
 - (instancetype)initWithDocumentURL:(NSURL*)URL;
-- (instancetype)initWithDocumentURL:(NSURL*)URL fontScale:(CGFloat)fontScale NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithDocumentURL:(NSURL*)URL fontScale:(CGFloat)fontScale;
+- (instancetype)initWithDocumentURL:(NSURL*)URL
+                          fontScale:(CGFloat)fontScale
+                       themeVariant:(SPDFMarkdownThemeVariant)themeVariant NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 - (void)applyFontScale:(CGFloat)scale;
+- (void)applyThemeVariant:(SPDFMarkdownThemeVariant)themeVariant;
 - (void)activateInHostView:(NSView*)hostView
                  workQueue:(dispatch_queue_t)workQueue
               scrollOrigin:(NSPoint)scrollOrigin

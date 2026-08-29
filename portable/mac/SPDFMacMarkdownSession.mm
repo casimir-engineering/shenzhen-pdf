@@ -29,10 +29,11 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     SPDFMacMarkdownPageFitMode _pendingFitMode;
     __weak id<SPDFMacUIReader> _reader;
     SPDFMacMarkdownSidebarModel* _sidebarModel;
-    // fontScale of the currently installed renderedDocument; when it trails
-    // _fontScale (the scale changed while inactive or mid-load) activation
-    // schedules a catch-up rerender.
+    // fontScale/themeVariant of the currently installed renderedDocument; when
+    // either trails the session preference (changed while inactive or
+    // mid-load) activation schedules a catch-up rerender.
     CGFloat _renderedFontScale;
+    SPDFMarkdownThemeVariant _renderedThemeVariant;
 }
 
 - (instancetype)initWithDocumentURL:(NSURL*)URL {
@@ -40,6 +41,12 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 }
 
 - (instancetype)initWithDocumentURL:(NSURL*)URL fontScale:(CGFloat)fontScale {
+    return [self initWithDocumentURL:URL fontScale:fontScale themeVariant:SPDFMarkdownThemeVariantLight];
+}
+
+- (instancetype)initWithDocumentURL:(NSURL*)URL
+                          fontScale:(CGFloat)fontScale
+                       themeVariant:(SPDFMarkdownThemeVariant)themeVariant {
     NSParameterAssert(URL.isFileURL);
     self = [super init];
     if (!self) return nil;
@@ -49,15 +56,23 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     _languageOverrides = [NSMutableDictionary dictionary];
     _fontScale = SPDFMacMarkdownClampFontScale(fontScale);
     _renderedFontScale = _fontScale;
+    _themeVariant = themeVariant;
+    _renderedThemeVariant = _themeVariant;
     [self buildRootView];
     return self;
 }
 
 - (SPDFMarkdownRenderOptions*)renderOptionsForCurrentScale {
-    SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions defaultOptions];
+    SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions defaultOptionsForThemeVariant:_themeVariant];
     options.fontScale = _fontScale;
     [self applyRemoteImageState:options];  // already-fetched remote image bytes
     return options;
+}
+
+// The installed render trails the session preferences: a catch-up rerender is
+// due (used by activation and the self-heal pass).
+- (BOOL)renderTrailsPreferences {
+    return _renderedFontScale != _fontScale || _renderedThemeVariant != _themeVariant;
 }
 
 - (void)applyFontScale:(CGFloat)scale {
@@ -65,6 +80,15 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     if (clamped == _fontScale) return;
     _fontScale = clamped;
     if (_active && self.document) [self rerenderDocumentWithStatus:@"Markdown text size updated."];
+}
+
+// The theme mirrors applyFontScale: exactly — an active session rerenders in
+// place preserving the viewport; an inactive one adopts the preference and
+// catches up on activation.
+- (void)applyThemeVariant:(SPDFMarkdownThemeVariant)themeVariant {
+    if (themeVariant == _themeVariant) return;
+    _themeVariant = themeVariant;
+    if (_active && self.document) [self rerenderDocumentWithStatus:@"Markdown reading theme updated."];
 }
 
 - (SPDFMarkdownPaginationPlan*)paginationPlan {
@@ -194,8 +218,9 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                        paginationPlan:_paginationPlan
                     interactiveString:_interactiveString
                  preserveCurrentState:NO];
-        // Catch up with a font scale changed while this session was cached.
-        if (_renderedFontScale != _fontScale) [self rerenderDocumentWithStatus:nil];
+        // Catch up with a font scale or theme changed while this session was
+        // cached.
+        if (self.renderTrailsPreferences) [self rerenderDocumentWithStatus:nil];
         [self finishActivationWithSuccess:YES error:nil];
         return;
     }
@@ -225,6 +250,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
           SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
           SPDFMarkdownPageConfiguration* configuration = [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
           configuration.includesCodeLanguageControlSpacing = YES;
+          configuration.themeVariant = renderOptions.themeVariant;
           NSArray* items = [paginator measureRenderedDocument:document.renderedDocument
                                                containerWidth:NSWidth(configuration.printableRect)];
           plan = [paginator paginateItems:items configuration:configuration];
@@ -247,13 +273,15 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
         self->_paginationPlan = plan;
         self->_interactiveString = interactive;
         self->_renderedFontScale = renderOptions.fontScale;
+        self->_renderedThemeVariant = renderOptions.themeVariant;
         self.state = SPDFMacMarkdownSessionReady;
         [self installRenderedDocument:self.renderedDocument
                        paginationPlan:plan
                     interactiveString:interactive
                  preserveCurrentState:NO];
-        // Catch up with a font scale applied while the first render was in flight.
-        if (self->_renderedFontScale != self->_fontScale) [self rerenderDocumentWithStatus:nil];
+        // Catch up with a font scale or theme applied while the first render
+        // was in flight.
+        if (self.renderTrailsPreferences) [self rerenderDocumentWithStatus:nil];
         [self finishActivationWithSuccess:YES error:nil];
       });
     });
@@ -281,8 +309,8 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                            paginationPlan:_paginationPlan
                         interactiveString:_interactiveString
                      preserveCurrentState:NO];
-        // Restart a cancelled font-scale catch-up rerender.
-        if (!_renderToken && _renderedFontScale != _fontScale) [self rerenderDocumentWithStatus:nil];
+        // Restart a cancelled font-scale/theme catch-up rerender.
+        if (!_renderToken && self.renderTrailsPreferences) [self rerenderDocumentWithStatus:nil];
         return;
     }
     [self startInitialDocumentLoad];
@@ -406,14 +434,16 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     [self cancelAllOperations];
 }
 
-// Shared rerender flow for language overrides and font-scale changes: every
-// pass renders with the session's current font scale so either kind of change
-// survives the other. A nil/empty status skips the status callback.
+// Shared rerender flow for language overrides, font-scale and theme changes:
+// every pass renders with the session's current font scale and theme so any
+// kind of change survives the others. A nil/empty status skips the status
+// callback.
 - (void)rerenderDocumentWithStatus:(NSString*)status {
     [_renderToken cancel];
     _renderGeneration++;
     NSUInteger renderGeneration = _renderGeneration;
     CGFloat fontScale = _fontScale;
+    SPDFMarkdownThemeVariant themeVariant = _themeVariant;
     NSDictionary* overrides = [_languageOverrides copy];
     __weak SPDFMacMarkdownSession* weakSelf = self;
     _renderToken = [self.document
@@ -429,6 +459,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                  SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
                  SPDFMarkdownPageConfiguration* configuration = [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
                  configuration.includesCodeLanguageControlSpacing = YES;
+                 configuration.themeVariant = themeVariant;
                  NSArray* items = [paginator measureRenderedDocument:rendered
                                                       containerWidth:NSWidth(configuration.printableRect)];
                  SPDFMarkdownPaginationPlan* plan = [paginator paginateItems:items configuration:configuration];
@@ -443,6 +474,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                    mainSelf->_paginationPlan = plan;
                    mainSelf->_interactiveString = interactive;
                    mainSelf->_renderedFontScale = fontScale;
+                   mainSelf->_renderedThemeVariant = themeVariant;
                    [mainSelf installRenderedDocument:rendered
                                       paginationPlan:plan
                                    interactiveString:interactive

@@ -175,20 +175,13 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     for (NSInteger pageIndex = first; pageIndex <= last; ++pageIndex) {
         NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];
         if (!NSIntersectsRect(pageFrame, dirtyRect)) continue;
-        NSShadow* shadow = [NSShadow new];
-        shadow.shadowColor = [NSColor.blackColor colorWithAlphaComponent:0.22];
-        shadow.shadowBlurRadius = 4.0;
-        shadow.shadowOffset = NSMakeSize(0, -1);
-        [NSGraphicsContext saveGraphicsState];
-        [shadow set];
-        [NSColor.whiteColor setFill];
-        NSRectFill(pageFrame);
-        [NSGraphicsContext restoreGraphicsState];
+        [self drawPaperBackgroundInFrame:pageFrame];
         CGContextSaveGState(context);
         CGContextTranslateCTM(context, NSMinX(pageFrame), NSMaxY(pageFrame));
         CGContextScaleCTM(context, 1, -1);
         [_plan drawPageAtIndex:(NSUInteger)pageIndex attributedString:_attributedString inContext:context];
         CGContextRestoreGState(context);
+        [self drawPaperBorderInFrame:pageFrame];
         SPDFMarkdownPage* page = _plan.pages[(NSUInteger)pageIndex];
         // PDF-parity all-matches highlight: same calibrated fill and rounded
         // 2pt shape as SPDFDocumentView's page.highlights pass.
@@ -426,8 +419,9 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 
 - (void)viewDidChangeEffectiveAppearance {
     [super viewDidChangeEffectiveAppearance];
-    // The page decorations and the code-language control use dynamic theme
-    // colors that must repaint when the system appearance flips.
+    // The page paints concrete theme colors, but the canvas gutter
+    // (windowBackgroundColor) and the system selection fill are
+    // appearance-dynamic and must repaint when the system appearance flips.
     [self setNeedsDisplay:YES];
 }
 

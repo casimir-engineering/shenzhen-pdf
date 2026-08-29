@@ -1,11 +1,28 @@
 #import <AppKit/AppKit.h>
 
 #import "../SPDFMacMarkdownSession.h"
+#import "../SPDFMacMarkdownPageCanvasPrivate.h"
 #import "../SPDFMacMarkdownPagedView.h"
 #import "../markdown/SPDFMarkdown.h"
 
 #include <assert.h>
 #include <stdio.h>
+
+static BOOL ColorMatchesHex(NSColor* color, unsigned int hex) {
+    NSColor* sRGB = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (!sRGB) return NO;
+    return fabs(sRGB.redComponent - ((hex >> 16) & 0xff) / 255.0) < 0.002 &&
+           fabs(sRGB.greenComponent - ((hex >> 8) & 0xff) / 255.0) < 0.002 &&
+           fabs(sRGB.blueComponent - (hex & 0xff) / 255.0) < 0.002;
+}
+
+static NSColor* BodyColorOfSession(SPDFMacMarkdownSession* session, NSString* probe) {
+    NSRange range = [session.renderedDocument.attributedString.string rangeOfString:probe];
+    if (range.location == NSNotFound) return nil;
+    return [session.renderedDocument.attributedString attribute:NSForegroundColorAttributeName
+                                                        atIndex:range.location
+                                                 effectiveRange:nil];
+}
 
 static BOOL SpinUntil(BOOL (^condition)(void), NSTimeInterval timeout) {
     NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
@@ -262,6 +279,104 @@ int main(void) {
         for (SPDFMarkdownPage* exportPage in exportPlan.pages)
             for (SPDFMarkdownPageFragment* fragment in exportPage.fragments)
                 assert(NSMaxRange(fragment.attributedRange) <= session.renderedDocument.attributedString.length);
+
+        // applyThemeVariant: mirrors applyFontScale: exactly — one viewport-
+        // preserving rerender for the active session (Obsidian palette in the
+        // rendered string AND the plan configuration), a no-op on equal
+        // values, and a silent catch-up rerender on activation when the theme
+        // changed while the session was inactive.
+        assert(session.themeVariant == SPDFMarkdownThemeVariantLight &&
+               session.paginationPlan.configuration.themeVariant == SPDFMarkdownThemeVariantLight &&
+               ColorMatchesHex(BodyColorOfSession(session, @"Alpha beta alpha"), 0x1F2328));
+        __block NSUInteger themeRenders = 0;
+        session.statusHandler = ^(NSString* status) {
+          if ([status isEqualToString:@"Markdown reading theme updated."]) themeRenders++;
+        };
+        [session applyThemeVariant:SPDFMarkdownThemeVariantDark];
+        assert(session.themeVariant == SPDFMarkdownThemeVariantDark);
+        assert(SpinUntil(
+            ^BOOL {
+              return themeRenders == 1;
+            },
+            5.0));
+        assert(ColorMatchesHex(BodyColorOfSession(session, @"Alpha beta alpha"), 0xDCDDDE));
+        assert(session.paginationPlan.configuration.themeVariant == SPDFMarkdownThemeVariantDark);
+        // The theme rerender preserves the custom viewport and the language
+        // override, like every other viewport-preserving rerender.
+        assert(SpinUntil(
+            ^BOOL {
+              return session.fitMode == SPDFMacMarkdownPageFitCustom && fabs(session.zoom - 1.6) < 0.01;
+            },
+            5.0));
+        SPDFMarkdownRenderedDocument* themedBeforeNoop = session.renderedDocument;
+        [session applyThemeVariant:SPDFMarkdownThemeVariantDark]; // equal value: no rerender
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
+        assert(themeRenders == 1 && session.renderedDocument == themedBeforeNoop);
+        // Theme changed while deactivated: adopted silently, rendered on the
+        // next activation (the fontScale catch-up mechanism).
+        [session deactivate];
+        [session applyThemeVariant:SPDFMarkdownThemeVariantLight];
+        assert(session.renderedDocument == themedBeforeNoop); // no render while inactive
+        __block BOOL reactivated = NO;
+        [session activateInHostView:host
+                          workQueue:sessionQueue
+                       scrollOrigin:NSZeroPoint
+                      selectedRange:NSMakeRange(0, 0)
+                          pageIndex:0
+                               zoom:1.6
+                            fitMode:SPDFMacMarkdownPageFitCustom
+                             anchor:nil
+                         completion:^(BOOL success, NSError* error) {
+                           assert(success && !error);
+                           reactivated = YES;
+                         }];
+        assert(SpinUntil(
+            ^BOOL {
+              return reactivated && ColorMatchesHex(BodyColorOfSession(session, @"Alpha beta alpha"), 0x1F2328) &&
+                     session.paginationPlan.configuration.themeVariant == SPDFMarkdownThemeVariantLight;
+            },
+            5.0));
+        assert(themeRenders == 1); // the catch-up rerender reports no status
+
+        // A session created dark renders dark from the first pass, and the
+        // live canvas swaps the light drop shadow for the dark paper + border.
+        SPDFMacMarkdownSession* darkSession =
+            [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]
+                                                      fontScale:1.0
+                                                   themeVariant:SPDFMarkdownThemeVariantDark];
+        __block BOOL darkLoaded = NO;
+        [darkSession activateInHostView:host
+                              workQueue:sessionQueue
+                           scrollOrigin:NSZeroPoint
+                          selectedRange:NSMakeRange(0, 0)
+                              pageIndex:0
+                                   zoom:1.0
+                                fitMode:SPDFMacMarkdownPageFitPage
+                                 anchor:nil
+                             completion:^(BOOL success, NSError* error) {
+                               assert(success && !error);
+                               darkLoaded = YES;
+                             }];
+        assert(SpinUntil(
+            ^BOOL {
+              return darkLoaded;
+            },
+            5.0));
+        assert(darkSession.themeVariant == SPDFMarkdownThemeVariantDark);
+        assert(ColorMatchesHex(BodyColorOfSession(darkSession, @"Alpha beta alpha"), 0xDCDDDE));
+        SPDFMacMarkdownPagedView* darkPagedView = nil;
+        for (NSView* view in darkSession.rootView.subviews)
+            if ([view isKindOfClass:SPDFMacMarkdownPagedView.class]) darkPagedView = (id)view;
+        SPDFMacMarkdownPageCanvas* darkCanvas = (SPDFMacMarkdownPageCanvas*)darkPagedView.documentView;
+        assert([darkCanvas isKindOfClass:SPDFMacMarkdownPageCanvas.class]);
+        assert(!darkCanvas.drawsPaperShadow && ColorMatchesHex(darkCanvas.paperFillColor, 0x1E1E1E));
+        [darkSession deactivate];
+        // The light canvas keeps the classic white sheet + shadow.
+        SPDFMacMarkdownPagedView* lightPagedView = nil;
+        for (NSView* view in session.rootView.subviews)
+            if ([view isKindOfClass:SPDFMacMarkdownPagedView.class]) lightPagedView = (id)view;
+        SPDFMacMarkdownPageCanvas* lightCanvas = (SPDFMacMarkdownPageCanvas*)lightPagedView.documentView;
+        assert(lightCanvas.drawsPaperShadow && ColorMatchesHex(lightCanvas.paperFillColor, 0xFFFFFF));
 
         // A session created with an initial font scale renders scaled from the
         // first pass, and a pending anchor no longer discards the restored zoom.

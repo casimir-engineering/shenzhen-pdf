@@ -74,12 +74,14 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     return MAX((CGFloat)0.5, MIN((CGFloat)3.0, scale));
 }
 
-// The Markdown text-size pill is the only markdown-exclusive toolbar view:
-// hidden for PDF tabs, visible (and clamped at the limits) for the active
-// Markdown tab. Segment tooltips carry the current percentage.
+// The Markdown text-size pill and the reading-theme toggle are the
+// markdown-exclusive toolbar views: hidden for PDF tabs, visible (and clamped
+// at the limits) for the active Markdown tab. Segment tooltips carry the
+// current percentage.
 - (void)updateMarkdownFontControls {
     BOOL markdownActive = [self isMarkdownActive];
     _markdownFontSizeSegments.hidden = !markdownActive;
+    [self updateMarkdownThemeControls];
     if (!markdownActive) return;
     double percent = round(_markdownFontScale * 100.0);
     [_markdownFontSizeSegments setEnabled:_markdownFontScale > 0.5 forSegment:0];
@@ -227,13 +229,15 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     SPDFMacMarkdownSession* session = tab.cachedMarkdownSession;
     if (!session) {
         session = [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]
-                                                            fontScale:_markdownFontScale];
+                                                            fontScale:_markdownFontScale
+                                                         themeVariant:self.markdownThemeVariant];
         tab.cachedMarkdownSession = session;
     }
-    // Cached sessions may predate a font-scale change made in another tab;
-    // adopting the global preference here (before activation) lets activation
-    // rerender the stale session once it is on screen.
+    // Cached sessions may predate a font-scale or theme change made in another
+    // tab; adopting the global preferences here (before activation) lets
+    // activation rerender the stale session once it is on screen.
     [session applyFontScale:_markdownFontScale];
+    [session applyThemeVariant:self.markdownThemeVariant];
     state.activeSession = session;
     [self configureMarkdownSession:session forTab:tab];
     if (!state.workQueue)

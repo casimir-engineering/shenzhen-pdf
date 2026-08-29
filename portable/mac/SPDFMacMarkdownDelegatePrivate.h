@@ -43,6 +43,23 @@ NS_ASSUME_NONNULL_BEGIN
                                            axis:(NSInteger)axis
                                         keyCode:(unsigned short)keyCode
                                        isRepeat:(BOOL)isRepeat;
+// ShenzhenPDFMac.mm's shared toolbar-overflow item builder.
+- (void)addOverflowItemWithTitle:(NSString*)title
+                          action:(SEL)action
+                            menu:(NSMenu*)menu
+                           state:(NSControlStateValue)state
+                         enabled:(BOOL)enabled;
+@end
+
+// The markdown-only reading-theme toggle (toolbar button + persisted
+// "markdownTheme" preference), implemented in
+// SPDFMacMarkdownThemeIntegration.mm and wired like the font-size controls.
+@interface ShenzhenMacDelegate (SPDFMacMarkdownThemeIntegration)
+- (SPDFMarkdownThemeVariant)markdownThemeVariant;
+- (void)buildMarkdownThemeToolbarButton;
+- (void)updateMarkdownThemeControls;
+- (void)toggleMarkdownReadingTheme:(nullable id)sender;
+- (void)addMarkdownThemeOverflowItemsToMenu:(NSMenu*)menu hiddenViews:(NSSet<NSView*>*)hiddenViews;
 @end
 
 @interface ShenzhenMacDelegate (SPDFMacMarkdownIntegration)

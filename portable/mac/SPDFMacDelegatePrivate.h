@@ -56,6 +56,7 @@
     NSButton* _ocrButton;
     NSButton* _translateButton;
     NSSegmentedControl* _markdownFontSizeSegments;
+    NSButton* _markdownThemeButton;
     NSBox* _ocrSeparator;
     NSSegmentedControl* _findSegments;
     NSTextField* _findCountLabel;
@@ -342,6 +343,11 @@
     // Persisted Markdown typography multiplier applied to every Markdown
     // document (settings.yaml "markdownFontScale", clamped [0.5, 3.0]).
     CGFloat _markdownFontScale;
+    // Persisted Markdown reading theme applied to every Markdown document
+    // (settings.yaml "markdownTheme": "light"/"dark"). BOOL keeps this header
+    // free of markdown-module types; SPDFMacMarkdownThemeIntegration.mm maps
+    // it to SPDFMarkdownThemeVariant.
+    BOOL _markdownDarkTheme;
     NSSize _restoredWindowContentSize;
     NSRect _restoredWindowFrame;
     BOOL _hasRestoredWindowFrame;
