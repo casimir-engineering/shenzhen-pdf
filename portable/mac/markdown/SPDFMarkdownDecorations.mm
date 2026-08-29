@@ -12,34 +12,81 @@ static NSColor* SPDFRGB(unsigned int hex) {
 
 const CGFloat SPDFMarkdownCodeBoxOuterMargin = 14.0;
 
-// The Markdown page is white paper in every app appearance (PDF parity), so
-// screen, print and export share one concrete sRGB light palette. Text sits in
-// GitHub's near-black #1F2328 rather than pure black; everything muted uses
-// #59636E; chrome hairlines use the #D0D7DE/#D1D9E0 border grays.
+// The Markdown page renders as its theme's paper in every app appearance
+// (PDF parity), so screen, print and export share one concrete sRGB palette
+// per variant. Light is GitHub-Primer: near-black #1F2328 text on white paper,
+// #59636E muted roles, #D0D7DE/#D1D9E0 border grays. Dark is Obsidian-default:
+// #DCDDDE text on #1E1E1E paper, #999999 muted roles, #333333 hairlines,
+// #262626/#2A2A2A code surfaces, the #7F6DF2 Obsidian purple accent, and an
+// Obsidian-flavored token set readable on #262626.
 @implementation SPDFMarkdownTheme
-+ (NSColor*)bodyTextColor { return SPDFRGB(0x1F2328); }
-+ (NSColor*)secondaryTextColor { return SPDFRGB(0x59636E); }
-+ (NSColor*)linkColor { return SPDFRGB(0x0969DA); }
-+ (NSColor*)inlineCodeChipColor { return SPDFRGB(0xEFF1F2); }
-+ (NSColor*)syntaxCommentColor { return SPDFRGB(0x59636E); }
-+ (NSColor*)syntaxStringColor { return SPDFRGB(0x0A3069); }
-+ (NSColor*)syntaxNumberColor { return SPDFRGB(0x0550AE); }
-+ (NSColor*)syntaxKeyColor { return SPDFRGB(0x953800); }
-+ (NSColor*)syntaxMarkupColor { return SPDFRGB(0x8250DF); }
-+ (NSColor*)syntaxKeywordColor { return SPDFRGB(0xCF222E); }
-+ (NSColor*)codeBoxFillColor { return SPDFRGB(0xF6F8FA); }
-+ (NSColor*)codeBoxStrokeColor { return SPDFRGB(0xD0D7DE); }
-+ (NSColor*)headingRuleColor { return SPDFRGB(0xD1D9E0); }
-+ (NSColor*)thematicBreakRuleColor { return SPDFRGB(0xD1D9E0); }
-+ (NSColor*)tableGridColor { return SPDFRGB(0xD1D9E0); }
-+ (NSColor*)tableHeaderFillColor { return SPDFRGB(0xEAEEF2); }
-+ (NSColor*)tableStripeFillColor { return SPDFRGB(0xFAFBFC); }
-+ (NSColor*)codeControlFillColor { return SPDFRGB(0xEAEEF2); }
-+ (NSColor*)codeControlStrokeColor { return SPDFRGB(0xD0D7DE); }
-+ (NSColor*)codeControlTextColor { return SPDFRGB(0x59636E); }
-+ (NSColor*)printCodeBoxFillColor { return self.codeBoxFillColor; }
-+ (NSColor*)printCodeBoxStrokeColor { return self.codeBoxStrokeColor; }
-+ (NSColor*)printHeadingRuleColor { return self.headingRuleColor; }
+- (instancetype)initWithVariant:(SPDFMarkdownThemeVariant)variant {
+    self = [super init];
+    if (!self) return nil;
+    BOOL dark = variant == SPDFMarkdownThemeVariantDark;
+    _variant = variant;
+    _paperColor = SPDFRGB(dark ? 0x1E1E1E : 0xFFFFFF);
+    _paperBorderColor = SPDFRGB(dark ? 0x333333 : 0xD0D7DE);
+    _bodyTextColor = SPDFRGB(dark ? 0xDCDDDE : 0x1F2328);
+    _secondaryTextColor = SPDFRGB(dark ? 0x999999 : 0x59636E);
+    _linkColor = SPDFRGB(dark ? 0x7F6DF2 : 0x0969DA);
+    _inlineCodeChipColor = SPDFRGB(dark ? 0x2A2A2A : 0xEFF1F2);
+    _syntaxCommentColor = SPDFRGB(dark ? 0x7F848E : 0x59636E);
+    _syntaxStringColor = SPDFRGB(dark ? 0x98C379 : 0x0A3069);
+    _syntaxNumberColor = SPDFRGB(dark ? 0xD19A66 : 0x0550AE);
+    _syntaxKeyColor = SPDFRGB(dark ? 0xE5C07B : 0x953800);
+    _syntaxMarkupColor = SPDFRGB(dark ? 0x61AFEF : 0x8250DF);
+    _syntaxKeywordColor = SPDFRGB(dark ? 0xC678DD : 0xCF222E);
+    _codeBoxFillColor = SPDFRGB(dark ? 0x262626 : 0xF6F8FA);
+    _codeBoxStrokeColor = SPDFRGB(dark ? 0x363636 : 0xD0D7DE);
+    _codeControlFillColor = SPDFRGB(dark ? 0x2A2A2A : 0xEAEEF2);
+    _codeControlStrokeColor = SPDFRGB(dark ? 0x363636 : 0xD0D7DE);
+    _codeControlTextColor = SPDFRGB(dark ? 0x999999 : 0x59636E);
+    _headingRuleColor = SPDFRGB(dark ? 0x333333 : 0xD1D9E0);
+    _thematicBreakRuleColor = SPDFRGB(dark ? 0x333333 : 0xD1D9E0);
+    _tableGridColor = SPDFRGB(dark ? 0x333333 : 0xD1D9E0);
+    _tableHeaderFillColor = SPDFRGB(dark ? 0x262626 : 0xEAEEF2);
+    _tableStripeFillColor = SPDFRGB(dark ? 0x232323 : 0xFAFBFC);
+    _imagePlaceholderFillColor = SPDFRGB(dark ? 0x262626 : 0xF6F8FA);
+    _imagePlaceholderStrokeColor = SPDFRGB(dark ? 0x333333 : 0xD1D9E0);
+    return self;
+}
+// One cached immutable palette per variant: theme lookups on the render and
+// draw paths never allocate.
++ (SPDFMarkdownTheme*)themeForVariant:(SPDFMarkdownThemeVariant)variant {
+    static SPDFMarkdownTheme* light;
+    static SPDFMarkdownTheme* dark;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+      light = [[SPDFMarkdownTheme alloc] initWithVariant:SPDFMarkdownThemeVariantLight];
+      dark = [[SPDFMarkdownTheme alloc] initWithVariant:SPDFMarkdownThemeVariantDark];
+    });
+    return variant == SPDFMarkdownThemeVariantDark ? dark : light;
+}
++ (SPDFMarkdownTheme*)lightTheme { return [self themeForVariant:SPDFMarkdownThemeVariantLight]; }
++ (NSColor*)bodyTextColor { return self.lightTheme.bodyTextColor; }
++ (NSColor*)secondaryTextColor { return self.lightTheme.secondaryTextColor; }
++ (NSColor*)linkColor { return self.lightTheme.linkColor; }
++ (NSColor*)inlineCodeChipColor { return self.lightTheme.inlineCodeChipColor; }
++ (NSColor*)syntaxCommentColor { return self.lightTheme.syntaxCommentColor; }
++ (NSColor*)syntaxStringColor { return self.lightTheme.syntaxStringColor; }
++ (NSColor*)syntaxNumberColor { return self.lightTheme.syntaxNumberColor; }
++ (NSColor*)syntaxKeyColor { return self.lightTheme.syntaxKeyColor; }
++ (NSColor*)syntaxMarkupColor { return self.lightTheme.syntaxMarkupColor; }
++ (NSColor*)syntaxKeywordColor { return self.lightTheme.syntaxKeywordColor; }
++ (NSColor*)codeBoxFillColor { return self.lightTheme.codeBoxFillColor; }
++ (NSColor*)codeBoxStrokeColor { return self.lightTheme.codeBoxStrokeColor; }
++ (NSColor*)headingRuleColor { return self.lightTheme.headingRuleColor; }
++ (NSColor*)thematicBreakRuleColor { return self.lightTheme.thematicBreakRuleColor; }
++ (NSColor*)tableGridColor { return self.lightTheme.tableGridColor; }
++ (NSColor*)tableHeaderFillColor { return self.lightTheme.tableHeaderFillColor; }
++ (NSColor*)tableStripeFillColor { return self.lightTheme.tableStripeFillColor; }
++ (NSColor*)codeControlFillColor { return self.lightTheme.codeControlFillColor; }
++ (NSColor*)codeControlStrokeColor { return self.lightTheme.codeControlStrokeColor; }
++ (NSColor*)codeControlTextColor { return self.lightTheme.codeControlTextColor; }
++ (NSColor*)printCodeBoxFillColor { return self.lightTheme.codeBoxFillColor; }
++ (NSColor*)printCodeBoxStrokeColor { return self.lightTheme.codeBoxStrokeColor; }
++ (NSColor*)printHeadingRuleColor { return self.lightTheme.headingRuleColor; }
 @end
 
 @implementation SPDFMarkdownPageDecoration

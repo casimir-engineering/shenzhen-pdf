@@ -2,6 +2,7 @@
 
 #import <AppKit/AppKit.h>
 
+#import "SPDFMarkdownDecorations.h"
 #import "SPDFMarkdownLanguage.h"
 #import "SPDFMarkdownHighlighter.h"
 #import "SPDFMarkdownModel.h"
@@ -25,6 +26,10 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 // Uniform typography multiplier, clamped to [0.5, 3.0] (default 1.0). Fonts and
 // vertical spacing scale with it; indent constants and image budgets do not.
 @property(nonatomic) CGFloat fontScale;
+// The reading theme (default Light). Setting it re-derives the five palette
+// role colors below from SPDFMarkdownTheme, so a render is deterministic per
+// themeVariant; set any custom color AFTER the variant. Copied like fontScale.
+@property(nonatomic) SPDFMarkdownThemeVariant themeVariant;
 @property(nonatomic) CGFloat contentInset;
 @property(nonatomic) CGFloat maximumImageWidth;
 @property(nonatomic) CGFloat maximumImageHeight;
@@ -49,6 +54,8 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 @property(nonatomic, strong) NSColor* codeBackgroundColor;
 @property(nonatomic, strong) NSColor* quoteColor;
 + (instancetype)defaultOptions;
+// defaultOptions carrying the given variant's palette roles.
++ (instancetype)defaultOptionsForThemeVariant:(SPDFMarkdownThemeVariant)variant;
 + (instancetype)printOptions;
 @end
 

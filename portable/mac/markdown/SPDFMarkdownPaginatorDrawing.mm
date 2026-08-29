@@ -97,7 +97,12 @@ static void SPDFDrawAttachments(NSAttributedString* lineString, CTLineRef line, 
                         }];
 }
 
-static NSColor* SPDFConcretePrintColor(NSColor* color, NSColor* fallback) {
+// Resolves one attributed-string color to a concrete sRGB value safe on the
+// theme's paper. The luminance guard protects the export from an
+// appearance-dynamic color sneaking in: on light paper anything resolving
+// near-white falls back to the theme role; on dark paper anything resolving
+// near-black does.
+static NSColor* SPDFConcretePrintColor(NSColor* color, NSColor* fallback, SPDFMarkdownThemeVariant variant) {
     __block NSColor* converted = nil;
     NSAppearance* appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
     [appearance performAsCurrentDrawingAppearance:^{
@@ -107,20 +112,21 @@ static NSColor* SPDFConcretePrintColor(NSColor* color, NSColor* fallback) {
     CGFloat red = converted.redComponent;
     CGFloat green = converted.greenComponent;
     CGFloat blue = converted.blueComponent;
-    if (red * 0.2126 + green * 0.7152 + blue * 0.0722 > 0.85) return fallback;
+    CGFloat luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+    if (variant == SPDFMarkdownThemeVariantDark ? luminance < 0.1 : luminance > 0.85) return fallback;
     return [NSColor colorWithSRGBRed:red green:green blue:blue alpha:converted.alphaComponent];
 }
 
-static NSAttributedString* SPDFPrintableLine(NSAttributedString* source) {
+static NSAttributedString* SPDFPrintableLine(NSAttributedString* source, SPDFMarkdownTheme* theme) {
     NSMutableAttributedString* result = [source mutableCopy];
     NSRange all = NSMakeRange(0, result.length);
-    SPDFMarkdownRenderOptions* palette = SPDFMarkdownRenderOptions.printOptions;
     [result enumerateAttribute:NSForegroundColorAttributeName
                        inRange:all
                        options:0
                     usingBlock:^(NSColor* color, NSRange range, BOOL* stop) {
                       (void)stop;
-                      NSColor* concrete = SPDFConcretePrintColor(color ?: palette.textColor, palette.textColor);
+                      NSColor* concrete = SPDFConcretePrintColor(color ?: theme.bodyTextColor, theme.bodyTextColor,
+                                                                 theme.variant);
                       [result addAttribute:NSForegroundColorAttributeName value:concrete range:range];
                     }];
     [result enumerateAttribute:NSBackgroundColorAttributeName
@@ -129,7 +135,7 @@ static NSAttributedString* SPDFPrintableLine(NSAttributedString* source) {
                     usingBlock:^(NSColor* color, NSRange range, BOOL* stop) {
                       (void)stop;
                       if (!color) return;
-                      NSColor* concrete = SPDFConcretePrintColor(color, palette.codeBackgroundColor);
+                      NSColor* concrete = SPDFConcretePrintColor(color, theme.inlineCodeChipColor, theme.variant);
                       [result addAttribute:NSBackgroundColorAttributeName value:concrete range:range];
                     }];
     return result;
@@ -148,10 +154,12 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
 
 @implementation SPDFMarkdownPaginationPlan (SPDFDrawing)
 
-// Print always paints the concrete light palette: rounded #F6F8FA/#D0D7DE code
-// boxes and #D1D9E0 heading/thematic-break rules, drawn beneath the planned
-// text lines.
+// Every consumer paints the plan's concrete theme palette (the
+// configuration's themeVariant): rounded code boxes and heading/thematic-break
+// rules, drawn beneath the planned text lines. Light stays byte-identical to
+// the historical #F6F8FA/#D0D7DE boxes and #D1D9E0 rules.
 - (void)spdf_drawDecorationsForPageIndex:(NSUInteger)pageIndex inContext:(CGContextRef)context {
+    SPDFMarkdownTheme* theme = [SPDFMarkdownTheme themeForVariant:self.configuration.themeVariant];
     CGFloat printableLeft = NSMinX(self.configuration.printableRect);
     CGFloat printableTop = self.configuration.paperSize.height - self.configuration.topContentInset;
     for (SPDFMarkdownPageDecoration* decoration in [self decorationsForPageIndex:pageIndex]) {
@@ -162,10 +170,10 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
             if (boxRect.size.width <= 0 || boxRect.size.height <= 0) continue;
             CGFloat radius = MIN(6, MIN(boxRect.size.width, boxRect.size.height) / 2);
             CGPathRef path = CGPathCreateWithRoundedRect(boxRect, radius, radius, NULL);
-            SPDFSetContextColor(context, SPDFMarkdownTheme.printCodeBoxFillColor, NO);
+            SPDFSetContextColor(context, theme.codeBoxFillColor, NO);
             CGContextAddPath(context, path);
             CGContextFillPath(context);
-            SPDFSetContextColor(context, SPDFMarkdownTheme.printCodeBoxStrokeColor, YES);
+            SPDFSetContextColor(context, theme.codeBoxStrokeColor, YES);
             CGContextSetLineWidth(context, 1);
             CGContextAddPath(context, path);
             CGContextStrokePath(context);
@@ -173,11 +181,11 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
         } else if (decoration.type == SPDFMarkdownPageDecorationTypeTableHeaderBand ||
                    decoration.type == SPDFMarkdownPageDecorationTypeTableStripe ||
                    decoration.type == SPDFMarkdownPageDecorationTypeTableGridLine) {
-            SPDFMarkdownDrawTableDecoration(context, decoration.type, rect);
+            SPDFMarkdownDrawTableDecoration(context, decoration.type, rect, theme);
         } else {
             NSColor* ruleColor = decoration.type == SPDFMarkdownPageDecorationTypeThematicBreakRule
-                                     ? SPDFMarkdownTheme.thematicBreakRuleColor
-                                     : SPDFMarkdownTheme.printHeadingRuleColor;
+                                     ? theme.thematicBreakRuleColor
+                                     : theme.headingRuleColor;
             SPDFSetContextColor(context, ruleColor, NO);
             CGContextFillRect(context, rect);
         }
@@ -189,17 +197,18 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
               inContext:(CGContextRef)context {
     if (pageIndex >= self.pages.count || !context) return NO;
     SPDFMarkdownPage* page = self.pages[pageIndex];
+    SPDFMarkdownTheme* theme = [SPDFMarkdownTheme themeForVariant:self.configuration.themeVariant];
     CGFloat paperHeight = self.configuration.paperSize.height;
     CGFloat printableTop = paperHeight - self.configuration.topContentInset;
     CGContextSaveGState(context);
-    CGContextSetRGBFillColor(context, 1, 1, 1, 1);
+    SPDFSetContextColor(context, theme.paperColor, NO);
     CGContextFillRect(context, CGRectMake(0, 0, self.configuration.paperSize.width, paperHeight));
     [self spdf_drawDecorationsForPageIndex:pageIndex inContext:context];
     CGContextSetTextMatrix(context, CGAffineTransformIdentity);
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (NSMaxRange(fragment.attributedRange) > attributedString.length) continue;
         NSAttributedString* substring =
-            SPDFPrintableLine([attributedString attributedSubstringFromRange:fragment.attributedRange]);
+            SPDFPrintableLine([attributedString attributedSubstringFromRange:fragment.attributedRange], theme);
         CTLineRef line = SPDFMarkdownCreateFragmentLine(substring);
         CGFloat x = NSMinX(self.configuration.printableRect) + fragment.xOffset;
         CGFloat y = printableTop - fragment.pageYOffset - fragment.baselineOffset;

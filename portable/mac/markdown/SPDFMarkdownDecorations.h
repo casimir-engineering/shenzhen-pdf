@@ -19,6 +19,17 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownPageDecorationType) {
     SPDFMarkdownPageDecorationTypeTableGridLine,
 };
 
+// The user-switchable reading theme. Light is the GitHub-Primer palette the
+// reader has always used (and stays the default); Dark is an Obsidian-default
+// flavored dark palette. A variant is a set of constants, not a subsystem:
+// it is threaded explicitly through SPDFMarkdownRenderOptions.themeVariant
+// (render-time colors) and SPDFMarkdownPageConfiguration.themeVariant
+// (draw-time chrome), never through global or appearance-dynamic state.
+typedef NS_ENUM(NSInteger, SPDFMarkdownThemeVariant) {
+    SPDFMarkdownThemeVariantLight = 0,
+    SPDFMarkdownThemeVariantDark = 1,
+};
+
 // Unpainted page margin kept between a code box edge and its neighbors. The
 // paginator reserves it inside the code item's spacer bands; the decoration
 // geometry insets the drawn box by the same amount, so two consecutive code
@@ -26,38 +37,71 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownPageDecorationType) {
 // the leading band below this margin.
 FOUNDATION_EXPORT const CGFloat SPDFMarkdownCodeBoxOuterMargin;
 
-// The reading palette, GitHub-Primer flavored. The Markdown page renders as
-// white paper in every app appearance (PDF parity), so screen, print and
-// export all draw from this one concrete sRGB light palette — no dynamic
-// colors anywhere. Every element takes a named role from here instead of an
-// ad-hoc NSColor. The print-prefixed names are aliases kept for the
-// export/Print call sites.
+// The reading palettes. Every color is a concrete sRGB constant — no dynamic
+// colors anywhere — so screen, print and export always draw exactly the same
+// page for the active variant (appearance flips can never corrupt output).
+// +themeForVariant: returns one cached immutable palette per variant; every
+// element takes a named role from it instead of an ad-hoc NSColor. The
+// zero-argument class accessors are aliases for the LIGHT palette, kept so
+// light-only call sites and existing expectations stay byte-identical; the
+// print-prefixed names are further light aliases for legacy export call sites.
 @interface SPDFMarkdownTheme : NSObject
+@property(nonatomic, readonly) SPDFMarkdownThemeVariant variant;
++ (SPDFMarkdownTheme*)themeForVariant:(SPDFMarkdownThemeVariant)variant;
+// Paper roles. Light paper is pure white with the canvas drop shadow; dark
+// paper is Obsidian's #1E1E1E and the canvas draws paperBorderColor instead
+// of a shadow.
+@property(nonatomic, readonly) NSColor* paperColor;        // #FFFFFF / #1E1E1E
+@property(nonatomic, readonly) NSColor* paperBorderColor;  // #D0D7DE / #333333
 // Text roles.
-+ (NSColor*)bodyTextColor;       // #1F2328 near-black, body and headings
-+ (NSColor*)secondaryTextColor;  // #59636E muted: markers, captions, quotes, H6
-+ (NSColor*)linkColor;           // #0969DA
-+ (NSColor*)inlineCodeChipColor; // #EFF1F2 inline-code chip background
-// Syntax token roles (Primer light).
-+ (NSColor*)syntaxCommentColor;  // #59636E
-+ (NSColor*)syntaxStringColor;   // #0A3069
-+ (NSColor*)syntaxNumberColor;   // #0550AE
-+ (NSColor*)syntaxKeyColor;      // #953800
-+ (NSColor*)syntaxMarkupColor;   // #8250DF
-+ (NSColor*)syntaxKeywordColor;  // #CF222E
+@property(nonatomic, readonly) NSColor* bodyTextColor;       // #1F2328 / #DCDDDE body and headings
+@property(nonatomic, readonly) NSColor* secondaryTextColor;  // #59636E / #999999 muted: markers, captions, quotes, H6
+@property(nonatomic, readonly) NSColor* linkColor;           // #0969DA / #7F6DF2 links and accents
+@property(nonatomic, readonly) NSColor* inlineCodeChipColor; // #EFF1F2 / #2A2A2A inline-code and kbd chips
+// Syntax token roles (Primer light / Obsidian-flavored dark).
+@property(nonatomic, readonly) NSColor* syntaxCommentColor;  // #59636E / #7F848E
+@property(nonatomic, readonly) NSColor* syntaxStringColor;   // #0A3069 / #98C379
+@property(nonatomic, readonly) NSColor* syntaxNumberColor;   // #0550AE / #D19A66
+@property(nonatomic, readonly) NSColor* syntaxKeyColor;      // #953800 / #E5C07B
+@property(nonatomic, readonly) NSColor* syntaxMarkupColor;   // #8250DF / #61AFEF
+@property(nonatomic, readonly) NSColor* syntaxKeywordColor;  // #CF222E / #C678DD
 // Page chrome roles.
+@property(nonatomic, readonly) NSColor* codeBoxFillColor;    // #F6F8FA / #262626
+@property(nonatomic, readonly) NSColor* codeBoxStrokeColor;  // #D0D7DE / #363636
+// Quiet chrome for the interactive language pill drawn inside a code box.
+@property(nonatomic, readonly) NSColor* codeControlFillColor;    // #EAEEF2 / #2A2A2A
+@property(nonatomic, readonly) NSColor* codeControlStrokeColor;  // #D0D7DE / #363636
+@property(nonatomic, readonly) NSColor* codeControlTextColor;    // #59636E / #999999
+@property(nonatomic, readonly) NSColor* headingRuleColor;        // #D1D9E0 / #333333
+@property(nonatomic, readonly) NSColor* thematicBreakRuleColor;  // #D1D9E0 / #333333
+// Table chrome roles, Primer-flavored like the code box.
+@property(nonatomic, readonly) NSColor* tableGridColor;        // #D1D9E0 / #333333 1px hairline grid
+@property(nonatomic, readonly) NSColor* tableHeaderFillColor;  // #EAEEF2 / #262626 header band
+@property(nonatomic, readonly) NSColor* tableStripeFillColor;  // #FAFBFC / #232323 alternating rows
+// Remote-image pending placeholder box (future diagram placeholders too).
+@property(nonatomic, readonly) NSColor* imagePlaceholderFillColor;    // #F6F8FA / #262626
+@property(nonatomic, readonly) NSColor* imagePlaceholderStrokeColor;  // #D1D9E0 / #333333
+// LIGHT-palette aliases (see the class comment).
++ (NSColor*)bodyTextColor;
++ (NSColor*)secondaryTextColor;
++ (NSColor*)linkColor;
++ (NSColor*)inlineCodeChipColor;
++ (NSColor*)syntaxCommentColor;
++ (NSColor*)syntaxStringColor;
++ (NSColor*)syntaxNumberColor;
++ (NSColor*)syntaxKeyColor;
++ (NSColor*)syntaxMarkupColor;
++ (NSColor*)syntaxKeywordColor;
 + (NSColor*)codeBoxFillColor;
 + (NSColor*)codeBoxStrokeColor;
-// Quiet chrome for the interactive language control drawn inside a code box.
 + (NSColor*)codeControlFillColor;
 + (NSColor*)codeControlStrokeColor;
 + (NSColor*)codeControlTextColor;
 + (NSColor*)headingRuleColor;
 + (NSColor*)thematicBreakRuleColor;
-// Table chrome roles, Primer-flavored like the code box.
-+ (NSColor*)tableGridColor;        // #D1D9E0 1px hairline grid
-+ (NSColor*)tableHeaderFillColor;  // #EAEEF2 header-row band, darker than the stripe
-+ (NSColor*)tableStripeFillColor;  // #FAFBFC alternating body rows
++ (NSColor*)tableGridColor;
++ (NSColor*)tableHeaderFillColor;
++ (NSColor*)tableStripeFillColor;
 + (NSColor*)printCodeBoxFillColor;
 + (NSColor*)printCodeBoxStrokeColor;
 + (NSColor*)printHeadingRuleColor;

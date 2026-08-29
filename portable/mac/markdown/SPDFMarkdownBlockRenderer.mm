@@ -16,14 +16,16 @@ static NSMutableParagraphStyle* SPDFStyle(SPDFMarkdownRenderContext* context, NS
     return style;
 }
 
-static NSColor* SPDFTokenColor(SPDFMarkdownSyntaxTokenKind kind) {
+// Syntax token roles come from the render's theme variant, so highlighted
+// code follows the active reading theme like every other palette role.
+static NSColor* SPDFTokenColor(SPDFMarkdownSyntaxTokenKind kind, SPDFMarkdownTheme* theme) {
     switch (kind) {
-        case SPDFMarkdownSyntaxTokenComment: return SPDFMarkdownTheme.syntaxCommentColor;
-        case SPDFMarkdownSyntaxTokenString: return SPDFMarkdownTheme.syntaxStringColor;
-        case SPDFMarkdownSyntaxTokenNumber: return SPDFMarkdownTheme.syntaxNumberColor;
-        case SPDFMarkdownSyntaxTokenKey: return SPDFMarkdownTheme.syntaxKeyColor;
-        case SPDFMarkdownSyntaxTokenMarkup: return SPDFMarkdownTheme.syntaxMarkupColor;
-        case SPDFMarkdownSyntaxTokenKeyword: return SPDFMarkdownTheme.syntaxKeywordColor;
+        case SPDFMarkdownSyntaxTokenComment: return theme.syntaxCommentColor;
+        case SPDFMarkdownSyntaxTokenString: return theme.syntaxStringColor;
+        case SPDFMarkdownSyntaxTokenNumber: return theme.syntaxNumberColor;
+        case SPDFMarkdownSyntaxTokenKey: return theme.syntaxKeyColor;
+        case SPDFMarkdownSyntaxTokenMarkup: return theme.syntaxMarkupColor;
+        case SPDFMarkdownSyntaxTokenKeyword: return theme.syntaxKeywordColor;
     }
 }
 
@@ -32,9 +34,10 @@ static void SPDFApplyCodeTokens(SPDFMarkdownRenderContext* context, NSRange rang
     NSString* code = [context.output.string substringWithRange:range];
     NSArray<SPDFMarkdownSyntaxToken*>* tokens =
         [context.highlighter tokensForCode:code language:language cancellationToken:context.cancellationToken];
+    SPDFMarkdownTheme* theme = [SPDFMarkdownTheme themeForVariant:context.options.themeVariant];
     for (SPDFMarkdownSyntaxToken* token in tokens) {
         [context.output addAttribute:NSForegroundColorAttributeName
-                               value:SPDFTokenColor(token.kind)
+                               value:SPDFTokenColor(token.kind, theme)
                                range:NSMakeRange(range.location + token.range.location, token.range.length)];
     }
 }

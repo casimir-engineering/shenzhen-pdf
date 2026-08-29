@@ -315,6 +315,71 @@ int main(void) {
                        fabs([SPDFMarkdownRenderOptions new].fontScale - 1.0) < 0.001,
                    @"fontScale defaults to 1.0");
 
+        // Reading themes: the default stays byte-identical Light (the class
+        // accessors alias the Light instance), the Dark instance exposes the
+        // Obsidian palette, and options.themeVariant re-derives the palette
+        // roles, copies with the options, and drives the rendered colors.
+        SPDFMarkdownTheme* lightTheme = [SPDFMarkdownTheme themeForVariant:SPDFMarkdownThemeVariantLight];
+        SPDFMarkdownTheme* darkTheme = [SPDFMarkdownTheme themeForVariant:SPDFMarkdownThemeVariantDark];
+        SPDFExpect(SPDFMarkdownRenderOptions.defaultOptions.themeVariant == SPDFMarkdownThemeVariantLight &&
+                       [SPDFMarkdownRenderOptions.defaultOptions.textColor isEqual:lightTheme.bodyTextColor] &&
+                       [SPDFMarkdownTheme.bodyTextColor isEqual:lightTheme.bodyTextColor] &&
+                       SPDFColorMatchesHex(lightTheme.paperColor, 0xFFFFFF) &&
+                       SPDFColorMatchesHex(lightTheme.bodyTextColor, 0x1F2328),
+                   @"default options render the Light theme and the class accessors alias it");
+        SPDFExpect(SPDFColorMatchesHex(darkTheme.paperColor, 0x1E1E1E) &&
+                       SPDFColorMatchesHex(darkTheme.bodyTextColor, 0xDCDDDE) &&
+                       SPDFColorMatchesHex(darkTheme.secondaryTextColor, 0x999999) &&
+                       SPDFColorMatchesHex(darkTheme.linkColor, 0x7F6DF2) &&
+                       SPDFColorMatchesHex(darkTheme.codeBoxFillColor, 0x262626) &&
+                       SPDFColorMatchesHex(darkTheme.codeBoxStrokeColor, 0x363636) &&
+                       SPDFColorMatchesHex(darkTheme.inlineCodeChipColor, 0x2A2A2A) &&
+                       SPDFColorMatchesHex(darkTheme.headingRuleColor, 0x333333) &&
+                       SPDFColorMatchesHex(darkTheme.tableHeaderFillColor, 0x262626) &&
+                       SPDFColorMatchesHex(darkTheme.tableStripeFillColor, 0x232323) &&
+                       SPDFColorMatchesHex(darkTheme.syntaxKeywordColor, 0xC678DD) &&
+                       SPDFColorMatchesHex(darkTheme.syntaxStringColor, 0x98C379) &&
+                       SPDFColorMatchesHex(darkTheme.syntaxNumberColor, 0xD19A66) &&
+                       SPDFColorMatchesHex(darkTheme.syntaxCommentColor, 0x7F848E) &&
+                       SPDFColorMatchesHex(darkTheme.imagePlaceholderFillColor, 0x262626),
+                   @"the Dark theme exposes the Obsidian palette across all roles");
+        SPDFMarkdownRenderOptions* darkOptions =
+            [SPDFMarkdownRenderOptions defaultOptionsForThemeVariant:SPDFMarkdownThemeVariantDark];
+        SPDFMarkdownRenderOptions* darkCopy = [darkOptions copy];
+        SPDFExpect(darkCopy.themeVariant == SPDFMarkdownThemeVariantDark &&
+                       [darkCopy.textColor isEqual:darkTheme.bodyTextColor] &&
+                       [darkCopy.linkColor isEqual:darkTheme.linkColor] &&
+                       [darkCopy.codeBackgroundColor isEqual:darkTheme.inlineCodeChipColor],
+                   @"themeVariant re-derives the palette roles and survives copyWithZone");
+        SPDFMarkdownDocumentModel* darkModel =
+            [parser parseString:@"Dark body [link](https://example.com) and `chip`\n\n```swift\nlet x = 1 // note\n```\n"
+                      sourceURL:nil
+                          error:&error];
+        SPDFMarkdownDocument* darkDocument = [[SPDFMarkdownDocument alloc] initWithModel:darkModel
+                                                                                  options:darkOptions];
+        NSString* darkText = darkDocument.renderedDocument.attributedString.string;
+        NSRange darkBody = [darkText rangeOfString:@"Dark body"];
+        NSRange darkLink = [darkText rangeOfString:@"link"];
+        NSRange darkKeyword = [darkText rangeOfString:@"let"];
+        SPDFExpect(SPDFColorMatchesHex([darkDocument.renderedDocument.attributedString
+                                           attribute:NSForegroundColorAttributeName
+                                             atIndex:darkBody.location
+                                      effectiveRange:nil],
+                                       0xDCDDDE),
+                   @"Dark render paints body text in the Obsidian near-white");
+        SPDFExpect(SPDFColorMatchesHex([darkDocument.renderedDocument.attributedString
+                                           attribute:NSForegroundColorAttributeName
+                                             atIndex:darkLink.location
+                                      effectiveRange:nil],
+                                       0x7F6DF2),
+                   @"Dark render paints links in the Obsidian purple accent");
+        SPDFExpect(SPDFColorMatchesHex([darkDocument.renderedDocument.attributedString
+                                           attribute:NSForegroundColorAttributeName
+                                             atIndex:darkKeyword.location
+                                      effectiveRange:nil],
+                                       0xC678DD),
+                   @"Dark render paints syntax keywords from the dark token set");
+
         NSTextView* view = [document newSelectableTextView];
         SPDFExpect(view.isSelectable && !view.isEditable && view.importsGraphics,
                    @"native view is selectable, read-only, and attachment-capable");

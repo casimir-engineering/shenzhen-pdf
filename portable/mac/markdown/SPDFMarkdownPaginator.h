@@ -30,6 +30,10 @@ FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* l
 // Screen pagination can reserve space for its interactive code-language control.
 // Print and export configurations intentionally default to NO.
 @property(nonatomic) BOOL includesCodeLanguageControlSpacing;
+// The reading theme the plan's pages are drawn with (default Light). Carried
+// by the plan so screen, print, export and copy-page draw the identical
+// concrete palette — geometry is theme-independent.
+@property(nonatomic) SPDFMarkdownThemeVariant themeVariant;
 // Distance from the paper's top edge down to the printable area — the TOP
 // margin. Equal to NSMinY(printableRect) (the bottom margin) only when the
 // vertical margins are symmetric, so every top-anchored coordinate must use
@@ -119,7 +123,8 @@ FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* l
 
 // Per-page decoration geometry (code boxes, heading rules) in page-content
 // coordinates. Print/export draws these itself; the screen canvas consumes the
-// same geometry with the dynamic SPDFMarkdownTheme colors.
+// same geometry with the same concrete SPDFMarkdownTheme palette (the
+// configuration's themeVariant).
 - (NSArray<SPDFMarkdownPageDecoration*>*)decorationsForPageIndex:(NSUInteger)pageIndex;
 @end
 

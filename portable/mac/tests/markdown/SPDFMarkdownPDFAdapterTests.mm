@@ -97,6 +97,37 @@ static BOOL SPDFPDFContainsMagentaImage(NSData* data) {
     return !CGRectIsNull(SPDFPDFMagentaBounds(data));
 }
 
+// Counts raster pixels on page 1 within `tolerance` of one concrete RGB value.
+static NSUInteger SPDFPDFPixelCountNear(NSData* data, int red, int green, int blue, int tolerance) {
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
+    CGPDFDocumentRef document = provider ? CGPDFDocumentCreateWithProvider(provider) : NULL;
+    CGPDFPageRef page = document ? CGPDFDocumentGetPage(document, 1) : NULL;
+    size_t width = 596;
+    size_t height = 842;
+    unsigned char* pixels = (unsigned char*)calloc(width * height, 4);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = pixels ? CGBitmapContextCreate(pixels, width, height, 8, width * 4, colorSpace,
+                                                           kCGImageAlphaPremultipliedLast) : NULL;
+    NSUInteger matched = 0;
+    if (context && page) {
+        CGContextSetRGBFillColor(context, 1, 1, 1, 1);
+        CGContextFillRect(context, CGRectMake(0, 0, width, height));
+        CGContextDrawPDFPage(context, page);
+        for (size_t index = 0; index < width * height; ++index) {
+            unsigned char* pixel = pixels + index * 4;
+            if (abs((int)pixel[0] - red) <= tolerance && abs((int)pixel[1] - green) <= tolerance &&
+                abs((int)pixel[2] - blue) <= tolerance)
+                ++matched;
+        }
+    }
+    if (context) CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
+    free(pixels);
+    if (document) CGPDFDocumentRelease(document);
+    if (provider) CGDataProviderRelease(provider);
+    return matched;
+}
+
 // Counts raster pixels close to the concrete #F6F8FA code-box fill on page 1.
 static NSUInteger SPDFPDFCodeBoxFillPixelCount(NSData* data) {
     CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
@@ -282,6 +313,35 @@ int main(void) {
                    @"an unstriped body row stays paper white in the exported PDF");
         SPDFExpect(stripeSampled && SPDFPixelNear(stripeRGB, 250, 251, 252, 2),
                    @"the striped body row carries the subtle #FAFBFC fill in the exported PDF");
+
+        // WYSIWYG dark export: a Dark-theme plan (dark render options + dark
+        // page configuration, exactly what the session builds) paints the
+        // Obsidian #1E1E1E paper and #262626 code boxes into the PDF while the
+        // text stays vector-selectable. LIGHT stays the explicit expectation
+        // of every probe above.
+        SPDFMarkdownRenderOptions* darkOptions =
+            [SPDFMarkdownRenderOptions defaultOptionsForThemeVariant:SPDFMarkdownThemeVariantDark];
+        SPDFMarkdownDocument* darkDocument = [SPDFMarkdownDocument documentWithURL:SPDFFixtureURL(@"commonmark-gfm.md")
+                                                                            options:darkOptions
+                                                                              error:&error];
+        SPDFMarkdownPageConfiguration* darkConfiguration = SPDFMarkdownPageConfiguration.A4PortraitConfiguration;
+        darkConfiguration.themeVariant = SPDFMarkdownThemeVariantDark;
+        SPDFExpect(((SPDFMarkdownPageConfiguration*)[darkConfiguration copy]).themeVariant ==
+                           SPDFMarkdownThemeVariantDark &&
+                       SPDFMarkdownPageConfiguration.A4PortraitConfiguration.themeVariant ==
+                           SPDFMarkdownThemeVariantLight,
+                   @"page configurations copy their theme variant and default to Light");
+        SPDFMarkdownPaginationPlan* darkPlan = [darkDocument paginationPlanForConfiguration:darkConfiguration];
+        NSData* darkThemeData = SPDFCreatePDF(darkPlan, darkDocument.renderedDocument.attributedString);
+        PDFDocument* darkThemePDF = [[PDFDocument alloc] initWithData:darkThemeData];
+        SPDFExpect([(darkThemePDF.string ?: @"") containsString:@"Shenzhen PDF Markdown"],
+                   @"dark-theme export keeps vector/selectable text");
+        unsigned char darkPaperRGB[3] = {0, 0, 0};
+        SPDFExpect(SPDFPDFPixelOnFirstPage(darkThemeData, 8, 8, darkPaperRGB) &&
+                       SPDFPixelNear(darkPaperRGB, 30, 30, 30, 2),
+                   @"dark-theme export paints the Obsidian #1E1E1E paper edge to edge");
+        SPDFExpect(SPDFPDFPixelCountNear(darkThemeData, 38, 38, 38, 3) > 2000,
+                   @"dark-theme export paints one continuous #262626 code box behind the code lines");
 
         NSString* temporaryRoot = nil;
         SPDFMarkdownDocument* imageDocument = [SPDFMarkdownDocument documentWithURL:SPDFCreateImageDocument(&temporaryRoot)
