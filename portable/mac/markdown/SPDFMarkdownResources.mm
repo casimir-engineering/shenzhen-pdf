@@ -334,8 +334,25 @@ static NSData* SPDFReadDescriptor(int fileDescriptor, NSUInteger maximumBytes) {
     uint64_t pixels = width && height <= UINT64_MAX / width ? width * height : UINT64_MAX;
     NSUInteger remaining = _decodedImagePixels < _maximumDecodedImagePixels
         ? _maximumDecodedImagePixels - _decodedImagePixels : 0;
-    if (!source || !width || !height || pixels > remaining) {
+    if (!source || !width || !height) {
         if (source) CFRelease(source);
+        // ImageIO cannot identify this data — notably SVG (shields.io badges).
+        // Try NSImage, which rasterizes SVG data on modern macOS; where that
+        // fails too, the caller keeps the stable text placeholder. The decoded
+        // size counts against the same pixel budget.
+        NSImage* fallback = [[NSImage alloc] initWithData:resource.data];
+        NSSize fallbackSize = fallback.size;
+        uint64_t fallbackPixels = fallbackSize.width >= 1 && fallbackSize.height >= 1
+            ? (uint64_t)ceil(fallbackSize.width) * (uint64_t)ceil(fallbackSize.height) : 0;
+        if (fallbackPixels > 0 && fallbackPixels <= remaining) {
+            resource.image = fallback;
+            _decodedImagePixels += (NSUInteger)fallbackPixels;
+        }
+        resource.data = nil;
+        return resource.image;
+    }
+    if (pixels > remaining) {
+        CFRelease(source);
         resource.data = nil;
         return nil;
     }

@@ -4,6 +4,7 @@ cmd/build-with-mingw.ts	1838	legacy	Legacy MinGW build orchestration; freeze gro
 cmd/gen-settings.ts	1796	legacy	Legacy settings generator; freeze growth while generated outputs stay excluded.
 cmd/trans-dl.ts	517	exception	Translation download workflow is cohesive; additions should use separate modules.
 portable/core/spdf_yaml.c	1147	legacy	Shared strict-YAML-subset state codec (parser + emitter + JSON bridge + flock-guarded migration) serving both frontends, +17 lines for mtime-aware re-migration when a pre-YAML build wrote newer JSON; freeze growth pending parse/emit split.
+portable/mac/markdown/SPDFMarkdownHTMLBlocks.mm	553	exception	Cohesive HTML block-island translator: island classification plus one Gumbo DOM-to-model walker (headings, containers, lists, quotes, details, pre, tables); new element families belong in focused helpers.
 portable/mac/tests/SPDFStateYamlTests.mm	672	exception	Cohesive YAML codec regression suite (round-trips, emit shape, migration incl. downgrade re-migration, rejection cases) in one deterministic harness.
 premake5.files.lua	1503	legacy	Legacy first-party Premake source manifest and project composition; freeze growth pending target-specific extraction.
 premake5.lua	1084	legacy	Legacy first-party Premake build configuration; freeze growth pending platform-target extraction.

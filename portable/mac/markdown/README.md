@@ -32,8 +32,10 @@ coordinate space. Search matches, heading ranges, block ranges, TextKit line
 fragments, selection, and pagination all refer directly to ranges in this
 string. It includes rendered structure such as list/task markers, callout
 titles, table separators, thematic rules, image attachment characters and
-image captions/placeholders. Consumers must never translate ranges through the
-parser model's source text.
+image captions/placeholders. Visible text emitted from sanitized HTML islands
+is searchable/selectable exactly like markdown text; raw tag text never
+appears in the canonical string. Consumers must never translate ranges through
+the parser model's source text.
 
 The parser model stores direct node text only. Parent blocks do not concatenate
 their descendants, preventing repeated subtree strings and quadratic indexes.
@@ -61,7 +63,39 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   (via `SPDFMarkdownMathLayoutAttribute`, the image-figure re-derivation
   pattern). Math uses the body text color and scales with `fontScale`.
 - Conservative Obsidian YAML front matter, wikilinks/aliases, and callouts.
-- Raw/inline HTML disabled. Scripts and active content are never evaluated.
+- Raw HTML islands render natively through a strict sanitizing whitelist
+  (vendored Gumbo HTML5 parser, `SPDFMarkdownHTML.mm` /
+  `SPDFMarkdownHTMLBlocks.mm`). Nothing is ever evaluated — HTML only
+  translates into ordinary model blocks and styled runs:
+  - Inline: `b`/`strong`, `i`/`em`, `code`/`tt`/`samp`, `s`/`strike`/`del`,
+    `sub`/`sup` (smaller baseline-shifted runs, mirroring the math scripts),
+    `kbd` (key-cap chip: smaller mono type on the inline-code background),
+    `br`, `a href` (http/https/mailto/#anchor destinations only; other schemes
+    keep the text and drop the link), and `img` (alt/`title` preserved;
+    `width`/`height` become display-size hints with the existing image caps as
+    maxima, scaling proportionally when only one is given; the src goes
+    through the exact same local/https resource pipeline as markdown images).
+  - Block: `h1`-`h6` (real navigable headings), `hr`, `p`/`div`/`center`
+    paragraph alignment (`align` attributes and the `center` tag set a block
+    alignment field the renderer's paragraph styles consume), `blockquote`,
+    `ul`/`ol`/`li`, `pre`, and simple `table`/`tr`/`th`/`td` mapped onto the
+    existing content-aware table model (alignment from `align` attributes;
+    tables using colspan/rowspan degrade to plain text rows). The GitHub
+    container pattern is handled with an explicit block-format stack: an
+    island consisting only of opening container tags (`<div align="center">`,
+    `<center>`, `<p align=…>`, `<details>`) pushes an alignment context that
+    applies to the markdown blocks that follow, until the island holding the
+    matching close tag pops it.
+  - `details`/`summary`: v1 always renders the content EXPANDED, with the
+    summary as a distinct bold line prefixed with a "▸ " disclosure triangle
+    (collapsing is a documented limitation).
+  - Dropped entirely, content included: `script`, `style`, `iframe`,
+    `object`, `embed`, `form`/`input`/`select`/`textarea`/`button`, `video`,
+    `audio`, inline `svg`, `math`, `canvas`, `link`, `meta`, plus every
+    event/style attribute (attributes other than the whitelisted
+    href/src/alt/title/align/width/height/start/colspan/rowspan are never
+    read). Unknown-but-harmless tags (`span`, `font`, …) pass their children
+    through unstyled. Scripts and active content are never evaluated.
 - `loadURL:` accepts local file URLs only.
 - Default budgets: 64 MiB UTF-8 input, 100,000 structural/inline nodes, and
   nesting depth 128. All are configurable on `SPDFMarkdownParser`; exceeding
@@ -95,7 +129,11 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
 - A render caches each unique decoded image. The default aggregate budgets are
   64 MiB of resource bytes and 32 million decoded pixels, shared between local
   and remote images; over-budget or invalid images become stable text
-  placeholders rather than consuming unbounded memory.
+  placeholders rather than consuming unbounded memory. Bytes that ImageIO
+  cannot identify — notably SVG badges (shields.io) — get one NSImage decode
+  attempt (macOS rasterizes SVG data natively on modern systems) under the
+  same pixel budget; where that fails too, the text placeholder stands. No
+  SVG library is vendored.
 
 Tables retain column count and per-cell left/center/right alignment in the
 model, and lay out content-aware columns (GFM's `| --- |` separator line is
@@ -242,8 +280,10 @@ appearance cannot produce white-on-white output.
 
 ## Compile and test
 
-Compile `ext/md4c/md4c.c` as C. Compile this directory's `.mm` files as
-Objective-C++ with ARC. Link Foundation, AppKit, CoreText and ImageIO.
+Compile `ext/md4c/md4c.c` as C. Compile every `ext/gumbo-parser/src/*.c` as
+C99 with `-Iext/gumbo-parser/src` (third-party: without `-Werror`). Compile
+this directory's `.mm` files as Objective-C++ with ARC. Link Foundation,
+AppKit, CoreText and ImageIO.
 
 ```sh
 portable/mac/tests/markdown/run-tests.sh
@@ -271,7 +311,7 @@ Do not copy this blindly into a differently named build graph; it documents the
 required source/link/test shape for the later integration change:
 
 ```make
-MARKDOWN_C := ext/md4c/md4c.c
+MARKDOWN_C := ext/md4c/md4c.c $(wildcard ext/gumbo-parser/src/*.c)
 MARKDOWN_MM := $(wildcard portable/mac/markdown/*.mm)
 MARKDOWN_FRAMEWORKS := -framework Foundation -framework AppKit -framework CoreText -framework ImageIO
 

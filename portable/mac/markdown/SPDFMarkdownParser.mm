@@ -1,24 +1,11 @@
 #import "SPDFMarkdownParser.h"
 
+#import "SPDFMarkdownHTML.h"
+#import "SPDFMarkdownParserInternal.h"
+
 #include "../../../ext/md4c/md4c.h"
 
 NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdown";
-
-@interface SPDFMarkdownBlockBuilder : NSObject
-@property(nonatomic) SPDFMarkdownBlockKind kind;
-@property(nonatomic) NSUInteger index;
-@property(nonatomic) NSUInteger level;
-@property(nonatomic) NSInteger orderedStart;
-@property(nonatomic) NSInteger taskState;
-@property(nonatomic) SPDFMarkdownTableAlignment tableAlignment;
-@property(nonatomic) NSUInteger tableColumnCount;
-@property(nonatomic, copy, nullable) NSString* codeLanguage;
-@property(nonatomic, copy, nullable) NSString* codeInfo;
-@property(nonatomic, copy, nullable) NSString* calloutKind;
-@property(nonatomic, copy, nullable) NSString* calloutTitle;
-@property(nonatomic) NSMutableArray<SPDFMarkdownInlineRun*>* runs;
-@property(nonatomic) NSMutableArray<SPDFMarkdownBlockBuilder*>* children;
-@end
 
 @implementation SPDFMarkdownBlockBuilder
 - (instancetype)init {
@@ -55,6 +42,7 @@ NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdo
 @property(nonatomic) NSUInteger nodeCount;
 @property(nonatomic) NSUInteger maximumNodeCount;
 @property(nonatomic) NSUInteger maximumNestingDepth;
+@property(nonatomic) SPDFMarkdownHTMLState* html;
 @property(nonatomic) SPDFMarkdownErrorCode failureCode;
 @property(nonatomic, copy, nullable) NSString* debugMessage;
 @end
@@ -67,6 +55,7 @@ NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdo
         _root.kind = SPDFMarkdownBlockKindDocument;
         _stack = [NSMutableArray arrayWithObject:_root];
         _spans = [NSMutableArray array];
+        _html = [SPDFMarkdownHTMLState new];
         _nextIndex = 1;
     }
     return self;
@@ -146,6 +135,18 @@ static int SPDFEnterBlock(MD_BLOCKTYPE type, void* detail, void* opaque) {
     if (type == MD_BLOCK_TABLE) block.tableColumnCount = ((MD_BLOCK_TABLE_DETAIL*)detail)->col_count;
     if (type == MD_BLOCK_TH || type == MD_BLOCK_TD)
         block.tableAlignment = SPDFTableAlignment(((MD_BLOCK_TD_DETAIL*)detail)->align);
+    if (type == MD_BLOCK_HTML) {
+        // A raw HTML island: accumulate its text and translate it through the
+        // sanitizing whitelist when the island closes (SPDFLeaveBlock).
+        block.htmlIsland = YES;
+        block.htmlText = [NSMutableString string];
+    }
+    // Inline HTML tags never leak styling or suppression across blocks; the
+    // block-format container stack (alignment) intentionally survives.
+    [context.html resetInlineState];
+    if ((type == MD_BLOCK_P || type == MD_BLOCK_H) &&
+        context.html.currentAlignment != SPDFMarkdownTableAlignmentDefault)
+        block.blockAlignment = context.html.currentAlignment;
     [context.stack.lastObject.children addObject:block];
     [context.stack addObject:block];
     return 0;
@@ -154,7 +155,23 @@ static int SPDFEnterBlock(MD_BLOCKTYPE type, void* detail, void* opaque) {
 static int SPDFLeaveBlock(MD_BLOCKTYPE type, void* detail, void* opaque) {
     (void)detail;
     SPDFMarkdownParseContext* context = (__bridge SPDFMarkdownParseContext*)opaque;
-    if (type != MD_BLOCK_DOC && context.stack.count > 1) [context.stack removeLastObject];
+    if (type == MD_BLOCK_DOC || context.stack.count <= 1) return 0;
+    SPDFMarkdownBlockBuilder* block = context.stack.lastObject;
+    [context.stack removeLastObject];
+    if (type != MD_BLOCK_HTML || !block.htmlIsland) return 0;
+    // Replace the raw island with its whitelisted translation (possibly
+    // nothing: dropped elements, or a container push/pop applying to the
+    // markdown blocks that follow). Raw tag text never reaches the model.
+    [context.stack.lastObject.children removeObjectIdenticalTo:block];
+    NSUInteger nextIndex = context.nextIndex;
+    NSUInteger nodeCount = context.nodeCount;
+    NSArray<SPDFMarkdownBlockBuilder*>* replacements =
+        SPDFMarkdownHTMLProcessBlockIsland(context.html, block.htmlText ?: @"", &nextIndex, &nodeCount);
+    context.nextIndex = nextIndex;
+    context.nodeCount = nodeCount;
+    if (context.nodeCount > context.maximumNodeCount)
+        return SPDFFailBudget(context, @"Markdown contains too many structural nodes.");
+    [context.stack.lastObject.children addObjectsFromArray:replacements];
     return 0;
 }
 
@@ -213,7 +230,8 @@ static int SPDFLeaveSpan(MD_SPANTYPE type, void* detail, void* opaque) {
     (void)detail;
     SPDFMarkdownParseContext* context = (__bridge SPDFMarkdownParseContext*)opaque;
     SPDFMarkdownSpanFrame* frame = context.spans.lastObject;
-    if (type == MD_SPAN_IMG && frame.block && frame.block.runs.count == frame.firstRun) {
+    if (type == MD_SPAN_IMG && !context.html.suppressing && frame.block &&
+        frame.block.runs.count == frame.firstRun) {
         // `![](src)` carries no alt text, so no text callback fired inside the
         // span and no run exists yet — but the image itself must still render:
         // synthesize the image run with empty text.
@@ -222,7 +240,8 @@ static int SPDFLeaveSpan(MD_SPANTYPE type, void* detail, void* opaque) {
                                                                     destination:context.destination
                                                                           title:context.title]];
     }
-    if (frame.wikiAlias.length && frame.block && frame.firstRun <= frame.block.runs.count) {
+    if (frame.wikiAlias.length && !context.html.suppressing && frame.block &&
+        frame.firstRun <= frame.block.runs.count) {
         NSRange runs = NSMakeRange(frame.firstRun, frame.block.runs.count - frame.firstRun);
         [frame.block.runs removeObjectsInRange:runs];
         [frame.block.runs addObject:[[SPDFMarkdownInlineRun alloc]
@@ -237,51 +256,44 @@ static int SPDFLeaveSpan(MD_SPANTYPE type, void* detail, void* opaque) {
     return 0;
 }
 
-static NSString* SPDFDecodeEntity(NSString* entity) {
-    NSDictionary* common = @{@"&amp;": @"&", @"&lt;": @"<", @"&gt;": @">", @"&quot;": @"\"", @"&apos;": @"'", @"&nbsp;": @"\u00a0"};
-    NSString* known = common[entity];
-    if (known) return known;
-    if (![entity hasPrefix:@"&#"] || ![entity hasSuffix:@";"]) return entity;
-    BOOL hex = entity.length > 3 && ([entity characterAtIndex:2] == 'x' || [entity characterAtIndex:2] == 'X');
-    NSString* digits = [entity substringWithRange:NSMakeRange(hex ? 3 : 2, entity.length - (hex ? 4 : 3))];
-    unsigned long long parsed = 0;
-    NSScanner* scanner = [NSScanner scannerWithString:digits];
-    BOOL valid = hex ? [scanner scanHexLongLong:&parsed] : [scanner scanUnsignedLongLong:&parsed];
-    if (!valid || !scanner.isAtEnd || parsed > 0x10ffff || (parsed >= 0xd800 && parsed <= 0xdfff)) return @"\uFFFD";
-    if (parsed <= 0xffff) {
-        unichar character = (unichar)parsed;
-        return [NSString stringWithCharacters:&character length:1];
-    }
-    parsed -= 0x10000;
-    unichar pair[] = {(unichar)(0xd800 + (parsed >> 10)), (unichar)(0xdc00 + (parsed & 0x3ff))};
-    return [NSString stringWithCharacters:pair length:2];
-}
-
 static int SPDFText(MD_TEXTTYPE type, const MD_CHAR* bytes, MD_SIZE size, void* opaque) {
     SPDFMarkdownParseContext* context = (__bridge SPDFMarkdownParseContext*)opaque;
     SPDFMarkdownBlockBuilder* block = context.stack.lastObject;
     NSString* text = SPDFString(bytes, size);
+    if (type == MD_TEXT_HTML) {
+        // Raw HTML never becomes visible text. A block island accumulates for
+        // whole-island translation; an inline segment is a single tag event.
+        if (block.htmlIsland) [block.htmlText appendString:text];
+        else SPDFMarkdownHTMLHandleInlineSegment(context.html, text, block, context.traits);
+        return 0;
+    }
+    if (context.html.suppressing) return 0;  // Inside a dropped element (<script>...).
     if (type == MD_TEXT_NULLCHAR) text = @"\uFFFD";
     else if (type == MD_TEXT_BR) text = @"\n";
     else if (type == MD_TEXT_SOFTBR) text = @"\u001e";
-    else if (type == MD_TEXT_ENTITY) text = SPDFDecodeEntity(text);
+    else if (type == MD_TEXT_ENTITY) text = SPDFMarkdownDecodeEntity(text);
     if (text.length == 0) return 0;
+    SPDFMarkdownInlineTraits traits = context.traits | context.html.overlayTraits;
+    NSString* destination = context.destination ?: context.html.overlayDestination;
+    NSString* title = context.title ?: context.html.overlayTitle;
     SPDFMarkdownInlineRun* last = block.runs.lastObject;
-    if (last && last.traits == context.traits &&
-        ((last.destination == nil && context.destination == nil) || [last.destination isEqualToString:context.destination]) &&
-        ((last.title == nil && context.title == nil) || [last.title isEqualToString:context.title])) {
+    if (last && last.traits == traits &&
+        ((last.destination == nil && destination == nil) || [last.destination isEqualToString:destination]) &&
+        ((last.title == nil && title == nil) || [last.title isEqualToString:title])) {
         SPDFMarkdownInlineRun* merged = [[SPDFMarkdownInlineRun alloc]
-            initWithText:[last.text stringByAppendingString:text]
-                  traits:last.traits
-             destination:last.destination
-                   title:last.title];
+              initWithText:[last.text stringByAppendingString:text]
+                    traits:last.traits
+               destination:last.destination
+                     title:last.title
+       preferredImageWidth:last.preferredImageWidth
+      preferredImageHeight:last.preferredImageHeight];
         [block.runs removeLastObject];
         [block.runs addObject:merged];
     } else {
         [block.runs addObject:[[SPDFMarkdownInlineRun alloc] initWithText:text
-                                                                  traits:context.traits
-                                                             destination:context.destination
-                                                                   title:context.title]];
+                                                                  traits:traits
+                                                             destination:destination
+                                                                   title:title]];
     }
     return 0;
 }
@@ -338,9 +350,11 @@ static SPDFMarkdownBlock* SPDFFreezeBlock(SPDFMarkdownBlockBuilder* source) {
     for (SPDFMarkdownInlineRun* run in source.runs) {
         NSString* normalized = [run.text stringByReplacingOccurrencesOfString:@"\u001e" withString:@" "];
         [runs addObject:[[SPDFMarkdownInlineRun alloc] initWithText:normalized
-                                                           traits:run.traits
-                                                      destination:run.destination
-                                                              title:run.title]];
+                                                             traits:run.traits
+                                                        destination:run.destination
+                                                              title:run.title
+                                                preferredImageWidth:run.preferredImageWidth
+                                               preferredImageHeight:run.preferredImageHeight]];
     }
     return [[SPDFMarkdownBlock alloc] initWithKind:source.kind
                                        blockIndex:source.index
@@ -348,6 +362,7 @@ static SPDFMarkdownBlock* SPDFFreezeBlock(SPDFMarkdownBlockBuilder* source) {
                                      orderedStart:source.orderedStart
                                         taskState:source.taskState
                                    tableAlignment:source.tableAlignment
+                                   blockAlignment:source.blockAlignment
                                  tableColumnCount:source.tableColumnCount
                                              runs:runs
                                          children:children
@@ -458,7 +473,9 @@ static NSString* SPDFExtractFrontMatter(NSString* input, NSDictionary** metadata
     context.maximumNestingDepth = self.maximumNestingDepth;
     MD_PARSER parser = {};
     parser.abi_version = 0;
-    parser.flags = MD_DIALECT_GITHUB | MD_FLAG_WIKILINKS | MD_FLAG_NOHTML | MD_FLAG_LATEXMATHSPANS;
+    // Raw HTML is enabled but never evaluated: islands go through the
+    // sanitizing whitelist in SPDFMarkdownHTML.mm / SPDFMarkdownHTMLBlocks.mm.
+    parser.flags = MD_DIALECT_GITHUB | MD_FLAG_WIKILINKS | MD_FLAG_LATEXMATHSPANS;
     parser.enter_block = SPDFEnterBlock;
     parser.leave_block = SPDFLeaveBlock;
     parser.enter_span = SPDFEnterSpan;

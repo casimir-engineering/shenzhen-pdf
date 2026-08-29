@@ -35,6 +35,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 ## <a id="markdown"></a>Markdown, read like a document <sub>macOS</sub>
 
 - **GitHub-grade formatting, paginated** — Markdown opens as real A4 sheets in the same reader as PDFs: GitHub-flavored typography and palette, tables with grids, header bands and zebra striping, and fenced code in continuous rounded boxes. Same tabs, chapters, map, zoom presets, and presentation mode.
+- **README HTML, sanitized and native** — The inline HTML that real READMEs lean on renders natively through a strict whitelist: centered `<div>`/`<p align>` blocks, HTML headings, badge images with `width`/`height` hints, `<kbd>` key caps, `<sub>`/`<sup>`, and simple HTML tables. `<details>` sections always render expanded with a bold ▸ summary line. Scripts, styles, iframes, forms, and event handlers are stripped — nothing is ever evaluated, no web engine involved.
 - **Identical navigation, identical search** — Chapter jumps, page stepping, find with in-page highlights, map and scrollbar markers, chapter-grouped results, regex — all the PDF behavior, including an I-beam over text and a pointing hand over links.
 - **31 syntax languages, chosen in place** — C, C++, Rust, Go, TypeScript, SQL, HTML, CSS, YAML, LaTeX, shell and more, picked from a searchable list anchored to the code block; Plain Text clears highlighting.
 - **LaTeX math** — `$inline$` and `$$display$$` typeset natively — Greek letters, symbols, super/subscripts, fractions, roots — with display math centered. No web engine, no network.

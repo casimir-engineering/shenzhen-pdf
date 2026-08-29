@@ -19,10 +19,25 @@ SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
     -c "$ROOT/ext/md4c/md4c.c" \
     -o "$BUILD_DIR/md4c.o"
 
+# Vendored Gumbo HTML5 parser backing the sanitizing HTML-island whitelist.
+# Third-party sources compile without -Werror.
+GUMBO_OBJS=""
+for GUMBO_SRC in "$ROOT/ext/gumbo-parser/src"/*.c; do
+    GUMBO_OBJ="$BUILD_DIR/gumbo-$(basename "$GUMBO_SRC" .c).o"
+    # shellcheck disable=SC2086
+    "$CC" -isysroot "$SDKROOT" -std=c99 -O0 -g \
+        $SANITIZER_FLAGS \
+        -I"$ROOT/ext/gumbo-parser/src" \
+        -c "$GUMBO_SRC" -o "$GUMBO_OBJ"
+    GUMBO_OBJS="$GUMBO_OBJS $GUMBO_OBJ"
+done
+
 SOURCES="
 $ROOT/portable/mac/markdown/SPDFMarkdownModel.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownMathTypesetter.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownParser.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownHTML.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownHTMLBlocks.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownResources.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownLanguage.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownHighlighter.mm
@@ -45,6 +60,7 @@ $ROOT/portable/mac/markdown/SPDFMarkdownDocument.mm
 
 for TEST in \
     SPDFMarkdownParserTests \
+    SPDFMarkdownHTMLTests \
     SPDFMarkdownMathTests \
     SPDFMarkdownLanguageTests \
     SPDFMarkdownRendererTests \
@@ -62,7 +78,7 @@ do
     "$CXX" -isysroot "$SDKROOT" -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror \
         $SANITIZER_FLAGS \
         -I"$ROOT/portable/mac/markdown" \
-        $SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" \
+        $SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" $GUMBO_OBJS \
         -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
         -o "$BUILD_DIR/$TEST"
     "$BUILD_DIR/$TEST"
