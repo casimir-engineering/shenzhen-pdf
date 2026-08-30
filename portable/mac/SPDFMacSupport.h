@@ -14,6 +14,10 @@ NSImage* spdf_translate_toolbar_image(void);
 NSImage* spdf_ocr_toolbar_image(void);
 NSImage* spdf_markdown_font_size_toolbar_image(BOOL larger);
 NSSegmentedControl* spdf_paired_toolbar_segments(id target, SEL action, NSImage* leadingImage, NSImage* trailingImage);
+// The one-segment pill, configured identically to the paired one (rounded
+// style, momentary tracking) so a lone toolbar toggle matches the pills beside
+// it instead of reading as a differently-bezeled push button.
+NSSegmentedControl* spdf_single_toolbar_segment(id target, SEL action, NSImage* image);
 BOOL spdf_is_allowed_external_url(NSURL* url);
 
 BOOL spdf_zoom_profile_enabled(void);

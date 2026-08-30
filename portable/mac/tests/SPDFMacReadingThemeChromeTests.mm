@@ -1,8 +1,9 @@
-// Reading-theme chrome: the gutter role both frontends read and the PDF
-// page's border-instead-of-shadow decision.
+// Reading-theme chrome: the gutter role both frontends read, the PDF page's
+// border-instead-of-shadow decision, and the single-segment toolbar pill.
 #import <AppKit/AppKit.h>
 
 #import "SPDFMacDocumentView.h"
+#import "SPDFMacSupport.h"
 #import "markdown/SPDFMarkdownDecorations.h"
 
 #include <assert.h>
@@ -137,6 +138,21 @@ int main(void) {
                Luminance(SampleAt(presentationRaster, view, NSMidX(presentationRect),
                                   NSMinY(presentationRect) + 0.5)) > 0.9);
         view.presentationMode = NO;
+
+        // --- The single-segment toolbar pill -----------------------------
+        NSImage* icon = [NSImage imageWithSystemSymbolName:@"moon.stars" accessibilityDescription:@"Dark"];
+        NSSegmentedControl* single = spdf_single_toolbar_segment(nil, @selector(description), icon);
+        NSSegmentedControl* paired = spdf_paired_toolbar_segments(nil, @selector(description), icon, icon);
+        Expect("single pill has one segment", single.segmentCount == 1);
+        Expect("single pill matches the paired pill's style", single.segmentStyle == paired.segmentStyle &&
+                                                                  single.segmentStyle == NSSegmentStyleRounded);
+        Expect("single pill tracks momentarily", single.trackingMode == NSSegmentSwitchTrackingMomentary &&
+                                                     single.trackingMode == paired.trackingMode);
+        Expect("single pill carries its image", [single imageForSegment:0] == icon);
+        Expect("single pill is autolayout-ready", !single.translatesAutoresizingMaskIntoConstraints);
+        Expect("single pill hugs its content",
+               [single contentHuggingPriorityForOrientation:NSLayoutConstraintOrientationHorizontal] ==
+                   [paired contentHuggingPriorityForOrientation:NSLayoutConstraintOrientationHorizontal]);
 
         printf("SPDFMacReadingThemeChromeTests passed\n");
     }

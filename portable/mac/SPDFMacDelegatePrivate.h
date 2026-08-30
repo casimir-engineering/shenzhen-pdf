@@ -56,7 +56,7 @@
     NSButton* _ocrButton;
     NSButton* _translateButton;
     NSSegmentedControl* _markdownFontSizeSegments;
-    NSButton* _readingThemeButton;
+    NSSegmentedControl* _readingThemeButton;  // single-segment pill, not a button
     NSBox* _ocrSeparator;
     NSSegmentedControl* _findSegments;
     NSTextField* _findCountLabel;

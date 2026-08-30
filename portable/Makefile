@@ -219,7 +219,7 @@ mac-tab-strip-interaction-tests: $(MAC_TAB_STRIP_INTERACTION_TEST)
 	"$(MAC_TAB_STRIP_INTERACTION_TEST)"
 
 # The reading-theme chrome seams: the gutter and page-border decisions on
-# SPDFDocumentView. Links the AppKit half only - no mupdf, and no markdown
+# SPDFDocumentView, plus the single-segment toolbar pill. Links the AppKit half only - no mupdf, and no markdown
 # pipeline beyond the palette itself.
 MAC_READING_THEME_CHROME_SRCS := mac/tests/SPDFMacReadingThemeChromeTests.mm mac/SPDFMacDocumentView.mm \
 	mac/SPDFMacPageRendering.mm mac/SPDFMacRenderedPage.mm mac/SPDFMacDelayedLinkActivation.mm \

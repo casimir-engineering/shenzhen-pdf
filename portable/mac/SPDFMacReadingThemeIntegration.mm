@@ -1,5 +1,6 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 
+#import "SPDFMacSupport.h"
 #import "markdown/SPDFMarkdown.h"
 
 // The document-agnostic reading-theme toggle: one always-visible toolbar button
@@ -47,16 +48,13 @@
 }
 
 - (void)buildReadingThemeToolbarButton {
-    // Built through the shared toolbar-button factory so the bezel, font and
-    // metrics match the OCR/Translate buttons exactly.
-    NSButton* button = [self buttonWithTitle:@"" action:@selector(toggleReadingTheme:)];
-    button.imagePosition = NSImageOnly;
-    [button.widthAnchor constraintEqualToConstant:32].active = YES;
-    [button setContentHuggingPriority:NSLayoutPriorityRequired
-                       forOrientation:NSLayoutConstraintOrientationHorizontal];
-    [button setContentCompressionResistancePriority:NSLayoutPriorityRequired
-                                     forOrientation:NSLayoutConstraintOrientationHorizontal];
-    _readingThemeButton = button;
+    // A SINGLE-segment pill rather than a push button: on a Markdown tab every
+    // control actually visible beside it (page, zoom, text size, find) is an
+    // NSSegmentedControl, so the shared button factory's textured bezel read as
+    // a foreign control. spdf_single_toolbar_segment reuses the paired pill's
+    // own configuration, so background, height and icon tint match exactly.
+    _readingThemeButton = spdf_single_toolbar_segment(self, @selector(toggleReadingTheme:), nil);
+    [_readingThemeButton.widthAnchor constraintEqualToConstant:32].active = YES;
     [self updateReadingThemeControls];
 }
 
@@ -71,7 +69,8 @@
     // Template rendering makes the glyph adopt the toolbar's control tint, the
     // way every other toolbar icon does.
     [icon setTemplate:YES];
-    _readingThemeButton.image = icon;
+    [_readingThemeButton setImage:icon forSegment:0];
+    [_readingThemeButton setToolTip:self.readingThemeToggleTitle forSegment:0];
     _readingThemeButton.toolTip = self.readingThemeToggleTitle;
     _readingThemeButton.accessibilityLabel = self.readingThemeToggleTitle;
 }

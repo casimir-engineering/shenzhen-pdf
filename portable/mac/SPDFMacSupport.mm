@@ -321,20 +321,33 @@ NSImage* spdf_markdown_font_size_toolbar_image(BOOL larger) {
 // Compact two-segment momentary "pill" for a paired back/forward style toolbar
 // action; the shared action switches on selectedSegment (0 = leading,
 // 1 = trailing).
-NSSegmentedControl* spdf_paired_toolbar_segments(id target, SEL action, NSImage* leadingImage, NSImage* trailingImage) {
+// One configuration for every toolbar pill, so a single-segment control and a
+// paired one share background, height and icon tint exactly.
+static NSSegmentedControl* spdf_toolbar_segments(id target, SEL action, NSInteger segmentCount) {
     NSSegmentedControl* control = [[NSSegmentedControl alloc] init];
-    control.segmentCount = 2;
+    control.segmentCount = segmentCount;
     control.segmentStyle = NSSegmentStyleRounded;
     control.trackingMode = NSSegmentSwitchTrackingMomentary;
     control.target = target;
     control.action = action;
     control.translatesAutoresizingMaskIntoConstraints = NO;
-    [control setImage:leadingImage forSegment:0];
-    [control setImage:trailingImage forSegment:1];
     [control setContentHuggingPriority:NSLayoutPriorityRequired
                         forOrientation:NSLayoutConstraintOrientationHorizontal];
     [control setContentCompressionResistancePriority:NSLayoutPriorityRequired
                                       forOrientation:NSLayoutConstraintOrientationHorizontal];
+    return control;
+}
+
+NSSegmentedControl* spdf_paired_toolbar_segments(id target, SEL action, NSImage* leadingImage, NSImage* trailingImage) {
+    NSSegmentedControl* control = spdf_toolbar_segments(target, action, 2);
+    [control setImage:leadingImage forSegment:0];
+    [control setImage:trailingImage forSegment:1];
+    return control;
+}
+
+NSSegmentedControl* spdf_single_toolbar_segment(id target, SEL action, NSImage* image) {
+    NSSegmentedControl* control = spdf_toolbar_segments(target, action, 1);
+    [control setImage:image forSegment:0];
     return control;
 }
 
