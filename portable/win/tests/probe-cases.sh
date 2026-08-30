@@ -13,7 +13,13 @@
 # exist, so a Windows-side failure produces one honest failure instead of three
 # confusing ones.
 
+# Both producing cases delete their own outputs before they run. Without this a
+# case that succeeded on a previous run and fails on this one leaves its old
+# transcript and PNG behind, and probe.diff/probe.png happily compare last
+# week's evidence and report a pass. Stale artifacts are the quietest way for a
+# test suite to start lying.
 case_probe_mac() {
+  rm -f "$OUT/probe-mac.txt" "$OUT/mac/probe-page.png"
   if ! find_mac_mupdf; then
     record "probe.mac" BLOCKED "no macOS libmupdf.a under mupdf/build (run: make -C portable mupdf)"
     return
@@ -46,6 +52,8 @@ case_probe_mac() {
 }
 
 case_probe_win() {
+  rm -f "$OUT/probe-win.txt" "$OUT/probe-win.raw" "$OUT/win/probe-page.png" \
+        "$STAGE/portable/win/build/t4/probe-page.png"
   if [[ -n "$GUEST_MUPDF" ]]; then
     record "probe.win" BLOCKED "$GUEST_MUPDF"
     return
