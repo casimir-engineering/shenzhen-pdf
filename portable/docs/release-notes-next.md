@@ -1,6 +1,6 @@
 # Release notes
 
-User-facing notes for changes merged since the last release (26.8.29 build 2).
+User-facing notes for changes merged since the last release (26.8.30 build 1).
 
 Release notes are tracked in `portable/docs/releases/`. Prepare the next release
 with `./portable/cut-release.sh --prepare-only ["summary"]`; publish the
@@ -8,35 +8,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
-- The dark reading theme now covers every document, not just Markdown. One
-  toolbar toggle, or Shift+Cmd+I, darkens PDF, XPS and EPUB pages onto the same
-  soft #1E1E1E paper the dark Markdown theme uses, so a PDF tab and a Markdown
-  tab look like one product. Pages are remapped by lightness with their color
-  left intact, so a red warning box stays red and a blue hyperlink stays blue
-  instead of flipping to its complement the way an inverted page does. The
-  choice is remembered across launches and applies to every open tab and to
-  documents opened later.
-- New setting, Settings > Keep Image Colors in Dark Theme (off by default):
-  with the dark theme on, leaves photographs and figures in their original
-  colors instead of darkening them along with the page. Scanned pages are the
-  exception — a scan is one image covering the sheet, so darkening it is the
-  whole point and the setting is ignored there rather than quietly leaving the
-  document white. Comic archives and image files are never darkened at all.
-- Printing, Save as PDF and Copy Page always use the document's own colors,
-  even while the dark theme is on. A PDF's colors are its content, and a file
-  that carried our dark paper would be wrong everywhere else it was opened.
-- Real-world READMEs render properly. The inline HTML that GitHub projects
-  lean on is now understood natively through a strict whitelist: centered
-  `<div>`/`<p align>` blocks, HTML headings, badge images sized by their
-  `width`/`height`, `<kbd>` key caps, `<sub>`/`<sup>`, and simple HTML tables.
-  `<details>` sections render expanded behind a bold summary line. Scripts,
-  styles, iframes, forms and event handlers are stripped and never evaluated —
-  there is no web engine anywhere in the reader.
-- Mermaid, js-sequence and flowchart.js code fences now draw as real
-  diagrams — flowcharts, sequence diagrams, pie charts, state and class
-  diagrams, and gantt charts — rendered natively, with no web engine and no
-  network. The artwork is fully vector, so it stays crisp at any zoom and
-  exports to PDF as vector shapes, and every label inside a diagram is real
-  text: you can select it, Cmd+F finds and highlights it in place, and it stays
-  selectable in the exported PDF. A fence the renderer does not understand
-  keeps its ordinary syntax-highlighted code box.
+Nothing yet.
