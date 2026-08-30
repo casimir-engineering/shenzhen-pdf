@@ -72,6 +72,7 @@ MAC_PASSWORD_TEST := $(BUILD)/SPDFMacPasswordTests
 MAC_MINIMAP_WINDOW_TEST := $(BUILD)/SPDFMacMinimapWindowTests
 MAC_TAB_STRIP_GEOMETRY_TEST := $(BUILD)/SPDFMacTabStripGeometryTests
 MAC_TAB_STRIP_INTERACTION_TEST := $(BUILD)/SPDFMacTabStripInteractionTests
+MAC_READING_THEME_CHROME_TEST := $(BUILD)/SPDFMacReadingThemeChromeTests
 MAC_PALETTE_RESULTS_TEST := $(BUILD)/SPDFMacPaletteResultsTests
 MAC_FIND_NEAREST_TEST := $(BUILD)/SPDFMacFindNearestTests
 MAC_UPDATER_TEST := $(BUILD)/SPDFUpdaterTests
@@ -104,7 +105,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -216,6 +217,20 @@ $(MAC_TAB_STRIP_INTERACTION_TEST): mac/tests/SPDFMacTabStripInteractionTests.mm 
 
 mac-tab-strip-interaction-tests: $(MAC_TAB_STRIP_INTERACTION_TEST)
 	"$(MAC_TAB_STRIP_INTERACTION_TEST)"
+
+# The reading-theme chrome seams: the gutter and page-border decisions on
+# SPDFDocumentView. Links the AppKit half only - no mupdf, and no markdown
+# pipeline beyond the palette itself.
+MAC_READING_THEME_CHROME_SRCS := mac/tests/SPDFMacReadingThemeChromeTests.mm mac/SPDFMacDocumentView.mm \
+	mac/SPDFMacPageRendering.mm mac/SPDFMacRenderedPage.mm mac/SPDFMacDelayedLinkActivation.mm \
+	mac/SPDFMacDocumentViewTheme.mm mac/SPDFMacSupport.mm mac/SPDFMacSelectionClick.mm mac/SPDFMacUIHelpers.mm \
+	mac/SPDFMacCursorRegions.mm mac/SPDFMacWindowChrome.mm mac/markdown/SPDFMarkdownTheme.mm
+
+$(MAC_READING_THEME_CHROME_TEST): $(MAC_READING_THEME_CHROME_SRCS) mac/markdown/SPDFMarkdownDecorations.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -Imac/markdown $(MAC_READING_THEME_CHROME_SRCS) -framework Cocoa -framework UniformTypeIdentifiers -o "$(MAC_READING_THEME_CHROME_TEST)"
+
+mac-reading-theme-chrome-tests: $(MAC_READING_THEME_CHROME_TEST)
+	"$(MAC_READING_THEME_CHROME_TEST)"
 
 $(MAC_PALETTE_RESULTS_TEST): mac/tests/SPDFMacPaletteResultsTests.mm mac/SPDFMacPaletteResults.mm mac/SPDFMacPaletteResults.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacPaletteResultsTests.mm mac/SPDFMacPaletteResults.mm -framework Cocoa -o "$(MAC_PALETTE_RESULTS_TEST)"

@@ -162,7 +162,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
-    [(self.presentationMode ? NSColor.blackColor : NSColor.windowBackgroundColor) setFill];
+    [(self.presentationMode ? NSColor.blackColor : self.viewportBackgroundColor) setFill];
     NSRectFill(dirtyRect);
     if (!self.pageCount) return;
     NSSize paper = _plan.configuration.paperSize;

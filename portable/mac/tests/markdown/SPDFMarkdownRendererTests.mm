@@ -14,6 +14,12 @@ static BOOL SPDFColorMatchesHex(NSColor* color, unsigned int hex) {
            fabs(sRGB.blueComponent - (hex & 0xff) / 255.0) < 0.002;
 }
 
+static CGFloat SPDFLuminance(NSColor* color) {
+    NSColor* sRGB = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (!sRGB) return -1.0;
+    return 0.2126 * sRGB.redComponent + 0.7152 * sRGB.greenComponent + 0.0722 * sRGB.blueComponent;
+}
+
 static void SPDFExpectSearchCorrespondence(SPDFMarkdownDocument* document, NSString* query) {
     NSArray* matches = [document searchForQuery:query caseSensitive:YES];
     SPDFExpect(matches.count > 0, [@"search finds " stringByAppendingString:query]);
@@ -329,6 +335,18 @@ int main(void) {
                        SPDFColorMatchesHex(lightTheme.paperColor, 0xFFFFFF) &&
                        SPDFColorMatchesHex(lightTheme.bodyTextColor, 0x1F2328),
                    @"default options render the Light theme and the class accessors alias it");
+        // The viewport gutter: light names none (every surface keeps the
+        // system background it already used), dark names one that is clearly
+        // BELOW the paper so a page edge always reads against it. Paper
+        // presentation follows the same role: shadow in light, 1px border in
+        // dark.
+        SPDFExpect(lightTheme.viewportBackgroundColor == nil && lightTheme.drawsPaperShadow,
+                   @"the light theme names no gutter and keeps the paper drop shadow");
+        SPDFExpect(SPDFColorMatchesHex(darkTheme.viewportBackgroundColor, 0x121212) && !darkTheme.drawsPaperShadow &&
+                       SPDFColorMatchesHex(darkTheme.paperBorderColor, 0x333333),
+                   @"the dark theme names a #121212 gutter and swaps the shadow for a #333333 border");
+        SPDFExpect(SPDFLuminance(darkTheme.viewportBackgroundColor) < SPDFLuminance(darkTheme.paperColor) - 0.01,
+                   @"the dark gutter reads darker than the dark paper");
         SPDFExpect(SPDFColorMatchesHex(darkTheme.paperColor, 0x1E1E1E) &&
                        SPDFColorMatchesHex(darkTheme.bodyTextColor, 0xDCDDDE) &&
                        SPDFColorMatchesHex(darkTheme.secondaryTextColor, 0x999999) &&

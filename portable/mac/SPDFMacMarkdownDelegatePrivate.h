@@ -66,6 +66,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSString*)readingThemeToggleTitle;
 - (void)updateReadingThemeControls;
 - (void)applyReadingThemeToEveryTab;
+- (void)applyReadingThemeToDocumentViewport;
 - (void)toggleReadingTheme:(nullable id)sender;
 - (void)toggleDarkThemePreservesImages:(nullable id)sender;
 - (void)addReadingThemeOverflowItemsToMenu:(NSMenu*)menu hiddenViews:(NSSet<NSView*>*)hiddenViews;

@@ -57,6 +57,17 @@ FOUNDATION_EXPORT const CGFloat SPDFMarkdownCodeBoxOuterMargin;
 // of a shadow.
 @property(nonatomic, readonly) NSColor* paperColor;        // #FFFFFF / #1E1E1E
 @property(nonatomic, readonly) NSColor* paperBorderColor;  // #D0D7DE / #333333
+// The viewport gutter behind the sheets (Markdown canvas AND the PDF/document
+// scroll view read this one role). Dark is #121212, deliberately well below the
+// #1E1E1E paper so a page edge always reads. LIGHT IS nil, meaning "keep the
+// system gutter this surface already used" — the Markdown canvas's
+// windowBackgroundColor and the document view's slightly darkened derivative
+// are unchanged, byte for byte, by the theme work.
+@property(nonatomic, readonly, nullable) NSColor* viewportBackgroundColor;  // nil / #121212
+// Paper presentation, shared by both frontends: light draws the classic drop
+// shadow, dark draws a crisp 1px paperBorderColor frame instead (a black
+// shadow is invisible on a dark gutter, so only one page edge would read).
+@property(nonatomic, readonly) BOOL drawsPaperShadow;  // YES / NO
 // Text roles.
 @property(nonatomic, readonly) NSColor* bodyTextColor;       // #1F2328 / #DCDDDE body and headings
 @property(nonatomic, readonly) NSColor* secondaryTextColor;  // #59636E / #999999 muted: markers, captions, quotes, H6

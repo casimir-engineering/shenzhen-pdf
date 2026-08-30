@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
 #import "SPDFMacModels.h"
+#import "markdown/SPDFMarkdownDecorations.h"
 #import "SPDFMacSelectionClick.h"
 #import "SPDFMacUIHelpers.h"
 
@@ -22,6 +23,11 @@
 @property(nonatomic) NSRect activeFindRect;
 @property(nonatomic) CGFloat activeFindAlpha;
 @property(nonatomic) BOOL presentationMode;
+// The active reading theme, threaded in from the delegate exactly like the
+// Markdown canvas's plan variant. It decides the gutter fill and how a page is
+// separated from it: light keeps the drop shadow, dark draws a 1px border
+// (a black shadow is invisible against a dark gutter).
+@property(nonatomic) SPDFMarkdownThemeVariant themeVariant;
 @property(nonatomic) BOOL liveZooming;
 @property(nonatomic, copy) NSString* emptyMessage;
 @property(nonatomic, weak) id<SPDFMacDocumentViewReader> reader;
@@ -40,4 +46,19 @@
 // location, e.g. after a cursor-region cache fill or when a pan drag ends.
 // No-op when the pointer is outside the view.
 - (void)refreshCursorForMouseLocation;
+// The page-separation decision for the active theme, split into fill/stroke
+// choices so a headless test can probe it without rasterizing — the mirror of
+// the Markdown canvas's paperFillColor/drawsPaperShadow seam. pageBorderColor
+// is nil whenever no border is drawn (light theme).
+@end
+
+// Implemented in SPDFMacDocumentViewTheme.mm.
+@interface SPDFDocumentView (Theme)
+- (BOOL)drawsPageShadow;
+- (NSColor*)pageBorderColor;  // nil when no border is drawn
+// The viewport gutter behind the sheets: the theme's own dark gutter, or the
+// unchanged system-derived canvas background in light.
+- (NSColor*)viewportBackgroundColor;
+// Drawn after the page content, so the hairline stays crisp at the page edge.
+- (void)drawPageBorderInRect:(NSRect)pageRect;
 @end
