@@ -43,14 +43,22 @@
 # double quotes and cmd.exe uses %, so guest command lines are assembled from
 # SINGLE-quoted fragments.
 #
+# NOT EVERY CASE RUNS IN THE GUEST. `layout.differential` and the D2D render
+# comparisons are decided on the Mac. The differential links glib, which will
+# never exist in the Windows guest; the D2D cases compare the guest's rendered
+# PNGs against the macOS reference, which only the Mac has. Host-side cases are
+# still cases: they are recorded, they gate, and a missing prerequisite is
+# BLOCKED rather than skipped.
+#
 # ADDING A TEST: drop `portable/win/tests/<name>_test.c` here and it is
 # discovered automatically. Declare extra translation units, runtime arguments
 # and prerequisites in the file itself; paths are repo-relative and an argument
 # naming a repo path is rewritten to the guest's copy:
 #
-#     /* spdf-test-sources: portable/win/src/spdf_win_compat.c */
+#     /* spdf-test-sources: portable/core/spdf_win_compat.c */
 #     /* spdf-test-args: portable/win/tests/fixtures/golden.pdf */
 #     /* spdf-test-needs: mupdf */
+#     /* spdf-test-host: mac */      <- never built in the guest
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -112,6 +120,10 @@ case_compare_png_selftest() {
     log_tail "$log" 14
   fi
 }
+
+# The layout port's differential against the GTK4 original it was transcribed
+# from. macOS-side, glib-linked, and the single case that gates a layout edit.
+. "$TESTS_DIR/differential-cases.sh"
 
 # The proof that the whole chain is honest, run before anything that depends on
 # it. Every assertion here is about an exit STATUS, never about output text.
@@ -287,6 +299,11 @@ case_win_tests() {
   for f in "$TESTS_DIR"/*_test.c; do
     [[ -e "$f" ]] || continue
     stem="$(basename "$f" .c)"
+    # A host-only source must never reach the guest compiler. Nothing declares
+    # this today -- gtk_differential.c stays out by not being named *_test.c --
+    # but the next host-only file that IS named *_test.c would otherwise be
+    # handed to MSVC and fail for a reason that has nothing to do with the code.
+    [[ "$(declared spdf-test-host "$f")" == mac ]] && continue
     selected "win.$stem" || continue
     extra="$(declared spdf-test-sources "$f")"
     [[ -n "$extra" ]] || extra="$(win_test_extra "$stem")"
@@ -336,7 +353,7 @@ case_win_tests() {
 # --- drive -----------------------------------------------------------------
 
 if [[ $LIST -eq 1 ]]; then
-  printf '%s\n' selftest.compare-png harness.exit-code harness.non-ascii-path \
+  printf '%s\n' selftest.compare-png layout.differential harness.exit-code harness.non-ascii-path \
       probe.mac probe.win probe.diff probe.png \
       alpha.mac alpha.win alpha.diff alpha.png 'core.<suite>' 'win.<name>_test'
   exit 0
@@ -364,6 +381,7 @@ say "run-tests: vm '$VM_NAME', stage $STAGE, results $OUT"
 say
 
 selected selftest.compare-png && case_compare_png_selftest
+selected layout.differential && case_layout_differential
 selected harness.exit-code && case_exit_code
 selected harness.forced-failure && case_forced_failure
 selected harness.non-ascii-path && case_non_ascii_path
