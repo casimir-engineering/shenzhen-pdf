@@ -393,3 +393,287 @@ is asymmetric top-to-bottom so a vertical flip is unmissable, carries unequal
 pure-red and pure-blue regions so a channel swap cannot be confused with the
 flip, has text and hairlines so anti-aliasing differences show up somewhere real,
 and its second page is a different size from its first.
+
+---
+
+# Building MuPDF for Windows ARM64
+
+*(Track T0. Files: `mupdf-build.sh`, `mupdf-build.cmd`, `mupdf-gen-ninja.sh`,
+`mupdf-bin2coff.c`, `mupdf-arch-check.{sh,cmd}`, `mupdf-render-check.sh`.)*
+
+`libmupdf` now builds natively for ARM64 in the guest, and a real PDF page
+rendered through `portable/core` on Windows is **byte-identical** to the same
+page rendered on macOS. That equality is the whole point: it is what makes every
+later pixel comparison in this port mean something.
+
+## TL;DR
+
+```sh
+portable/win/mupdf-build.sh          # ~59 s cold, ~3 s when nothing changed
+portable/win/mupdf-arch-check.sh     # proves every object is AA64, not x64
+portable/win/mupdf-render-check.sh   # renders a page on both hosts and diffs it
+portable/win/verify.sh               # all of the above plus the original 1-4
+```
+
+## Which MuPDF, and where it comes from
+
+**MuPDF 1.27.2**, the tree already vendored at `mupdf/` in this repo — the exact
+one `portable/Makefile` builds the macOS app against (`MUPDF_DIR := ../mupdf`,
+output in `mupdf/build/release-macos-arm64-12.0/`). Nothing is downloaded and
+no second copy exists. `sync-to-vm.sh` gained `mupdf` in `SUBTREES`, so the
+guest compiles the same files the Mac does.
+
+Two wrinkles about that tree are worth knowing:
+
+- **`mupdf/thirdparty/*` are symlinks into `ext/`** (`freetype -> ../../ext/freetype`
+  and ten more). Parallels does not present macOS symlinks to Windows in a form
+  robocopy or `cl.exe` can follow, so `sync-to-vm.sh` stages with
+  `--copy-unsafe-links` and the guest gets real directories.
+- **`mupdf/generated/` is `.gitignore`d.** It holds the 182 embedded fonts and
+  the hyphenation dictionary hexdumped into C, produced by the macOS MuPDF
+  build. The Windows build does not compile it (see below) but
+  `mupdf-gen-ninja.sh` still reads it, and refuses to run without it — because
+  its absence means this Mac has never built the MuPDF the comparison is
+  against.
+
+## How the build description is produced
+
+There is no checked-in `build.ninja` and no use of `mupdf/platform/win32/mupdf.sln`.
+`mupdf-gen-ninja.sh` runs `make -n` **inside `mupdf/` with exactly the arguments
+`portable/Makefile:113` uses**, and mechanically translates the printed compile
+lines into `cl.exe` flags:
+
+```sh
+make -n build=release OUT=build/win-manifest-dryrun \
+     ARCHFLAGS="-arch arm64" USE_SYSTEM_GLUT=yes brotli=no libs
+```
+
+This matters more than it looks. `mupdf.sln` does carry ARM64 configurations
+(619 references), but its feature set is its own — barcode, tesseract, brotli, a
+different font selection — and it would drift from the Mac build silently, which
+is the one failure this port cannot detect by looking at the output. Deriving
+the recipe from the Makefile means changing `portable/Makefile`'s MuPDF
+arguments changes the Windows build too, automatically.
+
+The result is **646 translation units in 14 flag groups**, one response file per
+group, emitted into `$SPDF_WIN_STAGE/mupdf-win/` (outside every subtree
+`sync-to-vm.sh` mirrors with `--delete`, so it survives the next sync).
+Unknown flags are a hard error rather than a silent drop.
+
+Flag translation, in full:
+
+| POSIX | MSVC | note |
+|---|---|---|
+| `-O2` / `-O0` | `/O2` / `/Od` | |
+| `-ffunction-sections` / `-fdata-sections` | `/Gy` / `/Gw` | |
+| `-I…` | `-I…` | rewritten to the guest's `C:/spdf/mupdf/…` |
+| `-D…` | `-D…` | verbatim, **including the backslashes** (below) |
+| `-DHAVE_UNISTD_H` | *dropped* | MSVC has no `<unistd.h>`; zlib only uses it to decide whether to include it for `fdopen`, so no compressed byte changes |
+| `-Wall -Wsign-compare …` | `/W3` (mupdf's own C), `/W1` (thirdparty), `/W0` (C++) | plus `/we4013`, below |
+| `-std=gnu++11`, `-fno-exceptions`, `-fno-rtti`, `-fno-threadsafe-statics` | `/std:c++14 /EHs-c- /GR- /Zc:threadSafeInit-` | harfbuzz |
+| `-pipe`, `-MMD`, `-MP`, `-mmacosx-version-min=…` | *dropped* | ninja uses `/showIncludes` for dependencies |
+
+Everything also gets `/MT /utf-8 /Zc:inline /D_CRT_SECURE_NO_WARNINGS`, and
+gumbo-parser additionally gets `-Ithirdparty/gumbo-parser/visualc/include`,
+which is where gumbo keeps its MSVC `<strings.h>` shim. `mupdf.sln`'s
+`libthirdparty` project adds that same directory for that same reason.
+
+**`/we4013` is deliberate and load-bearing.** Under MSVC an implicit function
+declaration is a *warning*, so a POSIX function that does not exist on Windows
+compiles to a call returning `int` and fails at link time — or worse, links
+against something unrelated. Promoting C4013 to an error over MuPDF's own 232
+sources means a missing function stops the build at the file that wanted it.
+All 232 compile clean at `/W3` with it on.
+
+## The font blob problem
+
+**MSVC cannot compile MuPDF's embedded resources, and this is the one place the
+Windows build deliberately differs from the POSIX one.**
+
+On POSIX the 182 fonts and the hyphenation dictionary arrive as
+`generated/resources/**.c`: a chain of `"\xNN"` string literals per file, from
+`mupdf/scripts/hexdump.sh`. `cl.exe` needs multiple GB of heap per megabyte of
+literal. Measured in this VM (16 GB, 8 cores):
+
+| `.c` size | result |
+|---|---|
+| under ~1.5 MB | compiles |
+| ~1.5–4 MB | `fatal error C1060: compiler is out of heap space` under `-j8` |
+| over ~4 MB | C1060 even at `-j1` |
+
+and `generated/resources/fonts/han/SourceHanSerif-Regular.ttc.c` is **103 MB**.
+There is no parallelism setting that makes that work.
+
+So the 182 blobs are embedded from their **original binaries** under
+`mupdf/resources/` by `portable/win/mupdf-bin2coff.c`, which writes a COFF object
+exporting `_binary_<name>` and `_binary_<name>_size` — the same interface
+`hexdump.sh` produces, so MuPDF's sources link against it unchanged. The
+embedded bytes are identical; only the route into the object file differs. The
+generator derives each symbol name with hexdump.sh's own rule
+(`sed 's/[.-]/_/g'`) **and then checks it against the second line of the .c that
+hexdump.sh actually produced**, so a rename in either tool fails the generator
+rather than the link. Net effect on staging: `mupdf/generated/` (190 MB) is
+excluded and `mupdf/resources/` (56 MB) is included.
+
+**Why not `mupdf/scripts/bin2coff.c`, which exists and does exactly this?**
+Because its ARM64 output does not link. It puts the size word immediately after
+the data with no padding, so any blob whose length is not a multiple of 4 gets
+an unaligned size symbol:
+
+```
+libmupdf.lib(hyphen.obj) : error LNK2048: relocation PAGEOFFSET_12L targeting
+'_binary_hyph_all_zip_size' (0056EC03) is invalid for the instruction
+(B9400102 at RVA 00055DEC) ... due to bad alignment of offset to target (C03);
+expected to be 4 bytes aligned
+```
+
+AArch64's `LDR` (immediate) cannot address it. Roughly three quarters of the 182
+blobs have a length that is not a multiple of 4, so this is systemic, not bad
+luck — `mupdf.sln`'s ARM64 configurations look untested here.
+`mupdf-bin2coff.c` pads to 8 and puts the section in `.rdata` with 16-byte
+alignment. It is ~200 lines and writes every COFF field byte by byte rather than
+through packed structs, because COFF is fully specified and struct packing is not.
+
+## What gets built, and how long it takes
+
+| | |
+|---|---|
+| `C:\spdf-build\mupdf\libmupdf.lib` | 58.5 MB, **417 objects** (MuPDF proper + the 182 embedded blobs) |
+| `C:\spdf-build\mupdf\libmupdf-third.lib` | 15.2 MB, **229 objects** (freetype, harfbuzz, libjpeg, lcms2, zlib, jbig2dec, openjpeg, mujs, gumbo, extract) |
+| clean build | **59 s** wall clock from the Mac, 8 cores, `ninja -j8` |
+| no-op rebuild | ~3 s, nearly all of it robocopy and `prlctl` |
+| staging | 233 MB / 8323 files; guest robocopy of that is seconds |
+
+There is no `libmupdf-pkcs7.lib`: the macOS build sets `HAVE_LIBCRYPTO=no`, and
+its `libmupdf-pkcs7.a` is 1336 bytes of nothing. Signature verification is a
+later phase's problem, and adding it here would be a difference from the Mac.
+
+## The linking interface — what other tracks get
+
+**No track needs to edit any of T0's files to link MuPDF.** `guest-build.cmd`
+already does all of this:
+
+| | |
+|---|---|
+| include path | `C:\spdf\mupdf\include`, plus `C:\spdf\portable\core` and `C:\spdf\portable\win\src` |
+| libraries | `libmupdf.lib` and `libmupdf-third.lib`, linked **when they exist** |
+| system libraries | `user32 gdi32 shell32 ole32 oleaut32 advapi32 shcore d2d1 dwrite windowscodecs uuid` |
+| CRT | `/MT` — static, and `libmupdf.lib` is `/MT` too. Mixing CRTs here produces link errors that read like missing symbols |
+| stack | `/STACK:8388608`, matching macOS's 8 MB main thread. Windows defaults to 1 MB and MuPDF's content-stream and CSS recursion can outrun that |
+| objects | `C:\spdf-build\obj-<target>\`, one directory per target — several repo sources share a basename (`buffer.c`, `image.c`, `util.c`) and a flat `/Fo` would have them overwrite each other |
+
+"When they exist" is deliberate: the tracks whose code is pure C keep building
+on a machine where MuPDF has never been built, and get a one-line note instead
+of a link failure. The linker only pulls the objects a symbol actually needs, so
+a target that ignores MuPDF pays nothing.
+
+`vm-build.sh` also grew a way to pass arguments to the program it runs:
+
+```sh
+portable/win/vm-build.sh --run core_smoke <sources...> \
+    -- 'C:\spdf\portable\win\smoke\smoke.pdf' 0 2.0 \
+       '\\Mac\Home\Documents\spdf-win\out\page.rgba'
+```
+
+Everything after a lone `--` is a **guest** argument. Note the second path: the
+share is writable from the guest, so a probe can drop its output straight onto
+the Mac with no copy step. Use `$SPDF_WIN_STAGE/out/`, which sits outside every
+subtree `sync-to-vm.sh` mirrors and therefore is not deleted on the next sync.
+
+## Proof it is native ARM64
+
+Windows on ARM runs x64 under emulation without complaint, so "it built and it
+ran" proves nothing about the target architecture. `mupdf-arch-check.sh` runs
+`dumpbin /headers` over both archives and asserts that **every** member reports
+`AA64`:
+
+```
+   libmupdf.lib             417 objects  AA64 ARM64
+   libmupdf-third.lib       229 objects  AA64 ARM64
+   core_smoke.exe             1 objects  AA64 ARM64
+ARCH CHECK OK: every member is AA64 (native ARM64)
+```
+
+It fails on the first non-`AA64` member. One x64 object would still link on some
+paths and would make the whole claim false.
+
+## Proof the pixels match
+
+`portable/win/smoke/core_smoke.c` opens a PDF through
+`portable/core/shenzhen_pdf_core.h`, prints the page count and page size,
+renders a page with `spdf_render_page_rgba_opts`, prints an FNV-1a digest of the
+pixels and nine sampled points, and optionally dumps the raw RGBA.
+`mupdf-render-check.sh` builds it twice — clang/arm64 against
+`mupdf/build/release-macos-arm64-12.0`, MSVC/ARM64 against `C:\spdf-build\mupdf`
+— runs both on the same fixture and compares the report *and* the raw bytes.
+
+The fixture, `portable/win/smoke/smoke.pdf`, is generated by
+`make_smoke_pdf.py` (the repo's root `.gitignore` excludes `*.pdf`) and is
+chosen to load the code most likely to diverge between two compilers: text in
+two base-14 faces at five sizes, a bezier, a dashed stroked polyline, a rotated
+and scaled text matrix, constant-alpha fills over other fills, and an upscaled
+inline RGB image.
+
+Result, measured — not assumed:
+
+```
+   render zoom=2.0000 -> 600x800 stride=2400
+   rgba fnv1a=b6f5f36846f24e18 bytes=1920000
+   BYTE-IDENTICAL: 1920000 bytes of RGBA, macOS clang/arm64 == Windows MSVC/ARM64
+```
+
+Also byte-identical at page 1 zoom 1.0 (480,000 bytes), page 0 zoom 3.5
+(5,880,000 bytes) and page 1 zoom 0.75 (270,000 bytes). Stride matched too, at
+every size.
+
+**So the tolerance for core render comparisons is zero, and it should stay zero.**
+The plan (§6, risk 6) left this open pending measurement; the measurement says
+the two toolchains agree exactly on this content, which is the strongest
+possible starting point. If a future MuPDF or toolchain introduces real drift,
+widen the tolerance *then*, with the measurement that justifies it recorded next
+to it. `mupdf-render-check.sh` prints differing-byte count, max per-channel
+delta and mean absolute error when a comparison fails, so that measurement is
+one run away.
+
+## Gotchas (in addition to 1–9 above)
+
+**10. MSVC dies on large string literals, not large arrays.** The failure is
+`fatal error C1060: compiler is out of heap space`, it is memory-driven rather
+than a hard limit, and it therefore depends on `-j`: the same file can compile
+alone and fail under `-j8`. Do not spend time tuning parallelism — see "The font
+blob problem".
+
+**11. `\"` in a response file must stay escaped.** `cl` parses a response file
+with the same CRT `argv` rules as a command line, so a bare `"` is a grouping
+quote it strips. `-DFT_CONFIG_OPTIONS_H="slimftoptions.h"` therefore arrives as
+`FT_CONFIG_OPTIONS_H=slimftoptions.h` and freetype fails with
+`error C2006: '#include': expected "FILENAME" or <FILENAME>`. Keep the
+backslashes exactly as `make -n` prints them.
+
+**12. ninja here does NOT put a shell between itself and the command.** A
+trailing `>nul` arrives as an extra `argv` entry, not a redirection — which is
+how `bin2coff` came to print its usage message 182 times instead of embedding
+anything. Redirect from the `.cmd` wrapper instead, or not at all.
+
+**13. `rsync --delete` PROTECTS files that are already excluded.** Changing an
+exclude does not clean up what the old rule copied; `sync-to-vm.sh` needs
+`--delete-excluded`, or 190 MB of `mupdf/generated/` lingers in the staging tree
+and is robocopied into the guest on every build forever.
+
+**14. `robocopy /MIR` will delete build output that lives under its
+destination.** `C:\spdf-build` is deliberately a sibling of `C:\spdf`, never a
+child. `mupdf-build.cmd` runs ninja from `C:\spdf-build\mupdf` for exactly this
+reason: build.ninja names its objects relative to *there* and its sources
+absolutely under `C:\spdf\mupdf`.
+
+**15. Escape `:` in ninja paths.** Ninja treats `:` as a field separator in path
+positions, so a Windows absolute path has to be written `C$:/spdf/mupdf/...`.
+Inside a variable value (`flags = ...`) it needs no escaping.
+
+**16. `ninja -k 0`.** `mupdf-build.cmd` passes it always. Without it ninja stops
+scheduling after the first failure, and a 646-edge build reports one broken file
+per round trip to the VM — which, at a minute a round trip, is the difference
+between one debugging session and six.
+
+**17. The guest has no `timeout`, and macOS `zsh` does not word-split unquoted
+expansions.** Both cost time in this session; neither is a Windows problem.
