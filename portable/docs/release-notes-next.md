@@ -8,4 +8,8 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
-Nothing yet.
+- Mermaid, js-sequence and flowchart.js code fences now draw as real
+  diagrams — flowcharts, sequence diagrams, pie charts, state and class
+  diagrams, and gantt charts — rendered natively, with no web engine and no
+  network. A fence the renderer does not understand keeps its ordinary
+  syntax-highlighted code box.

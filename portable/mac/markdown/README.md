@@ -32,7 +32,10 @@ coordinate space. Search matches, heading ranges, block ranges, TextKit line
 fragments, selection, and pagination all refer directly to ranges in this
 string. It includes rendered structure such as list/task markers, callout
 titles, table separators, thematic rules, image attachment characters and
-image captions/placeholders. Visible text emitted from sanitized HTML islands
+image captions/placeholders. A fenced diagram is the one code fence whose
+SOURCE is NOT canonical: it is replaced by a single attachment character, the
+same way an image is (an unrenderable diagram fence keeps its source text as
+ordinary, searchable code). Visible text emitted from sanitized HTML islands
 is searchable/selectable exactly like markdown text; raw tag text never
 appears in the canonical string. Consumers must never translate ranges through
 the parser model's source text.
@@ -239,6 +242,57 @@ Markdown keep their original lexers in `SPDFMarkdownHighlighter.mm`.
 Missing/unknown fences remain uncolored and can be assigned through
 `SPDFMarkdownLanguagePickerModel`.
 
+## Diagrams
+
+Fenced `mermaid`, `sequence` (js-sequence) and `flow` (flowchart.js) blocks
+render as native figures: pure parsing plus Core Graphics, with no web engine,
+no JavaScript and no network. The whole engine sits behind one seam,
+`SPDFMarkdownDiagram.h`:
+
+```objc
+SPDFMarkdownDiagramIsDiagramLanguage(fenceIdentifier);  // O(1) fence triage
+SPDFMarkdownDiagramRender(language, source, width, fontScale, variant, cache);
+```
+
+Implemented types: mermaid `graph`/`flowchart` (TD/TB/BT/LR/RL, rect, round,
+stadium, circle, diamond and subroutine shapes, labelled solid/dashed/thick
+edges), `sequenceDiagram` (participants and aliases, arrow variants, notes,
+activations, `alt`/`opt`/`loop`/`par`/`critical`/`rect` frames), `pie`,
+`stateDiagram`/`stateDiagram-v2`, `classDiagram` (compartments and the UML
+relation set) and `gantt` (`YYYY-MM-DD` dates, durations, `after` chains,
+`done`/`active`/`crit`). `sequence` fences use the js-sequence grammar
+(including its `Title:` line) and `flow` fences the flowchart.js
+`id=>type: text` grammar with branch qualifiers.
+
+Simplifications, all deliberate and all lossless on the page: flowchart
+`subgraph` grouping, `classDef`/`style`/`linkStyle`/`click` statements,
+composite-state braces, state notes, class cardinality strings and mermaid's
+`autonumber` are skipped, though their members still render.
+
+**Degradation is the contract.** The seam returns nil — never a partial or
+approximate drawing — on an unsupported sub-type, ANY syntax error, or a
+budget overrun, and the caller then runs the unchanged code-box path: the
+fence keeps its highlighted source, its canonical text, and its language pill.
+The budgets are hard: 200 nodes/actors/slices/tasks, 400 edges/events, a 50 ms
+layout deadline, and 4096 px per bitmap axis.
+
+**Speed.** A document with no diagram fence does zero diagram work: the only
+cost is one lowercased first-token comparison per code fence.
+`SPDFMarkdownDiagramWorkCount()` counts real parse+layout+raster attempts and
+is the test-visible proof of both that and the cache.
+`SPDFMarkdownRenderOptions.diagramCache` carries one thread-safe
+`SPDFMarkdownDiagramCache` per session, held BY REFERENCE across
+`-copyWithZone:`; it is keyed by (source, language, variant, fontScale, width)
+and caches failures too, so a theme or text-size change re-rasterizes while
+every other rerender — a remote image arriving, a language override, a
+self-heal — reuses the existing bitmaps. Diagrams are drawn at 2x into
+bitmap-backed images and reserved as centered figure attachments
+(`SPDFMarkdownImageLayoutRoleFigure`), recorded as PARAGRAPH blocks so
+pagination never plans a code box or a language pill behind one.
+
+`dist/diagram-demo.md` exercises every implemented type plus the degradation
+cases.
+
 ## Pagination and drawing
 
 `SPDFMarkdownPaginator` asks TextKit for real line fragments at the target
@@ -321,7 +375,12 @@ content scaling, code-box/heading-rule decoration geometry (including blocks
 split across pages), font scaling, and PDFKit/raster probes for selectable
 text, concrete print colors for both reading themes (including the dark-paper
 raster probes), the filled code-box background, and image containment within
-its line fragment.
+its line fragment. The diagram suite covers a render of every implemented
+diagram type, the nil-degradation paths (unknown sub-type, syntax error,
+over-budget graph), the zero-work proof for a diagram-free document, the
+session cache (including negative caching and the variant/scale re-raster),
+per-theme pixel inequality, and the end-to-end canonical-string shape of both
+a rendered figure and a degraded fence.
 
 ## Recommended Makefile fragment
 
