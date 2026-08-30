@@ -16,6 +16,12 @@ SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
 "$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
     $SANITIZER_FLAGS -I"$REPO/ext/md4c" -c "$REPO/ext/md4c/md4c.c" -o "$BUILD_DIR/md4c.o"
 
+# The shared dark-reading recolor, used by the Markdown page drawing to darken
+# a document's embedded images the way a PDF's are darkened in the render tail.
+# shellcheck disable=SC2086
+"$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
+    $SANITIZER_FLAGS -I"$PORTABLE/core" -c "$PORTABLE/core/spdf_recolor.c" -o "$BUILD_DIR/spdf_recolor.o"
+
 # Vendored Gumbo HTML5 parser backing the sanitizing HTML-island whitelist.
 # Third-party sources compile without -Werror.
 GUMBO_OBJS=""
@@ -64,6 +70,7 @@ $PORTABLE/mac/markdown/SPDFMarkdownTableLayout.mm
 $PORTABLE/mac/markdown/SPDFMarkdownImageRowBand.mm
 $PORTABLE/mac/markdown/SPDFMarkdownPaginator.mm
 $PORTABLE/mac/markdown/SPDFMarkdownPaginatorDrawing.mm
+$PORTABLE/mac/markdown/SPDFMarkdownImageRecolor.mm
 $PORTABLE/mac/markdown/SPDFMarkdownAsync.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDocument.mm
 "
@@ -114,7 +121,7 @@ do
     # shellcheck disable=SC2086
     "$CXX" -isysroot "$SDKROOT" -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror \
         $SANITIZER_FLAGS -I"$PORTABLE/core" -I"$PORTABLE/mac" -I"$PORTABLE/mac/markdown" \
-        $FOUNDATION_SOURCES $UI_SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" $GUMBO_OBJS \
+        $FOUNDATION_SOURCES $UI_SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" "$BUILD_DIR/spdf_recolor.o" $GUMBO_OBJS \
         -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
         -framework UniformTypeIdentifiers -o "$BUILD_DIR/$TEST"
     "$BUILD_DIR/$TEST"

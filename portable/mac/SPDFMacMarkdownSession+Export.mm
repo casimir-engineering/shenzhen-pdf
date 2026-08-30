@@ -16,11 +16,13 @@
 // Paginates a rendition exactly the way the live screen pass does, so an
 // export plan and the on-screen plan differ in palette and nothing else.
 SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(SPDFMarkdownRenderedDocument* rendered,
-                                                            SPDFMarkdownThemeVariant variant) {
+                                                            SPDFMarkdownThemeVariant variant,
+                                                            BOOL preservesImageColors) {
     SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
     SPDFMarkdownPageConfiguration* configuration = [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
     configuration.includesCodeLanguageControlSpacing = YES;
     configuration.themeVariant = variant;
+    configuration.preservesImageColors = preservesImageColors;
     NSArray* items = [paginator measureRenderedDocument:rendered
                                          containerWidth:NSWidth(configuration.printableRect)];
     return [paginator paginateItems:items configuration:configuration];
@@ -36,7 +38,8 @@ SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(SPDFMarkdownRendered
     SPDFMarkdownRenderedDocument* rendered =
         [self.document renderedDocumentWithOptions:options languageOverrides:[_languageOverrides copy]];
     if (!rendered) return;
-    _exportPlan = SPDFMacMarkdownPlanForRendition(rendered, SPDFMarkdownThemeVariantLight);
+    // Light never recolors, so the flag is immaterial here; stated, not inferred.
+    _exportPlan = SPDFMacMarkdownPlanForRendition(rendered, SPDFMarkdownThemeVariantLight, YES);
     _exportAttributedString = rendered.attributedString;
     _exportRenditionSource = source;
 }

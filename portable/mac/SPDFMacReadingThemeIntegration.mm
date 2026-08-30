@@ -120,10 +120,15 @@
     for (SPDFDocumentTab* tab in _tabs) {
         if (tab == selected) continue;
         [tab.cachedMarkdownSession applyThemeVariant:self.markdownThemeVariant];
+        tab.cachedMarkdownSession.preservesImageColors = _darkThemePreservesImages;
         tab.cachedRenderedPages = nil;
     }
     if ([self isMarkdownActive]) {
         [self.activeMarkdownSession applyThemeVariant:self.markdownThemeVariant];
+        // Draw-time only, so a "keep image colors" flip costs a redraw rather
+        // than the rerender a theme flip needs.
+        self.activeMarkdownSession.preservesImageColors = _darkThemePreservesImages;
+        [self.activeMarkdownSession.rootView setNeedsDisplay:YES];
         return;
     }
     if (!_doc) return;

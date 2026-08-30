@@ -31,6 +31,10 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 // reserved language-control band). Print and Save-as-PDF consume this plan
 // with renderedDocument so exports match the reader page for page.
 @property(nonatomic, readonly, nullable) SPDFMarkdownPaginationPlan* paginationPlan;
+// The reader's "Keep Image Colors in Dark Theme" answer (default NO: recolor).
+// Only affects drawing, so setting it retargets the live plan in place rather
+// than re-rendering; the caller redraws.
+@property(nonatomic) BOOL preservesImageColors;
 // The EXPORT rendition: Save as PDF, Print, Copy Page and Copy Page Image
 // always produce the LIGHT reading theme, matching the PDF side (where an
 // export always carries the document's own colors — dark paper baked into a

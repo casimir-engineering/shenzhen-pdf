@@ -239,6 +239,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     // activation rerender the stale session once it is on screen.
     [session applyFontScale:_markdownFontScale];
     [session applyThemeVariant:self.markdownThemeVariant];
+    session.preservesImageColors = _darkThemePreservesImages;
     state.activeSession = session;
     [self configureMarkdownSession:session forTab:tab];
     if (!state.workQueue)

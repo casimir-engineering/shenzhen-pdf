@@ -1,4 +1,5 @@
 #import "SPDFMarkdownPaginator.h"
+#import "SPDFMarkdownImageRecolor.h"
 
 #import <CoreText/CoreText.h>
 
@@ -65,7 +66,8 @@ CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* lineString) {
 }
 
 static void SPDFDrawAttachments(NSAttributedString* lineString, CTLineRef line, CGContextRef context, CGFloat lineX,
-                                CGFloat baselineY, CGFloat lineHeight, CGFloat baselineOffset) {
+                                CGFloat baselineY, CGFloat lineHeight, CGFloat baselineOffset,
+                                BOOL recolorsImages) {
     [lineString enumerateAttribute:NSAttachmentAttributeName
                            inRange:NSMakeRange(0, lineString.length)
                            options:0
@@ -82,6 +84,14 @@ static void SPDFDrawAttachments(NSAttributedString* lineString, CTLineRef line, 
                           NSRect proposed = NSMakeRect(0, 0, bounds.size.width, bounds.size.height);
                           CGImageRef CGImage = [image CGImageForProposedRect:&proposed context:nil hints:nil];
                           if (!CGImage) return;
+                          if (recolorsImages) {
+                              // A Markdown page never passes through the core's
+                              // render tail, where a PDF's images are recolored,
+                              // so the same luma remap is applied here.
+                              CGImageRef darkened =
+                                  SPDFMarkdownDarkRecoloredImageForAttachment(attachment, CGImage);
+                              if (darkened) CGImage = darkened;
+                          }
                           CGFloat offset = CTLineGetOffsetForStringIndex(line, (CFIndex)range.location, NULL);
                           CGFloat fragmentBottom = baselineY + baselineOffset - lineHeight;
                           CGFloat fragmentTop = baselineY + baselineOffset;
@@ -204,6 +214,10 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
     if (pageIndex >= self.pages.count || !context) return NO;
     SPDFMarkdownPage* page = self.pages[pageIndex];
     SPDFMarkdownTheme* theme = [SPDFMarkdownTheme themeForVariant:self.configuration.themeVariant];
+    // Dark paper recolors embedded images unless the reader asked to keep their
+    // colors. Light plans -- print, export, copy-page -- never recolor.
+    BOOL recolorsImages = self.configuration.themeVariant == SPDFMarkdownThemeVariantDark &&
+                          !self.configuration.preservesImageColors;
     CGFloat paperHeight = self.configuration.paperSize.height;
     CGFloat printableTop = paperHeight - self.configuration.topContentInset;
     CGContextSaveGState(context);
@@ -225,7 +239,7 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
         CTLineDraw(line, context);
         CGFloat localScale = MAX(fragment.scale, 0.001);
         SPDFDrawAttachments(substring, line, context, 0, 0, fragment.height / localScale,
-                            fragment.baselineOffset / localScale);
+                            fragment.baselineOffset / localScale, recolorsImages);
         CGContextRestoreGState(context);
         CFRelease(line);
     }
