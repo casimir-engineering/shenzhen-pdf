@@ -153,6 +153,41 @@ void spdf_recolor_rgba_excluding(unsigned char* rgba, int width, int height, int
         spdf_recolor_rgba_row(rgba + (size_t)y * (size_t)stride, width, y, table, exclusions, count);
 }
 
+int spdf_recolor_path_is_picture(const char* path) {
+    /* Comic archives and every still-image format mupdf will open as a
+     * one-page document. Kept as an explicit allow-list of PICTURES rather
+     * than of documents so that an unrecognized text format still gets the
+     * theme. */
+    static const char* const picture_extensions[] = {"cbz", "cbr", "cb7",  "cbt",  "zip", "tar", "png",
+                                                     "jpg", "jpeg", "jpe", "jfif", "gif", "bmp", "tif",
+                                                     "tiff", "pnm", "pam", "pgm",  "ppm", "pbm", "jxr",
+                                                     "hdp", "wdp",  "jpx", "jp2",  "j2k", "psd", "webp"};
+    const char* dot = NULL;
+    const char* p;
+    size_t i;
+
+    if (!path) return 0;
+    for (p = path; *p; ++p) {
+        if (*p == '/' || *p == '\\')
+            dot = NULL;
+        else if (*p == '.')
+            dot = p;
+    }
+    if (!dot || !dot[1]) return 0;
+    for (i = 0; i < sizeof(picture_extensions) / sizeof(picture_extensions[0]); ++i) {
+        const char* want = picture_extensions[i];
+        const char* have = dot + 1;
+        while (*want && *have) {
+            int a = *have >= 'A' && *have <= 'Z' ? *have + 32 : *have;
+            if (a != *want) break;
+            ++want;
+            ++have;
+        }
+        if (!*want && !*have) return 1;
+    }
+    return 0;
+}
+
 /* ---- Per-page image regions -------------------------------------------- */
 
 void spdf_recolor_page_cache_reset(spdf_recolor_page_cache* cache) {

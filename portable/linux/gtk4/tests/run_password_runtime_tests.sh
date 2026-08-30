@@ -24,7 +24,7 @@ binary="build/password_runtime_test"
 # shellcheck disable=SC2046,SC2086
 ${CC:-cc} -O2 -Wall -Wextra -Icore -Ilinux/gtk4 -I../mupdf/include \
     linux/gtk4/tests/password_runtime_case.c linux/gtk4/spdf_password.c linux/gtk4/spdf_password_controller.c \
-    linux/gtk4/spdf_password_lifecycle.c build/shenzhen_pdf_core.o \
+    linux/gtk4/spdf_password_lifecycle.c build/shenzhen_pdf_core.o build/spdf_recolor.o \
     "$mupdf_build/libmupdf.a" "$mupdf_build/libmupdf-third.a" "$mupdf_build/libmupdf-pkcs7.a" \
     $(pkg-config --cflags --libs glib-2.0 gio-2.0) $platform_libs -lm -o "$binary"
 

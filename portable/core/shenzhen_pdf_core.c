@@ -55,6 +55,7 @@ struct spdf_document {
     /* Image rectangles per page, for SPDF_RENDER_PRESERVE_IMAGES. Pure cache:
      * the dark reading theme itself is a per-render flag, not document state. */
     spdf_recolor_page_cache recolor_pages;
+    int picture_document; /* a comic archive or a bare image: never recolored */
 };
 
 /* Core-private body of the public cancellation token: just an fz_cookie.
@@ -180,6 +181,7 @@ spdf_document* spdf_open_with_password(const char* path, const char* password, s
             opened->password_protected = password_protected;
             opened->authentication = auth_result;
             spdf_recolor_page_cache_reset(&opened->recolor_pages);
+            opened->picture_document = spdf_recolor_path_is_picture(path);
             opened->page_count = fz_count_pages(ctx, doc);
             if (opened->page_count > 0) {
                 opened->page_sizes =
@@ -556,8 +558,10 @@ static void copy_pixmap_to_bitmap(spdf_document* doc, fz_pixmap* pix, int page_i
      * own: this loop already walks every pixel of every render on every path
      * and format, and recoloring each row right after writing it keeps that
      * row in L1 instead of paying a second walk of the whole image. */
-    spdf_recolor_table_init(&recolor, (flags & SPDF_RENDER_DARK_THEME) ? SPDF_RECOLOR_LUMA_REMAP : SPDF_RECOLOR_NONE,
-                            spdf_recolor_default_dark_theme());
+    spdf_recolor_table_init(
+        &recolor, ((flags & SPDF_RENDER_DARK_THEME) && !doc->picture_document) ? SPDF_RECOLOR_LUMA_REMAP
+                                                                               : SPDF_RECOLOR_NONE,
+        spdf_recolor_default_dark_theme());
     if (recolor.kind != SPDF_RECOLOR_NONE && (flags & SPDF_RENDER_PRESERVE_IMAGES))
         exclusion_count = page_recolor_exclusions(doc, page_index, zoom, pix->x, pix->y, exclusions,
                                                   SPDF_RECOLOR_MAX_REGIONS);

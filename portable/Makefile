@@ -58,6 +58,7 @@ MAC_GUMBO_OBJS := $(patsubst ../ext/gumbo-parser/src/%.c,$(BUILD)/gumbo-%.o,$(MA
 CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
 CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
 CORE_RECOLOR_TEST := $(BUILD)/SPDFCoreRecolorTests
+CORE_RENDER_THEME_TEST := $(BUILD)/SPDFCoreRenderThemeTests
 CORE_RECOLOR_PROBE := $(BUILD)/SPDFRecolorProbe
 CORE_SELECTION_TEST := $(BUILD)/SPDFCoreSelectionTests
 CORE_CJK_SELECTION_TEST := $(BUILD)/SPDFCoreCJKSelectionTests
@@ -103,7 +104,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -154,6 +155,12 @@ $(CORE_RECOLOR_TEST): core/tests/SPDFCoreRecolorTests.c $(CORE_RECOLOR_OBJ) | $(
 
 core-recolor-tests: $(CORE_RECOLOR_TEST)
 	"$(CORE_RECOLOR_TEST)"
+
+$(CORE_RENDER_THEME_TEST): core/tests/SPDFCoreRenderThemeTests.c $(CORE_OBJS) mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -I$(MUPDF_DIR)/include $< $(CORE_OBJS) $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
+
+core-render-theme-tests: $(CORE_RENDER_THEME_TEST)
+	"$(CORE_RENDER_THEME_TEST)"
 
 # Not part of the test suite: renders a real page with and without the dark
 # reading theme, times every transform and writes before/after PNGs, so recolor
@@ -406,7 +413,7 @@ install: mac-app
 LINUX_GTK4_SRCS := $(sort $(wildcard linux/gtk4/*.c))
 
 linux-gtk4: mupdf-libs | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" "$(CORE_SELECTION_SRC)" "$(CORE_SELECTION_SUPPORT_SRC)" "$(YAML_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
+	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" "$(CORE_SELECTION_SRC)" "$(CORE_SELECTION_SUPPORT_SRC)" "$(CORE_RECOLOR_SRC)" "$(YAML_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
 
 linux-gtk4-tests: | $(BUILD)
 	@set -e; for t in $(sort $(wildcard linux/gtk4/tests/*_test.c)); do \

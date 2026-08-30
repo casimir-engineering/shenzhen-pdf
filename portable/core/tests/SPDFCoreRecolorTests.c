@@ -119,6 +119,19 @@ int main(void) {
         check(memcmp(whole, rows, sizeof(whole)) == 0, "row-at-a-time recolor matches the whole-buffer form");
     }
 
+    /* Comic archives and bare images are pictures, not documents: never
+     * recolored, the way SumatraPDF skips its own override for image
+     * collections. Anything unrecognized is a document, so a text format we
+     * have not heard of still gets the theme. */
+    check(spdf_recolor_path_is_picture("/books/Volume 1.cbz"), "a comic archive is a picture");
+    check(spdf_recolor_path_is_picture("/photos/IMG_0042.JPEG"), "an image is a picture, case insensitively");
+    check(!spdf_recolor_path_is_picture("/docs/datasheet.pdf"), "a PDF is a document");
+    check(!spdf_recolor_path_is_picture("/books/novel.epub"), "an EPUB is a document");
+    check(!spdf_recolor_path_is_picture("/docs/report.xps"), "an XPS is a document");
+    check(!spdf_recolor_path_is_picture("/docs/notes"), "an extensionless path is a document");
+    check(!spdf_recolor_path_is_picture("/my.cbz.archive/report.pdf"), "only the basename's extension counts");
+    check(!spdf_recolor_path_is_picture(NULL), "a NULL path is a document");
+
     /* The page-region cache and the scanned-page guard. */
     {
         spdf_recolor_page_cache cache;
