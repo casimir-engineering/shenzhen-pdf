@@ -85,6 +85,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)printActiveMarkdown;
 - (void)saveActiveMarkdownAsPDF;
 - (void)updateControlsForActiveMarkdown;
+// The tab-activation focus chokepoint (ShenzhenPDFMac.mm). Safe to re-run: it
+// only claims focus from a passive holder.
+- (void)focusActiveDocumentViewAfterTabSelection;
 - (void)updateMarkdownFontControls;
 - (void)decreaseMarkdownFontSize:(nullable id)sender;
 - (void)increaseMarkdownFontSize:(nullable id)sender;

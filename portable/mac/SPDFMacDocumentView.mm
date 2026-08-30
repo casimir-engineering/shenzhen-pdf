@@ -403,7 +403,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 
     [NSGraphicsContext saveGraphicsState];
     if (!self.presentationMode && self.drawsPageShadow) [pageShadow set];
-    [[NSColor whiteColor] setFill];
+    [self.pageFillColor setFill];
     NSRectFill(pageRect);
     [NSGraphicsContext restoreGraphicsState];
 

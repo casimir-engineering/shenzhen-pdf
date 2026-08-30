@@ -288,6 +288,14 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                                                               reveal:NO];
                            [strongSelf rebuildSidebar];
                            [strongSelf updateMarkdownMinimap];
+                           // A Markdown canvas only exists once this async load
+                           // lands, so the tab-activation focus claim ran too
+                           // early to find one and focus stayed parked -- typing
+                           // and Cmd+F did nothing until the user clicked the
+                           // page. Re-run the claim now that there is something
+                           // to focus. It is guarded, so a find/page field the
+                           // user has clicked into meanwhile keeps typing.
+                           [strongSelf focusActiveDocumentViewAfterTabSelection];
                        }
                        [strongSelf updateControlsForActiveMarkdown];
                        [strongSelf savePersistentState];

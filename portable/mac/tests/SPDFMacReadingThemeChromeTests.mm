@@ -83,6 +83,7 @@ int main(void) {
 
         Expect("light document view defaults to the shadow", view.drawsPageShadow);
         Expect("light document view draws no page border", view.pageBorderColor == nil);
+        Expect("light page underlay is white", ColorMatchesHex(view.pageFillColor, 0xFFFFFF));
         Expect("light gutter keeps the system canvas background",
                view.viewportBackgroundColor != nil &&
                    !ColorMatchesHex(view.viewportBackgroundColor, 0x121212));
@@ -93,6 +94,12 @@ int main(void) {
                ColorMatchesHex(view.pageBorderColor, 0x333333));
         Expect("dark document view takes the theme gutter",
                ColorMatchesHex(view.viewportBackgroundColor, 0x121212));
+        // A white underlay showed through as a bright edge wherever a page's
+        // bitmap fell a fraction of a point short of its page rect.
+        Expect("dark page underlay is the theme paper, never white",
+               ColorMatchesHex(view.pageFillColor, 0x1E1E1E));
+        Expect("dark page underlay sits below its own border",
+               Luminance(view.pageFillColor) < Luminance(view.pageBorderColor));
 
         // --- The border actually lands on all four sides -----------------
         NSRect pageRect = [view rectForPageAtIndex:0];
@@ -110,17 +117,24 @@ int main(void) {
             {"left border", NSMakePoint(NSMinX(pageRect) + 0.5, NSMidY(pageRect))},
             {"right border", NSMakePoint(NSMaxX(pageRect) - 0.5, NSMidY(pageRect))},
         };
+        // One point inside the frame is bare sheet: the theme's #1E1E1E paper.
+        // This used to read white, because the underlay beneath a page's bitmap
+        // was hardcoded white -- which is exactly what leaked out as a bright
+        // edge wherever the bitmap fell a fraction of a point short.
+        NSColor* sheet = SampleAt(darkRaster, view, NSMidX(pageRect), NSMinY(pageRect) + 2.0);
+        Expect("dark sheet is the theme paper, not white", ColorMatchesHex(sheet, 0x1E1E1E));
         for (size_t i = 0; i < sizeof(edges) / sizeof(edges[0]); ++i) {
             NSColor* sample = SampleAt(darkRaster, view, edges[i].point.x, edges[i].point.y);
-            // #333333 on white paper: every edge must be visibly darker than
-            // the sheet it frames, on all four sides.
-            Expect(edges[i].label, Luminance(sample) < 0.5);
+            // #333333 on #1E1E1E paper: every edge must read against the sheet
+            // it frames, on all four sides, and none may be brighter than
+            // another -- an asymmetric edge is the artifact this guards.
+            Expect(edges[i].label, Luminance(sample) > Luminance(sheet) + 0.01);
+            NSColor* opposite = SampleAt(darkRaster, view, edges[(i + 2) % 4].point.x, edges[(i + 2) % 4].point.y);
+            Expect("opposite borders match", fabs(Luminance(sample) - Luminance(opposite)) < 0.02);
         }
-        // ...and only the edge: one point in, the sheet is untouched.
-        Expect("the border does not eat page content",
-               Luminance(SampleAt(darkRaster, view, NSMidX(pageRect), NSMinY(pageRect) + 2.0)) > 0.9);
         NSColor* gutter = SampleAt(darkRaster, view, 2, 2);
         Expect("dark gutter is painted around the page", ColorMatchesHex(gutter, 0x121212));
+        Expect("gutter sits below the sheet", Luminance(gutter) < Luminance(sheet));
 
         // Light keeps the sheet edge-to-edge white: no border stroke on it.
         view.themeVariant = SPDFMarkdownThemeVariantLight;
@@ -136,9 +150,15 @@ int main(void) {
         NSBitmapImageRep* presentationRaster = RasterizeView(view);
         NSRect presentationRect = [view rectForPageAtIndex:0];
         Expect("presentation gutter is black", Luminance(SampleAt(presentationRaster, view, 1, 1)) < 0.02);
+        // No frame in presentation: the edge pixel is the same sheet as the
+        // interior. Comparing the two is what proves the border is absent --
+        // asserting a fixed brightness would only re-state the sheet color.
+        NSColor* presentationEdge = SampleAt(presentationRaster, view, NSMidX(presentationRect),
+                                             NSMinY(presentationRect) + 0.5);
+        NSColor* presentationSheet = SampleAt(presentationRaster, view, NSMidX(presentationRect),
+                                              NSMinY(presentationRect) + 2.0);
         Expect("presentation draws no page border",
-               Luminance(SampleAt(presentationRaster, view, NSMidX(presentationRect),
-                                  NSMinY(presentationRect) + 0.5)) > 0.9);
+               fabs(Luminance(presentationEdge) - Luminance(presentationSheet)) < 0.02);
         view.presentationMode = NO;
 
         // --- The single-segment toolbar pill -----------------------------
