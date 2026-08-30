@@ -49,9 +49,26 @@ trap 'rm -rf "$TMP"' EXIT
 fail=0
 note() { printf '  %s\n' "$*"; }
 
+# The SHA256 of the guest PNG, or EMPTY when it is not there.
+#
+# `certutil -hashfile` prints its own error text on line 2 when the file is
+# missing ("CertUtil: The system cannot find the file specified."), so taking
+# line 2 unconditionally returned that sentence AS THE HASH. Two absent-file
+# calls then compared equal, and this check reported "the file survived
+# unchanged" about a file that did not exist. Exactly the failure mode this
+# script was written to catch, one level up: a comparison that cannot tell
+# missing data from unchanged data.
+#
+# Decided by exit code first, then by the shape of the line, and never by
+# piping into grep.
 guest_hash() {
-  prlctl exec "$VM_NAME" cmd.exe /c "certutil -hashfile $GUEST_PNG SHA256" 2>/dev/null \
-    | tr -d '\r' | sed -n 2p
+  local out
+  out="$(prlctl exec "$VM_NAME" cmd.exe /c "certutil -hashfile $GUEST_PNG SHA256" 2>/dev/null)"
+  [[ $? -eq 0 ]] || return 0
+  out="$(printf '%s' "$out" | tr -d '\r' | sed -n 2p)"
+  case "$out" in
+    [0-9a-fA-F][0-9a-fA-F]*) printf '%s' "$out" ;;
+  esac
 }
 
 echo "== qc: probe staleness / silent-write check =="

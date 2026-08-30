@@ -32,19 +32,38 @@ moves the second number a little; a real bug moves it a lot.
 TOLERANCE PROVENANCE -- READ BEFORE CHANGING THE DEFAULTS.
 The port plan (portable/docs/windows-port-plan.md, section 6) requires the
 tolerance to be MEASURED against a real Windows render and then pinned, never
-assumed. As of this commit no Windows render exists yet (MuPDF is not built in
-the guest), so the defaults below are provisional and deliberately loose enough
-not to produce a false failure on first contact:
+assumed. IT HAS NOW BEEN MEASURED, and the answer is zero:
 
-    MEASURED_MAX_MAE      = None   <- unmeasured
-    MEASURED_MAX_BAD_PCT  = None   <- unmeasured
+    MEASURED_MAX_MAE      = 0.0    <- measured, not assumed
+    MEASURED_MAX_BAD_PCT  = 0.0    <- measured, not assumed
 
-When the first Windows render lands, run with --strict first. If it is
-byte-identical -- which is plausible, since portable/win/verify.sh already proves
-byte-identity for pure integer C between clang/arm64 and MSVC/ARM64, and MuPDF's
-rasteriser is largely fixed-point -- then pin these at 0 and pass --strict from
-the runner. Otherwise record the observed numbers here and set the defaults just
-above them. Do not widen a threshold to make a failing comparison pass.
+macOS clang/arm64 and Windows MSVC/ARM64 render the harness fixtures
+BYTE-IDENTICALLY -- same pixels, same sha256 -- on the opaque fixture in `plain`
+mode and on the transparent one in `alpha` mode. This was predicted (MuPDF's
+rasteriser is largely fixed-point, and portable/win/verify.sh already proved
+byte-identity for pure integer C across these two toolchains) and it is now
+observed rather than hoped for.
+
+So probe-cases.sh passes --strict, and --strict DECIDES the case. It previously
+ran "for the report only", with the case decided by the loose provisional
+defaults below -- which meant a real regression that stayed inside mae 1.5 and 2%
+bad pixels would have passed a comparison known to be bit-exact. The plan says:
+if the delta is zero, pin it at zero. It is zero.
+
+The loose DEFAULT_* values below are NOT the pass bar any more. They survive as
+the diagnostic scale: once --strict has already failed a case, a second loose run
+says whether the drift is subtle or gross and puts a named diagnosis (flip,
+channel swap, premultiplied alpha, halo) in the report. If a rasteriser change
+ever makes byte-identity genuinely unattainable, record the newly observed
+numbers HERE, with the run that produced them, and set the bar just above them.
+Do not widen a threshold to make a failing comparison pass.
+
+WHAT THE DETECTORS ARE POINTED AT. The premultiplied-alpha and transparent-halo
+checks below can only fire on an image that HAS alpha. golden.pdf renders fully
+opaque, so for a long time neither could fire on any real comparison in this
+suite -- premultiplying an opaque image is the identity transform. That is why
+fixtures/alpha.pdf exists and why it is in the compared set; see
+make_fixture_pdf.py's build_alpha().
 
 No third-party dependency: PNG reading and writing live in png_io.py next door
 and use nothing but stdlib zlib. Adding Pillow here would mean the test harness
@@ -60,9 +79,11 @@ import zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from png_io import DecodeError, Image, decode_png, encode_png  # noqa: E402,F401
 
-MEASURED_MAX_MAE = None
-MEASURED_MAX_BAD_PCT = None
+# Measured across hosts, not assumed. See TOLERANCE PROVENANCE above.
+MEASURED_MAX_MAE = 0.0
+MEASURED_MAX_BAD_PCT = 0.0
 
+# Diagnostic scale only -- --strict is the pass bar. See above.
 DEFAULT_MAX_MAE = 1.5
 DEFAULT_DELTA = 40
 DEFAULT_MAX_BAD_PCT = 2.0

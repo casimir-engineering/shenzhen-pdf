@@ -307,12 +307,51 @@ floating-point mean could differ in its last digit and turn a healthy run red.
 It deliberately avoids `clock_gettime`, which is absent from the MSVC UCRT.
 
 ```sh
-spdf_win_probe <document> [page] [zoom] [out.png] [plain|dark|dark-images]
+spdf_win_probe <document> [page] [zoom] [out.png] [plain|dark|dark-images|alpha]
 ```
 
 `probe.mac` builds it with clang against `mupdf/build/release-macos-*`;
 `probe.win` builds it through `vm-build.sh`; `probe.diff` diffs the two
-transcripts; `probe.png` compares the two rendered PNGs.
+transcripts; `probe.png` compares the two rendered PNGs. `alpha.mac` /
+`alpha.win` / `alpha.diff` / `alpha.png` do the same over `alpha.pdf` in `alpha`
+mode.
+
+**A failed PNG write is a failed run.** `write_png()` used to return `void`: it
+caught the MuPDF throw, printed it to stderr, and returned, after which `main()`
+printed `png <basename>` — a line that asserts the file exists — then `ok`, and
+exited **0**. The exit code is the only signal `run-tests.sh` consults, so that
+failure never happened as far as the harness was concerned. It now returns a
+status, `main()` propagates it, and neither `png` nor `ok` is printed for a file
+that was not written.
+
+That mattered because it composed with a second defect into a complete false-pass
+chain, which is worth spelling out since the whole port's headline claim rested
+on it:
+
+> the Windows probe fails to render → it exits 0 anyway → `probe.win` records
+> **PASS** → `fetch_probe_png.ps1` returns the **previous** run's image →
+> `probe.png` compares last run's Windows pixels against this run's macOS
+> reference and reports **byte-identical**.
+
+A real Windows render regression was invisible for as long as the stale file
+survived. Three independent guards now close it, and each one alone is enough:
+
+1. **The probe deletes its own output before rendering**, so "the file exists"
+   means "*this* run wrote it" for every caller — harness, canary, or a hand
+   invocation in the guest.
+2. **`probe-cases.sh` clears the guest-side artifact before the run**, via its
+   own `prlctl exec` (the Mac cannot reach `C:\` through the share) and verified
+   by exit code rather than assumed — `del` reports success for a file it never
+   found. The run refuses to start if the path could not be cleared.
+3. **`fetch_probe_png.ps1` removes the file once it has read it.** It is a
+   transport buffer, not an artifact; the durable copy is the one on the Mac.
+   After a successful fetch there is nothing left to serve twice, and a second
+   fetch with no intervening render fails loudly, which is the right answer to a
+   question with no fresh data behind it.
+
+Deleting *after* a run would have closed nothing: the entire hazard lives in the
+window between a failed render and the next fetch. `tests/qc/probe-staleness-check.sh`
+pins both halves and is green.
 
 ### `compare_png.py` — why one tolerance is not enough
 
@@ -339,12 +378,18 @@ per-channel delta exceeds `--delta`. It reports both, plus max channel delta,
 the worst 16×16 block and its coordinates, a transparent-halo pixel count, and a
 one-line diagnosis; `--json` writes the lot. `--strict` demands byte identity.
 
-**The tolerance defaults are marked UNMEASURED on purpose.** The port plan
-requires them to be set from a real Windows render and pinned. Until
-`libmupdf.lib` exists in the guest there is no such render, and inventing a
-number would be exactly the dishonesty the plan warns against. When the first
-comparison runs: try `--strict` first, and if it is byte-identical, pin the
-defaults at zero.
+**The tolerance is pinned at zero, because zero is what was measured.** The port
+plan requires it to be set from a real Windows render rather than assumed. The
+render exists, and both fixtures come back byte-identical from the guest — same
+pixels, same sha256 — so `probe-cases.sh` passes `--strict` and **`--strict`
+decides the case**. It used to run "for the report only", with the case actually
+decided by the loose provisional defaults (mae 1.5, 2% bad pixels); a regression
+that stayed inside those would have passed a comparison known to be bit-exact.
+The loose numbers survive only as a diagnostic scale — once `--strict` has failed
+a case, a second loose run says whether the drift is subtle or gross and names
+the bug. If byte-identity ever becomes genuinely unattainable, record the newly
+observed numbers in `compare_png.py` with the run that produced them. Never widen
+a threshold to make a failing comparison pass.
 
 `compare_png_selftest.py` is the argument that any of this can be trusted. It
 mutates a synthetic reference with one known port bug at a time and asserts both
@@ -355,26 +400,38 @@ decoding a real MuPDF-written PNG.
 
 ### Where it stands
 
-Last full run: **12 cases, 8 pass, 0 fail, 4 blocked.**
+The `libmupdf.lib` `LNK2048` alignment defect that once blocked `probe.win`,
+`probe.diff`, `probe.png` and `SPDFCoreSaveTests` **is fixed** — see the MuPDF
+chapter below, which builds, links and renders in the guest. There is a Windows
+render, it is byte-identical to the macOS one, and the tolerance is pinned at
+zero accordingly. (This section claimed the opposite for a while, two hundred
+lines before the chapter proving otherwise; a reader who stopped here concluded
+the port had no Windows render at all.)
 
 Passing in the guest under MSVC/ARM64: the exit-code contract, the code-page
-check, the comparator self-test, the macOS reference probe,
-`SPDFCoreRecolorTests`, `SPDFCoreCompatTests`, `paths_test` and `state_test`.
+check, the comparator self-test, both cross-host probe pipelines end to end
+(`probe.*` over the opaque fixture, `alpha.*` over the transparent one),
+`SPDFCoreRecolorTests`, `SPDFCoreCompatTests`, `SPDFCoreSaveTests`, `paths_test`
+and `state_test`.
 
-Blocked: `probe.win`, `probe.diff`, `probe.png` and `SPDFCoreSaveTests`, all on
-one defect in the guest's `libmupdf.lib` —
+Two results worth stating precisely, because they are the port's headline
+claims and both have been miscounted before:
 
-```
-libmupdf.lib(hyphen.obj) : error LNK2048: relocation PAGEOFFSET_12L targeting
-'_binary_hyph_all_zip_size' is invalid for the instruction ... due to bad
-alignment of offset to target; expected to be 4 bytes aligned
-LINK : fatal error LNK1165: link failed because of fixup errors
-```
+* The cross-host probe transcript is **43 lines**, not 42, and byte-identical
+  between macOS clang/arm64 and Windows MSVC/ARM64. The runner now prints the
+  count it actually measured, so the number cannot drift in prose again.
+* The rendered PNGs are byte-identical: `sha256 00432a55a58dbfe1…` for
+  `golden.pdf` in `plain` mode, `sha256 32c0e3b9de92eeeb…` for `alpha.pdf` in
+  `alpha` mode.
 
-The generated hyphenation-data object is not 4-byte aligned for ARM64. Anything
-that links MuPDF in the guest hits it. Until it is fixed there is no Windows
-render, which is why the comparator's tolerance is still marked UNMEASURED
-rather than given a plausible-looking number.
+`SPDFCoreSaveTests` deserves its own line: it is newly passing not because the
+code changed but because it had **never actually run**. `guest_run()` pasted its
+argument straight onto the closing quote of the executable path, cmd answered
+*"The filename, directory name, or volume label syntax is incorrect"*, and the
+harness reported the result as a failure in `portable/core` — sending every
+reader to the wrong file while the only suite that exercises the Windows save
+path silently never launched. The separator is now inserted by `guest_run()`
+itself rather than left to each caller's convention.
 
 A build that fails *inside* `libmupdf.lib` is recorded BLOCKED rather than
 FAILED so the report points at the party who can fix it. That does not change
@@ -384,7 +441,7 @@ deliberately narrow — a linker error attributed to an object inside
 infrastructure would hide exactly the unresolved-symbol failures the harness
 exists to surface.
 
-### The fixture
+### The fixtures
 
 `tests/fixtures/golden.pdf` is hand-assembled by `tests/make_fixture_pdf.py`
 (no MuPDF, no reportlab — nothing that could drift and silently change the
@@ -393,6 +450,40 @@ is asymmetric top-to-bottom so a vertical flip is unmissable, carries unequal
 pure-red and pure-blue regions so a channel swap cannot be confused with the
 flip, has text and hairlines so anti-aliasing differences show up somewhere real,
 and its second page is a different size from its first.
+
+`tests/fixtures/alpha.pdf` exists because `golden.pdf` **cannot** do the other
+half of the job. It paints an opaque white backdrop and renders fully opaque —
+alpha 255 everywhere — and premultiplying a fully opaque image is the identity
+transform. So the comparator's two alpha guards, the pair aimed squarely at the
+premultiplied-alpha halo this repo has already shipped once, could not fire on
+any real comparison in the suite however broken the render was. Measured
+directly: premultiplying the `golden.pdf` reference, and recolouring every one of
+its transparent pixels, both still **pass** `--strict`. The same two mutations of
+the `alpha.pdf` reference fail, and are named correctly (`PREMULTIPLIED ALPHA`
+over 49,660 partially transparent pixels; `TRANSPARENT-PIXEL HALO`, 84,690 px).
+The halo case is the one that shows why this matters: it scores mean absolute
+error **0.0000** and max channel delta **0**, so no tolerance, no block check and
+no checksum over composited output can see it — only a detector pointed at an
+image that actually has alpha.
+
+`alpha.pdf` has a transparent page background (no backdrop fill at all), two
+constant-alpha graphics states over overlapping rectangles, text under 50% alpha,
+and an image XObject with an `/SMask` cut-out whose mask has hard 0 and 255
+plateaus and a graded rim. Its render carries 49,660 partially transparent pixels
+across alpha 0–255.
+
+It is compared through the probe's `alpha` mode rather than `plain`, and that is
+a finding in itself: **no PDF fixture can produce a non-opaque render through the
+shipping core entry point.** `spdf_render_page_rgba_opts` creates its pixmap with
+`alpha=0` on all three of its paths, and `copy_pixmap_to_bitmap` then writes a
+literal 255 into every alpha byte. The core's output is opaque by construction,
+whatever the document says — a reasonable choice for a page renderer, but it
+means the alpha detectors could never have been exercised by adding a fixture
+alone. `alpha` mode renders through MuPDF directly with an alpha-bearing pixmap
+and un-premultiplies into the straight-alpha RGBA convention `spdf_bitmap`
+documents and the Direct2D path consumes. It proves something narrower than the
+`plain` transcript — that the two toolchains agree bit-for-bit on alpha
+compositing — and it makes two dead detectors live.
 
 ---
 

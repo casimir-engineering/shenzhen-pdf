@@ -4,3 +4,9 @@
 # byte-for-byte by ../make_fixture_pdf.py. Un-ignore it here rather than
 # weakening the root rule.
 !golden.pdf
+# alpha.pdf is the second deliberate exception. golden.pdf renders fully opaque,
+# so the comparator's premultiplied-alpha and transparent-halo detectors cannot
+# fire on it; this one has a transparent page background, constant-alpha
+# graphics states and an SMask cut-out image, which is what makes those two
+# detectors live. Same provenance: hand-assembled by ../make_fixture_pdf.py.
+!alpha.pdf

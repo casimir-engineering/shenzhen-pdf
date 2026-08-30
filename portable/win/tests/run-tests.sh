@@ -198,7 +198,9 @@ case_non_ascii_path() {
   record "harness.non-ascii-path" PASS "narrow argv round-trips a non-ASCII path (${bytes:-bytes not captured})"
 }
 
-# The cross-host probe pipeline: probe.mac, probe.win, probe.diff, probe.png.
+# The cross-host probe pipeline: probe.* over the opaque golden fixture, and
+# alpha.* over the transparent one, which is the only comparison in the suite
+# that can exercise the comparator's premultiplied-alpha and halo detectors.
 . "$TESTS_DIR/probe-cases.sh"
 
 # Core suites that already exist as pure C over portable/core: free Windows
@@ -335,7 +337,8 @@ case_win_tests() {
 
 if [[ $LIST -eq 1 ]]; then
   printf '%s\n' selftest.compare-png harness.exit-code harness.non-ascii-path \
-      probe.mac probe.win probe.diff probe.png 'core.<suite>' 'win.<name>_test'
+      probe.mac probe.win probe.diff probe.png \
+      alpha.mac alpha.win alpha.diff alpha.png 'core.<suite>' 'win.<name>_test'
   exit 0
 fi
 
@@ -368,6 +371,10 @@ selected probe.mac && case_probe_mac
 selected probe.win && case_probe_win
 selected probe.diff && case_probe_diff
 selected probe.png && case_probe_png
+selected alpha.mac && case_alpha_mac
+selected alpha.win && case_alpha_win
+selected alpha.diff && case_alpha_diff
+selected alpha.png && case_alpha_png
 case_core_suites
 case_win_tests
 

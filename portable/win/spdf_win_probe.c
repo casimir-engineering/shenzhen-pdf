@@ -1,6 +1,6 @@
 /* spdf_win_probe -- the cross-host conformance probe for the Windows port.
  *
- *   spdf_win_probe <document> [page-index] [zoom] [out.png] [plain|dark|dark-images]
+ *   spdf_win_probe <document> [page-index] [zoom] [out.png] [plain|dark|dark-images|alpha]
  *
  * WHAT THIS IS FOR. The Windows port has no screen an agent can look at, so the
  * question "does portable/core behave the same on Windows as it does on macOS?"
@@ -73,13 +73,25 @@ static void checksum_pixels(const unsigned char* rgba, int w, int h, int stride,
              (unsigned long)(hash & 0xFFFFFFFFULL));
 }
 
-static void write_png(const char* path, const unsigned char* rgba, int w, int h, int stride) {
+/* Returns 1 on success, 0 on failure -- and the caller MUST propagate that into
+ * the process exit status.
+ *
+ * This used to return void. It caught the MuPDF throw, printed it to stderr, and
+ * returned; main() then printed `png <basename>` -- a line that ASSERTS the file
+ * exists -- followed by `ok`, and exited 0. Composed with a stale artifact left
+ * behind in the guest, that gave the harness a complete false-pass chain: a
+ * Windows render that produced nothing exited 0, the run recorded PASS, the
+ * fetch returned the PREVIOUS run's image, and the golden comparison declared it
+ * byte-identical. The exit code is the ONLY signal run-tests.sh consults, so a
+ * failure that does not reach it is a failure that never happened. */
+static int write_png(const char* path, const unsigned char* rgba, int w, int h, int stride) {
     fz_context* ctx = fz_new_context(NULL, NULL, FZ_STORE_UNLIMITED);
+    int ok = 0;
     int y;
 
     if (!ctx) {
         fprintf(stderr, "probe: no fitz context for png\n");
-        return;
+        return 0;
     }
     fz_try(ctx) {
         /* alpha=1: the golden comparison must be able to see the alpha channel.
@@ -91,16 +103,123 @@ static void write_png(const char* path, const unsigned char* rgba, int w, int h,
             memcpy(pix->samples + (size_t)y * (size_t)pix->stride, rgba + (size_t)y * (size_t)stride, (size_t)w * 4);
         fz_save_pixmap_as_png(ctx, pix, path);
         fz_drop_pixmap(ctx, pix);
+        ok = 1;
     }
     fz_catch(ctx) { fprintf(stderr, "probe: png write failed: %s\n", fz_caught_message(ctx)); }
     fz_drop_context(ctx);
+    return ok;
 }
 
 static unsigned flags_from_name(const char* name) {
     if (!name || !strcmp(name, "plain")) return SPDF_RENDER_DEFAULT;
     if (!strcmp(name, "dark")) return SPDF_RENDER_DARK_THEME;
     if (!strcmp(name, "dark-images")) return SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES;
+    if (!strcmp(name, "alpha")) return SPDF_RENDER_DEFAULT; /* see render_alpha_rgba */
     return 0xFFFFFFFFu; /* caller reports the usage error */
+}
+
+/* THE ALPHA MODE, AND WHY IT DOES NOT GO THROUGH THE CORE.
+ *
+ * The comparator (tests/compare_png.py) carries two detectors aimed squarely at
+ * the premultiplied-alpha halo this repo has already shipped once. Neither can
+ * fire on an opaque image: premultiplying a fully opaque buffer is the identity
+ * transform, and a halo is a disagreement about the colour of pixels whose alpha
+ * is zero. So the detectors are only as live as the alpha in the images they are
+ * pointed at.
+ *
+ * No PDF fixture can supply that through the shipping entry point.
+ * spdf_render_page_rgba_opts() renders every one of its three paths into a
+ * pixmap created with alpha=0 (shenzhen_pdf_core.c), and copy_pixmap_to_bitmap()
+ * then writes a literal 255 into every alpha byte. The core's output is opaque
+ * by construction, whatever the document says. That is a deliberate choice for a
+ * page renderer and not a defect -- but it does mean the alpha guards cannot be
+ * exercised by the `plain` mode no matter which file we hand it.
+ *
+ * This mode therefore renders the page through MuPDF directly with an
+ * alpha-bearing pixmap, and un-premultiplies into the straight-alpha RGBA
+ * convention that spdf_bitmap documents and that the Direct2D compose path
+ * consumes. What it proves is narrower than the `plain` transcript and worth
+ * having anyway: that the two toolchains agree bit-for-bit about alpha
+ * compositing, and that a host which started premultiplying, or started leaving
+ * colour in its transparent pixels, would be caught by a comparison that is
+ * actually able to notice.
+ *
+ * The un-premultiply is integer and exact-rounded, so it cannot itself become a
+ * source of cross-host drift: identical inputs, identical output, no floating
+ * point anywhere. See the determinism rules at the top of this file.
+ */
+static int render_alpha_rgba(const char* path, int page, double zoom, spdf_bitmap* out) {
+    fz_context* ctx = fz_new_context(NULL, NULL, FZ_STORE_UNLIMITED);
+    fz_document* fzdoc = NULL;
+    fz_pixmap* pix = NULL;
+    unsigned char* dst = NULL;
+    int ok = 0;
+
+    if (!ctx) {
+        fprintf(stderr, "probe: no fitz context for the alpha render\n");
+        return 0;
+    }
+    fz_var(fzdoc);
+    fz_var(pix);
+    fz_var(dst);
+    fz_try(ctx) {
+        int w, h, y, x, src_stride;
+        const unsigned char* samples;
+
+        fz_register_document_handlers(ctx);
+        fzdoc = fz_open_document(ctx, path);
+        pix = fz_new_pixmap_from_page_number(ctx, fzdoc, page, fz_scale((float)zoom, (float)zoom),
+                                             fz_device_rgb(ctx), 1);
+        w = fz_pixmap_width(ctx, pix);
+        h = fz_pixmap_height(ctx, pix);
+        src_stride = fz_pixmap_stride(ctx, pix);
+        samples = fz_pixmap_samples(ctx, pix);
+        if (w <= 0 || h <= 0) fz_throw(ctx, FZ_ERROR_GENERIC, "alpha render produced a %dx%d pixmap", w, h);
+        dst = (unsigned char*)malloc((size_t)w * (size_t)h * 4);
+        if (!dst) fz_throw(ctx, FZ_ERROR_SYSTEM, "out of memory for the alpha bitmap");
+
+        for (y = 0; y < h; ++y) {
+            const unsigned char* row = samples + (size_t)y * (size_t)src_stride;
+            unsigned char* orow = dst + (size_t)y * (size_t)w * 4;
+            for (x = 0; x < w; ++x) {
+                const unsigned char* px = row + (size_t)x * 4;
+                unsigned char* opx = orow + (size_t)x * 4;
+                int a = px[3];
+                int k;
+                opx[3] = (unsigned char)a;
+                if (a == 0) {
+                    /* Fully transparent pixels are forced to a single canonical
+                     * colour. Anything else here would be a halo of our own
+                     * making, and the halo detector would then be measuring this
+                     * function instead of the render. */
+                    opx[0] = opx[1] = opx[2] = 0;
+                } else if (a == 255) {
+                    opx[0] = px[0];
+                    opx[1] = px[1];
+                    opx[2] = px[2];
+                } else {
+                    for (k = 0; k < 3; ++k) {
+                        int v = (px[k] * 255 + a / 2) / a;
+                        opx[k] = (unsigned char)(v > 255 ? 255 : v);
+                    }
+                }
+            }
+        }
+        out->width = w;
+        out->height = h;
+        out->stride = w * 4;
+        out->rgba = dst;
+        dst = NULL; /* ownership handed to the caller */
+        ok = 1;
+    }
+    fz_always(ctx) {
+        if (pix) fz_drop_pixmap(ctx, pix);
+        if (fzdoc) fz_drop_document(ctx, fzdoc);
+        free(dst);
+    }
+    fz_catch(ctx) { fprintf(stderr, "probe: alpha render failed: %s\n", fz_caught_message(ctx)); }
+    fz_drop_context(ctx);
+    return ok;
 }
 
 int main(int argc, char** argv) {
@@ -109,6 +228,7 @@ int main(int argc, char** argv) {
     double zoom = argc > 3 ? atof(argv[3]) : 2.0;
     const char* png_path = (argc > 4 && argv[4][0] && strcmp(argv[4], "-")) ? argv[4] : NULL;
     const char* mode = argc > 5 ? argv[5] : "plain";
+    int alpha_mode;
     unsigned flags;
     char err[512];
     spdf_document* doc;
@@ -121,14 +241,35 @@ int main(int argc, char** argv) {
     char digest[32];
 
     if (!path) {
-        fprintf(stderr, "usage: spdf_win_probe <document> [page-index] [zoom] [out.png] [plain|dark|dark-images]\n");
+        fprintf(stderr,
+                "usage: spdf_win_probe <document> [page-index] [zoom] [out.png] "
+                "[plain|dark|dark-images|alpha]\n");
         return 2;
     }
+    alpha_mode = !strcmp(mode, "alpha");
     flags = flags_from_name(mode);
     if (flags == 0xFFFFFFFFu) {
         fprintf(stderr, "probe: unknown render mode '%s'\n", mode);
         return 2;
     }
+
+    /* DELETE THE OUTPUT BEFORE PRODUCING IT, NEVER AFTER.
+     *
+     * Co-located with the write on purpose. The harness also clears this path
+     * on both sides before it runs, but only this deletion holds for EVERY
+     * caller -- the harness, the QC canary, a hand invocation in the guest --
+     * and it is the one that makes "the file exists" mean "THIS run wrote it".
+     * Without it, a run that renders nothing leaves the previous run's image
+     * sitting at the path the fetch reads back, and the comparison happily
+     * grades last week's pixels. Deleting afterwards would be useless: the
+     * whole hazard is the window between a failed render and the next fetch.
+     *
+     * A missing file is the desired state, so ENOENT is not an error and the
+     * return value is deliberately ignored; if the path is genuinely unwritable
+     * write_png() fails below and the process exits non-zero. */
+    if (png_path) remove(png_path);
+
+    /* Nothing above this line prints, so the transcript is unchanged. */
 
     /* The header is printed before anything can fail so that a truncated
      * transcript is still recognisable as this program's output. */
@@ -173,7 +314,13 @@ int main(int argc, char** argv) {
     }
 
     memset(&bitmap, 0, sizeof(bitmap));
-    if (!spdf_render_page_rgba_opts(doc, page, (float)zoom, flags, NULL, &bitmap, err, sizeof(err))) {
+    if (alpha_mode) {
+        if (!render_alpha_rgba(path, page, zoom, &bitmap)) {
+            printf("render FAILED\n");
+            spdf_close(doc);
+            return 1;
+        }
+    } else if (!spdf_render_page_rgba_opts(doc, page, (float)zoom, flags, NULL, &bitmap, err, sizeof(err))) {
         printf("render FAILED\n");
         fprintf(stderr, "probe: render failed: %s\n", err);
         spdf_close(doc);
@@ -239,7 +386,14 @@ int main(int argc, char** argv) {
     printf("checksum fnv1a64 %s\n", digest);
 
     if (png_path) {
-        write_png(png_path, bitmap.rgba, bitmap.width, bitmap.height, bitmap.stride);
+        if (!write_png(png_path, bitmap.rgba, bitmap.width, bitmap.height, bitmap.stride)) {
+            /* No `png` line and no `ok`: both assert a file that is not there.
+             * Exit 1 so the runner sees the failure it is the only witness to. */
+            printf("png FAILED\n");
+            spdf_free_bitmap(&bitmap);
+            spdf_close(doc);
+            return 1;
+        }
         printf("png %s\n", basename_portable(png_path));
     }
 
