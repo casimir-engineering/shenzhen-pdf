@@ -17,9 +17,15 @@ typedef struct {
     NSFont* bold;
 } SPDFDiagramGraphFonts;
 
-// Two compartments always render (empty ones stay shallow), UML-style.
+// A classDiagram box shows ONLY the compartments it has members for: a class
+// with no attributes and no methods is a single named box, and a class with
+// members on one side gets exactly one extra compartment. Empty strips are
+// never drawn.
 static NSArray<NSArray<NSString*>*>* SPDFDiagramClassCompartments(SPDFMarkdownDiagramNode* node) {
-    return @[ node.memberAttributes ?: @[], node.memberMethods ?: @[] ];
+    NSMutableArray<NSArray<NSString*>*>* compartments = [NSMutableArray arrayWithCapacity:2];
+    if (node.memberAttributes.count) [compartments addObject:node.memberAttributes];
+    if (node.memberMethods.count) [compartments addObject:node.memberMethods];
+    return compartments;
 }
 
 static void SPDFDiagramMeasureNode(SPDFMarkdownDiagramNode* node, SPDFDiagramGraphFonts fonts, CGFloat scale) {
@@ -40,10 +46,10 @@ static void SPDFDiagramMeasureNode(SPDFMarkdownDiagramNode* node, SPDFDiagramGra
                                                              maxWidth)
                                   .height;
         CGFloat height = titleHeight + 2 * kSPDFDiagramNodePaddingY * scale;
-        for (NSArray<NSString*>* members in compartments) {
-            height += kSPDFDiagramClassGutter * scale + members.count * lineHeight;
-            if (members.count) height += kSPDFDiagramClassGutter * scale;
-        }
+        // Each PRESENT compartment adds its divider gutter above and below its
+        // member lines; an absent one adds nothing at all.
+        for (NSArray<NSString*>* members in compartments)
+            height += 2 * kSPDFDiagramClassGutter * scale + members.count * lineHeight;
         node.frame = NSMakeRect(0, 0, ceil(width + 2 * kSPDFDiagramNodePaddingX * scale), ceil(height));
         return;
     }
@@ -144,7 +150,7 @@ static void SPDFDiagramAddClassBody(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkd
                   alignment:NSTextAlignmentLeft];
             y += lineHeight;
         }
-        if (members.count) y += kSPDFDiagramClassGutter * scale;
+        y += kSPDFDiagramClassGutter * scale;
     }
 }
 
