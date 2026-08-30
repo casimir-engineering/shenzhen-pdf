@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # Bounded parallel compilation for the hand-rolled macOS test drivers.
 #
 # Sourced, not executed. The Markdown suites link a large fixed set of shared
