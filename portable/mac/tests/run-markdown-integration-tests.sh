@@ -58,6 +58,7 @@ $PORTABLE/mac/markdown/SPDFMarkdownDiagramChartShapes.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramBlock.mm
 $PORTABLE/mac/markdown/SPDFMarkdownInlineRenderer.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDecorations.mm
+$PORTABLE/mac/markdown/SPDFMarkdownTheme.mm
 $PORTABLE/mac/markdown/SPDFMarkdownTableDecorations.mm
 $PORTABLE/mac/markdown/SPDFMarkdownTableLayout.mm
 $PORTABLE/mac/markdown/SPDFMarkdownImageRowBand.mm
