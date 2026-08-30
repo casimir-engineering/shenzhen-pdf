@@ -12,14 +12,18 @@ CXX=$(xcrun --find clang++)
 SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
 SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
 
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/compile-jobs.sh"
+
+# Intentional word splitting: SANITIZER_FLAGS is a caller-supplied flag list.
 # shellcheck disable=SC2086
-"$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
+spdf_job "$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
     $SANITIZER_FLAGS -I"$REPO/ext/md4c" -c "$REPO/ext/md4c/md4c.c" -o "$BUILD_DIR/md4c.o"
 
 # The shared dark-reading recolor, used by the Markdown page drawing to darken
 # a document's embedded images the way a PDF's are darkened in the render tail.
 # shellcheck disable=SC2086
-"$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
+spdf_job "$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
     $SANITIZER_FLAGS -I"$PORTABLE/core" -c "$PORTABLE/core/spdf_recolor.c" -o "$BUILD_DIR/spdf_recolor.o"
 
 # Vendored Gumbo HTML5 parser backing the sanitizing HTML-island whitelist.
@@ -28,7 +32,7 @@ GUMBO_OBJS=""
 for GUMBO_SRC in "$REPO/ext/gumbo-parser/src"/*.c; do
     GUMBO_OBJ="$BUILD_DIR/gumbo-$(basename "$GUMBO_SRC" .c).o"
     # shellcheck disable=SC2086
-    "$CC" -isysroot "$SDKROOT" -std=c99 -O0 -g $SANITIZER_FLAGS \
+    spdf_job "$CC" -isysroot "$SDKROOT" -std=c99 -O0 -g $SANITIZER_FLAGS \
         -I"$REPO/ext/gumbo-parser/src" -c "$GUMBO_SRC" -o "$GUMBO_OBJ"
     GUMBO_OBJS="$GUMBO_OBJS $GUMBO_OBJ"
 done
@@ -104,24 +108,45 @@ $PORTABLE/mac/SPDFMacMarkdownSession+Search.mm
 $PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
 "
 
-for TEST in \
-    SPDFMacMarkdownKeyboardPolicyTests \
-    SPDFMacMarkdownRoutingTests \
-    SPDFMacMarkdownPagedViewTests \
-    SPDFMacMarkdownCopySelectionTests \
-    SPDFMacMarkdownMinimapModelTests \
-    SPDFMacMarkdownSidebarModelTests \
-    SPDFMacMarkdownSessionTests \
-    SPDFMacMarkdownSessionFindTests \
-    SPDFMacMarkdownRemoteImageSessionTests \
-    SPDFMacMarkdownLanguagePickerTests \
-    SPDFMacMarkdownPrintingTests
-do
-    # Source lists and sanitizer flags intentionally use shell word splitting.
+TESTS="
+SPDFMacMarkdownKeyboardPolicyTests
+SPDFMacMarkdownRoutingTests
+SPDFMacMarkdownPagedViewTests
+SPDFMacMarkdownCopySelectionTests
+SPDFMacMarkdownMinimapModelTests
+SPDFMacMarkdownSidebarModelTests
+SPDFMacMarkdownSessionTests
+SPDFMacMarkdownSessionFindTests
+SPDFMacMarkdownRemoteImageSessionTests
+SPDFMacMarkdownLanguagePickerTests
+SPDFMacMarkdownPrintingTests
+"
+
+CXXFLAGS="-isysroot $SDKROOT -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror $SANITIZER_FLAGS \
+-I$PORTABLE/core -I$PORTABLE/mac -I$PORTABLE/mac/markdown"
+
+# The foundation and UI sources are identical for every test binary, so compile
+# each ONE object once and link it into all of them. Passing the whole list to
+# every link rebuilt the same ~67 translation units for each of the 11 suites.
+SHARED_OBJS=""
+for SRC in $FOUNDATION_SOURCES $UI_SOURCES; do
+    OBJ="$BUILD_DIR/shared-$(basename "$SRC" .mm).o"
+    SHARED_OBJS="$SHARED_OBJS $OBJ"
     # shellcheck disable=SC2086
-    "$CXX" -isysroot "$SDKROOT" -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror \
-        $SANITIZER_FLAGS -I"$PORTABLE/core" -I"$PORTABLE/mac" -I"$PORTABLE/mac/markdown" \
-        $FOUNDATION_SOURCES $UI_SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" "$BUILD_DIR/spdf_recolor.o" $GUMBO_OBJS \
+    spdf_job "$CXX" $CXXFLAGS -c "$SRC" -o "$OBJ"
+done
+for TEST in $TESTS; do
+    # shellcheck disable=SC2086
+    spdf_job "$CXX" $CXXFLAGS -c "$SCRIPT_DIR/$TEST.mm" -o "$BUILD_DIR/test-$TEST.o"
+done
+spdf_join
+
+for TEST in $TESTS
+do
+    # Intentional word splitting: the object lists are shell-safe build paths.
+    # shellcheck disable=SC2086
+    "$CXX" -isysroot "$SDKROOT" $SANITIZER_FLAGS \
+        $SHARED_OBJS "$BUILD_DIR/test-$TEST.o" "$BUILD_DIR/md4c.o" "$BUILD_DIR/spdf_recolor.o" $GUMBO_OBJS \
         -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
         -framework UniformTypeIdentifiers -o "$BUILD_DIR/$TEST"
     "$BUILD_DIR/$TEST"
