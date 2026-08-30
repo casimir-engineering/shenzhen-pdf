@@ -1,0 +1,6 @@
+# The repo root ignores *.pdf so that sample documents dropped in a working tree
+# never get committed by accident. The golden fixture is the deliberate
+# exception: it IS the test input, it is 1.8 KB, and it is regenerated
+# byte-for-byte by ../make_fixture_pdf.py. Un-ignore it here rather than
+# weakening the root rule.
+!golden.pdf
