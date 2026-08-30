@@ -203,3 +203,130 @@ of times, so `guest-build.cmd` copies first. The copy itself is cheap: 85 MB /
   unused; `guest-build.cmd` currently invokes `cl.exe` directly, which is the
   right level for a smoke test but will want replacing when real sources land.
 - MuPDF itself has never been built here; only `portable/core` has.
+
+## The headless test harness
+
+Everything above proves that *a* Windows build works. This section is about
+proving that *the port* works — from macOS, by exit code and by pixel
+comparison, with nobody looking at a screen.
+
+```sh
+portable/win/tests/run-tests.sh --self-check   # everything; exit 0 only if it all ran and passed
+portable/win/tests/run-tests.sh --list
+portable/win/tests/run-tests.sh --filter probe --keep
+```
+
+| file | role |
+|---|---|
+| `tests/run-tests.sh` | the runner: builds and runs the Windows test binaries and aggregates a real exit status |
+| `tests/harness-lib.sh` | guest plumbing — `guest()`, `vm_build()`, prerequisite discovery |
+| `tests/compare_png.py` | golden-image comparison, macOS render vs Windows render |
+| `tests/png_io.py` | dependency-free PNG reader/writer (stdlib `zlib` only) |
+| `tests/compare_png_selftest.py` | proves the comparator detects what it claims to |
+| `tests/make_fixture_pdf.py` → `tests/fixtures/golden.pdf` | the deterministic test document |
+| `spdf_win_probe.c` | the cross-host probe: same source, built on both hosts, transcripts diffed |
+| `tests/exit_code_probe.c`, `tests/never_compiles.c` | canaries for the exit-code contract |
+
+### Exit status
+
+`run-tests.sh` exits **0** only when every selected case ran and passed;
+**1** if any case failed; **2** if any case was *blocked* by a missing
+prerequisite; **3** if a `--filter` matched nothing. Blocked is deliberately not
+zero — a harness that reports success because it could not run anything is worse
+than no harness, since everything layered on top of it inherits the lie.
+
+That status is proven rather than asserted:
+
+- `harness.exit-code` builds `tests/exit_code_probe.c` in the guest and runs it
+  with 0, 3 and 42, checking each value arrives intact on the Mac, then compiles
+  `tests/never_compiles.c` and fails the run if `vm-build.sh` returns 0.
+- `--self-check` re-runs the script with a deliberate failure injected and
+  refuses to proceed unless the runner's own exit status is non-zero.
+
+Three habits keep it honest and none may be tidied away: no `set -e`; nothing
+piped through `grep`/`tee` to decide pass or fail (a pipeline reports the *last*
+command's status, so `prog | grep -c ok` is green when `prog` crashes); and the
+final status computed from recorded results rather than from whatever ran last.
+
+### Adding a test for your track
+
+Drop `portable/win/tests/<name>_test.c` in the directory — it is discovered
+automatically as case `win.<name>_test`. Declare anything extra in the file:
+
+```c
+/* spdf-test-sources: portable/win/src/spdf_win_compat.c */
+/* spdf-test-args: portable/win/tests/fixtures/golden.pdf */
+/* spdf-test-needs: mupdf */
+```
+
+Paths are repo-relative; an argument naming a repo path is rewritten to the
+guest's copy. `spdf-test-needs: mupdf` makes the case report BLOCKED instead of
+FAILED while `libmupdf.lib` does not exist yet. No track needs to edit
+`run-tests.sh` to be tested by it.
+
+### `spdf_win_probe.c` — one source, two hosts, one diff
+
+The probe exercises `spdf_open`, `spdf_page_count`, `spdf_page_size` and
+`spdf_render_page_rgba_opts` and prints a transcript whose only intended
+consumer is `diff`. Every line must be reproducible across two compilers on two
+operating systems, so it contains no timings, no pointers, no full paths
+(basenames are split on both `/` and `\`), and only integer statistics — a
+floating-point mean could differ in its last digit and turn a healthy run red.
+It deliberately avoids `clock_gettime`, which is absent from the MSVC UCRT.
+
+```sh
+spdf_win_probe <document> [page] [zoom] [out.png] [plain|dark|dark-images]
+```
+
+`probe.mac` builds it with clang against `mupdf/build/release-macos-*`;
+`probe.win` builds it through `vm-build.sh`; `probe.diff` diffs the two
+transcripts; `probe.png` compares the two rendered PNGs.
+
+### `compare_png.py` — why one tolerance is not enough
+
+A single MAE threshold has to be loose enough to tolerate two rasterisers
+anti-aliasing the same glyph. Once it is that loose it will happily pass a
+vertically flipped page, a BGRA page, or a half-scale render, because none of
+those disturb the global statistics much. So the structural checks run first and
+fail regardless of tolerance:
+
+| check | the bug it catches |
+|---|---|
+| fully transparent / flat-colour output | the render target was never painted |
+| flat-colour *reference* | the test itself is broken; fix it before trusting anything |
+| vertical flip | a y-up rasteriser blitted into a y-down target |
+| R/B channel swap | an RGBA core buffer read as BGRA |
+| premultiplied vs straight alpha | the dark-halo bug this repo has already shipped once |
+| transparent-pixel halo | the same bug in its invisible form — composited output looks perfect, and fringes the moment anything blends or filters the buffer |
+| wrong scale | dimension ratio, DPI or device-pixel-ratio path |
+| worst-block MAE | a small ruined region hiding inside a good whole-image average |
+
+Only then does the tolerance apply, to two separate numbers: mean absolute error
+of the image composited over white, and the fraction of pixels whose
+per-channel delta exceeds `--delta`. It reports both, plus max channel delta,
+the worst 16×16 block and its coordinates, a transparent-halo pixel count, and a
+one-line diagnosis; `--json` writes the lot. `--strict` demands byte identity.
+
+**The tolerance defaults are marked UNMEASURED on purpose.** The port plan
+requires them to be set from a real Windows render and pinned. Until
+`libmupdf.lib` exists in the guest there is no such render, and inventing a
+number would be exactly the dishonesty the plan warns against. When the first
+comparison runs: try `--strict` first, and if it is byte-identical, pin the
+defaults at zero.
+
+`compare_png_selftest.py` is the argument that any of this can be trusted. It
+mutates a synthetic reference with one known port bug at a time and asserts both
+that the comparison fails *and* that the diagnosis names the right bug —
+a comparator that fails everything would be as useless as one that passes
+everything, so the unmutated and jitter cases must pass. 13 checks, including
+decoding a real MuPDF-written PNG.
+
+### The fixture
+
+`tests/fixtures/golden.pdf` is hand-assembled by `tests/make_fixture_pdf.py`
+(no MuPDF, no reportlab — nothing that could drift and silently change the
+golden image) and regenerates byte-for-byte. Every element earns its place: it
+is asymmetric top-to-bottom so a vertical flip is unmissable, carries unequal
+pure-red and pure-blue regions so a channel swap cannot be confused with the
+flip, has text and hairlines so anti-aliasing differences show up somewhere real,
+and its second page is a different size from its first.

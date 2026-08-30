@@ -15,12 +15,12 @@
 #include "mupdf/pdf.h"
 
 #include "shenzhen_pdf_core.h"
+#include "spdf_win_compat.h"
 #include "spdf_recolor.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 static int g_failures = 0;
 
@@ -287,19 +287,19 @@ static void test_picture_document(fz_context* ctx, const char* path) {
 }
 
 int main(void) {
-    char dir[] = "/tmp/spdf-core-render-theme-tests.XXXXXX";
-    char figure_path[PATH_MAX];
-    char scan_path[PATH_MAX];
-    char picture_path[PATH_MAX];
+    char dir[SPDF_COMPAT_PATH_MAX];
+    char figure_path[SPDF_COMPAT_PATH_MAX];
+    char scan_path[SPDF_COMPAT_PATH_MAX];
+    char picture_path[SPDF_COMPAT_PATH_MAX];
     fz_context* ctx;
 
-    if (!mkdtemp(dir)) {
+    if (!spdf_compat_make_temp_dir(dir, sizeof(dir), "spdf-core-render-theme-tests.")) {
         fprintf(stderr, "Could not create a temporary directory\n");
         return 1;
     }
-    snprintf(figure_path, sizeof(figure_path), "%s/figure.pdf", dir);
-    snprintf(scan_path, sizeof(scan_path), "%s/scan.pdf", dir);
-    snprintf(picture_path, sizeof(picture_path), "%s/picture.png", dir);
+    snprintf(figure_path, sizeof(figure_path), "%s" SPDF_PATH_SEP_STR "figure.pdf", dir);
+    snprintf(scan_path, sizeof(scan_path), "%s" SPDF_PATH_SEP_STR "scan.pdf", dir);
+    snprintf(picture_path, sizeof(picture_path), "%s" SPDF_PATH_SEP_STR "picture.png", dir);
 
     ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
     if (!ctx) {
@@ -317,10 +317,10 @@ int main(void) {
     }
 
     fz_drop_context(ctx);
-    unlink(figure_path);
-    unlink(scan_path);
-    unlink(picture_path);
-    rmdir(dir);
+    spdf_compat_unlink(figure_path);
+    spdf_compat_unlink(scan_path);
+    spdf_compat_unlink(picture_path);
+    spdf_compat_rmdir(dir);
 
     if (g_failures) {
         fprintf(stderr, "%d render-theme test(s) failed\n", g_failures);

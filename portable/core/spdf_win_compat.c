@@ -14,6 +14,7 @@
 #ifdef _WIN32
 
 #include <errno.h>
+#include <direct.h>
 #include <fcntl.h>
 #include <share.h>
 #include <stdlib.h>
@@ -131,6 +132,64 @@ int spdf_compat_mkstemp(char* template_path) {
     return -1;
 }
 
+/* WHY THIS EXISTS. mkdtemp() is not in the MSVC UCRT either. Same shape as the
+ * mkstemp shim above: _mktemp_s names, _wmkdir creates, and creation is the
+ * exclusivity check because _wmkdir fails with EEXIST on a directory that is
+ * already there. Retries work from a fresh copy of the template because
+ * _mktemp_s overwrites the placeholders even when it fails. */
+char* spdf_compat_mkdtemp(char* template_path) {
+    char scratch[SPDF_COMPAT_PATH_MAX];
+    size_t len;
+    int attempt;
+
+    if (!template_path) {
+        errno = EINVAL;
+        return NULL;
+    }
+    len = strlen(template_path);
+    if (len == 0 || len >= sizeof(scratch)) {
+        errno = ENAMETOOLONG;
+        return NULL;
+    }
+
+    for (attempt = 0; attempt < 64; ++attempt) {
+        WCHAR* wide;
+        int made;
+
+        memcpy(scratch, template_path, len + 1);
+        if (_mktemp_s(scratch, len + 1) != 0) continue;
+        wide = spdf_compat_widen(scratch);
+        if (!wide) {
+            errno = EINVAL;
+            return NULL;
+        }
+        made = _wmkdir(wide);
+        free(wide);
+        if (made == 0) {
+            memcpy(template_path, scratch, len + 1);
+            return template_path;
+        }
+        if (errno != EEXIST) return NULL;
+    }
+    errno = EEXIST;
+    return NULL;
+}
+
+/* WHY THIS EXISTS. rmdir() is spelled _rmdir() in the UCRT, and the narrow form
+ * would decode a non-ASCII temp path with the ANSI code page (see fopen). */
+int spdf_compat_rmdir(const char* path) {
+    WCHAR* wide = spdf_compat_widen(path);
+    int result;
+
+    if (!wide) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = _wrmdir(wide);
+    free(wide);
+    return result;
+}
+
 int spdf_compat_close(int fd) {
     return _close(fd);
 }
@@ -150,10 +209,13 @@ int spdf_compat_unlink(const char* path) {
     return result;
 }
 
-/* WHY THIS EXISTS. fopen() on Windows decodes its path with the process ANSI
- * code page, not UTF-8, so a state file under a %APPDATA% path containing any
- * non-ASCII character -- an accented or non-Latin Windows account name, which
- * is entirely ordinary -- silently fails to open. _wfopen takes UTF-16. */
+/* WHY THIS EXISTS, AND IT FAILS SILENTLY. fopen() on Windows decodes its path
+ * with the process ANSI code page, not UTF-8. A state file under a %APPDATA%
+ * path containing any non-ASCII character -- an accented or non-Latin Windows
+ * account name, which is entirely ordinary -- therefore just does not open, and
+ * the callers read that as "no state yet" rather than as an error: the user
+ * silently loses their session and settings on every launch. _wfopen takes
+ * UTF-16, so the UTF-8 path the core carries survives the boundary intact. */
 FILE* spdf_compat_fopen(const char* path, const char* mode) {
     WCHAR* wide_path = spdf_compat_widen(path);
     WCHAR* wide_mode = spdf_compat_widen(mode);
@@ -163,6 +225,13 @@ FILE* spdf_compat_fopen(const char* path, const char* mode) {
     free(wide_path);
     free(wide_mode);
     return f;
+}
+
+/* WHY THIS EXISTS. strdup() is spelled _strdup() in the UCRT; the unprefixed
+ * POSIX name warns as deprecated (C4996) and is not covered by
+ * _CRT_SECURE_NO_WARNINGS, which only silences the *_s replacements. */
+char* spdf_compat_strdup(const char* text) {
+    return _strdup(text);
 }
 
 /* WHY THIS EXISTS. getpid() is spelled _getpid() in the UCRT. It is used only

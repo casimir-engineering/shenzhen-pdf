@@ -419,8 +419,8 @@ static int render_pixmap_allocation_size(int width, int height, int comps, int s
     return 1;
 }
 
-/* clock_gettime()/CLOCK_MONOTONIC are absent from the MSVC UCRT, and this feeds
- * the render stats, so a stub would have quietly zeroed them on Windows. */
+/* SILENT FAILURE IF WRONG: clock_gettime/CLOCK_MONOTONIC are absent from the
+ * MSVC UCRT, and this feeds the render stats -- a stub reads 0, not an error. */
 static double spdf_monotonic_ms(void) {
     return spdf_compat_monotonic_ms();
 }
