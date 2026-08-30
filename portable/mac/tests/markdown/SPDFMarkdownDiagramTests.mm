@@ -180,6 +180,30 @@ int main(void) {
                                                       @"cond(no)->io\n"),
                                     @"flowchart.js `flow` fence");
 
+        // --- classDiagram compartments: no empty strips ----------------------
+        SPDFMarkdownDiagramLayout* bare = SPDFRenderDiagram(@"mermaid", @"classDiagram\n  class GraphImage\n");
+        SPDFMarkdownDiagramLayout* attributesOnly =
+            SPDFRenderDiagram(@"mermaid", @"classDiagram\n  class GraphImage {\n    +NSSize size\n  }\n");
+        SPDFMarkdownDiagramLayout* methodsOnly =
+            SPDFRenderDiagram(@"mermaid", @"classDiagram\n  class GraphImage {\n    +draw()\n  }\n");
+        SPDFMarkdownDiagramLayout* both = SPDFRenderDiagram(@"mermaid",
+                                                            @"classDiagram\n  class GraphImage {\n"
+                                                            @"    +NSSize size\n    +draw()\n  }\n");
+        SPDFExpect(bare != nil && attributesOnly != nil && methodsOnly != nil && both != nil,
+                   @"every classDiagram member shape renders");
+        // Each compartment DIVIDER is one polyline; the box itself is the rect.
+        SPDFExpect(SPDFDiagramShapeCount(bare, SPDFMarkdownDiagramShapeRectangle) == 1 &&
+                       SPDFDiagramShapeCount(bare, SPDFMarkdownDiagramShapePolyline) == 0,
+                   @"a class with NO members is a single box with no empty compartment strips");
+        SPDFExpect(SPDFDiagramShapeCount(attributesOnly, SPDFMarkdownDiagramShapePolyline) == 1 &&
+                       SPDFDiagramShapeCount(methodsOnly, SPDFMarkdownDiagramShapePolyline) == 1,
+                   @"a class with members on ONE side draws exactly one extra compartment");
+        SPDFExpect(SPDFDiagramShapeCount(both, SPDFMarkdownDiagramShapePolyline) == 2,
+                   @"a class with attributes AND methods draws three compartments");
+        SPDFExpect(bare.size.height < attributesOnly.size.height &&
+                       attributesOnly.size.height < both.size.height,
+                   @"an empty class box is shorter than one with members");
+
         // --- Degradation: every failure mode returns nil ---------------------
         SPDFExpect(SPDFRenderDiagram(@"mermaid", @"graph XX\n  A --> B\n") == nil,
                    @"an unknown flow direction degrades to the code box");
