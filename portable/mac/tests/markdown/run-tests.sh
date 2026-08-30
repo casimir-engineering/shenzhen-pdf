@@ -48,6 +48,17 @@ $ROOT/portable/mac/markdown/SPDFMarkdownLexersMarkup.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownLexersData.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownRenderer.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownBlockRenderer.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagram.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramModel.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramFlowchartParser.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramSequenceParser.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramStructParsers.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramChartParsers.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramLayout.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramGraphRaster.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramSequenceRaster.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramChartRaster.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramFigure.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownInlineRenderer.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDecorations.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownTableDecorations.mm
@@ -65,6 +76,7 @@ for TEST in \
     SPDFMarkdownLanguageTests \
     SPDFMarkdownRendererTests \
     SPDFMarkdownImageFigureTests \
+    SPDFMarkdownDiagramTests \
     SPDFMarkdownRemoteImageTests \
     SPDFMarkdownPaginatorTests \
     SPDFMarkdownTableLayoutTests \

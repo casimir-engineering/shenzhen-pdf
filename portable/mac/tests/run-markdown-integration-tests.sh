@@ -43,6 +43,17 @@ $PORTABLE/mac/markdown/SPDFMarkdownLexersMarkup.mm
 $PORTABLE/mac/markdown/SPDFMarkdownLexersData.mm
 $PORTABLE/mac/markdown/SPDFMarkdownRenderer.mm
 $PORTABLE/mac/markdown/SPDFMarkdownBlockRenderer.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagram.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramModel.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramFlowchartParser.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramSequenceParser.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramStructParsers.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramChartParsers.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramLayout.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramGraphRaster.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramSequenceRaster.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramChartRaster.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramFigure.mm
 $PORTABLE/mac/markdown/SPDFMarkdownInlineRenderer.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDecorations.mm
 $PORTABLE/mac/markdown/SPDFMarkdownTableDecorations.mm
