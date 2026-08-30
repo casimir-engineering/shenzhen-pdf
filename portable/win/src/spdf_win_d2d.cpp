@@ -26,6 +26,7 @@
 
 #include <dwrite.h>
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,22 +40,37 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "user32.lib")
 
+/* Eight is comfortably more than any viewport can show at a usable zoom (the
+ * slot margins alone put a floor under a page's on-screen height), so the LRU
+ * below effectively never evicts something still on screen. */
+#define SPDF_WIN_TEXTURE_SLOTS 8
+
 struct spdf_win_d2d {
     ID2D1Factory* factory;
     IWICImagingFactory* wic;
     IDWriteFactory* dwrite; /* may be NULL: text is a nicety, never a blocker */
     bool co_initialized;
 
-    /* One-entry page-texture cache. WM_PAINT fires far more often than the
-     * page changes (every resize, every expose), and re-uploading a multi-MB
-     * bitmap each time is exactly the sort of thing that shows up as a
-     * stutter. Keyed on the target too, because an ID2D1Bitmap belongs to the
-     * target that created it and dies with it. */
+    /* Page-texture cache. WM_PAINT fires far more often than the pages change
+     * (every resize, every expose, every scroll of one pixel), and re-uploading
+     * multi-MB bitmaps each time is exactly the sort of thing that shows up as
+     * a stutter. Keyed on the target too, because an ID2D1Bitmap belongs to the
+     * target that created it and dies with it.
+     *
+     * It holds a handful of entries rather than one because the continuous
+     * canvas draws every page the viewport touches -- a boundary between two
+     * pages, or three short pages at a low zoom. It is deliberately NOT a byte
+     * budget: that is spdf_win_canvas's job (T3's spdf_win_lru), and this is
+     * only the GPU-side shadow of whatever that cache is already holding. */
     ID2D1RenderTarget* cache_target;
-    const unsigned char* cache_src;
-    int cache_w;
-    int cache_h;
-    ID2D1Bitmap* cache_bitmap;
+    struct {
+        const unsigned char* src;
+        int w;
+        int h;
+        unsigned long long used;
+        ID2D1Bitmap* bitmap;
+    } cache[SPDF_WIN_TEXTURE_SLOTS];
+    unsigned long long use_counter;
 };
 
 template <class T>
@@ -130,11 +146,14 @@ IWICImagingFactory* spdf_win_d2d_wic(spdf_win_d2d* d2d) { return d2d ? d2d->wic 
 void spdf_win_d2d_release_target(spdf_win_d2d* d2d, ID2D1RenderTarget* target) {
     if (!d2d) return;
     if (target && d2d->cache_target != target) return;
-    safe_release(d2d->cache_bitmap);
+    for (int i = 0; i < SPDF_WIN_TEXTURE_SLOTS; ++i) {
+        safe_release(d2d->cache[i].bitmap);
+        d2d->cache[i].src = NULL;
+        d2d->cache[i].w = 0;
+        d2d->cache[i].h = 0;
+        d2d->cache[i].used = 0;
+    }
     d2d->cache_target = NULL;
-    d2d->cache_src = NULL;
-    d2d->cache_w = 0;
-    d2d->cache_h = 0;
 }
 
 /* The core hands back straight RGBA, top row first, with alpha pinned to 255
@@ -168,9 +187,20 @@ static unsigned char* rgba_to_bgra(const spdf_bitmap* page) {
 }
 
 static ID2D1Bitmap* page_texture(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_bitmap* page) {
-    if (d2d->cache_bitmap && d2d->cache_target == target && d2d->cache_src == page->rgba &&
-        d2d->cache_w == page->width && d2d->cache_h == page->height)
-        return d2d->cache_bitmap;
+    /* A target change invalidates every texture at once -- they belong to the
+     * old one. Do that before looking anything up, not after. */
+    if (d2d->cache_target && d2d->cache_target != target) spdf_win_d2d_release_target(d2d, NULL);
+
+    int victim = 0;
+    for (int i = 0; i < SPDF_WIN_TEXTURE_SLOTS; ++i) {
+        if (d2d->cache[i].bitmap && d2d->cache[i].src == page->rgba && d2d->cache[i].w == page->width &&
+            d2d->cache[i].h == page->height) {
+            d2d->cache[i].used = ++d2d->use_counter;
+            return d2d->cache[i].bitmap;
+        }
+        if (!d2d->cache[i].bitmap) victim = i;
+        else if (d2d->cache[victim].bitmap && d2d->cache[i].used < d2d->cache[victim].used) victim = i;
+    }
 
     unsigned char* bgra = rgba_to_bgra(page);
     if (!bgra) return NULL;
@@ -187,45 +217,46 @@ static ID2D1Bitmap* page_texture(spdf_win_d2d* d2d, ID2D1RenderTarget* target, c
     free(bgra);
     if (FAILED(hr)) return NULL;
 
-    spdf_win_d2d_release_target(d2d, NULL);
-    d2d->cache_bitmap = bitmap;
+    safe_release(d2d->cache[victim].bitmap);
     d2d->cache_target = target;
-    d2d->cache_src = page->rgba;
-    d2d->cache_w = page->width;
-    d2d->cache_h = page->height;
+    d2d->cache[victim].bitmap = bitmap;
+    d2d->cache[victim].src = page->rgba;
+    d2d->cache[victim].w = page->width;
+    d2d->cache[victim].h = page->height;
+    d2d->cache[victim].used = ++d2d->use_counter;
     return bitmap;
 }
 
-/* Places the page inside the target. EXACT is a 1:1 blit at the origin.
- * CONTAIN centres it with a margin and never scales ABOVE 1:1, because a page
- * rendered at the fit zoom is already the right number of pixels and blowing
- * it up would only add blur. */
-static D2D1_RECT_F page_destination(const spdf_win_scene* scene, const spdf_bitmap* page) {
-    float tw = (float)scene->target_px_w;
-    float th = (float)scene->target_px_h;
-    float pw = (float)page->width;
-    float ph = (float)page->height;
-
-    if (scene->fit == SPDF_WIN_FIT_EXACT) return D2D1::RectF(0.0f, 0.0f, pw, ph);
-
+/* One page on the continuous canvas: a soft edge, then the texture stretched
+ * over the slot the layout assigned it. Whole-pixel placement, because a
+ * half-pixel offset makes D2D resample a blit that should have been exact --
+ * which at fit-width, where the texture is already the slot's size, is the
+ * difference between the page's own pixels and a resampled copy of them. */
+static void draw_canvas_page(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_win_scene* scene,
+                             const spdf_win_page_draw* draw, ID2D1SolidColorBrush* shade,
+                             ID2D1SolidColorBrush* paper) {
     float s = scene->dpi_scale > 0.0f ? scene->dpi_scale : 1.0f;
-    float margin = 16.0f * s;
-    float avail_w = tw - 2.0f * margin;
-    float avail_h = th - 2.0f * margin;
-    if (avail_w < 1.0f) avail_w = 1.0f;
-    if (avail_h < 1.0f) avail_h = 1.0f;
+    float x = floorf(draw->dest_x + 0.5f);
+    float y = floorf(draw->dest_y + 0.5f);
+    D2D1_RECT_F dest = D2D1::RectF(x, y, x + floorf(draw->dest_w + 0.5f), y + floorf(draw->dest_h + 0.5f));
 
-    float scale = avail_w / pw;
-    if (avail_h / ph < scale) scale = avail_h / ph;
-    if (scale > 1.0f) scale = 1.0f;
+    if (shade)
+        target->FillRectangle(D2D1::RectF(dest.left - 2.0f * s, dest.top, dest.right + 2.0f * s, dest.bottom + 3.0f * s),
+                              shade);
 
-    float w = pw * scale;
-    float h = ph * scale;
-    /* Whole-pixel placement: a half-pixel offset makes D2D resample a blit
-     * that should have been exact. */
-    float x = (float)(int)((tw - w) * 0.5f + 0.5f);
-    float y = (float)(int)((th - h) * 0.5f + 0.5f);
-    return D2D1::RectF(x, y, x + w, y + h);
+    ID2D1Bitmap* texture = NULL;
+    if (draw->bitmap && draw->bitmap->rgba && draw->bitmap->width > 0 && draw->bitmap->height > 0)
+        texture = page_texture(d2d, target, draw->bitmap);
+
+    /* No texture yet -- the page is queued, or the render failed. Paper, not a
+     * hole: a blank slot of the right size keeps the strip's geometry legible
+     * while a render is outstanding, which is the state the whole canvas will
+     * live in once T5's async pipeline replaces the synchronous render. */
+    if (!texture) {
+        if (paper) target->FillRectangle(dest, paper);
+        return;
+    }
+    target->DrawBitmap(texture, dest, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
 }
 
 static void draw_message(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_win_scene* scene) {
@@ -274,28 +305,32 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
         background = D2D1::ColorF(0.878f, 0.878f, 0.886f);
     target->Clear(background);
 
-    ID2D1Bitmap* texture = NULL;
-    if (scene->page && scene->page->rgba && scene->page->width > 0 && scene->page->height > 0)
-        texture = page_texture(d2d, target, scene->page);
+    if (scene->fit == SPDF_WIN_FIT_EXACT) {
+        ID2D1Bitmap* texture = NULL;
+        if (scene->page && scene->page->rgba && scene->page->width > 0 && scene->page->height > 0)
+            texture = page_texture(d2d, target, scene->page);
+        if (texture)
+            target->DrawBitmap(texture, D2D1::RectF(0.0f, 0.0f, (float)scene->page->width, (float)scene->page->height),
+                               1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, NULL);
+        else
+            draw_message(d2d, target, scene);
+        return target->EndDraw();
+    }
 
-    if (texture) {
-        D2D1_RECT_F dest = page_destination(scene, scene->page);
-        if (scene->fit == SPDF_WIN_FIT_CONTAIN) {
-            /* A cheap one-band drop shadow -- not a gaussian, just enough to
-             * separate paper from surround the way the mac app does. */
-            float s = scene->dpi_scale > 0.0f ? scene->dpi_scale : 1.0f;
-            ID2D1SolidColorBrush* shade = NULL;
-            if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f), &shade))) {
-                target->FillRectangle(D2D1::RectF(dest.left - 2.0f * s, dest.top, dest.right + 2.0f * s,
-                                                  dest.bottom + 3.0f * s),
-                                      shade);
-                shade->Release();
-            }
-        }
-        target->DrawBitmap(texture, dest, 1.0f,
-                           scene->fit == SPDF_WIN_FIT_EXACT ? D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR
-                                                            : D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-                           NULL);
+    if (scene->pages && scene->page_count > 0) {
+        /* Two brushes for the whole strip rather than two per page: a
+         * CreateSolidColorBrush per page per frame is an allocation on the
+         * scroll hot path, which architecture.md sec 9 says must stay O(1)-ish
+         * per event. A cheap one-band drop shadow, not a gaussian -- just
+         * enough to separate paper from surround the way the mac app does. */
+        ID2D1SolidColorBrush* shade = NULL;
+        ID2D1SolidColorBrush* paper = NULL;
+        target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f), &shade);
+        target->CreateSolidColorBrush(scene->dark ? D2D1::ColorF(0.114f, 0.114f, 0.122f) : D2D1::ColorF(1.0f, 1.0f, 1.0f),
+                                      &paper);
+        for (int i = 0; i < scene->page_count; ++i) draw_canvas_page(d2d, target, scene, &scene->pages[i], shade, paper);
+        safe_release(paper);
+        safe_release(shade);
     } else {
         draw_message(d2d, target, scene);
     }

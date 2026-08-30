@@ -8,6 +8,9 @@
  */
 #include "spdf_win_window.h"
 
+#include <windowsx.h> /* GET_X_LPARAM / GET_Y_LPARAM */
+
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -20,9 +23,17 @@ struct spdf_win_window {
     spdf_win_d2d* d2d;
     ID2D1HwndRenderTarget* target;
     spdf_win_scene_fn scene_fn;
+    spdf_win_input_fn input_fn;
     void* user;
     UINT dpi;
     int exit_code;
+
+    /* Drag-to-pan state. `dragging` is the authority, not GetCapture(): a
+     * capture can be taken away (an Alt+Tab, a system modal) and the resulting
+     * WM_CAPTURECHANGED must end the drag, or the next mouse move a second
+     * later would pan by the distance the cursor travelled in between. */
+    bool dragging;
+    POINT drag_last;
 };
 
 /* SetProcessDpiAwarenessContext and GetDpiForWindow both arrived in Windows 10
@@ -94,12 +105,18 @@ static void paint(spdf_win_window* window) {
 
     spdf_win_scene scene;
     memset(&scene, 0, sizeof(scene));
-    scene.fit = SPDF_WIN_FIT_CONTAIN;
+    scene.fit = SPDF_WIN_FIT_CANVAS;
     scene.target_px_w = px_w;
     scene.target_px_h = px_h;
     scene.dpi_scale = spdf_win_window_dpi_scale(window);
+    /* A handler that declines leaves an EMPTY scene, not a half-filled one: it
+     * may have written a page list and then decided against it, and drawing
+     * from a list its owner has disclaimed is how a stale pointer gets
+     * dereferenced. */
     if (window->scene_fn && !window->scene_fn(window->user, &scene)) {
         scene.page = NULL;
+        scene.pages = NULL;
+        scene.page_count = 0;
     }
 
     HRESULT hr = spdf_win_paint(window->d2d, window->target, &scene);
@@ -110,6 +127,78 @@ static void paint(spdf_win_window* window) {
         discard_target(window);
         InvalidateRect(window->hwnd, NULL, FALSE);
     }
+}
+
+/* Fills in the fields every event carries and dispatches. Returns non-zero
+ * when the handler changed the view, and invalidates when it did. */
+static int dispatch(spdf_win_window* window, spdf_win_input* input) {
+    RECT rc = {0, 0, 0, 0};
+
+    if (!window->input_fn) return 0;
+    GetClientRect(window->hwnd, &rc);
+    input->view_px_w = (unsigned)(rc.right - rc.left);
+    input->view_px_h = (unsigned)(rc.bottom - rc.top);
+    input->mods = (GetKeyState(VK_CONTROL) < 0 ? SPDF_WIN_MOD_CTRL : 0u) |
+                  (GetKeyState(VK_SHIFT) < 0 ? SPDF_WIN_MOD_SHIFT : 0u);
+    if (!window->input_fn(window->user, input)) return 0;
+    InvalidateRect(window->hwnd, NULL, FALSE);
+    return 1;
+}
+
+/* One wheel notch in device pixels. SPI_GETWHEELSCROLLLINES is the user's own
+ * setting and honouring it is the difference between a viewer that feels like
+ * the rest of the desktop and one that does not; WHEEL_PAGESCROLL (0xFFFFFFFF)
+ * is its "scroll a screenful" value, which the caller can only express if we
+ * hand it a distance rather than a notch count. */
+static float wheel_step(const spdf_win_window* window, unsigned view_px_h) {
+    UINT lines = 3;
+    float scale = spdf_win_window_dpi_scale(window);
+
+    SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+    if (lines == WHEEL_PAGESCROLL) return (float)view_px_h * 0.9f;
+    if (lines == 0) lines = 3;
+    return (float)lines * 20.0f * scale;
+}
+
+/* Mouse wheel, both axes. Ctrl zooms at the cursor; Shift turns a vertical
+ * wheel horizontal, which is the Windows convention for a one-axis mouse. */
+static void on_wheel(spdf_win_window* window, WPARAM wparam, LPARAM lparam, bool horizontal) {
+    spdf_win_input input;
+    POINT pt;
+    float notches = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
+    RECT rc = {0, 0, 0, 0};
+
+    memset(&input, 0, sizeof(input));
+    /* WM_MOUSEWHEEL carries SCREEN coordinates, unlike every other mouse
+     * message in this file. Converting is not optional: the un-converted point
+     * would anchor a Ctrl+wheel zoom to wherever the window happens to sit on
+     * the desktop. */
+    pt.x = GET_X_LPARAM(lparam);
+    pt.y = GET_Y_LPARAM(lparam);
+    ScreenToClient(window->hwnd, &pt);
+    input.x = (float)pt.x;
+    input.y = (float)pt.y;
+
+    if (!horizontal && (GET_KEYSTATE_WPARAM(wparam) & MK_CONTROL)) {
+        input.kind = SPDF_WIN_INPUT_ZOOM;
+        /* Geometric, so N notches out exactly undo N notches in. */
+        input.factor = powf(1.1f, notches);
+        dispatch(window, &input);
+        return;
+    }
+
+    GetClientRect(window->hwnd, &rc);
+    float step = notches * wheel_step(window, (unsigned)(rc.bottom - rc.top));
+    input.kind = SPDF_WIN_INPUT_SCROLL;
+    if (horizontal || (GET_KEYSTATE_WPARAM(wparam) & MK_SHIFT)) input.dx = horizontal ? step : -step;
+    else input.dy = -step;
+    dispatch(window, &input);
+}
+
+static void end_drag(spdf_win_window* window) {
+    if (!window->dragging) return;
+    window->dragging = false;
+    if (GetCapture() == window->hwnd) ReleaseCapture();
 }
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -138,6 +227,51 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             if (wparam != SIZE_MINIMIZED && window->target)
                 window->target->Resize(D2D1::SizeU(LOWORD(lparam), HIWORD(lparam)));
             return 0;
+        case WM_MOUSEWHEEL:
+            on_wheel(window, wparam, lparam, false);
+            return 0;
+        case WM_MOUSEHWHEEL:
+            on_wheel(window, wparam, lparam, true);
+            return 0;
+        case WM_LBUTTONDOWN:
+        case WM_MBUTTONDOWN:
+            window->dragging = true;
+            window->drag_last.x = GET_X_LPARAM(lparam);
+            window->drag_last.y = GET_Y_LPARAM(lparam);
+            SetCapture(hwnd);
+            SetFocus(hwnd);
+            return 0;
+        case WM_MOUSEMOVE: {
+            if (!window->dragging) break;
+            spdf_win_input input;
+            POINT now = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            memset(&input, 0, sizeof(input));
+            input.kind = SPDF_WIN_INPUT_SCROLL;
+            /* Dragging the paper down scrolls the document up, so the scroll
+             * delta is the negated cursor delta -- grab-and-pull, not
+             * push-the-scrollbar. */
+            input.dx = (float)(window->drag_last.x - now.x);
+            input.dy = (float)(window->drag_last.y - now.y);
+            input.x = (float)now.x;
+            input.y = (float)now.y;
+            window->drag_last = now;
+            dispatch(window, &input);
+            return 0;
+        }
+        case WM_LBUTTONUP:
+        case WM_MBUTTONUP:
+            end_drag(window);
+            return 0;
+        case WM_CAPTURECHANGED:
+            window->dragging = false;
+            return 0;
+        case WM_SETCURSOR:
+            if (LOWORD(lparam) == HTCLIENT) {
+                SetCursor(LoadCursorW(NULL, MAKEINTRESOURCEW(window->dragging ? 32646 /* IDC_SIZEALL */
+                                                                              : 32512 /* IDC_ARROW */)));
+                return TRUE;
+            }
+            break;
         case WM_DPICHANGED: {
             /* Windows hands us the rectangle the window should occupy on the
              * monitor it just moved to. Honouring it is what makes a drag
@@ -150,13 +284,20 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
-        case WM_KEYDOWN:
+        case WM_KEYDOWN: {
             if (wparam == VK_ESCAPE) {
                 PostMessageW(hwnd, WM_CLOSE, 0, 0);
                 return 0;
             }
+            spdf_win_input input;
+            memset(&input, 0, sizeof(input));
+            input.kind = SPDF_WIN_INPUT_KEY;
+            input.key = (unsigned)wparam;
+            if (dispatch(window, &input)) return 0;
             break;
+        }
         case WM_DESTROY:
+            end_drag(window);
             discard_target(window);
             window->hwnd = NULL;
             PostQuitMessage(window->exit_code);
@@ -190,7 +331,8 @@ static int register_class(HINSTANCE instance) {
 }
 
 spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title, int client_px_w, int client_px_h,
-                                        spdf_win_scene_fn scene_fn, void* user, char* err, size_t err_len) {
+                                        spdf_win_scene_fn scene_fn, spdf_win_input_fn input_fn, void* user, char* err,
+                                        size_t err_len) {
     if (err && err_len) err[0] = '\0';
     if (!d2d) return NULL;
 
@@ -207,6 +349,7 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
     }
     window->d2d = d2d;
     window->scene_fn = scene_fn;
+    window->input_fn = input_fn;
     window->user = user;
     window->dpi = USER_DEFAULT_SCREEN_DPI;
 

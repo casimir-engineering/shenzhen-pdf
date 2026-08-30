@@ -49,17 +49,39 @@ typedef enum spdf_win_fit {
      * to be the core's own RGBA buffer, unresampled, so any difference
      * against the macOS reference render is a real difference. */
     SPDF_WIN_FIT_EXACT = 0,
-    /* Page scaled down to fit the target with a margin and centred on the app
-     * background, with a soft edge. This is what the window shows. */
-    SPDF_WIN_FIT_CONTAIN = 1
+    /* The continuous scrolling canvas: `pages` carries every page intersecting
+     * the viewport, already positioned in target device pixels by
+     * spdf_win_canvas.c. Pages outside the target are clipped by Direct2D, not
+     * by the caller, so a page straddling the top edge draws its lower half
+     * with no special case. This is what the window shows. */
+    SPDF_WIN_FIT_CANVAS = 1
 } spdf_win_fit;
+
+/* One page placed on the canvas. Destination is in TARGET DEVICE PIXELS and
+ * may fall partly or wholly outside the target; the bitmap is drawn stretched
+ * to it, which is what keeps geometry independent of the render byte cap (a
+ * giant sheet renders at a reduced zoom and is scaled back up to its true slot
+ * rather than changing where anything sits). */
+typedef struct spdf_win_page_draw {
+    const spdf_bitmap* bitmap; /* NULL = not rendered yet; a paper placeholder is drawn */
+    int page_index;
+    float dest_x;
+    float dest_y;
+    float dest_w;
+    float dest_h;
+} spdf_win_page_draw;
 
 /* Everything a paint needs. Deliberately free of Win32 handles: the same
  * struct is filled by the window and by a console probe. */
 typedef struct spdf_win_scene {
-    /* Borrowed RGBA page pixels from spdf_render_page_rgba_opts(). NULL is
-     * legal and means "nothing to show yet"; `message` is drawn instead. */
+    /* SPDF_WIN_FIT_EXACT only. Borrowed RGBA page pixels from
+     * spdf_render_page_rgba_opts(). NULL is legal and means "nothing to show
+     * yet"; `message` is drawn instead. */
     const spdf_bitmap* page;
+    /* SPDF_WIN_FIT_CANVAS only. Borrowed; valid until the canvas is next
+     * touched. An empty list with a NULL `page` draws `message`. */
+    const spdf_win_page_draw* pages;
+    int page_count;
     spdf_win_fit fit;
     /* Size of the target in DEVICE PIXELS. Passed in rather than queried off
      * the target: ID2D1RenderTarget::GetSize returns a struct by value, and
