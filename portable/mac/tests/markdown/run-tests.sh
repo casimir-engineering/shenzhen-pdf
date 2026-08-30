@@ -11,9 +11,12 @@ CXX=$(xcrun --find clang++)
 SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
 SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
 
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/../compile-jobs.sh"
+
 # Intentional word splitting: SANITIZER_FLAGS is a caller-supplied compiler flag list.
 # shellcheck disable=SC2086
-"$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
+spdf_job "$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
     $SANITIZER_FLAGS \
     -I"$ROOT/ext/md4c" \
     -c "$ROOT/ext/md4c/md4c.c" \
@@ -23,7 +26,7 @@ SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
 # core's dark endpoints still equal SPDFMarkdownTheme's. It is freestanding C
 # with no mupdf dependency, which is why it can be linked here at all.
 # shellcheck disable=SC2086
-"$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
+spdf_job "$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
     $SANITIZER_FLAGS \
     -I"$ROOT/portable/core" \
     -c "$ROOT/portable/core/spdf_recolor.c" \
@@ -35,7 +38,7 @@ GUMBO_OBJS=""
 for GUMBO_SRC in "$ROOT/ext/gumbo-parser/src"/*.c; do
     GUMBO_OBJ="$BUILD_DIR/gumbo-$(basename "$GUMBO_SRC" .c).o"
     # shellcheck disable=SC2086
-    "$CC" -isysroot "$SDKROOT" -std=c99 -O0 -g \
+    spdf_job "$CC" -isysroot "$SDKROOT" -std=c99 -O0 -g \
         $SANITIZER_FLAGS \
         -I"$ROOT/ext/gumbo-parser/src" \
         -c "$GUMBO_SRC" -o "$GUMBO_OBJ"
@@ -111,23 +114,17 @@ CXXFLAGS="-isysroot $SDKROOT -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror 
 # object once and link it into all of them. Compiling the whole list per test
 # rebuilt the same ~30 translation units for each of the ~14 suites.
 SHARED_OBJS=""
-COMPILE_PIDS=""
 for SRC in $SOURCES; do
     OBJ="$BUILD_DIR/shared-$(basename "$SRC" .mm).o"
     SHARED_OBJS="$SHARED_OBJS $OBJ"
     # shellcheck disable=SC2086
-    "$CXX" $CXXFLAGS -c "$SRC" -o "$OBJ" &
-    COMPILE_PIDS="$COMPILE_PIDS $!"
+    spdf_job "$CXX" $CXXFLAGS -c "$SRC" -o "$OBJ"
 done
 for SRC in $TESTS; do
-    OBJ="$BUILD_DIR/test-$SRC.o"
     # shellcheck disable=SC2086
-    "$CXX" $CXXFLAGS -c "$SCRIPT_DIR/$SRC.mm" -o "$OBJ" &
-    COMPILE_PIDS="$COMPILE_PIDS $!"
+    spdf_job "$CXX" $CXXFLAGS -c "$SCRIPT_DIR/$SRC.mm" -o "$BUILD_DIR/test-$SRC.o"
 done
-for PID in $COMPILE_PIDS; do
-    wait "$PID"
-done
+spdf_join
 
 for TEST in $TESTS
 do
