@@ -50,14 +50,48 @@ declared() {
 # directory. `cd /d ... &&` is safe here -- the cmd parsing trap documented in
 # guest_exists() is specific to `if`, and && propagates the last command's code
 # through `cmd /c` intact.
+#
+# ARGUMENT SEPARATION IS THIS FUNCTION'S JOB, NOT THE CALLER'S. The argument
+# string used to be concatenated straight onto the closing quote of the
+# executable path, so a caller that passed `C:\spdf-build\scratch` produced
+#
+#     "C:\spdf-build\SPDFCoreSaveTests.exe"C:\spdf-build\scratch
+#
+# and cmd answered "The filename, directory name, or volume label syntax is
+# incorrect" without ever launching the binary. The harness then reported
+# `FAIL core.SPDFCoreSaveTests exited 1 in the guest`, which sent every reader
+# to portable/core to look for a bug that was not there -- while the only suite
+# that exercises the Windows save path silently never ran at all.
+#
+# Two callers passed arguments and only one of them led with a space, so the
+# defect hid behind a convention instead of a rule. The separator is inserted
+# here now, once, and leading whitespace in `args` is trimmed so a caller that
+# still leads with a space cannot produce a double space either.
 GUEST_SCRATCH='C:\spdf-build\scratch'
 guest_run() {
   local log="$1" target="$2" args="${3:-}"
+  args="${args#"${args%%[![:space:]]*}"}"
+  local cmdline='cd /d "'"$GUEST_SCRATCH"'" && "'"$GUEST_OUT"'\'"$target"'.exe"'
+  [[ -n "$args" ]] && cmdline="$cmdline $args"
   prlctl exec "$VM_NAME" cmd.exe /c 'if not exist "'"$GUEST_SCRATCH"'" mkdir "'"$GUEST_SCRATCH"'"' \
       > "$OUT/guest-scratch.log" 2>&1
-  prlctl exec "$VM_NAME" cmd.exe /c 'cd /d "'"$GUEST_SCRATCH"'" && "'"$GUEST_OUT"'\'"$target"'.exe"'"$args" \
-      > "$log" 2>&1
+  prlctl exec "$VM_NAME" cmd.exe /c "$cmdline" > "$log" 2>&1
   return $?
+}
+
+# Delete one guest-side file and PROVE it is gone. Returns 0 when the path does
+# not exist afterwards, non-zero when it survived.
+#
+# `del` is not enough on its own to build a freshness guarantee on: it reports
+# success for a file it never found, and it reports failure for a locked file in
+# a way that is easy to ignore. Since the entire point of the call is the
+# post-condition -- "nothing stale is sitting at this path" -- the post-condition
+# is what gets checked, by exit code, in its own prlctl call.
+guest_rm() {
+  prlctl exec "$VM_NAME" cmd.exe /c 'if exist "'"$1"'" del /f /q "'"$1"'"' \
+      > "$OUT/guest-rm.log" 2>&1
+  guest_exists "$1" && return 1
+  return 0
 }
 
 # Run a PowerShell script that lives in the staged tree, returning its exit code.
@@ -67,8 +101,9 @@ guest_run() {
 # like a PowerShell syntax error rather than the quoting problem it is.
 guest_ps() {
   local log="$1" script="$2"
+  shift 2
   prlctl exec "$VM_NAME" powershell.exe -NoProfile -ExecutionPolicy Bypass \
-      -File "$GUEST_TREE"'\portable\win\tests\'"$script" > "$log" 2>&1
+      -File "$GUEST_TREE"'\portable\win\tests\'"$script" "$@" > "$log" 2>&1
   return $?
 }
 
