@@ -183,10 +183,18 @@ appearance-dynamic. The variant threads explicitly:
 `SPDFMarkdownRenderOptions.themeVariant` re-derives the render's palette-role
 colors, and `SPDFMarkdownPageConfiguration.themeVariant` carries the palette
 into every drawing consumer of the plan. The mac app persists the choice as
-`markdownTheme` ("light"/"dark") in settings.yaml, toggles it from a
-markdown-only toolbar button beside the text-size pill, and applies it to the
-active session through the same viewport-preserving rerender as the font
-scale (cached sessions catch up on activation). On the screen canvas, light
+`markdownTheme` ("light"/"dark") in settings.yaml, toggles it from an
+always-visible toolbar button beside the text-size pill (or Shift+Cmd+I), and
+applies it to the active session through the same viewport-preserving rerender
+as the font scale (cached sessions catch up on activation). That one preference
+is now the whole app's reading theme: it also drives `SPDF_RENDER_DARK_THEME`
+for rendered formats, where `portable/core/spdf_recolor.c` remaps a page's
+lightness onto exactly these `paperColor`/`bodyTextColor` endpoints, keeping
+chroma so a colored figure holds its hue. `SPDFMacReadingThemeIntegration.mm`
+owns both halves; `SPDFMarkdownRendererTests` asserts the two copies of the
+endpoints have not drifted. Markdown export stays WYSIWYG because a Markdown
+document's colors are ours to choose; PDF print and export always use the
+document's own colors, because a PDF's are not. On the screen canvas, light
 paper keeps the white sheet + drop shadow while dark paper draws a subtle
 1px #333333 border instead. An images-only paragraph (nothing but images and
 whitespace/soft breaks) renders by its shape. A single image becomes a

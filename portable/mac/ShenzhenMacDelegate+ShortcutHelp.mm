@@ -66,7 +66,8 @@
             @"category" : @"Panels",
             @"items" : @[
                 @{@"title" : @"Show or hide chapters and comments", @"subtitle" : @"View menu or Side Panel toggle"},
-                @{@"title" : @"Show or hide minimap", @"subtitle" : @"View menu or Map toggle"}
+                @{@"title" : @"Show or hide minimap", @"subtitle" : @"View menu or Map toggle"},
+                @{@"title" : @"Light or dark reading theme", @"keys" : @[ @"Cmd", @"Shift", @"I" ]}
             ]
         }
     ];

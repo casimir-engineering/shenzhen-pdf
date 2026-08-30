@@ -1,0 +1,130 @@
+#import "SPDFMacMarkdownDelegatePrivate.h"
+
+#import "markdown/SPDFMarkdown.h"
+
+// The document-agnostic reading-theme toggle: one always-visible toolbar button
+// right of the A-/A+ text-size pill, a View-menu item on Shift+Cmd+I, and the
+// persisted "markdownTheme" preference they drive.
+//
+// One preference, two mechanisms. A Markdown document has no colors of its own,
+// so the dark variant is applied by RESTYLING it (SPDFMarkdownThemeVariant).
+// Every other format arrives as a rasterized page, so the same preference is
+// applied by RECOLORING those pixels in the core (SPDF_RENDER_DARK_THEME, see
+// portable/core/spdf_recolor.h). Both endpoints are the Markdown dark theme's
+// own paper and body-text colors, so a recolored PDF page and a dark Markdown
+// page are the same product rather than two similar-looking things.
+//
+// The key kept its original "markdownTheme" name deliberately: users who had
+// already chosen the dark Markdown theme keep it, for every document, with no
+// migration step and no window where the two halves could disagree.
+//
+// Print, Save as PDF and Copy Page never carry the flag. A PDF's colors are its
+// content, and a file with our dark paper baked in would be wrong everywhere
+// else it is ever opened.
+
+@implementation ShenzhenMacDelegate (SPDFMacReadingThemeIntegration)
+
+- (SPDFMarkdownThemeVariant)markdownThemeVariant {
+    return _darkReadingTheme ? SPDFMarkdownThemeVariantDark : SPDFMarkdownThemeVariantLight;
+}
+
+// Called from the render wrappers, which run on background queues. The read is
+// a plain byte and a toggle bumps _renderGeneration and rebuilds the page cache,
+// so the worst a race can produce is one page rendered under the outgoing theme;
+// its imageDarkTheme stamp then fails -renderedPageImage:matchesZoom: and it is
+// re-rendered like any other stale page.
+- (unsigned)readingThemeRenderFlags {
+    if (!_darkReadingTheme) return 0;
+    // Comic archives and bare images are skipped by the core itself, per
+    // document, so nothing here has to know the format.
+    return SPDF_RENDER_DARK_THEME | (_darkThemePreservesImages ? SPDF_RENDER_PRESERVE_IMAGES : 0u);
+}
+
+// While LIGHT is active the button shows the moon (pressing it switches to
+// dark); while DARK is active it shows the sun (pressing switches to light).
+- (NSString*)readingThemeToggleTitle {
+    return _darkReadingTheme ? @"Switch to Light Reading Theme" : @"Switch to Dark Reading Theme";
+}
+
+- (void)buildReadingThemeToolbarButton {
+    // Built through the shared toolbar-button factory so the bezel, font and
+    // metrics match the OCR/Translate buttons exactly.
+    NSButton* button = [self buttonWithTitle:@"" action:@selector(toggleReadingTheme:)];
+    button.imagePosition = NSImageOnly;
+    [button.widthAnchor constraintEqualToConstant:32].active = YES;
+    [button setContentHuggingPriority:NSLayoutPriorityRequired
+                       forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [button setContentCompressionResistancePriority:NSLayoutPriorityRequired
+                                     forOrientation:NSLayoutConstraintOrientationHorizontal];
+    _readingThemeButton = button;
+    [self updateReadingThemeControls];
+}
+
+- (void)updateReadingThemeControls {
+    if (!_readingThemeButton) return;
+    // Always visible: the theme now applies to every document, not just
+    // Markdown, so hiding it for PDF tabs would hide the feature.
+    _readingThemeButton.hidden = NO;
+    NSString* symbol = _darkReadingTheme ? @"sun.max" : @"moon.stars";
+    NSImage* icon = [NSImage imageWithSystemSymbolName:symbol
+                              accessibilityDescription:self.readingThemeToggleTitle];
+    // Template rendering makes the glyph adopt the toolbar's control tint, the
+    // way every other toolbar icon does.
+    [icon setTemplate:YES];
+    _readingThemeButton.image = icon;
+    _readingThemeButton.toolTip = self.readingThemeToggleTitle;
+    _readingThemeButton.accessibilityLabel = self.readingThemeToggleTitle;
+}
+
+- (void)toggleReadingTheme:(id)sender {
+    (void)sender;
+    _darkReadingTheme = !_darkReadingTheme;
+    [self savePersistentState];
+    [self applyReadingThemeToEveryTab];
+    [self updateReadingThemeControls];
+    if ([self isMarkdownActive]) [self updateControlsForActiveMarkdown];
+}
+
+- (void)toggleDarkThemePreservesImages:(id)sender {
+    (void)sender;
+    _darkThemePreservesImages = !_darkThemePreservesImages;
+    [self savePersistentState];
+    // Only the recolored formats care, and only while the theme is on.
+    if (_darkReadingTheme) [self applyReadingThemeToEveryTab];
+}
+
+// The toggle has to reach EVERY tab, not just the active one, or a background
+// tab would come back light. Markdown restyles in place; a rendered document
+// drops its cached bitmaps and re-renders on the existing background queue,
+// exactly the way a zoom or fit-mode change already does. Inactive tabs simply
+// lose their cache, which activateCachedSelectedTab rebuilds on the way in.
+- (void)applyReadingThemeToEveryTab {
+    SPDFDocumentTab* selected = [self selectedTab];
+    for (SPDFDocumentTab* tab in _tabs) {
+        if (tab == selected) continue;
+        [tab.cachedMarkdownSession applyThemeVariant:self.markdownThemeVariant];
+        tab.cachedRenderedPages = nil;
+    }
+    if ([self isMarkdownActive]) {
+        [self.activeMarkdownSession applyThemeVariant:self.markdownThemeVariant];
+        return;
+    }
+    if (!_doc) return;
+    // Re-render at the current viewport rather than jumping: the user is
+    // reading, and a theme flip should not move the page under them.
+    NSValue* restoreOrigin = [NSValue valueWithPoint:_pageScrollView.contentView.bounds.origin];
+    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO restoreOrigin:restoreOrigin];
+}
+
+// Overflow-menu mirror, called from rebuildToolbarOverflowMenuWithHiddenViews:
+// (the theme button collapses into the overflow with the text-size pill).
+- (void)addReadingThemeOverflowItemsToMenu:(NSMenu*)menu hiddenViews:(NSSet<NSView*>*)hiddenViews {
+    if (![hiddenViews containsObject:_readingThemeButton]) return;
+    [self addOverflowItemWithTitle:self.readingThemeToggleTitle
+                            action:@selector(toggleReadingTheme:)
+                              menu:menu
+                             state:NSControlStateValueOff
+                           enabled:YES];
+}
+
+@end

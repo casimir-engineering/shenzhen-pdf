@@ -56,7 +56,7 @@
     NSButton* _ocrButton;
     NSButton* _translateButton;
     NSSegmentedControl* _markdownFontSizeSegments;
-    NSButton* _markdownThemeButton;
+    NSButton* _readingThemeButton;
     NSBox* _ocrSeparator;
     NSSegmentedControl* _findSegments;
     NSTextField* _findCountLabel;
@@ -343,11 +343,18 @@
     // Persisted Markdown typography multiplier applied to every Markdown
     // document (settings.yaml "markdownFontScale", clamped [0.5, 3.0]).
     CGFloat _markdownFontScale;
-    // Persisted Markdown reading theme applied to every Markdown document
-    // (settings.yaml "markdownTheme": "light"/"dark"). BOOL keeps this header
-    // free of markdown-module types; SPDFMacMarkdownThemeIntegration.mm maps
-    // it to SPDFMarkdownThemeVariant.
-    BOOL _markdownDarkTheme;
+    // Persisted reading theme applied to EVERY document, Markdown or rendered
+    // (settings.yaml "markdownTheme": "light"/"dark" -- the key kept its
+    // original name so the choice already in users' settings carries over with
+    // no migration). BOOL keeps this header free of markdown-module types;
+    // SPDFMacReadingThemeIntegration.mm maps it to SPDFMarkdownThemeVariant for
+    // Markdown and to SPDF_RENDER_DARK_THEME for everything else.
+    BOOL _darkReadingTheme;
+    // With the dark theme on, leave photographs and figures in their original
+    // colors (settings.yaml "darkThemePreservesImages", default NO = recolor
+    // the page uniformly). A page that is essentially one big image is a scan
+    // and is recolored whole regardless; see spdf_recolor.h.
+    BOOL _darkThemePreservesImages;
     NSSize _restoredWindowContentSize;
     NSRect _restoredWindowFrame;
     BOOL _hasRestoredWindowFrame;
@@ -460,6 +467,15 @@
 - (void)teardownActiveFileWatcher;
 - (void)reloadSelectedTabFromDiskChange;
 - (void)checkAllTabsForExternalChangesOnFocus;
+// Renders one page off the given document at an explicit zoom and scale. The
+// reading theme rides along through -readingThemeRenderFlags, so callers that
+// must have the document's own colors (Copy Page Image) clear it first.
+- (SPDFRenderedPage*)renderedPageAtIndex:(NSInteger)pageIndex
+                                document:(spdf_document*)doc
+                                    zoom:(CGFloat)zoom
+                            displayScale:(CGFloat)displayScale
+                                   error:(char*)err
+                             errorLength:(size_t)errLen;
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop;
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex
                              alignTop:(BOOL)alignTop

@@ -19,6 +19,16 @@ SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
     -c "$ROOT/ext/md4c/md4c.c" \
     -o "$BUILD_DIR/md4c.o"
 
+# The portable recolor module, so SPDFMarkdownRendererTests can assert that the
+# core's dark endpoints still equal SPDFMarkdownTheme's. It is freestanding C
+# with no mupdf dependency, which is why it can be linked here at all.
+# shellcheck disable=SC2086
+"$CC" -isysroot "$SDKROOT" -std=c11 -O0 -g -Wall -Wextra -Werror \
+    $SANITIZER_FLAGS \
+    -I"$ROOT/portable/core" \
+    -c "$ROOT/portable/core/spdf_recolor.c" \
+    -o "$BUILD_DIR/spdf_recolor.o"
+
 # Vendored Gumbo HTML5 parser backing the sanitizing HTML-island whitelist.
 # Third-party sources compile without -Werror.
 GUMBO_OBJS=""
@@ -92,8 +102,8 @@ do
     # shellcheck disable=SC2086
     "$CXX" -isysroot "$SDKROOT" -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror \
         $SANITIZER_FLAGS \
-        -I"$ROOT/portable/mac/markdown" \
-        $SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" $GUMBO_OBJS \
+        -I"$ROOT/portable/mac/markdown" -I"$ROOT/portable/core" \
+        $SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" "$BUILD_DIR/spdf_recolor.o" $GUMBO_OBJS \
         -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
         -o "$BUILD_DIR/$TEST"
     "$BUILD_DIR/$TEST"

@@ -81,7 +81,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
 - (void)updateMarkdownFontControls {
     BOOL markdownActive = [self isMarkdownActive];
     _markdownFontSizeSegments.hidden = !markdownActive;
-    [self updateMarkdownThemeControls];
+    [self updateReadingThemeControls];
     if (!markdownActive) return;
     double percent = round(_markdownFontScale * 100.0);
     [_markdownFontSizeSegments setEnabled:_markdownFontScale > 0.5 forSegment:0];
