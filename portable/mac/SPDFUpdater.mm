@@ -1,4 +1,5 @@
 #import "SPDFUpdater.h"
+#import "SPDFMacFileExplorerPreference.h"
 #import "SPDFUpdaterRelease.h"
 
 #import <AppKit/AppKit.h>
@@ -1346,8 +1347,9 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
     // copy to hand), keep it available for recovery, and clear lifecycle state.
     if ([fm fileExistsAtPath:oldPath]) {
         dispatch_async(dispatch_get_main_queue(), ^{
-          [NSWorkspace.sharedWorkspace
-              activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:oldPath] ]];
+          // Through the file-manager preference, like every other reveal.
+          if (!SPDFMacRevealPathUsingPreference(oldPath))
+              [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:oldPath] ]];
         });
         // Leave .old on disk for the user to recover from; the aged-orphan sweep
         // (lease ceiling) reclaims it on a later clean launch.
