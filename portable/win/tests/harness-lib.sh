@@ -60,6 +60,43 @@ guest_run() {
   return $?
 }
 
+# Run a PowerShell script that lives in the staged tree, returning its exit code.
+#
+# -File, not -Command: prlctl exec strips quotes out of an inline -Command
+# argument, so every string literal in the script vanishes and the failure looks
+# like a PowerShell syntax error rather than the quoting problem it is.
+guest_ps() {
+  local log="$1" script="$2"
+  prlctl exec "$VM_NAME" powershell.exe -NoProfile -ExecutionPolicy Bypass \
+      -File "$GUEST_TREE"'\portable\win\tests\'"$script" > "$log" 2>&1
+  return $?
+}
+
+# The tail of the first line of a guest transcript that starts with a marker.
+# Facts for a report, never a pass/fail decision.
+declared_line() {
+  tr -d '\r' < "$2" | sed -n "s|^$1 ||p" | sed -n 1p
+}
+
+# Did a guest build fail INSIDE libmupdf.lib rather than in the code under test?
+#
+# This does NOT decide pass/fail -- the exit code already did that, and the case
+# still counts against the run. It only re-labels an already-failed build as
+# BLOCKED so the report points at the party who can fix it. A defect in a
+# prebuilt library is not evidence that the port's own code is wrong, and saying
+# it is would send whoever reads the report looking in the wrong file.
+#
+# Deliberately narrow: it matches a linker error attributed to an object inside
+# libmupdf.lib and nothing else. Widening this to "link errors are infra" would
+# hide exactly the unresolved-symbol failures the harness exists to surface.
+mupdf_link_defect() {
+  [[ -f "$1" ]] || return 1
+  case "$(tr -d '\r' < "$1")" in
+    *'libmupdf.lib('*'error LNK'*) return 0 ;;
+  esac
+  return 1
+}
+
 log_tail() {
   [[ -f "$1" ]] || return 0
   echo "        --- last lines of $(basename "$1") ---"
