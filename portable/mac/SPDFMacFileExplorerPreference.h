@@ -16,9 +16,6 @@ typedef NSURL* _Nullable (^SPDFMacExplorerApplicationLookup)(NSString* bundleIde
 typedef void (^SPDFMacExplorerApplicationLauncher)(NSURL* applicationURL, NSArray<NSURL*>* URLs,
                                                     void (^completion)(NSError* _Nullable error));
 typedef void (^SPDFMacSystemRevealHandler)(NSURL* URL, BOOL isDirectory);
-// Fallback for a browse request: the system file manager, or the caller's own
-// native Open panel rooted at that folder.
-typedef void (^SPDFMacSystemBrowseHandler)(NSURL* directoryURL);
 
 FOUNDATION_EXPORT NSString* const SPDFMacShenzhenFilesBundleIdentifier;
 
@@ -37,8 +34,8 @@ SPDFMacFileExplorerPreference SPDFMacCurrentFileExplorerPreference(void);
 void SPDFMacSetFileExplorerPreference(SPDFMacFileExplorerPreference preference);
 void SPDFMacInstallFileExplorerSettingsMenu(NSMenu* settingsMenu);
 
-// The folder a browse/Open action should start in: the active document's
-// folder, else the newest recently-opened document's folder, else home.
+// The folder the Open panel should start in: the active document's folder,
+// else the newest recently-opened document's folder, else home.
 NSString* SPDFMacBrowseStartDirectory(NSString* _Nullable documentPath, NSArray<NSString*>* _Nullable recentPaths);
 
 // Returns NO only for an invalid path or missing handlers. A missing/failed
@@ -49,16 +46,5 @@ BOOL SPDFMacRevealPathWithHandlers(NSString* path, SPDFMacFileExplorerPreference
                                    SPDFMacSystemRevealHandler systemReveal);
 BOOL SPDFMacRevealPath(NSString* path, SPDFMacFileExplorerPreference preference);
 BOOL SPDFMacRevealPathUsingPreference(NSString* path);
-
-// Browses a folder (a file path resolves to its containing folder). Shenzhen
-// Files cannot return a selection, so the system fallback is the caller's own
-// native picker; it also runs when Shenzhen Files is missing or fails to launch.
-BOOL SPDFMacBrowseDirectoryWithHandlers(NSString* path, SPDFMacFileExplorerPreference preference,
-                                        SPDFMacExplorerApplicationLookup _Nullable lookup,
-                                        SPDFMacExplorerApplicationLauncher _Nullable launcher,
-                                        SPDFMacSystemBrowseHandler _Nullable systemBrowse);
-BOOL SPDFMacBrowseDirectory(NSString* path, SPDFMacFileExplorerPreference preference,
-                            SPDFMacSystemBrowseHandler _Nullable systemBrowse);
-BOOL SPDFMacBrowseDirectoryUsingPreference(NSString* path, SPDFMacSystemBrowseHandler systemBrowse);
 
 NS_ASSUME_NONNULL_END
