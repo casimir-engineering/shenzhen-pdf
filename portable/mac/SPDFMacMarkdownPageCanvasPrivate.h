@@ -41,9 +41,11 @@
 // Paper presentation for the plan's theme variant: the light theme keeps the
 // white sheet + drop shadow, the dark theme paints the theme paper with a 1px
 // border instead. paperFillColor/drawsPaperShadow expose the decision to
-// headless tests.
+// headless tests. viewportBackgroundColor is the gutter AROUND the sheets: the
+// theme's own dark gutter, or windowBackgroundColor unchanged in light.
 - (NSColor*)paperFillColor;
 - (BOOL)drawsPaperShadow;
+- (NSColor*)viewportBackgroundColor;
 - (void)drawPaperBackgroundInFrame:(NSRect)pageFrame;
 - (void)drawPaperBorderInFrame:(NSRect)pageFrame;
 - (SPDFMarkdownPageFragment*)codeControlFragmentOnPage:(SPDFMarkdownPage*)page blockIndex:(NSUInteger)blockIndex;

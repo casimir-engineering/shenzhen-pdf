@@ -7,6 +7,14 @@ static const CGFloat kSPDFMarkdownMinimumZoom = 0.10;
 static const CGFloat kSPDFMarkdownMaximumZoom = 5.00;
 static const CGFloat kSPDFMarkdownFitInset = 48.0;
 
+// The scroll/clip background behind the sheets. The dark theme names its own
+// #121212 gutter (clearly below the #1E1E1E paper); light keeps
+// windowBackgroundColor exactly as before.
+static NSColor* SPDFMacMarkdownGutterColor(SPDFMarkdownPaginationPlan* plan) {
+    SPDFMarkdownTheme* theme = [SPDFMarkdownTheme themeForVariant:plan.configuration.themeVariant];
+    return theme.viewportBackgroundColor ?: NSColor.windowBackgroundColor;
+}
+
 @implementation SPDFMacMarkdownPagedView {
     SPDFMacMarkdownPageCanvas* _canvas;
     SPDFMarkdownPaginationPlan* _plan;
@@ -28,7 +36,7 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     self.translatesAutoresizingMaskIntoConstraints = NO;
     self.borderType = NSNoBorder;
     self.drawsBackground = YES;
-    self.backgroundColor = NSColor.windowBackgroundColor;
+    self.backgroundColor = SPDFMacMarkdownGutterColor(plan);
     self.hasVerticalScroller = YES;
     // Same find-marker scroller as the PDF document scroll view: the trough
     // draws [reader findScrollbarMarkers] (delegate-routed to this session's
@@ -281,7 +289,7 @@ static const CGFloat kSPDFMarkdownFitInset = 48.0;
     _presentationMode = presentationMode;
     self.hasVerticalScroller = !presentationMode;
     self.autohidesScrollers = presentationMode;
-    self.backgroundColor = presentationMode ? NSColor.blackColor : NSColor.windowBackgroundColor;
+    self.backgroundColor = presentationMode ? NSColor.blackColor : SPDFMacMarkdownGutterColor(_plan);
     self.contentView.backgroundColor = self.backgroundColor;
     _canvas.presentationMode = presentationMode;
     [_canvas setNeedsDisplay:YES];

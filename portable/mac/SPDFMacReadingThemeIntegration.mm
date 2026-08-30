@@ -76,10 +76,28 @@
     _readingThemeButton.accessibilityLabel = self.readingThemeToggleTitle;
 }
 
+// The viewport GUTTER (the area around the sheets) for the rendered-document
+// path: the dark theme names its own #121212, clearly below the paper, so a
+// page edge always reads; light keeps every surface exactly as it was. The
+// document view additionally swaps its drop shadow for a 1px page border in
+// dark (see SPDFDocumentView.drawsPageShadow/pageBorderColor). Presentation
+// mode owns the background while it is on and is never disturbed here.
+- (void)applyReadingThemeToDocumentViewport {
+    if (!_pageScrollView || _presentationMode) return;
+    if (_pageView.themeVariant != self.markdownThemeVariant) {
+        _pageView.themeVariant = self.markdownThemeVariant;
+        [_pageView setNeedsDisplay:YES];
+    }
+    NSColor* gutter = _pageView.viewportBackgroundColor ?: NSColor.windowBackgroundColor;
+    _pageScrollView.backgroundColor = gutter;
+    _pageScrollView.contentView.backgroundColor = gutter;
+}
+
 - (void)toggleReadingTheme:(id)sender {
     (void)sender;
     _darkReadingTheme = !_darkReadingTheme;
     [self savePersistentState];
+    [self applyReadingThemeToDocumentViewport];
     [self applyReadingThemeToEveryTab];
     [self updateReadingThemeControls];
     if ([self isMarkdownActive]) [self updateControlsForActiveMarkdown];

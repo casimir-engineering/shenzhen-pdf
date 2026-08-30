@@ -37,7 +37,13 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(S
 }
 
 - (BOOL)drawsPaperShadow {
-    return self.plan.configuration.themeVariant != SPDFMarkdownThemeVariantDark;
+    return self.pageTheme.drawsPaperShadow;
+}
+
+// The gutter behind the sheets. Dark takes the theme's #121212 so the #1E1E1E
+// paper edge always reads; light keeps windowBackgroundColor exactly as before.
+- (NSColor*)viewportBackgroundColor {
+    return self.pageTheme.viewportBackgroundColor ?: NSColor.windowBackgroundColor;
 }
 
 - (void)drawPaperBackgroundInFrame:(NSRect)pageFrame {

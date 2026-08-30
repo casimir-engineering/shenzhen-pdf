@@ -22,6 +22,9 @@ static NSColor* SPDFRGB(unsigned int hex) {
     _variant = variant;
     _paperColor = SPDFRGB(dark ? 0x1E1E1E : 0xFFFFFF);
     _paperBorderColor = SPDFRGB(dark ? 0x333333 : 0xD0D7DE);
+    // nil in Light: every frontend keeps the system gutter it already used.
+    _viewportBackgroundColor = dark ? SPDFRGB(0x121212) : nil;
+    _drawsPaperShadow = !dark;
     _bodyTextColor = SPDFRGB(dark ? 0xDCDDDE : 0x1F2328);
     _secondaryTextColor = SPDFRGB(dark ? 0x999999 : 0x59636E);
     _linkColor = SPDFRGB(dark ? 0x7F6DF2 : 0x0969DA);
