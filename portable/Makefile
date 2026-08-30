@@ -219,14 +219,16 @@ mac-tab-strip-interaction-tests: $(MAC_TAB_STRIP_INTERACTION_TEST)
 	"$(MAC_TAB_STRIP_INTERACTION_TEST)"
 
 # The reading-theme chrome seams: the gutter and page-border decisions on
-# SPDFDocumentView, plus the single-segment toolbar pill. Links the AppKit half only - no mupdf, and no markdown
+# SPDFDocumentView, the single-segment toolbar pill, and the Translate
+# enablement policy. Links the AppKit half only - no mupdf, and no markdown
 # pipeline beyond the palette itself.
 MAC_READING_THEME_CHROME_SRCS := mac/tests/SPDFMacReadingThemeChromeTests.mm mac/SPDFMacDocumentView.mm \
 	mac/SPDFMacPageRendering.mm mac/SPDFMacRenderedPage.mm mac/SPDFMacDelayedLinkActivation.mm \
 	mac/SPDFMacDocumentViewTheme.mm mac/SPDFMacSupport.mm mac/SPDFMacSelectionClick.mm mac/SPDFMacUIHelpers.mm \
-	mac/SPDFMacCursorRegions.mm mac/SPDFMacWindowChrome.mm mac/markdown/SPDFMarkdownTheme.mm
+	mac/SPDFMacCursorRegions.mm mac/SPDFMacWindowChrome.mm mac/SPDFMacTranslationPolicy.mm \
+	mac/markdown/SPDFMarkdownTheme.mm
 
-$(MAC_READING_THEME_CHROME_TEST): $(MAC_READING_THEME_CHROME_SRCS) mac/markdown/SPDFMarkdownDecorations.h | $(BUILD)
+$(MAC_READING_THEME_CHROME_TEST): $(MAC_READING_THEME_CHROME_SRCS) mac/SPDFMacTranslationPolicy.h mac/markdown/SPDFMarkdownDecorations.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -Imac/markdown $(MAC_READING_THEME_CHROME_SRCS) -framework Cocoa -framework UniformTypeIdentifiers -o "$(MAC_READING_THEME_CHROME_TEST)"
 
 mac-reading-theme-chrome-tests: $(MAC_READING_THEME_CHROME_TEST)
