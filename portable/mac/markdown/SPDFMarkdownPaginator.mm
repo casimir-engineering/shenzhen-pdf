@@ -34,6 +34,7 @@
     copy.headingKeepThreshold = self.headingKeepThreshold;
     copy.includesCodeLanguageControlSpacing = self.includesCodeLanguageControlSpacing;
     copy.themeVariant = self.themeVariant;
+    copy.preservesImageColors = self.preservesImageColors;
     return copy;
 }
 @end
@@ -196,6 +197,10 @@
         _pages = [pages copy];
     }
     return self;
+}
+
+- (void)setPreservesImageColors:(BOOL)preservesImageColors {
+    _configuration.preservesImageColors = preservesImageColors;
 }
 
 - (NSArray<SPDFMarkdownPageDecoration*>*)decorationsForPageIndex:(NSUInteger)pageIndex {

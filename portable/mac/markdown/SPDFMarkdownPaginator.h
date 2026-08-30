@@ -35,6 +35,10 @@ FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* l
 // by the plan so screen, print, export and copy-page draw the identical
 // concrete palette — geometry is theme-independent.
 @property(nonatomic) SPDFMarkdownThemeVariant themeVariant;
+// Mirrors the reader's "Keep Image Colors in Dark Theme" setting (default NO,
+// i.e. recolor). Only consulted when themeVariant is Dark, so a Light plan --
+// every print and export plan -- is unaffected whatever this says.
+@property(nonatomic) BOOL preservesImageColors;
 // Distance from the paper's top edge down to the printable area — the TOP
 // margin. Equal to NSMinY(printableRect) (the bottom margin) only when the
 // vertical margins are symmetric, so every top-anchored coordinate must use
@@ -139,6 +143,12 @@ FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* l
 // same geometry with the same concrete SPDFMarkdownTheme palette (the
 // configuration's themeVariant).
 - (NSArray<SPDFMarkdownPageDecoration*>*)decorationsForPageIndex:(NSUInteger)pageIndex;
+
+// Retargets the plan's "Keep Image Colors in Dark Theme" answer without
+// re-paginating. The flag is consulted only while DRAWING, and geometry does
+// not depend on it, so toggling the setting costs a redraw rather than a
+// re-render of the whole document.
+- (void)setPreservesImageColors:(BOOL)preservesImageColors;
 @end
 
 // Concrete-palette page drawing, implemented in SPDFMarkdownPaginatorDrawing.mm.

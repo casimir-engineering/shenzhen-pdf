@@ -75,7 +75,7 @@ NS_ASSUME_NONNULL_BEGIN
 // plan and the on-screen plan differ in palette and nothing else. Shared by the
 // lifecycle passes and the export rendition; implemented alongside the latter.
 FOUNDATION_EXPORT SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(
-    SPDFMarkdownRenderedDocument* rendered, SPDFMarkdownThemeVariant variant);
+    SPDFMarkdownRenderedDocument* rendered, SPDFMarkdownThemeVariant variant, BOOL preservesImageColors);
 
 @interface SPDFMacMarkdownSession (LifecycleInternal)
 // Shared rerender flow for language overrides and font-scale changes. A

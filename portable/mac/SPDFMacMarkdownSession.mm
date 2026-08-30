@@ -91,6 +91,13 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 // The theme mirrors applyFontScale: exactly — an active session rerenders in
 // place preserving the viewport; an inactive one adopts the preference and
 // catches up on activation.
+- (void)setPreservesImageColors:(BOOL)preservesImageColors {
+    if (preservesImageColors == _preservesImageColors) return;
+    _preservesImageColors = preservesImageColors;
+    // Draw-time only: retarget the live plan instead of re-rendering.
+    [_paginationPlan setPreservesImageColors:preservesImageColors];
+}
+
 - (void)applyThemeVariant:(SPDFMarkdownThemeVariant)themeVariant {
     if (themeVariant == _themeVariant) return;
     _themeVariant = themeVariant;
@@ -253,7 +260,8 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
       SPDFMarkdownPaginationPlan* plan = nil;
       NSAttributedString* interactive = nil;
       if (document) {
-          plan = SPDFMacMarkdownPlanForRendition(document.renderedDocument, renderOptions.themeVariant);
+          plan = SPDFMacMarkdownPlanForRendition(document.renderedDocument, renderOptions.themeVariant,
+                                                self->_preservesImageColors);
           interactive = SPDFMacMarkdownInteractiveString(document.model, document.renderedDocument);
       }
       dispatch_async(dispatch_get_main_queue(), ^{
@@ -456,7 +464,8 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                  if (!strongSelf || cancelled || !strongSelf->_active ||
                      renderGeneration != strongSelf->_renderGeneration || !rendered)
                      return;
-                 SPDFMarkdownPaginationPlan* plan = SPDFMacMarkdownPlanForRendition(rendered, themeVariant);
+                 SPDFMarkdownPaginationPlan* plan =
+                     SPDFMacMarkdownPlanForRendition(rendered, themeVariant, self->_preservesImageColors);
                  NSAttributedString* interactive =
                      SPDFMacMarkdownInteractiveString(strongSelf.document.model, rendered);
                  dispatch_async(dispatch_get_main_queue(), ^{
