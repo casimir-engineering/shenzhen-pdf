@@ -26,6 +26,7 @@
  */
 #include "spdf_win_canvas.h"
 #include "spdf_win_layout.h" /* SPDF_WIN_PAGE_MARGIN_* for the initial window size */
+#include "spdf_win_tabs_app.h" /* the tab model, the session, and the glue to this canvas */
 #include "spdf_win_window.h"
 
 #include <math.h>
@@ -63,6 +64,9 @@ struct app {
      * until it knows how big the viewport is, and the viewport is not known
      * until the window has been laid out. -1 once it has been honoured. */
     int pending_page;
+    /* Windowed: documents come from the model, and `doc`/`path` stay NULL. */
+    spdf_win_tabs* tabs;
+    char window_id[SPDF_WIN_SESSION_ID_MAX];
     wchar_t status[512];
 };
 
@@ -121,6 +125,7 @@ static void close_document(app* a) {
 
 static int scene_for_window(void* user, spdf_win_scene* scene) {
     app* a = (app*)user;
+    if (!a->canvas) return 0; /* the last tab just closed; the pump is exiting */
     spdf_win_canvas_set_viewport(a->canvas, scene->target_px_w, scene->target_px_h, scene->dpi_scale);
     if (a->pending_page > 0) {
         spdf_win_canvas_scroll_to_page(a->canvas, a->pending_page);
@@ -166,6 +171,21 @@ static int key_for_window(app* a, const spdf_win_input* in) {
             if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
             spdf_win_canvas_set_zoom_mode(a->canvas, SPDF_WIN_ZOOM_FIT_PAGE);
             return 1;
+        /* Ctrl+Tab / Ctrl+W. Where the reader is in the tab being left is
+         * written back first, so returning to it lands on the same page. */
+        case VK_TAB:
+            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
+            spdf_win_tabs_app_remember(a->tabs, a->canvas);
+            spdf_win_tabs_select_relative(a->tabs, (in->mods & SPDF_WIN_MOD_SHIFT) ? -1 : 1);
+            return spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
+        case 'W':
+            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
+            if (!spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
+                                             a->canvas != NULL))
+                return 0;
+            spdf_win_tabs_close(a->tabs, spdf_win_tabs_selected_index(a->tabs), 0);
+            if (spdf_win_tabs_count(a->tabs) == 0) PostQuitMessage(0);
+            return spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
         default: return 0;
     }
 }
@@ -191,13 +211,13 @@ static const wchar_t* file_name_of(const wchar_t* path) {
 /* Page 1 at 100%, shrunk to a comfortable share of the work area. Done before
  * the window exists, so it uses the system DPI; WM_DPICHANGED corrects
  * anything the real monitor disagrees with. */
-static void initial_client_size(app* a, int* out_w, int* out_h) {
+static void initial_client_size(spdf_document* doc, int* out_w, int* out_h) {
     RECT work = {0, 0, 1280, 800};
     float page_w = 612.0f;
     float page_h = 792.0f;
     char err[128];
 
-    spdf_page_size(a->doc, 0, &page_w, &page_h, err, sizeof(err)); /* already cached by the canvas */
+    spdf_page_size(doc, 0, &page_w, &page_h, err, sizeof(err)); /* already cached by the canvas */
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
 
     float w = page_w + 2.0f * (float)SPDF_WIN_PAGE_MARGIN_H;
@@ -439,14 +459,20 @@ int main(void) {
         rc = run_viewport(&a, d2d, argv[i], _wtoi(argv[i + 1]), (unsigned)_wtoi(argv[i + 2]),
                           (unsigned)_wtoi(argv[i + 3]), &opts, argv[i + 4]);
     } else {
+        char* launch_path = utf8_from_wide(argv[i]);
         spdf_win_enable_dpi_awareness();
-        a.pending_page = window_page;
-        if (!open_document(&a, argv[i], window_page, true)) {
+        a.tabs = spdf_win_tabs_app_start(launch_path, a.window_id, sizeof(a.window_id));
+        free(launch_path);
+        if (!spdf_win_tabs_app_show(a.tabs, &a.canvas, a.render_flags, &a.pending_page)) {
+            report(L"That document could not be opened.", true);
             rc = 1;
         } else {
             int client_w, client_h;
             wchar_t title[320];
-            initial_client_size(&a, &client_w, &client_h);
+            int selected = spdf_win_tabs_selected_index(a.tabs);
+            if (window_page > 0) a.pending_page = window_page;
+            initial_client_size((spdf_document*)spdf_win_tabs_document(a.tabs, selected, err, sizeof(err)), &client_w,
+                                &client_h);
             _snwprintf_s(title, _TRUNCATE, L"%s \x2014 ShenzhenPDF", file_name_of(argv[i]));
 
             spdf_win_window* window = spdf_win_window_create(d2d, title, client_w, client_h, scene_for_window,
@@ -462,6 +488,9 @@ int main(void) {
                 spdf_win_window_destroy(window);
             }
         }
+        /* session.yaml, under the shared lock, then close what is still open. */
+        spdf_win_tabs_app_finish(a.tabs, a.canvas, a.window_id);
+        a.canvas = NULL; /* the model closed it; close_document() must not */
     }
 
     close_document(&a);
