@@ -1,6 +1,8 @@
 #ifndef SHENZHEN_PDF_CORE_H
 #define SHENZHEN_PDF_CORE_H
 
+#include "spdf_recolor.h"
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -155,7 +157,22 @@ void spdf_render_token_free(spdf_render_token* token);
 
 enum {
     SPDF_RENDER_DEFAULT = 0,
-    SPDF_RENDER_USE_PAGE_LIST = 1 << 0 /* render by replaying a cached per-page display list */
+    SPDF_RENDER_USE_PAGE_LIST = 1 << 0, /* render by replaying a cached per-page display list */
+    /* Recolor the page for the dark reading theme (see spdf_recolor.h). This
+     * is opt-in PER RENDER rather than a mode set on the document, so that
+     * print, export and Copy Page get the document's own colors by doing
+     * nothing: a PDF's colors are its content, and a file that baked in our
+     * dark paper would be wrong everywhere else it is ever opened. It also
+     * means a preference change needs no state pushed onto the several
+     * document handles (per tab, per render thread) that alias one file. */
+    SPDF_RENDER_DARK_THEME = 1 << 1,
+    /* With SPDF_RENDER_DARK_THEME: leave the page's image regions in their
+     * original colors instead of recoloring them, so photographs are not
+     * lightness-inverted. Ignored on a page that is essentially one big image
+     * (a scan), which is recolored whole -- otherwise this setting would
+     * silently turn dark mode off on scanned documents. Costs one structured
+     * text pass the first time a page is rendered, cached thereafter. */
+    SPDF_RENDER_PRESERVE_IMAGES = 1 << 2
 };
 
 /* How the LAST render on this document got its pixels (profiling aid). */

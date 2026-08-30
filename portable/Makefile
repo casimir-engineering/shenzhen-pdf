@@ -43,7 +43,10 @@ CORE_SELECTION_HDR := core/spdf_selection.h
 CORE_SELECTION_OBJ := $(BUILD)/spdf_selection.o
 CORE_SELECTION_SUPPORT_SRC := core/spdf_selection_support.c
 CORE_SELECTION_SUPPORT_OBJ := $(BUILD)/spdf_selection_support.o
-CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ) $(CORE_SELECTION_SUPPORT_OBJ)
+CORE_RECOLOR_SRC := core/spdf_recolor.c
+CORE_RECOLOR_HDR := core/spdf_recolor.h
+CORE_RECOLOR_OBJ := $(BUILD)/spdf_recolor.o
+CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ) $(CORE_SELECTION_SUPPORT_OBJ) $(CORE_RECOLOR_OBJ)
 YAML_SRC := core/spdf_yaml.c
 YAML_HDR := core/spdf_yaml.h
 YAML_OBJ := $(BUILD)/spdf_yaml.o
@@ -54,6 +57,8 @@ MAC_GUMBO_SRCS := $(sort $(wildcard ../ext/gumbo-parser/src/*.c))
 MAC_GUMBO_OBJS := $(patsubst ../ext/gumbo-parser/src/%.c,$(BUILD)/gumbo-%.o,$(MAC_GUMBO_SRCS))
 CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
 CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
+CORE_RECOLOR_TEST := $(BUILD)/SPDFCoreRecolorTests
+CORE_RECOLOR_PROBE := $(BUILD)/SPDFRecolorProbe
 CORE_SELECTION_TEST := $(BUILD)/SPDFCoreSelectionTests
 CORE_CJK_SELECTION_TEST := $(BUILD)/SPDFCoreCJKSelectionTests
 MAC_APP := $(DIST)/ShenzhenPDF.app
@@ -98,7 +103,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -118,6 +123,9 @@ $(CORE_SELECTION_OBJ): $(CORE_SELECTION_SRC) $(CORE_SELECTION_HDR) $(CORE_HDR) M
 $(CORE_SELECTION_SUPPORT_OBJ): $(CORE_SELECTION_SUPPORT_SRC) $(CORE_SELECTION_HDR) $(CORE_HDR) Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SELECTION_SUPPORT_SRC)" -o "$(CORE_SELECTION_SUPPORT_OBJ)"
 
+$(CORE_RECOLOR_OBJ): $(CORE_RECOLOR_SRC) $(CORE_RECOLOR_HDR) Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -c "$(CORE_RECOLOR_SRC)" -o "$(CORE_RECOLOR_OBJ)"
+
 $(MAC_MD4C_OBJ): ../ext/md4c/md4c.c ../ext/md4c/md4c.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c11 -I../ext/md4c -c ../ext/md4c/md4c.c -o "$(MAC_MD4C_OBJ)"
 
@@ -129,17 +137,31 @@ $(YAML_OBJ): $(YAML_SRC) $(YAML_HDR) Makefile | $(BUILD)
 
 mac-app: $(MAC_BIN)
 
-$(CORE_OUTLINE_TEST): core/tests/SPDFCoreOutlineTests.c $(CORE_OBJ) mupdf-libs | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
+$(CORE_OUTLINE_TEST): core/tests/SPDFCoreOutlineTests.c $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
 
 core-outline-tests: $(CORE_OUTLINE_TEST)
 	"$(CORE_OUTLINE_TEST)"
 
-$(CORE_PASSWORD_TEST): core/tests/SPDFCorePasswordTests.c $(CORE_OBJ) mupdf-libs | $(BUILD)
-	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
+$(CORE_PASSWORD_TEST): core/tests/SPDFCorePasswordTests.c $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
 
 core-password-tests: $(CORE_PASSWORD_TEST)
 	core/tests/run_password_tests.sh "$(CORE_PASSWORD_TEST)"
+
+$(CORE_RECOLOR_TEST): core/tests/SPDFCoreRecolorTests.c $(CORE_RECOLOR_OBJ) | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore $< "$(CORE_RECOLOR_OBJ)" -lm -o "$@"
+
+core-recolor-tests: $(CORE_RECOLOR_TEST)
+	"$(CORE_RECOLOR_TEST)"
+
+# Not part of the test suite: renders a real page with and without the dark
+# reading theme, times every transform and writes before/after PNGs, so recolor
+# quality and cost can be judged from pixels rather than argued.
+$(CORE_RECOLOR_PROBE): core/tests/SPDFRecolorProbe.c $(CORE_OBJS) mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< $(CORE_OBJS) $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
+
+core-recolor-probe: $(CORE_RECOLOR_PROBE)
 
 $(CORE_SELECTION_TEST): core/tests/SPDFCoreSelectionTests.c $(CORE_OBJS) mupdf-libs | $(BUILD)
 	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< $(CORE_OBJS) $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
@@ -163,8 +185,8 @@ $(MAC_WINDOW_CHROME_TEST): mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWind
 mac-window-chrome-tests: $(MAC_WINDOW_CHROME_TEST)
 	"$(MAC_WINDOW_CHROME_TEST)"
 
-$(MAC_PASSWORD_TEST): mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm mac/SPDFMacPassword.h $(CORE_OBJ) mupdf-libs | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(MAC_PASSWORD_TEST)"
+$(MAC_PASSWORD_TEST): mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm mac/SPDFMacPassword.h $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(MAC_PASSWORD_TEST)"
 
 mac-password-tests: $(MAC_PASSWORD_TEST)
 	"$(MAC_PASSWORD_TEST)"
@@ -234,14 +256,14 @@ $(MAC_PROPERTIES_FORMAT_TEST): mac/tests/SPDFMacPropertiesFormatTests.mm mac/SPD
 mac-properties-format-tests: $(MAC_PROPERTIES_FORMAT_TEST)
 	"$(MAC_PROPERTIES_FORMAT_TEST)"
 
-$(MAC_TRANSLATION_FILTER_TEST): mac/tests/SPDFTranslationChineseFilterTests.mm $(CORE_OBJ) mupdf-libs | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFTranslationChineseFilterTests.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$(MAC_TRANSLATION_FILTER_TEST)"
+$(MAC_TRANSLATION_FILTER_TEST): mac/tests/SPDFTranslationChineseFilterTests.mm $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFTranslationChineseFilterTests.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$(MAC_TRANSLATION_FILTER_TEST)"
 
 mac-translation-filter-tests: $(MAC_TRANSLATION_FILTER_TEST)
 	"$(MAC_TRANSLATION_FILTER_TEST)"
 
-$(MAC_TRANSLATION_COPY_TEST): mac/tests/SPDFTranslationCopyTests.mm $(CORE_OBJ) mupdf-libs | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFTranslationCopyTests.mm "$(CORE_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$(MAC_TRANSLATION_COPY_TEST)"
+$(MAC_TRANSLATION_COPY_TEST): mac/tests/SPDFTranslationCopyTests.mm $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFTranslationCopyTests.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$(MAC_TRANSLATION_COPY_TEST)"
 
 mac-translation-copy-tests: $(MAC_TRANSLATION_COPY_TEST)
 	"$(MAC_TRANSLATION_COPY_TEST)"
