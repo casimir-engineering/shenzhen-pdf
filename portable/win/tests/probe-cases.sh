@@ -117,11 +117,31 @@ case_probe_png() {
     record "probe.png" BLOCKED "needs a rendered PNG from both hosts"
     return
   fi
+  # --strict first, because section 6 of the port plan says the tolerance must be
+  # set from a measurement and pinned, and byte-identity is the measurement worth
+  # having: portable/win/verify.sh already proves byte-identical output for pure
+  # integer C across these two toolchains, and MuPDF's rasteriser is largely
+  # fixed-point. If this passes, pin the defaults at zero. Its result is reported
+  # either way -- it never decides the case, so a rasteriser that legitimately
+  # differs in the last bit does not fail the run.
+  python3 "$TESTS_DIR/compare_png.py" "$OUT/mac/probe-page.png" "$OUT/win/probe-page.png" \
+      --strict --quiet > "$OUT/probe-png-strict.txt" 2>&1
+  local strict_rc=$?
+  local identical="not byte-identical"
+  [[ $strict_rc -eq 0 ]] && identical="BYTE-IDENTICAL -- pin the tolerance at zero"
+
   python3 "$TESTS_DIR/compare_png.py" "$OUT/mac/probe-page.png" "$OUT/win/probe-page.png" \
       --json "$OUT/probe-png.json" > "$OUT/probe-png.txt" 2>&1
   local rc=$?
   if [[ $rc -eq 0 ]]; then
-    record "probe.png" PASS "the Windows render matches the macOS render within tolerance"
+    # The measured numbers go in the note so the value to pin is in the report
+    # itself, not somewhere a person has to go and look for it.
+    local measured
+    measured="$(python3 -c 'import json,sys
+r = json.load(open(sys.argv[1]))
+print("mae %.4f, max delta %d, %.4f%% over %s" % (r["mae"], r["max_channel_delta"], r["bad_pixel_pct"], "delta"))' \
+        "$OUT/probe-png.json" 2>/dev/null)"
+    record "probe.png" PASS "matches within tolerance: ${measured:-metrics unavailable}; $identical"
   else
     record "probe.png" FAIL "golden-image comparison failed (compare_png exited $rc)"
     log_tail "$OUT/probe-png.txt" 20
