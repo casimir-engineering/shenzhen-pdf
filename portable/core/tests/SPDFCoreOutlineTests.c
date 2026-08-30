@@ -1,12 +1,12 @@
 #include "mupdf/fitz.h"
 
 #include "shenzhen_pdf_core.h"
+#include "spdf_win_compat.h"
 
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 static int g_failure_count = 0;
 
@@ -116,19 +116,19 @@ static const spdf_outline_item* find_outline_item(const spdf_outline* outline, c
 }
 
 int main(void) {
-    char temp_dir[] = "/tmp/spdf-core-outline-tests.XXXXXX";
-    char epub_path[PATH_MAX];
+    char temp_dir[SPDF_COMPAT_PATH_MAX];
+    char epub_path[SPDF_COMPAT_PATH_MAX];
     char err[512];
     spdf_document* doc = NULL;
     spdf_outline outline = {0};
 
-    if (!mkdtemp(temp_dir)) {
+    if (!spdf_compat_make_temp_dir(temp_dir, sizeof(temp_dir), "spdf-core-outline-tests.")) {
         perror("mkdtemp");
         return 2;
     }
-    snprintf(epub_path, sizeof(epub_path), "%s/outline.epub", temp_dir);
+    snprintf(epub_path, sizeof(epub_path), "%s" SPDF_PATH_SEP_STR "outline.epub", temp_dir);
     if (!create_epub_fixture(epub_path)) {
-        rmdir(temp_dir);
+        spdf_compat_rmdir(temp_dir);
         return 2;
     }
 
@@ -166,8 +166,8 @@ int main(void) {
 
     spdf_free_outline(&outline);
     spdf_close(doc);
-    unlink(epub_path);
-    rmdir(temp_dir);
+    spdf_compat_unlink(epub_path);
+    spdf_compat_rmdir(temp_dir);
 
     if (g_failure_count != 0) {
         fprintf(stderr, "%d core outline test(s) failed\n", g_failure_count);

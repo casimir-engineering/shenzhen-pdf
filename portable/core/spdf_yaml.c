@@ -121,7 +121,7 @@ static char* buf_take(spdf_buf* buf) {
         free(buf->data);
         return NULL;
     }
-    if (!buf->data) return strdup("");
+    if (!buf->data) return spdf_compat_strdup("");
     return buf->data;
 }
 
@@ -758,7 +758,7 @@ static spdf_node* yaml_scalar_from_plain(const char* text) {
     }
     spdf_node* node = node_new(is_json_number_token(text, len) ? SPDF_NODE_NUMBER : SPDF_NODE_STRING);
     if (node) {
-        node->scalar = strdup(text);
+        node->scalar = spdf_compat_strdup(text);
         if (!node->scalar) {
             node_free(node);
             return NULL;
@@ -797,7 +797,7 @@ static spdf_node* yaml_parse_inline_value(const char* text) {
             free(decoded);
         return node;
     }
-    char* plain = strdup(text);
+    char* plain = spdf_compat_strdup(text);
     if (!plain) return NULL;
     yaml_strip_plain_comment(plain);
     spdf_node* node = NULL;

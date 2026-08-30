@@ -26,6 +26,7 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -61,6 +62,11 @@ extern "C" {
 #define SPDF_PATH_SEP_CHAR '/'
 #define SPDF_PATH_SEP_STR "/"
 #endif
+
+/* MSVC's <limits.h> defines no PATH_MAX, and its _MAX_PATH is the legacy
+ * 260-byte limit that modern long paths exceed. The core's own path buffers are
+ * 1024, so callers share that rather than a platform-dependent size. */
+#define SPDF_COMPAT_PATH_MAX 1024
 
 /* ------------------------------------------------------------------ paths */
 
@@ -107,6 +113,36 @@ static SPDF_COMPAT_INLINE const char* spdf_compat_path_basename(const char* path
     return spdf_compat_path_basename_ex(path, SPDF_COMPAT_BACKSLASH_IS_SEP);
 }
 
+/* Writes "<system temp directory><sep><prefix>XXXXXX" into `out`, ready for
+ * spdf_compat_mkdtemp(). Returns out, or NULL when it would not fit.
+ *
+ * The suites used to hardcode "/tmp/...", which simply does not exist on
+ * Windows, so mkdtemp() there would fail on the path before it ever failed on
+ * the missing function. TMPDIR is macOS's spelling, TEMP and TMP are Windows'. */
+static SPDF_COMPAT_INLINE char* spdf_compat_temp_template(char* out, size_t out_len, const char* prefix) {
+    static const char* names[] = {"TMPDIR", "TEMP", "TMP"};
+    const char* root = "/tmp";
+    size_t root_len;
+    size_t i;
+    int written;
+
+    if (!out || out_len == 0 || !prefix) return NULL;
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        const char* value = getenv(names[i]);
+        if (value && *value) {
+            root = value;
+            break;
+        }
+    }
+    /* A trailing separator on the root would double up in the join. */
+    root_len = strlen(root);
+    while (root_len && spdf_compat_is_path_sep(root[root_len - 1])) --root_len;
+
+    written = snprintf(out, out_len, "%.*s" SPDF_PATH_SEP_STR "%sXXXXXX", (int)root_len, root, prefix);
+    if (written < 0 || (size_t)written >= out_len) return NULL;
+    return out;
+}
+
 /* --------------------------------------------------------------- file lock */
 
 /* One exclusive advisory lock on a lock file. Only one of the two members is
@@ -126,9 +162,12 @@ typedef struct spdf_compat_file_lock {
  * the POSIX call it replaces is wrong on Windows rather than merely absent. */
 int spdf_compat_replace_file(const char* src, const char* dst);
 int spdf_compat_mkstemp(char* template_path);
+char* spdf_compat_mkdtemp(char* template_path);
+int spdf_compat_rmdir(const char* path);
 int spdf_compat_close(int fd);
 int spdf_compat_unlink(const char* path);
 FILE* spdf_compat_fopen(const char* path, const char* mode);
+char* spdf_compat_strdup(const char* text);
 long spdf_compat_getpid(void);
 int spdf_compat_file_mtime(const char* path, long long* out_sec, long* out_nsec);
 int spdf_compat_lock_acquire(const char* path, spdf_compat_file_lock* lock);
@@ -147,6 +186,14 @@ static SPDF_COMPAT_INLINE int spdf_compat_mkstemp(char* template_path) {
     return mkstemp(template_path);
 }
 
+static SPDF_COMPAT_INLINE char* spdf_compat_mkdtemp(char* template_path) {
+    return mkdtemp(template_path);
+}
+
+static SPDF_COMPAT_INLINE int spdf_compat_rmdir(const char* path) {
+    return rmdir(path);
+}
+
 static SPDF_COMPAT_INLINE int spdf_compat_close(int fd) {
     return close(fd);
 }
@@ -157,6 +204,10 @@ static SPDF_COMPAT_INLINE int spdf_compat_unlink(const char* path) {
 
 static SPDF_COMPAT_INLINE FILE* spdf_compat_fopen(const char* path, const char* mode) {
     return fopen(path, mode);
+}
+
+static SPDF_COMPAT_INLINE char* spdf_compat_strdup(const char* text) {
+    return strdup(text);
 }
 
 static SPDF_COMPAT_INLINE long spdf_compat_getpid(void) {
@@ -212,6 +263,16 @@ static SPDF_COMPAT_INLINE double spdf_compat_monotonic_ms(void) {
 }
 
 #endif /* _WIN32 */
+
+/* ------------------------------------------------------- composite helpers */
+
+/* Creates a fresh private directory under the system temp directory and writes
+ * its path into `out`. Returns out, or NULL on failure. Defined after both
+ * branches above so it can call whichever spdf_compat_mkdtemp() is in play. */
+static SPDF_COMPAT_INLINE char* spdf_compat_make_temp_dir(char* out, size_t out_len, const char* prefix) {
+    if (!spdf_compat_temp_template(out, out_len, prefix)) return NULL;
+    return spdf_compat_mkdtemp(out);
+}
 
 #ifdef __cplusplus
 }

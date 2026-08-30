@@ -1,4 +1,5 @@
 #include "shenzhen_pdf_core.h"
+#include "spdf_win_compat.h"
 #include "spdf_selection.h"
 
 #include <limits.h>
@@ -6,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 static int failures;
 
@@ -254,29 +254,29 @@ static void test_repair_rotated_collapsed_quad(void) {
 }
 
 int main(void) {
-    char temp_dir[] = "/tmp/spdf-core-cjk-selection-tests.XXXXXX";
-    char path[PATH_MAX];
+    char temp_dir[SPDF_COMPAT_PATH_MAX];
+    char path[SPDF_COMPAT_PATH_MAX];
     char err[512];
     spdf_document* doc;
 
     test_word_char_classes();
     test_repair_rotated_collapsed_quad();
 
-    if (!mkdtemp(temp_dir)) {
+    if (!spdf_compat_make_temp_dir(temp_dir, sizeof(temp_dir), "spdf-core-cjk-selection-tests.")) {
         perror("mkdtemp");
         return 2;
     }
-    snprintf(path, sizeof(path), "%s/cjk-selection.pdf", temp_dir);
+    snprintf(path, sizeof(path), "%s" SPDF_PATH_SEP_STR "cjk-selection.pdf", temp_dir);
     if (!create_cjk_fixture(path)) {
         fprintf(stderr, "Could not create CJK selection fixture\n");
-        rmdir(temp_dir);
+        spdf_compat_rmdir(temp_dir);
         return 2;
     }
     doc = spdf_open(path, err, sizeof(err));
     if (!doc) {
         fprintf(stderr, "Could not open CJK selection fixture: %s\n", err);
-        unlink(path);
-        rmdir(temp_dir);
+        spdf_compat_unlink(path);
+        spdf_compat_rmdir(temp_dir);
         return 2;
     }
 
@@ -284,8 +284,8 @@ int main(void) {
     test_cjk_block_and_range(doc);
 
     spdf_close(doc);
-    unlink(path);
-    rmdir(temp_dir);
+    spdf_compat_unlink(path);
+    spdf_compat_rmdir(temp_dir);
     if (failures) {
         fprintf(stderr, "%d core CJK selection test(s) failed\n", failures);
         return 1;

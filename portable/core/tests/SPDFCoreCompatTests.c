@@ -24,13 +24,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <direct.h>
-#else
-#include <sys/stat.h>
-#include <sys/types.h>
-#endif
-
 static int g_failures = 0;
 
 #define EXPECT(condition, ...)                         \
@@ -44,50 +37,12 @@ static int g_failures = 0;
 
 /* ------------------------------------------------------------- scaffolding */
 
-static int test_mkdir(const char* path) {
-#ifdef _WIN32
-    return _mkdir(path);
-#else
-    return mkdir(path, 0700);
-#endif
-}
-
-static const char* temp_root(void) {
-    static const char* names[] = {"TMPDIR", "TEMP", "TMP"};
-    size_t i;
-
-    for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
-        const char* value = getenv(names[i]);
-        if (value && *value) return value;
-    }
-    return "/tmp";
-}
-
-static int file_is_creatable_in(const char* dir) {
-    char probe[1024];
-    FILE* f;
-
-    if ((size_t)snprintf(probe, sizeof(probe), "%s" SPDF_PATH_SEP_STR "probe.tmp", dir) >= sizeof(probe)) return 0;
-    f = fopen(probe, "wb");
-    if (!f) return 0;
-    fclose(f);
-    remove(probe);
-    return 1;
-}
-
 /* A private directory for one run; NULL on failure. Caller frees. */
 static char* make_scratch_dir(void) {
-    const char* root = temp_root();
-    size_t root_len = strlen(root);
-    size_t trim = (root_len && spdf_compat_is_path_sep(root[root_len - 1])) ? 1 : 0;
-    char* path = (char*)malloc(root_len + 64);
+    char* path = (char*)malloc(SPDF_COMPAT_PATH_MAX);
 
     if (!path) return NULL;
-    snprintf(path, root_len + 64, "%.*s" SPDF_PATH_SEP_STR "spdf-compat-%ld", (int)(root_len - trim), root,
-             spdf_compat_getpid());
-    /* An existing directory from an earlier run in the same process slot is
-     * fine; every file below is named and removed by the test that made it. */
-    if (test_mkdir(path) != 0 && !file_is_creatable_in(path)) {
+    if (!spdf_compat_make_temp_dir(path, SPDF_COMPAT_PATH_MAX, "spdf-compat-tests.")) {
         free(path);
         return NULL;
     }
@@ -212,6 +167,7 @@ static void test_replace_over_existing_destination(const char* dir) {
     free(got);
     EXPECT(!file_exists(src), "source is consumed by the move");
 
+    spdf_compat_unlink(dst);
     free(src);
     free(dst);
 }
@@ -234,6 +190,7 @@ static void test_replace_onto_missing_destination(const char* dir) {
     EXPECT(got && strcmp(got, "NEW") == 0, "destination holds the moved bytes");
     free(got);
 
+    spdf_compat_unlink(dst);
     free(src);
     free(dst);
 }
@@ -310,6 +267,7 @@ static void test_file_mtime(const char* dir) {
     EXPECT(nsec >= 0 && nsec < 1000000000L, "mtime nanoseconds are in range");
     EXPECT(spdf_compat_file_mtime(NULL, &sec, &nsec) == 0, "NULL path reports no mtime");
 
+    spdf_compat_unlink(path);
     free(path);
     free(missing);
 }
@@ -340,6 +298,50 @@ static void test_migration_lock(const char* dir) {
     free(path);
 }
 
+/* ------------------------------------------------------ temp directories */
+
+/* The four legacy core suites used to hardcode "/tmp/<name>.XXXXXX", a path
+ * that does not exist on Windows at all, so they could not have run in the
+ * guest even with mkdtemp() available. These cover the replacement. */
+static void test_temp_template(void) {
+    char buffer[SPDF_COMPAT_PATH_MAX];
+    char tiny[8];
+    size_t len;
+
+    EXPECT(spdf_compat_temp_template(buffer, sizeof(buffer), "spdf-template-") == buffer, "template is produced");
+    len = strlen(buffer);
+    EXPECT(len > 6, "template is longer than its placeholder");
+    EXPECT(strcmp(buffer + len - 6, "XXXXXX") == 0, "template ends in six placeholders");
+    EXPECT(strstr(buffer, "spdf-template-") != NULL, "template carries the caller's prefix");
+    EXPECT(spdf_compat_path_dir_len(buffer) > 0, "template names a directory to create in");
+    /* No doubled separator when the temp root already ends in one. */
+    EXPECT(strstr(buffer, SPDF_PATH_SEP_STR SPDF_PATH_SEP_STR) == NULL, "template has no doubled separator");
+    EXPECT(spdf_compat_temp_template(tiny, sizeof(tiny), "far-too-long-a-prefix-") == NULL,
+           "an overlong template is refused rather than truncated");
+    EXPECT(spdf_compat_temp_template(NULL, 0, "x") == NULL, "a NULL buffer is refused");
+}
+
+static void test_make_and_remove_temp_dir(void) {
+    char first[SPDF_COMPAT_PATH_MAX];
+    char second[SPDF_COMPAT_PATH_MAX];
+    char* probe;
+
+    EXPECT(spdf_compat_make_temp_dir(first, sizeof(first), "spdf-dir-a.") == first, "temp directory created");
+    EXPECT(spdf_compat_make_temp_dir(second, sizeof(second), "spdf-dir-a.") == second, "second temp directory");
+    EXPECT(strcmp(first, second) != 0, "two runs get distinct directories");
+    EXPECT(strstr(first, "XXXXXX") == NULL, "placeholders were substituted");
+
+    probe = join(first, "inside.txt");
+    EXPECT(probe && write_text(probe, "x"), "the created directory is writable");
+    EXPECT(spdf_compat_rmdir(first) != 0, "a non-empty directory is not removed");
+    if (probe) EXPECT(spdf_compat_unlink(probe) == 0, "probe file removed");
+    free(probe);
+
+    EXPECT(spdf_compat_rmdir(first) == 0, "an empty directory is removed");
+    EXPECT(spdf_compat_rmdir(second) == 0, "the second directory is removed");
+    EXPECT(spdf_compat_rmdir(first) != 0, "removing a directory twice fails");
+}
+
 /* --------------------------------------------------------------- timing */
 
 static void test_monotonic_clock(void) {
@@ -360,6 +362,8 @@ int main(void) {
     test_posix_path_regime();
     test_windows_path_regime();
     test_host_regime_matches_platform();
+    test_temp_template();
+    test_make_and_remove_temp_dir();
     test_monotonic_clock();
 
     if (!dir) {
@@ -373,8 +377,9 @@ int main(void) {
     test_file_mtime(dir);
     test_migration_lock(dir);
 
-    /* Leave the scratch directory's leftovers behind rather than recursing over
-     * it: the files above are all named and removed by their own tests. */
+    /* Every file above is named and removed by the test that made it, so the
+     * scratch directory itself is empty by now and can go. */
+    EXPECT(spdf_compat_rmdir(dir) == 0, "scratch directory is empty and removable");
     free(dir);
 
     if (g_failures) {
