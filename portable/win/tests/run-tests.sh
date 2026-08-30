@@ -215,6 +215,10 @@ case_non_ascii_path() {
 # that can exercise the comparator's premultiplied-alpha and halo detectors.
 . "$TESTS_DIR/probe-cases.sh"
 
+# The Direct2D compose comparison (QC F3). Sourced after probe-cases.sh, whose
+# probe_mac_build() produces the macOS reference these cases compare against.
+. "$TESTS_DIR/d2d-cases.sh"
+
 # Core suites that already exist as pure C over portable/core: free Windows
 # conformance the moment the guest can compile them, and the reason this runner
 # is worth having before any Windows UI exists at all.
@@ -355,7 +359,9 @@ case_win_tests() {
 if [[ $LIST -eq 1 ]]; then
   printf '%s\n' selftest.compare-png layout.differential harness.exit-code harness.non-ascii-path \
       probe.mac probe.win probe.diff probe.png \
-      alpha.mac alpha.win alpha.diff alpha.png 'core.<suite>' 'win.<name>_test'
+      alpha.mac alpha.win alpha.diff alpha.png \
+      d2d.exact-plain d2d.exact-dark d2d.window-plain d2d.window-dark \
+      'core.<suite>' 'win.<name>_test'
   exit 0
 fi
 
@@ -393,6 +399,10 @@ selected alpha.mac && case_alpha_mac
 selected alpha.win && case_alpha_win
 selected alpha.diff && case_alpha_diff
 selected alpha.png && case_alpha_png
+selected d2d.exact-plain && case_d2d_exact_plain
+selected d2d.exact-dark && case_d2d_exact_dark
+selected d2d.window-plain && case_d2d_window_plain
+selected d2d.window-dark && case_d2d_window_dark
 case_core_suites
 case_win_tests
 
