@@ -1,4 +1,5 @@
 #import "SPDFUpdater.h"
+#import "SPDFUpdaterDownloadBounds.h"
 #import "SPDFMacFileExplorerPreference.h"
 #import "SPDFUpdaterRelease.h"
 
@@ -30,7 +31,6 @@ static const NSTimeInterval kSPDFRecurringLeeway = 600.0;        // generous coa
 static const NSTimeInterval kSPDFNetworkTimeout = 15.0;
 static const NSTimeInterval kSPDFLeaseStaleAfter = 3600.0;      // 1h liveness ceiling
 static const NSTimeInterval kSPDFLaterSnooze = 7.0 * 86400.0;   // "Later" nag cap
-static const long long kSPDFMaxDownloadBytes = 64LL * 1024 * 1024;
 static const NSUInteger kSPDFMaxRedirects = 5;
 static const NSInteger kSPDFSiblingQuitTimeoutSeconds = 20;
 static const uint32_t kSPDFHardenedRuntimeFlag = 0x10000;       // kSecCodeSignatureRuntime
@@ -895,7 +895,7 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
         // Free-space pre-check (~3x DMG).
         NSDictionary* attrs = [fm attributesOfFileSystemForPath:stagingURL.path error:nil];
         long long freeBytes = [attrs[NSFileSystemFreeSize] longLongValue];
-        if (assetSize > 0 && freeBytes > 0 && freeBytes < assetSize * 3) {
+        if (!spdf_has_free_space_for_asset(freeBytes, assetSize)) {
             if (outError) *outError = spdf_make_error(@"There is not enough disk space to install the update.");
             return;
         }
@@ -1100,13 +1100,8 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
     totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite {
     (void)session;
     (void)bytesWritten;
-    // Zip-bomb cap. The written-bytes ceiling is the HARD bound and is always
-    // evaluated, even for chunked/CDN responses where totalBytesExpectedToWrite
-    // is -1 (in which case the declared-length early-reject below simply doesn't
-    // fire). When asset.size is absent the ceiling falls back to the 64MB max.
-    long long ceiling = _expectedAssetSize > 0 ? MIN(_expectedAssetSize + 1, kSPDFMaxDownloadBytes) : kSPDFMaxDownloadBytes;
-    if (totalBytesWritten > ceiling ||
-        (totalBytesExpectedToWrite > 0 && totalBytesExpectedToWrite > kSPDFMaxDownloadBytes)) {
+    // Zip-bomb cap, decided by the pure bound above.
+    if (spdf_download_must_cancel(totalBytesWritten, totalBytesExpectedToWrite, _expectedAssetSize)) {
         [downloadTask cancel];
         return;
     }
