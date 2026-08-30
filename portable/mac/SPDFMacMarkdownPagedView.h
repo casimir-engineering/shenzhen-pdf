@@ -45,6 +45,10 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownPageFitMode) {
 - (BOOL)selectionContainsImage;
 - (BOOL)writeSelectionToPasteboard:(NSPasteboard*)pasteboard
                 plainTextTransform:(NSString* (^_Nullable)(NSString* text))transform;
+// Repaints the page canvas without re-paginating. The canvas is the scroll
+// view's DOCUMENT view, so -setNeedsDisplay: on the scroll view itself does
+// not reach it.
+- (void)redrawPages;
 - (void)setZoom:(CGFloat)zoom centeredAtPoint:(NSPoint)point;
 - (void)zoomByFactor:(CGFloat)factor;
 - (void)applyFitMode:(SPDFMacMarkdownPageFitMode)fitMode;

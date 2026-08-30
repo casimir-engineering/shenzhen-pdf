@@ -65,6 +65,8 @@ typedef void (^SPDFMarkdownMinimapThumbnailCompletion)(SPDFRenderedPage* _Nullab
 - (void)cancelThumbnailRequestForPageIndex:(NSUInteger)pageIndex;
 - (void)cancelAllThumbnailRequests;
 
+// Drops cached thumbnails so they are re-rendered from the current plan.
+- (void)invalidateThumbnails;
 @end
 
 NS_ASSUME_NONNULL_END

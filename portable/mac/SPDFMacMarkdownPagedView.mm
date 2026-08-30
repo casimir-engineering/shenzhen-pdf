@@ -296,6 +296,10 @@ static NSColor* SPDFMacMarkdownGutterColor(SPDFMarkdownPaginationPlan* plan) {
     [self updateHorizontalScrollLock];
 }
 
+- (void)redrawPages {
+    [_canvas setNeedsDisplay:YES];
+}
+
 - (void)setZoom:(CGFloat)zoom centeredAtPoint:(NSPoint)point {
     _fitMode = fabs(zoom - 1.0) < 0.0001 ? SPDFMacMarkdownPageFitActual : SPDFMacMarkdownPageFitCustom;
     [self setMagnification:MAX(kSPDFMarkdownMinimumZoom, MIN(kSPDFMarkdownMaximumZoom, zoom)) centeredAtPoint:point];

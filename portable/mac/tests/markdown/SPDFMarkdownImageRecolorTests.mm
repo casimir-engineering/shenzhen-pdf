@@ -145,6 +145,33 @@ int main(void) {
         }
         CGImageRef recolored = SPDFMarkdownCreateDarkRecoloredImage(red.CGImage);
         SPDFExpect(recolored != NULL, @"a bitmap can be recolored");
+
+        // A cut-out background must stay invisible. A bitmap context is
+        // premultiplied, so a transparent pixel arrives as (0,0,0,0); remapping
+        // it directly produced near-ink with alpha 0, which composited as a
+        // bright halo around the artwork and, once the minimap downscaled it,
+        // as a white sheet behind the page.
+        NSBitmapImageRep* cutout = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                                                          pixelsWide:4
+                                                                          pixelsHigh:4
+                                                                       bitsPerSample:8
+                                                                     samplesPerPixel:4
+                                                                            hasAlpha:YES
+                                                                            isPlanar:NO
+                                                                      colorSpaceName:NSCalibratedRGBColorSpace
+                                                                         bytesPerRow:0
+                                                                        bitsPerPixel:0];
+        memset(cutout.bitmapData, 0, (size_t)(cutout.bytesPerRow * cutout.pixelsHigh));
+        CGImageRef cutoutOut = SPDFMarkdownCreateDarkRecoloredImage(cutout.CGImage);
+        SPDFExpect(cutoutOut != NULL, @"a fully transparent bitmap can be recolored");
+        if (cutoutOut) {
+            NSBitmapImageRep* got = [[NSBitmapImageRep alloc] initWithCGImage:cutoutOut];
+            const unsigned char* pixel = got.bitmapData;
+            SPDFExpect(pixel[3] == 0, @"a transparent pixel stays transparent");
+            SPDFExpect(pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0,
+                       @"a transparent pixel carries no color, so it cannot halo");
+            CGImageRelease(cutoutOut);
+        }
         if (recolored) {
             // Read the raw bytes: -colorAtX:y: round-trips through color
             // management and does not report what was actually written.

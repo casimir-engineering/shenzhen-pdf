@@ -23,6 +23,7 @@ CGImageRef SPDFMarkdownCreateDarkRecoloredImage(CGImageRef source) {
 
     CGContextDrawImage(context, CGRectMake(0, 0, (CGFloat)width, (CGFloat)height), source);
     unsigned char* pixels = (unsigned char*)CGBitmapContextGetData(context);
+    stride = CGBitmapContextGetBytesPerRow(context);  // CG may pad the rows
     if (!pixels) {
         CGContextRelease(context);
         return NULL;
@@ -35,7 +36,37 @@ CGImageRef SPDFMarkdownCreateDarkRecoloredImage(CGImageRef source) {
     dispatch_once(&once, ^{
       spdf_recolor_table_init(&table, SPDF_RECOLOR_LUMA_REMAP, spdf_recolor_default_dark_theme());
     });
+    // A bitmap context is always PREMULTIPLIED, so a transparent pixel arrives
+    // as (0,0,0,0) and a soft edge arrives as a blend with black. Recoloring
+    // those directly turned every transparent pixel into near-ink with alpha 0
+    // -- a bright halo around any image with a cut-out background, which the
+    // minimap's downscaling then smeared into a white sheet. Undo the
+    // premultiply, remap the image's real colors, then put it back.
+    for (size_t y = 0; y < height; ++y) {
+        unsigned char* row = pixels + y * stride;
+        for (size_t x = 0; x < width; ++x) {
+            unsigned char* pixel = row + x * 4;
+            unsigned a = pixel[3];
+            if (a == 0) {
+                pixel[0] = pixel[1] = pixel[2] = 0;
+            } else if (a < 255) {
+                for (int c = 0; c < 3; ++c) pixel[c] = (unsigned char)MIN(255u, (pixel[c] * 255u + a / 2) / a);
+            }
+        }
+    }
     spdf_recolor_rgba(pixels, (int)width, (int)height, (int)stride, &table);
+    for (size_t y = 0; y < height; ++y) {
+        unsigned char* row = pixels + y * stride;
+        for (size_t x = 0; x < width; ++x) {
+            unsigned char* pixel = row + x * 4;
+            unsigned a = pixel[3];
+            if (a == 0) {
+                pixel[0] = pixel[1] = pixel[2] = 0;
+            } else if (a < 255) {
+                for (int c = 0; c < 3; ++c) pixel[c] = (unsigned char)((pixel[c] * a + 127) / 255);
+            }
+        }
+    }
 
     CGImageRef recolored = CGBitmapContextCreateImage(context);
     CGContextRelease(context);

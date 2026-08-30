@@ -107,7 +107,11 @@
     _darkThemePreservesImages = !_darkThemePreservesImages;
     [self savePersistentState];
     // Only the recolored formats care, and only while the theme is on.
-    if (_darkReadingTheme) [self applyReadingThemeToEveryTab];
+    if (!_darkReadingTheme) return;
+    [self applyReadingThemeToEveryTab];
+    // Markdown repaints in place, so its minimap has to be refreshed too --
+    // its thumbnails are rendered from the same plan and cached per page.
+    if ([self isMarkdownActive]) [self updateMarkdownMinimap];
 }
 
 // The toggle has to reach EVERY tab, not just the active one, or a background
