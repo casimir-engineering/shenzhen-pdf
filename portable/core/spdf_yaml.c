@@ -3,14 +3,12 @@
 
 #include "spdf_yaml.h"
 
+#include "spdf_win_compat.h"
+
 #include <ctype.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/file.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #define SPDF_YAML_MAX_DEPTH 128
 
@@ -1025,9 +1023,7 @@ char* spdf_json_from_yaml(const char* yaml_text) {
 
 const char* spdf_state_header_for_file(const char* filename, char* out, size_t out_len) {
     if (!out || out_len == 0) return out;
-    const char* base = filename ? filename : "";
-    const char* slash = strrchr(base, '/');
-    if (slash) base = slash + 1;
+    const char* base = spdf_compat_path_basename(filename ? filename : "");
     char stem[64];
     size_t n = 0;
     while (base[n] && base[n] != '.' && n + 1 < sizeof(stem)) {
@@ -1040,25 +1036,25 @@ const char* spdf_state_header_for_file(const char* filename, char* out, size_t o
 }
 
 static int spdf_file_exists(const char* path) {
-    struct stat st;
-    return path && stat(path, &st) == 0;
+    long long sec;
+    long nsec;
+    return spdf_compat_file_mtime(path, &sec, &nsec);
 }
 
-/* 1 when a exists and is strictly newer (nanosecond mtime) than b, else 0. */
+/* 1 when a exists and is strictly newer than b, else 0. Windows has neither
+ * st_mtimespec nor st_mtim and resolves only to the second, so two writes inside
+ * one second compare equal there and the caller keeps the YAML it already has. */
 static int spdf_file_strictly_newer(const char* a, const char* b) {
-    struct stat sa, sb;
-    if (!a || !b || stat(a, &sa) != 0 || stat(b, &sb) != 0) return 0;
-#ifdef __APPLE__
-    if (sa.st_mtimespec.tv_sec != sb.st_mtimespec.tv_sec) return sa.st_mtimespec.tv_sec > sb.st_mtimespec.tv_sec;
-    return sa.st_mtimespec.tv_nsec > sb.st_mtimespec.tv_nsec;
-#else
-    if (sa.st_mtim.tv_sec != sb.st_mtim.tv_sec) return sa.st_mtim.tv_sec > sb.st_mtim.tv_sec;
-    return sa.st_mtim.tv_nsec > sb.st_mtim.tv_nsec;
-#endif
+    long long a_sec = 0, b_sec = 0;
+    long a_nsec = 0, b_nsec = 0;
+    if (!spdf_compat_file_mtime(a, &a_sec, &a_nsec)) return 0;
+    if (!spdf_compat_file_mtime(b, &b_sec, &b_nsec)) return 0;
+    if (a_sec != b_sec) return a_sec > b_sec;
+    return a_nsec > b_nsec;
 }
 
 static char* spdf_read_entire_file(const char* path) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = spdf_compat_fopen(path, "rb");
     if (!f) return NULL;
     if (fseek(f, 0, SEEK_END) != 0) {
         fclose(f);
@@ -1086,18 +1082,20 @@ static char* spdf_read_entire_file(const char* path) {
 
 static int spdf_write_file_atomic(const char* path, const char* text) {
     char temp[1024];
-    if (snprintf(temp, sizeof(temp), "%s.tmp.%ld", path, (long)getpid()) >= (int)sizeof(temp)) return 0;
-    FILE* f = fopen(temp, "wb");
+    if (snprintf(temp, sizeof(temp), "%s.tmp.%ld", path, spdf_compat_getpid()) >= (int)sizeof(temp)) return 0;
+    FILE* f = spdf_compat_fopen(temp, "wb");
     if (!f) return 0;
     size_t len = strlen(text);
     size_t written = fwrite(text, 1, len, f);
     int close_err = fclose(f);
     if (written != len || close_err != 0) {
-        unlink(temp);
+        spdf_compat_unlink(temp);
         return 0;
     }
-    if (rename(temp, path) != 0) {
-        unlink(temp);
+    /* Replace-existing: rename() refuses to overwrite on Windows, and every
+     * state rewrite after the very first one overwrites an existing file. */
+    if (spdf_compat_replace_file(temp, path) != 0) {
+        spdf_compat_unlink(temp);
         return 0;
     }
     return 1;
@@ -1120,28 +1118,30 @@ int spdf_state_migrate_file(const char* json_path, const char* yaml_path, const 
     if (!wrote) return -1;
     char backup[1024];
     if (snprintf(backup, sizeof(backup), "%s.migrated-backup", json_path) < (int)sizeof(backup))
-        rename(json_path, backup);
+        spdf_compat_replace_file(json_path, backup); /* a backup may already exist */
     return 1;
 }
 
 int spdf_state_migrate_dir(const char* dir, const char* const* stems, int stem_count) {
     if (!dir || !stems || stem_count <= 0) return 0;
     char lock_path[1024];
-    if (snprintf(lock_path, sizeof(lock_path), "%s/migration.lock", dir) >= (int)sizeof(lock_path)) return -1;
-    int fd = open(lock_path, O_CREAT | O_RDWR, 0600);
-    if (fd < 0) return -1;
-    flock(fd, LOCK_EX);
+    const int lock_cap = (int)sizeof(lock_path);
+    if (snprintf(lock_path, lock_cap, "%s" SPDF_PATH_SEP_STR "migration.lock", dir) >= lock_cap) return -1;
+    /* Windows has no flock(); the shim takes an exclusive LockFileEx range on a
+     * CreateFileW handle, which the kernel drops if a holder dies mid-migration. */
+    spdf_compat_file_lock lock;
+    if (!spdf_compat_lock_acquire(lock_path, &lock)) return -1;
     int migrated = 0;
     for (int i = 0; i < stem_count; i++) {
         char json_path[1024];
         char yaml_path[1024];
         char header[128];
-        if (snprintf(json_path, sizeof(json_path), "%s/%s.json", dir, stems[i]) >= (int)sizeof(json_path)) continue;
-        if (snprintf(yaml_path, sizeof(yaml_path), "%s/%s.yaml", dir, stems[i]) >= (int)sizeof(yaml_path)) continue;
+        const int path_cap = (int)sizeof(json_path);
+        if (snprintf(json_path, path_cap, "%s" SPDF_PATH_SEP_STR "%s.json", dir, stems[i]) >= path_cap) continue;
+        if (snprintf(yaml_path, path_cap, "%s" SPDF_PATH_SEP_STR "%s.yaml", dir, stems[i]) >= path_cap) continue;
         spdf_state_header_for_file(stems[i], header, sizeof(header));
         if (spdf_state_migrate_file(json_path, yaml_path, header) == 1) migrated++;
     }
-    flock(fd, LOCK_UN);
-    close(fd);
+    spdf_compat_lock_release(&lock);
     return migrated;
 }
