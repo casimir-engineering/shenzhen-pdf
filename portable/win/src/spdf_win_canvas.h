@@ -13,10 +13,15 @@
  * the real window scroll to the same pixel: spdf_win_main.cpp's
  * --render-window-png drives this same canvas with no HWND in sight.
  *
- * Geometry comes from T3's spdf_win_layout.h and the page cache is T3's
- * spdf_win_lru -- both real, neither re-derived here. Background rendering is
- * the one stub: T5's spdf_win_render.c has not landed, so ensure_page() in the
- * .cpp renders synchronously. That seam is one function wide by design.
+ * Geometry comes from T3's spdf_win_layout.h, the page cache is T3's
+ * spdf_win_lru, and neighbour prefetch runs on T5's spdf_win_render worker
+ * pool. Nothing here re-derives any of the three. The page under the viewport
+ * is still rendered synchronously on purpose -- see the .cpp.
+ *
+ * `path` is the document's UTF-8 path, used only to give the render workers
+ * something to open (the core allows one spdf_document per thread, so they
+ * cannot share ours). NULL disables prefetch; everything still works, just on
+ * the calling thread.
  */
 #ifndef SPDF_WIN_CANVAS_H
 #define SPDF_WIN_CANVAS_H
@@ -40,7 +45,8 @@ typedef enum spdf_win_zoom_mode {
  * Cheap: it reads page 1's size and NOTHING else, because that is all the
  * first frame needs and launch time is the product's headline promise. Sizes
  * for later pages are measured as the viewport reaches them. */
-spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, unsigned render_flags, char* err, size_t err_len);
+spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, const char* path, unsigned render_flags, char* err,
+                                        size_t err_len);
 void spdf_win_canvas_destroy(spdf_win_canvas* canvas);
 
 /* Viewport in DEVICE PIXELS, plus the display's device-pixels-per-logical-pixel.
@@ -88,6 +94,19 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene);
 /* Bytes currently held by the page-bitmap cache. For the render-budget check;
  * never used to make a drawing decision. */
 size_t spdf_win_canvas_cache_bytes(const spdf_win_canvas* canvas);
+/* How many pages the LAST build_scene had to render on the calling thread. 0
+ * means every visible page came from the cache -- which, after a scroll onto a
+ * new page, is the observable proof that prefetch did its job. */
+int spdf_win_canvas_sync_renders(const spdf_win_canvas* canvas);
+/* How many renders the worker pool has started. Diagnostic only. */
+unsigned long long spdf_win_canvas_prefetched(spdf_win_canvas* canvas);
+
+/* HEADLESS ONLY. Drains completions, waiting up to timeout_ms for outstanding
+ * prefetches, and returns how many were adopted. A window must never call this
+ * -- it drains as it paints, and blocking the UI thread on a prefetch gives
+ * back the stall the prefetch exists to remove. It exists so a probe can make
+ * a multi-frame scroll deterministic. */
+int spdf_win_canvas_settle(spdf_win_canvas* canvas, int timeout_ms);
 
 #ifdef __cplusplus
 }

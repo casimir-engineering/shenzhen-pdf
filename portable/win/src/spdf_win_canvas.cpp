@@ -1,7 +1,7 @@
 /* The continuous scrolling canvas. See spdf_win_canvas.h for the layering.
  *
- * WHAT IS REAL AND WHAT IS STUBBED, because it matters to whoever reads this
- * next:
+ * NOTHING HERE IS STUBBED, which is worth saying because an earlier draft of
+ * this file was. All three seams are the real thing:
  *
  *  - GEOMETRY IS REAL. Every slot rect, fit zoom, zoom anchor and horizontal
  *    clamp below comes from T3's spdf_win_layout.h, which is the de-glib'd
@@ -10,62 +10,33 @@
  *    shipped bug each formulation fixes.
  *  - THE CACHE IS REAL. T3's spdf_win_lru holds decoded pages under the 96 MB
  *    budget with the same LRU policy the other two frontends use.
- *  - RENDERING IS SYNCHRONOUS, and that is the one stub. T5's
- *    spdf_win_render.h has landed but spdf_win_render.c has not, so there is
- *    nothing to link against yet. ensure_page(): a cache miss renders inline
- *    on the calling thread. The seam is one function wide -- when T5's
- *    implementation lands, ensure_page() posts a request and returns NULL
- *    (drawing a paper placeholder, which this file already handles for exactly
- *    that reason) and a drain callback inserts into the same cache under the
- *    same key. Nothing else in the frontend changes. There is deliberately no
- *    neighbour prefetch here: prefetching on the UI thread would trade the
- *    stutter it is supposed to remove for a bigger one, and it is T5's to add.
+ *  - THE WORKER POOL IS REAL. T5's spdf_win_render service prefetches the
+ *    pages either side of the viewport off-thread.
+ *
+ * The one deliberate asymmetry: the pages actually ON SCREEN are rendered
+ * SYNCHRONOUSLY, in ensure_page(), even though a worker pool is right there.
+ * Two reasons, and both are worth more than the symmetry:
+ *
+ *   - the canvas can then never hand back a frame with a hole in it, so the
+ *     placeholder path in the compose layer is a safety net rather than
+ *     something a reader sees on every page break;
+ *   - and the headless viewport probe stays deterministic. A --render-window-png
+ *     whose pixels depended on whether a worker had finished yet would be a PNG
+ *     no comparison against macOS could trust, and that comparison is the only
+ *     evidence this port is correct.
+ *
+ * What the pool buys is the page you are ABOUT to reach being ready before you
+ * get there, which is the whole difference between a strip that scrolls and one
+ * that stutters at every boundary. Moving the visible page onto it too is a
+ * later change, and wants a placeholder that does not flash.
  */
-#include "spdf_win_canvas.h"
-
-#include "spdf_win_layout.h"
-#include "spdf_win_lru.h"
+#include "spdf_win_canvas_internal.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
-
-struct spdf_win_canvas {
-    spdf_document* doc; /* borrowed */
-    unsigned render_flags;
-    int page_count;
-
-    /* Page sizes in PDF points. Pages [0, measured) have been asked of the
-     * core; the rest hold page 1's size as an estimate. Launching measures
-     * exactly ONE page, because a 500-page document would otherwise pay 500
-     * fz_load_page calls before the first pixel appears, and launch time is
-     * the product's headline promise. The estimate only ever affects the
-     * total scroll height below the viewport; everything at or above the
-     * viewport is exact, because build_scene() measures forward until the
-     * visible range stops moving. */
-    SpdfWinPageSizePt* sizes;
-    int measured;
-
-    SpdfWinLayout layout;
-    double zoom;
-    spdf_win_zoom_mode mode;
-    double scroll_x;
-    double scroll_y;
-
-    unsigned vp_w;
-    unsigned vp_h;
-    double dpi_scale;
-
-    SpdfWinLru cache; /* SpdfWinLruKey -> spdf_bitmap*, owned */
-
-    spdf_win_page_draw* draws;
-    int draws_cap;
-    int draws_count;
-
-    wchar_t status[256];
-};
 
 /* --- the cached value ---------------------------------------------------- */
 
@@ -75,6 +46,7 @@ static void destroy_bitmap(void* value) {
     spdf_free_bitmap(bitmap);
     free(bitmap);
 }
+
 
 /* --- measurement --------------------------------------------------------- */
 
@@ -119,8 +91,18 @@ static void clamp_scroll(spdf_win_canvas* canvas) {
 /* Re-derives the zoom under a fit mode and rebuilds every slot rect. The fit
  * modes key on the CURRENT page, so a mixed-size document fits the page you
  * are looking at rather than the widest sheet in the file. */
+/* Everything already rendered is now the wrong size. Bumping the generation
+ * cancels in-flight prefetches and makes their results arrive as SUPERSEDED
+ * rather than being adopted -- without it, a worker that started before a zoom
+ * change would file a stale bitmap under a key nothing will ever ask for, and
+ * the LRU would carry it until eviction. */
+static void note_zoom_changed(spdf_win_canvas* canvas, double before) {
+    if (canvas->service && fabs(canvas->zoom - before) > 1e-9) spdf_win_render_service_bump_generation(canvas->service);
+}
+
 static void relayout(spdf_win_canvas* canvas) {
     int page = current_page_of(canvas);
+    double before = canvas->zoom;
     double fit = 0.0;
 
     if (page >= canvas->page_count) page = canvas->page_count - 1;
@@ -138,6 +120,7 @@ static void relayout(spdf_win_canvas* canvas) {
      * the current zoom then is what stops a window that has not been sized yet
      * from snapping to something absurd. */
     if (fit > 0.0) canvas->zoom = fit;
+    note_zoom_changed(canvas, before);
 
     spdf_win_layout_compute(&canvas->layout, canvas->sizes, canvas->page_count, canvas->zoom, (double)canvas->vp_w,
                             SPDF_WIN_PAGE_MARGIN_H, SPDF_WIN_PAGE_MARGIN_V);
@@ -146,7 +129,8 @@ static void relayout(spdf_win_canvas* canvas) {
 
 /* --- lifecycle ----------------------------------------------------------- */
 
-spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, unsigned render_flags, char* err, size_t err_len) {
+spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, const char* path, unsigned render_flags, char* err,
+                                        size_t err_len) {
     spdf_win_canvas* canvas;
     float w = 612.0f;
     float h = 792.0f;
@@ -187,11 +171,30 @@ spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, unsigned render_flag
     canvas->measured = 1;
 
     spdf_win_lru_init(&canvas->cache, SPDF_WIN_MAX_RENDER_SURFACE_BYTES, destroy_bitmap);
+    /* No path means no prefetch -- the workers open the file themselves, one
+     * document per thread, because the core's contract is one spdf_document
+     * per thread and handing them ours would break it. Not having a service is
+     * a supported state, not a failure: everything still renders, just on the
+     * calling thread. Starting it costs nothing here; T5 spawns threads on the
+     * first request, not on construction, so launch pays for no worker it does
+     * not use. */
+    /* No notify hook on purpose: this canvas drains as it builds a frame,
+     * so a PostMessage per completion would only ask for a repaint the next
+     * paint was going to do anyway. A prefetched page is by definition not on
+     * screen yet, so nothing needs redrawing when it lands. */
+    canvas->service = spdf_win_render_service_new(path, NULL, SPDF_WIN_MAX_RENDER_SURFACE_BYTES, NULL, NULL);
     return canvas;
 }
 
 void spdf_win_canvas_destroy(spdf_win_canvas* canvas) {
     if (!canvas) return;
+    /* The service FIRST, and while the canvas is still whole: freeing it
+     * cancels everything in flight and then delivers each outstanding request
+     * SPDF_WIN_RENDER_SHUTDOWN on this thread, and those callbacks touch this
+     * canvas's cache. Tearing the cache down first would hand them freed
+     * memory. */
+    spdf_win_render_service_free(canvas->service);
+    canvas->service = NULL;
     spdf_win_lru_deinit(&canvas->cache);
     spdf_win_layout_clear(&canvas->layout);
     free(canvas->draws);
@@ -237,8 +240,10 @@ void spdf_win_canvas_set_zoom_at(spdf_win_canvas* canvas, float zoom, float vx, 
      * the point survives a layout whose slot rects all moved. */
     spdf_win_zoom_anchor_capture(&anchor, &canvas->layout, canvas->sizes, canvas->zoom, (double)vx, (double)vy,
                                  canvas->scroll_x, canvas->scroll_y);
+    double before = canvas->zoom;
     canvas->zoom = target;
     canvas->mode = SPDF_WIN_ZOOM_FREE;
+    note_zoom_changed(canvas, before);
     spdf_win_layout_compute(&canvas->layout, canvas->sizes, canvas->page_count, canvas->zoom, (double)canvas->vp_w,
                             SPDF_WIN_PAGE_MARGIN_H, SPDF_WIN_PAGE_MARGIN_V);
     spdf_win_zoom_anchor_apply(&anchor, &canvas->layout, canvas->zoom, (double)canvas->vp_w, (double)canvas->vp_h,
@@ -306,6 +311,7 @@ static const spdf_bitmap* ensure_page(spdf_win_canvas* canvas, int page) {
     bitmap = (spdf_bitmap*)spdf_win_lru_lookup(&canvas->cache, &key);
     if (bitmap) return bitmap;
 
+    canvas->sync_renders++;
     bitmap = (spdf_bitmap*)calloc(1, sizeof(*bitmap));
     if (!bitmap) return NULL;
     if (!spdf_render_page_rgba_opts(canvas->doc, page, (float)render_zoom, canvas->render_flags, NULL, bitmap, err,
@@ -325,6 +331,10 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
     int visible = 0;
 
     if (!canvas || !scene) return 0;
+    /* Adopt anything the pool finished since the last frame. Cheap and O(1)
+     * per item -- adoption on the UI thread must never do O(n) work. */
+    if (canvas->service) spdf_win_render_drain(canvas->service, -1);
+    canvas->sync_renders = 0;
     if (canvas->layout.count != canvas->page_count) relayout(canvas);
 
     /* Measure forward until the visible range stops changing. Each round can
@@ -365,6 +375,11 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
         draw->dest_w = (float)rect->w;
         draw->dest_h = (float)rect->h;
     }
+
+    /* The two pages the reader is most likely to reach next, off-thread. Both
+     * directions, because scrolling back up is as common as scrolling down. */
+    spdf_win_canvas_prefetch(canvas, last + 1);
+    spdf_win_canvas_prefetch(canvas, first - 1);
 
     scene->page = NULL;
     scene->pages = canvas->draws;
