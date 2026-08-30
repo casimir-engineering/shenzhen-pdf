@@ -73,6 +73,7 @@ $ROOT/portable/mac/markdown/SPDFMarkdownDiagramChartShapes.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramBlock.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownInlineRenderer.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDecorations.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownTheme.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownTableDecorations.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownTableLayout.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownImageRowBand.mm
