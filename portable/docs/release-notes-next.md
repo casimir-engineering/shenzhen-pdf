@@ -25,6 +25,13 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - Printing, Save as PDF and Copy Page always use the document's own colors,
   even while the dark theme is on. A PDF's colors are its content, and a file
   that carried our dark paper would be wrong everywhere else it was opened.
+- Real-world READMEs render properly. The inline HTML that GitHub projects
+  lean on is now understood natively through a strict whitelist: centered
+  `<div>`/`<p align>` blocks, HTML headings, badge images sized by their
+  `width`/`height`, `<kbd>` key caps, `<sub>`/`<sup>`, and simple HTML tables.
+  `<details>` sections render expanded behind a bold summary line. Scripts,
+  styles, iframes, forms and event handlers are stripped and never evaluated —
+  there is no web engine anywhere in the reader.
 - Mermaid, js-sequence and flowchart.js code fences now draw as real
   diagrams — flowcharts, sequence diagrams, pie charts, state and class
   diagrams, and gantt charts — rendered natively, with no web engine and no
