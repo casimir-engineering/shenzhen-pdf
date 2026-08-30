@@ -428,15 +428,18 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
 
 - (void)printActiveMarkdown {
     SPDFMacMarkdownSession* session = self.markdownState.activeSession;
-    SPDFMarkdownRenderedDocument* rendered = session.renderedDocument;
-    SPDFMarkdownPaginationPlan* plan = session.paginationPlan;
-    if (![self isMarkdownActive] || !rendered || !plan) {
+    // Always the LIGHT rendition, like every other export (see
+    // SPDFMacMarkdownSession.exportPaginationPlan). Free while the reader is
+    // light: these ARE the live plan and string.
+    SPDFMarkdownPaginationPlan* plan = session.exportPaginationPlan;
+    NSAttributedString* text = session.exportAttributedString;
+    if (![self isMarkdownActive] || !text || !plan) {
         NSBeep();
         return;
     }
     NSPrintOperation* operation =
         [SPDFMacMarkdownPrintAdapter printOperationForPaginationPlan:plan
-                                                    attributedString:rendered.attributedString
+                                                    attributedString:text
                                                            printInfo:[NSPrintInfo.sharedPrintInfo copy]];
     operation.jobTitle = _path.lastPathComponent ?: @"Markdown Document";
     [operation runOperationModalForWindow:_window delegate:nil didRunSelector:NULL contextInfo:NULL];
@@ -444,9 +447,9 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
 
 - (void)saveActiveMarkdownAsPDF {
     SPDFMacMarkdownSession* session = self.markdownState.activeSession;
-    SPDFMarkdownRenderedDocument* rendered = session.renderedDocument;
-    SPDFMarkdownPaginationPlan* plan = session.paginationPlan;
-    if (![self isMarkdownActive] || !rendered || !plan) {
+    SPDFMarkdownPaginationPlan* plan = session.exportPaginationPlan;
+    NSAttributedString* text = session.exportAttributedString;
+    if (![self isMarkdownActive] || !text || !plan) {
         NSBeep();
         return;
     }
@@ -459,7 +462,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     if ([panel runModal] != NSModalResponseOK) return;
     NSError* error = nil;
     if (![SPDFMacMarkdownPrintAdapter writePaginationPlan:plan
-                                         attributedString:rendered.attributedString
+                                         attributedString:text
                                                     toURL:panel.URL
                                                     error:&error]) {
         [self showError:@"Could not save Markdown as PDF"

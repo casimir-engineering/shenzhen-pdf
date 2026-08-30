@@ -19,6 +19,15 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SPDFMacMarkdownSession () {
   @protected
     SPDFMacMarkdownPagedView* _Nullable _pagedView;
+    SPDFMarkdownPaginationPlan* _Nullable _paginationPlan;
+    // Lazily built LIGHT export rendition, populated only while the session
+    // renders DARK. _exportRenditionSource is the renderedDocument it was
+    // derived from: a rerender installs a new object, which invalidates the
+    // cache by identity with no explicit bookkeeping (see
+    // SPDFMacMarkdownSession+Export.mm).
+    SPDFMarkdownPaginationPlan* _Nullable _exportPlan;
+    NSAttributedString* _Nullable _exportAttributedString;
+    SPDFMarkdownRenderedDocument* _Nullable _exportRenditionSource;
     SPDFMacMarkdownMinimapModel* _Nullable _minimapModel;
     NSString* _Nullable _pendingAnchor;
     NSMutableDictionary<NSNumber*, NSString*>* _languageOverrides;
@@ -58,10 +67,23 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Lifecycle internals the interaction half calls across the file split;
 // implemented in SPDFMacMarkdownSession.mm.
+// The export rendition, implemented in SPDFMacMarkdownSession+Export.mm.
+@interface SPDFMacMarkdownSession (Export)
+@end
+
+// Paginates a rendition exactly the way the live screen pass does, so an export
+// plan and the on-screen plan differ in palette and nothing else. Shared by the
+// lifecycle passes and the export rendition; implemented alongside the latter.
+FOUNDATION_EXPORT SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(
+    SPDFMarkdownRenderedDocument* rendered, SPDFMarkdownThemeVariant variant);
+
 @interface SPDFMacMarkdownSession (LifecycleInternal)
 // Shared rerender flow for language overrides and font-scale changes. A
 // nil/empty status skips the status callback.
 - (void)rerenderDocumentWithStatus:(NSString* _Nullable)status;
+// The session's current render options with an EXPLICIT theme variant, so the
+// export half can ask for a light rendition of a dark session.
+- (SPDFMarkdownRenderOptions*)renderOptionsForThemeVariant:(SPDFMarkdownThemeVariant)variant;
 @end
 
 // Interaction internals the lifecycle half calls across the file split;

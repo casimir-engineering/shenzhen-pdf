@@ -24,6 +24,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setLanguageIdentifier:(nullable NSString*)identifier forCodeBlock:(NSUInteger)blockIndex;
 - (NSArray<SPDFMarkdownSearchMatch*>*)searchForQuery:(NSString*)query caseSensitive:(BOOL)caseSensitive;
 - (SPDFMarkdownPaginationPlan*)paginationPlanForConfiguration:(SPDFMarkdownPageConfiguration*)configuration;
+// Synchronous one-off render with caller-supplied options, leaving the
+// document's own stored rendition and options untouched. The export path uses
+// it to produce a LIGHT rendition of an on-screen dark document; nil options
+// means the stored options.
+- (SPDFMarkdownRenderedDocument*)renderedDocumentWithOptions:(nullable SPDFMarkdownRenderOptions*)options
+                                           languageOverrides:
+                                               (nullable NSDictionary<NSNumber*, NSString*>*)languageOverrides;
 - (NSTextView*)newSelectableTextView;
 
 - (SPDFMarkdownCancellationToken*)searchForQuery:(NSString*)query

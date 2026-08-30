@@ -10,7 +10,6 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 @implementation SPDFMacMarkdownSession {
     NSView* _rootView;
     NSTextField* _placeholder;
-    SPDFMarkdownPaginationPlan* _paginationPlan;
     NSAttributedString* _interactiveString;
     SPDFMarkdownCancellationToken* _renderToken;
     NSUInteger _activationGeneration;
@@ -64,12 +63,16 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     return self;
 }
 
-- (SPDFMarkdownRenderOptions*)renderOptionsForCurrentScale {
-    SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions defaultOptionsForThemeVariant:_themeVariant];
+- (SPDFMarkdownRenderOptions*)renderOptionsForThemeVariant:(SPDFMarkdownThemeVariant)variant {
+    SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions defaultOptionsForThemeVariant:variant];
     options.fontScale = _fontScale;
     options.diagramCache = _diagramCache;  // one diagram-layout cache for the session
     [self applyRemoteImageState:options];  // already-fetched remote image bytes
     return options;
+}
+
+- (SPDFMarkdownRenderOptions*)renderOptionsForCurrentScale {
+    return [self renderOptionsForThemeVariant:_themeVariant];
 }
 
 // The installed render trails the session preferences: a catch-up rerender is
@@ -250,13 +253,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
       SPDFMarkdownPaginationPlan* plan = nil;
       NSAttributedString* interactive = nil;
       if (document) {
-          SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
-          SPDFMarkdownPageConfiguration* configuration = [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
-          configuration.includesCodeLanguageControlSpacing = YES;
-          configuration.themeVariant = renderOptions.themeVariant;
-          NSArray* items = [paginator measureRenderedDocument:document.renderedDocument
-                                               containerWidth:NSWidth(configuration.printableRect)];
-          plan = [paginator paginateItems:items configuration:configuration];
+          plan = SPDFMacMarkdownPlanForRendition(document.renderedDocument, renderOptions.themeVariant);
           interactive = SPDFMacMarkdownInteractiveString(document.model, document.renderedDocument);
       }
       dispatch_async(dispatch_get_main_queue(), ^{
@@ -459,13 +456,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
                  if (!strongSelf || cancelled || !strongSelf->_active ||
                      renderGeneration != strongSelf->_renderGeneration || !rendered)
                      return;
-                 SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
-                 SPDFMarkdownPageConfiguration* configuration = [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
-                 configuration.includesCodeLanguageControlSpacing = YES;
-                 configuration.themeVariant = themeVariant;
-                 NSArray* items = [paginator measureRenderedDocument:rendered
-                                                      containerWidth:NSWidth(configuration.printableRect)];
-                 SPDFMarkdownPaginationPlan* plan = [paginator paginateItems:items configuration:configuration];
+                 SPDFMarkdownPaginationPlan* plan = SPDFMacMarkdownPlanForRendition(rendered, themeVariant);
                  NSAttributedString* interactive =
                      SPDFMacMarkdownInteractiveString(strongSelf.document.model, rendered);
                  dispatch_async(dispatch_get_main_queue(), ^{

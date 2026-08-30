@@ -2,6 +2,7 @@
 #import <PDFKit/PDFKit.h>
 
 #import "../SPDFMacMarkdownPrinting.h"
+#import "../SPDFMacMarkdownSession.h"
 #import "../markdown/SPDFMarkdown.h"
 
 #include <assert.h>
@@ -40,6 +41,13 @@ static const unsigned char* PixelAt(const unsigned char* pixels, size_t width, s
     size_t column = (size_t)MIN((CGFloat)width - 1, MAX((CGFloat)0, round(x)));
     size_t row = (size_t)MIN((CGFloat)height - 1, MAX((CGFloat)0, round(yFromTop)));
     return pixels + (row * width + column) * 4;
+}
+
+static BOOL SpinUntil(BOOL (^condition)(void), NSTimeInterval timeout) {
+    NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+    while (!condition() && deadline.timeIntervalSinceNow > 0)
+        [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    return condition();
 }
 
 int main(void) {
@@ -276,6 +284,124 @@ int main(void) {
         [pagePasteboard releaseGlobally];
         [imagePasteboard releaseGlobally];
         [NSFileManager.defaultManager removeItemAtURL:pastedURL error:nil];
+
+        // ---------------------------------------------------------------
+        // Every Markdown export is the LIGHT rendition, whatever the reader
+        // is showing. A file carrying our dark paper would be wrong wherever
+        // it is opened next, which is exactly why the PDF side already exports
+        // the document's own colors.
+        // ---------------------------------------------------------------
+        NSView* host = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 640, 480)];
+        dispatch_queue_t queue = dispatch_queue_create("markdown.export.test", DISPATCH_QUEUE_CONCURRENT);
+        SPDFMacMarkdownSession* session =
+            [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
+        __block BOOL loaded = NO;
+        [session activateInHostView:host
+                          workQueue:queue
+                       scrollOrigin:NSZeroPoint
+                      selectedRange:NSMakeRange(0, 0)
+                          pageIndex:0
+                               zoom:1.0
+                            fitMode:SPDFMacMarkdownPageFitPage
+                             anchor:nil
+                         completion:^(BOOL success, NSError* error) {
+                           assert(success && !error);
+                           loaded = YES;
+                         }];
+        assert(SpinUntil(
+            ^BOOL {
+              return loaded && session.paginationPlan != nil;
+            },
+            10.0));
+
+        // LIGHT: the export rendition IS the live one. Identical objects —
+        // proof that nothing extra is rendered, paginated or allocated on the
+        // common path.
+        assert(session.themeVariant == SPDFMarkdownThemeVariantLight);
+        assert(session.exportPaginationPlan == session.paginationPlan);
+        assert(session.exportAttributedString == session.renderedDocument.attributedString);
+
+        // DARK: the screen goes dark, the export does not.
+        __block NSUInteger themeRenders = 0;
+        session.statusHandler = ^(NSString* status) {
+          if ([status isEqualToString:@"Markdown reading theme updated."]) themeRenders++;
+        };
+        [session applyThemeVariant:SPDFMarkdownThemeVariantDark];
+        assert(SpinUntil(
+            ^BOOL {
+              return themeRenders == 1 &&
+                     session.paginationPlan.configuration.themeVariant == SPDFMarkdownThemeVariantDark;
+            },
+            10.0));
+        SPDFMarkdownPaginationPlan* exportPlan = session.exportPaginationPlan;
+        NSAttributedString* exportText = session.exportAttributedString;
+        assert(exportPlan != nil && exportText != nil);
+        assert(exportPlan != session.paginationPlan);
+        assert(exportPlan.configuration.themeVariant == SPDFMarkdownThemeVariantLight);
+        // WYSIWYG in every respect except the palette: same paper, same page
+        // breaks, same reserved language-control band.
+        assert(exportPlan.pages.count == session.paginationPlan.pages.count);
+        assert(fabs(exportPlan.configuration.paperSize.width - session.paginationPlan.configuration.paperSize.width) <
+                   0.01 &&
+               fabs(exportPlan.configuration.paperSize.height -
+                    session.paginationPlan.configuration.paperSize.height) < 0.01);
+        assert(exportPlan.configuration.includesCodeLanguageControlSpacing ==
+               session.paginationPlan.configuration.includesCodeLanguageControlSpacing);
+        // Built once and cached until the next rerender replaces the installed
+        // rendition.
+        assert(session.exportPaginationPlan == exportPlan && session.exportAttributedString == exportText);
+
+        // The exported PDF really is light: white paper, dark body text.
+        NSBitmapImageRep* darkThemeExport = [SPDFMacMarkdownPrintAdapter imageRepForPageAtIndex:0
+                                                                                 paginationPlan:exportPlan
+                                                                               attributedString:exportText
+                                                                                          scale:1.0];
+        assert(darkThemeExport != nil);
+        NSColor* exportPaper = [darkThemeExport colorAtX:darkThemeExport.pixelsWide / 2 y:4];
+        assert(exportPaper.redComponent > 0.99 && exportPaper.greenComponent > 0.99 &&
+               exportPaper.blueComponent > 0.99);
+        BOOL exportHasDarkText = NO;
+        for (NSInteger y = 0; y < darkThemeExport.pixelsHigh && !exportHasDarkText; ++y)
+            for (NSInteger x = 0; x < darkThemeExport.pixelsWide && !exportHasDarkText; ++x) {
+                NSColor* color = [darkThemeExport colorAtX:x y:y];
+                exportHasDarkText = color.redComponent < 0.35 && color.greenComponent < 0.35 &&
+                                    color.blueComponent < 0.35;
+            }
+        assert(exportHasDarkText);
+
+        // ...while the on-screen plan drawn with the same call is still dark
+        // paper, so this is a real export-only substitution and not the theme
+        // silently failing to apply.
+        NSBitmapImageRep* screenRaster =
+            [SPDFMacMarkdownPrintAdapter imageRepForPageAtIndex:0
+                                                 paginationPlan:session.paginationPlan
+                                               attributedString:session.renderedDocument.attributedString
+                                                          scale:1.0];
+        NSColor* screenPaper = [screenRaster colorAtX:screenRaster.pixelsWide / 2 y:4];
+        assert(screenPaper.redComponent < 0.2 && screenPaper.greenComponent < 0.2 &&
+               screenPaper.blueComponent < 0.2);
+
+        // A rerender invalidates the cache: the next export is rebuilt, still
+        // light, and still page-for-page with the new screen plan.
+        [session applyFontScale:1.25];
+        assert(SpinUntil(
+            ^BOOL {
+              return session.exportPaginationPlan != exportPlan;
+            },
+            10.0));
+        assert(session.exportPaginationPlan.configuration.themeVariant == SPDFMarkdownThemeVariantLight);
+        assert(session.exportPaginationPlan.pages.count == session.paginationPlan.pages.count);
+
+        // Back to light: the export collapses onto the live plan again.
+        [session applyThemeVariant:SPDFMarkdownThemeVariantLight];
+        assert(SpinUntil(
+            ^BOOL {
+              return session.paginationPlan.configuration.themeVariant == SPDFMarkdownThemeVariantLight;
+            },
+            10.0));
+        assert(session.exportPaginationPlan == session.paginationPlan);
+        assert(session.exportAttributedString == session.renderedDocument.attributedString);
+        [session deactivate];
 
         [NSFileManager.defaultManager removeItemAtPath:path error:nil];
         [NSFileManager.defaultManager removeItemAtPath:output error:nil];

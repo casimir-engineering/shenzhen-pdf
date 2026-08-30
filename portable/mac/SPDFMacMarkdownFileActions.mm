@@ -8,6 +8,8 @@
 
 // The active Markdown session can serve single-page copies once its live
 // pagination plan and rendered text exist and pageIndex names a planned page.
+// Deliberately probes the LIVE plan, not the export one: this runs from
+// -validateMenuItem: on every menu pass, and must never build a rendition.
 - (BOOL)markdownSessionCanCopyPageAtIndex:(NSInteger)pageIndex {
     SPDFMacMarkdownSession* session = self.activeMarkdownSession;
     return session.paginationPlan != nil && session.renderedDocument.attributedString != nil && pageIndex >= 0 &&
@@ -92,8 +94,8 @@
         NSInteger pageIndex = session.currentPageIndex;
         if (![self markdownSessionCanCopyPageAtIndex:pageIndex] ||
             ![SPDFMacMarkdownPrintAdapter copyPageImageAtIndex:(NSUInteger)pageIndex
-                                                paginationPlan:session.paginationPlan
-                                              attributedString:session.renderedDocument.attributedString
+                                                paginationPlan:session.exportPaginationPlan
+                                              attributedString:session.exportAttributedString
                                                   toPasteboard:NSPasteboard.generalPasteboard]) {
             NSBeep();
             return;
@@ -155,8 +157,8 @@
         NSString* fileName =
             [NSString stringWithFormat:@"%@ - page %ld.pdf", base.length ? base : @"Page", (long)(pageIndex + 1)];
         if (![SPDFMacMarkdownPrintAdapter copyPageAtIndex:(NSUInteger)pageIndex
-                                           paginationPlan:session.paginationPlan
-                                         attributedString:session.renderedDocument.attributedString
+                                           paginationPlan:session.exportPaginationPlan
+                                         attributedString:session.exportAttributedString
                                                  fileName:fileName
                                              toPasteboard:NSPasteboard.generalPasteboard]) {
             NSBeep();
