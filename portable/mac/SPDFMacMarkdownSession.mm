@@ -3,9 +3,6 @@
 #import "SPDFMacMarkdownSidebarModel.h"
 #import "SPDFMacMarkdownView.h"
 
-static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
-    return MAX((CGFloat)0.5, MIN((CGFloat)3.0, scale));
-}
 
 @implementation SPDFMacMarkdownSession {
     NSView* _rootView;
@@ -28,12 +25,6 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     SPDFMacMarkdownPageFitMode _pendingFitMode;
     __weak id<SPDFMacUIReader> _reader;
     SPDFMacMarkdownSidebarModel* _sidebarModel;
-    // fontScale/themeVariant of the currently installed renderedDocument; when
-    // either trails the session preference (changed while inactive or
-    // mid-load) activation schedules a catch-up rerender.
-    CGFloat _renderedFontScale;
-    SPDFMarkdownThemeVariant _renderedThemeVariant;
-    SPDFMarkdownDiagramCache* _diagramCache;  // shared by every rerender
 }
 
 - (instancetype)initWithDocumentURL:(NSURL*)URL {
@@ -61,24 +52,6 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     _diagramCache = [SPDFMarkdownDiagramCache new];
     [self buildRootView];
     return self;
-}
-
-- (SPDFMarkdownRenderOptions*)renderOptionsForThemeVariant:(SPDFMarkdownThemeVariant)variant {
-    SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions defaultOptionsForThemeVariant:variant];
-    options.fontScale = _fontScale;
-    options.diagramCache = _diagramCache;  // one diagram-layout cache for the session
-    [self applyRemoteImageState:options];  // already-fetched remote image bytes
-    return options;
-}
-
-- (SPDFMarkdownRenderOptions*)renderOptionsForCurrentScale {
-    return [self renderOptionsForThemeVariant:_themeVariant];
-}
-
-// The installed render trails the session preferences: a catch-up rerender is
-// due (used by activation and the self-heal pass).
-- (BOOL)renderTrailsPreferences {
-    return _renderedFontScale != _fontScale || _renderedThemeVariant != _themeVariant;
 }
 
 - (void)applyFontScale:(CGFloat)scale {

@@ -29,6 +29,19 @@ NS_ASSUME_NONNULL_BEGIN
     NSAttributedString* _Nullable _exportAttributedString;
     SPDFMarkdownRenderedDocument* _Nullable _exportRenditionSource;
     SPDFMacMarkdownMinimapModel* _Nullable _minimapModel;
+    // Backing ivars for the reader preferences. Declared here rather than
+    // auto-synthesized so the appearance half can reach them; the property
+    // declarations in SPDFMacMarkdownSession.h adopt these by name.
+    CGFloat _fontScale;
+    SPDFMarkdownThemeVariant _themeVariant;
+    BOOL _preservesImageColors;
+    // fontScale/themeVariant of the currently installed renderedDocument; when
+    // either trails the session preference (changed while inactive or
+    // mid-load) activation schedules a catch-up rerender. Shared with the
+    // appearance half (SPDFMacMarkdownSession+Appearance.mm).
+    CGFloat _renderedFontScale;
+    SPDFMarkdownThemeVariant _renderedThemeVariant;
+    SPDFMarkdownDiagramCache* _Nullable _diagramCache;  // shared by every rerender
     NSString* _Nullable _pendingAnchor;
     NSMutableDictionary<NSNumber*, NSString*>* _languageOverrides;
     SPDFMacMarkdownLanguagePickerController* _Nullable _languagePicker;
@@ -76,6 +89,15 @@ NS_ASSUME_NONNULL_BEGIN
 // lifecycle passes and the export rendition; implemented alongside the latter.
 FOUNDATION_EXPORT SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(
     SPDFMarkdownRenderedDocument* rendered, SPDFMarkdownThemeVariant variant, BOOL preservesImageColors);
+
+// Clamps a reader font scale into the supported range.
+FOUNDATION_EXPORT CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale);
+
+@interface SPDFMacMarkdownSession (Appearance)
+- (SPDFMarkdownRenderOptions*)renderOptionsForThemeVariant:(SPDFMarkdownThemeVariant)variant;
+- (SPDFMarkdownRenderOptions*)renderOptionsForCurrentScale;
+- (BOOL)renderTrailsPreferences;
+@end
 
 @interface SPDFMacMarkdownSession (LifecycleInternal)
 // Shared rerender flow for language overrides and font-scale changes. A

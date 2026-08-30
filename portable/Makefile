@@ -105,7 +105,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests test-binaries release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -411,6 +411,27 @@ endif
 
 verify-mac-unsigned: dmg
 	release/verify-mac-artifact.sh --unsigned --dmg "$(MAC_DMG)" --version "$(MAC_VERSION)" --build "$(MAC_BUILD)" --bundle-id "$(MAC_BUNDLE_ID)" --min-os "$(MACOSX_DEPLOYMENT_TARGET)"
+
+# Every compiled binary the *-tests targets execute. A release sweep builds
+# this first with -j, then runs the suites sequentially, so the compiling is
+# spread over all cores while the test log stays in a deterministic order.
+# Running the *-tests targets themselves under -j would interleave their
+# output: the make shipped with macOS is 3.81, which has no --output-sync.
+TEST_BINARIES := $(CORE_OUTLINE_TEST) $(CORE_PASSWORD_TEST) $(CORE_RECOLOR_TEST) \
+	$(CORE_RENDER_THEME_TEST) $(CORE_SELECTION_TEST) $(CORE_CJK_SELECTION_TEST) \
+	$(MAC_WINDOW_SHORTCUT_TEST) $(MAC_WINDOW_CHROME_TEST) $(MAC_PASSWORD_TEST) \
+	$(MAC_MINIMAP_WINDOW_TEST) $(MAC_TAB_STRIP_GEOMETRY_TEST) \
+	$(MAC_TAB_STRIP_INTERACTION_TEST) $(MAC_READING_THEME_CHROME_TEST) \
+	$(MAC_PALETTE_RESULTS_TEST) $(MAC_FIND_NEAREST_TEST) $(MAC_UPDATER_TEST) \
+	$(MAC_PROPERTIES_FORMAT_TEST) $(MAC_TRANSLATION_FILTER_TEST) \
+	$(MAC_TRANSLATION_COPY_TEST) $(MAC_CURSOR_REGION_TEST) \
+	$(MAC_TAB_LIFECYCLE_TEST) $(MAC_FILE_EXPLORER_TEST) \
+	$(MAC_SELECTION_CLICK_TEST) $(MAC_SELECTION_ADAPTER_TEST) \
+	$(MAC_LAUNCH_WORK_POLICY_TEST) $(MAC_STATE_YAML_TEST)
+
+# Deliberately not named *-tests: spdf_discover_test_targets() scans this file
+# for that suffix, and this target runs nothing.
+test-binaries: $(TEST_BINARIES)
 
 $(MAC_RELEASE_NOTES_PREVIEW): release/SPDFReleaseNotesPreview.mm mac/SPDFUpdaterRelease.mm mac/SPDFUpdater.h mac/SPDFUpdaterRelease.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac release/SPDFReleaseNotesPreview.mm mac/SPDFUpdaterRelease.mm -framework Cocoa -o "$(MAC_RELEASE_NOTES_PREVIEW)"

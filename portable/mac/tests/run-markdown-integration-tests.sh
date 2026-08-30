@@ -101,6 +101,7 @@ $PORTABLE/mac/SPDFMacMarkdownSidebarModel.mm
 $PORTABLE/mac/SPDFMacMarkdownLanguagePicker.mm
 $PORTABLE/mac/SPDFMacMarkdownPrinting.mm
 $PORTABLE/mac/SPDFMacMarkdownSession.mm
+$PORTABLE/mac/SPDFMacMarkdownSession+Appearance.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Export.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Interaction.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+RemoteImages.mm
