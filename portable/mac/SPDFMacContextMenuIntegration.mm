@@ -1,5 +1,6 @@
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacTranslationEnablement.h"
 
 @interface ShenzhenMacDelegate (SPDFMacContextMenuPrivate)
 - (NSInteger)commentIndexAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
@@ -33,7 +34,7 @@
                             action:@selector(showSelectionTranslationPanel:)
                      keyEquivalent:@""];
         translateSelection.target = self;
-        translateSelection.enabled = contentCopyAllowed && !_translationRunning && !_translationInstallRunning;
+        translateSelection.enabled = spdf_translation_selection_enabled([self translationContext]);
         NSMenuItem* webSearch =
             [menu addItemWithTitle:preview.length ? [NSString stringWithFormat:@"Search Web for \"%@\"", preview]
                                                   : @"Search Web"

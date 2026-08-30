@@ -1,9 +1,11 @@
 // Reading-theme chrome: the gutter role both frontends read, the PDF page's
-// border-instead-of-shadow decision, and the single-segment toolbar pill.
+// border-instead-of-shadow decision, the single-segment toolbar pill, and where
+// the Translate entry points are allowed to act.
 #import <AppKit/AppKit.h>
 
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacSupport.h"
+#import "SPDFMacTranslationPolicy.h"
 #import "markdown/SPDFMarkdownDecorations.h"
 
 #include <assert.h>
@@ -153,6 +155,55 @@ int main(void) {
         Expect("single pill hugs its content",
                [single contentHuggingPriorityForOrientation:NSLayoutConstraintOrientationHorizontal] ==
                    [paired contentHuggingPriorityForOrientation:NSLayoutConstraintOrientationHorizontal]);
+
+        // --- Where Translate may act -------------------------------------
+        spdf_translation_context pdfNoSelection = {};
+        pdfNoSelection.pdfDocumentOpen = true;
+        pdfNoSelection.contentCopyAllowed = true;
+        Expect("PDF without a selection still offers whole-document translation",
+               spdf_translation_command_enabled(pdfNoSelection));
+        Expect("PDF without a selection has no selection translation",
+               !spdf_translation_selection_enabled(pdfNoSelection));
+
+        spdf_translation_context pdfSelection = pdfNoSelection;
+        pdfSelection.hasSelection = true;
+        Expect("PDF selection translates", spdf_translation_selection_enabled(pdfSelection));
+
+        // A copy-locked PDF keeps its old behavior exactly: the command stays
+        // live (the click explains the refusal), selection translation does not.
+        spdf_translation_context lockedPDF = pdfSelection;
+        lockedPDF.contentCopyAllowed = false;
+        Expect("a copy-locked PDF keeps the command live",
+               spdf_translation_command_enabled(lockedPDF) && !spdf_translation_selection_enabled(lockedPDF));
+
+        spdf_translation_context busyPDF = pdfSelection;
+        busyPDF.translationRunning = true;
+        Expect("a running translation blocks a second one", !spdf_translation_command_enabled(busyPDF));
+        busyPDF.translationRunning = false;
+        busyPDF.translationInstallRunning = true;
+        Expect("a running installer blocks translation", !spdf_translation_command_enabled(busyPDF));
+
+        // Markdown: text is all selection translation needs, and Markdown has
+        // no copy-permission concept. Whole-document translation writes into a
+        // PDF's own page geometry, so it stays PDF-only.
+        spdf_translation_context markdownNoSelection = {};
+        markdownNoSelection.markdownActive = true;
+        markdownNoSelection.contentCopyAllowed = true;
+        Expect("Markdown without a selection has nothing to translate",
+               !spdf_translation_command_enabled(markdownNoSelection));
+        Expect("whole-document translation stays PDF-only",
+               !spdf_translation_whole_document_available(markdownNoSelection));
+
+        spdf_translation_context markdownSelection = markdownNoSelection;
+        markdownSelection.hasSelection = true;
+        Expect("Markdown selection translates", spdf_translation_selection_enabled(markdownSelection));
+        Expect("Markdown selection enables the Translate command",
+               spdf_translation_command_enabled(markdownSelection));
+
+        spdf_translation_context busyMarkdown = markdownSelection;
+        busyMarkdown.translationRunning = true;
+        Expect("a running translation blocks Markdown too",
+               !spdf_translation_command_enabled(busyMarkdown));
 
         printf("SPDFMacReadingThemeChromeTests passed\n");
     }

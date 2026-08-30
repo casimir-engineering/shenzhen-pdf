@@ -30,6 +30,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacTranslationEnablement.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacPaletteResults.h"
 #import "SPDFMacPassword.h"
@@ -2774,7 +2775,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
                                 action:@selector(translateDocument:)
                                   menu:menu
                                  state:NSControlStateValueOff
-                               enabled:hasDoc && !_translationRunning && !_translationInstallRunning];
+                               enabled:spdf_translation_command_enabled([self translationContext])];
     if ([hiddenViews containsObject:_findRegexCheckbox])
         [self addOverflowItemWithTitle:@"Regex"
                                 action:@selector(toggleFindRegex:)
@@ -3229,9 +3230,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
     _pageScrollView.autohidesScrollers = NO;
     _pageScrollView.borderType = NSNoBorder;
     _pageScrollView.drawsBackground = YES;
-    _pageScrollView.backgroundColor = NSColor.windowBackgroundColor;
     _pageScrollView.contentView.drawsBackground = YES;
-    _pageScrollView.contentView.backgroundColor = NSColor.windowBackgroundColor;
     _pageScrollView.contentView.postsBoundsChangedNotifications = YES;
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(clipViewBoundsChanged:)
@@ -3240,6 +3239,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
 
     _pageView = [self newDocumentView];
     _pageScrollView.documentView = _pageView;
+    [self applyReadingThemeToDocumentViewport];
 
     _documentContainer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)];
     _documentContainer.translatesAutoresizingMaskIntoConstraints = NO;
@@ -10636,7 +10636,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     _searchField.enabled = hasDoc;
     _findRegexCheckbox.enabled = hasDoc;
     _ocrButton.enabled = hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
-    _translateButton.enabled = hasDoc && !_translationRunning && !_translationInstallRunning;
+    [self updateTranslateCommandEnablement];
     _minimapToggleButton.enabled = hasDoc;
     [self updateFindControls];
     _pageCountLabel.stringValue = [NSString stringWithFormat:@"/ %ld", (long)pageCount];
@@ -11419,7 +11419,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     _translationRunning = NO;
     _translationCancelRequested = NO;
     _selectionTranslationButton.enabled = YES;
-    _translateButton.enabled = _doc != NULL && !_translationInstallRunning;
+    [self updateTranslateCommandEnablement];
     if (error.length) {
         _selectionTranslationStatusLabel.stringValue = error;
         _statusLabel.stringValue = @"Selection translation failed.";
@@ -11466,7 +11466,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         if (!ok) {
             strongSelf->_translationRunning = NO;
             strongSelf->_selectionTranslationButton.enabled = YES;
-            strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationInstallRunning;
+            [strongSelf updateTranslateCommandEnablement];
             if (!offeredInstaller && failure.length) {
                 [strongSelf runArgosPackageInstallForSelectionFromLanguage:sourceLanguage
                                                                 toLanguage:targetLanguage
@@ -11539,8 +11539,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
                            ShenzhenMacDelegate* strongSelf = weakSelf;
                            if (!strongSelf) return;
                            strongSelf->_translationInstallRunning = NO;
-                           strongSelf->_translateButton.enabled =
-                               strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+                           [strongSelf updateTranslateCommandEnablement];
                            if (finishedTask.terminationStatus == 0 && [strongSelf argosToolPath].length) {
                                [strongSelf appendTranslationInstallLog:@"\nArgos Translate installed.\n"];
                                [strongSelf->_translationInstallPanel orderOut:nil];
@@ -11596,8 +11595,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
                            ShenzhenMacDelegate* strongSelf = weakSelf;
                            if (!strongSelf) return;
                            strongSelf->_translationInstallRunning = NO;
-                           strongSelf->_translateButton.enabled =
-                               strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+                           [strongSelf updateTranslateCommandEnablement];
                            if (finishedTask.terminationStatus == 0) {
                                [strongSelf appendTranslationInstallLog:@"\nArgos language package installed.\n"];
                                [strongSelf->_translationInstallPanel orderOut:nil];
@@ -13744,8 +13742,12 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
         _presentationOverlayView = nil;
     }
     _pageScrollView.autohidesScrollers = presentation;
-    _pageScrollView.backgroundColor = presentation ? NSColor.blackColor : NSColor.windowBackgroundColor;
-    _pageScrollView.contentView.backgroundColor = presentation ? NSColor.blackColor : NSColor.windowBackgroundColor;
+    if (presentation) {
+        _pageScrollView.backgroundColor = NSColor.blackColor;
+        _pageScrollView.contentView.backgroundColor = NSColor.blackColor;
+    } else {
+        [self applyReadingThemeToDocumentViewport];
+    }
     [_window.contentView layoutSubtreeIfNeeded];
     if (presentation && _presentationOverlayView) [_window makeFirstResponder:_presentationOverlayView];
 }
@@ -14418,7 +14420,7 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
         strongSelf->_translationInstallRunning = NO;
         strongSelf->_translationInstallTask = nil;
         [strongSelf->_translationInstallProgress stopAnimation:nil];
-        strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+        [strongSelf updateTranslateCommandEnablement];
         if (completionCopy) completionCopy(finishedTask, output);
       });
     };
@@ -14428,7 +14430,7 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
         _translationInstallRunning = NO;
         _translationInstallTask = nil;
         [_translationInstallProgress stopAnimation:nil];
-        _translateButton.enabled = _doc != NULL && !_translationRunning;
+        [self updateTranslateCommandEnablement];
         NSString* detail = launchError.localizedDescription ?: @"Could not start installer.";
         [self appendTranslationInstallLog:[NSString stringWithFormat:@"\n%@\n", detail]];
         _statusLabel.stringValue = @"Translation installer could not start.";
@@ -14472,8 +14474,7 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
                            ShenzhenMacDelegate* strongSelf = weakSelf;
                            if (!strongSelf) return;
                            strongSelf->_translationInstallRunning = NO;
-                           strongSelf->_translateButton.enabled =
-                               strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+                           [strongSelf updateTranslateCommandEnablement];
                            if (finishedTask.terminationStatus == 0) {
                                [strongSelf appendTranslationInstallLog:@"\nArgos language package installed.\n"];
                                [strongSelf->_translationInstallPanel orderOut:nil];
@@ -14772,7 +14773,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         ShenzhenMacDelegate* strongSelf = weakSelf;
         if (!strongSelf) return;
         strongSelf->_translationRunning = NO;
-        strongSelf->_translateButton.enabled = strongSelf->_doc != NULL && !strongSelf->_translationInstallRunning;
+        [strongSelf updateTranslateCommandEnablement];
         if (failure.length) {
             [strongSelf finishTranslationProgressWithDetail:failure keepVisible:NO];
             if ([failure isEqualToString:@"Translation canceled."]) {
@@ -14846,8 +14847,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                            ShenzhenMacDelegate* strongSelf = weakSelf;
                            if (!strongSelf) return;
                            strongSelf->_translationInstallRunning = NO;
-                           strongSelf->_translateButton.enabled =
-                               strongSelf->_doc != NULL && !strongSelf->_translationRunning;
+                           [strongSelf updateTranslateCommandEnablement];
                            NSString* tool = [strongSelf argosToolPath];
                            if (finishedTask.terminationStatus == 0 && tool.length) {
                                [strongSelf appendTranslationInstallLog:@"\nArgos Translate installed.\n"];
@@ -14868,16 +14868,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 }
 
 - (void)translateDocument:(id)sender {
-    (void)sender;
-    if (!_doc || !_path.length) {
-        NSBeep();
-        return;
-    }
+    if (![self beginTranslateCommandForSender:sender]) return;
     if (![self ensureContentCopyPermissionForOperation:@"Translation"]) return;
-    if ([self trimmedSelectedTextForCommand].length > 0) {
-        [self showSelectionTranslationPanel:sender];
-        return;
-    }
     if (![self ensureActivePDFCanBeModifiedForOperation:@"translation"]) return;
     if (_translationInstallRunning) {
         [_translationInstallPanel makeKeyAndOrderFront:nil];
@@ -16851,9 +16843,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return
             [self trimmedSelectedTextForCommand].length > 0 && (markdown || (_doc && spdf_has_permission(_doc, 'c')));
     if (action == @selector(showSelectionTranslationPanel:))
-        return [self trimmedSelectedTextForCommand].length > 0 &&
-               (markdown || (_doc && spdf_has_permission(_doc, 'c'))) && !_translationRunning &&
-               !_translationInstallRunning;
+        return spdf_translation_selection_enabled([self translationContext]);
     if (action == @selector(copySelection:))
         return (markdown || (_doc && spdf_has_permission(_doc, 'c'))) &&
                ([self trimmedSelectedTextForCommand].length > 0 ||
@@ -16865,8 +16855,10 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(ocrDocument:) || action == @selector(deleteAllTextFromDocument:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
-    if (action == @selector(translateDocument:))
-        return _doc && spdf_has_permission(_doc, 'c') && !_translationRunning && !_translationInstallRunning;
+    if (action == @selector(translateDocument:)) {
+        spdf_translation_context context = [self translationContext];
+        return spdf_translation_command_enabled(context) && context.contentCopyAllowed;
+    }
     if (action == @selector(saveDocumentAs:))
         return markdown || (hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"]);
     if (action == @selector(showInFolder:)) return hasDoc && _path.length > 0;

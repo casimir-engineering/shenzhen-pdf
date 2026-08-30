@@ -1,4 +1,5 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacTranslationEnablement.h"
 
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
@@ -346,8 +347,11 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     _sidebarToggleButton.enabled = session.state == SPDFMacMarkdownSessionReady;
     _minimapToggleButton.enabled = session.state == SPDFMacMarkdownSessionReady;
     _findRegexCheckbox.enabled = session.state == SPDFMacMarkdownSessionReady;
+    // OCR needs a scanned raster, which a Markdown document never has.
+    // Translate only needs text: it stays live for selection translation (see
+    // SPDFMacTranslationPolicy.h).
     _ocrButton.enabled = NO;
-    _translateButton.enabled = NO;
+    [self updateTranslateCommandEnablement];
     [self updateFindControls];
     [self syncToolbarState];
     NSString* title = [self displayNameForPathConsideringOpenTabs:_path];
