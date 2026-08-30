@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 
 #import "SPDFUpdater.h"
+#import "SPDFUpdaterDownloadBounds.h"
 
 static int gFailureCount = 0;
 
@@ -32,6 +33,13 @@ static void expectString(NSString* label, NSString* actual, NSString* expected) 
 static void expectDelay(NSString* label, NSTimeInterval actual, NSTimeInterval expected) {
     if (actual != expected) {
         fprintf(stderr, "FAIL %s: expected %.1f, got %.1f\n", label.UTF8String, expected, actual);
+        ++gFailureCount;
+    }
+}
+
+static void expectLL(NSString* label, long long actual, long long expected) {
+    if (actual != expected) {
+        fprintf(stderr, "FAIL %s: expected %lld, got %lld\n", label.UTF8String, expected, actual);
         ++gFailureCount;
     }
 }
@@ -190,11 +198,54 @@ int main(int argc, char** argv) {
         expectString(@"attributed unbalanced marker",
                      spdf_attributed_release_notes_for_alert(@"tail **unclosed", 12.0).string, @"tail unclosed");
         expectString(@"attributed empty body", spdf_attributed_release_notes_for_alert(nil, 12.0).string, @"");
+
+        // 29. Download ceiling: an absent asset.size falls back to the 64MB hard
+        // max, a declared size gets exactly one byte of slack, and a size at or
+        // above the max is capped there.
+        const long long kMax = kSPDFMaxDownloadBytes;
+        expectLL(@"ceiling without declared size", spdf_download_ceiling(0), kMax);
+        expectLL(@"ceiling with negative size", spdf_download_ceiling(-1), kMax);
+        expectLL(@"ceiling with declared size", spdf_download_ceiling(33LL * 1024 * 1024),
+                 33LL * 1024 * 1024 + 1);
+        expectLL(@"ceiling capped at max", spdf_download_ceiling(kMax * 4), kMax);
+
+        // 30. A hostile or corrupt asset.size must not overflow the bound. The
+        // pre-clamp form (size + 1) was undefined behaviour at LLONG_MAX and
+        // could yield a negative ceiling that cancels every download.
+        expectLL(@"ceiling at LLONG_MAX", spdf_download_ceiling(LLONG_MAX), kMax);
+        expectBool(@"ceiling stays positive", spdf_download_ceiling(LLONG_MAX) > 0, YES);
+        expectBool(@"LLONG_MAX still admits a real download",
+                   spdf_download_must_cancel(33LL * 1024 * 1024, -1, LLONG_MAX), NO);
+
+        // 31. Cancel decision: exactly the declared size passes, the first byte
+        // beyond it trips, the written-bytes bound still applies to a chunked
+        // response (declared length -1), and an up-front oversized declaration
+        // is rejected before the bytes arrive.
+        expectBool(@"exact declared size passes", spdf_download_must_cancel(1000, 1000, 1000), NO);
+        expectBool(@"one byte over trips", spdf_download_must_cancel(1002, 1000, 1000), YES);
+        expectBool(@"chunked response stays bounded", spdf_download_must_cancel(kMax + 1, -1, 0), YES);
+        expectBool(@"chunked response under the max passes",
+                   spdf_download_must_cancel(kMax - 1, -1, 0), NO);
+        expectBool(@"oversized declared length rejected",
+                   spdf_download_must_cancel(0, kMax + 1, 0), YES);
+
+        // 32. Free-space precheck: unknown inputs must never block an update,
+        // ~3x headroom is required when both are known, and LLONG_MAX must not
+        // overflow the multiply into a spurious pass.
+        expectBool(@"absent size does not block", spdf_has_free_space_for_asset(1024, 0), YES);
+        expectBool(@"unreadable volume does not block",
+                   spdf_has_free_space_for_asset(0, 33LL * 1024 * 1024), YES);
+        expectBool(@"ample space passes", spdf_has_free_space_for_asset(1024LL * 1024 * 1024,
+                                                                        33LL * 1024 * 1024), YES);
+        expectBool(@"tight space fails", spdf_has_free_space_for_asset(40LL * 1024 * 1024,
+                                                                       33LL * 1024 * 1024), NO);
+        expectBool(@"LLONG_MAX size does not overflow the headroom multiply",
+                   spdf_has_free_space_for_asset(1024, LLONG_MAX), NO);
     }
     if (gFailureCount > 0) {
         fprintf(stderr, "SPDFUpdaterTests: %d failure(s)\n", gFailureCount);
         return 1;
     }
-    printf("SPDFUpdaterTests passed (28 cases)\n");
+    printf("SPDFUpdaterTests passed (32 cases)\n");
     return 0;
 }
