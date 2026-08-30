@@ -428,10 +428,9 @@ TEST_BINARIES := $(CORE_OUTLINE_TEST) $(CORE_PASSWORD_TEST) $(CORE_RECOLOR_TEST)
 	$(MAC_TAB_LIFECYCLE_TEST) $(MAC_FILE_EXPLORER_TEST) \
 	$(MAC_SELECTION_CLICK_TEST) $(MAC_SELECTION_ADAPTER_TEST) \
 	$(MAC_LAUNCH_WORK_POLICY_TEST) $(MAC_STATE_YAML_TEST)
-
-# Deliberately not named *-tests: spdf_discover_test_targets() scans this file
-# for that suffix, and this target runs nothing.
-test-binaries: $(TEST_BINARIES)
+# The GTK test binaries are appended further down, once their sources are
+# globbed; the test-binaries rule itself lives at the end of this file so its
+# prerequisite list is expanded after that.
 
 $(MAC_RELEASE_NOTES_PREVIEW): release/SPDFReleaseNotesPreview.mm mac/SPDFUpdaterRelease.mm mac/SPDFUpdater.h mac/SPDFUpdaterRelease.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac release/SPDFReleaseNotesPreview.mm mac/SPDFUpdaterRelease.mm -framework Cocoa -o "$(MAC_RELEASE_NOTES_PREVIEW)"
@@ -453,12 +452,25 @@ LINUX_GTK4_SRCS := $(sort $(wildcard linux/gtk4/*.c))
 linux-gtk4: mupdf-libs | $(BUILD)
 	$(CC) $(PORTABLE_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 -I$(MUPDF_DIR)/include $$(pkg-config --cflags gtk4 libadwaita-1) "$(CORE_SRC)" "$(CORE_SELECTION_SRC)" "$(CORE_SELECTION_SUPPORT_SRC)" "$(CORE_RECOLOR_SRC)" "$(YAML_SRC)" $(LINUX_GTK4_SRCS) $(MUPDF_LIBS) $$(pkg-config --libs gtk4 libadwaita-1 openssl) -lm -o "$(BUILD)/ShenzhenPDF-gtk4"
 
-linux-gtk4-tests: | $(BUILD)
-	@set -e; for t in $(sort $(wildcard linux/gtk4/tests/*_test.c)); do \
-		bin="$(BUILD)/$$(basename $$t .c)"; \
-		$(CC) $(PORTABLE_TEST_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 $$(pkg-config --cflags glib-2.0 openssl) $$t "$(YAML_SRC)" $$(pkg-config --libs glib-2.0 openssl) -lm -o "$$bin"; \
-		"$$bin"; \
-	done
+LINUX_GTK4_TEST_SRCS := $(sort $(wildcard linux/gtk4/tests/*_test.c))
+LINUX_GTK4_TEST_BINS := $(patsubst linux/gtk4/tests/%.c,$(BUILD)/%,$(LINUX_GTK4_TEST_SRCS))
+# The recipe these replaced rebuilt every binary on every invocation, so the
+# prerequisite net is deliberately wide: any core/ or linux/gtk4/ header moving
+# rebuilds all 26. Correctness first; they are ~0.4s each and now build in
+# parallel under `make -j test-binaries`.
+LINUX_GTK4_TEST_DEPS := $(YAML_SRC) $(sort $(wildcard core/*.h) $(wildcard linux/gtk4/*.h)) Makefile
+
+$(LINUX_GTK4_TEST_BINS): $(BUILD)/%: linux/gtk4/tests/%.c $(LINUX_GTK4_TEST_DEPS) | $(BUILD)
+	$(CC) $(PORTABLE_TEST_OPTFLAGS) -Wall -Icore -Ilinux/gtk4 $$(pkg-config --cflags glib-2.0 openssl) $< "$(YAML_SRC)" $$(pkg-config --libs glib-2.0 openssl) -lm -o "$@"
+
+TEST_BINARIES += $(LINUX_GTK4_TEST_BINS)
+
+linux-gtk4-tests: $(LINUX_GTK4_TEST_BINS)
+	@set -e; for bin in $(LINUX_GTK4_TEST_BINS); do "$$bin"; done
+
+# Deliberately not named *-tests: spdf_discover_test_targets() scans this file
+# for that suffix, and this target runs nothing.
+test-binaries: $(TEST_BINARIES)
 
 clean:
 	rm -rf "$(BUILD)" "$(MAC_APP)" "$(MAC_DMG)"

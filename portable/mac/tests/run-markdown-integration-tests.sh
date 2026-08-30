@@ -142,13 +142,22 @@ for TEST in $TESTS; do
 done
 spdf_join
 
+# Link all of the binaries before running any of them: each link pulls in the
+# same ~100 objects, and interleaving link-then-run left the machine idle on
+# one linker at a time. The suites still RUN one at a time, in list order, so
+# the output stays deterministic and a failure is attributable.
 for TEST in $TESTS
 do
     # Intentional word splitting: the object lists are shell-safe build paths.
     # shellcheck disable=SC2086
-    "$CXX" -isysroot "$SDKROOT" $SANITIZER_FLAGS \
+    spdf_job "$CXX" -isysroot "$SDKROOT" $SANITIZER_FLAGS \
         $SHARED_OBJS "$BUILD_DIR/test-$TEST.o" "$BUILD_DIR/md4c.o" "$BUILD_DIR/spdf_recolor.o" $GUMBO_OBJS \
         -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
         -framework UniformTypeIdentifiers -o "$BUILD_DIR/$TEST"
+done
+spdf_join
+
+for TEST in $TESTS
+do
     "$BUILD_DIR/$TEST"
 done
