@@ -303,6 +303,37 @@ static void test_migration_lock(const char* dir) {
 /* The four legacy core suites used to hardcode "/tmp/<name>.XXXXXX", a path
  * that does not exist on Windows at all, so they could not have run in the
  * guest even with mkdtemp() available. These cover the replacement. */
+/* ------------------------------------------------------------- snprintf */
+
+/* spdf_compat_snprintf_ok() is the predicate every path-composing call in
+ * portable/core routes through, and it exists because the third arm of
+ * snprintf's contract kept getting dropped. spdf_yaml.c's migration backup
+ * path had it INVERTED -- `snprintf(...) < (int)sizeof(backup)` is true for a
+ * negative return -- so an encoding error would have handed
+ * spdf_compat_replace_file() an indeterminate buffer and renamed the user's
+ * state file to whatever the stack happened to hold. The negative arm is what
+ * these assertions are really for; the truncation and success arms are pinned
+ * alongside it so a future "simplification" cannot restore the old expression
+ * and still pass.
+ *
+ * Returns are passed as literals rather than by calling snprintf, because no
+ * libc the app ships against can be made to return a negative value for the
+ * `%s`-of-a-`char*` formats these callers use. That is precisely why the arm
+ * has to be tested directly: it is unreachable from the outside, which is what
+ * let it stay wrong. */
+static void test_snprintf_ok(void) {
+    EXPECT(spdf_compat_snprintf_ok(0, 1) == 1, "an empty string fits a one-byte buffer");
+    EXPECT(spdf_compat_snprintf_ok(5, 16) == 1, "a short string in a large buffer is complete");
+    EXPECT(spdf_compat_snprintf_ok(15, 16) == 1, "a string exactly filling the buffer with its NUL is complete");
+    EXPECT(spdf_compat_snprintf_ok(16, 16) == 0, "a string whose NUL does not fit is truncation, not success");
+    EXPECT(spdf_compat_snprintf_ok(17, 16) == 0, "an over-long string is truncation");
+    EXPECT(spdf_compat_snprintf_ok(-1, 16) == 0, "an encoding error is NOT success");
+    EXPECT(spdf_compat_snprintf_ok(-1, 1024) == 0, "an encoding error is not success at any capacity");
+    EXPECT(spdf_compat_snprintf_ok(-2147483647 - 1, 1024) == 0, "the most negative return is not success");
+    EXPECT(spdf_compat_snprintf_ok(0, 0) == 0, "a zero-byte buffer never holds a terminated string");
+    EXPECT(spdf_compat_snprintf_ok(-1, 0) == 0, "a zero-byte buffer plus an encoding error is not success");
+}
+
 static void test_temp_template(void) {
     char buffer[SPDF_COMPAT_PATH_MAX];
     char tiny[8];
@@ -362,6 +393,7 @@ int main(void) {
     test_posix_path_regime();
     test_windows_path_regime();
     test_host_regime_matches_platform();
+    test_snprintf_ok();
     test_temp_template();
     test_make_and_remove_temp_dir();
     test_monotonic_clock();

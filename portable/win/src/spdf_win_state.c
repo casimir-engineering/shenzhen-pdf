@@ -9,6 +9,7 @@
 #include "spdf_win_state.h"
 
 #include "spdf_win_paths.h"
+#include "spdf_win_compat.h"
 #include "spdf_yaml.h"
 
 #include <errno.h>
@@ -365,8 +366,8 @@ int spdf_win_state_write_json_at(const char* path, const char* json_text) {
         }
     }
 
-    if (snprintf(temp_path, sizeof(temp_path), "%s.tmp.%lu", path, current_pid()) >=
-        (int)sizeof(temp_path)) {
+    if (!spdf_compat_snprintf_ok(snprintf(temp_path, sizeof(temp_path), "%s.tmp.%lu", path, current_pid()),
+                                 sizeof(temp_path))) {
         free(yaml);
         return 0;
     }
