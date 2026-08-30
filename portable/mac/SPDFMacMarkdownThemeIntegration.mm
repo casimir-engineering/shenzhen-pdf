@@ -22,10 +22,10 @@
 }
 
 - (void)buildMarkdownThemeToolbarButton {
-    NSButton* button = [NSButton buttonWithTitle:@"" target:self action:@selector(toggleMarkdownReadingTheme:)];
-    button.bezelStyle = NSBezelStyleTexturedRounded;
+    // Built through the shared toolbar-button factory so the bezel, font and
+    // metrics match the OCR/Translate buttons exactly.
+    NSButton* button = [self buttonWithTitle:@"" action:@selector(toggleMarkdownReadingTheme:)];
     button.imagePosition = NSImageOnly;
-    button.translatesAutoresizingMaskIntoConstraints = NO;
     [button.widthAnchor constraintEqualToConstant:32].active = YES;
     [button setContentHuggingPriority:NSLayoutPriorityRequired
                        forOrientation:NSLayoutConstraintOrientationHorizontal];
@@ -42,8 +42,12 @@
     _markdownThemeButton.hidden = !markdownActive;
     if (!markdownActive) return;
     NSString* symbol = _markdownDarkTheme ? @"sun.max" : @"moon.stars";
-    _markdownThemeButton.image = [NSImage imageWithSystemSymbolName:symbol
-                                           accessibilityDescription:self.markdownThemeToggleTitle];
+    NSImage* icon = [NSImage imageWithSystemSymbolName:symbol
+                              accessibilityDescription:self.markdownThemeToggleTitle];
+    // Template rendering makes the glyph adopt the toolbar's control tint, the
+    // way every other toolbar icon does.
+    [icon setTemplate:YES];
+    _markdownThemeButton.image = icon;
     _markdownThemeButton.toolTip = self.markdownThemeToggleTitle;
     _markdownThemeButton.accessibilityLabel = self.markdownThemeToggleTitle;
 }
