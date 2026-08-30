@@ -74,7 +74,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>26.8.31</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationCategoryType</key>
