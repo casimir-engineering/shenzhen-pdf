@@ -81,17 +81,28 @@ case_probe_win() {
   fi
   mkdir -p "$OUT/win"
   tr -d '\r' < "$OUT/probe-win.raw" > "$OUT/probe-win.txt"
-  guest "$OUT/probe-fetch.log" 'copy /Y "'"$GUEST_OUT"'\probe-page.png" "'"$GUEST_DROP"'\probe-page.png"'
+  # The rendered PNG comes back as base64 on stdout, not through the staging
+  # tree: sync-to-vm.sh runs rsync with --delete-excluded, so the staging
+  # build/ directory is deleted on every sync -- including the one vm-build.sh
+  # performs moments before this runs. stdout does not depend on another
+  # track's rsync flags.
+  guest_ps "$OUT/probe-fetch.b64" fetch_probe_png.ps1
   rc=$?
   if [[ $rc -ne 0 ]]; then
-    record "probe.win" FAIL "could not copy the rendered PNG back to the share (copy exited $rc)"
-    log_tail "$OUT/probe-fetch.log"
+    record "probe.win" FAIL "could not read the rendered PNG back out of the guest (exit $rc)"
+    log_tail "$OUT/probe-fetch.b64"
     return
   fi
-  cp "$STAGE/portable/win/build/t4/probe-page.png" "$OUT/win/probe-page.png"
+  python3 -c 'import base64,re,sys
+raw = re.sub(rb"[^A-Za-z0-9+/=]", b"", open(sys.argv[1], "rb").read())
+data = base64.b64decode(raw, validate=True)
+if data[:8] != b"\x89PNG\r\n\x1a\n":
+    raise SystemExit("decoded %d bytes but they are not a PNG" % len(data))
+open(sys.argv[2], "wb").write(data)' "$OUT/probe-fetch.b64" "$OUT/win/probe-page.png"
   rc=$?
   if [[ $rc -ne 0 ]]; then
-    record "probe.win" FAIL "the guest reported the PNG copied but it is not readable on the Mac"
+    record "probe.win" FAIL "the guest returned something that is not a decodable PNG"
+    log_tail "$OUT/probe-fetch.b64" 4
     return
   fi
   record "probe.win" PASS "transcript and PNG produced in the guest"

@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 # End-to-end proof that the macOS -> Windows-VM build chain works and is honest.
 #
-# Three things get proven, in order:
+# Five things get proven, in order:
 #   1. The same pure-C source produces BYTE-IDENTICAL output on macOS/clang/arm64
 #      and Windows/MSVC/ARM64.
 #   2. vm-build.sh exits non-zero when the guest compile fails.
 #   3. vm-build.sh exits zero when it succeeds.
+#   4. Every object in the built libmupdf.lib / libmupdf-third.lib is AA64, i.e.
+#      native ARM64 rather than x64 under emulation.
+#   5. A real PDF page rendered through portable/core + libmupdf is byte-identical
+#      on both hosts.
+#
+# Steps 4 and 5 need libmupdf built in the guest (portable/win/mupdf-build.sh).
+# They are skipped, loudly, when it is not -- but never silently, and never
+# "passed".
 #
 # Run from anywhere:  portable/win/verify.sh
+#   SPDF_VERIFY_SKIP_MUPDF=1  runs only steps 1-3 (seconds instead of a minute)
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -52,6 +61,26 @@ if diff -u "$OUT/mac.txt" "$OUT/win.txt"; then
 else
   fail "macOS and Windows output differ (see above)"
 fi
+
+if [[ "${SPDF_VERIFY_SKIP_MUPDF:-0}" == "1" ]]; then
+  echo
+  echo "VERIFY OK (steps 5-6 skipped: SPDF_VERIFY_SKIP_MUPDF=1)"
+  exit 0
+fi
+
+echo "== 5. libmupdf is native ARM64 =="
+"$REPO_ROOT/portable/win/mupdf-arch-check.sh"
+arch_rc=$?
+if [[ $arch_rc -eq 93 ]]; then
+  echo "   SKIPPED: libmupdf has not been built. Run portable/win/mupdf-build.sh." >&2
+  echo
+  echo "VERIFY INCOMPLETE: steps 5-6 could not run" >&2
+  exit 2
+fi
+[[ $arch_rc -eq 0 ]] || fail "libmupdf is not native ARM64 (exit $arch_rc)"
+
+echo "== 6. a real page renders identically on both hosts =="
+"$REPO_ROOT/portable/win/mupdf-render-check.sh" || fail "cross-host render check failed"
 
 echo
 echo "VERIFY OK"

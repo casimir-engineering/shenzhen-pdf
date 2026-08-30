@@ -2,9 +2,13 @@
 # Build (and optionally run) repo C/C++ sources inside the Parallels Windows VM,
 # driven entirely from the macOS command line.
 #
-#   portable/win/vm-build.sh [--run] <target-name> <source>...
+#   portable/win/vm-build.sh [--run] <target-name> <source>... [-- <arg>...]
 #
 # Sources are paths relative to the repo root, e.g. portable/core/spdf_recolor.c.
+# Anything after a lone `--` is passed to the program under --run, as GUEST
+# arguments: a path there must be a Windows path the guest can see, e.g.
+#   C:\spdf\portable\win\smoke\fixture.pdf                    (the mirrored repo)
+#   \\Mac\Home\Documents\spdf-win\out\page.rgba               (writes back to the Mac)
 #
 # THE ONE INVARIANT: this script exits with the guest's real exit code.
 # A compile error in the VM must make this script exit non-zero on the Mac,
@@ -30,12 +34,33 @@ if [[ "${1:-}" == "--run" ]]; then
 fi
 
 if [[ $# -lt 2 ]]; then
-  echo "usage: $(basename "$0") [--run] <target-name> <source>..." >&2
+  echo "usage: $(basename "$0") [--run] <target-name> <source>... [-- <arg>...]" >&2
   exit 64
 fi
 
 TARGET="$1"
 shift
+
+# Split the tail into sources and program arguments at a lone `--`.
+RUN_ARGS=()
+SOURCES=()
+seen_sep=0
+for arg in "$@"; do
+  if [[ $seen_sep -eq 0 && "$arg" == "--" ]]; then
+    seen_sep=1
+    continue
+  fi
+  if [[ $seen_sep -eq 1 ]]; then
+    RUN_ARGS+=("$arg")
+  else
+    SOURCES+=("$arg")
+  fi
+done
+if [[ ${#SOURCES[@]} -eq 0 ]]; then
+  echo "vm-build: no sources given" >&2
+  exit 64
+fi
+set -- "${SOURCES[@]}"
 
 # Sources are named relative to the repo root but must resolve inside the staged
 # subtrees (portable/core, portable/win, ext). Catch a typo here rather than
@@ -77,8 +102,8 @@ fi
 echo "vm-build: built $GUEST_OUT\\$TARGET.exe"
 
 if [[ $RUN -eq 1 ]]; then
-  echo "vm-build: running $TARGET.exe ..."
-  prlctl exec "$VM_NAME" cmd.exe /c "$GUEST_OUT\\$TARGET.exe"
+  echo "vm-build: running $TARGET.exe ${RUN_ARGS[*]-}"
+  prlctl exec "$VM_NAME" cmd.exe /c "$GUEST_OUT\\$TARGET.exe ${RUN_ARGS[*]-}"
   rc=$?
   if [[ $rc -ne 0 ]]; then
     echo "vm-build: guest program exited $rc" >&2

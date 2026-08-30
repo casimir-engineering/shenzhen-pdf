@@ -75,9 +75,44 @@ if errorlevel 1 (
   exit /b 92
 )
 
-rem ---- 3. Compile --------------------------------------------------------
-rem /Fo needs the trailing backslash to mean "directory".
-cl /nologo /W3 /O2 /I"%SPDF_DST%\portable\core" %SOURCES% /Fe:"%SPDF_OUT%\%TARGET%.exe" /Fo:"%SPDF_OUT%\\"
+rem ---- 3. Work out what to link against ----------------------------------
+rem MuPDF, when it has been built. portable/win/mupdf-build.sh puts the two
+rem static libraries here; see portable/win/README.md, "The linking interface".
+rem They are linked WHEN PRESENT rather than required, so the four tracks whose
+rem code is pure C (layout, compat, paths, tests) keep building on a machine
+rem where MuPDF has never been built. The linker only pulls in the objects a
+rem symbol actually needs, so a target that ignores MuPDF pays nothing but the
+rem cost of opening the archives.
+set "MUPDF_INC=%SPDF_DST%\mupdf\include"
+set "MUPDF_LIBDIR=%SPDF_OUT%\mupdf"
+set "MUPDF_LIBS="
+if exist "%MUPDF_LIBDIR%\libmupdf.lib" (
+  if exist "%MUPDF_LIBDIR%\libmupdf-third.lib" (
+    set "MUPDF_LIBS=%MUPDF_LIBDIR%\libmupdf.lib %MUPDF_LIBDIR%\libmupdf-third.lib"
+  )
+)
+if not defined MUPDF_LIBS echo [guest] note: no libmupdf.lib yet -- run portable/win/mupdf-build.sh
+
+rem System import libraries the Windows frontend needs. Listing them here means
+rem no track has to edit this file to get a Direct2D/DirectWrite/WIC target to
+rem link: an unused import library costs nothing in the produced binary.
+set "SYS_LIBS=user32.lib gdi32.lib shell32.lib ole32.lib oleaut32.lib advapi32.lib shcore.lib d2d1.lib dwrite.lib windowscodecs.lib uuid.lib"
+
+rem ---- 4. Compile --------------------------------------------------------
+rem Per-target object directory: several repo sources share a basename
+rem (buffer.c, image.c, util.c...), and a flat /Fo would have them overwrite
+rem each other. /Fo needs the trailing backslash to mean "directory".
+set "OBJ_DIR=%SPDF_OUT%\obj-%TARGET%"
+if not exist "%OBJ_DIR%" mkdir "%OBJ_DIR%"
+
+rem /MT is cl.exe's default and is stated explicitly because libmupdf.lib is
+rem built /MT too -- mixing CRTs produces link errors that read like missing
+rem symbols. /STACK matches macOS's 8 MB main thread: Windows defaults to 1 MB
+rem and MuPDF's content-stream and CSS recursion can outrun that on real files.
+cl /nologo /W3 /O2 /MT /utf-8 /D_CRT_SECURE_NO_WARNINGS ^
+   /I"%SPDF_DST%\portable\core" /I"%SPDF_DST%\portable\win\src" /I"%MUPDF_INC%" ^
+   %SOURCES% /Fe:"%SPDF_OUT%\%TARGET%.exe" /Fo:"%OBJ_DIR%\\" ^
+   /link /STACK:8388608 %MUPDF_LIBS% %SYS_LIBS%
 set "CL_RC=%ERRORLEVEL%"
 if not "%CL_RC%"=="0" echo [guest] cl.exe exited %CL_RC%
 exit /b %CL_RC%
