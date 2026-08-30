@@ -34,7 +34,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// deletes <bundle>.app.old, clears the lease, and shows the one-time success
 /// banner; if pendingTag is set but the running version does NOT match it (the
 /// new version failed to come up), rolls <bundle>.app.old back into place and
-/// reveals it in Finder. Always sweeps an aged orphaned .old / staging dirs.
+/// reveals it in the preferred file manager. Always sweeps an aged orphaned .old / staging dirs.
 - (void)consumePendingUpdateMarkerAndSweep;
 
 /// The "Check for Updates…" menu path passes userInitiated=YES (bypasses the
