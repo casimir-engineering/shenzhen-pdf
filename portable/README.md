@@ -139,6 +139,21 @@ release only when they resolve to the exact prepared commit, replaces the
 named DMG asset when needed, and downloads it again for a SHA-256 comparison.
 Any conflicting tag or asset fails closed.
 
+A build number is spent only once its tag reaches the remote. `--prepare-only`
+stops before tagging, so a prepared-but-unpublished release can be re-prepared
+at the same version and build as many times as needed; do not increment the
+build number for a release that was never tagged and pushed.
+
+`readme.md` must describe what the release ships. Preparation fails when the
+README's content has not changed since the previous tag — the automated version
+badge does not count — so a headline feature cannot ship undocumented. A release
+that genuinely changes nothing user-visible states that with
+`SPDF_README_UNCHANGED=1`.
+
+The staged draft release is verified through `gh release view`. GitHub's REST
+"get a release by tag name" endpoint never resolves a draft, because a draft
+carries no server-side tag until it is published.
+
 To build the already committed metadata without tagging, pushing, or publishing:
 
 ```sh
