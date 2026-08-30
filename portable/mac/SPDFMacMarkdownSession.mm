@@ -34,6 +34,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     // mid-load) activation schedules a catch-up rerender.
     CGFloat _renderedFontScale;
     SPDFMarkdownThemeVariant _renderedThemeVariant;
+    SPDFMarkdownDiagramCache* _diagramCache;  // shared by every rerender
 }
 
 - (instancetype)initWithDocumentURL:(NSURL*)URL {
@@ -58,6 +59,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     _renderedFontScale = _fontScale;
     _themeVariant = themeVariant;
     _renderedThemeVariant = _themeVariant;
+    _diagramCache = [SPDFMarkdownDiagramCache new];
     [self buildRootView];
     return self;
 }
@@ -65,6 +67,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 - (SPDFMarkdownRenderOptions*)renderOptionsForCurrentScale {
     SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions defaultOptionsForThemeVariant:_themeVariant];
     options.fontScale = _fontScale;
+    options.diagramCache = _diagramCache;  // one raster cache for the session
     [self applyRemoteImageState:options];  // already-fetched remote image bytes
     return options;
 }

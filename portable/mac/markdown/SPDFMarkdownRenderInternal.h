@@ -32,6 +32,15 @@ CGFloat SPDFMarkdownRenderScale(SPDFMarkdownRenderContext* context);
 // alt-text captions (SPDFMarkdownInlineRenderer.mm).
 void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block);
 
+// A fenced code block whose language names a native diagram (mermaid /
+// sequence / flow) renders as a centered figure attachment instead of a code
+// box (SPDFMarkdownDiagramFigure.mm). Returns NO — having emitted nothing —
+// when the fence is not a diagram or the diagram seam declines it (malformed,
+// unsupported sub-type, over budget); the caller must then run the unchanged
+// code-box path, which is the degradation contract.
+BOOL SPDFMarkdownRenderDiagramFigureBlock(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block,
+                                          NSUInteger depth, BOOL record);
+
 // An images-only paragraph (images are its only meaningful content, separated
 // by nothing but whitespace/soft breaks) renders by its shape. A single image
 // becomes a centered figure with a centered caption line below the artwork —

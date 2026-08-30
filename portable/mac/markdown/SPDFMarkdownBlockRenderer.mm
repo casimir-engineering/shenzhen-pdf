@@ -249,6 +249,15 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
 
 static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block, NSUInteger depth,
                            BOOL record) {
+    // A diagram fence takes over the whole code branch below: it emits a
+    // centered figure attachment instead of the fence text, so the hook has to
+    // run BEFORE any of that text reaches the output. Non-diagram languages
+    // cost one O(1) identifier check and nothing else; a diagram that fails to
+    // parse also returns NO and falls straight through to the code box.
+    if (block.kind == SPDFMarkdownBlockKindCode &&
+        SPDFMarkdownRenderDiagramFigureBlock(context, block, depth, record)) {
+        return;
+    }
     NSUInteger start = context.output.length;
     if (block.kind == SPDFMarkdownBlockKindThematicBreak) {
         // The break contributes an invisible blank line that reserves layout
