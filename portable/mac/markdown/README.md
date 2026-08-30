@@ -192,11 +192,19 @@ for rendered formats, where `portable/core/spdf_recolor.c` remaps a page's
 lightness onto exactly these `paperColor`/`bodyTextColor` endpoints, keeping
 chroma so a colored figure holds its hue. `SPDFMacReadingThemeIntegration.mm`
 owns both halves; `SPDFMarkdownRendererTests` asserts the two copies of the
-endpoints have not drifted. Markdown export stays WYSIWYG because a Markdown
-document's colors are ours to choose; PDF print and export always use the
-document's own colors, because a PDF's are not. On the screen canvas, light
-paper keeps the white sheet + drop shadow while dark paper draws a subtle
-1px #333333 border instead. An images-only paragraph (nothing but images and
+endpoints have not drifted. Print, Save as PDF, Copy Page and Copy Page Image
+never carry the theme, for a Markdown document as much as for a PDF: an
+exported file leaves the reader, and dark paper baked into it would be wrong
+everywhere it lands. `viewportBackgroundColor` is the gutter role behind the
+sheets, read by BOTH frontends (the Markdown canvas and the PDF document
+scroll view): #121212 in dark, so the #1E1E1E paper edge always reads, and nil
+in light, meaning each surface keeps the system background it always had.
+`drawsPaperShadow` is the matching page-separation role — light keeps the
+white sheet + drop shadow, dark swaps it for a crisp 1px #333333
+`paperBorderColor` frame on all four sides, since a black shadow is invisible
+against a dark gutter. `SPDFDocumentView.drawsPageShadow`/`pageBorderColor`
+and the canvas's `paperFillColor`/`drawsPaperShadow` expose that decision to
+headless tests. Presentation mode stays pure black, with no border, in both. An images-only paragraph (nothing but images and
 whitespace/soft breaks) renders by its shape. A single image becomes a
 centered figure, GitHub-style: the attachment centered on its own line with a
 muted centered caption line below it. The caption text is the markdown title
@@ -378,18 +386,27 @@ across pages gets one box per portion), a 1px underline rule beneath level
 1 and 2 headings, and the table chrome (header band, zebra stripes, hairline
 grid) described in the styling section above.
 
-Save as PDF, preview and Print all reuse the session's live on-screen
-`SPDFMarkdownPaginationPlan` (A4 portrait, current font scale and reading
-theme, reserved language-control band) — a differing printer paper only
-scales the finished page, it never repaginates. Configurations built from
+Save as PDF, preview and Print all reuse the session's export
+`SPDFMarkdownPaginationPlan` (A4 portrait, current font scale, reserved
+language-control band) — a differing printer paper only scales the finished
+page, it never repaginates. That export plan IS the live on-screen plan while
+the reader is LIGHT: the identical object, no extra render, no extra
+pagination. While the reader is DARK it is a separate LIGHT rendition built
+once, lazily, on the first export and cached on the identity of the installed
+`renderedDocument`, so any rerender invalidates it (see
+`SPDFMacMarkdownSession.exportPaginationPlan`). Everything except the palette
+is identical: same font scale, same margins, same page breaks. Configurations built from
 asymmetric printable rectangles anchor content to `topContentInset`, the true
 top margin. The plan's `drawPageAtIndex:attributedString:inContext:` method
 draws the decorations first (the active theme's concrete palette — light:
 #F6F8FA/#D0D7DE code boxes and #D1D9E0 rules on white paper; dark:
 #262626/#363636 boxes and #333333 rules on #1E1E1E paper) and then the exact
 planned ranges into any PDF/print Core Graphics context, preserving
-vector/selectable text. Exports are WYSIWYG by design: a dark reading theme
-exports dark pages, exactly what the screen shows. Drawing resolves dynamic
+vector/selectable text. An export is WYSIWYG in every respect except the
+palette: it is ALWAYS the light rendition, whatever the reader is showing,
+which matches the PDF side (where an export always carries the document's own
+colors). A file with dark paper baked in would be wrong everywhere else it was
+ever opened, and nobody prints one on purpose. Drawing resolves dynamic
 AppKit colors through the active theme's concrete palette with a
 paper-appropriate luminance guard, so an application-appearance flip can
 never produce white-on-white (or black-on-black) output.

@@ -31,6 +31,20 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 // reserved language-control band). Print and Save-as-PDF consume this plan
 // with renderedDocument so exports match the reader page for page.
 @property(nonatomic, readonly, nullable) SPDFMarkdownPaginationPlan* paginationPlan;
+// The EXPORT rendition: Save as PDF, Print, Copy Page and Copy Page Image
+// always produce the LIGHT reading theme, matching the PDF side (where an
+// export always carries the document's own colors — dark paper baked into a
+// file would be wrong everywhere else it is opened).
+//
+// While the session is light these are the live plan and string themselves —
+// the identical objects, no render, no pagination, not one extra allocation on
+// the common path. Only while DARK is on do they build a light rendition, once,
+// lazily, on the first export, cached until the next rerender replaces the
+// installed renderedDocument (font scale, theme, language override, remote
+// image). Everything else about the export is unchanged: same font scale, same
+// margins, same reserved language-control band, same page breaks.
+@property(nonatomic, readonly, nullable) SPDFMarkdownPaginationPlan* exportPaginationPlan;
+@property(nonatomic, readonly, nullable) NSAttributedString* exportAttributedString;
 @property(nonatomic, readonly) SPDFMacMarkdownSessionState state;
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownSearchMatch*>* searchMatches;
 @property(nonatomic, readonly) NSInteger currentMatchIndex;

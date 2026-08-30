@@ -50,6 +50,14 @@
     return [_paginator paginateItems:items configuration:configuration];
 }
 
+- (SPDFMarkdownRenderedDocument*)renderedDocumentWithOptions:(SPDFMarkdownRenderOptions*)options
+                                           languageOverrides:
+                                               (NSDictionary<NSNumber*, NSString*>*)languageOverrides {
+    return [_renderer renderModel:_model
+                          options:[(options ?: _renderOptions) copy]
+                languageOverrides:languageOverrides ?: _mutableLanguageOverrides];
+}
+
 - (NSTextView*)newSelectableTextView {
     NSAssert(NSThread.isMainThread, @"NSTextView creation must run on the main thread");
     return [_renderer newSelectableTextViewForRenderedDocument:_renderedDocument options:_renderOptions];
