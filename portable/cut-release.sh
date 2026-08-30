@@ -200,6 +200,16 @@ if [[ ! -f "$notes_file" ]]; then
   } > "$notes_file"
   spdf_release_fail "Seeded $notes_file; edit it, then rerun this command"
 fi
+
+# Re-preparing an existing (never-tagged) release must not silently discard
+# notes accumulated since the last attempt: preparation resets
+# release-notes-next.md, so anything written there after the notes file was
+# created would vanish unnoticed. Fail closed and name the entries instead.
+pending_notes="$(sed -n '/^## Next release$/,$p' "$next_notes" | tail -n +2 | sed '/^[[:space:]]*$/d')"
+if [[ -n "$pending_notes" && "$pending_notes" != "Nothing yet." ]]; then
+  printf '%s\n' "$pending_notes" >&2
+  spdf_release_fail "release-notes-next.md has entries not in $notes_file; fold them in (or clear them), then rerun"
+fi
 spdf_validate_release_notes "$notes_file"
 git check-ignore -q "$notes_file" && spdf_release_fail "Release notes are ignored: $notes_file"
 log "Validated release notes for $tag"
