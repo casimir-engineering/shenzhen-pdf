@@ -56,6 +56,7 @@ static char* utf8_from_wide(const wchar_t* w) {
 
 struct app {
     spdf_document* doc;
+    char* path; /* UTF-8, owned; the render workers open their own handle to it */
     spdf_win_canvas* canvas;
     unsigned render_flags;
     /* Applied on the first paint, not at open: the canvas cannot place a page
@@ -74,13 +75,12 @@ static bool open_document(app* a, const wchar_t* wpath, int page_index, bool int
     char err[256] = {0};
     wchar_t message[600];
 
-    char* path = utf8_from_wide(wpath);
-    if (!path) {
+    a->path = utf8_from_wide(wpath);
+    if (!a->path) {
         report(L"That path could not be converted to UTF-8.", interactive);
         return false;
     }
-    a->doc = spdf_open(path, err, sizeof(err));
-    free(path);
+    a->doc = spdf_open(a->path, err, sizeof(err));
     if (!a->doc) {
         _snwprintf_s(message, _TRUNCATE, L"Could not open %s\n\n%hs", wpath, err[0] ? err : "unknown error");
         report(message, interactive);
@@ -96,8 +96,10 @@ static bool open_document(app* a, const wchar_t* wpath, int page_index, bool int
 
     /* The canvas reads page 0's size and nothing else. Every other page is
      * measured when the viewport reaches it, so opening a 500-page document
-     * costs the same as opening a 2-page one. */
-    a->canvas = spdf_win_canvas_create(a->doc, a->render_flags, err, sizeof(err));
+     * costs the same as opening a 2-page one. The path goes with it so the
+     * render workers can open their own handle -- the core allows one
+     * spdf_document per thread, so they cannot borrow ours. */
+    a->canvas = spdf_win_canvas_create(a->doc, a->path, a->render_flags, err, sizeof(err));
     if (!a->canvas) {
         _snwprintf_s(message, _TRUNCATE, L"Could not lay out %s: %hs", wpath, err[0] ? err : "unknown error");
         report(message, interactive);
@@ -111,6 +113,8 @@ static void close_document(app* a) {
     a->canvas = NULL;
     if (a->doc) spdf_close(a->doc);
     a->doc = NULL;
+    free(a->path);
+    a->path = NULL;
 }
 
 /* --- the window ---------------------------------------------------------- */
@@ -219,6 +223,11 @@ struct viewport_opts {
     float zoom_at_x; /* < 0 means "no zoom-at step" */
     float zoom_at_y;
     float zoom_factor;
+    /* Render N frames, scrolling a viewport height between each. One
+     * invocation is one process, so this is the only way to observe anything
+     * that is supposed to happen BETWEEN frames -- notably whether the worker
+     * pool had the next page ready. Only the last frame is written. */
+    int frames;
 };
 
 /* One machine-readable block per frame, on stdout. The consumer is a script
@@ -226,11 +235,12 @@ struct viewport_opts {
  * numbers here are the interface: change them and the comparison silently
  * starts measuring something else. */
 static void print_geometry(const char* label, spdf_win_canvas* canvas, const spdf_win_scene* scene) {
-    printf("%s viewport=%ux%u zoom=%.6f scroll=%.4f,%.4f content=%.4f,%.4f page=%d cache=%zu\n", label,
-           scene->target_px_w, scene->target_px_h, (double)spdf_win_canvas_zoom(canvas),
+    printf("%s viewport=%ux%u zoom=%.6f scroll=%.4f,%.4f content=%.4f,%.4f page=%d cache=%zu sync=%d started=%llu\n",
+           label, scene->target_px_w, scene->target_px_h, (double)spdf_win_canvas_zoom(canvas),
            (double)spdf_win_canvas_scroll_x(canvas), (double)spdf_win_canvas_scroll_y(canvas),
            (double)spdf_win_canvas_content_w(canvas), (double)spdf_win_canvas_content_h(canvas),
-           spdf_win_canvas_current_page(canvas), spdf_win_canvas_cache_bytes(canvas));
+           spdf_win_canvas_current_page(canvas), spdf_win_canvas_cache_bytes(canvas),
+           spdf_win_canvas_sync_renders(canvas), spdf_win_canvas_prefetched(canvas));
     for (int i = 0; i < scene->page_count; ++i) {
         const spdf_win_page_draw* d = &scene->pages[i];
         printf("%s draw page=%d dest=%.4f,%.4f size=%.4f,%.4f bitmap=%dx%d\n", label, d->page_index, (double)d->dest_x,
@@ -272,6 +282,20 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
     }
     spdf_win_canvas_build_scene(a->canvas, &scene);
     print_geometry("frame", a->canvas, &scene);
+
+    /* Extra frames, each a viewport further down, with the pool given a moment
+     * to land its prefetch in between -- the wait a real reader's hand supplies
+     * for free and a back-to-back loop does not. `sync=` on each frame is the
+     * measurement: 0 means every visible page was already in the cache. */
+    for (int frame = 1; frame < opts->frames; ++frame) {
+        char label[32];
+        spdf_win_canvas_scroll_by(a->canvas, 0.0f, (float)px_h);
+        spdf_win_canvas_settle(a->canvas, 4000);
+        memset(&scene, 0, sizeof(scene));
+        spdf_win_canvas_build_scene(a->canvas, &scene);
+        _snprintf_s(label, sizeof(label), _TRUNCATE, "frame%d", frame);
+        print_geometry(label, a->canvas, &scene);
+    }
 
     hr = spdf_win_render_scene_to_png(d2d, px_w, px_h, &scene, out_png);
     if (FAILED(hr)) {
@@ -336,7 +360,8 @@ static int usage(void) {
              L"         --scroll-y Y\n"
              L"         --dpi S           device pixels per logical pixel (default 1)\n"
              L"         --zoom-at X,Y     zoom about this viewport point after scrolling\n"
-             L"         --zoom-factor F   how much to zoom there (default 2)\n");
+             L"         --zoom-factor F   how much to zoom there (default 2)\n"
+             L"         --frames N        render N frames, a viewport apart; last is written\n");
     return 64;
 }
 
@@ -355,6 +380,7 @@ int main(void) {
     opts.dpi_scale = 1.0f;
     opts.zoom_at_x = -1.0f;
     opts.zoom_factor = 2.0f;
+    opts.frames = 1;
 
     int i = 1;
     bool exact = i < argc && wcscmp(argv[i], L"--render-png") == 0;
@@ -375,6 +401,7 @@ int main(void) {
         else if (wcscmp(flag, L"--scroll-y") == 0) opts.scroll_y = (float)_wtof(value);
         else if (wcscmp(flag, L"--dpi") == 0) opts.dpi_scale = (float)_wtof(value);
         else if (wcscmp(flag, L"--zoom-factor") == 0) opts.zoom_factor = (float)_wtof(value);
+        else if (wcscmp(flag, L"--frames") == 0) opts.frames = _wtoi(value);
         else if (wcscmp(flag, L"--zoom-at") == 0) {
             wchar_t* comma = NULL;
             opts.zoom_at_x = (float)wcstod(value, &comma);
