@@ -32,29 +32,78 @@ static void remove_fixture(NSString* path) {
     [NSFileManager.defaultManager removeItemAtPath:root error:nil];
 }
 
+// Re-validates both rows and asserts the checkmark tracks the RESOLVED
+// preference, with the "(Automatic)" hint only while nothing was chosen.
+static void check_menu_state(NSMenu* submenu, SPDFMacFileExplorerPreference stored) {
+    BOOL available = SPDFMacShenzhenFilesIsAvailable();
+    SPDFMacFileExplorerPreference resolved = SPDFMacResolveFileExplorerPreference(stored, available);
+    NSMenuItem* finder = [submenu itemAtIndex:0];
+    NSMenuItem* shenzhen = [submenu itemAtIndex:1];
+    id<NSMenuItemValidation> target = (id<NSMenuItemValidation>)finder.target;
+    [target validateMenuItem:finder];
+    CHECK([target validateMenuItem:shenzhen] == available, "Shenzhen Files row enablement ignores availability");
+    NSMenuItem* active = resolved == SPDFMacFileExplorerShenzhenFiles ? shenzhen : finder;
+    NSMenuItem* inactive = active == finder ? shenzhen : finder;
+    CHECK(active.state == NSControlStateValueOn, "the resolved file manager is not checked");
+    CHECK(inactive.state == NSControlStateValueOff, "a non-resolved file manager is checked");
+    BOOL derived = stored == SPDFMacFileExplorerUnset;
+    CHECK([active.title hasSuffix:@" (Automatic)"] == derived, "the derived-default hint is wrong");
+    CHECK(![inactive.title hasSuffix:@" (Automatic)"], "an inactive row claims to be the automatic default");
+}
+
 static void test_identifiers(void) {
     CHECK([SPDFMacFileExplorerPreferenceIdentifier(SPDFMacFileExplorerSystem) isEqualToString:@"system"],
           "system identifier changed");
     CHECK([SPDFMacFileExplorerPreferenceIdentifier(SPDFMacFileExplorerShenzhenFiles)
               isEqualToString:@"shenzhen-files"],
           "Shenzhen Files identifier changed");
+    CHECK(SPDFMacFileExplorerPreferenceIdentifier(SPDFMacFileExplorerUnset) == nil,
+          "an unset preference must not persist an identifier");
     CHECK(SPDFMacFileExplorerPreferenceFromIdentifier(@"shenzhen-files") == SPDFMacFileExplorerShenzhenFiles,
           "saved Shenzhen Files preference did not round-trip");
-    CHECK(SPDFMacFileExplorerPreferenceFromIdentifier(@"unknown") == SPDFMacFileExplorerSystem,
-          "unknown preference did not fall back to system");
-    CHECK(SPDFMacFileExplorerPreferenceFromIdentifier(nil) == SPDFMacFileExplorerSystem,
-          "missing preference did not preserve the system default");
+    CHECK(SPDFMacFileExplorerPreferenceFromIdentifier(@"system") == SPDFMacFileExplorerSystem,
+          "saved system preference did not round-trip");
+    CHECK(SPDFMacFileExplorerPreferenceFromIdentifier(@"unknown") == SPDFMacFileExplorerUnset,
+          "unknown preference was mistaken for an explicit choice");
+    CHECK(SPDFMacFileExplorerPreferenceFromIdentifier(nil) == SPDFMacFileExplorerUnset,
+          "missing preference was mistaken for an explicit choice");
+}
+
+// The whole point of the tri-state: derive only when nothing was chosen.
+static void test_resolution(void) {
+    CHECK(SPDFMacResolveFileExplorerPreference(SPDFMacFileExplorerUnset, YES) == SPDFMacFileExplorerShenzhenFiles,
+          "unset preference did not default to an installed Shenzhen Files");
+    CHECK(SPDFMacResolveFileExplorerPreference(SPDFMacFileExplorerUnset, NO) == SPDFMacFileExplorerSystem,
+          "unset preference did not fall back to the system file manager");
+    CHECK(SPDFMacResolveFileExplorerPreference(SPDFMacFileExplorerSystem, YES) == SPDFMacFileExplorerSystem,
+          "an explicit Finder choice was flipped by an installed Shenzhen Files");
+    CHECK(SPDFMacResolveFileExplorerPreference(SPDFMacFileExplorerSystem, NO) == SPDFMacFileExplorerSystem,
+          "an explicit Finder choice did not survive");
+    CHECK(SPDFMacResolveFileExplorerPreference(SPDFMacFileExplorerShenzhenFiles, YES) ==
+              SPDFMacFileExplorerShenzhenFiles,
+          "an explicit Shenzhen Files choice did not survive");
+    CHECK(SPDFMacResolveFileExplorerPreference(SPDFMacFileExplorerShenzhenFiles, NO) ==
+              SPDFMacFileExplorerShenzhenFiles,
+          "an explicit Shenzhen Files choice was dropped while the app is missing");
 }
 
 static void test_persistence_and_menu(void) {
     NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
     NSString* saved = [defaults stringForKey:@"SPDFFileExplorerPreference"];
     SPDFMacSetFileExplorerPreference(SPDFMacFileExplorerShenzhenFiles);
-    CHECK(SPDFMacCurrentFileExplorerPreference() == SPDFMacFileExplorerShenzhenFiles,
+    CHECK(SPDFMacStoredFileExplorerPreference() == SPDFMacFileExplorerShenzhenFiles,
           "Shenzhen Files preference was not persisted");
     SPDFMacSetFileExplorerPreference(SPDFMacFileExplorerSystem);
-    CHECK(SPDFMacCurrentFileExplorerPreference() == SPDFMacFileExplorerSystem,
+    CHECK(SPDFMacStoredFileExplorerPreference() == SPDFMacFileExplorerSystem,
           "system preference was not persisted");
+    CHECK(SPDFMacCurrentFileExplorerPreference() == SPDFMacFileExplorerSystem,
+          "an explicit system preference did not survive resolution");
+    SPDFMacSetFileExplorerPreference(SPDFMacFileExplorerUnset);
+    CHECK(SPDFMacStoredFileExplorerPreference() == SPDFMacFileExplorerUnset,
+          "clearing the preference did not restore the unset state");
+    CHECK(SPDFMacCurrentFileExplorerPreference() ==
+              (SPDFMacShenzhenFilesIsAvailable() ? SPDFMacFileExplorerShenzhenFiles : SPDFMacFileExplorerSystem),
+          "the unset preference did not resolve against Shenzhen Files availability");
 
     NSMenu* settings = [[NSMenu alloc] initWithTitle:@"Settings"];
     SPDFMacInstallFileExplorerSettingsMenu(settings);
@@ -62,6 +111,11 @@ static void test_persistence_and_menu(void) {
     NSMenuItem* item = [settings itemAtIndex:0];
     CHECK([item.title isEqualToString:@"File Manager"], "file-manager settings title changed");
     CHECK(item.submenu.numberOfItems == 2, "file-manager submenu does not contain both choices");
+    check_menu_state(item.submenu, SPDFMacFileExplorerUnset);
+    SPDFMacSetFileExplorerPreference(SPDFMacFileExplorerSystem);
+    check_menu_state(item.submenu, SPDFMacFileExplorerSystem);
+    SPDFMacSetFileExplorerPreference(SPDFMacFileExplorerShenzhenFiles);
+    check_menu_state(item.submenu, SPDFMacFileExplorerShenzhenFiles);
 
     if (saved) [defaults setObject:saved forKey:@"SPDFFileExplorerPreference"];
     else [defaults removeObjectForKey:@"SPDFFileExplorerPreference"];
@@ -159,13 +213,120 @@ static void test_fallbacks(void) {
     remove_fixture(path);
 }
 
+// A browse targets a FOLDER: a file path resolves to its containing directory.
+static void test_browse_routes(void) {
+    NSString* file = make_fixture(NO);
+    NSString* directory = file.stringByDeletingLastPathComponent;
+    NSURL* appURL = [NSURL fileURLWithPath:@"/Applications/Shenzhen Files.app" isDirectory:YES];
+
+    __block NSInteger launchCount = 0;
+    __block NSInteger browseCount = 0;
+    BOOL accepted = SPDFMacBrowseDirectoryWithHandlers(
+        file, SPDFMacFileExplorerShenzhenFiles,
+        ^NSURL*(NSString* bundleIdentifier) {
+          CHECK([bundleIdentifier isEqualToString:SPDFMacShenzhenFilesBundleIdentifier],
+                "unexpected Shenzhen Files bundle identifier");
+          return appURL;
+        },
+        ^(NSURL* applicationURL, NSArray<NSURL*>* URLs, void (^completion)(NSError*)) {
+          launchCount++;
+          CHECK([applicationURL isEqual:appURL], "browse launcher received the wrong application");
+          CHECK(URLs.count == 1 && [URLs.firstObject.path isEqualToString:directory],
+                "browse did not resolve the file to its containing folder");
+          completion(nil);
+        },
+        ^(NSURL* directoryURL) {
+          (void)directoryURL;
+          browseCount++;
+        });
+    CHECK(accepted && launchCount == 1, "Shenzhen Files browse was not launched");
+    CHECK(browseCount == 0, "a successful Shenzhen Files browse also opened the native picker");
+
+    // The system route never consults Shenzhen Files and hands back the folder.
+    __block NSInteger systemBrowseCount = 0;
+    accepted = SPDFMacBrowseDirectoryWithHandlers(
+        directory, SPDFMacFileExplorerSystem,
+        ^NSURL*(NSString* bundleIdentifier) {
+          (void)bundleIdentifier;
+          CHECK(NO, "system browse consulted Shenzhen Files");
+          return nil;
+        },
+        ^(NSURL* applicationURL, NSArray<NSURL*>* URLs, void (^completion)(NSError*)) {
+          (void)applicationURL;
+          (void)URLs;
+          (void)completion;
+          CHECK(NO, "system browse launched Shenzhen Files");
+        },
+        ^(NSURL* directoryURL) {
+          systemBrowseCount++;
+          CHECK([directoryURL.path isEqualToString:directory], "system browse received the wrong folder");
+        });
+    CHECK(accepted && systemBrowseCount == 1, "system browse did not run exactly once");
+    remove_fixture(file);
+}
+
+static void test_browse_fallbacks(void) {
+    NSString* directory = make_fixture(YES);
+    for (NSInteger mode = 0; mode < 2; ++mode) {
+        __block NSInteger browseCount = 0;
+        BOOL accepted = SPDFMacBrowseDirectoryWithHandlers(
+            directory, SPDFMacFileExplorerShenzhenFiles,
+            ^NSURL*(NSString* bundleIdentifier) {
+              (void)bundleIdentifier;
+              return mode == 0 ? nil : [NSURL fileURLWithPath:@"/Applications/Shenzhen Files.app"];
+            },
+            ^(NSURL* applicationURL, NSArray<NSURL*>* URLs, void (^completion)(NSError*)) {
+              (void)applicationURL;
+              (void)URLs;
+              completion([NSError errorWithDomain:@"test" code:1 userInfo:nil]);
+            },
+            ^(NSURL* directoryURL) {
+              browseCount++;
+              CHECK([directoryURL.path isEqualToString:directory], "browse fallback received the wrong folder");
+            });
+        CHECK(accepted && browseCount == 1, "a failed Shenzhen Files browse did not fall back exactly once");
+    }
+    CHECK(!SPDFMacBrowseDirectoryWithHandlers(@"/definitely/missing", SPDFMacFileExplorerSystem, nil, nil,
+                                              ^(NSURL* directoryURL) { (void)directoryURL; }),
+          "a missing browse target was accepted");
+    CHECK(!SPDFMacBrowseDirectoryWithHandlers(directory, SPDFMacFileExplorerShenzhenFiles, nil, nil, nil),
+          "a browse without a fallback handler was accepted");
+    remove_fixture(directory);
+}
+
+// Open... and the Cmd+Shift+O folder branch both start here.
+static void test_browse_start_directory(void) {
+    NSString* file = make_fixture(NO);
+    NSString* directory = file.stringByDeletingLastPathComponent;
+    NSString* recent = make_fixture(NO);
+    NSString* recentDirectory = recent.stringByDeletingLastPathComponent;
+    NSString* home = NSHomeDirectory();
+
+    CHECK([SPDFMacBrowseStartDirectory(file, @[ recent ]) isEqualToString:directory],
+          "the active document's folder did not win");
+    CHECK([SPDFMacBrowseStartDirectory(nil, @[ recent ]) isEqualToString:recentDirectory],
+          "the newest recent document's folder was not used");
+    CHECK([SPDFMacBrowseStartDirectory(@"", @[ @"/definitely/missing/a.pdf", recent ])
+              isEqualToString:recentDirectory],
+          "a stale recent path was not skipped");
+    CHECK([SPDFMacBrowseStartDirectory(nil, nil) isEqualToString:home], "the home folder is not the last resort");
+    CHECK([SPDFMacBrowseStartDirectory(@"/definitely/missing/a.pdf", @[]) isEqualToString:home],
+          "a missing document folder did not fall back home");
+    remove_fixture(file);
+    remove_fixture(recent);
+}
+
 int main(void) {
     @autoreleasepool {
         test_identifiers();
+        test_resolution();
         test_persistence_and_menu();
         test_system_route();
         test_shenzhen_route();
         test_fallbacks();
+        test_browse_routes();
+        test_browse_fallbacks();
+        test_browse_start_directory();
     }
     if (failures) return 1;
     puts("SPDF mac file-explorer preference tests passed");
