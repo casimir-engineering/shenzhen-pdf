@@ -68,6 +68,31 @@ extern "C" {
  * 1024, so callers share that rather than a platform-dependent size. */
 #define SPDF_COMPAT_PATH_MAX 1024
 
+/* --------------------------------------------------------------- snprintf */
+
+/* Did an snprintf() call produce a COMPLETE, NUL-terminated string in a buffer
+ * of `cap` bytes? Pass its return value as `written`.
+ *
+ * snprintf has THREE outcomes, and code that tests only two of them is wrong:
+ *
+ *   written >= 0 && written < cap  the whole string was written and terminated
+ *   written >= cap                 truncated; the buffer holds a valid prefix
+ *   written < 0                    encoding error; C99 7.21.6.5 leaves the
+ *                                  buffer contents INDETERMINATE, so it may
+ *                                  carry no NUL at all
+ *
+ * The third arm is the one that gets dropped, because `%s` of a `char*` cannot
+ * produce it on any libc the app ships against today. That makes it a latent
+ * defect rather than a live one -- but a buffer with no terminator handed to a
+ * path-taking call reads out of bounds, and the sites that make these calls
+ * rename the user's state files. Every caller in portable/core goes through
+ * this predicate so the arm cannot be dropped again one site at a time.
+ *
+ * `cap == 0` is never a success: snprintf writes nothing, not even the NUL. */
+static SPDF_COMPAT_INLINE int spdf_compat_snprintf_ok(int written, size_t cap) {
+    return written >= 0 && cap > 0 && (size_t)written < cap;
+}
+
 /* ------------------------------------------------------------------ paths */
 
 static SPDF_COMPAT_INLINE int spdf_compat_is_path_sep_ex(char c, int backslash_is_sep) {
@@ -139,7 +164,7 @@ static SPDF_COMPAT_INLINE char* spdf_compat_temp_template(char* out, size_t out_
     while (root_len && spdf_compat_is_path_sep(root[root_len - 1])) --root_len;
 
     written = snprintf(out, out_len, "%.*s" SPDF_PATH_SEP_STR "%sXXXXXX", (int)root_len, root, prefix);
-    if (written < 0 || (size_t)written >= out_len) return NULL;
+    if (!spdf_compat_snprintf_ok(written, out_len)) return NULL;
     return out;
 }
 

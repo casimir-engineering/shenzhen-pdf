@@ -1082,7 +1082,7 @@ static char* spdf_read_entire_file(const char* path) {
 
 static int spdf_write_file_atomic(const char* path, const char* text) {
     char temp[1024];
-    if (snprintf(temp, sizeof(temp), "%s.tmp.%ld", path, spdf_compat_getpid()) >= (int)sizeof(temp)) return 0;
+    if (!spdf_compat_snprintf_ok(snprintf(temp, sizeof(temp), "%s.tmp.%ld", path, spdf_compat_getpid()), sizeof(temp))) return 0;
     FILE* f = spdf_compat_fopen(temp, "wb");
     if (!f) return 0;
     size_t len = strlen(text);
@@ -1117,7 +1117,8 @@ int spdf_state_migrate_file(const char* json_path, const char* yaml_path, const 
     free(yaml);
     if (!wrote) return -1;
     char backup[1024];
-    if (snprintf(backup, sizeof(backup), "%s.migrated-backup", json_path) < (int)sizeof(backup))
+    /* Rename only when the WHOLE path was written: the old `< (int)sizeof(backup)` was also true for snprintf's negative return. */
+    if (spdf_compat_snprintf_ok(snprintf(backup, sizeof(backup), "%s.migrated-backup", json_path), sizeof(backup)))
         spdf_compat_replace_file(json_path, backup); /* a backup may already exist */
     return 1;
 }
@@ -1125,20 +1126,19 @@ int spdf_state_migrate_file(const char* json_path, const char* yaml_path, const 
 int spdf_state_migrate_dir(const char* dir, const char* const* stems, int stem_count) {
     if (!dir || !stems || stem_count <= 0) return 0;
     char lock_path[1024];
-    const int lock_cap = (int)sizeof(lock_path);
-    if (snprintf(lock_path, lock_cap, "%s" SPDF_PATH_SEP_STR "migration.lock", dir) >= lock_cap) return -1;
+    const size_t lock_cap = sizeof(lock_path);
+    if (!spdf_compat_snprintf_ok(snprintf(lock_path, lock_cap, "%s" SPDF_PATH_SEP_STR "migration.lock", dir), lock_cap)) return -1;
     /* Windows has no flock(); the shim takes an exclusive LockFileEx range on a
      * CreateFileW handle, which the kernel drops if a holder dies mid-migration. */
     spdf_compat_file_lock lock;
     if (!spdf_compat_lock_acquire(lock_path, &lock)) return -1;
     int migrated = 0;
     for (int i = 0; i < stem_count; i++) {
-        char json_path[1024];
-        char yaml_path[1024];
+        char json_path[1024], yaml_path[1024];
         char header[128];
-        const int path_cap = (int)sizeof(json_path);
-        if (snprintf(json_path, path_cap, "%s" SPDF_PATH_SEP_STR "%s.json", dir, stems[i]) >= path_cap) continue;
-        if (snprintf(yaml_path, path_cap, "%s" SPDF_PATH_SEP_STR "%s.yaml", dir, stems[i]) >= path_cap) continue;
+        const size_t path_cap = sizeof(json_path);
+        if (!spdf_compat_snprintf_ok(snprintf(json_path, path_cap, "%s" SPDF_PATH_SEP_STR "%s.json", dir, stems[i]), path_cap)) continue;
+        if (!spdf_compat_snprintf_ok(snprintf(yaml_path, path_cap, "%s" SPDF_PATH_SEP_STR "%s.yaml", dir, stems[i]), path_cap)) continue;
         spdf_state_header_for_file(stems[i], header, sizeof(header));
         if (spdf_state_migrate_file(json_path, yaml_path, header) == 1) migrated++;
     }
