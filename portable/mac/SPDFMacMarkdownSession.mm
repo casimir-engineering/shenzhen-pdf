@@ -67,7 +67,7 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 - (SPDFMarkdownRenderOptions*)renderOptionsForCurrentScale {
     SPDFMarkdownRenderOptions* options = [SPDFMarkdownRenderOptions defaultOptionsForThemeVariant:_themeVariant];
     options.fontScale = _fontScale;
-    options.diagramCache = _diagramCache;  // one raster cache for the session
+    options.diagramCache = _diagramCache;  // one diagram-layout cache for the session
     [self applyRemoteImageState:options];  // already-fetched remote image bytes
     return options;
 }

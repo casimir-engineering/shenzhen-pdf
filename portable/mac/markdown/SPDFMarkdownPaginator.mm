@@ -2,6 +2,8 @@
 
 #import <CoreText/CoreText.h>
 
+#import "SPDFMarkdownDiagramBand.h"
+#import "SPDFMarkdownImageRowBand.h"
 #import "SPDFMarkdownRenderInternal.h"
 #import "SPDFMarkdownTableDecorations.h"
 #import "SPDFMarkdownTableLayout.h"
@@ -69,6 +71,7 @@
                               kind:(SPDFMarkdownBlockKind)kind
                       headingLevel:(NSUInteger)headingLevel
                       tableRowInfo:(SPDFMarkdownTableRowInfo*)tableRowInfo
+                       diagramInfo:(SPDFMarkdownDiagramBlockInfo*)diagramInfo
                         bandLayout:(BOOL)bandLayout
                              lines:(NSArray<SPDFMarkdownTextLine*>*)lines {
     self = [super init];
@@ -77,7 +80,8 @@
         _kind = kind;
         _headingLevel = headingLevel;
         _tableRowInfo = tableRowInfo;
-        _bandLayout = bandLayout || tableRowInfo != nil;
+        _diagramInfo = diagramInfo;
+        _bandLayout = bandLayout || tableRowInfo != nil || diagramInfo != nil;
         _lines = [lines copy];
         CGFloat height = 0;
         if (_bandLayout) {
@@ -92,6 +96,20 @@
         _measuredHeight = height;
     }
     return self;
+}
+- (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
+                              kind:(SPDFMarkdownBlockKind)kind
+                      headingLevel:(NSUInteger)headingLevel
+                      tableRowInfo:(SPDFMarkdownTableRowInfo*)tableRowInfo
+                        bandLayout:(BOOL)bandLayout
+                             lines:(NSArray<SPDFMarkdownTextLine*>*)lines {
+    return [self initWithBlockIndex:blockIndex
+                                kind:kind
+                        headingLevel:headingLevel
+                        tableRowInfo:tableRowInfo
+                         diagramInfo:nil
+                          bandLayout:bandLayout
+                               lines:lines];
 }
 - (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
                               kind:(SPDFMarkdownBlockKind)kind
@@ -330,97 +348,6 @@ static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<S
     return [[SPDFMarkdownPaginationPlan alloc] initWithConfiguration:configuration items:items pages:pages];
 }
 
-// Image rows caption each image below itself. The renderer keeps the captions
-// canonical — one trailing caption paragraph, each caption's text exactly
-// once, image and caption spans linked by SPDFMarkdownImageRowIndexAttribute
-// — and this pass turns that paragraph into custom-positioned lines: the
-// default centered caption line(s) are replaced by one line per caption whose
-// center x matches its image's measured x-span, emitted right below the image
-// line the image actually landed on (wrapped rows get one caption band per
-// wrapped image line). The whole row becomes one atomic band so the captions
-// keep riding their images across page breaks. Returns nil when the block
-// carries no row captions.
-static SPDFMarkdownPaginationItem* SPDFImageRowItemWithCaptions(SPDFMarkdownRenderedBlock* block,
-                                                                NSAttributedString* text, NSLayoutManager* layout,
-                                                                NSTextContainer* container,
-                                                                NSArray<SPDFMarkdownTextLine*>* lines) {
-    if (block.kind != SPDFMarkdownBlockKindParagraph) return nil;
-    NSMutableDictionary<NSNumber*, NSValue*>* captionRanges = [NSMutableDictionary dictionary];
-    NSMutableDictionary<NSNumber*, NSValue*>* imageRanges = [NSMutableDictionary dictionary];
-    [text enumerateAttribute:SPDFMarkdownImageRowIndexAttribute
-                     inRange:block.attributedRange
-                     options:0
-                  usingBlock:^(NSNumber* ordinal, NSRange range, BOOL* stop) {
-                    (void)stop;
-                    if (!ordinal || !range.length) return;
-                    NSNumber* role = [text attribute:SPDFMarkdownImageLayoutAttribute
-                                             atIndex:range.location
-                                      effectiveRange:NULL];
-                    if (role.integerValue == SPDFMarkdownImageLayoutRoleCaption)
-                        captionRanges[ordinal] = [NSValue valueWithRange:range];
-                    else
-                        imageRanges[ordinal] = [NSValue valueWithRange:range];
-                  }];
-    if (!captionRanges.count) return nil;
-    NSRange captionParagraph =
-        [text.string paragraphRangeForRange:[captionRanges.allValues.firstObject rangeValue]];
-
-    // Every caption shares one style, so the default-measured caption line
-    // supplies the band height and baseline for all of them.
-    CGFloat captionHeight = 0;
-    CGFloat captionBaseline = 0;
-    for (SPDFMarkdownTextLine* line in lines) {
-        if (!NSLocationInRange(line.attributedRange.location, captionParagraph)) continue;
-        captionHeight = line.height;
-        captionBaseline = line.baselineOffset;
-        break;
-    }
-    if (captionHeight <= 0) return nil;
-
-    NSArray<NSNumber*>* ordinals = [captionRanges.allKeys sortedArrayUsingSelector:@selector(compare:)];
-    NSMutableArray<SPDFMarkdownTextLine*>* bandLines = [NSMutableArray arrayWithCapacity:lines.count];
-    CGFloat y = 0;
-    for (SPDFMarkdownTextLine* line in lines) {
-        if (NSLocationInRange(line.attributedRange.location, captionParagraph)) continue;
-        [bandLines addObject:[[SPDFMarkdownTextLine alloc] initWithAttributedRange:line.attributedRange
-                                                                            height:line.height
-                                                                           xOffset:line.xOffset
-                                                                    baselineOffset:line.baselineOffset
-                                                                   rowLocalYOffset:y]];
-        BOOL captionsBelow = NO;
-        for (NSNumber* ordinal in ordinals) {
-            NSValue* imageValue = imageRanges[ordinal];
-            if (!imageValue || !NSLocationInRange(imageValue.rangeValue.location, line.attributedRange)) continue;
-            NSRange captionRange = captionRanges[ordinal].rangeValue;
-            NSRange imageGlyphs = [layout glyphRangeForCharacterRange:imageValue.rangeValue
-                                                 actualCharacterRange:NULL];
-            NSRect imageRect = [layout boundingRectForGlyphRange:imageGlyphs inTextContainer:container];
-            // The caption draws as one CTLine at an explicit x, so its center
-            // comes from the same typographic width the drawing pass will use.
-            CTLineRef captionLine =
-                SPDFMarkdownCreateFragmentLine([text attributedSubstringFromRange:captionRange]);
-            CGFloat captionWidth = (CGFloat)CTLineGetTypographicBounds(captionLine, NULL, NULL, NULL);
-            CFRelease(captionLine);
-            [bandLines addObject:[[SPDFMarkdownTextLine alloc]
-                                     initWithAttributedRange:captionRange
-                                                      height:captionHeight
-                                                     xOffset:NSMidX(imageRect) - captionWidth / 2
-                                              baselineOffset:captionBaseline
-                                             rowLocalYOffset:y + line.height]];
-            captionsBelow = YES;
-        }
-        y += line.height;
-        if (captionsBelow) y += captionHeight;
-    }
-    if (!bandLines.count) return nil;
-    return [[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:block.blockIndex
-                                                             kind:block.kind
-                                                     headingLevel:block.level
-                                                     tableRowInfo:nil
-                                                       bandLayout:YES
-                                                            lines:bandLines];
-}
-
 - (NSArray<SPDFMarkdownPaginationItem*>*)measureRenderedDocument:(SPDFMarkdownRenderedDocument*)document
                                                   containerWidth:(CGFloat)containerWidth {
     if (containerWidth <= 0 || document.attributedString.length == 0) return @[];
@@ -438,6 +365,14 @@ static SPDFMarkdownPaginationItem* SPDFImageRowItemWithCaptions(SPDFMarkdownRend
     NSMutableDictionary<NSNumber*, NSArray<NSNumber*>*>* tableBoundaries = [NSMutableDictionary dictionary];
     for (SPDFMarkdownRenderedBlock* block in document.renderedBlocks) {
         if (!block.attributedRange.length || NSMaxRange(block.attributedRange) > storage.length) continue;
+        if (block.diagramInfo) {
+            // A native diagram is ONE atomic band: its labels are canonical
+            // text placed at the resolved layout's own positions.
+            SPDFMarkdownPaginationItem* diagramItem =
+                SPDFMarkdownMeasureDiagramItem(block, document.attributedString, containerWidth);
+            if (diagramItem) [result addObject:diagramItem];
+            continue;
+        }
         if (block.tableRowInfo.cellRanges.count) {
             // Table rows get content-aware column layout: cells wrap within
             // their own column box and the row band is its tallest cell.
@@ -475,7 +410,7 @@ static SPDFMarkdownPaginationItem* SPDFImageRowItemWithCaptions(SPDFMarkdownRend
             // An image row with captions re-shapes into an atomic band whose
             // caption lines sit centered under their own images.
             SPDFMarkdownPaginationItem* item =
-                SPDFImageRowItemWithCaptions(block, document.attributedString, layout, container, lines)
+                SPDFMarkdownImageRowBandItem(block, document.attributedString, layout, container, lines)
                     ?: [[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:block.blockIndex
                                                                          kind:block.kind
                                                                  headingLevel:block.level

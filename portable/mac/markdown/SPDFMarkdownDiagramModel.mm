@@ -1,7 +1,9 @@
 #import "SPDFMarkdownDiagramInternal.h"
 
+#import <CoreText/CoreText.h>
+
 // Shared diagram model objects, the per-variant palette, and the small text /
-// canvas utilities every parser and rasterizer builds on.
+// text utilities every parser and shape emitter builds on.
 
 @implementation SPDFMarkdownDiagramNode
 - (instancetype)init {
@@ -199,64 +201,46 @@ NSString* SPDFMarkdownDiagramCleanLabel(NSString* label) {
     return [kept componentsJoinedByString:@" "];
 }
 
+// A diagram label is always ONE line of canonical text at an explicit
+// position, so wrapping is done here, up front, by the same CoreText
+// typesetter the drawing pass uses — never by an implicit drawWithRect: pass.
+NSArray<NSString*>* SPDFMarkdownDiagramWrapText(NSString* text, NSFont* font, CGFloat maximumWidth) {
+    if (!text.length) return @[];
+    if (maximumWidth <= 0) return @[ text ];
+    NSAttributedString* attributed =
+        [[NSAttributedString alloc] initWithString:text attributes:@{NSFontAttributeName: font}];
+    CTTypesetterRef typesetter =
+        CTTypesetterCreateWithAttributedString((__bridge CFAttributedStringRef)attributed);
+    if (!typesetter) return @[ text ];
+    NSMutableArray<NSString*>* lines = [NSMutableArray array];
+    CFIndex start = 0;
+    CFIndex length = (CFIndex)text.length;
+    while (start < length) {
+        CFIndex count = CTTypesetterSuggestLineBreak(typesetter, start, maximumWidth);
+        if (count <= 0) count = length - start;  // a single glyph wider than the box
+        NSString* line = [text substringWithRange:NSMakeRange((NSUInteger)start, (NSUInteger)count)];
+        line = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (line.length) [lines addObject:line];
+        start += count;
+    }
+    CFRelease(typesetter);
+    return lines.count ? lines : @[ text ];
+}
+
+CGFloat SPDFMarkdownDiagramLineHeight(NSFont* font) {
+    return ceil(font.ascender - font.descender + font.leading);
+}
+
+// The box a wrapped string occupies: the widest line by the widest line's
+// typographic width, and one line height per wrapped line — exactly what the
+// emitted labels will take up.
 NSSize SPDFMarkdownDiagramMeasureText(NSString* text, NSFont* font, CGFloat maximumWidth) {
     if (!text.length) return NSZeroSize;
-    NSRect bounds = [text boundingRectWithSize:NSMakeSize(maximumWidth, CGFLOAT_MAX)
-                                       options:NSStringDrawingUsesLineFragmentOrigin
-                                    attributes:@{NSFontAttributeName: font}
-                                       context:nil];
-    return NSMakeSize(ceil(NSWidth(bounds)), ceil(NSHeight(bounds)));
-}
-
-void SPDFMarkdownDiagramDrawText(NSString* text, NSRect rect, NSFont* font, NSColor* color,
-                                 NSTextAlignment alignment) {
-    if (!text.length) return;
-    NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
-    style.alignment = alignment;
-    style.lineBreakMode = NSLineBreakByWordWrapping;
-    [text drawWithRect:rect
-               options:NSStringDrawingUsesLineFragmentOrigin
-            attributes:@{
-                NSFontAttributeName: font,
-                NSForegroundColorAttributeName: color,
-                NSParagraphStyleAttributeName: style,
-            }
-               context:nil];
-}
-
-// One 2x bitmap canvas. The drawing block runs inside a flipped, point-scaled
-// context so all geometry is top-down logical points; the backing bitmap is
-// exactly 2x. Refuses (nil) any bitmap axis beyond the raster budget.
-NSImage* SPDFMarkdownDiagramCreateCanvas(NSSize logicalSize, void (NS_NOESCAPE ^ draw)(void)) {
-    NSInteger pixelWidth = (NSInteger)ceil(logicalSize.width * 2);
-    NSInteger pixelHeight = (NSInteger)ceil(logicalSize.height * 2);
-    if (pixelWidth < 1 || pixelHeight < 1) return nil;
-    if (pixelWidth > (NSInteger)SPDFMarkdownDiagramMaximumRasterDimension ||
-        pixelHeight > (NSInteger)SPDFMarkdownDiagramMaximumRasterDimension)
-        return nil;
-    NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
-                                                                    pixelsWide:pixelWidth
-                                                                    pixelsHigh:pixelHeight
-                                                                 bitsPerSample:8
-                                                               samplesPerPixel:4
-                                                                      hasAlpha:YES
-                                                                      isPlanar:NO
-                                                                colorSpaceName:NSCalibratedRGBColorSpace
-                                                                   bytesPerRow:0
-                                                                  bitsPerPixel:0];
-    if (!rep) return nil;
-    NSGraphicsContext* bitmapContext = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
-    if (!bitmapContext) return nil;
-    CGContextRef cg = bitmapContext.CGContext;
-    CGContextTranslateCTM(cg, 0, pixelHeight);
-    CGContextScaleCTM(cg, 2, -2);
-    NSGraphicsContext* flipped = [NSGraphicsContext graphicsContextWithCGContext:cg flipped:YES];
-    [NSGraphicsContext saveGraphicsState];
-    NSGraphicsContext.currentContext = flipped;
-    draw();
-    [NSGraphicsContext restoreGraphicsState];
-    rep.size = logicalSize;
-    NSImage* image = [[NSImage alloc] initWithSize:logicalSize];
-    [image addRepresentation:rep];
-    return image;
+    NSArray<NSString*>* lines = SPDFMarkdownDiagramWrapText(text, font, maximumWidth);
+    CGFloat width = 0;
+    for (NSString* line in lines) {
+        NSSize size = [line sizeWithAttributes:@{NSFontAttributeName: font}];
+        width = MAX(width, size.width);
+    }
+    return NSMakeSize(ceil(width), ceil(lines.count * SPDFMarkdownDiagramLineHeight(font)));
 }

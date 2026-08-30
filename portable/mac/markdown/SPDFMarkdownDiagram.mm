@@ -2,12 +2,12 @@
 
 #import <stdatomic.h>
 
-// Entry seam, budgets, work counter and the per-document render cache.
+// Entry seam, budgets, work counter and the per-document layout cache.
 
 const NSUInteger SPDFMarkdownDiagramMaximumNodes = 200;
 const NSUInteger SPDFMarkdownDiagramMaximumEdges = 400;
 const NSTimeInterval SPDFMarkdownDiagramLayoutDeadline = 0.050;
-const CGFloat SPDFMarkdownDiagramMaximumRasterDimension = 4096;
+const CGFloat SPDFMarkdownDiagramMaximumDimension = 2048;
 
 static _Atomic NSUInteger sSPDFDiagramWorkCount = 0;
 
@@ -19,28 +19,13 @@ void SPDFMarkdownDiagramResetWorkCount(void) {
     atomic_store(&sSPDFDiagramWorkCount, (NSUInteger)0);
 }
 
-@interface SPDFMarkdownDiagramImage ()
-@property(nonatomic, readwrite, strong) NSImage* image;
-@property(nonatomic, readwrite) NSSize logicalSize;
-@end
-
-@implementation SPDFMarkdownDiagramImage
-@end
-
-SPDFMarkdownDiagramImage* SPDFMarkdownDiagramImageMake(NSImage* image, NSSize logicalSize) {
-    SPDFMarkdownDiagramImage* result = [SPDFMarkdownDiagramImage new];
-    result.image = image;
-    result.logicalSize = logicalSize;
-    return result;
-}
-
 // --- Cache -------------------------------------------------------------------
 
 // One cached outcome; `source` is kept so a hash collision can never serve the
-// wrong diagram. A nil `image` records a failed parse (negative caching).
+// wrong diagram. A nil `layout` records a failed parse (negative caching).
 @interface SPDFMarkdownDiagramCacheEntry : NSObject
 @property(nonatomic, copy) NSString* source;
-@property(nonatomic, strong, nullable) SPDFMarkdownDiagramImage* image;
+@property(nonatomic, strong, nullable) SPDFMarkdownDiagramLayout* layout;
 @end
 @implementation SPDFMarkdownDiagramCacheEntry
 @end
@@ -69,10 +54,10 @@ SPDFMarkdownDiagramImage* SPDFMarkdownDiagramImageMake(NSImage* image, NSSize lo
         return [entry.source isEqualToString:source] ? entry : nil;
     }
 }
-- (void)storeImage:(SPDFMarkdownDiagramImage*)image forKey:(NSString*)key source:(NSString*)source {
+- (void)storeLayout:(SPDFMarkdownDiagramLayout*)layout forKey:(NSString*)key source:(NSString*)source {
     SPDFMarkdownDiagramCacheEntry* entry = [SPDFMarkdownDiagramCacheEntry new];
     entry.source = source;
-    entry.image = image;
+    entry.layout = layout;
     @synchronized(self) {
         // Simple bound: a runaway document drops the whole map instead of
         // growing without limit (rerenders repopulate what is still visible).
@@ -100,64 +85,61 @@ static NSString* SPDFDiagramMermaidKeyword(NSString* source) {
         .lowercaseString;
 }
 
-static SPDFMarkdownDiagramImage* SPDFDiagramRenderUncached(NSString* language, NSString* source,
-                                                           CGFloat contentWidth, CGFloat fontScale,
-                                                           SPDFMarkdownThemeVariant variant) {
-    SPDFMarkdownDiagramPalette* palette = [SPDFMarkdownDiagramPalette paletteForVariant:variant];
+static SPDFMarkdownDiagramLayout* SPDFDiagramRenderUncached(NSString* language, NSString* source,
+                                                            CGFloat contentWidth, CGFloat fontScale) {
     CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + SPDFMarkdownDiagramLayoutDeadline;
     if ([language isEqualToString:@"sequence"]) {
         SPDFMarkdownDiagramSequence* sequence = SPDFMarkdownDiagramParseSequence(source, NO);
-        return sequence ? SPDFMarkdownDiagramRasterizeSequence(sequence, contentWidth, fontScale, palette) : nil;
+        return sequence ? SPDFMarkdownDiagramLayOutSequence(sequence, contentWidth, fontScale) : nil;
     }
     if ([language isEqualToString:@"flow"]) {
         SPDFMarkdownDiagramGraph* graph = SPDFMarkdownDiagramParseFlowFence(source);
-        return graph ? SPDFMarkdownDiagramRasterizeGraph(graph, contentWidth, fontScale, palette, deadline) : nil;
+        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentWidth, fontScale, deadline) : nil;
     }
     // mermaid sub-types.
     NSString* keyword = SPDFDiagramMermaidKeyword(source);
     if ([keyword isEqualToString:@"graph"] || [keyword isEqualToString:@"flowchart"]) {
         SPDFMarkdownDiagramGraph* graph = SPDFMarkdownDiagramParseMermaidFlowchart(source);
-        return graph ? SPDFMarkdownDiagramRasterizeGraph(graph, contentWidth, fontScale, palette, deadline) : nil;
+        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentWidth, fontScale, deadline) : nil;
     }
     if ([keyword isEqualToString:@"sequencediagram"]) {
         SPDFMarkdownDiagramSequence* sequence = SPDFMarkdownDiagramParseSequence(source, YES);
-        return sequence ? SPDFMarkdownDiagramRasterizeSequence(sequence, contentWidth, fontScale, palette) : nil;
+        return sequence ? SPDFMarkdownDiagramLayOutSequence(sequence, contentWidth, fontScale) : nil;
     }
     if ([keyword isEqualToString:@"pie"]) {
         SPDFMarkdownDiagramPie* pie = SPDFMarkdownDiagramParsePie(source);
-        return pie ? SPDFMarkdownDiagramRasterizePie(pie, contentWidth, fontScale, palette) : nil;
+        return pie ? SPDFMarkdownDiagramLayOutPie(pie, contentWidth, fontScale) : nil;
     }
     if ([keyword isEqualToString:@"statediagram"] || [keyword isEqualToString:@"statediagram-v2"]) {
         SPDFMarkdownDiagramGraph* graph = SPDFMarkdownDiagramParseMermaidState(source);
-        return graph ? SPDFMarkdownDiagramRasterizeGraph(graph, contentWidth, fontScale, palette, deadline) : nil;
+        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentWidth, fontScale, deadline) : nil;
     }
     if ([keyword isEqualToString:@"classdiagram"]) {
         SPDFMarkdownDiagramGraph* graph = SPDFMarkdownDiagramParseMermaidClass(source);
-        return graph ? SPDFMarkdownDiagramRasterizeGraph(graph, contentWidth, fontScale, palette, deadline) : nil;
+        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentWidth, fontScale, deadline) : nil;
     }
     if ([keyword isEqualToString:@"gantt"]) {
         SPDFMarkdownDiagramGantt* gantt = SPDFMarkdownDiagramParseGantt(source);
-        return gantt ? SPDFMarkdownDiagramRasterizeGantt(gantt, contentWidth, fontScale, palette) : nil;
+        return gantt ? SPDFMarkdownDiagramLayOutGantt(gantt, contentWidth, fontScale) : nil;
     }
     return nil;  // unknown mermaid sub-type degrades to the code box
 }
 
-SPDFMarkdownDiagramImage* SPDFMarkdownDiagramRender(NSString* fenceIdentifier, NSString* source,
-                                                    CGFloat contentWidth, CGFloat fontScale,
-                                                    SPDFMarkdownThemeVariant variant,
-                                                    SPDFMarkdownDiagramCache* cache) {
+SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramRender(NSString* fenceIdentifier, NSString* source,
+                                                     CGFloat contentWidth, CGFloat fontScale,
+                                                     SPDFMarkdownDiagramCache* cache) {
     if (!SPDFMarkdownDiagramIsDiagramLanguage(fenceIdentifier) || !source.length) return nil;
     NSString* language = [[SPDFMarkdownDiagramTrim(fenceIdentifier)
         componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet] firstObject]
                              .lowercaseString;
-    NSString* key = [NSString stringWithFormat:@"%@|%ld|%.4f|%.1f|%lu|%lu", language, (long)variant, fontScale,
-                                               contentWidth, (unsigned long)source.hash,
-                                               (unsigned long)source.length];
+    // No theme variant in the key: a resolved layout carries color ROLES, so a
+    // reading-theme switch reuses every cached diagram outright.
+    NSString* key = [NSString stringWithFormat:@"%@|%.4f|%.1f|%lu|%lu", language, fontScale, contentWidth,
+                                               (unsigned long)source.hash, (unsigned long)source.length];
     SPDFMarkdownDiagramCacheEntry* cached = [cache entryForKey:key source:source];
-    if (cached) return cached.image;
+    if (cached) return cached.layout;
     atomic_fetch_add(&sSPDFDiagramWorkCount, (NSUInteger)1);
-    SPDFMarkdownDiagramImage* image =
-        SPDFDiagramRenderUncached(language, source, contentWidth, fontScale, variant);
-    [cache storeImage:image forKey:key source:source];
-    return image;
+    SPDFMarkdownDiagramLayout* layout = SPDFDiagramRenderUncached(language, source, contentWidth, fontScale);
+    [cache storeLayout:layout forKey:key source:source];
+    return layout;
 }
