@@ -165,106 +165,41 @@ case_forced_failure() {
   record "harness.forced-failure" FAIL "deliberate failure injected by --self-check"
 }
 
-case_probe_mac() {
-  if ! find_mac_mupdf; then
-    record "probe.mac" BLOCKED "no macOS libmupdf.a under mupdf/build (run: make -C portable mupdf)"
+# The guest's ANSI code page is 1252, not UTF-8, and Windows narrows the real
+# UTF-16 command line to it on the way into `char** argv`. A harness that assumed
+# UTF-8 would hand the guest a path it cannot open and then blame the code under
+# test -- which is how a real failure in this port was first mis-diagnosed. So
+# the assumption is checked rather than believed, and the observed bytes are
+# reported on every run.
+case_non_ascii_path() {
+  if [[ -n "$GUEST_READY" ]]; then
+    record "harness.non-ascii-path" BLOCKED "$GUEST_READY"
     return
   fi
-  mkdir -p "$OUT/mac"
-  local log="$OUT/probe-mac-build.log"
-  cc -O2 -Wall -Wextra -I"$REPO_ROOT/portable/core" -I"$REPO_ROOT/mupdf/include" \
-     -o "$OUT/spdf_win_probe_mac" \
-     "$REPO_ROOT/portable/win/spdf_win_probe.c" \
-     "$REPO_ROOT/portable/core/shenzhen_pdf_core.c" \
-     "$REPO_ROOT/portable/core/spdf_recolor.c" \
-     "$MAC_MUPDF/libmupdf.a" "$MAC_MUPDF/libmupdf-third.a" "$MAC_MUPDF/libmupdf-pkcs7.a" \
-     -framework Foundation -lm > "$log" 2>&1
+  vm_build "$OUT/narrow-path-build.log" narrow_path_probe portable/win/tests/narrow_path_probe.c
   local rc=$?
   if [[ $rc -ne 0 ]]; then
-    record "probe.mac" FAIL "the probe does not build on macOS (cc exited $rc)"
-    log_tail "$log" 20
+    record "harness.non-ascii-path" FAIL "the narrow-path probe does not build in the guest (vm-build exited $rc)"
+    log_tail "$OUT/narrow-path-build.log" 20
     return
   fi
-  "$OUT/spdf_win_probe_mac" "$REPO_ROOT/$FIXTURE" 0 2.0 "$OUT/mac/probe-page.png" plain \
-      > "$OUT/probe-mac.txt" 2> "$OUT/probe-mac.err"
+  guest_ps "$OUT/narrow-path.log" non_ascii_path.ps1
   rc=$?
   if [[ $rc -ne 0 ]]; then
-    record "probe.mac" FAIL "the macOS probe exited $rc"
-    log_tail "$OUT/probe-mac.err"
+    record "harness.non-ascii-path" FAIL "a path containing a non-ASCII character could not be opened in the guest (exit $rc)"
+    log_tail "$OUT/narrow-path.log" 12
     return
   fi
-  record "probe.mac" PASS "reference transcript and PNG written from $MAC_MUPDF"
+  # Reporting the bytes, not asserting them: the code page is a property of the
+  # guest, and pinning 0xE9 here would turn a differently configured Windows
+  # into a spurious failure. Seeing C3 A9 instead would mean UTF-8 leaked in.
+  local bytes
+  bytes="$(declared_line 'argv1-bytes' "$OUT/narrow-path.log")"
+  record "harness.non-ascii-path" PASS "narrow argv round-trips a non-ASCII path (${bytes:-bytes not captured})"
 }
 
-case_probe_win() {
-  if [[ -n "$GUEST_MUPDF" ]]; then
-    record "probe.win" BLOCKED "$GUEST_MUPDF"
-    return
-  fi
-  local log="$OUT/probe-win-build.log"
-  vm_build "$log" spdf_win_probe \
-      portable/win/spdf_win_probe.c portable/core/shenzhen_pdf_core.c portable/core/spdf_recolor.c
-  local rc=$?
-  if [[ $rc -ne 0 ]]; then
-    record "probe.win" FAIL "the probe does not build in the guest (vm-build exited $rc)"
-    log_tail "$log" 20
-    return
-  fi
-  guest "$OUT/probe-win.raw" "$GUEST_OUT"'\spdf_win_probe.exe "'"$GUEST_TREE"'\'"${FIXTURE//\//\\}"'" 0 2.0 "'"$GUEST_OUT"'\probe-page.png" plain'
-  rc=$?
-  if [[ $rc -ne 0 ]]; then
-    record "probe.win" FAIL "the Windows probe exited $rc"
-    log_tail "$OUT/probe-win.raw"
-    return
-  fi
-  mkdir -p "$OUT/win"
-  tr -d '\r' < "$OUT/probe-win.raw" > "$OUT/probe-win.txt"
-  guest "$OUT/probe-fetch.log" 'copy /Y "'"$GUEST_OUT"'\probe-page.png" "'"$GUEST_DROP"'\probe-page.png"'
-  rc=$?
-  if [[ $rc -ne 0 ]]; then
-    record "probe.win" FAIL "could not copy the rendered PNG back to the share (copy exited $rc)"
-    log_tail "$OUT/probe-fetch.log"
-    return
-  fi
-  cp "$STAGE/portable/win/build/t4/probe-page.png" "$OUT/win/probe-page.png"
-  rc=$?
-  if [[ $rc -ne 0 ]]; then
-    record "probe.win" FAIL "the guest reported the PNG copied but it is not readable on the Mac"
-    return
-  fi
-  record "probe.win" PASS "transcript and PNG produced in the guest"
-}
-
-case_probe_diff() {
-  if [[ ! -s "$OUT/probe-mac.txt" || ! -s "$OUT/probe-win.txt" ]]; then
-    record "probe.diff" BLOCKED "needs both probe.mac and probe.win to have produced a transcript"
-    return
-  fi
-  diff -u "$OUT/probe-mac.txt" "$OUT/probe-win.txt" > "$OUT/probe-diff.txt" 2>&1
-  local rc=$?
-  if [[ $rc -eq 0 ]]; then
-    record "probe.diff" PASS "the core produces an identical transcript on macOS/clang and Windows/MSVC"
-  else
-    record "probe.diff" FAIL "the macOS and Windows core transcripts differ"
-    log_tail "$OUT/probe-diff.txt" 30
-  fi
-}
-
-case_probe_png() {
-  if [[ ! -f "$OUT/mac/probe-page.png" || ! -f "$OUT/win/probe-page.png" ]]; then
-    record "probe.png" BLOCKED "needs a rendered PNG from both hosts"
-    return
-  fi
-  python3 "$TESTS_DIR/compare_png.py" "$OUT/mac/probe-page.png" "$OUT/win/probe-page.png" \
-      --json "$OUT/probe-png.json" > "$OUT/probe-png.txt" 2>&1
-  local rc=$?
-  if [[ $rc -eq 0 ]]; then
-    record "probe.png" PASS "the Windows render matches the macOS render within tolerance"
-  else
-    record "probe.png" FAIL "golden-image comparison failed (compare_png exited $rc)"
-    log_tail "$OUT/probe-png.txt" 20
-  fi
-}
+# The cross-host probe pipeline: probe.mac, probe.win, probe.diff, probe.png.
+. "$TESTS_DIR/probe-cases.sh"
 
 # Core suites that already exist as pure C over portable/core: free Windows
 # conformance the moment the guest can compile them, and the reason this runner
@@ -306,8 +241,12 @@ case_core_suites() {
     vm_build "$log" "$name" "portable/core/tests/$name.c" $srcs
     rc=$?
     if [[ $rc -ne 0 ]]; then
-      record "core.$name" FAIL "does not build in the guest (vm-build exited $rc)"
-      log_tail "$log" 20
+      if mupdf_link_defect "$log"; then
+        record "core.$name" BLOCKED "libmupdf.lib itself fails to link in the guest (LNK2048 in hyphen.obj) -- toolchain track"
+      else
+        record "core.$name" FAIL "does not build in the guest (vm-build exited $rc)"
+        log_tail "$log" 20
+      fi
       continue
     fi
     guest_run "$OUT/core-$name.run.log" "$name" "${args//%SCRATCH%/$GUEST_SCRATCH}"
@@ -365,8 +304,12 @@ case_win_tests() {
     vm_build "$log" "$stem" "portable/win/tests/$(basename "$f")" $extra
     rc=$?
     if [[ $rc -ne 0 ]]; then
-      record "win.$stem" FAIL "does not build in the guest (vm-build exited $rc); if it needs extra translation units, declare them with /* spdf-test-sources: ... */"
-      log_tail "$log" 20
+      if mupdf_link_defect "$log"; then
+        record "win.$stem" BLOCKED "libmupdf.lib itself fails to link in the guest (LNK2048 in hyphen.obj) -- toolchain track"
+      else
+        record "win.$stem" FAIL "does not build in the guest (vm-build exited $rc); if it needs extra translation units, declare them with /* spdf-test-sources: ... */"
+        log_tail "$log" 20
+      fi
       continue
     fi
     guest_args=""
@@ -391,8 +334,8 @@ case_win_tests() {
 # --- drive -----------------------------------------------------------------
 
 if [[ $LIST -eq 1 ]]; then
-  printf '%s\n' selftest.compare-png harness.exit-code probe.mac probe.win \
-      probe.diff probe.png 'core.<suite>' 'win.<name>_test'
+  printf '%s\n' selftest.compare-png harness.exit-code harness.non-ascii-path \
+      probe.mac probe.win probe.diff probe.png 'core.<suite>' 'win.<name>_test'
   exit 0
 fi
 
@@ -420,6 +363,7 @@ say
 selected selftest.compare-png && case_compare_png_selftest
 selected harness.exit-code && case_exit_code
 selected harness.forced-failure && case_forced_failure
+selected harness.non-ascii-path && case_non_ascii_path
 selected probe.mac && case_probe_mac
 selected probe.win && case_probe_win
 selected probe.diff && case_probe_diff
