@@ -10,11 +10,71 @@ the reproduction command is given so the next person can check the checker.
 Two notes on scope. First, the working tree was being actively edited by the
 Phase 2/3 tracks while this audit ran — `spdf_win_canvas.h`, `spdf_win_layout.h`,
 `spdf_win_lru.*`, `spdf_win_render.*` and a rewritten `spdf_win_main.cpp` all
-appeared between 06:01 and 06:10. Findings are labelled **[committed]** or
-**[in flight]** accordingly, because an in-flight tree that does not compile is
-a normal Tuesday and a committed one is not. Second, per the standing rule the
-macOS app was never launched, quit or screenshotted; every macOS result below is
-a build or a test binary's exit code.
+appeared between 06:01 and 06:10. Findings were originally labelled
+**[committed]** or **[in flight]** accordingly, because an in-flight tree that
+does not compile is a normal Tuesday and a committed one is not. Second, per the
+standing rule the macOS app was never launched, quit or screenshotted; every
+macOS result below is a build or a test binary's exit code.
+
+> **Labelling changed 06:45.** Those two labels described *where the defect
+> lived*, not *whether it was fixed*, and readers were taking `[committed]` to
+> mean "handled" — F3 was `[committed]` and completely unfixed. Every finding now
+> carries an explicit **FIXED / OPEN** status and its fixing commit. See §0.
+> The body text of each finding is left as originally written, describing the
+> defect as it was found; the status line above it is the current truth.
+
+---
+
+## 0. Finding status as of 06:45 — added by the documentation reconciliation pass
+
+The original report labelled findings `[committed]` or `[in flight]`, meaning
+*"was this defect in committed code or in a tree someone was still editing"*.
+That is **not** the same as "has it been fixed", and the two were being read as
+the same thing — F3 was labelled `[committed]` and is entirely unfixed. Each
+finding now carries an explicit status and, where fixed, the commit that fixed
+it. Every status below was re-verified against the tree, not taken from a
+report.
+
+| # | Finding | Status | Commit | How this was verified |
+|---|---|---|---|---|
+| F1 | Stale-pixel false pass | **FIXED** | `abfd37255` | `qc/probe-staleness-check.sh` exit 0; both defects named green |
+| F2 | `SPDFCoreSaveTests` never ran | **FIXED** | `abfd37255` | `core.SPDFCoreSaveTests` PASS in the 20-case run |
+| F3 | Nothing compares the Direct2D output | **OPEN** | — | `spdf_win_probe.c` has **zero** D2D references; no `d2d`/compose case in `--list`; suite is 20 cases and none of them is this |
+| F4 | Fit never magnifies | **FIXED** | `647d9390f` | `--render-window-png … 900 700` → `zoom=4.500000`, page drawn 900 px wide in a 900 px viewport |
+| F5 | `mkstemp` shim used narrow paths | **FIXED** | `2bff74d7c` | `win.silent_failure_test` PASS |
+| F6 | `mkdir_one` accepted a file | **FIXED** | `2bff74d7c` | `win.silent_failure_test` PASS |
+| F7 | Silent state overwrite | **FIXED** | `2bff74d7c` | `win.silent_failure_test` + `win.state_test` PASS |
+| F8 | Alpha detectors could not fire | **FIXED** | `abfd37255` | `alpha.png` PASS over 49,660 partially transparent px, alpha 0–255 |
+| F9 | Tolerance `UNMEASURED` | **FIXED** | `abfd37255` | `probe.png`/`alpha.png` decided by `--strict` |
+| F10 | File-size ratchet red | **FIXED** | `e53d24466` | `tools/check-file-sizes.sh` passes; `spdf_win_render.c` landed at 499 lines, under the cap |
+| F11 | Stale unregistered binaries counted as passes | **RESOLVED IN REPORTING** | — | The runner never counted them; the claim table that did is superseded by the measured 20-case list. The stale `.exe`s may still sit in the guest — do not read `C:\spdf-build\*.exe` as evidence of anything |
+| F12 | README contradicts itself | **FIXED** | `abfd37255` + this commit | The harness chapter was fixed at 06:32; the README's **opening paragraph** still said *"No application code lives here yet"* and *"MuPDF itself has never been built here"* until this commit |
+| F13 | Entry points disagree on page numbering | **FIXED** | `647d9390f` | `spdf_win_main.cpp:19-24` now documents 0-based everywhere and matches the probe |
+| F14 | Working tree does not compile | **FIXED** | — | Tree clean; the full app target builds and links, exit 0, and renders a PNG (command in `portable/win/README.md`) |
+| F15 | Assorted smaller items | **MOSTLY OPEN** | partial | Itemised below |
+
+**Twelve of fifteen fixed. F3 is open, F15 is mostly open, F11 needs no code.**
+
+### F15 item-by-item, re-checked
+
+| item | status |
+|---|---|
+| `spdf_yaml.c:1120` inverted `snprintf` guard | **OPEN** — still `< (int)sizeof(backup)` with no `n >= 0` arm. Ships on macOS and Linux too |
+| `spdf_compat_widen` accepts malformed UTF-8 | **OPEN** — still no `MB_ERR_INVALID_CHARS` |
+| Five narrow `remove(temp_path)` in core save paths | **OPEN** — all five still at `shenzhen_pdf_core.c:2394, 2403, 2437, 2478, 2487` |
+| `spdf_win_probe.c` uses narrow `main(int, char**)` | **OPEN** — the port's own conformance oracle still cannot be pointed at a non-CP1252 path |
+| No `\\?\` prefix in `spdf_win_compat.c`; `SPDF_COMPAT_PATH_MAX` 1024 | **OPEN** |
+| No `FOLDERID_LocalAppData` anywhere | **OPEN** |
+| `session.lock` declared and never taken | **OPEN** — implemented and tested, but `spdf_win_state_write_json_at` does not take it and only the tests call `spdf_win_state_session_lock_acquire`. Lands as a real bug when Phase 4's multi-window does |
+| Dark-theme page separation draws a black shadow in both themes | **OPEN** — `scene->dark` switches the *paper* brush only; the 10%-black `shade` brush is used in both themes |
+| 96 MB render cap never applied | **PARTLY FIXED** — `spdf_win_capped_render_zoom` is now called from `spdf_win_canvas.cpp:306` and `spdf_win_canvas_prefetch.cpp:77`; `--render-png` is still unbounded |
+
+### One correction to this report's own scope
+
+§5 below records the file-size ratchet as failing. It passes now (F10). §4's
+conclusion about Phase 1 stands unchanged and is the most important paragraph in
+this file — **complete at the core-and-pixels layer, unproven at the window
+layer, and unprovable from here.** Nobody in any session has seen a window open.
 
 ---
 
@@ -26,7 +86,7 @@ a build or a test binary's exit code.
 | Rendered PNG byte-identical, sha256 `00432a55a58dbfe1…`, 0 differing pixels | **CONFIRMED**, independently |
 | `ShenzhenPDF.exe` is native ARM64 (`machine=0xAA64`) | **CONFIRMED** |
 | `SPDFCoreCompatTests`, `core_compat_yaml`, `paths_test`, `state_test`, `SPDFCoreRecolorTests`, `recolor_smoke` pass in the guest | **CONFIRMED** (with a caveat on two of them — F11) |
-| `SPDFCoreSaveTests` passes | **NOT CONFIRMED — it does not run at all.** See F2 |
+| `SPDFCoreSaveTests` passes | **NOT CONFIRMED at audit time — it did not run at all.** See F2. *Now fixed (`abfd37255`) and passing in the 20-case run.* |
 
 ### What I did to confirm them
 
@@ -68,7 +128,7 @@ render check reports `BYTE-IDENTICAL: 1920000 bytes`.
 
 ## 2. Findings, most severe first
 
-### F1 — The probe pipeline can report "byte-identical" against stale pixels [committed]
+### F1 — The probe pipeline can report "byte-identical" against stale pixels — **FIXED** (`abfd37255`)
 
 **Severity: highest. This is the one that makes the port's headline claim
 falsifiable rather than proven, on any future run.**
@@ -122,7 +182,7 @@ runner assumes it means.
 
 ---
 
-### F2 — `SPDFCoreSaveTests` never runs; the harness reports it as a code failure [committed]
+### F2 — `SPDFCoreSaveTests` never runs; the harness reports it as a code failure — **FIXED** (`abfd37255`)
 
 `harness-lib.sh`'s `guest_run()` concatenates the argument string directly onto
 the closing quote of the executable path, with no separating space:
@@ -168,7 +228,7 @@ to the wrong file.
 
 ---
 
-### F3 — Nothing compares the Direct2D output. Phase 1's stated headless test does not exist [committed]
+### F3 — Nothing compares the Direct2D output. Phase 1's stated headless test does not exist — **STILL OPEN**
 
 The port plan, §Phase 1 "Headless test", says:
 
@@ -206,7 +266,7 @@ honest description of a render path with no test pointed at it.
 
 ---
 
-### F4 — Fit-to-window never magnifies: a small page opens postage-stamp sized [committed]
+### F4 — Fit-to-window never magnifies: a small page opens postage-stamp sized — **FIXED** (`647d9390f`)
 
 `spdf_win_main.cpp`'s `fit_zoom()` clamps with `if (zoom > s) zoom = s;` — never
 above 100%. GTK4's `spdf_fit_page_zoom` (`spdf_docview_internal.h:187-190`)
@@ -240,7 +300,7 @@ tiny where the other two frontends fill the window.
 
 ---
 
-### F5 — `spdf_compat_mkstemp` is the one shim that uses narrow paths [committed]
+### F5 — `spdf_compat_mkstemp` is the one shim that uses narrow paths — **FIXED** (`2bff74d7c`)
 
 `portable/core/spdf_win_compat.c:123-125` calls `_mktemp_s` and `_sopen_s` on
 `scratch`, which holds **UTF-8 bytes** copied from `template_path` — the path
@@ -261,7 +321,7 @@ not run (F2).
 
 ---
 
-### F6 — `mkdir_one` reports success when a *file* occupies the directory name [committed]
+### F6 — `mkdir_one` reports success when a *file* occupies the directory name — **FIXED** (`2bff74d7c`)
 
 `portable/win/src/spdf_win_paths.c:299-300`:
 
@@ -283,7 +343,7 @@ this file exercises. Needs the matching `GetFileAttributesW` +
 
 ---
 
-### F7 — A transient state-read failure is indistinguishable from "no state", and the next save overwrites it [committed]
+### F7 — A transient state-read failure is indistinguishable from "no state", and the next save overwrites it — **FIXED** (`2bff74d7c`)
 
 `spdf_win_state.c:34-65`'s `read_file_limited` returns `NULL` for a widen
 failure, a `CreateFileW` failure (including a transient antivirus lock or sharing
@@ -299,7 +359,7 @@ files list, every window position, and the session. The mac/GTK precedent covers
 
 ---
 
-### F8 — The comparator's two alpha guards are inert against the only real image comparison [committed]
+### F8 — The comparator's two alpha guards are inert against the only real image comparison — **FIXED** (`abfd37255`)
 
 I attacked `compare_png.py` directly with my own mutations of the real reference
 PNG rather than trusting its self-test. It is **sound**:
@@ -340,7 +400,7 @@ comparison at `--render-png` output as well as the probe's.
 
 ---
 
-### F9 — The tolerance is still `UNMEASURED` although the measurement exists [committed]
+### F9 — The tolerance is still `UNMEASURED` although the measurement exists — **FIXED** (`abfd37255`)
 
 `compare_png.py:65-66` still reads `MEASURED_MAX_MAE = None`,
 `MEASURED_MAX_BAD_PCT = None`, and its docstring still says *"As of this commit
@@ -358,7 +418,7 @@ says *"If the delta is zero, pin it at zero."* It is zero. Pin it.
 
 ---
 
-### F10 — `tools/check-file-sizes.sh` is red [in flight]
+### F10 — `tools/check-file-sizes.sh` is red — **FIXED** (`e53d24466`)
 
 ```
 File-size ratchet failed:
@@ -373,7 +433,7 @@ violation reported.
 
 ---
 
-### F11 — Two of the "passing suites" are unregistered stale binaries [committed]
+### F11 — Two of the "passing suites" are unregistered stale binaries — **RESOLVED IN REPORTING**
 
 `core_compat_yaml` and `recolor_smoke` are not in `CORE_SUITES` and are not
 discovered by `case_win_tests` (which globs `tests/*_test.c`). They pass when I
@@ -392,7 +452,7 @@ they appear to be three copies of one suite counted as three results.
 
 ---
 
-### F12 — `portable/win/README.md` contradicts itself [committed]
+### F12 — `portable/win/README.md` contradicts itself — **FIXED** (`abfd37255` + this commit)
 
 The harness chapter's "Where it stands" says **"12 cases, 8 pass, 0 fail, 4
 blocked"**, blocked on an `LNK2048` alignment defect in `libmupdf.lib`, and that
@@ -403,7 +463,7 @@ conclude the port has no Windows render at all.
 
 ---
 
-### F13 — The two Windows entry points disagree about page numbering [committed]
+### F13 — The two Windows entry points disagree about page numbering — **FIXED** (`647d9390f`)
 
 `spdf_win_probe.exe golden.pdf 0` renders the first page. `ShenzhenPDF.exe
 --render-png golden.pdf 0` answers *"Page 0 is outside this document (2
@@ -413,7 +473,7 @@ same fixture in the same directory. Whoever wires up the missing D2D comparison
 
 ---
 
-### F14 — The working tree does not compile [in flight]
+### F14 — The working tree does not compile — **FIXED** (tree now clean; app target builds)
 
 At the time of audit, `spdf_win_canvas.h` existed with no `.c`/`.cpp` sibling
 (the `.cpp` appeared minutes later), `SPDF_WIN_FIT_CONTAIN` was referenced from
@@ -428,7 +488,7 @@ committed sources.
 
 ---
 
-### F15 — Smaller items, verified, not individually severe
+### F15 — Smaller items, verified, not individually severe — **MOSTLY STILL OPEN**
 
 - **`spdf_yaml.c:1120` inverted guard.** `if (snprintf(backup, sizeof(backup),
   "%s.migrated-backup", json_path) < (int)sizeof(backup))` passes on a
@@ -556,7 +616,7 @@ All by exit code, `set -o pipefail`, never by piping into `grep`.
 | `make -C portable mac-app` | **0** |
 | `make -C portable test-binaries` | **0** |
 | every `*-tests` target except `file-size-ratchet-tests` (28 suites, run one at a time) | **0** |
-| `file-size-ratchet-tests` / `tools/check-file-sizes.sh` | **1** — F10, in-flight |
+| `file-size-ratchet-tests` / `tools/check-file-sizes.sh` | **1** at audit time — F10, now **0** (`e53d24466`) |
 | `portable/mac/tests/markdown/run-tests.sh` | **0** |
 | `portable/mac/tests/run-markdown-integration-tests.sh` | **0** |
 
@@ -564,25 +624,49 @@ Suites run individually rather than as one `make` invocation, so that a single
 failure could not mask the rest. Core, password, recolor, render-theme, selection,
 CJK-selection, icon, release-pipeline and all 20 `mac-*` suites pass.
 
-**macOS is unregressed by the Windows work**, with the single exception of the
-file-size ratchet, which is tripped by an uncommitted Phase 3 file.
+**macOS is unregressed by the Windows work.** The single exception at audit time
+was the file-size ratchet, tripped by an then-uncommitted Phase 3 file; it landed
+split under the cap and the ratchet is green.
 
 ---
 
 ## 6. Recommended order of work
 
-1. **F1** — the probe's `write_png` must return a status, and the guest's
-   `probe-page.png` must be deleted before the run that writes it. Until then no
-   future green run means anything. `portable/win/tests/qc/probe-staleness-check.sh`
-   goes green when both are done.
-2. **F2** — one space in `harness-lib.sh`'s `guest_run`, then confirm
-   `SPDFCoreSaveTests` actually passes through the runner.
-3. **F5** — `_wsopen_s`/`_wmktemp_s` on a widened path in `spdf_compat_mkstemp`,
-   with a `SPDFCoreSaveTests` case that uses a non-CP1252 directory.
-4. **F3 + F8** — add a `--render-png` comparison case, and give `golden.pdf` a
-   partially transparent region so the alpha detectors can fire.
-5. **F9** — pin the tolerance at zero and pass `--strict` from the runner.
-6. **F4** — include `spdf_win_layout.h` from `spdf_win_main.cpp` instead of
-   maintaining a second fit formula.
-7. **F6, F7, F15's `spdf_yaml.c:1120`** — small, local, and each one turns a
-   silent wrong answer into an error.
+**Items 1, 2, 5, 6 and most of 7 are done.** What remains, re-ordered 06:45:
+
+1. **F3 — add a Direct2D compose comparison case.** The single largest coverage
+   gap in the port. `ShenzhenPDF.exe --render-png` and `--render-window-png` both
+   work, write PNGs, and have been compared by hand and found byte-identical in
+   both themes — so this is a morning's harness work with a known-good answer
+   waiting at the end of it, not an investigation. Until it exists, the layer
+   that the whole Direct2D-over-WIC architecture was chosen to make testable is
+   the one layer nothing tests.
+2. **Fold `t3-verify.sh`'s 7 cases into `run-tests.sh`.** The GTK4 differential
+   (397,099 comparisons, 0 mismatches) is the strongest correctness evidence the
+   layout port has and it does not run in the gating suite, because
+   `gtk_differential.c` is not named `*_test.c`. Anyone editing
+   `spdf_win_layout.h` will not learn they broke it.
+3. **Register the remaining four core suites.** `SPDFCoreOutlineTests`,
+   `SPDFCorePasswordTests`, `SPDFCoreRenderThemeTests`, `SPDFCoreSelectionTests`
+   and `SPDFCoreCJKSelectionTests` are written, pure C over MuPDF, and absent
+   from `CORE_SUITES`. Near-free Windows conformance; the plan called this out at
+   03:22 and it is still unclaimed.
+4. **F15's `spdf_yaml.c:1120`** — an inverted guard that calls
+   `spdf_compat_replace_file` with an uninitialised buffer on a negative
+   `snprintf`. **This ships on macOS and Linux too**, which makes it the only
+   open finding here that is not Windows-only.
+5. **F15's `session.lock`** — take the lock in `spdf_win_state_write_json_at`
+   before Phase 4's multi-window work makes its absence a lost-session bug.
+6. **F15's dark-theme shadow** — a 10%-black drop shadow is invisible on a dark
+   gutter; macOS explicitly fixed this and documented why
+   (`SPDFMacDocumentViewTheme.mm:47-49`). Windows currently reproduces the
+   defect macOS removed.
+7. **The rest of F15** — `MB_ERR_INVALID_CHARS`, the five narrow `remove()`
+   calls, the probe's narrow `main`, `\\?\` prefixes, `FOLDERID_LocalAppData`,
+   and capping `--render-png`.
+
+And the one that is not a code change at all:
+
+8. **Get a human to open the window.** Every other item on this list can be done
+   by an agent from macOS. This one cannot, and it is the only thing standing
+   between "Phase 1 complete on a generous reading" and "Phase 1 complete".

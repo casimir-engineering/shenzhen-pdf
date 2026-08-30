@@ -1,20 +1,63 @@
 # Building ShenzhenPDF code on Windows, from the Mac
 
-This directory is the Windows port's build plumbing: everything needed to
-compile and run repo C/C++ **inside a Parallels Windows VM, driven entirely
-from the macOS command line, without ever touching the VM's GUI**.
+This directory is the Windows port: the application sources under `src/`, the
+headless test harness under `tests/`, and the build plumbing that compiles and
+runs all of it **inside a Parallels Windows VM, driven entirely from the macOS
+command line, without ever touching the VM's GUI**.
 
-No application code lives here yet. The only C in this directory is a smoke
-test whose job is to prove the chain works.
+There **is** application code here — 5,021 committed lines under `portable/win/src/`,
+including a Direct2D renderer, a continuous-scroll canvas, a background render
+pool and the `%APPDATA%` state layer. `ShenzhenPDF.exe` builds, links against a
+native ARM64 `libmupdf`, and renders pages byte-identically to macOS. (This
+paragraph replaces one that read "No application code lives here yet. The only C
+in this directory is a smoke test" — true when written, false for some hours
+before anyone noticed.)
+
+**One thing this directory cannot do, and it is the port's central limitation:
+nobody has seen a ShenzhenPDF window open on Windows.** `prlctl exec` runs in
+the SYSTEM session, which has no interactive desktop, so every claim below is a
+build, an exit code or a pixel comparison. See "What is and is not proven".
 
 ## TL;DR
 
-```sh
-portable/win/verify.sh          # full proof; exits non-zero if anything is broken
+Every command in this file was run, from this repo, against this VM. None is
+aspirational.
 
-portable/win/vm-build.sh --run recolor_smoke \
-    portable/win/smoke/recolor_smoke.c portable/core/spdf_recolor.c
-echo $?                         # this is the GUEST compiler's exit code
+```sh
+portable/win/tests/run-tests.sh   # the whole suite: 20 cases, 0 failed, exit 0
+portable/win/verify.sh            # toolchain + cross-host proof; non-zero if broken
+portable/win/mupdf-build.sh       # libmupdf for ARM64 (~59 s cold, ~3 s no-op)
+```
+
+Build and headlessly render the app itself:
+
+```sh
+portable/win/vm-build.sh --run ShenzhenPDF \
+    portable/win/src/spdf_win_main.cpp portable/win/src/spdf_win_window.cpp \
+    portable/win/src/spdf_win_d2d.cpp portable/win/src/spdf_win_canvas.cpp \
+    portable/win/src/spdf_win_canvas_prefetch.cpp portable/win/src/spdf_win_lru.c \
+    portable/win/src/spdf_win_paths.c portable/win/src/spdf_win_render.c \
+    portable/win/src/spdf_win_state.c portable/core/shenzhen_pdf_core.c \
+    portable/core/spdf_selection.c portable/core/spdf_selection_support.c \
+    portable/core/spdf_recolor.c portable/core/spdf_yaml.c \
+    portable/core/spdf_win_compat.c \
+    -- --render-png 'C:\spdf\portable\win\tests\fixtures\golden.pdf' 0 1.0 \
+       '\\Mac\Home\Documents\spdf-win\out\app-page.png'
+# -> wrote \\Mac\Home\Documents\spdf-win\out\app-page.png 200x260
+```
+
+There is no shorter form of that link line yet: no CMake project and no source
+manifest exists, so the app's translation units are listed by hand at every
+call site. Note `portable/core/spdf_win_compat.c` at the end of it —
+**it belongs in every Windows source list** (see gotcha 18).
+
+`--render-window-png <pdf> <page> <w> <h> <out.png>` composes the full window
+scene instead of one exact-zoom page, which is how the fit-mode geometry is
+checked without a window:
+
+```
+frame viewport=900x700 zoom=4.500000 scroll=247.0000,0.0000 content=1394.0000,1942.0000
+frame draw page=0 dest=0.0000,13.0000 size=900.0000,1170.0000 bitmap=900x1170
 ```
 
 ## The machine
@@ -198,11 +241,81 @@ of times, so `guest-build.cmd` copies first. The copy itself is cheap: 85 MB /
 
 ## Still to do
 
-- Nothing is blocked on a human. The VM is fully configured and headless.
-- No CMake project exists yet — CMake and Ninja are installed and ready but
-  unused; `guest-build.cmd` currently invokes `cl.exe` directly, which is the
-  right level for a smoke test but will want replacing when real sources land.
-- MuPDF itself has never been built here; only `portable/core` has.
+- Nothing is blocked on a human *for building and headless testing*. The VM is
+  fully configured and needs no desktop session.
+- **Something is blocked on a human for the window layer**, and no amount of
+  work here will unblock it: see "What is and is not proven".
+- No CMake project and no source manifest exists for the **app** target, so its
+  translation units are spelled out by hand at every call site (see TL;DR).
+  `guest-build.cmd` invokes `cl.exe` directly. CMake and Ninja are installed and
+  are used for the MuPDF build, which generates its own `build.ninja`.
+- Only three of the six `portable/core` suites are wired into the runner
+  (`SPDFCoreRecolorTests`, `SPDFCoreCompatTests`, `SPDFCoreSaveTests`).
+  `SPDFCoreOutlineTests`, `SPDFCorePasswordTests`, `SPDFCoreRenderThemeTests`,
+  `SPDFCoreSelectionTests` and `SPDFCoreCJKSelectionTests` are written, are pure
+  C over MuPDF, and would be near-free Windows conformance — they are simply not
+  in `CORE_SUITES` yet.
+- Nothing compares the **Direct2D compose** output automatically. The comparison
+  has been run by hand and is byte-identical in both themes; the gap is coverage,
+  not known incorrectness. (QC finding F3, still open.)
+
+## What is and is not proven
+
+This is the most important section in this file, and the easiest to skip.
+
+**Proven, by exit code or by hashed pixels, re-run on demand:**
+
+- The core renders byte-identically on Windows/MSVC/ARM64 and macOS/clang/arm64
+  — same transcript, same PNG bytes, same sha256, for both an opaque and an
+  alpha-bearing fixture.
+- Every object in `libmupdf.lib`, `libmupdf-third.lib` and `ShenzhenPDF.exe` is
+  native ARM64 (`AA64`), not x64 under emulation.
+- The layout, zoom-anchor, clamp and LRU maths agree with the GTK4 originals.
+- The render pool's callback-exactly-once and cancellation contracts hold.
+- The state layer round-trips YAML and refuses to overwrite state it could not
+  read.
+- `ShenzhenPDF.exe` composes a page through Direct2D into a WIC bitmap with no
+  window, and writes a PNG.
+
+**Not proven, and not provable from this environment:**
+
+- **That a window ever opens.** `prlctl exec` runs as `nt authority\system` with
+  no interactive desktop. Nothing in any session so far has observed a
+  ShenzhenPDF window on Windows — not the window appearing, not a resize
+  repainting, not DPI scaling on a 2× display, not a clean exit on close.
+- Anything else that requires an interactive session: real input events, menus,
+  drag, the taskbar, file associations.
+
+The honest one-line summary, which should survive every future edit of this
+file: **the port is complete and verified at the core-and-pixels layer, unproven
+at the window layer, and unprovable at the window layer from here.** Closing
+that gap needs a human at the VM's GUI, or an interactive-session automation
+route that does not yet exist.
+
+## The application sources
+
+`portable/win/src/`, 5,021 committed lines (Phase 1–3). A Phase 4 tab/session
+layer is in flight and not counted here. Every file is under the 500-line cap
+(`tools/check-file-sizes.sh` is green).
+
+| file | LOC | role |
+|---|---|---|
+| `spdf_win_main.cpp` | 471 | entry point, `CommandLineToArgvW`, the two headless render modes |
+| `spdf_win_window.{h,cpp}` | 519 | window class, message pump, DPI awareness, input |
+| `spdf_win_d2d.{h,cpp}` | 536 | Direct2D device, scene compose, WIC PNG encode — **no `HWND` required** |
+| `spdf_win_canvas.{h,cpp}` + `_internal.h` + `_prefetch.cpp` | 709 | continuous-scroll canvas, fit modes, neighbour prefetch |
+| `spdf_win_layout.h` | 399 | the de-glib'd port of GTK4's `spdf_docview_internal.h`; differentially tested against it |
+| `spdf_win_render.{h,c}` | 759 | background render pool, coalescing, cancellation tokens |
+| `spdf_win_lru.{h,c}` | 460 | byte-bounded rendered-page cache |
+| `spdf_win_paths.{h,c}` | 582 | `%APPDATA%` via `SHGetKnownFolderPath`, UTF-8⇄UTF-16 |
+| `spdf_win_state.{h,c}` | 586 | YAML state layer over `portable/core/spdf_yaml.c` |
+
+The one architectural rule that must not be broken: **`spdf_win_d2d.cpp` paints
+into an `ID2D1RenderTarget` that may or may not be backed by a window.** The
+window's `WM_PAINT` and the headless probe call the same compose path. If
+painting ever requires an `HWND`, every pixel test in this directory dies with
+it — and given the window layer is the one thing that cannot be verified here,
+that would leave the port with no verification at all.
 
 ## The headless test harness
 
@@ -220,7 +333,7 @@ portable/win/tests/run-tests.sh --filter probe --keep
 |---|---|
 | `tests/run-tests.sh` | the runner: builds and runs the Windows test binaries and aggregates a real exit status |
 | `tests/harness-lib.sh` | guest plumbing — `guest()`, `vm_build()`, prerequisite discovery |
-| `tests/probe-cases.sh` | the four cross-host probe cases |
+| `tests/probe-cases.sh` | the eight cross-host probe cases (`probe.*` and `alpha.*`) |
 | `tests/compare_png.py` | golden-image comparison, macOS render vs Windows render |
 | `tests/png_io.py` | dependency-free PNG reader/writer (stdlib `zlib` only) |
 | `tests/compare_png_selftest.py` | proves the comparator detects what it claims to |
@@ -286,7 +399,7 @@ Drop `portable/win/tests/<name>_test.c` in the directory — it is discovered
 automatically as case `win.<name>_test`. Declare anything extra in the file:
 
 ```c
-/* spdf-test-sources: portable/win/src/spdf_win_compat.c */
+/* spdf-test-sources: portable/core/spdf_win_compat.c */
 /* spdf-test-args: portable/win/tests/fixtures/golden.pdf */
 /* spdf-test-needs: mupdf */
 ```
@@ -408,21 +521,48 @@ zero accordingly. (This section claimed the opposite for a while, two hundred
 lines before the chapter proving otherwise; a reader who stopped here concluded
 the port had no Windows render at all.)
 
-Passing in the guest under MSVC/ARM64: the exit-code contract, the code-page
-check, the comparator self-test, both cross-host probe pipelines end to end
-(`probe.*` over the opaque fixture, `alpha.*` over the transparent one),
-`SPDFCoreRecolorTests`, `SPDFCoreCompatTests`, `SPDFCoreSaveTests`, `paths_test`
-and `state_test`.
+### The current case list
 
-Two results worth stating precisely, because they are the port's headline
-claims and both have been miscounted before:
+`portable/win/tests/run-tests.sh` → **20 cases, 0 failed, 0 blocked, exit 0**,
+in about 50 seconds. This is the inventory as run, not as remembered:
 
-* The cross-host probe transcript is **43 lines**, not 42, and byte-identical
-  between macOS clang/arm64 and Windows MSVC/ARM64. The runner now prints the
-  count it actually measured, so the number cannot drift in prose again.
-* The rendered PNGs are byte-identical: `sha256 00432a55a58dbfe1…` for
-  `golden.pdf` in `plain` mode, `sha256 32c0e3b9de92eeeb…` for `alpha.pdf` in
-  `alpha` mode.
+| case | what it proves |
+|---|---|
+| `selftest.compare-png` | every golden-image detector fires on its own mutation (13 checks) |
+| `harness.exit-code` | guest exit codes 0/3/42 and a failed compile all reach the Mac intact |
+| `harness.non-ascii-path` | narrow `argv` round-trips a CP1252 path; reports the bytes rather than pinning them |
+| `probe.mac` / `probe.win` | the cross-host probe builds and runs on both hosts (opaque `golden.pdf`) |
+| `probe.diff` | identical **43-line** transcript, macOS/clang vs Windows/MSVC |
+| `probe.png` | rendered PNGs **byte-identical** (`--strict`) |
+| `alpha.mac` / `alpha.win` | same, over the transparent `alpha.pdf` in `alpha` mode |
+| `alpha.diff` | identical **42-line** transcript |
+| `alpha.png` | byte-identical over 49,660 partially transparent px — the alpha detectors are live here |
+| `core.SPDFCoreRecolorTests` | the recolor core, no MuPDF needed |
+| `core.SPDFCoreCompatTests` | the POSIX shim in `portable/core/spdf_win_compat.c` |
+| `core.SPDFCoreSaveTests` | the Windows save path, incl. replace-existing rename |
+| `win.layout_geometry_test` | continuous layout, fit zooms, zoom anchoring, clamp, byte cap |
+| `win.lru_cache_test` | the byte-bounded rendered-page cache |
+| `win.paths_test` | `%APPDATA%` resolution and UTF-8⇄UTF-16 |
+| `win.render_service_test` | worker pool, tokens, callback-exactly-once |
+| `win.silent_failure_test` | the three silent-failure fixes (QC F5, F6, F7) |
+| `win.state_test` | YAML state round-trip, session lock, absent-vs-failed reads |
+
+Two transcript lengths, both measured and both easy to confuse: the **probe** is
+43 lines, the **alpha** probe is 42, and `verify.sh`'s separate `spdf_recolor`
+transcript is 61. The runner prints each count from its own measurement so none
+of them can drift in prose again.
+
+A separate QC canary, not part of the 20:
+
+```sh
+bash portable/win/tests/qc/probe-staleness-check.sh   # exit 0
+#   ok  defect 1 fixed: a failed PNG write exits 1
+#   ok  defect 2 fixed: the guest PNG is gone after a run that wrote none
+```
+
+The port's headline pixel claim, stated precisely: the rendered PNGs are
+byte-identical across hosts — `sha256 00432a55a58dbfe1…` for `golden.pdf` in
+`plain` mode, `sha256 32c0e3b9de92eeeb…` for `alpha.pdf` in `alpha` mode.
 
 `SPDFCoreSaveTests` deserves its own line: it is newly passing not because the
 code changed but because it had **never actually run**. `guest_run()` pasted its
@@ -768,3 +908,30 @@ between one debugging session and six.
 
 **17. The guest has no `timeout`, and macOS `zsh` does not word-split unquoted
 expansions.** Both cost time in this session; neither is a Windows problem.
+
+**18. `portable/core/spdf_win_compat.c` belongs in EVERY Windows source list.**
+It is the POSIX shim the core's own sources `#include "spdf_win_compat.h"` from
+(`shenzhen_pdf_core.c:5`, `spdf_yaml.c:6`, and six of the core test suites), so
+omitting it produces a wall of `LNK2019: unresolved external symbol
+spdf_compat_*` rather than a compile error at the file that wanted it. Note the
+path: it lives under `portable/core/`, **not** `portable/win/src/`. This README
+told you `portable/win/src/spdf_win_compat.c` for a while, and
+`run-tests.sh`'s own header comment still does; the file has only ever been in
+`portable/core/`.
+
+**19. `-ffp-contract=off` on the macOS side is load-bearing, not a workaround.**
+It is the reason cross-host float results come back byte-identical. clang
+contracts `a*b + c` into a single fused multiply-add — one rounding step instead
+of two — while MSVC under `/fp:precise` (what `guest-build.cmd` uses) does not
+fuse. Same IEEE-754 arithmetic, same ARM64 hardware, different results in the
+last bit, and a golden-image comparison pinned at zero tolerance goes red.
+`portable/win/tests/t3-verify.sh:41-47` builds the macOS side with it for
+exactly this reason. Do not remove it to "match the release flags"; the release
+flags are not being compared to anything.
+
+**20. The guest ANSI code page is 1252, not UTF-8.** Windows narrows the real
+UTF-16 command line to the ACP on the way into `char** argv`, so a CP1252-
+representable path round-trips through a narrow `fopen` and anything outside
+CP1252 does not. `harness.non-ascii-path` checks this rather than assuming it —
+assuming it wrong is how a real failure in this port was first mis-diagnosed.
+See "The guest's code page is 1252, not UTF-8" above for the observed bytes.
