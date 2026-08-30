@@ -5,6 +5,12 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$script_dir/release-common.sh"
 
+# The suite must assert the gates' real behaviour, not the caller's. Preparing a
+# release with SPDF_README_UNCHANGED=1 exports it into these tests and silently
+# turned the rejection case below into a pass -- the override neutering the very
+# assertion that proves it is an override. Each case sets what it needs itself.
+unset SPDF_README_UNCHANGED
+
 failures=0
 expect_equal() {
   local label="$1" actual="$2" expected="$3"
