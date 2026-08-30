@@ -11,6 +11,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class SPDFMarkdownTableRowInfo;
+@class SPDFMarkdownDiagramCache;
 
 FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownBlockIndexAttribute;
 FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownBlockKindAttribute;
@@ -48,6 +49,13 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 // Height of the pending remote-image placeholder box (width is
 // maximumImageWidth). Unscaled by fontScale, like the image budgets.
 @property(nonatomic) CGFloat remoteImagePlaceholderHeight;
+// Shared, thread-safe render cache for native diagram fences (mermaid /
+// sequence / flow — see SPDFMarkdownDiagram.h). One cache lives per document
+// session and is carried by REFERENCE through -copyWithZone: (never deep
+// copied), so theme and text-size rerenders reuse rasters whose key still
+// matches. nil (the default) simply means no caching: diagrams still render,
+// they are just re-rasterized every pass.
+@property(nonatomic, strong, nullable) SPDFMarkdownDiagramCache* diagramCache;
 @property(nonatomic, strong) NSColor* textColor;
 @property(nonatomic, strong) NSColor* secondaryTextColor;
 @property(nonatomic, strong) NSColor* linkColor;

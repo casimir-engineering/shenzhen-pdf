@@ -78,6 +78,9 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     copy.remoteImageData = self.remoteImageData;
     copy.failedRemoteImageTargets = self.failedRemoteImageTargets;
     copy.remoteImagePlaceholderHeight = self.remoteImagePlaceholderHeight;
+    // By reference on purpose: the diagram cache is a shared thread-safe store
+    // whose whole value is being hit by the copies a rerender makes.
+    copy.diagramCache = self.diagramCache;
     copy.textColor = self.textColor;
     copy.secondaryTextColor = self.secondaryTextColor;
     copy.linkColor = self.linkColor;
