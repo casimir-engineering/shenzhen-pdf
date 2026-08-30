@@ -18,6 +18,7 @@
  */
 #include "shenzhen_pdf_core.h"
 #include "spdf_recolor.h"
+#include "spdf_win_compat.h"
 
 #include <mupdf/fitz.h>
 
@@ -27,10 +28,10 @@
 #include <string.h>
 #include <time.h>
 
+/* clock_gettime()/CLOCK_MONOTONIC are absent from the MSVC UCRT; the shim reads
+ * QueryPerformanceCounter there and clock_gettime() everywhere else. */
 static double now_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+    return spdf_compat_monotonic_ms();
 }
 
 static void write_png(const char* path, const unsigned char* rgba, int w, int h, int stride) {
