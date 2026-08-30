@@ -89,6 +89,14 @@ run_release_tests() {
     [[ -n "$target" ]] && targets+=("$target")
   done < <(spdf_discover_test_targets "$script_dir/Makefile")
   ((${#targets[@]} > 0)) || spdf_release_fail "No *-tests targets found"
+  # Compile every test binary across all cores first. The suites then run one
+  # at a time, in discovery order, off binaries that are already built, so the
+  # sweep spends its wall clock on tests rather than on serial clang calls and
+  # the release log stays readable.
+  local jobs
+  jobs="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+  log "Building test binaries with -j$jobs"
+  make -C "$script_dir" -j"$jobs" test-binaries
   log "Running release tests: ${targets[*]}"
   make -C "$script_dir" "${targets[@]}"
 }
