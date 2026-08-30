@@ -37,7 +37,8 @@ portable/win/vm-build.sh --run ShenzhenPDF \
     portable/win/src/spdf_win_d2d.cpp portable/win/src/spdf_win_canvas.cpp \
     portable/win/src/spdf_win_canvas_prefetch.cpp portable/win/src/spdf_win_lru.c \
     portable/win/src/spdf_win_paths.c portable/win/src/spdf_win_render.c \
-    portable/win/src/spdf_win_state.c portable/core/shenzhen_pdf_core.c \
+    portable/win/src/spdf_win_state.c portable/win/src/spdf_win_tabs.cpp \
+    portable/win/src/spdf_win_session.cpp portable/core/shenzhen_pdf_core.c \
     portable/core/spdf_selection.c portable/core/spdf_selection_support.c \
     portable/core/spdf_recolor.c portable/core/spdf_yaml.c \
     portable/core/spdf_win_compat.c \
