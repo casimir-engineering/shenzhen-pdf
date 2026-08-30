@@ -94,8 +94,13 @@ static CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 - (void)setPreservesImageColors:(BOOL)preservesImageColors {
     if (preservesImageColors == _preservesImageColors) return;
     _preservesImageColors = preservesImageColors;
-    // Draw-time only: retarget the live plan instead of re-rendering.
+    // Draw-time only: retarget the live plan instead of re-rendering, then
+    // repaint. The canvas is the scroll view's document view, so the scroll
+    // view's own setNeedsDisplay: never reached it and the change only showed
+    // up after switching tabs and back.
     [_paginationPlan setPreservesImageColors:preservesImageColors];
+    [_pagedView redrawPages];
+    [_minimapModel invalidateThumbnails];
 }
 
 - (void)applyThemeVariant:(SPDFMarkdownThemeVariant)themeVariant {

@@ -158,6 +158,11 @@ static BOOL SPDFMarkdownPixelSizeSatisfies(NSSize available, NSSize requested) {
     _pages = [pages copy];
 }
 
+- (void)invalidateThumbnails {
+    [_thumbnailImages removeAllObjects];
+    [_thumbnailPixelSizes removeAllObjects];
+}
+
 - (NSImage*)renderThumbnailForPageIndex:(NSUInteger)pageIndex pixelSize:(NSSize)pixelSize {
     size_t width = (size_t)MAX(1.0, pixelSize.width);
     size_t height = (size_t)MAX(1.0, pixelSize.height);
