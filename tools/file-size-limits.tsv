@@ -8,7 +8,7 @@ portable/mac/markdown/SPDFMarkdownHTMLBlocks.mm	553	exception	Cohesive HTML bloc
 portable/mac/tests/SPDFStateYamlTests.mm	673	exception	Cohesive YAML codec regression suite (round-trips, emit shape, migration incl. downgrade re-migration, rejection cases) in one deterministic harness; +1 line for the markdownTheme settings key.
 premake5.files.lua	1503	legacy	Legacy first-party Premake source manifest and project composition; freeze growth pending target-specific extraction.
 premake5.lua	1084	legacy	Legacy first-party Premake build configuration; freeze growth pending platform-target extraction.
-portable/core/shenzhen_pdf_core.c	3296	legacy	Legacy shared document core; freeze growth pending subsystem extraction.
+portable/core/shenzhen_pdf_core.c	3377	legacy	Legacy shared document core, +81 lines for the dark reading theme fused into copy_pixmap_to_bitmap() and the cached per-page image rectangles behind SPDF_RENDER_PRESERVE_IMAGES (the transform itself lives in spdf_recolor.c); freeze growth pending subsystem extraction.
 portable/linux/gtk4/spdf_annot.c	1301	legacy	Legacy GTK annotation controller; freeze growth pending extraction.
 portable/linux/gtk4/spdf_app.c	726	exception	GTK application lifecycle is cohesive and platform-specific.
 portable/linux/gtk4/spdf_docview.c	1793	legacy	Legacy GTK document view hot path; freeze growth pending extraction.

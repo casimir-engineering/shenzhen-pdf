@@ -1,5 +1,6 @@
 #include "shenzhen_pdf_core.h"
 
+#include "spdf_recolor.h"
 #include "spdf_selection.h"
 
 #include "mupdf/fitz.h"
@@ -51,6 +52,9 @@ struct spdf_document {
     spdf_render_stats last_render_stats;
     int password_protected;
     spdf_authentication authentication;
+    /* Image rectangles per page, for SPDF_RENDER_PRESERVE_IMAGES. Pure cache:
+     * the dark reading theme itself is a per-render flag, not document state. */
+    spdf_recolor_page_cache recolor_pages;
 };
 
 /* Core-private body of the public cancellation token: just an fz_cookie.
@@ -175,6 +179,7 @@ spdf_document* spdf_open_with_password(const char* path, const char* password, s
             opened->doc = doc;
             opened->password_protected = password_protected;
             opened->authentication = auth_result;
+            spdf_recolor_page_cache_reset(&opened->recolor_pages);
             opened->page_count = fz_count_pages(ctx, doc);
             if (opened->page_count > 0) {
                 opened->page_sizes =
@@ -517,7 +522,15 @@ static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_inde
  * layout (render_pixmap_allocation_size guards), allocates and fills out->rgba.
  * Must be called inside fz_try; throws on failure (after which out is untouched,
  * since out->rgba is only assigned once everything has succeeded). */
-static void copy_pixmap_to_bitmap(spdf_document* doc, fz_pixmap* pix, spdf_bitmap* out, char* err, size_t err_len) {
+/* Defined next to text_page_is_image_backed(), which it shares. */
+static int page_recolor_exclusions(spdf_document* doc, int page_index, float zoom, int origin_x, int origin_y,
+                                   spdf_recolor_irect* out, int max);
+
+static void copy_pixmap_to_bitmap(spdf_document* doc, fz_pixmap* pix, int page_index, float zoom, unsigned flags,
+                                  spdf_bitmap* out, char* err, size_t err_len) {
+    spdf_recolor_table recolor;
+    spdf_recolor_irect exclusions[SPDF_RECOLOR_MAX_REGIONS];
+    int exclusion_count = 0;
     unsigned char* dst;
     unsigned char* src;
     size_t byte_count;
@@ -539,6 +552,16 @@ static void copy_pixmap_to_bitmap(spdf_document* doc, fz_pixmap* pix, spdf_bitma
     if (!src || !render_pixmap_allocation_size(width, height, comps, src_stride, &stride, &byte_count, err, err_len))
         fz_throw(doc->ctx, FZ_ERROR_FORMAT, "%s", err && *err ? err : "Rendered page is too large.");
 
+    /* The dark reading theme rides along here rather than in a pass of its
+     * own: this loop already walks every pixel of every render on every path
+     * and format, and recoloring each row right after writing it keeps that
+     * row in L1 instead of paying a second walk of the whole image. */
+    spdf_recolor_table_init(&recolor, (flags & SPDF_RENDER_DARK_THEME) ? SPDF_RECOLOR_LUMA_REMAP : SPDF_RECOLOR_NONE,
+                            spdf_recolor_default_dark_theme());
+    if (recolor.kind != SPDF_RECOLOR_NONE && (flags & SPDF_RENDER_PRESERVE_IMAGES))
+        exclusion_count = page_recolor_exclusions(doc, page_index, zoom, pix->x, pix->y, exclusions,
+                                                  SPDF_RECOLOR_MAX_REGIONS);
+
     dst = (unsigned char*)malloc(byte_count);
     if (!dst) fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
 
@@ -553,6 +576,8 @@ static void copy_pixmap_to_bitmap(spdf_document* doc, fz_pixmap* pix, spdf_bitma
             opx[2] = comps > 2 ? px[2] : opx[0];
             opx[3] = alpha ? px[comps - 1] : 255;
         }
+        if (recolor.kind != SPDF_RECOLOR_NONE)
+            spdf_recolor_rgba_row(out_row, width, y, &recolor, exclusions, exclusion_count);
     }
 
     out->width = width;
@@ -653,7 +678,7 @@ int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, u
 
         /* A cookie abort stops the run without throwing; skip the bitmap copy
          * and report the cancellation after cleanup below. */
-        if (!token_canceled(token)) copy_pixmap_to_bitmap(doc, pix, out, err, err_len);
+        if (!token_canceled(token)) copy_pixmap_to_bitmap(doc, pix, page_index, zoom, flags, out, err, err_len);
 
         fz_drop_pixmap(doc->ctx, pix);
         pix = NULL;
@@ -773,7 +798,7 @@ int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float 
 
         /* A cookie abort stops the run without throwing; skip the bitmap copy
          * and report the cancellation after cleanup below. */
-        if (!token_canceled(token)) copy_pixmap_to_bitmap(doc, pix, out, err, err_len);
+        if (!token_canceled(token)) copy_pixmap_to_bitmap(doc, pix, page_index, zoom, flags, out, err, err_len);
 
         fz_drop_pixmap(doc->ctx, pix);
         pix = NULL;
@@ -1291,6 +1316,62 @@ static int text_page_is_image_backed(fz_stext_page* text) {
     if (stats.largest_image_area / page_area >= 0.55) return 1;
     if (stats.image_count > 1 && stats.total_image_area / page_area >= 0.75) return 1;
     return 0;
+}
+
+/* Image-block rectangles of a page, in page space, for the dark theme's
+ * "leave images alone" setting. Recurses through FZ_STEXT_BLOCK_STRUCT the way
+ * collect_image_stats_from_blocks() above does. */
+static void collect_image_rects_from_blocks(fz_stext_block* block, spdf_recolor_page_entry* entry) {
+    for (; block; block = block->next) {
+        if (block->type == FZ_STEXT_BLOCK_IMAGE) {
+            if (entry->count < SPDF_RECOLOR_MAX_REGIONS && block->bbox.x1 > block->bbox.x0 &&
+                block->bbox.y1 > block->bbox.y0) {
+                spdf_recolor_frect* r = &entry->rects[entry->count++];
+                r->x0 = block->bbox.x0;
+                r->y0 = block->bbox.y0;
+                r->x1 = block->bbox.x1;
+                r->y1 = block->bbox.y1;
+            }
+        } else if (block->type == FZ_STEXT_BLOCK_STRUCT && block->u.s.down) {
+            collect_image_rects_from_blocks(block->u.s.down->first_block, entry);
+        }
+    }
+}
+
+static int page_recolor_exclusions(spdf_document* doc, int page_index, float zoom, int origin_x, int origin_y,
+                                   spdf_recolor_irect* out, int max) {
+    spdf_recolor_page_entry* entry;
+
+    if (!doc || page_index < 0 || page_index >= doc->page_count) return 0;
+    entry = spdf_recolor_page_cache_find(&doc->recolor_pages, page_index);
+    if (!entry) {
+        /* One structured-text pass per PAGE, not per render: renders repeat at
+         * every zoom and display scale, the image rectangles do not. */
+        fz_stext_page* text = NULL;
+        entry = spdf_recolor_page_cache_claim(&doc->recolor_pages, page_index);
+        if (!entry) return 0;
+        fz_try(doc->ctx) {
+            fz_stext_options opts;
+            memset(&opts, 0, sizeof(opts));
+            opts.flags = FZ_STEXT_PRESERVE_IMAGES;
+            text = fz_new_stext_page_from_page_number(doc->ctx, doc->doc, page_index, &opts);
+            if (text) {
+                entry->image_backed = text_page_is_image_backed(text);
+                collect_image_rects_from_blocks(text->first_block, entry);
+            }
+        }
+        fz_always(doc->ctx) {
+            fz_drop_stext_page(doc->ctx, text);
+        }
+        fz_catch(doc->ctx) {
+            /* A page whose text cannot be walked keeps an empty entry, which
+             * means "no exclusions": the page is recolored whole, which is the
+             * safe answer -- dark mode still works, photographs are the only
+             * casualty. */
+            fz_ignore_error(doc->ctx);
+        }
+    }
+    return spdf_recolor_page_entry_exclusions(entry, zoom, origin_x, origin_y, out, max);
 }
 
 static void extract_lines_from_blocks(fz_context* ctx, text_line_builder* builder, fz_stext_block* block) {
