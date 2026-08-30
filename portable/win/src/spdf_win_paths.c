@@ -291,13 +291,25 @@ int spdf_win_path_to_native(const char* path, char* out, size_t out_bytes) {
 static const GUID spdf_folderid_roaming_appdata = {
     0x3EB685DB, 0x65F9, 0x4CF6, {0xA0, 0x3A, 0xE3, 0xEF, 0x65, 0x72, 0x9F, 0x3D}};
 
+/* SILENT FAILURE IF WRONG: CreateDirectoryW answers ERROR_ALREADY_EXISTS for a
+ * plain FILE sitting at the directory's name, not just for a directory. Taking
+ * that as success makes spdf_win_paths_state_dir() hand back a path that is not
+ * a directory; every later CreateFileW beneath it fails with
+ * ERROR_PATH_NOT_FOUND, and the state layer reports that as "you have no
+ * settings" -- so the user's recent files, window positions and session appear
+ * to have vanished, with no message and nothing pointing at the file that is in
+ * the way. Ask what is actually there, exactly as the POSIX branch below does
+ * with stat()+S_ISDIR. */
 static int mkdir_one(const char* utf8_dir) {
     wchar_t wide[SPDF_WIN_PATH_MAX];
     char extended[SPDF_WIN_PATH_MAX];
+    DWORD attrs;
     if (!spdf_win_path_to_extended(utf8_dir, extended, sizeof(extended))) return 0;
     if (spdf_win_utf16_from_utf8(extended, wide, SPDF_WIN_PATH_MAX) == SPDF_WIN_CONV_ERROR) return 0;
     if (CreateDirectoryW(wide, NULL)) return 1;
-    return GetLastError() == ERROR_ALREADY_EXISTS;
+    if (GetLastError() != ERROR_ALREADY_EXISTS) return 0;
+    attrs = GetFileAttributesW(wide);
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
 static int resolve_roaming_dir(char* out, size_t out_bytes) {
