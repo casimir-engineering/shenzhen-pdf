@@ -19,6 +19,7 @@
 #include <share.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <wchar.h>
 #include <windows.h>
 
 /* UTF-8 -> UTF-16. Caller frees. NULL on empty input or conversion failure. */
@@ -95,16 +96,28 @@ int spdf_compat_replace_file(const char* src, const char* dst) {
     return -1;
 }
 
-/* WHY THIS EXISTS. mkstemp() is not in the MSVC UCRT. _mktemp_s only picks a
+/* WHY THIS EXISTS. mkstemp() is not in the MSVC UCRT. _wmktemp_s only picks a
  * name -- it does not create the file -- so the create must be done here with
- * _O_EXCL to keep mkstemp's "created by us, exclusively" guarantee. _mktemp_s
+ * _O_EXCL to keep mkstemp's "created by us, exclusively" guarantee. _wmktemp_s
  * also destroys the template's X placeholders on failure and draws from a
  * small name space, so each attempt works on a fresh copy of the template.
  *
+ * SILENT FAILURE IF WRONG: this is the one shim that used to reach for the
+ * narrow _mktemp_s/_sopen_s pair, on bytes that are UTF-8. The narrow CRT
+ * decodes them with the process ANSI code page (CP1252 on the reference guest),
+ * so a template built from a document directory outside CP1252 -- Greek,
+ * Cyrillic, CJK, most emoji -- names a directory that does not exist. The
+ * create then fails, or worse succeeds somewhere else, and the caller
+ * (create_temp_save_path, i.e. every Save of an edited PDF) reports a generic
+ * write error or drops a mojibake temp file beside the user's document: the
+ * user's edits do not reach disk and nothing says which character did it.
+ * Widening first is what the rest of this file already does.
+ *
  * Returns an open descriptor, or -1 with errno set, matching mkstemp(). */
 int spdf_compat_mkstemp(char* template_path) {
-    char scratch[1024];
-    size_t len;
+    WCHAR* wide_template;
+    WCHAR* scratch;
+    size_t len, units, i;
     int attempt;
 
     if (!template_path) {
@@ -112,22 +125,55 @@ int spdf_compat_mkstemp(char* template_path) {
         return -1;
     }
     len = strlen(template_path);
-    if (len == 0 || len >= sizeof(scratch)) {
+    /* mkstemp() requires the six trailing placeholders; checking here is also
+     * what lets the tail be copied back byte-for-byte below. */
+    if (len < 6 || memcmp(template_path + len - 6, "XXXXXX", 6) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (len >= SPDF_COMPAT_PATH_MAX) {
         errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    wide_template = spdf_compat_widen(template_path);
+    if (!wide_template) {
+        errno = EINVAL;
+        return -1;
+    }
+    units = wcslen(wide_template) + 1;
+    scratch = (WCHAR*)malloc(units * sizeof(WCHAR));
+    if (!scratch) {
+        free(wide_template);
+        errno = ENOMEM;
         return -1;
     }
 
     for (attempt = 0; attempt < 64; ++attempt) {
         int fd = -1;
-        memcpy(scratch, template_path, len + 1);
-        if (_mktemp_s(scratch, len + 1) != 0) continue;
-        if (_sopen_s(&fd, scratch, _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY, _SH_DENYNO,
-                     _S_IREAD | _S_IWRITE) == 0) {
-            memcpy(template_path, scratch, len + 1);
+        memcpy(scratch, wide_template, units * sizeof(WCHAR));
+        if (_wmktemp_s(scratch, units) != 0) continue;
+        if (_wsopen_s(&fd, scratch, _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY, _SH_DENYNO,
+                      _S_IREAD | _S_IWRITE) == 0) {
+            /* _wmktemp_s rewrites only the six trailing 'X', and substitutes
+             * ASCII, so the UTF-8 spelling differs from the template in exactly
+             * those six bytes -- no second conversion, and no way for a
+             * round-trip to disturb the caller's buffer. */
+            for (i = 0; i < 6; ++i) template_path[len - 6 + i] = (char)scratch[units - 7 + i];
+            free(scratch);
+            free(wide_template);
             return fd;
         }
-        if (errno != EEXIST) return -1;
+        if (errno != EEXIST) {
+            int saved = errno;
+            free(scratch);
+            free(wide_template);
+            errno = saved;
+            return -1;
+        }
     }
+    free(scratch);
+    free(wide_template);
     errno = EEXIST;
     return -1;
 }

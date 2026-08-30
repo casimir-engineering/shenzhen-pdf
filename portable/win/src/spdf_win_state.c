@@ -11,11 +11,19 @@
 #include "spdf_win_paths.h"
 #include "spdf_yaml.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* --- platform file IO ---------------------------------------------------- */
+
+/* Every read_file_limited() below reports one of these through *status_out and
+ * the caller must honour the FAILED/ABSENT distinction; see the header. */
+#define READ_RESULT(status_out, value) \
+    do {                               \
+        if (status_out) *(status_out) = (value); \
+    } while (0)
 
 #if defined(_WIN32)
 
@@ -31,7 +39,25 @@ static int widen_path(const char* utf8, wchar_t* out, size_t out_units) {
     return spdf_win_utf16_from_utf8(extended, out, out_units) != SPDF_WIN_CONV_ERROR;
 }
 
-static char* read_file_limited(const char* path, size_t* len_out) {
+/* Which Win32 open errors mean "there is genuinely nothing here". Everything
+ * else -- ERROR_SHARING_VIOLATION and ERROR_ACCESS_DENIED above all, which is
+ * what an antivirus scan or an indexer holding the handle looks like -- means
+ * the file may well exist and be full of the user's state. */
+static spdf_win_state_read_status open_error_status(DWORD error) {
+    switch (error) {
+        case ERROR_FILE_NOT_FOUND:
+        case ERROR_PATH_NOT_FOUND:
+        case ERROR_INVALID_NAME:
+        case ERROR_BAD_NETPATH:
+        case ERROR_BAD_PATHNAME:
+            return SPDF_WIN_STATE_READ_ABSENT;
+        default:
+            return SPDF_WIN_STATE_READ_FAILED;
+    }
+}
+
+static char* read_file_limited(const char* path, size_t* len_out,
+                               spdf_win_state_read_status* status_out) {
     wchar_t wide[SPDF_WIN_PATH_MAX];
     HANDLE h;
     LARGE_INTEGER size;
@@ -39,12 +65,25 @@ static char* read_file_limited(const char* path, size_t* len_out) {
     char* data;
 
     if (len_out) *len_out = 0;
+    READ_RESULT(status_out, SPDF_WIN_STATE_READ_FAILED);
+    /* A path this module cannot even spell is not evidence that the file is
+     * missing, so it stays FAILED. */
     if (!widen_path(path, wide, SPDF_WIN_PATH_MAX)) return NULL;
     h = CreateFileW(wide, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
                     FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return NULL;
-    if (!GetFileSizeEx(h, &size) || size.QuadPart > SPDF_WIN_STATE_MAX_BYTES) {
+    if (h == INVALID_HANDLE_VALUE) {
+        READ_RESULT(status_out, open_error_status(GetLastError()));
+        return NULL;
+    }
+    if (!GetFileSizeEx(h, &size)) {
         CloseHandle(h);
+        return NULL;
+    }
+    if (size.QuadPart > SPDF_WIN_STATE_MAX_BYTES) {
+        /* Oversized is a property of the content, like unparseable: the
+         * inherited policy treats it as absent and lets defaults apply. */
+        CloseHandle(h);
+        READ_RESULT(status_out, SPDF_WIN_STATE_READ_ABSENT);
         return NULL;
     }
     data = (char*)malloc((size_t)size.QuadPart + 1);
@@ -61,6 +100,7 @@ static char* read_file_limited(const char* path, size_t* len_out) {
     CloseHandle(h);
     data[(size_t)size.QuadPart] = 0;
     if (len_out) *len_out = (size_t)size.QuadPart;
+    READ_RESULT(status_out, SPDF_WIN_STATE_READ_OK);
     return data;
 }
 
@@ -140,7 +180,16 @@ static void unlock_file(void* opaque) {
 #include <sys/stat.h>
 #include <unistd.h>
 
-static char* read_file_limited(const char* path, size_t* len_out) {
+/* The POSIX counterpart of open_error_status(). ENOENT/ENOTDIR are the only
+ * two errnos that actually assert nothing is there; EACCES, EPERM, EMFILE,
+ * EIO and friends all leave the file's contents unknown. */
+static spdf_win_state_read_status errno_status(int err) {
+    return (err == ENOENT || err == ENOTDIR) ? SPDF_WIN_STATE_READ_ABSENT
+                                             : SPDF_WIN_STATE_READ_FAILED;
+}
+
+static char* read_file_limited(const char* path, size_t* len_out,
+                               spdf_win_state_read_status* status_out) {
     char native[SPDF_WIN_PATH_MAX];
     struct stat st;
     FILE* f;
@@ -148,11 +197,24 @@ static char* read_file_limited(const char* path, size_t* len_out) {
     size_t got;
 
     if (len_out) *len_out = 0;
+    READ_RESULT(status_out, SPDF_WIN_STATE_READ_FAILED);
     if (!spdf_win_path_to_native(path, native, sizeof(native))) return NULL;
-    if (stat(native, &st) != 0 || !S_ISREG(st.st_mode)) return NULL;
-    if (st.st_size > SPDF_WIN_STATE_MAX_BYTES) return NULL;
+    if (stat(native, &st) != 0) {
+        READ_RESULT(status_out, errno_status(errno));
+        return NULL;
+    }
+    /* Something non-regular is occupying the name -- a directory, a device.
+     * Not absent, and emphatically not something to replace with defaults. */
+    if (!S_ISREG(st.st_mode)) return NULL;
+    if (st.st_size > SPDF_WIN_STATE_MAX_BYTES) {
+        READ_RESULT(status_out, SPDF_WIN_STATE_READ_ABSENT);
+        return NULL;
+    }
     f = fopen(native, "rb");
-    if (!f) return NULL;
+    if (!f) {
+        READ_RESULT(status_out, errno_status(errno));
+        return NULL;
+    }
     data = (char*)malloc((size_t)st.st_size + 1);
     if (!data) {
         fclose(f);
@@ -166,6 +228,7 @@ static char* read_file_limited(const char* path, size_t* len_out) {
     }
     data[got] = 0;
     if (len_out) *len_out = got;
+    READ_RESULT(status_out, SPDF_WIN_STATE_READ_OK);
     return data;
 }
 
@@ -229,18 +292,31 @@ static void unlock_file(void* opaque) {
 
 /* --- the codec boundary -------------------------------------------------- */
 
-char* spdf_win_state_read_json_at(const char* path) {
+char* spdf_win_state_read_json_at_checked(const char* path, spdf_win_state_read_status* status) {
     char* yaml;
     char* json;
+    spdf_win_state_read_status read_status = SPDF_WIN_STATE_READ_FAILED;
 
+    READ_RESULT(status, SPDF_WIN_STATE_READ_FAILED);
     if (!path || !*path) return NULL;
-    yaml = read_file_limited(path, NULL);
-    if (!yaml) return NULL;
+    yaml = read_file_limited(path, NULL, &read_status);
+    if (!yaml) {
+        READ_RESULT(status, read_status);
+        return NULL;
+    }
     json = spdf_json_from_yaml(yaml);
     free(yaml);
-    /* NULL here is the "file is unreadable, use defaults" path, not an error to
-     * report: identical to the mac and GTK behaviour for a corrupt state file. */
+    /* The bytes were obtained; only the codec refused them. That is the
+     * corrupt-file case the mac and GTK frontends have always treated as
+     * "absent, defaults apply" -- deterministic, so a rewrite is the documented
+     * recovery rather than data loss. Note the contrast with a failed OPEN
+     * above, which never lands here. */
+    READ_RESULT(status, json ? SPDF_WIN_STATE_READ_OK : SPDF_WIN_STATE_READ_ABSENT);
     return json;
+}
+
+char* spdf_win_state_read_json_at(const char* path) {
+    return spdf_win_state_read_json_at_checked(path, NULL);
 }
 
 int spdf_win_state_write_json_at(const char* path, const char* json_text) {
@@ -249,6 +325,7 @@ int spdf_win_state_write_json_at(const char* path, const char* json_text) {
     char* yaml;
     char* existing;
     size_t yaml_len, existing_len = 0;
+    spdf_win_state_read_status read_status = SPDF_WIN_STATE_READ_FAILED;
     int ok;
 
     if (!path || !*path || !json_text) return 0;
@@ -262,8 +339,23 @@ int spdf_win_state_write_json_at(const char* path, const char* json_text) {
     yaml_len = strlen(yaml);
 
     /* Skip a no-op save, as the mac app does, so the coalesced writer does not
-     * rewrite settings.yaml on every scroll-driven state tick. */
-    existing = read_file_limited(path, &existing_len);
+     * rewrite settings.yaml on every scroll-driven state tick.
+     *
+     * SILENT FAILURE IF WRONG: this read has a second job the comparison does
+     * not advertise. If it comes back FAILED -- the file is locked by an
+     * antivirus scan, a backup agent has it open, a permission changed under us
+     * -- then what is on disk is unknown, and the replace below would drop
+     * whatever this process happens to hold in memory (on a cold start, the
+     * defaults) on top of the user's real settings, session and recent-files
+     * list. It would report success while doing it. Refusing the write costs
+     * one skipped tick; the caller writes again on the next one, and by then
+     * the lock is usually gone. */
+    existing = read_file_limited(path, &existing_len, &read_status);
+    if (read_status == SPDF_WIN_STATE_READ_FAILED) {
+        free(existing);
+        free(yaml);
+        return 0;
+    }
     if (existing) {
         int same = existing_len == yaml_len && memcmp(existing, yaml, yaml_len) == 0;
         free(existing);
@@ -283,10 +375,18 @@ int spdf_win_state_write_json_at(const char* path, const char* json_text) {
     return ok;
 }
 
-char* spdf_win_state_read_json(const char* name) {
+char* spdf_win_state_read_json_checked(const char* name, spdf_win_state_read_status* status) {
     char path[SPDF_WIN_PATH_MAX];
+    READ_RESULT(status, SPDF_WIN_STATE_READ_FAILED);
+    /* An unresolvable state directory is FAILED, not ABSENT: after the F6 fix
+     * this is what a file squatting on the state directory's name looks like,
+     * and answering "absent" there is how the settings got overwritten. */
     if (!spdf_win_paths_state_file(name, path, sizeof(path))) return NULL;
-    return spdf_win_state_read_json_at(path);
+    return spdf_win_state_read_json_at_checked(path, status);
+}
+
+char* spdf_win_state_read_json(const char* name) {
+    return spdf_win_state_read_json_checked(name, NULL);
 }
 
 int spdf_win_state_write_json(const char* name, const char* json_text) {
