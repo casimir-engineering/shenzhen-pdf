@@ -19,14 +19,22 @@
     if ([panel runModal] == NSModalResponseOK) [self openPath:panel.URL.path];
 }
 
+// Opening a document needs a chooser that hands the selection back to the app.
+// Shenzhen Files can only open a window at a folder, so it is deliberately NOT
+// on this path -- routing Open... to it would replace "pick a file" with "look
+// at a file manager". The file-manager preference governs revealing a path,
+// which is a genuine "take me there" request; see -showPathInFolder:.
 - (void)browseForDocumentInDirectory:(NSString*)directory {
-    __weak ShenzhenMacDelegate* weakSelf = self;
-    SPDFMacSystemBrowseHandler pick = ^(NSURL* directoryURL) {
-      [weakSelf runOpenPanelInDirectory:directoryURL];
-    };
-    // A missing/unreadable folder never reaches a file manager; open the picker
-    // wherever macOS last left it rather than failing the command.
-    if (!SPDFMacBrowseDirectoryUsingPreference(directory ?: @"", pick)) [self runOpenPanelInDirectory:nil];
+    NSString* standardized = directory.stringByStandardizingPath;
+    BOOL isDirectory = NO;
+    // A missing or unreadable folder opens the picker wherever macOS last left
+    // it rather than failing the command.
+    if (!standardized.length ||
+        ![NSFileManager.defaultManager fileExistsAtPath:standardized isDirectory:&isDirectory] || !isDirectory) {
+        [self runOpenPanelInDirectory:nil];
+        return;
+    }
+    [self runOpenPanelInDirectory:[NSURL fileURLWithPath:standardized isDirectory:YES]];
 }
 
 - (void)openDocument:(id)sender {
@@ -35,13 +43,13 @@
 }
 
 // Cmd+Shift+O: type or paste a path to jump straight to it. A file opens
-// directly; a folder opens the preferred file manager there (or the standard
-// Open panel rooted at it). Handy for pasting a path from a terminal or a chat.
+// directly; a folder opens the standard Open panel rooted at it. Handy for
+// pasting a path from a terminal or a chat.
 - (void)openPathPrompt:(id)sender {
     (void)sender;
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = @"Open Path";
-    alert.informativeText = @"Enter a file or folder path. A folder opens the file browser there.";
+    alert.informativeText = @"Enter a file or folder path. A folder opens the Open panel there.";
     [alert addButtonWithTitle:@"Open"];
     [alert addButtonWithTitle:@"Cancel"];
     NSTextField* field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 420, 24)];
@@ -59,7 +67,7 @@
 }
 
 // Resolves a user-entered path (file:// URL, ~ expansion, trimming) and either
-// opens the file or browses the folder with the preferred file manager.
+// opens the file or points the Open panel at the folder.
 - (void)openResolvedPath:(NSString*)input {
     NSString* path = [input stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!path.length) return;

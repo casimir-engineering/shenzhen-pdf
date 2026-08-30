@@ -213,88 +213,7 @@ static void test_fallbacks(void) {
     remove_fixture(path);
 }
 
-// A browse targets a FOLDER: a file path resolves to its containing directory.
-static void test_browse_routes(void) {
-    NSString* file = make_fixture(NO);
-    NSString* directory = file.stringByDeletingLastPathComponent;
-    NSURL* appURL = [NSURL fileURLWithPath:@"/Applications/Shenzhen Files.app" isDirectory:YES];
-
-    __block NSInteger launchCount = 0;
-    __block NSInteger browseCount = 0;
-    BOOL accepted = SPDFMacBrowseDirectoryWithHandlers(
-        file, SPDFMacFileExplorerShenzhenFiles,
-        ^NSURL*(NSString* bundleIdentifier) {
-          CHECK([bundleIdentifier isEqualToString:SPDFMacShenzhenFilesBundleIdentifier],
-                "unexpected Shenzhen Files bundle identifier");
-          return appURL;
-        },
-        ^(NSURL* applicationURL, NSArray<NSURL*>* URLs, void (^completion)(NSError*)) {
-          launchCount++;
-          CHECK([applicationURL isEqual:appURL], "browse launcher received the wrong application");
-          CHECK(URLs.count == 1 && [URLs.firstObject.path isEqualToString:directory],
-                "browse did not resolve the file to its containing folder");
-          completion(nil);
-        },
-        ^(NSURL* directoryURL) {
-          (void)directoryURL;
-          browseCount++;
-        });
-    CHECK(accepted && launchCount == 1, "Shenzhen Files browse was not launched");
-    CHECK(browseCount == 0, "a successful Shenzhen Files browse also opened the native picker");
-
-    // The system route never consults Shenzhen Files and hands back the folder.
-    __block NSInteger systemBrowseCount = 0;
-    accepted = SPDFMacBrowseDirectoryWithHandlers(
-        directory, SPDFMacFileExplorerSystem,
-        ^NSURL*(NSString* bundleIdentifier) {
-          (void)bundleIdentifier;
-          CHECK(NO, "system browse consulted Shenzhen Files");
-          return nil;
-        },
-        ^(NSURL* applicationURL, NSArray<NSURL*>* URLs, void (^completion)(NSError*)) {
-          (void)applicationURL;
-          (void)URLs;
-          (void)completion;
-          CHECK(NO, "system browse launched Shenzhen Files");
-        },
-        ^(NSURL* directoryURL) {
-          systemBrowseCount++;
-          CHECK([directoryURL.path isEqualToString:directory], "system browse received the wrong folder");
-        });
-    CHECK(accepted && systemBrowseCount == 1, "system browse did not run exactly once");
-    remove_fixture(file);
-}
-
-static void test_browse_fallbacks(void) {
-    NSString* directory = make_fixture(YES);
-    for (NSInteger mode = 0; mode < 2; ++mode) {
-        __block NSInteger browseCount = 0;
-        BOOL accepted = SPDFMacBrowseDirectoryWithHandlers(
-            directory, SPDFMacFileExplorerShenzhenFiles,
-            ^NSURL*(NSString* bundleIdentifier) {
-              (void)bundleIdentifier;
-              return mode == 0 ? nil : [NSURL fileURLWithPath:@"/Applications/Shenzhen Files.app"];
-            },
-            ^(NSURL* applicationURL, NSArray<NSURL*>* URLs, void (^completion)(NSError*)) {
-              (void)applicationURL;
-              (void)URLs;
-              completion([NSError errorWithDomain:@"test" code:1 userInfo:nil]);
-            },
-            ^(NSURL* directoryURL) {
-              browseCount++;
-              CHECK([directoryURL.path isEqualToString:directory], "browse fallback received the wrong folder");
-            });
-        CHECK(accepted && browseCount == 1, "a failed Shenzhen Files browse did not fall back exactly once");
-    }
-    CHECK(!SPDFMacBrowseDirectoryWithHandlers(@"/definitely/missing", SPDFMacFileExplorerSystem, nil, nil,
-                                              ^(NSURL* directoryURL) { (void)directoryURL; }),
-          "a missing browse target was accepted");
-    CHECK(!SPDFMacBrowseDirectoryWithHandlers(directory, SPDFMacFileExplorerShenzhenFiles, nil, nil, nil),
-          "a browse without a fallback handler was accepted");
-    remove_fixture(directory);
-}
-
-// Open... and the Cmd+Shift+O folder branch both start here.
+// The folder the native Open panel starts in.
 static void test_browse_start_directory(void) {
     NSString* file = make_fixture(NO);
     NSString* directory = file.stringByDeletingLastPathComponent;
@@ -324,8 +243,6 @@ int main(void) {
         test_system_route();
         test_shenzhen_route();
         test_fallbacks();
-        test_browse_routes();
-        test_browse_fallbacks();
         test_browse_start_directory();
     }
     if (failures) return 1;

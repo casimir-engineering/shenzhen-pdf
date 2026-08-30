@@ -161,7 +161,7 @@ NSString* SPDFMacBrowseStartDirectory(NSString* documentPath, NSArray<NSString*>
     return NSHomeDirectory();
 }
 
-// Shared launch policy for reveal and browse: hand `fileURL` to Shenzhen Files
+// Launch policy for reveal: hand `fileURL` to Shenzhen Files
 // when the resolved preference asks for it, and fall back to `fallback` when it
 // is missing or the launch fails.
 static void spdf_open_in_explorer(NSURL* fileURL, SPDFMacFileExplorerPreference preference,
@@ -199,29 +199,6 @@ BOOL SPDFMacRevealPathWithHandlers(NSString* path, SPDFMacFileExplorerPreference
     return YES;
 }
 
-BOOL SPDFMacBrowseDirectoryWithHandlers(NSString* path, SPDFMacFileExplorerPreference preference,
-                                        SPDFMacExplorerApplicationLookup lookup,
-                                        SPDFMacExplorerApplicationLauncher launcher,
-                                        SPDFMacSystemBrowseHandler systemBrowse) {
-    if (!path.length || !systemBrowse) return NO;
-
-    NSString* standardized = path.stringByStandardizingPath;
-    if (!standardized.length) return NO;
-    BOOL isDirectory = NO;
-    if (![NSFileManager.defaultManager fileExistsAtPath:standardized isDirectory:&isDirectory]) return NO;
-    // A file browses its containing folder — Shenzhen Files opens folders.
-    if (!isDirectory) {
-        standardized = standardized.stringByDeletingLastPathComponent;
-        if (!standardized.length) return NO;
-    }
-
-    NSURL* directoryURL = [NSURL fileURLWithPath:standardized isDirectory:YES];
-    spdf_open_in_explorer(directoryURL, preference, lookup, launcher, ^{
-      systemBrowse(directoryURL);
-    });
-    return YES;
-}
-
 static SPDFMacExplorerApplicationLookup spdf_workspace_lookup(void) {
     return ^NSURL*(NSString* bundleIdentifier) {
       return [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:bundleIdentifier];
@@ -253,24 +230,4 @@ BOOL SPDFMacRevealPath(NSString* path, SPDFMacFileExplorerPreference preference)
 
 BOOL SPDFMacRevealPathUsingPreference(NSString* path) {
     return SPDFMacRevealPath(path, SPDFMacCurrentFileExplorerPreference());
-}
-
-BOOL SPDFMacBrowseDirectory(NSString* path, SPDFMacFileExplorerPreference preference,
-                            SPDFMacSystemBrowseHandler systemBrowse) {
-    if (!systemBrowse) return NO;
-    // The fallback may present a modal panel, and a failed launch reports back
-    // on a background queue, so pin it to the main thread here.
-    SPDFMacSystemBrowseHandler mainThreadBrowse = ^(NSURL* directoryURL) {
-      if (NSThread.isMainThread) {
-          systemBrowse(directoryURL);
-          return;
-      }
-      dispatch_async(dispatch_get_main_queue(), ^{ systemBrowse(directoryURL); });
-    };
-    return SPDFMacBrowseDirectoryWithHandlers(path, preference, spdf_workspace_lookup(), spdf_workspace_launcher(),
-                                              mainThreadBrowse);
-}
-
-BOOL SPDFMacBrowseDirectoryUsingPreference(NSString* path, SPDFMacSystemBrowseHandler systemBrowse) {
-    return SPDFMacBrowseDirectory(path, SPDFMacCurrentFileExplorerPreference(), systemBrowse);
 }
