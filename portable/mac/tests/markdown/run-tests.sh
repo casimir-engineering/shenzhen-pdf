@@ -84,6 +84,7 @@ $ROOT/portable/mac/markdown/SPDFMarkdownAsync.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDocument.mm
 "
 
+TESTS=""
 for TEST in \
     SPDFMarkdownParserTests \
     SPDFMarkdownHTMLTests \
@@ -100,13 +101,40 @@ for TEST in \
     SPDFMarkdownPDFAdapterTests \
     SPDFMarkdownPerformanceTests
 do
-    # Intentional word splitting: SOURCES contains one shell-safe repository path per line.
-    # SANITIZER_FLAGS is also an intentional caller-supplied compiler flag list.
+    TESTS="$TESTS $TEST"
+done
+
+CXXFLAGS="-isysroot $SDKROOT -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror $SANITIZER_FLAGS \
+-I$ROOT/portable/mac/markdown -I$ROOT/portable/core"
+
+# The shared sources are identical for every test binary, so compile each ONE
+# object once and link it into all of them. Compiling the whole list per test
+# rebuilt the same ~30 translation units for each of the ~14 suites.
+SHARED_OBJS=""
+COMPILE_PIDS=""
+for SRC in $SOURCES; do
+    OBJ="$BUILD_DIR/shared-$(basename "$SRC" .mm).o"
+    SHARED_OBJS="$SHARED_OBJS $OBJ"
     # shellcheck disable=SC2086
-    "$CXX" -isysroot "$SDKROOT" -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror \
-        $SANITIZER_FLAGS \
-        -I"$ROOT/portable/mac/markdown" -I"$ROOT/portable/core" \
-        $SOURCES "$SCRIPT_DIR/$TEST.mm" "$BUILD_DIR/md4c.o" "$BUILD_DIR/spdf_recolor.o" $GUMBO_OBJS \
+    "$CXX" $CXXFLAGS -c "$SRC" -o "$OBJ" &
+    COMPILE_PIDS="$COMPILE_PIDS $!"
+done
+for SRC in $TESTS; do
+    OBJ="$BUILD_DIR/test-$SRC.o"
+    # shellcheck disable=SC2086
+    "$CXX" $CXXFLAGS -c "$SCRIPT_DIR/$SRC.mm" -o "$OBJ" &
+    COMPILE_PIDS="$COMPILE_PIDS $!"
+done
+for PID in $COMPILE_PIDS; do
+    wait "$PID"
+done
+
+for TEST in $TESTS
+do
+    # Intentional word splitting: the object lists are shell-safe build paths.
+    # shellcheck disable=SC2086
+    "$CXX" -isysroot "$SDKROOT" $SANITIZER_FLAGS \
+        $SHARED_OBJS "$BUILD_DIR/test-$TEST.o" "$BUILD_DIR/md4c.o" "$BUILD_DIR/spdf_recolor.o" $GUMBO_OBJS \
         -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
         -o "$BUILD_DIR/$TEST"
     "$BUILD_DIR/$TEST"
