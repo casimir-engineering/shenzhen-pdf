@@ -4,6 +4,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class SPDFMarkdownDiagramLayout;
 @class SPDFMarkdownPage;
 @class SPDFMarkdownPaginationItem;
 
@@ -17,6 +18,9 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownPageDecorationType) {
     SPDFMarkdownPageDecorationTypeTableHeaderBand,
     SPDFMarkdownPageDecorationTypeTableStripe,
     SPDFMarkdownPageDecorationTypeTableGridLine,
+    // One native diagram's vector artwork: the decoration carries the whole
+    // resolved shape list (see diagramLayout below), never a bitmap.
+    SPDFMarkdownPageDecorationTypeDiagram,
 };
 
 // The user-switchable reading theme. Light is the GitHub-Primer palette the
@@ -114,9 +118,18 @@ FOUNDATION_EXPORT const CGFloat SPDFMarkdownCodeBoxOuterMargin;
 @property(nonatomic, readonly) SPDFMarkdownPageDecorationType type;
 @property(nonatomic, readonly) NSRect rect;
 @property(nonatomic, readonly) NSUInteger blockIndex;
+// Non-nil only for SPDFMarkdownPageDecorationTypeDiagram: the resolved vector
+// layout whose shapes fill `rect`. The layout's own size gives the drawing
+// scale (rect width over layout width), so an over-tall scaled band and a
+// natural one share one painting path.
+@property(nonatomic, readonly, nullable) SPDFMarkdownDiagramLayout* diagramLayout;
 - (instancetype)initWithType:(SPDFMarkdownPageDecorationType)type
                         rect:(NSRect)rect
-                  blockIndex:(NSUInteger)blockIndex NS_DESIGNATED_INITIALIZER;
+                  blockIndex:(NSUInteger)blockIndex
+               diagramLayout:(nullable SPDFMarkdownDiagramLayout*)diagramLayout NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithType:(SPDFMarkdownPageDecorationType)type
+                        rect:(NSRect)rect
+                  blockIndex:(NSUInteger)blockIndex;
 - (instancetype)init NS_UNAVAILABLE;
 @end
 

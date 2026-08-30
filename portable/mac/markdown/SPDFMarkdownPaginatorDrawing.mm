@@ -2,6 +2,7 @@
 
 #import <CoreText/CoreText.h>
 
+#import "SPDFMarkdownDiagramBand.h"
 #import "SPDFMarkdownTableDecorations.h"
 
 // Concrete-palette drawing of a planned page into any Core Graphics context
@@ -178,6 +179,11 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
             CGContextAddPath(context, path);
             CGContextStrokePath(context);
             CGPathRelease(path);
+        } else if (decoration.type == SPDFMarkdownPageDecorationTypeDiagram) {
+            // Native diagram artwork: pure vector paths in the plan's palette,
+            // crisp at any zoom and vector in the PDF. Its labels are ordinary
+            // canonical text and are painted by the text pass below.
+            SPDFMarkdownDrawDiagramShapes(context, decoration.diagramLayout, rect, theme.variant);
         } else if (decoration.type == SPDFMarkdownPageDecorationTypeTableHeaderBand ||
                    decoration.type == SPDFMarkdownPageDecorationTypeTableStripe ||
                    decoration.type == SPDFMarkdownPageDecorationTypeTableGridLine) {

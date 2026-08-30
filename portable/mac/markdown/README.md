@@ -33,8 +33,9 @@ fragments, selection, and pagination all refer directly to ranges in this
 string. It includes rendered structure such as list/task markers, callout
 titles, table separators, thematic rules, image attachment characters and
 image captions/placeholders. A fenced diagram is the one code fence whose
-SOURCE is NOT canonical: it is replaced by a single attachment character, the
-same way an image is (an unrenderable diagram fence keeps its source text as
+SOURCE is NOT canonical: it is replaced by the diagram's own LABELS, which ARE
+canonical text — selectable, searchable, and positioned inside the diagram by
+the pagination band (an unrenderable diagram fence keeps its source text as
 ordinary, searchable code). Visible text emitted from sanitized HTML islands
 is searchable/selectable exactly like markdown text; raw tag text never
 appears in the canonical string. Consumers must never translate ranges through
@@ -245,14 +246,24 @@ Missing/unknown fences remain uncolored and can be assigned through
 ## Diagrams
 
 Fenced `mermaid`, `sequence` (js-sequence) and `flow` (flowchart.js) blocks
-render as native figures: pure parsing plus Core Graphics, with no web engine,
-no JavaScript and no network. The whole engine sits behind one seam,
-`SPDFMarkdownDiagram.h`:
+render as native VECTOR artwork: pure parsing plus geometry, with no web
+engine, no JavaScript, no network and no bitmaps. The whole engine sits behind
+one seam, `SPDFMarkdownDiagram.h`:
 
 ```objc
 SPDFMarkdownDiagramIsDiagramLanguage(fenceIdentifier);  // O(1) fence triage
-SPDFMarkdownDiagramRender(language, source, width, fontScale, variant, cache);
+SPDFMarkdownDiagramRender(language, source, width, fontScale, cache);
 ```
+
+**The seam returns GEOMETRY, not pixels.** An `SPDFMarkdownDiagramLayout` is a
+logical size plus two lists: vector `SPDFMarkdownDiagramShape` primitives
+(rounded rect, ellipse, polygon, polyline with optional dash, filled pie slice)
+and single-line `SPDFMarkdownDiagramLabel` text placements, all in
+diagram-local y-down points. Every shape and label carries a color ROLE
+(`SPDFMarkdownDiagramRole`), never a color, so one resolved layout serves both
+reading themes; `SPDFMarkdownDiagramRoleColor(role, variant)` resolves a role
+at draw time. Layouts are theme-independent, which is why the cache key has no
+variant in it.
 
 Implemented types: mermaid `graph`/`flowchart` (TD/TB/BT/LR/RL, rect, round,
 stadium, circle, diamond and subroutine shapes, labelled solid/dashed/thick
@@ -262,36 +273,62 @@ activations, `alt`/`opt`/`loop`/`par`/`critical`/`rect` frames), `pie`,
 relation set) and `gantt` (`YYYY-MM-DD` dates, durations, `after` chains,
 `done`/`active`/`crit`). `sequence` fences use the js-sequence grammar
 (including its `Title:` line) and `flow` fences the flowchart.js
-`id=>type: text` grammar with branch qualifiers.
+`id=>type: text` grammar with branch qualifiers. A classDiagram box shows only
+the compartments it has members for: a class with neither attributes nor
+methods is a single named box, never two empty strips.
 
 Simplifications, all deliberate and all lossless on the page: flowchart
 `subgraph` grouping, `classDef`/`style`/`linkStyle`/`click` statements,
 composite-state braces, state notes, class cardinality strings and mermaid's
 `autonumber` are skipped, though their members still render.
 
+**Diagram labels are canonical text.** `SPDFMarkdownDiagramBlock.mm` appends
+every label into the attributed string as its own tab-separated run and records
+the label ranges on the rendered block (`SPDFMarkdownDiagramBlockInfo`, see
+`SPDFMarkdownDiagramBand.h`). Diagram text therefore lives in the SAME
+canonical coordinate space as ordinary paragraph text: it is selectable by
+dragging, found and highlighted by Cmd+F, copied with the selection, and
+exported as real PDF text. Only the fence SOURCE stays out of the string.
+
+**Layout is one atomic band.** `SPDFMarkdownMeasureDiagramItem` turns the block
+into a single `bandLayout` pagination item: one zero-length spacer line
+spanning the whole band, then one positioned line per label whose `xOffset`
+centers the label's real typographic width inside its own node box and whose
+`rowLocalYOffset` is the label's resolved y. The band never splits across a
+page break, stays centered in the printable column, and an over-tall one takes
+the existing uniform band scale. A diagram wider than the column is fitted at
+render time by ONE common factor applied to geometry AND label font sizes —
+never clipped.
+
+**Shapes are page decorations.** The band contributes one
+`SPDFMarkdownPageDecorationTypeDiagram` decoration carrying the resolved
+layout; `SPDFMarkdownDrawDiagramShapes` paints it as plain Core Graphics paths
+under the text pass. Screen canvas, print, Save-as-PDF and copy-page all go
+through that single draw path, so diagrams are WYSIWYG everywhere, crisp at any
+zoom, and vector in the export (a PDF page carrying a diagram has no image
+XObject at all).
+
 **Degradation is the contract.** The seam returns nil — never a partial or
 approximate drawing — on an unsupported sub-type, ANY syntax error, or a
 budget overrun, and the caller then runs the unchanged code-box path: the
 fence keeps its highlighted source, its canonical text, and its language pill.
 The budgets are hard: 200 nodes/actors/slices/tasks, 400 edges/events, a 50 ms
-layout deadline, and 4096 px per bitmap axis.
+layout deadline, and 2048 pt per diagram axis.
 
 **Speed.** A document with no diagram fence does zero diagram work: the only
 cost is one lowercased first-token comparison per code fence.
-`SPDFMarkdownDiagramWorkCount()` counts real parse+layout+raster attempts and
-is the test-visible proof of both that and the cache.
+`SPDFMarkdownDiagramWorkCount()` counts real parse+layout attempts and is the
+test-visible proof of both that and the cache.
 `SPDFMarkdownRenderOptions.diagramCache` carries one thread-safe
 `SPDFMarkdownDiagramCache` per session, held BY REFERENCE across
-`-copyWithZone:`; it is keyed by (source, language, variant, fontScale, width)
-and caches failures too, so a theme or text-size change re-rasterizes while
-every other rerender — a remote image arriving, a language override, a
-self-heal — reuses the existing bitmaps. Diagrams are drawn at 2x into
-bitmap-backed images and reserved as centered figure attachments
-(`SPDFMarkdownImageLayoutRoleFigure`), recorded as PARAGRAPH blocks so
-pagination never plans a code box or a language pill behind one.
+`-copyWithZone:`; it is keyed by (source, language, fontScale, width) and
+caches failures too, so a text-size or width change recomputes geometry while
+every other rerender — a theme switch, a remote image arriving, a language
+override, a self-heal — reuses the resolved layouts.
 
 `dist/diagram-demo.md` exercises every implemented type plus the degradation
 cases.
+
 
 ## Pagination and drawing
 

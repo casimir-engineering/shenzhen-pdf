@@ -4,7 +4,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-// Internal model, parser, layout and raster seams of the diagram engine.
+// Internal model, parser, layout and shape-emitter seams of the diagram engine.
 // Everything here is deterministic and side-effect free; the only public
 // surface is SPDFMarkdownDiagram.h. Tests import this header directly.
 
@@ -154,14 +154,67 @@ FOUNDATION_EXPORT NSArray<NSString*>* SPDFMarkdownDiagramSignificantLines(NSStri
 FOUNDATION_EXPORT NSString* SPDFMarkdownDiagramTrim(NSString* string);
 FOUNDATION_EXPORT NSString* SPDFMarkdownDiagramCleanLabel(NSString* label);
 
-// Text helpers shared by every rasterizer (SPDFMarkdownDiagramModel.mm).
+// Text helpers shared by every shape emitter (SPDFMarkdownDiagramModel.mm).
+// Wrapping is explicit — a diagram label is always ONE line, so the emitters
+// break a long string themselves and place each line at its own position.
+FOUNDATION_EXPORT NSArray<NSString*>* SPDFMarkdownDiagramWrapText(NSString* text, NSFont* font,
+                                                                  CGFloat maximumWidth);
+FOUNDATION_EXPORT CGFloat SPDFMarkdownDiagramLineHeight(NSFont* font);
 FOUNDATION_EXPORT NSSize SPDFMarkdownDiagramMeasureText(NSString* text, NSFont* font, CGFloat maximumWidth);
-FOUNDATION_EXPORT void SPDFMarkdownDiagramDrawText(NSString* text, NSRect rect, NSFont* font, NSColor* color,
-                                                   NSTextAlignment alignment);
-// 2x bitmap canvas: `draw` runs in a flipped (y-down), point-scaled context.
-// Returns nil when either bitmap axis would exceed the raster budget.
-FOUNDATION_EXPORT NSImage* _Nullable SPDFMarkdownDiagramCreateCanvas(NSSize logicalSize,
-                                                                     void (NS_NOESCAPE ^ draw)(void));
+
+// The geometry recorder every emitter draws into: it appends vector primitives
+// and single-line text labels in DIAGRAM-LOCAL, y-down points (see
+// SPDFMarkdownDiagram.h). Every add returns the shape it appended so the
+// caller can tune alpha; painting order is emission order.
+@interface SPDFMarkdownDiagramCanvas : NSObject
+@property(nonatomic, readonly) NSArray<SPDFMarkdownDiagramShape*>* shapes;
+@property(nonatomic, readonly) NSArray<SPDFMarkdownDiagramLabel*>* labels;
+- (SPDFMarkdownDiagramShape*)addRect:(NSRect)rect
+                              radius:(CGFloat)cornerRadius
+                                fill:(SPDFMarkdownDiagramRole)fill
+                              stroke:(SPDFMarkdownDiagramRole)stroke
+                               width:(CGFloat)lineWidth;
+- (SPDFMarkdownDiagramShape*)addEllipse:(NSRect)rect
+                                   fill:(SPDFMarkdownDiagramRole)fill
+                                 stroke:(SPDFMarkdownDiagramRole)stroke
+                                  width:(CGFloat)lineWidth;
+- (SPDFMarkdownDiagramShape*)addPolygon:(NSArray<NSValue*>*)points
+                                   fill:(SPDFMarkdownDiagramRole)fill
+                                 stroke:(SPDFMarkdownDiagramRole)stroke
+                                  width:(CGFloat)lineWidth;
+- (SPDFMarkdownDiagramShape*)addPolyline:(NSArray<NSValue*>*)points
+                                  stroke:(SPDFMarkdownDiagramRole)stroke
+                                   width:(CGFloat)lineWidth
+                                    dash:(CGFloat)dashLength;
+- (SPDFMarkdownDiagramShape*)addLineFrom:(NSPoint)start
+                                      to:(NSPoint)end
+                                  stroke:(SPDFMarkdownDiagramRole)stroke
+                                   width:(CGFloat)lineWidth
+                                    dash:(CGFloat)dashLength;
+- (SPDFMarkdownDiagramShape*)addPieSliceAt:(NSPoint)center
+                                    radius:(CGFloat)radius
+                                startAngle:(CGFloat)startAngle
+                                     sweep:(CGFloat)sweepAngle
+                                      fill:(SPDFMarkdownDiagramRole)fill
+                                    stroke:(SPDFMarkdownDiagramRole)stroke
+                                     width:(CGFloat)lineWidth;
+// Wraps `text` to the rect's width and stacks one label per line from the
+// rect's top, aligned inside the rect's horizontal box.
+- (void)addText:(nullable NSString*)text
+         inRect:(NSRect)rect
+           font:(NSFont*)font
+           role:(SPDFMarkdownDiagramRole)role
+      alignment:(NSTextAlignment)alignment;
+@end
+
+// Closes a canvas into a resolved layout at its natural size: refuses (nil)
+// any diagram past the dimension budget, then fits an over-wide diagram to
+// contentWidth by scaling geometry AND label font sizes by ONE factor.
+FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramFinishLayout(
+    SPDFMarkdownDiagramCanvas* canvas, NSSize naturalSize, CGFloat contentWidth);
+
+// The categorical ramp role for the nth slice/bar (wraps at six).
+FOUNDATION_EXPORT SPDFMarkdownDiagramRole SPDFMarkdownDiagramRampRole(NSUInteger index);
 
 // Parsers. Every parser returns nil on malformed or over-budget input.
 FOUNDATION_EXPORT SPDFMarkdownDiagramGraph* _Nullable SPDFMarkdownDiagramParseMermaidFlowchart(NSString* source);
@@ -181,20 +234,16 @@ FOUNDATION_EXPORT SPDFMarkdownDiagramGantt* _Nullable SPDFMarkdownDiagramParseGa
 FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramLayoutGraph(SPDFMarkdownDiagramGraph* graph, CGFloat nodeGap,
                                                       CGFloat rankGap, CFAbsoluteTime deadline, NSSize* outSize);
 
-// Rasterizers: measured+laid-out models -> 2x bitmap + logical size, or nil
-// when the raster budget is exceeded. fontScale scales every font and gap.
-FOUNDATION_EXPORT SPDFMarkdownDiagramImage* _Nullable SPDFMarkdownDiagramRasterizeGraph(
-    SPDFMarkdownDiagramGraph* graph, CGFloat contentWidth, CGFloat fontScale, SPDFMarkdownDiagramPalette* palette,
-    CFAbsoluteTime deadline);
-FOUNDATION_EXPORT SPDFMarkdownDiagramImage* _Nullable SPDFMarkdownDiagramRasterizeSequence(
-    SPDFMarkdownDiagramSequence* sequence, CGFloat contentWidth, CGFloat fontScale,
-    SPDFMarkdownDiagramPalette* palette);
-FOUNDATION_EXPORT SPDFMarkdownDiagramImage* _Nullable SPDFMarkdownDiagramRasterizePie(
-    SPDFMarkdownDiagramPie* pie, CGFloat contentWidth, CGFloat fontScale, SPDFMarkdownDiagramPalette* palette);
-FOUNDATION_EXPORT SPDFMarkdownDiagramImage* _Nullable SPDFMarkdownDiagramRasterizeGantt(
-    SPDFMarkdownDiagramGantt* gantt, CGFloat contentWidth, CGFloat fontScale, SPDFMarkdownDiagramPalette* palette);
-
-// SPDFMarkdownDiagram.mm internal constructor, exposed for the rasterizers.
-FOUNDATION_EXPORT SPDFMarkdownDiagramImage* SPDFMarkdownDiagramImageMake(NSImage* image, NSSize logicalSize);
+// Shape emitters: measured+laid-out models -> resolved vector layout, or nil
+// when a budget is exceeded. fontScale scales every font and gap.
+FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutGraph(
+    SPDFMarkdownDiagramGraph* graph, CGFloat contentWidth, CGFloat fontScale, CFAbsoluteTime deadline);
+FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutSequence(
+    SPDFMarkdownDiagramSequence* sequence, CGFloat contentWidth, CGFloat fontScale);
+FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutPie(SPDFMarkdownDiagramPie* pie,
+                                                                                    CGFloat contentWidth,
+                                                                                    CGFloat fontScale);
+FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutGantt(
+    SPDFMarkdownDiagramGantt* gantt, CGFloat contentWidth, CGFloat fontScale);
 
 NS_ASSUME_NONNULL_END

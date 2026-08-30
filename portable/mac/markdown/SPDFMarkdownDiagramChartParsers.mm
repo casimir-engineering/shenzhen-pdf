@@ -180,7 +180,7 @@ SPDFMarkdownDiagramGantt* SPDFMarkdownDiagramParseGantt(NSString* source) {
         if (task.taskIdentifier.length) byIdentifier[task.taskIdentifier] = task;
         cursorEndDay = task.endDay;
         if (gantt.taskCount > SPDFMarkdownDiagramMaximumNodes) return nil;
-        // Keep the axis bounded: a pathological span would explode the raster.
+        // Keep the axis bounded: a pathological span would explode the chart.
         if (task.endDay - task.startDay > 3660) return nil;
     }
     gantt.epoch = epoch;

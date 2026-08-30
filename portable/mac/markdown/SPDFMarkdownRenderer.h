@@ -11,6 +11,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class SPDFMarkdownTableRowInfo;
+@class SPDFMarkdownDiagramBlockInfo;
 @class SPDFMarkdownDiagramCache;
 
 FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownBlockIndexAttribute;
@@ -52,9 +53,10 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 // Shared, thread-safe render cache for native diagram fences (mermaid /
 // sequence / flow — see SPDFMarkdownDiagram.h). One cache lives per document
 // session and is carried by REFERENCE through -copyWithZone: (never deep
-// copied), so theme and text-size rerenders reuse rasters whose key still
-// matches. nil (the default) simply means no caching: diagrams still render,
-// they are just re-rasterized every pass.
+// copied), so text-size rerenders reuse the resolved layouts whose key still
+// matches — and a THEME switch reuses all of them, since a layout carries color
+// roles rather than colors. nil (the default) simply means no caching: diagrams
+// still render, their geometry is just recomputed every pass.
 @property(nonatomic, strong, nullable) SPDFMarkdownDiagramCache* diagramCache;
 @property(nonatomic, strong) NSColor* textColor;
 @property(nonatomic, strong) NSColor* secondaryTextColor;
@@ -77,12 +79,25 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 // the renderer so the pagination plan can draw the table grid decoration
 // without re-deriving tab-stop math (see SPDFMarkdownTableDecorations.h).
 @property(nonatomic, readonly, nullable) SPDFMarkdownTableRowInfo* tableRowInfo;
+// Non-nil only for native diagram fences: the block's resolved vector layout
+// and the canonical range of each of its labels (see SPDFMarkdownDiagramBand.h).
+// The diagram's LABEL TEXT is part of this block's attributed range, so it is
+// selectable, searchable and exported as text like any other paragraph.
+@property(nonatomic, readonly, nullable) SPDFMarkdownDiagramBlockInfo* diagramInfo;
 - (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
                               kind:(SPDFMarkdownBlockKind)kind
                    attributedRange:(NSRange)attributedRange
                              level:(NSUInteger)level
                              depth:(NSUInteger)depth
-                      tableRowInfo:(nullable SPDFMarkdownTableRowInfo*)tableRowInfo NS_DESIGNATED_INITIALIZER;
+                      tableRowInfo:(nullable SPDFMarkdownTableRowInfo*)tableRowInfo
+                       diagramInfo:(nullable SPDFMarkdownDiagramBlockInfo*)diagramInfo
+    NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
+                              kind:(SPDFMarkdownBlockKind)kind
+                   attributedRange:(NSRange)attributedRange
+                             level:(NSUInteger)level
+                             depth:(NSUInteger)depth
+                      tableRowInfo:(nullable SPDFMarkdownTableRowInfo*)tableRowInfo;
 - (instancetype)initWithBlockIndex:(NSUInteger)blockIndex
                               kind:(SPDFMarkdownBlockKind)kind
                    attributedRange:(NSRange)attributedRange

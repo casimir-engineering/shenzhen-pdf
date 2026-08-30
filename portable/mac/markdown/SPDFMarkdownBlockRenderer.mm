@@ -255,7 +255,7 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
     // cost one O(1) identifier check and nothing else; a diagram that fails to
     // parse also returns NO and falls straight through to the code box.
     if (block.kind == SPDFMarkdownBlockKindCode &&
-        SPDFMarkdownRenderDiagramFigureBlock(context, block, depth, record)) {
+        SPDFMarkdownRenderDiagramBlock(context, block, depth, record)) {
         return;
     }
     NSUInteger start = context.output.length;

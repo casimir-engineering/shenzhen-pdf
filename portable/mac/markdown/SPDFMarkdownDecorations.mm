@@ -1,5 +1,6 @@
 #import "SPDFMarkdownDecorations.h"
 
+#import "SPDFMarkdownDiagramBand.h"
 #import "SPDFMarkdownPaginator.h"
 #import "SPDFMarkdownTableDecorations.h"
 
@@ -92,14 +93,21 @@ const CGFloat SPDFMarkdownCodeBoxOuterMargin = 14.0;
 @implementation SPDFMarkdownPageDecoration
 - (instancetype)initWithType:(SPDFMarkdownPageDecorationType)type
                         rect:(NSRect)rect
-                  blockIndex:(NSUInteger)blockIndex {
+                  blockIndex:(NSUInteger)blockIndex
+               diagramLayout:(SPDFMarkdownDiagramLayout*)diagramLayout {
     self = [super init];
     if (self) {
         _type = type;
         _rect = rect;
         _blockIndex = blockIndex;
+        _diagramLayout = diagramLayout;
     }
     return self;
+}
+- (instancetype)initWithType:(SPDFMarkdownPageDecorationType)type
+                        rect:(NSRect)rect
+                  blockIndex:(NSUInteger)blockIndex {
+    return [self initWithType:type rect:rect blockIndex:blockIndex diagramLayout:nil];
 }
 @end
 
@@ -125,6 +133,13 @@ NSArray<SPDFMarkdownPageDecoration*>* SPDFMarkdownDecorationsForPage(SPDFMarkdow
         while (runEnd + 1 < fragments.count && fragments[runEnd + 1].itemIndex == first.itemIndex) ++runEnd;
         SPDFMarkdownPageFragment* last = fragments[runEnd];
         SPDFMarkdownPaginationItem* item = tableItem;
+        if (item.diagramInfo) {
+            // A native diagram contributes one decoration carrying its whole
+            // vector shape list; its labels are canonical text drawn by the
+            // page's own text pass on top.
+            index = SPDFMarkdownAppendDiagramDecoration(fragments, index, runEnd, item, decorations);
+            continue;
+        }
         if (item.kind == SPDFMarkdownBlockKindCode) {
             // The reserved spacer bands are fragments of the code item, so the
             // box covers them and each page portion gets its own box. The

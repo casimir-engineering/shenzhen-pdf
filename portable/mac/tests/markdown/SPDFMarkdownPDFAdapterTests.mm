@@ -3,6 +3,7 @@
 #import <PDFKit/PDFKit.h>
 
 #import "../../markdown/SPDFMarkdownDocument.h"
+#import "../../markdown/SPDFMarkdownDiagram.h"
 #import "../../markdown/SPDFMarkdownTableDecorations.h"
 
 static NSData* SPDFCreatePDF(SPDFMarkdownPaginationPlan* plan, NSAttributedString* string) {
@@ -190,6 +191,24 @@ static BOOL SPDFPDFPixelOnFirstPage(NSData* data, NSInteger x, NSInteger y, unsi
     return sampled;
 }
 
+// Image XObjects on the first page: the proof that an export carries no
+// embedded bitmap (a native diagram must be pure vector).
+static size_t SPDFPDFImageXObjectCount(NSData* data) {
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
+    CGPDFDocumentRef document = provider ? CGPDFDocumentCreateWithProvider(provider) : NULL;
+    CGPDFPageRef page = document ? CGPDFDocumentGetPage(document, 1) : NULL;
+    CGPDFDictionaryRef pageDictionary = page ? CGPDFPageGetDictionary(page) : NULL;
+    CGPDFDictionaryRef resources = NULL;
+    CGPDFDictionaryRef xObjects = NULL;
+    size_t count = 0;
+    if (pageDictionary && CGPDFDictionaryGetDictionary(pageDictionary, "Resources", &resources) &&
+        CGPDFDictionaryGetDictionary(resources, "XObject", &xObjects))
+        count = CGPDFDictionaryGetCount(xObjects);
+    if (document) CGPDFDocumentRelease(document);
+    if (provider) CGDataProviderRelease(provider);
+    return count;
+}
+
 static BOOL SPDFPixelNear(const unsigned char rgb[3], int red, int green, int blue, int tolerance) {
     return abs((int)rgb[0] - red) <= tolerance && abs((int)rgb[1] - green) <= tolerance &&
            abs((int)rgb[2] - blue) <= tolerance;
@@ -342,6 +361,44 @@ int main(void) {
                    @"dark-theme export paints the Obsidian #1E1E1E paper edge to edge");
         SPDFExpect(SPDFPDFPixelCountNear(darkThemeData, 38, 38, 38, 3) > 2000,
                    @"dark-theme export paints one continuous #262626 code box behind the code lines");
+
+        // Native diagrams export as VECTOR artwork with SELECTABLE text: the
+        // labels come back out of the PDF as text, the node boxes paint their
+        // concrete #F6F8FA fill as paths, and the page carries no image
+        // XObject at all (no bitmap is produced anywhere on this path).
+        SPDFMarkdownDocumentModel* diagramModel =
+            [tableParser parseString:@"```mermaid\ngraph TD\n  A[Ingest] --> B[Publish]\n```\n"
+                           sourceURL:nil
+                               error:&error];
+        SPDFMarkdownDocument* diagramDocument =
+            [[SPDFMarkdownDocument alloc] initWithModel:diagramModel
+                                                 options:SPDFMarkdownRenderOptions.defaultOptions];
+        SPDFMarkdownPaginationPlan* diagramPlan = [diagramDocument paginationPlanForConfiguration:configuration];
+        NSData* diagramPDF = SPDFCreatePDF(diagramPlan, diagramDocument.renderedDocument.attributedString);
+        PDFDocument* diagramPDFDocument = [[PDFDocument alloc] initWithData:diagramPDF];
+        NSString* diagramPageText = [diagramPDFDocument pageAtIndex:0].string ?: @"";
+        SPDFExpect([diagramPageText containsString:@"Ingest"] && [diagramPageText containsString:@"Publish"],
+                   @"diagram labels export as SELECTABLE PDF text");
+        SPDFExpect(SPDFPDFImageXObjectCount(diagramPDF) == 0,
+                   @"an exported diagram embeds NO bitmap: its artwork is vector paths");
+        SPDFExpect(SPDFPDFPixelCountNear(diagramPDF, 246, 248, 250, 3) > 500,
+                   @"the exported diagram paints its node boxes with the concrete #F6F8FA fill");
+        SPDFMarkdownPageDecoration* diagramDecoration = nil;
+        for (SPDFMarkdownPageDecoration* decoration in [diagramPlan decorationsForPageIndex:0])
+            if (decoration.type == SPDFMarkdownPageDecorationTypeDiagram) diagramDecoration = decoration;
+        SPDFExpect(diagramDecoration != nil && diagramDecoration.diagramLayout.shapes.count > 0 &&
+                       fabs(NSWidth(diagramDecoration.rect) - diagramDecoration.diagramLayout.size.width) < 0.01,
+                   @"the export plan exposes one diagram decoration carrying the resolved vector shapes");
+        PDFSelection* diagramSelection = [diagramPDFDocument findString:@"Ingest" withOptions:0].firstObject;
+        NSRect diagramLabelBounds = diagramSelection
+                                        ? [diagramSelection boundsForPage:diagramSelection.pages.firstObject]
+                                        : NSZeroRect;
+        CGFloat decorationBottom = configuration.paperSize.height - configuration.topContentInset -
+                                   NSMaxY(diagramDecoration.rect);
+        SPDFExpect(diagramSelection != nil && NSMinY(diagramLabelBounds) >= decorationBottom - 2 &&
+                       NSMaxY(diagramLabelBounds) <=
+                           decorationBottom + NSHeight(diagramDecoration.rect) + 2,
+                   @"an exported diagram label sits inside its own diagram artwork box");
 
         NSString* temporaryRoot = nil;
         SPDFMarkdownDocument* imageDocument = [SPDFMarkdownDocument documentWithURL:SPDFCreateImageDocument(&temporaryRoot)

@@ -9,27 +9,104 @@ NS_ASSUME_NONNULL_BEGIN
 // Native diagram rendering for Markdown code fences (Typora's set): mermaid
 // (flowchart, sequenceDiagram, pie, stateDiagram/-v2, classDiagram, gantt),
 // js-sequence (`sequence` fences) and flowchart.js (`flow` fences). Pure
-// parsing plus Core Graphics — no web engine, no JS, no network. Every
+// parsing plus geometry — no web engine, no JS, no network, NO BITMAPS. Every
 // unsupported, malformed or over-budget input returns nil so the caller falls
 // through to the exact existing code-box rendering.
+//
+// The seam is a GEOMETRY seam: it returns a resolved layout — vector shapes
+// carrying color ROLES (resolved against a theme variant at draw time) plus
+// positioned text labels. The block renderer puts the labels into the
+// canonical attributed string (selectable, searchable, vector in PDF export)
+// and the shapes travel to the page as one decoration per diagram portion.
 
 // Hard budgets. Exceeding any of them degrades the fence to a code block.
-FOUNDATION_EXPORT const NSUInteger SPDFMarkdownDiagramMaximumNodes;         // 200 nodes/actors/slices/tasks
-FOUNDATION_EXPORT const NSUInteger SPDFMarkdownDiagramMaximumEdges;         // 400 edges/events
-FOUNDATION_EXPORT const NSTimeInterval SPDFMarkdownDiagramLayoutDeadline;   // 50 ms of layout wall-clock
-FOUNDATION_EXPORT const CGFloat SPDFMarkdownDiagramMaximumRasterDimension;  // 4096 px per bitmap axis
+FOUNDATION_EXPORT const NSUInteger SPDFMarkdownDiagramMaximumNodes;        // 200 nodes/actors/slices/tasks
+FOUNDATION_EXPORT const NSUInteger SPDFMarkdownDiagramMaximumEdges;        // 400 edges/events
+FOUNDATION_EXPORT const NSTimeInterval SPDFMarkdownDiagramLayoutDeadline;  // 50 ms of layout wall-clock
+FOUNDATION_EXPORT const CGFloat SPDFMarkdownDiagramMaximumDimension;       // 2048 pt per diagram axis
 
-// A finished diagram: a 2x bitmap-backed NSImage plus its logical point size
-// (the attachment bounds the renderer should reserve).
-@interface SPDFMarkdownDiagramImage : NSObject
-@property(nonatomic, readonly) NSImage* image;
-@property(nonatomic, readonly) NSSize logicalSize;
+// Named palette roles. A resolved layout is theme-INDEPENDENT: every shape and
+// label carries a role, and screen, print and export resolve it against the
+// variant they draw with (SPDFMarkdownDiagramRoleColor).
+typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramRole) {
+    SPDFMarkdownDiagramRoleNone = 0,  // no paint at all (unfilled / unstroked)
+    SPDFMarkdownDiagramRolePaper,
+    SPDFMarkdownDiagramRoleNodeFill,
+    SPDFMarkdownDiagramRoleNodeStroke,
+    SPDFMarkdownDiagramRoleText,
+    SPDFMarkdownDiagramRoleSecondary,
+    SPDFMarkdownDiagramRoleAccent,
+    SPDFMarkdownDiagramRoleCritical,
+    // Six categorical hues for pie slices and chart bars.
+    SPDFMarkdownDiagramRoleRamp0,
+    SPDFMarkdownDiagramRoleRamp1,
+    SPDFMarkdownDiagramRoleRamp2,
+    SPDFMarkdownDiagramRoleRamp3,
+    SPDFMarkdownDiagramRoleRamp4,
+    SPDFMarkdownDiagramRoleRamp5,
+};
+
+// The concrete sRGB color for one role under one reading theme. Role None
+// resolves to a fully transparent color (nothing is painted).
+FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramRoleColor(SPDFMarkdownDiagramRole role,
+                                                        SPDFMarkdownThemeVariant variant);
+
+typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
+    SPDFMarkdownDiagramShapeRectangle = 0,  // rect + cornerRadius (0 = square corners)
+    SPDFMarkdownDiagramShapeEllipse,        // rect
+    SPDFMarkdownDiagramShapePolygon,        // closed points: diamonds, arrowheads
+    SPDFMarkdownDiagramShapePolyline,       // open points: edges, lifelines, rules
+    SPDFMarkdownDiagramShapePieSlice,       // center + radius + start/sweep angle
+};
+
+// One vector primitive in DIAGRAM-LOCAL points. The space is y-DOWN with its
+// origin at the diagram's top-left corner; angles are degrees with 0 at three
+// o'clock and a positive sweep running clockwise on screen.
+@interface SPDFMarkdownDiagramShape : NSObject
+@property(nonatomic) SPDFMarkdownDiagramShapeKind kind;
+@property(nonatomic) NSRect rect;          // rectangle / ellipse
+@property(nonatomic) CGFloat cornerRadius;
+@property(nonatomic, copy) NSArray<NSValue*>* points;  // polygon / polyline
+@property(nonatomic) NSPoint center;       // pie slice
+@property(nonatomic) CGFloat radius;
+@property(nonatomic) CGFloat startAngle;
+@property(nonatomic) CGFloat sweepAngle;
+@property(nonatomic) SPDFMarkdownDiagramRole fillRole;
+@property(nonatomic) SPDFMarkdownDiagramRole strokeRole;
+@property(nonatomic) CGFloat fillAlpha;    // multiplies the resolved fill alpha
+@property(nonatomic) CGFloat strokeAlpha;
+@property(nonatomic) CGFloat lineWidth;
+@property(nonatomic) CGFloat dashLength;   // 0 = solid; the gap is 0.75 of it
 @end
 
-// Thread-safe render cache keyed by (source, language, variant, fontScale,
-// width). Failed parses are cached too, so a rerender never re-parses a
-// malformed fence. Owned per document/session and threaded through
-// SPDFMarkdownRenderOptions.diagramCache; theme and text-size rerenders hit it.
+// One single-line text label at its resolved position. `frame` is the box the
+// text aligns inside (diagram-local, y-down, exactly one line tall); the
+// measurement pass centers/left-aligns the real typographic width inside it.
+@interface SPDFMarkdownDiagramLabel : NSObject
+@property(nonatomic, copy) NSString* text;
+@property(nonatomic) NSRect frame;
+@property(nonatomic) NSTextAlignment alignment;
+@property(nonatomic) CGFloat fontSize;
+@property(nonatomic) BOOL semibold;
+@property(nonatomic) SPDFMarkdownDiagramRole role;
+// The system font this label was measured with, rebuilt from fontSize/semibold.
+- (NSFont*)font;
+@end
+
+// A finished diagram: its logical size in points plus the vector shapes and
+// text labels that fill it. Already fitted to the caller's content width — one
+// common factor scales geometry AND label font sizes, never a clip.
+@interface SPDFMarkdownDiagramLayout : NSObject
+@property(nonatomic, readonly) NSSize size;
+@property(nonatomic, readonly, copy) NSArray<SPDFMarkdownDiagramShape*>* shapes;
+@property(nonatomic, readonly, copy) NSArray<SPDFMarkdownDiagramLabel*>* labels;
+@end
+
+// Thread-safe render cache keyed by (source, language, fontScale, width).
+// Failed parses are cached too, so a rerender never re-parses a malformed
+// fence. Owned per document/session and threaded through
+// SPDFMarkdownRenderOptions.diagramCache; text-size and width rerenders hit it,
+// and a THEME switch reuses it outright (a layout carries roles, not colors).
 @interface SPDFMarkdownDiagramCache : NSObject
 @property(nonatomic, readonly) NSUInteger count;
 - (void)removeAllEntries;
@@ -40,15 +117,15 @@ FOUNDATION_EXPORT const CGFloat SPDFMarkdownDiagramMaximumRasterDimension;  // 4
 FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramIsDiagramLanguage(NSString* _Nullable fenceIdentifier);
 
 // The single entry seam: (fence language, source, content width budget,
-// fontScale, theme variant) -> image + logical size, or nil on ANY parse,
-// unsupported-subtype, or over-budget condition. Deterministic per inputs.
-FOUNDATION_EXPORT SPDFMarkdownDiagramImage* _Nullable SPDFMarkdownDiagramRender(
+// fontScale) -> resolved layout, or nil on ANY parse, unsupported-subtype, or
+// over-budget condition. Deterministic per inputs.
+FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramRender(
     NSString* fenceIdentifier, NSString* source, CGFloat contentWidth, CGFloat fontScale,
-    SPDFMarkdownThemeVariant variant, SPDFMarkdownDiagramCache* _Nullable cache);
+    SPDFMarkdownDiagramCache* _Nullable cache);
 
 // Test-visible laziness/caching proof: incremented once per actual
-// parse+layout+raster attempt (cache hits and non-diagram languages do not
-// count). A document with no diagram fences must leave this untouched.
+// parse+layout attempt (cache hits and non-diagram languages do not count). A
+// document with no diagram fences must leave this untouched.
 FOUNDATION_EXPORT NSUInteger SPDFMarkdownDiagramWorkCount(void);
 FOUNDATION_EXPORT void SPDFMarkdownDiagramResetWorkCount(void);
 
