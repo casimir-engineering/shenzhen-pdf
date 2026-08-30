@@ -9,6 +9,9 @@ NS_ASSUME_NONNULL_BEGIN
 // implementations. Keeping these declarations here avoids growing the main
 // delegate interface with cross-module implementation details.
 @interface ShenzhenMacDelegate (SPDFMacMarkdownHostAccess)
+// The shared toolbar-button factory (bezel, font, layout metrics) every
+// toolbar image button is built with.
+- (NSButton*)buttonWithTitle:(NSString*)title action:(SEL)action;
 - (nullable NSDictionary*)fileAttributesForPath:(NSString*)path;
 - (void)recordFileAttributes:(NSDictionary*)attributes forTab:(SPDFDocumentTab*)tab;
 - (void)prepareSelectedTabViewState:(SPDFDocumentTab*)tab path:(NSString*)path;
