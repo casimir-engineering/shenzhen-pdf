@@ -8,6 +8,64 @@ Every number here was measured against the tree at HEAD. Paths are repo-relative
 
 ---
 
+## 0. Status as of 2026-08-31 06:45 — read this first
+
+This plan was written at 03:22, before any Windows code existed. Sections 1–3
+and 5–8 are the *original scoping* and have held up well; they are left as
+written except where a specific number turned out wrong. **Section 4's phase
+status has been rewritten against what actually landed**, and §1's effort table
+now carries a revised estimate.
+
+| Phase | Planned | Actual |
+|---|---|---|
+| **0** Toolchain | in flight | **complete** — MuPDF 1.27.2 native ARM64, 646 objects, all `AA64` |
+| **1** Window + real page | the 7-hour target | **complete at the core-and-pixels layer; unproven at the window layer** (see below) |
+| **2** Continuous canvas | "substantially complete" | **complete**, differentially tested against the GTK4 original |
+| **3** Worker render pipeline | "begun" | **complete** — pool, coalescing, cancellation, byte-capped LRU, prefetch |
+| **4** Shell: tabs, state, multi-window | later | **state layer complete; tabs/session in flight** |
+| **5–8** | later | not started |
+
+**Elapsed: 3h14m** (first commit `aa07138b3` 03:22, last `2bff74d7c` 06:36),
+against a 7-hour budget. Phases 1–3 came in at roughly half the planned time.
+§1's revised estimate explains at length why that speedup **does not
+extrapolate** to what remains.
+
+### The caveat that outranks everything else in this document
+
+> **Nobody has seen a window open.**
+
+Phase 1's stated done-bar is *"the window opens, the page is visible and
+correctly scaled to the client area, resizing repaints, DPI scaling is correct
+on a 2× display, and closing exits 0."* All five criteria are interactive.
+`prlctl exec` runs in the SYSTEM session, which has no interactive desktop —
+this plan's own risk 9 predicted it. So Phase 1 is marked complete on a
+**generous reading**: the core renders byte-identically, the Direct2D compose
+path produces correct pixels headlessly, and the fit geometry is verified
+numerically — but *the window itself* has never been observed by anyone, in any
+session. Not opening, not repainting, not closing.
+
+QC's verdict, which must survive into every future revision of this file:
+**complete at the core-and-pixels layer, unproven at the window layer, and
+unprovable from here.** Closing it needs a human at the VM's GUI or an
+interactive-session automation route that does not exist yet. It is the single
+most important limitation of this whole effort, and it applies to Phases 2, 3
+and 4 exactly as much as to Phase 1 — every one of them is verified by exit
+code and pixel comparison, never by use.
+
+### Verification state
+
+- `portable/win/tests/run-tests.sh` → **20 cases, 0 failed, 0 blocked, exit 0**
+  (~50 s). Inventory in `portable/win/README.md`.
+- `portable/win/tests/qc/probe-staleness-check.sh` → **exit 0**, both defects fixed.
+- `tools/check-file-sizes.sh` → **green** (112 exact caps; the maintained-file
+  count moves as tracks land files, so it is not pinned here).
+- QC findings F1–F14: **twelve fixed, F3 and parts of F15 still open.** See
+  `windows-port-qc.md` for per-finding status and fixing commits.
+- Hard-won environment knowledge lives in **one** place: the numbered gotchas
+  1–20 in `portable/win/README.md`. Add to that list, not to this file.
+
+---
+
 ## 1. Scope verdict
 
 ### What "1:1 with macOS" actually means
@@ -51,13 +109,62 @@ toolkit (Win32) that hands you far less for free than GTK4 + libadwaita did.
 
 ### The honest numbers
 
-| Target | Realistic effort |
-|---|---|
-| **Phase 1** — a window that opens a real PDF and renders a real page | 2–3 h |
-| **Phase 2** — continuous scrolling canvas with the shipping geometry | 3–5 h |
-| **This 7-hour push** — Phase 1 complete and proven, Phase 2 substantially complete, Phase 3 begun | 7 h, 6 parallel agents |
-| Parity with the **GTK4** frontend (everything except Markdown and the 8 GTK4 gaps) | 4–6 comparable multi-agent days |
-| True **1:1 with macOS**, Markdown included | a further 4–8 days, dominated by §4 |
+| Target | Estimated 03:22 | **Actual / revised 06:45** |
+|---|---|---|
+| **Phase 1** — a window that opens a real PDF and renders a real page | 2–3 h | ~1.5 h to headless pixels; **window layer still unverified** |
+| **Phase 2** — continuous scrolling canvas with the shipping geometry | 3–5 h | ~1 h |
+| **Phase 3** — worker render pipeline | (unbudgeted in this push) | ~0.5 h |
+| **This push** — Phases 1–3 complete, Phase 4 begun | 7 h, 6 parallel agents | **3h14m, ~7 tracks** |
+| Parity with the **GTK4** frontend (everything except Markdown and the 8 GTK4 gaps) | 4–6 multi-agent days | **3.5–6 days** — see below |
+| True **1:1 with macOS**, Markdown included | a further 4–8 days | **unchanged: 4–8 days** |
+| Verifying the **window layer** at all | not budgeted | **not costed; needs a human or new infrastructure** |
+
+### The revised estimate, and why the observed 2× speedup does not extrapolate
+
+Measured output of this push: **5,021 LOC** of Windows frontend production code,
+**3,072 LOC** of test C, **2,468 LOC** of harness shell/Python, **1,799 LOC** of
+build plumbing, plus the `portable/core` POSIX shim — about **12,900 lines in
+3h14m** across roughly seven parallel tracks.
+
+That is genuinely fast, and it is tempting to halve every remaining number. That
+would be wrong, for four reasons that are specific rather than superstitious:
+
+**1. About a third of what was built does not need building again.** The harness,
+the MuPDF ARM64 build, the sync/robocopy chain, the exit-code contract and the
+PNG comparator — roughly 4,300 LOC — are one-time infrastructure. Their cost is
+already paid, which *is* a real and permanent speedup for what follows. This is
+the one factor pushing the estimate down, and it is why the low end moves from 4
+days to 3.5.
+
+**2. Phases 1–3 were selected to be the parallelizable, headless-testable
+part.** That was deliberate and correct (§5's dependency argument), but it means
+the observed velocity is a measurement of the *easiest* third, not of the
+average. Layout maths, an LRU and a thread pool are pure functions with
+pre-existing GTK4 originals to diff against; six agents can work on them without
+touching each other's files.
+
+**3. What remains is chrome, and chrome is the opposite on every axis.** §2.4's
+~1,300 widget/menu/dialog call sites are shared-state, single-window, and each
+one needs painting *and* hit-testing written fresh because Win32 supplies
+neither. Tab strips, sidebars, the command palette, find, print panels and file
+dialogs contend for the same window and message pump — they parallelize badly,
+which is exactly what the Phase 4 track is now discovering.
+
+**4. None of it can be verified the way Phases 1–3 were.** A pure function is
+diffed against its GTK4 twin; a byte-identical PNG settles a renderer. A tab
+strip that responds to a drag has no equivalent oracle in a SYSTEM session. Every
+chrome phase therefore carries verification debt that Phases 1–3 did not, and
+that debt is currently *unpriced* because no one has costed the interactive
+route.
+
+**Net: GTK4-parity moves from 4–6 days to 3.5–6 days** — the low end pulled in
+by the one-time infrastructure win, the high end held because the remaining work
+is the part that resists parallelism. **Markdown stays at 4–8 days**; nothing in
+this push made it cheaper, and §3's line-breaking parity trap is untouched.
+
+And one line item the original table simply lacked: **verifying the window layer
+is not on this schedule at all.** It is not hard work, but it cannot be done by
+an agent in this environment, so it must be scheduled against a human.
 
 **So: seven hours does not produce a 1:1 port, and no plan that claims otherwise
 is honest.** What seven hours produces is a real, running, native Windows
@@ -334,9 +441,35 @@ the frontend. **Out of scope for Phases 1–7.**
 
 ## 4. Phased plan
 
-Phase 0 is already in flight, owned by the toolchain agent.
+**Status annotations added 06:45.** The file lists below were written before the
+code existed and named several files that were ultimately created at different
+paths or with different extensions; where that happened, the planned name is
+struck through and the real one given. This matters because those wrong paths
+were being copied forward into other documents.
 
-### Phase 0 — Toolchain (in progress, T0)
+### Phase 0 — Toolchain — **COMPLETE**
+
+Delivered: MuPDF 1.27.2 built natively for ARM64 in the guest (417 + 229
+objects, every one `AA64`), linked against `portable/core`, with a page render
+byte-identical to macOS. `sync-to-vm.sh` stages `mupdf`. `verify.sh` → exit 0.
+
+Two things the plan got wrong here, both worth recording because they cost time:
+
+- **`mupdf.sln` was not used and would not have worked.** The plan (and risk 1)
+  assumed its 619 ARM64 references meant MSBuild would handle this with no new
+  project files. In fact its feature set differs from the Mac build's and would
+  drift silently; worse, `mupdf/scripts/bin2coff.c`'s ARM64 output does not link
+  at all (unaligned size symbols, `LNK2048`, systemic across ~3/4 of the 182
+  font blobs). The build description is instead derived mechanically from
+  `make -n` inside `mupdf/` with `portable/Makefile`'s own arguments.
+- **MSVC cannot compile MuPDF's embedded font resources.** `cl.exe` needs
+  multiple GB of heap per MB of string literal and `SourceHanSerif-Regular.ttc.c`
+  is 103 MB. The blobs are embedded from their original binaries by
+  `portable/win/mupdf-bin2coff.c` instead. Nothing in the plan anticipated this.
+
+*(Original text follows.)*
+
+### Phase 0 — Toolchain (as planned, T0)
 
 **Goal.** MuPDF and the core compile and link in the guest; the macOS→guest
 build chain propagates exit codes.
@@ -360,19 +493,39 @@ pure-C output across hosts, (2) `vm-build.sh` exits non-zero on a broken source,
 
 ---
 
-### Phase 1 — A window rendering a real PDF page ← *the 7-hour target*
+### Phase 1 — A window rendering a real PDF page — **COMPLETE AT THE PIXEL LAYER, UNPROVEN AT THE WINDOW LAYER**
 
 **Goal.** `ShenzhenPDF.exe some.pdf` opens a native window and displays page 1,
 rendered by `spdf_render_page_rgba_opts` through Direct2D. Not scaffolding: end
 to end, core to pixels.
 
-**Files created:** `portable/win/src/spdf_win_main.c`,
-`spdf_win_window.{h,c}`, `spdf_win_d2d.{h,c}`, `spdf_win_compat.{h,c}`,
-`portable/win/src/spdf_win_probe.c`.
+**Files created** — planned vs. actual, because the planned paths were wrong and
+got copied into other docs:
+
+| planned | actual |
+|---|---|
+| `portable/win/src/spdf_win_main.c` | `portable/win/src/spdf_win_main.cpp` (C++) |
+| `spdf_win_window.{h,c}` | `spdf_win_window.{h,cpp}` |
+| `spdf_win_d2d.{h,c}` | `spdf_win_d2d.{h,cpp}` |
+| `portable/win/src/spdf_win_compat.{h,c}` | **`portable/core/spdf_win_compat.{h,c}`** — it shims the *core*, so it lives with the core, and must appear in every Windows source list |
+| `portable/win/src/spdf_win_probe.c` | `portable/win/spdf_win_probe.c` (not under `src/`) |
 
 **Done means:** the window opens, the page is visible and correctly scaled to
 the client area, resizing repaints, DPI scaling is correct on a 2× display, and
 closing exits 0. No scrolling required.
+
+**Against that bar, honestly:** *"correctly scaled to the client area"* is now
+true and verified numerically — `--render-window-png golden.pdf 0 900 700`
+reports `zoom=4.500000` and draws the 200 pt page at 900 px, filling the
+viewport. It was **not** true for several hours (QC F4: `fit_zoom()` clamped at
+100%, so a small page opened postage-stamp sized while the correctly-ported
+`spdf_win_layout.h` sat unused beside it). The other four criteria — opens,
+repaints on resize, DPI on a 2× display, exits 0 on close — **remain unobserved
+by anyone** and cannot be observed from a SYSTEM session. See §0.
+
+What is genuinely proven instead: the same `spdf_win_paint` compose path runs
+headlessly into a WIC-backed `ID2D1RenderTarget`, writes a PNG, and produces
+byte-identical output to macOS in both plain and dark themes.
 
 **Headless test.** `spdf_win_probe.exe <pdf> <page> <zoom> <out.png>` runs the
 *same* `spdf_win_paint()` into a WIC-backed `ID2D1RenderTarget` and writes a PNG.
@@ -382,15 +535,44 @@ which already renders through the shipping core path and writes PNGs via
 
 ---
 
-### Phase 2 — Continuous scrolling canvas
+### Phase 2 — Continuous scrolling canvas — **COMPLETE**
 
 **Goal.** Multi-page continuous layout, wheel and drag scrolling, fit modes,
 cursor-anchored zoom, the horizontal clamp, and the crop regime for oversized
 pages.
 
 **Files created:** `portable/win/src/spdf_win_layout.h` (the de-glib'd port of
-`spdf_docview_internal.h`), `spdf_win_canvas.{h,c}`,
-`portable/win/tests/layout_test.c`, `zoom_anchor_test.c`, `clamp_test.c`.
+`spdf_docview_internal.h`) landed as planned. ~~`spdf_win_canvas.{h,c}`~~ →
+`spdf_win_canvas.{h,cpp}` plus `spdf_win_canvas_internal.h` and
+`spdf_win_canvas_prefetch.cpp` (split to stay under the 500-line cap — risk 11
+arriving as predicted, and handled the way §5 asks rather than by an exception).
+
+The three planned test files ~~`layout_test.c`, `zoom_anchor_test.c`,
+`clamp_test.c`~~ landed as **one** `portable/win/tests/layout_geometry_test.c`,
+plus `gtk_differential.{c,h}` and `gtk_differential_cache.c` — which do
+something better than the plan asked for: rather than asserting the same
+*expected values* as the GTK4 suite, they compile
+`portable/linux/gtk4/spdf_docview_internal.h` and the Windows port into one
+binary and assert the two implementations agree function by function, at exact
+equality (a one-ulp difference in a transcription is still a transcription
+error). Measured: **397,099 comparisons, 0 mismatches.** A hand-copied list of
+expected constants would not have caught what that catches.
+
+**But it is not in the gating suite.** `gtk_differential.c` is not named
+`*_test.c`, so `run-tests.sh` does not discover it; it runs only from
+`portable/win/tests/t3-verify.sh`, which is a separate **7-case** run:
+
+```sh
+bash portable/win/tests/t3-verify.sh    # 7 cases, 0 failed, exit 0
+#   differential.gtk4    397099 comparisons, 0 mismatches
+#   transcript.layout    byte-identical across clang/arm64 and MSVC/ARM64 (82 lines)
+#   transcript.lru       byte-identical across clang/arm64 and MSVC/ARM64 (25 lines)
+```
+
+So the strongest correctness evidence the layout port has is **not** part of the
+20-case suite that gates everything else. Anyone touching `spdf_win_layout.h`
+must run `t3-verify.sh` by hand or they will not learn they broke it. Folding it
+into the runner is cheap and should happen.
 
 **Done means:** a 100-page mixed-size document scrolls smoothly; every page is
 centred on the canvas midline (`architecture.md` §4.1); cursor-anchored zoom
@@ -404,14 +586,20 @@ neither MuPDF nor a window.
 
 ---
 
-### Phase 3 — Worker render pipeline
+### Phase 3 — Worker render pipeline — **COMPLETE**
 
 **Goal.** Off-thread rendering with per-thread documents, display-list caching,
 cancellation tokens, the 96 MB byte cap, LRU eviction, current-page-first
 priority, and neighbour prefetch.
 
-**Files:** `spdf_win_render.{h,c}`, `spdf_win_lru.{h,c}`, `tests/lru_test.c`,
-`tests/render_service_test.c`.
+**Files:** `spdf_win_render.{h,c}`, `spdf_win_lru.{h,c}` as planned;
+~~`tests/lru_test.c`~~ → `tests/lru_cache_test.c`; `tests/render_service_test.c`
+as planned.
+
+The 96 MB cap (`spdf_win_capped_render_zoom`) is applied on the canvas and
+prefetch paths. It is **not** applied on `--render-png`, which remains
+unbounded — acceptable for a test-facing interface, worth knowing before it
+becomes user-facing.
 
 **Done means:** the invariants in `architecture.md` §3.3–§3.6 hold — render
 concurrency capped at ~3–4, the completion callback fires exactly once per token
@@ -423,10 +611,27 @@ peak RSS stays under the cap while walking a 500-page document.
 
 ---
 
-### Phase 4 — Shell: tabs, state, multi-window
+### Phase 4 — Shell: tabs, state, multi-window — **STATE COMPLETE, TABS IN FLIGHT**
 State via `spdf_yaml`, byte-compatible with the mac and Linux schemas
 (`settings.yaml`, `session.yaml`, `documents.yaml`, `favorites.yaml`) under
 `%APPDATA%\ShenzhenPDF\`. Test: round-trip a session written by the mac app.
+
+**Landed:** `spdf_win_paths.{h,c}` (`SHGetKnownFolderPath`, UTF-8⇄UTF-16) and
+`spdf_win_state.{h,c}`, covered by `win.paths_test`, `win.state_test` and
+`win.silent_failure_test`. State reads now distinguish ABSENT from FAILED and
+refuse to overwrite on FAILED (QC F7) — without that, one antivirus lock at the
+wrong moment silently replaced the user's settings, session and recent files
+with defaults, reporting success as it did so.
+
+**In flight at the time of writing:** `spdf_win_tabs.{h,cpp}` and
+`spdf_win_session.h` exist in the working tree but are **not committed**, so
+none of the numbers in §0 or §1 include them.
+
+**Known gap:** `session.lock` is declared and documented in
+`spdf_win_state.h:94-96` and implemented, but `spdf_win_state_write_json_at`
+does read-compare-write without taking it, and nothing outside the tests calls
+`spdf_win_state_session_lock_acquire`. Untriggerable with one window; a
+lost-session bug the day multi-window lands — which is this phase.
 
 ### Phase 5 — Find, sidebar, minimap
 Ports `spdf_search_internal.h`, `spdf_sidebar_internal.h`,
@@ -465,10 +670,10 @@ Design under the cap rather than asking for an exception.
 | Track | Owns (exclusive) | Deliverable |
 |---|---|---|
 | **T0** *(running)* | `portable/win/sync-to-vm.sh`, `vm-build.sh`, `guest-build.cmd`, `verify.sh`, `smoke/**`, `portable/win/README.md` | `mupdf` added to `SUBTREES`; `libmupdf` ARM64 via MSBuild; `verify.sh` step 4 opens a PDF in the guest |
-| **T1** | `portable/core/**` (all 13 sites in §2.2), `portable/win/src/spdf_win_compat.{h,c}`, `portable/win/tests/compat_test.c` | Core compiles clean under MSVC **and still clean under clang** (`make -C portable core-selection-tests` stays green); `MoveFileExW` replace-semantics; `LockFileEx` migration lock; both path separators |
-| **T2** | `portable/win/src/spdf_win_main.c`, `spdf_win_window.{h,c}`, `spdf_win_d2d.{h,c}` | **Phase 1**: the window that shows a real page. `spdf_win_paint(ID2D1RenderTarget*, …)` must not require an `HWND` |
-| **T3** | `portable/win/src/spdf_win_layout.h`, `spdf_win_lru.{h,c}`, `portable/win/tests/{layout,zoom_anchor,clamp,lru}_test.c` | The de-glib'd port of `spdf_docview_internal.h`, with the four GTK4 test suites passing in the guest with identical values |
-| **T4** | `portable/win/tests/run-tests.sh`, `portable/win/tools/compare_png.py`, `portable/win/src/spdf_win_probe.c`, `portable/win/fixtures/**` | Headless harness: exit-code runner, PNG comparator with a *measured* tolerance, macOS reference PNGs |
+| **T1** | `portable/core/**` (all 13 sites in §2.2), ~~`portable/win/src/spdf_win_compat.{h,c}`~~ → **`portable/core/spdf_win_compat.{h,c}`**, ~~`portable/win/tests/compat_test.c`~~ → `portable/core/tests/SPDFCoreCompatTests.c` | Core compiles clean under MSVC **and still clean under clang** (`make -C portable core-selection-tests` stays green); `MoveFileExW` replace-semantics; `LockFileEx` migration lock; both path separators |
+| **T2** | `spdf_win_main.cpp`, `spdf_win_window.{h,cpp}`, `spdf_win_d2d.{h,cpp}` (all landed as C++, not C) | **Phase 1**: the window that shows a real page. `spdf_win_paint(ID2D1RenderTarget*, …)` must not require an `HWND` |
+| **T3** | `portable/win/src/spdf_win_layout.h`, `spdf_win_lru.{h,c}`, `portable/win/tests/layout_geometry_test.c`, `lru_cache_test.c`, `gtk_differential*.c` (the four planned files landed as two, plus the differential harness) | The de-glib'd port of `spdf_docview_internal.h`, with the four GTK4 test suites passing in the guest with identical values |
+| **T4** | `portable/win/tests/run-tests.sh`, ~~`portable/win/tools/compare_png.py`~~ → `portable/win/tests/compare_png.py`, ~~`portable/win/src/spdf_win_probe.c`~~ → `portable/win/spdf_win_probe.c`, ~~`portable/win/fixtures/**`~~ → `portable/win/tests/fixtures/**` | Headless harness: exit-code runner, PNG comparator with a *measured* tolerance, macOS reference PNGs |
 | **T5** | `portable/win/src/spdf_win_render.{h,c}`, `portable/win/tests/render_service_test.c` | Worker pool, per-thread documents, tokens, callback-exactly-once |
 | **T6** | `portable/win/src/spdf_win_paths.{h,c}`, `spdf_win_state.{h,c}`, `portable/win/tests/paths_test.c` | `%APPDATA%\ShenzhenPDF\`, UTF-8⇄UTF-16 helpers, YAML state round-trip against a mac-written `session.yaml` |
 
@@ -528,6 +733,17 @@ substantial, already-written cross-platform correctness suite for essentially
 zero cost, and it should be wired up in Phase 0/1 rather than treated as later
 work. `SPDFCoreRecolorTests` needs no MuPDF at all and can run on day one.
 
+**Status: only three of the six are actually wired.** `run-tests.sh`'s
+`CORE_SUITES` holds `SPDFCoreRecolorTests`, `SPDFCoreCompatTests` and
+`SPDFCoreSaveTests` (the third of which, per QC F2, had never once launched
+until 06:32 — the harness pasted its argument onto the closing quote of the
+`.exe` path, so cmd rejected the command line and the failure was reported as a
+bug in `portable/core`). `SPDFCoreOutlineTests`, `SPDFCorePasswordTests`,
+`SPDFCoreRenderThemeTests`, `SPDFCoreSelectionTests` and
+`SPDFCoreCJKSelectionTests` are still not registered. The "essentially zero
+cost" claim above is correct and still unclaimed; this is the cheapest
+outstanding win in the port.
+
 **3. Golden images against the macOS renderer.** `SPDFRecolorProbe.c` is already
 the pattern `agents.md` asks for — "a probe binary that writes PNGs you sample
 programmatically" — rendering through the shipping core path and writing via
@@ -541,6 +757,20 @@ byte-identity is plausible — **but it must be measured in Phase 1, not assumed
 error, fail hard on any structural difference (dimensions, stride), and have its
 tolerance threshold set from the first measurement with the measured value
 recorded in a comment. If the delta is zero, pin it at zero.
+
+**Measured, and pinned at zero.** Both fixtures come back byte-identical from
+the guest, so `probe-cases.sh` passes `--strict` and `--strict` *decides* the
+case. For a while it ran "for the report only" while the loose provisional
+defaults (MAE 1.5, 2% bad pixels) actually decided pass/fail — a regression
+staying inside those would have passed a comparison known to be bit-exact
+(QC F9). The loose numbers survive only as a diagnostic scale, consulted after
+strict has already failed.
+
+**One flag makes this work and must not be removed:** `-ffp-contract=off` on the
+macOS side. clang fuses `a*b + c` into a single FMA — one rounding step — where
+MSVC under `/fp:precise` does not, so without it the two hosts disagree in the
+last bit and a zero tolerance goes red. Same arithmetic, same hardware, different
+contraction. See gotcha 19 in `portable/win/README.md`.
 
 Compare at three levels, in this order:
 - **core output** — `spdf_render_page_rgba_opts` bytes, Windows vs macOS. Any
@@ -562,6 +792,33 @@ sanity check.
 ---
 
 ## 7. Risks
+
+**How they actually turned out** (added 06:45). The table below is the original
+assessment; this is the scorecard:
+
+| # | Outcome |
+|---|---|
+| 1 | **Materialised, and the mitigation was wrong.** MuPDF did build ARM64, but not via `mupdf.sln` — see Phase 0 above. No fallback to x64 emulation was needed. |
+| 2 | Avoided exactly as designed; `mupdf` was added to `SUBTREES` by T0. |
+| 3, 4, 5 | All three real, all three fixed and covered by `SPDFCoreSaveTests` / `SPDFCoreCompatTests`. |
+| 6 | **Did not materialise** — byte-identical on both fixtures. But only because `-ffp-contract=off` is set; see §6. |
+| 7 | **Materialised twice as a *git* collision, not a file collision.** Two tracks used `git add -A` and silently reverted another track's work. Ownership tables do not protect you from a greedy `git add`. Use `git add -- <your own paths>` and check `git status` after committing. |
+| 8 | Avoided; the phase ordering worked. |
+| 9 | **Materialised, and is the port's defining limitation.** See §0. The mitigation (never require an `HWND` to paint) worked perfectly and is why anything is verifiable at all — but "interactive screenshots stay a manual step" turned out to mean *no one has ever seen the window*. |
+| 10 | Held; Markdown untouched. |
+| 11 | **Materialised** — `spdf_win_render.c` hit 732 lines mid-flight (QC F10) and `spdf_win_canvas` outgrew the cap. Both were split rather than exempted, as §5 asks. Ratchet is green. |
+| 12 | Held. macOS is unregressed: `mac-app`, 28 suites and both Markdown runners all exit 0. |
+| 13 | Materialised as predicted and shimmed early. |
+
+One risk the plan did not list and should have: **the documentation drifting out
+of sync with the tree faster than anyone could read it.** Agents that cannot see
+each other, several killed mid-sentence by a spend limit, left this file and
+`portable/win/README.md` asserting things that a later chapter of the same file
+disproved — most starkly a README that claimed "no Windows render exists" two
+hundred lines before the chapter proving one did. Docs written in flight need a
+reconciliation pass against the tree before anyone trusts them.
+
+*(Original risk table follows.)*
 
 | # | Risk | Mitigation |
 |---|---|---|
