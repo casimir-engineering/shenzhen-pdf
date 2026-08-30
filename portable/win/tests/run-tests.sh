@@ -266,18 +266,31 @@ case_probe_png() {
   fi
 }
 
-# Core suites that already exist and are pure C over portable/core. Free Windows
-# conformance the moment the guest can compile them. `-` means no MuPDF needed.
+# Core suites that already exist as pure C over portable/core: free Windows
+# conformance the moment the guest can compile them, and the reason this runner
+# is worth having before any Windows UI exists at all.
+#
+# Fields are name|needs|extra sources|arguments, separated by `|` rather than
+# `:` because guest arguments contain drive letters. `-` in the needs field
+# means the suite links no MuPDF and can therefore run in the guest today.
+# Everything runs with the working directory set to a scratch folder, so a suite
+# that leaks a temp file into the CWD -- which is exactly what SPDFCoreSaveTests
+# is checking for -- sees it where it expects to.
 CORE_SUITES=(
-  "SPDFCoreRecolorTests:-:portable/core/spdf_recolor.c"
+  "SPDFCoreRecolorTests|-|portable/core/spdf_recolor.c|"
+  "SPDFCoreCompatTests|-|portable/core/spdf_win_compat.c|"
+  "SPDFCoreSaveTests|mupdf|portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c|%SCRATCH%"
 )
 
+field() { echo "$1" | cut -d'|' -f"$2"; }
+
 case_core_suites() {
-  local entry name need srcs log rc
+  local entry name need srcs args log rc
   for entry in "${CORE_SUITES[@]}"; do
-    name="${entry%%:*}"
-    need="$(echo "$entry" | cut -d: -f2)"
-    srcs="$(echo "$entry" | cut -d: -f3-)"
+    name="$(field "$entry" 1)"
+    need="$(field "$entry" 2)"
+    srcs="$(field "$entry" 3)"
+    args="$(field "$entry" 4)"
     selected "core.$name" || continue
     if [[ -n "$GUEST_READY" ]]; then
       record "core.$name" BLOCKED "$GUEST_READY"
@@ -297,13 +310,32 @@ case_core_suites() {
       log_tail "$log" 20
       continue
     fi
-    guest "$OUT/core-$name.run.log" "$GUEST_OUT"'\'"$name"'.exe'
+    guest_run "$OUT/core-$name.run.log" "$name" "${args//%SCRATCH%/$GUEST_SCRATCH}"
     rc=$?
     if [[ $rc -eq 0 ]]; then
       record "core.$name" PASS "passes in the guest"
     else
       record "core.$name" FAIL "exited $rc in the guest"
       log_tail "$OUT/core-$name.run.log" 20
+    fi
+  done
+}
+
+# Extra translation units for tests whose own header documents the link line in
+# prose rather than in a machine-readable `spdf-test-sources` comment. The
+# in-file declaration always wins; this table only fills the gap so a track's
+# suite is registered here without anyone having to edit that track's files.
+WIN_TEST_EXTRA=(
+  "paths_test|portable/win/src/spdf_win_paths.c"
+  "state_test|portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_win_compat.c"
+)
+
+win_test_extra() {
+  local entry
+  for entry in "${WIN_TEST_EXTRA[@]}"; do
+    if [[ "$(field "$entry" 1)" == "$1" ]]; then
+      field "$entry" 2
+      return
     fi
   done
 }
@@ -316,6 +348,7 @@ case_win_tests() {
     stem="$(basename "$f" .c)"
     selected "win.$stem" || continue
     extra="$(declared spdf-test-sources "$f")"
+    [[ -n "$extra" ]] || extra="$(win_test_extra "$stem")"
     args="$(declared spdf-test-args "$f")"
     need="$(declared spdf-test-needs "$f")"
     if [[ -n "$GUEST_READY" ]]; then
@@ -344,7 +377,7 @@ case_win_tests() {
         guest_args="$guest_args $a"
       fi
     done
-    guest "$OUT/win-$stem.run.log" "$GUEST_OUT"'\'"$stem"'.exe'"$guest_args"
+    guest_run "$OUT/win-$stem.run.log" "$stem" "$guest_args"
     rc=$?
     if [[ $rc -eq 0 ]]; then
       record "win.$stem" PASS "passes in the guest"

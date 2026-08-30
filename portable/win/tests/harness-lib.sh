@@ -43,6 +43,23 @@ declared() {
   sed -n "s|.*$1:[[:space:]]*\\(.*\\)\\*/.*|\\1|p" "$2" | sed -n 1p
 }
 
+# Run a built guest binary from a scratch working directory, with arguments.
+#
+# The working directory matters: a suite that checks nothing was leaked into the
+# CWD has to be run somewhere it can see that, and never in the build output
+# directory. `cd /d ... &&` is safe here -- the cmd parsing trap documented in
+# guest_exists() is specific to `if`, and && propagates the last command's code
+# through `cmd /c` intact.
+GUEST_SCRATCH='C:\spdf-build\scratch'
+guest_run() {
+  local log="$1" target="$2" args="${3:-}"
+  prlctl exec "$VM_NAME" cmd.exe /c 'if not exist "'"$GUEST_SCRATCH"'" mkdir "'"$GUEST_SCRATCH"'"' \
+      > "$OUT/guest-scratch.log" 2>&1
+  prlctl exec "$VM_NAME" cmd.exe /c 'cd /d "'"$GUEST_SCRATCH"'" && "'"$GUEST_OUT"'\'"$target"'.exe"'"$args" \
+      > "$log" 2>&1
+  return $?
+}
+
 log_tail() {
   [[ -f "$1" ]] || return 0
   echo "        --- last lines of $(basename "$1") ---"
