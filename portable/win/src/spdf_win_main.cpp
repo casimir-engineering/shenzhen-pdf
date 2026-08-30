@@ -274,8 +274,11 @@ int main(void) {
 
     int rc;
     if (headless_exact) {
-        rc = run_headless(&a, d2d, argv[i], _wtoi(argv[i + 1]), SPDF_WIN_FIT_EXACT, (float)_wtof(argv[i + 2]), 0, 0,
-                          argv[i + 3]);
+        /* EXACT has no target to fit to, so a missing or nonsense zoom means
+         * 100% rather than run_headless's fit-to-target. */
+        float zoom = (float)_wtof(argv[i + 2]);
+        if (!(zoom > 0.0f)) zoom = 1.0f;
+        rc = run_headless(&a, d2d, argv[i], _wtoi(argv[i + 1]), SPDF_WIN_FIT_EXACT, zoom, 0, 0, argv[i + 3]);
     } else if (headless_window) {
         /* zoom 0: let run_headless pick the same fit zoom the window would,
          * so this really is the windowed appearance and not a 100% render

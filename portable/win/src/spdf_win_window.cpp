@@ -251,11 +251,16 @@ void spdf_win_window_invalidate(spdf_win_window* window) {
 int spdf_win_window_run(spdf_win_window* window) {
     MSG msg;
     if (!window) return 1;
-    while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+    for (;;) {
+        BOOL got = GetMessageW(&msg, NULL, 0, 0);
+        /* GetMessageW's third state is -1, and it leaves msg untouched. Reading
+         * msg.wParam then would hand the shell a garbage exit code, which is
+         * exactly the signal every headless check in this port relies on. */
+        if (got == -1) return 73;
+        if (got == 0) return (int)msg.wParam;
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-    return (int)msg.wParam;
 }
 
 void spdf_win_window_destroy(spdf_win_window* window) {
