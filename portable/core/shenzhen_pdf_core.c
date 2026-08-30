@@ -2,6 +2,7 @@
 
 #include "spdf_recolor.h"
 #include "spdf_selection.h"
+#include "spdf_win_compat.h"
 
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
@@ -15,7 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #define SPDF_MUPDF_STORE_LIMIT ((size_t)256 * 1024 * 1024)
 #define SPDF_MAX_RENDER_DIMENSION 32768
@@ -129,12 +129,10 @@ static char* copy_string(const char* value) {
     return copy;
 }
 
+/* Splitting on '/' alone showed a whole C:\Users\x\a.pdf as the window title. */
 static const char* path_basename(const char* path) {
-    const char* last_slash;
-
     if (!path || !*path) return "Untitled";
-    last_slash = strrchr(path, '/');
-    return last_slash ? last_slash + 1 : path;
+    return spdf_compat_path_basename(path);
 }
 
 spdf_document* spdf_open_with_password(const char* path, const char* password, spdf_open_status* status,
@@ -2400,7 +2398,7 @@ int spdf_delete_all_text(spdf_document* doc, const char* path, char* err, size_t
     }
 
     if (temp_path) {
-        if (rename(temp_path, path) != 0) {
+        if (spdf_compat_replace_file(temp_path, path) != 0) {
             set_error(err, err_len, "Could not replace the original PDF after removing text.");
             remove(temp_path);
             free(temp_path);
@@ -2411,10 +2409,12 @@ int spdf_delete_all_text(spdf_document* doc, const char* path, char* err, size_t
     return 1;
 }
 
+/* The temp file must land in the document's own directory, because the save ends
+ * in an atomic replace and that exists only within one volume. Splitting on '/'
+ * alone found none in a Windows path, so dir_len was 0 and this wrote the CWD. */
 static char* create_temp_save_path(fz_context* ctx, const char* path) {
     static const char temp_name[] = ".shenzhenpdf-save-XXXXXX";
-    const char* slash = strrchr(path, '/');
-    size_t dir_len = slash ? (size_t)(slash - path + 1) : 0;
+    size_t dir_len = spdf_compat_path_dir_len(path);
     size_t temp_name_len = strlen(temp_name);
     char* temp_path;
     int fd;
@@ -2426,13 +2426,13 @@ static char* create_temp_save_path(fz_context* ctx, const char* path) {
     if (dir_len) memcpy(temp_path, path, dir_len);
     memcpy(temp_path + dir_len, temp_name, temp_name_len + 1);
 
-    fd = mkstemp(temp_path);
+    fd = spdf_compat_mkstemp(temp_path);
     if (fd < 0) {
         int saved_errno = errno;
         free(temp_path);
         fz_throw(ctx, FZ_ERROR_SYSTEM, "Could not create a temporary save file: %s", strerror(saved_errno));
     }
-    if (close(fd) != 0) {
+    if (spdf_compat_close(fd) != 0) {
         int saved_errno = errno;
         remove(temp_path);
         free(temp_path);
@@ -2482,7 +2482,7 @@ int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t e
     }
 
     if (temp_path) {
-        if (rename(temp_path, path) != 0) {
+        if (spdf_compat_replace_file(temp_path, path) != 0) {
             set_error(err, err_len, "Could not replace the original PDF after saving.");
             remove(temp_path);
             free(temp_path);
