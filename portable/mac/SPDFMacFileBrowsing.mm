@@ -1,0 +1,85 @@
+#import "SPDFMacFileBrowsing.h"
+
+#import "SPDFMacFileExplorerPreference.h"
+#import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacSupport.h"
+
+@implementation ShenzhenMacDelegate (SPDFMacFileBrowsing)
+
+// The native picker, rooted at `directoryURL` when we have one. Shenzhen Files
+// cannot return a selection, so this stays the only way a browse hands a file
+// straight back to the app.
+- (void)runOpenPanelInDirectory:(NSURL*)directoryURL {
+    NSOpenPanel* panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = NO;
+    panel.allowsMultipleSelection = NO;
+    panel.allowedContentTypes = spdf_document_content_types();
+    if (directoryURL) panel.directoryURL = directoryURL;
+    if ([panel runModal] == NSModalResponseOK) [self openPath:panel.URL.path];
+}
+
+- (void)browseForDocumentInDirectory:(NSString*)directory {
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    SPDFMacSystemBrowseHandler pick = ^(NSURL* directoryURL) {
+      [weakSelf runOpenPanelInDirectory:directoryURL];
+    };
+    // A missing/unreadable folder never reaches a file manager; open the picker
+    // wherever macOS last left it rather than failing the command.
+    if (!SPDFMacBrowseDirectoryUsingPreference(directory ?: @"", pick)) [self runOpenPanelInDirectory:nil];
+}
+
+- (void)openDocument:(id)sender {
+    (void)sender;
+    [self browseForDocumentInDirectory:SPDFMacBrowseStartDirectory(_path, _recentlyOpenedPaths)];
+}
+
+// Cmd+Shift+O: type or paste a path to jump straight to it. A file opens
+// directly; a folder opens the preferred file manager there (or the standard
+// Open panel rooted at it). Handy for pasting a path from a terminal or a chat.
+- (void)openPathPrompt:(id)sender {
+    (void)sender;
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Open Path";
+    alert.informativeText = @"Enter a file or folder path. A folder opens the file browser there.";
+    [alert addButtonWithTitle:@"Open"];
+    [alert addButtonWithTitle:@"Cancel"];
+    NSTextField* field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 420, 24)];
+    field.placeholderString = @"/path/to/file-or-folder";
+    // Prefill from the clipboard when it already looks like a path, so a
+    // copied path just needs Return.
+    NSString* clip = [[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString]
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (clip.length && ([clip hasPrefix:@"/"] || [clip hasPrefix:@"~"] || [clip hasPrefix:@"file://"]))
+        field.stringValue = clip;
+    alert.accessoryView = field;
+    if (_window) [_window makeFirstResponder:field];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    [self openResolvedPath:field.stringValue];
+}
+
+// Resolves a user-entered path (file:// URL, ~ expansion, trimming) and either
+// opens the file or browses the folder with the preferred file manager.
+- (void)openResolvedPath:(NSString*)input {
+    NSString* path = [input stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!path.length) return;
+    if ([path hasPrefix:@"file://"]) {
+        NSURL* url = [NSURL URLWithString:path];
+        if (url.isFileURL && url.path.length) path = url.path;
+    }
+    path = path.stringByExpandingTildeInPath;
+    path = path.stringByStandardizingPath ?: path;
+
+    BOOL isDirectory = NO;
+    if (![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory]) {
+        [self showError:@"Path not found" detail:[NSString stringWithFormat:@"No file or folder exists at:\n%@", path]];
+        return;
+    }
+    if (isDirectory) {
+        [self browseForDocumentInDirectory:path];
+        return;
+    }
+    [self openPath:path];
+}
+
+@end

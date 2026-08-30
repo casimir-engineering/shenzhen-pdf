@@ -21,6 +21,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacDefaultReader.h"
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacDocumentView.h"
+#import "SPDFMacFileBrowsing.h"
 #import "SPDFMacFileExplorerPreference.h"
 #import "SPDFMacFindNearest.h"
 #import "SPDFMacInactivePreload.h"
@@ -8212,70 +8213,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _documentViewPanCropGeneration++;
     _documentViewPanCropInFlight = NO;
     _documentViewPanMaintenanceScheduled = NO;
-}
-
-- (void)openDocument:(id)sender {
-    (void)sender;
-    NSOpenPanel* panel = [NSOpenPanel openPanel];
-    panel.canChooseFiles = YES;
-    panel.canChooseDirectories = NO;
-    panel.allowsMultipleSelection = NO;
-    panel.allowedContentTypes = spdf_document_content_types();
-    if ([panel runModal] == NSModalResponseOK) [self openPath:panel.URL.path];
-}
-
-// Cmd+Shift+O: type or paste a path to jump straight to it. A file opens
-// directly; a folder opens the standard Open panel rooted at that folder so
-// you can pick from it. Handy for pasting a path from Finder/Terminal/a chat.
-- (void)openPathPrompt:(id)sender {
-    (void)sender;
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = @"Open Path";
-    alert.informativeText = @"Enter a file or folder path. A folder opens the file browser there.";
-    [alert addButtonWithTitle:@"Open"];
-    [alert addButtonWithTitle:@"Cancel"];
-    NSTextField* field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 420, 24)];
-    field.placeholderString = @"/path/to/file-or-folder";
-    // Prefill from the clipboard when it already looks like a path, so a
-    // copied path just needs Return.
-    NSString* clip = [[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString]
-        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (clip.length && ([clip hasPrefix:@"/"] || [clip hasPrefix:@"~"] || [clip hasPrefix:@"file://"]))
-        field.stringValue = clip;
-    alert.accessoryView = field;
-    if (_window) [_window makeFirstResponder:field];
-    if ([alert runModal] != NSAlertFirstButtonReturn) return;
-    [self openResolvedPath:field.stringValue];
-}
-
-// Resolves a user-entered path (file:// URL, ~ expansion, trimming) and either
-// opens the file or, for a folder, presents the Open panel rooted there.
-- (void)openResolvedPath:(NSString*)input {
-    NSString* path = [input stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (!path.length) return;
-    if ([path hasPrefix:@"file://"]) {
-        NSURL* url = [NSURL URLWithString:path];
-        if (url.isFileURL && url.path.length) path = url.path;
-    }
-    path = path.stringByExpandingTildeInPath;
-    path = path.stringByStandardizingPath ?: path;
-
-    BOOL isDirectory = NO;
-    if (![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory]) {
-        [self showError:@"Path not found" detail:[NSString stringWithFormat:@"No file or folder exists at:\n%@", path]];
-        return;
-    }
-    if (isDirectory) {
-        NSOpenPanel* panel = [NSOpenPanel openPanel];
-        panel.canChooseFiles = YES;
-        panel.canChooseDirectories = NO;
-        panel.allowsMultipleSelection = NO;
-        panel.allowedContentTypes = spdf_document_content_types();
-        panel.directoryURL = [NSURL fileURLWithPath:path isDirectory:YES];
-        if ([panel runModal] == NSModalResponseOK) [self openPath:panel.URL.path];
-        return;
-    }
-    [self openPath:path];
 }
 
 - (BOOL)pathIsInTemporaryLocation:(NSString*)path {
