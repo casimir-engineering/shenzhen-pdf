@@ -56,6 +56,15 @@ static NSColor* spdf_canvas_background_color(void) {
     return theme.drawsPaperShadow ? nil : theme.paperBorderColor;
 }
 
+// A page's bitmap does not always land exactly on the page rect: at fractional
+// zooms the drawn image can fall short by a fraction of a point. Filling white
+// underneath then leaked a bright sliver along that edge -- the lighter
+// right-hand border seen on dark-theme PDFs. Paint the theme's own paper so a
+// gap is invisible whichever edge it lands on.
+- (NSColor*)pageFillColor {
+    return [SPDFMarkdownTheme themeForVariant:self.themeVariant].paperColor;
+}
+
 - (NSColor*)viewportBackgroundColor {
     return [SPDFMarkdownTheme themeForVariant:self.themeVariant].viewportBackgroundColor
                ?: spdf_canvas_background_color();

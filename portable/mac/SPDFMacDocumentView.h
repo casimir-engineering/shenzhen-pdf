@@ -56,6 +56,10 @@
 @interface SPDFDocumentView (Theme)
 - (BOOL)drawsPageShadow;
 - (NSColor*)pageBorderColor;  // nil when no border is drawn
+// The underlay painted beneath a page's rendered bitmap, in the active theme's
+// own paper color. Never white in the dark theme: a fractional gap between the
+// bitmap and the page rect would show the underlay as a bright edge.
+- (NSColor*)pageFillColor;
 // The viewport gutter behind the sheets: the theme's own dark gutter, or the
 // unchanged system-derived canvas background in light.
 - (NSColor*)viewportBackgroundColor;
