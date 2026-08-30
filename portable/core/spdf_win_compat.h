@@ -207,8 +207,8 @@ static SPDF_COMPAT_INLINE void spdf_compat_lock_release(spdf_compat_file_lock* l
 static SPDF_COMPAT_INLINE double spdf_compat_monotonic_ms(void) {
     struct timespec ts;
 
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0.0;
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
 }
 
 #endif /* _WIN32 */
