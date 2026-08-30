@@ -17,8 +17,8 @@
  * so a recolored PDF page and a dark-themed Markdown page agree pixel for
  * pixel on background and text.
  *
- * Cost is one 256-entry table lookup plus three adds and three clamps per
- * pixel, with no table lookup and no floating point; the per-theme constants
+ * Cost is one dot product, three adds and three clamps per pixel, with no
+ * table lookup and no floating point; the per-theme constants
  * are computed once by spdf_recolor_table_init(), not once per page.
  *
  * The transform is fused into copy_pixmap_to_bitmap() in shenzhen_pdf_core.c,
@@ -104,6 +104,15 @@ void spdf_recolor_rgba_row(unsigned char* row, int width, int y, const spdf_reco
  * fused render tail calls once per non-excluded run of a row it has just
  * converted, so the pixels are still in L1. */
 void spdf_recolor_rgba_span(unsigned char* row, int x0, int x1, const spdf_recolor_table* table);
+
+/* A CBZ, a comic archive or a bare image file is a PICTURE, not a document:
+ * inverting its lightness is never what anyone wants, and SumatraPDF skips its
+ * own color override for image collections for the same reason. Returns 1 for
+ * those container formats, 0 for PDF/XPS/EPUB/MOBI/SVG and anything unknown --
+ * unknown defaults to "document" so a new text format is dark by default.
+ * Matched on the path's extension, case insensitively; a NULL or extensionless
+ * path is a document. */
+int spdf_recolor_path_is_picture(const char* path);
 
 /* ---- Per-page image regions -------------------------------------------- *
  *
