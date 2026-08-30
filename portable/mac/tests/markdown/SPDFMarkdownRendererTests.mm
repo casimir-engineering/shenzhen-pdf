@@ -4,6 +4,8 @@
 #import "../../markdown/SPDFMarkdownTableDecorations.h"
 #import "../../markdown/SPDFMarkdownTableLayout.h"
 
+#include "spdf_recolor.h"
+
 static BOOL SPDFColorMatchesHex(NSColor* color, unsigned int hex) {
     NSColor* sRGB = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
     if (!sRGB) return NO;
@@ -379,6 +381,18 @@ int main(void) {
                                       effectiveRange:nil],
                                        0xC678DD),
                    @"Dark render paints syntax keywords from the dark token set");
+
+        // The portable C core cannot import SPDFMarkdownTheme, so it carries its
+        // own copy of the dark endpoints. Recolored PDF pages and dark Markdown
+        // pages are only the same product while these agree, so assert it here
+        // rather than trusting two hand-kept constants not to drift.
+        SPDFMarkdownTheme* darkPalette = [SPDFMarkdownTheme themeForVariant:SPDFMarkdownThemeVariantDark];
+        spdf_recolor_theme coreTheme = spdf_recolor_default_dark_theme();
+        SPDFExpect(SPDFColorMatchesHex(darkPalette.paperColor, coreTheme.paper_rgb),
+                   @"core recolor paper matches the dark theme paperColor");
+        SPDFExpect(SPDFColorMatchesHex(darkPalette.bodyTextColor, coreTheme.ink_rgb),
+                   @"core recolor ink matches the dark theme bodyTextColor");
+        SPDFExpect(coreTheme.paper_rgb != 0x000000u, @"dark paper is not pure black");
 
         NSTextView* view = [document newSelectableTextView];
         SPDFExpect(view.isSelectable && !view.isEditable && view.importsGraphics,

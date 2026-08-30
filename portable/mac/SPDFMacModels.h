@@ -26,6 +26,11 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) CGFloat imagePointHeight;
 @property(nonatomic) CGFloat imageZoom;
 @property(nonatomic) CGFloat imageScale;
+// Reading theme the pixels were rendered under. The cache is keyed on it the
+// way it is keyed on zoom: a toggle re-renders rather than recoloring at paint
+// time, which is the mistake that made Okular ship a speed warning next to its
+// own color options.
+@property(nonatomic) BOOL imageDarkTheme;
 @property(nonatomic, strong) NSImage* image;
 @property(nonatomic) CGFloat baseImagePointWidth;
 @property(nonatomic) CGFloat baseImagePointHeight;

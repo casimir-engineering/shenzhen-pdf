@@ -252,6 +252,8 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
         return @"star";
     if (action == @selector(toggleDefaultSidebarForNewDocuments:)) return @"sidebar.left";
     if (action == @selector(toggleDefaultMinimapForNewDocuments:)) return @"map";
+    if (action == @selector(toggleReadingTheme:)) return @"moon.stars";
+    if (action == @selector(toggleDarkThemePreservesImages:)) return @"photo";
     if (action == @selector(toggleSearchJumpsToNearestResult:)) return @"scope";
     if (action == @selector(openStateFile:)) return @"curlybraces";
     if (action == @selector(revealSettingsFolder:)) return @"folder";
@@ -593,6 +595,19 @@ static void spdf_discard_launch_prerender(void) {
 - (void)startLaunchPrerender {
     if (self.detachedTabLaunch) return;
     if (getenv("SPDF_DISABLE_LAUNCH_PRERENDER")) return;
+    // The prerender runs before loadPersistentState, so read the reading theme
+    // here: the prerendered page is stamped with it and is only adopted when it
+    // matches the live one, so a dark session would otherwise throw its own
+    // first paint away. settings.yaml is small and loadPersistentState reads it
+    // again moments later from a warm page cache.
+    {
+        NSDictionary* settings = [self stateObjectFromFile:@"settings.yaml"];
+        if ([settings isKindOfClass:[NSDictionary class]]) {
+            _darkReadingTheme = [settings[@"markdownTheme"] isEqual:@"dark"];
+            NSNumber* preservesImages = settings[@"darkThemePreservesImages"];
+            if (preservesImages) _darkThemePreservesImages = preservesImages.boolValue;
+        }
+    }
     NSString* initialPath = [self.initialPath copy];
     NSString* restoreWindowID = [self.restoreWindowID copy];
     SPDFLaunchPrerenderResult* result = [[SPDFLaunchPrerenderResult alloc] init];
@@ -1423,7 +1438,11 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
         NSNumber* printScalingMode = settings[@"printScalingMode"];
         NSNumber* printCustomScale = settings[@"printCustomScale"];
         NSNumber* markdownFontScale = settings[@"markdownFontScale"];
-        _markdownDarkTheme = [settings[@"markdownTheme"] isEqual:@"dark"];
+        /* "markdownTheme" now means the reading theme for EVERY document; the
+         * key kept its name so an existing "dark" choice carries over with no
+         * migration. Missing key keeps the light default. */
+        _darkReadingTheme = [settings[@"markdownTheme"] isEqual:@"dark"];
+        NSNumber* darkThemePreservesImages = settings[@"darkThemePreservesImages"];
         NSDictionary* windowSize = settings[@"windowSize"];
         NSString* commentAuthor = settings[@"commentAuthor"];
         NSString* translateSource = settings[@"translateSourceLanguage"];
@@ -1434,6 +1453,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
         if (minimapWidth) _minimapWidth = spdf_clamp_cg(minimapWidth.doubleValue, 72.0, 260.0);
         if (defaultSidebarVisible) _defaultSidebarVisibleForNewDocuments = defaultSidebarVisible.boolValue;
         if (defaultMinimapVisible) _defaultMinimapVisibleForNewDocuments = defaultMinimapVisible.boolValue;
+        if (darkThemePreservesImages) _darkThemePreservesImages = darkThemePreservesImages.boolValue;
         if (collapseWhitespaceWhenCopyingText)
             _collapseWhitespaceWhenCopyingText = collapseWhitespaceWhenCopyingText.boolValue;
         /* Missing key (settings.yaml from an older build) keeps the enabled default. */
@@ -2055,7 +2075,8 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
         @"printScalingMode" : @(_printScalingMode),
         @"printCustomScale" : @(SPDFClampPrintCustomScale(_printCustomScale)),
         @"markdownFontScale" : @(round(MAX(0.5, MIN(3.0, _markdownFontScale)) * 100.0) / 100.0),
-        @"markdownTheme" : _markdownDarkTheme ? @"dark" : @"light",
+        @"markdownTheme" : _darkReadingTheme ? @"dark" : @"light",
+        @"darkThemePreservesImages" : @(_darkThemePreservesImages),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
     }
                    toFile:@"settings.yaml"];
@@ -2248,6 +2269,13 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
                                                   action:@selector(toggleMinimap:)
                                            keyEquivalent:@""];
     minimapItem.target = self;
+    // Title flips between "Dark"/"Light" in -validateMenuItem:, matching the
+    // toolbar button's moon/sun.
+    NSMenuItem* readingThemeItem = [viewMenu addItemWithTitle:@"Switch to Dark Reading Theme"
+                                                       action:@selector(toggleReadingTheme:)
+                                                keyEquivalent:@"i"];
+    readingThemeItem.target = self;
+    readingThemeItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [viewMenu addItem:[NSMenuItem separatorItem]];
     // One visible Presentation Mode row: it shows ⇧⌘F natively and advertises
     // the F5 shortcut via the "(F5)" suffix added in -validateMenuItem:. F5 keeps
@@ -2358,6 +2386,10 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
                                                              action:@selector(toggleDefaultMinimapForNewDocuments:)
                                                       keyEquivalent:@""];
     defaultMinimapItem.target = self;
+    NSMenuItem* preserveImagesItem = [settingsMenu addItemWithTitle:@"Keep Image Colors in Dark Theme"
+                                                             action:@selector(toggleDarkThemePreservesImages:)
+                                                      keyEquivalent:@""];
+    preserveImagesItem.target = self;
     NSMenuItem* nearestSearchItem = [settingsMenu addItemWithTitle:@"Search Jumps to Nearest Result"
                                                             action:@selector(toggleSearchJumpsToNearestResult:)
                                                      keyEquivalent:@""];
@@ -2777,7 +2809,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
                                  state:NSControlStateValueOff
                                enabled:[_markdownFontSizeSegments isEnabledForSegment:1]];
     }
-    [self addMarkdownThemeOverflowItemsToMenu:menu hiddenViews:hiddenViews];
+    [self addReadingThemeOverflowItemsToMenu:menu hiddenViews:hiddenViews];
     if ([hiddenViews containsObject:_fitModePopup] || [hiddenViews containsObject:_zoomSegments]) {
         [menu addItem:[NSMenuItem separatorItem]];
         if ([hiddenViews containsObject:_zoomSegments]) {
@@ -2837,7 +2869,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
         @[ _findCountLabel ],
         @[ _findSegments ],
         @[ _findRegexCheckbox ],
-        @[ _markdownFontSizeSegments, _markdownThemeButton ],
+        @[ _markdownFontSizeSegments, _readingThemeButton ],
         @[ _fitModePopup, _zoomSegments ],
     ];
     NSMutableSet<NSView*>* hiddenViews = [NSMutableSet set];
@@ -2965,7 +2997,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
                                                              spdf_markdown_font_size_toolbar_image(NO),
                                                              spdf_markdown_font_size_toolbar_image(YES));
     _markdownFontSizeSegments.hidden = YES; // markdown-only; updateMarkdownFontControls reveals it
-    [self buildMarkdownThemeToolbarButton]; // markdown-only reading-theme toggle, right of the pill
+    [self buildReadingThemeToolbarButton]; // reading-theme toggle, right of the pill
     [self updateMarkdownFontControls];
 
     _fitModePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
@@ -3078,7 +3110,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
     [_toolbar addArrangedSubview:_fitModePopup];
     [_toolbar addArrangedSubview:_zoomSegments];
     [_toolbar addArrangedSubview:_markdownFontSizeSegments];
-    [_toolbar addArrangedSubview:_markdownThemeButton];
+    [_toolbar addArrangedSubview:_readingThemeButton];
     [_toolbar addArrangedSubview:_searchField];
     [_toolbar addArrangedSubview:_findRegexCheckbox];
     [_toolbar addArrangedSubview:_findCountLabel];
@@ -3087,7 +3119,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
     [_toolbar addArrangedSubview:_toolbarOverflowButton];
     [_toolbar addArrangedSubview:_minimapToggleButton];
     [_toolbar setCustomSpacing:8.0 afterView:_zoomSegments];
-    [_toolbar setCustomSpacing:8.0 afterView:_markdownThemeButton];
+    [_toolbar setCustomSpacing:8.0 afterView:_readingThemeButton];
     [_toolbar setCustomSpacing:8.0 afterView:_searchField];
 
     if (launchWindowStart > 0.0)
@@ -3399,8 +3431,9 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
 
     double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     spdf_bitmap bitmap;
-    if (!spdf_render_page_rgba_opts(doc, (int)pageIndex, (float)(zoom * renderDisplayScale), SPDF_RENDER_DEFAULT,
-                                    renderToken, &bitmap, err, errLen))
+    unsigned renderFlags = [self readingThemeRenderFlags];
+    if (!spdf_render_page_rgba_opts(doc, (int)pageIndex, (float)(zoom * renderDisplayScale), renderFlags, renderToken,
+                                    &bitmap, err, errLen))
         return nil;
     if (spdf_zoom_profile_enabled()) {
         double elapsed = spdf_zoom_profile_now_ms() - profileStart;
@@ -3449,6 +3482,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
     page.imagePointHeight = pointSize.height;
     page.imageZoom = zoom;
     page.imageScale = requestedDisplayScale;
+    page.imageDarkTheme = (renderFlags & SPDF_RENDER_DARK_THEME) != 0;
     page.image = image;
     page.highlights = @[];
     page.selectionRects = @[];
@@ -3500,7 +3534,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     crop.y1 = (float)NSMaxY(pageCropRect);
 
     if (spdf_page_list_cache_disabled()) useList = NO;
-    unsigned renderFlags = useList ? SPDF_RENDER_USE_PAGE_LIST : SPDF_RENDER_DEFAULT;
+    unsigned renderFlags = (useList ? SPDF_RENDER_USE_PAGE_LIST : SPDF_RENDER_DEFAULT) | [self readingThemeRenderFlags];
     double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     spdf_bitmap bitmap;
     if (!spdf_render_page_region_rgba_opts(doc, (int)pageIndex, (float)(zoom * displayScale), crop, renderFlags,
@@ -3638,6 +3672,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (BOOL)renderedPageImage:(SPDFRenderedPage*)page matchesZoom:(CGFloat)zoom displayScale:(CGFloat)displayScale {
     if (!page.image) return NO;
+    if (page.imageDarkTheme != _darkReadingTheme) return NO;
     return fabs(page.imageZoom - zoom) <= 0.001 && fabs(page.imageScale - displayScale) <= 0.001;
 }
 
@@ -5295,7 +5330,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     SPDFRenderedPage* prerendered = _launchPrerenderedFirstPage;
     _launchPrerenderedFirstPage = nil; // single-shot: launch first paint only
     if (prerendered && prerendered.pageIndex == pageIndex && prerendered.imageZoom == _zoom &&
-        prerendered.imageScale == [self backingScale]) {
+        prerendered.imageScale == [self backingScale] && prerendered.imageDarkTheme == _darkReadingTheme) {
         err[0] = '\0';
         preferredPage = prerendered;
         spdf_launch_profile_log(@"sync preferred-page render page=%ld zoom=%.2f adopted from prerender",
@@ -16751,6 +16786,16 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     }
     if (action == @selector(toggleDefaultMinimapForNewDocuments:)) {
         menuItem.state = _defaultMinimapVisibleForNewDocuments ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
+    if (action == @selector(toggleDarkThemePreservesImages:)) {
+        menuItem.state = _darkThemePreservesImages ? NSControlStateValueOn : NSControlStateValueOff;
+        // Only meaningful while the dark theme is on; greyed out rather than
+        // hidden so the setting is discoverable either way.
+        return _darkReadingTheme;
+    }
+    if (action == @selector(toggleReadingTheme:)) {
+        menuItem.title = self.readingThemeToggleTitle;
         return YES;
     }
     if (action == @selector(toggleSearchJumpsToNearestResult:)) {

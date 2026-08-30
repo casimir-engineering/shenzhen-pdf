@@ -112,9 +112,33 @@
         return;
     }
 
+    // Copy the document's OWN colors, like Print and Save as PDF: the cached
+    // image may be recolored for the dark reading theme, and a pasted page
+    // carrying our dark paper would be wrong wherever it lands. Re-render at
+    // the cached page's own zoom and scale when that is the case.
+    SPDFRenderedPage* cached = _renderedPages[(NSUInteger)_pageIndex];
+    NSImage* image = cached.image;
+    if (cached.imageDarkTheme) {
+        char err[512];
+        BOOL darkTheme = _darkReadingTheme;
+        _darkReadingTheme = NO;
+        SPDFRenderedPage* original = [self renderedPageAtIndex:_pageIndex
+                                                      document:_doc
+                                                          zoom:cached.imageZoom
+                                                  displayScale:cached.imageScale
+                                                         error:err
+                                                   errorLength:sizeof(err)];
+        _darkReadingTheme = darkTheme;
+        if (!original.image) {
+            NSBeep();
+            return;
+        }
+        image = original.image;
+    }
+
     NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
     [pasteboard clearContents];
-    [pasteboard writeObjects:@[ _renderedPages[(NSUInteger)_pageIndex].image ]];
+    [pasteboard writeObjects:@[ image ]];
     _statusLabel.stringValue = @"Page image copied.";
 }
 

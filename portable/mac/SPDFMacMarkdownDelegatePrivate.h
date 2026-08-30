@@ -54,15 +54,21 @@ NS_ASSUME_NONNULL_BEGIN
                          enabled:(BOOL)enabled;
 @end
 
-// The markdown-only reading-theme toggle (toolbar button + persisted
-// "markdownTheme" preference), implemented in
-// SPDFMacMarkdownThemeIntegration.mm and wired like the font-size controls.
-@interface ShenzhenMacDelegate (SPDFMacMarkdownThemeIntegration)
+// The document-agnostic reading-theme toggle (always-visible toolbar button,
+// Shift+Cmd+I, and the persisted "markdownTheme" preference), implemented in
+// SPDFMacReadingThemeIntegration.mm and wired like the font-size controls.
+@interface ShenzhenMacDelegate (SPDFMacReadingThemeIntegration)
 - (SPDFMarkdownThemeVariant)markdownThemeVariant;
-- (void)buildMarkdownThemeToolbarButton;
-- (void)updateMarkdownThemeControls;
-- (void)toggleMarkdownReadingTheme:(nullable id)sender;
-- (void)addMarkdownThemeOverflowItemsToMenu:(NSMenu*)menu hiddenViews:(NSSet<NSView*>*)hiddenViews;
+// Render flags every fixed-page render must carry, so one preference drives
+// Markdown restyling and pixmap recoloring alike. Print and export never ask.
+- (unsigned)readingThemeRenderFlags;
+- (void)buildReadingThemeToolbarButton;
+- (NSString*)readingThemeToggleTitle;
+- (void)updateReadingThemeControls;
+- (void)applyReadingThemeToEveryTab;
+- (void)toggleReadingTheme:(nullable id)sender;
+- (void)toggleDarkThemePreservesImages:(nullable id)sender;
+- (void)addReadingThemeOverflowItemsToMenu:(NSMenu*)menu hiddenViews:(NSSet<NSView*>*)hiddenViews;
 @end
 
 @interface ShenzhenMacDelegate (SPDFMacMarkdownIntegration)

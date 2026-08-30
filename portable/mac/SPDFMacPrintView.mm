@@ -315,6 +315,11 @@ static NSImage* spdf_print_image_from_bitmap(spdf_bitmap* bitmap, CGFloat imageS
 - (NSImage*)highResolutionImageForPageIndex:(NSInteger)pageIndex {
     if (!self.document || pageIndex < 0 || pageIndex >= [self effectivePageCount]) return nil;
 
+    // Deliberately spdf_render_page_rgba, i.e. SPDF_RENDER_DEFAULT: print always
+    // gets the document's OWN colors, never the dark reading theme. A PDF's
+    // colors are its content, printing our dark paper would waste an enormous
+    // amount of toner, and every reader with both features (Okular, zathura,
+    // Evince, Skim) treats the color transform as view-only for the same reason.
     CGFloat targetDPI = self.targetDPI > 0 ? self.targetDPI : kSPDFDefaultPrintDPI;
     CGFloat renderZoom = MAX(kSPDFMinimumPrintRenderZoom, targetDPI / 72.0);
     char err[1024];
@@ -343,8 +348,13 @@ static NSImage* spdf_print_image_from_bitmap(spdf_bitmap* bitmap, CGFloat imageS
     NSRectFill(pageRect);
 
     NSImage* image = [self highResolutionImageForPageIndex:pageIndex];
-    if (!image && pageIndex < (NSInteger)self.fallbackPages.count)
-        image = self.fallbackPages[(NSUInteger)pageIndex].image;
+    if (!image && pageIndex < (NSInteger)self.fallbackPages.count) {
+        // The fallback is the on-screen cache, which under the dark reading
+        // theme holds recolored pixels. Leave the page blank rather than print
+        // them: a rescued page is worth less than never baking our colors in.
+        SPDFRenderedPage* cached = self.fallbackPages[(NSUInteger)pageIndex];
+        if (!cached.imageDarkTheme) image = cached.image;
+    }
     if (!image) return;
 
     NSRect imageable = info.imageablePageBounds;
