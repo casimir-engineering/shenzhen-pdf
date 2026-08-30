@@ -43,10 +43,31 @@ fi
 # file-actions module; count enforcement across both homes so a refactor cannot
 # silently drop a check.
 file_actions_impl="$root/portable/mac/SPDFMacMarkdownFileActions.mm"
-if [ "$(grep -c "spdf_has_permission(_doc, 'c')" "$app_impl")" -lt 7 ]; then
+translation_impl="$root/portable/mac/SPDFMacTranslationEnablement.mm"
+translation_policy="$root/portable/mac/SPDFMacTranslationPolicy.mm"
+# Copy permission is enforced across the coordinator, the copy-page file
+# actions and the translation context. Count the total rather than a
+# per-file quota so consolidating duplicate checks into one shared context
+# cannot trip the guard, while deleting a check still does.
+permission_total=0
+for impl in "$app_impl" "$file_actions_impl" "$translation_impl"; do
+    permission_total=$((permission_total + $(grep -c "spdf_has_permission(_doc, 'c')" "$impl")))
+done
+if [ "$permission_total" -lt 10 ]; then
     echo "encrypted-PDF copy actions do not consistently enforce copy permission" >&2
     exit 1
 fi
+# Translation reads the permission through the shared context, and the policy
+# must keep gating selection translation on it.
+grep -q "context.contentCopyAllowed = context.markdownActive || (_doc && spdf_has_permission(_doc, 'c'))" \
+    "$translation_impl" || {
+    echo "translation context must derive copy permission from the open PDF" >&2
+    exit 1
+}
+grep -q "!context.contentCopyAllowed" "$translation_policy" || {
+    echo "selection translation must stay gated on copy permission" >&2
+    exit 1
+}
 if [ "$(grep -c "spdf_has_permission(_doc, 'c')" "$file_actions_impl")" -lt 4 ]; then
     echo "copy-page file actions must enforce copy permission in enablement and action bodies" >&2
     exit 1
