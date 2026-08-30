@@ -220,12 +220,14 @@ portable/win/tests/run-tests.sh --filter probe --keep
 |---|---|
 | `tests/run-tests.sh` | the runner: builds and runs the Windows test binaries and aggregates a real exit status |
 | `tests/harness-lib.sh` | guest plumbing — `guest()`, `vm_build()`, prerequisite discovery |
+| `tests/probe-cases.sh` | the four cross-host probe cases |
 | `tests/compare_png.py` | golden-image comparison, macOS render vs Windows render |
 | `tests/png_io.py` | dependency-free PNG reader/writer (stdlib `zlib` only) |
 | `tests/compare_png_selftest.py` | proves the comparator detects what it claims to |
 | `tests/make_fixture_pdf.py` → `tests/fixtures/golden.pdf` | the deterministic test document |
 | `spdf_win_probe.c` | the cross-host probe: same source, built on both hosts, transcripts diffed |
 | `tests/exit_code_probe.c`, `tests/never_compiles.c` | canaries for the exit-code contract |
+| `tests/narrow_path_probe.c`, `tests/non_ascii_path.ps1` | the code-page check below |
 
 ### Exit status
 
@@ -247,6 +249,36 @@ Three habits keep it honest and none may be tidied away: no `set -e`; nothing
 piped through `grep`/`tee` to decide pass or fail (a pipeline reports the *last*
 command's status, so `prog | grep -c ok` is green when `prog` crashes); and the
 final status computed from recorded results rather than from whatever ran last.
+
+### The guest's code page is 1252, not UTF-8
+
+`harness.non-ascii-path` checks this rather than assuming it, because assuming
+it wrong is expensive: a harness that hands the guest a UTF-8 path gets a file
+that does not exist and then blames the code under test. That is not
+hypothetical — it is how a real failure in this port was first mis-diagnosed.
+
+Windows narrows the real UTF-16 command line to the ANSI code page on the way
+into `char** argv`, and `fopen` widens it back the same way. Observed in this
+guest, for a directory named with an e-acute:
+
+```
+argv1-bytes 43 3A 5C ... 74 34 2D E9 64 69 72 5C 67 6F 6C 64 65 6E 2E 70 64 66
+fopen ok                                  ^^ E9, not C3 A9
+```
+
+So CP1252-representable names round-trip; anything outside CP1252 will not, and
+any narrow `fopen` in the port inherits that limit. The runner *reports* those
+bytes rather than asserting them — the code page is a property of the guest, and
+pinning `E9` here would turn a differently configured Windows into a spurious
+failure.
+
+`tests/non_ascii_path.ps1` is a script in the staged tree rather than an inline
+`-Command`, because `prlctl exec` strips the quotes out of `-Command` and every
+string literal vanishes. It spells the character as `[char]0xE9` so the file
+itself stays pure ASCII: a literal would have to survive git, rsync, the
+Parallels share and robocopy, and on macOS would also be exposed to NFC/NFD
+normalisation — making the test's own input depend on which machine checked the
+repo out.
 
 ### Adding a test for your track
 
@@ -320,6 +352,37 @@ that the comparison fails *and* that the diagnosis names the right bug —
 a comparator that fails everything would be as useless as one that passes
 everything, so the unmutated and jitter cases must pass. 13 checks, including
 decoding a real MuPDF-written PNG.
+
+### Where it stands
+
+Last full run: **12 cases, 8 pass, 0 fail, 4 blocked.**
+
+Passing in the guest under MSVC/ARM64: the exit-code contract, the code-page
+check, the comparator self-test, the macOS reference probe,
+`SPDFCoreRecolorTests`, `SPDFCoreCompatTests`, `paths_test` and `state_test`.
+
+Blocked: `probe.win`, `probe.diff`, `probe.png` and `SPDFCoreSaveTests`, all on
+one defect in the guest's `libmupdf.lib` —
+
+```
+libmupdf.lib(hyphen.obj) : error LNK2048: relocation PAGEOFFSET_12L targeting
+'_binary_hyph_all_zip_size' is invalid for the instruction ... due to bad
+alignment of offset to target; expected to be 4 bytes aligned
+LINK : fatal error LNK1165: link failed because of fixup errors
+```
+
+The generated hyphenation-data object is not 4-byte aligned for ARM64. Anything
+that links MuPDF in the guest hits it. Until it is fixed there is no Windows
+render, which is why the comparator's tolerance is still marked UNMEASURED
+rather than given a plausible-looking number.
+
+A build that fails *inside* `libmupdf.lib` is recorded BLOCKED rather than
+FAILED so the report points at the party who can fix it. That does not change
+the exit status and the case still counts against the run. The match is
+deliberately narrow — a linker error attributed to an object inside
+`libmupdf.lib`, nothing else — because treating link errors generally as
+infrastructure would hide exactly the unresolved-symbol failures the harness
+exists to surface.
 
 ### The fixture
 
