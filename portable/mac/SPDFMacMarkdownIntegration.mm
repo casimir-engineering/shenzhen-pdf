@@ -54,18 +54,18 @@ static char kSPDFMacMarkdownDelegateStateKey;
     ]];
 }
 
-// Focus for a document that has JUST finished loading -- deliberately looser
-// than the tab-activation claim, which yields only from {nil, window, tab strip,
-// the parked PDF views}. On Cmd+Shift+T first responder is none of those (the
-// outgoing canvas, a sidebar row, a toolbar control), so that claim refused and
-// the reopened document could not be typed into or searched. At this instant
-// the user has had no chance to click anything, so a stale holder is stale by
-// definition. The one thing worth protecting is a live text edit: the find and
-// page fields make the window's field editor (an NSText) first responder, and
-// stealing that would eat keystrokes.
+// Focus for a document that has JUST finished loading. UNCONDITIONAL, unlike
+// the tab-activation claim, and both halves of that were learned the hard way:
+// yielding only from {nil, window, tab strip, parked PDF views} made a reopen
+// refuse, and exempting a focused NSText to protect a live find edit brought
+// the bug back by another route -- search a PDF, reopen a Markdown document,
+// and the find field still holds focus, so this stood off, and then
+// -updateControlsForActiveMarkdown re-enabled that field and AppKit dropped
+// first responder to the WINDOW. Nobody held it and typing went nowhere.
+// A document that just appeared is what the user is looking at, so it gets the
+// keys; a query typed for the previous document is stale by definition.
 - (void)focusMarkdownViewAfterLoad {
     if (_presentationMode) return;
-    if ([_window.firstResponder isKindOfClass:NSText.class]) return;
     NSView* target = [self activeDocumentKeyView];
     if (target) [_window makeFirstResponder:target];
 }
@@ -305,16 +305,10 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                                                               reveal:NO];
                            [strongSelf rebuildSidebar];
                            [strongSelf updateMarkdownMinimap];
-                           // A Markdown canvas only exists once this async load
-                           // lands, so the tab-activation claim ran too early to
-                           // find one. Re-running THAT claim is not enough: it
-                           // yields only from {nil, window, tab strip, the parked
-                           // PDF views}, and on reopen first responder is none of
-                           // those, so it refused and typing stayed dead until
-                           // the page was clicked. See -focusMarkdownViewAfterLoad.
-                           [strongSelf focusMarkdownViewAfterLoad];
                        }
                        [strongSelf updateControlsForActiveMarkdown];
+                       /* After the control pass: it drops first responder. */
+                       if (success) [strongSelf focusMarkdownViewAfterLoad];
                        [strongSelf savePersistentState];
                      }];
     [self rebuildSidebar];

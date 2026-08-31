@@ -425,15 +425,6 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     [self setNeedsDisplay:YES];
 }
 
-- (void)keyDown:(NSEvent*)event {
-    NSScrollView* scrollView = self.enclosingScrollView;
-    if (scrollView) {
-        [scrollView keyDown:event];
-        return;
-    }
-    [super keyDown:event];
-}
-
 - (void)copy:(id)sender {
     (void)sender;
     if (!_selectedRange.length || NSMaxRange(_selectedRange) > _attributedString.length) {
