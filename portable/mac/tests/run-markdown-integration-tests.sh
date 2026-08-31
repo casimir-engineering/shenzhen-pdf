@@ -90,6 +90,7 @@ $PORTABLE/mac/SPDFMacMarkdownPanController.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Copy.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Cursor.mm
+$PORTABLE/mac/SPDFMacMarkdownPageCanvas+Focus.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Decorations.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Navigation.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Pan.mm
