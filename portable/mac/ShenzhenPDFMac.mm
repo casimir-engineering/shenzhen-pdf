@@ -603,12 +603,11 @@ static void spdf_discard_launch_prerender(void) {
     // first paint away. settings.yaml is small and loadPersistentState reads it
     // again moments later from a warm page cache.
     {
-        NSDictionary* settings = [self stateObjectFromFile:@"settings.yaml"];
-        if ([settings isKindOfClass:[NSDictionary class]]) {
-            _darkReadingTheme = [settings[@"markdownTheme"] isEqual:@"dark"];
-            NSNumber* preservesImages = settings[@"darkThemePreservesImages"];
-            if (preservesImages) _darkThemePreservesImages = preservesImages.boolValue;
-        }
+        NSDictionary* raw = [self stateObjectFromFile:@"settings.yaml"];
+        NSDictionary* settings = [raw isKindOfClass:[NSDictionary class]] ? raw : nil;
+        _darkReadingTheme = [settings[@"markdownTheme"] isEqual:@"dark"];
+        NSNumber* preservesImages = settings[@"darkThemePreservesImages"];
+        _darkThemePreservesImages = preservesImages ? preservesImages.boolValue : YES;
     }
     NSString* initialPath = [self.initialPath copy];
     NSString* restoreWindowID = [self.restoreWindowID copy];
@@ -1419,6 +1418,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
 
 - (void)loadPersistentState {
     NSDictionary* settings = [self stateObjectFromFile:@"settings.yaml"];
+    _darkThemePreservesImages = YES; /* default ON; a stored key overrides below */
     if ([settings isKindOfClass:NSDictionary.class]) {
         NSNumber* fit = settings[@"fitMode"];
         /* viewMode is intentionally not read: single-page view mode was removed
