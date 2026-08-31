@@ -54,6 +54,22 @@ static char kSPDFMacMarkdownDelegateStateKey;
     ]];
 }
 
+// Focus for a document that has JUST finished loading -- deliberately looser
+// than the tab-activation claim, which yields only from {nil, window, tab strip,
+// the parked PDF views}. On Cmd+Shift+T first responder is none of those (the
+// outgoing canvas, a sidebar row, a toolbar control), so that claim refused and
+// the reopened document could not be typed into or searched. At this instant
+// the user has had no chance to click anything, so a stale holder is stale by
+// definition. The one thing worth protecting is a live text edit: the find and
+// page fields make the window's field editor (an NSText) first responder, and
+// stealing that would eat keystrokes.
+- (void)focusMarkdownViewAfterLoad {
+    if (_presentationMode) return;
+    if ([_window.firstResponder isKindOfClass:NSText.class]) return;
+    NSView* target = [self activeDocumentKeyView];
+    if (target) [_window makeFirstResponder:target];
+}
+
 - (BOOL)isMarkdownActive {
     return self.markdownState.activeSession != nil && spdf_mac_path_is_markdown(_path);
 }
@@ -290,13 +306,13 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                            [strongSelf rebuildSidebar];
                            [strongSelf updateMarkdownMinimap];
                            // A Markdown canvas only exists once this async load
-                           // lands, so the tab-activation focus claim ran too
-                           // early to find one and focus stayed parked -- typing
-                           // and Cmd+F did nothing until the user clicked the
-                           // page. Re-run the claim now that there is something
-                           // to focus. It is guarded, so a find/page field the
-                           // user has clicked into meanwhile keeps typing.
-                           [strongSelf focusActiveDocumentViewAfterTabSelection];
+                           // lands, so the tab-activation claim ran too early to
+                           // find one. Re-running THAT claim is not enough: it
+                           // yields only from {nil, window, tab strip, the parked
+                           // PDF views}, and on reopen first responder is none of
+                           // those, so it refused and typing stayed dead until
+                           // the page was clicked. See -focusMarkdownViewAfterLoad.
+                           [strongSelf focusMarkdownViewAfterLoad];
                        }
                        [strongSelf updateControlsForActiveMarkdown];
                        [strongSelf savePersistentState];

@@ -88,6 +88,10 @@ NS_ASSUME_NONNULL_BEGIN
 // The tab-activation focus chokepoint (ShenzhenPDFMac.mm). Safe to re-run: it
 // only claims focus from a passive holder.
 - (void)focusActiveDocumentViewAfterTabSelection;
+// The document-just-loaded variant, which yields only to a live text edit.
+- (void)focusMarkdownViewAfterLoad;
+// The view typing should reach: the Markdown canvas when one is up.
+- (NSView*)activeDocumentKeyView;
 - (void)updateMarkdownFontControls;
 - (void)decreaseMarkdownFontSize:(nullable id)sender;
 - (void)increaseMarkdownFontSize:(nullable id)sender;

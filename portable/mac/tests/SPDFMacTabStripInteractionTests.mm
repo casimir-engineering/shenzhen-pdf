@@ -260,6 +260,34 @@ int main(void) {
                                                  parkedResponders:@[ parkedView ]]);
         expect_true(@"document view holds focus after the claim", window.firstResponder == documentView);
 
+        // WHY THE REOPEN FIX NEEDED A SECOND RULE. The tab-activation claim
+        // yields only from {nil, window, tab strip, parked}. Reopening a
+        // Markdown document (Cmd+Shift+T) leaves first responder on none of
+        // those -- the outgoing session's canvas, a sidebar row, a toolbar
+        // control -- so re-running that claim when the load completed refused,
+        // and the reopened document still could not be typed into. This pins
+        // the refusal, so the load-time rule cannot be "simplified" back into
+        // the tab-activation one.
+        SPDFFakeDocumentView* staleHolder = [[SPDFFakeDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 10, 10)];
+        [window.contentView addSubview:staleHolder];
+        expect_true(@"a stale non-parked view can hold first responder", [window makeFirstResponder:staleHolder]);
+        expect_true(@"the tab-activation claim REFUSES a stale non-parked holder",
+                    ![SPDFTabStripView claimFocusOnDocumentKeyView:documentView
+                                                            window:window
+                                                          tabStrip:strip
+                                                  parkedResponders:@[]]);
+        expect_true(@"so focus stays stuck on the stale holder", window.firstResponder == staleHolder);
+
+        // The load-time rule (-focusMarkdownViewAfterLoad) yields to anything
+        // that is not a live text edit. Same predicate, asserted here so the
+        // reader's copy and this expectation cannot drift apart.
+        expect_true(@"a stale holder is not a text edit, so the load rule takes focus",
+                    ![window.firstResponder isKindOfClass:NSText.class] &&
+                        [window makeFirstResponder:documentView] && window.firstResponder == documentView);
+        expect_true(@"a focused field editor IS a text edit, so the load rule stands off",
+                    [window makeFirstResponder:textEditor] &&
+                        [window.firstResponder isKindOfClass:NSText.class]);
+
         // Belt-and-braces keyDown forwarding: a printable key over the strip
         // reaches the type-to-search hook; Escape and Cmd shortcuts fall
         // through to super (the probe mirrors the production reader's filter).
