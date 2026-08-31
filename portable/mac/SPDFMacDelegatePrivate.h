@@ -351,9 +351,9 @@
     // Markdown and to SPDF_RENDER_DARK_THEME for everything else.
     BOOL _darkReadingTheme;
     // With the dark theme on, leave photographs and figures in their original
-    // colors (settings.yaml "darkThemePreservesImages", default NO = recolor
-    // the page uniformly). A page that is essentially one big image is a scan
-    // and is recolored whole regardless; see spdf_recolor.h.
+    // colors (settings.yaml "darkThemePreservesImages", default YES; a stored
+    // key wins, so anyone who turned it off keeps it off). A page that is
+    // essentially one big image is a scan and is recolored whole regardless.
     BOOL _darkThemePreservesImages;
     NSSize _restoredWindowContentSize;
     NSRect _restoredWindowFrame;
