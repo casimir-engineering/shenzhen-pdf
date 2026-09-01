@@ -40,6 +40,16 @@ NSRect spdf_mac_page_rect_to_view_rect(NSRect rect, NSRect pageRect, SPDFRendere
     return rect;
 }
 
+const CGFloat kSPDFPageTopScrollLeadIn = 12.0;
+
+CGFloat spdf_mac_link_destination_scroll_origin_y(NSRect pageRect, CGFloat destinationPageY, CGFloat zoom) {
+    CGFloat scale = zoom > 0.0 ? zoom : 1.0;
+    CGFloat offset = destinationPageY > 0.0 ? destinationPageY * scale : 0.0;
+    // Clamped at the document top, and never above the target page's own top:
+    // a destination with no offset must land exactly where "go to page N" lands.
+    return MAX(0.0, NSMinY(pageRect) + offset - kSPDFPageTopScrollLeadIn);
+}
+
 NSPoint spdf_mac_view_point_to_page_point(NSPoint point, NSRect pageRect, SPDFRenderedPage* page) {
     CGFloat scaleX = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
     CGFloat scaleY = NSHeight(pageRect) / MAX(1.0, page.pageHeight);

@@ -10,3 +10,7 @@ SPDFMacSelectionGranularity spdf_mac_selection_granularity_for_event(NSEvent* ev
 BOOL spdf_mac_selection_uses_range_path(SPDFMacSelectionGranularity granularity) {
     return granularity == SPDFMacSelectionGranularityRange;
 }
+
+BOOL spdf_mac_link_undo_applies_to_click(NSInteger clickCount, BOOL undoAvailable) {
+    return undoAvailable && clickCount >= 2;
+}

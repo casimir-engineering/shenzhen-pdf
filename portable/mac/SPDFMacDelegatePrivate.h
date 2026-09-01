@@ -485,6 +485,7 @@
                  pageSize:(NSSize)pageSize
                  clipSize:(NSSize)clipSize
              fallbackZoom:(CGFloat)fallbackZoom;
+- (void)scrollToPage:(NSInteger)pageIndex alignTop:(BOOL)alignTop;
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin notify:(BOOL)notify;
 - (void)scrollDocumentClipViewToOrigin:(NSPoint)origin pageIndexHint:(NSInteger)pageIndex notify:(BOOL)notify;
 - (void)scrollDocumentClipViewToDocumentOrigin:(NSPoint)origin notify:(BOOL)notify;
@@ -615,6 +616,20 @@
 @end
 
 @interface ShenzhenMacDelegate (SPDFMacUIReaderConformance) <SPDFMacDocumentViewReader>
+@end
+
+// Implemented in SPDFMacLinkNavigation.mm: instant, reversible in-document link
+// following and the top-aligned arrival it scrolls to.
+@interface ShenzhenMacDelegate (SPDFMacLinkNavigation)
+- (BOOL)documentViewFollowInDocumentLinkAtPageIndex:(NSInteger)pageIndex
+                                          pagePoint:(NSPoint)pagePoint
+                                      restoreOrigin:(NSPoint*)restoreOrigin
+                                   restorePageIndex:(NSInteger*)restorePageIndex;
+- (void)documentViewRestoreDocumentPosition:(NSPoint)origin pageIndex:(NSInteger)pageIndex;
+// Puts a link destination at the TOP of the viewport. `pageY` is the
+// destination's offset from the target page's top edge in page points; 0 means
+// the link named only a page, and the page's own start is the destination.
+- (void)scrollToLinkDestinationOnPage:(NSInteger)pageIndex pageY:(CGFloat)pageY;
 @end
 
 @interface ShenzhenMacDelegate (ShortcutHelp)

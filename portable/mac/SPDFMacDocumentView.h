@@ -10,6 +10,20 @@
                                       from:(NSPoint)start
                                         to:(NSPoint)end
                                granularity:(SPDFMacSelectionGranularity)granularity;
+// Follows a link whose destination is inside this document, synchronously, on
+// the mouse-up that released the click - no multi-click wait, because the jump
+// costs a few milliseconds and can be taken back. Returns NO (having done
+// nothing) when the point has no link or the link leaves the document; an
+// external URL opens another app, which is irreversible, so it keeps the
+// deferred activation path instead. On YES the caller receives the scroll
+// origin and page index from BEFORE the jump, to hand back to
+// documentViewRestoreDocumentPosition:pageIndex: if the click turns out to be
+// the first of a multi-click selection.
+- (BOOL)documentViewFollowInDocumentLinkAtPageIndex:(NSInteger)pageIndex
+                                          pagePoint:(NSPoint)pagePoint
+                                      restoreOrigin:(NSPoint*)restoreOrigin
+                                   restorePageIndex:(NSInteger*)restorePageIndex;
+- (void)documentViewRestoreDocumentPosition:(NSPoint)origin pageIndex:(NSInteger)pageIndex;
 @end
 
 @interface SPDFDocumentView : NSView <NSDraggingDestination>

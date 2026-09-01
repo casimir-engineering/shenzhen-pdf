@@ -40,6 +40,12 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     NSInteger _linkGesturePageIndex;
     NSPoint _linkGesturePagePoint;
     SPDFMacDelayedLinkActivation* _pendingLinkActivation;
+    // Where the document sat before the most recent in-document link jump, so
+    // the second click of a double/triple click can put it back and select at
+    // the point the user actually pressed. Live for exactly one click run.
+    NSPoint _linkUndoOrigin;
+    NSInteger _linkUndoPageIndex;
+    BOOL _linkUndoAvailable;
     NSTrackingArea* _trackingArea;
     NSDictionary* _hoveredComment;
     BOOL _layoutCacheValid;
@@ -100,6 +106,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 
 - (void)setPages:(NSArray<SPDFRenderedPage*>*)pages {
     [_pendingLinkActivation cancel];
+    _linkUndoAvailable = NO;
     _pages = [pages copy];
     [self invalidateLayoutCache];
     [self setNeedsDisplay:YES];
@@ -589,6 +596,10 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     spdf_activate_window_for_view(self);
     [self.reader clearFindFieldFocus];
     [_pendingLinkActivation cancel];
+    // Before any view point is converted: a multi-click continuing from a click
+    // that already followed an in-document link scrolls back first, so the page
+    // coordinates below are the ones the user is looking at.
+    [self undoLinkNavigationForClickCount:event.clickCount];
     if (!self.reader) {
         [super mouseDown:event];
         return;
@@ -725,6 +736,32 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     if (_linkGesture.draggedBeyondThreshold || _linkGesture.selectionCreated) [NSCursor.IBeamCursor set];
 }
 
+// Asks the reader to follow a link at the recorded press point right now, and
+// remembers where the document was so a following multi-click can undo it.
+// NO means the reader declined (no link, or one that leaves the document) and
+// the caller should fall back to deferred activation.
+- (BOOL)followInDocumentLinkForGesture {
+    NSPoint restoreOrigin = NSZeroPoint;
+    NSInteger restorePageIndex = -1;
+    if (![self.reader documentViewFollowInDocumentLinkAtPageIndex:_linkGesturePageIndex
+                                                        pagePoint:_linkGesturePagePoint
+                                                    restoreOrigin:&restoreOrigin
+                                                 restorePageIndex:&restorePageIndex])
+        return NO;
+    _linkUndoOrigin = restoreOrigin;
+    _linkUndoPageIndex = restorePageIndex;
+    _linkUndoAvailable = YES;
+    return YES;
+}
+
+// Consumes the snapshot on every press: a continuing multi-click scrolls back,
+// a fresh press just forgets it. Either way it survives only one click run.
+- (void)undoLinkNavigationForClickCount:(NSInteger)clickCount {
+    BOOL undo = spdf_mac_link_undo_applies_to_click(clickCount, _linkUndoAvailable);
+    _linkUndoAvailable = NO;
+    if (undo) [self.reader documentViewRestoreDocumentPosition:_linkUndoOrigin pageIndex:_linkUndoPageIndex];
+}
+
 - (void)mouseUp:(NSEvent*)event {
     if (_isPanning) {
         [self endPan];
@@ -737,6 +774,23 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
                                                                             pagePoint:_linkGesturePagePoint];
         // Known text is not a link; unresolved regions defer the exact core hit-test.
         if (kind != SPDFCursorRegionText) {
+            // A destination inside this document is reached now, on release: the
+            // jump is a scroll, and a multi-click that follows takes it back
+            // (see undoLinkNavigationForClickCount:). Waiting out the
+            // double-click interval here used to cost every table-of-contents
+            // click ~500ms for work that measures ~5ms.
+            double followStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
+            if ([self followInDocumentLinkForGesture]) {
+                if (spdf_zoom_profile_enabled())
+                    spdf_zoom_profile_log(@"link followed in-document %.2fms after release",
+                                          spdf_zoom_profile_now_ms() - followStart);
+                _linkGesture.active = NO;
+                [self updateCursorForPointInWindow:event.locationInWindow];
+                return;
+            }
+            // Anything else (an external URL, or a point the core resolves to no
+            // link at all) still waits: opening another application cannot be
+            // undone by a second click.
             if (!_pendingLinkActivation) _pendingLinkActivation = [SPDFMacDelayedLinkActivation new];
             __weak id<SPDFMacDocumentViewReader> reader = self.reader;
             [_pendingLinkActivation schedulePageIndex:_linkGesturePageIndex
@@ -829,6 +883,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 
 - (void)cancelTransientInteraction {
     [_pendingLinkActivation cancel];
+    _linkUndoAvailable = NO;
     [_inertiaTimer invalidate];
     _inertiaTimer = nil;
     _isPanning = NO;
