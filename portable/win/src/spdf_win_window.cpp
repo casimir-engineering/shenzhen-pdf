@@ -108,6 +108,10 @@ static void paint(spdf_win_window* window) {
     scene.fit = SPDF_WIN_FIT_CANVAS;
     scene.target_px_w = px_w;
     scene.target_px_h = px_h;
+    /* The chrome lays itself out against these, not against
+     * target_px_w/h, which the canvas overwrites with its own viewport. */
+    scene.client_px_w = px_w;
+    scene.client_px_h = px_h;
     scene.dpi_scale = spdf_win_window_dpi_scale(window);
     /* A handler that declines leaves an EMPTY scene, not a half-filled one: it
      * may have written a page list and then decided against it, and drawing

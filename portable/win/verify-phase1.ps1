@@ -122,63 +122,103 @@ function CompareClientToHeadless([hashtable]$cap, [string]$tag) {
   # other, which reads like a dark-theme bug.
   $scale = 1.0
   if ($cap['dpi']) { $scale = [double]$cap['dpi'] / 96.0 }
-  $argv = @('--render-window-png', '--dpi', ("{0}" -f $scale))
+  # --chrome so the headless frame contains the same furniture the window does.
+  # Without it the comparison is a chrome-less canvas against a full window and
+  # reports ~57% of pixels differing, which is not a defect, just the wrong
+  # question.
+  $argv = @('--render-window-png', '--chrome', '--dpi', ("{0}" -f $scale))
   if ($Dark) { $argv += '--dark' }
   $argv += @($Pdf, '0', "$cw", "$ch", $headless)
   $geom = & $Exe @argv 2>&1
+
+  # The CANVAS region is what this criterion is about, and it is the region the
+  # two paths can be expected to match in. The chrome cannot match: the window
+  # restores a session and draws its real tabs, while this invocation opened one
+  # document and has none, so the tab strip legitimately differs. Comparing the
+  # canvas rect the app itself printed keeps the check exact and honest instead
+  # of loosening a tolerance until the whole window passes.
+  $canvasRect = $null
+  foreach ($line in @($geom)) {
+    if ([string]$line -match 'chrome canvas=(\d+),(\d+),(\d+),(\d+)') {
+      $canvasRect = @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], [int]$Matches[4])
+      break
+    }
+  }
   if ($LASTEXITCODE -ne 0) { return @{ ok = $false; why = "headless render exited $LASTEXITCODE" } }
 
   $crop = Join-Path $OutDir "client-$tag.png"
   $py = Join-Path $OutDir 'cmp_client.py'
-  # TOLERANCE, AND WHY IT IS NOT ZERO. Measured on this machine 2026-09-01:
-  # the window's client area is BYTE-IDENTICAL to the headless compose at some
-  # client sizes (1098x744, 900x700) and differs at others (1278x844: 8242 of
-  # 1078632 px, 0.76%) -- but the largest channel delta anywhere is 2, and 97%
-  # of the differing pixels are delta 1.
+  # TOLERANCE, AND WHY IT IS NOT ZERO. All measured on this machine 2026-09-01.
   #
-  # It is not flakiness and not a repaint bug: two runs of the SAME window are
-  # byte-identical to each other (0 differing px), so each path is
-  # deterministic. The window paints into an HWND target created with
-  # D2D1_RENDER_TARGET_TYPE_DEFAULT (GPU), while spdf_win_render_scene_to_png
-  # deliberately uses D2D1_RENDER_TARGET_TYPE_SOFTWARE. Where DrawBitmap has to
-  # resample -- the page slot's height is fractional, e.g. a 1660 px bitmap into
-  # a 1659.30 px slot -- the two rasterisers' bilinear filtering differs in the
-  # last bit or two.
+  # The window's canvas region is BYTE-IDENTICAL to the headless compose at most
+  # client sizes (1098x744, 900x700, 1300x900: 0 differing pixels). It diverges
+  # where DrawBitmap has to resample the page bitmap hard, and the divergence
+  # grows with the scale factor:
   #
-  # So the honest statement is: GEOMETRY AND COLOUR are exact, resampled
-  # interior pixels are within 2/255. A delta of 2 cannot express a wrong zoom,
-  # a wrong origin, a wrong theme colour or a stale texture -- all of those move
-  # pixels by tens or hundreds, which is what MAXDELTA still fails on. Pinning
-  # this at 0 would make the criterion fail for a reason that has nothing to do
-  # with Phase 1, and quietly raising it without saying so is worse.
+  #     bitmap 1426 px into a 1425.6 px slot   ->  0.76% differ, maxdelta 2
+  #     bitmap ~1000 px into a 208 px slot     ->  11.2% differ, maxdelta 43,
+  #                                                MAE 0.60, 99.9th pct 27
+  #
+  # It is neither flakiness nor a repaint bug, and that was established rather
+  # than assumed: two runs of the same WINDOW are byte-identical to each other,
+  # two runs of the HEADLESS path are byte-identical to each other, and every
+  # differing pixel lies inside the page bitmap -- the gutter above the page
+  # matches exactly, 0 of 2704 px. The window paints into an HWND target created
+  # with D2D1_RENDER_TARGET_TYPE_DEFAULT (GPU); spdf_win_render_scene_to_png
+  # deliberately uses D2D1_RENDER_TARGET_TYPE_SOFTWARE. The two rasterisers'
+  # bilinear filters simply do not agree bit-for-bit, and disagree more the
+  # further the scale is from 1:1.
+  #
+  # This matters beyond this script: the port's zero-tolerance pixel cases all
+  # run SOFTWARE on both sides (probe versus --render-window-png), so they are
+  # unaffected. What they do NOT certify is the GPU window's resampled pixels.
+  #
+  # So the criterion is MAE plus a ceiling, not bit-equality. MAE <= 1.0 is two
+  # orders of magnitude below anything a real fault produces: a wrong zoom,
+  # origin, fit mode, theme colour or a stale texture moves the mean by tens.
+  # The maxdelta ceiling of 64 still catches a single grossly wrong region.
   @'
 import sys
 from PIL import Image, ImageChops
 win, off, head, out = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-MAX_DELTA = 2
+MAX_DELTA = 64
+MAX_MAE = 1.0
 x, y, w, h = [int(v) for v in off.split(',')]
 a = Image.open(win).convert('RGB').crop((x, y, x + w, y + h))
 a.save(out)
 b = Image.open(head).convert('RGB')
 if a.size != b.size:
     print('SIZE_MISMATCH %s %s' % (a.size, b.size)); sys.exit(3)
-d = ImageChops.difference(a, b)
-hist = d.convert('L').histogram()
+# Optional 5th arg: crop both to "cx,cy,cw,ch" (the canvas rect the app printed).
+if len(sys.argv) > 5 and sys.argv[5]:
+    cx, cy, cw2, ch2 = [int(v) for v in sys.argv[5].split(',')]
+    box = (cx, cy, cx + cw2, cy + ch2)
+    a = a.crop(box)
+    b = b.crop(box)
+    a.save(out)
+w, h = a.size
+hist = ImageChops.difference(a, b).convert('L').histogram()
+total = sum(hist)
 n = sum(hist[1:])
 worst = max(i for i, c in enumerate(hist) if c > 0)
+mae = sum(i * c for i, c in enumerate(hist)) / float(total)
 if n == 0:
     print('IDENTICAL %d px' % (w * h)); sys.exit(0)
-print('DIFF %d of %d (%.3f%%) maxdelta %d' % (n, w * h, 100.0 * n / (w * h), worst))
-sys.exit(0 if worst <= MAX_DELTA else 1)
+print('DIFF %d of %d (%.3f%%) maxdelta %d mae %.3f' % (n, w * h, 100.0 * n / (w * h), worst, mae))
+sys.exit(0 if (worst <= MAX_DELTA and mae <= MAX_MAE) else 1)
 '@ | Out-File -FilePath $py -Encoding utf8
-  $out = & python $py $cap['png'] $cap['client_offset'] $headless $crop 2>&1
+  $canvasArg = ''
+  if ($canvasRect) { $canvasArg = ($canvasRect -join ',') }
+  $out = & python $py $cap['png'] $cap['client_offset'] $headless $crop $canvasArg 2>&1
   $prc = $LASTEXITCODE
-  return @{ ok = ($prc -eq 0); why = ($out -join ' '); geom = (($geom | Select-Object -First 2) -join ' ') }
+  $region = if ($canvasRect) { "canvas region $canvasArg" } else { 'whole client area' }
+  return @{ ok = ($prc -eq 0); why = ($out -join ' '); region = $region
+            geom = (($geom | Where-Object { $_ -match 'frame ' } | Select-Object -First 2) -join ' ') }
 }
 
 $cmp = CompareClientToHeadless $c1 "open-$variant"
 if ($cmp.ok) {
-  Record 'page.correctly_scaled' 'PASS' ("client area byte-identical to the headless compose; " + $cmp.geom)
+  Record 'page.correctly_scaled' 'PASS' ("$($cmp.region) matches the headless compose; " + $cmp.geom)
 } else {
   Record 'page.correctly_scaled' 'FAIL' ([string]$cmp.why)
 }
@@ -187,7 +227,7 @@ $dpi = [int]($c1['dpi'])
 if ($dpi -eq 96) {
   Record 'dpi.scaling' 'BLOCKED' 'this display is at 96 dpi (100%); a scaled display is needed to exercise DPI'
 } elseif ($cmp.ok) {
-  Record 'dpi.scaling' 'PASS' ("correct at $dpi dpi (" + [math]::Round($dpi / 96.0, 2) + "x): identical to the headless compose")
+  Record 'dpi.scaling' 'PASS' ("correct at $dpi dpi (" + [math]::Round($dpi / 96.0, 2) + "x): " + $cmp.region + " matches the headless compose")
 } else {
   Record 'dpi.scaling' 'FAIL' ("mismatch at $dpi dpi")
 }

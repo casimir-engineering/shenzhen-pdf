@@ -24,6 +24,8 @@
  */
 #include "spdf_win_d2d.h"
 
+#include "spdf_win_chrome_paint.h"
+
 #include <dwrite.h>
 
 #include <math.h>
@@ -354,6 +356,43 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
         return target->EndDraw();
     }
 
+    /* CHROME. Drawn before the pages, and the pages are then clipped and
+     * translated into the canvas region, so a page scrolled under the toolbar
+     * cannot paint over it. Everything here goes through the same
+     * ID2D1RenderTarget as the canvas, so the chrome is on the headless compose
+     * path too -- which is what makes it pixel-testable at all, and the reason
+     * the whole chrome layer is laid out by a pure header rather than from an
+     * HWND. */
+    SpdfWinChromeLayout chrome_layout;
+    bool has_chrome = false;
+    if (scene->chrome) {
+        SpdfWinChromePaintCtx ctx;
+        SpdfWinChromeTheme chrome_theme = spdf_win_chrome_theme_for(scene->dark);
+        unsigned cw = scene->client_px_w ? scene->client_px_w : scene->target_px_w;
+        unsigned ch = scene->client_px_h ? scene->client_px_h : scene->target_px_h;
+        spdf_win_chrome_layout(scene->chrome, cw, ch, scene->dpi_scale, &chrome_layout);
+        has_chrome = !spdf_win_chrome_rect_empty(chrome_layout.canvas);
+        ctx.target = target;
+        ctx.dwrite = d2d->dwrite;
+        ctx.theme = &chrome_theme;
+        ctx.model = scene->chrome;
+        ctx.layout = &chrome_layout;
+        ctx.dpi_scale = chrome_layout.dpi_scale;
+        spdf_win_chrome_paint_all(ctx);
+
+        if (has_chrome) {
+            /* PushAxisAlignedClip, then a translate, so draw_canvas_page needs
+             * no notion of the chrome at all: it keeps drawing at the canvas
+             * coordinates the layout gave it. */
+            target->PushAxisAlignedClip(spdf_win_chrome_d2d_rect(chrome_layout.canvas),
+                                        D2D1_ANTIALIAS_MODE_ALIASED);
+            target->SetTransform(D2D1::Matrix3x2F::Translation(chrome_layout.canvas.x, chrome_layout.canvas.y));
+            /* The gutter under the pages is the canvas region's own, not the
+             * whole client's: the Clear above painted the gutter everywhere,
+             * and the chrome has since covered its own bands. */
+        }
+    }
+
     if (scene->pages && scene->page_count > 0) {
         /* Brushes for the whole strip rather than per page: a
          * CreateSolidColorBrush per page per frame is an allocation on the
@@ -379,6 +418,11 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
         safe_release(shade);
     } else {
         draw_message(d2d, target, scene);
+    }
+
+    if (has_chrome) {
+        target->SetTransform(D2D1::Matrix3x2F::Identity());
+        target->PopAxisAlignedClip();
     }
 
     return target->EndDraw();
