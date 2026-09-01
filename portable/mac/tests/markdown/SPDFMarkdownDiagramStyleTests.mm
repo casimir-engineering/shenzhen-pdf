@@ -20,10 +20,12 @@
 // fill goes dark, its dark authored text goes light, and the contrast the
 // author built survives with its polarity flipped.
 
-static const CGFloat kSPDFStyleTestWidth = 440;
+static const NSSize kSPDFStyleTestBox = {440, 0};
+// Wider than the fixture's 1687 pt natural width, so no fit and no reflow.
+static const NSSize kSPDFStyleNaturalBox = {4096, 0};
 
 static SPDFMarkdownDiagramLayout* SPDFStyleRender(NSString* source) {
-    return SPDFMarkdownDiagramRender(@"mermaid", source, kSPDFStyleTestWidth, 1.0, nil);
+    return SPDFMarkdownDiagramRender(@"mermaid", source, kSPDFStyleTestBox, 1.0, nil);
 }
 
 static NSString* SPDFStyleFixtureMarkdown(void) {
@@ -98,10 +100,16 @@ int main(void) {
                        [fence containsString:@"classDef"] && [fence containsString:@"<-->"] &&
                        [fence containsString:@"&lt;"],
                    @"the fixture still exercises every construct this suite covers");
-        SPDFMarkdownDiagramLayout* real = SPDFStyleRender(fence);
+        // The content assertions below are about the AUTHOR's label lines, so
+        // they read the fixture at its natural size: a page box small enough to
+        // trigger the legibility reflow deliberately re-wraps labels, which is
+        // the subject of SPDFMarkdownDiagramFitTests, not of this suite.
+        SPDFMarkdownDiagramLayout* real =
+            SPDFMarkdownDiagramRender(@"mermaid", fence, kSPDFStyleNaturalBox, 1.0, nil);
         SPDFExpect(real != nil, @"the user's real power-tree flowchart renders as a diagram");
-        SPDFExpect(real.size.width > 0 && real.size.width <= kSPDFStyleTestWidth + 0.5 &&
-                       real.size.height > 0 && real.size.height <= SPDFMarkdownDiagramMaximumDimension,
+        SPDFMarkdownDiagramLayout* fitted = SPDFStyleRender(fence);
+        SPDFExpect(fitted.size.width > 0 && fitted.size.width <= kSPDFStyleTestBox.width + 0.5 &&
+                       fitted.size.height > 0 && fitted.size.height <= SPDFMarkdownDiagramMaximumDimension,
                    @"the power-tree diagram stays inside the width and dimension budgets");
         // Its `<br/>` breaks are honored: the two halves of a broken label are
         // separate lines, not one run joined by a space.
@@ -124,10 +132,10 @@ int main(void) {
         SPDFMarkdownDocumentModel* model = [[SPDFMarkdownParser new] parseString:markdown
                                                                       sourceURL:nil
                                                                           error:&error];
+        SPDFMarkdownRenderOptions* naturalOptions = SPDFMarkdownRenderOptions.defaultOptions;
+        naturalOptions.pageContentSize = kSPDFStyleNaturalBox;  // author's own label lines, as above
         SPDFMarkdownDocument* document =
-            model ? [[SPDFMarkdownDocument alloc] initWithModel:model
-                                                       options:SPDFMarkdownRenderOptions.defaultOptions]
-                  : nil;
+            model ? [[SPDFMarkdownDocument alloc] initWithModel:model options:naturalOptions] : nil;
         SPDFMarkdownRenderedBlock* fenceBlock = nil;
         for (SPDFMarkdownRenderedBlock* block in document.renderedDocument.renderedBlocks)
             if (block.diagramInfo) fenceBlock = block;
@@ -336,14 +344,15 @@ int main(void) {
 
         // --- Determinism and laziness -----------------------------------
         SPDFMarkdownDiagramLayout* again = SPDFStyleRender(fence);
-        BOOL identical = again.shapes.count == real.shapes.count && again.labels.count == real.labels.count &&
-                         fabs(again.size.height - real.size.height) < 0.001;
+        BOOL identical = again.shapes.count == fitted.shapes.count &&
+                         again.labels.count == fitted.labels.count &&
+                         fabs(again.size.height - fitted.size.height) < 0.001;
         for (NSUInteger index = 0; identical && index < again.labels.count; ++index)
-            identical = [again.labels[index].text isEqualToString:real.labels[index].text] &&
-                        NSEqualRects(again.labels[index].frame, real.labels[index].frame);
+            identical = [again.labels[index].text isEqualToString:fitted.labels[index].text] &&
+                        NSEqualRects(again.labels[index].frame, fitted.labels[index].frame);
         SPDFExpect(identical, @"the same styled source lays out identically twice");
         SPDFMarkdownDiagramResetWorkCount();
-        SPDFMarkdownDiagramRender(@"c", @"classDef aon fill:#fff\n", kSPDFStyleTestWidth, 1.0, nil);
+        SPDFMarkdownDiagramRender(@"c", @"classDef aon fill:#fff\n", kSPDFStyleTestBox, 1.0, nil);
         SPDFExpect(SPDFMarkdownDiagramWorkCount() == 0,
                    @"a non-diagram fence that merely LOOKS like styling does no diagram work");
     }

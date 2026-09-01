@@ -248,15 +248,25 @@ static NSRect SPDFDiagramScaleRect(NSRect rect, CGFloat factor) {
                       NSHeight(rect) * factor);
 }
 
+CGFloat SPDFMarkdownDiagramBoxFit(NSSize naturalSize, NSSize contentBox) {
+    if (naturalSize.width <= 0 || naturalSize.height <= 0) return 0;
+    CGFloat fit = 1.0;
+    if (contentBox.width > 0) fit = MIN(fit, contentBox.width / naturalSize.width);
+    if (contentBox.height > 0) fit = MIN(fit, contentBox.height / naturalSize.height);
+    return fit;
+}
+
 SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramFinishLayout(SPDFMarkdownDiagramCanvas* canvas, NSSize naturalSize,
-                                                           CGFloat contentWidth) {
+                                                           NSSize contentBox) {
     if (naturalSize.width <= 0 || naturalSize.height <= 0) return nil;
     if (naturalSize.width > SPDFMarkdownDiagramMaximumDimension ||
         naturalSize.height > SPDFMarkdownDiagramMaximumDimension)
         return nil;
-    // One common factor fits an over-wide diagram: geometry and label font
-    // sizes shrink together, so the drawing never clips and never re-wraps.
-    CGFloat fit = contentWidth > 0 ? MIN(1.0, contentWidth / naturalSize.width) : 1.0;
+    // One common factor fits an over-sized diagram to the page box: geometry
+    // and label font sizes shrink together, so the drawing never clips and
+    // never re-wraps. Fitting BOTH axes here is what keeps the pagination band
+    // from having to squeeze an over-tall diagram a second time.
+    CGFloat fit = SPDFMarkdownDiagramBoxFit(naturalSize, contentBox);
     NSArray<SPDFMarkdownDiagramShape*>* shapes = canvas.shapes;
     NSArray<SPDFMarkdownDiagramLabel*>* labels = canvas.labels;
     if (fit < 1.0) {

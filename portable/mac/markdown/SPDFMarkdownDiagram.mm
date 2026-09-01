@@ -8,6 +8,7 @@ const NSUInteger SPDFMarkdownDiagramMaximumNodes = 200;
 const NSUInteger SPDFMarkdownDiagramMaximumEdges = 400;
 const NSTimeInterval SPDFMarkdownDiagramLayoutDeadline = 0.050;
 const CGFloat SPDFMarkdownDiagramMaximumDimension = 2048;
+const CGFloat SPDFMarkdownDiagramLegibleLabelSize = 7;
 
 static _Atomic NSUInteger sSPDFDiagramWorkCount = 0;
 
@@ -86,60 +87,62 @@ static NSString* SPDFDiagramMermaidKeyword(NSString* source) {
 }
 
 static SPDFMarkdownDiagramLayout* SPDFDiagramRenderUncached(NSString* language, NSString* source,
-                                                            CGFloat contentWidth, CGFloat fontScale) {
+                                                            NSSize contentBox, CGFloat fontScale) {
     CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + SPDFMarkdownDiagramLayoutDeadline;
     if ([language isEqualToString:@"sequence"]) {
         SPDFMarkdownDiagramSequence* sequence = SPDFMarkdownDiagramParseSequence(source, NO);
-        return sequence ? SPDFMarkdownDiagramLayOutSequence(sequence, contentWidth, fontScale) : nil;
+        return sequence ? SPDFMarkdownDiagramLayOutSequence(sequence, contentBox, fontScale) : nil;
     }
     if ([language isEqualToString:@"flow"]) {
         SPDFMarkdownDiagramGraph* graph = SPDFMarkdownDiagramParseFlowFence(source);
-        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentWidth, fontScale, deadline) : nil;
+        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentBox, fontScale, deadline) : nil;
     }
     // mermaid sub-types.
     NSString* keyword = SPDFDiagramMermaidKeyword(source);
     if ([keyword isEqualToString:@"graph"] || [keyword isEqualToString:@"flowchart"]) {
         SPDFMarkdownDiagramGraph* graph = SPDFMarkdownDiagramParseMermaidFlowchart(source);
-        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentWidth, fontScale, deadline) : nil;
+        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentBox, fontScale, deadline) : nil;
     }
     if ([keyword isEqualToString:@"sequencediagram"]) {
         SPDFMarkdownDiagramSequence* sequence = SPDFMarkdownDiagramParseSequence(source, YES);
-        return sequence ? SPDFMarkdownDiagramLayOutSequence(sequence, contentWidth, fontScale) : nil;
+        return sequence ? SPDFMarkdownDiagramLayOutSequence(sequence, contentBox, fontScale) : nil;
     }
     if ([keyword isEqualToString:@"pie"]) {
         SPDFMarkdownDiagramPie* pie = SPDFMarkdownDiagramParsePie(source);
-        return pie ? SPDFMarkdownDiagramLayOutPie(pie, contentWidth, fontScale) : nil;
+        return pie ? SPDFMarkdownDiagramLayOutPie(pie, contentBox, fontScale) : nil;
     }
     if ([keyword isEqualToString:@"statediagram"] || [keyword isEqualToString:@"statediagram-v2"]) {
         SPDFMarkdownDiagramGraph* graph = SPDFMarkdownDiagramParseMermaidState(source);
-        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentWidth, fontScale, deadline) : nil;
+        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentBox, fontScale, deadline) : nil;
     }
     if ([keyword isEqualToString:@"classdiagram"]) {
         SPDFMarkdownDiagramGraph* graph = SPDFMarkdownDiagramParseMermaidClass(source);
-        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentWidth, fontScale, deadline) : nil;
+        return graph ? SPDFMarkdownDiagramLayOutGraph(graph, contentBox, fontScale, deadline) : nil;
     }
     if ([keyword isEqualToString:@"gantt"]) {
         SPDFMarkdownDiagramGantt* gantt = SPDFMarkdownDiagramParseGantt(source);
-        return gantt ? SPDFMarkdownDiagramLayOutGantt(gantt, contentWidth, fontScale) : nil;
+        return gantt ? SPDFMarkdownDiagramLayOutGantt(gantt, contentBox, fontScale) : nil;
     }
     return nil;  // unknown mermaid sub-type degrades to the code box
 }
 
 SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramRender(NSString* fenceIdentifier, NSString* source,
-                                                     CGFloat contentWidth, CGFloat fontScale,
+                                                     NSSize contentBox, CGFloat fontScale,
                                                      SPDFMarkdownDiagramCache* cache) {
     if (!SPDFMarkdownDiagramIsDiagramLanguage(fenceIdentifier) || !source.length) return nil;
+    if (contentBox.width <= 0) return nil;
     NSString* language = [[SPDFMarkdownDiagramTrim(fenceIdentifier)
         componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet] firstObject]
                              .lowercaseString;
     // No theme variant in the key: a resolved layout carries color ROLES, so a
     // reading-theme switch reuses every cached diagram outright.
-    NSString* key = [NSString stringWithFormat:@"%@|%.4f|%.1f|%lu|%lu", language, fontScale, contentWidth,
+    NSString* key = [NSString stringWithFormat:@"%@|%.4f|%.1f|%.1f|%lu|%lu", language, fontScale,
+                                               contentBox.width, contentBox.height,
                                                (unsigned long)source.hash, (unsigned long)source.length];
     SPDFMarkdownDiagramCacheEntry* cached = [cache entryForKey:key source:source];
     if (cached) return cached.layout;
     atomic_fetch_add(&sSPDFDiagramWorkCount, (NSUInteger)1);
-    SPDFMarkdownDiagramLayout* layout = SPDFDiagramRenderUncached(language, source, contentWidth, fontScale);
+    SPDFMarkdownDiagramLayout* layout = SPDFDiagramRenderUncached(language, source, contentBox, fontScale);
     [cache storeLayout:layout forKey:key source:source];
     return layout;
 }

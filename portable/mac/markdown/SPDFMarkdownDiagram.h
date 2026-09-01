@@ -130,7 +130,7 @@ FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramLabelColor(SPDFMarkdownDiagramLabe
                                                          SPDFMarkdownThemeVariant variant);
 
 // A finished diagram: its logical size in points plus the vector shapes and
-// text labels that fill it. Already fitted to the caller's content width — one
+// text labels that fill it. Already fitted to the caller's content BOX — one
 // common factor scales geometry AND label font sizes, never a clip.
 @interface SPDFMarkdownDiagramLayout : NSObject
 @property(nonatomic, readonly) NSSize size;
@@ -138,11 +138,12 @@ FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramLabelColor(SPDFMarkdownDiagramLabe
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownDiagramLabel*>* labels;
 @end
 
-// Thread-safe render cache keyed by (source, language, fontScale, width).
+// Thread-safe render cache keyed by (source, language, fontScale, content box).
 // Failed parses are cached too, so a rerender never re-parses a malformed
 // fence. Owned per document/session and threaded through
-// SPDFMarkdownRenderOptions.diagramCache; text-size and width rerenders hit it,
-// and a THEME switch reuses it outright (a layout carries roles, not colors).
+// SPDFMarkdownRenderOptions.diagramCache; text-size and PAPER rerenders hit it
+// (turning the paper changes the box, so it is part of the key), and a THEME
+// switch reuses it outright (a layout carries roles, not colors).
 @interface SPDFMarkdownDiagramCache : NSObject
 @property(nonatomic, readonly) NSUInteger count;
 - (void)removeAllEntries;
@@ -152,11 +153,24 @@ FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramLabelColor(SPDFMarkdownDiagramLabe
 // flow, case-insensitive first token). O(1); safe to call on every code fence.
 FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramIsDiagramLanguage(NSString* _Nullable fenceIdentifier);
 
-// The single entry seam: (fence language, source, content width budget,
-// fontScale) -> resolved layout, or nil on ANY parse, unsupported-subtype, or
-// over-budget condition. Deterministic per inputs.
+// The smallest effective label size a fitted diagram may be left at before the
+// flowchart family is allowed to RE-LAY-OUT itself narrower rather than shrink
+// further (SPDFMarkdownDiagramLayOutGraph). 7 pt is where the system font stops
+// being readable at 100% zoom; it is a trigger, not a guarantee -- a diagram
+// whose content simply cannot fit the page still ends up under it, and the
+// vector artwork is then read by zooming or by turning the paper.
+FOUNDATION_EXPORT const CGFloat SPDFMarkdownDiagramLegibleLabelSize;
+
+// The single entry seam: (fence language, source, the PAGE BOX the figure has
+// to fit, fontScale) -> resolved layout, or nil on ANY parse,
+// unsupported-subtype, or over-budget condition. Deterministic per inputs.
+//
+// `contentBox` is the printable area the diagram will be drawn into, already
+// net of whatever air the caller reserves around the band. A zero or negative
+// WIDTH refuses the diagram; a zero HEIGHT means "no height budget known", in
+// which case the fit is width-only exactly as it always was.
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramRender(
-    NSString* fenceIdentifier, NSString* source, CGFloat contentWidth, CGFloat fontScale,
+    NSString* fenceIdentifier, NSString* source, NSSize contentBox, CGFloat fontScale,
     SPDFMarkdownDiagramCache* _Nullable cache);
 
 // Test-visible laziness/caching proof: incremented once per actual

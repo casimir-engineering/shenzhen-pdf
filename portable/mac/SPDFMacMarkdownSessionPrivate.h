@@ -101,6 +101,12 @@ FOUNDATION_EXPORT SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(
     SPDFMarkdownRenderedDocument* rendered, SPDFMarkdownThemeVariant variant, BOOL preservesImageColors,
     SPDFMarkdownPageOrientation orientation);
 
+// The printable box the plan above will paginate into, for the RENDER half of
+// the same pass (SPDFMarkdownRenderOptions.pageContentSize). Both read the one
+// SPDFMarkdownPageConfiguration factory, so a figure can never be fitted to a
+// different page than the one it lands on.
+FOUNDATION_EXPORT NSSize SPDFMacMarkdownPageContentSize(SPDFMarkdownPageOrientation orientation);
+
 // Clamps a reader font scale into the supported range.
 FOUNDATION_EXPORT CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale);
 

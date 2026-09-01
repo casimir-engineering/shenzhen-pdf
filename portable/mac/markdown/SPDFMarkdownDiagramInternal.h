@@ -234,10 +234,17 @@ FOUNDATION_EXPORT NSSize SPDFMarkdownDiagramMeasureText(NSString* text, NSFont* 
 @end
 
 // Closes a canvas into a resolved layout at its natural size: refuses (nil)
-// any diagram past the dimension budget, then fits an over-wide diagram to
-// contentWidth by scaling geometry AND label font sizes by ONE factor.
+// any diagram past the dimension budget, then fits an over-sized diagram to
+// `contentBox` by scaling geometry AND label font sizes by ONE factor. A zero
+// box height means "no height budget", i.e. a width-only fit.
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramFinishLayout(
-    SPDFMarkdownDiagramCanvas* canvas, NSSize naturalSize, CGFloat contentWidth);
+    SPDFMarkdownDiagramCanvas* canvas, NSSize naturalSize, NSSize contentBox);
+
+// The single common factor `contentBox` imposes on a diagram of `naturalSize`:
+// the smaller of the two axis ratios, never above 1. A zero/negative box axis
+// does not constrain. Shared so the graph emitter's reflow search and the fit
+// itself can never disagree about what "fits" means.
+FOUNDATION_EXPORT CGFloat SPDFMarkdownDiagramBoxFit(NSSize naturalSize, NSSize contentBox);
 
 // The categorical ramp role for the nth slice/bar (wraps at six).
 FOUNDATION_EXPORT SPDFMarkdownDiagramRole SPDFMarkdownDiagramRampRole(NSUInteger index);
@@ -274,15 +281,21 @@ FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramLayoutGraph(SPDFMarkdownDiagramGraph* 
                                                       CGFloat rankGap, CFAbsoluteTime deadline, NSSize* outSize);
 
 // Shape emitters: measured+laid-out models -> resolved vector layout, or nil
-// when a budget is exceeded. fontScale scales every font and gap.
+// when a budget is exceeded. fontScale scales every font and gap; `contentBox`
+// is the page box the figure has to fit (see SPDFMarkdownDiagramRender).
+//
+// The graph emitter is the one that can RE-LAY-OUT rather than only rescale: a
+// flowchart the box would shrink below SPDFMarkdownDiagramLegibleLabelSize is
+// retried with tighter label wrapping, trading width for height until it either
+// clears the floor or stops improving.
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutGraph(
-    SPDFMarkdownDiagramGraph* graph, CGFloat contentWidth, CGFloat fontScale, CFAbsoluteTime deadline);
+    SPDFMarkdownDiagramGraph* graph, NSSize contentBox, CGFloat fontScale, CFAbsoluteTime deadline);
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutSequence(
-    SPDFMarkdownDiagramSequence* sequence, CGFloat contentWidth, CGFloat fontScale);
+    SPDFMarkdownDiagramSequence* sequence, NSSize contentBox, CGFloat fontScale);
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutPie(SPDFMarkdownDiagramPie* pie,
-                                                                                    CGFloat contentWidth,
+                                                                                    NSSize contentBox,
                                                                                     CGFloat fontScale);
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutGantt(
-    SPDFMarkdownDiagramGantt* gantt, CGFloat contentWidth, CGFloat fontScale);
+    SPDFMarkdownDiagramGantt* gantt, NSSize contentBox, CGFloat fontScale);
 
 NS_ASSUME_NONNULL_END

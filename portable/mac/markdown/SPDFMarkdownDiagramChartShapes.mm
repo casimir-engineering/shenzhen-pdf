@@ -4,7 +4,7 @@
 // percentages) and `gantt` (day-scaled horizontal bars in section rows with
 // date ticks).
 
-SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutPie(SPDFMarkdownDiagramPie* pie, CGFloat contentWidth,
+SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutPie(SPDFMarkdownDiagramPie* pie, NSSize contentBox,
                                                         CGFloat fontScale) {
     CGFloat scale = fontScale > 0 ? fontScale : 1;
     NSFont* labelFont = [NSFont systemFontOfSize:11 * scale];
@@ -74,7 +74,7 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutPie(SPDFMarkdownDiagramPie* 
               alignment:NSTextAlignmentLeft];
         legendY += legendRowHeight;
     }
-    return SPDFMarkdownDiagramFinishLayout(canvas, naturalSize, contentWidth);
+    return SPDFMarkdownDiagramFinishLayout(canvas, naturalSize, contentBox);
 }
 
 // --- gantt ------------------------------------------------------------------
@@ -91,7 +91,7 @@ static NSString* SPDFGanttTickLabel(NSDate* epoch, NSInteger day) {
     return [formatter stringFromDate:[epoch dateByAddingTimeInterval:(NSTimeInterval)day * 86400.0]];
 }
 
-SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGantt(SPDFMarkdownDiagramGantt* gantt, CGFloat contentWidth,
+SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGantt(SPDFMarkdownDiagramGantt* gantt, NSSize contentBox,
                                                           CGFloat fontScale) {
     CGFloat scale = fontScale > 0 ? fontScale : 1;
     NSFont* labelFont = [NSFont systemFontOfSize:11 * scale];
@@ -200,5 +200,5 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGantt(SPDFMarkdownDiagramGan
             y += rowHeight;
         }
     }
-    return SPDFMarkdownDiagramFinishLayout(canvas, naturalSize, contentWidth);
+    return SPDFMarkdownDiagramFinishLayout(canvas, naturalSize, contentBox);
 }

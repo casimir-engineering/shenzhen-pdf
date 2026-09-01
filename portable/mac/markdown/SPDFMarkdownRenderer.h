@@ -33,6 +33,16 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 // themeVariant; set any custom color AFTER the variant. Copied like fontScale.
 @property(nonatomic) SPDFMarkdownThemeVariant themeVariant;
 @property(nonatomic) CGFloat contentInset;
+// The PRINTABLE BOX of the page this render is destined for, in points, taken
+// off the same SPDFMarkdownPageConfiguration the pagination plan is built with
+// (SPDFMacMarkdownPlanForRendition). It is what a FIGURE is sized against:
+// diagrams are fitted to this box instead of to the inline-image budget, so a
+// diagram uses the whole column, and turning the paper (portrait A4's 473 pt
+// against landscape's 719 pt) really does re-fit the artwork rather than
+// leaving it at some constant. NSZeroSize (the default) means "no page known"
+// and falls back to maximumImageWidth with no height budget, which is what
+// every page-less caller — and every render before this existed — gets.
+@property(nonatomic) NSSize pageContentSize;
 @property(nonatomic) CGFloat maximumImageWidth;
 @property(nonatomic) CGFloat maximumImageHeight;
 @property(nonatomic) NSUInteger maximumResourceBytes;
