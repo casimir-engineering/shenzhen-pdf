@@ -327,6 +327,45 @@ as three real failures with large deltas. Delete the session before a run, or
 accept that the first run after any interactive poking is meaningless.
 
 
+### 4.6 A locked workstation looks exactly like a broken window
+
+The most convincing false positive this port has produced, and it cost a second
+investigation after §5.1's.
+
+Windows does not composite a locked session. The DWM-drawn title bar still
+appears in a capture, because DWM has it cached, but a Direct2D client area
+backed by a GPU surface does not: `PrintWindow` returns black or stale pixels,
+and `CopyFromScreen` returns black for the **entire screen**.
+
+What that presents as: the window paints nothing, `verify-phase1` reports three
+hard failures with enormous deltas, and **it reproduces** — including from a
+clean build of a known-good commit in a throwaway worktree. Commit `640ee4c3d`,
+measured at 7 passed / 0 failed earlier the same day with a correct screenshot,
+produced an identical black frame once the machine locked.
+
+The tell was in hand the whole time and was misread as a curiosity: **the
+offscreen compose of the very same binary stayed perfect.** Under this port's
+own central rule — `spdf_win_paint()` needs no desktop — that is evidence *for*
+the app, not a detail beside the failure. A regression that predates the commit
+that supposedly caused it is not a regression.
+
+There is an irony worth keeping. The entire reason nobody had ever seen this
+window is that `prlctl exec` runs in a session with no interactive desktop. This
+machine has one — until it locks.
+
+Both scripts now refuse to lie about it. `screenshot-window.ps1` checks for
+`LogonUI` **before** launching the app and exits **68**; `verify-phase1.ps1` maps
+68 to BLOCKED for the whole run. A pixel backstop covers the cases `LogonUI` does
+not name (disconnected RDP, a sleeping display, a GPU reset), and it samples the
+**client** area rather than the framed window — because that distinction is
+exactly what defeated the first attempt at the guard: with the title bar
+composited and the client blank, the whole-window count was 7 distinct colours
+and passed a naive uniformity test while the client area was 2.
+
+Neither check can turn a bad frame into a pass. They only ever turn a FAIL into
+a BLOCKED, which is the distinction the harness's BLOCKED convention exists for.
+
+
 ## 5. New tooling, and why each exists
 
 | file | why |
@@ -339,6 +378,8 @@ accept that the first run after any interactive poking is meaningless.
 | `portable/win/src/spdf_win_tabstrip.h` + `tests/tabstrip_geometry_test.c` | Tab-strip geometry transcribed from `SPDFMacTabStripView.mm` and `SPDFMacTabStripGeometry.h`, toolkit-free and header-only, 741 assertions. |
 | `portable/win/src/spdf_win_chrome*.{h,cpp}` + `tests/chrome_geometry_test.c` | The chrome itself: how the client area divides (3807 assertions), the theme, the painters (strip / toolbar / sidebar / minimap), the model, the input router (94,240 assertions). All HWND-free, so `--render-window-png --chrome` composes the whole window offscreen. |
 | `portable/win/src/spdf_win_minimap.h` + `tests/minimap_differential.c`, `tests/glib_shim/` | The GTK4 minimap geometry, ported and then differentially tested against the **real** GTK header under MSVC: 131,503 comparisons, all identical. See §4.4. |
+| `portable/win/tests/layout-differential-native.cmd` | Runs `gtk_differential.c` natively — **395,514 comparisons, 0 mismatches**. This is the port's strongest test and had been BLOCKED as "needs glib" since the beginning. Proven to bite: perturbing the ported fit-width zoom by one part in 10⁷ gives 17 mismatches. The two `spdf_lru_*` halves stay skipped, because glib leaves hash iteration order unspecified and a shim would report mismatches that are not transcription errors. |
+| `portable/win/src/spdf_win_search.*`, `spdf_win_chrome_find.*` + `tests/search_differential.c` | Find/search, with the GTK4 search header ported and differentially tested: 37,440 comparisons, 0 differ. |
 | `portable/win/drive-window.ps1` | Drives the live window with synthetic `PostMessage` mouse input and captures after each step. `PostMessage`, not `SendInput`, deliberately: the user is sitting at this machine and `SendInput` would move their real cursor. |
 | `portable/win/tests/fixtures/outline.pdf` + `make_outline_fixture.py` | No committed fixture had a document outline, and neither does the NASA scan — so the sidebar's chapter list, its nesting and its UTF-8 titles were untestable. This one carries an accented and a CJK title, which is what a narrow CP1252 conversion mangles silently here. |
 
