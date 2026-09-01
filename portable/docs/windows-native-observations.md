@@ -131,24 +131,32 @@ listed and are now fixed.
 
 ### 2.1 The parity gap, seen rather than inferred
 
-The handoff's §1.4 ledger is accurate. Placed beside
-`docs/images/portable/macos-main-window.webp`, the Windows window is missing,
-visibly, in this order of prominence:
+At first sight, placed beside `docs/images/portable/macos-main-window.webp`, the
+Windows window was missing every piece of chrome the macOS app has. **That has
+since been built** — tab strip, toolbar, sidebar and minimap now all draw, with
+metrics transcribed from the macOS source and cited to the line, in both themes.
 
-1. **The tab strip.** macOS shows five tabs with traffic lights, a `+`, a
-   read-only dot. Windows shows an OS caption. Largest single visual gap.
-2. **The toolbar.** macOS: 18 arranged controls — Side Panel, OCR, translate,
-   page field `4 / 117`, page pill, `Fit Page`, zoom pill, Find, Regex, Map.
-   Windows: nothing.
-3. **The sidebar** (Chapters/Comments + filter field, visible by default).
-4. **The minimap** strip (visible by default).
-5. **Scrollbars.** macOS has native ones carrying the search heat-map; Windows
-   has none, so a long document gives the reader no position feedback at all.
+What is genuinely still missing, as of the chrome work:
 
-Everything absent is chrome. The *document* — layout, zoom, fit, theme,
-continuous scroll — is there and is correct. That matches the handoff's own
-summary and is worth restating: what remains is painting and hit-testing, not
-document behaviour.
+- **Scrollbars.** macOS shows native ones and overlays the search heat-map on
+  them. Windows has none, so a long document gives the reader no position
+  feedback outside the minimap. Of everything absent this is the only
+  *functional* loss rather than a cosmetic one.
+- **Find**, the regex checkbox, the match counter and the scrollbar heat-map.
+  The behaviour is already toolkit-free in
+  `portable/linux/gtk4/spdf_search_internal.h` and wants porting the way
+  `spdf_win_layout.h` was ported.
+- **The Comments sidebar section**, OCR and translate — no model on Windows yet.
+- **Menus and a command palette**: no `HMENU`, no accelerator table.
+- **Open a file**: still command line only. No `WM_DROPFILES`, no
+  `IFileOpenDialog`, no file association — so the toolbar's `+` button and the
+  tab overflow `…` are routed but inert.
+- **The tab strip lives below the caption, not inside it.** macOS puts it in the
+  title bar. Hoisting it means owning `WM_NCCALCSIZE`, `WM_NCHITTEST`, the
+  caption buttons and snap-layouts hover — a subsystem, and one the offscreen
+  compose path cannot verify. `spdf_win_chrome.h` documents exactly which two
+  insets change if that is ever done.
+- **Selection, links, annotations, printing.** Untouched.
 
 ### 2.2 One thing the ledger did not mention
 
@@ -171,7 +179,7 @@ and it is only visible if you open a small document — which no headless test d
 macOS-side orchestrator that drives `prlctl`.
 
 ```
-33 cases, 25 passed, 0 failed, 8 blocked        exit 2 (BLOCKED is not a pass)
+37 cases, 29 passed, 0 failed, 8 blocked        exit 2 (BLOCKED is not a pass)
 ```
 
 Newly passing and previously registered nowhere: **all five orphaned core
@@ -262,6 +270,63 @@ See §2.2. Not fixed in this session; filed here so it is not lost.
 
 ---
 
+### 4.3 GPU and software Direct2D do not agree on resampling
+
+Measured while checking the chrome against the headless compose, and it changes
+what the port's pixel tests can be said to prove.
+
+The window paints into an HWND target created with
+`D2D1_RENDER_TARGET_TYPE_DEFAULT` (GPU). `spdf_win_render_scene_to_png` uses
+`D2D1_RENDER_TARGET_TYPE_SOFTWARE`, deliberately, because the harness host may
+have no display adapter. Where `DrawBitmap` resamples, the two rasterisers'
+bilinear filters do not agree bit-for-bit, and disagree more the further the
+scale is from 1:1:
+
+| case | differing | max delta | MAE |
+|---|---|---|---|
+| 1426 px bitmap into a 1425.6 px slot | 0.76% | 2 | — |
+| ~1000 px bitmap into a 208 px canvas | 11.2% | 43 | 0.60 |
+
+Established rather than assumed: two runs of the same **window** are
+byte-identical to each other, two runs of the **headless** path are
+byte-identical to each other, and every differing pixel lies inside the page
+bitmap — the gutter above it matches exactly, 0 of 2704 px.
+
+**What this does and does not affect.** Every zero-tolerance case in this repo
+compares SOFTWARE against SOFTWARE (`spdf_win_probe` versus
+`--render-window-png`), so all of them are unaffected. What they do **not**
+certify is the GPU window's resampled pixels. `verify-phase1.ps1` therefore
+decides on MAE ≤ 1.0 with a max-delta ceiling, and says so in the script: a wrong
+zoom, origin, fit mode, theme colour or a stale texture moves the mean by tens,
+which is two orders of magnitude above the noise.
+
+### 4.4 A "needs glib" block was softer than it looked
+
+`layout.differential` has always been BLOCKED with "needs glib and the GTK4
+headers". That is true of glib the **library** and not of the two pure headers
+this port transcribes: they need typedefs, `MAX`/`MIN`/`CLAMP` and
+`g_new0`/`g_free` and nothing else.
+
+A shim supplying exactly those — with glib's own macro bodies character for
+character, because the comparison order at the edges is part of what is being
+checked — lets the **real** `portable/linux/gtk4/spdf_minimap_internal.h`
+compile under MSVC beside the port in one binary: **131,503 comparisons, all
+identical**, across strip layout, median/scale, hit-testing, both
+document↔strip mappings, the viewport rect and the marker ticks. Same compiler
+on both sides, so a difference could only be a transcription error.
+
+`portable/win/tests/glib_shim/glib.h` is that shim. The same trick should
+unblock `layout.differential` itself.
+
+### 4.5 `verify-phase1.ps1` is sensitive to the saved session
+
+`%APPDATA%\ShenzhenPDF\session.yaml` remembers the page each tab was on. The
+window restores it; the headless reference renders page 0. So a session left
+behind by earlier clicking makes the two legitimately disagree, and it presents
+as three real failures with large deltas. Delete the session before a run, or
+accept that the first run after any interactive poking is meaningless.
+
+
 ## 5. New tooling, and why each exists
 
 | file | why |
@@ -271,7 +336,11 @@ See §2.2. Not fixed in this session; filed here so it is not lost.
 | `portable/win/build-native.cmd` | The native build the port never had. Discovers `portable/win/src/*`, lists `portable/core/*` explicitly, links MuPDF when present. |
 | `portable/win/tests/run-tests-native.sh` (+ `.lib.sh`, `.d2d.sh`) | The harness, natively. Honours the in-file `spdf-test-*` directives, registers the five orphaned core suites, BLOCKS rather than skips. |
 | `portable/win/mupdf-gen-ninja-native.sh`, `mupdf-native-build.cmd`, `mupdf-arch-check-native.cmd`, `mupdf-native-linkcheck.c/.cmd` | MuPDF for x64, still derived from `mupdf/Makefile`'s own recipe via `make -n` so both hosts compile the same MuPDF. 646 translation units in 14 flag groups, 417 + 229 objects — the same counts as the ARM64 build. |
-| `portable/win/src/spdf_win_tabstrip.h`, `portable/win/tests/tabstrip_geometry_test.c` | Tab-strip geometry transcribed from `SPDFMacTabStripView.mm` and `SPDFMacTabStripGeometry.h`, toolkit-free and header-only, 741 assertions. Geometry only — nothing draws it yet. |
+| `portable/win/src/spdf_win_tabstrip.h` + `tests/tabstrip_geometry_test.c` | Tab-strip geometry transcribed from `SPDFMacTabStripView.mm` and `SPDFMacTabStripGeometry.h`, toolkit-free and header-only, 741 assertions. |
+| `portable/win/src/spdf_win_chrome*.{h,cpp}` + `tests/chrome_geometry_test.c` | The chrome itself: how the client area divides (3807 assertions), the theme, the painters (strip / toolbar / sidebar / minimap), the model, the input router (94,240 assertions). All HWND-free, so `--render-window-png --chrome` composes the whole window offscreen. |
+| `portable/win/src/spdf_win_minimap.h` + `tests/minimap_differential.c`, `tests/glib_shim/` | The GTK4 minimap geometry, ported and then differentially tested against the **real** GTK header under MSVC: 131,503 comparisons, all identical. See §4.4. |
+| `portable/win/drive-window.ps1` | Drives the live window with synthetic `PostMessage` mouse input and captures after each step. `PostMessage`, not `SendInput`, deliberately: the user is sitting at this machine and `SendInput` would move their real cursor. |
+| `portable/win/tests/fixtures/outline.pdf` + `make_outline_fixture.py` | No committed fixture had a document outline, and neither does the NASA scan — so the sidebar's chapter list, its nesting and its UTF-8 titles were untestable. This one carries an accented and a CJK title, which is what a narrow CP1252 conversion mangles silently here. |
 
 ### 5.1 The capture host must be DPI-aware — this cost real time
 
@@ -325,23 +394,34 @@ Verified against the tree; the tree wins.
 
 ## 7. What I would do next, in order
 
-1. **Draw the tab strip.** The model is finished and tested; the geometry is now
-   finished and tested (`spdf_win_tabstrip.h`, 741 assertions). What remains is
-   D2D painting and `WM_LBUTTONDOWN` hit-testing — no new logic. Largest visible
-   parity gain per unit of risk.
-2. **Draw the toolbar**, pills first.
-3. **Give the window a minimum size and a sane default** (§2.2). Minutes, and it
+Items 1, 2 and 3 of the original list are done — the tab strip and toolbar are
+drawn and wired, and the sidebar and minimap show real content. What is left,
+in the order I would take it:
+
+1. **Scrollbars.** The only remaining absence that costs the reader something
+   functional rather than cosmetic. macOS overlays the search heat-map on them,
+   so this and Find want doing together.
+2. **Find.** `portable/linux/gtk4/spdf_search_internal.h` is already
+   toolkit-free — 15 `static inline` functions including the heat-map ticks.
+   Port it the way `spdf_win_layout.h` was ported and differentially test it with
+   the glib shim from §4.4, which is now known to work.
+3. **A minimum window size and a sane default** (§2.2). Minutes of work, and it
    fixes a window that can currently open too small to use.
-4. **Commit macOS reference PNGs**, or accept that the port's strongest evidence
-   only exists on one machine. §3 makes this concrete: 7 of 33 cases are blocked
-   on it, permanently, for anyone without a Mac.
-5. **Fix `d2d-cases.sh`'s `d2d.window-dark`** before someone runs it from the Mac
+4. **Wire the sidebar's row clicks.** The geometry and hit-testing are written
+   and tested; only the routing call is missing.
+5. **`SPDF_WIN_ZOOM_FIT_HEIGHT` on the canvas.** macOS's fit popup offers four
+   modes and the canvas has three, so the cycle silently skips one.
+6. **Commit macOS reference PNGs**, or accept that the port's strongest evidence
+   exists only on one machine. §3 makes the cost concrete: 7 of 37 cases are
+   blocked on it permanently for anyone without a Mac.
+7. **Fix `d2d-cases.sh`'s `d2d.window-dark`** before someone runs it from the Mac
    and hunts a Direct2D bug that is not there (§3.2).
-6. **Measure x64 ↔ ARM64 byte-identity**, or restate the claim as ARM64-only. It
-   is currently written as a property of the port and is really a property of one
-   pair of machines.
-7. **Scrollbars.** Of the missing chrome, this is the one whose absence is a
-   functional loss rather than a cosmetic one.
+8. **Measure x64 ↔ ARM64 byte-identity**, or restate the claim as ARM64-only. It
+   is written as a property of the port and is really a property of one pair of
+   machines.
+9. **Move the tab strip into the caption**, if visual parity with macOS's
+   title-bar tabs is wanted. This is a subsystem, not a detail — see the
+   divergence note at the top of `spdf_win_chrome.h`.
 
 ---
 
