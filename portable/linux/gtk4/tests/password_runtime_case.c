@@ -91,7 +91,12 @@ static void test_restricted(const char* path) {
     g_assert_cmpint(status, ==, SPDF_OPEN_OK);
     g_assert_true(spdf_has_permission(document, 'p'));
     g_assert_false(spdf_has_permission(document, 'h'));
-    g_assert_false(spdf_has_permission(document, 'c'));
+    /* Copy is granted unconditionally by product decision (see the core
+     * header): the flag is advisory, and the text is decrypted and on screen
+     * anyway. The neighbouring print/edit assertions prove the OTHER flags are
+     * still read from the document, so this is a deliberate exemption rather
+     * than a broken permission query. */
+    g_assert_true(spdf_has_permission(document, 'c'));
     g_assert_false(spdf_has_permission(document, 'e'));
     spdf_close(document);
     spdf_password_credential_unref(credential);
