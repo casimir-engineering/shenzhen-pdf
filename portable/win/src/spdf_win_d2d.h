@@ -122,6 +122,40 @@ typedef struct spdf_win_page_draw {
     float dest_h;
 } spdf_win_page_draw;
 
+/* WHAT GETS DRAWN OVER A PAGE, AND WHY THE COLOURS ARE NOT IN THE THEME.
+ *
+ * Search highlights and the text selection are **theme-independent and
+ * hard-coded** on macOS, in both canvases, and the handoff says explicitly not
+ * to route them through the palette (windows-port-handoff.md §3.3). The reason
+ * is that they are not surfaces: they are marks ON a surface, and they have to
+ * stay legible over a white page and over a #1E1E1E recoloured one. So the
+ * values live here beside the reading theme rather than in
+ * spdf_win_chrome_theme.h, which is for chrome that SHOULD look native.
+ *
+ * Values transcribed from portable/mac/SPDFMacDocumentView.mm:
+ *   all matches   calibrated(1.0, 0.84, 0.12, 0.38), rounded radius 2.0  (:467-473)
+ *   active match  stroke calibrated(0.94, 0.03, 0.02, a), inset -2,-2,
+ *                 lineWidth 1.2, alpha fades                            (:475-482)
+ *   selection     calibrated(0.40, 0.62, 0.86, 0.20)                    (:485, :11)
+ */
+typedef enum spdf_win_overlay_kind {
+    SPDF_WIN_OVERLAY_SEARCH_MATCH = 0,
+    SPDF_WIN_OVERLAY_SEARCH_ACTIVE = 1,
+    SPDF_WIN_OVERLAY_SELECTION = 2
+} spdf_win_overlay_kind;
+
+/* One mark. Coordinates are in the SAME space as spdf_win_page_draw's dest --
+ * canvas-local device pixels -- so a producer that already knows where a page
+ * landed does not have to convert twice, and a mark partly off-screen is
+ * clipped by Direct2D rather than by the caller. */
+typedef struct spdf_win_overlay {
+    int page_index;
+    float x, y, w, h;
+    int kind;  /* spdf_win_overlay_kind */
+    float alpha; /* multiplies the kind's own alpha; 1.0 for "as specified". The
+                  * active match's fade is the only current user. */
+} spdf_win_overlay;
+
 /* Everything a paint needs. Deliberately free of Win32 handles: the same
  * struct is filled by the window and by a console probe. */
 typedef struct spdf_win_scene {
@@ -174,6 +208,13 @@ typedef struct spdf_win_scene {
      * whether or not chrome is on. The caller must therefore have laid the
      * canvas out against the canvas rect's size, not the client size. */
     const SpdfWinChromeModel* chrome;
+    /* Marks drawn OVER the pages, after every page and before the chrome, so a
+     * highlight cannot paint over the toolbar and a page scrolled under the
+     * strip does not drag its highlights with it. Borrowed; NULL/0 is the norm.
+     * Drawn in array order, so a producer that wants the active match on top
+     * puts it last. */
+    const spdf_win_overlay* overlays;
+    int overlay_count;
 } spdf_win_scene;
 
 /* err/err_len may be NULL/0. Returns NULL on failure. */
