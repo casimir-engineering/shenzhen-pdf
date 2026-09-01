@@ -1,6 +1,6 @@
 # Release notes
 
-User-facing notes for changes merged since the last release (26.8.31 build 3).
+User-facing notes for changes merged since the last release (26.9.1 build 1).
 
 Release notes are tracked in `portable/docs/releases/`. Prepare the next release
 with `./portable/cut-release.sh --prepare-only ["summary"]`; publish the
