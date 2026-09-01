@@ -49,6 +49,7 @@
     _renderedFontScale = _fontScale;
     _themeVariant = themeVariant;
     _renderedThemeVariant = _themeVariant;
+    _pendingReanchorLocation = NSNotFound;  // 0 is a real location; nil-ness is not
     _diagramCache = [SPDFMarkdownDiagramCache new];
     [self buildRootView];
     return self;
@@ -209,8 +210,8 @@
                        paginationPlan:_paginationPlan
                     interactiveString:_interactiveString
                  preserveCurrentState:NO];
-        // Catch up with a font scale or theme changed while this session was
-        // cached.
+        // Catch up with a font scale, theme or paper changed while this
+        // session was cached.
         if (self.renderTrailsPreferences) [self rerenderDocumentWithStatus:nil];
         [self finishActivationWithSuccess:YES error:nil];
         return;
@@ -231,6 +232,7 @@
     NSUInteger activationGeneration = _activationGeneration;
     NSURL* URL = self.documentURL;
     SPDFMarkdownRenderOptions* renderOptions = [self renderOptionsForCurrentScale];
+    SPDFMarkdownPageOrientation orientation = _pageOrientation;
     dispatch_queue_t workQueue = _workQueue ?: dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     dispatch_async(workQueue, ^{
       NSError* error = nil;
@@ -239,7 +241,7 @@
       NSAttributedString* interactive = nil;
       if (document) {
           plan = SPDFMacMarkdownPlanForRendition(document.renderedDocument, renderOptions.themeVariant,
-                                                self->_preservesImageColors);
+                                                self->_preservesImageColors, orientation);
           interactive = SPDFMacMarkdownInteractiveString(document.model, document.renderedDocument);
       }
       dispatch_async(dispatch_get_main_queue(), ^{
@@ -260,13 +262,14 @@
         self->_interactiveString = interactive;
         self->_renderedFontScale = renderOptions.fontScale;
         self->_renderedThemeVariant = renderOptions.themeVariant;
+        self->_renderedOrientation = orientation;
         self.state = SPDFMacMarkdownSessionReady;
         [self installRenderedDocument:self.renderedDocument
                        paginationPlan:plan
                     interactiveString:interactive
                  preserveCurrentState:NO];
-        // Catch up with a font scale or theme applied while the first render
-        // was in flight.
+        // Catch up with a font scale, theme or paper applied while the first
+        // render was in flight.
         if (self.renderTrailsPreferences) [self rerenderDocumentWithStatus:nil];
         [self finishActivationWithSuccess:YES error:nil];
       });
@@ -295,7 +298,7 @@
                            paginationPlan:_paginationPlan
                         interactiveString:_interactiveString
                      preserveCurrentState:NO];
-        // Restart a cancelled font-scale/theme catch-up rerender.
+        // Restart a cancelled font-scale/theme/paper catch-up rerender.
         if (!_renderToken && self.renderTrailsPreferences) [self rerenderDocumentWithStatus:nil];
         return;
     }
@@ -312,6 +315,10 @@
     NSInteger page = preserve && _pagedView ? self.currentPageIndex : _pendingPageIndex;
     CGFloat zoom = preserve && _pagedView ? self.zoom : _pendingZoom;
     SPDFMacMarkdownPageFitMode fit = preserve && _pagedView ? self.fitMode : _pendingFitMode;
+    // Read the orientation switch's re-anchor target NOW: it belongs to this
+    // install, not to whichever one happens to run its viewport block next.
+    NSUInteger reanchor = preserve && _pagedView ? _pendingReanchorLocation : NSNotFound;
+    _pendingReanchorLocation = NSNotFound;
     [self clearMatchFlash]; // the flash timer must not drive the outgoing view
     [_pagedView removeFromSuperview];
     _pagedView = [[SPDFMacMarkdownPagedView alloc] initWithPaginationPlan:plan attributedString:interactive];
@@ -360,6 +367,12 @@
       if (self->_pendingAnchor.length) {
           [self scrollToHeadingAnchor:self->_pendingAnchor];
           self->_pendingAnchor = nil;
+      } else if (reanchor != NSNotFound) {
+          // Re-flowed onto different paper: the outgoing scroll origin points
+          // at unrelated content now, so land on the page that holds whatever
+          // was at the top of the viewport.
+          NSRange target = NSMakeRange(reanchor, 0);
+          [self->_pagedView goToPageAtIndex:(NSInteger)[self->_pagedView pageIndexForRange:target] alignTop:YES];
       } else if (preserve) {
           // An in-place rerender (language choice, font scale) captured the
           // live origin: restore it exactly for every fit mode so the viewport
@@ -423,16 +436,17 @@
     [self cancelAllOperations];
 }
 
-// Shared rerender flow for language overrides, font-scale and theme changes:
-// every pass renders with the session's current font scale and theme so any
-// kind of change survives the others. A nil/empty status skips the status
-// callback.
+// Shared rerender flow for language overrides, font-scale, theme and paper
+// changes: every pass renders with the session's current font scale, theme and
+// orientation so any kind of change survives the others. A nil/empty status
+// skips the status callback.
 - (void)rerenderDocumentWithStatus:(NSString*)status {
     [_renderToken cancel];
     _renderGeneration++;
     NSUInteger renderGeneration = _renderGeneration;
     CGFloat fontScale = _fontScale;
     SPDFMarkdownThemeVariant themeVariant = _themeVariant;
+    SPDFMarkdownPageOrientation orientation = _pageOrientation;
     NSDictionary* overrides = [_languageOverrides copy];
     __weak SPDFMacMarkdownSession* weakSelf = self;
     _renderToken = [self.document
@@ -446,7 +460,7 @@
                      renderGeneration != strongSelf->_renderGeneration || !rendered)
                      return;
                  SPDFMarkdownPaginationPlan* plan =
-                     SPDFMacMarkdownPlanForRendition(rendered, themeVariant, self->_preservesImageColors);
+                     SPDFMacMarkdownPlanForRendition(rendered, themeVariant, self->_preservesImageColors, orientation);
                  NSAttributedString* interactive =
                      SPDFMacMarkdownInteractiveString(strongSelf.document.model, rendered);
                  dispatch_async(dispatch_get_main_queue(), ^{
@@ -459,6 +473,7 @@
                    mainSelf->_interactiveString = interactive;
                    mainSelf->_renderedFontScale = fontScale;
                    mainSelf->_renderedThemeVariant = themeVariant;
+                   mainSelf->_renderedOrientation = orientation;
                    [mainSelf installRenderedDocument:rendered
                                       paginationPlan:plan
                                    interactiveString:interactive

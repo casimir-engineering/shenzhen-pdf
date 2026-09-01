@@ -34,13 +34,21 @@ NS_ASSUME_NONNULL_BEGIN
     // declarations in SPDFMacMarkdownSession.h adopt these by name.
     CGFloat _fontScale;
     SPDFMarkdownThemeVariant _themeVariant;
+    SPDFMarkdownPageOrientation _pageOrientation;
     BOOL _preservesImageColors;
-    // fontScale/themeVariant of the currently installed renderedDocument; when
-    // either trails the session preference (changed while inactive or
-    // mid-load) activation schedules a catch-up rerender. Shared with the
-    // appearance half (SPDFMacMarkdownSession+Appearance.mm).
+    // fontScale/themeVariant/orientation of the currently installed
+    // renderedDocument and plan; when any of them trails the session
+    // preference (changed while inactive or mid-load) activation schedules a
+    // catch-up rerender. Shared with the appearance half
+    // (SPDFMacMarkdownSession+Appearance.mm).
     CGFloat _renderedFontScale;
     SPDFMarkdownThemeVariant _renderedThemeVariant;
+    SPDFMarkdownPageOrientation _renderedOrientation;
+    // Set by an orientation switch: the attributed location that was at the
+    // top of the viewport, so the next install can land on whichever page now
+    // holds it. NSNotFound means "no re-anchor pending" — an absolute scroll
+    // origin is meaningless once the document re-flows onto different paper.
+    NSUInteger _pendingReanchorLocation;
     SPDFMarkdownDiagramCache* _Nullable _diagramCache;  // shared by every rerender
     NSString* _Nullable _pendingAnchor;
     NSMutableDictionary<NSNumber*, NSString*>* _languageOverrides;
@@ -85,10 +93,13 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 // Paginates a rendition exactly the way the live screen pass does, so an export
-// plan and the on-screen plan differ in palette and nothing else. Shared by the
+// plan and the on-screen plan differ in palette and nothing else. The single
+// seam every plan goes through (screen, print, export, copy-page), which is why
+// the paper orientation is a parameter here beside the theme. Shared by the
 // lifecycle passes and the export rendition; implemented alongside the latter.
 FOUNDATION_EXPORT SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(
-    SPDFMarkdownRenderedDocument* rendered, SPDFMarkdownThemeVariant variant, BOOL preservesImageColors);
+    SPDFMarkdownRenderedDocument* rendered, SPDFMarkdownThemeVariant variant, BOOL preservesImageColors,
+    SPDFMarkdownPageOrientation orientation);
 
 // Clamps a reader font scale into the supported range.
 FOUNDATION_EXPORT CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale);

@@ -1840,11 +1840,11 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
             @"markdownSelectionLength" : @(tab.markdownSelectionRange.length),
             @"showSidebar" : @(tab.showSidebar),
             @"showMinimap" : @(tab.showMinimap),
+            @"markdownLandscape" : @(tab.markdownLandscape),
             // Read-only shadow copy: persist the temp copy + the source stat it
             // reflects so relaunch reopens the copy without a source content read.
-            // readOnly is persisted so the orange dot shows immediately on restore
-            // for not-yet-preloaded inactive tabs.
-            // (Kept in sync with spdf_dictionary_from_tab in SPDFMacModels.mm.)
+            // readOnly is persisted so the orange dot shows immediately on restore for
+            // not-yet-preloaded inactive tabs. (Kept in sync with SPDFMacModels.mm.)
             @"readOnly" : @(tab.readOnly),
             @"workingPath" : tab.workingPath ?: @"",
             @"roCopyFileSize" : @(tab.copiedSourceFileSize),
@@ -15131,7 +15131,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 - (void)rotateCurrentPageByDegrees:(int)degrees {
     if (!_doc || !_path.length || ![_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
-        NSBeep();
+        if (![self rotateMarkdownPaperByDegrees:degrees]) NSBeep();
         return;
     }
     if (![self ensureActivePDFCanBeModifiedForOperation:@"rotating the page"]) return;
@@ -16769,7 +16769,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(editComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(deleteComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(rotateClockwise:) || action == @selector(rotateAnticlockwise:))
-        return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+        return [self canRotateActivePage];
     if (action == @selector(ocrDocument:) || action == @selector(deleteAllTextFromDocument:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(translateDocument:)) {

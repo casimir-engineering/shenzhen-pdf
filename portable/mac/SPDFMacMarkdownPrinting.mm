@@ -75,6 +75,14 @@
                                     attributedString:(NSAttributedString*)attributedString
                                            printInfo:(NSPrintInfo*)printInfo {
     NSPrintInfo* effectiveInfo = [printInfo copy] ?: [NSPrintInfo.sharedPrintInfo copy];
+    // Start the panel on paper turned the way the document was flowed, so a
+    // landscape Markdown document prints at full size instead of being shrunk
+    // onto a portrait sheet. Only the STARTING value: the panel still shows its
+    // orientation control, and overruling it just falls back to the scale-to-fit
+    // rule below, which is what any other paper mismatch already gets.
+    effectiveInfo.orientation = plan.configuration.orientation == SPDFMarkdownPageOrientationLandscape
+                                    ? NSPaperOrientationLandscape
+                                    : NSPaperOrientationPortrait;
     SPDFMacMarkdownPrintView* view = [[SPDFMacMarkdownPrintView alloc] initWithPaginationPlan:plan
                                                                              attributedString:attributedString];
     [view fitPlanPaperToPrintInfo:effectiveInfo];

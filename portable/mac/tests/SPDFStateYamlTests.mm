@@ -168,6 +168,7 @@ static NSDictionary* session_fixture(void) {
         @"searchRegex" : @NO,
         @"searchRegexMultiline" : @NO,
         @"findMatchIndex" : @-1,
+        @"markdownLandscape" : @YES,
         @"showSidebar" : @YES,
         @"showMinimap" : @NO,
         @"readOnly" : @NO,
@@ -417,6 +418,17 @@ static void test_state_fixtures(void) {
     expect_emit_stability(@"session stability", session_fixture());
     expect_emit_stability(@"documents stability", documents_fixture());
     expect_emit_stability(@"favorites stability", favorites_fixture());
+
+    // The per-tab Markdown paper orientation must land as a bare YAML boolean
+    // and come back as one: reparsed as the STRING "true" it would restore
+    // every tab as rotated, since any non-empty string is truthy going back
+    // into SPDFDocumentTab.
+    NSString* sessionYAML =
+        take_string(spdf_yaml_from_json(pretty_json_for_object(session_fixture()).UTF8String, "session"));
+    if (!sessionYAML || [sessionYAML rangeOfString:@"markdownLandscape: true"].location == NSNotFound)
+        fail(@"markdownLandscape emits as a bare boolean", sessionYAML ?: @"(emit failed)");
+    expect_yaml_parses_to(@"hand-edited markdownLandscape", @"markdownLandscape: false\npage: 2\n",
+                          (@{@"markdownLandscape" : @NO, @"page" : @2}));
 
     // The GTK frontend's hand-built JSON (fixed key order, %.4f zooms) must
     // convert losslessly too, preserving its key order for diffability.

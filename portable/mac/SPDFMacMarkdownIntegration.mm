@@ -252,9 +252,14 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     }
     // Cached sessions may predate a font-scale or theme change made in another
     // tab; adopting the global preferences here (before activation) lets
-    // activation rerender the stale session once it is on screen.
+    // activation rerender the stale session once it is on screen. The paper
+    // orientation comes from the TAB rather than a global preference — it is
+    // this document's own, restored from "markdownLandscape" — but it reaches
+    // the session by the same route and gets the same catch-up.
     [session applyFontScale:_markdownFontScale];
     [session applyThemeVariant:self.markdownThemeVariant];
+    [session applyPageOrientation:tab.markdownLandscape ? SPDFMarkdownPageOrientationLandscape
+                                                        : SPDFMarkdownPageOrientationPortrait];
     session.preservesImageColors = _darkThemePreservesImages;
     state.activeSession = session;
     [self configureMarkdownSession:session forTab:tab];
@@ -334,6 +339,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     tab.findMatchIndex = session.currentMatchIndex;
     tab.showSidebar = _sidebarPreferredVisible;
     tab.showMinimap = _minimapPreferredVisible;
+    tab.markdownLandscape = session.pageOrientation == SPDFMarkdownPageOrientationLandscape;
 }
 
 - (NSString*)markdownSelectedText {
