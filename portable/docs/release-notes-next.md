@@ -8,4 +8,5 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- Copying is always allowed. A PDF that asks viewers to forbid copying no longer stops you selecting, copying, translating or searching its text: the request is advisory, and the page is decrypted and in front of you either way. Printing and editing still follow the document's own flags.
 - Keep Image Colors in Dark Theme is now ON by default. Photographs, screenshots and figures keep their own colors on a dark page instead of being darkened with it; the page around them still is. If you had already turned the setting off, it stays off. A page that is essentially one big image is a scan, and is still darkened whole so dark mode is not a no-op on it.

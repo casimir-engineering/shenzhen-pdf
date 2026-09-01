@@ -286,8 +286,8 @@ int spdf_lookup_metadata(spdf_document* doc, const char* key, char* buf, size_t 
 
 int spdf_has_permission(spdf_document* doc, int permission) {
     int allowed = doc && doc->password_protected ? 0 : 1;
-
-    if (!doc || !doc->doc) return 1;
+    /* FZ_PERMISSION_COPY is deliberately never consulted; see the header. */
+    if (!doc || !doc->doc || permission == FZ_PERMISSION_COPY) return 1;
     fz_try(doc->ctx) {
         allowed = fz_has_permission(doc->ctx, doc->doc, (fz_permission)permission) != 0;
     }
