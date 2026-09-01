@@ -94,24 +94,49 @@ static void check_tiling(const SpdfWinChromeLayout* l, unsigned w, unsigned h, c
         split_top += l->toolbar.h;
     }
 
-    /* Every split-row rect starts at the same y and is the same height. */
+    /* Every split-row rect starts at the same y. The panels and dividers span
+     * the full split height; the canvas and its VERTICAL scroller lose the
+     * horizontal scroller's band when there is one, which is exactly why they
+     * are checked separately below rather than lumped in here. */
     {
-        const SpdfWinChromeRect* row[5];
+        const SpdfWinChromeRect* panel[4];
         int i;
-        row[0] = &l->sidebar;
-        row[1] = &l->sidebar_divider;
-        row[2] = &l->canvas;
-        row[3] = &l->minimap_divider;
-        row[4] = &l->minimap;
-        for (i = 0; i < 5; ++i) {
-            if (spdf_win_chrome_rect_empty(*row[i])) continue;
-            CHECK_EQF(row[i]->y, split_top);
-            CHECK_EQF(row[i]->h, (float)h - split_top);
-            sum += row[i]->w;
+        panel[0] = &l->sidebar;
+        panel[1] = &l->sidebar_divider;
+        panel[2] = &l->minimap_divider;
+        panel[3] = &l->minimap;
+        for (i = 0; i < 4; ++i) {
+            if (spdf_win_chrome_rect_empty(*panel[i])) continue;
+            CHECK_EQF(panel[i]->y, split_top);
+            CHECK_EQF(panel[i]->h, (float)h - split_top);
+            sum += panel[i]->w;
+        }
+        /* The canvas region: canvas + vertical scroller side by side. */
+        sum += l->canvas.w;
+        if (!spdf_win_chrome_rect_empty(l->vscroll)) sum += l->vscroll.w;
+        CHECK_EQF(l->canvas.y, split_top);
+    }
+    /* Exact cover of the width, scrollers included. */
+    CHECK_EQF(sum, (float)w);
+
+    /* And of the canvas region's HEIGHT: canvas + horizontal scroller. */
+    {
+        float vsum = l->canvas.h;
+        if (!spdf_win_chrome_rect_empty(l->hscroll)) vsum += l->hscroll.h;
+        CHECK_EQF(vsum, (float)h - split_top);
+        if (!spdf_win_chrome_rect_empty(l->vscroll)) {
+            /* The vertical trough must stop where the horizontal one starts, or
+             * the two fight over the corner pixel. */
+            CHECK_EQF(l->vscroll.y, split_top);
+            CHECK_EQF(l->vscroll.h, l->canvas.h);
+            CHECK_EQF(l->vscroll.x, l->canvas.x + l->canvas.w);
+        }
+        if (!spdf_win_chrome_rect_empty(l->hscroll)) {
+            CHECK_EQF(l->hscroll.x, l->canvas.x);
+            CHECK_EQF(l->hscroll.w, l->canvas.w);
+            CHECK_EQF(l->hscroll.y, l->canvas.y + l->canvas.h);
         }
     }
-    /* Exact cover of the width. */
-    CHECK_EQF(sum, (float)w);
 
     /* Strict left-to-right order, and no overlap. */
     if (!spdf_win_chrome_rect_empty(l->sidebar)) {
@@ -123,12 +148,13 @@ static void check_tiling(const SpdfWinChromeLayout* l, unsigned w, unsigned h, c
         CHECK_EQF(l->canvas.x, 0.0f);
     }
     if (!spdf_win_chrome_rect_empty(l->minimap)) {
-        CHECK(l->minimap_divider.x >= l->canvas.x + l->canvas.w);
+        /* Past the canvas AND its vertical scroller. */
+        CHECK(l->minimap_divider.x >= l->canvas.x + l->canvas.w + l->vscroll.w);
         CHECK(l->minimap.x >= l->minimap_divider.x + l->minimap_divider.w);
         CHECK_EQF(l->minimap.x + l->minimap.w, (float)w);
     } else {
         CHECK(spdf_win_chrome_rect_empty(l->minimap_divider));
-        CHECK_EQF(l->canvas.x + l->canvas.w, (float)w);
+        CHECK_EQF(l->canvas.x + l->canvas.w + l->vscroll.w, (float)w);
     }
 }
 
@@ -187,8 +213,28 @@ static void test_default_window_1x(void) {
     /* 126.5 rounds to 127 whole device pixels at 1x. */
     CHECK_EQF(l.minimap.w, 127.0f);
     CHECK_EQF(l.minimap_divider.w, 5.0f);
-    CHECK_EQF(l.canvas.w, 1120.0f - 240.0f - 5.0f - 5.0f - 127.0f);
+    /* ...less the vertical scroller, which lives INSIDE the canvas region and
+     * is always present (macOS never autohides its scrollers). */
+    CHECK_EQF(l.vscroll.w, 15.0f);
+    CHECK_EQF(l.canvas.w, 1120.0f - 240.0f - 5.0f - 5.0f - 127.0f - 15.0f);
+    /* No horizontal trough: the default model reports the content does not
+     * overflow horizontally, so there is nothing to scroll. */
+    CHECK(spdf_win_chrome_rect_empty(l.hscroll));
+    CHECK_EQF(l.canvas.h, 800.0f - 84.0f);
     check_tiling(&l, 1120, 800, "default 1x");
+
+    /* With horizontal overflow the trough appears, takes 15 pt off the canvas's
+     * height, and shortens the vertical trough so the two do not meet. */
+    {
+        SpdfWinChromeModel m2 = default_model();
+        SpdfWinChromeLayout l2;
+        m2.h_scrollable = 1;
+        spdf_win_chrome_layout(&m2, 1120, 800, 1.0f, &l2);
+        CHECK_EQF(l2.hscroll.h, 15.0f);
+        CHECK_EQF(l2.canvas.h, 800.0f - 84.0f - 15.0f);
+        CHECK_EQF(l2.vscroll.h, l2.canvas.h);
+        check_tiling(&l2, 1120, 800, "default 1x, h-scrollable");
+    }
 }
 
 /* --- DPI: every band is a whole number of device pixels ---------------- */

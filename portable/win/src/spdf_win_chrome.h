@@ -85,6 +85,28 @@
  * centre and a resizeLeftRight cursor (SPDFMacUIHelpers.mm:425-431). */
 #define SPDF_WIN_CHROME_DIVIDER_W 5.0
 
+/* Scroller thickness. macOS uses a legacy-style NSScroller, 15 pt wide, and
+ * never autohides it; Windows' own metric (SM_CXVSCROLL, 17 px at 96 dpi) is
+ * close but is a user setting, and a pixel test whose expected value depends on
+ * a user setting is not a test. 15 pt matches macOS and DPI-scales like every
+ * other chrome metric here.
+ *
+ * The heat-map geometry that rides on the vertical trough is macOS's own
+ * (SPDFMacUIHelpers.mm:453-479): the track is inset 2 pt top and bottom, a
+ * marker starts 2 pt in from the slot's left edge and is MAX(2, slotWidth - 4)
+ * wide, the ACTIVE match is 2 pt tall and the others 1 pt, and a marker closer
+ * than 1.5 pt to the previous one is dropped rather than drawn over it. */
+#define SPDF_WIN_CHROME_SCROLLBAR_W 15.0
+#define SPDF_WIN_CHROME_SCROLL_TRACK_INSET 2.0
+#define SPDF_WIN_CHROME_SCROLL_MARKER_INSET 2.0
+#define SPDF_WIN_CHROME_SCROLL_MARKER_MIN_W 2.0
+#define SPDF_WIN_CHROME_SCROLL_MARKER_ACTIVE_H 2.0
+#define SPDF_WIN_CHROME_SCROLL_MARKER_H 1.0
+#define SPDF_WIN_CHROME_SCROLL_MARKER_MIN_GAP 1.5
+/* Shortest a thumb may get, so a 10,000-page document still leaves something
+ * to grab. Not a macOS number -- AppKit enforces its own minimum internally. */
+#define SPDF_WIN_CHROME_SCROLL_THUMB_MIN 24.0
+
 /* Window sizing (:2912-2938, :69-70). Windows currently applies NO minimum at
  * all and derives its initial size from page 0, so golden.pdf opens a 244x286
  * window -- narrower than its own caption buttons. These are the macOS numbers
@@ -109,7 +131,16 @@ typedef enum spdf_win_chrome_part {
     SPDF_WIN_CHROME_SIDEBAR_DIVIDER,
     SPDF_WIN_CHROME_CANVAS,
     SPDF_WIN_CHROME_MINIMAP_DIVIDER,
-    SPDF_WIN_CHROME_MINIMAP
+    SPDF_WIN_CHROME_MINIMAP,
+    /* The two scrollers. Inside the canvas region, not siblings of it, because
+     * that is where macOS puts them: an NSScrollView contains the document view
+     * and its scrollers, and the scroll view is what sits between the sidebar
+     * and the minimap. `autohidesScrollers = NO` on both of macOS's scroll
+     * views (ShenzhenPDFMac.mm:3225-3227), so the trough is ALWAYS visible --
+     * which is what makes it a usable position indicator and a place to hang the
+     * search heat-map. */
+    SPDF_WIN_CHROME_VSCROLL,
+    SPDF_WIN_CHROME_HSCROLL
 } spdf_win_chrome_part;
 
 /* The full division of one client area. Empty rects (w or h <= 0) mean the
@@ -122,7 +153,17 @@ typedef struct SpdfWinChromeLayout {
     SpdfWinChromeRect toolbar;
     SpdfWinChromeRect sidebar;
     SpdfWinChromeRect sidebar_divider;
+    /* The DOCUMENT area -- what the canvas lays itself out into and what
+     * spdf_win_paint() translates the page rects by. It EXCLUDES the two
+     * scrollers, which sit inside the canvas region beside and below it. */
     SpdfWinChromeRect canvas;
+    /* Vertical scroller, to the right of `canvas`, full canvas height.
+     * Horizontal scroller, below `canvas`, canvas width. Either may be empty:
+     * the horizontal one only appears when the content is actually wider than
+     * the viewport, matching a scroll view with no horizontal overflow, while
+     * the vertical one is always present because macOS never autohides it. */
+    SpdfWinChromeRect vscroll;
+    SpdfWinChromeRect hscroll;
     SpdfWinChromeRect minimap_divider;
     SpdfWinChromeRect minimap;
     float dpi_scale;
@@ -132,104 +173,9 @@ typedef struct SpdfWinChromeLayout {
  * in spdf_win_tabs.h owns the storage. `missing` and `read_only` exist because
  * macOS colours a tab red for a missing file and shows an orange dot for a
  * read-only source (SPDFMacTabStripView.mm:552-555, :585). */
-typedef struct SpdfWinChromeTab {
-    const wchar_t* title;
-    int read_only;
-    int missing;
-} SpdfWinChromeTab;
-
-/* What the painters need to know that geometry does not carry. Deliberately a
- * plain value type with no pointers into app state beyond the strings it
- * borrows, so a headless test can build one by hand -- which is how the chrome
- * gets pixel-tested without a window. */
-typedef struct SpdfWinChromeModel {
-    /* Tab strip contents. `count` also drives the strip's GEOMETRY (tab width,
-     * overflow, the visible window), which is why it lives in the model rather
-     * than in a separate content struct. `hot` and `hot_close` are -1 when
-     * nothing is hovered. */
-    const SpdfWinChromeTab* tabs;
-    int tab_count;
-    int selected_tab;
-    int hot_tab;
-    int hot_close;
-
-    int dark;
-    int presentation; /* collapses the strip and toolbar to zero, as :13634 does */
-    int show_sidebar;
-    int show_minimap;
-    float sidebar_w;   /* points; 0 asks for the default */
-    float minimap_w;   /* points; 0 asks for the default */
-    int sidebar_section; /* 0 chapters, 1 comments, 2 search */
-    int search_active;   /* the Search section exists only while a query is live */
-
-    /* --- what the toolbar reads out -------------------------------------
-     *
-     * These are here rather than fetched by the painter because the painters
-     * must stay callable with a hand-built model and no app at all: that is what
-     * lets the whole window be composed offscreen and pixel-tested
-     * (spdf_win_chrome_paint.h). Every one of them is a plain value the window
-     * layer fills in spdf_win_chrome_model.cpp.
-     *
-     * `page_index` IS 0-BASED, like every page number inside this port
-     * (spdf_win_main.cpp's header comment). The toolbar draws page_index + 1,
-     * because the 1-based indicator is a PRESENTATION concern and this is where
-     * that conversion is allowed to happen -- exactly what macOS does at
-     * ShenzhenPDFMac.mm:10528 (`_pageIndex + 1`). -1 means "no document", which
-     * macOS draws as an empty field (:10528's `hasDoc` branch). */
-    int page_index;
-    int page_count;
-    /* Device pixels per PDF point, straight from spdf_win_canvas_zoom(), and
-     * the display's device-pixels-per-logical-pixel that turns it into a
-     * percentage. Two fields rather than a pre-divided percentage so the model
-     * carries measurements and the toolbar owns the rounding. */
-    float zoom;
-    float zoom_dpi_scale;
-    int fit_mode; /* spdf_win_chrome_fit */
-} SpdfWinChromeModel;
-
-/* The fit-mode popup's four fixed items, in macOS's own order
- * (ShenzhenPDFMac.mm:3006-3011), plus the CUSTOM state that has no fixed title:
- * macOS inserts a "<N>%" item for it and removes it again once the zoom returns
- * to 1.0 (syncToolbarState, :10484-10505).
- *
- * Numbered independently of spdf_win_zoom_mode on purpose. spdf_win_chrome.h
- * must not include spdf_win_canvas.h -- the chrome is drawn in tests that have
- * no canvas, no document and no MuPDF -- so the window layer maps between the
- * two. FIT_HEIGHT is listed because macOS offers it and this is the vocabulary
- * the toolbar speaks; the Windows canvas has no fit-height mode yet, so nothing
- * currently produces it. */
-typedef enum spdf_win_chrome_fit {
-    SPDF_WIN_CHROME_FIT_CUSTOM = 0,
-    SPDF_WIN_CHROME_FIT_ACTUAL,
-    SPDF_WIN_CHROME_FIT_WIDTH,
-    SPDF_WIN_CHROME_FIT_HEIGHT,
-    SPDF_WIN_CHROME_FIT_PAGE
-} spdf_win_chrome_fit;
-
-/* The fixed title for a fit mode, or NULL for CUSTOM -- whose title is a
- * percentage the caller formats, because a printf in a geometry header would
- * drag <stdio.h> into every test that only wants rectangles. */
-static SPDF_WIN_CHROME_INLINE const wchar_t* spdf_win_chrome_fit_label(int fit_mode) {
-    switch (fit_mode) {
-        case SPDF_WIN_CHROME_FIT_ACTUAL: return L"100%";
-        case SPDF_WIN_CHROME_FIT_WIDTH: return L"Fit Width";
-        case SPDF_WIN_CHROME_FIT_HEIGHT: return L"Fit Height";
-        case SPDF_WIN_CHROME_FIT_PAGE: return L"Fit Page";
-        default: return NULL;
-    }
-}
-
-/* The percentage a custom zoom reads out. macOS formats `_zoom * 100.0` with
- * "%.0f%%" (:10486), where its zoom is points-to-points; ours is device pixels
- * per PDF point, so it is divided by the DPI scale first -- otherwise a 150%
- * display would report 150% at actual size. */
-static SPDF_WIN_CHROME_INLINE int spdf_win_chrome_zoom_percent(const SpdfWinChromeModel* m) {
-    float s;
-    if (!m) return 100;
-    s = m->zoom_dpi_scale > 0.0f ? m->zoom_dpi_scale : 1.0f;
-    if (!(m->zoom > 0.0f)) return 100;
-    return (int)floorf(m->zoom / s * 100.0f + 0.5f);
-}
+/* The model the painters read. Kept here so every existing include of this
+ * header still gets both halves. */
+#include "spdf_win_chrome_state.h"
 
 static SPDF_WIN_CHROME_INLINE SpdfWinChromeRect spdf_win_chrome_zero(void) {
     SpdfWinChromeRect r;
@@ -313,6 +259,8 @@ static SPDF_WIN_CHROME_INLINE void spdf_win_chrome_layout(const SpdfWinChromeMod
     out->sidebar = spdf_win_chrome_zero();
     out->sidebar_divider = spdf_win_chrome_zero();
     out->canvas = spdf_win_chrome_zero();
+    out->vscroll = spdf_win_chrome_zero();
+    out->hscroll = spdf_win_chrome_zero();
     out->minimap_divider = spdf_win_chrome_zero();
     out->minimap = spdf_win_chrome_zero();
     out->dpi_scale = s;
@@ -393,11 +341,41 @@ static SPDF_WIN_CHROME_INLINE void spdf_win_chrome_layout(const SpdfWinChromeMod
         }
     }
 
-    /* --- canvas gets what is left --------------------------------------- */
+    /* --- canvas gets what is left, less its scrollers ------------------- */
     out->canvas.x = left;
     out->canvas.y = split_top;
     out->canvas.w = spdf_win_chrome_max(0.0f, right - left);
     out->canvas.h = split_h;
+
+    /* Presentation mode has no scrollers at all -- it has no chrome. */
+    if (model->presentation) return;
+
+    {
+        float bar = spdf_win_chrome_px(SPDF_WIN_CHROME_SCROLLBAR_W, s);
+        /* Reserve nothing on a canvas too small to lose it: below this the
+         * scroller would take more of the page than it is worth, and a viewport
+         * of zero width is a division waiting to happen downstream. */
+        int room_v = out->canvas.w > bar * 3.0f;
+        int room_h = out->canvas.h > bar * 3.0f;
+        int want_h = model->h_scrollable && room_h;
+
+        if (room_v) {
+            out->vscroll.x = out->canvas.x + out->canvas.w - bar;
+            out->vscroll.y = out->canvas.y;
+            out->vscroll.w = bar;
+            /* The vertical trough stops where the horizontal one begins, so the
+             * two never overlap in the corner. */
+            out->vscroll.h = out->canvas.h - (want_h ? bar : 0.0f);
+            out->canvas.w -= bar;
+        }
+        if (want_h) {
+            out->hscroll.x = out->canvas.x;
+            out->hscroll.y = out->canvas.y + out->canvas.h - bar;
+            out->hscroll.w = out->canvas.w;
+            out->hscroll.h = bar;
+            out->canvas.h -= bar;
+        }
+    }
 }
 
 /* Dividers are tested FIRST and with a widened grab area: a 5 pt divider is a
@@ -426,6 +404,11 @@ static SPDF_WIN_CHROME_INLINE spdf_win_chrome_part spdf_win_chrome_hit(const Spd
     if (spdf_win_chrome_contains(l->toolbar, x, y)) return SPDF_WIN_CHROME_TOOLBAR;
     if (spdf_win_chrome_contains(l->sidebar, x, y)) return SPDF_WIN_CHROME_SIDEBAR;
     if (spdf_win_chrome_contains(l->minimap, x, y)) return SPDF_WIN_CHROME_MINIMAP;
+    /* Before the canvas: both scrollers lie inside the canvas REGION, and the
+     * canvas rect has already been shrunk away from them, so order only matters
+     * if a future change stops shrinking it. Cheap insurance. */
+    if (spdf_win_chrome_contains(l->vscroll, x, y)) return SPDF_WIN_CHROME_VSCROLL;
+    if (spdf_win_chrome_contains(l->hscroll, x, y)) return SPDF_WIN_CHROME_HSCROLL;
     if (spdf_win_chrome_contains(l->canvas, x, y)) return SPDF_WIN_CHROME_CANVAS;
     return SPDF_WIN_CHROME_NONE;
 }
