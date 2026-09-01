@@ -1,6 +1,9 @@
 #import "SPDFMacTabStripStyle.h"
 
-const CGFloat kSPDFTabCornerRadius = 7.0;
+// 10pt on a 28pt-tall tab. At 7pt the corners read as a chamfer rather than a
+// round once the outline is actually visible -- a quarter of the height is not
+// enough curvature to look deliberate.
+const CGFloat kSPDFTabCornerRadius = 10.0;
 
 // Outline widths. Both are even multiples of a device pixel at 1x and 2x once
 // inset by half their width, which is what keeps the hairline crisp; 1.4 (the
@@ -14,7 +17,10 @@ static const CGFloat kSelectedStrokeWidth = 2.0;
 // the strip's overflow button already raises it. Deliberately translucent and
 // well short of the selected tab's 0.95 accent: the unselected tab needs an
 // edge, not equal billing.
-static const CGFloat kUnselectedStrokeAlpha = 0.42;
+// separatorColor ships at 0.098, far too faint to read as a tab edge. 0.42 was
+// the first fix and overshot -- the outlines read as harder than the content.
+// 0.26 keeps every tab edged while staying quieter than the selected accent.
+static const CGFloat kUnselectedStrokeAlpha = 0.26;
 
 SPDFTabStyle spdf_tab_style_for_state(BOOL selected, BOOL missing) {
     CGFloat width = selected ? kSelectedStrokeWidth : kUnselectedStrokeWidth;
