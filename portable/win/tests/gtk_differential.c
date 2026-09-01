@@ -398,8 +398,31 @@ int main(void) {
     differential_layout();
     differential_fit_and_cap();
     differential_zoom_anchor();
+
+    /* THE LRU HALVES ARE SKIPPABLE, AND ONLY ON WINDOWS.
+     *
+     * The layout, fit and zoom-anchor comparisons need glib for its typedefs,
+     * its MAX/MIN/CLAMP macros and G_N_ELEMENTS -- all of which
+     * portable/win/tests/glib_shim/glib.h supplies faithfully, so those three
+     * run natively under MSVC and this differential stops being macOS-only.
+     *
+     * These two do not. spdf_lru_* is backed by a real GHashTable, and glib
+     * leaves hash ITERATION ORDER unspecified. An eviction that picks its victim
+     * by iterating would then pick a different -- equally correct -- victim
+     * under a shim than under glib, and this differential would report a
+     * mismatch that is not a transcription error at all. A test that can cry
+     * wolf is worse than a test that admits it cannot run, so on Windows these
+     * two are skipped rather than faked, and the driver that skips them says so.
+     *
+     * On macOS and Linux, where real glib is linked, nothing changes: the macro
+     * is not defined and all five run. */
+#ifndef SPDF_DIFFERENTIAL_NO_LRU
     differential_cache_recency();
     differential_cache();
+#else
+    printf("differential: SKIPPING the two LRU comparisons -- they need real glib, "
+           "not a shim (hash iteration order is unspecified)\n");
+#endif
 
     printf("differential: %d comparisons, %d mismatches\n", spdf_diff_comparisons, spdf_diff_mismatches);
     if (spdf_diff_comparisons < 100000) {

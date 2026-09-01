@@ -86,6 +86,18 @@ typedef const void* gconstpointer;
 #define g_new(type, n) ((type*)malloc(sizeof(type) * (size_t)(n)))
 #define g_new0(type, n) ((type*)calloc((size_t)(n), sizeof(type)))
 
+/* glib's own definition (gmacros.h), character for character. */
+#define G_N_ELEMENTS(arr) (sizeof(arr) / sizeof((arr)[0]))
+
+/* glib documents g_snprintf as returning the number of bytes that WOULD have
+ * been written, i.e. C99 snprintf semantics -- which MSVC's snprintf has had
+ * since VS2015, unlike its older _snprintf. So this is a real equivalence and
+ * not an approximation. The differential only uses it to build failure
+ * messages, so even a divergence could not change a comparison; mapping it
+ * correctly anyway costs nothing and keeps the "nothing here lies" property
+ * this file's header claims. */
+#define g_snprintf snprintf
+
 /* Declared, never defined -- see this file's header comment. */
 typedef struct _GHashTable GHashTable;
 typedef struct _GArray GArray;
