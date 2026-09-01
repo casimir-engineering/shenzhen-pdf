@@ -84,6 +84,30 @@ $variant = if ($Dark) { 'dark' } else { 'light' }
 
 # ---- 1. the window opens ------------------------------------------------
 $c1 = Capture (Join-Path $OutDir "01-open-$variant.png") 1120 800 $appArgs
+
+# 68 from screenshot-window.ps1 means the desktop is not composited -- almost
+# always a locked workstation. Every criterion below is about what the window
+# LOOKS like, and none of them can be evaluated through a black capture, so this
+# is BLOCKED for the whole run rather than five failures.
+#
+# It is worth being emphatic about, because the failure is a convincing liar: a
+# locked session reproduces "the window paints nothing" from a clean build of a
+# known-good commit, which is exactly how a phantom regression gets reported. The
+# tell is that the offscreen compose of the same binary is perfect -- and that
+# path needs no desktop, which is why it is unaffected.
+if ($c1['__rc'] -eq 68) {
+  Record 'window.opens'              'BLOCKED' ($c1['detail'])
+  Record 'host.dpi_aware'            'BLOCKED' 'not reached'
+  Record 'page.correctly_scaled'     'BLOCKED' 'the screen cannot be read while the session is not composited'
+  Record 'dpi.scaling'               'BLOCKED' 'the screen cannot be read while the session is not composited'
+  Record 'resize.repaints'           'BLOCKED' 'the screen cannot be read while the session is not composited'
+  Record 'close.exits_zero'          'BLOCKED' 'not reached'
+  Record 'cleanup.no_stray_process'  'BLOCKED' 'not reached'
+  Write-Output ''
+  Write-Output "phase1[$variant]: 0 passed, 0 failed, 7 blocked  -- unlock the workstation and re-run"
+  exit 2
+}
+
 if ($c1['__rc'] -ne 0) {
   Record 'window.opens' 'FAIL' ("screenshot-window exited $($c1['__rc']): " + ($c1['__raw'] -replace "`n", ' | '))
 } else {
