@@ -11618,12 +11618,10 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
     char err[512];
     spdf_link_target target;
-    double kP0 = spdf_zoom_profile_now_ms();
     // A click actually follows the link, so do the full check including
     // plain-text URL detection (detect_text_links=1).
     int hit = spdf_link_at_point(_doc, (int)pageIndex, (float)pagePoint.x, (float)pagePoint.y, &target,
                                  /*detect_text_links=*/1, err, sizeof(err));
-    spdf_zoom_profile_log(@"LINKPROF spdf_link_at_point=%.1fms hit=%d", spdf_zoom_profile_now_ms() - kP0, hit);
     if (hit <= 0) return NO;
 
     if (target.kind == SPDF_LINK_URI && target.uri) {
@@ -11640,26 +11638,19 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
     if (target.kind == SPDF_LINK_INTERNAL && target.page_index >= 0) {
         NSInteger targetPage = target.page_index;
-        NSRect targetRect = NSZeroRect;
-        if (isfinite(target.x) && isfinite(target.y)) targetRect = NSMakeRect(target.x, target.y, 1.0, 24.0);
+        // A destination's own offset down the target page is honored; a link
+        // that names only a page arrives at that page's start. Top-aligned,
+        // never centered: centering the destination hung half a viewport of the
+        // PRECEDING page above it (see SPDFMacLinkNavigation.mm).
+        BOOL hasDestinationY = isfinite(target.x) && isfinite(target.y);
         _pageIndex = MAX(0, MIN(targetPage, spdf_page_count(_doc) - 1));
         _pageView.currentPageIndex = _pageIndex;
-        double kP1 = spdf_zoom_profile_now_ms();
         [self renderPageIfNeededAtIndex:_pageIndex];
-        double kP2 = spdf_zoom_profile_now_ms();
         [self resizeDocumentView];
-        double kP3 = spdf_zoom_profile_now_ms();
-        if (NSIsEmptyRect(targetRect))
-            [self scrollToPage:_pageIndex alignTop:YES];
-        else
-            [self scrollToPageRect:targetRect pageIndex:_pageIndex];
-        double kP4 = spdf_zoom_profile_now_ms();
+        [self scrollToLinkDestinationOnPage:_pageIndex pageY:hasDestinationY ? (CGFloat)target.y : 0.0];
         [self updateControls];
         [self selectCurrentSidebarRow];
-        double kP5 = spdf_zoom_profile_now_ms();
         [self persistActiveState];
-        spdf_zoom_profile_log(@"LINKPROF internal render=%.1f resize=%.1f scroll=%.1f controls=%.1f persist=%.1f",
-                              kP2 - kP1, kP3 - kP2, kP4 - kP3, kP5 - kP4, spdf_zoom_profile_now_ms() - kP5);
         spdf_free_link_target(&target);
         return YES;
     }

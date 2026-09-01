@@ -2,6 +2,7 @@
 
 #import "../SPDFMacDelayedLinkActivation.h"
 #import "../SPDFMacDocumentView.h"
+#import "../SPDFMacPageRendering.h"
 
 // The production model implementation also owns document-tab state and links
 // MuPDF. This focused view test only needs the rendered-page Objective-C model.
@@ -41,6 +42,13 @@ void spdf_launch_profile_log(NSString* format, ...) {
 @property(nonatomic) NSInteger granularCallCount;
 @property(nonatomic) NSInteger linkOpenCount;
 @property(nonatomic) NSInteger contextMenuCount;
+// Whether the point the view asks about resolves to a destination inside the
+// document (the reversible case the view follows straight away).
+@property(nonatomic) BOOL linkStaysInDocument;
+@property(nonatomic) NSInteger inDocumentFollowCount;
+@property(nonatomic) NSInteger restoreCount;
+@property(nonatomic) NSPoint restoredOrigin;
+@property(nonatomic) NSInteger restoredPageIndex;
 @property(nonatomic) SPDFMacSelectionGranularity lastGranularity;
 @end
 
@@ -64,6 +72,23 @@ void spdf_launch_profile_log(NSString* format, ...) {
     (void)pagePoint;
     ++self.linkOpenCount;
     return YES;
+}
+- (BOOL)documentViewFollowInDocumentLinkAtPageIndex:(NSInteger)pageIndex
+                                          pagePoint:(NSPoint)pagePoint
+                                      restoreOrigin:(NSPoint*)restoreOrigin
+                                   restorePageIndex:(NSInteger*)restorePageIndex {
+    (void)pageIndex;
+    (void)pagePoint;
+    if (!self.linkStaysInDocument) return NO;
+    ++self.inDocumentFollowCount;
+    if (restoreOrigin) *restoreOrigin = NSMakePoint(11.0, 22.0);
+    if (restorePageIndex) *restorePageIndex = 7;
+    return YES;
+}
+- (void)documentViewRestoreDocumentPosition:(NSPoint)origin pageIndex:(NSInteger)pageIndex {
+    ++self.restoreCount;
+    self.restoredOrigin = origin;
+    self.restoredPageIndex = pageIndex;
 }
 - (BOOL)documentViewSelectionChangedOnPage:(NSInteger)pageIndex from:(NSPoint)start to:(NSPoint)end {
     (void)pageIndex;
@@ -102,6 +127,19 @@ static void expect_bool(NSString* label, BOOL expected, BOOL actual) {
     if (expected == actual) return;
     fprintf(stderr, "FAIL %s: expected %s, got %s\n", label.UTF8String, expected ? "YES" : "NO",
             actual ? "YES" : "NO");
+    ++gFailureCount;
+}
+
+static void expect_double(NSString* label, double expected, double actual) {
+    if (fabs(expected - actual) <= 0.001) return;
+    fprintf(stderr, "FAIL %s: expected %.3f, got %.3f\n", label.UTF8String, expected, actual);
+    ++gFailureCount;
+}
+
+static void expect_point(NSString* label, NSPoint expected, NSPoint actual) {
+    if (NSEqualPoints(expected, actual)) return;
+    fprintf(stderr, "FAIL %s: expected (%.1f,%.1f), got (%.1f,%.1f)\n", label.UTF8String, expected.x, expected.y,
+            actual.x, actual.y);
     ++gFailureCount;
 }
 
@@ -193,6 +231,9 @@ static void test_triple_click_cancels_link_and_selects_block(void) {
 static void test_link_drag_stays_range_selection(void) {
     SPDFFakeDocumentReader* reader = [SPDFFakeDocumentReader new];
     reader.cursorKind = SPDFCursorRegionLink;
+    // Even for the link kind that is now followed instantly on a click: a drag
+    // is a text selection and must never navigate.
+    reader.linkStaysInDocument = YES;
     reader.rangeDragProducesSelection = YES;
     NSPoint point;
     SPDFDocumentView* view = make_view(reader, &point);
@@ -204,6 +245,8 @@ static void test_link_drag_stays_range_selection(void) {
     expect_integer(@"drag uses range path on down and move", 2, reader.rangeCallCount);
     expect_bool(@"drag creates selection", YES, reader.hasSelection);
     expect_integer(@"link drag does not activate", 0, reader.linkOpenCount);
+    expect_integer(@"link drag does not follow in-document either", 0, reader.inDocumentFollowCount);
+    expect_integer(@"link drag restores nothing", 0, reader.restoreCount);
     expect_integer(@"drag avoids granular path", 0, reader.granularCallCount);
 }
 
@@ -267,6 +310,127 @@ static void test_pending_link_cleanup(void) {
     expect_integer(@"deallocated view cannot activate link", 0, reader.linkOpenCount);
 }
 
+// The reported latency bug: a table-of-contents click waited out the whole
+// multi-click window (~500ms measured) before a ~5ms jump. An in-document
+// destination is now reached inside the mouse-up itself.
+static void test_in_document_link_follows_on_mouse_up_without_waiting(void) {
+    SPDFFakeDocumentReader* reader = [SPDFFakeDocumentReader new];
+    reader.cursorKind = SPDFCursorRegionLink;
+    reader.linkStaysInDocument = YES;
+    NSPoint point;
+    SPDFDocumentView* view = make_view(reader, &point);
+    send_click(view, point, 1, 1.0);
+    expect_integer(@"in-document link is followed on mouse-up", 1, reader.inDocumentFollowCount);
+    drain_delayed_activation();
+    expect_integer(@"instant follow still opens exactly once", 1, reader.inDocumentFollowCount);
+    expect_integer(@"instant follow skips the deferred path", 0, reader.linkOpenCount);
+    expect_integer(@"instant follow restores nothing", 0, reader.restoreCount);
+}
+
+// The guard that is kept: a link that leaves the document opens another
+// application, which no second click can undo, so it still waits.
+static void test_external_link_still_waits_out_the_multi_click_window(void) {
+    SPDFFakeDocumentReader* reader = [SPDFFakeDocumentReader new];
+    reader.cursorKind = SPDFCursorRegionLink;
+    reader.linkStaysInDocument = NO;
+    NSPoint point;
+    SPDFDocumentView* view = make_view(reader, &point);
+    send_click(view, point, 1, 1.0);
+    expect_integer(@"external link is not opened on mouse-up", 0, reader.linkOpenCount);
+    drain_delayed_activation();
+    expect_integer(@"external link opens after the multi-click window", 1, reader.linkOpenCount);
+}
+
+// The other half of the trade: word selection over link text still works,
+// because the second click puts the document back before selecting.
+static void test_double_click_undoes_the_jump_and_selects_the_word(void) {
+    SPDFFakeDocumentReader* reader = [SPDFFakeDocumentReader new];
+    reader.cursorKind = SPDFCursorRegionLink;
+    reader.linkStaysInDocument = YES;
+    reader.granularProducesSelection = YES;
+    NSPoint point;
+    SPDFDocumentView* view = make_view(reader, &point);
+    send_click(view, point, 1, 1.0);
+    send_click(view, point, 2, 1.01);
+    drain_delayed_activation();
+    expect_integer(@"double click undoes the jump once", 1, reader.restoreCount);
+    expect_point(@"undo restores the pre-jump origin", NSMakePoint(11.0, 22.0), reader.restoredOrigin);
+    expect_integer(@"undo restores the pre-jump page", 7, reader.restoredPageIndex);
+    expect_integer(@"double click still selects a word", 1, reader.granularCallCount);
+    expect_integer(@"double click selects word granularity", SPDFMacSelectionGranularityWord,
+                   reader.lastGranularity);
+    expect_integer(@"double click follows the link only once", 1, reader.inDocumentFollowCount);
+}
+
+// A third click belongs to the same run, but the document is already back where
+// it started: undoing twice would scroll away from the block being selected.
+static void test_triple_click_undoes_once_then_selects_block(void) {
+    SPDFFakeDocumentReader* reader = [SPDFFakeDocumentReader new];
+    reader.cursorKind = SPDFCursorRegionLink;
+    reader.linkStaysInDocument = YES;
+    reader.granularProducesSelection = YES;
+    NSPoint point;
+    SPDFDocumentView* view = make_view(reader, &point);
+    send_click(view, point, 1, 1.0);
+    send_click(view, point, 2, 1.01);
+    send_click(view, point, 3, 1.02);
+    drain_delayed_activation();
+    expect_integer(@"triple click undoes exactly once", 1, reader.restoreCount);
+    expect_integer(@"triple sequence performs word then block", 2, reader.granularCallCount);
+    expect_integer(@"third click selects block", SPDFMacSelectionGranularityBlock, reader.lastGranularity);
+}
+
+// A snapshot lives for one click run only: a later, unrelated double click must
+// not scroll the document back to where some earlier link click started.
+static void test_new_click_run_drops_the_stale_undo(void) {
+    SPDFFakeDocumentReader* reader = [SPDFFakeDocumentReader new];
+    reader.cursorKind = SPDFCursorRegionLink;
+    reader.linkStaysInDocument = YES;
+    reader.granularProducesSelection = YES;
+    NSPoint point;
+    SPDFDocumentView* view = make_view(reader, &point);
+    send_click(view, point, 1, 1.0);
+    send_click(view, point, 1, 2.0);  // fresh press: clickCount restarts at 1
+    send_click(view, point, 2, 2.01);
+    drain_delayed_activation();
+    expect_integer(@"only the second run's jump is undone", 1, reader.restoreCount);
+}
+
+// The destination the jump lands on must be derived from the TARGET page alone.
+// Centering it (the old scrollToPageRect: path) put page N-1's tail on screen.
+static void test_link_destination_scroll_is_target_page_top(void) {
+    NSRect previousPage = NSMakeRect(0.0, 200.0, 400.0, 560.0);
+    NSRect targetPage = NSMakeRect(0.0, 800.0, 400.0, 560.0);
+
+    // No destination offset: exactly where "go to page N" lands.
+    expect_double(@"page-only destination aligns the page top",
+                  NSMinY(targetPage) - kSPDFPageTopScrollLeadIn,
+                  spdf_mac_link_destination_scroll_origin_y(targetPage, 0.0, 1.0));
+    // A destination partway down the page is honored, scaled by zoom.
+    expect_double(@"destination offset is honored at zoom 1",
+                  NSMinY(targetPage) + 50.0 - kSPDFPageTopScrollLeadIn,
+                  spdf_mac_link_destination_scroll_origin_y(targetPage, 50.0, 1.0));
+    expect_double(@"destination offset scales with zoom",
+                  NSMinY(targetPage) + 100.0 - kSPDFPageTopScrollLeadIn,
+                  spdf_mac_link_destination_scroll_origin_y(targetPage, 50.0, 2.0));
+    // Never above the target page, and never inside the page before it.
+    expect_bool(@"result never reaches the preceding page", YES,
+                spdf_mac_link_destination_scroll_origin_y(targetPage, 0.0, 1.0) > NSMaxY(previousPage));
+    expect_double(@"a negative destination cannot pull the previous page in",
+                  NSMinY(targetPage) - kSPDFPageTopScrollLeadIn,
+                  spdf_mac_link_destination_scroll_origin_y(targetPage, -400.0, 1.0));
+    // The first page clamps at the document top rather than scrolling negative.
+    expect_double(@"first page clamps at the document top", 0.0,
+                  spdf_mac_link_destination_scroll_origin_y(NSMakeRect(0.0, 0.0, 400.0, 560.0), 0.0, 1.0));
+}
+
+static void test_link_undo_policy(void) {
+    expect_bool(@"single click never undoes", NO, spdf_mac_link_undo_applies_to_click(1, YES));
+    expect_bool(@"double click undoes a live snapshot", YES, spdf_mac_link_undo_applies_to_click(2, YES));
+    expect_bool(@"triple click undoes a live snapshot", YES, spdf_mac_link_undo_applies_to_click(3, YES));
+    expect_bool(@"no snapshot means nothing to undo", NO, spdf_mac_link_undo_applies_to_click(2, NO));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -279,6 +443,13 @@ int main(int argc, char** argv) {
         test_none_clears_without_range_fallback();
         test_nonlink_single_click_never_schedules_activation();
         test_pending_link_cleanup();
+        test_in_document_link_follows_on_mouse_up_without_waiting();
+        test_external_link_still_waits_out_the_multi_click_window();
+        test_double_click_undoes_the_jump_and_selects_the_word();
+        test_triple_click_undoes_once_then_selects_block();
+        test_new_click_run_drops_the_stale_undo();
+        test_link_undo_policy();
+        test_link_destination_scroll_is_target_page_top();
     }
     if (gFailureCount > 0) {
         fprintf(stderr, "%d macOS document-view selection test(s) failed\n", gFailureCount);
