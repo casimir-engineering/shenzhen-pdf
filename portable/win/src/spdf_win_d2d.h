@@ -57,6 +57,56 @@ typedef enum spdf_win_fit {
     SPDF_WIN_FIT_CANVAS = 1
 } spdf_win_fit;
 
+/* THE READING THEME, AS CONCRETE sRGB.
+ *
+ * These are the macOS palette's own literals, one variant each, transcribed
+ * from portable/mac/markdown/SPDFMarkdownTheme.mm:23-27 -- which is the reading
+ * theme for the WHOLE app, not just Markdown: SPDFMacDocumentViewTheme.mm:68-71
+ * reads the same object for the PDF canvas. Named here rather than spelled as
+ * D2D1::ColorF literals at the draw site for three reasons: the values are
+ * citable against the Mac source, the compose path stays a pure function of
+ * scene->dark (agents.md's render-determinism rule -- never appearance-dynamic,
+ * never ambient), and a test can pin every one of them with no device, no
+ * window and no desktop.
+ *
+ * `draws_page_shadow` / `draws_page_border` mirror SPDFMarkdownTheme's
+ * `drawsPaperShadow` seam and are mutually exclusive by construction. Light
+ * keeps the soft drop shadow; dark swaps it for a crisp 1 px paper-border frame,
+ * because on the #121212 gutter a black shadow is invisible, so only one page
+ * edge would ever read (SPDFMacDocumentViewTheme.mm:44-58 states exactly this).
+ *
+ * The light gutter is a hard-coded #E0E0E2 where macOS derives its own from
+ * NSColor.windowBackgroundColor blended 8% toward black
+ * (SPDFMacDocumentViewTheme.mm:16-41). Deriving the Windows equivalent from a
+ * system colour is a separate change: it makes the value appearance-dynamic and
+ * so has to be threaded in as a parameter rather than baked into this table.
+ *
+ * The shadow's own colour is NOT here. macOS uses a blurred NSShadow (radius
+ * 12, offset (0,-2), black at alpha 0.28); Windows deliberately approximates it
+ * with one flat band (see draw_canvas_page), and that approximation belongs at
+ * its draw site, not in a palette shared with exact values. */
+typedef struct spdf_win_theme {
+    unsigned int gutter_rgb;      /* 0xRRGGBB behind the sheets (FIT_CANVAS surround) */
+    unsigned int paper_rgb;       /* the page underlay; dark is the recolor transform's white endpoint */
+    unsigned int page_border_rgb; /* meaningful only when draws_page_border */
+    int draws_page_shadow;
+    int draws_page_border;
+} spdf_win_theme;
+
+static inline spdf_win_theme spdf_win_theme_for(int dark) {
+    spdf_win_theme theme;
+    /* #1E1E1E is not merely "the palette's dark paper": it is exactly what the
+     * luma remap produces for document white (spdf_recolor.h:50-53 -- white
+     * Y=255 maps to 255-255+220-190 = 30). Any other value shows a mismatched
+     * sliver around a recoloured page at a fractional zoom. */
+    theme.gutter_rgb = dark ? 0x121212u : 0xE0E0E2u;
+    theme.paper_rgb = dark ? 0x1E1E1Eu : 0xFFFFFFu;
+    theme.page_border_rgb = dark ? 0x333333u : 0xD0D7DEu;
+    theme.draws_page_shadow = !dark;
+    theme.draws_page_border = dark;
+    return theme;
+}
+
 /* One page placed on the canvas. Destination is in TARGET DEVICE PIXELS and
  * may fall partly or wholly outside the target; the bitmap is drawn stretched
  * to it, which is what keeps geometry independent of the render byte cap (a

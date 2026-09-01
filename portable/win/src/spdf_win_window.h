@@ -89,6 +89,24 @@ void spdf_win_window_show(spdf_win_window* window);
 void spdf_win_window_invalidate(spdf_win_window* window);
 float spdf_win_window_dpi_scale(const spdf_win_window* window);
 
+/* THE TWO WINDOW-LEVEL HALVES OF THE READING THEME.
+ *
+ * Both live here rather than in spdf_win_paint() because both are properties of
+ * an HWND, and spdf_win_d2d.h's load-bearing rule is that the compose path never
+ * requires one -- the headless PNG probe and WM_PAINT must keep calling the
+ * identical function. A title and an OS-drawn frame have no representation in a
+ * WIC bitmap, so putting either behind the paint path would buy nothing and cost
+ * every pixel test in the port.
+ *
+ * The title is UTF-16 in: the UTF-8 boundary belongs to whoever owns the
+ * document, and this file is *W-only by rule (see the file header). */
+void spdf_win_window_set_title(spdf_win_window* window, const wchar_t* title);
+
+/* Ask DWM to draw the caption, border and system menu dark, so `--dark` does not
+ * leave a light title bar wrapped around a #121212 canvas. Idempotent; a
+ * Windows without the attribute simply keeps its light frame. */
+void spdf_win_window_set_dark_frame(spdf_win_window* window, int dark);
+
 /* Runs the message pump until the window closes. Returns WM_QUIT's exit code,
  * which is 0 for a normal close -- the value main() should return. */
 int spdf_win_window_run(spdf_win_window* window);
