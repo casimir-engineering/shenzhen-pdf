@@ -72,6 +72,7 @@ MAC_PASSWORD_TEST := $(BUILD)/SPDFMacPasswordTests
 MAC_MINIMAP_WINDOW_TEST := $(BUILD)/SPDFMacMinimapWindowTests
 MAC_TAB_STRIP_GEOMETRY_TEST := $(BUILD)/SPDFMacTabStripGeometryTests
 MAC_TAB_STRIP_INTERACTION_TEST := $(BUILD)/SPDFMacTabStripInteractionTests
+MAC_TAB_STRIP_STYLE_TEST := $(BUILD)/SPDFMacTabStripStyleTests
 MAC_READING_THEME_CHROME_TEST := $(BUILD)/SPDFMacReadingThemeChromeTests
 MAC_PALETTE_RESULTS_TEST := $(BUILD)/SPDFMacPaletteResultsTests
 MAC_FIND_NEAREST_TEST := $(BUILD)/SPDFMacFindNearestTests
@@ -105,7 +106,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests test-binaries release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-tab-strip-style-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests test-binaries release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -212,11 +213,19 @@ $(MAC_TAB_STRIP_GEOMETRY_TEST): mac/tests/SPDFMacTabStripGeometryTests.mm mac/SP
 mac-tab-strip-geometry-tests: $(MAC_TAB_STRIP_GEOMETRY_TEST)
 	"$(MAC_TAB_STRIP_GEOMETRY_TEST)"
 
-$(MAC_TAB_STRIP_INTERACTION_TEST): mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabStripView.h mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripGeometry.h mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(MAC_TAB_STRIP_INTERACTION_TEST)"
+$(MAC_TAB_STRIP_INTERACTION_TEST): mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabStripView.h mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripGeometry.h mac/SPDFMacTabStripStyle.mm mac/SPDFMacTabStripStyle.h mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripStyle.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(MAC_TAB_STRIP_INTERACTION_TEST)"
 
 mac-tab-strip-interaction-tests: $(MAC_TAB_STRIP_INTERACTION_TEST)
 	"$(MAC_TAB_STRIP_INTERACTION_TEST)"
+
+# The per-tab fill/outline decision, plus the AppKit colours the roles resolve
+# to under both Aqua and Dark Aqua. Links only the seam itself.
+$(MAC_TAB_STRIP_STYLE_TEST): mac/tests/SPDFMacTabStripStyleTests.mm mac/SPDFMacTabStripStyle.mm mac/SPDFMacTabStripStyle.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacTabStripStyleTests.mm mac/SPDFMacTabStripStyle.mm -framework Cocoa -o "$(MAC_TAB_STRIP_STYLE_TEST)"
+
+mac-tab-strip-style-tests: $(MAC_TAB_STRIP_STYLE_TEST)
+	"$(MAC_TAB_STRIP_STYLE_TEST)"
 
 # The reading-theme chrome seams: the gutter and page-border decisions on
 # SPDFDocumentView, the single-segment toolbar pill, and the Translate
@@ -421,7 +430,8 @@ TEST_BINARIES := $(CORE_OUTLINE_TEST) $(CORE_PASSWORD_TEST) $(CORE_RECOLOR_TEST)
 	$(CORE_RENDER_THEME_TEST) $(CORE_SELECTION_TEST) $(CORE_CJK_SELECTION_TEST) \
 	$(MAC_WINDOW_SHORTCUT_TEST) $(MAC_WINDOW_CHROME_TEST) $(MAC_PASSWORD_TEST) \
 	$(MAC_MINIMAP_WINDOW_TEST) $(MAC_TAB_STRIP_GEOMETRY_TEST) \
-	$(MAC_TAB_STRIP_INTERACTION_TEST) $(MAC_READING_THEME_CHROME_TEST) \
+	$(MAC_TAB_STRIP_INTERACTION_TEST) $(MAC_TAB_STRIP_STYLE_TEST) \
+	$(MAC_READING_THEME_CHROME_TEST) \
 	$(MAC_PALETTE_RESULTS_TEST) $(MAC_FIND_NEAREST_TEST) $(MAC_UPDATER_TEST) \
 	$(MAC_PROPERTIES_FORMAT_TEST) $(MAC_TRANSLATION_FILTER_TEST) \
 	$(MAC_TRANSLATION_COPY_TEST) $(MAC_CURSOR_REGION_TEST) \
