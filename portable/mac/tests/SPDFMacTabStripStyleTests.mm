@@ -131,7 +131,7 @@ static void CheckResolvedColors(NSAppearanceName name) {
     // guards visibility; this one only guards against falling back to the
     // invisible default.
     Expect([label stringByAppendingString:@": neutral outline alpha was raised off separatorColor's own"],
-           SRGB(plainStroke).alphaComponent > SRGB(NSColor.separatorColor).alphaComponent + 0.04);
+           SRGB(plainStroke).alphaComponent > SRGB(NSColor.separatorColor).alphaComponent + 0.1);
 
     // The neutral hairline must actually be visible against the strip. 0.15 of
     // luminance separation is a clearly readable edge at hairline width; the
@@ -140,13 +140,8 @@ static void CheckResolvedColors(NSAppearanceName name) {
     CGFloat plainEdge = fabs(CompositedLuminance(plainStroke, strip) - stripLuminance);
     Expect([label stringByAppendingFormat:@": neutral outline reads against the strip (%.3f)", plainEdge],
            plainEdge > 0.15);
-    // Both bounds against separatorColor are PROXIES for "the alpha was raised
-    // deliberately"; they were first calibrated to 0.42 and have been walked
-    // down twice as the user asked for a quieter edge. The absolute
-    // `plainEdge > 0.15` check above is the one that actually proves the outline
-    // is visible -- keep tightening judgement there, not here.
     Expect([label stringByAppendingString:@": raising the alpha is what made it read"],
-           plainEdge > fabs(CompositedLuminance(NSColor.separatorColor, strip) - stripLuminance) + 0.04);
+           plainEdge > fabs(CompositedLuminance(NSColor.separatorColor, strip) - stripLuminance) + 0.1);
 
     // ...and the selected outline must still dominate it: chromatic accent
     // against a grey hairline, so compare distance from the neutral edge.
