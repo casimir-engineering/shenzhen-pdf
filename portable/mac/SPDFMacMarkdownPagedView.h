@@ -32,6 +32,9 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownPageFitMode) {
 @property(nonatomic, copy, nullable) void (^viewportChangedHandler)(NSInteger pageIndex, CGFloat zoom);
 @property(nonatomic, copy, nullable) void (^activateDestinationHandler)(NSString* destination, BOOL wikiLink);
 @property(nonatomic, copy, nullable) void (^chooseCodeLanguageHandler)(NSUInteger blockIndex);
+// A code box's copy button was clicked: copy that block's RAW source and
+// return whether it was written (YES arms the button's brief "Copied" state).
+@property(nonatomic, copy, nullable) BOOL (^copyCodeBlockHandler)(NSUInteger blockIndex);
 
 - (instancetype)initWithPaginationPlan:(SPDFMarkdownPaginationPlan*)plan
                       attributedString:(NSAttributedString*)attributedString NS_DESIGNATED_INITIALIZER;

@@ -7,6 +7,20 @@
 // code-language picker, and the viewport forwarding onto the paged view.
 // Split from SPDFMacMarkdownSession.mm, which keeps the activation/loading/
 // rendering lifecycle.
+NSString* SPDFMacMarkdownCodeSourceForBlock(SPDFMarkdownDocumentModel* model, NSUInteger blockIndex) {
+    for (SPDFMarkdownCodeFence* fence in model.codeFences)
+        if (fence.blockIndex == blockIndex) return fence.code;
+    return nil;
+}
+
+BOOL SPDFMacMarkdownCopyCodeSource(SPDFMarkdownDocumentModel* model, NSUInteger blockIndex,
+                                   NSPasteboard* pasteboard) {
+    NSString* code = SPDFMacMarkdownCodeSourceForBlock(model, blockIndex);
+    if (!code.length || !pasteboard) return NO;
+    [pasteboard clearContents];
+    return [pasteboard setString:code forType:NSPasteboardTypeString];
+}
+
 @implementation SPDFMacMarkdownSession (Interaction)
 
 - (BOOL)scrollToHeadingAnchor:(NSString*)anchor {
@@ -60,6 +74,16 @@
                             if (!strongSelf || !language || !strongSelf->_active) return;
                             [strongSelf applyLanguageIdentifier:language.identifier toCodeBlock:blockIndex];
                           }];
+}
+
+- (NSString*)codeSourceForCodeBlock:(NSUInteger)blockIndex {
+    return SPDFMacMarkdownCodeSourceForBlock(self.document.model, blockIndex);
+}
+
+- (BOOL)copyCodeBlock:(NSUInteger)blockIndex {
+    if (!SPDFMacMarkdownCopyCodeSource(self.document.model, blockIndex, NSPasteboard.generalPasteboard)) return NO;
+    if (self.statusHandler) self.statusHandler(@"Code copied.");
+    return YES;
 }
 
 - (void)applyLanguageIdentifier:(NSString*)identifier toCodeBlock:(NSUInteger)blockIndex {

@@ -5,6 +5,7 @@
 #import "markdown/SPDFMarkdownDecorations.h"
 
 @class SPDFMarkdownDocument;
+@class SPDFMarkdownDocumentModel;
 @class SPDFMarkdownPaginationPlan;
 @class SPDFMarkdownRenderedDocument;
 @class SPDFMarkdownSearchMatch;
@@ -124,12 +125,28 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 - (void)ensureActiveSessionHasContent;
 @end
 
+// The RAW source of one fenced code block, straight from the parsed model:
+// exactly the characters between the fences, never the syntax-highlighted
+// rendition and never the language label. nil when the block index is not a
+// fenced code block. SPDFMacMarkdownCopyCodeSource writes it to `pasteboard`
+// as plain text, and is what the code box's copy button ultimately runs.
+FOUNDATION_EXPORT NSString* _Nullable SPDFMacMarkdownCodeSourceForBlock(SPDFMarkdownDocumentModel* model,
+                                                                        NSUInteger blockIndex);
+FOUNDATION_EXPORT BOOL SPDFMacMarkdownCopyCodeSource(SPDFMarkdownDocumentModel* model, NSUInteger blockIndex,
+                                                     NSPasteboard* pasteboard);
+
 // Implemented in SPDFMacMarkdownSession+Interaction.mm: heading anchors, the
-// code-language picker, and the viewport forwarding onto the paged view.
+// code-language picker, the code copy button, and the viewport forwarding onto
+// the paged view.
 @interface SPDFMacMarkdownSession (Interaction)
 - (BOOL)scrollToHeadingAnchor:(NSString*)anchor;
 - (void)navigateToAnchorWhenReady:(NSString*)anchor;
 - (void)showLanguagePickerForCodeBlock:(NSUInteger)blockIndex parentWindow:(NSWindow*)window;
+// A code box's copy button, on the session's own document: writes that block's
+// RAW fence source as plain text and reports the status. NO when the index is
+// not a fenced code block, its source is empty, or the write was rejected.
+- (nullable NSString*)codeSourceForCodeBlock:(NSUInteger)blockIndex;
+- (BOOL)copyCodeBlock:(NSUInteger)blockIndex;
 - (void)goToPageAtIndex:(NSInteger)pageIndex;
 - (void)zoomByFactor:(CGFloat)factor;
 - (void)setZoom:(CGFloat)zoom;
