@@ -59,6 +59,9 @@
     65 process exited before a window appeared
     66 timed out waiting for a window
     67 capture itself failed
+    68 the capture came back blank because the desktop is not composited --
+       almost always a LOCKED workstation. This is a BLOCKED, not a failure:
+       nothing has been shown about the app. See DistinctColors below.
 #>
 [CmdletBinding()]
 param(
@@ -76,6 +79,33 @@ $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path -LiteralPath $Exe)) { Write-Output "error=no-exe path=$Exe"; exit 64 }
 if (-not (Test-Path -LiteralPath $Pdf)) { Write-Output "error=no-pdf path=$Pdf"; exit 64 }
+
+# A LOCKED WORKSTATION CANNOT BE SCREENSHOTTED, AND SAYING SO UP FRONT SAVES AN
+# INVESTIGATION.
+#
+# Windows does not composite a locked session. The DWM-drawn title bar still
+# appears in a capture, because DWM has it cached, but a Direct2D client area
+# backed by a GPU surface does not: PrintWindow returns black or stale garbage,
+# and CopyFromScreen returns pure black for the entire screen.
+#
+# The failure is convincing in the worst way. It looks exactly like the app
+# painting nothing -- and it REPRODUCES, including from a clean build of a
+# known-good commit, which is how one investigation concluded the window had
+# regressed when it had not. The offscreen compose of the very same binary was
+# perfect throughout, which is the tell: spdf_win_paint() needs no desktop.
+#
+# So this is checked BEFORE the app is launched (no point starting it) and
+# reported as its own exit code, so a harness records BLOCKED rather than FAIL.
+# Nothing has been learned about the app either way.
+if (@(Get-Process LogonUI -ErrorAction SilentlyContinue).Count -gt 0) {
+  Write-Output "error=workstation-locked"
+  Write-Output ("detail=LogonUI is running, so this session is locked and Windows is not compositing it. " +
+                "PrintWindow returns black or stale pixels for a Direct2D client area and CopyFromScreen " +
+                "returns black for the whole screen, which presents as 'the app rendered nothing'. " +
+                "Unlock the machine and re-run. The offscreen path (--render-window-png, optionally --chrome) " +
+                "needs no desktop at all and is unaffected.")
+  exit 68
+}
 
 $outDir = Split-Path -Parent $Out
 if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
@@ -177,6 +207,51 @@ public static class SpdfShot {
     // PW_RENDERFULLCONTENT = 2. Mandatory for a D2D/DirectComposition client area.
     const uint PW_RENDERFULLCONTENT = 2;
 
+    // How many DISTINCT colours a capture contains, sampled on a grid.
+    //
+    // WHY THIS IS HERE AND NOT IN THE CALLER. A capture taken while the
+    // workstation is LOCKED comes back black -- all of it, including the
+    // DWM-drawn title bar, which the app does not paint. Windows does not
+    // composite a locked session, so both PrintWindow and CopyFromScreen return
+    // nothing, and there is no reliable lock flag to test first: with the app in
+    // the user's own session, OpenInputDesktop still reports "Default" and
+    // GetForegroundWindow merely returns 0.
+    //
+    // So the harness asks the question it actually cares about -- is this
+    // capture meaningful? -- instead of trying to divine why it might not be.
+    // That distinction matters more than it sounds: a black capture presents as
+    // the app rendering nothing, and it cost one investigation already, in which
+    // a clean build of a known-good commit "reproduced" a window regression that
+    // did not exist. The port's whole history is people unable to see the
+    // window; being able to see it now includes noticing when you cannot.
+    public static int DistinctColors(Bitmap bmp, int maxSamples) {
+        return DistinctColorsIn(bmp, 0, 0, bmp.Width, bmp.Height, maxSamples);
+    }
+
+    // Same, over a sub-rectangle. The CLIENT area is the one that matters: DWM
+    // keeps compositing the title bar when a Direct2D client area does not, so a
+    // whole-window count stays healthy while the only interesting part is blank.
+    // Measured during the locked-session investigation: whole window 7 distinct
+    // colours, client area 2.
+    public static int DistinctColorsIn(Bitmap bmp, int x0, int y0, int w, int h, int maxSamples) {
+        if (w <= 0 || h <= 0) return -1;
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x0 + w > bmp.Width) w = bmp.Width - x0;
+        if (y0 + h > bmp.Height) h = bmp.Height - y0;
+        if (w <= 0 || h <= 0) return -1;
+        var seen = new System.Collections.Generic.HashSet<int>();
+        int stepX = Math.Max(1, w / 40), stepY = Math.Max(1, h / 40);
+        int n = 0;
+        for (int y = y0; y < y0 + h && n < maxSamples; y += stepY)
+            for (int x = x0; x < x0 + w && n < maxSamples; x += stepX, n++)
+                seen.Add(bmp.GetPixel(x, y).ToArgb());
+        return seen.Count;
+    }
+
+    public static int LastCaptureColors = -1;
+    public static int LastClientColors = -1;
+
     public static string Capture(IntPtr hwnd, string path) {
         RECT wr;
         if (!GetWindowRect(hwnd, out wr)) return "GetWindowRect failed";
@@ -189,6 +264,15 @@ public static class SpdfShot {
             try { ok = PrintWindow(hwnd, dc, PW_RENDERFULLCONTENT); }
             finally { g.ReleaseHdc(dc); }
             if (!ok) return "PrintWindow failed (win32 " + Marshal.GetLastWin32Error() + ")";
+            LastCaptureColors = DistinctColors(bmp, 1600);
+            // The client area within the captured (whole-window) bitmap.
+            RECT cr; POINT o = new POINT();
+            if (GetClientRect(hwnd, out cr) && ClientToScreen(hwnd, ref o)) {
+                LastClientColors = DistinctColorsIn(bmp, o.X - wr.Left, o.Y - wr.Top,
+                                                    cr.Right - cr.Left, cr.Bottom - cr.Top, 1600);
+            } else {
+                LastClientColors = -1;
+            }
             bmp.Save(path, ImageFormat.Png);
         }
         return null;
@@ -301,6 +385,28 @@ try {
 
   Write-Output ("png=" + $Out)
   Write-Output ("bytes=" + (Get-Item -LiteralPath $Out).Length)
+  Write-Output ("colors=" + [SpdfShot]::LastCaptureColors + " client_colors=" + [SpdfShot]::LastClientColors)
+
+  # A real ShenzhenPDF window has a document, chrome and a title bar in it, so
+  # it is never one or two flat colours. One is a black rectangle. Reported as a
+  # DISTINCT exit code rather than as success-with-a-bad-png, so a harness can
+  # record BLOCKED instead of FAIL: the app has not been shown to be wrong, the
+  # screen simply could not be read.
+  # Backstop for the non-composited cases the LogonUI check up front does not
+  # name -- a disconnected RDP session, a blanked display, a GPU reset. Judged on
+  # the CLIENT area, not the framed window: DWM keeps compositing the title bar
+  # when the Direct2D client does not, so a whole-window count stays healthy
+  # while the only part that matters is blank. Measured during the locked-session
+  # investigation: whole window 7 distinct colours, client area 2.
+  if ([SpdfShot]::LastClientColors -ge 0 -and [SpdfShot]::LastClientColors -le 3) {
+    Write-Output ("error=capture-not-composited client_colors=" + [SpdfShot]::LastClientColors)
+    Write-Output ("detail=the client area came back as " + [SpdfShot]::LastClientColors +
+                  ' flat colour(s), which no real document window is. The desktop is probably not being ' +
+                  'composited (locked, disconnected, or the display is asleep). This is BLOCKED, not a failure: ' +
+                  'nothing has been shown about the app. The offscreen path needs no desktop and is unaffected.')
+    exit 68
+  }
+
   Write-Output "status=captured"
   exit 0
 }
