@@ -2444,7 +2444,7 @@ static id spdf_state_object_from_yaml_data(NSData* data) {
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
     if (version.length == 0) version = @"26.9.1";
-    if (build.length == 0) build = @"1";
+    if (build.length == 0) build = @"2";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
