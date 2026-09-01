@@ -95,7 +95,16 @@ void spdf_window_activate_for_click_event(NSWindow* window, NSEvent* event) {
     // Order matters: focus the window BEFORE the event is dispatched, so AppKit
     // sees a key window and delivers the click normally instead of consuming it
     // as the click that activates.
-    if (!appActive) [app activateIgnoringOtherApps:YES];
+    // -activateIgnoringOtherApps: is deprecated and, under the cooperative
+    // activation macOS 14 introduced, is largely ignored: an app may no longer
+    // simply promote itself. It left the window taking KEY (the keyboard went
+    // to it) while the app stayed INACTIVE -- which is exactly the reported
+    // symptom, a focused-feeling window whose traffic lights stay grey.
+    // -[NSApplication activate] is the supported replacement.
+    if (!appActive) {
+        if ([app respondsToSelector:@selector(activate)]) [app activate];
+        else [app activateIgnoringOtherApps:YES];
+    }
     if (!window.keyWindow) [window makeKeyAndOrderFront:nil];
 }
 
