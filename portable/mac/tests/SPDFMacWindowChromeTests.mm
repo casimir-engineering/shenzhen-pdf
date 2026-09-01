@@ -85,6 +85,39 @@ int main(void) {
         // Nil arguments are inert: the imperative wrapper must never crash on a
         // window or event that is gone.
         spdf_window_activate_for_click_event(nil, nil);
+
+        // Zoom wheel: Cmd or Ctrl on an actively scrolling wheel, never on the
+        // inertial tail. Both the focused responder chain and the out-of-focus
+        // event tap ask this, so an unfocused Cmd+wheel zooms exactly like a
+        // focused one.
+        const NSUInteger cmd = SPDFWindowModifierFlagCommand;
+        const NSUInteger ctrl = SPDFWindowModifierFlagControl;
+        const NSUInteger shift = 1 << 17;  // NSEventModifierFlagShift
+        expect_bool(@"command wheel zooms", spdf_scroll_is_zoom_wheel(cmd, NO), YES);
+        expect_bool(@"control wheel zooms", spdf_scroll_is_zoom_wheel(ctrl, NO), YES);
+        expect_bool(@"command with other modifiers still zooms", spdf_scroll_is_zoom_wheel(cmd | shift, NO), YES);
+        expect_bool(@"plain wheel scrolls", spdf_scroll_is_zoom_wheel(0, NO), NO);
+        expect_bool(@"shift wheel scrolls sideways, never zooms", spdf_scroll_is_zoom_wheel(shift, NO), NO);
+        expect_bool(@"command held during momentum never zooms", spdf_scroll_is_zoom_wheel(cmd, YES), NO);
+        expect_bool(@"plain momentum never zooms", spdf_scroll_is_zoom_wheel(0, YES), NO);
+
+        // Tap ownership. Out of focus the tap sees the scroll first; if the
+        // window server hands the very same event to the window as well, the
+        // responder chain must stand down instead of zooming twice.
+        expect_bool(@"tap owns the event it just zoomed",
+                    spdf_zoom_wheel_handled_by_tap(YES, NO, 100.0, 100.0, 0.5), YES);
+        expect_bool(@"tap owns a rebuilt event within the hop window",
+                    spdf_zoom_wheel_handled_by_tap(YES, NO, 100.5, 100.0, 0.001), YES);
+        expect_bool(@"a later scroll the tap declined still zooms",
+                    spdf_zoom_wheel_handled_by_tap(YES, NO, 100.5, 100.0, 0.5), NO);
+        expect_bool(@"no tap zoom yet leaves the responder chain in charge",
+                    spdf_zoom_wheel_handled_by_tap(YES, NO, 100.0, 0.0, 1.0e6), NO);
+        expect_bool(@"focused app always zooms through the responder chain",
+                    spdf_zoom_wheel_handled_by_tap(YES, YES, 100.0, 100.0, 0.0), NO);
+        expect_bool(@"without a tap the responder chain is the only path",
+                    spdf_zoom_wheel_handled_by_tap(NO, NO, 100.0, 100.0, 0.0), NO);
+        expect_bool(@"a clock that ran backwards does not silence the wheel",
+                    spdf_zoom_wheel_handled_by_tap(YES, NO, 100.5, 100.0, -1.0), NO);
     }
     return 0;
 }
