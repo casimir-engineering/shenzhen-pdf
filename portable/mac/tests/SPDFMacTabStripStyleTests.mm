@@ -125,8 +125,13 @@ static void CheckResolvedColors(NSAppearanceName name) {
     Expect([label stringByAppendingString:@": tab fill matches the strip, so only the outline gives an edge"],
            ColorsEqual(plainFill, strip));
 
+    // Raised well clear of separatorColor's shipped 0.098, but deliberately NOT
+    // as far as the first attempt's 0.42, which read as harder than the content
+    // it framed. The luminance-separation assertion below is what actually
+    // guards visibility; this one only guards against falling back to the
+    // invisible default.
     Expect([label stringByAppendingString:@": neutral outline alpha was raised off separatorColor's own"],
-           SRGB(plainStroke).alphaComponent > SRGB(NSColor.separatorColor).alphaComponent + 0.2);
+           SRGB(plainStroke).alphaComponent > SRGB(NSColor.separatorColor).alphaComponent + 0.1);
 
     // The neutral hairline must actually be visible against the strip. 0.15 of
     // luminance separation is a clearly readable edge at hairline width; the
