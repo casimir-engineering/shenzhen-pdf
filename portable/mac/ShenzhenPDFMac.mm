@@ -8335,10 +8335,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         BOOL annotationOperation =
             [operationName rangeOfString:@"comment" options:NSCaseInsensitiveSearch].location != NSNotFound;
         int requiredPermission = annotationOperation ? 'n' : 'e';
-        BOOL needsCopyPermission = [operationName caseInsensitiveCompare:@"OCR"] == NSOrderedSame ||
-                                   [operationName caseInsensitiveCompare:@"translation"] == NSOrderedSame;
-        if (!spdf_has_permission(_doc, requiredPermission) ||
-            (needsCopyPermission && !spdf_has_permission(_doc, 'c'))) {
+        if (!spdf_has_permission(_doc, requiredPermission)) {
             [self showError:@"Operation is not allowed"
                      detail:[NSString stringWithFormat:@"This PDF's user permissions do not allow %@. Open it with the "
                                                        @"owner password to continue.",
@@ -11134,24 +11131,11 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         NSBeep();
         return;
     }
-    if (_doc && !spdf_has_permission(_doc, 'c')) {
-        [self showError:@"Copying is not allowed" detail:@"This PDF's permissions do not allow content copying."];
-        return;
-    }
     NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
     [pasteboard clearContents];
     NSString* text = _collapseWhitespaceWhenCopyingText ? SPDFTextByCollapsingWhitespace(_selectedText) : _selectedText;
     [pasteboard setString:text ?: @"" forType:NSPasteboardTypeString];
     _statusLabel.stringValue = @"Selected text copied.";
-}
-
-- (BOOL)ensureContentCopyPermissionForOperation:(NSString*)operationName {
-    if ([self isMarkdownActive]) return YES;
-    if (_doc && spdf_has_permission(_doc, 'c')) return YES;
-    [self
-        showError:[NSString stringWithFormat:@"%@ is not allowed", operationName ?: @"Copying"]
-           detail:@"This PDF's permissions do not allow content copying. Open it with the owner password to continue."];
-    return NO;
 }
 
 - (NSString*)trimmedSelectedTextForCommand {
@@ -11172,7 +11156,6 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         NSBeep();
         return;
     }
-    if (![self ensureContentCopyPermissionForOperation:@"Web search"]) return;
 
     if (SPDFPerformSystemTextSearchService(query)) {
         _statusLabel.stringValue = @"Opened selected text in browser search.";
@@ -11335,7 +11318,6 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
         NSBeep();
         return;
     }
-    if (![self ensureContentCopyPermissionForOperation:@"Translation"]) return;
 
     [self buildSelectionTranslationPanelIfNeeded];
     [self syncSelectionTranslationLanguagePopups];
@@ -11636,10 +11618,12 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
     char err[512];
     spdf_link_target target;
+    double kP0 = spdf_zoom_profile_now_ms();
     // A click actually follows the link, so do the full check including
     // plain-text URL detection (detect_text_links=1).
     int hit = spdf_link_at_point(_doc, (int)pageIndex, (float)pagePoint.x, (float)pagePoint.y, &target,
                                  /*detect_text_links=*/1, err, sizeof(err));
+    spdf_zoom_profile_log(@"LINKPROF spdf_link_at_point=%.1fms hit=%d", spdf_zoom_profile_now_ms() - kP0, hit);
     if (hit <= 0) return NO;
 
     if (target.kind == SPDF_LINK_URI && target.uri) {
@@ -11660,15 +11644,22 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
         if (isfinite(target.x) && isfinite(target.y)) targetRect = NSMakeRect(target.x, target.y, 1.0, 24.0);
         _pageIndex = MAX(0, MIN(targetPage, spdf_page_count(_doc) - 1));
         _pageView.currentPageIndex = _pageIndex;
+        double kP1 = spdf_zoom_profile_now_ms();
         [self renderPageIfNeededAtIndex:_pageIndex];
+        double kP2 = spdf_zoom_profile_now_ms();
         [self resizeDocumentView];
+        double kP3 = spdf_zoom_profile_now_ms();
         if (NSIsEmptyRect(targetRect))
             [self scrollToPage:_pageIndex alignTop:YES];
         else
             [self scrollToPageRect:targetRect pageIndex:_pageIndex];
+        double kP4 = spdf_zoom_profile_now_ms();
         [self updateControls];
         [self selectCurrentSidebarRow];
+        double kP5 = spdf_zoom_profile_now_ms();
         [self persistActiveState];
+        spdf_zoom_profile_log(@"LINKPROF internal render=%.1f resize=%.1f scroll=%.1f controls=%.1f persist=%.1f",
+                              kP2 - kP1, kP3 - kP2, kP4 - kP3, kP5 - kP4, spdf_zoom_profile_now_ms() - kP5);
         spdf_free_link_target(&target);
         return YES;
     }
@@ -14806,7 +14797,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 - (void)translateDocument:(id)sender {
     if (![self beginTranslateCommandForSender:sender]) return;
-    if (![self ensureContentCopyPermissionForOperation:@"Translation"]) return;
     if (![self ensureActivePDFCanBeModifiedForOperation:@"translation"]) return;
     if (_translationInstallRunning) {
         [_translationInstallPanel makeKeyAndOrderFront:nil];
@@ -16778,13 +16768,12 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     }
     if (action == @selector(searchSelectedTextInBrowser:))
         return
-            [self trimmedSelectedTextForCommand].length > 0 && (markdown || (_doc && spdf_has_permission(_doc, 'c')));
+            [self trimmedSelectedTextForCommand].length > 0;
     if (action == @selector(showSelectionTranslationPanel:))
         return spdf_translation_selection_enabled([self translationContext]);
     if (action == @selector(copySelection:))
-        return (markdown || (_doc && spdf_has_permission(_doc, 'c'))) &&
-               ([self trimmedSelectedTextForCommand].length > 0 ||
-                (markdown && [self.activeMarkdownSession selectionContainsImage]));
+        return [self trimmedSelectedTextForCommand].length > 0 ||
+               (markdown && [self.activeMarkdownSession selectionContainsImage]);
     if (action == @selector(addComment:)) return hasDoc && (_selectedText.length > 0 || _contextPageIndex >= 0);
     if (action == @selector(editComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(deleteComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
@@ -16794,7 +16783,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(translateDocument:)) {
         spdf_translation_context context = [self translationContext];
-        return spdf_translation_command_enabled(context) && context.contentCopyAllowed;
+        return spdf_translation_command_enabled(context);
     }
     if (action == @selector(saveDocumentAs:))
         return markdown || (hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"]);

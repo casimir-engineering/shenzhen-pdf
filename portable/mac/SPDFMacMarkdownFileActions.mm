@@ -24,14 +24,14 @@
 
 - (BOOL)canCopyCurrentPageAsPDF {
     if ([self isMarkdownActive]) return [self markdownSessionCanCopyPageAtIndex:[self markdownCopyPageIndex]];
-    return _doc != NULL && _path.length > 0 && spdf_has_permission(_doc, 'c');
+    return _doc != NULL && _path.length > 0;
 }
 
 - (BOOL)canCopyCurrentPageImage {
     if ([self isMarkdownActive])
         return [self markdownSessionCanCopyPageAtIndex:self.activeMarkdownSession.currentPageIndex];
-    return _doc != NULL && spdf_has_permission(_doc, 'c') && _pageIndex >= 0 &&
-           _pageIndex < (NSInteger)_renderedPages.count && _renderedPages[(NSUInteger)_pageIndex].image != nil;
+    return _doc != NULL && _pageIndex >= 0 && _pageIndex < (NSInteger)_renderedPages.count &&
+           _renderedPages[(NSUInteger)_pageIndex].image != nil;
 }
 
 - (void)openInExternalReader:(id)sender {
@@ -108,12 +108,6 @@
         NSBeep();
         return;
     }
-    if (!spdf_has_permission(_doc, 'c')) {
-        [self showError:@"Copying is not allowed"
-                 detail:@"This PDF's permissions do not allow content copying."];
-        return;
-    }
-
     // Copy the document's OWN colors, like Print and Save as PDF: the cached
     // image may be recolored for the dark reading theme, and a pasted page
     // carrying our dark paper would be wrong wherever it lands. Re-render at
@@ -172,12 +166,6 @@
         NSBeep();
         return;
     }
-    if (!spdf_has_permission(_doc, 'c')) {
-        [self showError:@"Copying is not allowed"
-                 detail:@"This PDF's permissions do not allow content copying."];
-        return;
-    }
-
     NSString* base = _path.lastPathComponent.stringByDeletingPathExtension;
     NSString* fileName =
         [NSString stringWithFormat:@"%@ - page %ld.pdf", base.length ? base : @"Page", (long)(pageIndex + 1)];

@@ -8,6 +8,9 @@ app_impl="$root/portable/mac/ShenzhenPDFMac.mm"
 properties_impl="$root/portable/mac/SPDFMacPropertiesPanel.mm"
 core_impl="$root/portable/core/shenzhen_pdf_core.c"
 core_header="$root/portable/core/shenzhen_pdf_core.h"
+file_actions_impl="$root/portable/mac/SPDFMacMarkdownFileActions.mm"
+translation_impl="$root/portable/mac/SPDFMacTranslationEnablement.mm"
+context_menu_impl="$root/portable/mac/SPDFMacContextMenuIntegration.mm"
 
 grep -q 'NSSecureTextField' "$password_impl"
 grep -q 'beginSheet:' "$password_impl"
@@ -57,9 +60,15 @@ grep -q "allowed = fz_has_permission(doc->ctx, doc->doc, (fz_permission)permissi
     echo "print/edit/annotate must still consult the document's own flags" >&2
     exit 1
 }
-grep -q 'ensureContentCopyPermissionForOperation:@"Web search"' "$app_impl"
-if [ "$(grep -c 'ensureContentCopyPermissionForOperation:@"Translation"' "$app_impl")" -lt 2 ]; then
-    echo "selection and document translation must both enforce copy permission" >&2
+# The frontend's copy gates are gone with the policy: nothing may reintroduce a
+# copy-permission refusal on the paths the user reaches.
+if grep -qE "spdf_has_permission\(_doc, 'c'\)|ensureContentCopyPermissionForOperation" \
+    "$app_impl" "$file_actions_impl" "$translation_impl" "$context_menu_impl"; then
+    echo "copy is unconditional; a copy-permission gate came back in the frontend" >&2
+    exit 1
+fi
+if grep -q 'Copying is not allowed' "$app_impl" "$file_actions_impl"; then
+    echo "the 'Copying is not allowed' dialog must not come back" >&2
     exit 1
 fi
 grep -q "allowed = doc->password_protected ? 0 : 1;" "$core_impl"

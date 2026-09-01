@@ -15,7 +15,6 @@
 typedef struct {
     bool markdownActive;             // the active tab is a Markdown document
     bool pdfDocumentOpen;            // a mupdf document is loaded (PDF/XPS/EPUB/CBZ path)
-    bool contentCopyAllowed;         // PDF 'c' permission; always true for Markdown
     bool hasSelection;               // trimmed selected text is non-empty
     bool translationRunning;         // a translation job is in flight
     bool translationInstallRunning;  // the Argos installer panel is running
@@ -26,7 +25,7 @@ typedef struct {
 // job is running, with a copy-locked PDF explained on click rather than greyed
 // out. A Markdown tab is enabled only while a selection exists, since there is
 // nothing else Translate could do there. The File-menu item additionally
-// requires contentCopyAllowed, which is also unchanged.
+// requires a selection, which is unchanged.
 bool spdf_translation_command_enabled(spdf_translation_context context);
 
 // The selection-translation panel (toolbar with a selection, context menu,
