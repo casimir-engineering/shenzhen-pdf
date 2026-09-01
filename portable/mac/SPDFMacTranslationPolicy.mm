@@ -5,7 +5,7 @@ static bool spdf_translation_idle(spdf_translation_context context) {
 }
 
 bool spdf_translation_selection_enabled(spdf_translation_context context) {
-    if (!context.hasSelection || !context.contentCopyAllowed) return false;
+    if (!context.hasSelection) return false;
     if (!context.markdownActive && !context.pdfDocumentOpen) return false;
     return spdf_translation_idle(context);
 }

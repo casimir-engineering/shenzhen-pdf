@@ -72,6 +72,17 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)addReadingThemeOverflowItemsToMenu:(NSMenu*)menu hiddenViews:(NSSet<NSView*>*)hiddenViews;
 @end
 
+// Implemented in ShenzhenPDFMac.mm. A category of their own on purpose:
+// declaring them in (SPDFMacMarkdownIntegration) makes the compiler expect
+// SPDFMacMarkdownIntegration.mm to define them too.
+@interface ShenzhenMacDelegate (SPDFMacMarkdownFocusHost)
+// The tab-activation focus chokepoint. Safe to re-run: it only claims focus
+// from a passive holder.
+- (void)focusActiveDocumentViewAfterTabSelection;
+// The view typing should reach: the Markdown canvas when one is up.
+- (NSView*)activeDocumentKeyView;
+@end
+
 @interface ShenzhenMacDelegate (SPDFMacMarkdownIntegration)
 - (void)installMarkdownHostInDocumentContainer;
 - (SPDFMacMarkdownSession*)activeMarkdownSession;
@@ -85,13 +96,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)printActiveMarkdown;
 - (void)saveActiveMarkdownAsPDF;
 - (void)updateControlsForActiveMarkdown;
-// The tab-activation focus chokepoint (ShenzhenPDFMac.mm). Safe to re-run: it
-// only claims focus from a passive holder.
-- (void)focusActiveDocumentViewAfterTabSelection;
-// The document-just-loaded variant, which yields only to a live text edit.
+// The document-just-loaded focus rule, which yields only to a live text edit.
 - (void)focusMarkdownViewAfterLoad;
-// The view typing should reach: the Markdown canvas when one is up.
-- (NSView*)activeDocumentKeyView;
 - (void)updateMarkdownFontControls;
 - (void)decreaseMarkdownFontSize:(nullable id)sender;
 - (void)increaseMarkdownFontSize:(nullable id)sender;

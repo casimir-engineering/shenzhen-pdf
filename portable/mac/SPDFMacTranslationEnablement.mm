@@ -18,7 +18,6 @@
     spdf_translation_context context = {};
     context.markdownActive = [self isMarkdownActive];
     context.pdfDocumentOpen = _doc != NULL;
-    context.contentCopyAllowed = context.markdownActive || (_doc && spdf_has_permission(_doc, 'c'));
     context.hasSelection = [self trimmedSelectedTextForCommand].length > 0;
     context.translationRunning = _translationRunning;
     context.translationInstallRunning = _translationInstallRunning;

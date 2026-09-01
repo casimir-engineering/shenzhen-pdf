@@ -25,7 +25,6 @@
     NSString* selectedText = markdown ? [self markdownSelectedText] : (_selectedText ?: @"");
     if (markdown) _contextPageIndex = self.activeMarkdownSession.currentPageIndex;
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
-    BOOL contentCopyAllowed = markdown || (_doc && spdf_has_permission(_doc, 'c'));
     if (selectedText.length > 0) {
         NSString* preview = [self shortSelectedTextForMenuTitle];
         NSMenuItem* translateSelection =
@@ -41,12 +40,11 @@
                             action:@selector(searchSelectedTextInBrowser:)
                      keyEquivalent:@""];
         webSearch.target = self;
-        webSearch.enabled = contentCopyAllowed;
         [menu addItem:[NSMenuItem separatorItem]];
     }
     NSMenuItem* copy = [menu addItemWithTitle:@"Copy" action:@selector(copySelection:) keyEquivalent:@""];
     copy.target = self;
-    copy.enabled = contentCopyAllowed &&
+    copy.enabled =
                    (selectedText.length > 0 || (markdown && [self.activeMarkdownSession selectionContainsImage]));
     if (!markdown && _contextCommentIndex >= 0) {
         NSMenuItem* editComment = [menu addItemWithTitle:@"Edit Comment..."
@@ -84,12 +82,12 @@
                                            action:@selector(copyCurrentPageAsPDF:)
                                     keyEquivalent:@""];
     copyPage.enabled = markdown ? [self canCopyCurrentPageAsPDF]
-                                : contentCopyAllowed && _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
+                                : _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
     NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
                                             action:@selector(copyCurrentPageImage:)
                                      keyEquivalent:@""];
     copyImage.enabled = markdown ? [self canCopyCurrentPageImage]
-                                 : contentCopyAllowed && _pageIndex >= 0 &&
+                                 : _pageIndex >= 0 &&
                                        _pageIndex < (NSInteger)_renderedPages.count &&
                                        _renderedPages[(NSUInteger)_pageIndex].image != nil;
     NSMenuItem* copyPath = [menu addItemWithTitle:@"Copy Path"

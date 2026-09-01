@@ -179,7 +179,6 @@ int main(void) {
         // --- Where Translate may act -------------------------------------
         spdf_translation_context pdfNoSelection = {};
         pdfNoSelection.pdfDocumentOpen = true;
-        pdfNoSelection.contentCopyAllowed = true;
         Expect("PDF without a selection still offers whole-document translation",
                spdf_translation_command_enabled(pdfNoSelection));
         Expect("PDF without a selection has no selection translation",
@@ -189,13 +188,6 @@ int main(void) {
         pdfSelection.hasSelection = true;
         Expect("PDF selection translates", spdf_translation_selection_enabled(pdfSelection));
 
-        // A copy-locked PDF keeps its old behavior exactly: the command stays
-        // live (the click explains the refusal), selection translation does not.
-        spdf_translation_context lockedPDF = pdfSelection;
-        lockedPDF.contentCopyAllowed = false;
-        Expect("a copy-locked PDF keeps the command live",
-               spdf_translation_command_enabled(lockedPDF) && !spdf_translation_selection_enabled(lockedPDF));
-
         spdf_translation_context busyPDF = pdfSelection;
         busyPDF.translationRunning = true;
         Expect("a running translation blocks a second one", !spdf_translation_command_enabled(busyPDF));
@@ -203,12 +195,11 @@ int main(void) {
         busyPDF.translationInstallRunning = true;
         Expect("a running installer blocks translation", !spdf_translation_command_enabled(busyPDF));
 
-        // Markdown: text is all selection translation needs, and Markdown has
-        // no copy-permission concept. Whole-document translation writes into a
-        // PDF's own page geometry, so it stays PDF-only.
+        // Markdown: text is all selection translation needs. Whole-document
+        // translation writes into a PDF's own page geometry, so it stays
+        // PDF-only.
         spdf_translation_context markdownNoSelection = {};
         markdownNoSelection.markdownActive = true;
-        markdownNoSelection.contentCopyAllowed = true;
         Expect("Markdown without a selection has nothing to translate",
                !spdf_translation_command_enabled(markdownNoSelection));
         Expect("whole-document translation stays PDF-only",
