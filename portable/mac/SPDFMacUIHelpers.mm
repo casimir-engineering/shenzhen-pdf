@@ -977,6 +977,7 @@ static void spdf_install_inactive_magnify_monitor(void) {
 }
 
 - (void)sendEvent:(NSEvent*)event {
+    spdf_window_activate_for_click_event(self, event);  // any click in the window focuses it, before any handler
     if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
     if (self.reader && [self.reader handleWindowArrangementShortcutEvent:event]) return;
