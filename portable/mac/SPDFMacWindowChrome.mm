@@ -108,6 +108,26 @@ void spdf_window_activate_for_click_event(NSWindow* window, NSEvent* event) {
     if (!window.keyWindow) [window makeKeyAndOrderFront:nil];
 }
 
+BOOL spdf_window_click_needs_key_handshake(NSUInteger eventType, BOOL windowIsKey, BOOL windowCanBecomeKey,
+                                           BOOL windowHasAttachedSheet, BOOL anotherWindowIsModal) {
+    if (!spdf_window_event_is_mouse_press(eventType)) return NO;
+    if (windowHasAttachedSheet || anotherWindowIsModal) return NO;
+    if (!windowCanBecomeKey) return NO;
+    // Already key: AppKit has already handed this window key and main status,
+    // and there is nothing for super to complete.
+    return !windowIsKey;
+}
+
+BOOL spdf_window_event_needs_key_handshake(NSWindow* window, NSEvent* event) {
+    if (!window || !event) return NO;
+    // Resolved by name (not by symbol) so this file keeps linking into the
+    // Foundation-only window-chrome unit-test binary.
+    id app = [NSClassFromString(@"NSApplication") sharedApplication];
+    id modalWindow = [app modalWindow];
+    return spdf_window_click_needs_key_handshake(event.type, window.keyWindow, window.canBecomeKeyWindow,
+                                                 window.attachedSheet != nil, modalWindow && modalWindow != window);
+}
+
 SPDFWindowChromeAction spdf_window_chrome_action_for_event(NSWindow* window, NSEvent* event, BOOL fullScreen,
                                                            BOOL presentation) {
     if (!event) return SPDFWindowChromeActionNone;

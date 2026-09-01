@@ -89,6 +89,31 @@ BOOL spdf_window_click_should_activate(NSUInteger eventType, BOOL appActive, BOO
 // swallowed as a first click. No-op when the policy declines.
 void spdf_window_activate_for_click_event(NSWindow* window, NSEvent* event);
 
+// YES when this press is the one AppKit needs in order to hand the window key
+// and main status, and that handover has not happened yet.
+//
+// AppKit performs the handover while it processes the activating mouse-down
+// inside -[NSWindow sendEvent:] — not when the app is told to activate. So a
+// -sendEvent: override that consumes a press before super (the tab strip's
+// clicks, the presentation and arrangement handlers) leaves the handover
+// undone, and it cannot be repaired afterwards: a later -makeKeyWindow /
+// -makeMainWindow / -makeKeyAndOrderFront: is refused outright, because AppKit
+// is still waiting for a mouse-down it will never see. The window server, which
+// tracks the front window independently, does consider the window main — so the
+// keyboard keeps working (key events route by window number, not by key status)
+// while everything drawn from key state, the traffic lights above all, stays
+// grey. A press matching this predicate must therefore reach super BEFORE any
+// handler can swallow it.
+//
+// Declines exactly where -spdf_window_click_should_activate does — window
+// cannot take key, a sheet is attached, another window is app-modal — plus the
+// case where the window is already key and there is nothing to hand over.
+BOOL spdf_window_click_needs_key_handshake(NSUInteger eventType, BOOL windowIsKey, BOOL windowCanBecomeKey,
+                                           BOOL windowHasAttachedSheet, BOOL anotherWindowIsModal);
+
+// Applies the predicate above to one live event and window.
+BOOL spdf_window_event_needs_key_handshake(NSWindow* window, NSEvent* event);
+
 // Full decision for one chrome mouse-down: re-hit-tests the event against the
 // window's content view and refuses drag/zoom for clicks that land on an
 // interactive control (chrome views also receive mouseDown via the responder
