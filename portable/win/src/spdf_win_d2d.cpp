@@ -24,6 +24,7 @@
  */
 #include "spdf_win_d2d.h"
 
+#include "spdf_win_chrome_content.h" /* spdf_win_chrome_content_shutdown */
 #include "spdf_win_chrome_paint.h"
 
 #include <dwrite.h>
@@ -134,6 +135,23 @@ spdf_win_d2d* spdf_win_d2d_create(char* err, size_t err_len) {
 
 void spdf_win_d2d_destroy(spdf_win_d2d* d2d) {
     if (!d2d) return;
+
+    /* The chrome's two process-lifetime caches, released here because this is
+     * the one place that runs after the last paint and before the DirectWrite
+     * factory goes away. Order matters both times:
+     *
+     *  - content first: it joins the thumbnail store's worker threads, and a
+     *    worker that woke up mid-teardown would otherwise touch a freed store.
+     *  - paint second but still BEFORE safe_release(d2d->dwrite): it holds
+     *    IDWriteTextFormat objects created from that factory.
+     *
+     * Neither was called by anyone until now. Both are idempotent and safe when
+     * nothing was ever drawn, which is the case on the --render-png path. An
+     * atexit handler was the alternative and is worse: it runs during CRT
+     * teardown, where a blocked worker becomes a hang on exit. */
+    spdf_win_chrome_content_shutdown();
+    spdf_win_chrome_paint_shutdown();
+
     spdf_win_d2d_release_target(d2d, NULL);
     safe_release(d2d->dwrite);
     safe_release(d2d->wic);
@@ -428,67 +446,4 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
     return target->EndDraw();
 }
 
-static HRESULT write_wic_png(spdf_win_d2d* d2d, IWICBitmap* bitmap, unsigned w, unsigned h, const wchar_t* path) {
-    IWICStream* stream = NULL;
-    IWICBitmapEncoder* encoder = NULL;
-    IWICBitmapFrameEncode* frame = NULL;
-    IWICBitmapSource* converted = NULL;
-    IPropertyBag2* options = NULL;
-    GUID format = GUID_WICPixelFormat32bppBGRA;
-
-    HRESULT hr = d2d->wic->CreateStream(&stream);
-    if (SUCCEEDED(hr)) hr = stream->InitializeFromFilename(path, GENERIC_WRITE);
-    if (SUCCEEDED(hr)) hr = d2d->wic->CreateEncoder(GUID_ContainerFormatPng, NULL, &encoder);
-    if (SUCCEEDED(hr)) hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
-    if (SUCCEEDED(hr)) hr = encoder->CreateNewFrame(&frame, &options);
-    if (SUCCEEDED(hr)) hr = frame->Initialize(options);
-    if (SUCCEEDED(hr)) hr = frame->SetSize(w, h);
-    if (SUCCEEDED(hr)) hr = frame->SetPixelFormat(&format);
-    /* D2D can only draw into a premultiplied target, but a PNG's alpha is
-     * straight. Convert rather than hand the encoder a format it has to guess
-     * about. With an opaque page the two are byte-identical anyway. */
-    if (SUCCEEDED(hr)) hr = WICConvertBitmapSource(GUID_WICPixelFormat32bppBGRA, bitmap, &converted);
-    if (SUCCEEDED(hr)) hr = frame->WriteSource(converted, NULL);
-    if (SUCCEEDED(hr)) hr = frame->Commit();
-    if (SUCCEEDED(hr)) hr = encoder->Commit();
-
-    safe_release(converted);
-    safe_release(options);
-    safe_release(frame);
-    safe_release(encoder);
-    safe_release(stream);
-    return hr;
-}
-
-HRESULT spdf_win_render_scene_to_png(spdf_win_d2d* d2d, unsigned px_w, unsigned px_h, const spdf_win_scene* scene,
-                                     const wchar_t* png_path) {
-    if (!d2d || !scene || !png_path) return E_POINTER;
-    if (px_w == 0 || px_h == 0) return E_INVALIDARG;
-
-    IWICBitmap* bitmap = NULL;
-    HRESULT hr = d2d->wic->CreateBitmap(px_w, px_h, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap);
-    if (FAILED(hr)) return hr;
-
-    /* SOFTWARE, not DEFAULT. `prlctl exec` runs in the SYSTEM session: there
-     * is no desktop and there may be no usable display adapter, and a target
-     * that quietly wants a GPU is a target that fails only on the machine we
-     * cannot see. */
-    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
-        D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
-
-    ID2D1RenderTarget* target = NULL;
-    hr = d2d->factory->CreateWicBitmapRenderTarget(bitmap, props, &target);
-    if (SUCCEEDED(hr)) {
-        spdf_win_scene local = *scene;
-        local.target_px_w = px_w;
-        local.target_px_h = px_h;
-        hr = spdf_win_paint(d2d, target, &local);
-        spdf_win_d2d_release_target(d2d, target);
-    }
-    safe_release(target);
-
-    if (SUCCEEDED(hr)) hr = write_wic_png(d2d, bitmap, px_w, px_h, png_path);
-    safe_release(bitmap);
-    return hr;
-}
+#include "spdf_win_d2d_png.h"

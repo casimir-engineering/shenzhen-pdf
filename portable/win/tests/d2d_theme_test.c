@@ -33,13 +33,23 @@
  * zoom shows a mismatched sliver around a recoloured page, and asserting the
  * second is how the two files can never drift apart silently.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_d2d.cpp portable/win/src/spdf_win_chrome_paint.cpp portable/win/src/spdf_win_chrome_toolbar.cpp portable/win/src/spdf_win_chrome_panels.cpp portable/core/spdf_recolor.c */
-/* The three spdf_win_chrome_*.cpp units are here because spdf_win_paint() now
- * calls spdf_win_chrome_paint_all(). This suite passes scene.chrome == NULL, so
- * none of that code RUNS -- but it still has to LINK, and omitting a translation
+/* spdf-test-sources: portable/win/src/spdf_win_d2d.cpp portable/win/src/spdf_win_chrome_paint.cpp portable/win/src/spdf_win_chrome_toolbar.cpp portable/win/src/spdf_win_chrome_panels.cpp portable/win/src/spdf_win_chrome_sidebar.cpp portable/win/src/spdf_win_chrome_minimap.cpp portable/win/src/spdf_win_chrome_content.cpp portable/win/src/spdf_win_chrome_thumbs.cpp portable/win/src/spdf_win_render.c portable/win/src/spdf_win_lru.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_win_compat.c portable/core/spdf_recolor.c */
+/* spdf-test-needs: mupdf */
+/* The spdf_win_chrome_*.cpp units are here because spdf_win_paint() now calls
+ * spdf_win_chrome_paint_all(). This suite passes scene.chrome == NULL, so none
+ * of that code RUNS -- but it still has to LINK, and omitting a translation
  * unit from a Windows link line produces a wall of LNK2019 rather than an error
  * at the file that wanted it (portable/win/README.md's gotcha about
- * spdf_win_compat.c is the same trap). */
+ * spdf_win_compat.c is the same trap).
+ *
+ * The list grew when the sidebar and minimap were given real content: the
+ * panels painter now reaches spdf_win_chrome_content.cpp, which reaches the
+ * thumbnail store, which reaches spdf_win_render.c and the core. Hence the
+ * `spdf-test-needs: mupdf` line -- this suite still needs no document and no
+ * desktop, but it now needs libmupdf on the LINK line. None of that code runs
+ * here, for the same reason as above: scene.chrome is NULL, so
+ * spdf_win_chrome_paint_panels() is never called and no document is ever
+ * opened. */
 
 #include "spdf_win_d2d.h"
 

@@ -90,10 +90,11 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
      * the same order spdf_win_main.cpp's scene_for_window uses, so the two paths
      * cannot disagree about the canvas size. */
     SpdfWinChromeLayout chrome_layout;
+    SpdfWinChromeModelInputs chrome_inputs;
     unsigned canvas_w = px_w, canvas_h = px_h;
     if (opts->chrome) {
-        spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs,
-                                    (a->render_flags & SPDF_RENDER_DARK_THEME) != 0, 1, 1, 0.0f, 0.0f);
+        chrome_inputs_for(a, &chrome_inputs, opts->dpi_scale);
+        spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, &chrome_inputs);
         spdf_win_chrome_layout(&a->chrome, px_w, px_h, opts->dpi_scale, &chrome_layout);
         canvas_w = (unsigned)chrome_layout.canvas.w;
         canvas_h = (unsigned)chrome_layout.canvas.h;
@@ -149,6 +150,13 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
         print_geometry(label, a->canvas, &scene);
     }
 
+    /* Rebuild the model now the canvas has settled, so the toolbar's page, zoom
+     * and fit readouts describe the frame about to be written -- the same second
+     * build scene_for_window does, for the same reason. */
+    if (opts->chrome) {
+        chrome_inputs_for(a, &chrome_inputs, opts->dpi_scale);
+        spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, &chrome_inputs);
+    }
     hr = spdf_win_render_scene_to_png(d2d, px_w, px_h, &scene, out_png);
     if (FAILED(hr)) {
         wchar_t message[256];

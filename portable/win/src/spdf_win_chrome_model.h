@@ -36,11 +36,49 @@ typedef struct SpdfWinChromeTabStore {
     int count;
 } SpdfWinChromeTabStore;
 
-/* Fills `model` and `store` from `tabs`. `store` must outlive the paint that
- * reads `model`. Safe with a NULL `tabs`, which yields a model with no tabs --
- * the state the window is in while the last tab is closing. */
-void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStore* store, spdf_win_tabs* tabs, int dark,
-                                 int show_sidebar, int show_minimap, float sidebar_w, float minimap_w);
+/* Everything the window layer knows that the chrome must show, and that the tab
+ * model does not carry.
+ *
+ * A STRUCT RATHER THAN A POSITIONAL LIST, and the reason is not taste. This began
+ * as five trailing arguments; feeding the toolbar its real page number, page
+ * count, zoom, DPI scale and fit mode, plus the hover state, would make eleven,
+ * six of them ints and three of them floats. That is the shape of call site where
+ * a dpi_scale ends up where a font size belongs and nothing complains --
+ * spdf_win_chrome_paint.h says the same thing about SpdfWinChromePaintCtx, for
+ * the same reason.
+ *
+ * Call spdf_win_chrome_model_inputs_init() first. It sets the macOS defaults --
+ * both panels visible, nothing hovered, no document -- so a caller that only
+ * cares about two fields writes two fields, and a field added here later cannot
+ * silently arrive as zero at a caller that predates it. */
+typedef struct SpdfWinChromeModelInputs {
+    int dark;
+    int show_sidebar;
+    int show_minimap;
+    float sidebar_w; /* points; 0 asks spdf_win_chrome.h for its default (240) */
+    float minimap_w; /* points; 0 likewise (126.5) */
+    /* Hover, from spdf_win_chrome_input.h's router. -1 is "nothing", which is
+     * the value SpdfWinChromeModel documents; these drive the painter's existing
+     * hover branches and nothing else. */
+    int hot_tab;
+    int hot_close;
+    /* Toolbar readouts. `page_index` is 0-BASED, as everywhere inside this port;
+     * the toolbar adds the one. -1 with page_count 0 is "no document". */
+    int page_index;
+    int page_count;
+    float zoom;           /* device pixels per PDF point, from spdf_win_canvas_zoom() */
+    float zoom_dpi_scale; /* device pixels per logical pixel, to make a percentage */
+    int fit_mode;         /* spdf_win_chrome_fit; the window maps the canvas's own enum */
+} SpdfWinChromeModelInputs;
+
+void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in);
+
+/* Fills `model` and `store` from `tabs` and `in`. `store` must outlive the paint
+ * that reads `model`. Safe with a NULL `tabs`, which yields a model with no tabs
+ * -- the state the window is in while the last tab is closing -- and with a NULL
+ * `in`, which yields the initialised defaults. */
+void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStore* store, spdf_win_tabs* tabs,
+                                 const SpdfWinChromeModelInputs* in);
 
 #ifdef __cplusplus
 }

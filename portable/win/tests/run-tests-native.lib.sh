@@ -28,6 +28,18 @@
 SPDF_OUT="$(cygpath -w "${SPDF_OUT:-C:\\spdf-build}" 2>/dev/null || echo 'C:\spdf-build')"
 export SPDF_OUT
 BUILD_DIR="$(cygpath -u "$SPDF_OUT")"
+
+# Where libmupdf lives. Derived from SPDF_OUT by default -- the two normally sit
+# side by side -- but overridable, because SPDF_OUT is ALSO where this run writes
+# its own binaries. Isolating a run from a concurrent build means pointing
+# SPDF_OUT somewhere private, and without this override that would also hide
+# MuPDF and BLOCK every case that links it. Measured: two agents building into
+# the same C:\spdf-build at once produced five spurious "does not build"
+# failures, because the exe under test was replaced mid-run.
+SPDF_MUPDF_LIBDIR="${SPDF_MUPDF_LIBDIR:-$SPDF_OUT\\mupdf}"
+export SPDF_MUPDF_LIBDIR
+MUPDF_LIB_DIR="$(cygpath -u "$SPDF_MUPDF_LIBDIR" 2>/dev/null || echo "$BUILD_DIR/mupdf")"
+
 SCRATCH="$BUILD_DIR/scratch-native"
 SCRATCH_WIN="$SPDF_OUT\\scratch-native"
 BUILD_CMD_WIN="$(cygpath -w "$BUILD_CMD" 2>/dev/null || echo "$BUILD_CMD")"
@@ -107,8 +119,8 @@ probe_native() {
   # and "go and fix something" is worth naming.
   if [[ ! -f "$REPO_ROOT/mupdf/include/mupdf/fitz.h" ]]; then
     MUPDF_READY="the mupdf sources are not checked out (no mupdf/include/mupdf/fitz.h)"
-  elif [[ ! -f "$BUILD_DIR/mupdf/libmupdf.lib" || ! -f "$BUILD_DIR/mupdf/libmupdf-third.lib" ]]; then
-    MUPDF_READY="libmupdf.lib and libmupdf-third.lib are not built yet (expected in $SPDF_OUT\\mupdf; run portable/win/mupdf-build.cmd)"
+  elif [[ ! -f "$MUPDF_LIB_DIR/libmupdf.lib" || ! -f "$MUPDF_LIB_DIR/libmupdf-third.lib" ]]; then
+    MUPDF_READY="libmupdf.lib and libmupdf-third.lib are not built yet (expected in $SPDF_MUPDF_LIBDIR; set SPDF_MUPDF_LIBDIR to point elsewhere, or run portable/win/mupdf-native-build.cmd)"
   fi
   QPDF_READY="$MUPDF_READY"
   [[ -n "$QPDF_READY" ]] && return

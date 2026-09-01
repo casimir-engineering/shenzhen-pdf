@@ -31,31 +31,27 @@
  * one rounded capsule, a hairline divider between segments, momentary press
  * feedback, and a lone button that is visibly the same object as half of a pair.
  *
- * STATE OF THIS FILE: lays out and draws the row's surface, the group geometry
- * and the pill/field/label shapes. It is not yet wired to the app's page number,
- * zoom, fit mode or find state, and the icons are drawn as primitives rather
- * than from an icon font. Everything here is geometry the input router can hit
- * test against, so wiring is additive.
+ * WHERE THE CONTROLS ARE is no longer decided here. It moved to
+ * spdf_win_chrome_toolbar.h the moment the row became clickable, for the reason
+ * spdf_win_chrome.h gives: hit-testing and painting agree only if they call the
+ * same functions, and a router that re-derived the zoom pill's position would
+ * drift from these pixels silently. This file walks that table and draws.
+ *
+ * STATE OF THIS FILE: the page number, the page count, the zoom percentage and
+ * the fit mode are REAL, fed from the chrome model. Still placeholders: the find
+ * field and its pill (no search model on Windows yet), the OCR and translate
+ * marks, and the icons generally, which are stroked primitives rather than an
+ * icon font.
  */
 #include "spdf_win_chrome_paint.h"
+#include "spdf_win_chrome_toolbar.h"
 
 #include <math.h>
+#include <stdio.h>
 
 namespace {
 
 float px(double points, float s) { return spdf_win_chrome_px(points, s); }
-
-/* macOS's toolbar metrics, transcribed. */
-const double kInsetX = 6.0;      /* edgeInsets left/right */
-const double kInsetY = 7.0;      /* edgeInsets top/bottom */
-const double kSpacing = 4.0;     /* stack view spacing */
-const double kWideSpacing = 8.0; /* the three custom gaps */
-const double kControlH = 28.0;   /* what a 42 pt row with 7 pt insets leaves */
-const double kIconW = 32.0;
-const double kPageFieldW = 50.0;
-const double kFitPopupW = 96.0;
-const double kSearchFieldW = 141.0;
-const double kSegmentW = 32.0; /* one half of a pill */
 
 void fill_rounded(ID2D1RenderTarget* target, SpdfWinChromeRect r, float radius, ID2D1Brush* fill, ID2D1Brush* stroke,
                   float stroke_w) {
@@ -75,9 +71,16 @@ void draw_pill(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, int segmen
     const SpdfWinChromeTheme* th = ctx.theme;
     float s = ctx.dpi_scale;
     float hair = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
-    ID2D1SolidColorBrush* fill = spdf_win_chrome_brush(ctx.target, th->control_fill);
-    ID2D1SolidColorBrush* stroke = spdf_win_chrome_brush(ctx.target, th->control_stroke);
+    ID2D1SolidColorBrush* fill;
+    ID2D1SolidColorBrush* stroke;
     int i;
+
+    /* An absent control is one the layout left empty -- the find group in a
+     * narrow window. Every drawing helper below bails on it, so the painter can
+     * walk the whole table unconditionally instead of repeating the test. */
+    if (spdf_win_chrome_rect_empty(r)) return;
+    fill = spdf_win_chrome_brush(ctx.target, th->control_fill);
+    stroke = spdf_win_chrome_brush(ctx.target, th->control_stroke);
 
     /* Fully rounded: radius half the height makes a capsule, which is what
      * NSSegmentStyleRounded looks like at 28 pt. */
@@ -102,7 +105,7 @@ void draw_chevron(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect cell, int 
     float a = px(3.5, s);
     float lw = spdf_win_chrome_stroke_px(1.5f, s);
     float dir = pointing_left ? -1.0f : 1.0f;
-    if (!brush) return;
+    if (!brush || spdf_win_chrome_rect_empty(cell)) return;
     ctx.target->DrawLine(D2D1::Point2F(cx - dir * a * 0.5f, cy - a), D2D1::Point2F(cx + dir * a * 0.5f, cy), brush, lw,
                          NULL);
     ctx.target->DrawLine(D2D1::Point2F(cx + dir * a * 0.5f, cy), D2D1::Point2F(cx - dir * a * 0.5f, cy + a), brush, lw,
@@ -115,16 +118,16 @@ void draw_plus_minus(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect cell, i
     float cy = cell.y + cell.h * 0.5f;
     float a = px(5.0, s);
     float lw = spdf_win_chrome_stroke_px(1.5f, s);
-    if (!brush) return;
+    if (!brush || spdf_win_chrome_rect_empty(cell)) return;
     ctx.target->DrawLine(D2D1::Point2F(cx - a, cy), D2D1::Point2F(cx + a, cy), brush, lw, NULL);
     if (plus) ctx.target->DrawLine(D2D1::Point2F(cx, cy - a), D2D1::Point2F(cx, cy + a), brush, lw, NULL);
 }
 
+/* Both halves of a two-segment pill, from the SAME function the router splits it
+ * with -- spdf_win_toolbar_cell(). A locally recomputed midpoint would put the
+ * chevron on one side of an odd-width pill and the click boundary on the other. */
 SpdfWinChromeRect cell_of(SpdfWinChromeRect pill, int index, int segments) {
-    SpdfWinChromeRect c = pill;
-    c.w = pill.w / (float)segments;
-    c.x = pill.x + c.w * (float)index;
-    return c;
+    return spdf_win_toolbar_cell(pill, index, segments);
 }
 
 /* A text field: rounded, filled, hairline outline, with a Windows 11-ish
@@ -134,9 +137,13 @@ void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wch
     const SpdfWinChromeTheme* th = ctx.theme;
     float s = ctx.dpi_scale;
     float hair = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
-    ID2D1SolidColorBrush* fill = spdf_win_chrome_brush(ctx.target, th->field_fill);
-    ID2D1SolidColorBrush* stroke = spdf_win_chrome_brush(ctx.target, th->field_stroke);
+    ID2D1SolidColorBrush* fill;
+    ID2D1SolidColorBrush* stroke;
     SpdfWinChromeRect text_rect = r;
+
+    if (spdf_win_chrome_rect_empty(r)) return;
+    fill = spdf_win_chrome_brush(ctx.target, th->field_fill);
+    stroke = spdf_win_chrome_brush(ctx.target, th->field_stroke);
 
     fill_rounded(ctx.target, r, px(4.0, s), fill, stroke, hair);
     if (fill) fill->Release();
@@ -159,6 +166,7 @@ void draw_toggle(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wc
     float hair = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
     SpdfWinChromeRect track, knob, label;
 
+    if (spdf_win_chrome_rect_empty(r)) return;
     track.w = px(32.0, s);
     track.h = px(18.0, s);
     track.x = r.x + r.w - px(5.0, s) - track.w;
@@ -202,18 +210,47 @@ void draw_toggle(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wc
     }
 }
 
+/* --- the readouts -------------------------------------------------------
+ *
+ * Formatted here rather than in the model, because a string is presentation and
+ * the model carries measurements. Both take a caller buffer: the paint path does
+ * not allocate.
+ *
+ * PAGES ARE 0-BASED EVERYWHERE INTERNALLY -- spdf_win_main.cpp's header comment
+ * is explicit that a human-facing 1-based indicator is a presentation concern
+ * for whoever draws one. This is that place, and the `+ 1` below is the whole of
+ * the conversion, exactly as macOS does it at ShenzhenPDFMac.mm:10528. An empty
+ * field for "no document" is macOS's own `hasDoc` branch on that line. */
+void page_labels(const SpdfWinChromeModel* m, wchar_t* number, size_t number_n, wchar_t* count, size_t count_n) {
+    if (m->page_count > 0 && m->page_index >= 0)
+        _snwprintf_s(number, number_n, _TRUNCATE, L"%d", m->page_index + 1);
+    else
+        number[0] = L'\0';
+    _snwprintf_s(count, count_n, _TRUNCATE, L"/ %d", m->page_count > 0 ? m->page_count : 0);
+}
+
+/* One of the popup's four fixed titles, or the percentage macOS inserts as a
+ * fifth item while the zoom is custom and removes again at 100%
+ * (syncToolbarState, :10484-10505). */
+void fit_label(const SpdfWinChromeModel* m, wchar_t* out, size_t n) {
+    const wchar_t* fixed = spdf_win_chrome_fit_label(m->fit_mode);
+    if (fixed) _snwprintf_s(out, n, _TRUNCATE, L"%s", fixed);
+    else _snwprintf_s(out, n, _TRUNCATE, L"%d%%", spdf_win_chrome_zoom_percent(m));
+}
+
 } /* namespace */
 
 void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
     const SpdfWinChromeLayout* l = ctx.layout;
     const SpdfWinChromeTheme* th = ctx.theme;
+    const SpdfWinChromeModel* m = ctx.model;
+    SpdfWinToolbarLayout tb;
     SpdfWinChromeRect bar;
     float s = ctx.dpi_scale > 0.0f ? ctx.dpi_scale : 1.0f;
-    float x, y, h, right;
     ID2D1SolidColorBrush* band = NULL;
     ID2D1SolidColorBrush* glyph = NULL;
 
-    if (!l || !th || !ctx.model) return;
+    if (!l || !th || !m) return;
     bar = l->toolbar;
     if (spdf_win_chrome_rect_empty(bar)) return;
 
@@ -224,38 +261,25 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
     }
     glyph = spdf_win_chrome_brush(ctx.target, th->control_glyph);
 
-    y = bar.y + px(kInsetY, s);
-    h = px(kControlH, s);
-    x = bar.x + px(kInsetX, s);
-    right = bar.x + bar.w - px(kInsetX, s);
+    /* WHERE each control goes comes from spdf_win_chrome_toolbar.h and from
+     * nowhere else, so the input router hit-tests the rectangles this function
+     * actually drew. A control the layout left empty is drawn by nobody: every
+     * helper above bails on an empty rect. */
+    spdf_win_toolbar_layout(bar, s, &tb);
 
-    /* 1. Side Panel toggle. Width is macOS's titleWidth + 50, approximated with
-     * a measured-free constant so the row does not need a text metric pass
-     * before it can lay itself out. */
-    {
-        SpdfWinChromeRect r;
-        r.x = x;
-        r.y = y;
-        r.w = px(112.0, s);
-        r.h = h;
-        draw_toggle(ctx, r, L"Side Panel", ctx.model->show_sidebar);
-        x = r.x + r.w + px(kSpacing, s);
-    }
+    /* 1. Side Panel toggle. */
+    draw_toggle(ctx, tb.item[SPDF_WIN_TB_SIDEBAR_TOGGLE], L"Side Panel", m->show_sidebar);
 
     /* 2-3. OCR and translate, icon buttons 32 wide. Drawn as capsule singles so
      * they match half a pill, per the shared-factory rule. */
     {
         int i;
         for (i = 0; i < 2; ++i) {
-            SpdfWinChromeRect r;
-            r.x = x;
-            r.y = y;
-            r.w = px(kIconW, s);
-            r.h = h;
+            SpdfWinChromeRect r = tb.item[i == 0 ? SPDF_WIN_TB_OCR : SPDF_WIN_TB_TRANSLATE];
             draw_pill(ctx, r, 1);
             /* Placeholder marks: a document-ish box for OCR, two bars for
              * translate. Replaced when an icon source lands. */
-            if (glyph) {
+            if (glyph && !spdf_win_chrome_rect_empty(r)) {
                 float cx = r.x + r.w * 0.5f, cy = r.y + r.h * 0.5f;
                 float a = px(4.0, s);
                 float lw = spdf_win_chrome_stroke_px(1.4f, s);
@@ -268,103 +292,77 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
                                          glyph, lw, NULL);
                 }
             }
-            x = r.x + r.w + px(kSpacing, s);
         }
     }
 
-    /* 4. Separator: an NSBox of width 1, full control height. */
+    /* 4. Separator: an NSBox of width 1, inset 4 pt top and bottom. */
     {
         ID2D1SolidColorBrush* sep = spdf_win_chrome_brush(ctx.target, th->separator);
         if (sep) {
-            float w = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
-            ctx.target->FillRectangle(D2D1::RectF(x, y + px(4.0, s), x + w, y + h - px(4.0, s)), sep);
+            ctx.target->FillRectangle(spdf_win_chrome_d2d_rect(tb.item[SPDF_WIN_TB_SEPARATOR]), sep);
             sep->Release();
         }
-        x += px(1.0, s) + px(kSpacing, s);
     }
 
-    /* 5-6. Page field and "/ N". */
+    /* 5-6. Page field and "/ N", both real. */
     {
-        SpdfWinChromeRect r;
-        r.x = x;
-        r.y = y;
-        r.w = px(kPageFieldW, s);
-        r.h = h;
-        draw_field(ctx, r, L"1", 0, DWRITE_TEXT_ALIGNMENT_TRAILING);
-        x = r.x + r.w + px(kSpacing, s);
-
-        r.x = x;
-        r.w = px(44.0, s);
-        spdf_win_chrome_draw_text(ctx, L"/ 1", r, th->label_secondary, px(SPDF_WIN_CT_FONT_SIZE_FIELD, s),
-                                  DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, 0);
-        x = r.x + r.w + px(kSpacing, s);
+        wchar_t number[16], count[24];
+        page_labels(m, number, sizeof(number) / sizeof(number[0]), count, sizeof(count) / sizeof(count[0]));
+        draw_field(ctx, tb.item[SPDF_WIN_TB_PAGE_FIELD], number, 0, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        spdf_win_chrome_draw_text(ctx, count, tb.item[SPDF_WIN_TB_PAGE_COUNT], th->label_secondary,
+                                  px(SPDF_WIN_CT_FONT_SIZE_FIELD, s), DWRITE_FONT_WEIGHT_NORMAL,
+                                  DWRITE_TEXT_ALIGNMENT_LEADING, 0);
     }
 
     /* 7. Page pill: chevron.left / chevron.right. */
     {
-        SpdfWinChromeRect r;
-        r.x = x;
-        r.y = y;
-        r.w = px(kSegmentW * 2.0, s);
-        r.h = h;
+        SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_PAGE_PILL];
         draw_pill(ctx, r, 2);
         draw_chevron(ctx, cell_of(r, 0, 2), 1, glyph);
         draw_chevron(ctx, cell_of(r, 1, 2), 0, glyph);
-        x = r.x + r.w + px(kSpacing, s);
     }
 
-    /* 8. Fit-mode popup. */
+    /* 8. Fit-mode popup, showing the canvas's ACTUAL mode. */
     {
-        SpdfWinChromeRect r;
-        r.x = x;
-        r.y = y;
-        r.w = px(kFitPopupW, s);
-        r.h = h;
+        SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_FIT_POPUP];
+        wchar_t label[24];
+        fit_label(m, label, sizeof(label) / sizeof(label[0]));
         draw_pill(ctx, r, 1);
-        {
+        if (!spdf_win_chrome_rect_empty(r)) {
             SpdfWinChromeRect t = r;
             t.x += px(8.0, s);
             t.w -= px(24.0, s);
-            spdf_win_chrome_draw_text(ctx, L"Fit Width", t, th->label, px(SPDF_WIN_CT_FONT_SIZE_LABEL, s),
+            spdf_win_chrome_draw_text(ctx, label, t, th->label, px(SPDF_WIN_CT_FONT_SIZE_LABEL, s),
                                       DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, 0);
+            /* The popup's disclosure chevron, pointing down. */
+            if (glyph) {
+                float cx = r.x + r.w - px(11.0, s);
+                float cy = r.y + r.h * 0.5f;
+                float a = px(3.0, s);
+                float lw = spdf_win_chrome_stroke_px(1.4f, s);
+                ctx.target->DrawLine(D2D1::Point2F(cx - a, cy - a * 0.5f), D2D1::Point2F(cx, cy + a * 0.5f), glyph, lw,
+                                     NULL);
+                ctx.target->DrawLine(D2D1::Point2F(cx, cy + a * 0.5f), D2D1::Point2F(cx + a, cy - a * 0.5f), glyph, lw,
+                                     NULL);
+            }
         }
-        /* The popup's disclosure chevron, pointing down. */
-        if (glyph) {
-            float cx = r.x + r.w - px(11.0, s);
-            float cy = r.y + r.h * 0.5f;
-            float a = px(3.0, s);
-            float lw = spdf_win_chrome_stroke_px(1.4f, s);
-            ctx.target->DrawLine(D2D1::Point2F(cx - a, cy - a * 0.5f), D2D1::Point2F(cx, cy + a * 0.5f), glyph, lw,
-                                 NULL);
-            ctx.target->DrawLine(D2D1::Point2F(cx, cy + a * 0.5f), D2D1::Point2F(cx + a, cy - a * 0.5f), glyph, lw,
-                                 NULL);
-        }
-        x = r.x + r.w + px(kSpacing, s);
     }
 
-    /* 9. Zoom pill: minus / plus, then a wide gap. */
+    /* 9. Zoom pill: minus / plus. */
     {
-        SpdfWinChromeRect r;
-        r.x = x;
-        r.y = y;
-        r.w = px(kSegmentW * 2.0, s);
-        r.h = h;
+        SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_ZOOM_PILL];
         draw_pill(ctx, r, 2);
         draw_plus_minus(ctx, cell_of(r, 0, 2), 0, glyph);
         draw_plus_minus(ctx, cell_of(r, 1, 2), 1, glyph);
-        x = r.x + r.w + px(kWideSpacing, s);
     }
 
     /* 11. Reading-theme button: a SINGLE-segment pill, 32 wide -- deliberately
-     * the same object as half of a pair. moon.stars in light, sun.max in dark. */
+     * the same object as half of a pair. moon.stars in light, sun.max in dark,
+     * following model->dark. */
     {
-        SpdfWinChromeRect r;
-        r.x = x;
-        r.y = y;
-        r.w = px(kIconW, s);
-        r.h = h;
+        SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_READING_THEME];
         draw_pill(ctx, r, 1);
-        if (glyph) {
+        if (glyph && !spdf_win_chrome_rect_empty(r)) {
             float cx = r.x + r.w * 0.5f, cy = r.y + r.h * 0.5f;
             float rad = px(5.0, s);
             float lw = spdf_win_chrome_stroke_px(1.4f, s);
@@ -374,7 +372,7 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
             e.radiusX = rad;
             e.radiusY = rad;
             ctx.target->DrawEllipse(e, glyph, lw, NULL);
-            if (ctx.model->dark) {
+            if (m->dark) {
                 /* sun: four short rays */
                 float o = rad + px(3.0, s);
                 ctx.target->DrawLine(D2D1::Point2F(cx - o, cy), D2D1::Point2F(cx - rad - px(1.0, s), cy), glyph, lw,
@@ -386,7 +384,7 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
                 ctx.target->DrawLine(D2D1::Point2F(cx, cy + rad + px(1.0, s)), D2D1::Point2F(cx, cy + o), glyph, lw,
                                      NULL);
             } else {
-                /* moon: bite the circle with a band-coloured disc */
+                /* moon: bite the circle with a control-coloured disc */
                 ID2D1SolidColorBrush* band2 = spdf_win_chrome_brush(ctx.target, th->control_fill);
                 if (band2) {
                     D2D1_ELLIPSE bite;
@@ -399,23 +397,14 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
                 }
             }
         }
-        x = r.x + r.w + px(kWideSpacing, s);
     }
 
     /* 18. Minimap toggle, from the trailing edge. 17. Overflow next to it. */
+    draw_toggle(ctx, tb.item[SPDF_WIN_TB_MINIMAP_TOGGLE], L"Map", m->show_minimap);
     {
-        SpdfWinChromeRect r;
-        r.w = px(74.0, s);
-        r.h = h;
-        r.x = right - r.w;
-        r.y = y;
-        draw_toggle(ctx, r, L"Map", ctx.model->show_minimap);
-        right = r.x - px(kSpacing, s);
-
-        r.w = px(30.0, s);
-        r.x = right - r.w;
+        SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_OVERFLOW];
         draw_pill(ctx, r, 1);
-        if (glyph) {
+        if (glyph && !spdf_win_chrome_rect_empty(r)) {
             float d = px(3.0, s);
             float gap = px(3.0, s);
             float total = 3.0f * d + 2.0f * gap;
@@ -431,27 +420,17 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
                 ctx.target->FillEllipse(e, glyph);
             }
         }
-        right = r.x - px(kSpacing, s);
     }
 
-    /* 12-15. Find field, then the regex checkbox and the find pill, laid out
-     * from the trailing side so the flexible spacer sits between them and the
-     * zoom pill exactly as the stack view puts it. Drawn only when there is room,
-     * which is this row's stand-in for macOS's group-by-group overflow. */
-    if (right - x > px(kSearchFieldW + 2.0 * kSegmentW + 3.0 * kSpacing, s)) {
-        SpdfWinChromeRect r;
-        r.w = px(kSegmentW * 2.0, s);
-        r.h = h;
-        r.x = right - r.w;
-        r.y = y;
+    /* 12-15. Find field and the find pill. Both rects are empty when the row is
+     * too narrow to hold them, which is this row's stand-in for macOS's
+     * group-by-group overflow -- so there is no width test here, only drawing. */
+    {
+        SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_FIND_PILL];
         draw_pill(ctx, r, 2);
         draw_chevron(ctx, cell_of(r, 0, 2), 1, glyph);
         draw_chevron(ctx, cell_of(r, 1, 2), 0, glyph);
-        right = r.x - px(kSpacing, s);
-
-        r.w = px(kSearchFieldW, s);
-        r.x = right - r.w;
-        draw_field(ctx, r, L"Find", 1, DWRITE_TEXT_ALIGNMENT_LEADING);
+        draw_field(ctx, tb.item[SPDF_WIN_TB_FIND_FIELD], L"Find", 1, DWRITE_TEXT_ALIGNMENT_LEADING);
     }
 
     if (glyph) glyph->Release();

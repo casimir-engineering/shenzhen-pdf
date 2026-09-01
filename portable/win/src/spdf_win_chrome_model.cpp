@@ -49,24 +49,49 @@ void strip_known_extension(wchar_t* title) {
 
 } /* namespace */
 
-void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStore* store, spdf_win_tabs* tabs, int dark,
-                                 int show_sidebar, int show_minimap, float sidebar_w, float minimap_w) {
+void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in) {
+    if (!in) return;
+    memset(in, 0, sizeof(*in));
+    /* Both side panels open, as macOS does for a new document
+     * (ShenzhenPDFMac.mm:836-840); 0 width asks spdf_win_chrome.h for its own
+     * default rather than repeating 240 and 126.5 here. */
+    in->show_sidebar = 1;
+    in->show_minimap = 1;
+    in->hot_tab = -1;
+    in->hot_close = -1;
+    in->page_index = -1;
+    in->zoom_dpi_scale = 1.0f;
+    in->fit_mode = SPDF_WIN_CHROME_FIT_WIDTH; /* what the canvas opens at */
+}
+
+void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStore* store, spdf_win_tabs* tabs,
+                                 const SpdfWinChromeModelInputs* in) {
+    SpdfWinChromeModelInputs defaults;
     int count, i;
 
     if (!model || !store) return;
     memset(model, 0, sizeof(*model));
     memset(store, 0, sizeof(*store));
+    if (!in) {
+        spdf_win_chrome_model_inputs_init(&defaults);
+        in = &defaults;
+    }
 
-    model->dark = dark;
-    model->show_sidebar = show_sidebar;
-    model->show_minimap = show_minimap;
-    model->sidebar_w = sidebar_w;
-    model->minimap_w = minimap_w;
+    model->dark = in->dark;
+    model->show_sidebar = in->show_sidebar;
+    model->show_minimap = in->show_minimap;
+    model->sidebar_w = in->sidebar_w;
+    model->minimap_w = in->minimap_w;
     model->sidebar_section = 0; /* Chapters, as macOS opens */
     model->search_active = 0;
-    model->hot_tab = -1;
-    model->hot_close = -1;
+    model->hot_tab = in->hot_tab;
+    model->hot_close = in->hot_close;
     model->selected_tab = -1;
+    model->page_index = in->page_index;
+    model->page_count = in->page_count;
+    model->zoom = in->zoom;
+    model->zoom_dpi_scale = in->zoom_dpi_scale;
+    model->fit_mode = in->fit_mode;
 
     if (!tabs) return;
 
