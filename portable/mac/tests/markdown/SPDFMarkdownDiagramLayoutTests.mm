@@ -1,6 +1,7 @@
 #import "SPDFMarkdownTestSupport.h"
 
 #import "../../markdown/SPDFMarkdownDiagramInternal.h"
+#import "../../markdown/SPDFMarkdownPaginator.h"
 
 // The layered (Sugiyama) graph layout, asserted as PROPERTIES rather than
 // coordinates: a layout is free to move a box, and none of these tests care
@@ -19,7 +20,7 @@
 // The acceptance case is the real user document that motivated the work
 // (fixtures/power-tree.md): 32 nodes, 31 edges, eight columns deep.
 
-static const CGFloat kSPDFLayoutTestWidth = 440;
+static const NSSize kSPDFLayoutTestBox = {440, 0};
 static const CGFloat kSPDFLayoutMinimumGap = 30;  // the emitter asks for 34 pt at scale 1
 
 static NSString* SPDFLayoutFixtureFence(void) {
@@ -47,7 +48,7 @@ static SPDFMarkdownDiagramGraph* SPDFLayoutGraphForSource(NSString* source, doub
     if (!graph) return nil;
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
     SPDFMarkdownDiagramLayout* layout =
-        SPDFMarkdownDiagramLayOutGraph(graph, 4096, 1.0, start + SPDFMarkdownDiagramLayoutDeadline);
+        SPDFMarkdownDiagramLayOutGraph(graph, NSMakeSize(4096, 0), 1.0, start + SPDFMarkdownDiagramLayoutDeadline);
     if (outMilliseconds) *outMilliseconds = (CFAbsoluteTimeGetCurrent() - start) * 1000;
     if (outLayout) *outLayout = layout;
     return layout ? graph : nil;
@@ -193,6 +194,15 @@ static void SPDFExpectChainStraight(SPDFMarkdownDiagramGraph* graph, NSArray<NSS
 }
 
 // Geometry equality, used for the determinism check.
+// The effective on-page size of a fitted diagram's smallest label -- the one
+// number that says whether the drawing can be read at 100% zoom.
+static CGFloat SPDFLayoutSmallestLabel(SPDFMarkdownDiagramLayout* layout) {
+    CGFloat smallest = 0;
+    for (SPDFMarkdownDiagramLabel* label in layout.labels)
+        smallest = smallest > 0 ? MIN(smallest, label.fontSize) : label.fontSize;
+    return smallest;
+}
+
 static BOOL SPDFLayoutsEqual(SPDFMarkdownDiagramLayout* a, SPDFMarkdownDiagramLayout* b) {
     if (!a || !b) return NO;
     if (!NSEqualSizes(a.size, b.size)) return NO;
@@ -324,14 +334,69 @@ int main(void) {
 
         // Determinism: same source, same geometry, twice, including after the
         // graph model has been laid out once already.
-        SPDFMarkdownDiagramLayout* first = SPDFMarkdownDiagramRender(@"mermaid", fence, kSPDFLayoutTestWidth,
+        SPDFMarkdownDiagramLayout* first = SPDFMarkdownDiagramRender(@"mermaid", fence, kSPDFLayoutTestBox,
                                                                      1.0, nil);
-        SPDFMarkdownDiagramLayout* second = SPDFMarkdownDiagramRender(@"mermaid", fence, kSPDFLayoutTestWidth,
+        SPDFMarkdownDiagramLayout* second = SPDFMarkdownDiagramRender(@"mermaid", fence, kSPDFLayoutTestBox,
                                                                       1.0, nil);
         SPDFExpect(SPDFLayoutsEqual(first, second), @"two renders of the fixture are geometrically identical");
         SPDFExpect(first.size.width <= SPDFMarkdownDiagramMaximumDimension &&
                        first.size.height <= SPDFMarkdownDiagramMaximumDimension,
                    @"the fixture stays inside the 2048 pt dimension budget");
+
+        // --- Sized by the PAGE, not by the inline-image budget ---------------
+        //
+        // The fixture is 1687 x 968 pt naturally, so on A4 it is always fitted;
+        // what these pin is that the fit is taken from the real printable box
+        // of the paper the plan will use, both axes, and that a fit the box
+        // would push under the legibility floor is allowed to RE-LAY-OUT the
+        // graph narrower instead of only shrinking it further.
+        NSSize natural = SPDFMarkdownDiagramRender(@"mermaid", fence, NSMakeSize(4096, 0), 1.0, nil).size;
+        NSSize portraitBox = [SPDFMarkdownPageConfiguration A4PortraitConfiguration].printableRect.size;
+        NSSize landscapeBox = [SPDFMarkdownPageConfiguration A4LandscapeConfiguration].printableRect.size;
+        SPDFMarkdownDiagramLayout* portrait = SPDFMarkdownDiagramRender(@"mermaid", fence, portraitBox, 1.0, nil);
+        SPDFMarkdownDiagramLayout* landscape =
+            SPDFMarkdownDiagramRender(@"mermaid", fence, landscapeBox, 1.0, nil);
+        CGFloat oldSize = SPDFLayoutSmallestLabel(first);  // the old 440 pt inline-image budget
+        CGFloat portraitSize = SPDFLayoutSmallestLabel(portrait);
+        CGFloat landscapeSize = SPDFLayoutSmallestLabel(landscape);
+        printf("Diagram fit (power-tree), smallest label: 440 pt box %.2f pt, A4 portrait box %.2f pt, "
+               "A4 landscape box %.2f pt\n",
+               oldSize, portraitSize, landscapeSize);
+        SPDFExpect(portrait.size.width <= portraitBox.width + 0.5 &&
+                       portrait.size.height <= portraitBox.height + 0.5 &&
+                       landscape.size.width <= landscapeBox.width + 0.5 &&
+                       landscape.size.height <= landscapeBox.height + 0.5,
+                   @"a fitted diagram fits the printable BOX, both axes, on either paper");
+        SPDFExpect(portraitSize > oldSize && landscapeSize > portraitSize,
+                   @"the page box beats the image budget, and turning the paper beats portrait");
+        // The reflow is not free scaling: it must beat what a pure width fit of
+        // the natural drawing could ever have produced.
+        SPDFExpect(portraitSize > 12.0 * portraitBox.width / natural.width + 0.05 &&
+                       landscapeSize > 12.0 * landscapeBox.width / natural.width + 0.05,
+                   @"the legibility reflow beats a pure rescale of the natural layout");
+        SPDFExpect(SPDFLayoutsEqual(portrait, SPDFMarkdownDiagramRender(@"mermaid", fence, portraitBox, 1.0,
+                                                                        nil)),
+                   @"the reflowed fit is deterministic: same source and same box, same geometry");
+
+        // A diagram that already fits its box is untouched by the search: same
+        // geometry as the natural layout, so nothing that fits ever pays for it.
+        NSString* small = @"flowchart LR\n  A[One] --> B[Two] --> C[Three]\n";
+        SPDFExpect(SPDFLayoutsEqual(SPDFMarkdownDiagramRender(@"mermaid", small, NSMakeSize(4096, 0), 1.0, nil),
+                                    SPDFMarkdownDiagramRender(@"mermaid", small, portraitBox, 1.0, nil)),
+                   @"a diagram that fits the page box comes out exactly as its natural layout");
+        // A box that only constrains the HEIGHT still fits: the old width-only
+        // fit would have left this one hanging off the bottom of the page.
+        SPDFMarkdownDiagramLayout* shortBox =
+            SPDFMarkdownDiagramRender(@"mermaid", fence, NSMakeSize(4096, 300), 1.0, nil);
+        SPDFExpect(shortBox != nil && shortBox.size.height <= 300.5,
+                   @"a height-only box fits the diagram by its height");
+        CFAbsoluteTime fitStart = CFAbsoluteTimeGetCurrent();
+        (void)SPDFMarkdownDiagramRender(@"mermaid", fence, portraitBox, 1.0, nil);
+        double fitMilliseconds = (CFAbsoluteTimeGetCurrent() - fitStart) * 1000;
+        printf("Diagram fit (power-tree, reflow search): %.2f ms\n", fitMilliseconds);
+        SPDFExpect(fitMilliseconds < SPDFMarkdownDiagramLayoutDeadline * 1000,
+                   [NSString stringWithFormat:@"the whole reflow search fits the 50 ms deadline (%.2f ms)",
+                                              fitMilliseconds]);
 
         // A top-down graph with a rank-skipping edge and a cycle keeps every
         // property; the flow axis just changes which one it is.
@@ -365,7 +430,7 @@ int main(void) {
             [dense appendFormat:@"  n%lu --> n%lu\n", (unsigned long)index, (unsigned long)(index + 40)];
         CFAbsoluteTime denseStart = CFAbsoluteTimeGetCurrent();
         SPDFMarkdownDiagramLayout* denseLayout = SPDFMarkdownDiagramRender(@"mermaid", dense,
-                                                                           kSPDFLayoutTestWidth, 1.0, nil);
+                                                                           kSPDFLayoutTestBox, 1.0, nil);
         double denseMilliseconds = (CFAbsoluteTimeGetCurrent() - denseStart) * 1000;
         printf("Diagram layout (dense 190-node chain + 75 long edges): %.2f ms, %s\n", denseMilliseconds,
                denseLayout ? "laid out" : "declined");

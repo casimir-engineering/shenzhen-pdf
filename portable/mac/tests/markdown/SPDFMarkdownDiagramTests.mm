@@ -13,10 +13,12 @@
 // work counter proves a diagram-free document does zero diagram work, and the
 // session cache proves a rerender (and now a theme switch) does no work twice.
 
-static const CGFloat kSPDFDiagramTestWidth = 440;
+// A width-only box (zero height = no height budget), i.e. exactly the fit these
+// suites always asserted; the page-BOX policy is exercised in its own suite.
+static const NSSize kSPDFDiagramTestBox = {440, 0};
 
 static SPDFMarkdownDiagramLayout* SPDFRenderDiagram(NSString* language, NSString* source) {
-    return SPDFMarkdownDiagramRender(language, source, kSPDFDiagramTestWidth, 1.0, nil);
+    return SPDFMarkdownDiagramRender(language, source, kSPDFDiagramTestBox, 1.0, nil);
 }
 
 // A rendered diagram is well formed: non-empty logical size, inside the content
@@ -29,7 +31,7 @@ static void SPDFExpectWellFormedDiagram(SPDFMarkdownDiagramLayout* diagram, NSSt
     }
     SPDFExpect(diagram.size.width > 0 && diagram.size.height > 0,
                [what stringByAppendingString:@" has a positive logical size"]);
-    SPDFExpect(diagram.size.width <= kSPDFDiagramTestWidth + 0.5,
+    SPDFExpect(diagram.size.width <= kSPDFDiagramTestBox.width + 0.5,
                [what stringByAppendingString:@" fits the content width budget"]);
     SPDFExpect(diagram.size.width <= SPDFMarkdownDiagramMaximumDimension &&
                    diagram.size.height <= SPDFMarkdownDiagramMaximumDimension,
@@ -226,8 +228,8 @@ int main(void) {
 
         // --- Fitting: an over-wide diagram scales by ONE common factor --------
         NSString* wideSource = @"graph LR\n  A[One] --> B[Two] --> C[Three] --> D[Four] --> E[Five]\n";
-        SPDFMarkdownDiagramLayout* natural = SPDFMarkdownDiagramRender(@"mermaid", wideSource, 4000, 1.0, nil);
-        SPDFMarkdownDiagramLayout* fitted = SPDFMarkdownDiagramRender(@"mermaid", wideSource, 220, 1.0, nil);
+        SPDFMarkdownDiagramLayout* natural = SPDFMarkdownDiagramRender(@"mermaid", wideSource, NSMakeSize(4000, 0), 1.0, nil);
+        SPDFMarkdownDiagramLayout* fitted = SPDFMarkdownDiagramRender(@"mermaid", wideSource, NSMakeSize(220, 0), 1.0, nil);
         SPDFExpect(natural != nil && fitted != nil && natural.size.width > 220 && fitted.size.width <= 220.5,
                    @"a diagram wider than the column is fitted, not clipped");
         CGFloat factor = fitted.size.width / natural.size.width;
@@ -268,20 +270,20 @@ int main(void) {
         SPDFMarkdownDiagramCache* cache = [SPDFMarkdownDiagramCache new];
         NSString* cachedSource = @"graph LR\n  A[One] --> B[Two]\n";
         SPDFMarkdownDiagramLayout* first = SPDFMarkdownDiagramRender(@"mermaid", cachedSource,
-                                                                     kSPDFDiagramTestWidth, 1.0, cache);
+                                                                     kSPDFDiagramTestBox, 1.0, cache);
         SPDFMarkdownDiagramLayout* second = SPDFMarkdownDiagramRender(@"mermaid", cachedSource,
-                                                                      kSPDFDiagramTestWidth, 1.0, cache);
+                                                                      kSPDFDiagramTestBox, 1.0, cache);
         SPDFExpect(first != nil && second == first && SPDFMarkdownDiagramWorkCount() == 1,
                    @"a second render of the same fence hits the cache instead of laying it out again");
-        SPDFMarkdownDiagramRender(@"mermaid", cachedSource, kSPDFDiagramTestWidth, 1.5, cache);
+        SPDFMarkdownDiagramRender(@"mermaid", cachedSource, kSPDFDiagramTestBox, 1.5, cache);
         SPDFExpect(SPDFMarkdownDiagramWorkCount() == 2, @"a text-size change re-lays out");
-        SPDFMarkdownDiagramRender(@"mermaid", cachedSource, 260, 1.0, cache);
+        SPDFMarkdownDiagramRender(@"mermaid", cachedSource, NSMakeSize(260, 0), 1.0, cache);
         SPDFExpect(SPDFMarkdownDiagramWorkCount() == 3, @"a width change re-lays out");
         // Negative caching: a malformed fence is parsed once, never again.
         SPDFMarkdownDiagramResetWorkCount();
         NSString* broken = @"graph TD\n  A[bad --> B\n";
-        SPDFExpect(SPDFMarkdownDiagramRender(@"mermaid", broken, kSPDFDiagramTestWidth, 1.0, cache) == nil &&
-                       SPDFMarkdownDiagramRender(@"mermaid", broken, kSPDFDiagramTestWidth, 1.0, cache) == nil &&
+        SPDFExpect(SPDFMarkdownDiagramRender(@"mermaid", broken, kSPDFDiagramTestBox, 1.0, cache) == nil &&
+                       SPDFMarkdownDiagramRender(@"mermaid", broken, kSPDFDiagramTestBox, 1.0, cache) == nil &&
                        SPDFMarkdownDiagramWorkCount() == 1,
                    @"a failed parse is cached too, so a rerender never re-parses it");
         SPDFExpect(cache.count > 0, @"the cache holds its entries");

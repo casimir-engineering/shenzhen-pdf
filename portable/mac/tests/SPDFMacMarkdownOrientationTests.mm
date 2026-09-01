@@ -327,6 +327,69 @@ static void TestExportsFollowThePaper(NSString* path, NSView* host, dispatch_que
     [session deactivate];
 }
 
+// --------------------------------------------------------------- the figures
+
+// A diagram is a FIGURE: it is sized against the printable box of the paper the
+// plan is about to use, not against the inline-image budget. So turning the
+// paper does not merely re-flow the text around the drawing — it re-fits the
+// drawing itself, and every output reads the one geometry.
+static NSRect DiagramRectInPlan(SPDFMarkdownPaginationPlan* plan) {
+    for (NSUInteger index = 0; index < plan.pages.count; ++index)
+        for (SPDFMarkdownPageDecoration* decoration in [plan decorationsForPageIndex:index])
+            if (decoration.type == SPDFMarkdownPageDecorationTypeDiagram) return decoration.rect;
+    return NSZeroRect;
+}
+
+static void TestFiguresFollowThePaper(NSView* host, dispatch_queue_t queue) {
+    NSMutableString* text = [NSMutableString stringWithString:@"# Figure\n\n```mermaid\nflowchart LR\n"];
+    // Short labels on a long chain: wide enough that any A4 column fits it, and
+    // narrow enough that no label re-wrap is involved, so the width the plan
+    // ends up with is purely the paper's.
+    for (int step = 0; step < 11; ++step)
+        [text appendFormat:@"  n%d[\"Stage %d\"] --> n%d[\"Stage %d\"]\n", step, step, step + 1, step + 1];
+    [text appendString:@"```\n\nAfter the figure.\n"];
+    NSString* path = [NSTemporaryDirectory()
+        stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"md"]];
+    assert([text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+
+    SPDFMacMarkdownSession* session =
+        [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
+    ActivateSession(session, host, queue, 1.0, SPDFMacMarkdownPageFitPage);
+    NSRect portraitFigure = DiagramRectInPlan(session.paginationPlan);
+    CGFloat portraitColumn = NSWidth(session.paginationPlan.configuration.printableRect);
+    // Wide enough to be fitted, and fitted to the COLUMN rather than to some
+    // constant well inside it.
+    assert(NSWidth(portraitFigure) > portraitColumn * 0.9);
+    assert(NSWidth(portraitFigure) <= portraitColumn + 0.5);
+
+    [session applyPageOrientation:SPDFMarkdownPageOrientationLandscape];
+    assert(SpinUntil(
+        ^BOOL {
+          return session.paginationPlan.configuration.orientation == SPDFMarkdownPageOrientationLandscape &&
+                 NSWidth(DiagramRectInPlan(session.paginationPlan)) > NSWidth(portraitFigure) + 1;
+        },
+        10.0));
+    NSRect landscapeFigure = DiagramRectInPlan(session.paginationPlan);
+    CGFloat landscapeColumn = NSWidth(session.paginationPlan.configuration.printableRect);
+    assert(NSWidth(landscapeFigure) <= landscapeColumn + 0.5);
+    // Turning the paper really did re-RENDER the figure larger, not just move it.
+    assert(NSWidth(landscapeFigure) > NSWidth(portraitFigure) * 1.3);
+
+    // Print / Save as PDF / Copy Page read the same plan, so they see the same
+    // figure; a dark session's independently built light rendition too.
+    assert(NSEqualRects(DiagramRectInPlan(session.exportPaginationPlan), landscapeFigure));
+    [session applyThemeVariant:SPDFMarkdownThemeVariantDark];
+    assert(SpinUntil(
+        ^BOOL {
+          return session.paginationPlan.configuration.themeVariant == SPDFMarkdownThemeVariantDark;
+        },
+        10.0));
+    NSRect exportFigure = DiagramRectInPlan(session.exportPaginationPlan);
+    assert(fabs(NSWidth(exportFigure) - NSWidth(landscapeFigure)) < 0.5);
+    [session deactivate];
+    [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+}
+
 int main(void) {
     @autoreleasepool {
         (void)NSApplication.sharedApplication;
@@ -338,6 +401,7 @@ int main(void) {
         TestSessionContract(path, host, queue);
         TestViewportReanchor(path, host, queue);
         TestExportsFollowThePaper(path, host, queue);
+        TestFiguresFollowThePaper(host, queue);
 
         [NSFileManager.defaultManager removeItemAtPath:path error:nil];
         puts("SPDFMacMarkdownOrientationTests passed");

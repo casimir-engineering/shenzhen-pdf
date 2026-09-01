@@ -13,6 +13,10 @@
 
 @implementation SPDFMacMarkdownSession (Export)
 
+NSSize SPDFMacMarkdownPageContentSize(SPDFMarkdownPageOrientation orientation) {
+    return [SPDFMarkdownPageConfiguration A4ConfigurationForOrientation:orientation].printableRect.size;
+}
+
 // Paginates a rendition exactly the way the live screen pass does, so an
 // export plan and the on-screen plan differ in palette and nothing else.
 SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(SPDFMarkdownRenderedDocument* rendered,

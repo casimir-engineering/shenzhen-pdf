@@ -268,7 +268,7 @@ one seam, `SPDFMarkdownDiagram.h`:
 
 ```objc
 SPDFMarkdownDiagramIsDiagramLanguage(fenceIdentifier);  // O(1) fence triage
-SPDFMarkdownDiagramRender(language, source, width, fontScale, cache);
+SPDFMarkdownDiagramRender(language, source, pageContentBox, fontScale, cache);
 ```
 
 **The seam returns GEOMETRY, not pixels.** An `SPDFMarkdownDiagramLayout` is a
@@ -336,9 +336,44 @@ spanning the whole band, then one positioned line per label whose `xOffset`
 centers the label's real typographic width inside its own node box and whose
 `rowLocalYOffset` is the label's resolved y. The band never splits across a
 page break, stays centered in the printable column, and an over-tall one takes
-the existing uniform band scale. A diagram wider than the column is fitted at
+the existing uniform band scale. A diagram bigger than its box is fitted at
 render time by ONE common factor applied to geometry AND label font sizes —
 never clipped.
+
+**A diagram is a FIGURE, sized by the page.** Its budget is not the inline-image
+budget but `SPDFMarkdownRenderOptions.pageContentSize`: the printable BOX of the
+page the render is destined for, taken off the very
+`SPDFMarkdownPageConfiguration` that `SPDFMacMarkdownPlanForRendition` will
+paginate with (`SPDFMacMarkdownPageContentSize`). Screen, print, Save as PDF and
+Copy Page therefore agree by construction, and turning the paper genuinely
+re-fits the artwork — A4 portrait offers a figure 473 pt, landscape 719 pt.
+Both axes constrain, so an over-tall figure is fitted by height here rather than
+squeezed a second time by the band; a figure that needs the whole printable
+height ends up alone on its page as a consequence, not as a special case. A
+render with no page attached (`NSZeroSize`, the default) keeps the old
+width-only `maximumImageWidth` behaviour.
+
+**A figure the page would make illegible re-lays-out instead of only shrinking.**
+When the box fit would leave a flowchart's labels under
+`SPDFMarkdownDiagramLegibleLabelSize` (7 pt — where the system font stops being
+readable at 100% zoom), `SPDFMarkdownDiagramLayOutGraph` retries the layout down
+a fixed ladder of narrower label wraps (170 → 130 → 100 → 76 pt), trading width
+for height, and keeps whichever attempt the box fits best. Attempt zero is the
+ordinary wrap, so the outcome is never worse than a plain rescale; a wrap at or
+above the widest label, and a diagram that already clears the floor, skip the
+search entirely, so anything that fits comes out byte for byte as before. Ties
+keep the earlier candidate and the whole search shares the one 50 ms deadline,
+which makes the winner a pure function of `(source, box, fontScale)` — the cache
+key. An attempt that would walk off the 2048 pt axis budget is discarded rather
+than allowed to degrade a fence a looser wrap renders fine. The floor is a
+TRIGGER, not a promise: a drawing whose content simply cannot fit A4 still lands
+under it, and is then read by zooming (the artwork is vector) or by turning the
+paper.
+
+Because the ladder re-wraps labels, a figure's canonical label LINES depend on
+the paper — the same rule that already governs body text, which re-wraps to the
+new column when the paper turns. Both are covered by the rerender: turning the
+paper re-renders, re-paginates and re-runs the active search.
 
 **Shapes are page decorations.** The band contributes one
 `SPDFMarkdownPageDecorationTypeDiagram` decoration carrying the resolved

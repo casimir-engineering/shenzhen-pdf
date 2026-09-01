@@ -7,6 +7,13 @@
 
 static const CGFloat kSPDFDiagramGraphMargin = 20;
 static const CGFloat kSPDFDiagramLabelMaxWidth = 170;
+// Narrower label wraps the emitter is allowed to fall back to when the page box
+// would otherwise shrink the drawing below the legibility floor. Tightening the
+// wrap trades WIDTH for HEIGHT (a node's text takes more lines), which is
+// exactly the trade a wide flowchart needs on a portrait page. Ordered
+// widest-first, and the first entry is the ordinary wrap, so a diagram that
+// already fits costs nothing and comes out byte for byte as it did before.
+static const CGFloat kSPDFDiagramLabelWrapLadder[] = {kSPDFDiagramLabelMaxWidth, 130, 100, 76};
 static const CGFloat kSPDFDiagramNodePaddingX = 13;
 static const CGFloat kSPDFDiagramNodePaddingY = 8;
 static const CGFloat kSPDFDiagramClassGutter = 4;
@@ -28,12 +35,16 @@ static NSArray<NSArray<NSString*>*>* SPDFDiagramClassCompartments(SPDFMarkdownDi
     return compartments;
 }
 
-static void SPDFDiagramMeasureNode(SPDFMarkdownDiagramNode* node, SPDFDiagramGraphFonts fonts, CGFloat scale) {
-    CGFloat maxWidth = kSPDFDiagramLabelMaxWidth * scale;
+// Sizes one node's box for a given label wrap. Returns the width the node's own
+// TEXT actually took, so the reflow search can tell whether a narrower wrap
+// could still change anything (a cap at or above the widest text is a no-op).
+static CGFloat SPDFDiagramMeasureNode(SPDFMarkdownDiagramNode* node, SPDFDiagramGraphFonts fonts, CGFloat scale,
+                                      CGFloat labelWrap) {
+    CGFloat maxWidth = labelWrap * scale;
     if (node.shape == SPDFMarkdownDiagramNodeShapeStartDot || node.shape == SPDFMarkdownDiagramNodeShapeEndDot) {
         CGFloat diameter = 14 * scale;
         node.frame = NSMakeRect(0, 0, diameter, diameter);
-        return;
+        return 0;
     }
     if (node.shape == SPDFMarkdownDiagramNodeShapeClassBox) {
         CGFloat width = SPDFMarkdownDiagramMeasureText(node.label, fonts.bold, maxWidth).width;
@@ -51,7 +62,7 @@ static void SPDFDiagramMeasureNode(SPDFMarkdownDiagramNode* node, SPDFDiagramGra
         for (NSArray<NSString*>* members in compartments)
             height += 2 * kSPDFDiagramClassGutter * scale + members.count * lineHeight;
         node.frame = NSMakeRect(0, 0, ceil(width + 2 * kSPDFDiagramNodePaddingX * scale), ceil(height));
-        return;
+        return width;
     }
     NSSize text = SPDFMarkdownDiagramMeasureText(node.label.length ? node.label : @" ", fonts.label, maxWidth);
     CGFloat width = text.width + 2 * kSPDFDiagramNodePaddingX * scale;
@@ -68,6 +79,7 @@ static void SPDFDiagramMeasureNode(SPDFMarkdownDiagramNode* node, SPDFDiagramGra
         width += 16 * scale;  // room for the slanted sides
     }
     node.frame = NSMakeRect(0, 0, ceil(MAX(width, 34 * scale)), ceil(MAX(height, 26 * scale)));
+    return text.width;
 }
 
 static NSValue* SPDFPoint(CGFloat x, CGFloat y) { return [NSValue valueWithPoint:NSMakePoint(x, y)]; }
@@ -347,7 +359,29 @@ static void SPDFDiagramAddEdge(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDi
     }
 }
 
-SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGraph(SPDFMarkdownDiagramGraph* graph, CGFloat contentWidth,
+// One complete measure+layout attempt at a given label wrap. Leaves the node
+// frames in CONTENT space (the diagram margin is folded in by the caller, once,
+// for the attempt that actually wins) and reports the natural size the attempt
+// would produce plus the widest text any node needed.
+static BOOL SPDFDiagramLayOutAtWrap(SPDFMarkdownDiagramGraph* graph, SPDFDiagramGraphFonts fonts, CGFloat scale,
+                                    CGFloat labelWrap, CFAbsoluteTime deadline, NSSize* outNatural,
+                                    CGFloat* outWidestText) {
+    CGFloat widest = 0;
+    for (SPDFMarkdownDiagramNode* node in graph.nodes)
+        widest = MAX(widest, SPDFDiagramMeasureNode(node, fonts, scale, labelWrap));
+    if (outWidestText) *outWidestText = widest / (scale > 0 ? scale : 1);
+    NSSize contentSize = NSZeroSize;
+    if (!SPDFMarkdownDiagramLayoutGraph(graph, 34 * scale, 44 * scale, deadline, &contentSize)) return NO;
+    CGFloat margin = kSPDFDiagramGraphMargin * scale;
+    *outNatural = NSMakeSize(contentSize.width + 2 * margin, contentSize.height + 2 * margin);
+    // A tighter wrap can only ever make a diagram TALLER, so an attempt that
+    // walks off the per-axis dimension budget is discarded rather than allowed
+    // to degrade a fence that a looser wrap renders perfectly well.
+    return outNatural->width <= SPDFMarkdownDiagramMaximumDimension &&
+           outNatural->height <= SPDFMarkdownDiagramMaximumDimension;
+}
+
+SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGraph(SPDFMarkdownDiagramGraph* graph, NSSize contentBox,
                                                           CGFloat fontScale, CFAbsoluteTime deadline) {
     CGFloat scale = fontScale > 0 ? fontScale : 1;
     SPDFDiagramGraphFonts fonts = {
@@ -355,19 +389,53 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGraph(SPDFMarkdownDiagramGra
         [NSFont systemFontOfSize:10.5 * scale],
         [NSFont systemFontOfSize:12 * scale weight:NSFontWeightSemibold],
     };
-    for (SPDFMarkdownDiagramNode* node in graph.nodes) SPDFDiagramMeasureNode(node, fonts, scale);
-    NSSize contentSize = NSZeroSize;
-    if (!SPDFMarkdownDiagramLayoutGraph(graph, 34 * scale, 44 * scale, deadline, &contentSize)) return nil;
+    // The fit the page box would impose, expressed as the label size it leaves:
+    // the body font is 12 pt, so clearing the floor means fit >= 7/12.
+    const CGFloat legibleFit = SPDFMarkdownDiagramLegibleLabelSize / 12.0;
+    NSSize natural = NSZeroSize;
+    CGFloat widestText = 0;
+    if (!SPDFDiagramLayOutAtWrap(graph, fonts, scale, kSPDFDiagramLabelWrapLadder[0], deadline, &natural,
+                                 &widestText))
+        return nil;
+    CGFloat bestWrap = kSPDFDiagramLabelWrapLadder[0];
+    CGFloat bestFit = SPDFMarkdownDiagramBoxFit(natural, contentBox);
+    CGFloat appliedWrap = bestWrap;
+    // Reflow search. Only a diagram the box would squeeze under the floor pays
+    // for it, and only wraps narrower than the widest label can change anything,
+    // so the overwhelmingly common case is the single pass above. Ties keep the
+    // earlier (wider-label) candidate, which makes the winner a pure function of
+    // (source, box, fontScale) -- the diagram cache key.
+    const NSUInteger ladderCount = sizeof(kSPDFDiagramLabelWrapLadder) / sizeof(CGFloat);
+    for (NSUInteger index = 1; index < ladderCount && bestFit < legibleFit; ++index) {
+        CGFloat wrap = kSPDFDiagramLabelWrapLadder[index];
+        if (wrap >= widestText) continue;
+        NSSize candidate = NSZeroSize;
+        // A candidate that trips the shared deadline (or the dimension budget)
+        // ends the search; the best COMPLETED attempt stands, and attempt zero
+        // is the ordinary layout, so the outcome is never worse than before.
+        if (!SPDFDiagramLayOutAtWrap(graph, fonts, scale, wrap, deadline, &candidate, NULL)) break;
+        appliedWrap = wrap;
+        CGFloat fit = SPDFMarkdownDiagramBoxFit(candidate, contentBox);
+        if (fit <= bestFit + 0.0005) continue;
+        bestFit = fit;
+        bestWrap = wrap;
+        natural = candidate;
+    }
+    // The frames on the graph belong to the LAST attempt, which is only the
+    // winner when the search stopped on it.
+    if (appliedWrap != bestWrap &&
+        !SPDFDiagramLayOutAtWrap(graph, fonts, scale, bestWrap, deadline, &natural, NULL))
+        return nil;
+
     // The margin used to be a drawing-time transform; with geometry as the
     // product it is folded into the node frames so every emitted point is
     // already in diagram-local space.
     CGFloat margin = kSPDFDiagramGraphMargin * scale;
     for (SPDFMarkdownDiagramNode* node in graph.nodes)
         node.frame = NSOffsetRect(node.frame, margin, margin);
-    NSSize naturalSize = NSMakeSize(contentSize.width + 2 * margin, contentSize.height + 2 * margin);
 
     SPDFMarkdownDiagramCanvas* canvas = [SPDFMarkdownDiagramCanvas new];
     for (SPDFMarkdownDiagramEdge* edge in graph.edges) SPDFDiagramAddEdge(canvas, edge, graph, fonts, scale);
     for (SPDFMarkdownDiagramNode* node in graph.nodes) SPDFDiagramAddNode(canvas, node, graph, fonts, scale);
-    return SPDFMarkdownDiagramFinishLayout(canvas, naturalSize, contentWidth);
+    return SPDFMarkdownDiagramFinishLayout(canvas, natural, contentBox);
 }
