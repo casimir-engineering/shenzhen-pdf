@@ -381,6 +381,42 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
     return window;
 }
 
+void spdf_win_window_set_title(spdf_win_window* window, const wchar_t* title) {
+    if (!window || !window->hwnd || !title) return;
+    SetWindowTextW(window->hwnd, title);
+}
+
+/* DWMWA_USE_IMMERSIVE_DARK_MODE. The attribute number is 20 from Windows 10
+ * 2004 (build 19041) onward; on 1809/1903/1909 the same undocumented attribute
+ * was 19, and the two were never valid at the same time. So try 20 and fall back
+ * to 19: DwmSetWindowAttribute rejects an out-of-range attribute with
+ * E_INVALIDARG rather than succeeding quietly, which makes the fallback a real
+ * runtime check instead of a guess from a version number. (This machine is
+ * 10.0.26200, where 20 is the live one and 19 never runs.)
+ *
+ * GetProcAddress rather than a link-time import of dwmapi.lib, following
+ * spdf_win_enable_dpi_awareness() above for exactly the same reason: one binary
+ * that starts everywhere and simply looks slightly wrong on a Windows older than
+ * the feature. LoadLibraryW, not GetModuleHandleW -- unlike user32.dll,
+ * dwmapi.dll is not already in the process. */
+typedef HRESULT(WINAPI* dwm_set_window_attribute_fn)(HWND, DWORD, LPCVOID, DWORD);
+
+void spdf_win_window_set_dark_frame(spdf_win_window* window, int dark) {
+    if (!window || !window->hwnd) return;
+    HMODULE dwmapi = LoadLibraryW(L"dwmapi.dll");
+    if (!dwmapi) return;
+    dwm_set_window_attribute_fn set_attr =
+        (dwm_set_window_attribute_fn)GetProcAddress(dwmapi, "DwmSetWindowAttribute");
+    if (set_attr) {
+        /* BOOL, 4 bytes: DWM validates the size and fails a plain `int` on some
+         * builds. */
+        BOOL on = dark ? TRUE : FALSE;
+        if (FAILED(set_attr(window->hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &on, sizeof(on))))
+            set_attr(window->hwnd, 19 /* the same attribute pre-2004 */, &on, sizeof(on));
+    }
+    FreeLibrary(dwmapi);
+}
+
 void spdf_win_window_show(spdf_win_window* window) {
     if (!window || !window->hwnd) return;
     ShowWindow(window->hwnd, SW_SHOWNORMAL);

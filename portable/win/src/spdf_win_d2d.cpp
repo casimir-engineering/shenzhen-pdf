@@ -227,14 +227,19 @@ static ID2D1Bitmap* page_texture(spdf_win_d2d* d2d, ID2D1RenderTarget* target, c
     return bitmap;
 }
 
-/* One page on the continuous canvas: a soft edge, then the texture stretched
- * over the slot the layout assigned it. Whole-pixel placement, because a
- * half-pixel offset makes D2D resample a blit that should have been exact --
- * which at fit-width, where the texture is already the slot's size, is the
- * difference between the page's own pixels and a resampled copy of them. */
+/* One page on the continuous canvas: its separation from the gutter, then the
+ * texture stretched over the slot the layout assigned it. Whole-pixel
+ * placement, because a half-pixel offset makes D2D resample a blit that should
+ * have been exact -- which at fit-width, where the texture is already the slot's
+ * size, is the difference between the page's own pixels and a resampled copy of
+ * them.
+ *
+ * `shade` and `border` are the two halves of SPDFMarkdownTheme's
+ * drawsPaperShadow seam and exactly one of them is ever non-NULL; the caller
+ * decides which, from the theme. */
 static void draw_canvas_page(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_win_scene* scene,
                              const spdf_win_page_draw* draw, ID2D1SolidColorBrush* shade,
-                             ID2D1SolidColorBrush* paper) {
+                             ID2D1SolidColorBrush* paper, ID2D1SolidColorBrush* border) {
     float s = scene->dpi_scale > 0.0f ? scene->dpi_scale : 1.0f;
     float x = floorf(draw->dest_x + 0.5f);
     float y = floorf(draw->dest_y + 0.5f);
@@ -254,9 +259,43 @@ static void draw_canvas_page(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const
      * live in once T5's async pipeline replaces the synchronous render. */
     if (!texture) {
         if (paper) target->FillRectangle(dest, paper);
-        return;
+    } else {
+        target->DrawBitmap(texture, dest, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
     }
-    target->DrawBitmap(texture, dest, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
+
+    /* AFTER the page content, so the hairline stays crisp at the page edge, and
+     * inset half a stroke so the stroke's centreline lands on a device-pixel
+     * boundary -- SPDFMacDocumentViewTheme.mm:76-83 draws its
+     * NSInsetRect(pageRect, 0.5, 0.5) / lineWidth 1.0 frame for the same two
+     * reasons. The stroke is dpi-scaled like every other chrome metric here, so
+     * it stays one logical pixel rather than thinning out on a 2x display,
+     * which is what makes it a 1 pt border on macOS too. */
+    if (border) {
+        /* WHOLE device pixels, which is not the same as 1.0f * s.
+         *
+         * Measured on a 144-dpi display (s = 1.5) on 2026-09-01: a 1.5 px
+         * stroke cannot land on the pixel grid whatever it is inset by, so it
+         * covers one full row and half of the next. The window's GPU target
+         * antialiases that half-covered row (#282828 against #1E1E1E paper)
+         * while spdf_win_render_scene_to_png's SOFTWARE target snaps it away --
+         * so the border blurred on screen AND the two compose paths stopped
+         * agreeing, with a channel delta of 85 on the row inside the frame
+         * where every other row matched exactly.
+         *
+         * Rounding to whole pixels fixes both: the border is crisp, and the
+         * windowed and headless paths produce the same pixels, which is what
+         * makes an offscreen pixel test evidence about the window.
+         *
+         * macOS never meets this case -- AppKit backing scales are 1x and 2x,
+         * where a 1 pt lineWidth is already 1 or 2 whole pixels. Windows'
+         * 125%/150%/175% steps are the reason this needs saying. */
+        float w = floorf(s + 0.5f);
+        D2D1_RECT_F frame;
+        if (w < 1.0f) w = 1.0f;
+        frame = D2D1::RectF(dest.left + w * 0.5f, dest.top + w * 0.5f, dest.right - w * 0.5f, dest.bottom - w * 0.5f);
+        if (frame.right > frame.left && frame.bottom > frame.top)
+            target->DrawRectangle(frame, border, w, NULL);
+    }
 }
 
 static void draw_message(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_win_scene* scene) {
@@ -296,14 +335,12 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
     target->SetDpi(96.0f, 96.0f);
     target->BeginDraw();
 
-    D2D1_COLOR_F background;
-    if (scene->fit == SPDF_WIN_FIT_EXACT)
-        background = D2D1::ColorF(1.0f, 1.0f, 1.0f); /* paper, so an oversized target still reads as a page */
-    else if (scene->dark)
-        background = D2D1::ColorF(0.129f, 0.129f, 0.137f);
-    else
-        background = D2D1::ColorF(0.878f, 0.878f, 0.886f);
-    target->Clear(background);
+    spdf_win_theme theme = spdf_win_theme_for(scene->dark);
+
+    /* FIT_EXACT is the pixel-comparison path and has no chrome at all, so its
+     * ground is the theme's own paper: an oversized target still reads as a
+     * page rather than as a page on a gutter. */
+    target->Clear(D2D1::ColorF(scene->fit == SPDF_WIN_FIT_EXACT ? theme.paper_rgb : theme.gutter_rgb));
 
     if (scene->fit == SPDF_WIN_FIT_EXACT) {
         ID2D1Bitmap* texture = NULL;
@@ -318,17 +355,26 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
     }
 
     if (scene->pages && scene->page_count > 0) {
-        /* Two brushes for the whole strip rather than two per page: a
+        /* Brushes for the whole strip rather than per page: a
          * CreateSolidColorBrush per page per frame is an allocation on the
          * scroll hot path, which architecture.md sec 9 says must stay O(1)-ish
-         * per event. A cheap one-band drop shadow, not a gaussian -- just
-         * enough to separate paper from surround the way the mac app does. */
+         * per event.
+         *
+         * EXACTLY ONE of shade/border is created, from the theme. Light gets the
+         * cheap one-band drop shadow -- not a gaussian, just enough to separate
+         * paper from surround the way the mac app's blurred NSShadow does. Dark
+         * gets the 1 px paperBorderColor frame instead, because black at 10%
+         * over the #121212 gutter is not a separation at all: it is invisible on
+         * three edges and the reason macOS made the same swap. */
         ID2D1SolidColorBrush* shade = NULL;
         ID2D1SolidColorBrush* paper = NULL;
-        target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f), &shade);
-        target->CreateSolidColorBrush(scene->dark ? D2D1::ColorF(0.114f, 0.114f, 0.122f) : D2D1::ColorF(1.0f, 1.0f, 1.0f),
-                                      &paper);
-        for (int i = 0; i < scene->page_count; ++i) draw_canvas_page(d2d, target, scene, &scene->pages[i], shade, paper);
+        ID2D1SolidColorBrush* border = NULL;
+        if (theme.draws_page_shadow) target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f), &shade);
+        if (theme.draws_page_border) target->CreateSolidColorBrush(D2D1::ColorF(theme.page_border_rgb), &border);
+        target->CreateSolidColorBrush(D2D1::ColorF(theme.paper_rgb), &paper);
+        for (int i = 0; i < scene->page_count; ++i)
+            draw_canvas_page(d2d, target, scene, &scene->pages[i], shade, paper, border);
+        safe_release(border);
         safe_release(paper);
         safe_release(shade);
     } else {

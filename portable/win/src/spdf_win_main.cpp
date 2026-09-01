@@ -66,6 +66,7 @@ struct app {
     int pending_page;
     /* Windowed: documents come from the model, and `doc`/`path` stay NULL. */
     spdf_win_tabs* tabs;
+    spdf_win_window* window; /* set once the window exists; NULL on the headless paths */
     char window_id[SPDF_WIN_SESSION_ID_MAX];
     wchar_t status[512];
 };
@@ -136,6 +137,40 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
     return 1;
 }
 
+/* macOS titles the window "<display name> - Shenzhen PDF", and the bare product
+ * name with no document (ShenzhenPDFMac.mm:8615, :10582; :8985, :9168). Same two
+ * strings here, so the two apps read alike in a task switcher -- and so the title
+ * stops naming the launch document forever, which is what it did while
+ * CreateWindowExW's argument was the only title a session ever got.
+ *
+ * The display name is the tab's own title, i.e. the path's last component. macOS
+ * also strips a known extension (spdf_display_label_without_extension) and
+ * disambiguates two tabs with the same leaf (SPDFMacSupport.mm:18-31, :82); both
+ * are shared display-name helpers the tab strip needs too and neither exists on
+ * Windows yet, so a Windows title still carries the ".pdf". */
+static void sync_window_title(app* a) {
+    wchar_t wide[288], title[320];
+    int index = a->tabs ? spdf_win_tabs_selected_index(a->tabs) : -1;
+    const char* name = index < 0 ? NULL : spdf_win_tabs_title(a->tabs, index);
+    if (!a->window) return;
+    /* MB_ERR_INVALID_CHARS: a title is cosmetic, so malformed UTF-8 degrades to the
+     * product name rather than to U+FFFD confetti. */
+    if (name && *name &&
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, wide, (int)(sizeof(wide) / sizeof(wide[0]))) > 0)
+        _snwprintf_s(title, _TRUNCATE, L"%s - Shenzhen PDF", wide);
+    else
+        _snwprintf_s(title, _TRUNCATE, L"Shenzhen PDF");
+    spdf_win_window_set_title(a->window, title);
+}
+
+/* Point the canvas at the newly selected tab AND retitle the window: every
+ * caller wants both, and doing only the first is the defect being fixed. */
+static int show_selected_tab(app* a) {
+    int shown = spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
+    sync_window_title(a);
+    return shown;
+}
+
 /* The keymap. Deliberately here and not in spdf_win_window.cpp: which key
  * pages forward is product policy, and the window has no business knowing a
  * document exists. */
@@ -177,7 +212,7 @@ static int key_for_window(app* a, const spdf_win_input* in) {
             if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
             spdf_win_tabs_app_remember(a->tabs, a->canvas);
             spdf_win_tabs_select_relative(a->tabs, (in->mods & SPDF_WIN_MOD_SHIFT) ? -1 : 1);
-            return spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
+            return show_selected_tab(a);
         case 'W':
             if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
             if (!spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
@@ -185,7 +220,7 @@ static int key_for_window(app* a, const spdf_win_input* in) {
                 return 0;
             spdf_win_tabs_close(a->tabs, spdf_win_tabs_selected_index(a->tabs), 0);
             if (spdf_win_tabs_count(a->tabs) == 0) PostQuitMessage(0);
-            return spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
+            return show_selected_tab(a);
         default: return 0;
     }
 }
@@ -199,13 +234,6 @@ static int input_for_window(void* user, const spdf_win_input* in) {
         case SPDF_WIN_INPUT_KEY: return key_for_window(a, in);
         default: return 0;
     }
-}
-
-static const wchar_t* file_name_of(const wchar_t* path) {
-    const wchar_t* name = path;
-    for (const wchar_t* p = path; *p; ++p)
-        if (*p == L'\\' || *p == L'/') name = p + 1;
-    return name;
 }
 
 /* Page 1 at 100%, shrunk to a comfortable share of the work area. Done before
@@ -434,14 +462,12 @@ int main(void) {
             rc = 1;
         } else {
             int client_w, client_h;
-            wchar_t title[320];
             int selected = spdf_win_tabs_selected_index(a.tabs);
             if (window_page > 0) a.pending_page = window_page;
             initial_client_size((spdf_document*)spdf_win_tabs_document(a.tabs, selected, err, sizeof(err)), &client_w,
                                 &client_h);
-            _snwprintf_s(title, _TRUNCATE, L"%s \x2014 ShenzhenPDF", file_name_of(argv[i]));
 
-            spdf_win_window* window = spdf_win_window_create(d2d, title, client_w, client_h, scene_for_window,
+            spdf_win_window* window = spdf_win_window_create(d2d, NULL, client_w, client_h, scene_for_window,
                                                             input_for_window, &a, err, sizeof(err));
             if (!window) {
                 wchar_t message[400];
@@ -449,8 +475,13 @@ int main(void) {
                 report(message, true);
                 rc = 72;
             } else {
+                /* Both before the show: no placeholder title, no light caption. */
+                a.window = window;
+                sync_window_title(&a);
+                spdf_win_window_set_dark_frame(window, (a.render_flags & SPDF_RENDER_DARK_THEME) != 0);
                 spdf_win_window_show(window);
                 rc = spdf_win_window_run(window);
+                a.window = NULL;
                 spdf_win_window_destroy(window);
             }
         }
