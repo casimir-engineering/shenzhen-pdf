@@ -35,10 +35,21 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramArrowHead) {
     SPDFMarkdownDiagramArrowHeadHollowDiamond,   // class aggregation
 };
 
+// Author-specified per-node colors from a mermaid `classDef`. Every field is
+// optional: a nil field means "keep the theme role for this channel", so a
+// `classDef` that only sets `fill:` leaves stroke and text on the theme.
+@interface SPDFMarkdownDiagramNodeStyle : NSObject
+@property(nonatomic, copy, nullable) NSColor* fillColor;
+@property(nonatomic, copy, nullable) NSColor* strokeColor;
+@property(nonatomic, copy, nullable) NSColor* textColor;
+@end
+
 @interface SPDFMarkdownDiagramNode : NSObject
 @property(nonatomic, copy) NSString* identifier;
 @property(nonatomic, copy) NSString* label;
 @property(nonatomic) SPDFMarkdownDiagramNodeShape shape;
+// The `:::name` / `class a,b name` class this node carries (nil when none).
+@property(nonatomic, copy, nullable) NSString* className;
 // classDiagram compartments (nil elsewhere).
 @property(nonatomic, copy, nullable) NSArray<NSString*>* memberAttributes;
 @property(nonatomic, copy, nullable) NSArray<NSString*>* memberMethods;
@@ -54,6 +65,7 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramArrowHead) {
 @property(nonatomic, copy, nullable) NSString* label;
 @property(nonatomic) SPDFMarkdownDiagramLineStyle lineStyle;
 @property(nonatomic) SPDFMarkdownDiagramArrowHead head;  // drawn at the `to` end
+@property(nonatomic) SPDFMarkdownDiagramArrowHead tail;  // drawn at the `from` end (`<-->`)
 @end
 
 // A directed graph plus flow direction. `vertical` maps TD/TB (and BT via
@@ -63,8 +75,16 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramArrowHead) {
 @property(nonatomic) BOOL reversed;
 @property(nonatomic, readonly) NSMutableArray<SPDFMarkdownDiagramNode*>* nodes;
 @property(nonatomic, readonly) NSMutableArray<SPDFMarkdownDiagramEdge*>* edges;
+// `classDef` styles by class name, and the `class a,b name` assignments that
+// were stated before their nodes existed (applied once parsing finishes).
+@property(nonatomic, readonly) NSMutableDictionary<NSString*, SPDFMarkdownDiagramNodeStyle*>* classStyles;
+@property(nonatomic, readonly) NSMutableDictionary<NSString*, NSString*>* classNamesByIdentifier;
 - (SPDFMarkdownDiagramNode*)nodeForIdentifier:(NSString*)identifier createWithLabel:(nullable NSString*)label;
 - (nullable SPDFMarkdownDiagramNode*)existingNodeForIdentifier:(NSString*)identifier;
+// The style a node draws with: its own class, else the `default` class, else nil.
+- (nullable SPDFMarkdownDiagramNodeStyle*)styleForNode:(SPDFMarkdownDiagramNode*)node;
+// Folds the deferred `class a,b name` assignments onto the nodes.
+- (void)applyDeferredClassNames;
 @end
 
 typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramSequenceEventKind) {
@@ -199,12 +219,13 @@ FOUNDATION_EXPORT NSSize SPDFMarkdownDiagramMeasureText(NSString* text, NSFont* 
                                     stroke:(SPDFMarkdownDiagramRole)stroke
                                      width:(CGFloat)lineWidth;
 // Wraps `text` to the rect's width and stacks one label per line from the
-// rect's top, aligned inside the rect's horizontal box.
-- (void)addText:(nullable NSString*)text
-         inRect:(NSRect)rect
-           font:(NSFont*)font
-           role:(SPDFMarkdownDiagramRole)role
-      alignment:(NSTextAlignment)alignment;
+// rect's top, aligned inside the rect's horizontal box. Returns the labels it
+// appended so a caller can tint them with author colors.
+- (NSArray<SPDFMarkdownDiagramLabel*>*)addText:(nullable NSString*)text
+                                        inRect:(NSRect)rect
+                                          font:(NSFont*)font
+                                          role:(SPDFMarkdownDiagramRole)role
+                                     alignment:(NSTextAlignment)alignment;
 @end
 
 // Closes a canvas into a resolved layout at its natural size: refuses (nil)
@@ -215,6 +236,15 @@ FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramFinish
 
 // The categorical ramp role for the nth slice/bar (wraps at six).
 FOUNDATION_EXPORT SPDFMarkdownDiagramRole SPDFMarkdownDiagramRampRole(NSUInteger index);
+
+// mermaid node styling (SPDFMarkdownDiagramStyle.mm). Both return NO when the
+// statement is not the form they handle OR carries nothing usable, and the
+// flowchart parser then SKIPS the line exactly as it did before styling
+// existed -- an unreadable `classDef` costs a node its colors, never the whole
+// diagram.
+FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramParseClassDef(NSString* statement, SPDFMarkdownDiagramGraph* graph);
+FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramParseClassAssignment(NSString* statement,
+                                                               SPDFMarkdownDiagramGraph* graph);
 
 // Parsers. Every parser returns nil on malformed or over-budget input.
 FOUNDATION_EXPORT SPDFMarkdownDiagramGraph* _Nullable SPDFMarkdownDiagramParseMermaidFlowchart(NSString* source);

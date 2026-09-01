@@ -37,7 +37,7 @@ BOOL SPDFMarkdownRenderDiagramBlock(SPDFMarkdownRenderContext* context, SPDFMark
         SPDFMarkdownAppend(context, label.text,
                            @{
                                NSFontAttributeName: label.font,
-                               NSForegroundColorAttributeName: SPDFMarkdownDiagramRoleColor(label.role, variant),
+                               NSForegroundColorAttributeName: SPDFMarkdownDiagramLabelColor(label, variant),
                            });
         [labelRanges addObject:[NSValue valueWithRange:NSMakeRange(labelStart,
                                                                    context.output.length - labelStart)]];

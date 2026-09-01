@@ -57,6 +57,7 @@ $PORTABLE/mac/markdown/SPDFMarkdownDiagram.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramModel.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramCanvas.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramFlowchartParser.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramStyle.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramSequenceParser.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramStructParsers.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramChartParsers.mm

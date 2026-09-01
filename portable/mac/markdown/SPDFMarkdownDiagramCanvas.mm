@@ -76,6 +76,21 @@ NSColor* SPDFMarkdownDiagramRoleColor(SPDFMarkdownDiagramRole role, SPDFMarkdown
     }
 }
 
+NSColor* SPDFMarkdownDiagramShapeFillColor(SPDFMarkdownDiagramShape* shape, SPDFMarkdownThemeVariant variant) {
+    return shape.authorFillColor ? SPDFMarkdownDiagramAuthorColor(shape.authorFillColor, variant)
+                                 : SPDFMarkdownDiagramRoleColor(shape.fillRole, variant);
+}
+
+NSColor* SPDFMarkdownDiagramShapeStrokeColor(SPDFMarkdownDiagramShape* shape, SPDFMarkdownThemeVariant variant) {
+    return shape.authorStrokeColor ? SPDFMarkdownDiagramAuthorColor(shape.authorStrokeColor, variant)
+                                   : SPDFMarkdownDiagramRoleColor(shape.strokeRole, variant);
+}
+
+NSColor* SPDFMarkdownDiagramLabelColor(SPDFMarkdownDiagramLabel* label, SPDFMarkdownThemeVariant variant) {
+    return label.authorColor ? SPDFMarkdownDiagramAuthorColor(label.authorColor, variant)
+                             : SPDFMarkdownDiagramRoleColor(label.role, variant);
+}
+
 SPDFMarkdownDiagramRole SPDFMarkdownDiagramRampRole(NSUInteger index) {
     return (SPDFMarkdownDiagramRole)(SPDFMarkdownDiagramRoleRamp0 + (NSInteger)(index % 6));
 }
@@ -187,12 +202,13 @@ SPDFMarkdownDiagramRole SPDFMarkdownDiagramRampRole(NSUInteger index) {
     return [self appendShape:shape];
 }
 
-- (void)addText:(NSString*)text
-         inRect:(NSRect)rect
-           font:(NSFont*)font
-           role:(SPDFMarkdownDiagramRole)role
-      alignment:(NSTextAlignment)alignment {
-    if (!text.length || NSWidth(rect) <= 0) return;
+- (NSArray<SPDFMarkdownDiagramLabel*>*)addText:(NSString*)text
+                                       inRect:(NSRect)rect
+                                         font:(NSFont*)font
+                                         role:(SPDFMarkdownDiagramRole)role
+                                    alignment:(NSTextAlignment)alignment {
+    if (!text.length || NSWidth(rect) <= 0) return @[];
+    NSMutableArray<SPDFMarkdownDiagramLabel*>* added = [NSMutableArray array];
     CGFloat lineHeight = SPDFMarkdownDiagramLineHeight(font);
     CGFloat y = NSMinY(rect);
     // A label stores size + weight, not a font object, so the measurement pass
@@ -209,8 +225,10 @@ SPDFMarkdownDiagramRole SPDFMarkdownDiagramRampRole(NSUInteger index) {
         label.semibold = semibold;
         label.role = role;
         [_labels addObject:label];
+        [added addObject:label];
         y += lineHeight;
     }
+    return added;
 }
 @end
 
@@ -260,6 +278,8 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramFinishLayout(SPDFMarkdownDiagramCa
             copy.strokeAlpha = shape.strokeAlpha;
             copy.lineWidth = shape.lineWidth * fit;
             copy.dashLength = shape.dashLength * fit;
+            copy.authorFillColor = shape.authorFillColor;
+            copy.authorStrokeColor = shape.authorStrokeColor;
             [scaledShapes addObject:copy];
         }
         NSMutableArray<SPDFMarkdownDiagramLabel*>* scaledLabels =
@@ -272,6 +292,7 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramFinishLayout(SPDFMarkdownDiagramCa
             copy.fontSize = label.fontSize * fit;
             copy.semibold = label.semibold;
             copy.role = label.role;
+            copy.authorColor = label.authorColor;
             [scaledLabels addObject:copy];
         }
         shapes = scaledShapes;
