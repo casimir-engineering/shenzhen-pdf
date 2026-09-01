@@ -237,12 +237,45 @@ static void SPDFDiagramAddArrowHead(SPDFMarkdownDiagramCanvas* canvas, NSPoint t
                  width:1];
 }
 
+// A smooth curve through `waypoints`, sampled into a polyline. Each span is a
+// cubic Bezier whose two control points sit on the FLOW axis, half a span
+// apart: that makes the path leave and land perpendicular to a node's border,
+// keeps it monotone along the flow axis (so a fan-out never loops back over
+// its own source anchor), and joins spans with a matching tangent, so a
+// rank-skipping route reads as one continuous wave. The shape vocabulary has
+// no curve primitive and does not need one -- at this density the sampled path
+// IS the curve for screen, print and PDF export alike, and two edges that
+// cross stay traceable instead of collapsing onto a shared right-angle trunk.
+static NSArray<NSValue*>* SPDFDiagramCurveThrough(NSArray<NSValue*>* waypoints, BOOL vertical) {
+    if (waypoints.count < 2) return waypoints;
+    const NSUInteger samples = 8;
+    NSMutableArray<NSValue*>* path = [NSMutableArray arrayWithCapacity:(waypoints.count - 1) * samples + 1];
+    [path addObject:waypoints.firstObject];
+    for (NSUInteger index = 0; index + 1 < waypoints.count; ++index) {
+        NSPoint a = waypoints[index].pointValue, d = waypoints[index + 1].pointValue;
+        CGFloat reach = (vertical ? (d.y - a.y) : (d.x - a.x)) / 2;
+        NSPoint b = vertical ? NSMakePoint(a.x, a.y + reach) : NSMakePoint(a.x + reach, a.y);
+        NSPoint c = vertical ? NSMakePoint(d.x, d.y - reach) : NSMakePoint(d.x - reach, d.y);
+        if (fabs(vertical ? (d.x - a.x) : (d.y - a.y)) < 0.5) {  // already aligned: a straight run
+            [path addObject:SPDFPoint(d.x, d.y)];
+            continue;
+        }
+        for (NSUInteger step = 1; step <= samples; ++step) {
+            CGFloat t = (CGFloat)step / samples, u = 1 - t;
+            CGFloat w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t;
+            [path addObject:SPDFPoint(w0 * a.x + w1 * b.x + w2 * c.x + w3 * d.x,
+                                      w0 * a.y + w1 * b.y + w2 * c.y + w3 * d.y)];
+        }
+    }
+    return path;
+}
+
 static void SPDFDiagramAddEdge(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDiagramEdge* edge,
                                SPDFMarkdownDiagramGraph* graph, SPDFDiagramGraphFonts fonts, CGFloat scale) {
     SPDFMarkdownDiagramNode* from = [graph existingNodeForIdentifier:edge.fromIdentifier];
     SPDFMarkdownDiagramNode* to = [graph existingNodeForIdentifier:edge.toIdentifier];
     if (!from || !to) return;
-    NSMutableArray<NSValue*>* points = [NSMutableArray array];
+    NSArray<NSValue*>* points = nil;
     NSPoint fromCenter = NSMakePoint(NSMidX(from.frame), NSMidY(from.frame));
     NSPoint toCenter = NSMakePoint(NSMidX(to.frame), NSMidY(to.frame));
     if (from == to) {
@@ -250,50 +283,38 @@ static void SPDFDiagramAddEdge(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDi
         CGFloat loop = 18 * scale;
         NSPoint start = NSMakePoint(NSMaxX(from.frame), NSMidY(from.frame) - 6 * scale);
         NSPoint end = NSMakePoint(NSMaxX(from.frame), NSMidY(from.frame) + 6 * scale);
-        [points addObject:SPDFPoint(start.x, start.y)];
-        [points addObject:SPDFPoint(start.x + loop, start.y)];
-        [points addObject:SPDFPoint(end.x + loop, end.y)];
-        [points addObject:SPDFPoint(end.x, end.y)];
+        points = @[
+            SPDFPoint(start.x, start.y), SPDFPoint(start.x + loop, start.y),
+            SPDFPoint(end.x + loop, end.y), SPDFPoint(end.x, end.y)
+        ];
     } else {
-        BOOL forward = graph.vertical ? (NSMinY(to.frame) >= NSMaxY(from.frame))
-                                      : (NSMinX(to.frame) >= NSMaxX(from.frame));
-        if (graph.reversed)
-            forward = graph.vertical ? (NSMaxY(to.frame) <= NSMinY(from.frame))
-                                     : (NSMaxX(to.frame) <= NSMinX(from.frame));
-        if (forward) {
-            // Single-elbow route between facing edges of the two rank bands.
-            NSPoint start, end;
-            if (graph.vertical) {
-                CGFloat startY = graph.reversed ? NSMinY(from.frame) : NSMaxY(from.frame);
-                CGFloat endY = graph.reversed ? NSMaxY(to.frame) : NSMinY(to.frame);
-                start = NSMakePoint(fromCenter.x, startY);
-                end = NSMakePoint(toCenter.x, endY);
-                CGFloat midY = (start.y + end.y) / 2;
-                [points addObject:SPDFPoint(start.x, start.y)];
-                if (fabs(start.x - end.x) > 0.5) {
-                    [points addObject:SPDFPoint(start.x, midY)];
-                    [points addObject:SPDFPoint(end.x, midY)];
-                }
-                [points addObject:SPDFPoint(end.x, end.y)];
-            } else {
-                CGFloat startX = graph.reversed ? NSMinX(from.frame) : NSMaxX(from.frame);
-                CGFloat endX = graph.reversed ? NSMaxX(to.frame) : NSMinX(to.frame);
-                start = NSMakePoint(startX, fromCenter.y);
-                end = NSMakePoint(endX, toCenter.y);
-                CGFloat midX = (start.x + end.x) / 2;
-                [points addObject:SPDFPoint(start.x, start.y)];
-                if (fabs(start.y - end.y) > 0.5) {
-                    [points addObject:SPDFPoint(midX, start.y)];
-                    [points addObject:SPDFPoint(midX, end.y)];
-                }
-                [points addObject:SPDFPoint(end.x, end.y)];
-            }
+        // Which way the edge runs is read off the finished geometry, so BT/RL
+        // (mirrored coordinates) and a BACK edge (target in an earlier rank)
+        // are the same case: leave the source's downstream border, land on the
+        // target's facing one.
+        BOOL vertical = graph.vertical;
+        CGFloat fromLow = vertical ? NSMinY(from.frame) : NSMinX(from.frame);
+        CGFloat fromHigh = vertical ? NSMaxY(from.frame) : NSMaxX(from.frame);
+        CGFloat toLow = vertical ? NSMinY(to.frame) : NSMinX(to.frame);
+        CGFloat toHigh = vertical ? NSMaxY(to.frame) : NSMaxX(to.frame);
+        if (toLow >= fromHigh || toHigh <= fromLow) {
+            BOOL rising = toLow >= fromHigh;
+            CGFloat startMain = rising ? fromHigh : fromLow;
+            CGFloat endMain = rising ? toLow : toHigh;
+            NSPoint start = vertical ? NSMakePoint(fromCenter.x, startMain)
+                                     : NSMakePoint(startMain, fromCenter.y);
+            NSPoint end = vertical ? NSMakePoint(toCenter.x, endMain) : NSMakePoint(endMain, toCenter.y);
+            // The layout reserved a bend point per rank a long edge skips; the
+            // curve threads them, so it never cuts through a column it passes.
+            NSMutableArray<NSValue*>* waypoints = [NSMutableArray arrayWithObject:SPDFPoint(start.x, start.y)];
+            [waypoints addObjectsFromArray:edge.routePoints ?: @[]];
+            [waypoints addObject:SPDFPoint(end.x, end.y)];
+            points = SPDFDiagramCurveThrough(waypoints, vertical);
         } else {
-            // Same-rank and back edges keep a straight border-to-border line.
+            // Overlapping bands (same rank) keep a straight border-to-border line.
             NSPoint start = SPDFDiagramAnchor(from, toCenter);
             NSPoint end = SPDFDiagramAnchor(to, fromCenter);
-            [points addObject:SPDFPoint(start.x, start.y)];
-            [points addObject:SPDFPoint(end.x, end.y)];
+            points = @[ SPDFPoint(start.x, start.y), SPDFPoint(end.x, end.y) ];
         }
     }
     [canvas addPolyline:points

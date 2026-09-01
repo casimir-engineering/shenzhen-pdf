@@ -98,6 +98,7 @@ for TEST in \
     SPDFMarkdownImageFigureTests \
     SPDFMarkdownImageRecolorTests \
     SPDFMarkdownDiagramTests \
+    SPDFMarkdownDiagramLayoutTests \
     SPDFMarkdownDiagramStyleTests \
     SPDFMarkdownRemoteImageTests \
     SPDFMarkdownPaginatorTests \
