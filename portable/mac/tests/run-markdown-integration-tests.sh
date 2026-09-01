@@ -121,6 +121,7 @@ SPDFMacMarkdownSessionTests
 SPDFMacMarkdownSessionFindTests
 SPDFMacMarkdownRemoteImageSessionTests
 SPDFMacMarkdownLanguagePickerTests
+SPDFMacMarkdownCodeControlsTests
 SPDFMacMarkdownPrintingTests
 "
 

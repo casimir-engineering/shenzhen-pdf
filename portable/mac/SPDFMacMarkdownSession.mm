@@ -332,6 +332,9 @@
       SPDFMacMarkdownSession* strongSelf = weakSelf;
       [strongSelf showLanguagePickerForCodeBlock:blockIndex parentWindow:strongSelf->_pagedView.window];
     };
+    _pagedView.copyCodeBlockHandler = ^BOOL(NSUInteger blockIndex) {
+      return [weakSelf copyCodeBlock:blockIndex];
+    };
     [_rootView addSubview:_pagedView];
     [NSLayoutConstraint activateConstraints:@[
         [_pagedView.topAnchor constraintEqualToAnchor:_rootView.topAnchor],

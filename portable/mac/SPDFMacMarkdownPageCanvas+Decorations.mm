@@ -5,12 +5,24 @@
 #import "SPDFMacMarkdownView.h"
 #import "markdown/SPDFMarkdown.h"
 
-// GitHub-style code-language control anchored inside the code box header band.
+// GitHub-style code-box chrome row anchored inside the code box header band:
+// the copy button on the LEFT and the language control on the RIGHT, sharing
+// one line (the band the paginator reserves for it, see
+// SPDFMarkdownPageConfiguration.includesCodeLanguageControlSpacing). Both are
+// canvas chrome: nothing here is drawn by the plan, so print, Save as PDF and
+// Copy Page — which paint a plan and never the canvas — exclude them both.
 static const CGFloat kSPDFMarkdownCodeControlHeight = 20.0;
 static const CGFloat kSPDFMarkdownCodeControlCornerRadius = 5.0;
-static const CGFloat kSPDFMarkdownCodeControlRightInset = 10.0;
+static const CGFloat kSPDFMarkdownCodeControlSideInset = 10.0;
 static const CGFloat kSPDFMarkdownCodeControlHorizontalPadding = 9.0;
 static const CGFloat kSPDFMarkdownCodeControlHitSlop = 7.0;
+// Minimum air between the copy button and the language pill; below it the
+// header band is too narrow for two controls and the copy button stands down.
+static const CGFloat kSPDFMarkdownCodeControlMinimumGap = 6.0;
+// How long the copy button reads "Copied" after a successful copy.
+static const NSTimeInterval kSPDFMarkdownCodeCopyFeedbackDuration = 1.2;
+static NSString* const kSPDFMarkdownCodeCopyTitle = @"Copy";
+static NSString* const kSPDFMarkdownCodeCopiedTitle = @"Copied";
 
 static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(SPDFMarkdownTheme* theme) {
     return @{
@@ -99,42 +111,88 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(S
     return nil;
 }
 
+// The copy button's title is stable in width across its two states, so the
+// transient "Copied" feedback never resizes or shifts the button.
+- (NSString*)copyCodeControlTitleForBlockIndex:(NSUInteger)blockIndex {
+    return [self.copiedCodeBlockIndex isEqualToNumber:@(blockIndex)] ? kSPDFMarkdownCodeCopiedTitle
+                                                                    : kSPDFMarkdownCodeCopyTitle;
+}
+
 // The non-continuation fragment of a code item is its reserved leading band
-// (see SPDFItemsForConfiguration), so the control centers vertically in the
-// header band the layout actually reserved and right-aligns inside the box.
-- (NSRect)codeLanguageControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame {
+// (see SPDFItemsForConfiguration), so the chrome row centers vertically in the
+// header band the layout actually reserved. The row spans the box; the two
+// controls anchor to its edges.
+- (NSRect)codeControlRowRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame {
     NSRect printable = self.plan.configuration.printableRect;
-    NSString* title = [self codeLanguageControlTitleForBlockIndex:fragment.blockIndex];
-    CGFloat width = ceil([title sizeWithAttributes:SPDFCodeControlTitleAttributes(self.pageTheme)].width) +
-                    kSPDFMarkdownCodeControlHorizontalPadding * 2.0;
-    width =
-        MIN(width, MAX(kSPDFMarkdownCodeControlHeight, NSWidth(printable) - kSPDFMarkdownCodeControlRightInset * 2.0));
     // The leading band starts with the unpainted outer margin above the box;
-    // the control centers in the in-box header portion below it.
+    // the row centers in the in-box header portion below it.
     CGFloat outerMargin = MIN(SPDFMarkdownCodeBoxOuterMargin * fragment.scale, fragment.height);
     CGFloat bandTop =
         NSMinY(pageFrame) + self.plan.configuration.topContentInset + fragment.pageYOffset + outerMargin;
     CGFloat y = round(bandTop + (fragment.height - outerMargin - kSPDFMarkdownCodeControlHeight) * 0.5);
-    CGFloat maxX = NSMinX(pageFrame) + NSMinX(printable) + NSWidth(printable) - kSPDFMarkdownCodeControlRightInset;
-    return NSMakeRect(maxX - width, y, width, kSPDFMarkdownCodeControlHeight);
+    return NSMakeRect(NSMinX(pageFrame) + NSMinX(printable), y, NSWidth(printable),
+                      kSPDFMarkdownCodeControlHeight);
+}
+
+- (CGFloat)codeControlWidthForTitle:(NSString*)title {
+    NSRect printable = self.plan.configuration.printableRect;
+    CGFloat width = ceil([title sizeWithAttributes:SPDFCodeControlTitleAttributes(self.pageTheme)].width) +
+                    kSPDFMarkdownCodeControlHorizontalPadding * 2.0;
+    return MIN(width,
+               MAX(kSPDFMarkdownCodeControlHeight, NSWidth(printable) - kSPDFMarkdownCodeControlSideInset * 2.0));
+}
+
+- (NSRect)codeLanguageControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame {
+    NSRect row = [self codeControlRowRectForFragment:fragment pageFrame:pageFrame];
+    CGFloat width = [self codeControlWidthForTitle:[self codeLanguageControlTitleForBlockIndex:fragment.blockIndex]];
+    return NSMakeRect(NSMaxX(row) - kSPDFMarkdownCodeControlSideInset - width, NSMinY(row), width, NSHeight(row));
+}
+
+// Left end of the same row. NSZeroRect when the header band is too narrow for
+// both controls: the language selector keeps the row and the copy button
+// stands down rather than overlapping it.
+- (NSRect)copyCodeControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame {
+    NSRect row = [self codeControlRowRectForFragment:fragment pageFrame:pageFrame];
+    CGFloat width = [self codeControlWidthForTitle:kSPDFMarkdownCodeCopiedTitle];
+    NSRect copyRect = NSMakeRect(NSMinX(row) + kSPDFMarkdownCodeControlSideInset, NSMinY(row), width, NSHeight(row));
+    NSRect languageRect = [self codeLanguageControlRectForFragment:fragment pageFrame:pageFrame];
+    if (NSMaxX(copyRect) + kSPDFMarkdownCodeControlMinimumGap > NSMinX(languageRect)) return NSZeroRect;
+    return copyRect;
+}
+
+static NSRect SPDFCodeControlHitRect(NSRect controlRect) {
+    if (NSIsEmptyRect(controlRect)) return NSZeroRect;
+    return NSInsetRect(controlRect, -kSPDFMarkdownCodeControlHitSlop, -kSPDFMarkdownCodeControlHitSlop);
 }
 
 - (NSRect)codeLanguageControlHitRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame {
-    return NSInsetRect([self codeLanguageControlRectForFragment:fragment pageFrame:pageFrame],
-                       -kSPDFMarkdownCodeControlHitSlop, -kSPDFMarkdownCodeControlHitSlop);
+    return SPDFCodeControlHitRect([self codeLanguageControlRectForFragment:fragment pageFrame:pageFrame]);
 }
 
-- (NSRect)codeLanguageControlFrameForBlockIndex:(NSUInteger)blockIndex {
+- (NSRect)copyCodeControlHitRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame {
+    return SPDFCodeControlHitRect([self copyCodeControlRectForFragment:fragment pageFrame:pageFrame]);
+}
+
+- (NSRect)codeControlFrameForBlockIndex:(NSUInteger)blockIndex copyButton:(BOOL)copyButton {
     for (SPDFMarkdownPage* page in self.plan.pages) {
         SPDFMarkdownPageFragment* fragment = [self codeControlFragmentOnPage:page blockIndex:blockIndex];
-        if (fragment)
-            return [self codeLanguageControlRectForFragment:fragment
-                                                  pageFrame:[self frameForPageAtIndex:page.pageIndex]];
+        if (!fragment) continue;
+        NSRect pageFrame = [self frameForPageAtIndex:page.pageIndex];
+        return copyButton ? [self copyCodeControlRectForFragment:fragment pageFrame:pageFrame]
+                          : [self codeLanguageControlRectForFragment:fragment pageFrame:pageFrame];
     }
     return NSZeroRect;
 }
 
-- (NSNumber*)codeLanguageBlockAtPoint:(NSPoint)point {
+- (NSRect)codeLanguageControlFrameForBlockIndex:(NSUInteger)blockIndex {
+    return [self codeControlFrameForBlockIndex:blockIndex copyButton:NO];
+}
+
+- (NSRect)copyCodeControlFrameForBlockIndex:(NSUInteger)blockIndex {
+    return [self codeControlFrameForBlockIndex:blockIndex copyButton:YES];
+}
+
+- (NSNumber*)codeControlBlockAtPoint:(NSPoint)point copyButton:(BOOL)copyButton {
     NSInteger pageIndex = [self pageIndexForVisibleRect:NSMakeRect(point.x, point.y, 1, 1)];
     if (pageIndex < 0 || pageIndex >= (NSInteger)self.pageCount) return nil;
     SPDFMarkdownPage* page = self.plan.pages[(NSUInteger)pageIndex];
@@ -143,10 +201,44 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(S
         if (fragment.itemIndex >= self.plan.items.count) continue;
         SPDFMarkdownPaginationItem* item = self.plan.items[fragment.itemIndex];
         if (item.kind != SPDFMarkdownBlockKindCode || fragment.isContinuation) continue;
-        if (NSPointInRect(point, [self codeLanguageControlHitRectForFragment:fragment pageFrame:pageFrame]))
-            return @(fragment.blockIndex);
+        NSRect hitRect = copyButton ? [self copyCodeControlHitRectForFragment:fragment pageFrame:pageFrame]
+                                    : [self codeLanguageControlHitRectForFragment:fragment pageFrame:pageFrame];
+        if (!NSIsEmptyRect(hitRect) && NSPointInRect(point, hitRect)) return @(fragment.blockIndex);
     }
     return nil;
+}
+
+- (NSNumber*)codeLanguageBlockAtPoint:(NSPoint)point {
+    return [self codeControlBlockAtPoint:point copyButton:NO];
+}
+
+- (NSNumber*)copyCodeBlockAtPoint:(NSPoint)point {
+    return [self codeControlBlockAtPoint:point copyButton:YES];
+}
+
+// Click handler for the copy button. The reader owns the pasteboard write —
+// it holds the parsed document, so the RAW fence source is copied, never the
+// syntax-highlighted rendition — and a successful write arms the transient
+// "Copied" title on that one button.
+- (void)handleCopyCodeBlock:(NSUInteger)blockIndex {
+    if (!self.copyCodeBlockHandler || !self.copyCodeBlockHandler(blockIndex)) {
+        NSBeep();
+        return;
+    }
+    self.copiedCodeBlockIndex = @(blockIndex);
+    NSUInteger generation = self.copiedCodeGeneration + 1;
+    self.copiedCodeGeneration = generation;
+    [self setNeedsDisplay:YES];
+    __weak SPDFMacMarkdownPageCanvas* weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kSPDFMarkdownCodeCopyFeedbackDuration * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                     SPDFMacMarkdownPageCanvas* strongSelf = weakSelf;
+                     // A later copy owns the state; only the newest generation
+                     // clears it (no timer to retain or invalidate).
+                     if (!strongSelf || strongSelf.copiedCodeGeneration != generation) return;
+                     strongSelf.copiedCodeBlockIndex = nil;
+                     [strongSelf setNeedsDisplay:YES];
+                   });
 }
 
 // PDF parity: links show the pointing-hand cursor on hover. Returns one rect
@@ -191,28 +283,38 @@ static NSDictionary<NSAttributedStringKey, id>* SPDFCodeControlTitleAttributes(S
     return linkRects;
 }
 
-- (void)drawCodeLanguageControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {
+// One pill of the chrome row: the theme's quiet code-control fill, hairline
+// stroke and muted text, so both controls read as the same control in both
+// reading themes. Skips an empty rect (a header band too narrow for two).
+- (void)drawCodeControlTitle:(NSString*)title inRect:(NSRect)controlRect theme:(SPDFMarkdownTheme*)theme {
+    if (NSIsEmptyRect(controlRect)) return;
+    NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(controlRect, 0.5, 0.5)
+                                                        xRadius:kSPDFMarkdownCodeControlCornerRadius
+                                                        yRadius:kSPDFMarkdownCodeControlCornerRadius];
+    [theme.codeControlFillColor setFill];
+    [path fill];
+    [theme.codeControlStrokeColor setStroke];
+    path.lineWidth = 1.0;
+    [path stroke];
+    NSDictionary* attributes = SPDFCodeControlTitleAttributes(theme);
+    NSSize titleSize = [title sizeWithAttributes:attributes];
+    [title drawAtPoint:NSMakePoint(round(NSMidX(controlRect) - titleSize.width * 0.5),
+                                   round(NSMidY(controlRect) - titleSize.height * 0.5))
+        withAttributes:attributes];
+}
+
+- (void)drawCodeBoxControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame {
     SPDFMarkdownTheme* theme = self.pageTheme;
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (fragment.itemIndex >= self.plan.items.count) continue;
         SPDFMarkdownPaginationItem* item = self.plan.items[fragment.itemIndex];
         if (item.kind != SPDFMarkdownBlockKindCode || fragment.isContinuation) continue;
-        NSRect controlRect = [self codeLanguageControlRectForFragment:fragment pageFrame:pageFrame];
-        NSRect boxRect = NSInsetRect(controlRect, 0.5, 0.5);
-        NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:boxRect
-                                                             xRadius:kSPDFMarkdownCodeControlCornerRadius
-                                                             yRadius:kSPDFMarkdownCodeControlCornerRadius];
-        [theme.codeControlFillColor setFill];
-        [path fill];
-        [theme.codeControlStrokeColor setStroke];
-        path.lineWidth = 1.0;
-        [path stroke];
-        NSString* title = [self codeLanguageControlTitleForBlockIndex:fragment.blockIndex];
-        NSDictionary* attributes = SPDFCodeControlTitleAttributes(theme);
-        NSSize titleSize = [title sizeWithAttributes:attributes];
-        [title drawAtPoint:NSMakePoint(NSMinX(controlRect) + kSPDFMarkdownCodeControlHorizontalPadding,
-                                       round(NSMidY(controlRect) - titleSize.height * 0.5))
-            withAttributes:attributes];
+        [self drawCodeControlTitle:[self copyCodeControlTitleForBlockIndex:fragment.blockIndex]
+                            inRect:[self copyCodeControlRectForFragment:fragment pageFrame:pageFrame]
+                             theme:theme];
+        [self drawCodeControlTitle:[self codeLanguageControlTitleForBlockIndex:fragment.blockIndex]
+                            inRect:[self codeLanguageControlRectForFragment:fragment pageFrame:pageFrame]
+                             theme:theme];
     }
 }
 

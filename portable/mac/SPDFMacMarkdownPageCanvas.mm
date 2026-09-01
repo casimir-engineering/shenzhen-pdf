@@ -197,7 +197,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
                       onPage:page
                    pageFrame:pageFrame];
         [self drawActiveSearchOnPage:page pageFrame:pageFrame];
-        [self drawCodeLanguageControlsOnPage:page pageFrame:pageFrame];
+        [self drawCodeBoxControlsOnPage:page pageFrame:pageFrame];
     }
 }
 
@@ -346,6 +346,12 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
         return;
     }
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    NSNumber* copyBlock = [self copyCodeBlockAtPoint:point];
+    if (copyBlock) {
+        _draggingSelection = NO;
+        [self handleCopyCodeBlock:copyBlock.unsignedIntegerValue];
+        return;
+    }
     NSNumber* languageBlock = [self codeLanguageBlockAtPoint:point];
     if (languageBlock) {
         _draggingSelection = NO;
