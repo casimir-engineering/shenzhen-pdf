@@ -72,8 +72,17 @@ static void SPDFDiagramMeasureNode(SPDFMarkdownDiagramNode* node, SPDFDiagramGra
 
 static NSValue* SPDFPoint(CGFloat x, CGFloat y) { return [NSValue valueWithPoint:NSMakePoint(x, y)]; }
 
-static void SPDFDiagramAddNodeShape(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDiagramNode* node,
-                                    CGFloat scale) {
+// Author `classDef` colors ride on the shape, not on its role: the layout stays
+// theme-independent and each draw target resolves them for the variant it
+// paints with (see SPDFMarkdownDiagramAuthorColor).
+static void SPDFDiagramTintShape(SPDFMarkdownDiagramShape* shape, SPDFMarkdownDiagramNodeStyle* style) {
+    if (!shape || !style) return;
+    shape.authorFillColor = style.fillColor;
+    shape.authorStrokeColor = style.strokeColor;
+}
+
+static SPDFMarkdownDiagramShape* SPDFDiagramAddNodeShape(SPDFMarkdownDiagramCanvas* canvas,
+                                                         SPDFMarkdownDiagramNode* node, CGFloat scale) {
     NSRect frame = node.frame;
     BOOL accentDot = node.shape == SPDFMarkdownDiagramNodeShapeStartDot;
     SPDFMarkdownDiagramRole fill = accentDot ? SPDFMarkdownDiagramRoleSecondary
@@ -81,42 +90,36 @@ static void SPDFDiagramAddNodeShape(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkd
     SPDFMarkdownDiagramRole stroke = SPDFMarkdownDiagramRoleNodeStroke;
     switch (node.shape) {
         case SPDFMarkdownDiagramNodeShapeRound:
-            [canvas addRect:frame radius:8 * scale fill:fill stroke:stroke width:1];
-            return;
+            return [canvas addRect:frame radius:8 * scale fill:fill stroke:stroke width:1];
         case SPDFMarkdownDiagramNodeShapeStadium:
-            [canvas addRect:frame radius:NSHeight(frame) / 2 fill:fill stroke:stroke width:1];
-            return;
+            return [canvas addRect:frame radius:NSHeight(frame) / 2 fill:fill stroke:stroke width:1];
         case SPDFMarkdownDiagramNodeShapeCircle:
         case SPDFMarkdownDiagramNodeShapeStartDot:
         case SPDFMarkdownDiagramNodeShapeEndDot:
-            [canvas addEllipse:frame fill:fill stroke:stroke width:1];
-            return;
+            return [canvas addEllipse:frame fill:fill stroke:stroke width:1];
         case SPDFMarkdownDiagramNodeShapeDiamond:
-            [canvas addPolygon:@[
+            return [canvas addPolygon:@[
                 SPDFPoint(NSMidX(frame), NSMinY(frame)), SPDFPoint(NSMaxX(frame), NSMidY(frame)),
                 SPDFPoint(NSMidX(frame), NSMaxY(frame)), SPDFPoint(NSMinX(frame), NSMidY(frame))
             ]
-                          fill:fill
-                        stroke:stroke
-                         width:1];
-            return;
+                                 fill:fill
+                               stroke:stroke
+                                width:1];
         case SPDFMarkdownDiagramNodeShapeParallelogram: {
             CGFloat slant = 10 * scale;
-            [canvas addPolygon:@[
+            return [canvas addPolygon:@[
                 SPDFPoint(NSMinX(frame) + slant, NSMinY(frame)), SPDFPoint(NSMaxX(frame), NSMinY(frame)),
                 SPDFPoint(NSMaxX(frame) - slant, NSMaxY(frame)), SPDFPoint(NSMinX(frame), NSMaxY(frame))
             ]
-                          fill:fill
-                        stroke:stroke
-                         width:1];
-            return;
+                                 fill:fill
+                               stroke:stroke
+                                width:1];
         }
         case SPDFMarkdownDiagramNodeShapeRect:
         case SPDFMarkdownDiagramNodeShapeSubroutine:
         case SPDFMarkdownDiagramNodeShapeClassBox:
         default:
-            [canvas addRect:frame radius:0 fill:fill stroke:stroke width:1];
-            return;
+            return [canvas addRect:frame radius:0 fill:fill stroke:stroke width:1];
     }
 }
 
@@ -155,8 +158,9 @@ static void SPDFDiagramAddClassBody(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkd
 }
 
 static void SPDFDiagramAddNode(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDiagramNode* node,
-                               SPDFDiagramGraphFonts fonts, CGFloat scale) {
-    SPDFDiagramAddNodeShape(canvas, node, scale);
+                               SPDFMarkdownDiagramGraph* graph, SPDFDiagramGraphFonts fonts, CGFloat scale) {
+    SPDFMarkdownDiagramNodeStyle* style = [graph styleForNode:node];
+    SPDFDiagramTintShape(SPDFDiagramAddNodeShape(canvas, node, scale), style);
     NSRect frame = node.frame;
     if (node.shape == SPDFMarkdownDiagramNodeShapeEndDot) {
         [canvas addEllipse:NSInsetRect(frame, 3.5 * scale, 3.5 * scale)
@@ -169,24 +173,29 @@ static void SPDFDiagramAddNode(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDi
     if (node.shape == SPDFMarkdownDiagramNodeShapeSubroutine) {
         CGFloat inset = 5 * scale;
         for (NSNumber* x in @[ @(NSMinX(frame) + inset), @(NSMaxX(frame) - inset) ]) {
-            [canvas addLineFrom:NSMakePoint(x.doubleValue, NSMinY(frame))
-                             to:NSMakePoint(x.doubleValue, NSMaxY(frame))
-                         stroke:SPDFMarkdownDiagramRoleNodeStroke
-                          width:1
-                           dash:0];
+            SPDFDiagramTintShape([canvas addLineFrom:NSMakePoint(x.doubleValue, NSMinY(frame))
+                                                  to:NSMakePoint(x.doubleValue, NSMaxY(frame))
+                                              stroke:SPDFMarkdownDiagramRoleNodeStroke
+                                               width:1
+                                                dash:0],
+                                 style);
         }
     }
     if (node.shape == SPDFMarkdownDiagramNodeShapeClassBox) {
         SPDFDiagramAddClassBody(canvas, node, fonts, scale);
         return;
     }
-    NSSize text = SPDFMarkdownDiagramMeasureText(node.label, fonts.label, NSWidth(frame));
-    [canvas addText:node.label
-             inRect:NSMakeRect(NSMinX(frame) + 4, NSMidY(frame) - text.height / 2, NSWidth(frame) - 8,
-                               text.height)
-               font:fonts.label
-               role:SPDFMarkdownDiagramRoleText
-          alignment:NSTextAlignmentCenter];
+    // A `<br/>`-broken label is several lines tall; the measured height centers
+    // the whole stack on the node and addText: centers each line in the box.
+    NSSize text = SPDFMarkdownDiagramMeasureText(node.label, fonts.label, NSWidth(frame) - 8);
+    NSArray<SPDFMarkdownDiagramLabel*>* labels =
+        [canvas addText:node.label
+                 inRect:NSMakeRect(NSMinX(frame) + 4, NSMidY(frame) - text.height / 2, NSWidth(frame) - 8,
+                                   text.height)
+                   font:fonts.label
+                   role:SPDFMarkdownDiagramRoleText
+              alignment:NSTextAlignmentCenter];
+    for (SPDFMarkdownDiagramLabel* label in labels) label.authorColor = style.textColor;
 }
 
 // Border anchor: where the segment toward `toward` leaves the node's frame.
@@ -293,6 +302,8 @@ static void SPDFDiagramAddEdge(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDi
                    dash:edge.lineStyle == SPDFMarkdownDiagramLineStyleDashed ? 4 * scale : 0];
     SPDFDiagramAddArrowHead(canvas, points.lastObject.pointValue, points[points.count - 2].pointValue, edge.head,
                             scale);
+    // `<-->`: the same head, pointing back out of the `from` node.
+    SPDFDiagramAddArrowHead(canvas, points.firstObject.pointValue, points[1].pointValue, edge.tail, scale);
     if (edge.label.length) {
         // Label chip at the path midpoint, backed with paper so the text stays
         // readable where it crosses the line.
@@ -336,6 +347,6 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGraph(SPDFMarkdownDiagramGra
 
     SPDFMarkdownDiagramCanvas* canvas = [SPDFMarkdownDiagramCanvas new];
     for (SPDFMarkdownDiagramEdge* edge in graph.edges) SPDFDiagramAddEdge(canvas, edge, graph, fonts, scale);
-    for (SPDFMarkdownDiagramNode* node in graph.nodes) SPDFDiagramAddNode(canvas, node, fonts, scale);
+    for (SPDFMarkdownDiagramNode* node in graph.nodes) SPDFDiagramAddNode(canvas, node, graph, fonts, scale);
     return SPDFMarkdownDiagramFinishLayout(canvas, naturalSize, contentWidth);
 }

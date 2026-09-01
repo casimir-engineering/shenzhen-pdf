@@ -51,6 +51,26 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramRole) {
 FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramRoleColor(SPDFMarkdownDiagramRole role,
                                                         SPDFMarkdownThemeVariant variant);
 
+// One AUTHOR-specified color (a mermaid `classDef` fill/stroke/color) resolved
+// for one reading theme.
+//
+// POLICY: mermaid `classDef` colors are written for mermaid's light default --
+// this repo's fixture uses pale fills with dark strokes and near-black text --
+// so painting them literally on #1E1E1E paper is unreadable. Light keeps them
+// byte for byte. Dark puts them through spdf_recolor's LUMA_REMAP with the
+// same paper #1E1E1E / ink #DCDDDE endpoints the reader already applies to
+// every PDF page (spdf_recolor.h) and to every image a Markdown document
+// embeds (SPDFMarkdownImageRecolor.h). That choice, rather than a bespoke
+// contrast forcing, because (a) it is the app's existing answer to exactly
+// this question for author-supplied raster color, so a diagram and a
+// screenshot of the same diagram now agree; (b) the remap preserves chroma, so
+// the author's four hues stay four distinguishable hues; and (c) its luma map
+// is strictly DECREASING (Y=0 -> 220, Y=255 -> 30), which makes dark-on-dark
+// arithmetically impossible: any fill/text pair the author made legible stays
+// legible, with its contrast magnitude preserved and its polarity flipped.
+FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramAuthorColor(NSColor* authored,
+                                                          SPDFMarkdownThemeVariant variant);
+
 typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
     SPDFMarkdownDiagramShapeRectangle = 0,  // rect + cornerRadius (0 = square corners)
     SPDFMarkdownDiagramShapeEllipse,        // rect
@@ -77,6 +97,11 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
 @property(nonatomic) CGFloat strokeAlpha;
 @property(nonatomic) CGFloat lineWidth;
 @property(nonatomic) CGFloat dashLength;   // 0 = solid; the gap is 0.75 of it
+// Author `classDef` colors overriding the roles above. nil = use the role. A
+// layout stays theme-INDEPENDENT: these are the author's own (light) colors,
+// resolved per variant at draw time by SPDFMarkdownDiagramAuthorColor.
+@property(nonatomic, copy, nullable) NSColor* authorFillColor;
+@property(nonatomic, copy, nullable) NSColor* authorStrokeColor;
 @end
 
 // One single-line text label at its resolved position. `frame` is the box the
@@ -89,9 +114,20 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
 @property(nonatomic) CGFloat fontSize;
 @property(nonatomic) BOOL semibold;
 @property(nonatomic) SPDFMarkdownDiagramRole role;
+@property(nonatomic, copy, nullable) NSColor* authorColor;  // classDef `color:`; nil = use the role
 // The system font this label was measured with, rebuilt from fontSize/semibold.
 - (NSFont*)font;
 @end
+
+// The color a shape/label actually paints with: its author color resolved for
+// `variant` when it has one, else its role. Every draw site goes through these
+// so author styling can never be honored in one output and dropped in another.
+FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramShapeFillColor(SPDFMarkdownDiagramShape* shape,
+                                                             SPDFMarkdownThemeVariant variant);
+FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramShapeStrokeColor(SPDFMarkdownDiagramShape* shape,
+                                                               SPDFMarkdownThemeVariant variant);
+FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramLabelColor(SPDFMarkdownDiagramLabel* label,
+                                                         SPDFMarkdownThemeVariant variant);
 
 // A finished diagram: its logical size in points plus the vector shapes and
 // text labels that fill it. Already fitted to the caller's content width — one

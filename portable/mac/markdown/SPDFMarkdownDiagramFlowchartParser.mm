@@ -124,20 +124,40 @@ static SPDFMarkdownDiagramNode* SPDFScanNode(SPDFDiagramScanner* scanner, SPDFMa
         if (label == nil) return nil;
         label = SPDFMarkdownDiagramCleanLabel(label);
     }
+    // `:::name` binds a `classDef` to this node. mermaid allows a chain
+    // (`A:::a:::b`); the LAST one wins, which is also what mermaid renders.
+    NSString* className = nil;
+    while (SPDFScanPeek(scanner, 0) == ':' && SPDFScanPeek(scanner, 1) == ':' &&
+           SPDFScanPeek(scanner, 2) == ':') {
+        scanner->position += 3;
+        NSString* name = SPDFScanIdentifier(scanner);
+        if (!name.length) return nil;  // a bare `:::` is malformed, not styling
+        className = name;
+    }
     SPDFMarkdownDiagramNode* node = [graph nodeForIdentifier:identifier createWithLabel:label];
     if (closer) node.shape = shape;
+    if (className.length) node.className = className;
     return node;
 }
 
 // Parses one edge operator (`-->`, `---`, `-.->`, `==>`, `--text-->`,
 // `-->|text|`, ...). Returns NO when the scanner does not sit on an edge.
 static BOOL SPDFScanEdge(SPDFDiagramScanner* scanner, SPDFMarkdownDiagramLineStyle* outStyle, BOOL* outArrow,
-                         NSString** outLabel) {
+                         BOOL* outTailArrow, NSString** outLabel) {
     SPDFScanSkipSpaces(scanner);
+    // A leading `<` is the tail arrowhead of `<-->` / `<--` / `<-.->` / `<==>`;
+    // everything after it is the ordinary connector run.
+    BOOL tailArrow = NO;
+    if (SPDFScanPeek(scanner, 0) == '<' &&
+        (SPDFScanPeek(scanner, 1) == '-' || SPDFScanPeek(scanner, 1) == '=')) {
+        tailArrow = YES;
+        ++scanner->position;
+    }
     unichar first = SPDFScanPeek(scanner, 0);
     unichar second = SPDFScanPeek(scanner, 1);
     BOOL startsEdge = (first == '-' && (second == '-' || second == '.')) || (first == '=' && second == '=');
     if (!startsEdge) return NO;
+    *outTailArrow = tailArrow;
     NSUInteger connectorStart = scanner->position;
     while (scanner->position < scanner->text.length) {
         unichar character = SPDFScanPeek(scanner, 0);
@@ -240,8 +260,9 @@ static BOOL SPDFParseFlowStatement(NSString* statement, SPDFMarkdownDiagramGraph
     while (scanner.position < scanner.text.length) {
         SPDFMarkdownDiagramLineStyle style = SPDFMarkdownDiagramLineStyleSolid;
         BOOL arrow = NO;
+        BOOL tailArrow = NO;
         NSString* label = nil;
-        if (!SPDFScanEdge(&scanner, &style, &arrow, &label)) return NO;
+        if (!SPDFScanEdge(&scanner, &style, &arrow, &tailArrow, &label)) return NO;
         NSMutableArray<SPDFMarkdownDiagramNode*>* rightGroup = [NSMutableArray array];
         SPDFMarkdownDiagramNode* target = SPDFScanNode(&scanner, graph);
         if (!target) return NO;
@@ -262,6 +283,7 @@ static BOOL SPDFParseFlowStatement(NSString* statement, SPDFMarkdownDiagramGraph
                 edge.label = label;
                 edge.lineStyle = style;
                 edge.head = arrow ? SPDFMarkdownDiagramArrowHeadArrow : SPDFMarkdownDiagramArrowHeadNone;
+                edge.tail = tailArrow ? SPDFMarkdownDiagramArrowHeadArrow : SPDFMarkdownDiagramArrowHeadNone;
                 [graph.edges addObject:edge];
             }
         }
@@ -269,6 +291,34 @@ static BOOL SPDFParseFlowStatement(NSString* statement, SPDFMarkdownDiagramGraph
         SPDFScanSkipSpaces(&scanner);
     }
     return YES;
+}
+
+// `;` ends a statement, but ONLY at top level: an HTML entity inside a label
+// (`SW["FW lockout &lt; 3.4 V"]`) carries one too, and splitting on it cut the
+// label in half and failed the whole diagram.
+static NSArray<NSString*>* SPDFFlowSplitStatements(NSString* line) {
+    if ([line rangeOfString:@";"].location == NSNotFound) return @[ line ];
+    NSMutableArray<NSString*>* statements = [NSMutableArray array];
+    NSUInteger start = 0;
+    NSInteger depth = 0;
+    BOOL quoted = NO;
+    for (NSUInteger index = 0; index < line.length; ++index) {
+        unichar character = [line characterAtIndex:index];
+        if (character == '"') {
+            quoted = !quoted;
+        } else if (quoted) {
+            continue;
+        } else if (character == '[' || character == '(' || character == '{') {
+            ++depth;
+        } else if (character == ']' || character == ')' || character == '}') {
+            if (depth > 0) --depth;
+        } else if (character == ';' && depth == 0) {
+            [statements addObject:[line substringWithRange:NSMakeRange(start, index - start)]];
+            start = index + 1;
+        }
+    }
+    [statements addObject:[line substringFromIndex:start]];
+    return statements;
 }
 
 static BOOL SPDFApplyFlowDirection(SPDFMarkdownDiagramGraph* graph, NSString* direction) {
@@ -306,10 +356,23 @@ SPDFMarkdownDiagramGraph* SPDFMarkdownDiagramParseMermaidFlowchart(NSString* sou
         // v1 ignores subgraph GROUPING (members still render) and skips pure
         // styling/interaction statements; documented in markdown/README.md.
         if ([lowered hasPrefix:@"subgraph"] || [lowered isEqualToString:@"end"] ||
-            [lowered hasPrefix:@"classdef "] || [lowered hasPrefix:@"class "] || [lowered hasPrefix:@"style "] ||
-            [lowered hasPrefix:@"linkstyle "] || [lowered hasPrefix:@"click "] || [lowered hasPrefix:@"direction "])
+            [lowered hasPrefix:@"style "] || [lowered hasPrefix:@"linkstyle "] ||
+            [lowered hasPrefix:@"click "] || [lowered hasPrefix:@"direction "])
             continue;
-        for (NSString* statement in [line componentsSeparatedByString:@";"]) {
+        // A `classDef` / `class` statement carries node STYLING. Either parser
+        // returning NO means "nothing usable here", and the line is skipped
+        // exactly as it was before styling existed -- an unreadable style
+        // declaration costs a node its colors, never the whole diagram.
+        if ([lowered hasPrefix:@"classdef "]) {
+            SPDFMarkdownDiagramParseClassDef(line, graph);
+            continue;
+        }
+        if ([lowered hasPrefix:@"class "]) {
+            SPDFMarkdownDiagramParseClassAssignment(
+                [line hasSuffix:@";"] ? [line substringToIndex:line.length - 1] : line, graph);
+            continue;
+        }
+        for (NSString* statement in SPDFFlowSplitStatements(line)) {
             NSString* trimmed = SPDFMarkdownDiagramTrim(statement);
             if (!trimmed.length) continue;
             if (!SPDFParseFlowStatement(trimmed, graph)) return nil;
@@ -318,6 +381,7 @@ SPDFMarkdownDiagramGraph* SPDFMarkdownDiagramParseMermaidFlowchart(NSString* sou
                 return nil;
         }
     }
+    [graph applyDeferredClassNames];
     return graph.nodes.count ? graph : nil;
 }
 

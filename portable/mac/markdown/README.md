@@ -281,9 +281,24 @@ reading themes; `SPDFMarkdownDiagramRoleColor(role, variant)` resolves a role
 at draw time. Layouts are theme-independent, which is why the cache key has no
 variant in it.
 
+The one exception is AUTHOR color from a mermaid `classDef`, which is not a
+theme role. It rides on the shape/label as the author's own (light) color, and
+the two accessors `SPDFMarkdownDiagramShapeFillColor` /
+`...StrokeColor` / `...LabelColor` resolve it per variant, so a layout stays
+theme-independent and the cache key still needs no variant. **Policy:**
+`classDef` colors are written for mermaid's light default, so the light theme
+paints them verbatim and the dark theme puts them through the same
+`spdf_recolor` LUMA_REMAP (paper `#1E1E1E` / ink `#DCDDDE`) already applied to
+every PDF page and to every image a Markdown document embeds. Chroma survives,
+so the author's hues stay distinguishable, and the luma map is strictly
+decreasing, so a legible fill/text pair cannot come out dark-on-dark. See
+`SPDFMarkdownDiagramAuthorColor` in `SPDFMarkdownDiagram.h` and
+`SPDFMarkdownDiagramStyle.mm`.
+
 Implemented types: mermaid `graph`/`flowchart` (TD/TB/BT/LR/RL, rect, round,
 stadium, circle, diamond and subroutine shapes, labelled solid/dashed/thick
-edges), `sequenceDiagram` (participants and aliases, arrow variants, notes,
+edges, bidirectional `<-->`/`<--`, per-node styling via `classDef` plus
+`:::name` or `class a,b name`), `sequenceDiagram` (participants and aliases, arrow variants, notes,
 activations, `alt`/`opt`/`loop`/`par`/`critical`/`rect` frames), `pie`,
 `stateDiagram`/`stateDiagram-v2`, `classDiagram` (compartments and the UML
 relation set) and `gantt` (`YYYY-MM-DD` dates, durations, `after` chains,
@@ -293,10 +308,19 @@ relation set) and `gantt` (`YYYY-MM-DD` dates, durations, `after` chains,
 the compartments it has members for: a class with neither attributes nor
 methods is a single named box, never two empty strips.
 
+Labels carry real line breaks and entities: `<br>`, `<br/>` and `<br />` are
+HARD breaks (each line wraps and centers on its own, and node sizing counts
+them), and `&lt; &gt; &amp; &quot; &#39; &apos; &nbsp;` decode. A `;` ends a
+statement only at top level, never inside a label.
+
 Simplifications, all deliberate and all lossless on the page: flowchart
-`subgraph` grouping, `classDef`/`style`/`linkStyle`/`click` statements,
-composite-state braces, state notes, class cardinality strings and mermaid's
-`autonumber` are skipped, though their members still render.
+`subgraph` grouping, `style`/`linkStyle`/`click` statements, composite-state
+braces, state notes, class cardinality strings and mermaid's `autonumber` are
+skipped, though their members still render. A `classDef` key this renderer
+cannot express (`stroke-width`, `stroke-dasharray`, `font-*`) and a color value
+it cannot read (a CSS name, `rgb()`, a gradient) are dropped rather than
+rejected: an unreadable style declaration costs a node its colors, never the
+whole diagram.
 
 **Diagram labels are canonical text.** `SPDFMarkdownDiagramBlock.mm` appends
 every label into the attributed string as its own tab-separated run and records
