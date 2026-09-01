@@ -39,39 +39,24 @@ if grep -n 'spdf_open(' "$app_impl" "$properties_impl"; then
     echo "macOS reopen path bypasses the credential-aware opener" >&2
     exit 1
 fi
-# Copy Page / Copy Page Image enablement and action bodies moved to the shared
-# file-actions module; count enforcement across both homes so a refactor cannot
-# silently drop a check.
-file_actions_impl="$root/portable/mac/SPDFMacMarkdownFileActions.mm"
-translation_impl="$root/portable/mac/SPDFMacTranslationEnablement.mm"
-translation_policy="$root/portable/mac/SPDFMacTranslationPolicy.mm"
-# Copy permission is enforced across the coordinator, the copy-page file
-# actions and the translation context. Count the total rather than a
-# per-file quota so consolidating duplicate checks into one shared context
-# cannot trip the guard, while deleting a check still does.
-permission_total=0
-for impl in "$app_impl" "$file_actions_impl" "$translation_impl"; do
-    permission_total=$((permission_total + $(grep -c "spdf_has_permission(_doc, 'c')" "$impl")))
-done
-if [ "$permission_total" -lt 10 ]; then
-    echo "encrypted-PDF copy actions do not consistently enforce copy permission" >&2
-    exit 1
-fi
-# Translation reads the permission through the shared context, and the policy
-# must keep gating selection translation on it.
-grep -q "context.contentCopyAllowed = context.markdownActive || (_doc && spdf_has_permission(_doc, 'c'))" \
-    "$translation_impl" || {
-    echo "translation context must derive copy permission from the open PDF" >&2
+# COPY IS UNCONDITIONAL, by product decision. The PDF copy flag is advisory,
+# and the text is decrypted and on screen by the time it could be consulted, so
+# the core exempts it (see shenzhen_pdf_core.h). This guard used to require the
+# frontend to enforce that flag; it now pins the exemption instead, so the
+# "Copying is not allowed" dialog cannot come back by way of the core.
+grep -q 'permission == FZ_PERMISSION_COPY) return 1;' "$core_impl" || {
+    echo "the core must grant copy permission unconditionally" >&2
     exit 1
 }
-grep -q "!context.contentCopyAllowed" "$translation_policy" || {
-    echo "selection translation must stay gated on copy permission" >&2
+grep -q "copy must be allowed even for a restricted user" "$root/portable/core/tests/SPDFCorePasswordTests.c" || {
+    echo "the unconditional-copy exemption must stay pinned by a core test" >&2
     exit 1
 }
-if [ "$(grep -c "spdf_has_permission(_doc, 'c')" "$file_actions_impl")" -lt 4 ]; then
-    echo "copy-page file actions must enforce copy permission in enablement and action bodies" >&2
+# The other permissions are still read from the document.
+grep -q "allowed = fz_has_permission(doc->ctx, doc->doc, (fz_permission)permission) != 0;" "$core_impl" || {
+    echo "print/edit/annotate must still consult the document's own flags" >&2
     exit 1
-fi
+}
 grep -q 'ensureContentCopyPermissionForOperation:@"Web search"' "$app_impl"
 if [ "$(grep -c 'ensureContentCopyPermissionForOperation:@"Translation"' "$app_impl")" -lt 2 ]; then
     echo "selection and document translation must both enforce copy permission" >&2

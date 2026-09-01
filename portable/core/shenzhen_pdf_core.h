@@ -204,7 +204,14 @@ int spdf_lookup_metadata(spdf_document* doc, const char* key, char* buf, size_t 
 /* Permission check. `permission` is an fz_permission character constant:
  * 'p' print, 'c' copy, 'e' edit, 'n' annotate. Returns 1 when allowed (also
  * for formats without a permission model), 0 when the document denies it.
- * Permission-query failures on password-protected documents fail closed. */
+ * Permission-query failures on password-protected documents fail closed.
+ *
+ * 'c' (COPY) ALWAYS returns 1, by product decision. The PDF copy flag is an
+ * advisory request to the viewer rather than access control: by the time it
+ * could be consulted the document is decrypted and its text is on screen and
+ * selectable, and general-purpose extractors ignore it. Honouring it only
+ * stopped a reader quoting a document they are already looking at. Print,
+ * edit and annotate still answer the document's own flags. */
 int spdf_has_permission(spdf_document* doc, int permission);
 /* Non-mutating snapshots captured during open. Unlike MuPDF's
  * fz_needs_password(), these calls cannot reset an authenticated PDF. */

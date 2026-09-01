@@ -120,7 +120,12 @@ static void test_restricted(const char* path, unsigned long long expected_hash) 
     if (!doc) return;
     CHECK((authentication & SPDF_AUTHENTICATION_USER_PASSWORD) != 0, "restricted user password class missing");
     CHECK(spdf_has_permission(doc, 'p'), "restricted user should retain low-resolution print permission");
-    CHECK(!spdf_has_permission(doc, 'c'), "restricted user unexpectedly received copy permission");
+    /* Copy is granted unconditionally by product decision (see the header):
+     * the flag is advisory, and the text is decrypted and on screen anyway.
+     * The neighbouring edit/print assertions prove the OTHER flags are still
+     * read from the document, so this is a deliberate exemption rather than a
+     * broken permission query. */
+    CHECK(spdf_has_permission(doc, 'c'), "copy must be allowed even for a restricted user");
     CHECK(!spdf_has_permission(doc, 'e'), "restricted user unexpectedly received edit permission");
     CHECK(!spdf_has_permission(doc, 'h'), "restricted user unexpectedly received high-quality print permission");
     CHECK(render_hash(doc) == expected_hash, "restricted user page differs from the plain source");
