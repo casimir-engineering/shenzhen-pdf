@@ -66,6 +66,11 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramArrowHead) {
 @property(nonatomic) SPDFMarkdownDiagramLineStyle lineStyle;
 @property(nonatomic) SPDFMarkdownDiagramArrowHead head;  // drawn at the `to` end
 @property(nonatomic) SPDFMarkdownDiagramArrowHead tail;  // drawn at the `from` end (`<-->`)
+// Layout result: the bend points a RANK-SKIPPING edge must pass through, one
+// per rank it crosses, in layout coordinates. nil for an edge between adjacent
+// ranks (which needs no detour). The emitter curves through them, which is
+// what keeps a long edge out of the boxes of the ranks it skips.
+@property(nonatomic, copy, nullable) NSArray<NSValue*>* routePoints;
 @end
 
 // A directed graph plus flow direction. `vertical` maps TD/TB (and BT via
@@ -256,11 +261,15 @@ FOUNDATION_EXPORT SPDFMarkdownDiagramSequence* _Nullable SPDFMarkdownDiagramPars
 FOUNDATION_EXPORT SPDFMarkdownDiagramPie* _Nullable SPDFMarkdownDiagramParsePie(NSString* source);
 FOUNDATION_EXPORT SPDFMarkdownDiagramGantt* _Nullable SPDFMarkdownDiagramParseGantt(NSString* source);
 
-// Layered layout: ranks via longest path in flow direction (back edges from a
-// DFS sweep are ignored for ranking), a few barycenter ordering passes, then
-// grid coordinates with generous gaps. Node frames must carry their measured
-// sizes on entry; on success every frame origin is set and *outSize holds the
-// content bounds. Returns NO when `deadline` (absolute time) passes mid-work.
+// Sugiyama layered layout: ranks via longest path in the flow direction (back
+// edges from a DFS sweep are ignored for ranking), routing dummies for every
+// rank-skipping edge, median ordering sweeps for crossing reduction, then
+// coordinate assignment by weighted isotonic regression -- which straightens
+// chains and centers fan-outs on their source while keeping `nodeGap` of clear
+// air between boxes as a HARD constraint, so no two node rects can intersect.
+// Node frames must carry their measured sizes on entry; on success every frame
+// origin is set, every rank-skipping edge carries its `routePoints`, and
+// *outSize holds the content bounds. Returns NO when `deadline` passes.
 FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramLayoutGraph(SPDFMarkdownDiagramGraph* graph, CGFloat nodeGap,
                                                       CGFloat rankGap, CFAbsoluteTime deadline, NSSize* outSize);
 
