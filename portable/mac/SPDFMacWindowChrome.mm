@@ -34,6 +34,30 @@ BOOL spdf_window_chrome_view_is_interactive(NSView* hitView) {
     return NO;
 }
 
+BOOL spdf_scroll_is_zoom_wheel(NSUInteger modifierFlags, BOOL isMomentum) {
+    // Momentum is the tail of a scroll the fingers already left; whatever the
+    // user presses during the coast cannot retroactively make it a zoom.
+    if (isMomentum) return NO;
+    return (modifierFlags & (SPDFWindowModifierFlagCommand | SPDFWindowModifierFlagControl)) != 0;
+}
+
+// How long a tap zoom keeps ownership of the wheel. The tap runs on the same
+// physical event a fraction of a millisecond before AppKit could deliver it, so
+// this only has to outlast that hop; it is deliberately far shorter than the
+// gap between two deliberate wheel gestures.
+static const double kSPDFTapZoomWheelOwnershipSeconds = 0.02;
+
+BOOL spdf_zoom_wheel_handled_by_tap(BOOL tapArmed, BOOL appActive, double eventTimestamp,
+                                    double tapZoomEventTimestamp, double secondsSinceTapZoom) {
+    // Focused, or with no tap armed, the responder chain is the only zoom path
+    // and must always run.
+    if (!tapArmed || appActive) return NO;
+    if (tapZoomEventTimestamp > 0.0 && fabs(eventTimestamp - tapZoomEventTimestamp) < 0.0005) return YES;
+    return secondsSinceTapZoom >= 0.0 && secondsSinceTapZoom < kSPDFTapZoomWheelOwnershipSeconds;
+}
+
+static_assert(SPDFWindowModifierFlagControl == NSEventModifierFlagControl, "control modifier bit drifted");
+static_assert(SPDFWindowModifierFlagCommand == NSEventModifierFlagCommand, "command modifier bit drifted");
 static_assert(SPDFWindowEventTypeLeftMouseDown == NSEventTypeLeftMouseDown, "left mouse down value drifted");
 static_assert(SPDFWindowEventTypeRightMouseDown == NSEventTypeRightMouseDown, "right mouse down value drifted");
 static_assert(SPDFWindowEventTypeOtherMouseDown == NSEventTypeOtherMouseDown, "other mouse down value drifted");

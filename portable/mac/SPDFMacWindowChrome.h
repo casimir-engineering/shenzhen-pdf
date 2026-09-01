@@ -37,6 +37,35 @@ enum {
     SPDFWindowEventTypeOtherMouseDown = 25,  // NSEventTypeOtherMouseDown
 };
 
+// Raw NSEvent modifier bits for the two zoom modifiers, spelled out so the
+// Foundation-only unit test can exercise the wheel-zoom policy below without
+// linking AppKit. Static-asserted against the AppKit constants in the .mm.
+enum {
+    SPDFWindowModifierFlagControl = 1 << 18,  // NSEventModifierFlagControl
+    SPDFWindowModifierFlagCommand = 1 << 20,  // NSEventModifierFlagCommand
+};
+
+// YES when a scroll wheel is the zoom gesture: Command or Control held while
+// the wheel is still actively scrolling. Inertial momentum is a scroll coasting
+// to a stop, so a modifier pressed during the coast (the Command held through
+// Cmd+Tab, say) must never turn it into a zoom. Shared by the focused
+// responder-chain path and by the out-of-focus event tap, so the two can never
+// disagree about what counts as a zoom wheel.
+BOOL spdf_scroll_is_zoom_wheel(NSUInteger modifierFlags, BOOL isMomentum);
+
+// Out of focus, the event tap sees a zoom wheel at the head of the HID chain —
+// before the window server decides whether to hand it to this app at all — so
+// once armed the tap owns the unfocused zoom. Should the window server ALSO
+// deliver that same scroll to the unfocused window, the responder chain must
+// not zoom a second time. YES exactly while the tap has already zoomed for this
+// event: matched on the event's own timestamp, and (because an event rebuilt
+// from a CGEvent can carry a slightly different one) for a few milliseconds
+// after any tap zoom. Both windows lapse the moment the tap stops zooming, so a
+// point the tap declines — over a detached minimap window, say — still zooms
+// through the responder chain.
+BOOL spdf_zoom_wheel_handled_by_tap(BOOL tapArmed, BOOL appActive, double eventTimestamp,
+                                    double tapZoomEventTimestamp, double secondsSinceTapZoom);
+
 // YES for a press of any mouse button (left / right / middle / extra). Releases,
 // drags, scrolls, gestures and key events are not presses.
 BOOL spdf_window_event_is_mouse_press(NSUInteger eventType);
