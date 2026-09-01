@@ -1,0 +1,350 @@
+/* chrome_geometry_test.c — pins portable/win/src/spdf_win_chrome.h.
+ *
+ * The chrome's division of the client area has no GTK4 original to
+ * differentially test against (the GTK frontend's chrome is built from real GTK
+ * widgets, not from arithmetic), so this suite pins the invariants the division
+ * must have plus the specific macOS metrics.
+ *
+ * The invariants matter more than the numbers. The layer's first integration bug
+ * was a WIDTH bug -- the chrome was laid out against the canvas region it had
+ * just produced instead of against the window, and drew the whole window's
+ * furniture into the left half of itself. What made that possible is that
+ * `spdf_win_canvas_build_scene()` overwrites `scene->target_px_w` with the
+ * canvas viewport, so the value meant two different things either side of one
+ * call. Geometry alone could not catch it -- hence the tiling and
+ * exact-cover checks below, which at least guarantee that WHATEVER width is
+ * passed in is fully accounted for by the rects that come out.
+ *
+ * Header-only under test, so no `spdf-test-sources` line is needed.
+ */
+#include "spdf_win_chrome.h"
+
+#include <stdio.h>
+#include <string.h>
+
+static int g_failures = 0;
+static int g_checks = 0;
+
+#define CHECK(cond)                                                                                                    \
+    do {                                                                                                               \
+        ++g_checks;                                                                                                    \
+        if (!(cond)) {                                                                                                 \
+            fprintf(stderr, "FAIL %s (%s:%d)\n", #cond, __FILE__, __LINE__);                                            \
+            ++g_failures;                                                                                              \
+        }                                                                                                              \
+    } while (0)
+
+#define CHECK_EQF(a, b)                                                                                                \
+    do {                                                                                                               \
+        ++g_checks;                                                                                                    \
+        if (fabsf((float)(a) - (float)(b)) > 0.001f) {                                                                 \
+            fprintf(stderr, "FAIL %s == %s (%.4f vs %.4f) (%s:%d)\n", #a, #b, (double)(a), (double)(b), __FILE__,       \
+                    __LINE__);                                                                                         \
+            ++g_failures;                                                                                              \
+        }                                                                                                              \
+    } while (0)
+
+static SpdfWinChromeModel default_model(void) {
+    SpdfWinChromeModel m;
+    memset(&m, 0, sizeof(m));
+    m.show_sidebar = 1;
+    m.show_minimap = 1;
+    m.hot_tab = -1;
+    m.hot_close = -1;
+    m.selected_tab = -1;
+    return m;
+}
+
+/* --- the metrics are macOS's ------------------------------------------- */
+static void test_metrics(void) {
+    CHECK_EQF(SPDF_WIN_CHROME_TABSTRIP_H, 42.0);
+    CHECK_EQF(SPDF_WIN_CHROME_TOOLBAR_H, 42.0);
+    CHECK_EQF(SPDF_WIN_CHROME_SIDEBAR_W, 240.0);
+    CHECK_EQF(SPDF_WIN_CHROME_SIDEBAR_MIN_W, 176.0);
+    CHECK_EQF(SPDF_WIN_CHROME_SIDEBAR_MAX_W, 320.0);
+    CHECK_EQF(SPDF_WIN_CHROME_MINIMAP_W, 126.5);
+    CHECK_EQF(SPDF_WIN_CHROME_MINIMAP_MIN_W, 72.0);
+    CHECK_EQF(SPDF_WIN_CHROME_MINIMAP_MAX_W, 260.0);
+    CHECK_EQF(SPDF_WIN_CHROME_DIVIDER_W, 5.0);
+    CHECK_EQF(SPDF_WIN_CHROME_DEFAULT_CONTENT_W, 1120.0);
+    CHECK_EQF(SPDF_WIN_CHROME_DEFAULT_CONTENT_H, 800.0);
+    CHECK_EQF(SPDF_WIN_CHROME_MIN_CONTENT_W, 560.0);
+    CHECK_EQF(SPDF_WIN_CHROME_MIN_CONTENT_H, 380.0);
+}
+
+/* --- THE EXACT-COVER INVARIANT ------------------------------------------
+ * Left to right, the split row's rects must tile the client width with no gap
+ * and no overlap; top to bottom, the bands plus the split row must tile the
+ * height. This is the check that would have caught the width bug. */
+static void check_tiling(const SpdfWinChromeLayout* l, unsigned w, unsigned h, const char* what) {
+    float sum = 0.0f;
+    float split_top = 0.0f;
+    (void)what;
+
+    if (!spdf_win_chrome_rect_empty(l->tabstrip)) {
+        CHECK_EQF(l->tabstrip.x, 0.0f);
+        CHECK_EQF(l->tabstrip.w, (float)w);
+        CHECK_EQF(l->tabstrip.y, 0.0f);
+        split_top += l->tabstrip.h;
+    }
+    if (!spdf_win_chrome_rect_empty(l->toolbar)) {
+        CHECK_EQF(l->toolbar.x, 0.0f);
+        CHECK_EQF(l->toolbar.w, (float)w);
+        CHECK_EQF(l->toolbar.y, split_top);
+        split_top += l->toolbar.h;
+    }
+
+    /* Every split-row rect starts at the same y and is the same height. */
+    {
+        const SpdfWinChromeRect* row[5];
+        int i;
+        row[0] = &l->sidebar;
+        row[1] = &l->sidebar_divider;
+        row[2] = &l->canvas;
+        row[3] = &l->minimap_divider;
+        row[4] = &l->minimap;
+        for (i = 0; i < 5; ++i) {
+            if (spdf_win_chrome_rect_empty(*row[i])) continue;
+            CHECK_EQF(row[i]->y, split_top);
+            CHECK_EQF(row[i]->h, (float)h - split_top);
+            sum += row[i]->w;
+        }
+    }
+    /* Exact cover of the width. */
+    CHECK_EQF(sum, (float)w);
+
+    /* Strict left-to-right order, and no overlap. */
+    if (!spdf_win_chrome_rect_empty(l->sidebar)) {
+        CHECK(l->sidebar.x == 0.0f);
+        CHECK(l->sidebar_divider.x >= l->sidebar.x + l->sidebar.w);
+        CHECK(l->canvas.x >= l->sidebar_divider.x + l->sidebar_divider.w);
+    } else {
+        CHECK(spdf_win_chrome_rect_empty(l->sidebar_divider));
+        CHECK_EQF(l->canvas.x, 0.0f);
+    }
+    if (!spdf_win_chrome_rect_empty(l->minimap)) {
+        CHECK(l->minimap_divider.x >= l->canvas.x + l->canvas.w);
+        CHECK(l->minimap.x >= l->minimap_divider.x + l->minimap_divider.w);
+        CHECK_EQF(l->minimap.x + l->minimap.w, (float)w);
+    } else {
+        CHECK(spdf_win_chrome_rect_empty(l->minimap_divider));
+        CHECK_EQF(l->canvas.x + l->canvas.w, (float)w);
+    }
+}
+
+static void test_tiling_across_sizes(void) {
+    float scales[] = {1.0f, 1.25f, 1.5f, 2.0f};
+    unsigned widths[] = {400, 560, 800, 1120, 1680, 2560, 3840};
+    unsigned heights[] = {300, 380, 600, 800, 1440};
+    size_t si, wi, hi;
+    SpdfWinChromeModel m = default_model();
+
+    for (si = 0; si < sizeof(scales) / sizeof(scales[0]); ++si) {
+        for (wi = 0; wi < sizeof(widths) / sizeof(widths[0]); ++wi) {
+            for (hi = 0; hi < sizeof(heights) / sizeof(heights[0]); ++hi) {
+                SpdfWinChromeLayout l;
+                spdf_win_chrome_layout(&m, widths[wi], heights[hi], scales[si], &l);
+                check_tiling(&l, widths[wi], heights[hi], "both panels");
+                /* The canvas must never vanish entirely, whatever the window. */
+                CHECK(l.canvas.w > 0.0f);
+                CHECK(l.canvas.h > 0.0f);
+            }
+        }
+    }
+
+    /* Same, with each panel hidden in turn and with both hidden. */
+    {
+        int sb, mm;
+        for (sb = 0; sb <= 1; ++sb) {
+            for (mm = 0; mm <= 1; ++mm) {
+                SpdfWinChromeLayout l;
+                SpdfWinChromeModel m2 = default_model();
+                m2.show_sidebar = sb;
+                m2.show_minimap = mm;
+                spdf_win_chrome_layout(&m2, 1120, 800, 1.5f, &l);
+                check_tiling(&l, 1120, 800, "panel combination");
+                if (!sb) CHECK(spdf_win_chrome_rect_empty(l.sidebar));
+                if (!mm) CHECK(spdf_win_chrome_rect_empty(l.minimap));
+            }
+        }
+    }
+}
+
+/* --- the macOS default window, at 1x, has macOS's numbers -------------- */
+static void test_default_window_1x(void) {
+    SpdfWinChromeModel m = default_model();
+    SpdfWinChromeLayout l;
+    spdf_win_chrome_layout(&m, 1120, 800, 1.0f, &l);
+
+    CHECK_EQF(l.tabstrip.h, 42.0f);
+    CHECK_EQF(l.toolbar.h, 42.0f);
+    CHECK_EQF(l.toolbar.y, 42.0f);
+    CHECK_EQF(l.sidebar.y, 84.0f);
+    CHECK_EQF(l.sidebar.h, 800.0f - 84.0f);
+    /* 240 is under 0.34 * 1120 = 380.8, so the default survives the clamp. */
+    CHECK_EQF(l.sidebar.w, 240.0f);
+    CHECK_EQF(l.sidebar_divider.w, 5.0f);
+    /* 126.5 rounds to 127 whole device pixels at 1x. */
+    CHECK_EQF(l.minimap.w, 127.0f);
+    CHECK_EQF(l.minimap_divider.w, 5.0f);
+    CHECK_EQF(l.canvas.w, 1120.0f - 240.0f - 5.0f - 5.0f - 127.0f);
+    check_tiling(&l, 1120, 800, "default 1x");
+}
+
+/* --- DPI: every band is a whole number of device pixels ---------------- */
+static void test_whole_pixels(void) {
+    float scales[] = {1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f};
+    size_t i;
+    SpdfWinChromeModel m = default_model();
+    for (i = 0; i < sizeof(scales) / sizeof(scales[0]); ++i) {
+        SpdfWinChromeLayout l;
+        const SpdfWinChromeRect* all[7];
+        int k;
+        spdf_win_chrome_layout(&m, 1600, 1000, scales[i], &l);
+        all[0] = &l.tabstrip;
+        all[1] = &l.toolbar;
+        all[2] = &l.sidebar;
+        all[3] = &l.sidebar_divider;
+        all[4] = &l.canvas;
+        all[5] = &l.minimap_divider;
+        all[6] = &l.minimap;
+        for (k = 0; k < 7; ++k) {
+            /* A fractional edge puts a 1 px separator across two rows -- the
+             * defect the dark page border already hit at 150%. */
+            CHECK_EQF(all[k]->x, floorf(all[k]->x));
+            CHECK_EQF(all[k]->y, floorf(all[k]->y));
+            CHECK_EQF(all[k]->w, floorf(all[k]->w));
+            CHECK_EQF(all[k]->h, floorf(all[k]->h));
+        }
+        /* 42 pt scales linearly and lands whole. */
+        CHECK_EQF(l.tabstrip.h, floorf(42.0f * scales[i] + 0.5f));
+    }
+}
+
+/* --- presentation mode collapses both bands ---------------------------- */
+static void test_presentation(void) {
+    SpdfWinChromeModel m = default_model();
+    SpdfWinChromeLayout l;
+    m.presentation = 1;
+    spdf_win_chrome_layout(&m, 1120, 800, 1.5f, &l);
+    CHECK(spdf_win_chrome_rect_empty(l.tabstrip));
+    CHECK(spdf_win_chrome_rect_empty(l.toolbar));
+    CHECK_EQF(l.canvas.y, 0.0f);
+    CHECK_EQF(l.canvas.h, 800.0f);
+    check_tiling(&l, 1120, 800, "presentation");
+}
+
+/* --- clamps match macOS's ---------------------------------------------- */
+static void test_clamps(void) {
+    /* Default when asked for 0. */
+    CHECK_EQF(spdf_win_chrome_clamp_sidebar_pt(0.0f, 1120.0f, 0), 240.0f);
+    /* Below the minimum is raised. */
+    CHECK_EQF(spdf_win_chrome_clamp_sidebar_pt(50.0f, 1120.0f, 0), 176.0f);
+    /* Search mode raises the minimum to 216. */
+    CHECK_EQF(spdf_win_chrome_clamp_sidebar_pt(50.0f, 1120.0f, 1), 216.0f);
+    /* Above the maximum is lowered. */
+    CHECK_EQF(spdf_win_chrome_clamp_sidebar_pt(900.0f, 4000.0f, 0), 320.0f);
+    /* The 0.34 fraction binds on a narrow window: 0.34 * 600 = 204. */
+    CHECK_EQF(spdf_win_chrome_clamp_sidebar_pt(300.0f, 600.0f, 0), 204.0f);
+    /* When the fraction falls below the minimum, the minimum wins -- so a
+     * narrow window keeps a usable sidebar rather than a sliver. */
+    CHECK_EQF(spdf_win_chrome_clamp_sidebar_pt(300.0f, 400.0f, 0), 176.0f);
+
+    CHECK_EQF(spdf_win_chrome_clamp_minimap_pt(0.0f, 1120.0f), 126.5f);
+    CHECK_EQF(spdf_win_chrome_clamp_minimap_pt(10.0f, 1120.0f), 72.0f);
+    CHECK_EQF(spdf_win_chrome_clamp_minimap_pt(9000.0f, 4000.0f), 260.0f);
+}
+
+/* --- hit testing ------------------------------------------------------- */
+static void test_hit(void) {
+    SpdfWinChromeModel m = default_model();
+    SpdfWinChromeLayout l;
+    spdf_win_chrome_layout(&m, 1120, 800, 1.0f, &l);
+
+    CHECK(spdf_win_chrome_hit(&l, 500.0f, 10.0f) == SPDF_WIN_CHROME_TABSTRIP);
+    CHECK(spdf_win_chrome_hit(&l, 500.0f, 60.0f) == SPDF_WIN_CHROME_TOOLBAR);
+    CHECK(spdf_win_chrome_hit(&l, 100.0f, 400.0f) == SPDF_WIN_CHROME_SIDEBAR);
+    CHECK(spdf_win_chrome_hit(&l, l.canvas.x + 50.0f, 400.0f) == SPDF_WIN_CHROME_CANVAS);
+    CHECK(spdf_win_chrome_hit(&l, l.minimap.x + 10.0f, 400.0f) == SPDF_WIN_CHROME_MINIMAP);
+
+    /* A divider is found even a couple of points outside its 5 pt width: the
+     * grab area is widened, and it is tested BEFORE the panels it overlaps. */
+    CHECK(spdf_win_chrome_hit(&l, l.sidebar_divider.x + 2.0f, 400.0f) == SPDF_WIN_CHROME_SIDEBAR_DIVIDER);
+    CHECK(spdf_win_chrome_hit(&l, l.sidebar_divider.x - 1.0f, 400.0f) == SPDF_WIN_CHROME_SIDEBAR_DIVIDER);
+    CHECK(spdf_win_chrome_hit(&l, l.minimap_divider.x + 2.0f, 400.0f) == SPDF_WIN_CHROME_MINIMAP_DIVIDER);
+
+    /* Outside the client is nothing. */
+    CHECK(spdf_win_chrome_hit(&l, -5.0f, 400.0f) == SPDF_WIN_CHROME_NONE);
+    CHECK(spdf_win_chrome_hit(&l, 5000.0f, 400.0f) == SPDF_WIN_CHROME_NONE);
+    CHECK(spdf_win_chrome_hit(NULL, 5.0f, 5.0f) == SPDF_WIN_CHROME_NONE);
+}
+
+/* --- divider drags land inside the clamps ------------------------------ */
+static void test_drags(void) {
+    SpdfWinChromeModel m = default_model();
+    SpdfWinChromeLayout l;
+    float w;
+    spdf_win_chrome_layout(&m, 1600, 900, 1.0f, &l);
+
+    /* Dragging the sidebar's seam to x = 300 asks for 300 pt; 0.34 * 1600 = 544
+     * so the 320 maximum binds. */
+    w = spdf_win_chrome_sidebar_drag_pt(&l, 300.0f, 0);
+    CHECK(w >= SPDF_WIN_CHROME_SIDEBAR_MIN_W);
+    CHECK(w <= SPDF_WIN_CHROME_SIDEBAR_MAX_W);
+    CHECK_EQF(w, 300.0f);
+
+    /* Dragging far left clamps to the minimum, not to zero. */
+    w = spdf_win_chrome_sidebar_drag_pt(&l, 10.0f, 0);
+    CHECK_EQF(w, SPDF_WIN_CHROME_SIDEBAR_MIN_W);
+    /* And far right to the maximum. */
+    w = spdf_win_chrome_sidebar_drag_pt(&l, 1500.0f, 0);
+    CHECK_EQF(w, SPDF_WIN_CHROME_SIDEBAR_MAX_W);
+
+    /* The minimap's leading edge moves the opposite way. */
+    w = spdf_win_chrome_minimap_drag_pt(&l, l.minimap.x - 40.0f);
+    CHECK(w > SPDF_WIN_CHROME_MINIMAP_W);
+    w = spdf_win_chrome_minimap_drag_pt(&l, 1599.0f);
+    CHECK_EQF(w, SPDF_WIN_CHROME_MINIMAP_MIN_W);
+
+    CHECK_EQF(spdf_win_chrome_sidebar_drag_pt(NULL, 100.0f, 0), 0.0f);
+    CHECK_EQF(spdf_win_chrome_minimap_drag_pt(NULL, 100.0f), 0.0f);
+}
+
+/* --- degenerate input -------------------------------------------------- */
+static void test_degenerate(void) {
+    SpdfWinChromeModel m = default_model();
+    SpdfWinChromeLayout l;
+
+    spdf_win_chrome_layout(&m, 0, 0, 1.0f, &l);
+    CHECK(spdf_win_chrome_rect_empty(l.canvas));
+    CHECK(spdf_win_chrome_rect_empty(l.tabstrip));
+
+    spdf_win_chrome_layout(NULL, 800, 600, 1.0f, &l);
+    CHECK(spdf_win_chrome_rect_empty(l.canvas));
+
+    /* A zero or negative scale must not divide by zero or produce NaN. */
+    spdf_win_chrome_layout(&m, 800, 600, 0.0f, &l);
+    CHECK_EQF(l.dpi_scale, 1.0f);
+    CHECK(l.canvas.w > 0.0f);
+    spdf_win_chrome_layout(&m, 800, 600, -3.0f, &l);
+    CHECK_EQF(l.dpi_scale, 1.0f);
+
+    /* Calling with a NULL out pointer must not crash. */
+    spdf_win_chrome_layout(&m, 800, 600, 1.0f, NULL);
+    ++g_checks;
+}
+
+int main(void) {
+    test_metrics();
+    test_tiling_across_sizes();
+    test_default_window_1x();
+    test_whole_pixels();
+    test_presentation();
+    test_clamps();
+    test_hit();
+    test_drags();
+    test_degenerate();
+
+    printf("chrome_geometry_test: %d checks, %d failures\n", g_checks, g_failures);
+    return g_failures == 0 ? 0 : 1;
+}

@@ -25,6 +25,7 @@
  * for whoever draws one.
  */
 #include "spdf_win_canvas.h"
+#include "spdf_win_chrome_model.h" /* the chrome model the window paints */
 #include "spdf_win_layout.h" /* SPDF_WIN_PAGE_MARGIN_* for the initial window size */
 #include "spdf_win_tabs_app.h" /* the tab model, the session, and the glue to this canvas */
 #include "spdf_win_window.h"
@@ -69,6 +70,17 @@ struct app {
     spdf_win_window* window; /* set once the window exists; NULL on the headless paths */
     char window_id[SPDF_WIN_SESSION_ID_MAX];
     wchar_t status[512];
+    /* Chrome. Both panels are VISIBLE BY DEFAULT, matching macOS
+     * (ShenzhenPDFMac.mm:836-840) -- the widths are 0 here, which asks
+     * spdf_win_chrome.h for its defaults (240 and 126.5). Not yet persisted:
+     * session.yaml already carries showSidebar and minimapWidth and they are
+     * still passed through untouched. */
+    SpdfWinChromeModel chrome;
+    SpdfWinChromeTabStore chrome_tabs; /* owns the UTF-16 titles `chrome` borrows */
+    int show_sidebar;
+    int show_minimap;
+    float sidebar_w;
+    float minimap_w;
 };
 
 static void report(const wchar_t* text, bool interactive) {
@@ -126,8 +138,28 @@ static void close_document(app* a) {
 
 static int scene_for_window(void* user, spdf_win_scene* scene) {
     app* a = (app*)user;
+    SpdfWinChromeLayout chrome_layout;
     if (!a->canvas) return 0; /* the last tab just closed; the pump is exiting */
-    spdf_win_canvas_set_viewport(a->canvas, scene->target_px_w, scene->target_px_h, scene->dpi_scale);
+
+    /* Chrome first, because it decides how big the canvas is. The model is
+     * rebuilt per paint rather than cached: it is a few dozen bytes plus one
+     * UTF-16 conversion per tab, and a cached copy is how a closed tab keeps
+     * being drawn. `a->chrome_tabs` owns the titles the model borrows and must
+     * therefore live as long as the paint, which is why it is a field on `app`
+     * rather than a local here. */
+    spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, (a->render_flags & SPDF_RENDER_DARK_THEME) != 0,
+                                a->show_sidebar, a->show_minimap, a->sidebar_w, a->minimap_w);
+    scene->chrome = &a->chrome;
+    spdf_win_chrome_layout(&a->chrome, scene->client_px_w ? scene->client_px_w : scene->target_px_w,
+                           scene->client_px_h ? scene->client_px_h : scene->target_px_h, scene->dpi_scale,
+                           &chrome_layout);
+
+    /* The canvas is laid out against the CANVAS REGION, not the client area, so
+     * fit-width fits the space the reader can actually see. spdf_win_paint()
+     * translates the page rects into that region, so everything downstream keeps
+     * working in canvas-local coordinates. */
+    spdf_win_canvas_set_viewport(a->canvas, (unsigned)chrome_layout.canvas.w, (unsigned)chrome_layout.canvas.h,
+                                 scene->dpi_scale);
     if (a->pending_page > 0) {
         spdf_win_canvas_scroll_to_page(a->canvas, a->pending_page);
         a->pending_page = -1;
@@ -260,101 +292,7 @@ static void initial_client_size(spdf_document* doc, int* out_w, int* out_h) {
 
 /* --- headless ------------------------------------------------------------ */
 
-/* Everything --render-window-png can be told. Defaults are the window's own:
- * fit-width, no extra scroll, 96 dpi. */
-struct viewport_opts {
-    spdf_win_zoom_mode mode;
-    float zoom;      /* > 0 overrides the mode */
-    float scroll_x;  /* added to the top of `page` */
-    float scroll_y;
-    float dpi_scale;
-    float zoom_at_x; /* < 0 means "no zoom-at step" */
-    float zoom_at_y;
-    float zoom_factor;
-    /* Render N frames, scrolling a viewport height between each. One
-     * invocation is one process, so this is the only way to observe anything
-     * that is supposed to happen BETWEEN frames -- notably whether the worker
-     * pool had the next page ready. Only the last frame is written. */
-    int frames;
-};
-
-/* One machine-readable block per frame, on stdout. The consumer is a script
- * that crops the macOS reference render to the same source rectangle, so the
- * numbers here are the interface: change them and the comparison silently
- * starts measuring something else. */
-static void print_geometry(const char* label, spdf_win_canvas* canvas, const spdf_win_scene* scene) {
-    printf("%s viewport=%ux%u zoom=%.6f scroll=%.4f,%.4f content=%.4f,%.4f page=%d cache=%zu sync=%d started=%llu\n",
-           label, scene->target_px_w, scene->target_px_h, (double)spdf_win_canvas_zoom(canvas),
-           (double)spdf_win_canvas_scroll_x(canvas), (double)spdf_win_canvas_scroll_y(canvas),
-           (double)spdf_win_canvas_content_w(canvas), (double)spdf_win_canvas_content_h(canvas),
-           spdf_win_canvas_current_page(canvas), spdf_win_canvas_cache_bytes(canvas),
-           spdf_win_canvas_sync_renders(canvas), spdf_win_canvas_prefetched(canvas));
-    for (int i = 0; i < scene->page_count; ++i) {
-        const spdf_win_page_draw* d = &scene->pages[i];
-        printf("%s draw page=%d dest=%.4f,%.4f size=%.4f,%.4f bitmap=%dx%d\n", label, d->page_index, (double)d->dest_x,
-               (double)d->dest_y, (double)d->dest_w, (double)d->dest_h, d->bitmap ? d->bitmap->width : 0,
-               d->bitmap ? d->bitmap->height : 0);
-    }
-}
-
-static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int page_index, unsigned px_w, unsigned px_h,
-                        const viewport_opts* opts, const wchar_t* out_png) {
-    spdf_win_scene scene;
-    HRESULT hr;
-
-    if (px_w == 0 || px_h == 0) {
-        report(L"The viewport must have a non-zero width and height.", false);
-        return 64;
-    }
-    if (!open_document(a, wpath, page_index, false)) return 1;
-
-    spdf_win_canvas_set_viewport(a->canvas, px_w, px_h, opts->dpi_scale);
-    if (opts->zoom > 0.0f) spdf_win_canvas_set_zoom_at(a->canvas, opts->zoom, 0.0f, 0.0f);
-    else spdf_win_canvas_set_zoom_mode(a->canvas, opts->mode);
-    /* Anchor on the page, then apply the offset. Expressing the scroll
-     * relative to a page rather than in absolute canvas pixels is what makes a
-     * case like "the boundary between page 0 and page 1" mean the same thing
-     * at every zoom and on every document. */
-    spdf_win_canvas_scroll_to_page(a->canvas, page_index);
-    spdf_win_canvas_scroll_by(a->canvas, opts->scroll_x, opts->scroll_y);
-
-    memset(&scene, 0, sizeof(scene));
-    if (opts->zoom_at_x >= 0.0f) {
-        /* Render the pre-zoom scene first so the anchor can be checked: the
-         * document point under (zoom_at_x, zoom_at_y) is derivable from these
-         * numbers, and must land back on the same viewport pixel afterwards. */
-        spdf_win_canvas_build_scene(a->canvas, &scene);
-        print_geometry("pre", a->canvas, &scene);
-        spdf_win_canvas_zoom_at(a->canvas, opts->zoom_factor, opts->zoom_at_x, opts->zoom_at_y);
-        memset(&scene, 0, sizeof(scene));
-    }
-    spdf_win_canvas_build_scene(a->canvas, &scene);
-    print_geometry("frame", a->canvas, &scene);
-
-    /* Extra frames, each a viewport further down, with the pool given a moment
-     * to land its prefetch in between -- the wait a real reader's hand supplies
-     * for free and a back-to-back loop does not. `sync=` on each frame is the
-     * measurement: 0 means every visible page was already in the cache. */
-    for (int frame = 1; frame < opts->frames; ++frame) {
-        char label[32];
-        spdf_win_canvas_scroll_by(a->canvas, 0.0f, (float)px_h);
-        spdf_win_canvas_settle(a->canvas, 4000);
-        memset(&scene, 0, sizeof(scene));
-        spdf_win_canvas_build_scene(a->canvas, &scene);
-        _snprintf_s(label, sizeof(label), _TRUNCATE, "frame%d", frame);
-        print_geometry(label, a->canvas, &scene);
-    }
-
-    hr = spdf_win_render_scene_to_png(d2d, px_w, px_h, &scene, out_png);
-    if (FAILED(hr)) {
-        wchar_t message[256];
-        _snwprintf_s(message, _TRUNCATE, L"Compose to %s failed (hr=0x%08lX)", out_png, (unsigned long)hr);
-        report(message, false);
-        return 1;
-    }
-    wprintf(L"wrote %s\n", out_png);
-    return 0;
-}
+#include "spdf_win_headless_viewport.h"
 
 /* Depends on `app` and spdf_win_d2d above, so it is included here rather
  * than with the headers at the top. */
@@ -375,7 +313,8 @@ static int usage(void) {
              L"         --dpi S           device pixels per logical pixel (default 1)\n"
              L"         --zoom-at X,Y     zoom about this viewport point after scrolling\n"
              L"         --zoom-factor F   how much to zoom there (default 2)\n"
-             L"         --frames N        render N frames, a viewport apart; last is written\n");
+             L"         --frames N        render N frames, a viewport apart; last is written\n"
+             L"         --chrome          compose the tab strip, toolbar, sidebar and minimap too\n");
     return 64;
 }
 
@@ -390,6 +329,11 @@ int main(void) {
     memset(&a, 0, sizeof(a));
     memset(&opts, 0, sizeof(opts));
     a.render_flags = SPDF_RENDER_DEFAULT;
+    /* Both side panels open, as macOS does for a new document
+     * (ShenzhenPDFMac.mm:836-840). 0 width asks spdf_win_chrome.h for
+     * its default. */
+    a.show_sidebar = 1;
+    a.show_minimap = 1;
     opts.mode = SPDF_WIN_ZOOM_FIT_WIDTH;
     opts.dpi_scale = 1.0f;
     opts.zoom_at_x = -1.0f;
@@ -406,6 +350,12 @@ int main(void) {
         const wchar_t* value = i + 1 < argc ? argv[i + 1] : NULL;
         if (wcscmp(flag, L"--dark") == 0) {
             a.render_flags |= SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES;
+            continue;
+        }
+        /* Valueless, like --dark. Composes the window chrome into the headless
+         * frame, so the whole window's pixels can be compared without a desktop. */
+        if (wcscmp(flag, L"--chrome") == 0) {
+            opts.chrome = 1;
             continue;
         }
         if (!value) return usage();

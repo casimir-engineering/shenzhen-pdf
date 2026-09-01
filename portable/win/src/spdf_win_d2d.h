@@ -34,6 +34,7 @@
 #include <wincodec.h>
 
 #include "shenzhen_pdf_core.h"
+#include "spdf_win_chrome.h" /* SpdfWinChromeModel, carried by the scene */
 
 #ifdef __cplusplus
 extern "C" {
@@ -140,6 +141,18 @@ typedef struct spdf_win_scene {
      * target already knows the number. */
     unsigned target_px_w;
     unsigned target_px_h;
+    /* Size of the WHOLE client area in device pixels, which is not the same as
+     * target_px_w/h once there is chrome: spdf_win_canvas_build_scene() sets
+     * target_px_w/h from the CANVAS viewport (documented in spdf_win_canvas.h),
+     * so after it runs those describe the page region, not the window.
+     *
+     * The chrome has to be laid out against the window. Keeping a separate pair
+     * that the canvas never touches is what stops the chrome from laying itself
+     * out inside the canvas it just produced -- which it did, once, and drew the
+     * entire window's furniture into the left half of itself. 0 means "same as
+     * target_px_w/h", which is every pre-chrome caller and the probe. */
+    unsigned client_px_w;
+    unsigned client_px_h;
     /* Device pixels per logical pixel (1.0 at 96 dpi, 2.0 on a 2x display).
      * Chrome metrics are multiplied by this; the page itself is already
      * rendered at the right zoom by the caller. */
@@ -148,6 +161,19 @@ typedef struct spdf_win_scene {
     /* UTF-16 status or error line, drawn centred when `page` is NULL. May be
      * NULL. A missing font degrades to no text, never to a failed paint. */
     const wchar_t* message;
+    /* SPDF_WIN_FIT_CANVAS only. NULL means "no chrome": the canvas gets the
+     * whole target, which is what every existing pixel test and the probe
+     * expect, so they keep comparing a bare canvas and nothing had to change to
+     * accommodate the chrome.
+     *
+     * When present, spdf_win_paint() divides the target with
+     * spdf_win_chrome_layout(), paints the strip/toolbar/panels, and clips the
+     * pages to the canvas region. The page positions in `pages` are then in
+     * CANVAS-LOCAL device pixels, not target-local -- which is also what
+     * --render-window-png prints, so its geometry output stays comparable
+     * whether or not chrome is on. The caller must therefore have laid the
+     * canvas out against the canvas rect's size, not the client size. */
+    const SpdfWinChromeModel* chrome;
 } spdf_win_scene;
 
 /* err/err_len may be NULL/0. Returns NULL on failure. */

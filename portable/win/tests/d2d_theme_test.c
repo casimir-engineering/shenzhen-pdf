@@ -33,7 +33,13 @@
  * zoom shows a mismatched sliver around a recoloured page, and asserting the
  * second is how the two files can never drift apart silently.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_d2d.cpp portable/core/spdf_recolor.c */
+/* spdf-test-sources: portable/win/src/spdf_win_d2d.cpp portable/win/src/spdf_win_chrome_paint.cpp portable/win/src/spdf_win_chrome_toolbar.cpp portable/win/src/spdf_win_chrome_panels.cpp portable/core/spdf_recolor.c */
+/* The three spdf_win_chrome_*.cpp units are here because spdf_win_paint() now
+ * calls spdf_win_chrome_paint_all(). This suite passes scene.chrome == NULL, so
+ * none of that code RUNS -- but it still has to LINK, and omitting a translation
+ * unit from a Windows link line produces a wall of LNK2019 rather than an error
+ * at the file that wanted it (portable/win/README.md's gotcha about
+ * spdf_win_compat.c is the same trap). */
 
 #include "spdf_win_d2d.h"
 
