@@ -8,14 +8,27 @@
 #import "SPDFMarkdownTableDecorations.h"
 #import "SPDFMarkdownTableLayout.h"
 
+// A4's two edges in points, and the Word-standard one-inch margin reduced 15%
+// per user preference. Turning the paper swaps the edges and leaves the margin
+// alone, so every margin stays a margin instead of being transposed with it.
+static const CGFloat kSPDFMarkdownA4ShortEdge = 595.2756;
+static const CGFloat kSPDFMarkdownA4LongEdge = 841.8898;
+static const CGFloat kSPDFMarkdownA4Margin = 61.2;
+
 @implementation SPDFMarkdownPageConfiguration
++ (instancetype)A4ConfigurationForOrientation:(SPDFMarkdownPageOrientation)orientation {
+    NSSize paper = orientation == SPDFMarkdownPageOrientationLandscape
+                       ? NSMakeSize(kSPDFMarkdownA4LongEdge, kSPDFMarkdownA4ShortEdge)
+                       : NSMakeSize(kSPDFMarkdownA4ShortEdge, kSPDFMarkdownA4LongEdge);
+    CGFloat margin = kSPDFMarkdownA4Margin;
+    NSRect printable = NSMakeRect(margin, margin, paper.width - margin * 2, paper.height - margin * 2);
+    return [self configurationForPaperSize:paper printableRect:printable];
+}
 + (instancetype)A4PortraitConfiguration {
-    SPDFMarkdownPageConfiguration* value = [SPDFMarkdownPageConfiguration new];
-    value.paperSize = NSMakeSize(595.2756, 841.8898);
-    // Word-standard one-inch margins reduced 15% per user preference.
-    value.printableRect = NSMakeRect(61.2, 61.2, value.paperSize.width - 122.4, value.paperSize.height - 122.4);
-    value.headingKeepThreshold = 0.75;
-    return value;
+    return [self A4ConfigurationForOrientation:SPDFMarkdownPageOrientationPortrait];
+}
++ (instancetype)A4LandscapeConfiguration {
+    return [self A4ConfigurationForOrientation:SPDFMarkdownPageOrientationLandscape];
 }
 + (instancetype)configurationForPaperSize:(NSSize)paperSize printableRect:(NSRect)printableRect {
     SPDFMarkdownPageConfiguration* value = [SPDFMarkdownPageConfiguration new];
@@ -26,6 +39,10 @@
 }
 - (CGFloat)topContentInset {
     return self.paperSize.height - NSMaxY(self.printableRect);
+}
+- (SPDFMarkdownPageOrientation)orientation {
+    return self.paperSize.width > self.paperSize.height ? SPDFMarkdownPageOrientationLandscape
+                                                        : SPDFMarkdownPageOrientationPortrait;
 }
 - (id)copyWithZone:(NSZone*)zone {
     SPDFMarkdownPageConfiguration* copy = [[[self class] allocWithZone:zone] init];

@@ -76,6 +76,10 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) BOOL missingFile;
 @property(nonatomic, copy) NSString* missingMessage;
 @property(nonatomic) NSRange markdownSelectionRange;
+// Markdown paper orientation for THIS tab: NO = A4 portrait (the default),
+// YES = A4 landscape, which the rotate commands switch by re-flowing the
+// document onto turned paper. Persisted as "markdownLandscape".
+@property(nonatomic) BOOL markdownLandscape;
 @property(nonatomic, copy) NSString* markdownAnchor;
 @property(nonatomic, strong) SPDFMacMarkdownSession* cachedMarkdownSession;
 @property(nonatomic, copy) NSString* cachedMarkdownFileIdentity;

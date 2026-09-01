@@ -5,7 +5,10 @@
 //
 // Font scale and theme change what is RENDERED, so an active session rerenders
 // in place; "keep image colors" only changes how the already-rendered pages are
-// DRAWN, so it retargets the live plan and repaints instead.
+// DRAWN, so it retargets the live plan and repaints instead. The paper
+// orientation is the third rerendering kind and lives next door in
+// SPDFMacMarkdownSession+Paper.mm; -renderTrailsPreferences below answers for
+// all three.
 
 @implementation SPDFMacMarkdownSession (Appearance)
 
@@ -28,7 +31,8 @@ CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
 // The installed render trails the session preferences: a catch-up rerender is
 // due (used by activation and the self-heal pass).
 - (BOOL)renderTrailsPreferences {
-    return _renderedFontScale != _fontScale || _renderedThemeVariant != _themeVariant;
+    return _renderedFontScale != _fontScale || _renderedThemeVariant != _themeVariant ||
+           _renderedOrientation != _pageOrientation;
 }
 
 @end

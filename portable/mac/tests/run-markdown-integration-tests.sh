@@ -106,6 +106,7 @@ $PORTABLE/mac/SPDFMacMarkdownSession.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Appearance.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Export.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Interaction.mm
+$PORTABLE/mac/SPDFMacMarkdownSession+Paper.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+RemoteImages.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Search.mm
 $PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
@@ -124,6 +125,7 @@ SPDFMacMarkdownRemoteImageSessionTests
 SPDFMacMarkdownLanguagePickerTests
 SPDFMacMarkdownCodeControlsTests
 SPDFMacMarkdownPrintingTests
+SPDFMacMarkdownOrientationTests
 "
 
 CXXFLAGS="-isysroot $SDKROOT -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror $SANITIZER_FLAGS \

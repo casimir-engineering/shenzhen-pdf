@@ -72,6 +72,22 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)addReadingThemeOverflowItemsToMenu:(NSMenu*)menu hiddenViews:(NSSet<NSView*>*)hiddenViews;
 @end
 
+// Rotate on a Markdown document, implemented in SPDFMacMarkdownOrientation.mm.
+// A PDF page rotation turns rendered pixels; a Markdown document has no pixels
+// of its own, so the same command turns the PAPER between A4 portrait and A4
+// landscape and the text RE-FLOWS onto it, still upright. Per tab, persisted in
+// the session's "markdownLandscape" key.
+@interface ShenzhenMacDelegate (SPDFMacMarkdownOrientation)
+// Shared enablement for Rotate Clockwise / Rotate Anticlockwise: a rotatable
+// PDF page (unchanged) or a loaded Markdown document.
+- (BOOL)canRotateActivePage;
+// Turns the active Markdown document's paper. Both directions swap the same two
+// paper edges, so the sign only picks the wording. NO when no Markdown document
+// is up, which is what keeps -rotateCurrentPageByDegrees: beeping for every
+// other kind of non-PDF document.
+- (BOOL)rotateMarkdownPaperByDegrees:(int)degrees;
+@end
+
 // Implemented in ShenzhenPDFMac.mm. A category of their own on purpose:
 // declaring them in (SPDFMacMarkdownIntegration) makes the compiler expect
 // SPDFMacMarkdownIntegration.mm to define them too.

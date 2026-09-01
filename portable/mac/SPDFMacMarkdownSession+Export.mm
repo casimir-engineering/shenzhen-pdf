@@ -17,9 +17,11 @@
 // export plan and the on-screen plan differ in palette and nothing else.
 SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(SPDFMarkdownRenderedDocument* rendered,
                                                             SPDFMarkdownThemeVariant variant,
-                                                            BOOL preservesImageColors) {
+                                                            BOOL preservesImageColors,
+                                                            SPDFMarkdownPageOrientation orientation) {
     SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
-    SPDFMarkdownPageConfiguration* configuration = [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
+    SPDFMarkdownPageConfiguration* configuration =
+        [SPDFMarkdownPageConfiguration A4ConfigurationForOrientation:orientation];
     configuration.includesCodeLanguageControlSpacing = YES;
     configuration.themeVariant = variant;
     configuration.preservesImageColors = preservesImageColors;
@@ -33,13 +35,17 @@ SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(SPDFMarkdownRendered
 - (void)ensureLightExportRendition {
     SPDFMarkdownRenderedDocument* source = self.renderedDocument;
     if (!source || !self.document) return;
-    if (_exportPlan && _exportRenditionSource == source) return;
+    // Orientation is independent of theme, so the cached light rendition is
+    // only reusable while its paper still matches the session's.
+    if (_exportPlan && _exportRenditionSource == source &&
+        _exportPlan.configuration.orientation == _pageOrientation)
+        return;
     SPDFMarkdownRenderOptions* options = [self renderOptionsForThemeVariant:SPDFMarkdownThemeVariantLight];
     SPDFMarkdownRenderedDocument* rendered =
         [self.document renderedDocumentWithOptions:options languageOverrides:[_languageOverrides copy]];
     if (!rendered) return;
     // Light never recolors, so the flag is immaterial here; stated, not inferred.
-    _exportPlan = SPDFMacMarkdownPlanForRendition(rendered, SPDFMarkdownThemeVariantLight, YES);
+    _exportPlan = SPDFMacMarkdownPlanForRendition(rendered, SPDFMarkdownThemeVariantLight, YES, _pageOrientation);
     _exportAttributedString = rendered.attributedString;
     _exportRenditionSource = source;
 }
