@@ -161,7 +161,75 @@ typedef struct SpdfWinChromeModel {
     float minimap_w;   /* points; 0 asks for the default */
     int sidebar_section; /* 0 chapters, 1 comments, 2 search */
     int search_active;   /* the Search section exists only while a query is live */
+
+    /* --- what the toolbar reads out -------------------------------------
+     *
+     * These are here rather than fetched by the painter because the painters
+     * must stay callable with a hand-built model and no app at all: that is what
+     * lets the whole window be composed offscreen and pixel-tested
+     * (spdf_win_chrome_paint.h). Every one of them is a plain value the window
+     * layer fills in spdf_win_chrome_model.cpp.
+     *
+     * `page_index` IS 0-BASED, like every page number inside this port
+     * (spdf_win_main.cpp's header comment). The toolbar draws page_index + 1,
+     * because the 1-based indicator is a PRESENTATION concern and this is where
+     * that conversion is allowed to happen -- exactly what macOS does at
+     * ShenzhenPDFMac.mm:10528 (`_pageIndex + 1`). -1 means "no document", which
+     * macOS draws as an empty field (:10528's `hasDoc` branch). */
+    int page_index;
+    int page_count;
+    /* Device pixels per PDF point, straight from spdf_win_canvas_zoom(), and
+     * the display's device-pixels-per-logical-pixel that turns it into a
+     * percentage. Two fields rather than a pre-divided percentage so the model
+     * carries measurements and the toolbar owns the rounding. */
+    float zoom;
+    float zoom_dpi_scale;
+    int fit_mode; /* spdf_win_chrome_fit */
 } SpdfWinChromeModel;
+
+/* The fit-mode popup's four fixed items, in macOS's own order
+ * (ShenzhenPDFMac.mm:3006-3011), plus the CUSTOM state that has no fixed title:
+ * macOS inserts a "<N>%" item for it and removes it again once the zoom returns
+ * to 1.0 (syncToolbarState, :10484-10505).
+ *
+ * Numbered independently of spdf_win_zoom_mode on purpose. spdf_win_chrome.h
+ * must not include spdf_win_canvas.h -- the chrome is drawn in tests that have
+ * no canvas, no document and no MuPDF -- so the window layer maps between the
+ * two. FIT_HEIGHT is listed because macOS offers it and this is the vocabulary
+ * the toolbar speaks; the Windows canvas has no fit-height mode yet, so nothing
+ * currently produces it. */
+typedef enum spdf_win_chrome_fit {
+    SPDF_WIN_CHROME_FIT_CUSTOM = 0,
+    SPDF_WIN_CHROME_FIT_ACTUAL,
+    SPDF_WIN_CHROME_FIT_WIDTH,
+    SPDF_WIN_CHROME_FIT_HEIGHT,
+    SPDF_WIN_CHROME_FIT_PAGE
+} spdf_win_chrome_fit;
+
+/* The fixed title for a fit mode, or NULL for CUSTOM -- whose title is a
+ * percentage the caller formats, because a printf in a geometry header would
+ * drag <stdio.h> into every test that only wants rectangles. */
+static SPDF_WIN_CHROME_INLINE const wchar_t* spdf_win_chrome_fit_label(int fit_mode) {
+    switch (fit_mode) {
+        case SPDF_WIN_CHROME_FIT_ACTUAL: return L"100%";
+        case SPDF_WIN_CHROME_FIT_WIDTH: return L"Fit Width";
+        case SPDF_WIN_CHROME_FIT_HEIGHT: return L"Fit Height";
+        case SPDF_WIN_CHROME_FIT_PAGE: return L"Fit Page";
+        default: return NULL;
+    }
+}
+
+/* The percentage a custom zoom reads out. macOS formats `_zoom * 100.0` with
+ * "%.0f%%" (:10486), where its zoom is points-to-points; ours is device pixels
+ * per PDF point, so it is divided by the DPI scale first -- otherwise a 150%
+ * display would report 150% at actual size. */
+static SPDF_WIN_CHROME_INLINE int spdf_win_chrome_zoom_percent(const SpdfWinChromeModel* m) {
+    float s;
+    if (!m) return 100;
+    s = m->zoom_dpi_scale > 0.0f ? m->zoom_dpi_scale : 1.0f;
+    if (!(m->zoom > 0.0f)) return 100;
+    return (int)floorf(m->zoom / s * 100.0f + 0.5f);
+}
 
 static SPDF_WIN_CHROME_INLINE SpdfWinChromeRect spdf_win_chrome_zero(void) {
     SpdfWinChromeRect r;

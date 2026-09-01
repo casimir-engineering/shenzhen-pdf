@@ -28,18 +28,17 @@ struct spdf_win_window {
     UINT dpi;
     int exit_code;
 
-    /* Drag-to-pan state. `dragging` is the authority, not GetCapture(): a
-     * capture can be taken away (an Alt+Tab, a system modal) and the resulting
-     * WM_CAPTURECHANGED must end the drag, or the next mouse move a second
-     * later would pan by the distance the cursor travelled in between. */
-    bool dragging;
-    POINT drag_last;
+    /* Which button, if any, is held with the capture. The authority, not
+     * GetCapture(): a capture can be taken away (an Alt+Tab, a system modal) and
+     * the WM_CAPTURECHANGED that follows must end the gesture, or the next mouse
+     * move a second later applies the distance travelled in between. WHAT the
+     * gesture means is the caller's now; the capture is the Win32 half. */
+    int pressed; /* spdf_win_chrome_button; SPDF_WIN_CB_NONE when nothing is */
 };
 
 /* SetProcessDpiAwarenessContext and GetDpiForWindow both arrived in Windows 10
  * 1607/1703. Resolving them dynamically means one binary runs everywhere and
- * simply looks slightly wrong on a machine older than the feature, instead of
- * failing to start. */
+ * merely looks slightly wrong on a Windows older than the feature. */
 typedef BOOL(WINAPI* set_dpi_ctx_fn)(DPI_AWARENESS_CONTEXT);
 typedef UINT(WINAPI* get_dpi_for_window_fn)(HWND);
 
@@ -108,15 +107,14 @@ static void paint(spdf_win_window* window) {
     scene.fit = SPDF_WIN_FIT_CANVAS;
     scene.target_px_w = px_w;
     scene.target_px_h = px_h;
-    /* The chrome lays itself out against these, not against
-     * target_px_w/h, which the canvas overwrites with its own viewport. */
+    /* The chrome lays itself out against these, not target_px_w/h, which the
+     * canvas overwrites with its own viewport. */
     scene.client_px_w = px_w;
     scene.client_px_h = px_h;
     scene.dpi_scale = spdf_win_window_dpi_scale(window);
     /* A handler that declines leaves an EMPTY scene, not a half-filled one: it
-     * may have written a page list and then decided against it, and drawing
-     * from a list its owner has disclaimed is how a stale pointer gets
-     * dereferenced. */
+     * may have written a page list and then decided against it, and drawing from
+     * a list its owner has disclaimed is how a stale pointer is dereferenced. */
     if (window->scene_fn && !window->scene_fn(window->user, &scene)) {
         scene.page = NULL;
         scene.pages = NULL;
@@ -133,77 +131,9 @@ static void paint(spdf_win_window* window) {
     }
 }
 
-/* Fills in the fields every event carries and dispatches. Returns non-zero
- * when the handler changed the view, and invalidates when it did. */
-static int dispatch(spdf_win_window* window, spdf_win_input* input) {
-    RECT rc = {0, 0, 0, 0};
-
-    if (!window->input_fn) return 0;
-    GetClientRect(window->hwnd, &rc);
-    input->view_px_w = (unsigned)(rc.right - rc.left);
-    input->view_px_h = (unsigned)(rc.bottom - rc.top);
-    input->mods = (GetKeyState(VK_CONTROL) < 0 ? SPDF_WIN_MOD_CTRL : 0u) |
-                  (GetKeyState(VK_SHIFT) < 0 ? SPDF_WIN_MOD_SHIFT : 0u);
-    if (!window->input_fn(window->user, input)) return 0;
-    InvalidateRect(window->hwnd, NULL, FALSE);
-    return 1;
-}
-
-/* One wheel notch in device pixels. SPI_GETWHEELSCROLLLINES is the user's own
- * setting and honouring it is the difference between a viewer that feels like
- * the rest of the desktop and one that does not; WHEEL_PAGESCROLL (0xFFFFFFFF)
- * is its "scroll a screenful" value, which the caller can only express if we
- * hand it a distance rather than a notch count. */
-static float wheel_step(const spdf_win_window* window, unsigned view_px_h) {
-    UINT lines = 3;
-    float scale = spdf_win_window_dpi_scale(window);
-
-    SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
-    if (lines == WHEEL_PAGESCROLL) return (float)view_px_h * 0.9f;
-    if (lines == 0) lines = 3;
-    return (float)lines * 20.0f * scale;
-}
-
-/* Mouse wheel, both axes. Ctrl zooms at the cursor; Shift turns a vertical
- * wheel horizontal, which is the Windows convention for a one-axis mouse. */
-static void on_wheel(spdf_win_window* window, WPARAM wparam, LPARAM lparam, bool horizontal) {
-    spdf_win_input input;
-    POINT pt;
-    float notches = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
-    RECT rc = {0, 0, 0, 0};
-
-    memset(&input, 0, sizeof(input));
-    /* WM_MOUSEWHEEL carries SCREEN coordinates, unlike every other mouse
-     * message in this file. Converting is not optional: the un-converted point
-     * would anchor a Ctrl+wheel zoom to wherever the window happens to sit on
-     * the desktop. */
-    pt.x = GET_X_LPARAM(lparam);
-    pt.y = GET_Y_LPARAM(lparam);
-    ScreenToClient(window->hwnd, &pt);
-    input.x = (float)pt.x;
-    input.y = (float)pt.y;
-
-    if (!horizontal && (GET_KEYSTATE_WPARAM(wparam) & MK_CONTROL)) {
-        input.kind = SPDF_WIN_INPUT_ZOOM;
-        /* Geometric, so N notches out exactly undo N notches in. */
-        input.factor = powf(1.1f, notches);
-        dispatch(window, &input);
-        return;
-    }
-
-    GetClientRect(window->hwnd, &rc);
-    float step = notches * wheel_step(window, (unsigned)(rc.bottom - rc.top));
-    input.kind = SPDF_WIN_INPUT_SCROLL;
-    if (horizontal || (GET_KEYSTATE_WPARAM(wparam) & MK_SHIFT)) input.dx = horizontal ? step : -step;
-    else input.dy = -step;
-    dispatch(window, &input);
-}
-
-static void end_drag(spdf_win_window* window) {
-    if (!window->dragging) return;
-    window->dragging = false;
-    if (GetCapture() == window->hwnd) ReleaseCapture();
-}
+/* Message-to-input translation: dispatch(), dispatch_mouse(), on_wheel() and
+ * end_press(). Depends on `struct spdf_win_window` above, hence the position. */
+#include "spdf_win_window_input.h"
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     spdf_win_window* window = (spdf_win_window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
@@ -239,40 +169,54 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             return 0;
         case WM_LBUTTONDOWN:
         case WM_MBUTTONDOWN:
-            window->dragging = true;
-            window->drag_last.x = GET_X_LPARAM(lparam);
-            window->drag_last.y = GET_Y_LPARAM(lparam);
+            /* Capture first, so a handler that starts a drag has the pointer. */
+            window->pressed = msg == WM_LBUTTONDOWN ? SPDF_WIN_CB_LEFT : SPDF_WIN_CB_MIDDLE;
             SetCapture(hwnd);
             SetFocus(hwnd);
+            dispatch_mouse(window, SPDF_WIN_INPUT_MOUSE_DOWN, window->pressed, lparam);
             return 0;
-        case WM_MOUSEMOVE: {
-            if (!window->dragging) break;
-            spdf_win_input input;
-            POINT now = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            memset(&input, 0, sizeof(input));
-            input.kind = SPDF_WIN_INPUT_SCROLL;
-            /* Dragging the paper down scrolls the document up, so the scroll
-             * delta is the negated cursor delta -- grab-and-pull, not
-             * push-the-scrollbar. */
-            input.dx = (float)(window->drag_last.x - now.x);
-            input.dy = (float)(window->drag_last.y - now.y);
-            input.x = (float)now.x;
-            input.y = (float)now.y;
-            window->drag_last = now;
-            dispatch(window, &input);
+        case WM_MOUSEMOVE:
+            /* Unconditionally, not only while a button is down: hover state is
+             * what lights the tab strip, and the handler decides if it changed. */
+            dispatch_mouse(window, SPDF_WIN_INPUT_MOUSE_MOVE, window->pressed, lparam);
             return 0;
-        }
+        case WM_MOUSELEAVE:
+            /* A position no chrome contains, so the router clears every hot flag.
+             * Not while a button is down: the capture keeps the gesture alive
+             * outside the window and (-1, -1) would pan the whole way there. */
+            if (window->pressed == SPDF_WIN_CB_NONE)
+                dispatch_mouse(window, SPDF_WIN_INPUT_MOUSE_MOVE, SPDF_WIN_CB_NONE, (LPARAM)-1);
+            return 0;
         case WM_LBUTTONUP:
+            end_press(window, SPDF_WIN_CB_LEFT, lparam);
+            return 0;
         case WM_MBUTTONUP:
-            end_drag(window);
+            end_press(window, SPDF_WIN_CB_MIDDLE, lparam);
             return 0;
         case WM_CAPTURECHANGED:
-            window->dragging = false;
+            /* lparam is the window that TOOK the capture, not a position, and
+             * SPDF_WIN_CB_NONE already says "cancelled", not "clicked". */
+            end_press(window, SPDF_WIN_CB_NONE, 0);
             return 0;
         case WM_SETCURSOR:
             if (LOWORD(lparam) == HTCLIENT) {
-                SetCursor(LoadCursorW(NULL, MAKEINTRESOURCEW(window->dragging ? 32646 /* IDC_SIZEALL */
-                                                                              : 32512 /* IDC_ARROW */)));
+                /* Ask the handler: the answer is about the chrome, or during a
+                 * drag about the drag. WM_SETCURSOR carries no position. */
+                POINT pt = {0, 0};
+                spdf_win_input query;
+                UINT id = 32512; /* IDC_ARROW */
+                memset(&query, 0, sizeof(query));
+                query.kind = SPDF_WIN_INPUT_CURSOR;
+                query.button = window->pressed;
+                query.cursor = SPDF_WIN_CC_ARROW;
+                if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
+                    query.x = (float)pt.x;
+                    query.y = (float)pt.y;
+                    dispatch(window, &query);
+                }
+                if (query.cursor == SPDF_WIN_CC_SIZEWE) id = 32644;       /* IDC_SIZEWE */
+                else if (query.cursor == SPDF_WIN_CC_SIZEALL) id = 32646; /* IDC_SIZEALL */
+                SetCursor(LoadCursorW(NULL, MAKEINTRESOURCEW(id)));
                 return TRUE;
             }
             break;
@@ -301,7 +245,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             break;
         }
         case WM_DESTROY:
-            end_drag(window);
+            window->pressed = SPDF_WIN_CB_NONE;
+            if (GetCapture() == hwnd) ReleaseCapture();
             discard_target(window);
             window->hwnd = NULL;
             PostQuitMessage(window->exit_code);

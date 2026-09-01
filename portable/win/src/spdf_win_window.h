@@ -14,6 +14,13 @@
 #define SPDF_WIN_WINDOW_H
 
 #include "spdf_win_d2d.h"
+/* For spdf_win_chrome_button and spdf_win_chrome_cursor, which the mouse events
+ * below carry. Taking them from there rather than declaring a parallel pair here
+ * is deliberate: two enums with the same meaning and independent numbering is
+ * how a middle click becomes a left click at a layer boundary. It costs nothing
+ * -- that header is pure, toolkit-free and header-only -- and it does not make
+ * this file know about documents, which is the layering rule it actually has. */
+#include "spdf_win_chrome_input.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,8 +55,41 @@ typedef enum spdf_win_input_kind {
     SPDF_WIN_INPUT_ZOOM = 1,
     /* A raw VK_* in `key`. The caller owns the keymap: which key means
      * "next page" is product policy, not window plumbing. */
-    SPDF_WIN_INPUT_KEY = 2
+    SPDF_WIN_INPUT_KEY = 2,
+
+    /* THE MOUSE, RAW. `button` says which, `x`/`y` where, in CLIENT device
+     * pixels -- the space every rect in SpdfWinChromeLayout lives in.
+     *
+     * These deliberately do NOT say "pan". Drag-to-pan used to be resolved
+     * inside this file, which was correct while the whole client area was
+     * canvas; it is not correct now that the top 84 pt of it is chrome, because
+     * "does this drag pan the document" became a question about where the
+     * pointer is, and where anything is is the caller's knowledge. So the window
+     * holds the CAPTURE and the caller holds the MEANING -- the same split this
+     * file already states for the keymap, one device over. The caller is
+     * expected to route these through spdf_win_chrome_input.h.
+     *
+     * MOUSE_MOVE is sent whether or not a button is down, because hover state is
+     * what lights the tab strip's close boxes. A handler that changes nothing
+     * must return 0, or every pixel of pointer travel costs a repaint. */
+    SPDF_WIN_INPUT_MOUSE_DOWN = 3,
+    SPDF_WIN_INPUT_MOUSE_UP = 4,
+    SPDF_WIN_INPUT_MOUSE_MOVE = 5,
+
+    /* WM_SETCURSOR, asking which cursor belongs at (x, y). The handler writes
+     * `cursor` and MUST return 0: a cursor query happens on every pointer move
+     * and must never invalidate. A separate event rather than a value cached
+     * from the last MOUSE_MOVE because Windows sends WM_SETCURSOR BEFORE
+     * WM_MOUSEMOVE, so a cache would always answer for the previous position --
+     * visible as a resize cursor that lags a pixel behind a divider's edge. */
+    SPDF_WIN_INPUT_CURSOR = 6
 } spdf_win_input_kind;
+
+/* A button-up whose `button` is SPDF_WIN_CB_NONE is a CANCELLED drag, not a
+ * release: the capture was taken away (an Alt+Tab, a system modal), and a
+ * handler that treats it as a release would finish a gesture the user abandoned.
+ * The old code had the same hazard and solved it the same way -- see
+ * WM_CAPTURECHANGED in spdf_win_window.cpp. */
 
 #define SPDF_WIN_MOD_CTRL 0x1u
 #define SPDF_WIN_MOD_SHIFT 0x2u
@@ -63,16 +103,39 @@ typedef struct spdf_win_input {
     float y;
     unsigned key;
     unsigned mods;
+    /* Which mouse button, as spdf_win_chrome_button. Mouse events only. */
+    int button;
     /* Client area in device pixels at the moment of the event, so a handler
-     * can express a page-sized scroll without asking the window anything. */
+     * can express a page-sized scroll without asking the window anything.
+     *
+     * NOTE that this is the CLIENT area, not the canvas: the canvas is a
+     * sub-rect of it now. A handler that wants the canvas divides the client
+     * area with spdf_win_chrome_layout(), the same function the painter uses --
+     * which is why dpi_scale is here too. */
     unsigned view_px_w;
     unsigned view_px_h;
+    /* Device pixels per logical pixel, so a handler can lay the chrome out the
+     * same way the painter did and hit-test against the rects that were actually
+     * drawn. Without it a handler would have to guess, and a guessed DPI puts
+     * every chrome edge in the wrong place at 150%. */
+    float dpi_scale;
+
+    /* --- written by the HANDLER, read by the window ---------------------- */
+    /* SPDF_WIN_INPUT_CURSOR only: which cursor belongs at (x, y), as
+     * spdf_win_chrome_cursor. Pre-set to SPDF_WIN_CC_ARROW, so a handler that
+     * does not care leaves it alone. */
+    int cursor;
 } spdf_win_input;
 
 /* Return non-zero when the view changed and needs repainting. Returning 0 for
  * a key the caller does not handle is what keeps unhandled keys from costing a
- * full repaint. */
-typedef int (*spdf_win_input_fn)(void* user, const spdf_win_input* input);
+ * full repaint -- and for SPDF_WIN_INPUT_MOUSE_MOVE and _CURSOR, which arrive
+ * on every pixel of pointer travel, it is what keeps the pointer from repainting
+ * the window continuously.
+ *
+ * NON-CONST because the mouse and cursor events carry an answer back (see
+ * `cursor` above). Nothing else in the struct may be modified. */
+typedef int (*spdf_win_input_fn)(void* user, spdf_win_input* input);
 
 /* Process-wide; call once before creating a window. Asks for per-monitor v2
  * DPI awareness and degrades silently on a Windows too old to offer it. */

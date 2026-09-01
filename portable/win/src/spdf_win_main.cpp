@@ -81,6 +81,18 @@ struct app {
     int show_minimap;
     float sidebar_w;
     float minimap_w;
+    /* Hover, so the tab strip's close boxes light up. -1 for none, which is what
+     * SpdfWinChromeModel documents; kept here rather than recomputed per paint
+     * because the pointer's position is not something a paint can ask for. */
+    int hot_tab;
+    int hot_close;
+    /* The gesture in progress, and where the pointer last was. The WINDOW holds
+     * the capture; the app holds the meaning, because whether a drag pans the
+     * document or resizes a panel depends on where it started -- see
+     * spdf_win_chrome_actions.h. SPDF_WIN_CA_NONE when no button is down. */
+    spdf_win_chrome_action drag;
+    float drag_last_x;
+    float drag_last_y;
 };
 
 static void report(const wchar_t* text, bool interactive) {
@@ -134,41 +146,6 @@ static void close_document(app* a) {
     a->path = NULL;
 }
 
-/* --- the window ---------------------------------------------------------- */
-
-static int scene_for_window(void* user, spdf_win_scene* scene) {
-    app* a = (app*)user;
-    SpdfWinChromeLayout chrome_layout;
-    if (!a->canvas) return 0; /* the last tab just closed; the pump is exiting */
-
-    /* Chrome first, because it decides how big the canvas is. The model is
-     * rebuilt per paint rather than cached: it is a few dozen bytes plus one
-     * UTF-16 conversion per tab, and a cached copy is how a closed tab keeps
-     * being drawn. `a->chrome_tabs` owns the titles the model borrows and must
-     * therefore live as long as the paint, which is why it is a field on `app`
-     * rather than a local here. */
-    spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, (a->render_flags & SPDF_RENDER_DARK_THEME) != 0,
-                                a->show_sidebar, a->show_minimap, a->sidebar_w, a->minimap_w);
-    scene->chrome = &a->chrome;
-    spdf_win_chrome_layout(&a->chrome, scene->client_px_w ? scene->client_px_w : scene->target_px_w,
-                           scene->client_px_h ? scene->client_px_h : scene->target_px_h, scene->dpi_scale,
-                           &chrome_layout);
-
-    /* The canvas is laid out against the CANVAS REGION, not the client area, so
-     * fit-width fits the space the reader can actually see. spdf_win_paint()
-     * translates the page rects into that region, so everything downstream keeps
-     * working in canvas-local coordinates. */
-    spdf_win_canvas_set_viewport(a->canvas, (unsigned)chrome_layout.canvas.w, (unsigned)chrome_layout.canvas.h,
-                                 scene->dpi_scale);
-    if (a->pending_page > 0) {
-        spdf_win_canvas_scroll_to_page(a->canvas, a->pending_page);
-        a->pending_page = -1;
-    }
-    if (spdf_win_canvas_build_scene(a->canvas, scene)) return 1;
-    scene->message = a->status[0] ? a->status : NULL;
-    return 1;
-}
-
 /* macOS titles the window "<display name> - Shenzhen PDF", and the bare product
  * name with no document (ShenzhenPDFMac.mm:8615, :10582; :8985, :9168). Same two
  * strings here, so the two apps read alike in a task switcher -- and so the title
@@ -203,14 +180,31 @@ static int show_selected_tab(app* a) {
     return shown;
 }
 
+/* --- the window ---------------------------------------------------------- */
+
+/* scene_for_window() -- the paint-time glue -- and the mouse routing both live
+ * here. Depends on `struct app` and on show_selected_tab() above it, and stays
+ * out of this file because this file is at its 500-line cap and
+ * tools/file-size-limits.md asks for an extracted file rather than a raised one.
+ * Same arrangement as spdf_win_tabs_app.h and spdf_win_headless_viewport.h. */
+#include "spdf_win_chrome_actions.h"
+
 /* The keymap. Deliberately here and not in spdf_win_window.cpp: which key
  * pages forward is product policy, and the window has no business knowing a
- * document exists. */
+ * document exists.
+ *
+ * A KEY THAT MOVES THE VIEW MEASURES THE CANVAS, NOT THE CLIENT AREA. `in`
+ * carries the client size, and the canvas is a sub-rect of it now: a Page Down
+ * of 0.9 client heights overshoots by the two 42 pt bands, and a `+` about the
+ * client centre zooms about a point that is not the middle of the page. So the
+ * client area is divided here with the same function the painter uses. */
 static int key_for_window(app* a, const spdf_win_input* in) {
-    float page_step = (float)in->view_px_h * 0.9f;
-    float line = 60.0f;
-    float cx = (float)in->view_px_w * 0.5f;
-    float cy = (float)in->view_px_h * 0.5f;
+    SpdfWinChromeModel model;
+    SpdfWinChromeLayout l;
+    float page_step, line = 60.0f;
+
+    chrome_layout_for_input(a, in, &model, &l);
+    page_step = l.canvas.h * 0.9f;
 
     switch (in->key) {
         case VK_DOWN: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, line);
@@ -222,10 +216,11 @@ static int key_for_window(app* a, const spdf_win_input* in) {
         case VK_PRIOR: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, -page_step);
         case VK_HOME: return spdf_win_canvas_scroll_to(a->canvas, 0.0f, 0.0f);
         case VK_END: return spdf_win_canvas_scroll_to(a->canvas, 0.0f, spdf_win_canvas_content_h(a->canvas));
+        /* Shared with the toolbar's zoom pill, so the two cannot drift apart. */
         case VK_OEM_PLUS:
-        case VK_ADD: spdf_win_canvas_zoom_at(a->canvas, 1.25f, cx, cy); return 1;
+        case VK_ADD: return chrome_zoom_step(a, &l, 1);
         case VK_OEM_MINUS:
-        case VK_SUBTRACT: spdf_win_canvas_zoom_at(a->canvas, 0.8f, cx, cy); return 1;
+        case VK_SUBTRACT: return chrome_zoom_step(a, &l, 0);
         case '0':
             if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
             spdf_win_canvas_set_zoom_mode(a->canvas, SPDF_WIN_ZOOM_ACTUAL);
@@ -250,20 +245,26 @@ static int key_for_window(app* a, const spdf_win_input* in) {
             if (!spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
                                              a->canvas != NULL))
                 return 0;
-            spdf_win_tabs_close(a->tabs, spdf_win_tabs_selected_index(a->tabs), 0);
-            if (spdf_win_tabs_count(a->tabs) == 0) PostQuitMessage(0);
-            return show_selected_tab(a);
+            /* The same handler the strip's close box uses, so Ctrl+W and a click
+             * pick the same survivor and both write the reader's place back. */
+            return chrome_close_tab(a, spdf_win_tabs_selected_index(a->tabs));
         default: return 0;
     }
 }
 
-static int input_for_window(void* user, const spdf_win_input* in) {
+static int input_for_window(void* user, spdf_win_input* in) {
     app* a = (app*)user;
     if (!a->canvas) return 0;
     switch (in->kind) {
         case SPDF_WIN_INPUT_SCROLL: return spdf_win_canvas_scroll_by(a->canvas, in->dx, in->dy);
-        case SPDF_WIN_INPUT_ZOOM: spdf_win_canvas_zoom_at(a->canvas, in->factor, in->x, in->y); return 1;
+        case SPDF_WIN_INPUT_ZOOM: return chrome_zoom_at_client(a, in);
         case SPDF_WIN_INPUT_KEY: return key_for_window(a, in);
+        /* Every mouse event goes through the chrome router FIRST, and reaches the
+         * document's pan only as SPDF_WIN_CA_CANVAS. */
+        case SPDF_WIN_INPUT_MOUSE_DOWN:
+        case SPDF_WIN_INPUT_MOUSE_UP:
+        case SPDF_WIN_INPUT_MOUSE_MOVE:
+        case SPDF_WIN_INPUT_CURSOR: return chrome_mouse(a, in);
         default: return 0;
     }
 }
@@ -334,6 +335,11 @@ int main(void) {
      * its default. */
     a.show_sidebar = 1;
     a.show_minimap = 1;
+    /* -1, not the 0 the memset left: 0 is a valid tab index, so a zeroed hover
+     * state would draw the first tab hovered before the pointer has ever
+     * entered the window. */
+    a.hot_tab = -1;
+    a.hot_close = -1;
     opts.mode = SPDF_WIN_ZOOM_FIT_WIDTH;
     opts.dpi_scale = 1.0f;
     opts.zoom_at_x = -1.0f;
