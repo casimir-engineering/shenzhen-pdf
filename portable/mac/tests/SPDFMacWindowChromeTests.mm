@@ -86,6 +86,35 @@ int main(void) {
         // window or event that is gone.
         spdf_window_activate_for_click_event(nil, nil);
 
+        // Key handshake. AppKit hands over key and main status only while super
+        // processes the press that arrived at a non-key window, so that press
+        // must reach super before any -sendEvent: handler can swallow it. Miss
+        // it and the window stays keyless for good: grey traffic lights on a
+        // window the window server considers main, and -makeKeyWindow refused.
+        expect_bool(@"a press at a non-key window needs the handshake",
+                    spdf_window_click_needs_key_handshake(SPDFWindowEventTypeLeftMouseDown, NO, YES, NO, NO), YES);
+        expect_bool(@"a middle-click press needs it too",
+                    spdf_window_click_needs_key_handshake(SPDFWindowEventTypeOtherMouseDown, NO, YES, NO, NO), YES);
+        expect_bool(@"a right-click press needs it too",
+                    spdf_window_click_needs_key_handshake(SPDFWindowEventTypeRightMouseDown, NO, YES, NO, NO), YES);
+        // Already key: nothing to hand over, so the handler order is untouched
+        // and every focused interaction keeps its existing behaviour exactly.
+        expect_bool(@"a press at the key window needs no handshake",
+                    spdf_window_click_needs_key_handshake(SPDFWindowEventTypeLeftMouseDown, YES, YES, NO, NO), NO);
+        expect_bool(@"scroll never needs the handshake", spdf_window_click_needs_key_handshake(22, NO, YES, NO, NO),
+                    NO);
+        expect_bool(@"magnify never needs the handshake", spdf_window_click_needs_key_handshake(30, NO, YES, NO, NO),
+                    NO);
+        expect_bool(@"mouse up never needs the handshake", spdf_window_click_needs_key_handshake(2, NO, YES, NO, NO),
+                    NO);
+        expect_bool(@"a window that cannot take key needs no handshake",
+                    spdf_window_click_needs_key_handshake(SPDFWindowEventTypeLeftMouseDown, NO, NO, NO, NO), NO);
+        expect_bool(@"an attached sheet suppresses the handshake",
+                    spdf_window_click_needs_key_handshake(SPDFWindowEventTypeLeftMouseDown, NO, YES, YES, NO), NO);
+        expect_bool(@"an app-modal window suppresses the handshake",
+                    spdf_window_click_needs_key_handshake(SPDFWindowEventTypeLeftMouseDown, NO, YES, NO, YES), NO);
+        expect_bool(@"nil window and event need no handshake", spdf_window_event_needs_key_handshake(nil, nil), NO);
+
         // Zoom wheel: Cmd or Ctrl on an actively scrolling wheel, never on the
         // inertial tail. Both the focused responder chain and the out-of-focus
         // event tap ask this, so an unfocused Cmd+wheel zooms exactly like a
