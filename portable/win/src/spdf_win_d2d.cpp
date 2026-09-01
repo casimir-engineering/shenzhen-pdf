@@ -26,6 +26,7 @@
 
 #include "spdf_win_chrome_content.h" /* spdf_win_chrome_content_shutdown */
 #include "spdf_win_chrome_paint.h"
+#include "spdf_win_d2d_overlay.h" /* draw_overlays; needs only the scene */
 
 #include <dwrite.h>
 
@@ -437,6 +438,10 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
     } else {
         draw_message(d2d, target, scene);
     }
+
+    /* Search highlights and the text selection. See spdf_win_d2d_overlay.h. */
+    draw_overlays(target, scene);
+
 
     if (has_chrome) {
         target->SetTransform(D2D1::Matrix3x2F::Identity());
