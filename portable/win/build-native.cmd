@@ -204,9 +204,36 @@ rem and printf reaches it unchanged. Measured after this change, not assumed.
 set "SUBSYSTEM_FLAGS="
 if /i "%TARGET%"=="ShenzhenPDF" set "SUBSYSTEM_FLAGS=/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
 
+rem ---- 3a. Resources (app only) --------------------------------------------
+rem portable\win\spdf_win.rc carries the icon, the manifest (per-monitor-v2
+rem DPI, long paths, common controls 6) and VERSIONINFO, with its numbers taken
+rem from portable\win\src\spdf_win_about_version.h -- hence the /I. rc.exe
+rem ships in the same Windows SDK that provides the headers cl.exe already
+rem needs, and vcvarsall puts it on PATH; a missing rc.exe is an infrastructure
+rem failure (66), not a compile error, so it stays distinguishable. The .res is
+rem handed to cl.exe on the command line, which passes it to the linker.
+rem
+rem The ~20 test binaries get no resources on purpose: they are console
+rem programs, and a manifest declaring PerMonitorV2 would change how the
+rem window-opening tests (properties_dialog_test) measure themselves.
+set "RES_FILE="
+if /i "%TARGET%"=="ShenzhenPDF" (
+  where rc.exe >nul 2>&1
+  if errorlevel 1 (
+    echo [build-native] rc.exe is not on PATH; the Windows SDK that provides it is part of the VS C++ build tools
+    exit /b 66
+  )
+  rc /nologo /I"%REPO%\portable\win\src" /fo"%OBJ_DIR%\spdf_win.res" "%REPO%\portable\win\spdf_win.rc"
+  if errorlevel 1 (
+    echo [build-native] rc.exe failed on portable\win\spdf_win.rc
+    exit /b 66
+  )
+  set "RES_FILE="%OBJ_DIR%\spdf_win.res""
+)
+
 cl /nologo /W3 /O2 /MT /utf-8 /D_CRT_SECURE_NO_WARNINGS ^
    /I"%REPO%\portable\core" /I"%REPO%\portable\win\src" /I"%SPDF_MUPDF_INC%" ^
-   %SOURCES% /Fe:"%SPDF_OUT%\%TARGET%.exe" /Fo:"%OBJ_DIR%\\" ^
+   %SOURCES% %RES_FILE% /Fe:"%SPDF_OUT%\%TARGET%.exe" /Fo:"%OBJ_DIR%\\" ^
    /link /STACK:8388608 %SUBSYSTEM_FLAGS% %MUPDF_LIBS% %SYS_LIBS%
 set "CL_RC=%ERRORLEVEL%"
 if not "%CL_RC%"=="0" echo [build-native] cl.exe exited %CL_RC% building %TARGET%
@@ -278,5 +305,6 @@ echo   SPDF_MUPDF_INC     MuPDF include directory     (default ^<repo^>\mupdf\in
 echo   SPDF_MUPDF_LIBDIR  libmupdf.lib directory      (default %%SPDF_OUT%%\mupdf^)
 echo.
 echo Exit codes: cl.exe's own, verbatim, or 64 usage / 65 missing source /
-echo 90 output dir / 91 no vcvarsall / 92 vcvarsall failed / 93 bad repo.
+echo 66 rc.exe missing or failed ^(app target^) / 90 output dir / 91 no vcvarsall /
+echo 92 vcvarsall failed / 93 bad repo.
 exit /b 0
