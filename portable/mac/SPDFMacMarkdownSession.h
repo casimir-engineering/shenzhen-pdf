@@ -32,9 +32,12 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 // reserved language-control band). Print and Save-as-PDF consume this plan
 // with renderedDocument so exports match the reader page for page.
 @property(nonatomic, readonly, nullable) SPDFMarkdownPaginationPlan* paginationPlan;
-// The reader's "Keep Image Colors in Dark Theme" answer (default NO: recolor).
-// Only affects drawing, so setting it retargets the live plan in place rather
-// than re-rendering; the caller redraws.
+// The reader's "Keep Image Colors in Dark Theme" answer. Since 26.9.1-1 the
+// setting defaults to YES (keep the image's own colors); the delegate seeds it
+// from settings.yaml "darkThemePreservesImages" and hands it here, so this
+// property is never the place the default lives. Only affects drawing, so
+// setting it retargets the live plan in place rather than re-rendering; the
+// caller redraws.
 @property(nonatomic) BOOL preservesImageColors;
 // The EXPORT rendition: Save as PDF, Print, Copy Page and Copy Page Image
 // always produce the LIGHT reading theme, matching the PDF side (where an
