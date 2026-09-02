@@ -294,6 +294,7 @@ int spdf_win_watcher_watch(spdf_win_watcher* handle, const char* utf8_path, spdf
         free(wide);
         return 0;
     }
+    watch->dir = INVALID_HANDLE_VALUE; /* calloc's 0 is not the "no handle" value */
     watch->wname = _wcsdup(slash + 1);
     /* The directory, root kept: "C:\a.pdf" watches "C:\". */
     if (slash == wide || (slash == wide + 2 && wide[1] == L':')) slash[1] = 0;
@@ -302,7 +303,6 @@ int spdf_win_watcher_watch(spdf_win_watcher* handle, const char* utf8_path, spdf
     watch->dir = CreateFileW(watch->wdir, FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                              NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
     if (!watch->wname || watch->dir == INVALID_HANDLE_VALUE) {
-        if (watch->dir == INVALID_HANDLE_VALUE) watch->dir = INVALID_HANDLE_VALUE;
         stop_watch(watch);
         return 0;
     }
