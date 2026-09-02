@@ -40,7 +40,7 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     {SPDF_WIN_CMD_MOVE_TAB_TO_WINDOW, SPDF_WIN_MENU_FILE, L"&Move Tab to New Window", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_SHOW_IN_FOLDER, SPDF_WIN_MENU_FILE, L"Show in &Folder", NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_RELOAD, SPDF_WIN_MENU_FILE, L"Re&load", L"Ctrl+R", 'R', SPDF_WIN_ACCEL_CTRL, 0},
+    {SPDF_WIN_CMD_RELOAD, SPDF_WIN_MENU_FILE, L"Re&load", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_SET_DEFAULT_READER, SPDF_WIN_MENU_FILE, L"Make &Default PDF Reader", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_CHECK_UPDATES, SPDF_WIN_MENU_FILE, L"Check for &Updates...", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
@@ -82,6 +82,12 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_VIEW, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_PRESENTATION, SPDF_WIN_MENU_VIEW, L"&Presentation", L"F5", SPDF_WIN_KEY_F5, 0, 0},
     {SPDF_WIN_CMD_FULLSCREEN, SPDF_WIN_MENU_VIEW, L"F&ull Screen", L"F11", SPDF_WIN_KEY_F11, 0, 0},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_VIEW, NULL, NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_ROTATE_CW, SPDF_WIN_MENU_VIEW, L"&Rotate Clockwise", L"Ctrl+R", 'R', SPDF_WIN_ACCEL_CTRL, 0},
+    {SPDF_WIN_CMD_ROTATE_CCW, SPDF_WIN_MENU_VIEW, L"Rotate &Anticlockwise", L"Ctrl+Shift+R", 'R', SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_VIEW, NULL, NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_SHORTCUTS, SPDF_WIN_MENU_VIEW, L"&Keyboard Shortcuts", L"F1", SPDF_WIN_KEY_F1, 0, 0},
+    {SPDF_WIN_CMD_ABOUT, SPDF_WIN_MENU_VIEW, L"A&bout Shenzhen PDF", NULL, 0, 0, 0},
 
     /* --- Edit --------------------------------------------------------- */
     /* macOS has a plain "Copy" on Cmd+C for its own text fields and a separate
@@ -107,6 +113,7 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
      SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_FIND_REGEX, SPDF_WIN_MENU_EDIT, L"&Regex", NULL, 0, 0, 1},
+    {SPDF_WIN_CMD_FIND_REGEX_MULTILINE, SPDF_WIN_MENU_EDIT, L"Regex Matches Across &Lines", NULL, 0, 0, 1},
 
     /* --- accelerator-only rows ----------------------------------------
      *

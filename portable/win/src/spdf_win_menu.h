@@ -86,6 +86,7 @@ extern "C" {
 #define SPDF_WIN_KEY_F9 0x78     /* VK_F9 */
 #define SPDF_WIN_KEY_F5 0x74     /* VK_F5: presentation, as the readme says */
 #define SPDF_WIN_KEY_F11 0x7A    /* VK_F11: full screen */
+#define SPDF_WIN_KEY_F1 0x70     /* VK_F1: keyboard shortcuts */
 #define SPDF_WIN_KEY_OEM_PLUS 0xBB  /* VK_OEM_PLUS, the '=' key on a US layout */
 #define SPDF_WIN_KEY_OEM_MINUS 0xBD /* VK_OEM_MINUS */
 
@@ -177,6 +178,11 @@ typedef enum spdf_win_command {
     SPDF_WIN_CMD_TRANSLATE_DOCUMENT,  /* Edit: write <name>_<lang>.pdf */
     SPDF_WIN_CMD_SELECT_ALL,          /* Edit: Ctrl+A */
     SPDF_WIN_CMD_PASTE_SEARCH,        /* Edit: Ctrl+V while reading searches the clipboard text (26.7.17) */
+    SPDF_WIN_CMD_FIND_REGEX_MULTILINE,/* Edit: patterns may span line and paragraph breaks */
+    SPDF_WIN_CMD_ROTATE_CW,           /* View: rotate the page clockwise, Ctrl+R as on macOS */
+    SPDF_WIN_CMD_ROTATE_CCW,          /* View: anticlockwise, Ctrl+Shift+R */
+    SPDF_WIN_CMD_SHORTCUTS,           /* View: the keyboard-shortcuts sheet, F1 */
+    SPDF_WIN_CMD_ABOUT,               /* View: About Shenzhen PDF */
 
     SPDF_WIN_CMD_COUNT
 } spdf_win_command;
@@ -293,6 +299,7 @@ typedef struct SpdfWinMenuState {
      * set. Shown ticked whatever the theme, like the macOS Settings menu. */
     int keep_image_colors;
     int regex;
+    int regex_multiline;
     int can_close_tab;
     int has_document;
     /* The document's OWN print flag. The only permission this menu honours.
@@ -350,6 +357,7 @@ static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_checked(int command, const
         case SPDF_WIN_CMD_TOGGLE_THEME: return st->dark_theme != 0;
         case SPDF_WIN_CMD_TOGGLE_KEEP_IMAGE_COLORS: return st->keep_image_colors != 0;
         case SPDF_WIN_CMD_FIND_REGEX: return st->regex != 0;
+        case SPDF_WIN_CMD_FIND_REGEX_MULTILINE: return st->regex_multiline != 0;
         default: return 0;
     }
 }
