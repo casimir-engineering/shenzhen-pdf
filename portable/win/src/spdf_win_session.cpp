@@ -74,6 +74,19 @@ static void apply_tab(spdf_win_tabs* tabs, const char* obj) {
             free(search);
         }
     }
+    /* The read-only binding (spdf_win_watcher.h), taken back here and handed to
+     * the watcher by the tabs glue before the tab is first shown. Absent keys
+     * read as "not read-only", which is what the mac writes for a plain file. */
+    view->read_only = json_bool(obj, "readOnly", 0);
+    {
+        char* working = json_str(obj, "workingPath");
+        if (working) {
+            strncpy_s(view->working_path, sizeof(view->working_path), working, _TRUNCATE);
+            free(working);
+        }
+    }
+    view->ro_copy_file_size = (unsigned long long)json_num(obj, "roCopyFileSize", 0.0);
+    view->ro_copy_modified_at = json_num(obj, "roCopyModifiedAt", 0.0);
 }
 
 /* The window object to restore, or NULL. A root with "tabs" and no "windows"
@@ -165,7 +178,8 @@ spdf_win_session_status spdf_win_session_restore_ex(spdf_win_tabs* tabs, const c
  * two-page view recorded by another frontend survives a Windows session. */
 static int key_is_owned(const member* m) {
     static const char* const owned[] = {"path",    "title",   "page",    "zoom",            "customZoom",
-                                        "fitMode", "scrollX", "scrollY", "hasScrollOrigin", "searchText"};
+                                        "fitMode", "scrollX", "scrollY", "hasScrollOrigin", "searchText",
+                                        "readOnly", "workingPath", "roCopyFileSize", "roCopyModifiedAt"};
     size_t i;
     for (i = 0; i < sizeof(owned) / sizeof(owned[0]); ++i)
         if (key_is(m, owned[i])) return 1;
@@ -215,6 +229,22 @@ static void emit_tab(out_buf* out, const spdf_win_tabs* tabs, int index, const c
     if (view->search_text[0]) {
         emit_key(out, "searchText");
         emit_string(out, view->search_text);
+    }
+    /* The read-only binding, only for a tab that has one (the mac omits the
+     * keys otherwise): what lets a relaunch reopen the shadow copy without
+     * reading the source (spdf_win_watcher_prime_restore). The mtime keeps the
+     * stat's 100 ns resolution, or the comparison on restore would never hold. */
+    if (view->read_only) {
+        emit_key(out, "readOnly");
+        buf_puts(out, "true");
+        if (view->working_path[0]) {
+            emit_key(out, "workingPath");
+            emit_string(out, view->working_path);
+        }
+        emit_key(out, "roCopyFileSize");
+        emit_int(out, (long long)view->ro_copy_file_size);
+        emit_key(out, "roCopyModifiedAt");
+        emit_fixed(out, view->ro_copy_modified_at, 7);
     }
 
     for (ok = object_first(disk, &m); ok; ok = object_next(&m)) {

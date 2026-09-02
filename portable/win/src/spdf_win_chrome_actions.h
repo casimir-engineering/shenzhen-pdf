@@ -121,11 +121,13 @@ static int chrome_perform(app* a, const SpdfWinChromeHit* hit, const SpdfWinChro
         case SPDF_WIN_CA_DRAG_MINIMAP:
         case SPDF_WIN_CA_DRAG_VSCROLL:
         case SPDF_WIN_CA_DRAG_HSCROLL: return 0;
-        /* The strip's `+` and `...`, both live now: the first opens the native
-         * file dialog into a new tab, the second drops a real Win32 popup listing
-         * every tab. Neither falls through to the canvas, which is what has kept
-         * a press on either from panning the document all along. */
-        case SPDF_WIN_CA_NEW_TAB: return chrome_open_dialog(a);
+        /* The strip's `+` and `...`, both live: the first POSTS File > Open, so
+         * the picker it gets is the documents track's (start folder, recents)
+         * through command_perform like Ctrl+O -- one dialog however it is
+         * reached; the second drops a real Win32 popup listing every tab.
+         * Neither falls through to the canvas, which is what has kept a press on
+         * either from panning the document all along. */
+        case SPDF_WIN_CA_NEW_TAB: return chrome_post_command(a, SPDF_WIN_CMD_OPEN);
         case SPDF_WIN_CA_TAB_OVERFLOW: return chrome_tab_overflow(a, l);
         case SPDF_WIN_CA_APP_MENU: return chrome_app_menu(a, l);
         default: return 0;
