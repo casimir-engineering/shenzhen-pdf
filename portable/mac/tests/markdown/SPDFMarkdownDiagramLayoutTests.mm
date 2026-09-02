@@ -277,6 +277,29 @@ static void SPDFExpectSmoothEdges(SPDFMarkdownDiagramGraph* graph, SPDFMarkdownD
                                           (unsigned long)curved, (unsigned long)graph.edges.count]);
 }
 
+// Nothing the layout draws may reach past the size it reports: the fit factor
+// comes from `natural`, so one attempt's size over another attempt's frames
+// spills past the bottom -- the reflow bug this pins.
+static void SPDFExpectDrawnWithinSize(SPDFMarkdownDiagramLayout* layout, NSString* what) {
+    CGFloat maxX = 0, maxY = 0;
+    for (SPDFMarkdownDiagramShape* shape in layout.shapes) {
+        maxX = MAX(maxX, NSMaxX(shape.rect));
+        maxY = MAX(maxY, NSMaxY(shape.rect));
+        for (NSValue* value in shape.points) {
+            maxX = MAX(maxX, value.pointValue.x);
+            maxY = MAX(maxY, value.pointValue.y);
+        }
+    }
+    for (SPDFMarkdownDiagramLabel* label in layout.labels) {
+        maxX = MAX(maxX, NSMaxX(label.frame));
+        maxY = MAX(maxY, NSMaxY(label.frame));
+    }
+    SPDFExpect(maxX <= layout.size.width + 1.0 && maxY <= layout.size.height + 1.0,
+               [NSString stringWithFormat:@"%@ keeps every drawn point inside its %.0fx%.0f box "
+                                          @"(reaches %.0fx%.0f)",
+                                          what, layout.size.width, layout.size.height, maxX, maxY]);
+}
+
 int main(void) {
     @autoreleasepool {
         NSString* fence = SPDFLayoutFixtureFence();
@@ -453,6 +476,35 @@ int main(void) {
             SPDFMarkdownDiagramNode* c = SPDFLayoutNode(mirrored, @"C");
             SPDFExpect(a && c && NSMinX(a.frame) > NSMaxX(c.frame),
                        @"the right-to-left graph puts the source to the right of the sink");
+        }
+        // --- A reflow rung that overruns the dimension budget -----------------
+        //
+        // A tall chain of labels whose widest line clears the 130 pt ladder
+        // rung, so the reflow tries narrower wraps. The natural drawing (~1800
+        // pt) clears the 2048 pt budget, but a narrower wrap adds a line to each
+        // of the 24 boxes and pushes the total over 2048, so a rung mid-search
+        // trips the budget and fails -- leaving its over-tall frames on the
+        // graph. Unless the search re-lays-out at its best wrap, the diagram
+        // reports a box it fits but draws past the bottom of it. (Should font
+        // metrics move the natural size itself past 2048, the render declines
+        // to nil instead -- still no mis-fit.)
+        NSMutableString* ladderTrip = [NSMutableString stringWithString:@"flowchart TD\n"];
+        for (NSUInteger i = 0; i + 1 < 24; ++i)
+            [ladderTrip appendFormat:@"  q%lu[Node Alpha Bravo %lu] --> q%lu[Node Alpha Bravo %lu]\n",
+                                     (unsigned long)i, (unsigned long)i, (unsigned long)(i + 1),
+                                     (unsigned long)(i + 1)];
+        NSSize tripBox = {700, 700};
+        SPDFMarkdownDiagramLayout* trip = SPDFMarkdownDiagramRender(@"mermaid", ladderTrip, tripBox, 1.0, nil);
+        NSSize tripNatural = SPDFMarkdownDiagramRender(@"mermaid", ladderTrip, NSMakeSize(4096, 0), 1.0,
+                                                       nil).size;
+        printf("Diagram reflow rung trip (24-node chain): natural %.0fx%.0f, fitted %.0fx%.0f\n",
+               tripNatural.width, tripNatural.height, trip.size.width, trip.size.height);
+        SPDFExpect(tripNatural.height < SPDFMarkdownDiagramMaximumDimension,
+                   @"the reflow-trip fixture's natural drawing clears the dimension budget");
+        if (trip) {
+            SPDFExpect(trip.size.width <= tripBox.width + 0.5 && trip.size.height <= tripBox.height + 0.5,
+                       @"the reflow-trip fixture is fitted to its page box");
+            SPDFExpectDrawnWithinSize(trip, @"a diagram whose reflow rung overran the budget");
         }
     }
     return SPDFFinishTests(@"SPDFMarkdownDiagramLayoutTests");
