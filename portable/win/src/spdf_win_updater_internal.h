@@ -12,6 +12,8 @@
 
 #include <stddef.h>
 
+#include "spdf_win_updater.h" /* spdf_win_release_info, the store mutator type */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,6 +54,50 @@ typedef struct spdf_win_fetch_result {
 int spdf_win_updater_fetch(const char* url, const wchar_t* dest_path, const char* etag_in, int api_request,
                            long long max_bytes, unsigned timeout_ms, volatile long* cancel,
                            spdf_win_fetch_result* out);
+
+/* --- the worker half (spdf_win_updater_work.cpp) --------------------------
+ *
+ * The check and the install run on threads that touch no window. Each takes
+ * one heap-allocated outcome, fills it, and PostMessageW()s it to `sink` (the
+ * UI's message-only HWND) as the message below with the outcome in lParam;
+ * the UI thread frees it. Split from spdf_win_updater_ui.cpp so each file
+ * stays under the repo's 500-line cap and so the thread bodies have no
+ * globals: everything they need rides in the outcome. */
+
+#define SPDF_WIN_UPDATER_MSG_CHECK_DONE (0x8000 + 0x51)   /* WM_APP + 0x51 */
+#define SPDF_WIN_UPDATER_MSG_INSTALL_DONE (0x8000 + 0x52) /* WM_APP + 0x52 */
+
+typedef struct spdf_win_check_outcome {
+    void* sink;            /* HWND to post the result to */
+    volatile long* cancel; /* polled by the fetch */
+    int user_initiated;    /* Check for Updates... : no ETag, no snooze, no skip */
+    int ok;                /* an HTTP outcome was obtained and parsed */
+    int not_modified;      /* 304 */
+    int available;
+    int newer_but_missing_asset;
+    spdf_win_release_info release;
+    char err[256];
+} spdf_win_check_outcome;
+
+typedef struct spdf_win_install_outcome {
+    void* sink;
+    volatile long* cancel;
+    wchar_t self_exe[260];         /* the running binary, to stage beside and swap */
+    spdf_win_release_info release; /* a deep copy; cleared by the UI with the outcome */
+    int ok;
+    char err[512];
+} spdf_win_install_outcome;
+
+unsigned long __stdcall spdf_win_updater_check_thread(void* outcome);
+unsigned long __stdcall spdf_win_updater_install_thread(void* outcome);
+
+/* The running identity, SPDF_WIN_RELEASE_TAG. */
+const char* spdf_win_updater_running_version(void);
+/* settings.yaml's autoUpdateEnabled, then the 24-hour gate under the store
+ * lock, stamping the slot when it opens. 1 when a silent check should run. */
+int spdf_win_updater_claim_daily_slot(void);
+/* "Later": deferredTag = tag, remindAfter = now + 7 days. */
+void spdf_win_updater_snooze(const char* tag);
 
 #ifdef __cplusplus
 }
