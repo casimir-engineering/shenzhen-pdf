@@ -197,7 +197,6 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
         case SPDF_WIN_CMD_FIND_PREV: return chrome_find_step(a, -1);
         case SPDF_WIN_CMD_SAVE_AS:
         case SPDF_WIN_CMD_SAVE_PAGE_AS:
-        case SPDF_WIN_CMD_PROPERTIES:
         case SPDF_WIN_CMD_COPY_PAGE:
         case SPDF_WIN_CMD_COPY_PAGE_TEXT:
         case SPDF_WIN_CMD_COPY_PAGE_IMAGE: {
@@ -214,9 +213,6 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
                 case SPDF_WIN_CMD_SAVE_PAGE_AS:
                     spdf_win_export_save_page_as(act.hwnd, act.doc, act.path, act.page, err, sizeof(err), saved,
                                                  sizeof(saved));
-                    break;
-                case SPDF_WIN_CMD_PROPERTIES:
-                    spdf_win_properties_show_for_document(act.hwnd, act.doc, act.path, act.page, 0, 0);
                     break;
                 case SPDF_WIN_CMD_COPY_PAGE:
                     spdf_win_copy_page_pdf(act.doc, act.page, act.path, err, sizeof(err), &os_error);
@@ -272,6 +268,7 @@ static void chrome_sync_menu(app* a) {
     st.regex = a->find_regex;
     st.regex_multiline = spdf_win_find_regex_multiline();
     st.has_document = a->canvas != NULL;
+    st.tab_count = spdf_win_tabs_count(a->tabs);
     st.can_close_tab = spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
                                                    a->canvas != NULL);
     /* The document's own print flag, so Print greys out before the reader picks

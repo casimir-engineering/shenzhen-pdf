@@ -237,6 +237,7 @@ int main(void) {
         else if (wcscmp(flag, L"--dpi") == 0) opts.dpi_scale = (float)_wtof(value);
         else if (wcscmp(flag, L"--zoom-factor") == 0) opts.zoom_factor = (float)_wtof(value);
         else if (wcscmp(flag, L"--frames") == 0) opts.frames = _wtoi(value);
+        else if (wcscmp(flag, L"--sidebar-section") == 0) opts.sidebar_section = _wtoi(value);
         else if (wcscmp(flag, L"--zoom-at") == 0) {
             wchar_t* comma = NULL;
             opts.zoom_at_x = (float)wcstod(value, &comma);

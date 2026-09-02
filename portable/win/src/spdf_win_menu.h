@@ -330,6 +330,7 @@ typedef struct SpdfWinMenuState {
     int regex;
     int regex_multiline;
     int can_close_tab;
+    int tab_count; /* Close Other Tabs needs a second tab to close */
     int has_document;
     /* The document's OWN print flag. The only permission this menu honours.
      * spdf_has_permission(doc,'c') returns 1 unconditionally by product decision
@@ -346,6 +347,7 @@ static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_enabled(int command, const
     if (!st) return 1;
     switch (command) {
         case SPDF_WIN_CMD_CLOSE_TAB: return st->can_close_tab != 0;
+        case SPDF_WIN_CMD_CLOSE_OTHER_TABS: return st->tab_count > 1;
         /* Everything that needs a document to act on. Open, New Tab and Quit
          * deliberately stay live with no document -- they are the way out of
          * that state. */
