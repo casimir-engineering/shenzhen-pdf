@@ -217,6 +217,41 @@ static void test_id_ranges_do_not_overlap(void) {
 
 /* --- greying and ticking ------------------------------------------------- */
 
+/* The documents track's rows and ids: Open Path... on Ctrl+Shift+O (macOS
+ * Cmd+Shift+O), the three shell commands and Reload greyed without a document,
+ * and the Open Recent submenu's id range -- above every table command, below
+ * the tab overflow's range, so a WM_COMMAND can be read as exactly one thing. */
+static void test_documents_track_rows(void) {
+    SpdfWinMenuState st;
+    CHECK_EQI(spdf_win_menu_command_for_key('O', SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT), SPDF_WIN_CMD_OPEN_PATH);
+    CHECK_EQI(spdf_win_menu_command_for_key('O', SPDF_WIN_ACCEL_CTRL), SPDF_WIN_CMD_OPEN);
+    CHECK_EQI(spdf_win_menu_command_for_key('D', SPDF_WIN_ACCEL_CTRL), SPDF_WIN_CMD_ADD_FAVORITE);
+    CHECK_EQI(spdf_win_menu_command_for_key('K', SPDF_WIN_ACCEL_CTRL), SPDF_WIN_CMD_PALETTE);
+    CHECK_EQI(spdf_win_menu_command_for_key('T', SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT),
+              SPDF_WIN_CMD_REOPEN_CLOSED_TAB);
+    CHECK(spdf_win_menu_item_for_command(SPDF_WIN_CMD_COPY_PATH) != NULL);
+    CHECK(spdf_win_menu_item_for_command(SPDF_WIN_CMD_OPEN_IN_BROWSER) != NULL);
+    CHECK(spdf_win_menu_item_for_command(SPDF_WIN_CMD_OPEN_RECENT)->menu == SPDF_WIN_MENU_GO);
+
+    memset(&st, 0, sizeof(st));
+    CHECK(!spdf_win_menu_command_enabled(SPDF_WIN_CMD_SHOW_IN_FOLDER, &st));
+    CHECK(!spdf_win_menu_command_enabled(SPDF_WIN_CMD_COPY_PATH, &st));
+    CHECK(!spdf_win_menu_command_enabled(SPDF_WIN_CMD_OPEN_IN_BROWSER, &st));
+    CHECK(!spdf_win_menu_command_enabled(SPDF_WIN_CMD_RELOAD, &st));
+    CHECK(!spdf_win_menu_command_enabled(SPDF_WIN_CMD_ADD_FAVORITE, &st));
+    /* The ways INTO a document stay live with none open. */
+    CHECK(spdf_win_menu_command_enabled(SPDF_WIN_CMD_OPEN_PATH, &st));
+    CHECK(spdf_win_menu_command_enabled(SPDF_WIN_CMD_REOPEN_CLOSED_TAB, &st));
+    CHECK(spdf_win_menu_command_enabled(SPDF_WIN_CMD_PALETTE, &st));
+    st.has_document = 1;
+    CHECK(spdf_win_menu_command_enabled(SPDF_WIN_CMD_SHOW_IN_FOLDER, &st));
+    CHECK(spdf_win_menu_command_enabled(SPDF_WIN_CMD_RELOAD, &st));
+
+    CHECK(SPDF_WIN_CMD_OPEN_RECENT_FIRST >= SPDF_WIN_CMD_COUNT);
+    CHECK(SPDF_WIN_CMD_OPEN_RECENT_LAST - SPDF_WIN_CMD_OPEN_RECENT_FIRST + 1 == 10);
+    CHECK(SPDF_WIN_MENU_ID_BASE + SPDF_WIN_CMD_OPEN_RECENT_LAST < SPDF_WIN_MENU_TAB_ID_BASE);
+}
+
 static void test_enabled_and_checked_rules(void) {
     SpdfWinMenuState st;
     memset(&st, 0, sizeof(st));
@@ -293,6 +328,7 @@ int main(void) {
     test_page_navigation_is_on_alt();
     test_id_ranges_do_not_overlap();
     test_enabled_and_checked_rules();
+    test_documents_track_rows();
     test_checkable_flag_matches_the_predicate();
 
     printf("menu_test: %d checks, %d failures\n", g_checks, g_failures);
