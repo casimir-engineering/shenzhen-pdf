@@ -2,6 +2,7 @@
 #import "SPDFUpdaterDownloadBounds.h"
 #import "SPDFMacFileExplorerPreference.h"
 #import "SPDFUpdaterRelease.h"
+#import "SPDFMacSupport.h"
 
 #import <AppKit/AppKit.h>
 #import <Security/Security.h>
@@ -212,10 +213,7 @@ static NSUInteger spdf_running_instance_count(void) {
 // the next launch isn't left with a half-set lifecycle. Foundation-only flock
 // read-modify-write mirroring -withLockedUpdateStore:.
 static void spdf_helper_clear_update_state(void) {
-    NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
-                                                       inDomains:NSUserDomainMask]
-                      .firstObject;
-    NSString* dir = [base.path stringByAppendingPathComponent:@"ShenzhenPDF"];
+    NSString* dir = spdf_mac_support_directory();
     NSString* lockPath = [dir stringByAppendingPathComponent:@"update.lock"];
     NSString* jsonPath = [dir stringByAppendingPathComponent:@"update.json"];
     int fd = open(lockPath.fileSystemRepresentation, O_CREAT | O_RDWR, 0600);
@@ -449,12 +447,7 @@ int spdf_run_post_update_helper(NSString* stagedAppPath, NSString* targetBundleP
 // ----- support dir / json helpers (own flock unit, sidesteps save suspension) -
 
 - (NSString*)supportDirectory {
-    NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
-                                                       inDomains:NSUserDomainMask]
-                      .firstObject;
-    NSString* dir = [base.path stringByAppendingPathComponent:@"ShenzhenPDF"];
-    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    return dir;
+    return spdf_mac_support_directory();
 }
 
 - (NSString*)pathForStateFile:(NSString*)name {
