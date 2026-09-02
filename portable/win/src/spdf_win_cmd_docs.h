@@ -152,6 +152,7 @@ static void docs_menu_state(app* a, SpdfWinMenuState* st) {
     st->dark_theme = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
     st->keep_image_colors = (a->render_flags & SPDF_RENDER_PRESERVE_IMAGES) != 0;
     st->regex = a->find_regex;
+    st->regex_multiline = spdf_win_find_regex_multiline();
     st->has_document = a->canvas != NULL;
     st->can_close_tab = spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
                                                     a->canvas != NULL);

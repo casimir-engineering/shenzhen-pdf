@@ -73,185 +73,10 @@ static int chrome_set_scroll_hot(spdf_win_chrome_part bar, int part, int pressed
     return 1;
 }
 
-/* The model the ROUTER needs, which is not the model the PAINTER needs.
- *
- * The strip's geometry keys on tab_count and selected_tab; the titles cost a
- * UTF-16 conversion per tab and are only needed to draw glyphs. WM_MOUSEMOVE
- * arrives on every pixel of pointer travel, so a move must not pay for strings
- * it will not draw. Everything that affects GEOMETRY is copied faithfully --
- * that is what makes this layout identical to the painter's. */
-static void chrome_layout_for_input(app* a, const spdf_win_input* in, SpdfWinChromeModel* model,
-                                    SpdfWinChromeLayout* layout) {
-    memset(model, 0, sizeof(*model));
-    model->dark = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
-    /* Presenting collapses the bands and hides both panels, exactly as the
-     * painter's model does (spdf_win_chrome_model_build). */
-    model->presentation = a->presentation;
-    model->show_sidebar = a->presentation ? 0 : a->show_sidebar;
-    model->show_minimap = a->presentation ? 0 : a->show_minimap;
-    model->sidebar_w = a->sidebar_w;
-    model->minimap_w = a->minimap_w;
-    model->hot_tab = a->hot_tab;
-    model->hot_close = a->hot_close;
-    model->drag_tab = a->drag_tab;
-    model->drop_slot = a->drop_slot;
-    model->focus = a->focus;
-    model->tab_count = a->tabs ? spdf_win_tabs_count(a->tabs) : 0;
-    model->selected_tab = a->tabs ? spdf_win_tabs_selected_index(a->tabs) : -1;
-    /* search_active IS GEOMETRY: it raises the sidebar's minimum width from 176
-     * to 216 pt (spdf_win_chrome_clamp_sidebar_pt, macOS :3138-3144), so a
-     * router that left it zeroed while a query was live would hit-test a narrow
-     * sidebar against the wider one that was drawn. The painter's model gets the
-     * same answer from spdf_win_find_fill_model, which sets it from whether the
-     * query is non-empty -- which is exactly this test. */
-    model->search_active = a->find_text[0] != L'\0';
-    /* The sidebar's list, as it was drawn last frame. sidebar_scroll_y is 0
-     * because nothing scrolls the list yet; when something does, it must be
-     * carried here too or a click will land a row or two out. */
-    model->sidebar_row_count = a->sidebar_rows;
-    model->sidebar_scroll_y = 0.0f;
-    /* The scroller fractions ARE geometry here: h_scrollable decides whether the
-     * horizontal trough exists (and so how tall the canvas is), and the two
-     * `pos`/`visible` pairs decide where each thumb sits. A router that left them
-     * zeroed would hit-test against a full-length thumb at the top of a trough
-     * that the painter drew a fifth of the way down. */
-    chrome_scroll_into(a, model);
-    spdf_win_chrome_layout(model, in->view_px_w, in->view_px_h, in->dpi_scale, layout);
-    /* THE CANVAS VIEWPORT, REMEMBERED. Every input event lays the chrome out
-     * here before anything acts on it, so by the time a click or a key switches
-     * tabs the app knows the rect the next canvas will be laid out against --
-     * which is what lets show_selected_tab() put a restored scroll offset back
-     * before the first paint rather than losing it (spdf_win_tabs_app_apply_view). */
-    if (layout->canvas.w > 0.0f && layout->canvas.h > 0.0f) {
-        a->view_w = (unsigned)layout->canvas.w;
-        a->view_h = (unsigned)layout->canvas.h;
-        a->view_dpi = layout->dpi_scale;
-    }
-}
-
-/* Zoom about the CANVAS's centre, by the same factors the `+`/`-` keys use.
- *
- * One function for the keys and for the toolbar's zoom pill, because two copies
- * of "1.25" and "0.8" is two chances for a zoom-in that a zoom-out cannot undo.
- * The two are exact reciprocals (1.25 * 0.8 == 1.0), which is why they are the
- * pair rather than 1.25 and 1/1.25. */
-static int chrome_zoom_step(app* a, const SpdfWinChromeLayout* l, int zoom_in) {
-    if (!a->canvas) return 0;
-    spdf_win_canvas_zoom_at(a->canvas, zoom_in ? 1.25f : 0.8f, l->canvas.w * 0.5f, l->canvas.h * 0.5f);
-    return 1;
-}
-
-/* Ctrl+wheel, anchored under the cursor.
- *
- * THE BUG THIS FUNCTION EXISTS TO NOT HAVE: spdf_win_canvas_zoom_at() takes a
- * VIEWPORT point, and the viewport is the canvas -- but WM_MOUSEWHEEL gives a
- * CLIENT point. The two were the same before the chrome existed, and the window
- * passed the client point straight through. With the sidebar open they are 245 px
- * apart, so the un-translated point would anchor the zoom a sidebar's width to
- * the left of the cursor and the document would visibly slide out from under the
- * pointer -- worse the further from the canvas's left edge you zoom.
- *
- * Clamped into the canvas, so a Ctrl+wheel with the pointer over the toolbar or a
- * side panel still zooms about the nearest point of the page rather than about a
- * negative coordinate. */
-static int chrome_zoom_at_client(app* a, const spdf_win_input* in) {
-    SpdfWinChromeModel model;
-    SpdfWinChromeLayout l;
-    float vx, vy;
-    if (!a->canvas) return 0;
-    chrome_layout_for_input(a, in, &model, &l);
-    vx = spdf_win_chrome_input_canvas_x(&l, in->x);
-    vy = spdf_win_chrome_input_canvas_y(&l, in->y);
-    vx = spdf_win_chrome_max(0.0f, spdf_win_chrome_min(vx, l.canvas.w));
-    vy = spdf_win_chrome_max(0.0f, spdf_win_chrome_min(vy, l.canvas.h));
-    spdf_win_canvas_zoom_at(a->canvas, in->factor, vx, vy);
-    return 1;
-}
-
-/* The page pill. macOS's chevrons move the READING POSITION by one page, so this
- * is scroll_to_page and not a scroll by a viewport: at fit-page they coincide, at
- * fit-width on a tall page they do not, and "next page" must mean the next page. */
-static int chrome_step_page(app* a, int delta) {
-    int page;
-    if (!a->canvas) return 0;
-    page = spdf_win_canvas_current_page(a->canvas) + delta;
-    if (page < 0 || page >= spdf_win_canvas_page_count(a->canvas)) return 0;
-    return spdf_win_canvas_scroll_to_page(a->canvas, page);
-}
-
-/* The fit popup, WITHOUT a popup.
- *
- * macOS opens an NSPopUpButton with four items; a real Win32 menu is a separate
- * piece of work (TrackPopupMenu, its own message loop, keyboard navigation), and
- * a control that looks live and does nothing is worse than one that cycles. So a
- * click advances through the modes in the popup's own order (:3006-3011), and
- * that is now ALL FOUR of them: the cycle used to skip Fit Height because
- * spdf_win_canvas.h had no such mode, even though the toolbar could draw the
- * label and spdf_win_layout.h had carried spdf_win_fit_height_zoom() all along.
- * A custom zoom re-enters the cycle at Fit Width, which is where macOS's own
- * selectItem lands a custom zoom (:10504-10505). */
-static int chrome_cycle_fit(app* a) {
-    spdf_win_zoom_mode next;
-    if (!a->canvas) return 0;
-    switch (spdf_win_canvas_zoom_mode(a->canvas)) {
-        case SPDF_WIN_ZOOM_FIT_WIDTH: next = SPDF_WIN_ZOOM_FIT_HEIGHT; break;
-        case SPDF_WIN_ZOOM_FIT_HEIGHT: next = SPDF_WIN_ZOOM_FIT_PAGE; break;
-        case SPDF_WIN_ZOOM_FIT_PAGE: next = SPDF_WIN_ZOOM_ACTUAL; break;
-        default: next = SPDF_WIN_ZOOM_FIT_WIDTH; break;
-    }
-    spdf_win_canvas_set_zoom_mode(a->canvas, next);
-    return 1;
-}
-
-/* REBUILD THE CANVAS OVER THE SAME DOCUMENT WITH THE CURRENT RENDER FLAGS. The
- * canvas takes its flags at construction and has no setter, so a theme change
- * is a rebuild -- which is exactly what a tab switch already does, so the path
- * is proven rather than new. The reader's place survives WHOLE: remember()
- * writes the fit mode, the page and the exact offset into the tab's view, and
- * show_selected_tab() puts them back against the viewport the last event laid
- * out (spdf_win_tabs_app_apply_view). It used to keep only the page. */
-static int chrome_rebuild_canvas(app* a) {
-    if (!a->canvas) return 0;
-    spdf_win_tabs_app_remember(a->tabs, a->canvas);
-    if (a->window) spdf_win_window_set_dark_frame(a->window, (a->render_flags & SPDF_RENDER_DARK_THEME) != 0);
-    return show_selected_tab(a);
-}
-
-/* The reading-theme button. Dark comes with images preserved when the Keep
- * Image Colors setting says so, as the mac composes its flags
- * (SPDFMacReadingThemeIntegration.mm:41). The choice is WRITTEN to
- * settings.yaml as "markdownTheme" -- the mac's key, kept on purpose -- so the
- * next launch opens in it rather than following the system again.
- *
- * The window frame follows, or `--dark`'s own fix -- a light caption around a
- * #121212 canvas -- comes straight back the first time anyone presses this. */
-static int chrome_toggle_theme(app* a) {
-    spdf_win_settings* s = spdf_win_settings_shared();
-    int dark = !(a->render_flags & SPDF_RENDER_DARK_THEME);
-    if (!a->canvas) return 0;
-    a->render_flags &= ~(unsigned)(SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES);
-    if (dark) a->render_flags |= SPDF_RENDER_DARK_THEME | (s->dark_theme_preserves_images ? SPDF_RENDER_PRESERVE_IMAGES : 0u);
-    s->theme = dark ? SPDF_WIN_THEME_DARK : SPDF_WIN_THEME_LIGHT;
-    spdf_win_settings_commit();
-    return chrome_rebuild_canvas(a);
-}
-
-/* A click on the trough, above or below the thumb. A VIEWPORT, less a tenth --
- * the same 0.9 factor Page Down uses in spdf_win_main.cpp's keymap, deliberately
- * shared as a number rather than as a function because the two differ in axis
- * and the overlap is one literal. Sharing the LITERAL is what stops a trough
- * click and Page Down from covering different distances, which is the kind of
- * difference a reader feels without being able to name. */
-static int chrome_scroll_page(app* a, const SpdfWinChromeHit* hit, const SpdfWinChromeLayout* l, int forward) {
-    float step;
-    if (!a->canvas) return 0;
-    if (hit->part == SPDF_WIN_CHROME_HSCROLL) {
-        step = l->canvas.w * 0.9f;
-        return spdf_win_canvas_scroll_by(a->canvas, forward ? step : -step, 0.0f);
-    }
-    step = l->canvas.h * 0.9f;
-    return spdf_win_canvas_scroll_by(a->canvas, 0.0f, forward ? step : -step);
-}
+/* The view commands -- the router's layout, zoom, page step, fit cycle, theme,
+ * trough click -- shared with the keymap, in their own file since this one
+ * reached its cap. */
+#include "spdf_win_chrome_view_ui.h"
 
 /* Do it. `l` is the layout the hit was computed against, so a handler that needs
  * geometry -- the zoom pill's anchor, a divider's clamp -- uses the same rects
@@ -268,6 +93,14 @@ static int chrome_perform(app* a, const SpdfWinChromeHit* hit, const SpdfWinChro
         case SPDF_WIN_CA_FIND_PREV: return chrome_find_step(a, -1);
         case SPDF_WIN_CA_FIND_NEXT: return chrome_find_step(a, 1);
         case SPDF_WIN_CA_SIDEBAR_ROW: return chrome_sidebar_row(a, hit->index);
+        case SPDF_WIN_CA_SIDEBAR_SECTION: return chrome_sidebar_section(a, hit->index);
+        /* A press on the minimap arms the strip gesture (spdf_win_search_map_ui.h);
+         * the moves and the release below finish it. */
+        case SPDF_WIN_CA_MINIMAP: return minimap_press(a, hit, l);
+        /* Two toolbar buttons whose handlers belong to the tools track: posted
+         * as commands, so they arrive through command_perform like the menu. */
+        case SPDF_WIN_CA_OCR: return chrome_post_command(a, SPDF_WIN_CMD_OCR);
+        case SPDF_WIN_CA_TRANSLATE_SELECTION: return chrome_post_command(a, SPDF_WIN_CMD_TRANSLATE_SELECTION);
         case SPDF_WIN_CA_SCROLL_PAGE_BACK: return chrome_scroll_page(a, hit, l, 0);
         case SPDF_WIN_CA_SCROLL_PAGE_FORWARD: return chrome_scroll_page(a, hit, l, 1);
         case SPDF_WIN_CA_SELECT_TAB: return chrome_select_tab(a, hit->index);
@@ -336,7 +169,7 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
          * `!= NONE` branch below, which would give it the divider's resize
          * cursor and make the trough look like a panel edge. */
         else if (a->drag == SPDF_WIN_CA_DRAG_VSCROLL || a->drag == SPDF_WIN_CA_DRAG_HSCROLL ||
-                 a->drag == SPDF_WIN_CA_DRAG_TAB)
+                 a->drag == SPDF_WIN_CA_DRAG_TAB || a->drag == SPDF_WIN_CA_MINIMAP_DRAG)
             in->cursor = SPDF_WIN_CC_ARROW;
         else if (a->drag != SPDF_WIN_CA_NONE) in->cursor = SPDF_WIN_CC_SIZEWE;
         else in->cursor = hit.cursor;
@@ -354,6 +187,7 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
          * behaviour, which only works if press/drag/release are all routed). A
          * button of NONE is a CANCELLED drag, not a release. */
         if (a->drag == SPDF_WIN_CA_CANVAS_SELECT) moved |= canvas_release(a, in->button == SPDF_WIN_CB_NONE);
+        if (a->drag == SPDF_WIN_CA_MINIMAP_DRAG) moved |= minimap_release(a, in, &l);
         a->drag = SPDF_WIN_CA_NONE;
         a->drag_tab = -1;
         a->drop_slot = -1;
@@ -413,6 +247,7 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
          * spdf_win_canvas_scroll_by, so the page stays put under the growing
          * highlight. */
         case SPDF_WIN_CA_CANVAS_SELECT: return canvas_drag(a, in, &l);
+        case SPDF_WIN_CA_MINIMAP_DRAG: return minimap_drag(a, in, &l);
         case SPDF_WIN_CA_DRAG_TAB: {
             /* THE TEAR-OFF. Once the pointer has left the strip by the mac's
              * margins (spdf_win_tabstrip_drag_detaches, :1012-1014) the drag

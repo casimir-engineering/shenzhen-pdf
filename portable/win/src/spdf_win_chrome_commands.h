@@ -253,6 +253,7 @@ static void chrome_sync_menu(app* a) {
     st.dark_theme = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
     st.keep_image_colors = (a->render_flags & SPDF_RENDER_PRESERVE_IMAGES) != 0;
     st.regex = a->find_regex;
+    st.regex_multiline = spdf_win_find_regex_multiline();
     st.has_document = a->canvas != NULL;
     st.can_close_tab = spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
                                                    a->canvas != NULL);
@@ -360,7 +361,9 @@ static int input_for_window(void* user, spdf_win_input* in) {
      * the strip drags or selects a tab, a caption button minimises or closes,
      * and a keystroke reaches the same keymap it always did. */
     switch (in->kind) {
-        case SPDF_WIN_INPUT_SCROLL: return spdf_win_canvas_scroll_by(a->canvas, in->dx, in->dy);
+        /* A wheel goes where the pointer is: the strip, the Search list or the
+         * document (chrome_wheel, spdf_win_chrome_field_ui.h). */
+        case SPDF_WIN_INPUT_SCROLL: return chrome_wheel(a, in);
         case SPDF_WIN_INPUT_ZOOM: return chrome_zoom_at_client(a, in);
         case SPDF_WIN_INPUT_CHAR: return chrome_char(a, in->key);
         /* A worker's message to the window (spdf_win_window.h). The only one so
