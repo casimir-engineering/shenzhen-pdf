@@ -121,13 +121,17 @@ static int test_prerender_consumes_finished_result(void) {
     return 0;
 }
 
-static int test_prerender_late_claim_never_waits_for_render(void) {
+static int test_prerender_late_claim_adopts_inflight_render(void) {
     SPDFMacLaunchPrerenderOwnership* ownership = [[SPDFMacLaunchPrerenderOwnership alloc] init];
     EXPECT([ownership workerMayBeginOpen]);
     EXPECT([ownership workerMayBeginRender]);
-    EXPECT([ownership claimForForeground] == SPDFMacLaunchPrerenderForegroundActionOpenInForeground);
-    EXPECT(ownership.abandoned);
+    // The render is already in flight: redoing the open and render in the
+    // foreground would cost the same work again, so the claim owns this result.
+    EXPECT([ownership claimForForeground] == SPDFMacLaunchPrerenderForegroundActionWaitForOwnedResult);
+    EXPECT(!ownership.abandoned);
     [ownership workerDidFinish];
+    [ownership markConsumed];
+    EXPECT([ownership claimForForeground] == SPDFMacLaunchPrerenderForegroundActionUnavailable);
     return 0;
 }
 
@@ -287,7 +291,7 @@ int main(void) {
         if (test_prerender_cancels_before_worker_open()) return 1;
         if (test_prerender_foreground_owns_inflight_open()) return 1;
         if (test_prerender_concurrent_claim_runs_one_open_and_no_stale_render()) return 1;
-        if (test_prerender_late_claim_never_waits_for_render()) return 1;
+        if (test_prerender_late_claim_adopts_inflight_render()) return 1;
         if (test_prerender_consumes_finished_result()) return 1;
         if (test_prerender_abandonment_stops_new_work()) return 1;
         if (test_inactive_preload_foreground_claims_inflight_open()) return 1;
