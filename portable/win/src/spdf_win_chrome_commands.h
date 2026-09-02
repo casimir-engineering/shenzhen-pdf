@@ -369,6 +369,7 @@ static void chrome_sync_menu(app* a) {
     st.sidebar_visible = a->show_sidebar;
     st.minimap_visible = a->show_minimap;
     st.dark_theme = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
+    st.keep_image_colors = (a->render_flags & SPDF_RENDER_PRESERVE_IMAGES) != 0;
     st.regex = a->find_regex;
     st.has_document = a->canvas != NULL;
     st.can_close_tab = spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),

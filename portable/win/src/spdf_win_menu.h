@@ -289,6 +289,9 @@ typedef struct SpdfWinMenuState {
     int sidebar_visible;
     int minimap_visible;
     int dark_theme;
+    /* Settings > Keep Image Colors in Dark Theme: SPDF_RENDER_PRESERVE_IMAGES is
+     * set. Shown ticked whatever the theme, like the macOS Settings menu. */
+    int keep_image_colors;
     int regex;
     int can_close_tab;
     int has_document;
@@ -345,6 +348,7 @@ static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_checked(int command, const
         case SPDF_WIN_CMD_TOGGLE_SIDEBAR: return st->sidebar_visible != 0;
         case SPDF_WIN_CMD_TOGGLE_MINIMAP: return st->minimap_visible != 0;
         case SPDF_WIN_CMD_TOGGLE_THEME: return st->dark_theme != 0;
+        case SPDF_WIN_CMD_TOGGLE_KEEP_IMAGE_COLORS: return st->keep_image_colors != 0;
         case SPDF_WIN_CMD_FIND_REGEX: return st->regex != 0;
         default: return 0;
     }
