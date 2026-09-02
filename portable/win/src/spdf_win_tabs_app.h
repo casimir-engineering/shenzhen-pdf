@@ -1,5 +1,5 @@
-/* spdf_win_tabs_app.h — the four lines of glue between the tab/session model
- * and the app's one canvas.
+/* spdf_win_tabs_app.h — the glue between the tab/session model and the app's
+ * one canvas.
  *
  * Header-only and included by exactly one translation unit
  * (spdf_win_main.cpp). It is a header rather than a .cpp for two reasons:
@@ -28,11 +28,22 @@
  *   - Restoring a session costs paths and view state and NOTHING else. The
  *     document behind a tab is opened the first time that tab is shown, which
  *     for every tab but one is never.
+ *
+ * WHAT A TAB REMEMBERS, AND HOW IT COMES BACK. remember() writes the whole
+ * view -- page, zoom, the fit mode as one of the schema's five values (not
+ * collapsed to width/custom as it once was), the scroll offset, and the live
+ * find query -- into the tab. apply_view() puts it back on a canvas that has a
+ * viewport: fit mode first, then the page (which measures the pages above it,
+ * so the layout is exact there), then the exact offset. That order is what
+ * makes "resume exactly where you left off" exact rather than page-accurate,
+ * and it is also what the theme toggle relies on to keep the reader's place
+ * while it rebuilds the canvas.
  */
 #ifndef SPDF_WIN_TABS_APP_H
 #define SPDF_WIN_TABS_APP_H
 
 #include "spdf_win_canvas.h"
+#include "spdf_win_chrome_model.h" /* spdf_win_find_query_utf8: the query the tab remembers */
 #include "spdf_win_session.h"
 
 /* The model's document hooks. The core allows one spdf_document per thread and
@@ -48,19 +59,85 @@ static void tabs_app_close_document(void* user, void* document) {
     if (document) spdf_close((spdf_document*)document);
 }
 
+/* The two enums, mapped both ways. The canvas's is the runtime's; the tab's is
+ * the FILE FORMAT (spdf_state_internal.h:61) and may not be renumbered, which
+ * is why the map is spelled out rather than cast. */
+static int tabs_app_fit_for_zoom_mode(spdf_win_zoom_mode mode) {
+    switch (mode) {
+        case SPDF_WIN_ZOOM_FIT_WIDTH: return SPDF_WIN_TAB_FIT_WIDTH;
+        case SPDF_WIN_ZOOM_FIT_HEIGHT: return SPDF_WIN_TAB_FIT_HEIGHT;
+        case SPDF_WIN_ZOOM_FIT_PAGE: return SPDF_WIN_TAB_FIT_PAGE;
+        case SPDF_WIN_ZOOM_ACTUAL: return SPDF_WIN_TAB_FIT_ACTUAL;
+        default: return SPDF_WIN_TAB_FIT_CUSTOM;
+    }
+}
+
+static spdf_win_zoom_mode tabs_app_zoom_mode_for_fit(int fit) {
+    switch (fit) {
+        case SPDF_WIN_TAB_FIT_WIDTH: return SPDF_WIN_ZOOM_FIT_WIDTH;
+        case SPDF_WIN_TAB_FIT_HEIGHT: return SPDF_WIN_ZOOM_FIT_HEIGHT;
+        case SPDF_WIN_TAB_FIT_PAGE: return SPDF_WIN_ZOOM_FIT_PAGE;
+        case SPDF_WIN_TAB_FIT_ACTUAL: return SPDF_WIN_ZOOM_ACTUAL;
+        default: return SPDF_WIN_ZOOM_FREE;
+    }
+}
+
 /* Write the reader's current place back into the selected tab, so a tab switch
- * and the session file both remember it. */
+ * and the session file both remember it. The find query comes from the
+ * process-wide find bridge, which holds the SELECTED tab's query -- show()
+ * below is what makes that true on every switch. */
 static void spdf_win_tabs_app_remember(spdf_win_tabs* tabs, spdf_win_canvas* canvas) {
     spdf_win_tab_view* view = spdf_win_tabs_view(tabs, spdf_win_tabs_selected_index(tabs));
+    const char* query;
     if (!view || !canvas) return;
     view->page = spdf_win_canvas_current_page(canvas);
     view->zoom = (double)spdf_win_canvas_zoom(canvas);
     view->custom_zoom = view->zoom;
-    view->fit_mode = spdf_win_canvas_zoom_mode(canvas) == SPDF_WIN_ZOOM_FIT_WIDTH ? SPDF_WIN_TAB_FIT_WIDTH
-                                                                                  : SPDF_WIN_TAB_FIT_CUSTOM;
+    view->fit_mode = tabs_app_fit_for_zoom_mode(spdf_win_canvas_zoom_mode(canvas));
     view->scroll_x = (double)spdf_win_canvas_scroll_x(canvas);
     view->scroll_y = (double)spdf_win_canvas_scroll_y(canvas);
     view->has_scroll_origin = 1;
+    query = spdf_win_find_query_utf8();
+    strncpy_s(view->search_text, sizeof(view->search_text), query ? query : "", _TRUNCATE);
+}
+
+/* Put a tab's remembered view onto its canvas. Needs the canvas's viewport --
+ * fit zooms and the scroll clamp are functions of it -- so the caller passes
+ * the canvas rect it last laid the chrome out against. Returns 1 when it
+ * placed the view; 0 (nothing touched) with no canvas, no view or no viewport
+ * yet, in which case the first paint's pending_page path places the page and
+ * the offset is lost -- the pre-existing behaviour, now the fallback. */
+static int spdf_win_tabs_app_apply_view(spdf_win_tabs* tabs, spdf_win_canvas* canvas, unsigned view_w,
+                                        unsigned view_h, float dpi_scale) {
+    const spdf_win_tab_view* view = spdf_win_tabs_view_const(tabs, spdf_win_tabs_selected_index(tabs));
+    spdf_win_zoom_mode mode;
+    if (!view || !canvas || view_w == 0 || view_h == 0) return 0;
+    spdf_win_canvas_set_viewport(canvas, view_w, view_h, dpi_scale);
+    mode = tabs_app_zoom_mode_for_fit(view->fit_mode);
+    if (mode == SPDF_WIN_ZOOM_FREE) {
+        if (view->zoom > 0.0) spdf_win_canvas_set_zoom_at(canvas, (float)view->zoom, 0.0f, 0.0f);
+    } else {
+        spdf_win_canvas_set_zoom_mode(canvas, mode);
+    }
+    /* The page first: it measures every page above it, so the offset that
+     * follows lands on an exact layout rather than an estimated one. */
+    spdf_win_canvas_scroll_to_page(canvas, view->page);
+    if (view->has_scroll_origin) spdf_win_canvas_scroll_to(canvas, (float)view->scroll_x, (float)view->scroll_y);
+    return 1;
+}
+
+/* A NEW tab -- one the reader just opened, as opposed to one restored from a
+ * file -- starts at FIT WIDTH, which is what this frontend has opened every
+ * document at since Phase 1 and what every pixel case and verify-phase1.ps1
+ * compare against. The view's own default (spdf_win_tab_view_init) is fit
+ * page, the mac and GTK default, and is right for a restored tab whose file
+ * carries no fitMode; it is not the launch behaviour here. One place for the
+ * rule, used by the launch document and by File > Open alike. */
+static int spdf_win_tabs_app_append(spdf_win_tabs* tabs, const char* utf8_path) {
+    int index = spdf_win_tabs_append(tabs, utf8_path, NULL);
+    spdf_win_tab_view* view = spdf_win_tabs_view(tabs, index);
+    if (view) view->fit_mode = SPDF_WIN_TAB_FIT_WIDTH;
+    return index;
 }
 
 /* Point the canvas at the selected tab, materialising that tab's document if
@@ -76,34 +153,54 @@ static int spdf_win_tabs_app_show(spdf_win_tabs* tabs, spdf_win_canvas** canvas,
     *canvas = doc ? spdf_win_canvas_create(doc, spdf_win_tabs_path(tabs, index), render_flags, err, sizeof(err))
                   : NULL;
     /* The restored page is applied on the first paint, not here: the canvas
-     * cannot place a page until it knows the viewport. */
+     * cannot place a page until it knows the viewport. apply_view() above does
+     * better when the caller knows one. */
     *pending_page = *canvas ? spdf_win_tabs_view(tabs, index)->page : -1;
     return *canvas != NULL;
 }
 
-/* Build the tab model for this window: last session's tabs as metadata, plus
- * the document the app was launched with, selected. */
-static spdf_win_tabs* spdf_win_tabs_app_start(const char* utf8_path, char* window_id, size_t id_len) {
+/* How a launch finds its tabs. */
+typedef enum spdf_win_tabs_app_restore {
+    SPDF_WIN_TABS_APP_RESTORE_FIRST = 0, /* a plain launch: the first window in the file */
+    SPDF_WIN_TABS_APP_RESTORE_ID = 1,    /* --window <id>: the window another process handed over */
+    SPDF_WIN_TABS_APP_RESTORE_NONE = 2   /* --new-window: nothing, a fresh empty window */
+} spdf_win_tabs_app_restore;
+
+/* Build the tab model for this window: last session's tabs as metadata (or
+ * the named window's, or none), plus the document the app was launched with,
+ * selected. `window_id` is IN for RESTORE_ID and OUT always; `out_frame` gets
+ * the restored window's frame, or zeros. */
+static spdf_win_tabs* spdf_win_tabs_app_start(const char* utf8_path, spdf_win_tabs_app_restore how, char* window_id,
+                                              size_t id_len, spdf_win_session_frame* out_frame) {
     spdf_win_tabs* tabs = spdf_win_tabs_create();
-    int index;
+    char want[SPDF_WIN_SESSION_ID_MAX];
+    int index, restored = 0;
+    if (out_frame) memset(out_frame, 0, sizeof(*out_frame));
     if (!tabs) return NULL;
     spdf_win_tabs_set_document_hooks(tabs, tabs_app_open_document, tabs_app_close_document, NULL);
     /* An UNREADABLE session leaves the model empty AND must not be saved over;
      * spdf_win_session_save() refuses on its own, so there is nothing to do
      * here but carry on with the launch document. */
-    if (spdf_win_session_restore(tabs, NULL, window_id, id_len) != SPDF_WIN_SESSION_RESTORED)
-        spdf_win_session_new_window_id(window_id, id_len);
+    strncpy_s(want, sizeof(want), window_id ? window_id : "", _TRUNCATE);
+    if (how == SPDF_WIN_TABS_APP_RESTORE_FIRST)
+        restored = spdf_win_session_restore_ex(tabs, NULL, window_id, id_len, out_frame) == SPDF_WIN_SESSION_RESTORED;
+    else if (how == SPDF_WIN_TABS_APP_RESTORE_ID && want[0])
+        restored = spdf_win_session_restore_ex(tabs, want, window_id, id_len, out_frame) == SPDF_WIN_SESSION_RESTORED;
+    /* A handed-over id that is not in the file keeps the id it was given, so
+     * the parent's later merge and ours agree about which window this is. */
+    if (!restored && !(how == SPDF_WIN_TABS_APP_RESTORE_ID && want[0])) spdf_win_session_new_window_id(window_id, id_len);
     index = utf8_path ? spdf_win_tabs_index_of_path(tabs, utf8_path) : -1;
-    if (index < 0 && utf8_path) index = spdf_win_tabs_append(tabs, utf8_path, NULL);
+    if (index < 0 && utf8_path) index = spdf_win_tabs_app_append(tabs, utf8_path);
     if (index < 0) index = spdf_win_tabs_selected_index(tabs);
     if (index >= 0) spdf_win_tabs_select_deferred(tabs, index);
     return tabs;
 }
 
-static void spdf_win_tabs_app_finish(spdf_win_tabs* tabs, spdf_win_canvas* canvas, const char* window_id) {
+static void spdf_win_tabs_app_finish(spdf_win_tabs* tabs, spdf_win_canvas* canvas, const char* window_id,
+                                     const spdf_win_session_frame* frame) {
     if (!tabs) return;
     spdf_win_tabs_app_remember(tabs, canvas);
-    spdf_win_session_save(tabs, window_id);
+    spdf_win_session_save_ex(tabs, window_id, frame);
     spdf_win_canvas_destroy(canvas);
     spdf_win_tabs_destroy(tabs);
 }

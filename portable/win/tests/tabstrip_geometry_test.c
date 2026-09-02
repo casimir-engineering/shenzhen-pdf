@@ -12,6 +12,7 @@
  * no `spdf-test-sources` line is needed.
  */
 #include "spdf_win_tabstrip.h"
+#include "spdf_win_tabs_drag.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -322,6 +323,81 @@ static void test_drop_slot(void) {
     CHECK(spdf_win_tabstrip_drop_slot(w, 0, -1, 100.0) == 0);
 }
 
+/* --- the drop indicator sits in the gap ---------------------------------- */
+static void test_drop_indicator(void) {
+    const double w = 1120.0;
+    int n = 3, visible = 0, start = 0;
+    SpdfWinTabRect t0 = spdf_win_tabstrip_tab_rect(w, n, 0, 0);
+    SpdfWinTabRect t1 = spdf_win_tabstrip_tab_rect(w, n, 0, 1);
+    SpdfWinTabRect t2 = spdf_win_tabstrip_tab_rect(w, n, 0, 2);
+    SpdfWinTabRect r;
+    spdf_win_tabstrip_visible_range(w, n, 0, &start, &visible);
+    CHECK(visible == 3);
+
+    /* Between tab 0 and tab 1: centred in the 6 pt gap, 2 pt wide, tab height. */
+    r = spdf_win_tabstrip_drop_indicator_rect(w, n, 0, 1);
+    CHECK_NEAR(r.x + r.w / 2.0, (t0.x + t0.w + t1.x) / 2.0);
+    CHECK_NEAR(r.w, SPDF_WIN_TABSTRIP_DROP_INDICATOR_WIDTH);
+    CHECK_NEAR(r.y, SPDF_WIN_TABSTRIP_TAB_Y);
+    CHECK_NEAR(r.h, SPDF_WIN_TABSTRIP_TAB_HEIGHT);
+    /* The end slots: half a gap outside the first / last tab (:19-20). */
+    r = spdf_win_tabstrip_drop_indicator_rect(w, n, 0, 0);
+    CHECK_NEAR(r.x + r.w / 2.0, t0.x - SPDF_WIN_TABSTRIP_TAB_GAP / 2.0);
+    r = spdf_win_tabstrip_drop_indicator_rect(w, n, 0, 3);
+    CHECK_NEAR(r.x + r.w / 2.0, t2.x + t2.w + SPDF_WIN_TABSTRIP_TAB_GAP / 2.0);
+    /* Out of range, or nothing visible: empty, and the painter draws nothing. */
+    CHECK(spdf_win_tabstrip_rect_is_empty(spdf_win_tabstrip_drop_indicator_rect(w, n, 0, 4)));
+    CHECK(spdf_win_tabstrip_rect_is_empty(spdf_win_tabstrip_drop_indicator_rect(w, n, 0, -1)));
+    CHECK(spdf_win_tabstrip_rect_is_empty(spdf_win_tabstrip_drop_indicator_rect(w, 0, -1, 0)));
+}
+
+/* --- when a drag leaves the strip (SPDFMacTabStripView.mm:1012-1014) ------ */
+static void test_drag_detaches(void) {
+    const double w = 1120.0, h = SPDF_WIN_TABSTRIP_HEIGHT;
+    SpdfWinTabRect plus = spdf_win_tabstrip_plus_rect(w);
+    /* Sliding along the strip is a reorder. */
+    CHECK(!spdf_win_tabstrip_drag_detaches(w, h, 300.0, 20.0, 20.0));
+    CHECK(!spdf_win_tabstrip_drag_detaches(w, h, 300.0, -20.0, 20.0));
+    CHECK(!spdf_win_tabstrip_drag_detaches(w, h, 300.0, h + 20.0, 20.0));
+    /* More than 24 pt outside the strip vertically, or 18 pt outside the tab
+     * area horizontally, or 48 pt from where the drag began: a detach. */
+    CHECK(spdf_win_tabstrip_drag_detaches(w, h, 300.0, -25.0, 20.0));
+    CHECK(spdf_win_tabstrip_drag_detaches(w, h, 300.0, h + 25.0, 20.0));
+    CHECK(spdf_win_tabstrip_drag_detaches(w, h, SPDF_WIN_TABSTRIP_LEADING_INSET - 19.0, 20.0, 20.0));
+    CHECK(spdf_win_tabstrip_drag_detaches(w, h, plus.x + plus.w + 19.0, 20.0, 20.0));
+    CHECK(spdf_win_tabstrip_drag_detaches(w, h, 300.0, 20.0, 20.0 + 49.0));
+}
+
+/* --- the chip style is the mac's (SPDFMacTabStripStyle.mm) ---------------- */
+static void test_tab_style(void) {
+    SpdfWinTabStyle s = spdf_win_tab_style_for_state(0, 0);
+    /* EVERY tab is outlined: the unselected present tab has a stroke now. */
+    CHECK(s.stroke_role == SPDF_WIN_TAB_ROLE_SEPARATOR);
+    CHECK_NEAR(s.stroke_alpha, 0.26);
+    CHECK_NEAR(s.stroke_width, 1.0);
+    CHECK(s.fill_role == SPDF_WIN_TAB_ROLE_CONTROL_BACKGROUND);
+    CHECK_NEAR(s.fill_alpha, 0.0);
+    s = spdf_win_tab_style_for_state(1, 0);
+    CHECK(s.fill_role == SPDF_WIN_TAB_ROLE_ACCENT && s.stroke_role == SPDF_WIN_TAB_ROLE_ACCENT);
+    CHECK_NEAR(s.fill_alpha, 0.34);
+    CHECK_NEAR(s.stroke_alpha, 0.95);
+    CHECK_NEAR(s.stroke_width, 2.0); /* twice the neutral width */
+    s = spdf_win_tab_style_for_state(0, 1);
+    CHECK(s.fill_role == SPDF_WIN_TAB_ROLE_ALERT && s.stroke_role == SPDF_WIN_TAB_ROLE_ALERT);
+    CHECK_NEAR(s.fill_alpha, 0.22);
+    CHECK_NEAR(s.stroke_alpha, 0.65);
+    CHECK_NEAR(s.stroke_width, 1.0);
+    s = spdf_win_tab_style_for_state(1, 1);
+    CHECK_NEAR(s.fill_alpha, 0.36);
+    CHECK_NEAR(s.stroke_alpha, 0.95);
+    CHECK_NEAR(s.stroke_width, 2.0);
+    /* Half the width, so the centreline lands on a pixel at 1x and 2x. */
+    CHECK_NEAR(spdf_win_tab_stroke_inset(2.0), 1.0);
+    CHECK_NEAR(spdf_win_tab_stroke_inset(1.0), 0.5);
+    /* kSPDFTabCornerRadius is 10 since the outline became visible. */
+    CHECK_NEAR(SPDF_WIN_TABSTRIP_TAB_RADIUS, 10.0);
+}
+
 /* --- same-window move index --------------------------------------------- */
 static void test_move_index(void) {
     /* Both gaps adjacent to the source collapse to a no-op. This is the
@@ -377,6 +453,9 @@ int main(void) {
     test_readonly_dot();
     test_hit_testing();
     test_drop_slot();
+    test_drop_indicator();
+    test_drag_detaches();
+    test_tab_style();
     test_move_index();
     test_width_monotonicity();
 

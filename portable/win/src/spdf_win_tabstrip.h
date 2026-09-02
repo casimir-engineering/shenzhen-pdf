@@ -103,10 +103,18 @@
 #define SPDF_WIN_TABSTRIP_READONLY_DOT_TITLE_GAP 2.5
 
 /* Tab body: y = 7, height 28 within the 42pt strip
- * (SPDFMacTabStripView.mm:124-129, :213-222). */
+ * (SPDFMacTabStripView.mm:124-129, :213-222). The corner radius is
+ * kSPDFTabCornerRadius (SPDFMacTabStripStyle.mm:6): 10 pt since 26.9.2-1's
+ * "Give every tab a visible outline" -- at 7 pt the corners read as a chamfer
+ * once the outline is actually visible. */
 #define SPDF_WIN_TABSTRIP_TAB_Y 7.0
 #define SPDF_WIN_TABSTRIP_TAB_HEIGHT 28.0
-#define SPDF_WIN_TABSTRIP_TAB_RADIUS 7.0
+#define SPDF_WIN_TABSTRIP_TAB_RADIUS 10.0
+
+/* The tab chip's style -- fill, outline, widths -- lives in spdf_win_tabs_style.h,
+ * split out for the file-size ratchet; included here so every consumer of the
+ * strip's geometry keeps seeing it. */
+#include "spdf_win_tabs_style.h"
 
 /* The `+` and overflow `…` buttons: 32 x 28 at y = 7, radius 9
  * (SPDFMacTabStripView.mm:135-149, :651-681). */

@@ -131,7 +131,10 @@ static void extend_frame_into_strip(spdf_win_window* window) {
     if (!dwmapi) return;
     extend = (dwm_extend_frame_fn)GetProcAddress(dwmapi, "DwmExtendFrameIntoClientArea");
     if (extend) {
-        if (!window->maximized)
+        /* Nothing when maximized or full screen: there is no frame to extend
+         * into, and a non-zero margin over a borderless popup draws a DWM strip
+         * along its top edge. */
+        if (!window->maximized && !window->fullscreen)
             m.cyTopHeight = border_y_px(window) + metric_for_dpi(SM_CYCAPTION, window->dpi);
         extend(window->hwnd, &m);
     }
@@ -198,9 +201,10 @@ static LRESULT nc_hit_test(spdf_win_window* window, WPARAM wparam, LPARAM lparam
     pt.y = GET_Y_LPARAM(lparam);
     if (!ScreenToClient(window->hwnd, &pt) || !GetClientRect(window->hwnd, &rc)) return HTCLIENT;
 
-    /* The top resize band, with its two corners. Not when maximized: there is
-     * nothing to resize to, and the band would eat the top of the strip. */
-    if (!window->maximized && pt.y < top_resize_band_px(window)) {
+    /* The top resize band, with its two corners. Not when maximized or full
+     * screen: there is nothing to resize to, and the band would eat the top of
+     * the strip. */
+    if (!window->maximized && !window->fullscreen && pt.y < top_resize_band_px(window)) {
         int bx = border_x_px(window);
         if (pt.x < bx) return HTTOPLEFT;
         if (pt.x >= rc.right - bx) return HTTOPRIGHT;

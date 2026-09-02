@@ -22,6 +22,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #pragma comment(lib, "user32.lib")
 
@@ -64,102 +65,36 @@ struct spdf_win_window {
     int maximized;
     int caption_hot;
     int caption_pressed;
+
+    /* FULL SCREEN (spdf_win_window_frame.h). The placement to go back to, valid
+     * only while `fullscreen` is set. */
+    int fullscreen;
+    WINDOWPLACEMENT placement;
+
+    /* The periodic tick (spdf_win_window_set_tick), or NULL. */
+    spdf_win_tick_fn tick_fn;
+
+    /* THE TOOLTIP (spdf_win_window_tooltip.h): the control, created on first
+     * use, and the text waiting for the show delay to elapse. */
+    HWND tooltip;
+    wchar_t tooltip_text[512];
+    int tooltip_x;
+    int tooltip_y;
 };
 
-/* SetProcessDpiAwarenessContext and GetDpiForWindow both arrived in Windows 10
- * 1607/1703. Resolving them dynamically means one binary runs everywhere and
- * merely looks slightly wrong on a Windows older than the feature. */
-typedef BOOL(WINAPI* set_dpi_ctx_fn)(DPI_AWARENESS_CONTEXT);
-typedef UINT(WINAPI* get_dpi_for_window_fn)(HWND);
-
-void spdf_win_enable_dpi_awareness(void) {
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    if (!user32) return;
-    set_dpi_ctx_fn set_ctx = (set_dpi_ctx_fn)GetProcAddress(user32, "SetProcessDpiAwarenessContext");
-    if (set_ctx) set_ctx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-}
-
-static UINT window_dpi(HWND hwnd) {
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    if (user32) {
-        get_dpi_for_window_fn get_dpi = (get_dpi_for_window_fn)GetProcAddress(user32, "GetDpiForWindow");
-        if (get_dpi) {
-            UINT dpi = get_dpi(hwnd);
-            if (dpi >= 48 && dpi <= 960) return dpi;
-        }
-    }
-    return USER_DEFAULT_SCREEN_DPI;
-}
+/* Timer ids. WM_TIMER carries the id in wParam; these two are the only timers
+ * this window sets. */
+#define SPDF_WIN_TIMER_TICK 1
+#define SPDF_WIN_TIMER_TOOLTIP 2
 
 float spdf_win_window_dpi_scale(const spdf_win_window* window) {
     if (!window || window->dpi == 0) return 1.0f;
     return (float)window->dpi / (float)USER_DEFAULT_SCREEN_DPI;
 }
 
-static void discard_target(spdf_win_window* window) {
-    if (!window->target) return;
-    spdf_win_d2d_release_target(window->d2d, window->target);
-    window->target->Release();
-    window->target = NULL;
-}
-
-/* Creates the HWND render target on first paint, and resizes it in place
- * afterwards. Lazily, because a target created before the window has its
- * final size is a target that gets resized immediately anyway, and Phase 1's
- * whole point is that nothing eager happens on the launch path. */
-static HRESULT ensure_target(spdf_win_window* window, UINT px_w, UINT px_h) {
-    if (window->target) {
-        return window->target->Resize(D2D1::SizeU(px_w, px_h));
-    }
-    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
-        D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
-        96.0f, 96.0f);
-    D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_props =
-        D2D1::HwndRenderTargetProperties(window->hwnd, D2D1::SizeU(px_w, px_h), D2D1_PRESENT_OPTIONS_NONE);
-    return spdf_win_d2d_factory(window->d2d)->CreateHwndRenderTarget(props, hwnd_props, &window->target);
-}
-
-static void paint(spdf_win_window* window) {
-    RECT rc;
-    if (!GetClientRect(window->hwnd, &rc)) return;
-
-    UINT px_w = (UINT)(rc.right - rc.left);
-    UINT px_h = (UINT)(rc.bottom - rc.top);
-    if (px_w == 0 || px_h == 0) return;
-
-    if (FAILED(ensure_target(window, px_w, px_h))) {
-        discard_target(window);
-        return;
-    }
-
-    spdf_win_scene scene;
-    memset(&scene, 0, sizeof(scene));
-    scene.fit = SPDF_WIN_FIT_CANVAS;
-    scene.target_px_w = px_w;
-    scene.target_px_h = px_h;
-    /* The chrome lays itself out against these, not target_px_w/h, which the
-     * canvas overwrites with its own viewport. */
-    scene.client_px_w = px_w;
-    scene.client_px_h = px_h;
-    scene.dpi_scale = spdf_win_window_dpi_scale(window);
-    /* A handler that declines leaves an EMPTY scene, not a half-filled one: it
-     * may have written a page list and then decided against it, and drawing from
-     * a list its owner has disclaimed is how a stale pointer is dereferenced. */
-    if (window->scene_fn && !window->scene_fn(window->user, &scene)) {
-        scene.page = NULL;
-        scene.pages = NULL;
-        scene.page_count = 0;
-    }
-
-    HRESULT hr = spdf_win_paint(window->d2d, window->target, &scene);
-    if (hr == D2DERR_RECREATE_TARGET) {
-        /* The display changed, the GPU was reset, or the session was locked.
-         * Throw the target away and ask for another paint; the next one
-         * rebuilds it. */
-        discard_target(window);
-        InvalidateRect(window->hwnd, NULL, FALSE);
-    }
-}
+/* The HWND render target and paint(). Depends on `struct spdf_win_window`
+ * above, hence the position. */
+#include "spdf_win_window_target.h"
 
 /* Message-to-input translation: dispatch(), dispatch_mouse(), on_wheel() and
  * end_press(). Depends on `struct spdf_win_window` above, hence the position. */
@@ -169,9 +104,13 @@ static void paint(spdf_win_window* window) {
  * Depends on dispatch() above, hence the position. */
 #include "spdf_win_window_caption.h"
 
-/* The frame, the title, the dark frame and the menu bar. Depends on
- * frame_extents() above, hence the position. */
+/* The frame, the title, the dark frame, full screen and the menu bar. Depends
+ * on frame_extents() above, hence the position. */
 #include "spdf_win_window_frame.h"
+
+/* The tab strip's hover preview. Depends on `struct spdf_win_window` and the
+ * timer ids above. */
+#include "spdf_win_window_tooltip.h"
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     spdf_win_window* window = (spdf_win_window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
@@ -236,6 +175,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         case WM_LBUTTONDOWN:
         case WM_LBUTTONDBLCLK:
         case WM_MBUTTONDOWN:
+            tooltip_hide(window); /* a press ends a hover */
             /* Capture first, so a handler that starts a drag has the pointer. */
             window->pressed = msg == WM_MBUTTONDOWN ? SPDF_WIN_CB_MIDDLE : SPDF_WIN_CB_LEFT;
             if (msg != WM_MBUTTONDOWN) next_click_count(window, lparam);
@@ -258,6 +198,18 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
              * outside the window and (-1, -1) would pan the whole way there. */
             if (window->pressed == SPDF_WIN_CB_NONE)
                 dispatch_mouse(window, SPDF_WIN_INPUT_MOUSE_MOVE, SPDF_WIN_CB_NONE, (LPARAM)-1);
+            tooltip_hide(window);
+            return 0;
+        /* The right button, as SPDF_WIN_INPUT_CONTEXT. No capture, no release:
+         * see the enum. Consumed whether or not the handler wanted it -- with no
+         * menu bar there is no WM_CONTEXTMENU anyone is waiting for. */
+        case WM_RBUTTONDOWN:
+            SetFocus(hwnd);
+            dispatch_mouse(window, SPDF_WIN_INPUT_CONTEXT, SPDF_WIN_CB_NONE, lparam);
+            return 0;
+        case WM_TIMER:
+            if (wparam == SPDF_WIN_TIMER_TICK && window->tick_fn) window->tick_fn(window->user);
+            else if (wparam == SPDF_WIN_TIMER_TOOLTIP) tooltip_fire(window);
             return 0;
         case WM_LBUTTONUP:
             /* A caption button pressed and released over the client is a press
@@ -346,13 +298,15 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             input.kind = SPDF_WIN_INPUT_KEY;
             input.key = (unsigned)wparam;
             if (dispatch(window, &input)) return 0;
-            /* THE LAST RESORT FOR ESCAPE, and it is last now rather than first.
-             * Escape used to close the window unconditionally from here, which
-             * cannot survive a find field -- Escape's first job is to dismiss
-             * whatever is open. The handler gets it, and only an Escape nothing
-             * wanted still closes the window. */
+            /* AN ESCAPE NOBODY WANTED. It used to close the window from here,
+             * which macOS never does and which bit anyone who cancelled a search
+             * twice (portable/docs/windows-feature-matrix.md, gap 2). Now it
+             * leaves full screen when the window is in it -- the one key policy
+             * this file holds, argued at spdf_win_window_set_fullscreen() -- and
+             * otherwise does nothing at all. Pinned by window_keys_test.c. */
             if (msg == WM_KEYDOWN && wparam == VK_ESCAPE) {
-                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                if (spdf_win_window_escape_leaves_fullscreen(window->fullscreen))
+                    dispatch_value(window, SPDF_WIN_INPUT_COMMAND, (unsigned)SPDF_WIN_CMD_FULLSCREEN);
                 return 0;
             }
             break;
@@ -360,6 +314,16 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         case WM_DESTROY:
             window->pressed = SPDF_WIN_CB_NONE;
             if (GetCapture() == hwnd) ReleaseCapture();
+            /* The tooltip is OWNED by this window, so Windows destroys it with
+             * us; only the handle must stop being followed. */
+            window->tooltip = NULL;
+            spdf_win_window_prevent_sleep(0);
+            /* The last placement, for the session save that runs after the
+             * pump returns and the HWND is gone (spdf_win_window_get_frame). */
+            if (!window->fullscreen) {
+                window->placement.length = sizeof(window->placement);
+                if (!GetWindowPlacement(hwnd, &window->placement)) window->placement.length = 0;
+            }
             discard_target(window);
             window->hwnd = NULL;
             PostQuitMessage(window->exit_code);
@@ -461,6 +425,13 @@ void spdf_win_window_show(spdf_win_window* window) {
 
 void spdf_win_window_invalidate(spdf_win_window* window) {
     if (window && window->hwnd) InvalidateRect(window->hwnd, NULL, FALSE);
+}
+
+void spdf_win_window_set_tick(spdf_win_window* window, unsigned ms, spdf_win_tick_fn fn) {
+    if (!window || !window->hwnd) return;
+    window->tick_fn = ms ? fn : NULL;
+    if (ms && fn) SetTimer(window->hwnd, SPDF_WIN_TIMER_TICK, ms, NULL);
+    else KillTimer(window->hwnd, SPDF_WIN_TIMER_TICK);
 }
 
 int spdf_win_window_run(spdf_win_window* window) {

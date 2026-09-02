@@ -95,6 +95,12 @@ typedef struct SpdfWinChromeModelInputs {
     int maximized;
     int caption_hot;
     int caption_pressed;
+    /* PRESENTATION: the strip and toolbar collapse to nothing and both panels
+     * are hidden whatever show_sidebar/show_minimap say (ShenzhenPDFMac.mm:13432
+     * -enterPresentationMode: sets both preferred-visible flags NO). Seeded by
+     * spdf_win_chrome_model_inputs_init() from spdf_win_chrome_presentation(),
+     * the process-wide flag below, for the reason the caption state is. */
+    int presentation;
 } SpdfWinChromeModelInputs;
 
 void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in);
@@ -119,6 +125,18 @@ void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in);
  * setter and composes the same frame it always would. */
 void spdf_win_chrome_caption_set_state(int maximized, int hot, int pressed);
 void spdf_win_chrome_caption_state(int* maximized, int* hot, int* pressed);
+
+/* --- presentation ---------------------------------------------------------
+ *
+ * Whether the window is presenting, travelling the same way as the caption
+ * state and for the same reason: the model is rebuilt every paint by code that
+ * fills SpdfWinChromeModelInputs field by field, and that code belongs to
+ * another track. Set by the app when F5 toggles; read by inputs_init. One
+ * window per process, so a process-wide value is the whole truth; defaults to
+ * not presenting, so every offscreen render composes the window it always did
+ * unless `--presentation` asks for the collapsed one. */
+void spdf_win_chrome_presentation_set(int on);
+int spdf_win_chrome_presentation(void);
 
 /* Fills `model` and `store` from `tabs` and `in`. `store` must outlive the paint
  * that reads `model`. Safe with a NULL `tabs`, which yields a model with no tabs
@@ -150,6 +168,12 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
  * The stored UTF-16 is what SpdfWinChromeModel::query then borrows, so it must
  * outlive a paint; it is a static buffer inside spdf_win_chrome_model.cpp. */
 void spdf_win_find_set_query(const wchar_t* query, int regex);
+
+/* The query as last set, UTF-8, for the session: each tab remembers its own
+ * (spdf_win_tab_view::search_text), and the tab model has no access to the
+ * find field's UTF-16 buffer. Empty string, never NULL, when there is none.
+ * Borrowed static storage, valid until the next set. */
+const char* spdf_win_find_query_utf8(void);
 
 #ifdef __cplusplus
 }

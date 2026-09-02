@@ -18,6 +18,143 @@
  * can sit behind spdf_win_paint().
  */
 
+/* SetProcessDpiAwarenessContext and GetDpiForWindow both arrived in Windows 10
+ * 1607/1703. Resolving them dynamically means one binary runs everywhere and
+ * merely looks slightly wrong on a Windows older than the feature. */
+typedef BOOL(WINAPI* set_dpi_ctx_fn)(DPI_AWARENESS_CONTEXT);
+typedef UINT(WINAPI* get_dpi_for_window_fn)(HWND);
+
+void spdf_win_enable_dpi_awareness(void) {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (!user32) return;
+    set_dpi_ctx_fn set_ctx = (set_dpi_ctx_fn)GetProcAddress(user32, "SetProcessDpiAwarenessContext");
+    if (set_ctx) set_ctx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+}
+
+static UINT window_dpi(HWND hwnd) {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32) {
+        get_dpi_for_window_fn get_dpi = (get_dpi_for_window_fn)GetProcAddress(user32, "GetDpiForWindow");
+        if (get_dpi) {
+            UINT dpi = get_dpi(hwnd);
+            if (dpi >= 48 && dpi <= 960) return dpi;
+        }
+    }
+    return USER_DEFAULT_SCREEN_DPI;
+}
+
+/* --- full screen ---------------------------------------------------------
+ *
+ * The standard Win32 arrangement (it is what Raymond Chen documents and what
+ * every browser does): drop the overlapped styles for WS_POPUP, cover the
+ * monitor's whole rectangle, and put the saved placement back on exit. The
+ * client-owned caption needs two things to know about it -- the DWM frame
+ * extension goes to zero (extend_frame_into_strip) and the top resize band is
+ * not offered (nc_hit_test), both exactly as for a maximized window. */
+void spdf_win_window_set_fullscreen(spdf_win_window* window, int on) {
+    LONG_PTR style;
+    if (!window || !window->hwnd) return;
+    on = on ? 1 : 0;
+    if (on == window->fullscreen) return;
+    style = GetWindowLongPtrW(window->hwnd, GWL_STYLE);
+    if (on) {
+        MONITORINFO mi;
+        HMONITOR mon = MonitorFromWindow(window->hwnd, MONITOR_DEFAULTTONEAREST);
+        memset(&mi, 0, sizeof(mi));
+        mi.cbSize = sizeof(mi);
+        if (!mon || !GetMonitorInfoW(mon, &mi)) return;
+        window->placement.length = sizeof(window->placement);
+        GetWindowPlacement(window->hwnd, &window->placement);
+        window->fullscreen = 1;
+        SetWindowLongPtrW(window->hwnd, GWL_STYLE, (style & ~(LONG_PTR)WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        extend_frame_into_strip(window);
+        SetWindowPos(window->hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    } else {
+        window->fullscreen = 0;
+        SetWindowLongPtrW(window->hwnd, GWL_STYLE, (style & ~(LONG_PTR)WS_POPUP) | WS_OVERLAPPEDWINDOW);
+        SetWindowPlacement(window->hwnd, &window->placement);
+        extend_frame_into_strip(window);
+        SetWindowPos(window->hwnd, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+    InvalidateRect(window->hwnd, NULL, FALSE);
+}
+
+int spdf_win_window_is_fullscreen(const spdf_win_window* window) { return window ? window->fullscreen : 0; }
+
+/* ES_DISPLAY_REQUIRED keeps the screen on, ES_SYSTEM_REQUIRED keeps the
+ * machine from sleeping, ES_CONTINUOUS makes both stick until the next call.
+ * The same call with ES_CONTINUOUS alone clears them. */
+void spdf_win_window_prevent_sleep(int on) {
+    SetThreadExecutionState(on ? (ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) : ES_CONTINUOUS);
+}
+
+/* --- the frame ----------------------------------------------------------- */
+
+int spdf_win_window_get_frame(const spdf_win_window* window, int* x, int* y, int* w, int* h) {
+    WINDOWPLACEMENT wp;
+    const RECT* r;
+    if (!window) return 0;
+    /* While full screen the live placement is the monitor; the one worth
+     * remembering is the one that will come back. After WM_DESTROY there is no
+     * HWND and the placement is what it recorded on the way out -- which is
+     * when the exit save asks. */
+    if (window->fullscreen || !window->hwnd) {
+        if (window->placement.length != sizeof(window->placement)) return 0;
+        wp = window->placement;
+    } else {
+        memset(&wp, 0, sizeof(wp));
+        wp.length = sizeof(wp);
+        if (!GetWindowPlacement(window->hwnd, &wp)) return 0;
+    }
+    r = &wp.rcNormalPosition;
+    if (r->right <= r->left || r->bottom <= r->top) return 0;
+    if (x) *x = r->left;
+    if (y) *y = r->top;
+    if (w) *w = r->right - r->left;
+    if (h) *h = r->bottom - r->top;
+    return 1;
+}
+
+void spdf_win_window_set_frame(spdf_win_window* window, int x, int y, int w, int h) {
+    RECT want, work;
+    MONITORINFO mi;
+    HMONITOR mon;
+    WINDOWPLACEMENT wp;
+    if (!window || !window->hwnd || w <= 0 || h <= 0) return;
+    want.left = x;
+    want.top = y;
+    want.right = x + w;
+    want.bottom = y + h;
+    /* Onto the nearest monitor's WORK area, so a frame saved on a screen that
+     * is gone -- or under a taskbar that has moved -- comes back reachable. */
+    mon = MonitorFromRect(&want, MONITOR_DEFAULTTONEAREST);
+    memset(&mi, 0, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    if (!mon || !GetMonitorInfoW(mon, &mi)) return;
+    work = mi.rcWork;
+    if (w > work.right - work.left) w = work.right - work.left;
+    if (h > work.bottom - work.top) h = work.bottom - work.top;
+    if (x + w > work.right) x = work.right - w;
+    if (y + h > work.bottom) y = work.bottom - h;
+    if (x < work.left) x = work.left;
+    if (y < work.top) y = work.top;
+    /* Through the placement rather than SetWindowPos: rcNormalPosition is what
+     * get_frame reads, so a save-restore-save round trip is the identity. The
+     * window is not shown yet, and SW_HIDE keeps it that way. */
+    memset(&wp, 0, sizeof(wp));
+    wp.length = sizeof(wp);
+    if (!GetWindowPlacement(window->hwnd, &wp)) return;
+    wp.showCmd = SW_HIDE;
+    wp.rcNormalPosition.left = x;
+    wp.rcNormalPosition.top = y;
+    wp.rcNormalPosition.right = x + w;
+    wp.rcNormalPosition.bottom = y + h;
+    SetWindowPlacement(window->hwnd, &wp);
+}
+
 /* Grow the FRAME until the CLIENT area is the requested size at this window's
  * DPI. Idempotent.
  *
