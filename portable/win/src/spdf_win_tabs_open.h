@@ -38,6 +38,7 @@
 #ifndef SPDF_WIN_TABS_OPEN_H
 #define SPDF_WIN_TABS_OPEN_H
 
+#include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 #include "spdf_win_password.h"
 #include "spdf_win_tabs.h"
 #include "spdf_win_watcher.h"
@@ -173,7 +174,16 @@ static void* tabs_app_open_document(void* user, const char* path, char* err, siz
     spdf_win_tab_view* view;
     int read_only = spdf_win_watcher_resolve_open(path, &res);
     const char* open_path = read_only && res.working_path[0] ? res.working_path : path;
-    int rc = spdf_win_open_document_interactive(g_tabs_owner, open_path, &doc, err, err_len);
+    int rc;
+
+    /* The launch timeline's `spdf-open-*` pair. It brackets the WHOLE hook, not
+     * just spdf_open() inside it: the resolve above and the shadow copy it can
+     * order are part of what a launch waits for, and the timeline exists to
+     * account for the wall clock rather than for one call. Free when
+     * SPDF_WIN_LAUNCH_PROFILE is unset -- one load and one compare. */
+    spdf_win_launch_mark("spdf-open-begin");
+    rc = spdf_win_open_document_interactive(g_tabs_owner, open_path, &doc, err, err_len);
+    spdf_win_launch_mark("spdf-open-end");
 
     g_tabs_open_cancelled = rc == 0;
     if (rc == 0 && err && err_len) err[0] = 0;

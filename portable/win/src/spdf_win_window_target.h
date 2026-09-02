@@ -16,6 +16,10 @@
  * spdf_win_d2d.h's: nothing about HOW a page is drawn lives on this side of
  * that call, which is what keeps the headless probe drawing the same pixels as
  * the window.
+ *
+ * THE ORDER INSIDE paint() IS A MEASURED DECISION, not an accident of editing:
+ * the scene is built BEFORE the target is created. The long note at that line
+ * says why and what it is worth.
  */
 
 static void discard_target(spdf_win_window* window) {
@@ -49,10 +53,7 @@ static void paint(spdf_win_window* window) {
     UINT px_h = (UINT)(rc.bottom - rc.top);
     if (px_w == 0 || px_h == 0) return;
 
-    if (FAILED(ensure_target(window, px_w, px_h))) {
-        discard_target(window);
-        return;
-    }
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-paint-begin");
 
     spdf_win_scene scene;
     memset(&scene, 0, sizeof(scene));
@@ -72,8 +73,31 @@ static void paint(spdf_win_window* window) {
         scene.pages = NULL;
         scene.page_count = 0;
     }
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-scene-built");
+
+    /* THE TARGET AFTER THE SCENE, NOT BEFORE, and the order is worth 30% of the
+     * first page (portable/docs/windows-launch-performance.md §4.1, experiment
+     * E2). The scene is where page 0 is rendered and the outline read -- pure
+     * CPU. The target is where Direct2D creates its D3D device, which since
+     * spdf_win_gpu_prewarm.h happens on a worker; but if that worker has not
+     * finished, THIS CALL WAITS FOR IT. Building the scene first spends the
+     * document's CPU work inside that wait instead of queueing it behind the
+     * wait. Measured: page render done at 58-110 ms against a device ready at
+     * 124-160, so the render is free. On every later frame the target already
+     * exists and the order is immaterial.
+     *
+     * Nothing about the PIXELS moves with it: the same scene is handed to the
+     * same spdf_win_paint() through the same target, created by the same call
+     * with the same properties. That is what the d2d.compose-* byte comparisons
+     * and a before/after --render-window-png check are for. */
+    if (FAILED(ensure_target(window, px_w, px_h))) {
+        discard_target(window);
+        return;
+    }
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-hwnd-target");
 
     HRESULT hr = spdf_win_paint(window->d2d, window->target, &scene);
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-paint-end");
     if (hr == D2DERR_RECREATE_TARGET) {
         /* The display changed, the GPU was reset, or the session was locked.
          * Throw the target away and ask for another paint; the next one
