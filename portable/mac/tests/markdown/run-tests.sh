@@ -101,6 +101,7 @@ for TEST in \
     SPDFMarkdownDiagramTests \
     SPDFMarkdownDiagramLayoutTests \
     SPDFMarkdownDiagramEdgeRoutingTests \
+    SPDFMarkdownDiagramNodeTextTests \
     SPDFMarkdownDiagramStyleTests \
     SPDFMarkdownRemoteImageTests \
     SPDFMarkdownPaginatorTests \

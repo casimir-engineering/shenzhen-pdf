@@ -375,6 +375,24 @@ the paper — the same rule that already governs body text, which re-wraps to th
 new column when the paper turns. Both are covered by the rerender: turning the
 paper re-renders, re-paginates and re-runs the active search.
 
+**A node is sized by its SAFE INTERIOR, not by its bounding rect.** Those are
+the same thing only for a rectangle. A stadium's caps, a circle, a rhombus and a
+parallelogram's slant all take width back, and the curved ones take back MORE
+the taller the text block is, because they pinch inward toward its first and
+last lines — so sizing tuned on one- and two-line labels started overflowing as
+soon as the ladder above began producing four- and five-line ones.
+`SPDFDiagramInteriorHalfWidth` is the one model of where each outline actually
+runs; `SPDFDiagramBoxForBlock` inverts it per shape to pick the smallest box
+that clears the measured block, and the emitter evaluates it at the block's own
+extreme lines to pick the width it re-wraps the label at. That re-wrap can only
+ever SHED lines, and fewer lines only sit closer to the middle where every
+outline is wider, so the drawn text is inside the drawn shape by construction. A
+rectangle's interior is its frame, so rectangles come out byte for byte as
+before; cylinder `[(…)]` and hexagon `{{…}}` are drawn as stadiums and inherit
+the stadium solve. `SPDFMarkdownDiagramNodeTextTests` re-derives every outline
+independently and asserts containment at one through five lines, at two font
+scales, and on the power-tree fixture at four page boxes.
+
 **Shapes are page decorations.** The band contributes one
 `SPDFMarkdownPageDecorationTypeDiagram` decoration carrying the resolved
 layout; `SPDFMarkdownDrawDiagramShapes` paints it as plain Core Graphics paths

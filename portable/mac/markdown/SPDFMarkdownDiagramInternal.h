@@ -57,6 +57,12 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramArrowHead) {
 @property(nonatomic) NSInteger rank;
 @property(nonatomic) NSInteger order;
 @property(nonatomic) NSRect frame;
+// The measured text block the shape was sized around, centered in `frame`:
+// the widest wrapped line by the stack of line heights. This -- not the frame
+// -- is what has to sit inside a curved outline, so it is what the sizing
+// solves for, and it is how far off center the emitter has to ask the outline
+// about before it re-wraps (see SPDFDiagramBoxForBlock).
+@property(nonatomic) NSSize labelBlock;
 @end
 
 @interface SPDFMarkdownDiagramEdge : NSObject
