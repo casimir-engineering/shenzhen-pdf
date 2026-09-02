@@ -43,21 +43,15 @@
 #define SPDF_WIN_TABS_APP_H
 
 #include "spdf_win_canvas.h"
+#include "spdf_win_recents.h"   /* the launch document is a recent document */
+#include "spdf_win_tabs_open.h" /* the document hooks: password, shadow copy, watch */
 #include "spdf_win_chrome_model.h" /* spdf_win_find_query_utf8: the query the tab remembers */
 #include "spdf_win_session.h"
 
-/* The model's document hooks. The core allows one spdf_document per thread and
- * the canvas takes its own path for the render workers, so there is nothing to
- * share here: open and close, and that is all. */
-static void* tabs_app_open_document(void* user, const char* path, char* err, size_t err_len) {
-    (void)user;
-    return spdf_open(path, err, err_len);
-}
-
-static void tabs_app_close_document(void* user, void* document) {
-    (void)user;
-    if (document) spdf_close((spdf_document*)document);
-}
+/* The model's document hooks -- the password prompt, the read-only shadow copy
+ * and the watch on the source -- are spdf_win_tabs_open.h's, included above.
+ * The core allows one spdf_document per thread and the canvas takes its own
+ * path for the render workers, so the hook opens one handle and that is all. */
 
 /* The two enums, mapped both ways. The canvas's is the runtime's; the tab's is
  * the FILE FORMAT (spdf_state_internal.h:61) and may not be renumbered, which
@@ -150,7 +144,11 @@ static int spdf_win_tabs_app_show(spdf_win_tabs* tabs, spdf_win_canvas** canvas,
     spdf_document* doc = index < 0 ? NULL : (spdf_document*)spdf_win_tabs_document(tabs, index, err, sizeof(err));
 
     spdf_win_canvas_destroy(*canvas);
-    *canvas = doc ? spdf_win_canvas_create(doc, spdf_win_tabs_path(tabs, index), render_flags, err, sizeof(err))
+    /* The render workers open their own handles by path: for a read-only
+     * source that is the shadow copy the document itself came from, so every
+     * handle on the tab agrees on the bytes (spdf_win_tabs_open_render_path). */
+    *canvas = doc ? spdf_win_canvas_create(doc, spdf_win_tabs_open_render_path(tabs, index), render_flags, err,
+                                           sizeof(err))
                   : NULL;
     /* The restored page is applied on the first paint, not here: the canvas
      * cannot place a page until it knows the viewport. apply_view() above does
@@ -177,7 +175,9 @@ static spdf_win_tabs* spdf_win_tabs_app_start(const char* utf8_path, spdf_win_ta
     int index, restored = 0;
     if (out_frame) memset(out_frame, 0, sizeof(*out_frame));
     if (!tabs) return NULL;
-    spdf_win_tabs_set_document_hooks(tabs, tabs_app_open_document, tabs_app_close_document, NULL);
+    /* The hook's user is the model itself, so the open can write the read-only
+     * binding onto the tab it materialised (spdf_win_tabs_open.h). */
+    spdf_win_tabs_set_document_hooks(tabs, tabs_app_open_document, tabs_app_close_document, tabs);
     /* An UNREADABLE session leaves the model empty AND must not be saved over;
      * spdf_win_session_save() refuses on its own, so there is nothing to do
      * here but carry on with the launch document. */
@@ -189,8 +189,13 @@ static spdf_win_tabs* spdf_win_tabs_app_start(const char* utf8_path, spdf_win_ta
     /* A handed-over id that is not in the file keeps the id it was given, so
      * the parent's later merge and ours agree about which window this is. */
     if (!restored && !(how == SPDF_WIN_TABS_APP_RESTORE_ID && want[0])) spdf_win_session_new_window_id(window_id, id_len);
+    /* Every restored read-only binding goes to the watcher BEFORE any tab is
+     * shown, so an unchanged source reopens its copy without a content read. */
+    spdf_win_tabs_open_prime(tabs);
     index = utf8_path ? spdf_win_tabs_index_of_path(tabs, utf8_path) : -1;
     if (index < 0 && utf8_path) index = spdf_win_tabs_app_append(tabs, utf8_path);
+    /* The launch document is a recent document, like one the picker chose. */
+    if (utf8_path && index >= 0) spdf_win_recents_note_opened(utf8_path, NULL);
     if (index < 0) index = spdf_win_tabs_selected_index(tabs);
     if (index >= 0) spdf_win_tabs_select_deferred(tabs, index);
     return tabs;

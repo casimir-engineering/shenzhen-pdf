@@ -112,6 +112,11 @@ static LRESULT CALLBACK props_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
             return 0;
         case WM_DESTROY:
             if (state) state->finished = 1;
+            /* A cross-thread SendMessageW(WM_CLOSE) -- what properties_dialog_test
+             * does to close the sheet -- is handled INSIDE the modal loop's
+             * GetMessageW, which then keeps waiting for a message that never
+             * comes. A thread message wakes it so it can see `finished`. */
+            PostThreadMessageW(GetCurrentThreadId(), WM_NULL, 0, 0);
             return 0;
         default:
             break;

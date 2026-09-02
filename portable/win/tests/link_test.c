@@ -18,7 +18,7 @@
  * core's header and which a later "scroll to the exact destination point"
  * refinement would otherwise have to rediscover.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_links.cpp portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c */
+/* spdf-test-sources: portable/win/src/spdf_win_links.cpp portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c portable/win/src/spdf_win_open.c */
 /* spdf-test-args: portable/win/tests/fixtures/selection.pdf */
 /* spdf-test-needs: mupdf */
 #include "spdf_win_links.h"

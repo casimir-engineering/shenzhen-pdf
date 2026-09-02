@@ -25,6 +25,16 @@ unsigned spdf_win_export_render_flags(void) {
     return (unsigned)SPDF_RENDER_DEFAULT;
 }
 
+/* Whether the document behind a save or a copy is a Markdown file, from its
+ * path: the one question the export verbs ask before choosing the core call.
+ * A NULL or unencodable path is not Markdown. */
+int spdf_win_export_source_is_markdown(const wchar_t* doc_path) {
+    char utf8[MAX_PATH * 4];
+    if (!doc_path || !doc_path[0]) return 0;
+    if (!spdf_win_export_utf8_path(doc_path, utf8, (int)sizeof(utf8))) return 0;
+    return spdf_path_is_markdown(utf8);
+}
+
 /* --- 2. pure naming -------------------------------------------------------
  *
  * Hand-written rather than PathFindFileNameW/PathCchRemoveExtension: shlwapi's
@@ -224,6 +234,12 @@ static int spdf_win_export_save_common(HWND parent, spdf_document* doc, const wc
         if (err && err_len) _snprintf_s(err, err_len, _TRUNCATE, "That location could not be encoded as a path.");
         return 0;
     }
+    /* A MARKDOWN DOCUMENT HAS NO ORIGINAL BYTES TO KEEP: it is written out
+     * through the core's document writer, vector text and all, and always in
+     * the light rendition -- spdf_export_pdf never sees a render flag, which is
+     * this file's light-theme rule met by construction (spdf_win_md.h, "THE
+     * DARK THEME NEEDS NOTHING HERE"). A PDF keeps its bytes, as before. */
+    if (spdf_win_export_source_is_markdown(doc_path)) return spdf_export_pdf(doc, utf8, page_index, err, err_len);
     if (page_index >= 0) return spdf_save_single_page_pdf(doc, page_index, utf8, err, err_len);
     return spdf_save_document(doc, utf8, err, err_len);
 }

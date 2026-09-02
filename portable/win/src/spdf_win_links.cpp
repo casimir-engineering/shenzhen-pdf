@@ -20,6 +20,7 @@
  * per page the pointer actually rests on.
  */
 #include "spdf_win_links.h"
+#include "spdf_win_open.h" /* the process opener: spdf_open, or Markdown-aware once main() says so */
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -121,7 +122,7 @@ static unsigned __stdcall text_link_worker(void* arg) {
             WaitForSingleObject(links->wake, INFINITE);
             continue;
         }
-        if (!doc) doc = spdf_open(links->path, err, sizeof(err));
+        if (!doc) doc = spdf_win_open_document(links->path, err, sizeof(err));
         if (!doc) break; /* an unopenable document has no text URLs; the thread rests */
 
         /* detect_text_links = 1: the structured-text pass, off the UI thread,

@@ -13,6 +13,7 @@
  */
 #include "spdf_win_settings.h"
 
+#include "spdf_win_recents.h" /* "recentlyOpened" is its list, written by this file's one writer */
 #include "spdf_win_session_json.h"
 #include "spdf_win_state.h"
 
@@ -232,6 +233,7 @@ int spdf_win_settings_save(const spdf_win_settings* s) {
     spdf_win_state_read_status status = SPDF_WIN_STATE_READ_ABSENT;
     char* existing;
     char* json;
+    char* merged;
     int ok;
     if (!s) return 0;
     existing = spdf_win_state_read_json_checked(SPDF_WIN_STATE_SETTINGS, &status);
@@ -243,7 +245,14 @@ int spdf_win_settings_save(const spdf_win_settings* s) {
     json = spdf_win_settings_to_json(s, existing);
     free(existing);
     if (!json) return 0;
-    ok = spdf_win_state_write_json(SPDF_WIN_STATE_SETTINGS, json);
+    /* "recentlyOpened" belongs to the recents module, which keeps the order in
+     * memory and hands it over here so the shared key is written once, by the
+     * file's one writer (spdf_win_recents.h, "WHERE THE MRU LIST LIVES"). A
+     * failed merge (allocation) writes the document as it was, key carried
+     * through from disk. */
+    merged = spdf_win_recents_merge_recently_opened(json);
+    ok = spdf_win_state_write_json(SPDF_WIN_STATE_SETTINGS, merged ? merged : json);
+    free(merged);
     free(json);
     return ok;
 }

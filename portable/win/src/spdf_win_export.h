@@ -142,6 +142,11 @@ int spdf_win_export_copy_scratch_dir(wchar_t* out, int out_cap);
  * bytes written including the NUL, or 0. */
 int spdf_win_export_utf8_path(const wchar_t* path, char* out, int out_len);
 
+/* 1 when `doc_path` names a Markdown file (spdf_path_is_markdown on its UTF-8
+ * form). Save As, Save Page As and Copy Page write such a document through
+ * spdf_export_pdf rather than the byte-preserving PDF saves. */
+int spdf_win_export_source_is_markdown(const wchar_t* doc_path);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

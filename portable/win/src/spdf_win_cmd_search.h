@@ -52,6 +52,9 @@ static int cmd_search_rotate(app* a, int degrees) {
         doc_action_report(a, err);
         return 0;
     }
+    /* Our own write: the watcher takes the new stat as its baseline rather than
+     * reporting it back as a change and reloading the page we just rotated. */
+    spdf_win_tabs_open_note_self_save(utf8_path);
     spdf_win_canvas_page_changed(a->canvas, act.page);
     /* The search's rects describe the old orientation; the thumbnails and the
      * outline bridge hold a handle to the old file. Both rebuild on the next

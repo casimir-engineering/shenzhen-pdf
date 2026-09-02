@@ -7,11 +7,12 @@
  * cache directory under the computed name is found on the next lookup -- the
  * whole contract the converter and the frontend rely on, minus the socket.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_md.cpp portable/win/src/spdf_win_md_images.cpp portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_open.c ext/md4c/md4c.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c */
+/* spdf-test-sources: portable/win/src/spdf_win_md.cpp portable/win/src/spdf_win_md_images.cpp portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_open.c ext/md4c/md4c.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c portable/win/src/spdf_win_open.c */
 /* spdf-test-args: portable/win/tests/fixtures/golden.pdf portable/win/tests/fixtures/readme-style.md %SCRATCH% */
 /* spdf-test-needs: mupdf */
 #include "spdf_win_md.h"
 #include "spdf_win_md_images.h"
+#include "spdf_win_open.h"
 
 #include <direct.h>
 #include <math.h>
@@ -122,6 +123,11 @@ static void test_cache_names(const char* scratch) {
     snprintf(dir, sizeof(dir), "%s/md-win-cache", scratch);
     spdf_win_md_images_set_dir_override(dir);
     spdf_win_md_images_clear_pending();
+    /* The seed this test plants below survives into the next run under the same
+     * scratch directory, where it would answer the "miss" lookups as a hit:
+     * the suite failed on every second run until this remove. */
+    snprintf(path, sizeof(path), "%s/%s", dir, a);
+    remove(path);
     EXPECT(spdf_win_md_images_dir(path, sizeof(path)) && strcmp(path, dir) == 0, "override directory is used");
     EXPECT(!spdf_win_md_images_lookup(NULL, "http://plain.example/a.png", b, sizeof(b)), "http is never cached");
     EXPECT(spdf_win_md_images_pending_count() == 0, "and never recorded");
@@ -182,6 +188,23 @@ static void test_open_seam(const char* pdf, const char* md) {
     EXPECT(doc == NULL && err[0], "a missing .pdf fails with a message");
 }
 
+/* The process opener (spdf_win_open.h): spdf_open until the hook is installed,
+ * and this module's open_any afterwards -- which is how the render workers,
+ * the search worker and the headless paths come to open Markdown without
+ * linking this module. main() installs it first thing. */
+static void test_open_seam_hook(const char* md) {
+    char err[512] = {0};
+    spdf_document* doc;
+    EXPECT(spdf_win_open_hook() == NULL, "no hook installed by default");
+    spdf_win_open_set_hook(spdf_win_md_open_any);
+    EXPECT(spdf_win_open_hook() == spdf_win_md_open_any, "the hook is what was installed");
+    doc = spdf_win_open_document(md, err, sizeof(err));
+    EXPECT(doc && spdf_page_count(doc) >= 3, "with the hook a .md opens as pages: %s", err);
+    if (doc) spdf_close(doc);
+    spdf_win_open_set_hook(NULL);
+    EXPECT(spdf_win_open_hook() == NULL, "NULL restores the default");
+}
+
 int main(int argc, char** argv) {
     const char* pdf = argc > 1 ? argv[1] : "portable/win/tests/fixtures/golden.pdf";
     const char* md = argc > 2 ? argv[2] : "portable/win/tests/fixtures/readme-style.md";
@@ -195,6 +218,7 @@ int main(int argc, char** argv) {
     test_settings_json();
     test_cache_names(scratch);
     test_open_seam(pdf, md);
+    test_open_seam_hook(md);
 
     if (g_failures) {
         fprintf(stderr, "%d Windows Markdown module check(s) failed\n", g_failures);

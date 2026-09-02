@@ -28,7 +28,7 @@
  * ignored -- and the test then fails to link for a reason that looks nothing
  * like the cause. Cost one full suite run.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_search.cpp portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c */
+/* spdf-test-sources: portable/win/src/spdf_win_search.cpp portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c portable/win/src/spdf_win_open.c */
 /* spdf-test-args: portable/win/tests/fixtures/outline.pdf */
 /* spdf-test-needs: mupdf */
 #include "spdf_win_chrome_find.h"

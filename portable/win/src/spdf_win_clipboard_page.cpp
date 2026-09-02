@@ -325,7 +325,11 @@ int spdf_win_copy_page_pdf(spdf_document* doc, int page_index, const wchar_t* do
     if (!spdf_win_export_page_file_name(doc_path, page_index, name, (int)(sizeof(name) / sizeof(name[0])))) return 0;
     if (_snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE, L"%s\\%s", dir, name) < 0) return 0;
     if (!spdf_win_export_utf8_path(path, utf8, (int)sizeof(utf8))) return 0;
-    if (!spdf_save_single_page_pdf(doc, page_index, utf8, err, err_len)) return 0;
+    /* Markdown pages are written through the core's document writer, light
+     * rendition, as Save Page As does (spdf_win_export.cpp). */
+    if (spdf_win_export_source_is_markdown(doc_path) ? !spdf_export_pdf(doc, utf8, page_index, err, err_len)
+                                                     : !spdf_save_single_page_pdf(doc, page_index, utf8, err, err_len))
+        return 0;
 
     hdrop = spdf_win_clipboard_alloc_hdrop(path);
     bytes = spdf_win_clipboard_alloc_file_bytes(path, &byte_size);

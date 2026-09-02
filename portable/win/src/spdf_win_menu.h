@@ -189,6 +189,11 @@ typedef enum spdf_win_command {
     SPDF_WIN_CMD_COPY_PATH,           /* File: the document's path to the clipboard; GTK4 win.copy-path */
     SPDF_WIN_CMD_OPEN_IN_BROWSER,     /* File: the document in the default browser; GTK4 win.open-in-browser */
 
+    /* The Markdown track's two (spdf_win_md_commands.h): the A-/A+ text size,
+     * on the View menu with the mac's Cmd+Alt+-/= as Ctrl+Alt+-/=. */
+    SPDF_WIN_CMD_MD_TEXT_SMALLER,
+    SPDF_WIN_CMD_MD_TEXT_LARGER,
+
     SPDF_WIN_CMD_COUNT
 } spdf_win_command;
 
@@ -359,7 +364,11 @@ static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_enabled(int command, const
         case SPDF_WIN_CMD_COPY_PATH:
         case SPDF_WIN_CMD_OPEN_IN_BROWSER:
         case SPDF_WIN_CMD_RELOAD:
-        case SPDF_WIN_CMD_ADD_FAVORITE: return st->has_document != 0;
+        case SPDF_WIN_CMD_ADD_FAVORITE:
+        /* The Markdown text size re-lays the selected document out; inert on a
+         * PDF tab (spdf_win_md_command_text_step) but greyed with no tab at all. */
+        case SPDF_WIN_CMD_MD_TEXT_SMALLER:
+        case SPDF_WIN_CMD_MD_TEXT_LARGER: return st->has_document != 0;
         /* The print job is refused before any dialog appears when the document
          * forbids it; greying the item says so before the reader asks. */
         case SPDF_WIN_CMD_PRINT: return st->has_document != 0 && st->can_print != 0;

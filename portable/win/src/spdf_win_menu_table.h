@@ -94,6 +94,14 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     {SPDF_WIN_CMD_ROTATE_CW, SPDF_WIN_MENU_VIEW, L"&Rotate Clockwise", L"Ctrl+R", 'R', SPDF_WIN_ACCEL_CTRL, 0},
     {SPDF_WIN_CMD_ROTATE_CCW, SPDF_WIN_MENU_VIEW, L"Rotate &Anticlockwise", L"Ctrl+Shift+R", 'R', SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_VIEW, NULL, NULL, 0, 0, 0},
+    /* The Markdown reader's A-/A+ (ShenzhenPDFMac.mm Cmd+Alt+-/=): 10% of the
+     * base size per press, persisted as markdownFontScale. Ctrl+Alt so they
+     * cannot collide with the zoom accelerators on the same two keys. */
+    {SPDF_WIN_CMD_MD_TEXT_SMALLER, SPDF_WIN_MENU_VIEW, L"Smaller Te&xt", L"Ctrl+Alt+-", SPDF_WIN_KEY_OEM_MINUS,
+     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_ALT, 0},
+    {SPDF_WIN_CMD_MD_TEXT_LARGER, SPDF_WIN_MENU_VIEW, L"&Larger Text", L"Ctrl+Alt+=", SPDF_WIN_KEY_OEM_PLUS,
+     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_ALT, 0},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_VIEW, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_SHORTCUTS, SPDF_WIN_MENU_VIEW, L"&Keyboard Shortcuts", L"F1", SPDF_WIN_KEY_F1, 0, 0},
     {SPDF_WIN_CMD_ABOUT, SPDF_WIN_MENU_VIEW, L"A&bout Shenzhen PDF", NULL, 0, 0, 0},
 
@@ -141,5 +149,8 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
      * and WM_KEYDOWN reports the unshifted VK either way. Without this row the
      * accelerator the menu PRINTS is the one that does not work. */
     {SPDF_WIN_CMD_ZOOM_IN, SPDF_WIN_MENU_NONE, NULL, NULL, SPDF_WIN_KEY_OEM_PLUS,
-     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0}
+     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
+    /* Shift+Ctrl+F is the mac's other Presentation key (ShenzhenPDFMac.mm:13432
+     * "F5 / Shift+Cmd+F"); the menu prints F5. */
+    {SPDF_WIN_CMD_PRESENTATION, SPDF_WIN_MENU_NONE, NULL, NULL, 'F', SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0}
 };

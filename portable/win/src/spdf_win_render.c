@@ -10,6 +10,7 @@
  * Renders, done callbacks and the notify hook all run with the lock RELEASED. */
 
 #include "spdf_win_render.h"
+#include "spdf_win_open.h" /* the process opener: spdf_open, or Markdown-aware once main() says so */
 
 #include <stdlib.h>
 #include <string.h>
@@ -280,7 +281,7 @@ static spdf_document* core_doc(const char* path, char* err, size_t err_len) {
     if (g_slot_doc && g_slot_path && path && strcmp(g_slot_path, path) == 0) return g_slot_doc;
     core_thread_exit(NULL);
     if (!path) return NULL;
-    g_slot_doc = spdf_open(path, err, err_len);
+    g_slot_doc = spdf_win_open_document(path, err, err_len);
     if (g_slot_doc) g_slot_path = dup_str(path);
     return g_slot_doc;
 }
