@@ -150,7 +150,8 @@ int spdf_win_ocr_temp_path(const char* path, unsigned nonce, char* out, size_t o
 }
 
 size_t spdf_win_ocr_env(const char* tesseract_dir, const char* gs_dir, const char* scripts_dir,
-                        const char* tessdata_parent, char* out, size_t out_bytes) {
+                        const char* tessdata_dir, char* out, size_t out_bytes) {
+    const char* tessdata_parent = tessdata_dir; /* the value, whatever level the caller chose */
     char path[SPDF_WIN_TC_ENV] = "PATH=";
     const char* dirs[3] = {tesseract_dir, gs_dir, scripts_dir};
     size_t at = 0, n;
@@ -336,8 +337,18 @@ SpdfWinOcrJob* spdf_win_ocr_start(const SpdfWinOcrRequest* req, const SpdfWinOcr
     if (spdf_win_toolchain_has(req->tools, SPDF_WIN_TOOL_GHOSTSCRIPT))
         spdf_win_toolchain_dirname(req->tools->path[SPDF_WIN_TOOL_GHOSTSCRIPT], gs_dir, sizeof(gs_dir));
     if (req->roots->user_scripts[0]) scripts = req->roots->user_scripts;
-    if (!spdf_win_toolchain_tessdata_parent_for_language(req->roots, req->language, parent, sizeof(parent)))
+    /* TESSDATA_PREFIX replaces tesseract's search path, so the downloaded-data
+     * directory is completed with what tesseract ships before it is named. */
+    if (spdf_win_toolchain_tessdata_complete(req->roots, req->tools->path[SPDF_WIN_TOOL_TESSERACT], req->language,
+                                             parent, sizeof(parent))) {
+        /* Tesseract 4+: TESSDATA_PREFIX names the tessdata directory itself,
+         * not its parent as Tesseract 3 (and the GTK port's variable) did --
+         * it looked for <parent>/osd.traineddata and found nothing. */
+        size_t n = strlen(parent);
+        snprintf(parent + n, sizeof(parent) - n, "\\tessdata");
+    } else {
         parent[0] = '\0';
+    }
     spdf_win_ocr_env(tess_dir, gs_dir, scripts, parent, job->env, sizeof(job->env));
     job->cancel = CreateEventW(NULL, TRUE, FALSE, NULL);
     job->thread = CreateThread(NULL, 0, ocr_thread, job, 0, NULL);

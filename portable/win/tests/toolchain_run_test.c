@@ -166,6 +166,63 @@ static void test_run_capture(void) {
         CHECK(n == 1);
     }
     CHECK(spdf_win_toolchain_cpu_count() >= 1);
+
+    /* TESSDATA_PREFIX completion: a fake tesseract tree ships eng and osd, our
+     * directory holds a downloaded chi_sim; completing copies eng and osd in
+     * and names our directory. With nothing downloaded it stays out of it. */
+    {
+        SpdfWinToolchainRoots r;
+        char tessexe[MAX_PATH], parent[SPDF_WIN_TC_PATH], f[SPDF_WIN_TC_PATH];
+        memset(&r, 0, sizeof(r));
+        snprintf(r.user_profile, sizeof(r.user_profile), "%sspdf-tc-local", tmp);
+        snprintf(tessexe, sizeof(tessexe), "%sspdf-tc-tess\\tesseract.exe", tmp);
+        snprintf(f, sizeof(f), "%sspdf-tc-tess", tmp);
+        CreateDirectoryA(f, NULL);
+        snprintf(f, sizeof(f), "%sspdf-tc-tess\\tessdata", tmp);
+        CreateDirectoryA(f, NULL);
+        snprintf(f, sizeof(f), "%sspdf-tc-tess\\tessdata\\eng.traineddata", tmp);
+        write_fake(f, "eng");
+        snprintf(f, sizeof(f), "%sspdf-tc-tess\\tessdata\\osd.traineddata", tmp);
+        write_fake(f, "osd");
+        snprintf(f, sizeof(f), "%sspdf-tc-tess\\tessdata\\configs", tmp);
+        CreateDirectoryA(f, NULL);
+        snprintf(f, sizeof(f), "%sspdf-tc-tess\\tessdata\\configs\\hocr", tmp);
+        write_fake(f, "tessedit_create_hocr 1");
+        CHECK(!spdf_win_toolchain_tessdata_complete(&r, tessexe, "chi_sim+eng", parent, sizeof(parent)));
+        snprintf(f, sizeof(f), "%sspdf-tc-local", tmp);
+        CreateDirectoryA(f, NULL);
+        snprintf(f, sizeof(f), "%sspdf-tc-local\\.shenzhenpdf", tmp);
+        CreateDirectoryA(f, NULL);
+        snprintf(f, sizeof(f), "%sspdf-tc-local\\.shenzhenpdf\\tesseract", tmp);
+        CreateDirectoryA(f, NULL);
+        snprintf(f, sizeof(f), "%sspdf-tc-local\\.shenzhenpdf\\tesseract\\tessdata", tmp);
+        CreateDirectoryA(f, NULL);
+        snprintf(f, sizeof(f), "%sspdf-tc-local\\.shenzhenpdf\\tesseract\\tessdata\\chi_sim.traineddata", tmp);
+        write_fake(f, "chi");
+        CHECK(spdf_win_toolchain_tessdata_complete(&r, tessexe, "chi_sim+eng", parent, sizeof(parent)));
+        CHECK(strstr(parent, "spdf-tc-local\\.shenzhenpdf\\tesseract") != NULL);
+        snprintf(f, sizeof(f), "%s\\tessdata\\eng.traineddata", parent);
+        CHECK(GetFileAttributesA(f) != INVALID_FILE_ATTRIBUTES);
+        DeleteFileA(f);
+        snprintf(f, sizeof(f), "%s\\tessdata\\osd.traineddata", parent);
+        CHECK(GetFileAttributesA(f) != INVALID_FILE_ATTRIBUTES);
+        DeleteFileA(f);
+        snprintf(f, sizeof(f), "%s\\tessdata\\configs\\hocr", parent); /* the output-format configs came too */
+        CHECK(GetFileAttributesA(f) != INVALID_FILE_ATTRIBUTES);
+        DeleteFileA(f);
+        snprintf(f, sizeof(f), "%s\\tessdata\\configs", parent);
+        RemoveDirectoryA(f);
+        snprintf(f, sizeof(f), "%sspdf-tc-tess\\tessdata\\configs\\hocr", tmp);
+        DeleteFileA(f);
+        snprintf(f, sizeof(f), "%sspdf-tc-tess\\tessdata\\configs", tmp);
+        RemoveDirectoryA(f);
+        snprintf(f, sizeof(f), "%s\\tessdata\\chi_sim.traineddata", parent);
+        DeleteFileA(f);
+        snprintf(f, sizeof(f), "%sspdf-tc-tess\\tessdata\\eng.traineddata", tmp);
+        DeleteFileA(f);
+        snprintf(f, sizeof(f), "%sspdf-tc-tess\\tessdata\\osd.traineddata", tmp);
+        DeleteFileA(f);
+    }
     DeleteFileA(fake);
     DeleteFileA(sleeper);
     DeleteFileA(echo);

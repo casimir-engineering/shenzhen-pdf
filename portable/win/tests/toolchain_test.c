@@ -79,7 +79,7 @@ static void test_candidates(void) {
     CHECK(spdf_win_toolchain_candidates(SPDF_WIN_TOOL_CURL, &r, out) == 1);
     CHECK_STR(out[0], "C:\\Windows\\System32\\curl.exe");
     CHECK(spdf_win_toolchain_tessdata_parent(&r, out[0], SPDF_WIN_TC_PATH));
-    CHECK_STR(out[0], "C:\\Users\\Ren\\AppData\\Local\\ShenzhenPDF\\tesseract");
+    CHECK_STR(out[0], "C:\\Users\\Ren\\.shenzhenpdf\\tesseract");
     /* No Python: no scripts directory, so no pip --user candidate; the Argos
      * venv location is still looked at. */
     r.user_scripts[0] = '\0';
@@ -224,7 +224,7 @@ static void test_plans(void) {
     CHECK(plan.steps[2].kind == SPDF_WIN_TC_STEP_PIP);
     CHECK_STR(plan.steps[2].command, "python -m pip install --user --upgrade --progress-bar off ocrmypdf");
     CHECK(plan.steps[3].kind == SPDF_WIN_TC_STEP_TRAINEDDATA);
-    CHECK_STR(plan.steps[3].dest, "C:\\Users\\Ren\\AppData\\Local\\ShenzhenPDF\\tesseract\\tessdata\\chi_sim.traineddata");
+    CHECK_STR(plan.steps[3].dest, "C:\\Users\\Ren\\.shenzhenpdf\\tesseract\\tessdata\\chi_sim.traineddata");
     CHECK(strstr(plan.steps[3].command, "tessdata_fast/main/chi_sim.traineddata") != NULL);
     CHECK(plan.needs_elevation_note); /* Tesseract's installer is machine-wide */
 

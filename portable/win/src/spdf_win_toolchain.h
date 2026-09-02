@@ -27,14 +27,21 @@
  *                              dist-info under the Store Python's 120-character
  *                              user site-packages prefix, and a venv at a short
  *                              path also keeps the torch/ctranslate2 stack out
- *                              of the user's own site-packages. Not under
- *                              %LOCALAPPDATA%: the Store Python is a packaged
- *                              app whose writes under AppData are redirected
- *                              into its LocalCache (the second run made the
- *                              venv where no other process could find it)
+ *                              of the user's own site-packages; and not under
+ *                              %LOCALAPPDATA%, see below
  *   language data  tessdata_fast (as Linux) into
- *                              %LOCALAPPDATA%\ShenzhenPDF\tesseract\tessdata;
+ *                              %USERPROFILE%\.shenzhenpdf\tesseract\tessdata;
  *                              argospm install translate-<from>_<to> on demand
+ *
+ * WHY %USERPROFILE%\.shenzhenpdf AND NOT %LOCALAPPDATA%. The Store Python is a
+ * packaged app, and every process it starts -- ocrmypdf, and the tesseract that
+ * ocrmypdf starts -- runs in its package context, where AppData\Local is a
+ * virtualised view: writes land in the package's LocalCache and a directory
+ * deleted through that view stays invisible to it. Measured twice here: the
+ * Argos venv was created where no other process could find it, and tesseract
+ * launched by ocrmypdf could not open a traineddata file that plainly existed
+ * and that the same tesseract opened from a shell. The profile root is not
+ * virtualised, so everything this file downloads or creates goes there.
  *
  * TWO HALVES, ONE HEADER. Everything above the SPDF_WIN_TOOLCHAIN_RUN marker
  * is pure C: paths and PATH searches take the roots and an existence callback
@@ -164,7 +171,7 @@ size_t spdf_win_toolchain_curl_cmd(const char* curl, const char* url, const char
 /* "<argospm>" install translate-<from>_<to> */
 size_t spdf_win_toolchain_argospm_cmd(const char* argospm, const char* from_lang, const char* to_lang, char* out,
                                       size_t out_bytes);
-/* Where downloaded tessdata goes: %LOCALAPPDATA%\ShenzhenPDF\tesseract. */
+/* Where downloaded tessdata goes: %USERPROFILE%\.shenzhenpdf\tesseract. */
 int spdf_win_toolchain_tessdata_parent(const SpdfWinToolchainRoots* roots, char* out, size_t out_bytes);
 
 /* --- install plans --------------------------------------------------------- */
@@ -270,6 +277,18 @@ int spdf_win_toolchain_missing_components(const char* tesseract, const char* tes
  * language's downloaded components, else 0. */
 int spdf_win_toolchain_tessdata_parent_for_language(const SpdfWinToolchainRoots* roots, const char* language,
                                                     char* out, size_t out_bytes);
+
+/* Make the downloaded-data directory usable as TESSDATA_PREFIX. That variable
+ * REPLACES tesseract's search path rather than extending it, so once one
+ * component lives in our directory every other component of the language --
+ * and osd, which --rotate-pages needs -- must be there too; the ones tesseract
+ * ships (eng, osd under <tesseract dir>\tessdata) are copied in. Returns 1
+ * with the parent in `out` when our directory is needed and complete, 0 when
+ * it is not needed (tesseract has everything) or cannot be completed. Learned
+ * from the first panel run: chi_sim downloaded, prefix withheld because eng
+ * was not beside it, and OCRmyPDF reported chi_sim missing. */
+int spdf_win_toolchain_tessdata_complete(const SpdfWinToolchainRoots* roots, const char* tesseract_exe,
+                                         const char* language, char* out, size_t out_bytes);
 
 /* Directory of a resolved tool path ("C:\x\bin\gswin64c.exe" -> "C:\x\bin"). */
 int spdf_win_toolchain_dirname(const char* path, char* out, size_t out_bytes);
