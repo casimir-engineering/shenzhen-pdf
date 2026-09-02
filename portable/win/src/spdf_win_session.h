@@ -149,6 +149,13 @@ int spdf_win_session_save_ex(const spdf_win_tabs* tabs, const char* window_id, c
 int spdf_win_session_detach_tab(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
                                 char* out_new_id, size_t out_len);
 
+/* How many windows OTHER than `window_id` the file holds: the mac app's "does
+ * another ShenzhenPDF window exist" (spdf_win_tabs.h's header), which decides
+ * whether closing the last tab closes the window or leaves it empty. One
+ * process per window, so the file is the only place the answer lives. 0 for no
+ * file or an unreadable one. */
+int spdf_win_session_other_windows(const char* window_id);
+
 #ifdef __cplusplus
 }
 #endif

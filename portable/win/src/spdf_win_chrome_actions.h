@@ -82,8 +82,11 @@ static void chrome_layout_for_input(app* a, const spdf_win_input* in, SpdfWinChr
                                     SpdfWinChromeLayout* layout) {
     memset(model, 0, sizeof(*model));
     model->dark = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
-    model->show_sidebar = a->show_sidebar;
-    model->show_minimap = a->show_minimap;
+    /* Presenting collapses the bands and hides both panels, exactly as the
+     * painter's model does (spdf_win_chrome_model_build). */
+    model->presentation = a->presentation;
+    model->show_sidebar = a->presentation ? 0 : a->show_sidebar;
+    model->show_minimap = a->presentation ? 0 : a->show_minimap;
     model->sidebar_w = a->sidebar_w;
     model->minimap_w = a->minimap_w;
     model->hot_tab = a->hot_tab;
@@ -112,6 +115,16 @@ static void chrome_layout_for_input(app* a, const spdf_win_input* in, SpdfWinChr
      * that the painter drew a fifth of the way down. */
     chrome_scroll_into(a, model);
     spdf_win_chrome_layout(model, in->view_px_w, in->view_px_h, in->dpi_scale, layout);
+    /* THE CANVAS VIEWPORT, REMEMBERED. Every input event lays the chrome out
+     * here before anything acts on it, so by the time a click or a key switches
+     * tabs the app knows the rect the next canvas will be laid out against --
+     * which is what lets show_selected_tab() put a restored scroll offset back
+     * before the first paint rather than losing it (spdf_win_tabs_app_apply_view). */
+    if (layout->canvas.w > 0.0f && layout->canvas.h > 0.0f) {
+        a->view_w = (unsigned)layout->canvas.w;
+        a->view_h = (unsigned)layout->canvas.h;
+        a->view_dpi = layout->dpi_scale;
+    }
 }
 
 /* Zoom about the CANVAS's centre, by the same factors the `+`/`-` keys use.
@@ -188,24 +201,37 @@ static int chrome_cycle_fit(app* a) {
     return 1;
 }
 
-/* The reading-theme button. The canvas takes its render flags at construction
- * and has no setter, so the theme is changed by rebuilding it over the same
- * document -- which is exactly what a tab switch already does, so the path is
- * proven rather than new. The reader's PAGE survives (remember() writes it into
- * the tab's view state and show() restores it); the exact scroll offset within
- * that page does not, because spdf_win_tabs_app_show only replays the page.
+/* REBUILD THE CANVAS OVER THE SAME DOCUMENT WITH THE CURRENT RENDER FLAGS. The
+ * canvas takes its flags at construction and has no setter, so a theme change
+ * is a rebuild -- which is exactly what a tab switch already does, so the path
+ * is proven rather than new. The reader's place survives WHOLE: remember()
+ * writes the fit mode, the page and the exact offset into the tab's view, and
+ * show_selected_tab() puts them back against the viewport the last event laid
+ * out (spdf_win_tabs_app_apply_view). It used to keep only the page. */
+static int chrome_rebuild_canvas(app* a) {
+    if (!a->canvas) return 0;
+    spdf_win_tabs_app_remember(a->tabs, a->canvas);
+    if (a->window) spdf_win_window_set_dark_frame(a->window, (a->render_flags & SPDF_RENDER_DARK_THEME) != 0);
+    return show_selected_tab(a);
+}
+
+/* The reading-theme button. Dark comes with images preserved when the Keep
+ * Image Colors setting says so, as the mac composes its flags
+ * (SPDFMacReadingThemeIntegration.mm:41). The choice is WRITTEN to
+ * settings.yaml as "markdownTheme" -- the mac's key, kept on purpose -- so the
+ * next launch opens in it rather than following the system again.
  *
  * The window frame follows, or `--dark`'s own fix -- a light caption around a
  * #121212 canvas -- comes straight back the first time anyone presses this. */
 static int chrome_toggle_theme(app* a) {
+    spdf_win_settings* s = spdf_win_settings_shared();
+    int dark = !(a->render_flags & SPDF_RENDER_DARK_THEME);
     if (!a->canvas) return 0;
-    /* Both bits together, as the --dark flag sets them together: dark theme with
-     * images left in their original colours (SPDF_RENDER_PRESERVE_IMAGES), which
-     * is what makes a scanned page readable rather than inverted. */
-    a->render_flags ^= (unsigned)(SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES);
-    spdf_win_tabs_app_remember(a->tabs, a->canvas);
-    if (a->window) spdf_win_window_set_dark_frame(a->window, (a->render_flags & SPDF_RENDER_DARK_THEME) != 0);
-    return show_selected_tab(a);
+    a->render_flags &= ~(unsigned)(SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES);
+    if (dark) a->render_flags |= SPDF_RENDER_DARK_THEME | (s->dark_theme_preserves_images ? SPDF_RENDER_PRESERVE_IMAGES : 0u);
+    s->theme = dark ? SPDF_WIN_THEME_DARK : SPDF_WIN_THEME_LIGHT;
+    spdf_win_settings_commit();
+    return chrome_rebuild_canvas(a);
 }
 
 /* A click on the trough, above or below the thumb. A VIEWPORT, less a tenth --
@@ -283,6 +309,10 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
     SpdfWinChromeHit hit;
 
     chrome_layout_for_input(a, in, &model, &l);
+    /* No chrome while presenting: the pointer turns pages and nothing else. */
+    if (a->presentation) return presentation_mouse(a, in);
+    /* The right button outside presentation has no meaning yet. */
+    if (in->kind == SPDF_WIN_INPUT_CONTEXT) return 0;
     spdf_win_chrome_input_route(&l, &model, in->x, in->y, in->button, &hit);
 
     if (in->kind == SPDF_WIN_INPUT_CURSOR) {
@@ -370,6 +400,7 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
             a->drag = SPDF_WIN_CA_DRAG_TAB;
             a->drag_tab = hit.index;
             a->drop_slot = -1;
+            a->drag_start_y = (in->y - l.tabstrip.y) / (l.dpi_scale > 0.0f ? l.dpi_scale : 1.0f);
         }
         return selecting | chrome_perform(a, &hit, &l) | chrome_set_scroll_hot(hit.part, hit.scroll_part, scroll_drag);
     }
@@ -381,12 +412,31 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
          * highlight. */
         case SPDF_WIN_CA_CANVAS_SELECT: return canvas_drag(a, in, &l);
         case SPDF_WIN_CA_DRAG_TAB: {
+            /* THE TEAR-OFF. Once the pointer has left the strip by the mac's
+             * margins (spdf_win_tabstrip_drag_detaches, :1012-1014) the drag
+             * stops being a reorder: the tab goes to a new window and the
+             * gesture ends here, capture and all -- the second process owns the
+             * tab now and this window has nothing left to drop. A lone tab stays
+             * put; a window with one tab detaching it would leave two windows
+             * where the reader had one. */
+            float s = l.dpi_scale > 0.0f ? l.dpi_scale : 1.0f;
+            int slot;
+            if (model.tab_count > 1 && !spdf_win_chrome_rect_empty(l.tabstrip) &&
+                spdf_win_tabstrip_drag_detaches(l.tabstrip.w / s, l.tabstrip.h / s, (in->x - l.tabstrip.x) / s,
+                                                (in->y - l.tabstrip.y) / s, a->drag_start_y)) {
+                int tab = a->drag_tab;
+                a->drag = SPDF_WIN_CA_NONE;
+                a->drag_tab = -1;
+                a->drop_slot = -1;
+                chrome_release_capture(a);
+                return chrome_detach_tab(a, tab) | 1;
+            }
             /* Only the SLOT is tracked while the pointer moves; the tab model is
              * not touched until the button comes up. Reordering live would make
              * every intermediate position a real move, and the reader would have
              * to land the tab exactly rather than merely release it in the right
              * gap. */
-            int slot = chrome_drop_slot_at(&l, &model, in->x);
+            slot = chrome_drop_slot_at(&l, &model, in->x);
             if (slot == a->drop_slot) return 0;
             a->drop_slot = slot;
             return 1;
@@ -440,6 +490,7 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
     {
         int changed = chrome_set_scroll_hot(hit.part, hit.scroll_part, 0);
         if (hit.hot_tab == a->hot_tab && hit.hot_close == a->hot_close) return changed;
+        if (hit.hot_tab != a->hot_tab) chrome_hover_tooltip(a, &l, hit.hot_tab);
         a->hot_tab = hit.hot_tab;
         a->hot_close = hit.hot_close;
         return 1;

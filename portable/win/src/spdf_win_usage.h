@@ -16,8 +16,12 @@
 
 static int usage(void) {
     fwprintf(stderr,
-             L"usage: ShenzhenPDF.exe [--dark|--light] [--page N] [file.pdf]\n"
-             L"       (no file: restores the last session, or opens an empty window)\n"
+             L"usage: ShenzhenPDF.exe [--dark|--light] [--page N] [--window ID | --new-window]\n"
+             L"                       [--state-dir DIR] [file.pdf]\n"
+             L"       (no file: restores the last session, or opens an empty window;\n"
+             L"        --window ID restores the session window another window handed over,\n"
+             L"        --new-window restores nothing; --state-dir reads and writes the\n"
+             L"        settings and session there instead of %%APPDATA%%\\ShenzhenPDF)\n"
              L"       ShenzhenPDF.exe --render-png [--dark] <file.pdf> <page> <zoom> <out.png>\n"
              L"       ShenzhenPDF.exe --render-window-png [opts] <file.pdf> <page> <w> <h> <out.png>\n"
              L"\n"
@@ -33,6 +37,7 @@ static int usage(void) {
              L"         --zoom-factor F   how much to zoom there (default 2)\n"
              L"         --frames N        render N frames, a viewport apart; last is written\n"
              L"         --chrome          compose the tab strip, toolbar, sidebar and minimap too\n"
+             L"         --presentation    ... collapsed, as F5 leaves them (with --chrome)\n"
              L"         --find Q          run a search for Q, so the frame shows the find chrome\n"
              L"         --find-regex      treat Q as a regular expression\n");
     return 64;

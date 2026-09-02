@@ -96,10 +96,13 @@ void spdf_win_window_prevent_sleep(int on) {
 int spdf_win_window_get_frame(const spdf_win_window* window, int* x, int* y, int* w, int* h) {
     WINDOWPLACEMENT wp;
     const RECT* r;
-    if (!window || !window->hwnd) return 0;
+    if (!window) return 0;
     /* While full screen the live placement is the monitor; the one worth
-     * remembering is the one that will come back. */
-    if (window->fullscreen) {
+     * remembering is the one that will come back. After WM_DESTROY there is no
+     * HWND and the placement is what it recorded on the way out -- which is
+     * when the exit save asks. */
+    if (window->fullscreen || !window->hwnd) {
+        if (window->placement.length != sizeof(window->placement)) return 0;
         wp = window->placement;
     } else {
         memset(&wp, 0, sizeof(wp));
