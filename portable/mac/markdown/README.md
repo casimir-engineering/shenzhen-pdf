@@ -116,8 +116,9 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   `SPDFMarkdownRenderOptions.remoteImageData`, a map of raw bytes keyed by
   `SPDFMarkdownRemoteImageKeyForTarget` output, synchronously; it never opens
   a connection. A remote target with no bytes yet renders as a fixed-size
-  pending placeholder box (maximumImageWidth x remoteImagePlaceholderHeight,
-  theme-gray with the alt text) that reserves layout space; targets in
+  pending placeholder box (the render's image width budget x
+  remoteImagePlaceholderHeight, theme-gray with the alt text) that reserves
+  layout space; targets in
   `failedRemoteImageTargets`, undecodable bytes, and over-budget bytes render
   the stable `[Image: alt]` text placeholder.
 - The session layer (`SPDFMacMarkdownSession+RemoteImages.mm` +
@@ -138,6 +139,16 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   attempt (macOS rasterizes SVG data natively on modern systems) under the
   same pixel budget; where that fails too, the text placeholder stands. No
   SVG library is vendored.
+- Display SIZE is budgeted by the destination page. When the render carries a
+  page (`SPDFMarkdownRenderOptions.pageContentSize` — see the Diagrams section
+  for the page-box policy), an image's display size caps at that page's
+  printable box (its width, and its height net of the figure air), the pending
+  placeholder box and image-row fitting use the same printable width, and the
+  table renderer's provisional column distribution uses the very formula the
+  paginator rebinds with. Turning the paper therefore re-fits images and
+  tables exactly like diagrams. A page-less render (`NSZeroSize`, the default)
+  keeps the constant `maximumImageWidth` x `maximumImageHeight` caps (440 x
+  320 by default) everywhere, unchanged.
 
 Tables retain column count and per-cell left/center/right alignment in the
 model, and lay out content-aware columns (GFM's `| --- |` separator line is
@@ -155,9 +166,10 @@ tall as its tallest cell. Each row records an `SPDFMarkdownTableRowInfo`
 (table identity, header/body role, body-row ordinal, column boundary x
 positions, per-cell canonical ranges and alignments, natural widths, row
 padding) on its rendered block; the paginator re-distributes the natural
-widths at the real printable width, rebinds the boundaries on the row's
-pagination item, and decoration planning draws GitHub-style table chrome from
-that measured geometry: a
+widths at the real printable width (which the render-time provisional
+distribution already equals when the render carries a page), rebinds the
+boundaries on the row's pagination item, and decoration planning draws
+GitHub-style table chrome from that measured geometry: a
 `tableHeaderFillColor` (#F6F8FA) band behind the header row, a subtle
 `tableStripeFillColor` (#FAFBFC) on alternating body rows (parity is
 per-table, so a split table keeps its striping across the page break), and a
@@ -340,8 +352,8 @@ the existing uniform band scale. A diagram bigger than its box is fitted at
 render time by ONE common factor applied to geometry AND label font sizes —
 never clipped.
 
-**A diagram is a FIGURE, sized by the page.** Its budget is not the inline-image
-budget but `SPDFMarkdownRenderOptions.pageContentSize`: the printable BOX of the
+**A diagram is a FIGURE, sized by the page.** Its budget is
+`SPDFMarkdownRenderOptions.pageContentSize`: the printable BOX of the
 page the render is destined for, taken off the very
 `SPDFMarkdownPageConfiguration` that `SPDFMacMarkdownPlanForRendition` will
 paginate with (`SPDFMacMarkdownPageContentSize`). Screen, print, Save as PDF and
