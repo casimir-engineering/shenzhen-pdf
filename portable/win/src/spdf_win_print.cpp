@@ -1,6 +1,7 @@
 /* spdf_win_print.cpp — see spdf_win_print.h. */
 
 #include "spdf_win_print.h"
+#include "spdf_win_open.h" /* the process opener: spdf_open, or Markdown-aware once main() says so */
 
 #include "spdf_win_clipboard_page.h" /* spdf_win_clipboard_alloc_dib */
 #include "spdf_win_export.h"         /* the light-theme rule, UTF-8 paths */
@@ -258,7 +259,7 @@ spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc
      * not fatal, it just means the job shares the caller's handle, which is
      * safe because everything below runs on this thread. */
     if (doc_path && spdf_win_export_utf8_path(doc_path, utf8, (int)sizeof(utf8)))
-        own_doc = spdf_open(utf8, open_err, sizeof(open_err));
+        own_doc = spdf_win_open_document(utf8, open_err, sizeof(open_err));
     job_doc = own_doc ? own_doc : doc;
 
     if (!spdf_win_print_paper_from_caps(GetDeviceCaps(pd.hDC, LOGPIXELSX), GetDeviceCaps(pd.hDC, LOGPIXELSY),

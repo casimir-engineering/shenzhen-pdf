@@ -1,6 +1,7 @@
 /* The content the sidebar and minimap show, and the temporary bridge that finds
  * it. See spdf_win_chrome_content.h for the three rules that shape this file. */
 #include "spdf_win_chrome_content.h"
+#include "spdf_win_open.h" /* the process opener: spdf_open, or Markdown-aware once main() says so */
 
 #include "spdf_win_chrome_thumbs.h"
 #include "shenzhen_pdf_core.h"
@@ -193,7 +194,7 @@ void ensure_outline(Bridge* b) {
         b->filter_dirty = 1;   /* a new document needs its rows built at least once */
         ensure_path(b);
         if (!b->path) return;
-        b->doc = spdf_open(b->path, err, sizeof(err));
+        b->doc = spdf_win_open_document(b->path, err, sizeof(err));
         if (!b->doc) return;
         if (!spdf_load_outline(b->doc, &b->outline, err, sizeof(err))) return;
         b->sidebar.total_count = b->outline.count;

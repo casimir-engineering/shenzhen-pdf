@@ -43,6 +43,7 @@
 #define SPDF_WIN_TABS_APP_H
 
 #include "spdf_win_canvas.h"
+#include "spdf_win_open.h" /* the process opener, Markdown-aware once main() has installed it */
 #include "spdf_win_chrome_model.h" /* spdf_win_find_query_utf8: the query the tab remembers */
 #include "spdf_win_session.h"
 
@@ -51,7 +52,7 @@
  * share here: open and close, and that is all. */
 static void* tabs_app_open_document(void* user, const char* path, char* err, size_t err_len) {
     (void)user;
-    return spdf_open(path, err, err_len);
+    return spdf_win_open_document(path, err, err_len);
 }
 
 static void tabs_app_close_document(void* user, void* document) {

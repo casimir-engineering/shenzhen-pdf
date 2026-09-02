@@ -28,6 +28,8 @@
 #include "spdf_win_canvas.h"
 #include "spdf_win_chrome_model.h" /* the chrome model the window paints */
 #include "spdf_win_layout.h" /* SPDF_WIN_PAGE_MARGIN_* for the initial window size */
+#include "spdf_win_md.h"     /* spdf_win_md_open_any: the process opener every by-path open goes through */
+#include "spdf_win_open.h"   /* ... and the seam it is installed into */
 #include "spdf_win_paths.h"    /* spdf_win_paths_set_state_dir_override, for --state-dir */
 #include "spdf_win_settings.h" /* settings.yaml: theme, panels, print, window size */
 #include "spdf_win_tabs_app.h" /* the tab model, the session, and the glue to this canvas */
@@ -182,6 +184,10 @@ struct app {
 /* The find group, which field has the keyboard, and the sidebar's rows. */
 #include "spdf_win_chrome_field_ui.h"
 #include "spdf_win_chrome_actions.h"
+/* The Markdown commands -- the A-/A+ text size and the image-cache arrival --
+ * in the shape the command switch expects. After the tab strip and the
+ * actions, whose show_selected_tab and spdf_win_tabs_app_remember it calls. */
+#include "spdf_win_md_commands.h"
 /* The keymap, the three typeable fields and the one command switch. LAST,
  * because it calls into all three above it. */
 #include "spdf_win_chrome_commands.h"
@@ -199,6 +205,13 @@ int main(void) {
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) return 70;
+
+    /* THE ONE CALL, INSTALLED ONCE (spdf_win_md.h, spdf_win_open.h): from here on
+     * every by-path open in the process -- the headless paths, the tab model,
+     * the render workers, search, thumbnails, links, print -- opens a Markdown
+     * file as pages and everything else exactly as before. Before the flag
+     * parse, because --render-png and --render-window-png open too. */
+    spdf_win_open_set_hook(spdf_win_md_open_any);
 
     app a;
     viewport_opts opts;
@@ -382,6 +395,10 @@ int main(void) {
             a.sidebar_w = (float)settings->sidebar_width;
             a.minimap_w = (float)settings->minimap_width;
         }
+        /* markdownFontScale, once, before the first Markdown tab is laid out;
+         * the headless paths keep the default so a pixel case depends on no
+         * file. */
+        spdf_win_md_load_settings();
 
         spdf_win_enable_dark_menus(); /* before any menu exists */
 
@@ -439,6 +456,11 @@ int main(void) {
                 a.menu = NULL;
                 spdf_win_window_set_dark_frame(window, (a.render_flags & SPDF_RENDER_DARK_THEME) != 0);
                 spdf_win_window_show(window);
+                /* The launch tab was shown before the window existed, so the
+                 * one thing show_selected_tab() could not do for it -- start
+                 * the fetch of a Markdown document's remote images -- is done
+                 * here, now there is a window for the completion to reach. */
+                spdf_win_md_command_after_open(&a, (HWND)spdf_win_window_native_handle(window));
                 rc = spdf_win_window_run(window);
                 /* What the session and the settings need from the window, read
                  * while it still exists. */

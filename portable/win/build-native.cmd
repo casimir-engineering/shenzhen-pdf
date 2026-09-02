@@ -27,9 +27,17 @@ rem chain is parsed as a sibling command, so the exit runs unconditionally and
 rem the script fails every build. Do not "simplify" these back.
 rem
 rem Delayed expansion is deliberately OFF. The MSVC environment vcvarsall.bat
-rem installs is large and not guaranteed free of `!`, and the source lists are
-rem accumulated through :add_* subroutines, which re-expand on every call and so
-rem need no `!` at all.
+rem installs is large and not guaranteed free of `!`, and the source list is
+rem accumulated through :add_source, which needs no `!` at all.
+rem
+rem THE SOURCE LIST IS A RESPONSE FILE, NOT A VARIABLE. cmd caps a command line
+rem -- including the expansion of `set "SOURCES=%SOURCES% ..."` -- at 8191
+rem characters, and the app is ~70 translation units named by ABSOLUTE path:
+rem from a git worktree under .claude\worktrees\<id>\ that is ~9 KB, and the
+rem script died with "The input line is too long" before cl.exe ever ran. So
+rem :add_source appends each source, quoted, as one line of
+rem %SPDF_OUT%\obj-<target>\sources.rsp and cl.exe reads it with @file, which
+rem has no such limit. --print-sources prints that file.
 setlocal EnableExtensions DisableDelayedExpansion
 
 for %%I in ("%~dp0..\..") do set "REPO=%%~fI"
@@ -45,7 +53,8 @@ if not defined SPDF_ARCH set "SPDF_ARCH=x64"
 
 rem ---- 0. Arguments ------------------------------------------------------
 set "TARGET="
-set "SOURCES="
+set "RSP="
+set "SOURCE_COUNT=0"
 set "PRINT_ONLY="
 
 if "%~1"=="" goto app_target
@@ -61,6 +70,7 @@ if /i "%~1"=="--app" (
 )
 
 set "TARGET=%~1"
+call :begin_sources
 shift
 :collect
 if "%~1"=="" goto collected
@@ -69,7 +79,7 @@ if errorlevel 1 exit /b 65
 shift
 goto collect
 :collected
-if not defined SOURCES (
+if "%SOURCE_COUNT%"=="0" (
   echo [build-native] target "%TARGET%" was given no sources
   exit /b 64
 )
@@ -81,8 +91,9 @@ rem adds portable\win\src\spdf_win_whatever.cpp must not have to edit this file,
 rem and must not silently drop out of the build either. Same approach as
 rem portable/win/tests/d2d-cases.sh:92.
 set "TARGET=ShenzhenPDF"
+call :begin_sources
 for %%F in ("%REPO%\portable\win\src\*.c" "%REPO%\portable\win\src\*.cpp") do call :add_source "portable\win\src\%%~nxF"
-if not defined SOURCES (
+if "%SOURCE_COUNT%"=="0" (
   echo [build-native] no sources found under "%REPO%\portable\win\src"
   exit /b 93
 )
@@ -102,7 +113,7 @@ call :add_source "ext\md4c\md4c.c"
 if errorlevel 1 exit /b 65
 
 if defined PRINT_ONLY (
-  echo %SOURCES%
+  type "%RSP%"
   exit /b 0
 )
 
@@ -233,13 +244,24 @@ if /i "%TARGET%"=="ShenzhenPDF" (
 
 cl /nologo /W3 /O2 /MT /utf-8 /D_CRT_SECURE_NO_WARNINGS ^
    /I"%REPO%\portable\core" /I"%REPO%\portable\win\src" /I"%SPDF_MUPDF_INC%" ^
-   %SOURCES% %RES_FILE% /Fe:"%SPDF_OUT%\%TARGET%.exe" /Fo:"%OBJ_DIR%\\" ^
+   @"%RSP%" %RES_FILE% /Fe:"%SPDF_OUT%\%TARGET%.exe" /Fo:"%OBJ_DIR%\\" ^
    /link /STACK:8388608 %SUBSYSTEM_FLAGS% %MUPDF_LIBS% %SYS_LIBS%
 set "CL_RC=%ERRORLEVEL%"
 if not "%CL_RC%"=="0" echo [build-native] cl.exe exited %CL_RC% building %TARGET%
 exit /b %CL_RC%
 
 rem ---- subroutines -------------------------------------------------------
+
+:begin_sources
+rem Start the response file for %TARGET% (see the header): its directory is the
+rem per-target object directory, created here because :add_source runs before
+rem step 3 does. A stale file from the last build is removed, never appended to.
+set "RSP=%SPDF_OUT%\obj-%TARGET%\sources.rsp"
+if not exist "%SPDF_OUT%" mkdir "%SPDF_OUT%"
+if not exist "%SPDF_OUT%\obj-%TARGET%" mkdir "%SPDF_OUT%\obj-%TARGET%"
+if exist "%RSP%" del "%RSP%"
+set "SOURCE_COUNT=0"
+exit /b 0
 
 :add_source
 rem Accept forward or back slashes so a bash caller can pass repo-relative
@@ -250,7 +272,8 @@ if not exist "%REPO%\%~1" (
   echo [build-native] source does not exist: %~1
   exit /b 1
 )
-set "SOURCES=%SOURCES% "%REPO%\%~1""
+>>"%RSP%" echo "%REPO%\%~1"
+set /a SOURCE_COUNT+=1
 exit /b 0
 
 :find_vcvars

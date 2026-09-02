@@ -1,5 +1,7 @@
 #pragma once
 
+#include "spdf_win_open.h" /* the process opener: Markdown-aware once main() has installed it */
+
 /* spdf_win_window_doc.h -- the ONE document the headless paths open, how an
  * error is reported, and the UTF-16 -> UTF-8 step every path argument takes.
  *
@@ -46,7 +48,7 @@ static bool open_document(app* a, const wchar_t* wpath, int page_index, bool int
         report(L"That path could not be converted to UTF-8.", interactive);
         return false;
     }
-    a->doc = spdf_open(a->path, err, sizeof(err));
+    a->doc = spdf_win_open_document(a->path, err, sizeof(err));
     if (!a->doc) {
         _snwprintf_s(message, _TRUNCATE, L"Could not open %s\n\n%hs", wpath, err[0] ? err : "unknown error");
         report(message, interactive);

@@ -17,7 +17,7 @@
  * The two declarations below are read by portable/win/tests/run-tests.sh, which
  * expects each on a single line ending in the comment terminator -- hence the
  * long line, which is not reflowable. */
-/* spdf-test-sources: portable/win/src/spdf_win_render.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c */
+/* spdf-test-sources: portable/win/src/spdf_win_render.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c portable/win/src/spdf_win_open.c */
 /* spdf-test-needs: mupdf */
 
 #include <stdio.h>
