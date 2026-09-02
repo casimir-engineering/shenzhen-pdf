@@ -402,7 +402,13 @@ int main(void) {
     chrome_find_push(&a);
 
     int remaining = argc - i;
-    if ((exact && remaining != 4) || (viewport && remaining != 5) || (!exact && !viewport && remaining != 1))
+    /* The windowed path takes AT MOST one document, and may take none: a bare
+     * launch restores the session, or opens an empty window that File > Open,
+     * the strip's `+` and a dropped file can all fill. That is macOS's launch
+     * behaviour, and it is what a double-click on the exe has to do -- until now
+     * that printed this usage text and exited 64, so the app could only ever be
+     * started from a command line that named a file. */
+    if ((exact && remaining != 4) || (viewport && remaining != 5) || (!exact && !viewport && remaining > 1))
         return usage();
 
     char err[256] = {0};
@@ -432,11 +438,19 @@ int main(void) {
 
         spdf_win_enable_dark_menus(); /* before any menu exists */
 
-        char* launch_path = utf8_from_wide(argv[i]);
+        /* NULL when launched bare: utf8_from_wide(NULL) is NULL, and
+         * spdf_win_tabs_app_start(NULL, ...) restores the saved session and
+         * selects its tab, or leaves the model empty. */
+        char* launch_path = remaining ? utf8_from_wide(argv[i]) : NULL;
         spdf_win_enable_dpi_awareness();
         a.tabs = spdf_win_tabs_app_start(launch_path, a.window_id, sizeof(a.window_id));
         free(launch_path);
-        if (!spdf_win_tabs_app_show(a.tabs, &a.canvas, a.render_flags, &a.pending_page)) {
+        /* A NAMED document that will not open is an error the user must see. No
+         * document at all is not: the window opens empty, with the chrome drawn
+         * and a line saying how to open one (scene_for_window's no-canvas
+         * branch), and every canvas call in the frontend tolerates a NULL
+         * canvas -- which was checked rather than assumed. */
+        if (!spdf_win_tabs_app_show(a.tabs, &a.canvas, a.render_flags, &a.pending_page) && remaining) {
             report(L"That document could not be opened.", true);
             rc = 1;
         } else {

@@ -87,6 +87,10 @@ function Capture([string]$png, [int]$w, [int]$h, [string[]]$appArgs) {
 $appArgs = if ($Dark) { @('--dark') } else { @('--light') }
 $variant = if ($Dark) { 'dark' } else { 'light' }
 
+# Snapshot of instances that are NOT ours, for the cleanup criterion at the end.
+$exeName = [IO.Path]::GetFileNameWithoutExtension($Exe)
+$preexisting = @(Get-Process -Name $exeName -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+
 # ---- 1. the window opens ------------------------------------------------
 $c1 = Capture (Join-Path $OutDir "01-open-$variant.png") 1120 800 $appArgs
 
@@ -323,13 +327,21 @@ if ($c1['app_exitcode'] -eq '0') {
   Record 'close.exits_zero' 'FAIL' ("app exited " + $c1['app_exitcode'])
 }
 
-# Nothing may be left running. This is the Windows form of agents.md's "do not
-# launch the macOS app": the user is at this machine while agents work.
-$stray = @(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($Exe)) -ErrorAction SilentlyContinue)
+# Nothing WE started may be left running. This is the Windows form of agents.md's
+# "do not launch the macOS app": the user is at this machine while agents work.
+#
+# Judged by PID against the snapshot taken before the first launch, NOT by
+# process name. The user may -- and right now does -- have their own instance
+# open while this runs, and a name-based count reported that as a leak: one
+# false failure in both themes, on a run that had cleaned up perfectly. A
+# harness must not fail because the person it serves is using the product.
+$after = @(Get-Process -Name $exeName -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+$stray = @($after | Where-Object { $preexisting -notcontains $_ })
 if ($stray.Count -eq 0) {
-  Record 'cleanup.no_stray_process' 'PASS' 'no ShenzhenPDF process left behind'
+  $note = if ($preexisting.Count -gt 0) { " ($($preexisting.Count) pre-existing instance(s) left alone)" } else { '' }
+  Record 'cleanup.no_stray_process' 'PASS' ("no process started by this run left behind" + $note)
 } else {
-  Record 'cleanup.no_stray_process' 'FAIL' ("$($stray.Count) process(es) still running")
+  Record 'cleanup.no_stray_process' 'FAIL' ("started by this run and still running: pid " + ($stray -join ', '))
 }
 
 Write-Output ''
