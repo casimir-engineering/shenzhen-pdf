@@ -28,30 +28,32 @@
  * here, not reinvented, and being toolkit-free they can be differentially
  * tested against the originals the way layout_geometry_test.c is.
  *
- * ONE DELIBERATE DIVERGENCE FROM macOS: WHERE THE STRIP LIVES.
- * On macOS the strip is INSIDE the title bar — SPDFWindow sets
- * titlebarAppearsTransparent, titleVisibility Hidden and
- * NSWindowStyleMaskFullSizeContentView, which is why the strip's background is
- * clearColor and why it reserves a leading inset for the traffic lights
+ * WHERE THE STRIP LIVES: INSIDE THE TITLE BAR, ON BOTH PLATFORMS.
+ * On macOS SPDFWindow sets titlebarAppearsTransparent, titleVisibility Hidden
+ * and NSWindowStyleMaskFullSizeContentView, which is why the strip's background
+ * is clearColor and why it reserves a LEADING inset for the traffic lights
  * (MAX(16.0, NSMaxX(zoomButton) + 18.0), falling back to 138.0 windowed and
  * 16.0 fullscreen).
  *
- * Here the strip is the top band of the CLIENT area, below an ordinary
- * WS_OVERLAPPEDWINDOW caption. That is a smaller change than hoisting it into
- * the caption, which on Win32 means owning WM_NCCALCSIZE, WM_NCHITTEST, the
- * caption buttons, snap-layouts hover, and the maximised-window inset — a
- * subsystem, not a detail, and one that cannot be verified by the offscreen
- * compose path every other pixel test in this port uses. Drawing the strip in
- * the client area delivers the visible parity now and does not preclude that
- * work later: only the strip's ORIGIN and the two insets below would change.
+ * Here the client area is extended over the caption (spdf_win_window.cpp owns
+ * WM_NCCALCSIZE and WM_NCHITTEST for that), so the strip IS the title bar, and
+ * the mirror of macOS applies: Windows' caption buttons sit at the RIGHT, so the
+ * reserve is a TRAILING inset. Three Windows 11 caption buttons at 46 px each
+ * are 138 px at 96 dpi -- the same number macOS falls back to for its traffic
+ * lights, which is a coincidence worth keeping rather than rounding.
  *
- * The consequence for the insets is a real simplification rather than a fudge:
- * with no traffic lights to avoid, the leading inset is macOS's own
- * no-traffic-lights value, 16.0 — the number it uses in fullscreen, for exactly
- * this situation. And because the caption buttons are in the caption rather
- * than in our band, there is no trailing reserve either. If the strip is ever
- * moved into the caption, the mirror of macOS applies: Windows' caption buttons
- * sit at the RIGHT, so the reserve becomes a TRAILING inset.
+ * The consequences for the two insets:
+ *   - LEADING is macOS's own no-traffic-lights value, 16.0 -- the number it uses
+ *     in fullscreen, for exactly this situation.
+ *   - TRAILING is the caption-button reserve, 138.0, and the `+` and overflow
+ *     buttons sit to its left. spdf_win_tabstrip_caption_rect() below is the
+ *     geometry of the three buttons themselves, in the same strip-local points
+ *     as everything else here, so the painter and WM_NCHITTEST agree about
+ *     where the close button is for the same reason they agree about a tab.
+ *
+ * Everything else -- overflow windowing, the forgiving hit target, the drag
+ * slots -- is macOS's arithmetic unchanged; the reserve only moves the right
+ * edge the `+` is pinned against.
  *
  * UNITS. Everything here is in logical points, matching the macOS constants
  * one for one. The caller multiplies by the window's DPI scale when it paints,
@@ -125,9 +127,28 @@
 #define SPDF_WIN_TABSTRIP_CLOSE_X_LINE_WIDTH 1.35
 
 /* Leading inset. macOS: MAX(16.0, reservedLeadingInset) to clear the traffic
- * lights. Here the strip is below the caption, so 16.0 — which is macOS's own
- * value when there are no traffic lights in the way. See the header comment. */
+ * lights. Windows has none, so 16.0 -- macOS's own value when there are no
+ * traffic lights in the way. See the header comment. */
 #define SPDF_WIN_TABSTRIP_LEADING_INSET 16.0
+
+/* Trailing inset: the caption-button reserve. Three buttons, each 46 pt wide
+ * and the full strip height, which is how Windows 11 sizes them (46 x the
+ * caption's height; ours is 42). 3 * 46 = 138, macOS's windowed fallback for
+ * the traffic-light reserve, mirrored to the trailing end. */
+#define SPDF_WIN_TABSTRIP_CAPTION_BUTTON_W 46.0
+#define SPDF_WIN_TABSTRIP_CAPTION_BUTTONS 3
+#define SPDF_WIN_TABSTRIP_TRAILING_INSET (SPDF_WIN_TABSTRIP_CAPTION_BUTTON_W * SPDF_WIN_TABSTRIP_CAPTION_BUTTONS)
+
+/* The three caption buttons, in left-to-right order, plus NONE. Numbered so
+ * that (4 - button) is how many button widths the button's LEFT edge is from
+ * the strip's trailing edge -- see spdf_win_tabstrip_caption_rect. The same
+ * values are SpdfWinChromeModel::caption_hot / caption_pressed. */
+typedef enum spdf_win_caption_button {
+    SPDF_WIN_CAPTION_NONE = 0,
+    SPDF_WIN_CAPTION_MINIMIZE = 1,
+    SPDF_WIN_CAPTION_MAXIMIZE = 2, /* draws Restore when the window is maximized */
+    SPDF_WIN_CAPTION_CLOSE = 3
+} spdf_win_caption_button;
 
 /* Drop indicator for a reattach drag: 2pt wide, full tab height, corner radius
  * 1.0, systemYellow (SPDFMacTabStripView.mm:684-699). */
@@ -167,11 +188,20 @@ static SPDF_WIN_TS_INLINE int spdf_win_ts_imin(int a, int b) { return a < b ? a 
  * is transcribed as-is: MAX pins the button clear of the leading inset, MIN
  * then keeps it 40-42pt from the trailing edge. Reproducing the shape rather
  * than a simplification of it keeps this diffable against the original. */
+/* The one edit to the transcription: `strip_w` is replaced by the edge of the
+ * caption-button reserve, so the `+` is pinned 40-42 pt left of the buttons
+ * rather than of the window. Everything downstream (the overflow button, the
+ * tab area, capacity) derives from this rect and moves with it. */
+static SPDF_WIN_TS_INLINE double spdf_win_tabstrip_controls_right(double strip_w) {
+    return strip_w - SPDF_WIN_TABSTRIP_TRAILING_INSET;
+}
+
 static SPDF_WIN_TS_INLINE SpdfWinTabRect spdf_win_tabstrip_plus_rect(double strip_w) {
     double floor_x = SPDF_WIN_TABSTRIP_LEADING_INSET + SPDF_WIN_TABSTRIP_CONTROL_WIDTH + 16.0;
-    double x = spdf_win_ts_max(floor_x, strip_w - 42.0);
+    double right = spdf_win_tabstrip_controls_right(strip_w);
+    double x = spdf_win_ts_max(floor_x, right - 42.0);
     SpdfWinTabRect r;
-    x = spdf_win_ts_min(x, spdf_win_ts_max(floor_x, strip_w - 40.0));
+    x = spdf_win_ts_min(x, spdf_win_ts_max(floor_x, right - 40.0));
     r.x = x;
     r.y = SPDF_WIN_TABSTRIP_TAB_Y;
     r.w = SPDF_WIN_TABSTRIP_CONTROL_WIDTH;
@@ -382,6 +412,36 @@ static SPDF_WIN_TS_INLINE int spdf_win_tabstrip_close_hit(double strip_w, int ta
         if (spdf_win_tabstrip_rect_contains(spdf_win_tabstrip_close_rect(tab), x, y)) return i;
     }
     return -1;
+}
+
+/* --------------------------------------------------------- caption buttons
+ * Windows-only geometry with no macOS counterpart: the traffic lights are
+ * AppKit's, but Windows' caption buttons are ours once the client area covers
+ * the caption. Strip-local points like everything else here, full strip
+ * height, packed against the trailing edge in the order Windows draws them --
+ * minimize, maximize/restore, close. An empty rect for NONE or for a strip too
+ * narrow to hold the reserve at all. */
+static SPDF_WIN_TS_INLINE SpdfWinTabRect spdf_win_tabstrip_caption_rect(double strip_w, double strip_h, int button) {
+    SpdfWinTabRect r;
+    if (button < SPDF_WIN_CAPTION_MINIMIZE || button > SPDF_WIN_CAPTION_CLOSE) return spdf_win_tabstrip_zero_rect();
+    if (strip_w < SPDF_WIN_TABSTRIP_TRAILING_INSET || strip_h <= 0.0) return spdf_win_tabstrip_zero_rect();
+    r.x = strip_w - (double)(SPDF_WIN_TABSTRIP_CAPTION_BUTTONS + 1 - button) * SPDF_WIN_TABSTRIP_CAPTION_BUTTON_W;
+    r.y = 0.0;
+    r.w = SPDF_WIN_TABSTRIP_CAPTION_BUTTON_W;
+    r.h = strip_h;
+    return r;
+}
+
+/* Which caption button a strip-local point is on, or NONE. This is what
+ * WM_NCHITTEST turns into HTMINBUTTON / HTMAXBUTTON / HTCLOSE -- and returning
+ * HTMAXBUTTON from the real hit test is what makes Windows 11's Snap Layouts
+ * flyout appear over our drawn button, so the button must be found HERE, by the
+ * same function the painter draws it with, and not faked in client space. */
+static SPDF_WIN_TS_INLINE int spdf_win_tabstrip_caption_hit(double strip_w, double strip_h, double x, double y) {
+    int b;
+    for (b = SPDF_WIN_CAPTION_MINIMIZE; b <= SPDF_WIN_CAPTION_CLOSE; ++b)
+        if (spdf_win_tabstrip_rect_contains(spdf_win_tabstrip_caption_rect(strip_w, strip_h, b), x, y)) return b;
+    return SPDF_WIN_CAPTION_NONE;
 }
 
 /* spdf_tab_strip_drop_slot_for_x (SPDFMacTabStripGeometry.h:16-18): the first

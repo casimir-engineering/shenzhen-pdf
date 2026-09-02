@@ -87,9 +87,38 @@ typedef struct SpdfWinChromeModelInputs {
     float zoom;           /* device pixels per PDF point, from spdf_win_canvas_zoom() */
     float zoom_dpi_scale; /* device pixels per logical pixel, to make a percentage */
     int fit_mode;         /* spdf_win_chrome_fit; the window maps the canvas's own enum */
+    /* The caption buttons, straight into the model's three fields of the same
+     * names (SpdfWinChromeModel). spdf_win_chrome_model_inputs_init() seeds them
+     * from spdf_win_chrome_caption_state() below, so a caller that knows nothing
+     * about the caption -- the app's paint glue, the headless frame -- gets the
+     * window's live state, or the at-rest state when there is no window. */
+    int maximized;
+    int caption_hot;
+    int caption_pressed;
 } SpdfWinChromeModelInputs;
 
 void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in);
+
+/* --- the caption buttons' state ------------------------------------------
+ *
+ * THE ONE PIECE OF WINDOW STATE THE MODEL CARRIES, and it travels the way the
+ * scroller's hover does (spdf_win_chrome_scroll_set_hot, whose long note in
+ * spdf_win_chrome_paint.h is the argument): a setter the window layer calls,
+ * read once when the inputs are initialised. Two things force that shape.
+ * First, whether the window is maximized and whether the pointer is over the
+ * close button are facts only spdf_win_window.cpp has -- WM_SIZE and
+ * WM_NCMOUSEMOVE deliver them -- and that file knows no app and no model.
+ * Second, the model is rebuilt from `struct app` every paint by code that owns
+ * neither the window nor this file, so the state has to be somewhere both can
+ * reach without either learning the other's types. One window per process
+ * (multi-window is multi-process, per session.yaml's window ids), so a
+ * process-wide value is the whole truth.
+ *
+ * DEFAULTS TO AT REST: not maximized, nothing hovered, nothing held. A process
+ * that never creates a window -- every offscreen render -- never calls the
+ * setter and composes the same frame it always would. */
+void spdf_win_chrome_caption_set_state(int maximized, int hot, int pressed);
+void spdf_win_chrome_caption_state(int* maximized, int* hot, int* pressed);
 
 /* Fills `model` and `store` from `tabs` and `in`. `store` must outlive the paint
  * that reads `model`. Safe with a NULL `tabs`, which yields a model with no tabs

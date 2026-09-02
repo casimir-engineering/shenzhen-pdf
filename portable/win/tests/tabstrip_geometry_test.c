@@ -83,15 +83,62 @@ static void test_single_tab(void) {
     CHECK(spdf_win_tabstrip_rect_is_empty(spdf_win_tabstrip_tab_rect(w, 1, 0, 1)));
     CHECK(spdf_win_tabstrip_rect_is_empty(spdf_win_tabstrip_tab_rect(w, 1, 0, -1)));
 
-    /* The + button sits near the trailing edge and never overlaps the tabs. */
+    /* The + button sits just left of the caption-button reserve -- 42 pt from
+     * its edge, as macOS pins it 42 pt from the window's -- and never overlaps
+     * the tabs. */
     plus = spdf_win_tabstrip_plus_rect(w);
     CHECK_NEAR(plus.w, 32.0);
     CHECK_NEAR(plus.h, 28.0);
-    CHECK(plus.x + plus.w <= w);
+    CHECK_NEAR(plus.x, w - SPDF_WIN_TABSTRIP_TRAILING_INSET - 42.0);
+    CHECK(plus.x + plus.w <= w - SPDF_WIN_TABSTRIP_TRAILING_INSET);
     CHECK(tab.x + tab.w <= plus.x);
 
     /* With no overflow there is no overflow button. */
     CHECK(spdf_win_tabstrip_rect_is_empty(spdf_win_tabstrip_overflow_rect(w, 1)));
+}
+
+/* --- the caption buttons: three, 46 wide, full height, flush right --------- */
+static void test_caption_buttons(void) {
+    const double w = 1120.0, h = SPDF_WIN_TABSTRIP_HEIGHT;
+    SpdfWinTabRect mn = spdf_win_tabstrip_caption_rect(w, h, SPDF_WIN_CAPTION_MINIMIZE);
+    SpdfWinTabRect mx = spdf_win_tabstrip_caption_rect(w, h, SPDF_WIN_CAPTION_MAXIMIZE);
+    SpdfWinTabRect cl = spdf_win_tabstrip_caption_rect(w, h, SPDF_WIN_CAPTION_CLOSE);
+
+    /* 3 x 46 = 138: macOS's windowed traffic-light reserve, mirrored. */
+    CHECK_NEAR(SPDF_WIN_TABSTRIP_TRAILING_INSET, 138.0);
+    CHECK_NEAR(SPDF_WIN_TABSTRIP_CAPTION_BUTTON_W, 46.0);
+
+    CHECK_NEAR(cl.x + cl.w, w);
+    CHECK_NEAR(mx.x + mx.w, cl.x);
+    CHECK_NEAR(mn.x + mn.w, mx.x);
+    CHECK_NEAR(mn.x, w - SPDF_WIN_TABSTRIP_TRAILING_INSET);
+    CHECK_NEAR(mn.y, 0.0);
+    CHECK_NEAR(mn.h, h);
+    CHECK_NEAR(cl.h, h);
+
+    /* Hit-testing agrees with the rects, edge-inclusive on the left. */
+    CHECK(spdf_win_tabstrip_caption_hit(w, h, mn.x, 0.0) == SPDF_WIN_CAPTION_MINIMIZE);
+    CHECK(spdf_win_tabstrip_caption_hit(w, h, mx.x + 23.0, 41.0) == SPDF_WIN_CAPTION_MAXIMIZE);
+    CHECK(spdf_win_tabstrip_caption_hit(w, h, w - 1.0, 20.0) == SPDF_WIN_CAPTION_CLOSE);
+    CHECK(spdf_win_tabstrip_caption_hit(w, h, mn.x - 1.0, 20.0) == SPDF_WIN_CAPTION_NONE);
+    CHECK(spdf_win_tabstrip_caption_hit(w, h, w, 20.0) == SPDF_WIN_CAPTION_NONE);
+    CHECK(spdf_win_tabstrip_caption_hit(w, h, w - 1.0, h) == SPDF_WIN_CAPTION_NONE);
+
+    /* The reserve never collides with the controls left of it. */
+    {
+        SpdfWinTabRect plus = spdf_win_tabstrip_plus_rect(w);
+        SpdfWinTabRect ov = spdf_win_tabstrip_overflow_rect(w, 40);
+        CHECK(plus.x + plus.w <= mn.x);
+        CHECK(ov.x + ov.w <= plus.x);
+    }
+
+    /* Degenerate input: NONE and out-of-range buttons have no rect, and a strip
+     * narrower than the reserve has no buttons rather than buttons off its left
+     * edge. */
+    CHECK(spdf_win_tabstrip_rect_is_empty(spdf_win_tabstrip_caption_rect(w, h, SPDF_WIN_CAPTION_NONE)));
+    CHECK(spdf_win_tabstrip_rect_is_empty(spdf_win_tabstrip_caption_rect(w, h, 4)));
+    CHECK(spdf_win_tabstrip_rect_is_empty(spdf_win_tabstrip_caption_rect(100.0, h, SPDF_WIN_CAPTION_CLOSE)));
+    CHECK(spdf_win_tabstrip_caption_hit(100.0, h, 90.0, 20.0) == SPDF_WIN_CAPTION_NONE);
 }
 
 /* --- tabs are laid out left to right, gap exactly kTabGap ---------------- */
@@ -322,6 +369,7 @@ static void test_width_monotonicity(void) {
 int main(void) {
     test_metrics();
     test_single_tab();
+    test_caption_buttons();
     test_gaps_and_order();
     test_overflow();
     test_degenerate_widths();

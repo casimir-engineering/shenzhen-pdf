@@ -9,13 +9,21 @@
  * THE macOS WINDOW, top to bottom (ShenzhenPDFMac.mm:3292-3312):
  *
  *     +--------------------------------------------------+
- *     | tab strip                                  42 pt |
+ *     | tab strip                       42 pt  [ _ o x ] |
  *     +--------------------------------------------------+
  *     | toolbar                                    42 pt |
  *     +--------------------------------------------------+
  *     | sidebar  | |            canvas            | | mm |
  *     |  240 pt  |5|                              |5|126.5
  *     +--------------------------------------------------+
+ *
+ * The strip IS the title bar on both platforms. macOS puts it inside the
+ * transparent title bar and reserves a leading inset for the traffic lights;
+ * here the client area is extended over the caption (spdf_win_window.cpp's
+ * WM_NCCALCSIZE) and the strip reserves a TRAILING inset for the three Windows
+ * caption buttons, which the chrome draws itself -- `caption` below is that
+ * reserve, and it lies INSIDE the strip rect rather than beside it, because the
+ * band, its hairline and its hit-testing are all still the strip's.
  *
  * The middle row is an NSSplitView (vertical, thin divider) filling the rest.
  * BOTH side panels are visible by default -- `_defaultSidebarVisibleForNewDocuments
@@ -51,6 +59,11 @@
 #define SPDF_WIN_CHROME_H
 
 #include <math.h>
+
+/* For the caption-button reserve (SPDF_WIN_TABSTRIP_TRAILING_INSET), which is
+ * the strip's own metric and must be the one number in one place: the layout's
+ * `caption` rect and the strip's `+` position both derive from it. */
+#include "spdf_win_tabstrip.h"
 
 #if defined(_MSC_VER) && !defined(__cplusplus)
 #define SPDF_WIN_CHROME_INLINE __inline
@@ -140,7 +153,12 @@ typedef enum spdf_win_chrome_part {
      * which is what makes it a usable position indicator and a place to hang the
      * search heat-map. */
     SPDF_WIN_CHROME_VSCROLL,
-    SPDF_WIN_CHROME_HSCROLL
+    SPDF_WIN_CHROME_HSCROLL,
+    /* The caption-button reserve at the strip's trailing end. Tested BEFORE the
+     * strip because it lies inside the strip's rect. Which of the three buttons
+     * is a further question the input router asks spdf_win_tabstrip_caption_hit().
+     * Appended, so no existing part changes number. */
+    SPDF_WIN_CHROME_CAPTION
 } spdf_win_chrome_part;
 
 /* The full division of one client area. Empty rects (w or h <= 0) mean the
@@ -150,6 +168,11 @@ typedef enum spdf_win_chrome_part {
  * survive a user dragging the sidebar to its maximum. */
 typedef struct SpdfWinChromeLayout {
     SpdfWinChromeRect tabstrip;
+    /* The three caption buttons' reserve: the trailing
+     * SPDF_WIN_TABSTRIP_TRAILING_INSET points of the strip, full strip height,
+     * INSIDE `tabstrip`. Empty whenever the strip is. Coarse hit-testing only;
+     * the individual buttons come from spdf_win_tabstrip_caption_rect(). */
+    SpdfWinChromeRect caption;
     SpdfWinChromeRect toolbar;
     SpdfWinChromeRect sidebar;
     SpdfWinChromeRect sidebar_divider;
@@ -255,6 +278,7 @@ static SPDF_WIN_CHROME_INLINE void spdf_win_chrome_layout(const SpdfWinChromeMod
 
     if (!out) return;
     out->tabstrip = spdf_win_chrome_zero();
+    out->caption = spdf_win_chrome_zero();
     out->toolbar = spdf_win_chrome_zero();
     out->sidebar = spdf_win_chrome_zero();
     out->sidebar_divider = spdf_win_chrome_zero();
@@ -293,6 +317,19 @@ static SPDF_WIN_CHROME_INLINE void spdf_win_chrome_layout(const SpdfWinChromeMod
             out->tabstrip.w = w;
             out->tabstrip.h = strip_h;
             y += strip_h;
+        }
+        /* The caption reserve rides on the strip: same whole-pixel conversion
+         * the strip painter applies to the buttons, so the coarse rect and the
+         * drawn buttons share an edge. A strip narrower than the reserve has no
+         * buttons at all rather than buttons hanging off its left edge. */
+        if (!spdf_win_chrome_rect_empty(out->tabstrip)) {
+            float cap_w = spdf_win_chrome_px(SPDF_WIN_TABSTRIP_TRAILING_INSET, s);
+            if (cap_w <= w) {
+                out->caption.x = w - cap_w;
+                out->caption.y = 0.0f;
+                out->caption.w = cap_w;
+                out->caption.h = out->tabstrip.h;
+            }
         }
     }
 
@@ -400,6 +437,8 @@ static SPDF_WIN_CHROME_INLINE spdf_win_chrome_part spdf_win_chrome_hit(const Spd
         return SPDF_WIN_CHROME_SIDEBAR_DIVIDER;
     if (spdf_win_chrome_contains(spdf_win_chrome_grab_rect(l->minimap_divider, l->dpi_scale), x, y))
         return SPDF_WIN_CHROME_MINIMAP_DIVIDER;
+    /* The caption reserve before the strip that contains it. */
+    if (spdf_win_chrome_contains(l->caption, x, y)) return SPDF_WIN_CHROME_CAPTION;
     if (spdf_win_chrome_contains(l->tabstrip, x, y)) return SPDF_WIN_CHROME_TABSTRIP;
     if (spdf_win_chrome_contains(l->toolbar, x, y)) return SPDF_WIN_CHROME_TOOLBAR;
     if (spdf_win_chrome_contains(l->sidebar, x, y)) return SPDF_WIN_CHROME_SIDEBAR;

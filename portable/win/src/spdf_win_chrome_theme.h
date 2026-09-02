@@ -144,6 +144,21 @@ typedef struct SpdfWinChromeTheme {
      * (:684-699). */
     SpdfWinChromeColor drop_indicator;
 
+    /* --- caption buttons ---------------------------------------------------
+     *
+     * Nothing to transcribe: macOS's traffic lights are AppKit's and Windows'
+     * caption buttons are ours once the strip is the title bar. These are the
+     * Windows 11 relationships -- a button is invisible at rest, lifts to a faint
+     * fill on hover, drops back a step when pressed, and CLOSE alone turns red
+     * (#C42B1C) with a white glyph on hover, as every Win11 window's does. The
+     * glyph is the label colour otherwise. */
+    SpdfWinChromeColor caption_fill_hot;
+    SpdfWinChromeColor caption_fill_pressed;
+    SpdfWinChromeColor caption_close_hot;
+    SpdfWinChromeColor caption_close_pressed;
+    SpdfWinChromeColor caption_glyph;
+    SpdfWinChromeColor caption_glyph_on_close;
+
     /* --- scrollers -------------------------------------------------------
      *
      * macOS uses a legacy NSScroller and gets all four of these from AppKit, so
@@ -224,6 +239,11 @@ static SPDF_WIN_CT_INLINE SpdfWinChromeTheme spdf_win_chrome_theme_for(int dark)
         t.scroll_thumb = spdf_win_ct_rgb(0x8A8A8Au, 1.0f);
         t.scroll_thumb_hot = spdf_win_ct_rgb(0xA6A6A6u, 1.0f);
         t.scroll_thumb_pressed = spdf_win_ct_rgb(0xC4C4C4u, 1.0f);
+        /* White at 6% over the band on hover, 4% when pressed: Windows 11's own
+         * subtle-fill steps for a dark caption. */
+        t.caption_fill_hot = spdf_win_ct_rgb(0xFFFFFFu, 0.0605f);
+        t.caption_fill_pressed = spdf_win_ct_rgb(0xFFFFFFu, 0.0419f);
+        t.caption_glyph = spdf_win_ct_rgb(0xFFFFFFu, 1.0f);
     } else {
         t.band = spdf_win_ct_rgb(0xF3F3F3u, 1.0f);
         t.panel = spdf_win_ct_rgb(0xF3F3F3u, 1.0f);
@@ -253,7 +273,15 @@ static SPDF_WIN_CT_INLINE SpdfWinChromeTheme spdf_win_chrome_theme_for(int dark)
         t.scroll_thumb = spdf_win_ct_rgb(0x8A8A8Au, 1.0f);
         t.scroll_thumb_hot = spdf_win_ct_rgb(0x6E6E6Eu, 1.0f);
         t.scroll_thumb_pressed = spdf_win_ct_rgb(0x5A5A5Au, 1.0f);
+        t.caption_fill_hot = spdf_win_ct_rgb(0x000000u, 0.0605f);
+        t.caption_fill_pressed = spdf_win_ct_rgb(0x000000u, 0.0419f);
+        t.caption_glyph = spdf_win_ct_rgb(0x1A1A1Au, 1.0f);
     }
+    /* The close button's red is the same in both appearances; pressed is the
+     * same red at 90%, which is how Windows 11 dims it under the pointer. */
+    t.caption_close_hot = spdf_win_ct_rgb(0xC42B1Cu, 1.0f);
+    t.caption_close_pressed = spdf_win_ct_rgb(0xC42B1Cu, 0.9f);
+    t.caption_glyph_on_close = spdf_win_ct_rgb(0xFFFFFFu, 1.0f);
 
     /* The accent-derived tab values keep macOS's alphas exactly, because those
      * ARE literals there (:556-558). */

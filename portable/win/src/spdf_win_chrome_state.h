@@ -75,6 +75,23 @@ typedef struct SpdfWinChromeModel {
     int drag_tab;
     int drop_slot;
 
+    /* --- the caption buttons -----------------------------------------------
+     *
+     * The strip is the title bar (spdf_win_tabstrip.h's header), so the three
+     * Windows caption buttons are drawn by the strip painter from these three
+     * values and nothing else. `maximized` swaps the maximize glyph for restore;
+     * `caption_hot` and `caption_pressed` are spdf_win_caption_button values,
+     * SPDF_WIN_CAPTION_NONE (0) when nothing is hovered or held, which is what a
+     * zeroed model already says. The WINDOW fills them, because only an HWND
+     * knows its own zoom state and only WM_NCMOUSEMOVE knows the pointer is over
+     * a non-client button; the painter must never ask an HWND itself, or the
+     * chrome falls out of every offscreen pixel test in this port. A hand-built
+     * model draws the three buttons at rest, which is what the headless
+     * `--render-window-png --chrome` frame shows. */
+    int maximized;
+    int caption_hot;
+    int caption_pressed;
+
     int dark;
     int presentation; /* collapses the strip and toolbar to zero, as :13634 does */
     int show_sidebar;

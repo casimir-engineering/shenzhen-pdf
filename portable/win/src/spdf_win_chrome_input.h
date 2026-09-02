@@ -173,10 +173,32 @@ typedef enum spdf_win_chrome_cursor {
     SPDF_WIN_CC_HAND
 } spdf_win_chrome_cursor;
 
+/* WHAT THE POINT IS TO THE WINDOW MANAGER, as opposed to the app. The strip is
+ * the title bar (spdf_win_tabstrip.h's header), so a point in it is one of
+ * three things to Win32: ours (a tab, its close box, the `+`, the overflow --
+ * HTCLIENT, and the click never moves the window), empty title bar (HTCAPTION:
+ * a drag moves the window, a double-click toggles maximize -- macOS's
+ * SPDFMacWindowChrome policy exactly, handoff §3.6), or one of the three caption
+ * buttons (HTMINBUTTON / HTMAXBUTTON / HTCLOSE, which is what makes Windows 11's
+ * Snap Layouts flyout appear over OUR maximize button). Everything below the
+ * strip is CLIENT. The window's WM_NCHITTEST maps these onto the HT codes and
+ * knows nothing else; the router decides here, from the same geometry the
+ * painter draws, so the drag region is exactly the pixels that look empty. */
+typedef enum spdf_win_chrome_nc {
+    SPDF_WIN_NC_CLIENT = 0,
+    SPDF_WIN_NC_CAPTION,
+    SPDF_WIN_NC_MINIMIZE,
+    SPDF_WIN_NC_MAXIMIZE,
+    SPDF_WIN_NC_CLOSE
+} spdf_win_chrome_nc;
+
 typedef struct SpdfWinChromeHit {
     spdf_win_chrome_action action;
     int index; /* tab index for SELECT_TAB / CLOSE_TAB, else -1 */
     spdf_win_chrome_part part;
+    /* spdf_win_chrome_nc: the window manager's view of the point. Independent of
+     * `button`, because WM_NCHITTEST asks before any button is down. */
+    int nc;
     /* Straight into SpdfWinChromeModel::hot_tab / hot_close, so the painter's
      * existing hover branches light up without the caller deciding anything.
      * -1 when nothing is hovered, which is the value the model documents. */
@@ -276,12 +298,28 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
     out->hot_close = -1;
     out->scroll_part = SPDF_WIN_SCROLL_NONE;
     out->cursor = SPDF_WIN_CC_ARROW;
+    out->nc = SPDF_WIN_NC_CLIENT;
     if (!l || !m) return;
 
     s = l->dpi_scale > 0.0f ? l->dpi_scale : 1.0f;
     out->part = spdf_win_chrome_hit(l, x, y);
 
     switch (out->part) {
+        case SPDF_WIN_CHROME_CAPTION: {
+            /* The three buttons, in strip-local points like every other strip
+             * hit. A point in the reserve that is on none of them (a reserve
+             * rounded a pixel wider than three buttons) is empty title bar. No
+             * app action ever: the window performs minimize/maximize/close
+             * itself from the HT code, as Windows expects. */
+            int b = spdf_win_tabstrip_caption_hit(l->tabstrip.w / s, l->tabstrip.h / s, (x - l->tabstrip.x) / s,
+                                                  (y - l->tabstrip.y) / s);
+            if (b == SPDF_WIN_CAPTION_MINIMIZE) out->nc = SPDF_WIN_NC_MINIMIZE;
+            else if (b == SPDF_WIN_CAPTION_MAXIMIZE) out->nc = SPDF_WIN_NC_MAXIMIZE;
+            else if (b == SPDF_WIN_CAPTION_CLOSE) out->nc = SPDF_WIN_NC_CLOSE;
+            else out->nc = SPDF_WIN_NC_CAPTION;
+            return;
+        }
+
         case SPDF_WIN_CHROME_SIDEBAR_DIVIDER:
             out->cursor = SPDF_WIN_CC_SIZEWE;
             if (button == SPDF_WIN_CB_LEFT) out->action = SPDF_WIN_CA_DRAG_SIDEBAR;
@@ -305,9 +343,17 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
             float strip_h = l->tabstrip.h / s;
             int close = spdf_win_tabstrip_close_hit(strip_w, m->tab_count, m->selected_tab, xp, yp);
             int tab = spdf_win_tabstrip_hit(strip_w, strip_h, m->tab_count, m->selected_tab, xp, yp);
+            int on_plus = spdf_win_tabstrip_rect_contains(spdf_win_tabstrip_plus_rect(strip_w), xp, yp);
+            int on_overflow =
+                spdf_win_tabstrip_rect_contains(spdf_win_tabstrip_overflow_rect(strip_w, m->tab_count), xp, yp);
 
             if (close >= 0) out->hot_close = close;
             if (tab >= 0) out->hot_tab = tab;
+            /* Title bar wherever there is no control -- with the tab's forgiving
+             * 6 pt slop counted as the tab, so the pixels that select a tab and
+             * the pixels that drag the window are complementary. Decided before
+             * the button branches: WM_NCHITTEST asks with no button at all. */
+            out->nc = (close >= 0 || tab >= 0 || on_plus || on_overflow) ? SPDF_WIN_NC_CLIENT : SPDF_WIN_NC_CAPTION;
 
             if (button == SPDF_WIN_CB_MIDDLE) {
                 /* Middle-click closes a tab, which is macOS's behaviour and the
@@ -332,12 +378,11 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
                 out->index = tab;
                 return;
             }
-            if (spdf_win_tabstrip_rect_contains(spdf_win_tabstrip_plus_rect(strip_w), xp, yp)) {
+            if (on_plus) {
                 out->action = SPDF_WIN_CA_NEW_TAB;
                 return;
             }
-            if (spdf_win_tabstrip_rect_contains(spdf_win_tabstrip_overflow_rect(strip_w, m->tab_count), xp, yp))
-                out->action = SPDF_WIN_CA_TAB_OVERFLOW;
+            if (on_overflow) out->action = SPDF_WIN_CA_TAB_OVERFLOW;
             return;
         }
 

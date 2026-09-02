@@ -102,12 +102,17 @@ typedef enum spdf_win_input_kind {
      * them, so a caller that opens each in a new tab needs no array. */
     SPDF_WIN_INPUT_DROP_FILE = 9,
 
-    /* WM_SETCURSOR, asking which cursor belongs at (x, y). The handler writes
-     * `cursor` and MUST return 0: a cursor query happens on every pointer move
-     * and must never invalidate. A separate event rather than a value cached
-     * from the last MOUSE_MOVE because Windows sends WM_SETCURSOR BEFORE
-     * WM_MOUSEMOVE, so a cache would always answer for the previous position --
-     * visible as a resize cursor that lags a pixel behind a divider's edge. */
+    /* THE POSITION QUERY: what is at (x, y)? Sent for WM_SETCURSOR, asking
+     * which cursor belongs there, and for WM_NCHITTEST, asking whether the point
+     * is the app's or the window manager's. The handler writes `cursor` and `nc`
+     * and MUST return 0: both queries happen on every pointer move and must
+     * never invalidate. A separate event rather than a value cached from the
+     * last MOUSE_MOVE because Windows sends WM_SETCURSOR BEFORE WM_MOUSEMOVE, so
+     * a cache would always answer for the previous position -- visible as a
+     * resize cursor that lags a pixel behind a divider's edge. One event for
+     * both questions because they are the same question -- "what is here" --
+     * answered by the same routing, and a second kind would be a second switch
+     * arm in the caller for no second decision. */
     SPDF_WIN_INPUT_CURSOR = 6
 } spdf_win_input_kind;
 
@@ -172,6 +177,12 @@ typedef struct spdf_win_input {
      * spdf_win_chrome_cursor. Pre-set to SPDF_WIN_CC_ARROW, so a handler that
      * does not care leaves it alone. */
     int cursor;
+    /* SPDF_WIN_INPUT_CURSOR only: the window manager's view of (x, y), as
+     * spdf_win_chrome_nc. Pre-set to SPDF_WIN_NC_CLIENT, so a handler that does
+     * not care leaves every pixel the app's -- which is exactly the pre-caption
+     * behaviour. WM_NCHITTEST turns it into HTCAPTION / HTMINBUTTON /
+     * HTMAXBUTTON / HTCLOSE / HTCLIENT; see spdf_win_window_caption.h. */
+    int nc;
 } spdf_win_input;
 
 /* Return non-zero when the view changed and needs repainting. Returning 0 for
@@ -212,9 +223,17 @@ float spdf_win_window_dpi_scale(const spdf_win_window* window);
  * document, and this file is *W-only by rule (see the file header). */
 void spdf_win_window_set_title(spdf_win_window* window, const wchar_t* title);
 
-/* Ask DWM to draw the caption, border and system menu dark, so `--dark` does not
- * leave a light title bar wrapped around a #121212 canvas. Idempotent; a
- * Windows without the attribute simply keeps its light frame. */
+/* Ask DWM to draw the border and system menu dark, so `--dark` does not leave
+ * a light frame wrapped around a #121212 canvas. Idempotent; a Windows without
+ * the attribute simply keeps its light frame.
+ *
+ * THE CAPTION ITSELF IS OURS NOW. The client area covers the caption
+ * (WM_NCCALCSIZE in spdf_win_window_caption.h) and the tab strip is the title
+ * bar, with the three caption buttons drawn by the chrome painter from
+ * SpdfWinChromeModel::maximized / caption_hot / caption_pressed. The title is
+ * no longer visible anywhere on the window -- macOS's titleVisibility = Hidden
+ * -- but spdf_win_window_set_title() still matters: the taskbar and Alt-Tab
+ * read it. */
 void spdf_win_window_set_dark_frame(spdf_win_window* window, int dark);
 
 /* Does the SYSTEM want dark? 1 dark, 0 light.
@@ -271,7 +290,12 @@ void spdf_win_enable_dark_menus(void);
  * IT CHANGES THE CLIENT AREA. A menu bar comes out of the window's height, so
  * this is called BEFORE the window is shown and re-runs the sizing that
  * spdf_win_window_create() did -- otherwise the first document opens in a window
- * one menu bar shorter than every measurement in this port assumes. */
+ * one menu bar shorter than every measurement in this port assumes.
+ *
+ * AND IT DOES NOT COMBINE WITH THE CLIENT-OWNED CAPTION: WM_NCCALCSIZE gives the
+ * client the whole top of the frame, so a bar installed here would be painted
+ * over the tab strip. Nothing calls this any more; see the note at its
+ * definition in spdf_win_window_frame.h before bringing a menu bar back. */
 void spdf_win_window_set_menu(spdf_win_window* window, void* hmenu);
 
 /* The HWND, as void*, for the two things that genuinely need one: TrackPopupMenu
