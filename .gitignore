@@ -49,3 +49,5 @@ docs/md/.obsidian
 *.certSigningRequest
 *.provisionprofile
 *.cer
+# per-agent git worktrees created by the coding assistant
+.claude/worktrees/
