@@ -43,7 +43,7 @@ static void plan_pip(SpdfWinToolchainPlan* plan, const SpdfWinToolchainState* st
                      const char* label) {
     const char* python = spdf_win_toolchain_has(st, SPDF_WIN_TOOL_PYTHON) ? st->path[SPDF_WIN_TOOL_PYTHON] : "python";
     SpdfWinToolchainStep* s = plan_add(plan, SPDF_WIN_TC_STEP_PIP, label);
-    if (s) spdf_win_toolchain_pip_cmd(python, &package, 1, s->command, sizeof(s->command));
+    if (s) spdf_win_toolchain_pip_cmd(python, 1, &package, 1, s->command, sizeof(s->command));
 }
 
 static void plan_python(SpdfWinToolchainPlan* plan, const SpdfWinToolchainState* st) {
@@ -60,22 +60,19 @@ void spdf_win_toolchain_ocr_plan(const SpdfWinToolchainState* st, const SpdfWinT
     if (!spdf_win_toolchain_has(st, SPDF_WIN_TOOL_TESSERACT))
         plan_winget(plan, st, SPDF_WIN_TC_WINGET_TESSERACT, 0, "Installing Tesseract OCR (winget)",
                     "Tesseract is missing and winget is unavailable: install UB-Mannheim Tesseract by hand");
-    if (!spdf_win_toolchain_has(st, SPDF_WIN_TOOL_GHOSTSCRIPT)) {
-        if (spdf_win_toolchain_has(st, SPDF_WIN_TOOL_CURL) && spdf_win_toolchain_has(st, SPDF_WIN_TOOL_CERTUTIL)) {
-            SpdfWinToolchainStep* s = plan_add(plan, SPDF_WIN_TC_STEP_GHOSTSCRIPT,
-                                               "Installing Ghostscript (official installer from GitHub, verified)");
-            if (s && roots) spdf_win_toolchain_gs_install_dir(roots, s->dest, sizeof(s->dest));
-            plan->needs_elevation_note = 1;
-        } else {
-            plan_add(plan, SPDF_WIN_TC_STEP_BLOCKED,
-                     "Ghostscript is missing and curl.exe/certutil.exe are unavailable: install it from ghostscript.com");
-        }
-    }
+    /* Ghostscript is not planned: OCRmyPDF 17 rasterises with pypdfium2 and
+     * only needs gs for PDF/A output (spdf_win_toolchain_install.cpp). */
     plan_python(plan, st);
     if (!spdf_win_toolchain_has(st, SPDF_WIN_TOOL_OCRMYPDF)) plan_pip(plan, st, "ocrmypdf", "Installing OCRmyPDF (pip --user)");
     for (int i = 0; i < st->missing_language_count && i < 8; ++i) {
         char parent[SPDF_WIN_TC_PATH], dir[SPDF_WIN_TC_PATH], leaf[64], url[256], label[160];
         SpdfWinToolchainStep* s;
+        /* With no tesseract yet, every component reads as missing -- but the
+         * UB-Mannheim installer ships eng and osd, so only the others are
+         * fetched; the re-probe after the install settles what is still absent. */
+        if (!spdf_win_toolchain_has(st, SPDF_WIN_TOOL_TESSERACT) &&
+            (strcmp(st->missing_languages[i], "eng") == 0 || strcmp(st->missing_languages[i], "osd") == 0))
+            continue;
         if (!roots || !spdf_win_toolchain_tessdata_parent(roots, parent, sizeof(parent)) ||
             !join2(dir, sizeof(dir), parent, "tessdata"))
             continue;
@@ -95,18 +92,39 @@ void spdf_win_toolchain_ocr_plan(const SpdfWinToolchainState* st, const SpdfWinT
     (void)language;
 }
 
-void spdf_win_toolchain_argos_plan(const SpdfWinToolchainState* st, const char* from_lang, const char* to_lang,
-                                   int with_package, SpdfWinToolchainPlan* plan) {
+void spdf_win_toolchain_argos_plan(const SpdfWinToolchainState* st, const SpdfWinToolchainRoots* roots,
+                                   const char* from_lang, const char* to_lang, int with_package,
+                                   SpdfWinToolchainPlan* plan) {
+    char env_dir[SPDF_WIN_TC_PATH] = "", env_python[SPDF_WIN_TC_PATH] = "", env_argospm[SPDF_WIN_TC_PATH] = "";
     if (!plan) return;
     memset(plan, 0, sizeof(*plan));
     if (!st) return;
+    if (roots) {
+        spdf_win_toolchain_argos_env_dir(roots, env_dir, sizeof(env_dir));
+        spdf_win_toolchain_argos_env_python(roots, env_python, sizeof(env_python));
+        join2(env_argospm, sizeof(env_argospm), env_dir, "Scripts\\argospm.exe");
+    }
     plan_python(plan, st);
-    if (!spdf_win_toolchain_has(st, SPDF_WIN_TOOL_ARGOS_TRANSLATE) || !spdf_win_toolchain_has(st, SPDF_WIN_TOOL_ARGOSPM))
-        plan_pip(plan, st, "argostranslate", "Installing Argos Translate (pip --user; pulls torch and ctranslate2)");
+    if (!spdf_win_toolchain_has(st, SPDF_WIN_TOOL_ARGOS_TRANSLATE) || !spdf_win_toolchain_has(st, SPDF_WIN_TOOL_ARGOSPM)) {
+        /* A venv at a short path (the header says why), then argostranslate
+         * into it with the venv's own python. "python" stands in until the
+         * winget step above has run; the step runner re-resolves it. */
+        const char* python =
+            spdf_win_toolchain_has(st, SPDF_WIN_TOOL_PYTHON) ? st->path[SPDF_WIN_TOOL_PYTHON] : "python";
+        const char* package = "argostranslate";
+        SpdfWinToolchainStep* s = plan_add(plan, SPDF_WIN_TC_STEP_VENV, "Creating the Argos Translate environment (venv)");
+        if (s) {
+            spdf_win_toolchain_venv_cmd(python, env_dir, s->command, sizeof(s->command));
+            snprintf(s->dest, sizeof(s->dest), "%s", env_dir);
+        }
+        s = plan_add(plan, SPDF_WIN_TC_STEP_PIP, "Installing Argos Translate into it (pip; pulls torch and ctranslate2)");
+        if (s) spdf_win_toolchain_pip_cmd(env_python, 0, &package, 1, s->command, sizeof(s->command));
+    }
     if (with_package) {
         char label[160];
-        const char* argospm =
-            spdf_win_toolchain_has(st, SPDF_WIN_TOOL_ARGOSPM) ? st->path[SPDF_WIN_TOOL_ARGOSPM] : "argospm";
+        const char* argospm = spdf_win_toolchain_has(st, SPDF_WIN_TOOL_ARGOSPM) ? st->path[SPDF_WIN_TOOL_ARGOSPM]
+                              : env_argospm[0]                                 ? env_argospm
+                                                                               : "argospm";
         SpdfWinToolchainStep* s;
         snprintf(label, sizeof(label), "Installing the %s to %s language package (argospm)", from_lang ? from_lang : "?",
                  to_lang ? to_lang : "?");
