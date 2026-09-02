@@ -1,6 +1,7 @@
 /* The minimap thumbnail store. See spdf_win_chrome_thumbs.h for the policy and
  * for why none of this may run on the paint path or the launch path. */
 #include "spdf_win_chrome_thumbs.h"
+#include "spdf_win_open.h" /* the process opener: spdf_open, or Markdown-aware once main() says so */
 
 #include "spdf_win_lru.h"
 #include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
@@ -83,7 +84,7 @@ static unsigned __stdcall size_sweep(void* arg) {
     int i;
 
     spdf_win_launch_mark("thumbs-sweep-begin");
-    doc = spdf_open(s->path, err, sizeof(err));
+    doc = spdf_win_open_document(s->path, err, sizeof(err));
     if (!doc) return 0;
     for (i = 0; i < s->page_count; ++i) {
         float w = 0.0f, h = 0.0f;
@@ -120,7 +121,7 @@ static void ensure_pages(SpdfWinThumbStore* s) {
     if (!s || s->counted) return;
     s->counted = 1;
     spdf_win_launch_mark("thumbs-open-begin");
-    s->size_doc = spdf_open(s->path, err, sizeof(err));
+    s->size_doc = spdf_win_open_document(s->path, err, sizeof(err));
     spdf_win_launch_mark("thumbs-doc-opened");
     if (!s->size_doc) return;
     s->page_count = spdf_page_count(s->size_doc);

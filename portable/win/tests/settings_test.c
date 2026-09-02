@@ -21,13 +21,14 @@
  *
  * Exit code is the whole signal: 0 pass, 1 fail.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_settings.c portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_win_compat.c */
+/* spdf-test-sources: portable/win/src/spdf_win_settings.c portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_win_compat.c portable/win/src/spdf_win_recents.c */
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
 #include "silent_failure_support.h" /* check, write_whole/read_whole, remove_file */
 
+#include "../src/spdf_win_recents.h"
 #include "../src/spdf_win_settings.h"
 #include "../src/spdf_win_state.h"
 
@@ -106,10 +107,15 @@ static void test_save_carries_unknown_keys(void) {
     }
     s.sidebar_width = 220;
     s.dark_theme_preserves_images = 1;
+    /* The recents module keeps the MRU order and this writer writes it: the
+     * shared "recentlyOpened" key, once, by the file's one writer. */
+    spdf_win_recents_note_opened("C:/Docs/Recent.pdf", NULL);
     check(spdf_win_settings_save(&s), "save succeeds");
     yaml = read_whole(g_settings_path);
     check(yaml != NULL, "the file is there after saving");
     if (!yaml) return;
+    check(strstr(yaml, "recentlyOpened:") != NULL, "recentlyOpened is written by the settings writer");
+    check(strstr(yaml, "Recent.pdf") != NULL, "and carries the document the recents module noted");
     check(strstr(yaml, "fullDiskAccessPromptDismissed: true") != NULL,
           "the mac permission flag survives a Windows rewrite (dropping it re-triggers the mac prompt)");
     check(strstr(yaml, "commentAuthor: \"Rapha\xc3\xabl\"") != NULL, "so does the comment author, non-ASCII intact");

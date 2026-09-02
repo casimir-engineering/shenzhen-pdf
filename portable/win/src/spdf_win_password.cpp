@@ -1,6 +1,7 @@
 /* spdf_win_password.cpp — see spdf_win_password.h. */
 #include "spdf_win_password.h"
 
+#include "spdf_win_open.h" /* the process opener, for the Markdown branch */
 #include "spdf_win_password_flow.h"
 #include "spdf_win_paths.h"
 #include "spdf_win_shell_dialog.h"
@@ -80,6 +81,16 @@ int spdf_win_open_document_interactive(void* hwnd_owner, const char* utf8_path, 
     if (!utf8_path || !*utf8_path) {
         set_err(err, err_len, "No path was given.");
         return -1;
+    }
+    /* A Markdown document carries no password state (shenzhen_pdf_core.h at
+     * spdf_open_markdown), so it goes straight through the process opener --
+     * spdf_win_md_open_any once spdf_win_main.cpp has installed it -- and never
+     * through the prompt loop. This is what makes the tab model's one open
+     * hook right for every document kind. */
+    if (spdf_path_is_markdown(utf8_path)) {
+        *out = spdf_win_open_document(utf8_path, err, err_len);
+        if (!*out && err && err_len && !err[0]) set_err(err, err_len, "Could not open document.");
+        return *out ? 1 : -1;
     }
     /* The GTK flow waits for an unmapped parent; a hidden owner here is shown
      * before the first prompt, so the dialog has something to be modal to. */

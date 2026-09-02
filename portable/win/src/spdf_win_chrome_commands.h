@@ -39,132 +39,10 @@
 #include "spdf_win_properties.h"
 #include "spdf_win_menu.h"
 
-/* --- the three fields ---------------------------------------------------
- *
- * Which buffer the keyboard is talking to, resolved once. Returning the caret by
- * pointer as well as the buffer is what lets one set of edit calls serve all
- * three; the alternative is the same seven-case switch written three times. */
-typedef struct SpdfWinFocusedField {
-    wchar_t* text;
-    int cap; /* capacity in wchar_t, terminator included */
-    int* caret;
-} SpdfWinFocusedField;
-
-static int chrome_focused_field(app* a, SpdfWinFocusedField* out) {
-    out->text = NULL;
-    out->cap = 0;
-    out->caret = NULL;
-    switch (a->focus) {
-        case SPDF_WIN_FOCUS_FIND:
-            out->text = a->find_text;
-            out->cap = (int)(sizeof(a->find_text) / sizeof(a->find_text[0]));
-            out->caret = &a->find_caret;
-            return 1;
-        case SPDF_WIN_FOCUS_PAGE:
-            out->text = a->page_text;
-            out->cap = (int)(sizeof(a->page_text) / sizeof(a->page_text[0]));
-            out->caret = &a->page_caret;
-            return 1;
-        case SPDF_WIN_FOCUS_SIDEBAR_FILTER:
-            out->text = a->filter_text;
-            out->cap = (int)(sizeof(a->filter_text) / sizeof(a->filter_text[0]));
-            out->caret = &a->filter_caret;
-            return 1;
-        default: return 0;
-    }
-}
-
-/* A field's text changed: tell whatever consumes it.
- *
- * The FIND query goes to the process-wide session, which restarts the search
- * only when the query actually differs (spdf_win_find_set), so a keystroke that
- * produced the same string costs a strcmp. The FILTER goes to the panel content
- * bridge, which re-filters the outline it already has rather than reopening the
- * document. The PAGE field consumes nothing until Return -- a field that jumped
- * on every digit would send a reader typing "12" to page 1 first. */
-static void chrome_field_changed(app* a) {
-    if (a->focus == SPDF_WIN_FOCUS_FIND) chrome_find_push(a);
-    else if (a->focus == SPDF_WIN_FOCUS_SIDEBAR_FILTER) spdf_win_chrome_content_set_filter(a->filter_text);
-}
-
-/* Return in the page field. 1-based in, 0-based to the canvas -- the one place
- * in this port where a human's page numbering exists, exactly as the toolbar
- * painter is the one place it is written out. An out-of-range or unparseable
- * number does nothing and KEEPS the focus, so the reader can correct it. */
-static int chrome_commit_page(app* a) {
-    int value = spdf_win_text_page_value(a->page_text);
-    if (!a->canvas || value < 1 || value > spdf_win_canvas_page_count(a->canvas)) return 0;
-    spdf_win_canvas_scroll_to_page(a->canvas, value - 1);
-    a->focus = SPDF_WIN_FOCUS_NONE;
-    return 1;
-}
-
-/* Give the keyboard back to the document. Escape's job, and the find field's
- * Escape also CLEARS the query -- which is what makes the highlights and the
- * counter go away, i.e. what a reader means by cancelling a search. The sidebar
- * filter clears for the same reason: an invisible filter still hiding rows is
- * the worst state either control can be left in. */
-static int chrome_blur(app* a) {
-    if (a->focus == SPDF_WIN_FOCUS_FIND) {
-        spdf_win_text_clear(a->find_text, &a->find_caret);
-        chrome_find_push(a);
-    } else if (a->focus == SPDF_WIN_FOCUS_SIDEBAR_FILTER) {
-        spdf_win_text_clear(a->filter_text, &a->filter_caret);
-        spdf_win_chrome_content_set_filter(a->filter_text);
-    } else if (a->focus == SPDF_WIN_FOCUS_NONE) {
-        return 0;
-    }
-    a->focus = SPDF_WIN_FOCUS_NONE;
-    return 1;
-}
-
-/* One typed code unit. The page field takes digits only; the other two take
- * anything printable, which is what makes a CJK or accented query possible at
- * all -- WM_CHAR is the layout's and the IME's output, not a key. */
-static int chrome_char(app* a, unsigned unit) {
-    SpdfWinFocusedField f;
-    if (!chrome_focused_field(a, &f)) return 0;
-    if (!spdf_win_text_is_printable(unit)) return 0;
-    if (a->focus == SPDF_WIN_FOCUS_PAGE && !spdf_win_text_is_digit(unit)) return 0;
-    if (!spdf_win_text_insert(f.text, f.cap, f.caret, unit)) return 0;
-    chrome_field_changed(a);
-    return 1;
-}
-
-/* A key while a field has the keyboard. Returns 1 when the view changed, and
- * SWALLOWS everything else (see the header comment). */
-static int chrome_field_key(app* a, const spdf_win_input* in) {
-    SpdfWinFocusedField f;
-    int changed = 0;
-    if (!chrome_focused_field(a, &f)) return 0;
-
-    switch (in->key) {
-        case SPDF_WIN_KEY_ESCAPE: return chrome_blur(a);
-        case SPDF_WIN_KEY_TAB:
-            /* Plain Tab leaves the field. Ctrl+Tab never reaches here: it is an
-             * accelerator, matched before this function is called. */
-            a->focus = SPDF_WIN_FOCUS_NONE;
-            return 1;
-        case SPDF_WIN_KEY_RETURN:
-            if (a->focus == SPDF_WIN_FOCUS_PAGE) return chrome_commit_page(a);
-            if (a->focus == SPDF_WIN_FOCUS_FIND)
-                /* Return steps forward, Shift+Return back -- the convention every
-                 * find bar on this desktop uses, and the keyboard half of the
-                 * prev/next pill beside the field. */
-                return chrome_find_step(a, (in->mods & SPDF_WIN_MOD_SHIFT) ? -1 : 1);
-            a->focus = SPDF_WIN_FOCUS_NONE;
-            return 1;
-        case SPDF_WIN_KEY_BACK: changed = spdf_win_text_backspace(f.text, f.caret); break;
-        case SPDF_WIN_KEY_DELETE: changed = spdf_win_text_delete(f.text, f.caret); break;
-        case SPDF_WIN_KEY_LEFT: return spdf_win_text_move(f.text, f.caret, -1);
-        case SPDF_WIN_KEY_RIGHT: return spdf_win_text_move(f.text, f.caret, 1);
-        case SPDF_WIN_KEY_HOME: return spdf_win_text_home(f.text, f.caret);
-        case SPDF_WIN_KEY_END: return spdf_win_text_end(f.text, f.caret);
-        default: return 0; /* swallowed: no scrolling while typing */
-    }
-    if (changed) chrome_field_changed(a);
-    return changed;
-}
+/* The three typeable fields -- which buffer has the keyboard, a typed code unit,
+ * a key while a field is focused. Step 2 of key_for_window() below, in its own
+ * file since this one reached its cap. */
+#include "spdf_win_chrome_typing.h"
 
 /* --- commands ------------------------------------------------------------ */
 
@@ -173,9 +51,13 @@ static int chrome_field_key(app* a, const spdf_win_input* in) {
  * did -- see chrome_layout_for_input's own note on why a cached layout will not
  * do. */
 
-/* --- the document actions: save, print, properties, copy page -------------
+/* --- the document actions: save, properties, copy page --------------------
  *
- * These four subsystems take a document, its path as UTF-16, and a page. The
+ * (Print is spdf_win_cmd_window.h's: it carries the scaling choice from
+ * settings.yaml, so the case that once lived here passed a default the
+ * reader could never change and was dead the moment that handler claimed it.)
+ *
+ * These subsystems take a document, its path as UTF-16, and a page. The
  * app holds the path as UTF-8 (the core's currency) and the document behind the
  * tab model, so this is the one place that widens and resolves. Widening here
  * rather than in each subsystem keeps the CP_UTF8 conversion in one place, which
@@ -297,6 +179,10 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
         case SPDF_WIN_CMD_TOGGLE_SIDEBAR: a->show_sidebar = !a->show_sidebar; return 1;
         case SPDF_WIN_CMD_TOGGLE_MINIMAP: a->show_minimap = !a->show_minimap; return 1;
         case SPDF_WIN_CMD_TOGGLE_THEME: return chrome_toggle_theme(a);
+        /* The Markdown reader's A-/A+: re-lays the selected tab out at the new
+         * size and persists it; inert on a PDF tab (spdf_win_md_commands.h). */
+        case SPDF_WIN_CMD_MD_TEXT_SMALLER: return spdf_win_md_command_text_step(a, -1);
+        case SPDF_WIN_CMD_MD_TEXT_LARGER: return spdf_win_md_command_text_step(a, 1);
 
         /* CF_UNICODETEXT, inside the canvas. Returns 1 when something was
          * copied; a Ctrl+C with nothing selected is not a failure and does not
@@ -309,7 +195,6 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
         case SPDF_WIN_CMD_FIND_PREV: return chrome_find_step(a, -1);
         case SPDF_WIN_CMD_SAVE_AS:
         case SPDF_WIN_CMD_SAVE_PAGE_AS:
-        case SPDF_WIN_CMD_PRINT:
         case SPDF_WIN_CMD_PROPERTIES:
         case SPDF_WIN_CMD_COPY_PAGE:
         case SPDF_WIN_CMD_COPY_PAGE_TEXT:
@@ -324,15 +209,6 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
                     break;
                 case SPDF_WIN_CMD_SAVE_PAGE_AS:
                     spdf_win_export_save_page_as(act.hwnd, act.doc, act.path, act.page, err, sizeof(err));
-                    break;
-                case SPDF_WIN_CMD_PRINT:
-                    /* Scaling mode and custom scale are persisted by the other
-                     * two frontends as settings.json printScalingMode /
-                     * printCustomScale; Windows state does not carry them yet, so
-                     * the default is passed and the enum stays wire-compatible
-                     * (the print differential pins that). */
-                    spdf_win_print_document(act.hwnd, act.doc, act.path, SPDF_WIN_PRINT_SCALING_FIT, 1.0, err,
-                                            sizeof(err));
                     break;
                 case SPDF_WIN_CMD_PROPERTIES:
                     spdf_win_properties_show_for_document(act.hwnd, act.doc, act.path, act.page, 0, 0);
@@ -371,6 +247,7 @@ static void chrome_sync_menu(app* a) {
     st.dark_theme = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
     st.keep_image_colors = (a->render_flags & SPDF_RENDER_PRESERVE_IMAGES) != 0;
     st.regex = a->find_regex;
+    st.regex_multiline = spdf_win_find_regex_multiline();
     st.has_document = a->canvas != NULL;
     st.can_close_tab = spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
                                                    a->canvas != NULL);
@@ -406,13 +283,31 @@ static int key_for_window(app* a, const spdf_win_input* in) {
     chrome_layout_for_input(a, in, &model, &l);
     page_step = l.canvas.h * 0.9f;
 
+    /* PRESENTING: the arrows, Page Up/Down and Space turn PAGES, not lines --
+     * SPDFMacPresentationIntegration.mm's keyDown (left/up/page-up back;
+     * right/down/page-down/space forward), through the same step the pointer
+     * uses. Everything else falls through to the keymap below. */
+    if (a->presentation) {
+        switch (in->key) {
+            case SPDF_WIN_KEY_LEFT:
+            case SPDF_WIN_KEY_UP:
+            case SPDF_WIN_KEY_PRIOR: return presentation_step_page(a, -1);
+            case SPDF_WIN_KEY_RIGHT:
+            case SPDF_WIN_KEY_DOWN:
+            case SPDF_WIN_KEY_NEXT:
+            case VK_SPACE: return presentation_step_page(a, 1);
+            default: break;
+        }
+    }
+
     switch (in->key) {
         /* ESCAPE, WITH NOTHING FOCUSED: end any pointer gesture and drop the
          * selection. Returning 0 when there was nothing to drop is deliberate --
-         * spdf_win_window.cpp then falls through to closing the window, which is
-         * what Escape has always done here. So Escape dismisses the most local
-         * thing there is, and only closes the window when there is nothing left
-         * to dismiss. */
+         * spdf_win_window.cpp then leaves full screen if the window is in it and
+         * otherwise does nothing at all (it used to close the window, which macOS
+         * never did: windows-feature-matrix.md gap 2, pinned by
+         * window_keys_test.c). So Escape dismisses the most local thing there is,
+         * then presentation or full screen, and never the window. */
         case SPDF_WIN_KEY_ESCAPE:
             spdf_win_canvas_pointer_cancel(a->canvas);
             a->drag = SPDF_WIN_CA_NONE;
@@ -478,9 +373,16 @@ static int input_for_window(void* user, spdf_win_input* in) {
      * the strip drags or selects a tab, a caption button minimises or closes,
      * and a keystroke reaches the same keymap it always did. */
     switch (in->kind) {
-        case SPDF_WIN_INPUT_SCROLL: return spdf_win_canvas_scroll_by(a->canvas, in->dx, in->dy);
+        /* A wheel goes where the pointer is: the strip, the Search list or the
+         * document (chrome_wheel, spdf_win_chrome_field_ui.h). */
+        case SPDF_WIN_INPUT_SCROLL: return chrome_wheel(a, in);
         case SPDF_WIN_INPUT_ZOOM: return chrome_zoom_at_client(a, in);
         case SPDF_WIN_INPUT_CHAR: return chrome_char(a, in->key);
+        /* A worker's message to the window (spdf_win_window.h). The only one so
+         * far: a Markdown document's remote images landed in the cache, so the
+         * tab is re-shown and the placeholders become pictures. */
+        case SPDF_WIN_INPUT_APP_MESSAGE:
+            return in->key == SPDF_WIN_MD_WM_IMAGES_ARRIVED ? spdf_win_md_command_images_arrived(a) : 0;
         case SPDF_WIN_INPUT_KEY:
             changed = key_for_window(a, in);
             chrome_sync_menu(a);
@@ -491,6 +393,9 @@ static int input_for_window(void* user, spdf_win_input* in) {
             changed = chrome_mouse(a, in);
             chrome_sync_menu(a);
             return changed;
+        /* The right button too: a page BACK while presenting, nothing otherwise
+         * (chrome_mouse hands it to presentation_mouse first). */
+        case SPDF_WIN_INPUT_CONTEXT:
         case SPDF_WIN_INPUT_MOUSE_UP:
         case SPDF_WIN_INPUT_MOUSE_MOVE:
         case SPDF_WIN_INPUT_CURSOR: return chrome_mouse(a, in);

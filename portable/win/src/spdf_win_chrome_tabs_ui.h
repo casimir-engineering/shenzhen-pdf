@@ -25,6 +25,7 @@
  * spdf_win_chrome_input.h: deciding what a click means must stay pure, and
  * running a nested message loop is the opposite of pure. */
 #include "spdf_win_menu.h"
+#include "spdf_win_recents.h" /* what a close and an open tell the reopen ring and the MRU list */
 
 /* Close a tab from the strip. prefer_most_recent_active is 0, matching
  * ShenzhenPDFMac.mm:9115 -- the close box and Ctrl+W both ask for the
@@ -34,6 +35,11 @@
 static int chrome_close_tab(app* a, int index) {
     int shown;
     if (!a->tabs || index < 0) return 0;
+    /* Remembered for Reopen Last Closed Tab, and the watch and any shadow copy
+     * released, while the model still has the path. THE one place a close is
+     * noted: the close box, Ctrl+W and Close Other Tabs all come through here. */
+    spdf_win_recents_note_closed(spdf_win_tabs_path(a->tabs, index));
+    spdf_win_tabs_open_forget(a->tabs, index);
     if (index == spdf_win_tabs_selected_index(a->tabs)) spdf_win_tabs_app_remember(a->tabs, a->canvas);
     spdf_win_tabs_close(a->tabs, index, 0);
     /* THE LAST TAB CLOSING IS NOT THE APP QUITTING. macOS (spdf_win_tabs.h's
@@ -129,6 +135,8 @@ static int chrome_detach_tab(app* a, int index) {
         frame.y += 40;
     }
     if (!spdf_win_session_detach_tab(a->tabs, index, &frame, new_id, sizeof(new_id))) return 0;
+    /* Unwatched, not forgotten: the copy (if any) is the child process's now. */
+    spdf_win_tabs_open_unwatch(spdf_win_tabs_path(a->tabs, index));
     spdf_win_tabs_close(a->tabs, index, 1);
     show_selected_tab(a);
     app_session_save(a);
@@ -151,6 +159,9 @@ static int chrome_open_wide(app* a, const wchar_t* wpath) {
     if (!utf8) return 0;
     index = spdf_win_tabs_index_of_path(a->tabs, utf8);
     if (index < 0) index = spdf_win_tabs_app_append(a->tabs, utf8); /* fit width, like the launch document */
+    /* Every way in -- the picker, a drop, Open Path, a recent, the palette --
+     * ends here, so this is where a document becomes a recent one. */
+    if (index >= 0) spdf_win_recents_note_opened(utf8, spdf_win_tabs_title(a->tabs, index));
     free(utf8);
     if (index < 0) return 0; /* at SPDF_WIN_TABS_MAX, or out of memory */
     if (index == spdf_win_tabs_selected_index(a->tabs)) return 0;
@@ -243,6 +254,7 @@ static int chrome_app_menu(app* a, const SpdfWinChromeLayout* l) {
     st.dark_theme = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
     st.keep_image_colors = (a->render_flags & SPDF_RENDER_PRESERVE_IMAGES) != 0;
     st.regex = a->find_regex;
+    st.regex_multiline = spdf_win_find_regex_multiline();
     st.has_document = a->canvas != NULL;
     st.can_close_tab = spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
                                                    a->canvas != NULL);

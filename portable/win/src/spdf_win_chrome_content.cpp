@@ -1,6 +1,7 @@
 /* The content the sidebar and minimap show, and the temporary bridge that finds
  * it. See spdf_win_chrome_content.h for the three rules that shape this file. */
 #include "spdf_win_chrome_content.h"
+#include "spdf_win_open.h" /* the process opener: spdf_open, or Markdown-aware once main() says so */
 
 #include "spdf_win_chrome_thumbs.h"
 #include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
@@ -195,7 +196,7 @@ void ensure_outline(Bridge* b) {
         ensure_path(b);
         if (!b->path) return;
         spdf_win_launch_mark("outline-open-begin");
-        b->doc = spdf_open(b->path, err, sizeof(err));
+        b->doc = spdf_win_open_document(b->path, err, sizeof(err));
         spdf_win_launch_mark("outline-doc-opened");
         if (!b->doc) return;
         if (!spdf_load_outline(b->doc, &b->outline, err, sizeof(err))) return;

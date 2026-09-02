@@ -170,18 +170,16 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
     }
 
     for (i = 0; i < count; ++i) {
+        const spdf_win_tab_view* view = spdf_win_tabs_view_const(tabs, i);
         store->tabs[i].title = store->titles[i];
-        /* read_only needs the SOURCE file's write permission, which the tab
-         * model does not carry -- macOS reads it at open and shows an orange dot
-         * (SPDFMacTabStripView.mm:585). Reported as absent rather than guessed:
-         * a wrong dot is a claim about the user's file.
-         *
-         * `missing` likewise: the model has no per-tab existence flag, and
-         * probing the filesystem here would put a stat on the paint path, which
-         * the repo's speed rule forbids. Both belong in the tab model, set at
-         * open and on a directory change. */
-        store->tabs[i].read_only = 0;
-        store->tabs[i].missing = 0;
+        /* Both flags come from the TAB MODEL, where the open hook set them: the
+         * watcher probed the source's write permission at open (the orange dot,
+         * SPDFMacTabStripView.mm:585) and reports a file gone for its grace
+         * period (the red tab). Nothing here touches the filesystem -- a stat
+         * on the paint path is what the repo's speed rule forbids -- and a tab
+         * never shown carries neither, which is the truthful answer. */
+        store->tabs[i].read_only = view ? view->read_only : 0;
+        store->tabs[i].missing = view ? view->missing : 0;
     }
     store->count = count;
 

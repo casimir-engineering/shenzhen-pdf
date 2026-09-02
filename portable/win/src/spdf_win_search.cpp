@@ -44,6 +44,7 @@
  * thread that ever reads it afterwards. Nothing borrows across the lock.
  */
 #include "spdf_win_chrome_find.h"
+#include "spdf_win_open.h" /* the process opener: spdf_open, or Markdown-aware once main() says so */
 
 #include "spdf_win_d2d.h" /* spdf_win_scene, spdf_win_overlay */
 #include "spdf_win_layout.h"
@@ -279,7 +280,7 @@ unsigned __stdcall search_worker(void* arg) {
     spdf_document* doc;
 
     spdf_win_search_match_list_init(&batch);
-    doc = spdf_open(job->path, err, sizeof(err));
+    doc = spdf_win_open_document(job->path, err, sizeof(err));
     if (!doc) {
         error = err[0] ? err : "Could not open the document for search.";
     } else {

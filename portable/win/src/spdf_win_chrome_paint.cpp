@@ -7,6 +7,7 @@
 #include "spdf_win_chrome_paint.h"
 
 #include "spdf_win_tabstrip.h"
+#include "spdf_win_tabs_drag.h" /* the drop indicator's rect */
 
 #include <math.h>
 #include <string.h>
@@ -289,12 +290,20 @@ void spdf_win_chrome_paint_tabstrip(const SpdfWinChromePaintCtx& ctx) {
             fill = spdf_win_chrome_brush(ctx.target, th->tab_selected_fill);
             stroke = spdf_win_chrome_brush(ctx.target, th->tab_selected_stroke);
         } else {
-            /* An unselected, present tab has NO stroke on macOS (:559-561);
-             * a hovered one lifts its fill, which macOS gets from AppKit. */
+            /* EVERY TAB HAS AN OUTLINE (26.9.2-1, "Give every tab a visible
+             * outline"): an unselected, present tab is stroked with the separator
+             * colour at the quiet alpha spdf_win_tab_style_for_state gives that
+             * state, so the strip reads as tabs rather than as one band. A hovered
+             * one lifts its fill, which macOS gets from AppKit. */
             SpdfWinChromeColor c = (i == m->hot_tab) ? th->control_fill_hot : th->tab_fill;
+            SpdfWinChromeColor edge = th->separator;
+            edge.a = (float)spdf_win_tab_style_for_state(0, 0).stroke_alpha;
             fill = spdf_win_chrome_brush(ctx.target, c);
+            stroke = spdf_win_chrome_brush(ctx.target, edge);
         }
-        stroke_w = spdf_win_chrome_stroke_px(selected ? SPDF_WIN_CT_TAB_STROKE_SELECTED : SPDF_WIN_CT_TAB_STROKE, s);
+        /* The stroke width is the tab style's for this state (spdf_win_tabs_style.h),
+         * the same table the geometry insets by. */
+        stroke_w = spdf_win_chrome_stroke_px((float)spdf_win_tab_style_for_state(selected, missing).stroke_width, s);
         fill_rounded(ctx.target, rect, px(SPDF_WIN_TABSTRIP_TAB_RADIUS, s), fill, stroke, stroke_w);
         if (fill) fill->Release();
         if (stroke) stroke->Release();
@@ -377,6 +386,22 @@ void spdf_win_chrome_paint_tabstrip(const SpdfWinChromePaintCtx& ctx) {
             if (ol) ol->Release();
         }
         if (glyph) glyph->Release();
+    }
+
+    /* THE DROP INDICATOR: the yellow bar in the gap a dragged tab would land in
+     * (spdf_win_tabs_drag.h, from SPDFMacTabStripGeometry.mm), drawn only while
+     * a drag is over a slot. The mac snaps floor(centerX) - 1 in device pixels;
+     * the floor here and a 2 px minimum keep it visible at 100%. */
+    if (m->drag_tab >= 0 && m->drop_slot >= 0) {
+        SpdfWinTabRect r = spdf_win_tabstrip_drop_indicator_rect(strip_w_pt, m->tab_count, m->selected_tab, m->drop_slot);
+        if (!spdf_win_tabstrip_rect_is_empty(r)) {
+            SpdfWinChromeRect ind = to_client(r, strip, s);
+            ID2D1SolidColorBrush* b = spdf_win_chrome_brush(ctx.target, th->drop_indicator);
+            ind.x = floorf(ind.x);
+            if (ind.w < 2.0f) ind.w = 2.0f;
+            fill_rounded(ctx.target, ind, px(SPDF_WIN_TABSTRIP_DROP_INDICATOR_RADIUS, s), b, NULL, 0.0f);
+            if (b) b->Release();
+        }
     }
 
     /* The caption buttons, in the trailing reserve the `+` was pinned against.

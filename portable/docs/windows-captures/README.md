@@ -14,9 +14,18 @@ to `portable/docs/gtk4-captures/` and `portable/docs/linux-captures/`.
 |---|---|
 | `01-window-light.png` | The light window at 1500×950 on a 144 dpi (150%) display |
 | `02-window-dark.png` | The same, `--dark` |
+| `03-markdown-light.png` | `portable/win/tests/fixtures/readme-style.md` open as a paginated document: its headings are the Chapters list, page 1 of 4 at fit width, badges, emphasis, a blockquote and a callout |
+| `04-markdown-dark.png` | The same Markdown document in the dark reading theme: the Obsidian-style dark rendition the core lays out beside the light one, chrome and paper both dark |
+| `05-markdown-code-light.png` | Page 2: the code boxes with per-language syntax highlighting (C, Python, JSON, YAML, shell), light theme |
+| `06-markdown-page3-light.png` | Page 3 of the same fixture as a bare page render (`--render-png`, no chrome): the Images section -- a local figure with its caption, the placeholder a remote badge shows before its fetch has landed, an inline image in a sentence -- then inline and display math and the start of the long section |
+| `07-search-section-headless.png` | The Search section, composed OFFSCREEN: `--render-window-png --chrome --find fixture` over `outline.pdf` at 150%, with the four matches grouped under their chapter headings, the active one ringed, and the strip and scroller markers |
 
-Both are **live windows** captured with `portable/win/screenshot-window.ps1`
-(`PrintWindow` with `PW_RENDERFULLCONTENT`), not offscreen renders.
+01 to 05 are **live windows** captured with `portable/win/screenshot-window.ps1`
+(`PrintWindow` with `PW_RENDERFULLCONTENT`), not offscreen renders. 06 is one
+page through the core (`--render-png`), the byte-for-byte comparison path. 07 is
+the whole window composed with no window and no desktop (`--render-window-png
+--chrome`): the frame `spdf_win_paint()` produces for the pixel cases, kept
+because on a locked or non-compositing desktop it is the only way to look.
 
 ## What is in them, and why each thing is worth seeing
 
