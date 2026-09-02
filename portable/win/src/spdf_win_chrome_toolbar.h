@@ -279,4 +279,20 @@ static SPDF_WIN_TB_INLINE spdf_win_toolbar_item spdf_win_toolbar_hit(const SpdfW
     return SPDF_WIN_TB_NONE;
 }
 
+/* THE TWO POWER-TOOL BUTTONS' STATE, set by the tools track's command glue
+ * (spdf_win_cmd_tools.h) and read by the painter in spdf_win_chrome_toolbar.cpp:
+ * a running OCR or translation greys its button, and a live selection is what
+ * the translate button acts on. Process-wide for the reason
+ * spdf_win_chrome_caption_set_state() gives: the model is rebuilt every paint
+ * by code that owns neither the panel nor this header. Defined in the .cpp,
+ * declared here so the glue needs no second header; the pure tests that
+ * include this header never call it, so they link without the painter. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+void spdf_win_chrome_toolbar_set_tools_state(int ocr_busy, int translate_busy, int has_selection);
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* SPDF_WIN_CHROME_TOOLBAR_GEOMETRY_H */
