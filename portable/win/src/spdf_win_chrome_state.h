@@ -99,6 +99,14 @@ typedef struct SpdfWinChromeModel {
     float minimap_w;   /* points; 0 asks for the default */
     int sidebar_section; /* 0 chapters, 1 comments, 2 search */
     int search_active;   /* the Search section exists only while a query is live */
+    /* THE SELECTED TAB IS A MARKDOWN DOCUMENT, which puts the A−/A＋ text-size
+     * pill in the toolbar (macOS item 10) and takes it away again on a PDF tab.
+     * It is GEOMETRY, like search_active above it: the pill occupies 64 pt of
+     * the row, so a router that left this zeroed while the painter drew the pill
+     * would hit-test every later control 68 pt to the left of where it is. Both
+     * the painter's model (spdf_win_chrome_model.h) and the router's
+     * (chrome_layout_for_input) fill it from the same test. */
+    int markdown;
 
     /* --- what the toolbar reads out -------------------------------------
      *

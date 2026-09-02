@@ -43,6 +43,7 @@
 #define SPDF_WIN_TABS_APP_H
 
 #include "spdf_win_canvas.h"
+#include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 #include "spdf_win_recents.h"   /* the launch document is a recent document */
 #include "spdf_win_tabs_open.h" /* the document hooks: password, shadow copy, watch */
 #include "spdf_win_chrome_model.h" /* spdf_win_find_query_utf8: the query the tab remembers */
@@ -150,6 +151,7 @@ static int spdf_win_tabs_app_show(spdf_win_tabs* tabs, spdf_win_canvas** canvas,
     *canvas = doc ? spdf_win_canvas_create(doc, spdf_win_tabs_open_render_path(tabs, index), render_flags, err,
                                            sizeof(err))
                   : NULL;
+    if (*canvas) spdf_win_launch_mark("canvas-created");
     /* The restored page is applied on the first paint, not here: the canvas
      * cannot place a page until it knows the viewport. apply_view() above does
      * better when the caller knows one. */
@@ -181,6 +183,7 @@ static spdf_win_tabs* spdf_win_tabs_app_start(const char* utf8_path, spdf_win_ta
     /* An UNREADABLE session leaves the model empty AND must not be saved over;
      * spdf_win_session_save() refuses on its own, so there is nothing to do
      * here but carry on with the launch document. */
+    spdf_win_launch_mark("session-restore-begin");
     strncpy_s(want, sizeof(want), window_id ? window_id : "", _TRUNCATE);
     if (how == SPDF_WIN_TABS_APP_RESTORE_FIRST)
         restored = spdf_win_session_restore_ex(tabs, NULL, window_id, id_len, out_frame) == SPDF_WIN_SESSION_RESTORED;
@@ -192,6 +195,7 @@ static spdf_win_tabs* spdf_win_tabs_app_start(const char* utf8_path, spdf_win_ta
     /* Every restored read-only binding goes to the watcher BEFORE any tab is
      * shown, so an unchanged source reopens its copy without a content read. */
     spdf_win_tabs_open_prime(tabs);
+    spdf_win_launch_mark_n("session-restored", spdf_win_tabs_count(tabs));
     index = utf8_path ? spdf_win_tabs_index_of_path(tabs, utf8_path) : -1;
     if (index < 0 && utf8_path) index = spdf_win_tabs_app_append(tabs, utf8_path);
     /* The launch document is a recent document, like one the picker chose. */

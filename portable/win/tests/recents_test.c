@@ -15,7 +15,7 @@
  * override -- never against %APPDATA%\ShenzhenPDF, which the user's running
  * instance is using right now.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_recents.c portable/win/src/spdf_win_favorites.c portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_win_compat.c */
+/* spdf-test-sources: portable/win/src/spdf_win_recents.c portable/win/src/spdf_win_favorites.c portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/win/src/spdf_win_watcher.cpp portable/win/src/spdf_win_watcher_shadow.cpp portable/core/spdf_yaml.c portable/core/spdf_win_compat.c */
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
 #endif
@@ -24,6 +24,7 @@
 #include "spdf_win_paths.h"
 #include "spdf_win_recents.h"
 #include "spdf_win_state.h"
+#include "spdf_win_watcher.h" /* spdf_win_watcher_is_shadow_path, the refusal both stores make */
 #include "spdf_yaml.h"
 
 #include <stdio.h>
@@ -312,6 +313,67 @@ static void test_favorites_reads_legacy_wrapper(void) {
     if (f) check_str(f->type, "document", "legacy document flag");
 }
 
+/* NEITHER STORE ACCEPTS A READ-ONLY SHADOW COPY.
+ *
+ * spdf_win_recents.h has claimed "shadow copies ... are ignored" since it was
+ * written, and neither store checked -- so every read-only document a reader
+ * opened put a `%APPDATA%\ShenzhenPDF\ReadOnlyCopies\ro-<hex>.pdf` entry at the
+ * top of Open Recent, and Ctrl+D could bookmark one. Those files are deleted by
+ * the next launch's orphan sweep, so both were offers of a path that would be
+ * gone.
+ *
+ * The path is CONSTRUCTED rather than copied from a run: the shape is the
+ * contract (spdf_win_watcher_logic.h -- directly in the copies directory,
+ * "ro-", 32 hex digits, an extension) and nothing has to exist on disk for the
+ * predicate to answer. Two near-misses are checked alongside, because a test
+ * that only fed it a shadow path would pass just as well against a store that
+ * refused everything under the state directory. */
+static void test_shadow_copies_are_refused_by_both_stores(void) {
+    char copies[SPDF_WIN_PATH_MAX], shadow[SPDF_WIN_PATH_MAX], state[SPDF_WIN_PATH_MAX];
+    char nearly[SPDF_WIN_PATH_MAX];
+    SpdfWinFavorite f;
+    int before;
+
+    CHECK(spdf_win_paths_state_dir(state, sizeof(state)) != 0);
+    CHECK(spdf_win_path_join(state, "ReadOnlyCopies", copies, sizeof(copies)) != 0);
+    CHECK(spdf_win_path_join(copies, "ro-0123456789abcdef0123456789abcdef.pdf", shadow, sizeof(shadow)) != 0);
+    /* FIRST, that the predicate says yes about this path. Without this line the
+     * three refusal assertions below would all pass against a predicate that
+     * answered 0 for everything -- which is exactly what a state-directory
+     * override the watcher did not see would produce. */
+    CHECK(spdf_win_watcher_is_shadow_path(shadow) == 1);
+
+    spdf_win_state_write_json(SPDF_WIN_STATE_DOCUMENTS, "{}");
+    spdf_win_state_write_json(SPDF_WIN_STATE_SETTINGS, "{}");
+    spdf_win_recents_reset();
+    before = spdf_win_recents_count();
+    spdf_win_recents_note_opened(shadow, "Read-only copy");
+    CHECK(spdf_win_recents_count() == before);
+    CHECK(spdf_win_recents_document_lookup(shadow, NULL) == 0);
+
+    memset(&f, 0, sizeof(f));
+    strcpy(f.type, "document");
+    strcpy(f.path, "x");
+    if (spdf_win_path_join(copies, "ro-0123456789abcdef0123456789abcdef.pdf", f.path, sizeof(f.path)))
+        CHECK(spdf_win_favorites_add(&f) == -1);
+
+    /* The SOURCE still goes in -- the refusal is about the copy, not about
+     * read-only documents. */
+    spdf_win_recents_note_opened("C:\\docs\\report.pdf", "Report");
+    CHECK(spdf_win_recents_count() == before + 1);
+
+    /* Near misses: the right directory with the wrong name, and the right name
+     * one directory too deep. Both are ordinary documents. */
+    if (spdf_win_path_join(copies, "notes.pdf", nearly, sizeof(nearly))) {
+        spdf_win_recents_note_opened(nearly, NULL);
+        CHECK(spdf_win_recents_count() == before + 2);
+    }
+    if (spdf_win_path_join(copies, "sub\\ro-0123456789abcdef0123456789abcdef.pdf", nearly, sizeof(nearly))) {
+        spdf_win_recents_note_opened(nearly, NULL);
+        CHECK(spdf_win_recents_count() == before + 3);
+    }
+}
+
 int main(int argc, char** argv) {
     char scratch[SPDF_WIN_PATH_MAX], dir[SPDF_WIN_PATH_MAX];
     const char* base = argc > 1 ? argv[1] : NULL;
@@ -336,6 +398,7 @@ int main(int argc, char** argv) {
     test_settings_list_seeds_and_merges();
     test_favorites_toggle_dedupe_and_file();
     test_favorites_reads_legacy_wrapper();
+    test_shadow_copies_are_refused_by_both_stores();
 
     spdf_win_paths_set_state_dir_override(NULL);
     printf("recents_test: %d checks, %d failures\n", g_checks, g_failures);

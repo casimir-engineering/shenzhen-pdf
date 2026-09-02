@@ -384,3 +384,36 @@ back). An empty session after a run now counts as ours.
 | 5 Binary hygiene | marginal | pre-main is 5-8 ms over a bare exe warm; cold, Defender's scan of a new 40 MB file is ~55 ms once per install; the GPU shader cache dominates cold start, not the image |
 | 6 Display lists / copy reduction | later | the texture upload is 8-12 ms; the swizzle half is gone |
 | (Windows-only) GPU device off the critical path | **the item** | Section 3.2, 4.1, 5.1 |
+
+## 8. Measured again once the patch was applied (2026-09-03, wiring pass 2)
+
+The prewarm call and E2 are in the tree. Medians of 7 warm launches each,
+`measure-launch.ps1` against `C:\spdf-build\track-wiring2\ShenzhenPDF.exe`, same
+machine, **still locked** (LockApp.exe, so the external first-pixels sampler is
+BLOCKED and the `launch.budget` case with it — §6.3; the in-process timeline
+needs no compositing). Milliseconds from process creation.
+
+| case | window visible (external) | page render done | prewarm done | HWND target | first page (`first-compose-end`) | pre-show paint done | ShowWindow returned |
+|---|---|---|---|---|---|---|---|
+| outline.pdf | 146 | 73 | 118 | 118 | **142** | 142 | 155 |
+| golden.pdf | 163 | 88 | 124 | 125 | **157** | 157 | 172 |
+| bare launch | 137 | — | 115 | 116 | **131** | 131 | 148 |
+
+Both mechanisms are visible in the outline.pdf row and both do exactly what
+Section 4.1 predicted. The synchronous page render finishes at 73 ms, 45 ms
+BEFORE the GPU device is ready at 118 — so on this build the document costs the
+launch nothing at all: its work is spent inside a wait that existed anyway. And
+the UI thread's own `CreateHwndRenderTarget` costs **0.4 ms** (118.1, after a
+prewarm that finished at 117.7) where the baseline paid 79-117 ms on that line.
+
+Against Section 2's baseline: first page 178 → **142** on outline.pdf and 199 →
+157 on golden.pdf, under the 150 ms bar for the document the profile was written
+against. The window now appears at ~145 ms rather than ~40 — and appears
+**complete**: `pre-show-paint-done` precedes `show-window-returned` in every
+run, so the blank-client interval that used to be 130-230 ms is zero by
+construction rather than by measurement. What remains is the driver's device
+creation itself (79-95 ms of prewarm here), which is Section 5's outstanding
+item and not this pass's.
+
+Not re-measured, and blocked for the same reason as before: the external
+first-pixels number, and therefore `launch.budget`, needs a composited desktop.

@@ -31,6 +31,7 @@
  * later change, and wants a placeholder that does not flash.
  */
 #include "spdf_win_canvas_internal.h"
+#include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 
 #include <math.h>
 #include <stdio.h>
@@ -163,11 +164,13 @@ spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, const char* path, un
         free(canvas);
         return NULL;
     }
+    spdf_win_launch_mark("canvas-create-begin");
     if (!spdf_page_size(doc, 0, &w, &h, err, err_len) || w <= 0.0f || h <= 0.0f) {
         free(canvas->sizes);
         free(canvas);
         return NULL;
     }
+    spdf_win_launch_mark("canvas-page0-measured");
     for (int i = 0; i < canvas->page_count; ++i) {
         canvas->sizes[i].width = w;
         canvas->sizes[i].height = h;
@@ -398,11 +401,17 @@ static const spdf_bitmap* ensure_page(spdf_win_canvas* canvas, int page) {
     canvas->sync_renders++;
     bitmap = (spdf_bitmap*)calloc(1, sizeof(*bitmap));
     if (!bitmap) return NULL;
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-page-render-begin");
     if (!spdf_render_page_rgba_opts(canvas->doc, page, (float)render_zoom, canvas->render_flags, NULL, bitmap, err,
                                     sizeof(err))) {
         _snwprintf_s(canvas->status, _TRUNCATE, L"Could not render page %d: %hs", page + 1, err);
         free(bitmap);
         return NULL;
+    }
+    if (spdf_win_launch_enabled()) {
+        char tag[64];
+        _snprintf_s(tag, sizeof(tag), _TRUNCATE, "first-page-render-end %dx%d", bitmap->width, bitmap->height);
+        SPDF_WIN_LAUNCH_MARK_ONCE(tag);
     }
     if (!spdf_win_lru_insert(&canvas->cache, &key, bitmap, spdf_win_lru_bitmap_bytes(bitmap->width, bitmap->height)))
         return NULL; /* insert destroyed it; a placeholder is drawn this frame */

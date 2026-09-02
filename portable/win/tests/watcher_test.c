@@ -328,6 +328,71 @@ static void test_shadow_copies(const char* dir) {
     delete_file(stranger);
 }
 
+/* THE WORKER'S HALF OF THE RESOLUTION.
+ *
+ * Every open in the process goes through one hook, and that hook has to give a
+ * search worker, a thumbnail store or a link scanner the SAME bytes the canvas
+ * is showing -- which for a read-only source is the shadow copy, not the
+ * source (spdf_win_open_app.h). It cannot call resolve_open() to find out:
+ * that one writes files and mutates the binding table, on a UI thread, and the
+ * hook is called from a dozen workers at once. So there is a lookup-only form,
+ * and these are its four answers.
+ *
+ * The stale-copy case is the one worth reading twice. A copy whose source has
+ * since MOVED ON is still the right answer: the canvas is holding that copy's
+ * bytes until the watcher reports the change and reloads, so a worker that
+ * read the newer source would disagree with the page on screen -- the same bug
+ * this fixes, pointing the other way. Proven by planting bytes in the copy and
+ * finding that the lookup still names it. */
+static void test_existing_working_path(const char* dir) {
+    char src[SPDF_WIN_PATH_MAX], found[SPDF_WIN_PATH_MAX], content[128];
+    SpdfWinWatcherResolution res;
+    spdf_win_path_join(dir, "worker-view.pdf", src, sizeof(src));
+    CHECK(write_file(src, "%PDF-1.4 v1"));
+
+    /* Writable, and no copy: the caller opens what it was given. */
+    strcpy(found, "dirty");
+    CHECK(!spdf_win_watcher_existing_working_path(src, found, sizeof(found)));
+    CHECK(found[0] == 0); /* emptied, never left holding a stale answer */
+    CHECK(!spdf_win_watcher_existing_working_path(NULL, found, sizeof(found)));
+    CHECK(!spdf_win_watcher_existing_working_path(src, NULL, 0));
+    CHECK(!spdf_win_watcher_existing_working_path("C:\\no\\such\\spdf.pdf", found, sizeof(found)));
+
+    /* Read-only, once a copy exists: the copy, byte for byte the path
+     * resolve_open() authored. */
+    set_read_only(src, 1);
+    CHECK(spdf_win_watcher_resolve_open(src, &res));
+    CHECK(res.working_path[0] != 0);
+    CHECK(spdf_win_watcher_existing_working_path(src, found, sizeof(found)));
+    CHECK(strcmp(found, res.working_path) == 0);
+
+    /* A STALE copy is still the answer. write_file() clears the read-only
+     * attribute to do its write (it has to), so the bit goes back on after --
+     * which is also what the real case looks like: the source is rewritten by
+     * whatever owns it and is still not ours to write. */
+    CHECK(write_file(res.working_path, "PLANTED"));
+    set_read_only(src, 0);
+    CHECK(write_file(src, "%PDF-1.4 v2 and longer"));
+    set_read_only(src, 1);
+    CHECK(spdf_win_watcher_existing_working_path(src, found, sizeof(found)));
+    CHECK(strcmp(found, res.working_path) == 0);
+    CHECK(read_file(found, content, sizeof(content)));
+    CHECK(strcmp(content, "PLANTED") == 0);
+
+    /* The copy is never resolved to a copy of itself: no recursion, whatever a
+     * caller hands over. */
+    CHECK(!spdf_win_watcher_existing_working_path(res.working_path, found, sizeof(found)));
+
+    /* WRITABLE AGAIN, with the copy still on disk -- the state the first ten
+     * seconds after a launch are in, before the orphan sweep runs. The source
+     * is what the canvas opens now, so it must be what the workers open: a
+     * lookup that answered from the leftover file would put every worker on a
+     * document the reader is not looking at. */
+    set_read_only(src, 0);
+    CHECK(!spdf_win_watcher_existing_working_path(src, found, sizeof(found)));
+    CHECK(found[0] == 0);
+}
+
 int main(int argc, char** argv) {
     char scratch[SPDF_WIN_PATH_MAX], state[SPDF_WIN_PATH_MAX], docs[SPDF_WIN_PATH_MAX];
     const char* base = argc > 1 ? argv[1] : NULL;
@@ -344,6 +409,7 @@ int main(int argc, char** argv) {
 
     test_probes(docs);
     test_shadow_copies(docs);
+    test_existing_working_path(docs);
     test_change_missing_and_self_save(docs);
 
     spdf_win_paths_set_state_dir_override(NULL);

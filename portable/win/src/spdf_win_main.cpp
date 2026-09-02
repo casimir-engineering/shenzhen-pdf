@@ -28,8 +28,7 @@
 #include "spdf_win_canvas.h"
 #include "spdf_win_chrome_model.h" /* the chrome model the window paints */
 #include "spdf_win_layout.h" /* SPDF_WIN_PAGE_MARGIN_* for the initial window size */
-#include "spdf_win_md.h"     /* spdf_win_md_open_any: the process opener every by-path open goes through */
-#include "spdf_win_open.h"   /* ... and the seam it is installed into */
+#include "spdf_win_open_app.h" /* the process opener every by-path open goes through, and its seam */
 #include "spdf_win_paths.h"    /* spdf_win_paths_set_state_dir_override, for --state-dir */
 #include "spdf_win_settings.h" /* settings.yaml: theme, panels, print, window size */
 #include "spdf_win_tabs_app.h" /* the tab model, the session, and the glue to this canvas */
@@ -109,12 +108,13 @@ int main(void) {
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) return 70;
 
-    /* THE ONE CALL, INSTALLED ONCE (spdf_win_md.h, spdf_win_open.h): from here on
-     * every by-path open in the process -- the headless paths, the tab model,
-     * the render workers, search, thumbnails, links, print -- opens a Markdown
-     * file as pages and everything else exactly as before. Before the flag
-     * parse, because --render-png and --render-window-png open too. */
-    spdf_win_open_set_hook(spdf_win_md_open_any);
+    /* THE ONE CALL, INSTALLED ONCE (spdf_win_open_app.h): from here on every
+     * by-path open in the process -- the headless paths, the tab model, the
+     * render workers, search, thumbnails, links, print -- opens a Markdown file
+     * as pages, opens a read-only source's working copy when one exists, and
+     * opens everything else exactly as before. Before the flag parse, because
+     * --render-png and --render-window-png open too. */
+    spdf_win_open_set_hook(spdf_win_open_app_document);
 
     app a;
     viewport_opts opts;
@@ -290,6 +290,12 @@ int main(void) {
          * its render flags at construction. Windowed path only; the headless
          * ones must not depend on a file or a registry value. Both points are
          * argued at spdf_win_system_prefers_dark() in spdf_win_window.h. */
+        /* AND THE GPU DEVICE, ON A WORKER, FIRST. Nothing between here and the
+         * first paint needs it and nothing here needs more than one core, so
+         * the driver load overlaps the settings read, the session restore, the
+         * document open and CreateWindowExW instead of following them. Windowed
+         * path only: see spdf_win_gpu_prewarm.h. */
+        spdf_win_gpu_prewarm_start(d2d);
         {
             const spdf_win_settings* settings = spdf_win_settings_shared();
             if (!theme_explicit) a.render_flags = app_initial_render_flags();
@@ -359,6 +365,10 @@ int main(void) {
                 app_restore_find_text(&a);
                 sync_window_title(&a);
                 spdf_win_window_set_tick(window, SPDF_WIN_SESSION_TICK_MS, app_tick);
+                /* The deferred sweep of orphaned read-only copies, on its own
+                 * one-shot rather than on the session tick -- see
+                 * app_watch_sweep_once() for why thirty seconds was too late. */
+                spdf_win_window_set_once(window, SPDF_WIN_WATCH_SWEEP_MS, app_watch_sweep_once);
                 /* NO MENU BAR, deliberately: macOS's menus are in the system
                  * menu bar, not the window, and a Win32 bar cannot be themed
                  * dark. The same menu opens from the toolbar's `...` instead.

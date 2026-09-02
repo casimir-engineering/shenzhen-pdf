@@ -3,6 +3,7 @@
 
 #include "spdf_win_recents_json.h"
 #include "spdf_win_state.h"
+#include "spdf_win_watcher.h" /* spdf_win_watcher_is_shadow_path: a copy is not a document */
 
 #include <stdlib.h>
 #include <string.h>
@@ -339,6 +340,15 @@ static doc_entry* stamp(const char* path, const char* title) {
 
 void spdf_win_recents_note_opened(const char* path, const char* title) {
     if (!path || !*path) return;
+    /* THE READ-ONLY SHADOW COPY IS NOT A DOCUMENT THE READER OPENED. When the
+     * source is not writable the app opens a copy under
+     * %APPDATA%\ShenzhenPDF\ReadOnlyCopies instead (spdf_win_watcher.h), and
+     * every by-path open funnels through here -- so without this test the MRU
+     * filled up with `ro-<hex>.pdf` entries pointing at files the orphan sweep
+     * deletes, and File > Open Recent offered the reader a path that would be
+     * gone by the time they chose it. This header has promised the refusal
+     * since it was written; it was never implemented. */
+    if (spdf_win_watcher_is_shadow_path(path)) return;
     load();
     recent_push_front(path);
     if (stamp(path, title)) save_documents();
