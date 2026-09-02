@@ -153,6 +153,53 @@ int spdf_win_menu_tab_overflow(void* hwnd, const wchar_t* const* titles, int cou
     return chosen - SPDF_WIN_MENU_TAB_ID_BASE;
 }
 
+int spdf_win_menu_app_popup(void* hwnd, const SpdfWinMenuState* state, int screen_x, int screen_y) {
+    /* The bar, built and then shown as a popup rather than attached to a window.
+     * spdf_win_menu_create() already produces the whole thing with its five
+     * submenus, the ids, the accelerator text and the separators, so this reuses
+     * it verbatim: one table, one builder, and the popup cannot drift from what
+     * the bar showed. */
+    HMENU bar = (HMENU)spdf_win_menu_create();
+    HMENU shell;
+    int i, count, chosen;
+
+    if (!bar) return SPDF_WIN_CMD_NONE;
+    spdf_win_menu_sync(bar, state);
+
+    /* A menu BAR cannot be tracked as a popup -- TrackPopupMenu wants a popup
+     * menu -- so the five top-level entries are re-hung as submenus of one
+     * throwaway popup. The submenu HMENUs are borrowed, not copied, which is why
+     * they are detached with RemoveMenu (NOT DeleteMenu, which would destroy
+     * them) before the bar is freed. */
+    shell = CreatePopupMenu();
+    if (!shell) {
+        spdf_win_menu_destroy(bar);
+        return SPDF_WIN_CMD_NONE;
+    }
+    count = GetMenuItemCount(bar);
+    for (i = 0; i < count; ++i) {
+        wchar_t title[64];
+        HMENU sub = GetSubMenu(bar, i);
+        if (!sub) continue;
+        title[0] = 0;
+        GetMenuStringW(bar, (UINT)i, title, (int)(sizeof(title) / sizeof(title[0])), MF_BYPOSITION);
+        AppendMenuW(shell, MF_STRING | MF_POPUP, (UINT_PTR)sub, title);
+    }
+
+    SetForegroundWindow((HWND)hwnd);
+    chosen = (int)TrackPopupMenu(shell, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTALIGN | TPM_TOPALIGN, screen_x,
+                                 screen_y, 0, (HWND)hwnd, NULL);
+    PostMessageW((HWND)hwnd, WM_NULL, 0, 0);
+
+    /* Detach before destroying either menu, or the submenus die twice. */
+    for (i = GetMenuItemCount(shell) - 1; i >= 0; --i) RemoveMenu(shell, (UINT)i, MF_BYPOSITION);
+    DestroyMenu(shell);
+    spdf_win_menu_destroy(bar);
+
+    if (chosen < SPDF_WIN_MENU_ID_BASE) return SPDF_WIN_CMD_NONE;
+    return chosen - SPDF_WIN_MENU_ID_BASE;
+}
+
 int spdf_win_menu_open_dialog(void* hwnd, wchar_t* out_path, int out_len) {
     ComScope com;
     IFileOpenDialog* dialog = NULL;

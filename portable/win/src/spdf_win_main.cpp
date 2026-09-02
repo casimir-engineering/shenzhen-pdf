@@ -28,6 +28,7 @@
 #include "spdf_win_chrome_model.h" /* the chrome model the window paints */
 #include "spdf_win_layout.h" /* SPDF_WIN_PAGE_MARGIN_* for the initial window size */
 #include "spdf_win_tabs_app.h" /* the tab model, the session, and the glue to this canvas */
+#include "spdf_win_usage.h"
 #include "spdf_win_window.h"
 
 #include <math.h>
@@ -289,27 +290,6 @@ static void initial_client_size(int* out_w, int* out_h) {
  * than with the headers at the top. */
 #include "spdf_win_headless.h"
 
-static int usage(void) {
-    fwprintf(stderr,
-             L"usage: ShenzhenPDF.exe [--dark] [--page N] <file.pdf>\n"
-             L"       ShenzhenPDF.exe --render-png [--dark] <file.pdf> <page> <zoom> <out.png>\n"
-             L"       ShenzhenPDF.exe --render-window-png [opts] <file.pdf> <page> <w> <h> <out.png>\n"
-             L"\n"
-             L"  <page> is 0-BASED, matching the core API and spdf_win_probe.\n"
-             L"  opts:  --dark            dark reading theme, images preserved\n"
-             L"         --fit MODE        width (default) | height | page | actual\n"
-             L"         --zoom Z          device pixels per PDF point; overrides --fit\n"
-             L"         --scroll-x X      viewport pixels, added to the top of <page>\n"
-             L"         --scroll-y Y\n"
-             L"         --dpi S           device pixels per logical pixel (default 1)\n"
-             L"         --zoom-at X,Y     zoom about this viewport point after scrolling\n"
-             L"         --zoom-factor F   how much to zoom there (default 2)\n"
-             L"         --frames N        render N frames, a viewport apart; last is written\n"
-             L"         --chrome          compose the tab strip, toolbar, sidebar and minimap too\n"
-             L"         --find Q          run a search for Q, so the frame shows the find chrome\n"
-             L"         --find-regex      treat Q as a regular expression\n");
-    return 64;
-}
 
 int main(void) {
     int argc = 0;
@@ -319,6 +299,9 @@ int main(void) {
     app a;
     viewport_opts opts;
     int window_page = 0;
+    /* Set by --dark or --light. Until one of them appears the theme is the
+     * SYSTEM's, resolved below -- but only for the windowed path. */
+    int theme_explicit = 0;
     memset(&a, 0, sizeof(a));
     memset(&opts, 0, sizeof(opts));
     a.render_flags = SPDF_RENDER_DEFAULT;
@@ -352,6 +335,14 @@ int main(void) {
         const wchar_t* value = i + 1 < argc ? argv[i + 1] : NULL;
         if (wcscmp(flag, L"--dark") == 0) {
             a.render_flags |= SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES;
+            theme_explicit = 1;
+            continue;
+        }
+        /* The counterpart, so a dark machine can still be told to open light and
+         * a pixel case can pin either. */
+        if (wcscmp(flag, L"--light") == 0) {
+            a.render_flags &= ~(unsigned)(SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES);
+            theme_explicit = 1;
             continue;
         }
         /* Valueless, like --dark. Composes the window chrome into the headless
@@ -432,6 +423,15 @@ int main(void) {
         rc = run_viewport(&a, d2d, argv[i], _wtoi(argv[i + 1]), (unsigned)_wtoi(argv[i + 2]),
                           (unsigned)_wtoi(argv[i + 3]), &opts, argv[i + 4]);
     } else {
+        /* Follow the system theme -- and BEFORE the canvas exists, which takes
+         * its render flags at construction. Windowed path only; the headless
+         * ones must not depend on a registry value. Both points are argued at
+         * spdf_win_system_prefers_dark() in spdf_win_window.h. */
+        if (!theme_explicit && spdf_win_system_prefers_dark())
+            a.render_flags |= SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES;
+
+        spdf_win_enable_dark_menus(); /* before any menu exists */
+
         char* launch_path = utf8_from_wide(argv[i]);
         spdf_win_enable_dpi_awareness();
         a.tabs = spdf_win_tabs_app_start(launch_path, a.window_id, sizeof(a.window_id));
@@ -456,13 +456,12 @@ int main(void) {
                  * caption, and no window that visibly grows a menu bar. */
                 a.window = window;
                 sync_window_title(&a);
-                /* A NULL menu is not an error. spdf_win_menu_create() returning
-                 * NULL means the shell would not give us an HMENU, and a viewer
-                 * with no menu bar is still a viewer -- every command it lists
-                 * also has an accelerator or a toolbar control. */
-                a.menu = spdf_win_menu_create();
-                spdf_win_window_set_menu(window, a.menu);
-                chrome_sync_menu(&a);
+                /* NO MENU BAR, deliberately: macOS's menus are in the system
+                 * menu bar, not the window, and a Win32 bar cannot be themed
+                 * dark. The same menu opens from the toolbar's `...` instead.
+                 * The full reasoning, and how to put the bar back, is at
+                 * spdf_win_menu_app_popup() in spdf_win_menu.h. */
+                a.menu = NULL;
                 spdf_win_window_set_dark_frame(window, (a.render_flags & SPDF_RENDER_DARK_THEME) != 0);
                 spdf_win_window_show(window);
                 rc = spdf_win_window_run(window);
