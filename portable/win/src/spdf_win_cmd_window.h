@@ -18,7 +18,8 @@
  * ahead of command_perform()'s own case, because the scaling choice (Fit /
  * Actual Size / Custom) lives in settings.yaml and the switch next door passes
  * a hard-coded default; claiming it here is how the choice reaches the job and
- * persists without editing that file.
+ * persists without editing that file. Close Other Tabs is claimed for the
+ * plainest reason: nothing claimed it, so the menu row did nothing at all.
  */
 
 #include "spdf_win_settings.h"
@@ -83,6 +84,47 @@ static int cmd_window_print(app* a) {
     return 1;
 }
 
+/* File > Close Other Tabs. The menu row existed with no handler anywhere, so
+ * the item was drawn, enabled, and inert -- the reader's only way to clear a
+ * crowded strip was N presses of Ctrl+W, each of which also moves the
+ * selection.
+ *
+ * DESCENDING, COMPARING AGAINST THE ORIGINAL INDEX. spdf_win_tabs_close()
+ * shifts every index ABOVE the closed one down by one and leaves the ones below
+ * it alone, so a descending walk never revisits a tab that has moved. `keep`
+ * itself shifts down as tabs to its left go, but it is only ever compared
+ * against indices that are already known to be other tabs: those above it were
+ * visited before any shift could reach it, and those below it are below it
+ * whatever it has shifted to. The model half of that arithmetic is pinned in
+ * portable/win/tests/tabs_test.c (test_close_others_keeps_the_selected_tab).
+ *
+ * NOT ONE chrome_close_tab() PER TAB. That function rebuilds the canvas and
+ * writes session.yaml on every call, so routing twenty tabs through it would
+ * throw the kept document's page cache away twenty times and hit the disk
+ * twenty times to reach the same end state. The two things it does that MUST
+ * happen per tab -- note the path for Reopen Last Closed Tab, and release the
+ * watch and any shadow copy while the model still has the path -- are done per
+ * tab here; the two that need happen once are done once, after.
+ *
+ * The kept tab's canvas is not rebuilt at all: it is the same document at the
+ * same place, and only the strip's geometry changed. */
+static int cmd_window_close_other_tabs(app* a) {
+    int keep, i, closed = 0;
+    if (!a->tabs) return 0;
+    keep = spdf_win_tabs_selected_index(a->tabs);
+    if (keep < 0) return 0;
+    for (i = spdf_win_tabs_count(a->tabs) - 1; i >= 0; --i) {
+        if (i == keep) continue;
+        spdf_win_recents_note_closed(spdf_win_tabs_path(a->tabs, i));
+        spdf_win_tabs_open_forget(a->tabs, i);
+        spdf_win_tabs_close(a->tabs, i, 0);
+        closed = 1;
+    }
+    if (!closed) return 0; /* one tab, or none: nothing to do and nothing to redraw */
+    app_session_save(a);
+    return 1;
+}
+
 static int spdf_win_cmd_window_perform(app* a, int command, const spdf_win_input* in) {
     (void)in;
     switch (command) {
@@ -95,6 +137,7 @@ static int spdf_win_cmd_window_perform(app* a, int command, const spdf_win_input
         case SPDF_WIN_CMD_NEW_WINDOW: return app_spawn_window(a, NULL);
         case SPDF_WIN_CMD_MOVE_TAB_TO_WINDOW:
             return a->tabs ? chrome_detach_tab(a, spdf_win_tabs_selected_index(a->tabs)) : 0;
+        case SPDF_WIN_CMD_CLOSE_OTHER_TABS: return cmd_window_close_other_tabs(a);
         case SPDF_WIN_CMD_TOGGLE_KEEP_IMAGE_COLORS: return cmd_window_toggle_keep_image_colors(a);
         case SPDF_WIN_CMD_PRINT: return cmd_window_print(a);
         default: return 0;

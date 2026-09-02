@@ -106,6 +106,32 @@ int spdf_win_watcher_is_shadow_path(const char* utf8_path) {
     return spdf_win_watcher_path_is_shadow_in(cpath, cdir);
 }
 
+int spdf_win_watcher_existing_working_path(const char* utf8_source, char* out, size_t out_cap) {
+    char key[SPDF_WIN_WATCHER_PATH_MAX], dir[SPDF_WIN_PATH_MAX], name[64];
+    char copy_path[SPDF_WIN_WATCHER_PATH_MAX];
+
+    if (!out || !out_cap) return 0;
+    out[0] = '\0';
+    /* The DETERMINISTIC name, and only that one: the random staged fallback
+     * resolve_open() uses when the deterministic copy is held open is known
+     * only to the tab that made it, and a worker asking about it would be
+     * guessing. That tab's canvas hands its own workers the right path
+     * directly (spdf_win_tabs_open_render_path); this is for the ones that have
+     * nothing but a path, and for them the staged case degrades to today's
+     * behaviour -- open the source -- rather than to something wrong. */
+    if (!canonical(utf8_source, key, sizeof(key))) return 0;
+    if (!spdf_win_watcher_copies_dir(0, dir, sizeof(dir))) return 0;
+    if (!spdf_win_watcher_shadow_copy_name(key, name, sizeof(name))) return 0;
+    if (!spdf_win_path_join(dir, name, copy_path, sizeof(copy_path))) return 0;
+    /* The stat FIRST. Almost every open in this process is of a writable file
+     * with no copy, and for those this is one GetFileAttributes rather than an
+     * open-for-write probe. */
+    if (!exists_regular(copy_path)) return 0;
+    if (!spdf_win_watcher_source_is_read_only(utf8_source)) return 0;
+    strncpy_s(out, out_cap, copy_path, _TRUNCATE);
+    return 1;
+}
+
 void spdf_win_watcher_prime_restore(const char* utf8_source, const char* utf8_working_path,
                                     unsigned long long copy_file_size, double copy_modified_at) {
     char key[SPDF_WIN_WATCHER_PATH_MAX];

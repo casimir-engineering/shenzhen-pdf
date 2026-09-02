@@ -109,14 +109,25 @@ int spdf_win_export_choose_save_path(HWND parent, const wchar_t* title, const wc
 /* Save the whole document to a user-chosen path (spdf_save_document).
  * `doc_path` supplies the proposed file name only. Returns 1 on success, 0 on
  * cancellation or failure; `err` receives the core's message when the write
- * itself failed and is left empty on a cancellation. */
+ * itself failed and is left empty on a cancellation.
+ *
+ * `out_saved_utf8` (may be NULL, and is left empty unless the write SUCCEEDED)
+ * receives the path actually written, UTF-8. The caller needs it for one
+ * reason: the reader may have chosen the document's OWN path, and the file
+ * watcher has to be told the app made that write or it reports it as an
+ * external change and reloads the tab underneath them
+ * (spdf_win_watcher_note_self_save). Returning "where did it go" is the
+ * dialog's answer to give -- the caller cannot re-derive it, since only the
+ * dialog knows what the reader typed. */
 int spdf_win_export_save_document_as(HWND parent, spdf_document* doc, const wchar_t* doc_path, char* err,
-                                     size_t err_len);
+                                     size_t err_len, char* out_saved_utf8, size_t out_saved_cap);
 
 /* Save ONE page as a standalone PDF (spdf_save_single_page_pdf). Same return
- * contract. */
+ * contract, and the same `out_saved_utf8`: a one-page save can land on the
+ * open document's own path too (a one-page document, or a reader who meant
+ * Save As). */
 int spdf_win_export_save_page_as(HWND parent, spdf_document* doc, const wchar_t* doc_path, int page_index, char* err,
-                                 size_t err_len);
+                                 size_t err_len, char* out_saved_utf8, size_t out_saved_cap);
 
 /* --- 4. the copy scratch directory ---------------------------------------- */
 
