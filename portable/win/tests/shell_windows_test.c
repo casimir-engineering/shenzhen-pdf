@@ -48,10 +48,40 @@ static int g_checks = 0;
 static volatile LONG g_about_seen = 0;
 static volatile LONG g_sheet_seen = 0;
 
+/* Find OUR window of a class: FindWindowW alone answers with any process's
+ * window of that class, and on this machine several ShenzhenPDF instances run
+ * at once (the user's, other tracks'), each able to have its own About box
+ * open. Measured: the suite run found a foreign About box mid-construction
+ * and reported its EDIT missing. Filtering on the process id is what makes
+ * the answer about this binary. */
+typedef struct find_own {
+    const wchar_t* cls;
+    HWND found;
+} find_own;
+
+static BOOL CALLBACK find_own_cb(HWND hwnd, LPARAM param) {
+    find_own* f = (find_own*)param;
+    wchar_t name[128];
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != GetCurrentProcessId()) return TRUE;
+    if (!GetClassNameW(hwnd, name, 128) || wcscmp(name, f->cls) != 0) return TRUE;
+    f->found = hwnd;
+    return FALSE;
+}
+
+static HWND find_own_window(const wchar_t* cls) {
+    find_own f;
+    f.cls = cls;
+    f.found = NULL;
+    EnumWindows(find_own_cb, (LPARAM)&f);
+    return f.found;
+}
+
 static HWND wait_for(const wchar_t* cls) {
     HWND hwnd = NULL;
     int waited = 0;
-    while (waited < 5000 && !(hwnd = FindWindowW(cls, NULL))) {
+    while (waited < 5000 && !(hwnd = find_own_window(cls))) {
         Sleep(25);
         waited += 25;
     }
@@ -116,8 +146,8 @@ static DWORD WINAPI watchdog(LPVOID unused) {
     HWND w;
     (void)unused;
     Sleep(15000);
-    if ((w = FindWindowW(ABOUT_CLASS, NULL)) != NULL) PostMessageW(w, WM_CLOSE, 0, 0);
-    if ((w = FindWindowW(SHEET_CLASS, NULL)) != NULL) PostMessageW(w, WM_CLOSE, 0, 0);
+    if ((w = find_own_window(ABOUT_CLASS)) != NULL) PostMessageW(w, WM_CLOSE, 0, 0);
+    if ((w = find_own_window(SHEET_CLASS)) != NULL) PostMessageW(w, WM_CLOSE, 0, 0);
     return 0;
 }
 
@@ -148,7 +178,7 @@ int main(void) {
     CloseHandle(t);
     CHECK(shown == 1);
     CHECK(g_about_seen == 1);
-    CHECK(FindWindowW(ABOUT_CLASS, NULL) == NULL); /* gone */
+    CHECK(find_own_window(ABOUT_CLASS) == NULL); /* gone */
 
     printf("shell_windows_test: opening the Keyboard Shortcuts sheet\n");
     t = CreateThread(NULL, 0, drive_sheet, NULL, 0, NULL);
@@ -158,7 +188,7 @@ int main(void) {
     CloseHandle(t);
     CHECK(shown == 1);
     CHECK(g_sheet_seen == 1);
-    CHECK(FindWindowW(SHEET_CLASS, NULL) == NULL);
+    CHECK(find_own_window(SHEET_CLASS) == NULL);
 
     printf("shell_windows_test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
