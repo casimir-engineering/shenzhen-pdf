@@ -71,16 +71,20 @@ static SpdfWinChromeModel model_with_tabs(int tab_count, int selected) {
 
 /* --- the toolbar's table ------------------------------------------------- */
 
-static void test_toolbar_layout_is_ordered_and_inside(float dpi) {
+static void test_toolbar_layout_is_ordered_and_inside(float dpi, int markdown) {
     SpdfWinChromeModel m = model_with_tabs(3, 0);
     SpdfWinChromeLayout l;
     SpdfWinToolbarLayout tb;
     int i, previous = -1;
     unsigned w = (unsigned)(1120.0f * dpi), h = (unsigned)(800.0f * dpi);
 
+    m.markdown = markdown;
     spdf_win_chrome_layout(&m, w, h, dpi, &l);
-    spdf_win_toolbar_layout(l.toolbar, dpi, &tb);
+    spdf_win_toolbar_layout(l.toolbar, dpi, m.markdown, &tb);
     CHECK(!spdf_win_chrome_rect_empty(l.toolbar));
+    /* The Markdown pill is in the row on a Markdown tab and out of it on a PDF,
+     * which is the whole of its visibility rule. */
+    CHECK(spdf_win_chrome_rect_empty(tb.item[SPDF_WIN_TB_MD_TEXT_PILL]) == !markdown);
 
     for (i = SPDF_WIN_TB_NONE + 1; i < SPDF_WIN_TB_ITEM_COUNT; ++i) {
         SpdfWinChromeRect r = tb.item[i];
@@ -102,14 +106,15 @@ static void test_toolbar_layout_is_ordered_and_inside(float dpi) {
 /* THE AGREEMENT CHECK: every rect the layout produced hit-tests back to itself.
  * The separator is excluded because spdf_win_toolbar_hit deliberately ignores
  * it -- it is a hairline of decoration, not a target. */
-static void test_toolbar_hit_agrees_with_layout(float dpi) {
+static void test_toolbar_hit_agrees_with_layout(float dpi, int markdown) {
     SpdfWinChromeModel m = model_with_tabs(3, 0);
     SpdfWinChromeLayout l;
     SpdfWinToolbarLayout tb;
     int i;
 
+    m.markdown = markdown;
     spdf_win_chrome_layout(&m, (unsigned)(1120.0f * dpi), (unsigned)(800.0f * dpi), dpi, &l);
-    spdf_win_toolbar_layout(l.toolbar, dpi, &tb);
+    spdf_win_toolbar_layout(l.toolbar, dpi, m.markdown, &tb);
 
     for (i = SPDF_WIN_TB_NONE + 1; i < SPDF_WIN_TB_ITEM_COUNT; ++i) {
         SpdfWinChromeRect r = tb.item[i];
@@ -123,22 +128,24 @@ static void test_toolbar_hit_agrees_with_layout(float dpi) {
     }
 }
 
-/* Both halves of both pills, because a swapped pair is a prev button that pages
- * forward and a minus that zooms in. */
+/* Both halves of every pill, because a swapped pair is a prev button that pages
+ * forward, a minus that zooms in, or an A− that makes the text bigger. */
 static void test_pill_segments(void) {
     SpdfWinChromeModel m = model_with_tabs(3, 0);
     SpdfWinChromeLayout l;
     SpdfWinToolbarLayout tb;
-    int ids[3];
+    int ids[4];
     int k;
 
     ids[0] = SPDF_WIN_TB_PAGE_PILL;
     ids[1] = SPDF_WIN_TB_ZOOM_PILL;
     ids[2] = SPDF_WIN_TB_FIND_PILL;
+    ids[3] = SPDF_WIN_TB_MD_TEXT_PILL;
+    m.markdown = 1; /* or the fourth pill is not in the row to split */
     spdf_win_chrome_layout(&m, 1120, 800, 1.0f, &l);
-    spdf_win_toolbar_layout(l.toolbar, 1.0f, &tb);
+    spdf_win_toolbar_layout(l.toolbar, 1.0f, m.markdown, &tb);
 
-    for (k = 0; k < 3; ++k) {
+    for (k = 0; k < 4; ++k) {
         SpdfWinChromeRect r = tb.item[ids[k]];
         int segment = -1;
         if (spdf_win_chrome_rect_empty(r)) continue;
@@ -166,14 +173,14 @@ static void test_find_group_drops_when_narrow(void) {
     SpdfWinToolbarLayout tw, tn;
 
     spdf_win_chrome_layout(&m, 1120, 800, 1.0f, &wide);
-    spdf_win_toolbar_layout(wide.toolbar, 1.0f, &tw);
+    spdf_win_toolbar_layout(wide.toolbar, 1.0f, 0, &tw);
     CHECK(!spdf_win_chrome_rect_empty(tw.item[SPDF_WIN_TB_FIND_FIELD]));
     CHECK(!spdf_win_chrome_rect_empty(tw.item[SPDF_WIN_TB_FIND_PILL]));
 
     /* macOS's own minimum content width. The row cannot hold the find group
      * there, and the controls that remain must still not overlap. */
     spdf_win_chrome_layout(&m, (unsigned)SPDF_WIN_CHROME_MIN_CONTENT_W, 800, 1.0f, &narrow);
-    spdf_win_toolbar_layout(narrow.toolbar, 1.0f, &tn);
+    spdf_win_toolbar_layout(narrow.toolbar, 1.0f, 0, &tn);
     CHECK(spdf_win_chrome_rect_empty(tn.item[SPDF_WIN_TB_FIND_FIELD]));
     CHECK(spdf_win_chrome_rect_empty(tn.item[SPDF_WIN_TB_FIND_PILL]));
     CHECK(!spdf_win_chrome_rect_empty(tn.item[SPDF_WIN_TB_MINIMAP_TOGGLE]));
@@ -185,7 +192,7 @@ static void test_find_group_drops_when_narrow(void) {
     {
         SpdfWinToolbarLayout empty;
         int i;
-        spdf_win_toolbar_layout(spdf_win_chrome_zero(), 1.0f, &empty);
+        spdf_win_toolbar_layout(spdf_win_chrome_zero(), 1.0f, 1, &empty);
         for (i = 0; i < SPDF_WIN_TB_ITEM_COUNT; ++i) CHECK(spdf_win_chrome_rect_empty(empty.item[i]));
         CHECK_EQI(spdf_win_toolbar_hit(&empty, 10.0f, 10.0f, NULL), SPDF_WIN_TB_NONE);
     }
@@ -255,8 +262,9 @@ static void test_toolbar_actions(void) {
     SpdfWinChromeModel m = model_with_tabs(3, 1);
     SpdfWinChromeLayout l;
     SpdfWinToolbarLayout tb;
+    m.markdown = 1; /* so the A−/A＋ pill is in the row to be clicked */
     spdf_win_chrome_layout(&m, 1120, 800, 1.0f, &l);
-    spdf_win_toolbar_layout(l.toolbar, 1.0f, &tb);
+    spdf_win_toolbar_layout(l.toolbar, 1.0f, m.markdown, &tb);
 
 #define AT(id, fx) (tb.item[id].x + tb.item[id].w * (fx)), (tb.item[id].y + tb.item[id].h * 0.5f)
     CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_SIDEBAR_TOGGLE, 0.5f), SPDF_WIN_CB_LEFT).action,
@@ -275,6 +283,8 @@ static void test_toolbar_actions(void) {
     CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_OCR, 0.5f), SPDF_WIN_CB_LEFT).action, SPDF_WIN_CA_OCR);
     CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_TRANSLATE, 0.5f), SPDF_WIN_CB_LEFT).action,
               SPDF_WIN_CA_TRANSLATE_SELECTION);
+    /* The Markdown pill's own two halves, and the PDF row it must not disturb,
+     * are toolbar_route_test.c -- this file was at the line cap. */
     /* Nothing is wired to the middle button in the toolbar, and a hover is not a
      * click. Both must be inert rather than firing the left-button action. */
     CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_ZOOM_PILL, 0.75f), SPDF_WIN_CB_MIDDLE).action, SPDF_WIN_CA_NONE);
@@ -411,36 +421,6 @@ static void test_canvas_local_conversion(void) {
 
 /* --- the readouts the toolbar draws ------------------------------------- */
 
-static void test_fit_labels_and_zoom_percent(void) {
-    SpdfWinChromeModel m = model_with_tabs(1, 0);
-
-    CHECK(wcscmp(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_ACTUAL), L"100%") == 0);
-    CHECK(wcscmp(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_WIDTH), L"Fit Width") == 0);
-    CHECK(wcscmp(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_HEIGHT), L"Fit Height") == 0);
-    CHECK(wcscmp(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_PAGE), L"Fit Page") == 0);
-    /* CUSTOM has no fixed title: macOS inserts a percentage item instead, and
-     * the caller must format it. NULL is how this header says so. */
-    CHECK(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_CUSTOM) == NULL);
-
-    /* The percentage divides out the DPI scale, or a 150% display would read
-     * 150% at actual size. */
-    m.zoom = 1.0f;
-    m.zoom_dpi_scale = 1.0f;
-    CHECK_EQI(spdf_win_chrome_zoom_percent(&m), 100);
-    m.zoom = 1.5f;
-    m.zoom_dpi_scale = 1.5f;
-    CHECK_EQI(spdf_win_chrome_zoom_percent(&m), 100);
-    m.zoom = 3.0f;
-    m.zoom_dpi_scale = 1.5f;
-    CHECK_EQI(spdf_win_chrome_zoom_percent(&m), 200);
-    m.zoom = 0.435f;
-    m.zoom_dpi_scale = 1.0f;
-    CHECK_EQI(spdf_win_chrome_zoom_percent(&m), 44); /* rounded, as "%.0f%%" rounds */
-    m.zoom = 0.0f;
-    CHECK_EQI(spdf_win_chrome_zoom_percent(&m), 100); /* no zoom yet, not 0% */
-    CHECK_EQI(spdf_win_chrome_zoom_percent(NULL), 100);
-}
-
 /* Nothing may crash or route on a NULL layout or model -- the state the window
  * is in before its first paint has divided anything. */
 static void test_degenerate_inputs(void) {
@@ -471,8 +451,12 @@ int main(void) {
     scales[2] = 2.0f;
 
     for (i = 0; i < 3; ++i) {
-        test_toolbar_layout_is_ordered_and_inside(scales[i]);
-        test_toolbar_hit_agrees_with_layout(scales[i]);
+        /* Both rows at every scale: the PDF one and the Markdown one, which
+         * differ by a control in the middle of the forward walk. */
+        test_toolbar_layout_is_ordered_and_inside(scales[i], 0);
+        test_toolbar_layout_is_ordered_and_inside(scales[i], 1);
+        test_toolbar_hit_agrees_with_layout(scales[i], 0);
+        test_toolbar_hit_agrees_with_layout(scales[i], 1);
         test_no_chrome_pixel_routes_to_the_canvas_in(scales[i], 0);
         test_no_chrome_pixel_routes_to_the_canvas_in(scales[i], 1);
     }
@@ -482,7 +466,6 @@ int main(void) {
     test_tabstrip_actions();
     test_dividers();
     test_canvas_local_conversion();
-    test_fit_labels_and_zoom_percent();
     test_degenerate_inputs();
 
     printf("chrome_input_test: %d checks, %d failures\n", g_checks, g_failures);

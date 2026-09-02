@@ -126,6 +126,13 @@ typedef enum spdf_win_chrome_action {
      * one command switch like every other route in. */
     SPDF_WIN_CA_OCR,
     SPDF_WIN_CA_TRANSLATE_SELECTION,
+    /* The Markdown A−/A＋ pill, posted as SPDF_WIN_CMD_MD_TEXT_SMALLER /
+     * _LARGER so the pill and View > Smaller/Larger Text are one handler. The
+     * pill is in the row only on a Markdown tab, so these never arrive on a
+     * PDF -- but the commands are inert there anyway
+     * (spdf_win_md_commands.h). */
+    SPDF_WIN_CA_MD_TEXT_SMALLER,
+    SPDF_WIN_CA_MD_TEXT_LARGER,
     /* A press on a split divider. The caller then follows the pointer and asks
      * spdf_win_chrome_sidebar_drag_pt() / _minimap_drag_pt() for the new width,
      * which clamp exactly as macOS's NSSplitView does. */
@@ -220,7 +227,9 @@ typedef struct SpdfWinChromeHit {
     spdf_win_chrome_cursor cursor;
 } SpdfWinChromeHit;
 
-/* The sidebar case, extracted for the size ratchet; needs the types above. */
+/* The sidebar and toolbar cases, extracted for the size ratchet; both need the
+ * types above. */
+#include "spdf_win_chrome_toolbar_route.h"
 #include "spdf_win_sidebar_input.h"
 
 /* The band, the track and the two fractions for one scroller, picked by part.
@@ -397,46 +406,9 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
             return;
         }
 
-        case SPDF_WIN_CHROME_TOOLBAR: {
-            SpdfWinToolbarLayout tb;
-            int segment = 0;
-            spdf_win_toolbar_item item;
-            if (button != SPDF_WIN_CB_LEFT) return;
-            spdf_win_toolbar_layout(l->toolbar, s, &tb);
-            item = spdf_win_toolbar_hit(&tb, x, y, &segment);
-            switch (item) {
-                case SPDF_WIN_TB_SIDEBAR_TOGGLE: out->action = SPDF_WIN_CA_TOGGLE_SIDEBAR; return;
-                case SPDF_WIN_TB_MINIMAP_TOGGLE: out->action = SPDF_WIN_CA_TOGGLE_MINIMAP; return;
-                case SPDF_WIN_TB_READING_THEME: out->action = SPDF_WIN_CA_TOGGLE_THEME; return;
-                case SPDF_WIN_TB_PAGE_PILL:
-                    /* chevron.left / chevron.right, in that order (:2996-3000). */
-                    out->action = segment == 0 ? SPDF_WIN_CA_PREV_PAGE : SPDF_WIN_CA_NEXT_PAGE;
-                    return;
-                case SPDF_WIN_TB_ZOOM_PILL:
-                    /* minus / plus, in that order (:3026-3030). */
-                    out->action = segment == 0 ? SPDF_WIN_CA_ZOOM_OUT : SPDF_WIN_CA_ZOOM_IN;
-                    return;
-                case SPDF_WIN_TB_FIT_POPUP: out->action = SPDF_WIN_CA_CYCLE_FIT; return;
-                case SPDF_WIN_TB_OVERFLOW: out->action = SPDF_WIN_CA_APP_MENU; return;
-                /* The two power tools. Their handlers belong to another track;
-                 * the caller posts the command (spdf_win_chrome_field_ui.h
-                 * chrome_post_command). */
-                case SPDF_WIN_TB_OCR: out->action = SPDF_WIN_CA_OCR; return;
-                case SPDF_WIN_TB_TRANSLATE: out->action = SPDF_WIN_CA_TRANSLATE_SELECTION; return;
-                /* The two text fields and the two find controls. All four were
-                 * drawn and inert while the query and the page number could only
-                 * be changed from outside the app. */
-                case SPDF_WIN_TB_FIND_FIELD: out->action = SPDF_WIN_CA_FOCUS_FIND; return;
-                case SPDF_WIN_TB_PAGE_FIELD: out->action = SPDF_WIN_CA_FOCUS_PAGE; return;
-                case SPDF_WIN_TB_FIND_REGEX: out->action = SPDF_WIN_CA_TOGGLE_REGEX; return;
-                case SPDF_WIN_TB_FIND_PILL:
-                    /* chevron.up / chevron.down -- previous match, then next, the
-                     * order macOS's find segments use (:3073-3079). */
-                    out->action = segment == 0 ? SPDF_WIN_CA_FIND_PREV : SPDF_WIN_CA_FIND_NEXT;
-                    return;
-                default: return;
-            }
-        }
+        /* THE TOOLBAR: its eighteen controls and the halves of its pills, in
+         * spdf_win_chrome_toolbar_route.h. */
+        case SPDF_WIN_CHROME_TOOLBAR: spdf_win_toolbar_route(l, m, x, y, button, s, out); return;
 
         /* THE SIDEBAR: its segment control, its filter field and its list, in
          * spdf_win_sidebar_input.h. */

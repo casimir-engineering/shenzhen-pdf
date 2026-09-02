@@ -94,7 +94,7 @@ static void test_toolbar_fields(float dpi) {
     SpdfWinChromeLayout l;
     SpdfWinToolbarLayout tb;
     spdf_win_chrome_layout(&m, (unsigned)(1400.0f * dpi), (unsigned)(900.0f * dpi), dpi, &l);
-    spdf_win_toolbar_layout(l.toolbar, dpi, &tb);
+    spdf_win_toolbar_layout(l.toolbar, dpi, m.markdown, &tb);
 
     /* A window wide enough that the whole find group is present -- these four
      * assertions would be vacuous against an empty rect. */
