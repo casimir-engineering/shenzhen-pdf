@@ -199,9 +199,12 @@ static void SPDFRenderTable(SPDFMarkdownRenderContext* context, SPDFMarkdownBloc
     }
     if (!rowBlocks.count) return;
 
-    // Provisional distribution at the render-time content-width budget; the
-    // paginator rebinds the boundaries to the real printable width.
-    CGFloat available = MAX(SPDFMarkdownTableMinimumColumnWidth, context.options.maximumImageWidth);
+    // Provisional distribution at the destination page's printable width when
+    // the render carries one — the very formula the paginator rebinds with, so
+    // the two distributions agree — at the constant image budget otherwise.
+    CGFloat available =
+        MAX(SPDFMarkdownTableMinimumColumnWidth,
+            SPDFMarkdownContentWidthBudget(context, depthIndent, context.options.maximumImageWidth));
     NSArray<NSNumber*>* widths = SPDFMarkdownTableColumnWidths(naturalWidths, available);
     NSArray<NSNumber*>* boundaries = SPDFMarkdownTableColumnBoundaries(widths, depthIndent);
 

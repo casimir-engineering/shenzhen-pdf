@@ -28,10 +28,9 @@ BOOL SPDFMarkdownRenderDiagramBlock(SPDFMarkdownRenderContext* context, SPDFMark
     // A render with no page attached keeps the old width-only image budget.
     CGFloat margin = context.options.paragraphSpacing * scale;
     CGFloat depthIndent = depth * 22;
-    NSSize page = context.options.pageContentSize;
-    NSSize contentBox =
-        NSMakeSize(MAX(64.0, (page.width > 0 ? page.width - depthIndent : context.options.maximumImageWidth)),
-                   page.height > 0 ? MAX(64.0, page.height - 2 * margin) : 0);
+    NSSize contentBox = NSMakeSize(
+        MAX(64.0, SPDFMarkdownContentWidthBudget(context, depthIndent, context.options.maximumImageWidth)),
+        SPDFMarkdownContentHeightBudget(context, 0));
     SPDFMarkdownDiagramLayout* layout =
         SPDFMarkdownDiagramRender(identifier, block.plainText ?: @"", contentBox, context.options.fontScale,
                                   context.options.diagramCache);
