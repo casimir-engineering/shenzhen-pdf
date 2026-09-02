@@ -38,9 +38,13 @@ FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* l
 // by the plan so screen, print, export and copy-page draw the identical
 // concrete palette — geometry is theme-independent.
 @property(nonatomic) SPDFMarkdownThemeVariant themeVariant;
-// Mirrors the reader's "Keep Image Colors in Dark Theme" setting (default NO,
-// i.e. recolor). Only consulted when themeVariant is Dark, so a Light plan --
-// every print and export plan -- is unaffected whatever this says.
+// Mirrors the reader's "Keep Image Colors in Dark Theme" setting, which since
+// 26.9.1-1 defaults to YES (keep the image's own colors). The value is always
+// pushed in from the session, which seeds it from settings.yaml
+// "darkThemePreservesImages" -- a freshly allocated configuration carries
+// whatever the ivar zero-initialises to and that is not the product default.
+// Only consulted when themeVariant is Dark, so a Light plan -- every print and
+// export plan -- is unaffected whatever this says.
 @property(nonatomic) BOOL preservesImageColors;
 // Distance from the paper's top edge down to the printable area — the TOP
 // margin. Equal to NSMinY(printableRect) (the bottom margin) only when the

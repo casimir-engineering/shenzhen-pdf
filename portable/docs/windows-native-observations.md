@@ -43,10 +43,12 @@ every pixel test in this repo was worth less until it was shown.
 
 ## 1. This is not the machine the port was written for
 
-Everything in `portable/win/README.md` and the handoff assumes an **ARM64**
-Windows 11 guest in Parallels, reached over `prlctl exec`, with a toolchain in
-`C:\BuildTools` and MuPDF prebuilt in `C:\spdf-build\mupdf`. None of that was
-true here.
+When this was written, everything in `portable/win/README.md` and the handoff
+assumed an **ARM64** Windows 11 guest in Parallels, reached over `prlctl exec`,
+with a toolchain in `C:\BuildTools` and MuPDF prebuilt in `C:\spdf-build\mupdf`.
+None of that was true here. (`portable/win/README.md` has since been rewritten
+native-first and the Parallels route moved to its own chapter; the handoff has
+not, and should be read as history.)
 
 | | Docs assume | This machine |
 |---|---|---|
@@ -136,27 +138,44 @@ Windows window was missing every piece of chrome the macOS app has. **That has
 since been built** — tab strip, toolbar, sidebar and minimap now all draw, with
 metrics transcribed from the macOS source and cited to the line, in both themes.
 
-What is genuinely still missing, as of the chrome work:
+This section listed seven gaps when it was written. **Six of the seven have
+since landed** (see §9 for the wave that closed them); the list is kept with
+each item's disposition rather than deleted, because the ledger's value is that
+it can be checked.
 
-- **Scrollbars.** macOS shows native ones and overlays the search heat-map on
-  them. Windows has none, so a long document gives the reader no position
-  feedback outside the minimap. Of everything absent this is the only
-  *functional* loss rather than a cosmetic one.
-- **Find**, the regex checkbox, the match counter and the scrollbar heat-map.
-  The behaviour is already toolkit-free in
-  `portable/linux/gtk4/spdf_search_internal.h` and wants porting the way
-  `spdf_win_layout.h` was ported.
-- **The Comments sidebar section**, OCR and translate — no model on Windows yet.
-- **Menus and a command palette**: no `HMENU`, no accelerator table.
-- **Open a file**: still command line only. No `WM_DROPFILES`, no
-  `IFileOpenDialog`, no file association — so the toolbar's `+` button and the
-  tab overflow `…` are routed but inert.
-- **The tab strip lives below the caption, not inside it.** macOS puts it in the
-  title bar. Hoisting it means owning `WM_NCCALCSIZE`, `WM_NCHITTEST`, the
-  caption buttons and snap-layouts hover — a subsystem, and one the offscreen
-  compose path cannot verify. `spdf_win_chrome.h` documents exactly which two
-  insets change if that is ever done.
-- **Selection, links, annotations, printing.** Untouched.
+- ~~**Scrollbars.**~~ Landed in `099a68508`, with the search heat-map overlaid
+  on them as macOS has it (`spdf_win_chrome_scroll.h`,
+  `spdf_win_chrome_scrollbar.cpp`; `chrome_scroll_test`,
+  `chrome_scroll_input_test`, `find_overlay_test` test_thin_marks).
+- ~~**Find**, the regex checkbox, the match counter and the scrollbar
+  heat-map.~~ Landed in `099a68508`, ported from
+  `portable/linux/gtk4/spdf_search_internal.h` exactly as predicted and
+  differentially tested against it — 37,440 comparisons, 0 differ
+  (`search-differential-native.cmd`). Regex multiline is a real toggle since
+  `95f1b1433`.
+- **The Comments sidebar section** is still missing: Windows draws a "No
+  Comments" placeholder and the core's annotation API has no caller. **OCR and
+  translate landed** in `d52fadc22` (toolchain, jobs, panel, glue), with the
+  first real installs' lessons in `1c5b5ddf3` and `443ee4603`.
+- ~~**Menus and a command palette**: no `HMENU`, no accelerator table.~~ Menus
+  landed in `86ae70cf3` as a popup from the toolbar's `…` — deliberately not a
+  menu bar, because a Win32 bar cannot be themed (§4.7). The palette, Open
+  Recent, reopen-closed and favorites landed in `f30842fdb`, with the filter and
+  ranking ported from GTK and differentially tested (`54b9f9a64`).
+- ~~**Open a file**: still command line only.~~ Landed in `86ae70cf3`
+  (`IFileOpenDialog`, `WM_DROPFILES`, the `+` button and the overflow `…` now
+  routed to real handlers). `.pdf` registration and the shell commands landed in
+  `85ba7fad5`.
+- ~~**The tab strip lives below the caption, not inside it.**~~ Hoisted: the
+  client now owns `WM_NCCALCSIZE` and `WM_NCHITTEST` and paints its own caption
+  buttons (`spdf_win_window_caption.h`, `spdf_win_chrome_caption.h`;
+  `chrome_nc_test` 5,552 hit checks, `chrome_caption_paint_test`). The window has
+  one header band, as macOS does. What remains is cosmetic — see §7 item 1.
+- **Selection, links, printing** all landed (`86ae70cf3`, `e8cba79fa`), each with
+  a differential against its original: selection 50,171 comparisons / 0 differ,
+  print maths 1,944,132 / 0 mismatches. **Annotations are still untouched** and
+  are the largest remaining reading gap; they also block the Properties dialog's
+  comment count, which is passed as 0.
 
 ### 2.2 One thing the ledger did not mention
 
@@ -178,16 +197,28 @@ and it is only visible if you open a small document — which no headless test d
 `portable/win/tests/run-tests-native.sh` — new, because `run-tests.sh` is a
 macOS-side orchestrator that drives `prlctl`.
 
+As measured in this session (2026-09-01):
+
 ```
 37 cases, 29 passed, 0 failed, 8 blocked        exit 2 (BLOCKED is not a pass)
 ```
 
-Newly passing and previously registered nowhere: **all five orphaned core
+**That count is a snapshot and has moved twice since.** The audit in
+`windows-feature-matrix.md` recorded 56 cases at `5677cc628`, and the parity wave
+of 2026-09-02 (§9) took the inventory to **86** — `bash
+portable/win/tests/run-tests-native.sh --list`, which needs no build and is the
+only number worth quoting, because a track that drops
+`tests/<name>_test.c` in the directory registers a case without touching the
+runner. Do not copy a case count into another document; cite `--list`.
+
+Newly passing here and previously registered nowhere: **all five orphaned core
 suites** — `SPDFCoreOutlineTests`, `SPDFCoreRenderThemeTests`,
 `SPDFCoreSelectionTests`, `SPDFCoreCJKSelectionTests` pass;
 `SPDFCorePasswordTests` is BLOCKED only because it needs `qpdf` to generate
 encrypted fixtures (`winget install qpdf.qpdf`). The handoff called this "the
-cheapest outstanding win in the port"; it was.
+cheapest outstanding win in the port"; it was. `CORE_SUITES` now registers
+**nine**: the Markdown track added `SPDFCoreMarkdownTests`, which needs no MuPDF
+at all.
 
 The 8 blocked cases are honest blocks, each naming its missing prerequisite:
 `layout.differential` needs glib and the GTK4 headers; the 7 cross-host PNG cases
@@ -198,6 +229,14 @@ Mac at test time**. There is no committed reference image anywhere in
 they are a RECORD, not test references -- a chrome screenshot pins four
 subsystems at once and would fail for reasons unrelated to whatever changed.) Any plan to run the port's strongest evidence off a Mac has
 to commit references first.
+
+`layout.differential` no longer needs a Mac: §4.4's shim closed it, and
+`portable/win/tests/layout-differential-native.cmd` runs it natively. It stays in
+`CROSS_HOST` because the runner's own `layout.differential` case is the
+macOS-driven one; the native script is the substitute and reports 395,514
+comparisons, 0 mismatches. So the structural block on this box is **seven
+cross-host cases plus the password suite**, and a complete run exits 2 even with
+everything built.
 
 ### 3.1 Salvaging the Direct2D cases without a Mac
 
@@ -529,8 +568,11 @@ Verified against the tree; the tree wins.
 - **§3.5's tab stroke description is incomplete**: the tree is
   `lineWidth = selected ? 1.4 : 1.0`, and an unselected non-missing tab is not
   stroked at all.
-- **`spdf_win_layout.h`'s header references `portable/win/tests/layout_transcript_test.c`,
-  which does not exist.**
+- **`spdf_win_layout.h`'s header referenced `portable/win/tests/layout_transcript_test.c`,
+  which does not exist and never has.** Fixed: the header now cites
+  `layout_geometry_test.c` for the numbers and `gtk_differential.c` (run by
+  `layout-differential-native.cmd`) for the comparison against the real GTK
+  header, and says plainly that no transcript test exists.
 - The handoff's own §3.1 misses two useful reference sets that are committed:
   `portable/docs/gtk4-captures/` (24 PNGs) and `portable/docs/linux-captures/`
   (13 PNGs). They are the GTK4 frontend, not macOS, but they are real screenshots
@@ -540,35 +582,54 @@ Verified against the tree; the tree wins.
 
 ## 7. What I would do next, in order
 
-Items 1, 2 and 3 of the original list are done — the tab strip and toolbar are
-drawn and wired, and the sidebar and minimap show real content. What is left,
-in the order I would take it:
+**Six of these nine are done.** Each is marked with the commit that did it
+rather than deleted, so the list stays checkable and so a reader can see which
+predictions in it held. The three that remain all need a machine this one is
+not.
 
-1. ~~Scrollbars~~, ~~Find~~ and ~~the tab strip into the title bar~~ — all done.
-   The window now has one header band, as macOS does; the "double top bar" is
-   closed. What remains of the frame work is cosmetic: no 1 px top border line
-   when windowed, and the auto-hide-taskbar edge when maximized.
-2. **Find.** `portable/linux/gtk4/spdf_search_internal.h` is already
-   toolkit-free — 15 `static inline` functions including the heat-map ticks.
-   Port it the way `spdf_win_layout.h` was ported and differentially test it with
-   the glib shim from §4.4, which is now known to work.
-3. **A minimum window size and a sane default** (§2.2). Minutes of work, and it
-   fixes a window that can currently open too small to use.
-4. **Wire the sidebar's row clicks.** The geometry and hit-testing are written
-   and tested; only the routing call is missing.
-5. **`SPDF_WIN_ZOOM_FIT_HEIGHT` on the canvas.** macOS's fit popup offers four
-   modes and the canvas has three, so the cycle silently skips one.
-6. **Commit macOS reference PNGs**, or accept that the port's strongest evidence
-   exists only on one machine. §3 makes the cost concrete: 7 of 37 cases are
-   blocked on it permanently for anyone without a Mac.
-7. **Fix `d2d-cases.sh`'s `d2d.window-dark`** before someone runs it from the Mac
-   and hunts a Direct2D bug that is not there (§3.2).
-8. **Measure x64 ↔ ARM64 byte-identity**, or restate the claim as ARM64-only. It
-   is written as a property of the port and is really a property of one pair of
-   machines.
-9. **Move the tab strip into the caption**, if visual parity with macOS's
-   title-bar tabs is wanted. This is a subsystem, not a detail — see the
-   divergence note at the top of `spdf_win_chrome.h`.
+1. ~~Scrollbars~~, ~~Find~~ and ~~the tab strip into the title bar~~ — **done**
+   (`099a68508`, `86ae70cf3`). The window has one header band, as macOS does;
+   the "double top bar" is closed. The two cosmetic remainders named here — no
+   1 px top border when windowed, and the maximized edge — are closed too:
+   `extend_frame_into_strip()` in `spdf_win_window_caption.h` calls
+   `DwmExtendFrameIntoClientArea` with the full caption height when windowed
+   (which is what keeps DWM drawing the shadow, the rounded corners and the 1 px
+   frame) and with nothing when maximized or full screen, because a non-zero
+   margin over a borderless popup draws a DWM strip along its top edge.
+2. ~~**Find.**~~ **Done** (`099a68508`), and the prediction held exactly:
+   `spdf_search_internal.h` was ported the way `spdf_win_layout.h` was and
+   differentially tested with §4.4's shim — 37,440 comparisons, 0 differ. The
+   results half followed in `a22c17cb4`/`5e0afbe7b` with its own differential.
+3. ~~**A minimum window size and a sane default** (§2.2).~~ **Done**
+   (`099a68508`, extended by `c8c8ed557`): `WM_GETMINMAXINFO` → `min_track_size`
+   in `spdf_win_window.cpp`, and `initial_client_size()` in
+   `spdf_win_session_app.h` now clamps a restored or default size into
+   `[MIN_CONTENT … RESTORE_MAX]` against the monitor's **work** area, defaulting
+   to macOS's 1120×800 with a 560×380 floor. §2.2's 244×286 window with clipped
+   caption buttons cannot happen again.
+4. ~~**Wire the sidebar's row clicks.**~~ **Done** (`5e0afbe7b`), along with the
+   segmented Chapters/Comments/Search control, the results rows and their
+   snippets. The Comments section is still a placeholder because annotations are
+   not ported.
+5. ~~**`SPDF_WIN_ZOOM_FIT_HEIGHT` on the canvas.**~~ **Done** (`099a68508`);
+   `--fit height` is a real mode and `menu_test test_fit_keys_match_the_other_two_frontends`
+   pins the accelerators against the other two frontends.
+6. **Commit macOS reference PNGs** — still open, and now the largest single
+   verification gap. §3 makes the cost concrete: seven cases are blocked on it
+   permanently for anyone without a Mac, and they are the only cases that can
+   catch a Windows-vs-macOS divergence.
+7. **Fix `d2d-cases.sh`'s `d2d.window-dark`** — still open. `d2d-cases.sh` has
+   not been touched since `833e0d527`, so the flaw §3.2 measured is still there
+   and will fire the moment someone runs the suite from a Mac. Fix it before
+   they hunt a Direct2D bug that is not there.
+8. **Measure x64 ↔ ARM64 byte-identity**, or restate the claim as ARM64-only —
+   still open, and needs a machine with both. It is written as a property of the
+   port and is really a property of one pair of machines.
+9. ~~**Move the tab strip into the caption.**~~ **Done** — see item 1. It was a
+   subsystem, as predicted: `WM_NCCALCSIZE`, `WM_NCHITTEST` from the painter's
+   own geometry and three caption buttons painted from model state, so the paint
+   path still needs no `HWND`. `chrome_nc_test` runs 5,552 hit-test checks and
+   `chrome_caption_paint_test` pins the button pixels in both themes.
 
 ---
 
@@ -578,10 +639,50 @@ in the order I would take it:
 portable\win\mupdf-native-build.cmd --clean          :: MuPDF, x64, ~70 s
 portable\win\mupdf-arch-check-native.cmd             :: all 646 members 8664
 portable\win\build-native.cmd                        :: ShenzhenPDF.exe
-bash portable/win/tests/run-tests-native.sh          :: 33 cases
-portable\win\verify-phase1.ps1 -Exe C:\spdf-build\ShenzhenPDF.exe -Pdf <a.pdf>
-portable\win\verify-phase1.ps1 -Exe C:\spdf-build\ShenzhenPDF.exe -Pdf <a.pdf> -Dark
+bash portable/win/tests/run-tests-native.sh --list   :: the inventory: 86 cases
+bash portable/win/tests/run-tests-native.sh          :: the run; exit 2 here (7 cross-host + qpdf)
+portable\win\verify-phase1.ps1 -Exe %SPDF_OUT%\ShenzhenPDF.exe -Pdf <a.pdf>
+portable\win\verify-phase1.ps1 -Exe %SPDF_OUT%\ShenzhenPDF.exe -Pdf <a.pdf> -Dark
 ```
 
-Every one of these is judged by its exit code. None of them decides anything by
+Set `SPDF_OUT` to a private directory if another track is building, and point
+`SPDF_MUPDF_LIBDIR` at the shared `C:\spdf-build\mupdf` so the private build does
+not have to rebuild 74 MB of MuPDF. The user's own running instance holds a lock
+on `ShenzhenPDF.exe`, so a shared `SPDF_OUT` fails to link rather than
+mysteriously testing yesterday's binary. `portable/win/README.md` has the table.
+
+From Git Bash, `cmd /c` is **`cmd //c`**: MSYS rewrites a bare `/c` to `C:\`, so
+`cmd /c build-native.cmd` runs nothing and exits 0 (§4.8). Every one of the
+commands above is judged by its exit code, and none of them decides anything by
 piping output through `grep`.
+
+---
+
+## 9. The parity wave of 2026-09-02
+
+Seven tracks were developed in parallel worktrees and merged into `master` on
+2026-09-02, taking the port from "the chrome draws" to "most of the reader
+works". Each merge is a first-parent merge commit with the track's own commits
+under it; `git log --merges --first-parent` lists them in reverse order.
+
+| merge | track | what landed, and what pins it |
+|---|---|---|
+| `32e4271c9` (+ `b5c21bb3a`) | **Markdown** | Markdown opens as paginated pages through **MuPDF's HTML engine** rather than a transcription of the 18,138-LOC AppKit reader (`portable/core/spdf_markdown*.c`, `spdf_win_md*`). Pinned by `SPDFCoreMarkdownTests` (no MuPDF needed), `markdown_core_test`, `markdown_open_test`, `md_win_test`; the decision and the phased plan are in `windows-markdown-design.md`, and four live Markdown captures are in `windows-captures/` |
+| `2a1a452d8` | **Search** | the chapter-grouped **results sidebar**, centred scroll-to-match, a **clickable** minimap, type-anywhere search, and a pointing hand over plain-text URLs. A new `sidebar-differential-native.cmd` compares the result grouping against `spdf_sidebar_internal.h`, and the minimap's input policy was folded into the existing minimap differential (`minimap_differential_input.h`); plus `sidebar_rows_test`, `find_overlay_test`, `find_settings_test`, `link_test`, `canvas_selection_test` |
+| `76a51bbb1` | **Docs/state** | `documents.yaml` and `favorites.yaml` written the way the other two frontends write them; the **palette** with Open Recent, reopen-last-closed and favorites; **password prompts** and the **file watcher** (auto-reload, read-only shadow copy). `palette-differential-native.cmd` and `watcher-differential-native.cmd` compare the ported halves against their GTK originals; `palette_filter_test`, `palette_model_test`, `recents_test`, `password_test`, `password_flow_test`, `watcher_logic_test`, `watcher_test` |
+| `a9348b0b3` | **Window** | **presentation mode**, full screen, a **second window**, session fidelity (frame, query, detaching), `settings.yaml` read and written, print **scaling** UI — and the one-line fix that stops **Escape closing the window** when nothing is focused, which §7's predecessor list called a real usability hazard. `settings_test`, `session_frame_test`, `window_keys_test`, `print_scaling_dialog_test` |
+| `68bb691b6` | **Shell** | the exe's **identity** (icon, per-monitor-v2 manifest, version block, About box), `.pdf` **registration**, the F1 **shortcuts sheet generated from the menu table**, Explorer reveal and the other shell commands, and the **auto-updater** ported with Authenticode trust and a self-replacing exe. `about_test`, `assoc_test`, `shortcuts_test`, `shell_test`, `shell_windows_test`, `updater_feed_test`, `updater_verify_test`, `updater_install_test`, `updater_store_test` |
+| `5b224fd11` | **Tools** | **OCR and translation**: toolchain acquisition, job running, the live-log panel and the glue. The first real installs cost two revisions — Ghostscript dropped, Argos put in a venv, the tools' data kept out of `AppData`, `TESSDATA_PREFIX` completed. `ocr_test`, `translate_test`, `toolchain_test`, `toolchain_run_test`, plus the `tools_e2e.sh` and `tools_panel.sh` probes |
+| `03fa9f15a` | **Launch** | launch **measured** from process creation to first page (§4.8 left this as the open question), the Direct2D device created on a worker before the first paint needs it, and a `launch.budget` case in the suite. `windows-launch-performance.md` carries the bar, the baseline, the diagnosis and the patch for files other tracks own |
+
+Two things the wave changed about how to read the rest of this file:
+
+- **The counts moved.** 37 cases in §3 → 56 at the audit → **86** today. LOC
+  under `portable/win/src/` went from 5,021 (the number
+  `portable/win/README.md` carried for months) to **43,678** across 178 files,
+  and the differentials from six to **nine**.
+- **`windows-feature-matrix.md` is the feature-status authority**, audited
+  against a built and run tree rather than from memory. §2.1 and §7 above are
+  now a record of what this session predicted and how it turned out; where they
+  disagree with the matrix, the matrix is newer. The handoff's §1.4 ledger and
+  the plan's §0/§4 phase status are older than both.
