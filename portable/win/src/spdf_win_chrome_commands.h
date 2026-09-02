@@ -118,6 +118,7 @@ static void doc_action_report(app* a, const char* err) {
 #include "spdf_win_cmd_docs.h"
 #include "spdf_win_cmd_tools.h"
 #include "spdf_win_cmd_shell.h"
+#include "spdf_win_cmd_annot.h"
 
 static int command_perform(app* a, int command, const spdf_win_input* in) {
     SpdfWinChromeModel model;
@@ -131,6 +132,7 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
     if (spdf_win_cmd_docs_perform(a, command, in)) return 1;
     if (spdf_win_cmd_tools_perform(a, command, in)) return 1;
     if (spdf_win_cmd_shell_perform(a, command, in)) return 1;
+    if (spdf_win_cmd_annot_perform(a, command, in)) return 1;
 
     switch (command) {
         case SPDF_WIN_CMD_OPEN:

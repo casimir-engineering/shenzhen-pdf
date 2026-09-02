@@ -107,8 +107,8 @@ typedef enum spdf_win_chrome_action {
     SPDF_WIN_CA_FIND_NEXT,
     /* A click on a row of the sidebar's list. Chapters: `index` is the row,
      * which the caller turns into a page through the content provider (the
-     * router must not resolve it on a mouse move). Search: `index` is the
-     * LIST-LOCAL Y in device px, scroll included -- see
+     * router must not resolve it on a mouse move). Comments and Search: `index`
+     * is the LIST-LOCAL Y in device px, scroll included -- see
      * spdf_win_sidebar_input.h for why. */
     SPDF_WIN_CA_SIDEBAR_ROW,
     /* A click on the Chapters / Comments / Search segment control. `index` is
@@ -165,7 +165,11 @@ typedef enum spdf_win_chrome_action {
      * AXIS comes from `part` (VSCROLL or HSCROLL), which the hit always carries.
      * "BACK" is up on the vertical scroller and left on the horizontal one. */
     SPDF_WIN_CA_SCROLL_PAGE_BACK,
-    SPDF_WIN_CA_SCROLL_PAGE_FORWARD
+    SPDF_WIN_CA_SCROLL_PAGE_FORWARD,
+    /* A LEFT PRESS ON A COMMENT MARKER'S BADGE: `index` is the comment to edit
+     * (spdf_win_annot_marks.h). For a CANVAS hit, `index` is the comment under
+     * the pointer for the hover preview, or -1. */
+    SPDF_WIN_CA_ANNOT_EDIT
 } spdf_win_chrome_action;
 
 /* Cursors as an enum rather than as an HCURSOR, so this header stays free of
@@ -231,6 +235,7 @@ typedef struct SpdfWinChromeHit {
  * types above. */
 #include "spdf_win_chrome_toolbar_route.h"
 #include "spdf_win_sidebar_input.h"
+#include "spdf_win_annot_marks.h" /* the canvas case: comment markers, same reason */
 
 /* The band, the track and the two fractions for one scroller, picked by part.
  * A helper rather than an if-else at each of the four call sites (the router
@@ -453,7 +458,7 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
             }
         }
 
-        case SPDF_WIN_CHROME_CANVAS: out->action = SPDF_WIN_CA_CANVAS; return;
+        case SPDF_WIN_CHROME_CANVAS: spdf_win_annot_route(m, x, y, button, out); return;
 
         /* Anything else -- a divider's dead pixel, the caption reserve's edge --
          * is swallowed rather than passed to the canvas. Swallowed, not

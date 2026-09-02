@@ -52,6 +52,36 @@ static void draw_overlays(ID2D1RenderTarget* target, const spdf_win_scene* scene
                     target->DrawRectangle(ring, brush, lw, NULL);
                     break;
                 }
+                case SPDF_WIN_OVERLAY_COMMENT: {
+                    /* The mac's marker frame (SPDFMacDocumentView.mm:492-502):
+                     * NSInsetRect(-2, -2) GROWS the rect, radius 3, a fill
+                     * and then a 1.2 stroke. Theme-invariant like its
+                     * neighbours: it sits over the annotation the document
+                     * itself drew, on white or on recoloured #1E1E1E. */
+                    float grow = 2.0f * s;
+                    D2D1_ROUNDED_RECT rr;
+                    rr.rect = D2D1::RectF(r.left - grow, r.top - grow, r.right + grow, r.bottom + grow);
+                    rr.radiusX = 3.0f * s;
+                    rr.radiusY = 3.0f * s;
+                    brush->SetColor(D2D1::ColorF(1.0f, 0.76f, 0.10f, 0.16f * a));
+                    target->FillRoundedRectangle(rr, brush);
+                    brush->SetColor(D2D1::ColorF(0.92f, 0.52f, 0.0f, 0.95f * a));
+                    target->DrawRoundedRectangle(rr, brush, 1.2f * s, NULL);
+                    break;
+                }
+                case SPDF_WIN_OVERLAY_COMMENT_BADGE: {
+                    /* GTK's badge (spdf_docview.c:1270-1282): an amber square
+                     * with a whole-pixel border drawn INSIDE its edge, the way
+                     * snapshot_page_border draws one. */
+                    float bw = s >= 1.5f ? 2.0f : 1.0f;
+                    D2D1_RECT_F inner =
+                        D2D1::RectF(r.left + bw * 0.5f, r.top + bw * 0.5f, r.right - bw * 0.5f, r.bottom - bw * 0.5f);
+                    brush->SetColor(D2D1::ColorF(0.98f, 0.74f, 0.18f, 0.92f * a));
+                    target->FillRectangle(r, brush);
+                    brush->SetColor(D2D1::ColorF(0.55f, 0.35f, 0.0f, 0.9f * a));
+                    target->DrawRectangle(inner, brush, bw, NULL);
+                    break;
+                }
                 case SPDF_WIN_OVERLAY_SELECTION:
                 default:
                     /* calibrated(0.40, 0.62, 0.86, 0.20), square fill --

@@ -77,6 +77,9 @@ static int chrome_set_scroll_hot(spdf_win_chrome_part bar, int part, int pressed
  * trough click -- shared with the keymap, in their own file since this one
  * reached its cap. */
 #include "spdf_win_chrome_view_ui.h"
+/* The comment flows -- add, edit, delete, hover, the canvas's context menu --
+ * in their own file for the same reason; they call chrome_rebuild_canvas. */
+#include "spdf_win_chrome_annot_ui.h"
 
 /* Do it. `l` is the layout the hit was computed against, so a handler that needs
  * geometry -- the zoom pill's anchor, a divider's clamp -- uses the same rects
@@ -94,6 +97,8 @@ static int chrome_perform(app* a, const SpdfWinChromeHit* hit, const SpdfWinChro
         case SPDF_WIN_CA_FIND_NEXT: return chrome_find_step(a, 1);
         case SPDF_WIN_CA_SIDEBAR_ROW: return chrome_sidebar_row(a, hit->index);
         case SPDF_WIN_CA_SIDEBAR_SECTION: return chrome_sidebar_section(a, hit->index);
+        /* Click-to-edit on a comment marker's badge (GTK annot_marker_click_pressed). */
+        case SPDF_WIN_CA_ANNOT_EDIT: return annot_edit(a, hit->index);
         /* A press on the minimap arms the strip gesture (spdf_win_search_map_ui.h);
          * the moves and the release below finish it. */
         case SPDF_WIN_CA_MINIMAP: return minimap_press(a, hit, l);
@@ -154,9 +159,10 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
     chrome_layout_for_input(a, in, &model, &l);
     /* No chrome while presenting: the pointer turns pages and nothing else. */
     if (a->presentation) return presentation_mouse(a, in);
-    /* The right button outside presentation has no meaning yet. */
-    if (in->kind == SPDF_WIN_INPUT_CONTEXT) return 0;
     spdf_win_chrome_input_route(&l, &model, in->x, in->y, in->button, &hit);
+    /* The right button outside presentation: the canvas's context menu
+     * (spdf_win_chrome_annot_ui.h); nothing anywhere else. */
+    if (in->kind == SPDF_WIN_INPUT_CONTEXT) return annot_context_menu(a, in, &hit);
 
     if (in->kind == SPDF_WIN_INPUT_CURSOR) {
         /* The window manager's half of the position query first: it depends on
@@ -218,6 +224,8 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
          * keyboard -- takes the focus away from the toolbar, because that is what
          * clicking outside a text field means everywhere else on this desktop. */
         if (hit.action == SPDF_WIN_CA_CANVAS) selecting = canvas_press(a, in, &l);
+        /* Where on the page, for a note added later without a selection. */
+        if (hit.action == SPDF_WIN_CA_CANVAS || hit.action == SPDF_WIN_CA_ANNOT_EDIT) annot_note_canvas_press(in, &hit);
         if (hit.action != SPDF_WIN_CA_FOCUS_FIND && hit.action != SPDF_WIN_CA_FOCUS_PAGE &&
             hit.action != SPDF_WIN_CA_FOCUS_SIDEBAR_FILTER && a->focus != SPDF_WIN_FOCUS_NONE) {
             a->focus = SPDF_WIN_FOCUS_NONE;
@@ -334,6 +342,8 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
      * leave a thumb lit after the pointer had left it. */
     {
         int changed = chrome_set_scroll_hot(hit.part, hit.scroll_part, 0);
+        /* The comment under the pointer: a tooltip, never a repaint. */
+        annot_hover(a, &hit, in);
         if (hit.hot_tab == a->hot_tab && hit.hot_close == a->hot_close) return changed;
         if (hit.hot_tab != a->hot_tab) chrome_hover_tooltip(a, &l, hit.hot_tab);
         a->hot_tab = hit.hot_tab;

@@ -38,6 +38,8 @@
  * reveal runs at paint time, because that is when results arrive.
  */
 
+#include "spdf_win_annot.h"    /* the Comments section's rows */
+#include "spdf_win_annot_model.h" /* spdf_win_annot_bounds_have_area */
 #include "spdf_win_settings.h" /* searchJumpsToNearestResult, from the process-wide settings */
 #include "spdf_win_menu.h"      /* SPDF_WIN_MENU_ID_BASE, for chrome_post_command */
 #include "spdf_win_search_map_ui.h"
@@ -271,6 +273,18 @@ static int chrome_sidebar_row(app* a, int row) {
         chrome_find_show_current(a);
         return 1;
     }
+    if (spdf_win_sidebar_section() == 1) {
+        /* Comments: the same list-local y, resolved against the published
+         * rows; a header does nothing, a comment row centres its annotation
+         * -- or lands on its page when the core gave it no area (GTK
+         * comments_row_activated). */
+        const spdf_comment_item* item =
+            spdf_win_annot_item(spdf_win_annot_sidebar_comment_at((float)row, g_chrome_dpi));
+        if (!a->canvas || !item) return 0;
+        if (spdf_win_annot_bounds_have_area(&item->bounds))
+            return spdf_win_canvas_scroll_to_rect(a->canvas, item->page_index, item->bounds);
+        return spdf_win_canvas_scroll_to_page(a->canvas, item->page_index);
+    }
     {
         const SpdfWinChromePanelsContent* content = spdf_win_chrome_content_current();
         const SpdfWinSidebarContent* sb = content ? content->sidebar : NULL;
@@ -314,5 +328,7 @@ static int chrome_wheel(app* a, const spdf_win_input* in) {
     if (spdf_win_map_frame_current(&f) && spdf_win_chrome_contains(f.panel, in->x, in->y)) return minimap_wheel(a, in);
     if (spdf_win_sidebar_section() == 2 && g_results_builder && spdf_win_chrome_contains(g_results_list, in->x, in->y))
         return spdf_win_sidebar_results_scroll_by(g_results_builder, in->dy, g_results_list.h, g_chrome_dpi);
+    if (spdf_win_sidebar_section() == 1 && spdf_win_chrome_contains(g_comments_list, in->x, in->y))
+        return spdf_win_annot_sidebar_scroll_by(in->dy, g_comments_list.h, g_chrome_dpi);
     return spdf_win_canvas_scroll_by(a->canvas, in->dx, in->dy);
 }

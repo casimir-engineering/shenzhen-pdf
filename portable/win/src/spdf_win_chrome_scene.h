@@ -34,6 +34,7 @@
  * which document is selected. Included here rather than relying on it arriving
  * through spdf_win_main.cpp's include order, which is what left this header
  * depending on a declaration it never asked for. */
+#include "spdf_win_annot.h"       /* the comment cache, markers and Comments rows */
 #include "spdf_win_chrome_content.h"
 #include "spdf_win_chrome_find.h" /* spdf_win_find_apply_overlays */
 #include "spdf_win_search_map.h"  /* spdf_win_map_marks_publish */
@@ -51,6 +52,11 @@
 static SpdfWinSidebarResultsBuilder* g_results_builder;
 /* The list rect the results were laid out in, client px, for the wheel. */
 static SpdfWinChromeRect g_results_list;
+/* The same for the Comments section's list. */
+static SpdfWinChromeRect g_comments_list;
+/* One per scene_for_window: the comment cache's frame clock
+ * (spdf_win_annot_sync defers a new document's load to a later frame). */
+static unsigned g_paint_frame;
 /* Armed by every way a search STARTS (spdf_win_chrome_field_ui.h
  * chrome_find_start); consumed by chrome_find_reveal_if_pending() below once
  * the search settles. */
@@ -137,6 +143,37 @@ static void chrome_inputs_for(app* a, SpdfWinChromeModelInputs* in, float dpi_sc
     in->fit_mode = chrome_fit_for_zoom_mode(spdf_win_canvas_zoom_mode(a->canvas));
 }
 
+/* THE COMMENT CACHE, synced to the selected tab's document for this paint. A
+ * document seen for the first time is loaded on the NEXT frame, which this
+ * asks for, so the first page is on screen before the annotation walk begins
+ * (spdf_win_annot.h). Returns the comment count known so far. */
+static int chrome_annot_sync(app* a) {
+    char err[256] = {0};
+    const char* path = NULL;
+    spdf_document* doc = NULL;
+    int deferred = 0;
+    if (a->canvas && a->tabs) {
+        int sel = spdf_win_tabs_selected_index(a->tabs);
+        if (sel >= 0) {
+            path = spdf_win_tabs_path(a->tabs, sel);
+            doc = (spdf_document*)spdf_win_tabs_document(a->tabs, sel, err, sizeof(err));
+        }
+    } else if (a->canvas) {
+        /* The headless paths open one document directly and have no tabs. */
+        path = a->path;
+        doc = a->doc;
+    }
+    int count = spdf_win_annot_sync(doc, path, g_paint_frame, &deferred);
+    if (deferred) {
+        /* Windowed: ask for the next frame, which loads. Headless
+         * (--render-window-png): there is no next frame and no launch budget
+         * to protect, so the one frame there is carries the markers. */
+        if (a->window) spdf_win_window_invalidate(a->window);
+        else count = spdf_win_annot_count(doc, path);
+    }
+    return count;
+}
+
 /* WHAT THE SIDEBAR HAS TO LIST, and therefore whether it exists and which
  * section it shows. Resolves the content provider -- which loads the outline
  * on the first call that needs it -- only while the reader wants the panel, so
@@ -144,6 +181,7 @@ static void chrome_inputs_for(app* a, SpdfWinChromeModelInputs* in, float dpi_sc
  * Publishes the effective visibility and returns the resolved section. */
 static int chrome_sidebar_decide(app* a, int* out_has_chapters) {
     int has_chapters = 0;
+    int has_comments = 0;
     int has_search = a->find_text[0] != L'\0';
     int section;
     if (a->canvas && a->show_sidebar) {
@@ -152,11 +190,42 @@ static int chrome_sidebar_decide(app* a, int* out_has_chapters) {
         /* Not loaded yet means not known yet: keep the panel rather than blink
          * it away for the one frame before the outline is read. */
         has_chapters = sb ? (!sb->loaded || sb->total_count > 0) : 0;
+        /* Comments: the cache is what the markers are drawn from anyway, so
+         * asking it here costs nothing the paint was not going to pay. */
+        has_comments = chrome_annot_sync(a) > 0;
     }
-    spdf_win_sidebar_set_effective_visible(a->canvas != NULL && (has_chapters || has_search));
-    section = spdf_win_sidebar_resolve_section(spdf_win_sidebar_section(), has_chapters, 0, has_search);
+    spdf_win_sidebar_set_effective_visible(a->canvas != NULL && (has_chapters || has_comments || has_search));
+    section = spdf_win_sidebar_resolve_section(spdf_win_sidebar_section(), has_chapters, has_comments, has_search);
     if (out_has_chapters) *out_has_chapters = has_chapters;
     return section;
+}
+
+/* The Comments section's rows for this paint, and the markers' geometry and
+ * overlays over the pages the canvas just placed. `scene` may carry no pages
+ * (no document, or nothing built), in which case only the rows are published. */
+static void chrome_publish_comments(app* a, spdf_win_scene* scene, const SpdfWinChromeLayout* layout, int section,
+                                    float dpi) {
+    g_comments_list = spdf_win_chrome_zero();
+    if (!a->canvas) {
+        spdf_win_sidebar_comments_publish(NULL);
+        spdf_win_annot_publish_geometry(NULL, 0.0f, 0.0f, 1.0f);
+        return;
+    }
+    chrome_annot_sync(a);
+    if (section == 1 && !spdf_win_chrome_rect_empty(layout->sidebar)) {
+        SpdfWinSidebarLayout sb;
+        spdf_win_sidebar_layout(layout->sidebar, 1, dpi, &sb);
+        g_comments_list = sb.list;
+        spdf_win_sidebar_comments_publish(spdf_win_annot_sidebar_build(a->filter_text, sb.list.h, dpi));
+    } else {
+        spdf_win_sidebar_comments_publish(NULL);
+    }
+    if (!scene) return;
+    /* Marks in CLIENT px for the router (the canvas rect's origin added);
+     * overlays in canvas-local px like every other producer's. Third in the
+     * chain find -> selection -> comments, the mac's draw order (:485, :492). */
+    spdf_win_annot_publish_geometry(scene, layout->canvas.x, layout->canvas.y, spdf_win_canvas_zoom(a->canvas));
+    spdf_win_annot_apply_overlays(scene, spdf_win_canvas_zoom(a->canvas));
 }
 
 /* The Search section's rows for this paint, and the strip's markers -- both
@@ -200,6 +269,7 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
     client_w = scene->client_px_w ? scene->client_px_w : scene->target_px_w;
     client_h = scene->client_px_h ? scene->client_px_h : scene->target_px_h;
     g_chrome_dpi = scene->dpi_scale > 0.0f ? scene->dpi_scale : 1.0f;
+    ++g_paint_frame;
 
     /* NO DOCUMENT: still a window, not a blank one.
      *
@@ -242,6 +312,7 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
         a->sidebar_rows = 0;
         a->chrome.sidebar_row_count = 0;
         chrome_publish_search(a, &chrome_layout, section, g_chrome_dpi);
+        chrome_publish_comments(a, NULL, &chrome_layout, section, g_chrome_dpi);
         scene->message = a->status[0] ? a->status
                                       : L"No document open — Ctrl+O to open one, or drop a PDF here";
         return 1;
@@ -347,10 +418,12 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
     if (spdf_win_canvas_build_scene(a->canvas, scene)) {
         spdf_win_find_apply_overlays(scene);
         spdf_win_canvas_apply_selection_overlays(a->canvas, scene);
+        chrome_publish_comments(a, scene, &chrome_layout, section, g_chrome_dpi);
         return 1;
     }
     spdf_win_find_apply_overlays(scene);
     spdf_win_canvas_apply_selection_overlays(a->canvas, scene);
+    chrome_publish_comments(a, scene, &chrome_layout, section, g_chrome_dpi);
     scene->message = a->status[0] ? a->status : NULL;
     return 1;
 }
