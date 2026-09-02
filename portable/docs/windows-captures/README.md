@@ -65,9 +65,10 @@ portable\win\screenshot-window.ps1 -Exe <exe> -Pdf portable\win\tests\fixtures\o
     -Out 01-window-light.png -Width 1500 -Height 950 -SettleMs 4000
 ```
 
-`SPDF_FIND_QUERY=fixture` in the environment drives the search shown here; it is
-a temporary bridge that disappears once the find field is typeable, and it is
-documented as temporary at its definition.
+The search shown in the live pictures was typed into the find field through
+`drive-window.ps1`; the offscreen ones pass `--find fixture` (and `--find-regex`
+when wanted) to `--render-window-png`. The `SPDF_FIND_QUERY` environment bridge
+these pictures were first made with no longer exists.
 
 **The workstation must be unlocked.** A locked session is not composited, so
 `PrintWindow` returns black for a Direct2D client area and the capture looks
