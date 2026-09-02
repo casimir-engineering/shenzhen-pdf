@@ -21,42 +21,19 @@
 #define SPDF_MAX_RENDER_DIMENSION 32768
 #define SPDF_MAX_RENDER_BYTES ((size_t)512 * 1024 * 1024)
 
-typedef struct spdf_page_size_cache {
-    float width;
-    float height;
-    int valid;
-} spdf_page_size_cache;
+/* struct spdf_document and its page caches live in spdf_core_document.h. */
+#include "spdf_core_document.h"
 
-#define SPDF_PAGE_LIST_SLOTS 4
+/* Which rendition a render draws, and what colour its paper is cleared to.
+ * doc->dark_doc is NULL for every format but Markdown (see the header). */
+static fz_document* render_document(const spdf_document* doc, unsigned flags) {
+    return (flags & SPDF_RENDER_DARK_THEME) && doc->dark_doc ? doc->dark_doc : doc->doc;
+}
 
-typedef struct spdf_page_list_entry {
-    fz_display_list* list; /* NULL = empty slot */
-    int page_index;
-    double build_ms;
-    uint64_t last_used; /* monotonic counter, LRU */
-} spdf_page_list_entry;
-
-/* THREADING CONTRACT: an spdf_document (and everything hanging off it, including
- * the page-list cache and last_render_stats below) may only be used by one thread
- * at a time. The app honors this by giving each worker thread its own document
- * (see workerDocumentForPath on the Mac side); the main-thread document is only
- * touched from the main thread. No locking is done here. */
-struct spdf_document {
-    fz_context* ctx;
-    fz_document* doc;
-    char* title;
-    int page_count;
-    spdf_page_size_cache* page_sizes;
-    spdf_page_list_entry page_lists[SPDF_PAGE_LIST_SLOTS];
-    uint64_t page_list_use_counter;
-    spdf_render_stats last_render_stats;
-    int password_protected;
-    spdf_authentication authentication;
-    /* Image rectangles per page, for SPDF_RENDER_PRESERVE_IMAGES. Pure cache:
-     * the dark reading theme itself is a per-render flag, not document state. */
-    spdf_recolor_page_cache recolor_pages;
-    int picture_document; /* a comic archive or a bare image: never recolored */
-};
+static int render_paper_value(const spdf_document* doc, unsigned flags) {
+    /* The dark paper (#1E1E1E) is a neutral grey, so one channel clears all three. */
+    return render_document(doc, flags) == doc->doc ? 0xFF : (int)(spdf_recolor_default_dark_theme().paper_rgb & 0xFF);
+}
 
 /* Core-private body of the public cancellation token: just an fz_cookie.
  * cancel() writes cookie.abort from any thread while a render on another
@@ -231,6 +208,7 @@ spdf_document* spdf_open(const char* path, char* err, size_t err_len) {
 void spdf_close(spdf_document* doc) {
     if (!doc) return;
     spdf_drop_page_list_cache(doc, -1);
+    if (doc->dark_doc) fz_drop_document(doc->ctx, doc->dark_doc);
     if (doc->doc) fz_drop_document(doc->ctx, doc->doc);
     if (doc->ctx) fz_drop_context(doc->ctx);
     free(doc->title);
@@ -447,19 +425,20 @@ spdf_render_stats spdf_last_render_stats(const spdf_document* doc) {
  * Returns NULL on build failure (err is set, nothing partial is ever cached).
  * A token cancellation during the build run also returns NULL (err is
  * "Render canceled."); the partial list is dropped, never cached. */
-static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_index, spdf_render_token* token, char* err,
-                                               size_t err_len) {
+static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_index, unsigned flags,
+                                               spdf_render_token* token, char* err, size_t err_len) {
     spdf_page_list_entry* slot;
     fz_page* page = NULL;
     fz_display_list* list = NULL;
     fz_device* dev = NULL;
     double build_start;
     double build_ms;
+    int dark = render_document(doc, flags) != doc->doc;
     int i;
 
     for (i = 0; i < SPDF_PAGE_LIST_SLOTS; ++i) {
         spdf_page_list_entry* entry = &doc->page_lists[i];
-        if (entry->list && entry->page_index == page_index) {
+        if (entry->list && entry->page_index == page_index && entry->dark == dark) {
             entry->last_used = ++doc->page_list_use_counter;
             return entry->list;
         }
@@ -481,7 +460,7 @@ static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_inde
 
     build_start = spdf_monotonic_ms();
     fz_try(doc->ctx) {
-        page = fz_load_page(doc->ctx, doc->doc, page_index);
+        page = fz_load_page(doc->ctx, render_document(doc, flags), page_index);
         list = fz_new_display_list(doc->ctx, fz_bound_page(doc->ctx, page));
         dev = fz_new_list_device(doc->ctx, list);
         fz_run_page(doc->ctx, page, dev, fz_identity, token_cookie(token));
@@ -511,6 +490,7 @@ static fz_display_list* get_or_build_page_list(spdf_document* doc, int page_inde
     if (slot->list) fz_drop_display_list(doc->ctx, slot->list);
     slot->list = list;
     slot->page_index = page_index;
+    slot->dark = dark;
     slot->build_ms = build_ms;
     slot->last_used = ++doc->page_list_use_counter;
     doc->last_render_stats.built_list = 1;
@@ -557,8 +537,9 @@ static void copy_pixmap_to_bitmap(spdf_document* doc, fz_pixmap* pix, int page_i
      * and format, and recoloring each row right after writing it keeps that
      * row in L1 instead of paying a second walk of the whole image. */
     spdf_recolor_table_init(
-        &recolor, ((flags & SPDF_RENDER_DARK_THEME) && !doc->picture_document) ? SPDF_RECOLOR_LUMA_REMAP
-                                                                               : SPDF_RECOLOR_NONE,
+        &recolor, ((flags & SPDF_RENDER_DARK_THEME) && !doc->picture_document && !doc->dark_doc)
+                      ? SPDF_RECOLOR_LUMA_REMAP
+                      : SPDF_RECOLOR_NONE,
         spdf_recolor_default_dark_theme());
     if (recolor.kind != SPDF_RECOLOR_NONE && (flags & SPDF_RENDER_PRESERVE_IMAGES))
         exclusion_count = page_recolor_exclusions(doc, page_index, zoom, pix->x, pix->y, exclusions,
@@ -631,7 +612,7 @@ int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, u
     }
 
     if (flags & SPDF_RENDER_USE_PAGE_LIST) {
-        list = get_or_build_page_list(doc, page_index, token, err, err_len);
+        list = get_or_build_page_list(doc, page_index, flags, token, err, err_len);
         if (!list) {
             if (token_canceled(token)) return 0; /* err is already "Render canceled." */
             set_error(err, err_len, "");         /* fail-open: fall through to the direct path */
@@ -649,25 +630,25 @@ int spdf_render_page_rgba_opts(spdf_document* doc, int page_index, float zoom, u
             transformed = fz_transform_rect(bounds, ctm);
             bbox = fz_round_rect(transformed);
             pix = fz_new_pixmap_with_bbox(doc->ctx, fz_device_rgb(doc->ctx), bbox, NULL, 0);
-            fz_clear_pixmap_with_value(doc->ctx, pix, 0xFF);
+            fz_clear_pixmap_with_value(doc->ctx, pix, render_paper_value(doc, flags));
             dev = fz_new_draw_device(doc->ctx, fz_identity, pix);
             fz_run_display_list(doc->ctx, list, dev, ctm, fz_infinite_rect, token_cookie(token));
             fz_close_device(doc->ctx, dev);
             fz_drop_device(doc->ctx, dev);
             dev = NULL;
             doc->last_render_stats.used_list = 1;
-        } else if (token) {
+        } else if (token || render_document(doc, flags) != doc->doc) {
             /* Explicit equivalent of fz_new_pixmap_from_page_number (mupdf
              * source/fitz/util.c, alpha=0) so the cookie reaches fz_run_page. */
-            page = fz_load_page(doc->ctx, doc->doc, page_index);
+            page = fz_load_page(doc->ctx, render_document(doc, flags), page_index);
             bounds = fz_bound_page(doc->ctx, page);
             ctm = fz_scale(zoom, zoom);
             transformed = fz_transform_rect(bounds, ctm);
             bbox = fz_round_rect(transformed);
             pix = fz_new_pixmap_with_bbox(doc->ctx, fz_device_rgb(doc->ctx), bbox, NULL, 0);
-            fz_clear_pixmap_with_value(doc->ctx, pix, 0xFF);
+            fz_clear_pixmap_with_value(doc->ctx, pix, render_paper_value(doc, flags));
             dev = fz_new_draw_device(doc->ctx, ctm, pix);
-            fz_run_page(doc->ctx, page, dev, fz_identity, &token->cookie);
+            fz_run_page(doc->ctx, page, dev, fz_identity, token_cookie(token));
             fz_close_device(doc->ctx, dev);
             fz_drop_device(doc->ctx, dev);
             dev = NULL;
@@ -758,7 +739,7 @@ int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float 
     }
 
     if (flags & SPDF_RENDER_USE_PAGE_LIST) {
-        list = get_or_build_page_list(doc, page_index, token, err, err_len);
+        list = get_or_build_page_list(doc, page_index, flags, token, err, err_len);
         if (!list) {
             if (token_canceled(token)) return 0; /* err is already "Render canceled." */
             set_error(err, err_len, "");         /* fail-open: fall through to the direct path */
@@ -773,7 +754,7 @@ int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float 
         if (list) {
             bounds = fz_bound_display_list(doc->ctx, list);
         } else {
-            page = fz_load_page(doc->ctx, doc->doc, page_index);
+            page = fz_load_page(doc->ctx, render_document(doc, flags), page_index);
             bounds = fz_bound_page(doc->ctx, page);
         }
         crop.x0 = bounds.x0 + region.x0;
@@ -785,7 +766,7 @@ int spdf_render_page_region_rgba_opts(spdf_document* doc, int page_index, float 
         transformed = fz_transform_rect(crop, ctm);
         bbox = fz_round_rect(transformed);
         pix = fz_new_pixmap_with_bbox(doc->ctx, fz_device_rgb(doc->ctx), bbox, NULL, 0);
-        fz_clear_pixmap_with_value(doc->ctx, pix, 0xFF);
+        fz_clear_pixmap_with_value(doc->ctx, pix, render_paper_value(doc, flags));
         dev = fz_new_draw_device(doc->ctx, fz_identity, pix);
         if (list) {
             /* Scissor is the DEVICE-space rect of the pixmap, not page coords. */
