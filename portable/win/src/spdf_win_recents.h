@@ -81,7 +81,8 @@ const char* spdf_win_recents_path(int index);
 
 /* A document was opened: move (or insert) it at the front, stamp its
  * documents.yaml record and write the file. `title` may be NULL (the path's
- * last component is used). Shadow copies and empty paths are ignored. */
+ * last component is used). Shadow copies (spdf_win_watcher_is_shadow_path) and
+ * empty paths are ignored -- as they are by spdf_win_favorites_add(). */
 void spdf_win_recents_note_opened(const char* path, const char* title);
 
 /* Drop a path from the list (it no longer exists, say). Does not touch its

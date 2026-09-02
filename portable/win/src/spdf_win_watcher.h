@@ -110,6 +110,34 @@ typedef struct SpdfWinWatcherResolution {
  * or missing source with *out zeroed. Consumes a primed restore binding. */
 int spdf_win_watcher_resolve_open(const char* utf8_source, SpdfWinWatcherResolution* out);
 
+/* THE COPY THAT ALREADY EXISTS FOR `utf8_source`, if there is one: fills `out`
+ * and returns 1, else empties it and returns 0.
+ *
+ * WHY THIS IS NOT spdf_win_watcher_resolve_open(). Everything in the process
+ * that opens a document by path -- the search worker, the thumbnail store, the
+ * outline bridge, the link scanner, the render pool -- has to open the same
+ * bytes the canvas is showing, or a search hit lands on the wrong page of a
+ * document that changed under the app. But those opens happen on WORKER
+ * THREADS, several at once, and resolve_open() is a UI-thread function in three
+ * separate ways: it mutates the primed-restore table with no lock, it CREATES
+ * the copy (so N workers would race to author it, and the random staged
+ * fallback would leave N orphans behind), and consuming a primed binding on a
+ * worker would spend the session-restore adoption that the UI thread's own open
+ * is about to need. So this is the half a worker may call: a pure question
+ * about the filesystem, no state touched, no file written, safe from any
+ * thread and at any time.
+ *
+ * IT DELIBERATELY DOES NOT CHECK THAT THE COPY IS STILL CURRENT. A stale copy
+ * is exactly what the caller wants: the canvas is holding that copy's bytes
+ * until the watcher reports the change and reloads, and until then a worker
+ * that "helpfully" read the newer source would disagree with the page on
+ * screen -- which is the bug this exists to fix, in reverse.
+ *
+ * The read-only test is what keeps a copy left behind by an earlier session
+ * from capturing a file that has since become writable; it is only reached
+ * when a copy is actually there, so the common open pays one stat. */
+int spdf_win_watcher_existing_working_path(const char* utf8_source, char* out, size_t out_cap);
+
 /* Session restore: the persisted binding for `source`, adopted by the next
  * resolve so an unchanged source reuses its copy without a content read. */
 void spdf_win_watcher_prime_restore(const char* utf8_source, const char* utf8_working_path,

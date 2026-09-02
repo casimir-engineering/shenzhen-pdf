@@ -64,14 +64,29 @@ static void app_on_watch(void* user, const char* path, int event) {
 }
 
 /* THE LAUNCH SWEEP (the mac's deferred one): every shadow copy no live tab
- * renders from and nobody touched in the last minute is deleted. Run once,
- * from the first session tick -- half a minute in, well off the launch path
- * and after every restored tab has had its binding primed. */
-static void app_watch_first_tick(app* a) {
+ * renders from and nobody touched in the last minute is deleted.
+ *
+ * ON ITS OWN ONE-SHOT TIMER, ten seconds after the window is shown
+ * (SPDF_WIN_WATCH_SWEEP_MS, armed in spdf_win_main.cpp). It used to ride the
+ * first SESSION tick, which is thirty seconds, and that had it both ways: a
+ * reader who opened a read-only document and closed the app inside half a
+ * minute -- the commonest way to look at one file -- never swept at all, so
+ * the copies piled up in %APPDATA%\ShenzhenPDF\ReadOnlyCopies indefinitely.
+ * Ten seconds is far off the launch path (the first page lands at ~150 ms,
+ * portable/docs/windows-launch-performance.md) and every restored tab has long
+ * since had its binding primed, which is the one ordering this depends on.
+ *
+ * Still guarded by `swept`: the one-shot cannot fire twice, but the guard also
+ * covers the session tick's old route if anyone re-adds it, and costs a
+ * branch. */
+#define SPDF_WIN_WATCH_SWEEP_MS 10000
+
+static void app_watch_sweep_once(void* user) {
+    app* a = (app*)user;
     static int swept;
     const char* refs[SPDF_WIN_TABS_MAX];
     int i, n = 0, count;
-    if (swept) return;
+    if (!a || swept) return;
     swept = 1;
     count = a->tabs ? spdf_win_tabs_count(a->tabs) : 0;
     for (i = 0; i < count && n < SPDF_WIN_TABS_MAX; ++i) {

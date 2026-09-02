@@ -36,8 +36,10 @@ static int chrome_close_tab(app* a, int index) {
     int shown;
     if (!a->tabs || index < 0) return 0;
     /* Remembered for Reopen Last Closed Tab, and the watch and any shadow copy
-     * released, while the model still has the path. THE one place a close is
-     * noted: the close box, Ctrl+W and Close Other Tabs all come through here. */
+     * released, while the model still has the path. The close box, Ctrl+W and
+     * a middle-click all come through here; Close Other Tabs does the same two
+     * per-tab steps in its own loop rather than paying for a canvas rebuild and
+     * a session write per tab (spdf_win_cmd_window.h). */
     spdf_win_recents_note_closed(spdf_win_tabs_path(a->tabs, index));
     spdf_win_tabs_open_forget(a->tabs, index);
     if (index == spdf_win_tabs_selected_index(a->tabs)) spdf_win_tabs_app_remember(a->tabs, a->canvas);

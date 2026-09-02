@@ -11,7 +11,7 @@
  * accelerator text coming from the same table row as the menu, and the
  * selection's movement over status rows.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_palette_model.c portable/win/src/spdf_win_recents.c portable/win/src/spdf_win_favorites.c portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_win_compat.c */
+/* spdf-test-sources: portable/win/src/spdf_win_palette_model.c portable/win/src/spdf_win_recents.c portable/win/src/spdf_win_favorites.c portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/win/src/spdf_win_watcher.cpp portable/win/src/spdf_win_watcher_shadow.cpp portable/core/spdf_yaml.c portable/core/spdf_win_compat.c */
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
 #endif
