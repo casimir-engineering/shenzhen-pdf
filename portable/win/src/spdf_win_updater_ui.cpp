@@ -1,7 +1,7 @@
-/* spdf_win_updater_ui.cpp — the updater's timers, worker threads and dialogs:
- * the part that is wired to the app. Everything it decides with, it decides
- * through the pure functions in spdf_win_updater.h; this file schedules,
- * fetches, prompts and relaunches.
+/* spdf_win_updater_ui.cpp — the updater's timers and dialogs: the part that is
+ * wired to the app. Everything it decides with, it decides through the pure
+ * functions in spdf_win_updater.h; the network and file work is
+ * spdf_win_updater_work.cpp, on threads this file starts.
  *
  * THREADING, in one paragraph. The UI thread owns a MESSAGE-ONLY window
  * (HWND_MESSAGE) that this module creates for itself, so the app's own window
@@ -22,22 +22,16 @@
  *                            reports every outcome
  *
  * THE INSTALL is always on consent: the prompt offers Install Now / Later.
- * Install Now downloads the sidecar and the exe (bounded), checks the SHA-256,
- * verifies Authenticode against the pin, reads the staged exe's ProductVersion
- * and requires it to be the tag, stages it beside the running exe, swaps, and
- * records pendingTag. Then it asks to restart; Restart Now closes the window
- * (the session is saved by the normal quit path) and relaunches the exe from
- * an atexit handler, after that save. Any failure before the swap deletes the
- * download; a failure during the swap restores the working app.
+ * Then it asks to restart; Restart Now closes the window (the session is
+ * saved by the normal quit path) and relaunches the exe from an atexit
+ * handler, after that save. "Later" takes effect on the next launch, where
+ * the health check confirms pendingTag.
  */
 #include "spdf_win_updater.h"
 #include "spdf_win_updater_internal.h"
 
-#include "spdf_win_about_version.h"
-
 #include <windows.h>
 #include <commctrl.h>
-#include <shlobj.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,29 +39,9 @@
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "comctl32.lib")
-#pragma comment(lib, "shell32.lib")
-#pragma comment(lib, "ole32.lib")
 
 #define UPD_TIMER_FIRST 1
 #define UPD_TIMER_CADENCE 2
-#define UPD_MSG_CHECK_DONE (WM_APP + 0x51)
-#define UPD_MSG_INSTALL_DONE (WM_APP + 0x52)
-
-typedef struct check_outcome {
-    int ok;                /* an HTTP outcome was obtained and parsed */
-    int not_modified;      /* 304 */
-    int available;
-    int newer_but_missing_asset;
-    int user_initiated;
-    spdf_win_release_info release;
-    char err[256];
-} check_outcome;
-
-typedef struct install_outcome {
-    int ok;
-    char tag[64];
-    char err[512];
-} install_outcome;
 
 static struct {
     HWND main;
@@ -81,7 +55,7 @@ static struct {
 
 static const wchar_t* k_sink_class = L"SpdfWinUpdaterSink";
 
-/* --- helpers ---------------------------------------------------------------- */
+/* --- dialogs ------------------------------------------------------------------ */
 
 static void utf8_to_wide(const char* in, wchar_t* out, size_t cap) {
     if (!in || MultiByteToWideChar(CP_UTF8, 0, in, -1, out, (int)cap) <= 0) out[0] = L'\0';
@@ -133,258 +107,7 @@ static void inform(const wchar_t* heading, const wchar_t* body, int warning) {
     ask(L"Software Update", heading, body, ok, 1, !warning);
 }
 
-static const char* running_version(void) {
-    return SPDF_WIN_RELEASE_TAG;
-}
-
-/* settings.yaml, read-only: %APPDATA%\ShenzhenPDF\settings.yaml. */
-static char* read_settings_text(void) {
-    wchar_t* roaming = NULL;
-    wchar_t path[MAX_PATH];
-    char* text = NULL;
-    size_t len = 0;
-    if (SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, NULL, &roaming) != S_OK || !roaming) return NULL;
-    _snwprintf_s(path, _countof(path), _TRUNCATE, L"%s\\ShenzhenPDF\\settings.yaml", roaming);
-    CoTaskMemFree(roaming);
-    spdf_win_updater_read_file(path, &text, &len, 2 * 1024 * 1024);
-    return text; /* NULL when absent: every reader treats that as the default */
-}
-
-/* --- store mutators ----------------------------------------------------------- */
-
-static int mutator_claim_daily_slot(spdf_win_update_store* store, void* user) {
-    int* claimed = (int*)user;
-    long long now = spdf_win_updater_now_epoch();
-    long long delay = spdf_win_updater_daily_check_delay(1, store->last_check != 0, store->last_check, now);
-    if (delay != 0) return 0;
-    /* Stamp BEFORE the network call: a crash or a 403 still consumes the
-     * day's slot, so a broken server is asked once a day, not once a second. */
-    store->last_check = now;
-    *claimed = 1;
-    return 1;
-}
-
-typedef struct store_snapshot {
-    char etag[256];
-    char highest_seen[64];
-    char deferred_tag[64];
-    long long remind_after;
-} store_snapshot;
-
-static int mutator_read_snapshot(spdf_win_update_store* store, void* user) {
-    store_snapshot* s = (store_snapshot*)user;
-    strncpy_s(s->etag, sizeof(s->etag), store->etag ? store->etag : "", _TRUNCATE);
-    strncpy_s(s->highest_seen, sizeof(s->highest_seen), store->highest_seen ? store->highest_seen : "", _TRUNCATE);
-    strncpy_s(s->deferred_tag, sizeof(s->deferred_tag), store->deferred_tag ? store->deferred_tag : "", _TRUNCATE);
-    s->remind_after = store->remind_after;
-    return 0;
-}
-
-typedef struct persist_args {
-    const char* etag;
-    const char* tag;
-} persist_args;
-
-static int mutator_persist_check(spdf_win_update_store* store, void* user) {
-    persist_args* a = (persist_args*)user;
-    int changed = 0;
-    if (a->etag && *a->etag && (!store->etag || strcmp(store->etag, a->etag) != 0)) {
-        free(store->etag);
-        store->etag = _strdup(a->etag);
-        changed = 1;
-    }
-    /* Advance the high-water mark on every 200, whatever the user chooses. */
-    if (a->tag && *a->tag &&
-        (!store->highest_seen || !*store->highest_seen || spdf_win_updater_compare_versions(a->tag, store->highest_seen) > 0)) {
-        free(store->highest_seen);
-        store->highest_seen = _strdup(a->tag);
-        changed = 1;
-    }
-    return changed;
-}
-
-static int mutator_snooze(spdf_win_update_store* store, void* user) {
-    free(store->deferred_tag);
-    store->deferred_tag = _strdup((const char*)user);
-    store->remind_after = spdf_win_updater_now_epoch() + SPDF_WIN_UPDATER_LATER_SNOOZE_SECONDS;
-    return 1;
-}
-
-static int mutator_set_pending(spdf_win_update_store* store, void* user) {
-    free(store->pending_tag);
-    store->pending_tag = _strdup((const char*)user);
-    return 1;
-}
-
-/* --- the check (worker) ---------------------------------------------------------- */
-
-static DWORD WINAPI check_thread(LPVOID param) {
-    check_outcome* out = (check_outcome*)param;
-    store_snapshot snap;
-    wchar_t dir[MAX_PATH];
-    wchar_t body_path[MAX_PATH + 32];
-    spdf_win_fetch_result fetch;
-    char* body = NULL;
-    size_t body_len = 0;
-
-    memset(&snap, 0, sizeof(snap));
-    spdf_win_updater_with_locked_store(mutator_read_snapshot, &snap);
-    if (!spdf_win_updater_dir(dir, _countof(dir))) {
-        strncpy_s(out->err, sizeof(out->err), "the updates folder could not be created", _TRUNCATE);
-        goto done;
-    }
-    _snwprintf_s(body_path, _countof(body_path), _TRUNCATE, L"%s\\release.json", dir);
-    /* The manual path omits the ETag so the server answers 200 and the whole
-     * decision runs; the silent path sends it so a 304 costs nothing. */
-    if (!spdf_win_updater_fetch(SPDF_WIN_UPDATER_RELEASES_LATEST_URL, body_path, out->user_initiated ? NULL : snap.etag,
-                                1, SPDF_WIN_UPDATER_MAX_FEED_BYTES, SPDF_WIN_UPDATER_NET_TIMEOUT_MS, &g.cancel,
-                                &fetch)) {
-        strncpy_s(out->err, sizeof(out->err), fetch.err, _TRUNCATE);
-        goto done;
-    }
-    if (fetch.status == 304) {
-        out->ok = 1;
-        out->not_modified = 1;
-        goto done;
-    }
-    if (fetch.status != 200) {
-        snprintf(out->err, sizeof(out->err), "the update server returned HTTP %d", fetch.status);
-        goto done;
-    }
-    if (!spdf_win_updater_read_file(body_path, &body, &body_len, (size_t)SPDF_WIN_UPDATER_MAX_FEED_BYTES) ||
-        !spdf_win_updater_parse_release(body, (long)body_len, SPDF_WIN_UPDATER_ASSET, SPDF_WIN_UPDATER_SIDECAR_SUFFIX,
-                                        &out->release)) {
-        strncpy_s(out->err, sizeof(out->err), "the update server response was malformed", _TRUNCATE);
-        goto done;
-    }
-    {
-        persist_args pa = {fetch.etag, out->release.tag};
-        spdf_win_updater_with_locked_store(mutator_persist_check, &pa);
-    }
-    out->ok = 1;
-    out->available = spdf_win_updater_release_available(&out->release, running_version(), snap.highest_seen);
-    out->newer_but_missing_asset = !out->available && !out->release.draft && !out->release.prerelease &&
-                                   spdf_win_updater_compare_versions(out->release.tag, running_version()) > 0 &&
-                                   (!out->release.asset_url || !out->release.sidecar_url);
-    /* The silent path honours "Later" (7 days) and skippedUpdateVersion. */
-    if (out->available && !out->user_initiated) {
-        char skipped[64];
-        char* settings = read_settings_text();
-        if (spdf_win_updater_setting_skipped(settings, skipped, sizeof(skipped)) &&
-            strcmp(skipped, out->release.tag) == 0)
-            out->available = 0;
-        free(settings);
-        if (out->available && snap.deferred_tag[0] && strcmp(snap.deferred_tag, out->release.tag) == 0 &&
-            spdf_win_updater_now_epoch() < snap.remind_after)
-            out->available = 0;
-    }
-done:
-    DeleteFileW(body_path);
-    free(body);
-    PostMessageW(g.sink, UPD_MSG_CHECK_DONE, 0, (LPARAM)out);
-    return 0;
-}
-
-/* --- the install (worker) ---------------------------------------------------------- */
-
-static DWORD WINAPI install_thread(LPVOID param) {
-    install_outcome* out = (install_outcome*)param;
-    spdf_win_release_info* rel = (spdf_win_release_info*)((char*)out + sizeof(*out));
-    wchar_t dir[MAX_PATH], tag_dir[MAX_PATH + 72], asset_path[MAX_PATH + 160], sidecar_path[MAX_PATH + 168];
-    wchar_t staged[MAX_PATH + 8];
-    wchar_t wtag[64];
-    spdf_win_fetch_result fetch;
-    char* sidecar_text = NULL;
-    size_t sidecar_len = 0;
-    char want_hex[65], got_hex[65];
-    char product[128];
-    char err[512];
-
-    strncpy_s(out->tag, sizeof(out->tag), rel->tag, _TRUNCATE);
-    utf8_to_wide(rel->tag, wtag, _countof(wtag));
-    if (!spdf_win_updater_dir(dir, _countof(dir))) {
-        strncpy_s(out->err, sizeof(out->err), "the updates folder could not be created", _TRUNCATE);
-        goto done;
-    }
-    _snwprintf_s(tag_dir, _countof(tag_dir), _TRUNCATE, L"%s\\%s", dir, wtag);
-    CreateDirectoryW(tag_dir, NULL);
-    _snwprintf_s(asset_path, _countof(asset_path), _TRUNCATE, L"%s\\%hs", tag_dir, SPDF_WIN_UPDATER_ASSET);
-    _snwprintf_s(sidecar_path, _countof(sidecar_path), _TRUNCATE, L"%s%hs", asset_path, SPDF_WIN_UPDATER_SIDECAR_SUFFIX);
-
-    /* Free space, from the untrusted declared size clamped by the bounds. */
-    {
-        ULARGE_INTEGER free_bytes;
-        if (GetDiskFreeSpaceExW(dir, &free_bytes, NULL, NULL) &&
-            !spdf_win_updater_has_free_space((long long)free_bytes.QuadPart, rel->asset_size)) {
-            strncpy_s(out->err, sizeof(out->err), "there is not enough free disk space to download the update", _TRUNCATE);
-            goto done;
-        }
-    }
-    if (!spdf_win_updater_fetch(rel->sidecar_url, sidecar_path, NULL, 0, SPDF_WIN_UPDATER_MAX_SIDECAR_BYTES,
-                                SPDF_WIN_UPDATER_NET_TIMEOUT_MS, &g.cancel, &fetch) ||
-        fetch.status != 200) {
-        snprintf(out->err, sizeof(out->err), "the update's checksum could not be downloaded (%s)",
-                 fetch.err[0] ? fetch.err : "HTTP error");
-        goto done;
-    }
-    if (!spdf_win_updater_read_file(sidecar_path, &sidecar_text, &sidecar_len, 64 * 1024) ||
-        !spdf_win_updater_parse_sha256_sidecar(sidecar_text, want_hex, sizeof(want_hex))) {
-        strncpy_s(out->err, sizeof(out->err), "the update's checksum file was malformed", _TRUNCATE);
-        goto done;
-    }
-    if (!spdf_win_updater_fetch(rel->asset_url, asset_path, NULL, 0, spdf_win_updater_download_ceiling(rel->asset_size),
-                                SPDF_WIN_UPDATER_ASSET_TIMEOUT_MS, &g.cancel, &fetch) ||
-        fetch.status != 200) {
-        snprintf(out->err, sizeof(out->err), "the update could not be downloaded (%s)",
-                 fetch.err[0] ? fetch.err : "HTTP error");
-        goto done;
-    }
-    /* Integrity: declared size (when given), then the sidecar digest. Both are
-     * heuristics against truncation and a stale CDN, never trust. */
-    if (rel->asset_size > 0 && fetch.bytes != rel->asset_size) {
-        strncpy_s(out->err, sizeof(out->err), "the downloaded update was incomplete", _TRUNCATE);
-        goto done;
-    }
-    if (!spdf_win_updater_sha256_file(asset_path, got_hex, sizeof(got_hex)) || strcmp(got_hex, want_hex) != 0) {
-        strncpy_s(out->err, sizeof(out->err), "the downloaded update does not match its published checksum", _TRUNCATE);
-        goto done;
-    }
-    /* TRUST: Authenticode + the pin. This is the only gate that matters. */
-    if (!spdf_win_updater_verify_pinned(asset_path, spdf_win_updater_pinned_thumbprint(), err, sizeof(err))) {
-        snprintf(out->err, sizeof(out->err), "The update could not be verified and was not installed (%s).", err);
-        goto done;
-    }
-    /* The right publisher's RIGHT build: the staged exe must say it is the tag. */
-    if (!spdf_win_updater_file_product_version(asset_path, product, sizeof(product)) ||
-        !spdf_win_updater_versions_match_release_target(rel->tag, product)) {
-        snprintf(out->err, sizeof(out->err), "the downloaded file says it is version %s, not %s; it was not installed",
-                 product[0] ? product : "(unknown)", rel->tag);
-        goto done;
-    }
-    if (!spdf_win_updater_stage_beside(g.self_exe, asset_path, staged, _countof(staged), err, sizeof(err)) ||
-        !spdf_win_updater_swap_exe(g.self_exe, staged, err, sizeof(err))) {
-        strncpy_s(out->err, sizeof(out->err), err, _TRUNCATE);
-        DeleteFileW(staged);
-        goto done;
-    }
-    spdf_win_updater_with_locked_store(mutator_set_pending, (void*)rel->tag);
-    out->ok = 1;
-done:
-    if (!out->ok) {
-        DeleteFileW(asset_path); /* never keep a partial or unverified artifact */
-        DeleteFileW(sidecar_path);
-        RemoveDirectoryW(tag_dir);
-    } else {
-        DeleteFileW(asset_path); /* installed: the copy in updates\ has done its job */
-        DeleteFileW(sidecar_path);
-        RemoveDirectoryW(tag_dir);
-    }
-    free(sidecar_text);
-    PostMessageW(g.sink, UPD_MSG_INSTALL_DONE, 0, (LPARAM)out);
-    return 0;
-}
-
-/* --- the UI thread ------------------------------------------------------------------ */
+/* --- workers ------------------------------------------------------------------- */
 
 static int worker_busy(void) {
     if (!g.worker) return 0;
@@ -397,17 +120,40 @@ static int worker_busy(void) {
 }
 
 static void launch_check(int user_initiated) {
-    check_outcome* out;
+    spdf_win_check_outcome* out;
     if (worker_busy()) {
         if (user_initiated) inform(L"Already checking for updates.", NULL, 0);
         return;
     }
-    out = (check_outcome*)calloc(1, sizeof(*out));
+    out = (spdf_win_check_outcome*)calloc(1, sizeof(*out));
     if (!out) return;
+    out->sink = g.sink;
+    out->cancel = &g.cancel;
     out->user_initiated = user_initiated;
     g.cancel = 0;
-    g.worker = CreateThread(NULL, 0, check_thread, out, 0, NULL);
+    g.worker = CreateThread(NULL, 0, spdf_win_updater_check_thread, out, 0, NULL);
     if (!g.worker) free(out);
+}
+
+static void begin_install(const spdf_win_release_info* rel) {
+    spdf_win_install_outcome* out;
+    if (worker_busy()) return;
+    out = (spdf_win_install_outcome*)calloc(1, sizeof(*out));
+    if (!out) return;
+    out->sink = g.sink;
+    out->cancel = &g.cancel;
+    wcsncpy_s(out->self_exe, _countof(out->self_exe), g.self_exe, _TRUNCATE);
+    /* A deep copy: the check outcome that carried `rel` is freed on return. */
+    out->release.tag = _strdup(rel->tag);
+    out->release.asset_url = rel->asset_url ? _strdup(rel->asset_url) : NULL;
+    out->release.sidecar_url = rel->sidecar_url ? _strdup(rel->sidecar_url) : NULL;
+    out->release.asset_size = rel->asset_size;
+    g.cancel = 0;
+    g.worker = CreateThread(NULL, 0, spdf_win_updater_install_thread, out, 0, NULL);
+    if (!g.worker) {
+        spdf_win_release_info_clear(&out->release);
+        free(out);
+    }
 }
 
 static void relaunch_at_exit(void) {
@@ -426,33 +172,14 @@ static void relaunch_at_exit(void) {
     }
 }
 
-static void begin_install(const spdf_win_release_info* rel) {
-    /* The outcome and a deep copy of the release travel together to the
-     * worker; the worker frees nothing, the completion handler frees all. */
-    install_outcome* out;
-    spdf_win_release_info* copy;
-    if (worker_busy()) return;
-    out = (install_outcome*)calloc(1, sizeof(*out) + sizeof(*copy));
-    if (!out) return;
-    copy = (spdf_win_release_info*)((char*)out + sizeof(*out));
-    copy->tag = _strdup(rel->tag);
-    copy->asset_url = rel->asset_url ? _strdup(rel->asset_url) : NULL;
-    copy->sidecar_url = rel->sidecar_url ? _strdup(rel->sidecar_url) : NULL;
-    copy->asset_size = rel->asset_size;
-    g.cancel = 0;
-    g.worker = CreateThread(NULL, 0, install_thread, out, 0, NULL);
-    if (!g.worker) {
-        spdf_win_release_info_clear(copy);
-        free(out);
-    }
-}
+/* --- results, on the UI thread ----------------------------------------------------- */
 
-static void on_check_done(check_outcome* out) {
+static void on_check_done(spdf_win_check_outcome* out) {
     wchar_t heading[256];
     wchar_t body[4096];
     wchar_t wrun[64], wtag[64];
 
-    utf8_to_wide(running_version(), wrun, _countof(wrun));
+    utf8_to_wide(spdf_win_updater_running_version(), wrun, _countof(wrun));
     if (!out->ok) {
         if (out->user_initiated) {
             wchar_t werr[256];
@@ -489,16 +216,15 @@ static void on_check_done(check_outcome* out) {
                      wrun, wnotes[0] ? L"\n\n" : L"", wnotes);
         choice = ask(L"Software Update", heading, body, buttons, 2, 1);
         if (choice == 0) begin_install(&out->release);
-        else spdf_win_updater_with_locked_store(mutator_snooze, (void*)out->release.tag);
+        else spdf_win_updater_snooze(out->release.tag);
     }
     spdf_win_release_info_clear(&out->release);
     free(out);
 }
 
-static void on_install_done(install_outcome* out) {
-    spdf_win_release_info* copy = (spdf_win_release_info*)((char*)out + sizeof(*out));
+static void on_install_done(spdf_win_install_outcome* out) {
     wchar_t heading[256], wtag[64];
-    utf8_to_wide(out->tag, wtag, _countof(wtag));
+    utf8_to_wide(out->release.tag, wtag, _countof(wtag));
     if (!out->ok) {
         wchar_t werr[512];
         utf8_to_wide(out->err, werr, _countof(werr));
@@ -507,21 +233,21 @@ static void on_install_done(install_outcome* out) {
         const wchar_t* buttons[] = {L"Restart Now", L"Later"};
         _snwprintf_s(heading, _countof(heading), _TRUNCATE, L"Update %s installed.", wtag);
         if (ask(L"Software Update", heading,
-                L"Restart Shenzhen PDF to finish updating. Your windows and tabs will be restored.", buttons, 2, 1) == 0) {
+                L"Restart Shenzhen PDF to finish updating. Your windows and tabs will be restored.", buttons, 2,
+                1) == 0) {
             g.relaunch_at_exit = 1;
             atexit(relaunch_at_exit);
             if (g.main) PostMessageW(g.main, WM_CLOSE, 0, 0);
         }
-        /* "Later": the new binary takes effect on the next launch, where the
-         * health check confirms pendingTag. */
     }
-    spdf_win_release_info_clear(copy);
+    spdf_win_release_info_clear(&out->release);
     free(out);
 }
 
+/* The relaunch health check, then the daily gate. */
 static void health_check_then_daily(void) {
     char tag[64];
-    int r = spdf_win_updater_consume_pending(g.self_exe, running_version(), tag, sizeof(tag));
+    int r = spdf_win_updater_consume_pending(g.self_exe, spdf_win_updater_running_version(), tag, sizeof(tag));
     if (r == 1) {
         wchar_t body[256], wtag[64];
         utf8_to_wide(tag, wtag, _countof(wtag));
@@ -530,23 +256,14 @@ static void health_check_then_daily(void) {
     } else if (r == -1) {
         wchar_t body[1024], wtag[64], wrun[64];
         utf8_to_wide(tag, wtag, _countof(wtag));
-        utf8_to_wide(running_version(), wrun, _countof(wrun));
+        utf8_to_wide(spdf_win_updater_running_version(), wrun, _countof(wrun));
         _snwprintf_s(body, _countof(body), _TRUNCATE,
                      L"The update to %s did not take: this is still Shenzhen PDF %s. The previous app is kept "
                      L"beside this one as\n%s.old\nfor recovery.",
                      wtag, wrun, g.self_exe);
         inform(L"The update did not complete.", body, 1);
     }
-    /* Then the daily gate. */
-    {
-        char* settings = read_settings_text();
-        int enabled = spdf_win_updater_setting_enabled(settings);
-        int claimed = 0;
-        free(settings);
-        if (!enabled) return;
-        spdf_win_updater_with_locked_store(mutator_claim_daily_slot, &claimed);
-        if (claimed) launch_check(0);
-    }
+    if (spdf_win_updater_claim_daily_slot()) launch_check(0);
 }
 
 static LRESULT CALLBACK sink_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -558,19 +275,12 @@ static LRESULT CALLBACK sink_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
                 return 0;
             }
             if (wparam == UPD_TIMER_CADENCE) {
-                char* settings = read_settings_text();
-                int claimed = 0;
-                int enabled = spdf_win_updater_setting_enabled(settings);
-                free(settings);
-                if (enabled) {
-                    spdf_win_updater_with_locked_store(mutator_claim_daily_slot, &claimed);
-                    if (claimed) launch_check(0);
-                }
+                if (spdf_win_updater_claim_daily_slot()) launch_check(0);
                 return 0;
             }
             break;
-        case UPD_MSG_CHECK_DONE: on_check_done((check_outcome*)lparam); return 0;
-        case UPD_MSG_INSTALL_DONE: on_install_done((install_outcome*)lparam); return 0;
+        case SPDF_WIN_UPDATER_MSG_CHECK_DONE: on_check_done((spdf_win_check_outcome*)lparam); return 0;
+        case SPDF_WIN_UPDATER_MSG_INSTALL_DONE: on_install_done((spdf_win_install_outcome*)lparam); return 0;
         default: break;
     }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
