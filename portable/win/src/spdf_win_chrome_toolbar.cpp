@@ -218,6 +218,52 @@ void draw_toggle(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wc
     }
 }
 
+/* --- the two power-tool buttons -------------------------------------------
+ * macOS uses SF Symbols "doc.text.viewfinder" and "character.book.closed"; the
+ * port draws its icons as strokes, so OCR is a viewfinder (four corner brackets
+ * around two text lines) and translate is the two letters the feature is about,
+ * "A" and U+6587 (文), set small in the UI face -- DirectWrite's per-run font
+ * fallback supplies the CJK glyph. Disabled: the secondary label colour. */
+struct ToolsState {
+    int ocr_busy, translate_busy, has_selection;
+};
+ToolsState g_tools; /* written by spdf_win_chrome_toolbar_set_tools_state() below */
+
+void draw_tool_button(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, int translate, int enabled) {
+    float s = ctx.dpi_scale, cx = r.x + r.w * 0.5f, cy = r.y + r.h * 0.5f, a = px(6.0, s);
+    float lw = spdf_win_chrome_stroke_px(1.4f, s);
+    SpdfWinChromeColor col = enabled ? ctx.theme->control_glyph : ctx.theme->label_secondary;
+    ID2D1SolidColorBrush* b;
+    if (spdf_win_chrome_rect_empty(r)) return;
+    draw_pill(ctx, r, 1);
+    if (translate) {
+        SpdfWinChromeRect t = r;
+        t.w = r.w * 0.5f;
+        t.x = r.x + px(3.0, s);
+        t.y = r.y - px(3.0, s);
+        spdf_win_chrome_draw_text(ctx, L"A", t, col, px(11.0, s), DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                                  DWRITE_TEXT_ALIGNMENT_LEADING, 0);
+        t.x = r.x + r.w * 0.5f - px(2.0, s);
+        t.y = r.y + px(3.0, s);
+        spdf_win_chrome_draw_text(ctx, L"文", t, col, px(11.0, s), DWRITE_FONT_WEIGHT_NORMAL,
+                                  DWRITE_TEXT_ALIGNMENT_LEADING, 0);
+        return;
+    }
+    b = spdf_win_chrome_brush(ctx.target, col);
+    if (!b) return;
+    for (int i = 0; i < 4; ++i) { /* the four bracket corners */
+        float sx = i % 2 ? cx + a : cx - a, sy = i < 2 ? cy - a : cy + a, c = px(2.5, s);
+        float dx = i % 2 ? -c : c, dy = i < 2 ? c : -c;
+        ctx.target->DrawLine(D2D1::Point2F(sx, sy), D2D1::Point2F(sx + dx, sy), b, lw, NULL);
+        ctx.target->DrawLine(D2D1::Point2F(sx, sy), D2D1::Point2F(sx, sy + dy), b, lw, NULL);
+    }
+    ctx.target->DrawLine(D2D1::Point2F(cx - a * 0.5f, cy - px(1.5, s)), D2D1::Point2F(cx + a * 0.5f, cy - px(1.5, s)), b,
+                         lw, NULL);
+    ctx.target->DrawLine(D2D1::Point2F(cx - a * 0.5f, cy + px(1.5, s)), D2D1::Point2F(cx + a * 0.2f, cy + px(1.5, s)), b,
+                         lw, NULL);
+    b->Release();
+}
+
 /* --- the readouts -------------------------------------------------------
  *
  * Formatted here rather than in the model, because a string is presentation and
@@ -257,6 +303,12 @@ void fit_label(const SpdfWinChromeModel* m, wchar_t* out, size_t n) {
 
 } /* namespace */
 
+extern "C" void spdf_win_chrome_toolbar_set_tools_state(int ocr_busy, int translate_busy, int has_selection) {
+    g_tools.ocr_busy = ocr_busy;
+    g_tools.translate_busy = translate_busy;
+    g_tools.has_selection = has_selection;
+}
+
 void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
     const SpdfWinChromeLayout* l = ctx.layout;
     const SpdfWinChromeTheme* th = ctx.theme;
@@ -288,29 +340,12 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
     draw_toggle(ctx, tb.item[SPDF_WIN_TB_SIDEBAR_TOGGLE], L"Side Panel", m->show_sidebar);
 
     /* 2-3. OCR and translate, icon buttons 32 wide. Drawn as capsule singles so
-     * they match half a pill, per the shared-factory rule. */
-    {
-        int i;
-        for (i = 0; i < 2; ++i) {
-            SpdfWinChromeRect r = tb.item[i == 0 ? SPDF_WIN_TB_OCR : SPDF_WIN_TB_TRANSLATE];
-            draw_pill(ctx, r, 1);
-            /* Placeholder marks: a document-ish box for OCR, two bars for
-             * translate. Replaced when an icon source lands. */
-            if (glyph && !spdf_win_chrome_rect_empty(r)) {
-                float cx = r.x + r.w * 0.5f, cy = r.y + r.h * 0.5f;
-                float a = px(4.0, s);
-                float lw = spdf_win_chrome_stroke_px(1.4f, s);
-                if (i == 0) {
-                    ctx.target->DrawRectangle(D2D1::RectF(cx - a, cy - a, cx + a, cy + a), glyph, lw, NULL);
-                } else {
-                    ctx.target->DrawLine(D2D1::Point2F(cx - a, cy - a * 0.5f), D2D1::Point2F(cx + a, cy - a * 0.5f),
-                                         glyph, lw, NULL);
-                    ctx.target->DrawLine(D2D1::Point2F(cx - a, cy + a * 0.5f), D2D1::Point2F(cx + a, cy + a * 0.5f),
-                                         glyph, lw, NULL);
-                }
-            }
-        }
-    }
+     * they match half a pill, per the shared-factory rule. Enabled while a
+     * document is open and that tool is not already running -- the Mac policy
+     * (SPDFMacTranslationPolicy.mm: a PDF tab is enabled whenever a document is
+     * open and idle; with a selection the button translates that). */
+    draw_tool_button(ctx, tb.item[SPDF_WIN_TB_OCR], 0, m->page_count > 0 && !g_tools.ocr_busy);
+    draw_tool_button(ctx, tb.item[SPDF_WIN_TB_TRANSLATE], 1, m->page_count > 0 && !g_tools.translate_busy);
 
     /* 4. Separator: an NSBox of width 1, inset 4 pt top and bottom. */
     {
