@@ -19,6 +19,7 @@
  * surface.
  */
 
+#include "spdf_win_annot.h"    /* the comment markers the router tests against */
 #include "spdf_win_settings.h" /* the reading theme is written to settings.yaml */
 
 /* The model the ROUTER needs, which is not the model the PAINTER needs.
@@ -63,6 +64,9 @@ static void chrome_layout_for_input(app* a, const spdf_win_input* in, SpdfWinChr
      * carried here too or a click will land a row or two out. */
     model->sidebar_row_count = a->sidebar_rows;
     model->sidebar_scroll_y = 0.0f;
+    /* The comment markers the last paint published, in client px, so a press
+     * on a badge is routed to the badge that was drawn (spdf_win_annot_marks.h). */
+    model->annot_marks = spdf_win_annot_marks(&model->annot_mark_count);
     /* The scroller fractions ARE geometry here: h_scrollable decides whether the
      * horizontal trough exists (and so how tall the canvas is), and the two
      * `pos`/`visible` pairs decide where each thumb sits. A router that left them

@@ -256,6 +256,11 @@ spdf_win_canvas_cursor spdf_win_canvas_cursor_at(spdf_win_canvas* canvas, float 
 int spdf_win_canvas_copy_selection(spdf_win_canvas* canvas);
 /* Borrowed UTF-8, NULL when nothing is selected. */
 const char* spdf_win_canvas_selection_text(const spdf_win_canvas* canvas);
+/* The selection's rects in PAGE space (PDF points, y down) and the page they
+ * are on -- exactly what spdf_add_highlight_comment takes, which is the one
+ * caller (the annotations track). Copies up to `max`; returns the count, 0
+ * with no selection (page_index then -1). */
+int spdf_win_canvas_selection_rects(const spdf_win_canvas* canvas, int* page_index, spdf_rect* rects, int max);
 int spdf_win_canvas_has_selection(const spdf_win_canvas* canvas);
 /* Returns non-zero when something was actually cleared. */
 int spdf_win_canvas_clear_selection(spdf_win_canvas* canvas);

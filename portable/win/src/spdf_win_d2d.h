@@ -141,7 +141,17 @@ typedef struct spdf_win_page_draw {
 typedef enum spdf_win_overlay_kind {
     SPDF_WIN_OVERLAY_SEARCH_MATCH = 0,
     SPDF_WIN_OVERLAY_SEARCH_ACTIVE = 1,
-    SPDF_WIN_OVERLAY_SELECTION = 2
+    SPDF_WIN_OVERLAY_SELECTION = 2,
+    /* Comment markers (the annotations track). COMMENT is the mac's frame
+     * around an annotation's bounds: fill calibrated(1.0, 0.76, 0.10, 0.16),
+     * stroke calibrated(0.92, 0.52, 0.0, 0.95) at 1.2, rounded 3, the rect
+     * grown 2 (SPDFMacDocumentView.mm:492-502). COMMENT_BADGE is the GTK
+     * click-to-edit badge, a 12 pt amber square at the top-right corner: fill
+     * (0.98, 0.74, 0.18, 0.92), border (0.55, 0.35, 0.0, 0.9)
+     * (spdf_docview.c:1270-1282); its rect is spdf_win_annot_badge()'s, so the
+     * pixels drawn and the pixels that open the editor are the same pixels. */
+    SPDF_WIN_OVERLAY_COMMENT = 3,
+    SPDF_WIN_OVERLAY_COMMENT_BADGE = 4
 } spdf_win_overlay_kind;
 
 /* One mark. Coordinates are in the SAME space as spdf_win_page_draw's dest --

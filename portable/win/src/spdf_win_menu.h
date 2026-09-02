@@ -194,6 +194,17 @@ typedef enum spdf_win_command {
     SPDF_WIN_CMD_MD_TEXT_SMALLER,
     SPDF_WIN_CMD_MD_TEXT_LARGER,
 
+    /* The annotations track's five (spdf_win_cmd_annot.h). The mac menu has
+     * only "Set Author for Comments..." (:2096); its add/edit/delete are
+     * context-menu items, as are GTK's four (spdf_annot.c:1116-1119). Here
+     * they are Edit-menu rows too, so they have accelerators and a place on
+     * the F1 sheet. */
+    SPDF_WIN_CMD_HIGHLIGHT_SELECTION, /* Edit: a highlight annotation over the selection, with a comment */
+    SPDF_WIN_CMD_ADD_COMMENT,         /* Edit: a note at the clicked point; a highlight when text is selected */
+    SPDF_WIN_CMD_EDIT_COMMENT,        /* Edit: the comment under the pointer or last clicked */
+    SPDF_WIN_CMD_DELETE_COMMENT,      /* Edit: Delete / Backspace over a marker */
+    SPDF_WIN_CMD_SET_COMMENT_AUTHOR,  /* Edit: settings.yaml commentAuthor */
+
     SPDF_WIN_CMD_COUNT
 } spdf_win_command;
 
@@ -368,7 +379,15 @@ static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_enabled(int command, const
         /* The Markdown text size re-lays the selected document out; inert on a
          * PDF tab (spdf_win_md_command_text_step) but greyed with no tab at all. */
         case SPDF_WIN_CMD_MD_TEXT_SMALLER:
-        case SPDF_WIN_CMD_MD_TEXT_LARGER: return st->has_document != 0;
+        case SPDF_WIN_CMD_MD_TEXT_LARGER:
+        /* The comment commands act on the current document; whether there IS
+         * a comment under the pointer is the handler's to answer, not a
+         * greying rule -- the menu has no pointer. Set Author is a setting
+         * and stays live with no document at all. */
+        case SPDF_WIN_CMD_HIGHLIGHT_SELECTION:
+        case SPDF_WIN_CMD_ADD_COMMENT:
+        case SPDF_WIN_CMD_EDIT_COMMENT:
+        case SPDF_WIN_CMD_DELETE_COMMENT: return st->has_document != 0;
         /* The print job is refused before any dialog appears when the document
          * forbids it; greying the item says so before the reader asks. */
         case SPDF_WIN_CMD_PRINT: return st->has_document != 0 && st->can_print != 0;

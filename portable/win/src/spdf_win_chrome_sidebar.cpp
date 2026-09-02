@@ -54,12 +54,15 @@
 
 namespace {
 const SpdfWinSidebarResultsView* g_results;
+const SpdfWinSidebarResultsView* g_comments;
 int g_section;
 int g_effective_visible = 1;
 } /* namespace */
 
 void spdf_win_sidebar_results_publish(const SpdfWinSidebarResultsView* view) { g_results = view; }
 const SpdfWinSidebarResultsView* spdf_win_sidebar_results_current(void) { return g_results; }
+void spdf_win_sidebar_comments_publish(const SpdfWinSidebarResultsView* view) { g_comments = view; }
+const SpdfWinSidebarResultsView* spdf_win_sidebar_comments_current(void) { return g_comments; }
 void spdf_win_sidebar_set_section(int section) { g_section = section < 0 || section > 2 ? 0 : section; }
 int spdf_win_sidebar_section(void) { return g_section; }
 void spdf_win_sidebar_set_effective_visible(int visible) { g_effective_visible = visible ? 1 : 0; }
@@ -351,9 +354,15 @@ void spdf_win_chrome_paint_sidebar(const SpdfWinChromePaintCtx& ctx, const SpdfW
     if (!spdf_win_chrome_rect_empty(l.filter))
         draw_filter_field(ctx, l.filter, m->sidebar_section, content ? content->filter : NULL);
 
-    /* Comments has no content on Windows yet; it says what it is instead. */
+    /* Comments: the published rows -- a header per page, a row per comment,
+     * built by spdf_win_annot.h from the comment cache -- through the Search
+     * section's painter, so the two lists cannot look different. GTK's pane
+     * shows "No comments in this document" as its placeholder; the two words
+     * here match the Chapters section's own empty state beside it. */
     if (m->sidebar_section == 1) {
-        draw_empty_state(ctx, l.list, L"No Comments");
+        const SpdfWinSidebarResultsView* v = spdf_win_sidebar_comments_current();
+        if (v && v->rows && v->row_count > 0) draw_results(ctx, l, v);
+        else draw_empty_state(ctx, l.list, L"No Comments");
         return;
     }
     if (m->sidebar_section == 2) {

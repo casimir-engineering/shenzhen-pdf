@@ -191,6 +191,19 @@ int spdf_win_canvas_clear_selection(spdf_win_canvas* canvas) {
 
 /* --- overlays ------------------------------------------------------------- */
 
+int spdf_win_canvas_selection_rects(const spdf_win_canvas* canvas, int* page_index, spdf_rect* rects, int max) {
+    int n = 0;
+    const spdf_rect* src;
+    if (page_index) *page_index = -1;
+    if (!canvas || !canvas->selection || !spdf_win_selection_has_text(canvas->selection)) return 0;
+    src = spdf_win_selection_rects(canvas->selection, &n);
+    if (!src || n <= 0) return 0;
+    if (page_index) *page_index = spdf_win_selection_page(canvas->selection);
+    if (n > max) n = max;
+    if (rects && n > 0) memcpy(rects, src, sizeof(spdf_rect) * (size_t)n);
+    return n;
+}
+
 void spdf_win_canvas_apply_selection_overlays(spdf_win_canvas* canvas, spdf_win_scene* scene) {
     if (!canvas || !canvas->selection) return;
     spdf_win_selection_compose_overlays(canvas->selection, canvas->draws, canvas->draws_count, canvas->sizes,
