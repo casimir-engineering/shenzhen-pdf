@@ -275,6 +275,7 @@ static void test_checkable_flag_matches_the_predicate(void) {
     const SpdfWinMenuItem* t = spdf_win_menu_table(&n);
     memset(&all, 0, sizeof(all));
     all.sidebar_visible = all.minimap_visible = all.dark_theme = all.regex = 1;
+    all.keep_image_colors = 1;
     for (i = 0; i < n; ++i) {
         if (t[i].command == SPDF_WIN_CMD_NONE || t[i].menu == SPDF_WIN_MENU_NONE) continue;
         CHECK_EQI(spdf_win_menu_command_checked(t[i].command, &all) != 0, t[i].checkable != 0);
