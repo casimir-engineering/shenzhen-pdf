@@ -224,10 +224,31 @@ static void doc_action_report(app* a, const char* err) {
     report(message, a->window != NULL);
 }
 
+/* PER-TRACK COMMAND HANDLERS. Each header below owns the commands of one
+ * parity track (see portable/docs/windows-feature-matrix.md) and is included
+ * here, after the app struct and the chrome model are complete, so the tracks
+ * can land handlers in parallel without any of them editing the switch below.
+ * A handler returns 1 when it consumed the command. The order is the order
+ * they are asked; no command id is claimed by two of them, so it does not
+ * matter. */
+#include "spdf_win_cmd_window.h"
+#include "spdf_win_cmd_search.h"
+#include "spdf_win_cmd_docs.h"
+#include "spdf_win_cmd_tools.h"
+#include "spdf_win_cmd_shell.h"
+
 static int command_perform(app* a, int command, const spdf_win_input* in) {
     SpdfWinChromeModel model;
     SpdfWinChromeLayout l;
     chrome_layout_for_input(a, in, &model, &l);
+
+    /* The parity tracks first; everything they do not claim falls through to
+     * the switch this file has always had. */
+    if (spdf_win_cmd_window_perform(a, command, in)) return 1;
+    if (spdf_win_cmd_search_perform(a, command, in)) return 1;
+    if (spdf_win_cmd_docs_perform(a, command, in)) return 1;
+    if (spdf_win_cmd_tools_perform(a, command, in)) return 1;
+    if (spdf_win_cmd_shell_perform(a, command, in)) return 1;
 
     switch (command) {
         case SPDF_WIN_CMD_OPEN:

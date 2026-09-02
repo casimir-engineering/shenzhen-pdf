@@ -84,6 +84,8 @@ extern "C" {
 #define SPDF_WIN_KEY_ADD 0x6B    /* VK_ADD, numeric keypad */
 #define SPDF_WIN_KEY_SUBTRACT 0x6D /* VK_SUBTRACT */
 #define SPDF_WIN_KEY_F9 0x78     /* VK_F9 */
+#define SPDF_WIN_KEY_F5 0x74     /* VK_F5: presentation, as the readme says */
+#define SPDF_WIN_KEY_F11 0x7A    /* VK_F11: full screen */
 #define SPDF_WIN_KEY_OEM_PLUS 0xBB  /* VK_OEM_PLUS, the '=' key on a US layout */
 #define SPDF_WIN_KEY_OEM_MINUS 0xBD /* VK_OEM_MINUS */
 
@@ -151,6 +153,31 @@ typedef enum spdf_win_command {
     SPDF_WIN_CMD_COPY_PAGE_TEXT,
     SPDF_WIN_CMD_COPY_PAGE_IMAGE,
 
+    /* --- pre-declared for the parity tracks (release-note audit, 2026-09-02) --
+     * Declared here in one pass so several tracks can land handlers without any
+     * of them editing this header -- the same seam discipline that kept the
+     * scrollbar and find tracks out of each other's files. An id with no handler
+     * is inert: command_perform() falls through to `return 0`. */
+    SPDF_WIN_CMD_NEW_WINDOW,          /* File: a second window, its own tabs (multi-window session) */
+    SPDF_WIN_CMD_MOVE_TAB_TO_WINDOW,  /* File: detach the current tab into a new window */
+    SPDF_WIN_CMD_REOPEN_CLOSED_TAB,   /* File: Ctrl+Shift+T, like a browser (26.7.9) */
+    SPDF_WIN_CMD_CLOSE_OTHER_TABS,
+    SPDF_WIN_CMD_SHOW_IN_FOLDER,      /* File: reveal in Explorer (the file-manager preference's Windows form) */
+    SPDF_WIN_CMD_RELOAD,              /* File: re-read a changed document now (auto-reload does it unasked) */
+    SPDF_WIN_CMD_SET_DEFAULT_READER,  /* File: register .pdf with the shell */
+    SPDF_WIN_CMD_CHECK_UPDATES,       /* File: the daily GitHub-releases check, run now */
+    SPDF_WIN_CMD_PRESENTATION,        /* View: chrome-free full-screen, F5 / Shift+Ctrl+F */
+    SPDF_WIN_CMD_FULLSCREEN,          /* View: F11 */
+    SPDF_WIN_CMD_TOGGLE_KEEP_IMAGE_COLORS, /* View: Settings > Keep Image Colors in Dark Theme */
+    SPDF_WIN_CMD_PALETTE,             /* Go To: Ctrl+K command palette */
+    SPDF_WIN_CMD_ADD_FAVORITE,        /* Go To: star the current page */
+    SPDF_WIN_CMD_OPEN_RECENT,         /* Go To: the Recents submenu is built at runtime; this is its anchor */
+    SPDF_WIN_CMD_OCR,                 /* Edit: make an image-only PDF searchable, on-device */
+    SPDF_WIN_CMD_TRANSLATE_SELECTION, /* Edit: translate the selection, on-device */
+    SPDF_WIN_CMD_TRANSLATE_DOCUMENT,  /* Edit: write <name>_<lang>.pdf */
+    SPDF_WIN_CMD_SELECT_ALL,          /* Edit: Ctrl+A */
+    SPDF_WIN_CMD_PASTE_SEARCH,        /* Edit: Ctrl+V while reading searches the clipboard text (26.7.17) */
+
     SPDF_WIN_CMD_COUNT
 } spdf_win_command;
 
@@ -193,88 +220,9 @@ typedef struct SpdfWinMenuItem {
  * `static` in a header gives each translation unit its own copy, which is what
  * the rest of this port's pure headers already do (spdf_win_chrome.h's inline
  * functions) and costs a few hundred bytes in the two files that include it. */
-static const SpdfWinMenuItem k_spdf_win_menu[] = {
-    /* --- File --------------------------------------------------------- */
-    {SPDF_WIN_CMD_OPEN, SPDF_WIN_MENU_FILE, L"&Open...", L"Ctrl+O", 'O', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_NEW_TAB, SPDF_WIN_MENU_FILE, L"Open in New &Tab...", L"Ctrl+T", 'T', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_SAVE_AS, SPDF_WIN_MENU_FILE, L"&Save As...", L"Ctrl+S", 'S', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_SAVE_PAGE_AS, SPDF_WIN_MENU_FILE, L"Save &Page As...", NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_PRINT, SPDF_WIN_MENU_FILE, L"&Print...", L"Ctrl+P", 'P', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_PROPERTIES, SPDF_WIN_MENU_FILE, L"P&roperties...", L"Ctrl+I", 'I', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_CLOSE_TAB, SPDF_WIN_MENU_FILE, L"&Close", L"Ctrl+W", 'W', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_QUIT, SPDF_WIN_MENU_FILE, L"&Quit Shenzhen PDF", L"Ctrl+Q", 'Q', SPDF_WIN_ACCEL_CTRL, 0},
 
-    /* --- Go To -------------------------------------------------------- */
-    {SPDF_WIN_CMD_FIRST_PAGE, SPDF_WIN_MENU_GO, L"&First Page", L"Alt+Up", SPDF_WIN_KEY_UP, SPDF_WIN_ACCEL_ALT, 0},
-    {SPDF_WIN_CMD_PREV_PAGE, SPDF_WIN_MENU_GO, L"&Previous Page", L"Alt+Left", SPDF_WIN_KEY_LEFT, SPDF_WIN_ACCEL_ALT,
-     0},
-    {SPDF_WIN_CMD_NEXT_PAGE, SPDF_WIN_MENU_GO, L"&Next Page", L"Alt+Right", SPDF_WIN_KEY_RIGHT, SPDF_WIN_ACCEL_ALT, 0},
-    {SPDF_WIN_CMD_LAST_PAGE, SPDF_WIN_MENU_GO, L"&Last Page", L"Alt+Down", SPDF_WIN_KEY_DOWN, SPDF_WIN_ACCEL_ALT, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_GO, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_GOTO_PAGE, SPDF_WIN_MENU_GO, L"&Go To Page...", L"Ctrl+L", 'L', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_GO, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_PREV_TAB, SPDF_WIN_MENU_GO, L"Previous &Tab", L"Ctrl+PgUp", SPDF_WIN_KEY_PRIOR,
-     SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_NEXT_TAB, SPDF_WIN_MENU_GO, L"Next Ta&b", L"Ctrl+PgDn", SPDF_WIN_KEY_NEXT, SPDF_WIN_ACCEL_CTRL, 0},
-
-    /* --- Zoom --------------------------------------------------------- */
-    {SPDF_WIN_CMD_ZOOM_IN, SPDF_WIN_MENU_ZOOM, L"Zoom &In", L"Ctrl++", SPDF_WIN_KEY_OEM_PLUS, SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_ZOOM_OUT, SPDF_WIN_MENU_ZOOM, L"Zoom &Out", L"Ctrl+-", SPDF_WIN_KEY_OEM_MINUS, SPDF_WIN_ACCEL_CTRL,
-     0},
-    {SPDF_WIN_CMD_ZOOM_ACTUAL, SPDF_WIN_MENU_ZOOM, L"&100%", L"Ctrl+0", '0', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_ZOOM, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_FIT_PAGE, SPDF_WIN_MENU_ZOOM, L"Fit &Page", L"Ctrl+1", '1', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_FIT_WIDTH, SPDF_WIN_MENU_ZOOM, L"Fit &Width", L"Ctrl+2", '2', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_FIT_HEIGHT, SPDF_WIN_MENU_ZOOM, L"Fit &Height", L"Ctrl+3", '3', SPDF_WIN_ACCEL_CTRL, 0},
-
-    /* --- View --------------------------------------------------------- */
-    {SPDF_WIN_CMD_TOGGLE_SIDEBAR, SPDF_WIN_MENU_VIEW, L"Show &Side Panel", L"F9", SPDF_WIN_KEY_F9, 0, 1},
-    {SPDF_WIN_CMD_TOGGLE_MINIMAP, SPDF_WIN_MENU_VIEW, L"Show &Minimap", NULL, 0, 0, 1},
-    {SPDF_WIN_CMD_TOGGLE_THEME, SPDF_WIN_MENU_VIEW, L"&Dark Reading Theme", L"Ctrl+Shift+I", 'I',
-     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 1},
-
-    /* --- Edit --------------------------------------------------------- */
-    /* macOS has a plain "Copy" on Cmd+C for its own text fields and a separate
-     * "Copy Selected Document Text" with no key (:2346, :2350). There is one
-     * selection to copy on Windows -- the document's -- so the two are one item,
-     * on Ctrl+C, which is also GTK4's win.copy. */
-    {SPDF_WIN_CMD_COPY, SPDF_WIN_MENU_EDIT, L"&Copy", L"Ctrl+C", 'C', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_COPY_PAGE, SPDF_WIN_MENU_EDIT, L"Copy &Page", NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_COPY_PAGE_TEXT, SPDF_WIN_MENU_EDIT, L"Copy Page &Text", NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_COPY_PAGE_IMAGE, SPDF_WIN_MENU_EDIT, L"Copy Page &Image", NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_FIND, SPDF_WIN_MENU_EDIT, L"&Find", L"Ctrl+F", 'F', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_FIND_NEXT, SPDF_WIN_MENU_EDIT, L"Find &Next", L"Ctrl+G", 'G', SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_FIND_PREV, SPDF_WIN_MENU_EDIT, L"Find &Previous", L"Ctrl+Shift+G", 'G',
-     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
-    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
-    {SPDF_WIN_CMD_FIND_REGEX, SPDF_WIN_MENU_EDIT, L"&Regex", NULL, 0, 0, 1},
-
-    /* --- accelerator-only rows ----------------------------------------
-     *
-     * The keypad and the shifted-'=' spellings of zoom, which GTK4 also carries
-     * as extra accels on the same actions (spdf_shortcuts.c win.zoom-in has
-     * three). They fire but are not drawn: a menu that lists "Zoom In" twice
-     * reads as a bug. */
-    {SPDF_WIN_CMD_ZOOM_IN, SPDF_WIN_MENU_NONE, NULL, NULL, SPDF_WIN_KEY_ADD, SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_ZOOM_OUT, SPDF_WIN_MENU_NONE, NULL, NULL, SPDF_WIN_KEY_SUBTRACT, SPDF_WIN_ACCEL_CTRL, 0},
-    /* Ctrl+Tab and Ctrl+Shift+Tab, which this port already had before there was
-     * a menu and which readers coming from a browser reach for first. The menu
-     * PRINTS Ctrl+PageUp / Ctrl+PageDown, following GTK4; both work. */
-    {SPDF_WIN_CMD_NEXT_TAB, SPDF_WIN_MENU_NONE, NULL, NULL, SPDF_WIN_KEY_TAB, SPDF_WIN_ACCEL_CTRL, 0},
-    {SPDF_WIN_CMD_PREV_TAB, SPDF_WIN_MENU_NONE, NULL, NULL, SPDF_WIN_KEY_TAB,
-     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
-    /* Ctrl+Shift+= IS Ctrl++ on a US layout: the '+' glyph is the shifted '=',
-     * and WM_KEYDOWN reports the unshifted VK either way. Without this row the
-     * accelerator the menu PRINTS is the one that does not work. */
-    {SPDF_WIN_CMD_ZOOM_IN, SPDF_WIN_MENU_NONE, NULL, NULL, SPDF_WIN_KEY_OEM_PLUS,
-     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0}
-};
+/* The rows themselves; see that header for why they live apart. */
+#include "spdf_win_menu_table.h"
 
 static SPDF_WIN_MENU_INLINE const SpdfWinMenuItem* spdf_win_menu_table(int* out_count) {
     if (out_count) *out_count = (int)(sizeof(k_spdf_win_menu) / sizeof(k_spdf_win_menu[0]));
