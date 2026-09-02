@@ -139,10 +139,20 @@ void spdf_discard_launch_prerender(void) {
 // nil to speculate on session.yaml's selected tab.
 - (void)beginLaunchPrerenderForNamedPath:(NSString*)namedPath {
     NSString* initialPath = [namedPath copy];
-    // Metadata prewarm is only for a named target: a session guess that turns
-    // out wrong would make the foreground wait for outline/comments it is
-    // going to throw away, and a named target cannot be wrong.
-    BOOL prewarmMetadata = initialPath.length > 0 && _launchPrerenderSidebarExpected;
+    // Prewarm the sidebar metadata off-main for BOTH a named target and a
+    // session guess. A wrong session guess is never adopted — the identity check
+    // in -takeLaunchPrerenderedDocumentForPath: frees the metadata on mismatch —
+    // so there is no correctness cost; the only cost is wasted work, and both
+    // waste paths are bounded. (1) A foreground claim that lands mid-load waits
+    // for the same outline/comments the main thread would otherwise load
+    // synchronously; for the document that is actually adopted that is never
+    // worse than the main-thread load it replaces. (2) A retarget (a Finder odoc
+    // replacing the session guess, which abandons this worker ~70ms in) wastes
+    // whatever the abandoned worker had loaded; the ownership.abandoned re-checks
+    // in the metadata loop below trim that when the abandon lands between steps,
+    // and the residual runs off-main without delaying the retargeted document's
+    // first paint (see the loop for the full argument).
+    BOOL prewarmMetadata = _launchPrerenderSidebarExpected;
     NSString* restoreWindowID = [self.restoreWindowID copy];
     SPDFLaunchPrerenderResult* result = [[SPDFLaunchPrerenderResult alloc] init];
     result.ownership = [[SPDFMacLaunchPrerenderOwnership alloc] init];
@@ -282,29 +292,48 @@ void spdf_discard_launch_prerender(void) {
       // annotations — the single most expensive item on the pre-paint main
       // thread for a long document. This stays inside the "Opening" ownership
       // phase deliberately: a foreground claim that lands mid-load waits for
-      // this exact work instead of racing it, and waiting is never worse than
-      // doing it on the main thread, which is the only alternative.
+      // this exact work instead of racing it, and for the adopted document
+      // waiting is never worse than doing it on the main thread, the only
+      // alternative.
+      //
+      // A session guess is speculative, so a retarget can abandon this worker
+      // while the load is in flight (see -beginLaunchPrerenderForNamedPath:); the
+      // load would then be wasted work. Re-read ownership.abandoned before each
+      // step so an abandon that lands between steps skips the rest — most often
+      // the per-page spdf_load_comments walk, the expensive one. spdf_load_comments
+      // is not itself cancelable (no fz_cookie for annotation collection), so an
+      // abandon that lands after the walk has already started cannot stop it: it
+      // runs to completion on this QOS_USER_INITIATED background thread. That
+      // residual is acceptable — it is one document's metadata (bounded, not
+      // unbounded), and being off-main it does not delay the retargeted
+      // document's first paint (measured: no regression versus a clean launch of
+      // the same document). For a named target abandoned is never set mid-load —
+      // a mid-Opening foreground claim takes WaitForOwnedResult, not abandon — so
+      // these checks are free there.
       spdf_outline prewarmedOutline;
       spdf_comments prewarmedComments;
       memset(&prewarmedOutline, 0, sizeof(prewarmedOutline));
       memset(&prewarmedComments, 0, sizeof(prewarmedComments));
       BOOL loadedOutline = NO;
       BOOL loadedComments = NO;
-      if (doc && prewarmMetadata) {
+      if (doc && prewarmMetadata && !result.ownership.abandoned) {
           double metadataStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
           if (!spdf_load_outline(doc, &prewarmedOutline, err, sizeof(err))) {
               spdf_free_outline(&prewarmedOutline);
               memset(&prewarmedOutline, 0, sizeof(prewarmedOutline));
           }
           loadedOutline = YES;
-          if (!spdf_load_comments(doc, &prewarmedComments, err, sizeof(err))) {
-              spdf_free_comments(&prewarmedComments);
-              memset(&prewarmedComments, 0, sizeof(prewarmedComments));
+          if (!result.ownership.abandoned) {
+              if (!spdf_load_comments(doc, &prewarmedComments, err, sizeof(err))) {
+                  spdf_free_comments(&prewarmedComments);
+                  memset(&prewarmedComments, 0, sizeof(prewarmedComments));
+              }
+              loadedComments = YES;
           }
-          loadedComments = YES;
           if (metadataStart > 0.0) {
-              spdf_launch_profile_log(@"prerender metadata %@ %.1fms [bg]", path.lastPathComponent,
-                                      spdf_zoom_profile_now_ms() - metadataStart);
+              spdf_launch_profile_log(@"prerender metadata %@ %.1fms%@ [bg]", path.lastPathComponent,
+                                      spdf_zoom_profile_now_ms() - metadataStart,
+                                      loadedComments ? @"" : @" (abandoned before comments)");
           }
       }
       SPDFRenderedPage* rendered = nil;
