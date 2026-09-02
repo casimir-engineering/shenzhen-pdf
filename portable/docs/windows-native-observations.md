@@ -639,7 +639,7 @@ not.
 portable\win\mupdf-native-build.cmd --clean          :: MuPDF, x64, ~70 s
 portable\win\mupdf-arch-check-native.cmd             :: all 646 members 8664
 portable\win\build-native.cmd                        :: ShenzhenPDF.exe
-bash portable/win/tests/run-tests-native.sh --list   :: the inventory: 86 cases
+bash portable/win/tests/run-tests-native.sh --list   :: the inventory: 92 cases
 bash portable/win/tests/run-tests-native.sh          :: the run; exit 2 here (7 cross-host + qpdf)
 portable\win\verify-phase1.ps1 -Exe %SPDF_OUT%\ShenzhenPDF.exe -Pdf <a.pdf>
 portable\win\verify-phase1.ps1 -Exe %SPDF_OUT%\ShenzhenPDF.exe -Pdf <a.pdf> -Dark
@@ -679,7 +679,7 @@ Two things the wave changed about how to read the rest of this file:
 
 - **The counts moved.** 37 cases in §3 → 56 at the audit → **86** today. LOC
   under `portable/win/src/` went from 5,021 (the number
-  `portable/win/README.md` carried for months) to **43,678** across 178 files,
+  `portable/win/README.md` carried for months) to **46,968** across 195 files,
   and the differentials from six to **nine**.
 - **`windows-feature-matrix.md` is the feature-status authority**, audited
   against a built and run tree rather than from memory. §2.1 and §7 above are
