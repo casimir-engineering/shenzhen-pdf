@@ -149,5 +149,8 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
      * and WM_KEYDOWN reports the unshifted VK either way. Without this row the
      * accelerator the menu PRINTS is the one that does not work. */
     {SPDF_WIN_CMD_ZOOM_IN, SPDF_WIN_MENU_NONE, NULL, NULL, SPDF_WIN_KEY_OEM_PLUS,
-     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0}
+     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
+    /* Shift+Ctrl+F is the mac's other Presentation key (ShenzhenPDFMac.mm:13432
+     * "F5 / Shift+Cmd+F"); the menu prints F5. */
+    {SPDF_WIN_CMD_PRESENTATION, SPDF_WIN_MENU_NONE, NULL, NULL, 'F', SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0}
 };

@@ -115,7 +115,7 @@ typedef enum spdf_win_input_kind {
      * every WM_APP..0xBFFF message is handed over rather than dropped on the
      * floor by DefWindowProc. wParam and lParam are not carried; a worker
      * that has more to say than "done" keeps it where the handler can read it. */
-    SPDF_WIN_INPUT_APP_MESSAGE = 10,
+    SPDF_WIN_INPUT_APP_MESSAGE = 11, /* 10 is SPDF_WIN_INPUT_CONTEXT, declared below */
 
     /* THE POSITION QUERY: what is at (x, y)? Sent for WM_SETCURSOR, asking
      * which cursor belongs there, and for WM_NCHITTEST, asking whether the point

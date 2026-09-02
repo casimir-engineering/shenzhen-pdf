@@ -187,11 +187,11 @@ typedef struct SpdfWinChromeTheme {
 } SpdfWinChromeTheme;
 
 /* Radii and strokes that ARE literals on macOS, so they transfer exactly. */
-#define SPDF_WIN_CT_TAB_RADIUS 7.0f          /* :563 */
+#define SPDF_WIN_CT_TAB_RADIUS 10.0f         /* :563; 26.9.2-1 rounded the tabs fully */
 #define SPDF_WIN_CT_CONTROL_RADIUS 9.0f      /* :135-149, the + and overflow buttons */
 #define SPDF_WIN_CT_TOGGLE_RADIUS 7.0f       /* SPDFMacUIHelpers.mm:144-246 pressed bg */
 #define SPDF_WIN_CT_MENU_BUTTON_RADIUS 8.0f  /* SPDFMacUIHelpers.mm:250-306 */
-#define SPDF_WIN_CT_TAB_STROKE_SELECTED 1.4f /* :566 */
+#define SPDF_WIN_CT_TAB_STROKE_SELECTED 2.0f /* :566; 26.9.2-1 gave every tab a visible outline */
 #define SPDF_WIN_CT_TAB_STROKE 1.0f          /* :566, the unselected/missing case */
 #define SPDF_WIN_CT_HAIRLINE 1.0f
 
