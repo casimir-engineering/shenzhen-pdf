@@ -289,13 +289,31 @@ static int key_for_window(app* a, const spdf_win_input* in) {
     chrome_layout_for_input(a, in, &model, &l);
     page_step = l.canvas.h * 0.9f;
 
+    /* PRESENTING: the arrows, Page Up/Down and Space turn PAGES, not lines --
+     * SPDFMacPresentationIntegration.mm's keyDown (left/up/page-up back;
+     * right/down/page-down/space forward), through the same step the pointer
+     * uses. Everything else falls through to the keymap below. */
+    if (a->presentation) {
+        switch (in->key) {
+            case SPDF_WIN_KEY_LEFT:
+            case SPDF_WIN_KEY_UP:
+            case SPDF_WIN_KEY_PRIOR: return presentation_step_page(a, -1);
+            case SPDF_WIN_KEY_RIGHT:
+            case SPDF_WIN_KEY_DOWN:
+            case SPDF_WIN_KEY_NEXT:
+            case VK_SPACE: return presentation_step_page(a, 1);
+            default: break;
+        }
+    }
+
     switch (in->key) {
         /* ESCAPE, WITH NOTHING FOCUSED: end any pointer gesture and drop the
          * selection. Returning 0 when there was nothing to drop is deliberate --
-         * spdf_win_window.cpp then falls through to closing the window, which is
-         * what Escape has always done here. So Escape dismisses the most local
-         * thing there is, and only closes the window when there is nothing left
-         * to dismiss. */
+         * spdf_win_window.cpp then leaves full screen if the window is in it and
+         * otherwise does nothing at all (it used to close the window, which macOS
+         * never did: windows-feature-matrix.md gap 2, pinned by
+         * window_keys_test.c). So Escape dismisses the most local thing there is,
+         * then presentation or full screen, and never the window. */
         case SPDF_WIN_KEY_ESCAPE:
             spdf_win_canvas_pointer_cancel(a->canvas);
             a->drag = SPDF_WIN_CA_NONE;
@@ -381,6 +399,9 @@ static int input_for_window(void* user, spdf_win_input* in) {
             changed = chrome_mouse(a, in);
             chrome_sync_menu(a);
             return changed;
+        /* The right button too: a page BACK while presenting, nothing otherwise
+         * (chrome_mouse hands it to presentation_mouse first). */
+        case SPDF_WIN_INPUT_CONTEXT:
         case SPDF_WIN_INPUT_MOUSE_UP:
         case SPDF_WIN_INPUT_MOUSE_MOVE:
         case SPDF_WIN_INPUT_CURSOR: return chrome_mouse(a, in);

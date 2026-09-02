@@ -150,6 +150,11 @@ static void test_modifiers_are_exact(void) {
               SPDF_WIN_CMD_MD_TEXT_LARGER);
     CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_OEM_PLUS, SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT),
               SPDF_WIN_CMD_ZOOM_IN);
+    /* Presentation has two keys, F5 on the menu and the mac's Shift+Ctrl+F as
+     * an accelerator-only row; Ctrl+F alone is still Find. */
+    CHECK_EQI(spdf_win_menu_command_for_key('F', SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT), SPDF_WIN_CMD_PRESENTATION);
+    CHECK_EQI(spdf_win_menu_command_for_key('F', SPDF_WIN_ACCEL_CTRL), SPDF_WIN_CMD_FIND);
+    CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_F5, 0), SPDF_WIN_CMD_PRESENTATION);
     /* Both live on the View menu and grey without a document, like the zooms. */
     CHECK(spdf_win_menu_item_for_command(SPDF_WIN_CMD_MD_TEXT_SMALLER)->menu == SPDF_WIN_MENU_VIEW);
     CHECK(spdf_win_menu_item_for_command(SPDF_WIN_CMD_MD_TEXT_LARGER)->menu == SPDF_WIN_MENU_VIEW);

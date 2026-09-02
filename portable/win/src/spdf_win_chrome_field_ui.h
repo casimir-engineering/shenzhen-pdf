@@ -38,7 +38,7 @@
  * reveal runs at paint time, because that is when results arrive.
  */
 
-#include "spdf_win_find_settings.h"
+#include "spdf_win_settings.h" /* searchJumpsToNearestResult, from the process-wide settings */
 #include "spdf_win_menu.h"      /* SPDF_WIN_MENU_ID_BASE, for chrome_post_command */
 #include "spdf_win_search_map_ui.h"
 #include "spdf_win_selection.h" /* spdf_win_clipboard_get_utf8 */
@@ -220,7 +220,7 @@ static int chrome_find_reveal_if_pending(app* a) {
     g_find_reveal_pending = 0;
     count = spdf_win_find_match_count(s);
     if (count <= 0) return 0;
-    if (spdf_win_find_jumps_to_nearest()) {
+    if (spdf_win_settings_shared()->search_jumps_to_nearest_result) {
         int* pages = (int*)malloc(sizeof(int) * (size_t)count);
         double* centers = (double*)malloc(sizeof(double) * (size_t)count);
         if (pages && centers) {
