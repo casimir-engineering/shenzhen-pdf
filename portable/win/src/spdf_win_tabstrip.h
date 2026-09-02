@@ -103,10 +103,79 @@
 #define SPDF_WIN_TABSTRIP_READONLY_DOT_TITLE_GAP 2.5
 
 /* Tab body: y = 7, height 28 within the 42pt strip
- * (SPDFMacTabStripView.mm:124-129, :213-222). */
+ * (SPDFMacTabStripView.mm:124-129, :213-222). The corner radius is
+ * kSPDFTabCornerRadius (SPDFMacTabStripStyle.mm:6): 10 pt since 26.9.2-1's
+ * "Give every tab a visible outline" -- at 7 pt the corners read as a chamfer
+ * once the outline is actually visible. */
 #define SPDF_WIN_TABSTRIP_TAB_Y 7.0
 #define SPDF_WIN_TABSTRIP_TAB_HEIGHT 28.0
-#define SPDF_WIN_TABSTRIP_TAB_RADIUS 7.0
+#define SPDF_WIN_TABSTRIP_TAB_RADIUS 10.0
+
+/* --- tab chip style (SPDFMacTabStripStyle.{h,mm}, 26.9.2-1) ---------------
+ *
+ * How one tab's chip is painted: which semantic colour family, at what alpha,
+ * at what stroke width. Transcribed rather than restated so the painter cannot
+ * drift from the mac: EVERY tab is outlined now. An unselected present tab used
+ * to have no stroke at all over a fill identical to the strip behind it, so it
+ * had no discernible edge in either theme -- the defect that commit fixed. The
+ * selected tab keeps a nearly opaque accent outline at twice the neutral width
+ * over an accent-tinted fill; an unselected one gets a translucent neutral
+ * hairline over an untinted one; a missing file is red at either width.
+ *
+ * Roles name the theme colour rather than an RGB value, as the mac names the
+ * AppKit semantic colour: spdf_win_chrome_theme.h resolves them per theme. */
+typedef enum spdf_win_tab_style_role {
+    SPDF_WIN_TAB_ROLE_CONTROL_BACKGROUND = 0, /* controlBackgroundColor: the body of a present tab */
+    SPDF_WIN_TAB_ROLE_SEPARATOR,              /* separatorColor: the neutral hairline round an unselected tab */
+    SPDF_WIN_TAB_ROLE_ACCENT,                 /* controlAccentColor: the selected tab, fill and outline */
+    SPDF_WIN_TAB_ROLE_ALERT                   /* systemRedColor: a tab whose file has gone missing */
+} spdf_win_tab_style_role;
+
+typedef struct SpdfWinTabStyle {
+    int fill_role;       /* spdf_win_tab_style_role */
+    double fill_alpha;   /* 0 means "the role's own alpha", i.e. leave it alone */
+    int stroke_role;
+    double stroke_alpha;
+    double stroke_width; /* points */
+} SpdfWinTabStyle;
+
+/* SPDFMacTabStripStyle.mm:8-23. Both widths are whole device pixels at 1x and
+ * 2x once inset by half their width; 1.4 (the old selected width) was neither
+ * and smeared at both scales. 0.26 is the neutral alpha that keeps every tab
+ * edged while staying quieter than the selected accent (0.42 overshot). */
+#define SPDF_WIN_TAB_STROKE_UNSELECTED 1.0
+#define SPDF_WIN_TAB_STROKE_SELECTED 2.0
+#define SPDF_WIN_TAB_STROKE_UNSELECTED_ALPHA 0.26
+
+/* spdf_tab_style_for_state (SPDFMacTabStripStyle.mm:25-47). */
+static SPDF_WIN_TS_INLINE SpdfWinTabStyle spdf_win_tab_style_for_state(int selected, int missing) {
+    SpdfWinTabStyle s;
+    s.stroke_width = selected ? SPDF_WIN_TAB_STROKE_SELECTED : SPDF_WIN_TAB_STROKE_UNSELECTED;
+    if (missing) {
+        s.fill_role = SPDF_WIN_TAB_ROLE_ALERT;
+        s.fill_alpha = selected ? 0.36 : 0.22;
+        s.stroke_role = SPDF_WIN_TAB_ROLE_ALERT;
+        s.stroke_alpha = selected ? 0.95 : 0.65;
+        return s;
+    }
+    if (selected) {
+        s.fill_role = SPDF_WIN_TAB_ROLE_ACCENT;
+        s.fill_alpha = 0.34;
+        s.stroke_role = SPDF_WIN_TAB_ROLE_ACCENT;
+        s.stroke_alpha = 0.95;
+        return s;
+    }
+    s.fill_role = SPDF_WIN_TAB_ROLE_CONTROL_BACKGROUND;
+    s.fill_alpha = 0.0;
+    s.stroke_role = SPDF_WIN_TAB_ROLE_SEPARATOR;
+    s.stroke_alpha = SPDF_WIN_TAB_STROKE_UNSELECTED_ALPHA;
+    return s;
+}
+
+/* spdf_tab_stroke_inset (:49-51): inset the chip by half the stroke width and
+ * the outline's centreline lands on a device-pixel boundary, so the hairline
+ * stays crisp instead of straddling the fill edge across two rows. */
+static SPDF_WIN_TS_INLINE double spdf_win_tab_stroke_inset(double stroke_width) { return stroke_width / 2.0; }
 
 /* The `+` and overflow `…` buttons: 32 x 28 at y = 7, radius 9
  * (SPDFMacTabStripView.mm:135-149, :651-681). */
@@ -458,6 +527,57 @@ static SPDF_WIN_TS_INLINE int spdf_win_tabstrip_drop_slot(double strip_w, int ta
         if (tab.x + tab.w / 2.0 > x) return i;
     }
     return visible;
+}
+
+/* spdf_tab_strip_drop_indicator_center_x (SPDFMacTabStripGeometry.mm:13-22),
+ * turned into the indicator's whole rect so the painter has nothing to derive:
+ * SPDF_WIN_TABSTRIP_DROP_INDICATOR_WIDTH wide, the full tab height at the tab
+ * y, centred in the gap between the two neighbouring visible tabs -- or half a
+ * gap outside the first/last tab edge for the end slots (:19-20). An empty rect
+ * for no visible tabs or a slot out of range, where the mac returns NAN and the
+ * caller draws nothing. The mac's `floor(centerX) - 1.0` snap happens where the
+ * mac does it, in the painter, in device pixels. */
+static SPDF_WIN_TS_INLINE SpdfWinTabRect spdf_win_tabstrip_drop_indicator_rect(double strip_w, int tab_count,
+                                                                              int selected, int slot) {
+    int start = 0, visible = 0;
+    double center;
+    SpdfWinTabRect r;
+    spdf_win_tabstrip_visible_range(strip_w, tab_count, selected, &start, &visible);
+    if (visible <= 0 || slot < 0 || slot > visible) return spdf_win_tabstrip_zero_rect();
+    if (slot == 0) {
+        SpdfWinTabRect first = spdf_win_tabstrip_tab_rect(strip_w, tab_count, selected, start);
+        center = first.x - SPDF_WIN_TABSTRIP_TAB_GAP / 2.0;
+    } else if (slot == visible) {
+        SpdfWinTabRect last = spdf_win_tabstrip_tab_rect(strip_w, tab_count, selected, start + visible - 1);
+        center = last.x + last.w + SPDF_WIN_TABSTRIP_TAB_GAP / 2.0;
+    } else {
+        SpdfWinTabRect before = spdf_win_tabstrip_tab_rect(strip_w, tab_count, selected, start + slot - 1);
+        SpdfWinTabRect after = spdf_win_tabstrip_tab_rect(strip_w, tab_count, selected, start + slot);
+        center = (before.x + before.w + after.x) / 2.0;
+    }
+    r.x = center - SPDF_WIN_TABSTRIP_DROP_INDICATOR_WIDTH / 2.0;
+    r.y = SPDF_WIN_TABSTRIP_TAB_Y;
+    r.w = SPDF_WIN_TABSTRIP_DROP_INDICATOR_WIDTH;
+    r.h = SPDF_WIN_TABSTRIP_TAB_HEIGHT;
+    return r;
+}
+
+/* WHEN A DRAG HAS LEFT THE STRIP -- SPDFMacTabStripView.mm:1012-1014, the test
+ * that turns a same-window reorder into a detach: the pointer more than 24 pt
+ * above or below the strip, more than 18 pt left of the leading inset or right
+ * of the `+`, or more than 48 pt from where the drag began vertically. Strip
+ * points in, like every other test in this header. */
+#define SPDF_WIN_TABSTRIP_DETACH_SLOP_Y 24.0
+#define SPDF_WIN_TABSTRIP_DETACH_SLOP_X 18.0
+#define SPDF_WIN_TABSTRIP_DETACH_DY 48.0
+
+static SPDF_WIN_TS_INLINE int spdf_win_tabstrip_drag_detaches(double strip_w, double strip_h, double x, double y,
+                                                              double start_y) {
+    SpdfWinTabRect plus = spdf_win_tabstrip_plus_rect(strip_w);
+    int outside = y < -SPDF_WIN_TABSTRIP_DETACH_SLOP_Y || y > strip_h + SPDF_WIN_TABSTRIP_DETACH_SLOP_Y ||
+                  x < SPDF_WIN_TABSTRIP_LEADING_INSET - SPDF_WIN_TABSTRIP_DETACH_SLOP_X ||
+                  x > plus.x + plus.w + SPDF_WIN_TABSTRIP_DETACH_SLOP_X;
+    return outside || fabs(y - start_y) > SPDF_WIN_TABSTRIP_DETACH_DY;
 }
 
 /* spdf_tab_strip_same_window_move_index (SPDFMacTabStripGeometry.h:31-34).

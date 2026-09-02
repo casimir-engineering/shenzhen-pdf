@@ -105,6 +105,50 @@ spdf_win_session_status spdf_win_session_restore(spdf_win_tabs* tabs, const char
  * nothing was written; retrying later is always safe. */
 int spdf_win_session_save(const spdf_win_tabs* tabs, const char* window_id);
 
+/* --- the window's frame ---------------------------------------------------
+ *
+ * "frame": { "x", "y", "width", "height" } on the window object -- the mac
+ * writes its NSWindow frame in points, GTK its size in pixels; this port writes
+ * the window's normal placement in screen device pixels
+ * (spdf_win_window_get_frame). Cross-platform the numbers mean little (a mac
+ * screen's y grows upward), which is why the restore clamps onto a monitor
+ * before trusting them. `w`/`h` <= 0 means "no frame". */
+typedef struct spdf_win_session_frame {
+    int x, y, w, h;
+} spdf_win_session_frame;
+
+/* As spdf_win_session_restore(), and also reads the window's frame into
+ * `out_frame` when there is one (else w = h = 0). NULL is allowed. */
+spdf_win_session_status spdf_win_session_restore_ex(spdf_win_tabs* tabs, const char* window_id, char* out_window_id,
+                                                    size_t out_len, spdf_win_session_frame* out_frame);
+
+/* As spdf_win_session_save(), writing `frame` as the window's frame. NULL, or a
+ * frame with w or h <= 0, keeps whatever frame the file already had for this
+ * window -- so a save that knows nothing about geometry never moves a mac
+ * user's window. */
+int spdf_win_session_save_ex(const spdf_win_tabs* tabs, const char* window_id, const spdf_win_session_frame* frame);
+
+/* --- detaching a tab into a new window -------------------------------------
+ *
+ * ONE PROCESS PER WINDOW, so tearing a tab off the strip means: write that tab
+ * into session.yaml as a NEW window under a fresh id, remove it from this
+ * window, and start a second ShenzhenPDF.exe that restores that id
+ * (`--window <id>`). The file is the hand-over -- the same file the two
+ * processes will keep merging into under session.lock from then on -- so
+ * nothing else has to be invented for the second process to find its
+ * document, its page and its zoom. macOS detaches in-process
+ * (SPDFMacTabStripView.mm:788-836, -detachTabAtIndex:); GTK hands the page to a
+ * fresh AdwTabView (spdf_window.c:391). Both keep the tab's whole view state,
+ * and so does this.
+ *
+ * Writes the window under the lock and returns 1 with the new id in
+ * `out_new_id`; the caller then closes the tab locally (with
+ * prefer_most_recent_active, as :9300 does for a detach) and spawns the
+ * process. 0 and nothing written for a bad index, an unreadable file or a
+ * failed write -- the tab stays where it is. */
+int spdf_win_session_detach_tab(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
+                                char* out_new_id, size_t out_len);
+
 #ifdef __cplusplus
 }
 #endif
