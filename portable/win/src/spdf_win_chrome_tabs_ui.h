@@ -237,8 +237,12 @@ static int chrome_app_menu(app* a, const SpdfWinChromeLayout* l) {
     if (!hwnd) return 0;
     chrome_release_capture(a); /* a popup needs the mouse -- see chrome_release_capture */
 
-    /* The same layout the painter used, so the popup hangs off the drawn cell. */
-    spdf_win_toolbar_layout(l->toolbar, s, &tb);
+    /* The same layout the painter used, so the popup hangs off the drawn cell.
+     * The overflow button is placed by the BACKWARD walk, so the Markdown pill
+     * cannot move it -- but the flag is passed rather than guessed, because
+     * "this caller happens not to care" is not a fact a reader can check from
+     * here and would stop being true the day a control moves. */
+    spdf_win_toolbar_layout(l->toolbar, s, spdf_win_md_selected_tab_is_markdown(a), &tb);
     cell = tb.item[SPDF_WIN_TB_OVERFLOW];
     if (spdf_win_chrome_rect_empty(cell)) return 0;
     pt.x = (LONG)(cell.x + cell.w);

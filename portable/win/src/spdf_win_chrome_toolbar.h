@@ -84,10 +84,18 @@
  * arranges them -- and the ENUM ORDER IS THAT ORDER, which
  * portable/win/tests/chrome_input_test.c asserts by walking the table and
  * checking each rect starts after the previous one ends. A new control goes at
- * its visual position, not at the end. The two macOS items this port still does
- * not draw (the markdown font-size pill and the flexible spacer) are absent
- * rather than reserved: an item in this table is an item with a rect, and a rect
- * nothing draws is a rect something could still click. */
+ * its visual position, not at the end. The one macOS item this port still does
+ * not draw (the flexible spacer) is absent rather than reserved: an item in this
+ * table is an item with a rect, and a rect nothing draws is a rect something
+ * could still click.
+ *
+ * SPDF_WIN_TB_MD_TEXT_PILL is macOS's item 10, and it is the first control in
+ * this row whose presence depends on the DOCUMENT rather than on the window's
+ * width: it exists only on a Markdown tab, because that is the only thing a
+ * text-size change means anything to (spdf_win_md_commands.h). On a PDF tab its
+ * rect is empty and every control after it sits exactly where it sat before this
+ * item existed -- which is the whole reason the flag is a parameter of the layout
+ * rather than a wider row. */
 typedef enum spdf_win_toolbar_item {
     SPDF_WIN_TB_NONE = 0,
     SPDF_WIN_TB_SIDEBAR_TOGGLE,
@@ -99,6 +107,7 @@ typedef enum spdf_win_toolbar_item {
     SPDF_WIN_TB_PAGE_PILL,
     SPDF_WIN_TB_FIT_POPUP,
     SPDF_WIN_TB_ZOOM_PILL,
+    SPDF_WIN_TB_MD_TEXT_PILL,
     SPDF_WIN_TB_READING_THEME,
     SPDF_WIN_TB_FIND_FIELD,
     SPDF_WIN_TB_FIND_REGEX,
@@ -141,8 +150,16 @@ static SPDF_WIN_TB_INLINE SpdfWinChromeRect spdf_win_toolbar_cell(SpdfWinChromeR
 }
 
 /* THE ONE ENTRY POINT. `bar` is SpdfWinChromeLayout::toolbar, in client device
- * pixels; an empty bar yields an all-empty table. */
-static SPDF_WIN_TB_INLINE void spdf_win_toolbar_layout(SpdfWinChromeRect bar, float dpi_scale,
+ * pixels; an empty bar yields an all-empty table.
+ *
+ * `markdown` is SpdfWinChromeModel::markdown -- whether the selected tab is a
+ * Markdown document -- and it adds the A−/A＋ pill. A POSITIONAL int next to a
+ * float is exactly the call site this port's headers warn about, so it is here
+ * rather than defaulted away in a wrapper: every caller has to say which row it
+ * means, and the painter and the router both say it from the same model field.
+ * A wrapper that quietly meant "no pill" is how the router would come to
+ * hit-test a row the painter did not draw. */
+static SPDF_WIN_TB_INLINE void spdf_win_toolbar_layout(SpdfWinChromeRect bar, float dpi_scale, int markdown,
                                                        SpdfWinToolbarLayout* out) {
     float s = dpi_scale > 0.0f ? dpi_scale : 1.0f;
     float x, y, h, right;
@@ -198,6 +215,12 @@ static SPDF_WIN_TB_INLINE void spdf_win_toolbar_layout(SpdfWinChromeRect bar, fl
     SPDF_WIN_TB_PLACE(SPDF_WIN_TB_PAGE_PILL, SPDF_WIN_TB_PILL_W, SPDF_WIN_TB_SPACING);
     SPDF_WIN_TB_PLACE(SPDF_WIN_TB_FIT_POPUP, SPDF_WIN_TB_FIT_POPUP_W, SPDF_WIN_TB_SPACING);
     SPDF_WIN_TB_PLACE(SPDF_WIN_TB_ZOOM_PILL, SPDF_WIN_TB_PILL_W, SPDF_WIN_TB_WIDE_SPACING);
+    /* macOS item 10, and only on a Markdown tab. The wide 8 pt spacing stays
+     * ATTACHED TO THE ZOOM PILL (:3123-3125 sets it there) and the pill that
+     * follows takes the ordinary 4 pt, so a PDF row is bit-for-bit the row it
+     * was: no pill, no advance, and the reading-theme button lands on the same
+     * pixel it always did. */
+    if (markdown) SPDF_WIN_TB_PLACE(SPDF_WIN_TB_MD_TEXT_PILL, SPDF_WIN_TB_PILL_W, SPDF_WIN_TB_SPACING);
     SPDF_WIN_TB_PLACE(SPDF_WIN_TB_READING_THEME, SPDF_WIN_TB_ICON_W, SPDF_WIN_TB_WIDE_SPACING);
 
     SPDF_WIN_TB_PLACE_TRAILING(SPDF_WIN_TB_MINIMAP_TOGGLE, SPDF_WIN_TB_MINIMAP_TOGGLE_W);
@@ -266,8 +289,8 @@ static SPDF_WIN_TB_INLINE spdf_win_toolbar_item spdf_win_toolbar_hit(const SpdfW
     for (i = SPDF_WIN_TB_NONE + 1; i < SPDF_WIN_TB_ITEM_COUNT; ++i) {
         if (i == SPDF_WIN_TB_SEPARATOR) continue;
         if (!spdf_win_chrome_contains(l->item[i], x, y)) continue;
-        if (out_segment &&
-            (i == SPDF_WIN_TB_PAGE_PILL || i == SPDF_WIN_TB_ZOOM_PILL || i == SPDF_WIN_TB_FIND_PILL)) {
+        if (out_segment && (i == SPDF_WIN_TB_PAGE_PILL || i == SPDF_WIN_TB_ZOOM_PILL ||
+                            i == SPDF_WIN_TB_MD_TEXT_PILL || i == SPDF_WIN_TB_FIND_PILL)) {
             /* Which half, from the pill's own rect rather than from a midpoint
              * recomputed here, so a pill of odd device width splits exactly
              * where spdf_win_toolbar_cell() drew the divider. */

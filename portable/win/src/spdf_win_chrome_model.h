@@ -101,6 +101,10 @@ typedef struct SpdfWinChromeModelInputs {
      * spdf_win_chrome_model_inputs_init() from spdf_win_chrome_presentation(),
      * the process-wide flag below, for the reason the caption state is. */
     int presentation;
+    /* The selected tab is a Markdown document, so the toolbar gets the A−/A＋
+     * text-size pill. Straight into the model field of the same name; see
+     * SpdfWinChromeModel::markdown for why it is geometry. */
+    int markdown;
 } SpdfWinChromeModelInputs;
 
 void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in);

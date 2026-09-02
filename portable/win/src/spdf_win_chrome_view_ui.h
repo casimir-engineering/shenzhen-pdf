@@ -19,6 +19,7 @@
  * surface.
  */
 
+#include "spdf_win_panel.h"    /* an open tools panel follows the reading theme */
 #include "spdf_win_settings.h" /* the reading theme is written to settings.yaml */
 
 /* The model the ROUTER needs, which is not the model the PAINTER needs.
@@ -58,6 +59,11 @@ static void chrome_layout_for_input(app* a, const spdf_win_input* in, SpdfWinChr
      * same answer from spdf_win_find_fill_model, which sets it from whether the
      * query is non-empty -- which is exactly this test. */
     model->search_active = a->find_text[0] != L'\0';
+    /* markdown IS GEOMETRY too, and for the sharper version of the same reason:
+     * the A−/A＋ pill takes 64 pt out of the middle of the toolbar, so a router
+     * that left this zeroed on a Markdown tab would send every click right of
+     * the zoom pill to the wrong control. */
+    model->markdown = spdf_win_md_selected_tab_is_markdown(a);
     /* The sidebar's list, as it was drawn last frame. sidebar_scroll_y is 0
      * because nothing scrolls the list yet; when something does, it must be
      * carried here too or a click will land a row or two out. */
@@ -167,6 +173,12 @@ static int chrome_rebuild_canvas(app* a) {
     if (!a->canvas) return 0;
     spdf_win_tabs_app_remember(a->tabs, a->canvas);
     if (a->window) spdf_win_window_set_dark_frame(a->window, (a->render_flags & SPDF_RENDER_DARK_THEME) != 0);
+    /* An OPEN tools panel follows the theme too. It is a separate top-level
+     * window with its own brushes, so nothing in this repaint reaches it; the
+     * setter is a no-op when no panel exists and when the theme did not change
+     * (spdf_win_panel.cpp), which is why it can sit on the plain path. A panel
+     * opened later gets the theme from its request. */
+    spdf_win_panel_set_dark((a->render_flags & SPDF_RENDER_DARK_THEME) != 0);
     return show_selected_tab(a);
 }
 
