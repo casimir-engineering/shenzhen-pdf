@@ -11,15 +11,27 @@
  *                              %ProgramFiles%\Tesseract-OCR, NOT on PATH),
  *                              Python.Python.3.12 --scope user when no
  *                              python.exe resolves
- *   Ghostscript    GitHub      ArtifexSoftware/ghostpdl-downloads: the winget
- *                              catalogue on this machine has no Ghostscript
- *                              (only ArtifexSoftware.mutool), so the official
- *                              gs<ver>w64.exe is fetched with curl.exe, checked
- *                              against the release's SHA512SUMS with certutil,
- *                              and run silently into %LOCALAPPDATA%\Programs\gs
- *   Python packages pip --user  ocrmypdf, argostranslate; the console scripts
- *                              land in Python's per-user Scripts directory,
- *                              which is not on PATH either
+ *   Ghostscript    detected only, never installed: OCRmyPDF 17 rasterises
+ *                              with pypdfium2 and needs gs solely for PDF/A,
+ *                              falling back to a plain PDF without it. The
+ *                              winget catalogue here has no Ghostscript and
+ *                              Artifex's installer has no silent mode (a
+ *                              wizard behind UAC), so it is not worth asking
+ *                              for; when it is present it goes on the child's
+ *                              PATH (spdf_win_toolchain_install.cpp)
+ *   ocrmypdf       pip --user  its console script lands in Python's per-user
+ *                              Scripts directory, which is not on PATH either
+ *   argostranslate pip, into a venv at %USERPROFILE%\.shenzhenpdf\argos. Not
+ *                              --user: the first real run failed with
+ *                              WinError 206 (path too long) unpacking torch's
+ *                              dist-info under the Store Python's 120-character
+ *                              user site-packages prefix, and a venv at a short
+ *                              path also keeps the torch/ctranslate2 stack out
+ *                              of the user's own site-packages. Not under
+ *                              %LOCALAPPDATA%: the Store Python is a packaged
+ *                              app whose writes under AppData are redirected
+ *                              into its LocalCache (the second run made the
+ *                              venv where no other process could find it)
  *   language data  tessdata_fast (as Linux) into
  *                              %LOCALAPPDATA%\ShenzhenPDF\tesseract\tessdata;
  *                              argospm install translate-<from>_<to> on demand
@@ -33,10 +45,10 @@
  * same test drives against a fake tesseract.cmd it writes itself.
  *
  * NOTHING LEAVES THE MACHINE. The only outbound traffic any of this ever
- * makes is the installers' own downloads (winget's, pip's, and the two curl
- * fetches named above); documents and their text go to local processes over
- * pipes and nowhere else. readme.md's "100% on-device" promise is a property
- * of this file: no function here takes a document.
+ * makes is the installers' own downloads (winget's, pip's, argospm's, and the
+ * tessdata_fast curl fetch); documents and their text go to local processes
+ * over pipes and nowhere else. readme.md's "100% on-device" promise is a
+ * property of this file: no function here takes a document.
  */
 #ifndef SPDF_WIN_TOOLCHAIN_H
 #define SPDF_WIN_TOOLCHAIN_H
@@ -62,7 +74,6 @@ typedef enum spdf_win_tool {
     SPDF_WIN_TOOL_ARGOSPM,
     SPDF_WIN_TOOL_WINGET,
     SPDF_WIN_TOOL_CURL,
-    SPDF_WIN_TOOL_CERTUTIL,
     SPDF_WIN_TOOL_COUNT
 } spdf_win_tool;
 
@@ -76,6 +87,7 @@ const char* spdf_win_tool_exe(spdf_win_tool tool);
 typedef struct SpdfWinToolchainRoots {
     char program_files[SPDF_WIN_TC_PATH];
     char local_appdata[SPDF_WIN_TC_PATH];
+    char user_profile[SPDF_WIN_TC_PATH]; /* %USERPROFILE%; the one root a packaged Python does not redirect */
     char system_root[SPDF_WIN_TC_PATH];
     char user_scripts[SPDF_WIN_TC_PATH];
     char path_env[SPDF_WIN_TC_ENV];
@@ -133,44 +145,34 @@ size_t spdf_win_toolchain_join_argv(const char* const* argv, int argc, char* out
 
 #define SPDF_WIN_TC_WINGET_TESSERACT "UB-Mannheim.TesseractOCR"
 #define SPDF_WIN_TC_WINGET_PYTHON "Python.Python.3.12"
-#define SPDF_WIN_TC_GS_RELEASES_API "https://api.github.com/repos/ArtifexSoftware/ghostpdl-downloads/releases/latest"
 #define SPDF_WIN_TC_TESSDATA_URL "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/"
 
 /* "<winget>" install --id <id> -e --accept-source-agreements
  * --accept-package-agreements --disable-interactivity [--scope user] */
 size_t spdf_win_toolchain_winget_cmd(const char* winget, const char* id, int user_scope, char* out, size_t out_bytes);
-/* "<python>" -m pip install --user --upgrade --progress-bar off <packages...> */
-size_t spdf_win_toolchain_pip_cmd(const char* python, const char* const* packages, int count, char* out,
-                                  size_t out_bytes);
+/* "<python>" -m pip install [--user] --upgrade --progress-bar off <packages...>
+ * (--user for the user's Python; not inside a venv, where pip rejects it) */
+size_t spdf_win_toolchain_pip_cmd(const char* python, int user_site, const char* const* packages, int count,
+                                  char* out, size_t out_bytes);
+/* "<python>" -m venv "<dir>" */
+size_t spdf_win_toolchain_venv_cmd(const char* python, const char* dir, char* out, size_t out_bytes);
+/* The Argos venv: %USERPROFILE%\.shenzhenpdf\argos, and its Scripts\python.exe. */
+int spdf_win_toolchain_argos_env_dir(const SpdfWinToolchainRoots* roots, char* out, size_t out_bytes);
+int spdf_win_toolchain_argos_env_python(const SpdfWinToolchainRoots* roots, char* out, size_t out_bytes);
 /* "<curl>" -L -f -sS -o "<dest>" "<url>" */
 size_t spdf_win_toolchain_curl_cmd(const char* curl, const char* url, const char* dest, char* out, size_t out_bytes);
-/* "<installer>" /S /D=<dir>   (NSIS: /D must be last and UNQUOTED) */
-size_t spdf_win_toolchain_gs_installer_cmd(const char* installer, const char* dir, char* out, size_t out_bytes);
-/* "<certutil>" -hashfile "<file>" SHA512 */
-size_t spdf_win_toolchain_certutil_cmd(const char* certutil, const char* file, char* out, size_t out_bytes);
 /* "<argospm>" install translate-<from>_<to> */
 size_t spdf_win_toolchain_argospm_cmd(const char* argospm, const char* from_lang, const char* to_lang, char* out,
                                       size_t out_bytes);
-/* The gs<ver>w64.exe asset's browser_download_url in a GitHub release JSON. */
-int spdf_win_toolchain_gs_asset_url(const char* release_json, char* out, size_t out_bytes);
-/* The SHA512SUMS url beside it (same release directory as the asset). */
-int spdf_win_toolchain_gs_sums_url(const char* asset_url, char* out, size_t out_bytes);
-/* The 128-hex digest for `file_name` in a SHA512SUMS text ("<hex>  <name>"). */
-int spdf_win_toolchain_sums_lookup(const char* sums_text, const char* file_name, char* hex_out, size_t out_bytes);
-/* certutil -hashfile prints the digest on its second line, possibly with
- * spaces between byte pairs on older builds; both forms yield 128 lowercase
- * hex digits here. */
-int spdf_win_toolchain_certutil_digest(const char* output, char* hex_out, size_t out_bytes);
-/* Where the fetched installer and the tessdata go. */
-int spdf_win_toolchain_gs_install_dir(const SpdfWinToolchainRoots* roots, char* out, size_t out_bytes);
+/* Where downloaded tessdata goes: %LOCALAPPDATA%\ShenzhenPDF\tesseract. */
 int spdf_win_toolchain_tessdata_parent(const SpdfWinToolchainRoots* roots, char* out, size_t out_bytes);
 
 /* --- install plans --------------------------------------------------------- */
 
 typedef enum spdf_win_tc_step_kind {
     SPDF_WIN_TC_STEP_WINGET = 1, /* command: the winget line */
-    SPDF_WIN_TC_STEP_GHOSTSCRIPT, /* resolved at run time: API -> curl -> certutil -> /S */
     SPDF_WIN_TC_STEP_PIP,        /* command: the pip line; "python" re-resolved if it was just installed */
+    SPDF_WIN_TC_STEP_VENV,       /* command: python -m venv; dest: the environment directory */
     SPDF_WIN_TC_STEP_TRAINEDDATA, /* command: the curl line; dest: the .traineddata path */
     SPDF_WIN_TC_STEP_ARGOSPM,     /* command: the argospm line */
     SPDF_WIN_TC_STEP_BLOCKED      /* nothing runnable: label says what the reader must do */
@@ -202,15 +204,17 @@ typedef struct SpdfWinToolchainState {
 int spdf_win_toolchain_has(const SpdfWinToolchainState* st, spdf_win_tool tool);
 
 /* Everything OCR needs and does not have, in dependency order: Tesseract,
- * Ghostscript, Python, ocrmypdf, then one traineddata download per missing
- * component. A tool that cannot be acquired (no winget, no curl) becomes a
- * BLOCKED step with the reason, so the log says so instead of the plan being
- * silently shorter. */
+ * Python, ocrmypdf, then one traineddata download per missing component
+ * (Ghostscript is optional and never planned; see the header comment). A tool
+ * that cannot be acquired (no winget, no curl) becomes a BLOCKED step with the
+ * reason, so the log says so instead of the plan being silently shorter. */
 void spdf_win_toolchain_ocr_plan(const SpdfWinToolchainState* st, const SpdfWinToolchainRoots* roots,
                                  const char* language, SpdfWinToolchainPlan* plan);
-/* Python, then argostranslate; optionally the translate-<from>_<to> package. */
-void spdf_win_toolchain_argos_plan(const SpdfWinToolchainState* st, const char* from_lang, const char* to_lang,
-                                   int with_package, SpdfWinToolchainPlan* plan);
+/* Python, then the venv, then argostranslate into it; optionally the
+ * translate-<from>_<to> package with the venv's argospm. */
+void spdf_win_toolchain_argos_plan(const SpdfWinToolchainState* st, const SpdfWinToolchainRoots* roots,
+                                   const char* from_lang, const char* to_lang, int with_package,
+                                   SpdfWinToolchainPlan* plan);
 
 /* --- the live log's line splitter ------------------------------------------ */
 
@@ -309,8 +313,7 @@ int spdf_win_toolchain_run_capture(SpdfWinToolchainRun* run);
 unsigned spdf_win_toolchain_cpu_count(void);
 
 /* Run one plan step to completion, streaming its output. Returns 1 on
- * success. The Ghostscript step performs its whole resolve/fetch/verify/
- * install sequence here, logging each part. */
+ * success. */
 int spdf_win_toolchain_run_step(const SpdfWinToolchainStep* step, const SpdfWinToolchainRoots* roots, void* cancel,
                                 spdf_win_toolchain_line_fn on_line, void* user);
 

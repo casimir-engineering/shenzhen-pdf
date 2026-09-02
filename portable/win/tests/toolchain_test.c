@@ -4,8 +4,8 @@
  * versions are read out of --version banners, the Tesseract language helpers
  * and the Argos helpers the GTK suite pins (portable/linux/gtk4/tests/
  * toolchain_test.c, same cases), the exact command lines the installer will
- * run, the GitHub release / SHA512SUMS / certutil parsers, the install plans,
- * the live-log line splitter and the settings JSON accessors.
+ * run, the install plans, the live-log line splitter and the settings JSON
+ * accessors.
  *
  * NO network, NO installer, NO real tool, NO subprocess: the plan functions
  * produce command lines and nothing here runs them. The subprocess seam has
@@ -47,6 +47,7 @@ static void roots_fixture(SpdfWinToolchainRoots* r) {
     memset(r, 0, sizeof(*r));
     strcpy(r->program_files, "C:\\Program Files");
     strcpy(r->local_appdata, "C:\\Users\\Ren\\AppData\\Local");
+    strcpy(r->user_profile, "C:\\Users\\Ren");
     strcpy(r->system_root, "C:\\Windows");
     strcpy(r->user_scripts, "C:\\Users\\Ren\\AppData\\Local\\Packages\\Py\\LocalCache\\local-packages\\Python313\\Scripts");
     strcpy(r->path_env, "C:\\Windows\\System32;\"C:\\Tools With Space\";;C:\\Users\\Ren\\bin");
@@ -77,9 +78,13 @@ static void test_candidates(void) {
               "C:\\Users\\Ren\\AppData\\Local\\Packages\\Py\\LocalCache\\local-packages\\Python313\\Scripts\\ocrmypdf.exe");
     CHECK(spdf_win_toolchain_candidates(SPDF_WIN_TOOL_CURL, &r, out) == 1);
     CHECK_STR(out[0], "C:\\Windows\\System32\\curl.exe");
-    /* No Python: no scripts directory, so no pip-installed candidates. */
+    CHECK(spdf_win_toolchain_tessdata_parent(&r, out[0], SPDF_WIN_TC_PATH));
+    CHECK_STR(out[0], "C:\\Users\\Ren\\AppData\\Local\\ShenzhenPDF\\tesseract");
+    /* No Python: no scripts directory, so no pip --user candidate; the Argos
+     * venv location is still looked at. */
     r.user_scripts[0] = '\0';
-    CHECK(spdf_win_toolchain_candidates(SPDF_WIN_TOOL_ARGOSPM, &r, out) == 0);
+    CHECK(spdf_win_toolchain_candidates(SPDF_WIN_TOOL_OCRMYPDF, &r, out) == 0);
+    CHECK(spdf_win_toolchain_candidates(SPDF_WIN_TOOL_ARGOSPM, &r, out) == 1);
 }
 
 static void test_search_path(void) {
@@ -181,54 +186,16 @@ static void test_command_lines(void) {
                    "--accept-package-agreements --disable-interactivity");
     spdf_win_toolchain_winget_cmd("winget", SPDF_WIN_TC_WINGET_PYTHON, 1, cmd, sizeof(cmd));
     CHECK(strstr(cmd, "--id Python.Python.3.12 -e") && strstr(cmd, " --scope user"));
-    spdf_win_toolchain_pip_cmd("C:\\Py Dir\\python.exe", pkgs, 1, cmd, sizeof(cmd));
+    spdf_win_toolchain_pip_cmd("C:\\Py Dir\\python.exe", 1, pkgs, 1, cmd, sizeof(cmd));
     CHECK_STR(cmd, "\"C:\\Py Dir\\python.exe\" -m pip install --user --upgrade --progress-bar off ocrmypdf");
+    spdf_win_toolchain_pip_cmd("C:\\A\\Scripts\\python.exe", 0, pkgs, 1, cmd, sizeof(cmd));
+    CHECK_STR(cmd, "C:\\A\\Scripts\\python.exe -m pip install --upgrade --progress-bar off ocrmypdf");
+    spdf_win_toolchain_venv_cmd("python", "C:\\Users\\Ren\\.shenzhenpdf\\argos", cmd, sizeof(cmd));
+    CHECK_STR(cmd, "python -m venv C:\\Users\\Ren\\.shenzhenpdf\\argos");
     spdf_win_toolchain_curl_cmd("curl.exe", "https://x/y.traineddata", "C:\\T d\\y.traineddata", cmd, sizeof(cmd));
     CHECK_STR(cmd, "curl.exe -L -f -sS -o \"C:\\T d\\y.traineddata\" https://x/y.traineddata");
-    spdf_win_toolchain_gs_installer_cmd("C:\\Temp\\gs10071w64.exe", "C:\\Users\\Ren\\AppData\\Local\\Programs\\gs\\gs10.07.1",
-                                        cmd, sizeof(cmd));
-    CHECK_STR(cmd, "C:\\Temp\\gs10071w64.exe /S /D=C:\\Users\\Ren\\AppData\\Local\\Programs\\gs\\gs10.07.1");
-    spdf_win_toolchain_certutil_cmd("certutil.exe", "C:\\Temp\\gs10071w64.exe", cmd, sizeof(cmd));
-    CHECK_STR(cmd, "certutil.exe -hashfile C:\\Temp\\gs10071w64.exe SHA512");
     spdf_win_toolchain_argospm_cmd("argospm.exe", "zh", "en", cmd, sizeof(cmd));
     CHECK_STR(cmd, "argospm.exe install translate-zh_en");
-}
-
-static void test_release_parsers(void) {
-    const char* json = "{\"assets\":[{\"name\":\"gs10071w32.exe\",\"browser_download_url\": "
-                       "\"https://github.com/A/r/releases/download/gs10071/gs10071w32.exe\"},"
-                       "{\"browser_download_url\": \"https://github.com/A/r/releases/download/gs10071/ghostpcl-10.07.1-win64.zip\"},"
-                       "{\"browser_download_url\": \"https://github.com/A/r/releases/download/gs10071/gs10071w64.exe\"}]}";
-    const char* sums = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ABCDEF  gs10071w64.exe\n"
-                       "ffff  gs10071w32.exe\n";
-    const char* certutil = "SHA512 hash of C:\\Temp\\gs10071w64.exe:\r\n"
-                           "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                           "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\r\n"
-                           "CertUtil: -hashfile command completed successfully.\r\n";
-    const char* certutil_spaced = "SHA512 hash of file x:\r\n"
-                                  "01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef "
-                                  "01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef\r\n";
-    char url[512], hex[160], hex2[160];
-    SpdfWinToolchainRoots r;
-    roots_fixture(&r);
-    CHECK(spdf_win_toolchain_gs_asset_url(json, url, sizeof(url)));
-    CHECK_STR(url, "https://github.com/A/r/releases/download/gs10071/gs10071w64.exe");
-    CHECK(!spdf_win_toolchain_gs_asset_url("{}", url, sizeof(url)));
-    CHECK(spdf_win_toolchain_gs_sums_url(url, url, sizeof(url)));
-    CHECK_STR(url, "https://github.com/A/r/releases/download/gs10071/SHA512SUMS");
-    CHECK(spdf_win_toolchain_sums_lookup(sums, "gs10071w64.exe", hex, sizeof(hex)));
-    CHECK(strlen(hex) == 128 && hex[127] == 'f'); /* lowercased */
-    CHECK(!spdf_win_toolchain_sums_lookup(sums, "gs10071w32.exe", hex2, sizeof(hex2))); /* not 128 hex digits */
-    CHECK(spdf_win_toolchain_certutil_digest(certutil, hex2, sizeof(hex2)));
-    CHECK_STR(hex2, hex);
-    CHECK(spdf_win_toolchain_certutil_digest(certutil_spaced, hex2, sizeof(hex2)));
-    CHECK_STR(hex2, hex);
-    CHECK(!spdf_win_toolchain_certutil_digest("CertUtil: The system cannot find the file specified.", hex2, sizeof(hex2)));
-    CHECK(spdf_win_toolchain_gs_install_dir(&r, url, sizeof(url)));
-    CHECK_STR(url, "C:\\Users\\Ren\\AppData\\Local\\Programs\\gs");
-    CHECK(spdf_win_toolchain_tessdata_parent(&r, url, sizeof(url)));
-    CHECK_STR(url, "C:\\Users\\Ren\\AppData\\Local\\ShenzhenPDF\\tesseract");
 }
 
 /* --- plans ----------------------------------------------------------------- */
@@ -241,27 +208,29 @@ static void test_plans(void) {
     memset(&st, 0, sizeof(st));
     strcpy(st.path[SPDF_WIN_TOOL_WINGET], "C:\\W\\winget.exe");
     strcpy(st.path[SPDF_WIN_TOOL_CURL], "C:\\Windows\\System32\\curl.exe");
-    strcpy(st.path[SPDF_WIN_TOOL_CERTUTIL], "C:\\Windows\\System32\\certutil.exe");
     strcpy(st.missing_languages[0], "chi_sim");
     st.missing_language_count = 1;
 
-    /* Bare machine with winget: Tesseract, Ghostscript, Python, ocrmypdf, one traineddata. */
+    /* Bare machine with winget: Tesseract, Python, ocrmypdf, one traineddata --
+     * chi_sim only, because the Tesseract installer ships eng; and never
+     * Ghostscript, which OCRmyPDF 17 does not need. */
+    strcpy(st.missing_languages[1], "eng");
+    st.missing_language_count = 2;
     spdf_win_toolchain_ocr_plan(&st, &r, "chi_sim+eng", &plan);
-    CHECK(plan.count == 5);
+    CHECK(plan.count == 4);
+    st.missing_language_count = 1;
     CHECK(plan.steps[0].kind == SPDF_WIN_TC_STEP_WINGET && strstr(plan.steps[0].command, "UB-Mannheim.TesseractOCR"));
-    CHECK(plan.steps[1].kind == SPDF_WIN_TC_STEP_GHOSTSCRIPT);
-    CHECK_STR(plan.steps[1].dest, "C:\\Users\\Ren\\AppData\\Local\\Programs\\gs");
-    CHECK(plan.steps[2].kind == SPDF_WIN_TC_STEP_WINGET && strstr(plan.steps[2].command, "--scope user"));
-    CHECK(plan.steps[3].kind == SPDF_WIN_TC_STEP_PIP);
-    CHECK_STR(plan.steps[3].command, "python -m pip install --user --upgrade --progress-bar off ocrmypdf");
-    CHECK(plan.steps[4].kind == SPDF_WIN_TC_STEP_TRAINEDDATA);
-    CHECK_STR(plan.steps[4].dest, "C:\\Users\\Ren\\AppData\\Local\\ShenzhenPDF\\tesseract\\tessdata\\chi_sim.traineddata");
-    CHECK(strstr(plan.steps[4].command, "tessdata_fast/main/chi_sim.traineddata") != NULL);
-    CHECK(plan.needs_elevation_note);
+    CHECK(plan.steps[1].kind == SPDF_WIN_TC_STEP_WINGET && strstr(plan.steps[1].command, "--scope user"));
+    CHECK(plan.steps[2].kind == SPDF_WIN_TC_STEP_PIP);
+    CHECK_STR(plan.steps[2].command, "python -m pip install --user --upgrade --progress-bar off ocrmypdf");
+    CHECK(plan.steps[3].kind == SPDF_WIN_TC_STEP_TRAINEDDATA);
+    CHECK_STR(plan.steps[3].dest, "C:\\Users\\Ren\\AppData\\Local\\ShenzhenPDF\\tesseract\\tessdata\\chi_sim.traineddata");
+    CHECK(strstr(plan.steps[3].command, "tessdata_fast/main/chi_sim.traineddata") != NULL);
+    CHECK(plan.needs_elevation_note); /* Tesseract's installer is machine-wide */
 
-    /* Everything present but the language: one download, no elevation note. */
+    /* Everything present but the language: one download, no elevation note.
+     * Ghostscript stays absent and is not asked for. */
     strcpy(st.path[SPDF_WIN_TOOL_TESSERACT], "C:\\Program Files\\Tesseract-OCR\\tesseract.exe");
-    strcpy(st.path[SPDF_WIN_TOOL_GHOSTSCRIPT], "C:\\Program Files\\gs\\gs10.07.1\\bin\\gswin64c.exe");
     strcpy(st.path[SPDF_WIN_TOOL_PYTHON], "C:\\Py\\python.exe");
     strcpy(st.path[SPDF_WIN_TOOL_OCRMYPDF], "C:\\Py\\Scripts\\ocrmypdf.exe");
     spdf_win_toolchain_ocr_plan(&st, &r, "chi_sim+eng", &plan);
@@ -280,19 +249,33 @@ static void test_plans(void) {
     CHECK(plan.steps[0].kind == SPDF_WIN_TC_STEP_BLOCKED && strstr(plan.steps[0].label, "Tesseract"));
     CHECK(plan.steps[1].kind == SPDF_WIN_TC_STEP_BLOCKED && strstr(plan.steps[1].label, "Python"));
 
-    /* Argos: pip for the package, argospm for the pair; python quoted when known. */
+    /* Argos: a venv made by the user's python (quoted when known), the package
+     * installed by the venv's python WITHOUT --user, argospm from the venv. */
     strcpy(st.path[SPDF_WIN_TOOL_PYTHON], "C:\\Py Dir\\python.exe");
-    spdf_win_toolchain_argos_plan(&st, "zh", "en", 1, &plan);
-    CHECK(plan.count == 2);
-    CHECK_STR(plan.steps[0].command, "\"C:\\Py Dir\\python.exe\" -m pip install --user --upgrade --progress-bar off argostranslate");
-    CHECK_STR(plan.steps[1].command, "argospm install translate-zh_en");
+    spdf_win_toolchain_argos_plan(&st, &r, "zh", "en", 1, &plan);
+    CHECK(plan.count == 3);
+    CHECK(plan.steps[0].kind == SPDF_WIN_TC_STEP_VENV);
+    CHECK_STR(plan.steps[0].command, "\"C:\\Py Dir\\python.exe\" -m venv C:\\Users\\Ren\\.shenzhenpdf\\argos");
+    CHECK_STR(plan.steps[0].dest, "C:\\Users\\Ren\\.shenzhenpdf\\argos");
+    CHECK(plan.steps[1].kind == SPDF_WIN_TC_STEP_PIP);
+    CHECK_STR(plan.steps[1].command, "C:\\Users\\Ren\\.shenzhenpdf\\argos\\Scripts\\python.exe -m pip install "
+                                     "--upgrade --progress-bar off argostranslate");
+    CHECK(plan.steps[2].kind == SPDF_WIN_TC_STEP_ARGOSPM);
+    CHECK_STR(plan.steps[2].command, "C:\\Users\\Ren\\.shenzhenpdf\\argos\\Scripts\\argospm.exe install translate-zh_en");
+    CHECK(!plan.needs_elevation_note);
     strcpy(st.path[SPDF_WIN_TOOL_ARGOS_TRANSLATE], "C:\\S\\argos-translate.exe");
     strcpy(st.path[SPDF_WIN_TOOL_ARGOSPM], "C:\\S\\argospm.exe");
-    spdf_win_toolchain_argos_plan(&st, "zh", "en", 0, &plan);
+    spdf_win_toolchain_argos_plan(&st, &r, "zh", "en", 0, &plan);
     CHECK(plan.count == 0);
-    spdf_win_toolchain_argos_plan(&st, "zh", "en", 1, &plan);
+    spdf_win_toolchain_argos_plan(&st, &r, "zh", "en", 1, &plan);
     CHECK(plan.count == 1 && plan.steps[0].kind == SPDF_WIN_TC_STEP_ARGOSPM);
     CHECK_STR(plan.steps[0].command, "C:\\S\\argospm.exe install translate-zh_en");
+    /* The venv's scripts are looked for before the user's. */
+    {
+        char cands[SPDF_WIN_TC_MAX_CANDIDATES][SPDF_WIN_TC_PATH];
+        CHECK(spdf_win_toolchain_candidates(SPDF_WIN_TOOL_ARGOS_TRANSLATE, &r, cands) == 2);
+        CHECK_STR(cands[0], "C:\\Users\\Ren\\.shenzhenpdf\\argos\\Scripts\\argos-translate.exe");
+    }
 }
 
 /* --- line splitter ------------------------------------------------------------ */
@@ -371,7 +354,6 @@ int main(void) {
     test_languages();
     test_argos_helpers();
     test_command_lines();
-    test_release_parsers();
     test_plans();
     test_line_splitter();
     test_settings_json();

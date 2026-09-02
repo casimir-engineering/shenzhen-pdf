@@ -48,7 +48,7 @@ static const char* trim_view(const char* s, size_t* len) {
 
 static const char* const k_exe[SPDF_WIN_TOOL_COUNT] = {
     "tesseract.exe", "gswin64c.exe", "python.exe", "ocrmypdf.exe", "argos-translate.exe",
-    "argospm.exe",   "winget.exe",   "curl.exe",   "certutil.exe",
+    "argospm.exe",   "winget.exe",   "curl.exe",
 };
 
 const char* spdf_win_tool_exe(spdf_win_tool tool) {
@@ -75,7 +75,7 @@ int spdf_win_toolchain_candidates(spdf_win_tool tool, const SpdfWinToolchainRoot
             CAND(r->local_appdata, "Tesseract-OCR");
             break;
         case SPDF_WIN_TOOL_GHOSTSCRIPT:
-            /* Our own silent install first, then the machine-wide default. */
+            /* A per-user install first, then the installer's default. */
             CAND(r->local_appdata, "Programs\\gs\\gs*\\bin");
             CAND(r->program_files, "gs\\gs*\\bin");
             break;
@@ -83,12 +83,15 @@ int spdf_win_toolchain_candidates(spdf_win_tool tool, const SpdfWinToolchainRoot
             CAND(r->local_appdata, "Programs\\Python\\Python3*");
             CAND(r->local_appdata, "Microsoft\\WindowsApps");
             break;
-        case SPDF_WIN_TOOL_OCRMYPDF:
+        case SPDF_WIN_TOOL_OCRMYPDF: CAND(r->user_scripts, "."); break;
         case SPDF_WIN_TOOL_ARGOS_TRANSLATE:
-        case SPDF_WIN_TOOL_ARGOSPM: CAND(r->user_scripts, "."); break;
+        case SPDF_WIN_TOOL_ARGOSPM:
+            /* Our venv first (the header says why), then a pip --user install. */
+            CAND(r->user_profile, ".shenzhenpdf\\argos\\Scripts");
+            CAND(r->user_scripts, ".");
+            break;
         case SPDF_WIN_TOOL_WINGET: CAND(r->local_appdata, "Microsoft\\WindowsApps"); break;
-        case SPDF_WIN_TOOL_CURL:
-        case SPDF_WIN_TOOL_CERTUTIL: CAND(r->system_root, "System32"); break;
+        case SPDF_WIN_TOOL_CURL: CAND(r->system_root, "System32"); break;
         default: break;
     }
 #undef CAND

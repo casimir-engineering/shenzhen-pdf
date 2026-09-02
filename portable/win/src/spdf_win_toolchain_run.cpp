@@ -105,6 +105,7 @@ void spdf_win_toolchain_roots_from_env(SpdfWinToolchainRoots* roots) {
     memset(roots, 0, sizeof(*roots));
     env_utf8(L"ProgramFiles", roots->program_files, sizeof(roots->program_files));
     env_utf8(L"LOCALAPPDATA", roots->local_appdata, sizeof(roots->local_appdata));
+    env_utf8(L"USERPROFILE", roots->user_profile, sizeof(roots->user_profile));
     env_utf8(L"SystemRoot", roots->system_root, sizeof(roots->system_root));
     env_utf8(L"PATH", roots->path_env, sizeof(roots->path_env));
     resolve_user_scripts(roots); /* needs the four above to find python */

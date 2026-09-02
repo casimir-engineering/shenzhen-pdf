@@ -312,7 +312,10 @@ static spdf_win_panel* create_panel(HWND owner, int dark) {
     p->owner = owner;
     p->dark = dark;
     dpi = owner ? (int)GetDpiForWindow(owner) : 96;
-    p->hwnd = CreateWindowExW(WS_EX_TOOLWINDOW * 0, k_class, L"OCR", WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
+    /* An OWNED top-level window (not a child, not a tool window): it gets its
+     * own caption and taskbar entry, stays above the main window, and closes
+     * with it. */
+    p->hwnd = CreateWindowExW(0, k_class, L"OCR", WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
                               CW_USEDEFAULT, CW_USEDEFAULT, MulDiv(680, dpi, 96), MulDiv(560, dpi, 96), owner, NULL,
                               GetModuleHandleW(NULL), NULL);
     if (!p->hwnd) {

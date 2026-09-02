@@ -332,7 +332,7 @@ static int offer_package(spdf_win_panel* p, const char* failure) {
                  p->from_lang, p->to_lang, package);
     if (MessageBoxW(p->hwnd, text, L"Install Argos language package?", MB_OKCANCEL | MB_ICONQUESTION) != IDOK) return 0;
     p->with_package = 1;
-    spdf_win_toolchain_argos_plan(&p->tools, p->from_lang, p->to_lang, 1, &p->plan);
+    spdf_win_toolchain_argos_plan(&p->tools, &p->roots, p->from_lang, p->to_lang, 1, &p->plan);
     begin_install(p);
     return 1;
 }
@@ -356,7 +356,7 @@ int spdf_win_panel_flow_message(spdf_win_panel* p, UINT msg, WPARAM wparam, LPAR
                 return 0;
             }
             if (p->mode == SPDF_WIN_PANEL_OCR) spdf_win_toolchain_ocr_plan(&p->tools, &p->roots, p->language, &p->plan);
-            else spdf_win_toolchain_argos_plan(&p->tools, p->from_lang, p->to_lang, p->with_package, &p->plan);
+            else spdf_win_toolchain_argos_plan(&p->tools, &p->roots, p->from_lang, p->to_lang, p->with_package, &p->plan);
             if (p->plan.count > 0) offer_install(p);
             else run_job(p);
             return 0;
