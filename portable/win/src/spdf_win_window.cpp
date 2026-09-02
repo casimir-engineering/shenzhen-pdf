@@ -15,6 +15,7 @@
  * an HWND knows (maximized, hovered button, held button), pushed to the model
  * the chrome painter reads. See spdf_win_window_caption.h. */
 #include "spdf_win_chrome_model.h"
+#include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 
 #include <windowsx.h> /* GET_X_LPARAM / GET_Y_LPARAM */
 #include <shellapi.h> /* DragAcceptFiles / DragQueryFileW / DragFinish */
@@ -407,6 +408,7 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
     /* Now that there is an HWND we can ask which monitor it landed on. The
      * frame was sized in 96-dpi units, so on a 2x display resize it once
      * rather than leaving a half-size window. */
+    spdf_win_launch_mark("hwnd-created");
     window->dpi = window_dpi(window->hwnd);
     window->client_px_w = client_px_w;
     window->client_px_h = client_px_h;
@@ -426,8 +428,25 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
 
 void spdf_win_window_show(spdf_win_window* window) {
     if (!window || !window->hwnd) return;
+    /* THE FIRST FRAME IS PAINTED BEFORE THE WINDOW IS SHOWN.
+     *
+     * Measured (portable/docs/windows-launch-performance.md): ShowWindow puts
+     * the frame on screen ~40 ms after process creation and the client area
+     * then stays BLANK until the first WM_PAINT completes -- 130-230 ms later
+     * on the baseline. A window that appears empty and fills in later reads as
+     * "loading"; one that appears complete reads as instant even when it
+     * appears a little later. So the target is created and the first frame
+     * presented while the window is still hidden -- the swap chain keeps it --
+     * and ShowWindow reveals a window that already has its page. UpdateWindow
+     * then repaints from warm caches (page bitmap and texture are both cached),
+     * which costs a few milliseconds and guarantees the shown surface is
+     * current even if the hidden present was discarded. */
+    paint(window);
+    spdf_win_launch_mark("pre-show-paint-done");
     ShowWindow(window->hwnd, SW_SHOWNORMAL);
+    spdf_win_launch_mark("show-window-returned");
     UpdateWindow(window->hwnd);
+    spdf_win_launch_mark("update-window-returned");
 }
 
 void spdf_win_window_invalidate(spdf_win_window* window) {

@@ -290,6 +290,12 @@ int main(void) {
          * its render flags at construction. Windowed path only; the headless
          * ones must not depend on a file or a registry value. Both points are
          * argued at spdf_win_system_prefers_dark() in spdf_win_window.h. */
+        /* AND THE GPU DEVICE, ON A WORKER, FIRST. Nothing between here and the
+         * first paint needs it and nothing here needs more than one core, so
+         * the driver load overlaps the settings read, the session restore, the
+         * document open and CreateWindowExW instead of following them. Windowed
+         * path only: see spdf_win_gpu_prewarm.h. */
+        spdf_win_gpu_prewarm_start(d2d);
         {
             const spdf_win_settings* settings = spdf_win_settings_shared();
             if (!theme_explicit) a.render_flags = app_initial_render_flags();
