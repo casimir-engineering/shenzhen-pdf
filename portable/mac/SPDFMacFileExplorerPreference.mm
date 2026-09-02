@@ -132,9 +132,14 @@ void SPDFMacInstallFileExplorerSettingsMenu(NSMenu* settingsMenu) {
                                                    action:@selector(useShenzhenFilesExplorer:)
                                             keyEquivalent:@""];
     shenzhenFiles.target = target;
-    // Reflect the derived default before the menu is ever opened.
-    [target validateMenuItem:finder];
-    [target validateMenuItem:shenzhenFiles];
+    // Item state (checkmark, the "(Automatic)" hint, and the Shenzhen Files
+    // row's availability-gated enablement) is resolved by -validateMenuItem:,
+    // which AppKit calls automatically before the submenu is displayed
+    // (autoenablesItems is YES). Validating eagerly here only mattered to code
+    // inspecting the item between install and first open, and it forced a Launch
+    // Services round-trip (URLForApplicationWithBundleIdentifier:, ~5 ms cold)
+    // onto the pre-first-paint buildMenu path. Deferred to first display, where
+    // the cost is invisible and NSWorkspace has cached the result.
     NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:@"File Manager" action:nil keyEquivalent:@""];
     item.submenu = submenu;
     [settingsMenu addItem:item];
