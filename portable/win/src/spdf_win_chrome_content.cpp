@@ -3,6 +3,7 @@
 #include "spdf_win_chrome_content.h"
 
 #include "spdf_win_chrome_thumbs.h"
+#include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 #include "shenzhen_pdf_core.h"
 
 #include <shellapi.h>
@@ -193,9 +194,12 @@ void ensure_outline(Bridge* b) {
         b->filter_dirty = 1;   /* a new document needs its rows built at least once */
         ensure_path(b);
         if (!b->path) return;
+        spdf_win_launch_mark("outline-open-begin");
         b->doc = spdf_open(b->path, err, sizeof(err));
+        spdf_win_launch_mark("outline-doc-opened");
         if (!b->doc) return;
         if (!spdf_load_outline(b->doc, &b->outline, err, sizeof(err))) return;
+        spdf_win_launch_mark_n("outline-loaded", b->outline.count);
         b->sidebar.total_count = b->outline.count;
     }
     if (!b->filter_dirty) return;
@@ -226,6 +230,7 @@ void ensure_minimap(Bridge* b) {
     spdf_win_thumbs_note_paint_thread(b->thumbs);
     spdf_win_thumbs_drain(b->thumbs);
     count = spdf_win_thumbs_page_count(b->thumbs);
+    SPDF_WIN_LAUNCH_MARK_ONCE("thumbs-counted");
     if (count <= 0) return;
     if (count != b->size_count) {
         free(b->sizes);

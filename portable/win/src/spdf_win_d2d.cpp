@@ -27,6 +27,7 @@
 #include "spdf_win_chrome_content.h" /* spdf_win_chrome_content_shutdown */
 #include "spdf_win_chrome_paint.h"
 #include "spdf_win_d2d_overlay.h" /* draw_overlays; needs only the scene */
+#include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 
 #include <dwrite.h>
 
@@ -104,6 +105,7 @@ spdf_win_d2d* spdf_win_d2d_create(char* err, size_t err_len) {
      * in main() means a console probe that only ever calls into this file
      * needs no ceremony. RPC_E_CHANGED_MODE means the caller already chose a
      * different apartment -- fine, use theirs and do not uninitialize it. */
+    spdf_win_launch_mark("d2d-create-begin");
     hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     if (SUCCEEDED(hr)) {
         d2d->co_initialized = true;
@@ -113,24 +115,32 @@ spdf_win_d2d* spdf_win_d2d_create(char* err, size_t err_len) {
         return NULL;
     }
 
-    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &d2d->factory);
+    spdf_win_launch_mark("com-initialized");
+    /* MULTI_THREADED, not SINGLE_THREADED, since the GPU prewarm: a factory
+     * shares its internal D3D device between all the hardware targets it
+     * creates, and the multi-threaded kind does so across threads, which is
+     * what lets spdf_win_gpu_prewarm.cpp pay for the device on a worker while
+     * the UI thread opens the document. Every target is still used from one
+     * thread only; the factory merely takes a lock per call. */
+    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, &d2d->factory);
     if (FAILED(hr)) {
         set_err(err, err_len, "D2D1CreateFactory", hr);
         spdf_win_d2d_destroy(d2d);
         return NULL;
     }
 
-    hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d2d->wic));
-    if (FAILED(hr)) {
-        set_err(err, err_len, "CoCreateInstance(WICImagingFactory)", hr);
-        spdf_win_d2d_destroy(d2d);
-        return NULL;
-    }
+    spdf_win_launch_mark("d2d-factory");
+    /* WIC is created on first use (spdf_win_d2d_wic), not here. Only the PNG
+     * writers, the clipboard and export need it; the window never does, and
+     * the CoCreateInstance -- which is also what loads WindowsCodecs.dll's
+     * object model -- measured 2-3 ms on the launch path for nothing. */
 
     /* Deliberately not fatal. A machine with a broken font stack should still
      * show the page; only the status line goes missing. */
+    spdf_win_launch_mark("wic-factory");
     DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                         reinterpret_cast<IUnknown**>(&d2d->dwrite));
+    spdf_win_launch_mark("dwrite-factory");
     return d2d;
 }
 
@@ -153,6 +163,11 @@ void spdf_win_d2d_destroy(spdf_win_d2d* d2d) {
     spdf_win_chrome_content_shutdown();
     spdf_win_chrome_paint_shutdown();
 
+    /* The GPU prewarm thread (if the windowed path started one) is joined
+     * here for the same reason as the two shutdowns above: a driver still
+     * initialising at process exit is a hang or a crash in someone else's
+     * DllMain. A no-op on the headless paths. */
+    spdf_win_gpu_prewarm_finish();
     spdf_win_d2d_release_target(d2d, NULL);
     safe_release(d2d->dwrite);
     safe_release(d2d->wic);
@@ -162,7 +177,11 @@ void spdf_win_d2d_destroy(spdf_win_d2d* d2d) {
 }
 
 ID2D1Factory* spdf_win_d2d_factory(spdf_win_d2d* d2d) { return d2d ? d2d->factory : NULL; }
-IWICImagingFactory* spdf_win_d2d_wic(spdf_win_d2d* d2d) { return d2d ? d2d->wic : NULL; }
+IWICImagingFactory* spdf_win_d2d_wic(spdf_win_d2d* d2d) {
+    if (!d2d) return NULL;
+    if (!d2d->wic) CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d2d->wic));
+    return d2d->wic; /* NULL when the codecs are unavailable; every caller checks */
+}
 
 void spdf_win_d2d_release_target(spdf_win_d2d* d2d, ID2D1RenderTarget* target) {
     if (!d2d) return;
@@ -195,11 +214,25 @@ static unsigned char* rgba_to_bgra(const spdf_bitmap* page) {
         const unsigned char* src = page->rgba + (size_t)y * (size_t)page->stride;
         unsigned char* dst = out + (size_t)y * row_bytes;
         for (int x = 0; x < page->width; ++x) {
-            unsigned a = src[3];
-            dst[0] = a == 255 ? src[2] : (unsigned char)((src[2] * a + 127) / 255);
-            dst[1] = a == 255 ? src[1] : (unsigned char)((src[1] * a + 127) / 255);
-            dst[2] = a == 255 ? src[0] : (unsigned char)((src[0] * a + 127) / 255);
-            dst[3] = (unsigned char)a;
+            /* One 32-bit load, one store. In memory the core's pixel is
+             * R,G,B,A, i.e. the little-endian word A<<24|B<<16|G<<8|R; D2D
+             * wants A<<24|R<<16|G<<8|B. Alpha and green stay put and the
+             * other two swap. Byte-for-byte what the per-channel form below
+             * produces at alpha 255 -- the d2d.compose-* cases pin that --
+             * and about three times faster on a 1.5-Mpx page, which is on the
+             * first-paint path: the first texture upload measured 8-12 ms. */
+            unsigned p;
+            memcpy(&p, src, 4);
+            if ((p >> 24) == 0xFFu) {
+                p = (p & 0xFF00FF00u) | ((p & 0xFFu) << 16) | ((p >> 16) & 0xFFu);
+                memcpy(dst, &p, 4);
+            } else {
+                unsigned a = src[3];
+                dst[0] = (unsigned char)((src[2] * a + 127) / 255);
+                dst[1] = (unsigned char)((src[1] * a + 127) / 255);
+                dst[2] = (unsigned char)((src[0] * a + 127) / 255);
+                dst[3] = (unsigned char)a;
+            }
             src += 4;
             dst += 4;
         }
@@ -237,6 +270,7 @@ static ID2D1Bitmap* page_texture(spdf_win_d2d* d2d, ID2D1RenderTarget* target, c
                                       (UINT32)(page->width * 4), &props, &bitmap);
     free(bgra);
     if (FAILED(hr)) return NULL;
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-page-texture");
 
     safe_release(d2d->cache[victim].bitmap);
     d2d->cache_target = target;
@@ -352,6 +386,7 @@ static void draw_message(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spd
 HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_win_scene* scene) {
     if (!d2d || !target || !scene) return E_POINTER;
 
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-compose-begin");
     /* Everything downstream is in device pixels. */
     target->SetDpi(96.0f, 96.0f);
     target->BeginDraw();
@@ -398,6 +433,7 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
         ctx.layout = &chrome_layout;
         ctx.dpi_scale = chrome_layout.dpi_scale;
         spdf_win_chrome_paint_all(ctx);
+        SPDF_WIN_LAUNCH_MARK_ONCE("first-chrome-painted");
 
         if (has_chrome) {
             /* PushAxisAlignedClip, then a translate, so draw_canvas_page needs
@@ -448,7 +484,15 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
         target->PopAxisAlignedClip();
     }
 
-    return target->EndDraw();
+    {
+        /* EndDraw on an HWND target is the present: after it returns, the
+         * frame is on its way to DWM. This is the mark the launch harness
+         * reads as "first page pixels". */
+        SPDF_WIN_LAUNCH_MARK_ONCE("first-compose-draws-issued");
+        HRESULT end = target->EndDraw();
+        SPDF_WIN_LAUNCH_MARK_ONCE("first-compose-end");
+        return end;
+    }
 }
 
 #include "spdf_win_d2d_png.h"

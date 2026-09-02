@@ -29,9 +29,11 @@ static HRESULT write_wic_png(spdf_win_d2d* d2d, IWICBitmap* bitmap, unsigned w, 
     IPropertyBag2* options = NULL;
     GUID format = GUID_WICPixelFormat32bppBGRA;
 
-    HRESULT hr = d2d->wic->CreateStream(&stream);
+    IWICImagingFactory* wic = spdf_win_d2d_wic(d2d); /* created on first use */
+    if (!wic) return E_FAIL;
+    HRESULT hr = wic->CreateStream(&stream);
     if (SUCCEEDED(hr)) hr = stream->InitializeFromFilename(path, GENERIC_WRITE);
-    if (SUCCEEDED(hr)) hr = d2d->wic->CreateEncoder(GUID_ContainerFormatPng, NULL, &encoder);
+    if (SUCCEEDED(hr)) hr = wic->CreateEncoder(GUID_ContainerFormatPng, NULL, &encoder);
     if (SUCCEEDED(hr)) hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
     if (SUCCEEDED(hr)) hr = encoder->CreateNewFrame(&frame, &options);
     if (SUCCEEDED(hr)) hr = frame->Initialize(options);
@@ -59,7 +61,9 @@ HRESULT spdf_win_render_scene_to_png(spdf_win_d2d* d2d, unsigned px_w, unsigned 
     if (px_w == 0 || px_h == 0) return E_INVALIDARG;
 
     IWICBitmap* bitmap = NULL;
-    HRESULT hr = d2d->wic->CreateBitmap(px_w, px_h, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap);
+    IWICImagingFactory* wic = spdf_win_d2d_wic(d2d); /* created on first use: the window never needs WIC */
+    if (!wic) return E_FAIL;
+    HRESULT hr = wic->CreateBitmap(px_w, px_h, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap);
     if (FAILED(hr)) return hr;
 
     /* SOFTWARE, not DEFAULT. `prlctl exec` runs in the SYSTEM session: there
