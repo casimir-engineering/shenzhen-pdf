@@ -96,6 +96,6 @@ size_t spdf_win_toolchain_argospm_cmd(const char* argospm, const char* from_lang
 }
 
 int spdf_win_toolchain_tessdata_parent(const SpdfWinToolchainRoots* roots, char* out, size_t out_bytes) {
-    return roots && out && join2(out, out_bytes, roots->local_appdata, "ShenzhenPDF\\tesseract");
+    return roots && out && join2(out, out_bytes, roots->user_profile, ".shenzhenpdf\\tesseract");
 }
 

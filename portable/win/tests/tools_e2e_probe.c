@@ -14,7 +14,7 @@
  *       validated output in, report whether the core now finds text
  *   tools_e2e_probe install-argos <from> <to>
  *       run the Argos install plan including the translate-<from>_<to> package
- *   tools_e2e_probe translate <from> <to> <text...>
+ *   tools_e2e_probe translate <from> <to> <text...|@utf8-file>
  *       translate the text through Argos and print the result
  *
  * NOT a test: it changes the machine (that is the point) and needs the network
@@ -192,9 +192,18 @@ int main(int argc, char** argv) {
         char text[4096] = "", err[2048] = "";
         char* out = NULL;
         int rc;
-        for (int i = 4; i < argc; ++i) {
-            size_t n = strlen(text);
-            snprintf(text + n, sizeof(text) - n, "%s%s", n ? " " : "", argv[i]);
+        if (argv[4][0] == '@') {
+            /* "@file": UTF-8 from a file, because main()'s argv is the ANSI
+             * code page and CJK on a 1252 console would arrive as '?'. */
+            FILE* f = fopen(argv[4] + 1, "rb");
+            size_t n = f ? fread(text, 1, sizeof(text) - 1, f) : 0;
+            if (f) fclose(f);
+            text[n] = '\0';
+        } else {
+            for (int i = 4; i < argc; ++i) {
+                size_t n = strlen(text);
+                snprintf(text + n, sizeof(text) - n, "%s%s", n ? " " : "", argv[i]);
+            }
         }
         spdf_win_toolchain_probe(&roots, NULL, &st);
         rc = spdf_win_translate_text(st.path[SPDF_WIN_TOOL_ARGOS_TRANSLATE], roots.user_scripts, argv[2], argv[3], text,

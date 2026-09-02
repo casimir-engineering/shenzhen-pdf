@@ -382,6 +382,7 @@ int spdf_win_panel_flow_message(spdf_win_panel* p, UINT msg, WPARAM wparam, LPAR
         case SPDF_WIN_PANEL_MSG_TEXT_DONE: {
             SpdfWinPanelResult* r = (SpdfWinPanelResult*)lparam;
             join_worker(p);
+            spdf_win_panel_set_progress(p, r->success ? 1000 : 0); /* stop the marquee */
             if (r->success) {
                 spdf_win_panel_set_output_text(p, r->message);
                 finished(p, "Translation complete.");

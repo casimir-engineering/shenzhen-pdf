@@ -87,10 +87,11 @@ int spdf_win_ocr_temp_path(const char* path, unsigned nonce, char* out, size_t o
 /* The child's environment additions, as the NUL-separated, double-NUL-ended
  * block spdf_win_toolchain_run_capture() takes: "PATH=<tesseract dir>;<gs
  * dir>;<scripts dir>" from whichever are non-empty, then
- * "TESSDATA_PREFIX=<parent>" when a downloaded-data parent is given. Returns
+ * "TESSDATA_PREFIX=<tessdata dir>" when a downloaded-data directory is given
+ * (Tesseract 4+ wants the tessdata directory itself, not its parent). Returns
  * the block's length including the final NUL. */
 size_t spdf_win_ocr_env(const char* tesseract_dir, const char* gs_dir, const char* scripts_dir,
-                        const char* tessdata_parent, char* out, size_t out_bytes);
+                        const char* tessdata_dir, char* out, size_t out_bytes);
 
 /* --- the worker (spdf_win_ocr.cpp, Win32 + core) ------------------------- */
 

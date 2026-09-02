@@ -243,6 +243,85 @@ int spdf_win_toolchain_tessdata_parent_for_language(const SpdfWinToolchainRoots*
     return any;
 }
 
+/* Copy every file directly inside <src_dir> into <dst_dir> (created), skipping
+ * ones already there. For tesseract's configs/ and tessconfigs/: output formats
+ * such as hocr are config files there, and with TESSDATA_PREFIX pointing at our
+ * directory tesseract looks for them under it and nowhere else. */
+static void copy_flat_dir(const char* src_dir, const char* dst_dir) {
+    wchar_t wmask[SPDF_WIN_TC_PATH], wsrc[SPDF_WIN_TC_PATH], wdst[SPDF_WIN_TC_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE h;
+    char mask[SPDF_WIN_TC_PATH];
+    if (!to_wide(dst_dir, wdst, SPDF_WIN_TC_PATH)) return;
+    CreateDirectoryW(wdst, NULL);
+    if (snprintf(mask, sizeof(mask), "%s\\*", src_dir) >= (int)sizeof(mask) || !to_wide(mask, wmask, SPDF_WIN_TC_PATH))
+        return;
+    h = FindFirstFileW(wmask, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (!to_wide(src_dir, wsrc, SPDF_WIN_TC_PATH) || !to_wide(dst_dir, wdst, SPDF_WIN_TC_PATH)) continue;
+        if (wcslen(wsrc) + wcslen(fd.cFileName) + 2 > SPDF_WIN_TC_PATH ||
+            wcslen(wdst) + wcslen(fd.cFileName) + 2 > SPDF_WIN_TC_PATH)
+            continue;
+        wcscat(wsrc, L"\\");
+        wcscat(wsrc, fd.cFileName);
+        wcscat(wdst, L"\\");
+        wcscat(wdst, fd.cFileName);
+        CopyFileW(wsrc, wdst, TRUE); /* FALSE + ERROR_FILE_EXISTS is the "already there" case */
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+int spdf_win_toolchain_tessdata_complete(const SpdfWinToolchainRoots* roots, const char* tesseract_exe,
+                                         const char* language, char* out, size_t out_bytes) {
+    char parts[8][32];
+    char tess_dir[SPDF_WIN_TC_PATH], src[SPDF_WIN_TC_PATH], dst[SPDF_WIN_TC_PATH];
+    wchar_t wsrc[SPDF_WIN_TC_PATH], wdst[SPDF_WIN_TC_PATH];
+    int n = spdf_win_ocr_language_components(language, parts), ours = 0;
+    if (!spdf_win_toolchain_tessdata_parent(roots, out, out_bytes)) return 0;
+    for (int i = 0; i < n; ++i) {
+        if (snprintf(dst, sizeof(dst), "%s\\tessdata\\%s.traineddata", out, parts[i]) < (int)sizeof(dst) &&
+            file_exists(dst, NULL))
+            ours = 1;
+    }
+    if (!ours) return 0; /* nothing downloaded: tesseract's own data serves */
+    if (!tesseract_exe || !spdf_win_toolchain_dirname(tesseract_exe, tess_dir, sizeof(tess_dir))) return 0;
+    /* The output-format configs (hocr, pdf, tsv...) live beside the language
+     * data and are looked up under the prefix too. */
+    {
+        static const char* const subdirs[] = {"configs", "tessconfigs"};
+        for (int i = 0; i < 2; ++i) {
+            if (snprintf(src, sizeof(src), "%s\\tessdata\\%s", tess_dir, subdirs[i]) < (int)sizeof(src) &&
+                snprintf(dst, sizeof(dst), "%s\\tessdata\\%s", out, subdirs[i]) < (int)sizeof(dst))
+                copy_flat_dir(src, dst);
+        }
+    }
+    /* osd rides along: --rotate-pages asks tesseract for it. */
+    if (n < 8) strcpy(parts[n++], "osd");
+    for (int i = 0; i < n; ++i) {
+        if (snprintf(dst, sizeof(dst), "%s\\tessdata\\%s.traineddata", out, parts[i]) >= (int)sizeof(dst)) return 0;
+        if (file_exists(dst, NULL)) continue;
+        if (snprintf(src, sizeof(src), "%s\\tessdata\\%s.traineddata", tess_dir, parts[i]) >= (int)sizeof(src) ||
+            !file_exists(src, NULL) || !to_wide(src, wsrc, SPDF_WIN_TC_PATH) || !to_wide(dst, wdst, SPDF_WIN_TC_PATH))
+            return strcmp(parts[i], "osd") == 0 ? 1 : 0; /* no osd anywhere: rotation is skipped, OCR still runs */
+        if (!CopyFileW(wsrc, wdst, TRUE) && GetLastError() != ERROR_FILE_EXISTS) return 0;
+        /* A freshly written 10 MB osd.traineddata is exactly what an on-access
+         * scanner holds for a moment; tesseract opened it a second later and
+         * reported "Error opening data file" on a file that was there. Wait
+         * until it can be read before naming the directory. */
+        for (int attempt = 0; attempt < 50; ++attempt) {
+            HANDLE h = CreateFileW(wdst, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+            if (h != INVALID_HANDLE_VALUE) {
+                CloseHandle(h);
+                break;
+            }
+            Sleep(100);
+        }
+    }
+    return 1;
+}
+
 void spdf_win_toolchain_probe(const SpdfWinToolchainRoots* roots, const char* ocr_language,
                               SpdfWinToolchainState* st) {
     char parent[SPDF_WIN_TC_PATH];
