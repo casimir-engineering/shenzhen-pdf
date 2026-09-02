@@ -45,6 +45,10 @@ int spdf_win_about_show(void* hwnd, int dark);
  * (sets only the process id). */
 void spdf_win_about_apply_identity(void* hwnd);
 
+/* DWMWA_USE_IMMERSIVE_DARK_MODE on a top-level window (an HWND), so a dark
+ * dialog gets a dark caption. Shared by the About box and the shortcuts sheet. */
+void spdf_win_about_dark_caption(void* hwnd, int dark);
+
 #ifdef __cplusplus
 }
 #endif

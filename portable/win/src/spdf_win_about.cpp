@@ -20,6 +20,7 @@
 #include "spdf_win_chrome_theme.h"
 
 #include <windows.h>
+#include <dwmapi.h>
 #include <shobjidl.h>
 
 #include <mupdf/fitz/version.h>
@@ -30,6 +31,17 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "dwmapi.lib")
+
+/* The caption follows the box: DWMWA_USE_IMMERSIVE_DARK_MODE, the same
+ * attribute the main window sets through spdf_win_window_set_dark_frame(),
+ * so a dark About box does not arrive under a white title bar. Measured on
+ * the first capture of this box, not assumed. Harmless where unsupported. */
+void spdf_win_about_dark_caption(void* hwnd, int dark) {
+    BOOL on = dark ? TRUE : FALSE;
+    if (!hwnd) return;
+    DwmSetWindowAttribute((HWND)hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &on, sizeof(on));
+}
 
 int spdf_win_about_text(const char* os_build, char* out, size_t out_len) {
     int n;
@@ -115,8 +127,10 @@ void spdf_win_about_apply_identity(void* hwnd_handle) {
 
 #define ABOUT_ID_TEXT 1101
 #define ABOUT_ID_CLOSE 1102
-#define ABOUT_WIDTH 460
-#define ABOUT_HEIGHT 250
+/* Five lines of 15 px Segoe UI under a 24 px title, plus the button row: the
+ * first capture at 250 clipped the copyright line. */
+#define ABOUT_WIDTH 480
+#define ABOUT_HEIGHT 290
 #define ABOUT_MARGIN 20
 #define ABOUT_ICON 64
 
@@ -252,6 +266,7 @@ int spdf_win_about_show(void* parent_handle, int dark) {
         return 0;
     }
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)&st);
+    spdf_win_about_dark_caption(hwnd, dark);
     GetClientRect(hwnd, &client);
     edit = CreateWindowExW(0, L"EDIT", crlf, WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY,
                            ABOUT_MARGIN + ABOUT_ICON + 16, ABOUT_MARGIN + 40,

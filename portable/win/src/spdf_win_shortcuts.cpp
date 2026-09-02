@@ -16,6 +16,7 @@
  */
 #include "spdf_win_shortcuts.h"
 
+#include "spdf_win_about.h" /* spdf_win_about_dark_caption */
 #include "spdf_win_chrome_theme.h"
 
 #include <windows.h>
@@ -337,6 +338,7 @@ int spdf_win_shortcuts_show(void* parent_handle, int dark) {
         return 0;
     }
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)st);
+    spdf_win_about_dark_caption(hwnd, dark);
     sc_update_scrollbar(hwnd, st);
     if (parent) parent_was_enabled = IsWindowEnabled(parent);
     if (parent && parent_was_enabled) EnableWindow(parent, FALSE);
