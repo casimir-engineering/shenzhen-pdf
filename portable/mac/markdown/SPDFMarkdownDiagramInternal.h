@@ -280,6 +280,16 @@ FOUNDATION_EXPORT SPDFMarkdownDiagramGantt* _Nullable SPDFMarkdownDiagramParseGa
 FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramLayoutGraph(SPDFMarkdownDiagramGraph* graph, CGFloat nodeGap,
                                                       CGFloat rankGap, CFAbsoluteTime deadline, NSSize* outSize);
 
+// Draws every edge of an already-positioned graph into `canvas`, in
+// `graph.edges` order and BEFORE the node boxes go down (see
+// SPDFMarkdownDiagramGraphEdges.mm). Edges are routed as a family, not one at a
+// time: the anchors of all the edges sharing one border are spread along it in
+// the cross-axis order of their far ends, so a fan-out cannot cross itself
+// where it leaves the box. `labelFont` types the chips on labeled edges.
+FOUNDATION_EXPORT void SPDFMarkdownDiagramEmitGraphEdges(SPDFMarkdownDiagramCanvas* canvas,
+                                                         SPDFMarkdownDiagramGraph* graph, NSFont* labelFont,
+                                                         CGFloat scale);
+
 // Shape emitters: measured+laid-out models -> resolved vector layout, or nil
 // when a budget is exceeded. fontScale scales every font and gap; `contentBox`
 // is the page box the figure has to fit (see SPDFMarkdownDiagramRender).

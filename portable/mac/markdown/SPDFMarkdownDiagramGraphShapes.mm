@@ -2,8 +2,10 @@
 
 // Vector emitter for the flowchart-family graphs (flowchart, state, class,
 // flow fences). Measures node sizes with the scaled body font, runs the
-// layered layout under its deadline, then emits node shapes, elbow edges with
-// arrowheads, and chip-backed edge labels as geometry plus positioned text.
+// layered layout under its deadline (reflowing labels narrower when the page
+// box would otherwise shrink the drawing below the legibility floor), then emits
+// the node shapes. Edge geometry is its own concern: see
+// SPDFMarkdownDiagramGraphEdges.mm.
 
 static const CGFloat kSPDFDiagramGraphMargin = 20;
 static const CGFloat kSPDFDiagramLabelMaxWidth = 170;
@@ -210,155 +212,6 @@ static void SPDFDiagramAddNode(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDi
     for (SPDFMarkdownDiagramLabel* label in labels) label.authorColor = style.textColor;
 }
 
-// Border anchor: where the segment toward `toward` leaves the node's frame.
-static NSPoint SPDFDiagramAnchor(SPDFMarkdownDiagramNode* node, NSPoint toward) {
-    NSRect frame = node.frame;
-    NSPoint center = NSMakePoint(NSMidX(frame), NSMidY(frame));
-    CGFloat dx = toward.x - center.x;
-    CGFloat dy = toward.y - center.y;
-    if (fabs(dx) < 0.001 && fabs(dy) < 0.001) return center;
-    CGFloat scaleX = fabs(dx) > 0.001 ? (NSWidth(frame) / 2) / fabs(dx) : CGFLOAT_MAX;
-    CGFloat scaleY = fabs(dy) > 0.001 ? (NSHeight(frame) / 2) / fabs(dy) : CGFLOAT_MAX;
-    CGFloat scale = MIN(scaleX, scaleY);
-    return NSMakePoint(center.x + dx * scale, center.y + dy * scale);
-}
-
-static void SPDFDiagramAddArrowHead(SPDFMarkdownDiagramCanvas* canvas, NSPoint tip, NSPoint fromDirection,
-                                    SPDFMarkdownDiagramArrowHead head, CGFloat scale) {
-    if (head == SPDFMarkdownDiagramArrowHeadNone) return;
-    CGFloat dx = tip.x - fromDirection.x;
-    CGFloat dy = tip.y - fromDirection.y;
-    CGFloat length = hypot(dx, dy);
-    if (length < 0.001) return;
-    dx /= length;
-    dy /= length;
-    BOOL diamond = head == SPDFMarkdownDiagramArrowHeadFilledDiamond ||
-                   head == SPDFMarkdownDiagramArrowHeadHollowDiamond;
-    CGFloat size = (head == SPDFMarkdownDiagramArrowHeadArrow ? 7 : 9) * scale;
-    NSPoint back = NSMakePoint(tip.x - dx * size, tip.y - dy * size);
-    NSMutableArray<NSValue*>* points = [NSMutableArray arrayWithCapacity:4];
-    [points addObject:SPDFPoint(tip.x, tip.y)];
-    [points addObject:SPDFPoint(back.x - dy * size * 0.5, back.y + dx * size * 0.5)];
-    if (diamond) [points addObject:SPDFPoint(tip.x - dx * size * 2, tip.y - dy * size * 2)];
-    [points addObject:SPDFPoint(back.x + dy * size * 0.5, back.y - dx * size * 0.5)];
-    BOOL hollow = head == SPDFMarkdownDiagramArrowHeadHollowTriangle ||
-                  head == SPDFMarkdownDiagramArrowHeadHollowDiamond;
-    [canvas addPolygon:points
-                  fill:hollow ? SPDFMarkdownDiagramRolePaper : SPDFMarkdownDiagramRoleSecondary
-                stroke:SPDFMarkdownDiagramRoleSecondary
-                 width:1];
-}
-
-// A smooth curve through `waypoints`, sampled into a polyline. Each span is a
-// cubic Bezier whose two control points sit on the FLOW axis, half a span
-// apart: that makes the path leave and land perpendicular to a node's border,
-// keeps it monotone along the flow axis (so a fan-out never loops back over
-// its own source anchor), and joins spans with a matching tangent, so a
-// rank-skipping route reads as one continuous wave. The shape vocabulary has
-// no curve primitive and does not need one -- at this density the sampled path
-// IS the curve for screen, print and PDF export alike, and two edges that
-// cross stay traceable instead of collapsing onto a shared right-angle trunk.
-static NSArray<NSValue*>* SPDFDiagramCurveThrough(NSArray<NSValue*>* waypoints, BOOL vertical) {
-    if (waypoints.count < 2) return waypoints;
-    const NSUInteger samples = 8;
-    NSMutableArray<NSValue*>* path = [NSMutableArray arrayWithCapacity:(waypoints.count - 1) * samples + 1];
-    [path addObject:waypoints.firstObject];
-    for (NSUInteger index = 0; index + 1 < waypoints.count; ++index) {
-        NSPoint a = waypoints[index].pointValue, d = waypoints[index + 1].pointValue;
-        CGFloat reach = (vertical ? (d.y - a.y) : (d.x - a.x)) / 2;
-        NSPoint b = vertical ? NSMakePoint(a.x, a.y + reach) : NSMakePoint(a.x + reach, a.y);
-        NSPoint c = vertical ? NSMakePoint(d.x, d.y - reach) : NSMakePoint(d.x - reach, d.y);
-        if (fabs(vertical ? (d.x - a.x) : (d.y - a.y)) < 0.5) {  // already aligned: a straight run
-            [path addObject:SPDFPoint(d.x, d.y)];
-            continue;
-        }
-        for (NSUInteger step = 1; step <= samples; ++step) {
-            CGFloat t = (CGFloat)step / samples, u = 1 - t;
-            CGFloat w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t;
-            [path addObject:SPDFPoint(w0 * a.x + w1 * b.x + w2 * c.x + w3 * d.x,
-                                      w0 * a.y + w1 * b.y + w2 * c.y + w3 * d.y)];
-        }
-    }
-    return path;
-}
-
-static void SPDFDiagramAddEdge(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDiagramEdge* edge,
-                               SPDFMarkdownDiagramGraph* graph, SPDFDiagramGraphFonts fonts, CGFloat scale) {
-    SPDFMarkdownDiagramNode* from = [graph existingNodeForIdentifier:edge.fromIdentifier];
-    SPDFMarkdownDiagramNode* to = [graph existingNodeForIdentifier:edge.toIdentifier];
-    if (!from || !to) return;
-    NSArray<NSValue*>* points = nil;
-    NSPoint fromCenter = NSMakePoint(NSMidX(from.frame), NSMidY(from.frame));
-    NSPoint toCenter = NSMakePoint(NSMidX(to.frame), NSMidY(to.frame));
-    if (from == to) {
-        // Self-loop: a small square detour off the node's right edge.
-        CGFloat loop = 18 * scale;
-        NSPoint start = NSMakePoint(NSMaxX(from.frame), NSMidY(from.frame) - 6 * scale);
-        NSPoint end = NSMakePoint(NSMaxX(from.frame), NSMidY(from.frame) + 6 * scale);
-        points = @[
-            SPDFPoint(start.x, start.y), SPDFPoint(start.x + loop, start.y),
-            SPDFPoint(end.x + loop, end.y), SPDFPoint(end.x, end.y)
-        ];
-    } else {
-        // Which way the edge runs is read off the finished geometry, so BT/RL
-        // (mirrored coordinates) and a BACK edge (target in an earlier rank)
-        // are the same case: leave the source's downstream border, land on the
-        // target's facing one.
-        BOOL vertical = graph.vertical;
-        CGFloat fromLow = vertical ? NSMinY(from.frame) : NSMinX(from.frame);
-        CGFloat fromHigh = vertical ? NSMaxY(from.frame) : NSMaxX(from.frame);
-        CGFloat toLow = vertical ? NSMinY(to.frame) : NSMinX(to.frame);
-        CGFloat toHigh = vertical ? NSMaxY(to.frame) : NSMaxX(to.frame);
-        if (toLow >= fromHigh || toHigh <= fromLow) {
-            BOOL rising = toLow >= fromHigh;
-            CGFloat startMain = rising ? fromHigh : fromLow;
-            CGFloat endMain = rising ? toLow : toHigh;
-            NSPoint start = vertical ? NSMakePoint(fromCenter.x, startMain)
-                                     : NSMakePoint(startMain, fromCenter.y);
-            NSPoint end = vertical ? NSMakePoint(toCenter.x, endMain) : NSMakePoint(endMain, toCenter.y);
-            // The layout reserved a bend point per rank a long edge skips; the
-            // curve threads them, so it never cuts through a column it passes.
-            NSMutableArray<NSValue*>* waypoints = [NSMutableArray arrayWithObject:SPDFPoint(start.x, start.y)];
-            [waypoints addObjectsFromArray:edge.routePoints ?: @[]];
-            [waypoints addObject:SPDFPoint(end.x, end.y)];
-            points = SPDFDiagramCurveThrough(waypoints, vertical);
-        } else {
-            // Overlapping bands (same rank) keep a straight border-to-border line.
-            NSPoint start = SPDFDiagramAnchor(from, toCenter);
-            NSPoint end = SPDFDiagramAnchor(to, fromCenter);
-            points = @[ SPDFPoint(start.x, start.y), SPDFPoint(end.x, end.y) ];
-        }
-    }
-    [canvas addPolyline:points
-                 stroke:SPDFMarkdownDiagramRoleSecondary
-                  width:edge.lineStyle == SPDFMarkdownDiagramLineStyleThick ? 2.5 : 1.2
-                   dash:edge.lineStyle == SPDFMarkdownDiagramLineStyleDashed ? 4 * scale : 0];
-    SPDFDiagramAddArrowHead(canvas, points.lastObject.pointValue, points[points.count - 2].pointValue, edge.head,
-                            scale);
-    // `<-->`: the same head, pointing back out of the `from` node.
-    SPDFDiagramAddArrowHead(canvas, points.firstObject.pointValue, points[1].pointValue, edge.tail, scale);
-    if (edge.label.length) {
-        // Label chip at the path midpoint, backed with paper so the text stays
-        // readable where it crosses the line.
-        NSPoint a = points[(points.count - 1) / 2].pointValue;
-        NSPoint b = points[(points.count - 1) / 2 + (points.count > 1 ? 1 : 0)].pointValue;
-        NSPoint middle = NSMakePoint((a.x + b.x) / 2, (a.y + b.y) / 2);
-        NSSize text = SPDFMarkdownDiagramMeasureText(edge.label, fonts.small, 150 * scale);
-        NSRect chip = NSMakeRect(middle.x - text.width / 2 - 4, middle.y - text.height / 2 - 2, text.width + 8,
-                                 text.height + 4);
-        [canvas addRect:chip
-                 radius:4
-                   fill:SPDFMarkdownDiagramRolePaper
-                 stroke:SPDFMarkdownDiagramRoleNone
-                  width:0];
-        [canvas addText:edge.label
-                 inRect:NSInsetRect(chip, 4, 2)
-                   font:fonts.small
-                   role:SPDFMarkdownDiagramRoleSecondary
-              alignment:NSTextAlignmentCenter];
-    }
-}
-
 // One complete measure+layout attempt at a given label wrap. Leaves the node
 // frames in CONTENT space (the diagram margin is folded in by the caller, once,
 // for the attempt that actually wins) and reports the natural size the attempt
@@ -435,7 +288,7 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGraph(SPDFMarkdownDiagramGra
         node.frame = NSOffsetRect(node.frame, margin, margin);
 
     SPDFMarkdownDiagramCanvas* canvas = [SPDFMarkdownDiagramCanvas new];
-    for (SPDFMarkdownDiagramEdge* edge in graph.edges) SPDFDiagramAddEdge(canvas, edge, graph, fonts, scale);
+    SPDFMarkdownDiagramEmitGraphEdges(canvas, graph, fonts.small, scale);
     for (SPDFMarkdownDiagramNode* node in graph.nodes) SPDFDiagramAddNode(canvas, node, graph, fonts, scale);
     return SPDFMarkdownDiagramFinishLayout(canvas, natural, contentBox);
 }
