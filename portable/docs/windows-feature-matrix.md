@@ -1,8 +1,9 @@
 # Windows Feature Matrix — every shipped feature vs. `portable/win/` today
 
-Audited 2026-09-02 against `5677cc628`; **re-audited 2026-09-03 against HEAD
-`ca130cde3`** (branch `master`) after the parity wave of seven tracks, a wiring
-pass and a documentation pass landed. Companion to
+Audited 2026-09-02 against `5677cc628`; re-audited 2026-09-03 against
+`ca130cde3` after the parity wave of seven tracks; **re-audited again against
+HEAD `142e19a75`** (branch `master`) after the second wiring pass and the
+annotations track. Companion to
 `windows-native-observations.md` (§9 names the wave, §2.1/§7 are now its
 historical record) and `windows-port-handoff.md` (§1.4 original ledger);
 **where those disagree with this file, this file is newer and was checked
@@ -26,13 +27,15 @@ re-ask.
 
 Two facts about the checkout that change how to read this file:
 
-- **The parity wave moved most of the table.** Eight first-parent merges
-  between `731606aae` and HEAD (`git log --merges --first-parent`) took the port
-  from "the chrome draws" to "most of the reader works": Markdown `32e4271c9`,
-  search `2a1a452d8`, docs/state `76a51bbb1`, window `a9348b0b3`, shell
-  `68bb691b6`, tools `5b224fd11`, launch `03fa9f15a`, wiring `8d6524b7f`, docs
-  `7c5334f58`. The 2026-09-02 audit's counts (DONE 17 · PARTIAL 18 · MISSING 19)
-  described the tree before six of those.
+- **The parity wave moved most of the table.** Ten first-parent merges between
+  `731606aae` and HEAD (`git log --merges --first-parent`) took the port from
+  "the chrome draws" to "the reader works": Markdown `32e4271c9`, search
+  `2a1a452d8`, docs/state `76a51bbb1`, window `a9348b0b3`, shell `68bb691b6`,
+  tools `5b224fd11`, launch `03fa9f15a`, wiring `8d6524b7f`, docs `7c5334f58`,
+  then **wiring2 `71844ceda`** (the launch patch applied, the Markdown pill, and
+  five defects the first pass had found and left) and **annotations
+  `142e19a75`**. The 2026-09-02 audit's counts (DONE 17 · PARTIAL 18 · MISSING
+  19) described the tree before eight of those.
 - **`26.9.2-1` is on `master` now.** The earlier audit's "*(origin only)*"
   caveat is gone: `releases/26.9.2-1.md` exists at HEAD and the readme says
   "Latest 26.9.2-1". Rows that were qualified by it are plain rows again.
@@ -41,12 +44,13 @@ Two facts about the checkout that change how to read this file:
 
 | Check | Result |
 |---|---|
-| `run-tests-native.sh --list` | exit 0, **87 cases** printed, plus `launch.budget`, which the case dispatch runs but `--list` does not print (`LAUNCH_NATIVE_CASES` is never echoed — a harness gap, not a missing case): **88 cases** |
+| `run-tests-native.sh --list` | exit 0, **92 cases** — and `launch.budget` is among them now, so the harness gap the last pass filed as (c) item 14 is closed |
+| `annot-differential-native.cmd` (vs section 1 of `spdf_annot.c`) | exit 0 — **10,139 comparisons, 0 differ** |
 | `palette-differential-native.cmd` (vs `spdf_palette.c` under `SPDF_PALETTE_TESTING`) | exit 0 — **24,494 comparisons, 0 mismatches** |
 | `sidebar-differential-native.cmd` (vs `spdf_sidebar_internal.h`) | exit 0 — **15,203 comparisons, 0 differ** |
 | `watcher-differential-native.cmd` (vs `spdf_watcher_logic.c`) | exit 0 — **69,925 comparisons, 0 mismatches** |
 | `minimap-differential-native.cmd` (geometry **+ the new input policy**) | exit 0 — **181,823 comparisons, all identical** (was 131,503 before `a22c17cb4` folded `spdf_win_search_map_input.h` in) |
-| Every file and test named in a DONE below | present in `git ls-files portable/win/src` (183 files) and, for tests, in `--list` |
+| Every file and test named in a DONE below | present in `git ls-files portable/win/src` (195 files) and, for tests, in `--list` |
 | `qpdf` on this box | **absent** from PATH, `where qpdf`, and the winget links dir — so `core.SPDFCorePasswordTests` is **still BLOCKED here**, unchanged from the 2026-09-02 audit |
 | OCR/translation toolchains on this box | **present**: Tesseract 5.4.0.20240606 under `%ProgramFiles%\Tesseract-OCR`, and `%USERPROFILE%\.shenzhenpdf\{argos,tesseract}` — the tools track's end-to-end installs are real on this machine |
 | Live-window criteria, the full suite, and the six PDF differentials | **not re-run here** (a full run needs a build and would steal focus from the user's own instance). Carried from the 2026-09-02 audit — 56 cases, 48 passed, 0 failed, 8 blocked — and from `windows-native-observations.md` §0/§4.6 (`verify-phase1.ps1` 7/7 light and dark) and `portable/docs/windows-captures/` |
@@ -85,7 +89,7 @@ port. "TF" marks a toolkit-free original.
 | Window: 1120×800 default, 560×380 minimum, tab strip inside the title bar, drawn caption buttons, double-click title bar maximises, "`<name> - Shenzhen PDF`" | 26.6.17-1 / 26.8.27-1 | ✓ | ✓ | **DONE** | `initial_client_size`, `WM_GETMINMAXINFO`, `spdf_win_window_caption.h` (`chrome_nc_test` 5,552 hit checks, `chrome_caption_paint_test`) | Cosmetic leftovers in observations §7.1. The opening size now also comes from the session (`spdf_win_session_app.h`) |
 | Clicking a tab focuses the window; Ctrl+scroll zooms an unfocused window | 26.9.1-2 | ✓ | n/a | **DONE** | `SetFocus` on every `WM_LBUTTONDOWN` (`spdf_win_window.cpp` window_proc) | macOS-specific fix; Windows never had the bug |
 | Password-protected PDFs: secure prompt, retry, cancel, no persistence | 26.8.27-1 | ✓ | ✓ | **DONE** | `spdf_win_password.{cpp,h}` (the Win32 dialog) over `spdf_win_password_flow.h` ← GTK `spdf_password_lifecycle.c` + `spdf_password_controller.c` (TF); `password_test`, `password_flow_test`. **Wired at the one open site** by the wiring pass: `spdf_win_tabs_open.h` prompts as often as the flow allows and returns EMPTY on cancel (`3aa1a806b`, `e5d8f3f62`) | `core.SPDFCorePasswordTests` is **still BLOCKED on this box** — `qpdf` is absent, so the encrypted fixtures cannot be built. The Windows half is pinned by its own two suites; the core half is unverified natively |
-| Annotations: highlights, text comments, edit/delete, comment author, Comments sidebar, click-to-edit markers, hover preview | 26.6.17-1 | ✓ | ✓ | **MISSING** | Core API exists (`spdf_load_comments`, `spdf_add_highlight_comment`, `spdf_add_text_comment`, `spdf_update_comment`, `spdf_delete_comment`) and **no file in `portable/win/src` calls any of it**. The Comments section resolves to the empty state; the segmented control is clickable now, so only the content is absent. Port GTK `spdf_annot.c` (1,301), `spdf_sidebar.c` comments half; mac `ShenzhenPDFMac.mm` | **A track is in progress on this as of 2026-09-03.** Also blocks the Properties "Comments" count (passed as 0) and is the readme's named "largest gap that remains" |
+| Annotations: highlights, text comments, edit/delete, comment author, Comments sidebar, click-to-edit markers, hover preview | 26.6.17-1 | ✓ | ✓ | **DONE** | `spdf_win_annot_model.h` ← section 1 of GTK `spdf_annot.c` (TF) — **annot differential 10,139/0 this audit** — under `spdf_win_annot.{h,cpp}` (the core calls), `spdf_win_annot_marks.h`, `spdf_win_chrome_annot_ui.h` (pointer, badge, tooltip), `spdf_win_cmd_annot.h` (the command arms) and `spdf_win_annot_dialog.{h,cpp}`; `annot_model_test`, `annot_comments_test`, `annot_overlay_test`. **Highlight Selection** Ctrl+Shift+H and **Add Comment** Ctrl+Shift+M on the Edit menu (`spdf_win_menu_table.h:124,126`), edit on a badge click, **Delete/Backspace over a marker** (bare, `:129,171`), **Set Author for Comments…** persisted as `"commentAuthor"` (`spdf_win_settings.h:101`); **Comments sidebar** with a `Page N` header per page and `author: text` rows (`spdf_win_annot.h:97-102`); markers and the list are in the headless compose (`52852448d`); **Properties now shows the real count** (`spdf_win_cmd_annot.h:54 spdf_win_annot_count`, no longer 0). `142e19a75` | **Caveats**: the dialogs, the hover tooltip and the right-click menu were **not exercised live** — the workstation was locked for the track, and modal windows cannot be driven there. **Comments are grouped by page where GTK's and macOS's lists are flat** — the Search section's grouping rule reused over pages rather than chapters; a deliberate divergence, not an oversight |
 | Page rotate clockwise / anticlockwise (Cmd+R) | 26.6.17-1 | ✓ | ✓ | **DONE** | `SPDF_WIN_CMD_ROTATE_CW`/`_CCW` → `cmd_search_rotate(a, ±90)` (`spdf_win_cmd_search.h:81`), Ctrl+R / Ctrl+Shift+R in the menu table (`:94,95`), `menu_test` | Markdown rotation (26.9.2-1) is a Markdown-family item |
 | Type anywhere to search; select text then Cmd+F seeds the query; Cmd+V searches the clipboard | 26.6.17-1 / 26.7.17-1 | ✓ | ✓ | **DONE** | `chrome_char` with no field focused starts a search through `chrome_type_to_search` ← `documentTypeToSearchKeyDown` (`spdf_win_chrome_typing.h:100-116`, declines control characters and a document-less window); `SPDF_WIN_CMD_FIND` seeds from the selection; `SPDF_WIN_CMD_PASTE_SEARCH` trims and collapses the clipboard (`spdf_win_cmd_search.h:24,76`); `chrome_field_input_test`, `find_overlay_test`, `menu_test` (`5e0afbe7b`, `b5659edc9`) | |
 | macOS-only File-menu extras: Open in Adobe Acrobat Reader, Delete All Text…, Replace Line Breaks When Copying, Set Author for Comments… | 26.6.17-1 | ✓ | Copy Path only | **MISSING** | Core `spdf_delete_all_text` exists; the rest is shell work. Not in the readme's feature list | **Open Path… (Ctrl+Shift+O) is no longer on this list** — it shipped in `85ba7fad5`. The remainder is low value; listed for completeness |
@@ -94,7 +98,7 @@ port. "TF" marks a toolkit-free original.
 
 | Feature | First shipped | macOS | Linux | Windows | Evidence / where the original lives | Notes |
 |---|---|---|---|---|---|---|
-| Markdown reader family: GFM typography, tables, code boxes + 31-language highlighting + in-place picker, sanitized README HTML, Mermaid/js-sequence/flowchart diagrams with selectable labels, LaTeX math, local + remote images with cache, Obsidian dark palette, A−/A＋ text size, chapters/map/search/selection parity, Save as PDF / Print / Copy Page, translate selection, type-to-search | 26.8.27-1 → 26.9.2-1 | ✓ | **✗** (readme tags macOS; 0 refs in gtk4) | **PARTIAL** | **The route is md4c → HTML → MuPDF's own HTML engine**, not a transcription of the 18,138-LOC AppKit reader — the spike, the fidelity measurements and the phased plan are `windows-markdown-design.md` (`7526f1d6b`). `portable/core/spdf_markdown*.c` + `spdf_win_md*` open `.md` as pages at every open site through `spdf_win_open_document` → `spdf_win_md_open_any` (tab model, render workers, search, thumbnails, links, print, headless, rotation); A−/A＋ on the View menu (Ctrl+Alt+−/=, persisted as `markdownFontScale`, `spdf_win_md.h:52`); Save As / Save Page As / Copy Page through `spdf_export_pdf`; remote images fetched to a cache and re-shown. `SPDFCoreMarkdownTests`, `markdown_core_test`, `markdown_open_test`, `md_win_test`; captures **03–06**. Missing, each with its supplement designed in §3 of that doc: **native diagrams** (phase D — port the 7 parsers to C emitting SVG), the **in-place language picker and code copy button** (phase C — a Direct2D overlay), **WebP** (phase C — transcode through WIC), and the **toolbar A−/A＋ pill** (the keys exist; the pill is the second wiring pass) | Plan §3/§4 Phase 8 called this "a separate project", 4–8 multi-agent days. The MuPDF route cost days, not weeks, and the readme now describes it by its actual route rather than crediting the macOS feature list |
+| Markdown reader family: GFM typography, tables, code boxes + 31-language highlighting + in-place picker, sanitized README HTML, Mermaid/js-sequence/flowchart diagrams with selectable labels, LaTeX math, local + remote images with cache, Obsidian dark palette, A−/A＋ text size, chapters/map/search/selection parity, Save as PDF / Print / Copy Page, translate selection, type-to-search | 26.8.27-1 → 26.9.2-1 | ✓ | **✗** (readme tags macOS; 0 refs in gtk4) | **PARTIAL** | **The route is md4c → HTML → MuPDF's own HTML engine**, not a transcription of the 18,138-LOC AppKit reader — the spike, the fidelity measurements and the phased plan are `windows-markdown-design.md` (`7526f1d6b`). `portable/core/spdf_markdown*.c` + `spdf_win_md*` open `.md` as pages at every open site through `spdf_win_open_document` → `spdf_win_md_open_any` (tab model, render workers, search, thumbnails, links, print, headless, rotation); A−/A＋ on the View menu (Ctrl+Alt+−/=, persisted as `markdownFontScale`, `spdf_win_md.h:52`); Save As / Save Page As / Copy Page through `spdf_export_pdf`; remote images fetched to a cache and re-shown; the **toolbar A−/A＋ pill** is now there too (`SPDF_WIN_TB_MD_TEXT_PILL`, placed only for Markdown tabs, `spdf_win_chrome_toolbar.h:110,223`, routed in `spdf_win_chrome_toolbar_route.h:44`, `toolbar_route_test`, `47d7f4b81`). `SPDFCoreMarkdownTests`, `markdown_core_test`, `markdown_open_test`, `md_win_test`; captures **03–06**. **Three reasons remain for the PARTIAL**, each with its supplement designed in §3 of that doc: **native diagrams** (phase D — port the 7 parsers to C emitting SVG), the **in-place language picker and code copy button** (phase C — a Direct2D overlay over the `<pre>` blocks), and **WebP** (phase C — transcode through WIC) | Plan §3/§4 Phase 8 called this "a separate project", 4–8 multi-agent days. The MuPDF route cost days, not weeks, and the readme now describes it by its actual route rather than crediting the macOS feature list |
 | Markdown pagination identical to macOS (same page breaks, same line fragments) | — | — | — | **N/A-BY-DESIGN** | `windows-port-plan.md` §3 "(b)", `portable/mac/markdown/README.md:28-45`, handoff §4: TextKit's fragment boundaries define the coordinate space; parity means same content/styling/features, internally consistent coordinates, **not** the same page breaks | Product decision already taken; do not relitigate |
 
 ### Search & map
@@ -123,7 +127,7 @@ port. "TF" marks a toolkit-free original.
 | Snappy rendering: visible page first at high priority, neighbours warm up, cached display lists, crop-to-viewport, stale renders abort in ms, instant tab switch (inactive tabs pre-warmed) | 26.6.17-1 | ✓ | ✓ | **PARTIAL** | Done: worker pool with priorities, coalescing, cancellation, callback-exactly-once (`spdf_win_render.c`, `render_service_test`), byte-capped LRU (`lru_cache_test`), neighbour prefetch (`spdf_win_canvas_prefetch.cpp`). Missing, both unchanged: the **visible page still renders synchronously on the UI thread** — a documented and defended asymmetry (`spdf_win_canvas.cpp:16-32`: no frame can ever have a hole in it, and `--render-window-png` stays deterministic, which is the only evidence the port is correct); and **one canvas per process, so inactive tabs are never warmed** (mac `SPDFMacInactivePreload.mm` 124, `SPDFMacLaunchWorkPolicy.mm` 323, TF) | The launch track's answer is not "make it async" but **prerender the first page while the GPU device is being made** (`windows-launch-performance.md` §5 item 2, exact by construction because a DPI mismatch is just a cache miss). `spdf_win_gpu_prewarm.h` exists for exactly that; the readme still does not credit Windows here, correctly |
 | MuPDF 1.27.2 statically linked behind the portable core; render byte-identical to macOS | 26.6.17-1 | ✓ | ✓ | **DONE** | Nine core suites registered, eight runnable natively (`SPDFCorePasswordTests` needs qpdf); ARM64↔ARM64 byte identity measured (handoff §1.3); `d2d.compose-*` byte-identical, and the launch track's GPU prewarm was gated on seven headless frames being byte-identical to the baseline | **x64↔ARM64 identity is unmeasured** (observations §1) — the 7 cross-host cases plus `d2d.window-dark` stay BLOCKED without a Mac or committed references |
 | Far more than PDF: XPS, CBZ/comics, EPUB/MOBI, images, FB2, HTML | 26.6.17-1 | ✓ | ✓ | **DONE** (core) | A generated CBZ renders through the Windows exe (`--render-png` exit 0, 675×525) and stays un-recoloured in `--dark`; open-dialog filter lists all formats | No EPUB/XPS/MOBI fixture exists in the repo, so those were not exercised on any platform's test suite |
-| Launches instantly; Linux resident mode | 26.6.17-1 | ✓ | ✓ (resident) | **PARTIAL** | **MEASURED**, which is what the 2026-09-02 audit demanded before any claim: `windows-launch-performance.md`, medians of 7 warm launches from the kernel's process-creation time — **window visible 37–49 ms** (bar: 100), **first page 178–281 ms warm** (bar: 150), of which **D3D device creation is 79–117 ms** and dominates; **cold 872 ms, once per binary identity** because the AMD driver keys its shader cache on the exe. Tooling committed: `spdf_win_launch_profile.h`, `measure-launch.ps1`, `make_launch_fixtures.py`, and a **`launch.budget` case** in the suite (300/600 ms tripwire, BLOCKED on a locked workstation). Landed: GPU prewarm on a worker (`spdf_win_gpu_prewarm.h`), lazy WIC factory, fast RGBA→BGRA swizzle. **Not yet on the launch path**: `spdf_win_gpu_prewarm_start()` has zero callers, and paint-before-`ShowWindow` + scene-before-target is a patch (`windows-launch-profile.patch`) for the windows track — measured at **−30 to −32 %** (217→151, 242→164, 264→179 ms) and landing in the second wiring pass | Resident mode is N/A-BY-DESIGN: plan §3 reason 1 (the Win32 empty-window floor is single-digit ms; the resident process was GTK's cure). Observations §4.8's "launch is ~50 ms" measured `ShowWindow`; the client area stayed blank for another 130–230 ms behind it |
+| Launches instantly; Linux resident mode | 26.6.17-1 | ✓ | ✓ (resident) | **DONE** | **MEASURED, then fixed, then measured again** — `windows-launch-performance.md` §2 for the baseline, §8 for the state after the second wiring pass (`71844ceda`), medians of 7 warm launches from the kernel's process-creation time. Today: **first page 142 ms (outline.pdf) / 157 ms (golden.pdf) / 131 ms bare** against a 150 ms bar, down from 178/199. The window is **painted before `ShowWindow`** (`spdf_win_window_lifecycle.h:110-131`, `pre-show-paint-done` precedes `show-window-returned` in every run), so the **130–230 ms blank client is zero by construction**, not by measurement. The Direct2D device is created on a worker before the first paint needs it (`spdf_win_gpu_prewarm.h`, now called from `spdf_win_main.cpp:298`), which takes the UI thread's `CreateHwndRenderTarget` from 79–117 ms to **0.4 ms**; the synchronous page render then finishes at 73 ms, 45 ms *before* the device is ready, so on this build the document costs the launch nothing. Also landed: lazy WIC factory, fast RGBA→BGRA swizzle. Tooling: `spdf_win_launch_profile.h`, `measure-launch.ps1`, `make_launch_fixtures.py`, and a **`launch.budget` case** (300/600 ms tripwire). **Cold is still 872 ms, once per binary identity** — the AMD driver keys its shader cache on the exe and Defender scans a never-seen 40 MB file | **Caveat**: `launch.budget` and the external first-pixels sampler are **BLOCKED while the workstation is locked** — the desktop is not composited then, so §8's numbers are the in-process timeline, which needs none. The **trade-off is deliberate and argued** (§5 item 1): the window now appears at ~145 ms *complete* rather than at ~40 ms empty, because a window that fills in later reads as "loading". Resident mode is N/A-BY-DESIGN: plan §3 reason 1 (the Win32 empty-window floor is single-digit ms; the resident process was GTK's cure) |
 
 ### Files, printing & updates
 
@@ -150,11 +154,31 @@ port. "TF" marks a toolkit-free original.
 | Shenzhen Files as the automatic file manager (Show in Folder reveals there; Settings ▸ File Manager) | 26.8.27-1 / 26.8.31-1 | ✓ | ✗ | **N/A-BY-DESIGN** | macOS-only product (readme tags `macOS`; `SPDFMacFileExplorerPreference.mm`) | The Windows form is plain Explorer reveal (row above) |
 | Developer ID signing, hardened runtime, notarization, DMG; "Set Up Permissions…" wizard; security-scoped bookmarks | 26.6.17-1 | ✓ | n/a | **N/A-BY-DESIGN** | Apple platform mechanics. Windows counterpart (Authenticode, installer) belongs to the updater/release row | |
 | App icon, taskbar identity, `.pdf` file association | 26.8.27-1 (new icon) | ✓ | ✓ | **DONE** | `spdf_win.rc`, `spdf_win.ico` and a per-monitor-v2 `spdf_win.manifest` with a version block compiled into the exe (`04425ade3`); the AppUserModelID and the window icons applied after the show (`spdf_win_about_apply_identity`, `b9f3fb6fb`); the `.pdf` ProgID registered by `spdf_win_assoc` (`85ba7fad5`); `about_test`, `assoc_test` | Artwork exists in `portable/mac/Assets.xcassets`. Not yet observed live, but the resource, manifest and registry shapes are pinned |
-| Native build + headless test harness for the frontend | — | ✓ | ✓ | **DONE** | `build-native.cmd`, `run-tests-native.sh` (**88 cases**), **nine** `*-differential-native.cmd`, `measure-launch.ps1`, `verify-phase1.ps1`, `screenshot-window.ps1`, `drive-window.ps1` | 8 cases permanently BLOCKED off a Mac until reference PNGs are committed (7 cross-host + `d2d.window-dark`, whose Windows-internal substitute `d2d.compose-window-dark` proves strictly less; observations §3.2, §7.6) |
+| Native build + headless test harness for the frontend | — | ✓ | ✓ | **DONE** | `build-native.cmd`, `run-tests-native.sh` (**92 cases**, and `--list` now prints all of them — see (c) item 14), **ten** `*-differential-native.cmd`, `measure-launch.ps1`, `verify-phase1.ps1`, `screenshot-window.ps1`, `drive-window.ps1` | 8 cases permanently BLOCKED off a Mac until reference PNGs are committed (7 cross-host + `d2d.window-dark`, whose Windows-internal substitute `d2d.compose-window-dark` proves strictly less; observations §3.2, §7.6). `launch.budget` is BLOCKED on a locked workstation |
 | A published Windows binary / installer | — | ✓ | ✓ | **MISSING** | readme: "there is no published Windows binary or installer yet" — still true | Gate for the updater's install path and the last unproven half of the default-reader row |
 
-**Counts (57 rows above): DONE 43 · PARTIAL 8 · MISSING 3 · N/A-BY-DESIGN 3.**
-Was DONE 17 · PARTIAL 18 · MISSING 19 · N/A 3 on 2026-09-02.
+**Counts (57 rows above): DONE 45 · PARTIAL 7 · MISSING 2 · N/A-BY-DESIGN 3.**
+Was DONE 43 · PARTIAL 8 · MISSING 3 earlier on 2026-09-03, before the
+annotations and wiring2 tracks; DONE 17 · PARTIAL 18 · MISSING 19 · N/A 3 on
+2026-09-02. The two MISSING rows are the macOS-only File-menu leftovers (low
+value, listed for completeness) and **a published Windows binary**, which is the
+only one that gates anything else.
+
+The seven PARTIALs split, which is the useful thing to know about them. **Two
+wait on something outside the tree**: Save As… on an unlocked session to show
+its dialog once, and the updater on a signed release plus its thumbprint. **Five
+are in-tree work with the hard part already done**: cross-window reattach
+(cross-process DnD, the geometry long since transcribed), the links
+named-destination y (`link_test` already pins which way up it is), Markdown's
+diagrams, language picker and WebP (each with a supplement designed in
+`windows-markdown-design.md` §3), the first-page prerender during device
+creation plus inactive-tab warming, and the Settings **menu** over a settings
+model that is already complete.
+
+Three DONE rows carry a live-verification caveat rather than a clean bill — the
+Open and Save pickers, the print job end to end, and the annotations dialogs,
+tooltip and context menu. All four need an unlocked session, and gap 16 is where
+they are tracked together.
 
 ## (a) Gap list, ranked by user impact
 
@@ -162,7 +186,7 @@ Kept whole so the history can be checked; items the wave closed are marked
 **done** with the commit that did it. Each open line: what · size · port from.
 "TF" = toolkit-free original to transcribe and differentially test.
 
-1. ~~**Markdown reader family**~~ — **done (partly) — `32e4271c9`, `0fedc5950`.** Not by porting the 18,138 LOC: `windows-markdown-design.md` chose md4c → HTML → MuPDF's HTML engine. **Open**: native diagrams (phase D), the in-place language picker and code copy button (phase C), WebP (phase C), the toolbar A−/A＋ pill (second wiring pass).
+1. ~~**Markdown reader family**~~ — **done (partly) — `32e4271c9`, `0fedc5950`**, and the toolbar A−/A＋ pill **done — `47d7f4b81`**. Not by porting the 18,138 LOC: `windows-markdown-design.md` chose md4c → HTML → MuPDF's HTML engine. **Open**: native diagrams (phase D), the in-place language picker and code copy button (phase C), WebP (phase C).
 2. ~~**Escape closes the window**~~ — **done — `24b940e26`**, one line, pinned by `window_keys_test`. It now leaves full screen or does nothing.
 3. ~~**Search results sidebar + section switching**~~ — **done — `a22c17cb4`** (`spdf_win_sidebar_results.h`, differential 15,203/0), **`5e0afbe7b`**, **`b5659edc9`** (the segmented control is clickable).
 4. ~~**Match navigation**~~ — **done — `95f1b1433`, `5e0afbe7b`**: scroll-to-rect centred, nearest-match wired to its setting, type-anywhere, Ctrl+F seeds from the selection, Ctrl+V paste-to-search.
@@ -172,26 +196,27 @@ Kept whole so the history can be checked; items the wave closed are marked
 8. ~~**Session fidelity**~~ — **done — `c8c8ed557`, `c15359ac9`**: fit-mode round trip, scroll replay, `searchText`, window `frame`, periodic save; `session_frame_test`.
 9. ~~**Recents / reopen closed / favorites / Cmd+K palette**~~ — **done — `54b9f9a64`, `f30842fdb`, `5223c3855`** (differential 24,494/0). **Open**: the "Text in Open Documents" section, deliberately deferred — it is the one section needing a worker thread per query.
 10. **Multi-window** (PARTIAL): New Window and tear-off are **done — `c15359ac9`**, the drop indicator **done — `1854a0344`**. **Open: cross-window reattach** — dragging a tab into another window is cross-process DnD, and it is the last piece of the tab story. Medium.
-11. **Annotations + Comments sidebar** (MISSING) — medium-large; core API exists and no Windows file calls it; GTK `spdf_annot.c` (1,301), `spdf_sidebar.c`. **A track is in progress as of 2026-09-03.** The readme names it the largest remaining gap.
+11. ~~**Annotations + Comments sidebar**~~ — **done — `142e19a75`** (`e91a41118`, `52852448d`, `2a05b0510`): the model transcribed from `spdf_annot.c` §1 and compared against it (10,139/0), markers, the Comments sidebar, add/edit/delete, the author setting, and the real comment count in Properties. It was the readme's "largest gap that remains"; it is not any more. **Open**: exercise the dialogs, the tooltip and the context menu live (rolls into item 16), and decide whether the by-page grouping should stay or match the other two frontends' flat lists.
 12. ~~**File watcher / auto-reload / read-only shadow copy**~~ — **done — `3aa1a806b`, `eb234fee0`, `e5d8f3f62`** (differential 69,925/0, `watcher_test` against the real `ReadDirectoryChangesW`).
 13. ~~**Presentation mode + Full Screen**~~ — **done — `c15359ac9`, `24b940e26`, `1854a0344`**, prevent-sleep included.
 14. ~~**Page rotate**~~ — **done — `c15359ac9`** (`SPDF_WIN_CMD_ROTATE_CW/CCW`, Ctrl+R / Ctrl+Shift+R).
 15. **Printing UI** — scaling choice and persistence **done — `574287e3e`** (`print_scaling_dialog_test`). **Open**: one recorded end-to-end job; needs a printer and an unlocked session.
-16. **Open/Save dialogs verified live** — Open Path…, Open Recent, Show in Folder, Copy Path and the start-folder policy are **done — `85ba7fad5`, `f30842fdb`**. **Open**: the pickers themselves have still never been shown; record a `drive-window.ps1` run. Small, and it is the last soft spot under two DONEs.
+16. **Modal windows verified live** — the largest remaining hole in the evidence, and now the only one that spans several rows. Open Path…, Open Recent, Show in Folder, Copy Path and the start-folder policy are **done — `85ba7fad5`, `f30842fdb`**; what has never been *shown* is the Open picker, the Save picker, the print job end to end, and the annotations dialogs, hover tooltip and right-click menu (`142e19a75`). Every one needs an unlocked, composited session — the same condition that blocks `launch.budget` and the first-pixels sampler — so one recorded `drive-window.ps1` run would firm up four DONEs and a PARTIAL at once. Small work, high value.
 17. **Auto-updater** (PARTIAL) — implemented and tested offline, **`19347e4ed`, `fd5bc37a7`, `b9f3fb6fb`**. **Open, both external**: a published signed binary, and setting `k_spdf_win_pinned_thumbprint` (empty today, fails closed).
 18. ~~**OCR**~~ — **done — `d52fadc22`, `1c5b5ddf3`, `443ee4603`**: winget Tesseract + pip OCRmyPDF, no Ghostscript, proven end to end on this machine.
 19. ~~**Translation**~~ — **done — `d52fadc22`, `443ee4603`**: Argos in a venv under `%USERPROFILE%\.shenzhenpdf`.
 20. ~~**Default reader + file association + icon/taskbar identity**~~ — **done — `04425ade3`, `85ba7fad5`, `b9f3fb6fb`** (`assoc_test`, `about_test`).
 21. ~~**Shortcuts cheat sheet + About + Check for Updates entry**~~ — **done — `85ba7fad5`, `0ea630a38`, `19347e4ed`**; the sheet is generated from the menu table.
-22. **Render pipeline** (PARTIAL) — the launch track measured where the time actually goes and landed the unowned half (`a9f3bd79f`). **Open**: the first page is still rendered synchronously on the UI thread, and inactive tabs are never warmed. The next step is not "make it async" but §5 item 2 of `windows-launch-performance.md` — prerender the first page while the GPU device is being made — plus applying `windows-launch-profile.patch` (paint before `ShowWindow`, scene before target, measured at −30 %), which needs `spdf_win_window.cpp` split first (469 lines, cap 500, the patch adds ~52). Medium.
+22. **Render pipeline** (PARTIAL) — the launch track measured where the time goes and landed the unowned half (`a9f3bd79f`); the second wiring pass landed the rest — **prewarm now called and paint-before-`ShowWindow` done — `21a7beba3`** (`spdf_win_window.cpp` was split, `spdf_win_window_lifecycle.h`, so the cap held). First page 178 → **142 ms**, `CreateHwndRenderTarget` 79–117 → **0.4 ms**, blank client → zero. **Open**: prerender the first page *during* device creation (§5 item 2 — the 45 ms of idle wait the §8 numbers now expose), and warm inactive tabs. The visible page staying synchronous is deliberate and defended (`spdf_win_canvas.cpp:16-32`), so this is about filling the wait, not making it async. Small-medium now.
 23. ~~**Regex multiline toggle**~~ — **done — `c15359ac9`**: default on, menu item with a check mark.
 24. ~~**Tab polish**~~ — **done — `7ea160612`, `1854a0344`, `e5d8f3f62`**: same-name disambiguation (`tabs_names_test`), read-only dot, hover preview, unselected-tab hairline.
 25. ~~**Sidebar auto-hide**~~ — **done — `5e0afbe7b`** (`spdf_win_sidebar_effective_visible`, read by both the scene and the input router).
-26. ~~**Measure launch time**~~ — **done — `f5cf22f72`, `9ba76d658`, `c046d4c69`**: window 37–49 ms, first page 178–281 ms warm, cold 872 ms once per install, plus a `launch.budget` tripwire. See item 22 for what the numbers ask for.
+26. ~~**Measure launch time**~~ — **done — `f5cf22f72`, `9ba76d658`, `c046d4c69`**, and **re-measured after the fix — `21a7beba3`** (`windows-launch-performance.md` §8): first page 142 ms, cold 872 ms once per install, plus a `launch.budget` tripwire. See item 22 for the one thing the numbers still ask for.
 27. ~~**Text-URL hover hand**~~ — **done — `95f1b1433`** (the off-thread region build both originals have, `link_test`).
 28. **Links: the named-destination y** (PARTIAL) — an internal jump lands at the top of the page. Tiny: `link_test` already pins which way up `fz_resolve_link`'s y is, and `spdf_win_links.h:163-174` warns not to borrow the outline code's flip. Also open: delayed external activation (`SPDFMacDelayedLinkActivation.mm`, 35, TF).
 29. **`d2d.window-dark`** — permanently BLOCKED off a Mac. Commit reference PNGs, or accept that `d2d.compose-window-dark` proves strictly less (observations §3.2).
 30. **A published Windows binary** (MISSING) — the gate for items 15's sibling and 17.
+31. **Close Other Tabs is never greyed** — cosmetic. `d9496ee46` gave it the handler it had been drawn without, but `spdf_win_menu_command_enabled` has no arm for `SPDF_WIN_CMD_CLOSE_OTHER_TABS`, so it falls to `default: return 1` and stays live with one tab or none — where `CLOSE_TAB` beside it is gated on `st->can_close_tab`. One case in a pure function that `menu_test` already covers.
 
 ## (b) readme claims the Windows build now satisfies but is not credited for
 
@@ -217,7 +242,8 @@ Still to change, now that the wave has landed:
 - `Snappy native rendering` <sub>macOS · Linux</sub> → still correct to withhold: the visible page is synchronous and inactive tabs are not warmed.
 - **Markdown, read like a document** <sub>macOS</sub> → the section heading still excludes Windows while the platform paragraph below describes the Windows reader. One of the two should move.
 - The Linux parity list credits `properties panel`, `printing`, `command palette`, … — Windows now has all three. A Windows list in the same style would be honest and no longer short.
-- `portable/win/README.md` is current (rewritten native-first by the docs pass) except for its case count and LOC, which were measured on the docs branch before the wiring pass merged: **88 cases**, **44,302 LOC across 183 files** today, and `git ls-files portable/win` is **353**.
+- **Annotations** — the readme's Windows platform paragraph ends "Annotations and the Comments sidebar are the largest gap that remains." **That sentence is now false** and is the one line in the readme the annotations track obliges someone to change. The macOS annotations bullet carries no tag, so it also needs one or a Windows mention.
+- `portable/win/README.md` is current (rewritten native-first by the docs pass) except for its case count and LOC: **92 cases**, **46,966 LOC across 195 files** of `src/` and **24,493 across 93** of `tests/` today, ten differentials, and `git ls-files portable/win` is **375**. Its numbers were measured on the docs branch, three merges ago.
 
 ## (c) Release notes and documents that contradict the tree
 
@@ -235,12 +261,13 @@ Still to change, now that the wave has landed:
 
 Item 8 was closed after that note was written: `ca130cde3` replaced the deleted
 `SPDF_FIND_QUERY` bridge with the `--find` flag in the captures README, and
-`b92ac3718` described captures 03–07. Three new prose defects, all in documents
-the wave itself wrote:
+`b92ac3718` described captures 03–07. Four new prose defects, all in documents
+the wave itself wrote, and one harness gap it has since fixed:
 
-13. **`windows-native-observations.md` §9 names `find_settings_test`** among the search track's pins. It does not exist: the wiring pass deleted `spdf_win_find_settings.{h,cpp}` in `1854a0344` and folded the setting into `spdf_win_settings`. Same section says "**86** cases" and "**43,678** LOC across 178 files"; both were measured on the docs branch before the wiring pass merged, and are now 88, 44,302 and 183.
-14. **`run-tests-native.sh --list` does not print `launch.budget`.** The dispatch runs it (`:397`) but the list block never echoes `LAUNCH_NATIVE_CASES` (`:353-363`), so every document that counts cases by `--list` is one short — including §9 above and `portable/win/README.md`. One line to fix, in the harness rather than in the documents.
+13. **`windows-native-observations.md` §9 names `find_settings_test`** among the search track's pins. It does not exist: the wiring pass deleted `spdf_win_find_settings.{h,cpp}` in `1854a0344` and folded the setting into `spdf_win_settings`. Same section says "**86** cases" and "**43,678** LOC across 178 files"; those were measured on the docs branch, and are now **92**, **46,966** and **195**. §9 also stops at the seventh track and does not mention wiring2 (`71844ceda`) or annotations (`142e19a75`), which is the wave it set out to record.
+14. ~~**`--list` does not print `launch.budget`.**~~ **Fixed.** The list block now echoes `LAUNCH_NATIVE_CASES` under a length guard, so `--list` prints all **92** cases and a count taken from it is no longer one short. Every other document's case count is still stale, but for the ordinary reason.
 15. **Three stale code comments left behind by their own tracks**: `spdf_win_chrome_state.h:70` says the drop indicator "IS NOT DRAWN YET" (it is, `spdf_win_chrome_paint.cpp:396`); `spdf_win_session.h:47` lists `searchText` among "keys that this port has no feature for yet" (it round-trips and is restored on show); `spdf_win_canvas.cpp` still calls one canvas per process a `spdf_win_tabs_app.h` matter after that file was rewritten. Comment-only, no behaviour — but each is the kind of note a later reader trusts.
+16. **The readme still calls annotations the largest remaining gap** (platform paragraph). It shipped in `142e19a75`; see (b).
 
 The four surviving items from the original twelve — 4, 9, 10 and 11 — are
 unchanged and are recorded in the note above rather than repeated here.
@@ -248,18 +275,20 @@ unchanged and are recorded in the note above rather than repeated here.
 ## Appendix — reproducing this re-audit
 
 ```
-git log --merges --first-parent 731606aae..HEAD --format='%h %s'   :: the eight merges
+git log --merges --first-parent 731606aae..HEAD --format='%h %s'   :: the ten merges
 git log --no-merges <merge>^1..<merge>^2 --format='%h %s'          :: one track's commits
-bash portable/win/tests/run-tests-native.sh --list                 :: 87 + launch.budget
+bash portable/win/tests/run-tests-native.sh --list                 :: 92 cases
+wc -l portable/win/src/*.{c,cpp,h} | tail -1                       :: 46,966 over 195 files
 set SPDF_OUT=C:\spdf-build-matrix
 set SPDF_MUPDF_LIBDIR=C:\spdf-build\mupdf
+portable\win\tests\annot-differential-native.cmd                   :: 10,139 / 0
 portable\win\tests\palette-differential-native.cmd                 :: 24,494 / 0
 portable\win\tests\sidebar-differential-native.cmd                 :: 15,203 / 0
 portable\win\tests\watcher-differential-native.cmd                 :: 69,925 / 0
 portable\win\tests\minimap-differential-native.cmd                 :: 181,823 / 0
 ```
 
-The four differentials above need only MSVC, not MuPDF, so they are the cheapest
+The five differentials above need only MSVC, not MuPDF, so they are the cheapest
 real evidence in the tree. Invoke every `.cmd` **by path**: this box sets
 `NoDefaultCurrentDirectoryInExePath=1`, and from Git Bash it is `cmd //c`, never
 `cmd /c` (a bare `/c` is rewritten to `C:\`, the driver runs nothing, and the
