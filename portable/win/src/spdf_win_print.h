@@ -58,6 +58,9 @@
 
 #include "shenzhen_pdf_core.h"
 #include "spdf_win_print_math.h"
+#define SPDF_WIN_PRINT_SCALING_PURE /* the page itself is the .cpp's business */
+#include "spdf_win_print_scaling.h" /* spdf_win_print_choice */
+#undef SPDF_WIN_PRINT_SCALING_PURE
 
 #ifdef __cplusplus
 extern "C" {
@@ -95,6 +98,15 @@ int spdf_win_print_high_quality_allowed(spdf_document* doc);
 spdf_win_print_status spdf_win_print_document(HWND parent, spdf_document* doc, const wchar_t* doc_path,
                                               spdf_win_print_scaling_mode mode, double custom_scale, char* err,
                                               size_t err_len);
+
+/* The same, WITH THE SCALING PAGE: the dialog gets a "Scaling" tab preset from
+ * `choice` (spdf_win_print_scaling.h), the job prints with what the reader
+ * chose, and `choice` holds that on return -- the caller persists it as
+ * printScalingMode / printCustomScale when the status is OK. On a cancel
+ * `choice` is left as it was. This is the entry point the shell uses; the one
+ * above is for a caller that has already decided. */
+spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc, const wchar_t* doc_path,
+                                                 spdf_win_print_choice* choice, char* err, size_t err_len);
 
 /* One page onto a device context, at `paper`'s resolution, placed by the
  * arithmetic in spdf_win_print_math.h. Split out of the job loop so it can be

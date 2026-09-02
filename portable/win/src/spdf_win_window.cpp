@@ -318,6 +318,12 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
              * us; only the handle must stop being followed. */
             window->tooltip = NULL;
             spdf_win_window_prevent_sleep(0);
+            /* The last placement, for the session save that runs after the
+             * pump returns and the HWND is gone (spdf_win_window_get_frame). */
+            if (!window->fullscreen) {
+                window->placement.length = sizeof(window->placement);
+                if (!GetWindowPlacement(hwnd, &window->placement)) window->placement.length = 0;
+            }
             discard_target(window);
             window->hwnd = NULL;
             PostQuitMessage(window->exit_code);

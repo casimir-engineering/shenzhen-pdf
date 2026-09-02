@@ -32,21 +32,108 @@
  * asks for the most recently active one (:9300). Getting that argument backwards
  * would make the close box feel like a different app from Ctrl+W. */
 static int chrome_close_tab(app* a, int index) {
+    int shown;
     if (!a->tabs || index < 0) return 0;
     if (index == spdf_win_tabs_selected_index(a->tabs)) spdf_win_tabs_app_remember(a->tabs, a->canvas);
     spdf_win_tabs_close(a->tabs, index, 0);
+    /* THE LAST TAB CLOSING IS NOT THE APP QUITTING. macOS (spdf_win_tabs.h's
+     * header, from ShenzhenPDFMac.mm): the window closes when another
+     * ShenzhenPDF window exists, and otherwise stays open showing "Open a
+     * document" -- the same empty window a bare launch opens. It used to quit
+     * here, which on a one-window desktop meant Ctrl+W on the last tab was Quit.
+     * Another window means another PROCESS, and the session file is where the
+     * two know about each other. */
     if (spdf_win_tabs_count(a->tabs) == 0) {
-        PostQuitMessage(0);
+        show_selected_tab(a); /* NULL canvas: the empty window's chrome */
+        app_session_save(a);  /* removes this window from the file */
+        if (spdf_win_session_other_windows(a->window_id) > 0 && a->window)
+            PostMessageW((HWND)spdf_win_window_native_handle(a->window), WM_CLOSE, 0, 0);
         return 1;
     }
-    return show_selected_tab(a);
+    shown = show_selected_tab(a);
+    app_session_save(a);
+    return shown;
 }
 
 static int chrome_select_tab(app* a, int index) {
+    int shown;
     if (!a->tabs || index < 0 || index == spdf_win_tabs_selected_index(a->tabs)) return 0;
     spdf_win_tabs_app_remember(a->tabs, a->canvas);
     spdf_win_tabs_select_deferred(a->tabs, index);
-    return show_selected_tab(a);
+    shown = show_selected_tab(a);
+    app_session_save(a);
+    return shown;
+}
+
+/* --- ANOTHER WINDOW IS ANOTHER PROCESS -----------------------------------
+ *
+ * spdf_win_chrome_model.h states the rule -- "one window per process
+ * (multi-window is multi-process, per session.yaml's window ids)" -- and this
+ * is where it is kept. File > New Window starts a second ShenzhenPDF.exe with
+ * `--new-window` (an empty window, a fresh id); Move Tab to New Window and a
+ * tab torn off the strip write the tab into session.yaml under a new id first
+ * (spdf_win_session_detach_tab) and start the exe with `--window <id>`, which
+ * restores exactly that one. --state-dir is passed along when this process
+ * was given one, so a test's two windows share the test's file.
+ *
+ * CreateProcessW on our own image (GetModuleFileNameW), no shell, no working
+ * directory: the child needs nothing from the environment that it does not
+ * read from session.yaml. Returns 1 when the process started. */
+static int app_spawn_window(app* a, const char* utf8_window_id) {
+    wchar_t exe[MAX_PATH * 4];
+    wchar_t cmd[MAX_PATH * 8];
+    wchar_t id[SPDF_WIN_SESSION_ID_MAX];
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    int ok;
+    if (!GetModuleFileNameW(NULL, exe, (DWORD)(sizeof(exe) / sizeof(exe[0])))) return 0;
+    if (utf8_window_id && *utf8_window_id) {
+        if (MultiByteToWideChar(CP_UTF8, 0, utf8_window_id, -1, id, (int)(sizeof(id) / sizeof(id[0]))) <= 0) return 0;
+        _snwprintf_s(cmd, _TRUNCATE, L"\"%s\" --window %s", exe, id);
+    } else {
+        _snwprintf_s(cmd, _TRUNCATE, L"\"%s\" --new-window", exe);
+    }
+    if (a->state_dir[0]) {
+        size_t n = wcslen(cmd);
+        _snwprintf_s(cmd + n, sizeof(cmd) / sizeof(cmd[0]) - n, _TRUNCATE, L" --state-dir \"%s\"", a->state_dir);
+    }
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    memset(&pi, 0, sizeof(pi));
+    ok = CreateProcessW(exe, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi) ? 1 : 0;
+    if (ok) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    return ok;
+}
+
+/* Detach tab `index` into a new window. The order matters and is the mac's
+ * (:9300, -detachTabAtIndex:): the tab's view is written back if it is the one
+ * showing, the hand-over goes to disk under a new id, THIS window drops the tab
+ * and saves itself -- so the file is consistent before the child reads it --
+ * and only then is the child started. Closing the detached tab asks for the
+ * MOST RECENTLY ACTIVE survivor, not the adjacent one: that is the one place
+ * spdf_win_tabs_close's second argument is 1. A window with one tab does not
+ * detach it; that would be two windows where the reader had one. */
+static int chrome_detach_tab(app* a, int index) {
+    spdf_win_session_frame frame;
+    char new_id[SPDF_WIN_SESSION_ID_MAX];
+    if (!a->tabs || index < 0 || index >= spdf_win_tabs_count(a->tabs) || spdf_win_tabs_count(a->tabs) < 2) return 0;
+    if (index == spdf_win_tabs_selected_index(a->tabs)) spdf_win_tabs_app_remember(a->tabs, a->canvas);
+    /* The new window opens the size of this one, cascaded a little, so it is
+     * visibly a second window and not this one moved. */
+    frame = app_session_frame(a);
+    if (frame.w > 0) {
+        frame.x += 40;
+        frame.y += 40;
+    }
+    if (!spdf_win_session_detach_tab(a->tabs, index, &frame, new_id, sizeof(new_id))) return 0;
+    spdf_win_tabs_close(a->tabs, index, 1);
+    show_selected_tab(a);
+    app_session_save(a);
+    app_spawn_window(a, new_id);
+    return 1;
 }
 
 /* OPEN A DOCUMENT IN A NEW TAB. A path already open selects its tab instead of
@@ -63,13 +150,15 @@ static int chrome_open_wide(app* a, const wchar_t* wpath) {
     utf8 = utf8_from_wide(wpath);
     if (!utf8) return 0;
     index = spdf_win_tabs_index_of_path(a->tabs, utf8);
-    if (index < 0) index = spdf_win_tabs_append(a->tabs, utf8, NULL);
+    if (index < 0) index = spdf_win_tabs_app_append(a->tabs, utf8); /* fit width, like the launch document */
     free(utf8);
     if (index < 0) return 0; /* at SPDF_WIN_TABS_MAX, or out of memory */
     if (index == spdf_win_tabs_selected_index(a->tabs)) return 0;
     spdf_win_tabs_app_remember(a->tabs, a->canvas);
     spdf_win_tabs_select_deferred(a->tabs, index);
-    return show_selected_tab(a);
+    index = show_selected_tab(a);
+    app_session_save(a); /* a new tab is worth remembering before exit */
+    return index;
 }
 
 /* GIVE THE MOUSE BACK BEFORE OPENING ANYTHING MODAL.

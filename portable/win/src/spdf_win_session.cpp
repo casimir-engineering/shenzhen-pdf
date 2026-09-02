@@ -356,3 +356,22 @@ int spdf_win_session_detach_tab(const spdf_win_tabs* tabs, int index, const spdf
     snprintf(out_new_id, out_len, "%s", id);
     return 1;
 }
+
+int spdf_win_session_other_windows(const char* window_id) {
+    char* json = spdf_win_state_read_json(SPDF_WIN_STATE_SESSION);
+    const char* windows;
+    const char* end = NULL;
+    const char* element;
+    int count = 0;
+    if (!json) return 0;
+    windows = obj_value(skip_ws(json), "windows", NULL);
+    for (element = array_first(windows, &end); element; element = array_next(end, &end)) {
+        char* id;
+        if (*element != '{') continue;
+        id = json_str(element, "id");
+        if (!(id && window_id && strcmp(id, window_id) == 0)) count++;
+        free(id);
+    }
+    free(json);
+    return count;
+}

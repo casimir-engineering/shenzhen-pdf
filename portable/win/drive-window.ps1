@@ -7,18 +7,33 @@
   WM_LBUTTONDOWN/UP/WM_MOUSEMOVE to the window's own queue with the coordinates
   we choose and touches nothing else on the desktop.
 
-  Steps are strings:  move:X,Y | click:X,Y | mclick:X,Y | drag:X1,Y1>X2,Y2 | shot:NAME
+  Steps are strings:  move:X,Y | click:X,Y | mclick:X,Y | rclick:X,Y | drag:X1,Y1>X2,Y2 | shot:NAME
+                      key:VK (a virtual-key code, e.g. key:27 for Escape, key:116 for F5)
+                      cmd:ID (a spdf_win_command id, posted as the menu's WM_COMMAND)
+                      sleep:MS | alive (prints alive=True/False without failing)
+                      rect (prints window=X,Y,WxH: the outer frame, screen pixels)
+
+  KEYS ARE POSTED UNMODIFIED. A WM_KEYDOWN carries no modifier state -- the app
+  reads GetKeyState(VK_CONTROL), the REAL keyboard -- so Ctrl+W cannot be posted
+  without pressing the user's Ctrl key, which SendInput would do and this script
+  never will. Post the COMMAND instead (cmd:3 is Close Tab); it takes the same
+  route an accelerator takes after the keymap has resolved it.
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory=$true)][string]$Exe,
-  [Parameter(Mandatory=$true)][string]$Pdf,
+  # Optional since the app launches bare (restoring its session, or opening an
+  # empty window): an empty -Pdf launches it that way.
+  [string]$Pdf = '',
   [Parameter(Mandatory=$true)][string]$OutDir,
   [string[]]$AppArgs = @(),
   [Parameter(Mandatory=$true)][string[]]$Steps,
   [int]$Width = 1120,
   [int]$Height = 800,
-  [int]$SettleMs = 900
+  [int]$SettleMs = 900,
+  # Leave the window where the app put it, instead of moving it to 80,80 at
+  # Width x Height: what a check of the session's restored frame needs.
+  [switch]$NoMove
 )
 $ErrorActionPreference = 'Stop'
 
@@ -78,6 +93,20 @@ public static class SpdfDrive {
         PostMessageW(h, WM_MBUTTONDOWN, new IntPtr(MK_MBUTTON), LP(x,y));
         PostMessageW(h, WM_MBUTTONUP, IntPtr.Zero, LP(x,y));
     }
+    const uint WM_RBUTTONDOWN = 0x0204, WM_RBUTTONUP = 0x0205, WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_COMMAND = 0x0111;
+    const int MK_RBUTTON = 0x0002;
+    public static void RClick(IntPtr h, int x, int y) {
+        PostMessageW(h, WM_MOUSEMOVE, IntPtr.Zero, LP(x,y));
+        PostMessageW(h, WM_RBUTTONDOWN, new IntPtr(MK_RBUTTON), LP(x,y));
+        PostMessageW(h, WM_RBUTTONUP, IntPtr.Zero, LP(x,y));
+    }
+    public static void Key(IntPtr h, int vk) {
+        PostMessageW(h, WM_KEYDOWN, new IntPtr(vk), IntPtr.Zero);
+        PostMessageW(h, WM_KEYUP, new IntPtr(vk), new IntPtr(unchecked((int)0xC0000000)));
+    }
+    // SPDF_WIN_MENU_ID_BASE (spdf_win_menu.h) + the command, lParam 0: exactly the
+    // message a menu pick produces, which the window turns into SPDF_WIN_INPUT_COMMAND.
+    public static void Command(IntPtr h, int id) { PostMessageW(h, WM_COMMAND, new IntPtr(0x400 + id), IntPtr.Zero); }
     // WM_MOUSEWHEEL carries SCREEN coordinates, so the client point is converted
     // here -- the same conversion spdf_win_window.cpp's on_wheel does.
     public static void Wheel(IntPtr h, int x, int y, int notches, bool ctrl) {
@@ -133,7 +162,7 @@ try {
     Start-Sleep -Milliseconds 100
   }
   if ($hwnd -eq [IntPtr]::Zero) { Write-Output "error=no-window"; exit 66 }
-  [void][SpdfDrive]::MoveWindow($hwnd, 80, 80, $Width, $Height, $true)
+  if (-not $NoMove) { [void][SpdfDrive]::MoveWindow($hwnd, 80, 80, $Width, $Height, $true) }
   Start-Sleep -Milliseconds 600
   $cr = New-Object SpdfDrive+RECT
   [void][SpdfDrive]::GetClientRect($hwnd, [ref]$cr)
@@ -155,6 +184,23 @@ try {
     if ($s -match '^move:(-?\d+),(-?\d+)$')   { [SpdfDrive]::Move($hwnd,   [int]$Matches[1], [int]$Matches[2], 0); Write-Output ("step=" + $s); Start-Sleep -Milliseconds 250; continue }
     if ($s -match '^wheel:(-?\d+),(-?\d+),(-?\d+),(ctrl|plain)$') { [SpdfDrive]::Wheel($hwnd, [int]$Matches[1], [int]$Matches[2], [int]$Matches[3], ($Matches[4] -eq 'ctrl')); Write-Output ("step=" + $s); Start-Sleep -Milliseconds 400; continue }
     if ($s -match '^drag:(-?\d+),(-?\d+)>(-?\d+),(-?\d+)$') { [SpdfDrive]::Drag($hwnd, [int]$Matches[1], [int]$Matches[2], [int]$Matches[3], [int]$Matches[4]); Write-Output ("step=" + $s); Start-Sleep -Milliseconds 400; continue }
+    if ($s -match '^rclick:(-?\d+),(-?\d+)$') { [SpdfDrive]::RClick($hwnd, [int]$Matches[1], [int]$Matches[2]); Write-Output ("step=" + $s); Start-Sleep -Milliseconds 350; continue }
+    if ($s -match '^key:(\d+)$')             { [SpdfDrive]::Key($hwnd, [int]$Matches[1]); Write-Output ("step=" + $s); Start-Sleep -Milliseconds 400; continue }
+    if ($s -match '^cmd:(\d+)$')             { [SpdfDrive]::Command($hwnd, [int]$Matches[1]); Write-Output ("step=" + $s); Start-Sleep -Milliseconds 600; continue }
+    if ($s -match '^sleep:(\d+)$')           { Start-Sleep -Milliseconds ([int]$Matches[1]); Write-Output ("step=" + $s); continue }
+    if ($s -eq 'alive') {
+      # Whether the process is still there, and whether its window is: the two
+      # differ while a WM_CLOSE is being processed. Never a failure by itself.
+      $proc.Refresh()
+      Write-Output ("alive=" + (-not $proc.HasExited) + " window=" + [SpdfDrive]::IsWindowVisible($hwnd))
+      continue
+    }
+    if ($s -eq 'rect') {
+      $wr = New-Object SpdfDrive+RECT
+      [void][SpdfDrive]::GetWindowRect($hwnd, [ref]$wr)
+      Write-Output ("window=" + $wr.Left + "," + $wr.Top + "," + ($wr.Right - $wr.Left) + "x" + ($wr.Bottom - $wr.Top))
+      continue
+    }
     Write-Output ("error=bad-step step=" + $s); exit 64
   }
   Write-Output "status=done"

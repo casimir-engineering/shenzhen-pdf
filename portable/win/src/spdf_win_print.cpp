@@ -4,6 +4,7 @@
 
 #include "spdf_win_clipboard_page.h" /* spdf_win_clipboard_alloc_dib */
 #include "spdf_win_export.h"         /* the light-theme rule, UTF-8 paths */
+#include "spdf_win_print_scaling.h"  /* the Scaling page, Win32 half */
 
 #include <commdlg.h>
 
@@ -160,7 +161,24 @@ static int print_selected_pages(const PRINTDLGEXW* pd, int page_count, int** out
 spdf_win_print_status spdf_win_print_document(HWND parent, spdf_document* doc, const wchar_t* doc_path,
                                               spdf_win_print_scaling_mode mode, double custom_scale, char* err,
                                               size_t err_len) {
+    spdf_win_print_choice choice;
+    choice.mode = mode;
+    choice.custom_scale = custom_scale;
+    return spdf_win_print_document_ex(parent, doc, doc_path, &choice, err, err_len);
+}
+
+spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc, const wchar_t* doc_path,
+                                                 spdf_win_print_choice* choice, char* err, size_t err_len) {
     PRINTDLGEXW pd;
+    /* THE SCALING PAGE. `shown` is what the dialog edits, so a cancel leaves the
+     * caller's `choice` as it was; on Print it is copied back. The template
+     * and the choice must outlive PrintDlgEx, which is why both are here. */
+    spdf_win_print_tpl tpl;
+    spdf_win_print_choice fallback;
+    spdf_win_print_choice shown;
+    HPROPSHEETPAGE page = NULL;
+    spdf_win_print_scaling_mode mode;
+    double custom_scale;
     PRINTPAGERANGE ranges[16];
     DOCINFOW info;
     spdf_win_print_paper paper;
@@ -179,6 +197,13 @@ spdf_win_print_status spdf_win_print_document(HWND parent, spdf_document* doc, c
 
     if (err && err_len) err[0] = '\0';
     if (!doc) return SPDF_WIN_PRINT_NO_DOCUMENT;
+    if (!choice) {
+        fallback.mode = SPDF_WIN_PRINT_SCALING_FIT;
+        fallback.custom_scale = 1.0;
+        choice = &fallback;
+    }
+    shown = *choice;
+    shown.custom_scale = spdf_win_print_clamp_custom_scale(shown.custom_scale);
     if (!spdf_win_print_allowed(doc)) {
         /* macOS's sentence, verbatim (ShenzhenPDFMac.mm:15574). */
         if (err && err_len)
@@ -201,6 +226,14 @@ spdf_win_print_status spdf_win_print_document(HWND parent, spdf_document* doc, c
     pd.nPageRanges = 0;
     pd.nMaxPageRanges = (DWORD)(sizeof(ranges) / sizeof(ranges[0]));
     pd.lpPageRanges = ranges;
+    /* Our tab beside the General page. PrintDlgEx owns the page once it has
+     * it; a page that could not be built is a dialog without the tab, printing
+     * with the choice as given. */
+    page = spdf_win_print_scaling_page(&tpl, &shown);
+    if (page) {
+        pd.nPropertyPages = 1;
+        pd.lphPropertyPages = &page;
+    }
 
     hr = PrintDlgExW(&pd);
     if (FAILED(hr)) {
@@ -215,6 +248,11 @@ spdf_win_print_status spdf_win_print_document(HWND parent, spdf_document* doc, c
         if (pd.hDevNames) GlobalFree(pd.hDevNames);
         return SPDF_WIN_PRINT_CANCELLED;
     }
+    /* Printing: what the page holds is the reader's choice, for this job and
+     * for the caller to remember. */
+    *choice = shown;
+    mode = shown.mode;
+    custom_scale = shown.custom_scale;
 
     /* The job's own document handle. See spdf_win_print.h; a failure here is
      * not fatal, it just means the job shares the caller's handle, which is
