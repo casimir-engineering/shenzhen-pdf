@@ -97,9 +97,9 @@ if (-not (Test-Path -LiteralPath $Pdf)) { Write-Output "error=no-pdf path=$Pdf";
 # So this is checked BEFORE the app is launched (no point starting it) and
 # reported as its own exit code, so a harness records BLOCKED rather than FAIL.
 # Nothing has been learned about the app either way.
-if (@(Get-Process LogonUI -ErrorAction SilentlyContinue).Count -gt 0) {
+if (@(Get-Process LogonUI, LockApp -ErrorAction SilentlyContinue).Count -gt 0) {
   Write-Output "error=workstation-locked"
-  Write-Output ("detail=LogonUI is running, so this session is locked and Windows is not compositing it. " +
+  Write-Output ("detail=LogonUI or LockApp (the Windows 11 lock screen) is running, so this session is locked and Windows is not compositing it. " +
                 "PrintWindow returns black or stale pixels for a Direct2D client area and CopyFromScreen " +
                 "returns black for the whole screen, which presents as 'the app rendered nothing'. " +
                 "Unlock the machine and re-run. The offscreen path (--render-window-png, optionally --chrome) " +
