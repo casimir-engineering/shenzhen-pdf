@@ -19,6 +19,15 @@
  * spdf_win_chrome_actions.h beside it, and BEFORE spdf_win_chrome_actions.h,
  * which calls the two functions named above. Not part of the port's public
  * surface.
+ *
+ * THE SIDEBAR IS DECIDED HERE, ONCE PER PAINT, the way mac rebuildSidebar
+ * (ShenzhenPDFMac.mm:9552-9580) decides it: the panel exists only while the
+ * document has something to list -- chapters, comments (none on Windows yet) or
+ * a live search -- AND the reader wants it; the section shown is the chosen one
+ * if it has content, else the first that does. Both answers are published
+ * through spdf_win_sidebar_view.h's side channels so the input router's layout
+ * (spdf_win_chrome_actions.h chrome_layout_for_input) reads the same ones the
+ * painter drew with; the model fields the painter reads are set directly.
  */
 
 /* For spdf_win_chrome_content_set_document(): scene_for_window tells the panels
@@ -27,6 +36,31 @@
  * depending on a declaration it never asked for. */
 #include "spdf_win_chrome_content.h"
 #include "spdf_win_chrome_find.h" /* spdf_win_find_apply_overlays */
+#include "spdf_win_search_map.h"  /* spdf_win_map_marks_publish */
+#include "spdf_win_sidebar_view.h"
+
+/* --- state the paint path owns and the input path reads --------------------
+ *
+ * Statics rather than fields on `app`: the struct belongs to another file, and
+ * there is one app per process. spdf_win_chrome_field_ui.h (included after this
+ * header, same translation unit) reads all four. */
+
+/* The Search section's rows, built from the find session; created on the first
+ * paint that shows the section, freed never -- it lives as long as the process
+ * and is one struct plus its arena. */
+static SpdfWinSidebarResultsBuilder* g_results_builder;
+/* The list rect the results were laid out in, client px, for the wheel. */
+static SpdfWinChromeRect g_results_list;
+/* Armed by every way a search STARTS (spdf_win_chrome_field_ui.h
+ * chrome_find_start); consumed by chrome_find_reveal_if_pending() below once
+ * the search settles. */
+static int g_find_reveal_pending;
+/* The DPI scale of the last paint, for the one input-side hit that needs
+ * points -> pixels without a layout in hand (the results rows). */
+static float g_chrome_dpi = 1.0f;
+/* Defined in spdf_win_chrome_field_ui.h; declared here so the paint path can
+ * run the reveal at the moment results have arrived. */
+static int chrome_find_reveal_if_pending(app* a);
 
 /* The canvas's zoom mode in the vocabulary the toolbar speaks.
  *
@@ -69,7 +103,9 @@ static void chrome_scroll_into(app* a, SpdfWinChromeModel* m) {
 static void chrome_inputs_for(app* a, SpdfWinChromeModelInputs* in, float dpi_scale) {
     spdf_win_chrome_model_inputs_init(in);
     in->dark = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
-    in->show_sidebar = a->show_sidebar;
+    /* The EFFECTIVE visibility, decided by scene_for_window before the build
+     * and published for the router (spdf_win_sidebar_view.h). */
+    in->show_sidebar = a->show_sidebar && spdf_win_sidebar_effective_visible();
     in->show_minimap = a->show_minimap;
     in->sidebar_w = a->sidebar_w;
     in->minimap_w = a->minimap_w;
@@ -93,6 +129,51 @@ static void chrome_inputs_for(app* a, SpdfWinChromeModelInputs* in, float dpi_sc
     in->fit_mode = chrome_fit_for_zoom_mode(spdf_win_canvas_zoom_mode(a->canvas));
 }
 
+/* WHAT THE SIDEBAR HAS TO LIST, and therefore whether it exists and which
+ * section it shows. Resolves the content provider -- which loads the outline
+ * on the first call that needs it -- only while the reader wants the panel, so
+ * a hidden sidebar still costs nothing (spdf_win_chrome_content.h rule 2).
+ * Publishes the effective visibility and returns the resolved section. */
+static int chrome_sidebar_decide(app* a, int* out_has_chapters) {
+    int has_chapters = 0;
+    int has_search = a->find_text[0] != L'\0';
+    int section;
+    if (a->canvas && a->show_sidebar) {
+        const SpdfWinChromePanelsContent* content = spdf_win_chrome_content_current();
+        const SpdfWinSidebarContent* sb = content ? content->sidebar : NULL;
+        /* Not loaded yet means not known yet: keep the panel rather than blink
+         * it away for the one frame before the outline is read. */
+        has_chapters = sb ? (!sb->loaded || sb->total_count > 0) : 0;
+    }
+    spdf_win_sidebar_set_effective_visible(a->canvas != NULL && (has_chapters || has_search));
+    section = spdf_win_sidebar_resolve_section(spdf_win_sidebar_section(), has_chapters, 0, has_search);
+    if (out_has_chapters) *out_has_chapters = has_chapters;
+    return section;
+}
+
+/* The Search section's rows for this paint, and the strip's markers -- both
+ * published for painters that cannot reach the session. `layout` is this
+ * frame's, so the list height the reveal-scroll uses is the one the rows are
+ * drawn into. */
+static void chrome_publish_search(app* a, const SpdfWinChromeLayout* layout, int section, float dpi) {
+    SpdfWinFindSession* s = spdf_win_find_shared();
+    int n = 0, active = -1;
+    const SpdfWinFindPageMark* marks = s ? spdf_win_find_page_marks(s, &n, &active) : NULL;
+    spdf_win_map_marks_publish(marks, n, active);
+
+    g_results_list = spdf_win_chrome_zero();
+    if (section == 2 && s && !spdf_win_chrome_rect_empty(layout->sidebar)) {
+        SpdfWinSidebarLayout sb;
+        if (!g_results_builder) g_results_builder = spdf_win_sidebar_results_builder_new();
+        spdf_win_sidebar_layout(layout->sidebar, 2, dpi, &sb);
+        g_results_list = sb.list;
+        spdf_win_sidebar_results_publish(
+            spdf_win_sidebar_results_build(g_results_builder, s, a->chrome.searching, sb.list.h, dpi));
+    } else {
+        spdf_win_sidebar_results_publish(NULL);
+    }
+}
+
 /* THE PAINT-TIME GLUE. Chrome first, because it decides how big the canvas is.
  *
  * The model is rebuilt per paint rather than cached: it is a few dozen bytes plus
@@ -106,9 +187,11 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
     SpdfWinChromeLayout chrome_layout;
     unsigned client_w, client_h;
     int h_scrollable_this_frame;
+    int section, has_chapters = 0;
 
     client_w = scene->client_px_w ? scene->client_px_w : scene->target_px_w;
     client_h = scene->client_px_h ? scene->client_px_h : scene->target_px_h;
+    g_chrome_dpi = scene->dpi_scale > 0.0f ? scene->dpi_scale : 1.0f;
 
     /* NO DOCUMENT: still a window, not a blank one.
      *
@@ -123,11 +206,19 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
      * target_px_w/h are set to the CANVAS region's size because that is what
      * spdf_win_canvas_build_scene() would have done and what draw_message()
      * lays the text out against -- inside the translate spdf_win_paint applies
-     * for chrome, so the hint centres in the document area, not the client. */
+     * for chrome, so the hint centres in the document area, not the client.
+     *
+     * No document means no sidebar (mac hasSidebar requires _doc), which
+     * chrome_sidebar_decide publishes before the build reads it. */
     if (!a->canvas) {
+        /* Release the panels' content: with no selected document the sidebar
+         * and minimap must not keep showing the one that just closed. */
+        spdf_win_chrome_content_set_document(NULL, 0);
+        section = chrome_sidebar_decide(a, NULL);
         chrome_inputs_for(a, &inputs, scene->dpi_scale);
         spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, &inputs);
         chrome_scroll_into(a, &a->chrome); /* NULL-safe: reports "nothing to scroll" */
+        a->chrome.sidebar_section = section;
         scene->chrome = &a->chrome;
         spdf_win_chrome_layout(&a->chrome, client_w, client_h, scene->dpi_scale, &chrome_layout);
         scene->target_px_w = (unsigned)chrome_layout.canvas.w;
@@ -140,15 +231,32 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
          * caption. Measured on a dark machine: a light window under a dark title
          * bar. Set it from the same flags the canvas would have carried. */
         scene->dark = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
-        /* Release the panels' content: with no selected document the sidebar
-         * and minimap must not keep showing the one that just closed. */
-        spdf_win_chrome_content_set_document(NULL, 0);
         a->sidebar_rows = 0;
         a->chrome.sidebar_row_count = 0;
+        chrome_publish_search(a, &chrome_layout, section, g_chrome_dpi);
         scene->message = a->status[0] ? a->status
                                       : L"No document open — Ctrl+O to open one, or drop a PDF here";
         return 1;
     }
+
+    /* Tell the panels which document is selected and where the reader is in it
+     * BEFORE anything asks them what they have to list. The app is the only
+     * thing that knows both; left to itself the content bridge guesses from the
+     * process command line, so the sidebar listed the LAUNCH document's outline
+     * and the minimap its thumbnails even after a Ctrl+Tab, next to a canvas
+     * showing the right pages. Passing the live current page also makes the
+     * minimap's current-page outline follow scrolling instead of pinning to the
+     * page the window opened on.
+     *
+     * Cheap by construction: same path is a strcmp and two stores. */
+    {
+        int sel = a->tabs ? spdf_win_tabs_selected_index(a->tabs) : -1;
+        const char* sel_path = sel < 0 ? NULL : spdf_win_tabs_path(a->tabs, sel);
+        spdf_win_chrome_content_set_document(sel_path ? sel_path : a->path,
+                                            spdf_win_canvas_current_page(a->canvas));
+        spdf_win_chrome_content_set_filter(a->filter_text);
+    }
+    section = chrome_sidebar_decide(a, &has_chapters);
 
     /* Built twice, and deliberately. The first build only has to be right about
      * GEOMETRY, because it decides the canvas rect; the readouts it carries are
@@ -160,6 +268,7 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
     chrome_inputs_for(a, &inputs, scene->dpi_scale);
     spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, &inputs);
     chrome_scroll_into(a, &a->chrome);
+    a->chrome.sidebar_section = section;
     scene->chrome = &a->chrome;
     spdf_win_chrome_layout(&a->chrome, client_w, client_h, scene->dpi_scale, &chrome_layout);
     /* WHETHER THERE IS A HORIZONTAL TROUGH IS DECIDED ONCE PER FRAME, HERE.
@@ -186,51 +295,40 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
         spdf_win_canvas_scroll_to_page(a->canvas, a->pending_page);
         a->pending_page = -1;
     }
+    /* A search that has just settled moves the view to its match NOW, before
+     * the second build reads the scroll position -- the first build's
+     * fill_model is what polled the results in. */
+    chrome_find_reveal_if_pending(a);
     chrome_inputs_for(a, &inputs, scene->dpi_scale);
     spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, &inputs);
     chrome_scroll_into(a, &a->chrome);
     a->chrome.h_scrollable = h_scrollable_this_frame;
+    a->chrome.sidebar_section = section;
+    a->chrome.sidebar_has_content = spdf_win_sidebar_effective_visible();
 
-    /* Tell the panels which document is selected and where the reader is in it.
-     * The app is the only thing that knows both; left to itself the content
-     * bridge guesses from the process command line, so the sidebar listed the
-     * LAUNCH document's outline and the minimap its thumbnails even after a
-     * Ctrl+Tab, next to a canvas showing the right pages. Passing the live
-     * current page also makes the minimap's current-page outline follow
-     * scrolling instead of pinning to the page the window opened on.
-     *
-     * Cheap by construction: same path is a strcmp and two stores. */
-    {
-        int sel = a->tabs ? spdf_win_tabs_selected_index(a->tabs) : -1;
-        const char* sel_path = sel < 0 ? NULL : spdf_win_tabs_path(a->tabs, sel);
-        spdf_win_chrome_content_set_document(sel_path ? sel_path : a->path,
-                                            spdf_win_canvas_current_page(a->canvas));
-        spdf_win_chrome_content_set_filter(a->filter_text);
-        /* HOW MANY ROWS THE LIST IS SHOWING, cached for the input router, which
-         * has no way to ask -- resolving the content provider on a mouse move
-         * would put the outline load on the pointer's path. Read only while the
-         * sidebar is VISIBLE, because spdf_win_chrome_content_current() is what
-         * loads the outline and this file's rule 2 is that nothing runs for a
-         * panel nobody is looking at. */
-        if (a->show_sidebar) {
-            const SpdfWinChromePanelsContent* content = spdf_win_chrome_content_current();
-            a->sidebar_rows = content && content->sidebar ? content->sidebar->row_count : 0;
-            a->chrome.sidebar_row_count = a->sidebar_rows;
-        } else {
-            a->sidebar_rows = 0;
-            a->chrome.sidebar_row_count = 0;
-        }
+    /* HOW MANY ROWS THE LIST IS SHOWING, cached for the input router, which
+     * has no way to ask -- resolving the content provider on a mouse move
+     * would put the outline load on the pointer's path. Read only while the
+     * sidebar is VISIBLE, because spdf_win_chrome_content_current() is what
+     * loads the outline and spdf_win_chrome_content.h's rule 2 is that nothing
+     * runs for a panel nobody is looking at. The Search section's rows are the
+     * published view's business (spdf_win_chrome_field_ui.h chrome_sidebar_row),
+     * so the count here is the Chapters list's. */
+    if (a->chrome.show_sidebar && section == 0) {
+        const SpdfWinChromePanelsContent* content = spdf_win_chrome_content_current();
+        a->sidebar_rows = content && content->sidebar ? content->sidebar->row_count : 0;
+    } else {
+        a->sidebar_rows = 0;
     }
+    a->chrome.sidebar_row_count = a->sidebar_rows;
+    chrome_publish_search(a, &chrome_layout, section, g_chrome_dpi);
 
     /* Search highlights, AFTER build_scene because that is what fills
      * scene->pages, which is what the overlay rects are derived from. Reads only
      * pages/page_count/target_px_h/dpi_scale and writes only overlays; a no-op
      * with no live query, and it does not even create a session then.
      *
-     * Note it OVERWRITES scene->overlays rather than appending -- documented at
-     * its declaration in spdf_win_chrome_find.h. A future selection track adding
-     * a second producer has to resolve that; today there is one. */
-    /* TWO OVERLAY PRODUCERS, AND THE ORDER IS macOS'S DRAW ORDER: find's
+     * TWO OVERLAY PRODUCERS, AND THE ORDER IS macOS'S DRAW ORDER: find's
      * highlights (SPDFMacDocumentView.mm:467), find's active ring (:475), then
      * the selection (:485). find OVERWRITES scene->overlays -- it says so at its
      * declaration -- and the selection compositor takes whatever is there as an

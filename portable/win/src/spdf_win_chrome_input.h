@@ -42,18 +42,10 @@
 #define SPDF_WIN_CHROME_INPUT_H
 
 #include "spdf_win_chrome.h"
-/* For spdf_win_sidebar_layout() and spdf_win_sidebar_row_at() -- the sidebar's
- * own bands, which the panels painter already draws with. Routing the filter
- * field and the chapter rows anywhere but here would put two thirds of the
- * hit-testing in one function and one third in another, which is precisely how
- * the two drift; this header's whole claim is that it is THE ONE ENTRY POINT.
- *
- * It costs this header <windows.h>, which the rest of the pure family does
- * without. Accepted rather than worked around: spdf_win_chrome_content.h is
- * itself C-compatible and Direct2D-free by design (a plain C test already
- * compiles it, portable/win/tests/sidebar_rows_test.c), the whole port is
- * Windows-only, and the alternative is a split hit-test. */
-#include "spdf_win_chrome_content.h"
+/* The sidebar's own bands and the segment control's geometry come in through
+ * spdf_win_sidebar_input.h below, which costs this header <windows.h>; accepted
+ * for the reason that header's comment gives -- the alternative is a split
+ * hit-test. */
 #include "spdf_win_chrome_scroll.h"
 #include "spdf_win_chrome_toolbar.h"
 #include "spdf_win_tabstrip.h"
@@ -113,11 +105,27 @@ typedef enum spdf_win_chrome_action {
     SPDF_WIN_CA_TOGGLE_REGEX,
     SPDF_WIN_CA_FIND_PREV,
     SPDF_WIN_CA_FIND_NEXT,
-    /* A click on a row of the sidebar's chapter list. `index` is the row, which
-     * the caller turns into a page through the content provider -- the router has
-     * no access to it and must not: it would be the paint path's content
-     * provider being resolved on a mouse move. */
+    /* A click on a row of the sidebar's list. Chapters: `index` is the row,
+     * which the caller turns into a page through the content provider (the
+     * router must not resolve it on a mouse move). Search: `index` is the
+     * LIST-LOCAL Y in device px, scroll included -- see
+     * spdf_win_sidebar_input.h for why. */
     SPDF_WIN_CA_SIDEBAR_ROW,
+    /* A click on the Chapters / Comments / Search segment control. `index` is
+     * the segment, which IS the section number (0, 1, 2). */
+    SPDF_WIN_CA_SIDEBAR_SECTION,
+    /* A LEFT PRESS INSIDE THE MINIMAP STRIP. Click-to-jump or viewport drag is
+     * the caller's call, against the frame the strip was painted from
+     * (spdf_win_search_map.h). Names the region, like CANVAS; never pans. */
+    SPDF_WIN_CA_MINIMAP,
+    /* THE MINIMAP DRAG IN PROGRESS. THE ROUTER NEVER RETURNS THIS: the caller
+     * arms it on top of a MINIMAP press, as DRAG_TAB and CANVAS_SELECT are. */
+    SPDF_WIN_CA_MINIMAP_DRAG,
+    /* The toolbar's OCR and translate buttons: the caller posts SPDF_WIN_CMD_OCR
+     * / _TRANSLATE_SELECTION so another track's handler gets them through the
+     * one command switch like every other route in. */
+    SPDF_WIN_CA_OCR,
+    SPDF_WIN_CA_TRANSLATE_SELECTION,
     /* A press on a split divider. The caller then follows the pointer and asks
      * spdf_win_chrome_sidebar_drag_pt() / _minimap_drag_pt() for the new width,
      * which clamp exactly as macOS's NSSplitView does. */
@@ -211,6 +219,9 @@ typedef struct SpdfWinChromeHit {
     spdf_win_scroll_part scroll_part;
     spdf_win_chrome_cursor cursor;
 } SpdfWinChromeHit;
+
+/* The sidebar case, extracted for the size ratchet; needs the types above. */
+#include "spdf_win_sidebar_input.h"
 
 /* The band, the track and the two fractions for one scroller, picked by part.
  * A helper rather than an if-else at each of the four call sites (the router
@@ -407,6 +418,11 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
                     return;
                 case SPDF_WIN_TB_FIT_POPUP: out->action = SPDF_WIN_CA_CYCLE_FIT; return;
                 case SPDF_WIN_TB_OVERFLOW: out->action = SPDF_WIN_CA_APP_MENU; return;
+                /* The two power tools. Their handlers belong to another track;
+                 * the caller posts the command (spdf_win_chrome_field_ui.h
+                 * chrome_post_command). */
+                case SPDF_WIN_TB_OCR: out->action = SPDF_WIN_CA_OCR; return;
+                case SPDF_WIN_TB_TRANSLATE: out->action = SPDF_WIN_CA_TRANSLATE_SELECTION; return;
                 /* The two text fields and the two find controls. All four were
                  * drawn and inert while the query and the page number could only
                  * be changed from outside the app. */
@@ -422,28 +438,18 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
             }
         }
 
-        /* THE SIDEBAR'S FILTER FIELD AND ITS LIST. Both were swallowed while the
-         * panel was a placeholder; the rows are real now and the filter is
-         * typeable, so a click on either has somewhere to go. Everything else in
-         * the panel -- the section control, the empty space below the last row --
-         * is still swallowed rather than forwarded, for the reason the default
-         * case below gives. */
-        case SPDF_WIN_CHROME_SIDEBAR: {
-            SpdfWinSidebarLayout sb;
-            int row;
-            if (button != SPDF_WIN_CB_LEFT) return;
-            spdf_win_sidebar_layout(l->sidebar, m->sidebar_section, s, &sb);
-            if (spdf_win_chrome_contains(sb.filter, x, y)) {
-                out->action = SPDF_WIN_CA_FOCUS_SIDEBAR_FILTER;
-                return;
-            }
-            row = spdf_win_sidebar_row_at(&sb, m->sidebar_scroll_y, m->sidebar_row_count, x, y);
-            if (row >= 0) {
-                out->action = SPDF_WIN_CA_SIDEBAR_ROW;
-                out->index = row;
-            }
+        /* THE SIDEBAR: its segment control, its filter field and its list, in
+         * spdf_win_sidebar_input.h. */
+        case SPDF_WIN_CHROME_SIDEBAR: spdf_win_sidebar_route(l, m, x, y, button, s, out); return;
+
+        /* THE MINIMAP STRIP. A left press is a minimap action -- click or drag,
+         * the caller decides against the painted frame. Any other button, and a
+         * bare hover (an arrow cursor, as over the canvas), does nothing. The
+         * strip never falls through to the canvas: a press inside it must not
+         * pan the document, which is what would happen if it did. */
+        case SPDF_WIN_CHROME_MINIMAP:
+            if (button == SPDF_WIN_CB_LEFT) out->action = SPDF_WIN_CA_MINIMAP;
             return;
-        }
 
         /* THE TWO SCROLLERS, and note where they sit in this switch: BEFORE the
          * canvas case, so a press on a trough can never fall through to
@@ -477,11 +483,10 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
 
         case SPDF_WIN_CHROME_CANVAS: out->action = SPDF_WIN_CA_CANVAS; return;
 
-        /* The sidebar's list and the minimap's thumbnails are still placeholders
-         * (see the 4925e127d commit message), so a press inside either is
-         * swallowed rather than passed to the canvas. Swallowed, not forwarded:
-         * a drag begun on the sidebar that panned the document would be a worse
-         * bug than a panel that does nothing yet. */
+        /* Anything else -- a divider's dead pixel, the caption reserve's edge --
+         * is swallowed rather than passed to the canvas. Swallowed, not
+         * forwarded: a drag begun on a panel that panned the document would be
+         * a worse bug than a panel that does nothing. */
         default: return;
     }
 }

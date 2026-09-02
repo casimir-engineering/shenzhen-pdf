@@ -31,6 +31,7 @@
 #include <string.h>
 
 #include "spdf_win_chrome_content.h"
+#include "spdf_win_sidebar_view.h"
 
 static int failures;
 
@@ -276,6 +277,119 @@ static void test_layout(float dpi) {
     }
 }
 
+/* --- the Search section's rows (spdf_win_sidebar_view.h) ------------------
+ *
+ * Three heights -- 46 pt match, 30 pt header, 36 pt status (:15869-15871,
+ * :16238) -- so the hit-test is a walk, and the painter and the click resolver
+ * both take it. Driven at the same three scales as the chapter rows. */
+static void test_results_rows(float dpi) {
+    SpdfWinSidebarResultRow rows[5];
+    SpdfWinSidebarResultsView v;
+    float h_match = spdf_win_chrome_px(SPDF_WIN_SIDEBAR_RESULT_MATCH_H, dpi);
+    float h_header = spdf_win_chrome_px(SPDF_WIN_SIDEBAR_RESULT_HEADER_H, dpi);
+    float h_status = spdf_win_chrome_px(SPDF_WIN_SIDEBAR_RESULT_STATUS_H, dpi);
+    int i;
+
+    memset(rows, 0, sizeof(rows));
+    rows[0].kind = SPDF_WIN_SIDEBAR_RESULT_HEADER;
+    rows[1].kind = SPDF_WIN_SIDEBAR_RESULT_MATCH;
+    rows[2].kind = SPDF_WIN_SIDEBAR_RESULT_MATCH;
+    rows[3].kind = SPDF_WIN_SIDEBAR_RESULT_HEADER;
+    rows[4].kind = SPDF_WIN_SIDEBAR_RESULT_MATCH;
+    memset(&v, 0, sizeof(v));
+    v.rows = rows;
+    v.row_count = 5;
+    v.current_row = -1;
+
+    expect_near(spdf_win_sidebar_result_row_h(SPDF_WIN_SIDEBAR_RESULT_MATCH, dpi), h_match, "a match row is 46 pt");
+    expect_near(spdf_win_sidebar_result_row_h(SPDF_WIN_SIDEBAR_RESULT_HEADER, dpi), h_header, "a header is 30 pt");
+    expect_near(spdf_win_sidebar_result_row_h(SPDF_WIN_SIDEBAR_RESULT_STATUS, dpi), h_status, "a status is 36 pt");
+    expect_near(spdf_win_sidebar_results_row_top(&v, 0, dpi), 0.0f, "the first row starts at 0");
+    expect_near(spdf_win_sidebar_results_row_top(&v, 2, dpi), h_header + h_match, "row 2 starts after a header and a match");
+    expect_near(spdf_win_sidebar_results_height(&v, dpi), 2.0f * h_header + 3.0f * h_match,
+                "the list is the sum of its rows");
+    /* Every row answers for every pixel of its own height, and no other. */
+    for (i = 0; i < 5; ++i) {
+        float top = spdf_win_sidebar_results_row_top(&v, i, dpi);
+        float h = spdf_win_sidebar_result_row_h(rows[i].kind, dpi);
+        expect(spdf_win_sidebar_results_row_at(&v, top, dpi) == i, "the row's first pixel is the row");
+        expect(spdf_win_sidebar_results_row_at(&v, top + h * 0.5f, dpi) == i, "the row's middle is the row");
+        expect(spdf_win_sidebar_results_row_at(&v, top + h - 0.01f, dpi) == i, "the row's last pixel is the row");
+    }
+    expect(spdf_win_sidebar_results_row_at(&v, spdf_win_sidebar_results_height(&v, dpi) + 1.0f, dpi) == -1,
+           "below the last row is nothing");
+    expect(spdf_win_sidebar_results_row_at(&v, -1.0f, dpi) == -1, "above the first row is nothing");
+    expect(spdf_win_sidebar_results_row_at(NULL, 10.0f, dpi) == -1, "no view, no row");
+    expect_near(spdf_win_sidebar_results_max_scroll(&v, spdf_win_chrome_px(100.0, dpi), dpi),
+                2.0f * h_header + 3.0f * h_match - spdf_win_chrome_px(100.0, dpi), "the scroll range is content less list");
+    expect_near(spdf_win_sidebar_results_max_scroll(&v, spdf_win_chrome_px(5000.0, dpi), dpi), 0.0f,
+                "a list taller than its content does not scroll");
+}
+
+/* The segment control's normalised width (:3138-3144) and which segment a point
+ * is on, at the default and the minimum sidebar widths. */
+static void test_sections(float dpi) {
+    SpdfWinChromeRect side = sidebar_rect(dpi);
+    SpdfWinSidebarLayout l;
+    SpdfWinChromeRect bar3, bar2;
+
+    spdf_win_sidebar_layout(side, 0, dpi, &l);
+    bar3 = spdf_win_sidebar_sections_rect(l.sections, side, 3, dpi);
+    bar2 = spdf_win_sidebar_sections_rect(l.sections, side, 2, dpi);
+    /* 240 pt: floor(224/3) = 74 >= 66 -> 222 pt; floor(224/2) = 112 -> 224 pt. */
+    expect_near(bar3.w, spdf_win_chrome_px(222.0, dpi), "three segments in a 240 pt sidebar are 3 x 74");
+    expect_near(bar2.w, spdf_win_chrome_px(224.0, dpi), "two segments in a 240 pt sidebar are 2 x 112");
+    expect(bar3.x == l.sections.x && bar3.y == l.sections.y && bar3.h == l.sections.h, "only the width is normalised");
+
+    expect(spdf_win_sidebar_section_at(bar3, 3, bar3.x + bar3.w / 6.0f, bar3.y + bar3.h * 0.5f) == 0, "first third");
+    expect(spdf_win_sidebar_section_at(bar3, 3, bar3.x + bar3.w / 2.0f, bar3.y + bar3.h * 0.5f) == 1, "middle third");
+    expect(spdf_win_sidebar_section_at(bar3, 3, bar3.x + bar3.w * 5.0f / 6.0f, bar3.y + bar3.h * 0.5f) == 2,
+           "last third");
+    expect(spdf_win_sidebar_section_at(bar3, 3, bar3.x + bar3.w + 1.0f, bar3.y + bar3.h * 0.5f) == -1,
+           "past the bar is no segment");
+    expect(spdf_win_sidebar_section_at(bar3, 3, bar3.x + 1.0f, bar3.y - 1.0f) == -1, "above the bar is no segment");
+    expect(spdf_win_sidebar_section_at(bar2, 2, bar2.x + bar2.w * 0.75f, bar2.y + 1.0f) == 1, "two segments, second");
+
+    /* The 176 pt minimum: floor(160/3) = 53 < 66, so macOS would make the
+     * control 198 pt wide -- wider than the 160 pt inner width. Clamped. */
+    {
+        SpdfWinChromeRect narrow = side;
+        SpdfWinSidebarLayout nl;
+        SpdfWinChromeRect nbar;
+        narrow.w = spdf_win_chrome_px(176.0, dpi);
+        spdf_win_sidebar_layout(narrow, 0, dpi, &nl);
+        nbar = spdf_win_sidebar_sections_rect(nl.sections, narrow, 3, dpi);
+        expect_near(nbar.w, spdf_win_chrome_px(160.0, dpi), "a narrow sidebar clamps the control to its inner width");
+    }
+}
+
+/* mac rebuildSidebar's cascade (:9552-9580): a chosen section with nothing
+ * falls back to the first that has something, chapters first. */
+static void test_resolve_section(void) {
+    /* Everything present: the choice stands. */
+    expect(spdf_win_sidebar_resolve_section(0, 1, 1, 1) == 0, "chapters chosen, all present");
+    expect(spdf_win_sidebar_resolve_section(1, 1, 1, 1) == 1, "comments chosen, all present");
+    expect(spdf_win_sidebar_resolve_section(2, 1, 1, 1) == 2, "search chosen, all present");
+    /* Search chosen, then the query cleared: back to chapters, else comments. */
+    expect(spdf_win_sidebar_resolve_section(2, 1, 0, 0) == 0, "search gone -> chapters");
+    expect(spdf_win_sidebar_resolve_section(2, 0, 1, 0) == 1, "search gone, no chapters -> comments");
+    expect(spdf_win_sidebar_resolve_section(2, 0, 0, 0) == 0, "search gone, nothing -> chapters");
+    /* Comments chosen on a document without comments. */
+    expect(spdf_win_sidebar_resolve_section(1, 1, 0, 1) == 0, "no comments -> chapters");
+    expect(spdf_win_sidebar_resolve_section(1, 0, 0, 1) == 2, "no comments, no chapters -> search");
+    /* Chapters chosen on a document without an outline. */
+    expect(spdf_win_sidebar_resolve_section(0, 0, 1, 1) == 1, "no chapters -> comments");
+    expect(spdf_win_sidebar_resolve_section(0, 0, 0, 1) == 2, "no chapters, no comments -> search");
+    /* Exactly one thing to list shows that thing whatever was chosen. */
+    expect(spdf_win_sidebar_resolve_section(2, 1, 0, 0) == 0, "only chapters -> chapters");
+    expect(spdf_win_sidebar_resolve_section(0, 0, 1, 0) == 1, "only comments -> comments");
+    expect(spdf_win_sidebar_resolve_section(0, 0, 0, 1) == 2, "only search -> search");
+    expect(spdf_win_sidebar_resolve_section(1, 0, 0, 0) == 0, "nothing -> chapters");
+    /* A garbage choice is chapters. */
+    expect(spdf_win_sidebar_resolve_section(7, 1, 1, 1) == 0, "out of range -> chapters");
+    expect(spdf_win_sidebar_resolve_section(-1, 1, 1, 1) == 0, "negative -> chapters");
+}
+
 static void test_rows_geometry(float dpi) {
     SpdfWinChromeRect side = sidebar_rect(dpi);
     SpdfWinSidebarLayout l;
@@ -357,7 +471,10 @@ int main(void) {
     for (i = 0; i < 3; ++i) {
         test_layout(scales[i]);
         test_rows_geometry(scales[i]);
+        test_results_rows(scales[i]);
+        test_sections(scales[i]);
     }
+    test_resolve_section();
 
     if (failures) {
         printf("%d sidebar row check(s) failed\n", failures);

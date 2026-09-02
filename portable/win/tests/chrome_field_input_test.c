@@ -268,6 +268,132 @@ static void test_tab_drop_destination(void) {
     }
 }
 
+/* --- the segment control and the Search section's rows ------------------- */
+
+/* The segment under the pointer is the segment the painter drew there (both
+ * call spdf_win_sidebar_sections_rect), three segments with a live query and
+ * two without; and in the Search section a click on the list carries the
+ * LIST-LOCAL Y in `index` -- scroll included -- for the app to resolve against
+ * the published rows, since the router has no view of their heights. */
+static void test_sidebar_sections_and_search_rows(float dpi) {
+    SpdfWinChromeModel m = model_live(40);
+    SpdfWinChromeLayout l;
+    SpdfWinSidebarLayout sb;
+    SpdfWinChromeRect bar;
+    SpdfWinChromeHit hit;
+
+    spdf_win_chrome_layout(&m, (unsigned)(1400.0f * dpi), (unsigned)(900.0f * dpi), dpi, &l);
+    spdf_win_sidebar_layout(l.sidebar, m.sidebar_section, dpi, &sb);
+    bar = spdf_win_sidebar_sections_rect(sb.sections, l.sidebar, 3, dpi);
+    CHECK(!spdf_win_chrome_rect_empty(bar));
+    CHECK(bar.w <= sb.sections.w + 0.001f);
+
+#define SEG(fx) route(&l, &m, bar.x + bar.w * (fx), bar.y + bar.h * 0.5f, SPDF_WIN_CB_LEFT)
+    hit = SEG(0.17f);
+    CHECK_EQI(hit.action, SPDF_WIN_CA_SIDEBAR_SECTION);
+    CHECK_EQI(hit.index, 0);
+    hit = SEG(0.50f);
+    CHECK_EQI(hit.action, SPDF_WIN_CA_SIDEBAR_SECTION);
+    CHECK_EQI(hit.index, 1);
+    hit = SEG(0.83f);
+    CHECK_EQI(hit.action, SPDF_WIN_CA_SIDEBAR_SECTION);
+    CHECK_EQI(hit.index, 2);
+    /* A hover and a middle click choose nothing. */
+    CHECK_EQI(route(&l, &m, bar.x + bar.w * 0.5f, bar.y + bar.h * 0.5f, SPDF_WIN_CB_NONE).action, SPDF_WIN_CA_NONE);
+    CHECK_EQI(route(&l, &m, bar.x + bar.w * 0.5f, bar.y + bar.h * 0.5f, SPDF_WIN_CB_MIDDLE).action, SPDF_WIN_CA_NONE);
+    /* Past the normalised bar's right edge is panel, not the last segment. */
+    if (bar.x + bar.w + 2.0f < l.sidebar.x + l.sidebar.w)
+        CHECK(route(&l, &m, bar.x + bar.w + 2.0f, bar.y + bar.h * 0.5f, SPDF_WIN_CB_LEFT).action !=
+              SPDF_WIN_CA_SIDEBAR_SECTION);
+#undef SEG
+
+    /* Without a live query there are two segments, and the point that was the
+     * middle of "Comments" above is now inside "Chapters". */
+    {
+        SpdfWinChromeModel two = model_live(40);
+        SpdfWinChromeLayout tl;
+        SpdfWinSidebarLayout tsb;
+        SpdfWinChromeRect tbar;
+        two.search_active = 0;
+        two.query = NULL;
+        spdf_win_chrome_layout(&two, (unsigned)(1400.0f * dpi), (unsigned)(900.0f * dpi), dpi, &tl);
+        spdf_win_sidebar_layout(tl.sidebar, two.sidebar_section, dpi, &tsb);
+        tbar = spdf_win_sidebar_sections_rect(tsb.sections, tl.sidebar, 2, dpi);
+        hit = route(&tl, &two, tbar.x + tbar.w * 0.25f, tbar.y + tbar.h * 0.5f, SPDF_WIN_CB_LEFT);
+        CHECK_EQI(hit.action, SPDF_WIN_CA_SIDEBAR_SECTION);
+        CHECK_EQI(hit.index, 0);
+        hit = route(&tl, &two, tbar.x + tbar.w * 0.75f, tbar.y + tbar.h * 0.5f, SPDF_WIN_CB_LEFT);
+        CHECK_EQI(hit.action, SPDF_WIN_CA_SIDEBAR_SECTION);
+        CHECK_EQI(hit.index, 1);
+    }
+
+    /* The Search section: no filter field, and the list reports local y. */
+    {
+        SpdfWinChromeModel sm = model_live(0);
+        SpdfWinChromeLayout sl;
+        SpdfWinSidebarLayout ssb;
+        float local = spdf_win_chrome_px(37.0, dpi);
+        sm.sidebar_section = 2;
+        sm.sidebar_scroll_y = spdf_win_chrome_px(30.0, dpi);
+        spdf_win_chrome_layout(&sm, (unsigned)(1400.0f * dpi), (unsigned)(900.0f * dpi), dpi, &sl);
+        spdf_win_sidebar_layout(sl.sidebar, 2, dpi, &ssb);
+        CHECK(spdf_win_chrome_rect_empty(ssb.filter));
+        hit = route(&sl, &sm, ssb.list.x + ssb.list.w * 0.5f, ssb.list.y + local, SPDF_WIN_CB_LEFT);
+        CHECK_EQI(hit.action, SPDF_WIN_CA_SIDEBAR_ROW);
+        CHECK_EQI(hit.index, (int)floorf(local + sm.sidebar_scroll_y));
+        /* Even with zero chapter rows: the Search list does not depend on the
+         * Chapters row count. */
+        hit = route(&sl, &sm, ssb.list.x + 3.0f, ssb.list.y + 1.0f, SPDF_WIN_CB_LEFT);
+        CHECK_EQI(hit.action, SPDF_WIN_CA_SIDEBAR_ROW);
+        CHECK(hit.index >= 0);
+        /* Below the list is still panel, never canvas. */
+        CHECK(route(&sl, &sm, ssb.list.x + 3.0f, sl.sidebar.y + sl.sidebar.h - 1.0f, SPDF_WIN_CB_LEFT).action !=
+              SPDF_WIN_CA_CANVAS);
+        /* A hover over the list is nothing. */
+        CHECK_EQI(route(&sl, &sm, ssb.list.x + 3.0f, ssb.list.y + local, SPDF_WIN_CB_NONE).action, SPDF_WIN_CA_NONE);
+    }
+}
+
+/* --- the minimap strip ---------------------------------------------------- */
+
+/* A left press inside the strip is the minimap's; the caller decides click or
+ * drag against the painted frame. Nothing in the strip pans, hovers show an
+ * arrow, and the other buttons are inert. */
+static void test_minimap_press(float dpi) {
+    SpdfWinChromeModel m = model_live(10);
+    SpdfWinChromeLayout l;
+    SpdfWinChromeHit hit;
+    float x, y, fy;
+
+    spdf_win_chrome_layout(&m, (unsigned)(1400.0f * dpi), (unsigned)(900.0f * dpi), dpi, &l);
+    CHECK(!spdf_win_chrome_rect_empty(l.minimap));
+    x = l.minimap.x + l.minimap.w * 0.5f;
+    for (fy = 0.05f; fy < 1.0f; fy += 0.3f) {
+        y = l.minimap.y + l.minimap.h * fy;
+        hit = route(&l, &m, x, y, SPDF_WIN_CB_LEFT);
+        CHECK_EQI(hit.part, SPDF_WIN_CHROME_MINIMAP);
+        CHECK_EQI(hit.action, SPDF_WIN_CA_MINIMAP);
+        hit = route(&l, &m, x, y, SPDF_WIN_CB_NONE);
+        CHECK_EQI(hit.action, SPDF_WIN_CA_NONE);
+        CHECK_EQI(hit.cursor, SPDF_WIN_CC_ARROW);
+        CHECK_EQI(route(&l, &m, x, y, SPDF_WIN_CB_MIDDLE).action, SPDF_WIN_CA_NONE);
+    }
+    /* The divider beside it is still the divider, so a drag armed at its edge
+     * resizes rather than jumps. */
+    hit = route(&l, &m, l.minimap_divider.x + l.minimap_divider.w * 0.5f, l.minimap.y + l.minimap.h * 0.5f,
+                SPDF_WIN_CB_LEFT);
+    CHECK_EQI(hit.action, SPDF_WIN_CA_DRAG_MINIMAP);
+    /* With the strip hidden there is no minimap part anywhere. */
+    {
+        SpdfWinChromeModel hidden = model_live(10);
+        SpdfWinChromeLayout hl;
+        hidden.show_minimap = 0;
+        spdf_win_chrome_layout(&hidden, (unsigned)(1400.0f * dpi), (unsigned)(900.0f * dpi), dpi, &hl);
+        CHECK(route(&hl, &hidden, x, l.minimap.y + l.minimap.h * 0.5f, SPDF_WIN_CB_LEFT).action !=
+              SPDF_WIN_CA_MINIMAP);
+    }
+}
+
 int main(void) {
     float scales[3];
     int i;
@@ -279,6 +405,8 @@ int main(void) {
         test_toolbar_fields(scales[i]);
         test_sidebar_filter_and_rows(scales[i]);
         test_no_sidebar_pixel_pans(scales[i]);
+        test_sidebar_sections_and_search_rows(scales[i]);
+        test_minimap_press(scales[i]);
     }
     test_tab_drop_destination();
 
