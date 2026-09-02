@@ -12,6 +12,7 @@
  * no `spdf-test-sources` line is needed.
  */
 #include "spdf_win_tabstrip.h"
+#include "spdf_win_tabs_drag.h"
 
 #include <stdio.h>
 #include <string.h>
