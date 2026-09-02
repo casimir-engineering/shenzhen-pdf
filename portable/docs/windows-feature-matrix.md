@@ -216,7 +216,7 @@ Kept whole so the history can be checked; items the wave closed are marked
 28. **Links: the named-destination y** (PARTIAL) — an internal jump lands at the top of the page. Tiny: `link_test` already pins which way up `fz_resolve_link`'s y is, and `spdf_win_links.h:163-174` warns not to borrow the outline code's flip. Also open: delayed external activation (`SPDFMacDelayedLinkActivation.mm`, 35, TF).
 29. **`d2d.window-dark`** — permanently BLOCKED off a Mac. Commit reference PNGs, or accept that `d2d.compose-window-dark` proves strictly less (observations §3.2).
 30. **A published Windows binary** (MISSING) — the gate for items 15's sibling and 17.
-31. **Close Other Tabs is never greyed** — cosmetic. `d9496ee46` gave it the handler it had been drawn without, but `spdf_win_menu_command_enabled` has no arm for `SPDF_WIN_CMD_CLOSE_OTHER_TABS`, so it falls to `default: return 1` and stays live with one tab or none — where `CLOSE_TAB` beside it is gated on `st->can_close_tab`. One case in a pure function that `menu_test` already covers.
+31. ~~**Close Other Tabs is never greyed**~~ — done in `ce3c8f42a`: `SpdfWinMenuState.tab_count` and a rule requiring two tabs, pinned by `menu_test`. Was: `d9496ee46` gave it the handler it had been drawn without, but `spdf_win_menu_command_enabled` has no arm for `SPDF_WIN_CMD_CLOSE_OTHER_TABS`, so it falls to `default: return 1` and stays live with one tab or none — where `CLOSE_TAB` beside it is gated on `st->can_close_tab`. One case in a pure function that `menu_test` already covers.
 
 ## (b) readme claims the Windows build now satisfies but is not credited for
 
