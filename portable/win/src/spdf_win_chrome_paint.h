@@ -56,6 +56,34 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx);
  * Owns portable/win/src/spdf_win_chrome_panels.cpp. */
 void spdf_win_chrome_paint_panels(const SpdfWinChromePaintCtx& ctx);
 
+/* The two scrollers: trough, thumb, and the search heat-map on the vertical
+ * one. Owns portable/win/src/spdf_win_chrome_scrollbar.cpp. Geometry comes from
+ * spdf_win_chrome_scroll.h, which the input router uses too -- that shared
+ * header is the only thing that keeps a click landing on the thumb that was
+ * drawn. */
+void spdf_win_chrome_paint_scrollers(const SpdfWinChromePaintCtx& ctx);
+
+/* WHICH SCROLLER PART IS HOVERED OR HELD, as ambient state rather than as a
+ * ctx field or a model field, and this seam deserves an explanation because it
+ * is the one place the chrome reaches for a global.
+ *
+ * SpdfWinChromePaintCtx is assembled field by field in spdf_win_d2d.cpp and
+ * SpdfWinChromeModel is filled by spdf_win_chrome_model.cpp; both belong to
+ * other tracks, and a new field in either arrives UNINITIALISED at the existing
+ * call site, which for a hover flag means a thumb that is randomly lit. So the
+ * scroller's interaction state travels the same way the sidebar's and minimap's
+ * CONTENT does -- spdf_win_chrome_content_set_document() next door -- as a
+ * setter the input layer calls and the painter reads once at the top of its
+ * frame. The state is deliberately tiny and deliberately DEFAULTS TO NOTHING
+ * HOVERED, so every offscreen pixel test composes the same window it always did
+ * without knowing this exists.
+ *
+ * `bar` is SPDF_WIN_CHROME_VSCROLL or _HSCROLL (anything else clears);
+ * `part` is a spdf_win_scroll_part; `pressed` distinguishes a held thumb from a
+ * hovered one. */
+void spdf_win_chrome_scroll_set_hot(int bar, int part, int pressed);
+void spdf_win_chrome_scroll_hot(int* bar, int* part, int* pressed);
+
 /* Paints every region present in the layout, in back-to-front order. This is
  * what spdf_win_paint() calls; it does not begin or end a draw. */
 void spdf_win_chrome_paint_all(const SpdfWinChromePaintCtx& ctx);

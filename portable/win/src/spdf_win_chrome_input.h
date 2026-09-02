@@ -42,6 +42,7 @@
 #define SPDF_WIN_CHROME_INPUT_H
 
 #include "spdf_win_chrome.h"
+#include "spdf_win_chrome_scroll.h"
 #include "spdf_win_chrome_toolbar.h"
 #include "spdf_win_tabstrip.h"
 
@@ -85,7 +86,19 @@ typedef enum spdf_win_chrome_action {
      * spdf_win_chrome_sidebar_drag_pt() / _minimap_drag_pt() for the new width,
      * which clamp exactly as macOS's NSSplitView does. */
     SPDF_WIN_CA_DRAG_SIDEBAR,
-    SPDF_WIN_CA_DRAG_MINIMAP
+    SPDF_WIN_CA_DRAG_MINIMAP,
+    /* A press on a scroller's THUMB. Like the divider drags this only arms the
+     * gesture; the caller then feeds pointer deltas to
+     * spdf_win_scroll_drag_pos(). Two actions rather than one with the axis in a
+     * field because the caller stores the armed action and nothing else -- an
+     * axis kept beside it is an axis that can go stale against it. */
+    SPDF_WIN_CA_DRAG_VSCROLL,
+    SPDF_WIN_CA_DRAG_HSCROLL,
+    /* A click on the trough, before or after the thumb. Instantaneous, so the
+     * AXIS comes from `part` (VSCROLL or HSCROLL), which the hit always carries.
+     * "BACK" is up on the vertical scroller and left on the horizontal one. */
+    SPDF_WIN_CA_SCROLL_PAGE_BACK,
+    SPDF_WIN_CA_SCROLL_PAGE_FORWARD
 } spdf_win_chrome_action;
 
 /* Cursors as an enum rather than as an HCURSOR, so this header stays free of
@@ -110,8 +123,52 @@ typedef struct SpdfWinChromeHit {
      * -1 when nothing is hovered, which is the value the model documents. */
     int hot_tab;
     int hot_close;
+    /* Which part of the scroller under the pointer, as spdf_win_scroll_part, or
+     * SPDF_WIN_SCROLL_NONE when the pointer is not on one. Reported for a bare
+     * hover as well as for a press, because it is what lights the thumb --
+     * the caller hands it to spdf_win_chrome_scroll_set_hot(). */
+    spdf_win_scroll_part scroll_part;
     spdf_win_chrome_cursor cursor;
 } SpdfWinChromeHit;
+
+/* The band, the track and the two fractions for one scroller, picked by part.
+ * A helper rather than an if-else at each of the four call sites (the router
+ * below, the drag, the hover repaint and the test), because picking vscroll's
+ * rect with hscroll's fraction is a bug that produces a thumb in a plausible
+ * place and is therefore invisible until someone drags it. */
+typedef struct SpdfWinScrollBar {
+    SpdfWinChromeRect band;
+    SpdfWinChromeRect track;
+    float pos;
+    float visible;
+    int axis; /* spdf_win_scroll_axis */
+} SpdfWinScrollBar;
+
+static SPDF_WIN_CI_INLINE void spdf_win_chrome_scroll_bar(const SpdfWinChromeLayout* l, const SpdfWinChromeModel* m,
+                                                          spdf_win_chrome_part part, SpdfWinScrollBar* out) {
+    float s;
+    if (!out) return;
+    out->band = spdf_win_chrome_zero();
+    out->track = spdf_win_chrome_zero();
+    out->pos = 0.0f;
+    out->visible = 0.0f;
+    out->axis = SPDF_WIN_SCROLL_V;
+    if (!l || !m) return;
+    s = l->dpi_scale > 0.0f ? l->dpi_scale : 1.0f;
+    if (part == SPDF_WIN_CHROME_HSCROLL) {
+        out->band = l->hscroll;
+        out->pos = m->h_pos;
+        out->visible = m->h_visible;
+        out->axis = SPDF_WIN_SCROLL_H;
+    } else if (part == SPDF_WIN_CHROME_VSCROLL) {
+        out->band = l->vscroll;
+        out->pos = m->v_pos;
+        out->visible = m->v_visible;
+    } else {
+        return;
+    }
+    out->track = spdf_win_scroll_track(out->band, s, out->axis);
+}
 
 /* A client point in CANVAS-LOCAL device pixels. The canvas was laid out against
  * the canvas rect's size (spdf_win_canvas_set_viewport is given
@@ -158,6 +215,7 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
     out->part = SPDF_WIN_CHROME_NONE;
     out->hot_tab = -1;
     out->hot_close = -1;
+    out->scroll_part = SPDF_WIN_SCROLL_NONE;
     out->cursor = SPDF_WIN_CC_ARROW;
     if (!l || !m) return;
 
@@ -244,6 +302,36 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
                     out->action = segment == 0 ? SPDF_WIN_CA_ZOOM_OUT : SPDF_WIN_CA_ZOOM_IN;
                     return;
                 case SPDF_WIN_TB_FIT_POPUP: out->action = SPDF_WIN_CA_CYCLE_FIT; return;
+                default: return;
+            }
+        }
+
+        /* THE TWO SCROLLERS, and note where they sit in this switch: BEFORE the
+         * canvas case, so a press on a trough can never fall through to
+         * SPDF_WIN_CA_CANVAS and pan the document. They are inside the canvas
+         * REGION, and the drag they arm looks superficially like a pan; getting
+         * this order wrong would give a scroller that scrolls and pans at once.
+         *
+         * The cursor stays an ARROW over both. Windows does not change it over a
+         * scrollbar and neither does AppKit, and a resize cursor over a trough
+         * would suggest the panel edge next to it. */
+        case SPDF_WIN_CHROME_VSCROLL:
+        case SPDF_WIN_CHROME_HSCROLL: {
+            SpdfWinScrollBar bar;
+            spdf_win_chrome_scroll_bar(l, m, out->part, &bar);
+            out->scroll_part = spdf_win_scroll_hit(bar.track, bar.pos, bar.visible, spdf_win_scroll_thumb_min(s), x, y,
+                                                  bar.axis);
+            if (button != SPDF_WIN_CB_LEFT) return;
+            switch (out->scroll_part) {
+                case SPDF_WIN_SCROLL_THUMB:
+                    out->action = out->part == SPDF_WIN_CHROME_HSCROLL ? SPDF_WIN_CA_DRAG_HSCROLL
+                                                                       : SPDF_WIN_CA_DRAG_VSCROLL;
+                    return;
+                case SPDF_WIN_SCROLL_TROUGH_BACK: out->action = SPDF_WIN_CA_SCROLL_PAGE_BACK; return;
+                case SPDF_WIN_SCROLL_TROUGH_FORWARD: out->action = SPDF_WIN_CA_SCROLL_PAGE_FORWARD; return;
+                /* The 2 pt inset at each end of the band is not part of the
+                 * track. Swallowed, not forwarded: a 3 px strip that pans the
+                 * document is worse than one that does nothing. */
                 default: return;
             }
         }

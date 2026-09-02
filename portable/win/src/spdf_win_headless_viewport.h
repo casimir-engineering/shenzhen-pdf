@@ -92,18 +92,52 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
     SpdfWinChromeLayout chrome_layout;
     SpdfWinChromeModelInputs chrome_inputs;
     unsigned canvas_w = px_w, canvas_h = px_h;
+    int chrome_h_scrollable = 0;
     if (opts->chrome) {
         chrome_inputs_for(a, &chrome_inputs, opts->dpi_scale);
         spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, &chrome_inputs);
+        chrome_scroll_into(a, &a->chrome);
         spdf_win_chrome_layout(&a->chrome, px_w, px_h, opts->dpi_scale, &chrome_layout);
+        /* Latched for the frame, exactly as scene_for_window does and for the
+         * same reason: the canvas is about to be sized against THIS layout, so
+         * the model the painter finally reads must not disagree about whether
+         * there is a horizontal trough. */
+        chrome_h_scrollable = a->chrome.h_scrollable;
         canvas_w = (unsigned)chrome_layout.canvas.w;
         canvas_h = (unsigned)chrome_layout.canvas.h;
-        print_chrome_geometry("frame", &chrome_layout);
     }
 
     spdf_win_canvas_set_viewport(a->canvas, canvas_w, canvas_h, opts->dpi_scale);
     if (opts->zoom > 0.0f) spdf_win_canvas_set_zoom_at(a->canvas, opts->zoom, 0.0f, 0.0f);
     else spdf_win_canvas_set_zoom_mode(a->canvas, opts->mode);
+
+    /* A SECOND PASS, ONLY FOR THE HORIZONTAL TROUGH, AND ONLY HERE.
+     *
+     * Whether the content overflows sideways is not knowable until the zoom has
+     * been applied, and the zoom cannot be applied until the canvas has a
+     * viewport, which needs the layout, which needs to know about the trough.
+     * The window resolves that circle in TIME -- scene_for_window() reads a
+     * canvas that already carries the previous frame's zoom, so the trough
+     * appears on the paint that follows the zoom, one frame later at worst. A
+     * one-shot render has no next frame, so without this it could never show a
+     * horizontal scroller at all. Re-laying out costs one idempotent
+     * set_viewport and happens only when the verdict actually changed.
+     *
+     * The geometry line is printed AFTER this, exactly once: it is the oracle
+     * portable/win/tests/run-tests-native.d2d.sh and verify-phase1.ps1 crop
+     * against, and printing a pre-settle rect there would silently point them at
+     * the wrong rectangle. */
+    if (opts->chrome) {
+        chrome_scroll_into(a, &a->chrome);
+        if (a->chrome.h_scrollable != chrome_h_scrollable) {
+            chrome_h_scrollable = a->chrome.h_scrollable;
+            spdf_win_chrome_layout(&a->chrome, px_w, px_h, opts->dpi_scale, &chrome_layout);
+            spdf_win_canvas_set_viewport(a->canvas, (unsigned)chrome_layout.canvas.w,
+                                         (unsigned)chrome_layout.canvas.h, opts->dpi_scale);
+        }
+        print_chrome_geometry("frame", &chrome_layout);
+    }
+
     /* Anchor on the page, then apply the offset. Expressing the scroll
      * relative to a page rather than in absolute canvas pixels is what makes a
      * case like "the boundary between page 0 and page 1" mean the same thing
@@ -134,6 +168,10 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
         }
     }
     spdf_win_canvas_build_scene(a->canvas, &scene);
+    /* So --render-window-png --chrome shows highlights too. See the note in
+     * spdf_win_chrome_scene.h; this is the same call on the scene that is
+     * actually written out. */
+    spdf_win_find_apply_overlays(&scene);
     print_geometry("frame", a->canvas, &scene);
 
     /* Extra frames, each a viewport further down, with the pool given a moment
@@ -146,6 +184,7 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
         spdf_win_canvas_settle(a->canvas, 4000);
         memset(&scene, 0, sizeof(scene));
         spdf_win_canvas_build_scene(a->canvas, &scene);
+        spdf_win_find_apply_overlays(&scene);
         _snprintf_s(label, sizeof(label), _TRUNCATE, "frame%d", frame);
         print_geometry(label, a->canvas, &scene);
     }
@@ -154,8 +193,71 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
      * and fit readouts describe the frame about to be written -- the same second
      * build scene_for_window does, for the same reason. */
     if (opts->chrome) {
+        /* LET AN ASYNC SEARCH LAND BEFORE THE ONE FRAME THIS PROCESS WILL EVER
+         * DRAW.
+         *
+         * The window gets this free: it polls, the search delivers in batches,
+         * and each batch invalidates, so highlights appear over the next few
+         * frames. A single --render-window-png invocation has no next frame, so
+         * without a settle it composes the instant the query was set and shows
+         * the search field and the Search sidebar section but NOT a single
+         * highlight -- which reads as "the overlays are not wired" when they are.
+         *
+         * It matters beyond convenience: spdf_win_paint() needing no desktop is
+         * what makes the chrome pixel-testable offscreen, and that property is
+         * worth nothing for find if the offscreen path can never show a match.
+         *
+         * Bounded, and it polls rather than sleeps blindly: a search that never
+         * finishes costs the timeout once, not a hang. The same shape as
+         * spdf_win_canvas_settle() above it. */
+        SpdfWinFindSession* find;
+        int spins = 0;
+
         chrome_inputs_for(a, &chrome_inputs, opts->dpi_scale);
         spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, &chrome_inputs);
+        chrome_scroll_into(a, &a->chrome);
+        a->chrome.h_scrollable = chrome_h_scrollable;
+
+        /* FIND, AND THE ORDER HERE IS THE WHOLE POINT.
+         *
+         * Two things conspire on this path and each is invisible alone.
+         *
+         * First, spdf_win_chrome_model_build() takes the document from the
+         * selected TAB, and this path has no tabs -- it opened one document
+         * directly -- so it calls spdf_win_find_fill_model(model, NULL), which
+         * hands the session a NULL path and DISCARDS whatever search was
+         * running. Any settle done before that build is thrown away by it. So
+         * the path is set after the build, never before.
+         *
+         * Second, the window gets its results free -- it polls, results arrive
+         * in batches, each batch invalidates, highlights appear over the next
+         * few frames -- but a single --render-window-png invocation has no next
+         * frame. Without a settle it composes the instant the query was set and
+         * shows the search field and the Search sidebar section but NOT ONE
+         * highlight, which reads as "the overlays were never wired" when they
+         * are. That matters beyond convenience: spdf_win_paint() needing no
+         * desktop is what makes the chrome pixel-testable offscreen, and that is
+         * worth nothing for find if the offscreen path can never show a match.
+         *
+         * Hence: build, then set the document, then settle, then re-fill so the
+         * counter reflects what the settle earned. The second fill is cheap and
+         * does not restart anything -- spdf_win_find_set() only restarts when
+         * the document or the query actually changed. */
+        spdf_win_find_fill_model(&a->chrome, a->path);
+        find = spdf_win_find_shared();
+        while (find && spdf_win_find_searching(find) && spins < 500) {
+            spdf_win_find_poll(find);
+            Sleep(10);
+            ++spins;
+        }
+        if (find) spdf_win_find_poll(find);
+        spdf_win_find_fill_model(&a->chrome, a->path);
+
+        /* Re-derive the overlays now the matches exist. The earlier call, right
+         * after build_scene, ran against an empty result set. scene->pages is
+         * still the list build_scene produced, so this recomputes rather than
+         * re-laying out. */
+        spdf_win_find_apply_overlays(&scene);
     }
     hr = spdf_win_render_scene_to_png(d2d, px_w, px_h, &scene, out_png);
     if (FAILED(hr)) {

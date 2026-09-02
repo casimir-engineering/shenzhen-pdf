@@ -1,6 +1,8 @@
 /* Building the chrome model from the tab model. See spdf_win_chrome_model.h. */
 #include "spdf_win_chrome_model.h"
 
+#include "spdf_win_chrome_find.h"
+
 #include <string.h>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -93,7 +95,14 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
     model->zoom_dpi_scale = in->zoom_dpi_scale;
     model->fit_mode = in->fit_mode;
 
-    if (!tabs) return;
+    if (!tabs) {
+        /* Still fill the find state: a model with no tabs is what the window
+         * builds while the last tab closes, and leaving the counter showing a
+         * previous document's total there would be a lie about a document that
+         * is gone. With no path the session cancels and reports nothing. */
+        spdf_win_find_fill_model(model, NULL);
+        return;
+    }
 
     count = spdf_win_tabs_count(tabs);
     if (count > SPDF_WIN_CHROME_MAX_TABS) count = SPDF_WIN_CHROME_MAX_TABS;
@@ -120,4 +129,131 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
     model->tab_count = count;
     model->selected_tab = spdf_win_tabs_selected_index(tabs);
     if (model->selected_tab >= count) model->selected_tab = count > 0 ? count - 1 : -1;
+
+    /* The find fields, from the shared session (spdf_win_chrome_find.h). Keyed
+     * on the SELECTED tab's path, so a Ctrl+Tab re-targets the search at the
+     * document the reader is now looking at rather than at the one the window
+     * opened on -- the same defect spdf_win_chrome_content_set_document() exists
+     * to prevent for the sidebar. Cheap on the steady path: a strcmp and a poll
+     * that finds nothing, and with no query it does not even allocate a session.
+     *
+     * Here rather than in SpdfWinChromeModelInputs on purpose. Threading eight
+     * more fields through the inputs struct would mean the window layer -- which
+     * has no search state -- filling eight fields it would have to fetch from
+     * this same session anyway, and the headless compose path would have to
+     * repeat it. */
+    spdf_win_find_fill_model(model, model->selected_tab >= 0 ? spdf_win_tabs_path(tabs, model->selected_tab) : NULL);
+}
+
+/* --- the find bridge -----------------------------------------------------
+ *
+ * The process-wide find session, the temporary query bridge, and the fill that
+ * puts the result into the model. Here rather than in spdf_win_chrome_find.cpp
+ * for a linking reason worth stating: that file is the toolbar's find PAINTER,
+ * and everything it needs is inline in spdf_win_chrome_find.h. Keeping the
+ * bridge out of it means a test that links the toolbar painter does not also
+ * have to link the search engine, its worker thread and MuPDF behind it.
+ * portable/win/tests/d2d_theme_test.c and overlay_paint_test.c are exactly that
+ * test, and the difference to them is one source file instead of two.
+ *
+ * Here rather than in spdf_win_search.cpp for the other reason: that file is at
+ * its size cap, and this half is a different thing anyway -- it reaches the
+ * session only through the same public API a test does, so the engine's struct
+ * stays private to its own translation unit.
+ */
+
+namespace {
+
+SpdfWinFindSession* g_shared;
+int g_shared_tried;
+
+/* TEMPORARY, and documented as such at its definition -- the same pattern and
+ * the same justification as spdf_win_chrome_content.cpp's SPDF_SIDEBAR_FILTER.
+ * No keyboard input reaches this track yet (this change's report says exactly
+ * what is needed from the input track), so the only way to exercise find in the
+ * real app today is the environment. Costs one getenv per process.
+ *
+ *   SPDF_FIND_QUERY=<text>   the query
+ *   SPDF_FIND_REGEX=1        treat it as a regular expression
+ *
+ * Delete both of these the moment the search field is typeable. */
+const char* env_query(void) {
+    static char buf[512];
+    static int tried;
+    size_t got = 0;
+    if (tried) return buf[0] ? buf : NULL;
+    tried = 1;
+    if (getenv_s(&got, buf, sizeof(buf), "SPDF_FIND_QUERY") != 0 || got == 0) buf[0] = 0;
+    return buf[0] ? buf : NULL;
+}
+
+int env_regex(void) {
+    static int value = -1;
+    char buf[16];
+    size_t got = 0;
+    if (value >= 0) return value;
+    value = 0;
+    if (getenv_s(&got, buf, sizeof(buf), "SPDF_FIND_REGEX") == 0 && got > 0 && buf[0] && buf[0] != '0') value = 1;
+    return value;
+}
+
+} /* namespace */
+
+SpdfWinFindSession* spdf_win_find_shared(void) {
+    if (!g_shared_tried) {
+        g_shared_tried = 1;
+        /* Lazy for real: no query means no session, no thread and no document
+         * handle, so a process that never searches pays one branch. */
+        if (env_query()) g_shared = spdf_win_find_session_new();
+    }
+    return g_shared;
+}
+
+/* The scene builder's entry point, over the process-wide session. Here, beside
+ * spdf_win_find_shared(), and NOT beside _apply_overlays_for() in
+ * spdf_win_search_geometry.h: putting it there would make every consumer of the
+ * engine also need this file's shared session, which is exactly the dependency
+ * this split exists to avoid -- portable/win/tests/find_overlay_test.c links the
+ * engine and nothing else. */
+void spdf_win_find_apply_overlays(struct spdf_win_scene* scene) {
+    spdf_win_find_apply_overlays_for(spdf_win_find_shared(), scene);
+}
+
+void spdf_win_find_fill_model(SpdfWinChromeModel* model, const char* utf8_path) {
+    static wchar_t wide_query[512];
+    SpdfWinFindSession* s;
+    const char* query;
+
+    if (!model) return;
+    model->query = NULL;
+    model->regex = 0;
+    model->searching = 0;
+    model->match_count = 0;
+    model->match_index = -1;
+    model->marks = NULL;
+    model->mark_count = 0;
+    model->active_mark = -1;
+
+    s = spdf_win_find_shared();
+    if (!s) return;
+    query = env_query();
+    spdf_win_find_set(s, utf8_path, query, env_regex());
+    spdf_win_find_poll(s);
+
+    /* The environment block is ANSI here, so this one string -- and only this
+     * one -- goes through CP_ACP by necessity. It is a debugging hook, not
+     * document data; every other string the chrome draws is CP_UTF8. */
+    if (query && !wide_query[0])
+        MultiByteToWideChar(CP_ACP, 0, query, -1, wide_query, (int)(sizeof(wide_query) / sizeof(wide_query[0])));
+    model->query = query ? wide_query : NULL;
+    model->regex = env_regex();
+    model->searching = spdf_win_find_searching(s);
+    model->match_count = spdf_win_find_match_count(s);
+    model->match_index = spdf_win_find_match_index(s);
+    model->marks = spdf_win_find_marks(s, &model->mark_count, &model->active_mark);
+    /* macOS grows the sidebar's minimum and shows its Search section only while
+     * a query is live (ShenzhenPDFMac.mm:3138-3144, :9603-9615). */
+    model->search_active = model->query != NULL;
+
+    spdf_win_find_note_paint_thread(s);
 }

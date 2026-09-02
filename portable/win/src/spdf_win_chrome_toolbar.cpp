@@ -37,13 +37,16 @@
  * same functions, and a router that re-derived the zoom pill's position would
  * drift from these pixels silently. This file walks that table and draws.
  *
- * STATE OF THIS FILE: the page number, the page count, the zoom percentage and
- * the fit mode are REAL, fed from the chrome model. Still placeholders: the find
- * field and its pill (no search model on Windows yet), the OCR and translate
- * marks, and the icons generally, which are stroked primitives rather than an
- * icon font.
+ * STATE OF THIS FILE: the page number, the page count, the zoom percentage, the
+ * fit mode and the whole find group are REAL, fed from the chrome model. The
+ * find group's own drawing lives in spdf_win_chrome_find.cpp -- called from
+ * here, so the row is still laid out and drawn in one pass -- because this file
+ * is at its size cap and tools/file-size-limits.md prefers a focused file over a
+ * raised one. Still placeholders: the OCR and translate marks, and the icons
+ * generally, which are stroked primitives rather than an icon font.
  */
 #include "spdf_win_chrome_paint.h"
+#include "spdf_win_chrome_find.h"
 #include "spdf_win_chrome_toolbar.h"
 
 #include <math.h>
@@ -422,18 +425,16 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
         }
     }
 
-    /* 12-15. Find field and the find pill. Both rects are empty when the row is
-     * too narrow to hold them, which is this row's stand-in for macOS's
-     * group-by-group overflow -- so there is no width test here, only drawing. */
-    {
-        SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_FIND_PILL];
-        draw_pill(ctx, r, 2);
-        draw_chevron(ctx, cell_of(r, 0, 2), 1, glyph);
-        draw_chevron(ctx, cell_of(r, 1, 2), 0, glyph);
-        draw_field(ctx, tb.item[SPDF_WIN_TB_FIND_FIELD], L"Find", 1, DWRITE_TEXT_ALIGNMENT_LEADING);
-    }
-
     if (glyph) glyph->Release();
+
+    /* 12-15. The find group -- search field, regex checkbox, counter and the
+     * prev/next pill -- in spdf_win_chrome_find.cpp, which owns the whole
+     * feature's drawing. Called from here rather than from paint_all so the row
+     * is still one walk of one layout table; every rect it uses comes out of
+     * `tb`, so the router hit-tests exactly what it drew. Each of those rects is
+     * empty when the row was too narrow to hold that control, and the find
+     * painter bails on an empty rect like every helper above. */
+    spdf_win_chrome_paint_find(ctx, tb);
 
     /* Hairline under the toolbar: the boundary between chrome and document. */
     {
