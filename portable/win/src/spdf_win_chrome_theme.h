@@ -61,6 +61,20 @@ typedef struct SpdfWinChromeColor {
     float r, g, b, a;
 } SpdfWinChromeColor;
 
+/* For the two colours macOS states as calibrated components rather than as a
+ * hex triple. Rounding 0.38 to 0x61 and back would move it by 0.0004 -- nothing
+ * a human sees, but it would also make this file stop being a transcription of
+ * SPDFMacUIHelpers.mm:453-479, and being able to diff a constant against the
+ * line that produced it is most of what this header is for. */
+static SPDF_WIN_CT_INLINE SpdfWinChromeColor spdf_win_ct_calibrated(float r, float g, float b, float a) {
+    SpdfWinChromeColor c;
+    c.r = r;
+    c.g = g;
+    c.b = b;
+    c.a = a;
+    return c;
+}
+
 static SPDF_WIN_CT_INLINE SpdfWinChromeColor spdf_win_ct_rgb(unsigned rgb, float a) {
     SpdfWinChromeColor c;
     c.r = (float)((rgb >> 16) & 0xFFu) / 255.0f;
@@ -129,6 +143,32 @@ typedef struct SpdfWinChromeTheme {
     /* Drop indicator for a tab reattach drag: systemYellow, 2 pt wide
      * (:684-699). */
     SpdfWinChromeColor drop_indicator;
+
+    /* --- scrollers -------------------------------------------------------
+     *
+     * macOS uses a legacy NSScroller and gets all four of these from AppKit, so
+     * there are no numbers to copy; what transfers is the RELATIONSHIP, which is
+     * that the trough is a quiet surface distinguishable from the document
+     * gutter behind it and the thumb is clearly darker (light) or lighter (dark)
+     * than its trough at every one of its three states.
+     *
+     * The trough MUST be distinguishable from the gutter (spdf_win_d2d.h's
+     * gutter_rgb: 0xE0E0E2 light, 0x121212 dark). `autohidesScrollers = NO` on
+     * both macOS scroll views, so the trough is always visible -- which is only
+     * worth anything if a reader can see where it starts and stops. */
+    SpdfWinChromeColor scroll_trough;
+    SpdfWinChromeColor scroll_thumb;
+    SpdfWinChromeColor scroll_thumb_hot;
+    SpdfWinChromeColor scroll_thumb_pressed;
+
+    /* The search heat-map's ticks, and these two ARE literals on macOS
+     * (SPDFMacUIHelpers.mm:453-479), so they transfer exactly:
+     * calibrated(1.0, 0.38, 0.08, 0.95) for the ACTIVE match and
+     * calibrated(1.0, 0.86, 0.12, 0.82) for every other one. Same in both
+     * appearances -- a find marker is a signal, not a surface, and macOS does
+     * not vary it either. */
+    SpdfWinChromeColor find_mark_active;
+    SpdfWinChromeColor find_mark;
 } SpdfWinChromeTheme;
 
 /* Radii and strokes that ARE literals on macOS, so they transfer exactly. */
@@ -178,6 +218,12 @@ static SPDF_WIN_CT_INLINE SpdfWinChromeTheme spdf_win_chrome_theme_for(int dark)
         t.close_fill = spdf_win_ct_rgb(0xC5C5C5u, 0.13f);
         t.close_glyph_selected = spdf_win_ct_rgb(0xFFFFFFu, 0.76f);
         t.close_glyph = spdf_win_ct_rgb(0xC5C5C5u, 0.82f);
+        /* One step up from the 0x121212 gutter, so the trough's extent is
+         * readable without becoming a bright bar down the page. */
+        t.scroll_trough = spdf_win_ct_rgb(0x1F1F1Fu, 1.0f);
+        t.scroll_thumb = spdf_win_ct_rgb(0x8A8A8Au, 1.0f);
+        t.scroll_thumb_hot = spdf_win_ct_rgb(0xA6A6A6u, 1.0f);
+        t.scroll_thumb_pressed = spdf_win_ct_rgb(0xC4C4C4u, 1.0f);
     } else {
         t.band = spdf_win_ct_rgb(0xF3F3F3u, 1.0f);
         t.panel = spdf_win_ct_rgb(0xF3F3F3u, 1.0f);
@@ -200,6 +246,13 @@ static SPDF_WIN_CT_INLINE SpdfWinChromeTheme spdf_win_chrome_theme_for(int dark)
         t.close_fill = spdf_win_ct_rgb(0x5D5D5Du, 0.13f);
         t.close_glyph_selected = spdf_win_ct_rgb(0x1A1A1Au, 0.76f);
         t.close_glyph = spdf_win_ct_rgb(0x5D5D5Du, 0.82f);
+        /* Lighter than the 0xE0E0E2 gutter, which is the Windows 11 arrangement:
+         * the scrollbar reads as furniture attached to the window rather than as
+         * part of the paper's surround. */
+        t.scroll_trough = spdf_win_ct_rgb(0xF0F0F0u, 1.0f);
+        t.scroll_thumb = spdf_win_ct_rgb(0x8A8A8Au, 1.0f);
+        t.scroll_thumb_hot = spdf_win_ct_rgb(0x6E6E6Eu, 1.0f);
+        t.scroll_thumb_pressed = spdf_win_ct_rgb(0x5A5A5Au, 1.0f);
     }
 
     /* The accent-derived tab values keep macOS's alphas exactly, because those
@@ -217,6 +270,10 @@ static SPDF_WIN_CT_INLINE SpdfWinChromeTheme spdf_win_chrome_theme_for(int dark)
     /* systemOrange / systemYellow analogues, fully opaque as macOS uses them. */
     t.readonly_dot = spdf_win_ct_rgb(0xF7630Cu, 1.0f);
     t.drop_indicator = spdf_win_ct_rgb(0xFFC83Du, 1.0f);
+
+    /* SPDFMacUIHelpers.mm:453-479, component for component. */
+    t.find_mark_active = spdf_win_ct_calibrated(1.0f, 0.38f, 0.08f, 0.95f);
+    t.find_mark = spdf_win_ct_calibrated(1.0f, 0.86f, 0.12f, 0.82f);
     return t;
 }
 

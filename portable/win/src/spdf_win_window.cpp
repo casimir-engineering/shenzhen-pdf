@@ -220,6 +220,28 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 return TRUE;
             }
             break;
+        case WM_GETMINMAXINFO: {
+            /* THE FLOOR THE USER CANNOT DRAG THROUGH. macOS sets contentMinSize
+             * to 560 x 380 (ShenzhenPDFMac.mm:69-70) and Windows had nothing at
+             * all, so the frame could be dragged down to a caption bar with a
+             * sliver of chrome under it -- and spdf_win_chrome_layout() then
+             * starts dropping bands, which is a graceful degradation meant for a
+             * squeezed panel rather than a normal way to use the app.
+             *
+             * The constants are CLIENT-area points, so they are scaled by this
+             * window's DPI and then grown into a FRAME size: ptMinTrackSize is
+             * the outer window, and clamping the outer window to a client-area
+             * number would leave the client short by the border and caption on
+             * every machine. */
+            MINMAXINFO* mmi = (MINMAXINFO*)lparam;
+            float s = spdf_win_window_dpi_scale(window);
+            RECT rc = {0, 0, (LONG)(SPDF_WIN_CHROME_MIN_CONTENT_W * s), (LONG)(SPDF_WIN_CHROME_MIN_CONTENT_H * s)};
+            DWORD style = (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE);
+            AdjustWindowRectEx(&rc, style ? style : WS_OVERLAPPEDWINDOW, FALSE, 0);
+            mmi->ptMinTrackSize.x = rc.right - rc.left;
+            mmi->ptMinTrackSize.y = rc.bottom - rc.top;
+            return 0;
+        }
         case WM_DPICHANGED: {
             /* Windows hands us the rectangle the window should occupy on the
              * monitor it just moved to. Honouring it is what makes a drag

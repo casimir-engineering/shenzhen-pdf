@@ -38,7 +38,14 @@ typedef enum spdf_win_zoom_mode {
     SPDF_WIN_ZOOM_FREE = 0,       /* whatever zoom was last set */
     SPDF_WIN_ZOOM_FIT_WIDTH = 1,  /* page width fills the viewport; re-fits on resize */
     SPDF_WIN_ZOOM_FIT_PAGE = 2,   /* whole page visible */
-    SPDF_WIN_ZOOM_ACTUAL = 3      /* 1 PDF point = 1 logical pixel, times the DPI scale */
+    SPDF_WIN_ZOOM_ACTUAL = 3,     /* 1 PDF point = 1 logical pixel, times the DPI scale */
+    /* Page HEIGHT fills the viewport, letting a wide sheet overflow sideways.
+     * macOS's fit popup has offered this from the start (SPDFFitModeHeight,
+     * ShenzhenPDFMac.mm:3006-3011) and spdf_win_layout.h has carried the
+     * arithmetic for it since the layout port (spdf_win_fit_height_zoom); only
+     * this enum was missing, so the toolbar's fit cycle silently skipped one of
+     * macOS's four items. Numbered last so no persisted or scripted value moves. */
+    SPDF_WIN_ZOOM_FIT_HEIGHT = 4
 } spdf_win_zoom_mode;
 
 /* Borrows `doc` -- the caller keeps ownership and must outlive the canvas.
@@ -75,6 +82,50 @@ int spdf_win_canvas_scroll_to(spdf_win_canvas* canvas, float x, float y);
 /* Puts the top of `page_index` at the top of the viewport (minus the slot
  * margin), measuring intervening pages as needed. */
 int spdf_win_canvas_scroll_to_page(spdf_win_canvas* canvas, int page_index);
+
+/* WHAT A SCROLLBAR NEEDS, and nothing else: two fractions per axis plus whether
+ * the content overflows sideways at all.
+ *
+ * FRACTIONS, NOT OFFSETS, and that is the whole point of this call existing
+ * rather than the chrome dividing scroll_y by content_h itself. `visible` is
+ * viewport/content, which IS the thumb's proportional length, and `pos` is
+ * offset/(content - viewport), which IS where the thumb sits in its travel. Both
+ * are unitless, so spdf_win_chrome_scroll.h needs no notion of a PDF point, a
+ * zoom or a page -- and neither can be got wrong by a caller that does not know
+ * the canvas measures page heights lazily.
+ *
+ * `h_scrollable` says whether there is anything to drag SIDEWAYS, which is not
+ * the same question as "is the content wider than the viewport". The canvas is
+ * always at least `widest page + 2 * 22 pt` wide, so at fit width the content
+ * permanently overflows by 44 px -- and spdf_win_hscroll_clamp then pins a page
+ * that fits the viewport CENTRED, so the offset never moves. A trough drawn
+ * from the overflow alone would therefore be present on every ordinary document
+ * with a thumb nobody can move. So this reports the CURRENT PAGE's pan range,
+ * which is exactly what the clamp permits, and the horizontal `pos`/`visible`
+ * are measured against that same page. (This does not contradict
+ * spdf_win_layout.h:349-355: that warns against keying the canvas's WIDTH on
+ * the current page, which nothing here does.)
+ *
+ * It decides whether a horizontal trough exists at all, so painter and hit-test
+ * must both take it from here and from nowhere else. */
+typedef struct spdf_win_canvas_scroll {
+    float v_pos;
+    float v_visible;
+    float h_pos;
+    float h_visible;
+    int h_scrollable;
+} spdf_win_canvas_scroll;
+
+/* Always fully written, so a caller may read every field after any call. A NULL
+ * canvas yields "nothing to scroll": both fractions 0 and both `visible` 1,
+ * which spdf_win_chrome_scroll.h draws as a full-length thumb -- the honest
+ * picture of a window with no document. */
+void spdf_win_canvas_scroll_state(const spdf_win_canvas* canvas, spdf_win_canvas_scroll* out);
+
+/* Scroll one axis to a fraction in [0,1] of its travel -- the inverse of the
+ * `pos` above, and what a thumb drag performs. Returns non-zero when the offset
+ * actually moved. Clamps like every other scroll entry point. */
+int spdf_win_canvas_scroll_to_fraction(spdf_win_canvas* canvas, int vertical, float pos);
 
 float spdf_win_canvas_scroll_x(const spdf_win_canvas* canvas);
 float spdf_win_canvas_scroll_y(const spdf_win_canvas* canvas);

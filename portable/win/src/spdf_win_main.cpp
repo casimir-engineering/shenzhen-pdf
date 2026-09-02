@@ -93,6 +93,11 @@ struct app {
     spdf_win_chrome_action drag;
     float drag_last_x;
     float drag_last_y;
+    /* The scroll fraction the thumb had when a scroller drag was armed. A thumb
+     * drag is absolute -- press position plus total pointer travel -- rather
+     * than an accumulation of per-move deltas, so this is the only extra state
+     * it needs, and drag_last_x/y stay pinned to the press for it. */
+    float drag_scroll_pos;
 };
 
 static void report(const wchar_t* text, bool interactive) {
@@ -182,11 +187,14 @@ static int show_selected_tab(app* a) {
 
 /* --- the window ---------------------------------------------------------- */
 
-/* scene_for_window() -- the paint-time glue -- and the mouse routing both live
- * here. Depends on `struct app` and on show_selected_tab() above it, and stays
+/* scene_for_window() -- the paint-time glue -- and the mouse routing. Both
+ * depend on `struct app` and on show_selected_tab() above them, and both stay
  * out of this file because this file is at its 500-line cap and
  * tools/file-size-limits.md asks for an extracted file rather than a raised one.
- * Same arrangement as spdf_win_tabs_app.h and spdf_win_headless_viewport.h. */
+ * Same arrangement as spdf_win_tabs_app.h and spdf_win_headless_viewport.h.
+ *
+ * The scene half comes FIRST: the input half calls two of its functions. */
+#include "spdf_win_chrome_scene.h"
 #include "spdf_win_chrome_actions.h"
 
 /* The keymap. Deliberately here and not in spdf_win_window.cpp: which key
@@ -269,26 +277,45 @@ static int input_for_window(void* user, spdf_win_input* in) {
     }
 }
 
-/* Page 1 at 100%, shrunk to a comfortable share of the work area. Done before
- * the window exists, so it uses the system DPI; WM_DPICHANGED corrects
- * anything the real monitor disagrees with. */
-static void initial_client_size(spdf_document* doc, int* out_w, int* out_h) {
+/* THE WINDOW'S OPENING SIZE, AND ITS FLOOR.
+ *
+ * This used to derive the size from page 0 at 100% -- page width plus margins,
+ * shrunk to fit the work area, with NO minimum. On golden.pdf that opens a
+ * 244 x 286 window: narrower than its own caption buttons, and far narrower
+ * than the 84 pt of chrome the window now has to hold. macOS never did this. It
+ * opens every document window at a fixed 1120 x 800 and clamps a restored size
+ * into [560 … min(2200, screenW − 40)] x [380 … min(1600, screenH − 40)]
+ * (ShenzhenPDFMac.mm:2912-2938, :69-70, :189-196), so a small page gets a
+ * normal window with a small page in it rather than a window the size of the
+ * page. The constants live in spdf_win_chrome.h with the rest of the metrics.
+ *
+ * The floor is enforced twice, deliberately: here, so the window opens above it,
+ * and in WM_GETMINMAXINFO, so the user cannot drag below it afterwards. Only the
+ * second is load-bearing against a user; the first is what stops the app from
+ * doing it to itself.
+ *
+ * Done before the window exists, so it uses the system DPI; WM_DPICHANGED
+ * corrects anything the real monitor disagrees with. */
+#define SPDF_WIN_RESTORE_MAX_W 2200.0f /* :189-196 */
+#define SPDF_WIN_RESTORE_MAX_H 1600.0f
+#define SPDF_WIN_SCREEN_INSET 40.0f
+
+static float clamp_content(float want, float lo, float hi, float screen) {
+    float top = screen - SPDF_WIN_SCREEN_INSET;
+    if (top < hi) hi = top;
+    if (hi < lo) hi = lo; /* a screen too small to satisfy both: the floor wins */
+    if (want < lo) want = lo;
+    if (want > hi) want = hi;
+    return want;
+}
+
+static void initial_client_size(int* out_w, int* out_h) {
     RECT work = {0, 0, 1280, 800};
-    float page_w = 612.0f;
-    float page_h = 792.0f;
-    char err[128];
-
-    spdf_page_size(doc, 0, &page_w, &page_h, err, sizeof(err)); /* already cached by the canvas */
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-
-    float w = page_w + 2.0f * (float)SPDF_WIN_PAGE_MARGIN_H;
-    float h = page_h + 2.0f * (float)SPDF_WIN_PAGE_MARGIN_V;
-    float scale = 1.0f;
-    if (w > (float)(work.right - work.left) * 0.80f) scale = (float)(work.right - work.left) * 0.80f / w;
-    if (h > (float)(work.bottom - work.top) * 0.90f && (float)(work.bottom - work.top) * 0.90f / h < scale)
-        scale = (float)(work.bottom - work.top) * 0.90f / h;
-    *out_w = (int)(w * scale);
-    *out_h = (int)(h * scale);
+    *out_w = (int)clamp_content((float)SPDF_WIN_CHROME_DEFAULT_CONTENT_W, (float)SPDF_WIN_CHROME_MIN_CONTENT_W,
+                                SPDF_WIN_RESTORE_MAX_W, (float)(work.right - work.left));
+    *out_h = (int)clamp_content((float)SPDF_WIN_CHROME_DEFAULT_CONTENT_H, (float)SPDF_WIN_CHROME_MIN_CONTENT_H,
+                                SPDF_WIN_RESTORE_MAX_H, (float)(work.bottom - work.top));
 }
 
 /* --- headless ------------------------------------------------------------ */
@@ -307,7 +334,7 @@ static int usage(void) {
              L"\n"
              L"  <page> is 0-BASED, matching the core API and spdf_win_probe.\n"
              L"  opts:  --dark            dark reading theme, images preserved\n"
-             L"         --fit MODE        width (default) | page | actual\n"
+             L"         --fit MODE        width (default) | height | page | actual\n"
              L"         --zoom Z          device pixels per PDF point; overrides --fit\n"
              L"         --scroll-x X      viewport pixels, added to the top of <page>\n"
              L"         --scroll-y Y\n"
@@ -378,6 +405,7 @@ int main(void) {
             opts.zoom_at_y = comma && *comma == L',' ? (float)wcstod(comma + 1, NULL) : 0.0f;
         } else if (wcscmp(flag, L"--fit") == 0) {
             if (wcscmp(value, L"width") == 0) opts.mode = SPDF_WIN_ZOOM_FIT_WIDTH;
+            else if (wcscmp(value, L"height") == 0) opts.mode = SPDF_WIN_ZOOM_FIT_HEIGHT;
             else if (wcscmp(value, L"page") == 0) opts.mode = SPDF_WIN_ZOOM_FIT_PAGE;
             else if (wcscmp(value, L"actual") == 0) opts.mode = SPDF_WIN_ZOOM_ACTUAL;
             else return usage();
@@ -418,10 +446,8 @@ int main(void) {
             rc = 1;
         } else {
             int client_w, client_h;
-            int selected = spdf_win_tabs_selected_index(a.tabs);
             if (window_page > 0) a.pending_page = window_page;
-            initial_client_size((spdf_document*)spdf_win_tabs_document(a.tabs, selected, err, sizeof(err)), &client_w,
-                                &client_h);
+            initial_client_size(&client_w, &client_h);
 
             spdf_win_window* window = spdf_win_window_create(d2d, NULL, client_w, client_h, scene_for_window,
                                                             input_for_window, &a, err, sizeof(err));

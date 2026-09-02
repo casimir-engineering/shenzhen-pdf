@@ -68,6 +68,8 @@
 #define SPDF_WIN_TB_PAGE_COUNT_W 44.0  /* the "/ N" label; AppKit measures it */
 #define SPDF_WIN_TB_FIT_POPUP_W 96.0   /* :3021 */
 #define SPDF_WIN_TB_SEARCH_FIELD_W 141.0 /* :3032, the un-squeezed width */
+#define SPDF_WIN_TB_FIND_REGEX_W 68.0    /* :3070, the "Regex" checkbox */
+#define SPDF_WIN_TB_FIND_COUNT_W 64.0    /* :3081-3086, the match counter label */
 #define SPDF_WIN_TB_SEGMENT_W 32.0     /* one half of a pill */
 #define SPDF_WIN_TB_PILL_W 64.0        /* a two-segment pill */
 #define SPDF_WIN_TB_OVERFLOW_W 30.0    /* :3096 */
@@ -79,10 +81,13 @@
 #define SPDF_WIN_TB_MINIMAP_TOGGLE_W 74.0
 
 /* Every control the row can contain, left to right in the order the stack view
- * arranges them. The five macOS items this port does not draw yet (the markdown
- * font-size pill, the regex checkbox, the find-count label, the flexible spacer)
- * are absent rather than reserved: an item in this table is an item with a rect,
- * and a rect nothing draws is a rect something could still click. */
+ * arranges them -- and the ENUM ORDER IS THAT ORDER, which
+ * portable/win/tests/chrome_input_test.c asserts by walking the table and
+ * checking each rect starts after the previous one ends. A new control goes at
+ * its visual position, not at the end. The two macOS items this port still does
+ * not draw (the markdown font-size pill and the flexible spacer) are absent
+ * rather than reserved: an item in this table is an item with a rect, and a rect
+ * nothing draws is a rect something could still click. */
 typedef enum spdf_win_toolbar_item {
     SPDF_WIN_TB_NONE = 0,
     SPDF_WIN_TB_SIDEBAR_TOGGLE,
@@ -96,6 +101,8 @@ typedef enum spdf_win_toolbar_item {
     SPDF_WIN_TB_ZOOM_PILL,
     SPDF_WIN_TB_READING_THEME,
     SPDF_WIN_TB_FIND_FIELD,
+    SPDF_WIN_TB_FIND_REGEX,
+    SPDF_WIN_TB_FIND_COUNT,
     SPDF_WIN_TB_FIND_PILL,
     SPDF_WIN_TB_OVERFLOW,
     SPDF_WIN_TB_MINIMAP_TOGGLE,
@@ -196,14 +203,42 @@ static SPDF_WIN_TB_INLINE void spdf_win_toolbar_layout(SpdfWinChromeRect bar, fl
     SPDF_WIN_TB_PLACE_TRAILING(SPDF_WIN_TB_MINIMAP_TOGGLE, SPDF_WIN_TB_MINIMAP_TOGGLE_W);
     SPDF_WIN_TB_PLACE_TRAILING(SPDF_WIN_TB_OVERFLOW, SPDF_WIN_TB_OVERFLOW_W);
 
-    /* The find group, only when the gap left between the two walks can hold it.
-     * This stands in for macOS's group-by-group overflow, and it is the ONE
-     * place the two walks interact -- which is why it is tested. */
-    if (right - x > spdf_win_chrome_px(SPDF_WIN_TB_SEARCH_FIELD_W + 2.0 * SPDF_WIN_TB_SEGMENT_W +
-                                           3.0 * SPDF_WIN_TB_SPACING,
-                                       s)) {
-        SPDF_WIN_TB_PLACE_TRAILING(SPDF_WIN_TB_FIND_PILL, SPDF_WIN_TB_PILL_W);
-        SPDF_WIN_TB_PLACE_TRAILING(SPDF_WIN_TB_FIND_FIELD, SPDF_WIN_TB_SEARCH_FIELD_W);
+    /* The find group, in macOS's own collapse order. :2866-2909 hides whole
+     * groups until the row fits, and the find groups go in this sequence:
+     *
+     *     [findCountLabel]  ->  [findSegments]  ->  [findRegexCheckbox]
+     *
+     * so DURABILITY runs the other way -- the search field survives longest
+     * (it is not in the collapse list at all), then the regex checkbox, then
+     * the prev/next pill, and the counter is the first thing to go. Which is why
+     * the four tests below nest rather than being four independent widths: a
+     * control is present only if every more-durable one already is.
+     *
+     * That the regex checkbox outlives the prev/next pill is macOS's ordering
+     * and not a typo. The reasoning is visible in the list: the checkbox changes
+     * what the query MEANS, and there is a keyboard route to the next match but
+     * none to the regex mode.
+     *
+     * Placed right to left, because these are the last things before the
+     * overflow button and the Map toggle, which the backward walk has already
+     * consumed. This is the ONE place the two walks interact -- which is why it
+     * is tested (portable/win/tests/chrome_input_test.c). */
+    {
+        float sp = spdf_win_chrome_px(SPDF_WIN_TB_SPACING, s);
+        float w_field = spdf_win_chrome_px(SPDF_WIN_TB_SEARCH_FIELD_W, s);
+        float w_regex = spdf_win_chrome_px(SPDF_WIN_TB_FIND_REGEX_W, s);
+        float w_pill = spdf_win_chrome_px(SPDF_WIN_TB_PILL_W, s);
+        float w_count = spdf_win_chrome_px(SPDF_WIN_TB_FIND_COUNT_W, s);
+        float avail = right - x;
+        int field = avail > w_field;
+        int regex = field && avail > w_field + sp + w_regex;
+        int pill = regex && avail > w_field + sp + w_regex + sp + w_pill;
+        int count = pill && avail > w_field + sp + w_regex + sp + w_pill + sp + w_count;
+
+        if (pill) SPDF_WIN_TB_PLACE_TRAILING(SPDF_WIN_TB_FIND_PILL, SPDF_WIN_TB_PILL_W);
+        if (count) SPDF_WIN_TB_PLACE_TRAILING(SPDF_WIN_TB_FIND_COUNT, SPDF_WIN_TB_FIND_COUNT_W);
+        if (regex) SPDF_WIN_TB_PLACE_TRAILING(SPDF_WIN_TB_FIND_REGEX, SPDF_WIN_TB_FIND_REGEX_W);
+        if (field) SPDF_WIN_TB_PLACE_TRAILING(SPDF_WIN_TB_FIND_FIELD, SPDF_WIN_TB_SEARCH_FIELD_W);
     }
 
 #undef SPDF_WIN_TB_PLACE
@@ -215,7 +250,14 @@ static SPDF_WIN_TB_INLINE void spdf_win_toolbar_layout(SpdfWinChromeRect bar, fl
  * The separator is skipped: it is decoration a hairline wide, and letting a
  * click land on it would mean a click 1 px left of the page field doing nothing
  * instead of falling through to the bar. `out_segment` is 0 for a non-pill and
- * for a miss. */
+ * for a miss.
+ *
+ * SPDF_WIN_TB_FIND_COUNT is NOT skipped even though it is a label. It is 64 pt
+ * wide, so a click on it is a click the reader aimed at something; reporting it
+ * lets the router decide (it maps to no action today, which is the same outcome
+ * as falling through, but it is a decision the router can change without this
+ * header lying about where the label is). The separator's exclusion is about a
+ * hairline swallowing a near miss, which does not apply here. */
 static SPDF_WIN_TB_INLINE spdf_win_toolbar_item spdf_win_toolbar_hit(const SpdfWinToolbarLayout* l, float x, float y,
                                                                     int* out_segment) {
     int i;

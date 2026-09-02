@@ -393,6 +393,13 @@ void spdf_win_chrome_paint_tabstrip(const SpdfWinChromePaintCtx& ctx) {
 void spdf_win_chrome_paint_all(const SpdfWinChromePaintCtx& ctx) {
     if (!ctx.target || !ctx.layout || !ctx.model || !ctx.theme) return;
     spdf_win_chrome_paint_panels(ctx);
+    /* The scrollers before the bands, because they belong to the split row and
+     * the bands sit above it. They are also drawn BEFORE the pages -- everything
+     * in this function is -- and the pages are then clipped to the canvas rect,
+     * which EXCLUDES both troughs (spdf_win_chrome.h lays them out inside the
+     * canvas region and shrinks the canvas away from them). So a page scrolled
+     * to the right edge cannot paint over the vertical trough. */
+    spdf_win_chrome_paint_scrollers(ctx);
     spdf_win_chrome_paint_toolbar(ctx);
     spdf_win_chrome_paint_tabstrip(ctx);
 }

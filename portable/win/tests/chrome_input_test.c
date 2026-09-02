@@ -13,6 +13,11 @@
  * the other half of it: the centre of every rect the layout produces must
  * hit-test back to the item that produced it, at 100%, 150% and 200%.
  *
+ * The SCROLLERS are routed by the same header and checked in
+ * chrome_scroll_input_test.c rather than here, because the two suites together
+ * would be past the 500-line cap. What stays here is the sweep over the bands
+ * and panels; the sweep over the two troughs is the first function there.
+ *
  * Both headers are header-only, so no `spdf-test-sources` line is needed --
  * same as chrome_geometry_test.c and tabstrip_geometry_test.c.
  */
@@ -366,6 +371,7 @@ static void test_dividers(void) {
     /* The search section raises the minimum to 216 (:72-76). */
     CHECK(spdf_win_chrome_sidebar_drag_pt(&l, 1.0f, 1) == (float)SPDF_WIN_CHROME_SIDEBAR_SEARCH_MIN_W);
 }
+
 
 /* The conversion whose absence made a cursor-anchored zoom drift. */
 static void test_canvas_local_conversion(void) {
