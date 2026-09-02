@@ -205,6 +205,13 @@ int spdf_win_sidebar_results_scroll_by(SpdfWinSidebarResultsBuilder* b, float dy
 void spdf_win_sidebar_results_publish(const SpdfWinSidebarResultsView* view);
 const SpdfWinSidebarResultsView* spdf_win_sidebar_results_current(void);
 
+/* The Comments section's rows for the coming paint, in the SAME row shape --
+ * a header per page, a row per comment -- and drawn by the same painter, so the
+ * two lists cannot look different. Built by spdf_win_annot.h from the comment
+ * cache; borrowed like the results; NULL means none, drawn as "No Comments". */
+void spdf_win_sidebar_comments_publish(const SpdfWinSidebarResultsView* view);
+const SpdfWinSidebarResultsView* spdf_win_sidebar_comments_current(void);
+
 /* The section the reader chose (0 chapters, 1 comments, 2 search). The app
  * resolves it against what the document has before each paint and pushes the
  * result into both models; this is the chosen value, not the resolved one. */

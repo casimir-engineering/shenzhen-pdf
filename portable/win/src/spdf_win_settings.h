@@ -14,7 +14,7 @@
  *   defaultSidebarVisibleForNewDocuments, defaultMinimapVisibleForNewDocuments,
  *   searchJumpsToNearestResult, preventSleepInPresentation,
  *   printScalingMode 0..2, printCustomScale, windowSize {width, height},
- *   markdownTheme "light"|"dark", darkThemePreservesImages.
+ *   markdownTheme "light"|"dark", darkThemePreservesImages, commentAuthor.
  *
  * "markdownTheme" IS THE READING THEME FOR EVERY DOCUMENT, and it keeps that
  * name deliberately: SPDFMacReadingThemeIntegration.mm:18 -- "users who had
@@ -34,7 +34,7 @@
  * WHAT IT REFUSES TO DO, inherited from spdf_win_session.h:
  *
  *   1. It never drops a key it does not model. The mac app's
- *      fullDiskAccessPromptDismissed, permissionsWizardShown, commentAuthor,
+ *      fullDiskAccessPromptDismissed, permissionsWizardShown,
  *      translate*Language, the GTK app's ocrLanguage and instantLaunchResident
  *      -- all carried through a save byte for byte, so opening a shared
  *      settings.yaml on Windows and quitting re-triggers no mac prompt and
@@ -94,6 +94,11 @@ typedef struct spdf_win_settings {
     int window_height;
     int theme;                          /* spdf_win_theme_pref, "markdownTheme" */
     int dark_theme_preserves_images;    /* "darkThemePreservesImages" */
+    /* "commentAuthor": the author new comments are signed with (mac
+     * setCommentAuthor:, GTK spdf_state_internal.h:78). UTF-8; "" means "the
+     * account's display name", which is what both apps fall back to. Written
+     * always, as both apps write it. */
+    char comment_author[256];
 } spdf_win_settings;
 
 typedef enum spdf_win_settings_status {

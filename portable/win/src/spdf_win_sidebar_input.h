@@ -43,9 +43,10 @@ static SPDF_WIN_CI_INLINE void spdf_win_sidebar_route(const SpdfWinChromeLayout*
         out->action = SPDF_WIN_CA_FOCUS_SIDEBAR_FILTER;
         return;
     }
-    if (m->sidebar_section == 2) {
-        /* The Search section's rows are the caller's to resolve: the
-         * list-local y travels in `index` (see SPDF_WIN_CA_SIDEBAR_ROW). */
+    if (m->sidebar_section != 0) {
+        /* The Search and Comments sections' rows have three heights and are
+         * the caller's to resolve: the list-local y travels in `index` (see
+         * SPDF_WIN_CA_SIDEBAR_ROW). */
         if (spdf_win_chrome_contains(sb.list, x, y)) {
             out->action = SPDF_WIN_CA_SIDEBAR_ROW;
             out->index = (int)floorf(y - sb.list.y + m->sidebar_scroll_y);
