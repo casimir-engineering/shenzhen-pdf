@@ -77,6 +77,10 @@ static NSColor* SPDFMacMarkdownGutterColor(SPDFMarkdownPaginationPlan* plan) {
       SPDFMacMarkdownPagedView* strongSelf = weakSelf;
       if (strongSelf.chooseCodeLanguageHandler) strongSelf.chooseCodeLanguageHandler(blockIndex);
     };
+    _canvas.copyCodeBlockHandler = ^BOOL(NSUInteger blockIndex) {
+      SPDFMacMarkdownPagedView* strongSelf = weakSelf;
+      return strongSelf.copyCodeBlockHandler ? strongSelf.copyCodeBlockHandler(blockIndex) : NO;
+    };
     NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
     [center addObserver:self
                selector:@selector(viewportDidChange:)

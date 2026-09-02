@@ -71,6 +71,7 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     copy.paragraphSpacing = self.paragraphSpacing;
     copy.fontScale = self.fontScale;
     copy.contentInset = self.contentInset;
+    copy.pageContentSize = self.pageContentSize;
     copy.maximumImageWidth = self.maximumImageWidth;
     copy.maximumImageHeight = self.maximumImageHeight;
     copy.maximumResourceBytes = self.maximumResourceBytes;

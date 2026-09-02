@@ -53,7 +53,7 @@ typedef struct {
 @end
 
 SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutSequence(SPDFMarkdownDiagramSequence* sequence,
-                                                             CGFloat contentWidth, CGFloat fontScale) {
+                                                             NSSize contentBox, CGFloat fontScale) {
     CGFloat scale = fontScale > 0 ? fontScale : 1;
     SPDFSequenceFonts fonts;
     fonts.label = [NSFont systemFontOfSize:12 * scale];
@@ -394,5 +394,5 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutSequence(SPDFMarkdownDiagram
                   alignment:NSTextAlignmentCenter];
         }
     }
-    return SPDFMarkdownDiagramFinishLayout(canvas, naturalSize, contentWidth);
+    return SPDFMarkdownDiagramFinishLayout(canvas, naturalSize, contentBox);
 }

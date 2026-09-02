@@ -84,6 +84,7 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     copy.missingFile = source.missingFile;
     copy.missingMessage = source.missingMessage;
     copy.markdownSelectionRange = source.markdownSelectionRange;
+    copy.markdownLandscape = source.markdownLandscape;
     copy.markdownAnchor = source.markdownAnchor;
     copy.readOnly = source.readOnly;
     copy.workingPath = source.workingPath;
@@ -112,6 +113,7 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
         @"searchRegex" : @(tab.searchRegex),
         @"searchRegexMultiline" : @(tab.searchRegexMultiline),
         @"findMatchIndex" : @(tab.findMatchIndex),
+        @"markdownLandscape" : @(tab.markdownLandscape),
         @"markdownSelectionLocation" : @(tab.markdownSelectionRange.location),
         @"markdownSelectionLength" : @(tab.markdownSelectionRange.length),
         @"showSidebar" : @(tab.showSidebar),
@@ -152,6 +154,7 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     NSUInteger markdownSelectionLocation = [item[@"markdownSelectionLocation"] unsignedIntegerValue];
     NSUInteger markdownSelectionLength = [item[@"markdownSelectionLength"] unsignedIntegerValue];
     tab.markdownSelectionRange = NSMakeRange(markdownSelectionLocation, markdownSelectionLength);
+    tab.markdownLandscape = [item[@"markdownLandscape"] boolValue];
     tab.showSidebar = item[@"showSidebar"] ? [item[@"showSidebar"] boolValue] : YES;
     tab.showMinimap = item[@"showMinimap"] ? [item[@"showMinimap"] boolValue] : YES;
     tab.hasMinimapPreference = item[@"showMinimap"] != nil;

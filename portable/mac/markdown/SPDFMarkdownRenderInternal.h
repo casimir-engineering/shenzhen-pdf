@@ -28,6 +28,20 @@ void SPDFMarkdownAppend(SPDFMarkdownRenderContext* context, NSString* string,
                         NSDictionary<NSAttributedStringKey, id>* attributes);
 CGFloat SPDFMarkdownRenderScale(SPDFMarkdownRenderContext* context);
 
+// The budgets page-sized content lays out against (SPDFMarkdownInlineRenderer.mm).
+// When the render carries a destination page (pageContentSize), the width
+// budget is that page's printable width net of the caller's nesting indent and
+// the height budget is its printable height net of the air a figure band
+// reserves above and below. A render with no page attached (NSZeroSize)
+// returns the caller's page-less fallback verbatim, so every such render —
+// and every render before pageContentSize existed — keeps its old constant
+// budgets byte for byte. Used by image display sizing, the pending remote
+// placeholder box, image-row fitting, the table renderer's provisional column
+// distribution, and the diagram figure box.
+CGFloat SPDFMarkdownContentWidthBudget(SPDFMarkdownRenderContext* context, CGFloat depthIndent,
+                                       CGFloat pagelessFallback);
+CGFloat SPDFMarkdownContentHeightBudget(SPDFMarkdownRenderContext* context, CGFloat pagelessFallback);
+
 // Renders a block's inline runs, including image attachments and their
 // alt-text captions (SPDFMarkdownInlineRenderer.mm).
 void SPDFMarkdownRenderInlineRuns(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block);
@@ -52,7 +66,7 @@ BOOL SPDFMarkdownRenderDiagramBlock(SPDFMarkdownRenderContext* context, SPDFMark
 // flow side by side in one center-aligned paragraph, separated by the
 // source's spaces/soft breaks and wrapping when the printable width runs out
 // (badge rows read as one line). A row whose capped images would overflow the
-// width budget (maximumImageWidth) scales them all down by one common factor
+// width budget (SPDFMarkdownContentWidthBudget) scales them all down by one common factor
 // — never below 0.45x — so typical two-image rows fit a single line instead
 // of stacking. Row images caption too: each attachment-rendered image shows
 // its title-or-alt caption BELOW ITSELF, centered under that image's own

@@ -57,11 +57,13 @@ $PORTABLE/mac/markdown/SPDFMarkdownDiagram.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramModel.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramCanvas.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramFlowchartParser.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramStyle.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramSequenceParser.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramStructParsers.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramChartParsers.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramLayout.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramBand.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramGraphEdges.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramGraphShapes.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramSequenceShapes.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramChartShapes.mm
@@ -105,6 +107,7 @@ $PORTABLE/mac/SPDFMacMarkdownSession.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Appearance.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Export.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Interaction.mm
+$PORTABLE/mac/SPDFMacMarkdownSession+Paper.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+RemoteImages.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Search.mm
 $PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
@@ -121,7 +124,9 @@ SPDFMacMarkdownSessionTests
 SPDFMacMarkdownSessionFindTests
 SPDFMacMarkdownRemoteImageSessionTests
 SPDFMacMarkdownLanguagePickerTests
+SPDFMacMarkdownCodeControlsTests
 SPDFMacMarkdownPrintingTests
+SPDFMacMarkdownOrientationTests
 "
 
 CXXFLAGS="-isysroot $SDKROOT -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror $SANITIZER_FLAGS \

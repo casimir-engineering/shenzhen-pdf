@@ -16,6 +16,11 @@
 // YES while a left-button selection drag is in flight (forces the I-beam in
 // updateCursorForPointInWindow:, matching the PDF view's selection drag).
 @property(nonatomic, readonly, getter=isDraggingSelection) BOOL draggingSelection;
+// Transient "Copied" feedback on ONE code box's copy button: the block index
+// whose button reads "Copied", nil when none. copiedCodeGeneration stamps the
+// arming so a later copy invalidates an in-flight reset without a timer.
+@property(nonatomic, strong) NSNumber* copiedCodeBlockIndex;
+@property(nonatomic) NSUInteger copiedCodeGeneration;
 // Double-click word selection: the word containing `index`, else the image
 // attachment character at (or just before — CTLine hit-testing returns the
 // caret index, which lands after the character for a right-half click) the
@@ -49,9 +54,22 @@
 - (void)drawPaperBackgroundInFrame:(NSRect)pageFrame;
 - (void)drawPaperBorderInFrame:(NSRect)pageFrame;
 - (SPDFMarkdownPageFragment*)codeControlFragmentOnPage:(SPDFMarkdownPage*)page blockIndex:(NSUInteger)blockIndex;
+// The chrome row inside a code box's reserved header band, and the two
+// controls anchored to its ends: the copy button left, the language control
+// right, same height and same theme colors. The copy rect is NSZeroRect when
+// the row is too narrow to hold both.
+- (NSRect)codeControlRowRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
 - (NSRect)codeLanguageControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
 - (NSRect)codeLanguageControlHitRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
-- (void)drawCodeLanguageControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;
+- (NSRect)copyCodeControlRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
+- (NSRect)copyCodeControlHitRectForFragment:(SPDFMarkdownPageFragment*)fragment pageFrame:(NSRect)pageFrame;
+// The copy button's current title ("Copy", or "Copied" while the feedback is
+// armed for that block).
+- (NSString*)copyCodeControlTitleForBlockIndex:(NSUInteger)blockIndex;
+// Runs the copy button's click: asks copyCodeBlockHandler for the write and
+// arms the "Copied" feedback when it succeeds (NSBeep when it does not).
+- (void)handleCopyCodeBlock:(NSUInteger)blockIndex;
+- (void)drawCodeBoxControlsOnPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;
 // Canvas-space rects of every link-run portion inside the page's line
 // fragments, using the same CTLine offset mapping the highlight drawing uses.
 - (NSArray<NSValue*>*)linkRectsForPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;

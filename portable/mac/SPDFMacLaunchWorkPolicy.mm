@@ -171,12 +171,16 @@ typedef NS_ENUM(NSInteger, SPDFMacLaunchPrerenderState) {
             _state = SPDFMacLaunchPrerenderStateCancelled;
             return SPDFMacLaunchPrerenderForegroundActionOpenInForeground;
         }
-        if (_state == SPDFMacLaunchPrerenderStateRendering) {
-            _abandoned = YES;
-            return SPDFMacLaunchPrerenderForegroundActionOpenInForeground;
-        }
         _foregroundClaimed = YES;
-        if (_state == SPDFMacLaunchPrerenderStateOpening)
+        // Opening: wait for the open; workerMayBeginRender then refuses, so the
+        // wait never includes a speculative render that has not started.
+        // Rendering: the render is already in flight. Abandoning it made the
+        // foreground redo the same open and render synchronously -- measured as
+        // a 120 ms duplicate of a render that was 2 ms from done, hit on every
+        // launch once the pre-paint main thread got faster than the worker. The
+        // wait is bounded by that render's remaining time, and the result is
+        // validated on adoption (identity, zoom, scale, theme) like any other.
+        if (_state == SPDFMacLaunchPrerenderStateOpening || _state == SPDFMacLaunchPrerenderStateRendering)
             return SPDFMacLaunchPrerenderForegroundActionWaitForOwnedResult;
         return SPDFMacLaunchPrerenderForegroundActionConsumeFinishedResult;
     }

@@ -19,9 +19,20 @@ BOOL SPDFMarkdownRenderDiagramBlock(SPDFMarkdownRenderContext* context, SPDFMark
                                           NSUInteger depth, BOOL record) {
     NSString* identifier = context.overrides[@(block.blockIndex)] ?: block.codeLanguage;
     if (!SPDFMarkdownDiagramIsDiagramLanguage(identifier)) return NO;
-    CGFloat contentWidth = MAX(64.0, context.options.maximumImageWidth);
+    CGFloat scale = SPDFMarkdownRenderScale(context);
+    // A diagram is a FIGURE, so it is sized by the page, not by the inline-image
+    // budget: the whole printable column wide, and no taller than one page's
+    // printable height net of the air the band reserves above and below. Both
+    // come off the live page configuration, so screen, print, Save as PDF and
+    // Copy Page agree by construction and turning the paper re-fits the artwork.
+    // A render with no page attached keeps the old width-only image budget.
+    CGFloat margin = context.options.paragraphSpacing * scale;
+    CGFloat depthIndent = depth * 22;
+    NSSize contentBox = NSMakeSize(
+        MAX(64.0, SPDFMarkdownContentWidthBudget(context, depthIndent, context.options.maximumImageWidth)),
+        SPDFMarkdownContentHeightBudget(context, 0));
     SPDFMarkdownDiagramLayout* layout =
-        SPDFMarkdownDiagramRender(identifier, block.plainText ?: @"", contentWidth, context.options.fontScale,
+        SPDFMarkdownDiagramRender(identifier, block.plainText ?: @"", contentBox, context.options.fontScale,
                                   context.options.diagramCache);
     if (!layout) return NO;
 
@@ -37,7 +48,7 @@ BOOL SPDFMarkdownRenderDiagramBlock(SPDFMarkdownRenderContext* context, SPDFMark
         SPDFMarkdownAppend(context, label.text,
                            @{
                                NSFontAttributeName: label.font,
-                               NSForegroundColorAttributeName: SPDFMarkdownDiagramRoleColor(label.role, variant),
+                               NSForegroundColorAttributeName: SPDFMarkdownDiagramLabelColor(label, variant),
                            });
         [labelRanges addObject:[NSValue valueWithRange:NSMakeRange(labelStart,
                                                                    context.output.length - labelStart)]];
@@ -45,12 +56,11 @@ BOOL SPDFMarkdownRenderDiagramBlock(SPDFMarkdownRenderContext* context, SPDFMark
     SPDFMarkdownAppend(context, @"\n", @{});
 
     NSRange range = NSMakeRange(start, context.output.length - start);
-    CGFloat scale = SPDFMarkdownRenderScale(context);
     NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
     style.lineSpacing = context.options.lineSpacing * scale;
     style.paragraphSpacing = context.options.paragraphSpacing * scale;
-    style.headIndent = depth * 22;
-    style.firstLineHeadIndent = depth * 22;
+    style.headIndent = depthIndent;
+    style.firstLineHeadIndent = depthIndent;
     style.alignment = NSTextAlignmentCenter;  // the flowing fallback view centers the labels
     [context.output addAttribute:NSParagraphStyleAttributeName value:style range:range];
     if (record) {
@@ -59,14 +69,14 @@ BOOL SPDFMarkdownRenderDiagramBlock(SPDFMarkdownRenderContext* context, SPDFMark
                                value:@(SPDFMarkdownBlockKindParagraph)
                                range:range];
         // The paginated band reserves its own air above and below the artwork
-        // (paragraph spacing never reaches a band item).
-        CGFloat margin = context.options.paragraphSpacing * scale;
+        // (paragraph spacing never reaches a band item) -- the same `margin` the
+        // height budget above already took off the page.
         SPDFMarkdownDiagramBlockInfo* info =
             [[SPDFMarkdownDiagramBlockInfo alloc] initWithLayout:layout
                                                      labelRanges:labelRanges
                                                        topMargin:margin
                                                     bottomMargin:margin
-                                                     depthIndent:depth * 22];
+                                                     depthIndent:depthIndent];
         [context.blocks addObject:[[SPDFMarkdownRenderedBlock alloc] initWithBlockIndex:block.blockIndex
                                                                                    kind:SPDFMarkdownBlockKindParagraph
                                                                         attributedRange:range
