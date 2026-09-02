@@ -253,6 +253,23 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
         if (find) spdf_win_find_poll(find);
         spdf_win_find_fill_model(&a->chrome, a->path);
 
+        /* THE SEARCH SECTION, OFFSCREEN. The window decides the sidebar per paint
+         * in scene_for_window (chrome_sidebar_decide, chrome_publish_search);
+         * this path built its model directly and so never chose a section or
+         * published the results the sidebar painter reads. With a query, do
+         * what a search START does in the window (spdf_win_chrome_field_ui.h):
+         * show the Search section -- then resolve and publish exactly as the
+         * window would, so the compose proves the results list and the strip
+         * markers with no desktop. Without a query this is the Chapters
+         * section it always was. */
+        if (a->find_text[0]) spdf_win_sidebar_set_section(2);
+        {
+            int section = chrome_sidebar_decide(a, NULL);
+            a->chrome.sidebar_section = section;
+            a->chrome.sidebar_has_content = spdf_win_sidebar_effective_visible();
+            chrome_publish_search(a, &chrome_layout, section, opts->dpi_scale);
+        }
+
         /* Re-derive the overlays now the matches exist. The earlier call, right
          * after build_scene, ran against an empty result set. scene->pages is
          * still the list build_scene produced, so this recomputes rather than
