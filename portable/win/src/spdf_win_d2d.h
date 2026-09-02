@@ -221,6 +221,7 @@ typedef struct spdf_win_scene {
 spdf_win_d2d* spdf_win_d2d_create(char* err, size_t err_len);
 void spdf_win_d2d_destroy(spdf_win_d2d* d2d);
 
+
 /* Needed by spdf_win_window.cpp to build its HWND render target, and by any
  * headless caller that wants to make its own WIC target. */
 ID2D1Factory* spdf_win_d2d_factory(spdf_win_d2d* d2d);
@@ -245,5 +246,12 @@ HRESULT spdf_win_render_scene_to_png(spdf_win_d2d* d2d, unsigned px_w, unsigned 
 #ifdef __cplusplus
 }
 #endif
+
+/* spdf_win_gpu_prewarm_start(d2d): the windowed path calls it right after
+ * create() so the factory's GPU device is made on a worker while the session
+ * and the document open; destroy() joins it. Header-only and C++-only in its
+ * implementation, so it comes after the C declarations it uses and outside
+ * the extern "C" block. */
+#include "spdf_win_gpu_prewarm.h"
 
 #endif /* SPDF_WIN_D2D_H */
