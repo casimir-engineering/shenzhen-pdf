@@ -153,6 +153,7 @@ static void docs_menu_state(app* a, SpdfWinMenuState* st) {
     st->regex = a->find_regex;
     st->regex_multiline = spdf_win_find_regex_multiline();
     st->has_document = a->canvas != NULL;
+    st->tab_count = spdf_win_tabs_count(a->tabs);
     st->can_close_tab = spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
                                                     a->canvas != NULL);
     if (a->tabs && a->canvas) {

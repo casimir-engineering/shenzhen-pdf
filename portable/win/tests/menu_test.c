@@ -298,6 +298,7 @@ static void test_enabled_and_checked_rules(void) {
 
     st.has_document = 1;
     st.can_close_tab = 1;
+    st.tab_count = 2;
     CHECK(spdf_win_menu_command_enabled(SPDF_WIN_CMD_NEXT_PAGE, &st));
     CHECK(spdf_win_menu_command_enabled(SPDF_WIN_CMD_FIND_PREV, &st));
     CHECK(spdf_win_menu_command_enabled(SPDF_WIN_CMD_CLOSE_TAB, &st));
