@@ -25,6 +25,10 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     /* --- File --------------------------------------------------------- */
     {SPDF_WIN_CMD_OPEN, SPDF_WIN_MENU_FILE, L"&Open...", L"Ctrl+O", 'O', SPDF_WIN_ACCEL_CTRL, 0},
     {SPDF_WIN_CMD_NEW_TAB, SPDF_WIN_MENU_FILE, L"Open in New &Tab...", L"Ctrl+T", 'T', SPDF_WIN_ACCEL_CTRL, 0},
+    /* macOS File > Open Path... (Cmd+Shift+O): a typed path for a file the
+     * picker cannot reach conveniently -- a UNC share, a pasted path. */
+    {SPDF_WIN_CMD_OPEN_PATH, SPDF_WIN_MENU_FILE, L"Open Pat&h...", L"Ctrl+Shift+O", 'O',
+     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_SAVE_AS, SPDF_WIN_MENU_FILE, L"&Save As...", L"Ctrl+S", 'S', SPDF_WIN_ACCEL_CTRL, 0},
     {SPDF_WIN_CMD_SAVE_PAGE_AS, SPDF_WIN_MENU_FILE, L"Save &Page As...", NULL, 0, 0, 0},
@@ -40,6 +44,10 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     {SPDF_WIN_CMD_MOVE_TAB_TO_WINDOW, SPDF_WIN_MENU_FILE, L"&Move Tab to New Window", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_SHOW_IN_FOLDER, SPDF_WIN_MENU_FILE, L"Show in &Folder", NULL, 0, 0, 0},
+    /* GTK4 win.copy-path / win.open-in-browser, the two neighbours of
+     * win.show-in-folder in spdf_shortcuts.c's Tools group. */
+    {SPDF_WIN_CMD_COPY_PATH, SPDF_WIN_MENU_FILE, L"Cop&y Path", NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_OPEN_IN_BROWSER, SPDF_WIN_MENU_FILE, L"Open in Bro&wser", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_RELOAD, SPDF_WIN_MENU_FILE, L"Re&load", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_SET_DEFAULT_READER, SPDF_WIN_MENU_FILE, L"Make &Default PDF Reader", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_CHECK_UPDATES, SPDF_WIN_MENU_FILE, L"Check for &Updates...", NULL, 0, 0, 0},

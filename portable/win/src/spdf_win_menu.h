@@ -184,8 +184,21 @@ typedef enum spdf_win_command {
     SPDF_WIN_CMD_SHORTCUTS,           /* View: the keyboard-shortcuts sheet, F1 */
     SPDF_WIN_CMD_ABOUT,               /* View: About Shenzhen PDF */
 
+    /* The documents track's own three (spdf_win_cmd_docs.h). */
+    SPDF_WIN_CMD_OPEN_PATH,           /* File: type a path, Ctrl+Shift+O as on macOS */
+    SPDF_WIN_CMD_COPY_PATH,           /* File: the document's path to the clipboard; GTK4 win.copy-path */
+    SPDF_WIN_CMD_OPEN_IN_BROWSER,     /* File: the document in the default browser; GTK4 win.open-in-browser */
+
     SPDF_WIN_CMD_COUNT
 } spdf_win_command;
+
+/* THE OPEN RECENT SUBMENU'S IDS. Its rows are built at popup time from
+ * spdf_win_recents (they change with every open), so they cannot be table rows;
+ * they are WM_COMMAND ids in a range of their own above every table command,
+ * SPDF_WIN_MENU_ID_BASE + FIRST + i for the i-th most recent document. A
+ * handler tests the range; nothing else knows these numbers. */
+#define SPDF_WIN_CMD_OPEN_RECENT_FIRST 0x100
+#define SPDF_WIN_CMD_OPEN_RECENT_LAST 0x109 /* ten entries, the mac's kRecentDocumentLimit */
 
 /* Which top-level menu an item belongs to. NONE is an ACCELERATOR-ONLY row: a
  * second key for a command that already has a menu item (Ctrl+= as well as
@@ -340,7 +353,13 @@ static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_enabled(int command, const
         case SPDF_WIN_CMD_PROPERTIES:
         case SPDF_WIN_CMD_COPY_PAGE:
         case SPDF_WIN_CMD_COPY_PAGE_TEXT:
-        case SPDF_WIN_CMD_COPY_PAGE_IMAGE: return st->has_document != 0;
+        case SPDF_WIN_CMD_COPY_PAGE_IMAGE:
+        /* The documents track's: each acts on the current document's PATH. */
+        case SPDF_WIN_CMD_SHOW_IN_FOLDER:
+        case SPDF_WIN_CMD_COPY_PATH:
+        case SPDF_WIN_CMD_OPEN_IN_BROWSER:
+        case SPDF_WIN_CMD_RELOAD:
+        case SPDF_WIN_CMD_ADD_FAVORITE: return st->has_document != 0;
         /* The print job is refused before any dialog appears when the document
          * forbids it; greying the item says so before the reader asks. */
         case SPDF_WIN_CMD_PRINT: return st->has_document != 0 && st->can_print != 0;
@@ -418,6 +437,13 @@ int spdf_win_menu_app_popup(void* hwnd, const SpdfWinMenuState* state, int scree
  * file has to hand the selection back to the app; no external file manager
  * can." */
 int spdf_win_menu_open_dialog(void* hwnd, wchar_t* out_path, int out_len);
+
+/* The same dialog, opened in `start_dir` (UTF-16; NULL or empty for the
+ * shell's own default). The FOLDER POLICY -- the current document's folder,
+ * else the last opened document's, else the user's home (26.8.31-1) -- is
+ * decided by spdf_win_shell_open_start_dir() and passed in here, so this file
+ * stays a dialog and knows nothing about tabs or recents. */
+int spdf_win_menu_open_dialog_in(void* hwnd, const wchar_t* start_dir, wchar_t* out_path, int out_len);
 
 #ifdef __cplusplus
 }

@@ -14,6 +14,9 @@
  */
 #include "spdf_win_menu.h"
 
+#include "spdf_win_paths.h"   /* UTF-8 -> UTF-16 for the recent paths */
+#include "spdf_win_recents.h" /* the Open Recent submenu's rows */
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -21,8 +24,10 @@
 
 #include <shobjidl.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "shell32.lib") /* SHCreateItemFromParsingName */
 #pragma comment(lib, "user32.lib")
 
 namespace {
@@ -52,6 +57,39 @@ struct ComScope {
     }
 };
 
+/* THE OPEN RECENT SUBMENU, built from the recents store at the moment the menu
+ * is created -- which, since the app has no menu bar and shows the table as a
+ * popup, is every time the `...` is clicked. So the list is always current and
+ * nothing has to invalidate it. The mac's rebuildRecentlyOpenedMenu: the display
+ * name (the path's last component) as the title, the whole path nowhere visible,
+ * and a greyed "No Recent Documents" when the list is empty. */
+HMENU recent_submenu() {
+    HMENU sub = CreatePopupMenu();
+    int count = spdf_win_recents_count();
+    if (!sub) return NULL;
+    if (count > SPDF_WIN_CMD_OPEN_RECENT_LAST - SPDF_WIN_CMD_OPEN_RECENT_FIRST + 1)
+        count = SPDF_WIN_CMD_OPEN_RECENT_LAST - SPDF_WIN_CMD_OPEN_RECENT_FIRST + 1;
+    if (count == 0) {
+        AppendMenuW(sub, MF_STRING | MF_GRAYED, 0, L"No Recent Documents");
+        return sub;
+    }
+    for (int i = 0; i < count; ++i) {
+        const char* path = spdf_win_recents_path(i);
+        wchar_t* wide = path ? spdf_win_utf16_dup_from_utf8(spdf_win_path_basename(path)) : NULL;
+        wchar_t text[300];
+        /* A '&' in a file name would become a mnemonic; doubling it prints it. */
+        size_t n = 0;
+        for (const wchar_t* p = wide ? wide : L"Untitled"; *p && n + 2 < sizeof(text) / sizeof(text[0]); ++p) {
+            if (*p == L'&') text[n++] = L'&';
+            text[n++] = *p;
+        }
+        text[n] = 0;
+        free(wide);
+        AppendMenuW(sub, MF_STRING, (UINT_PTR)(SPDF_WIN_MENU_ID_BASE + SPDF_WIN_CMD_OPEN_RECENT_FIRST + i), text);
+    }
+    return sub;
+}
+
 } /* namespace */
 
 void* spdf_win_menu_create(void) {
@@ -79,7 +117,13 @@ void* spdf_win_menu_create(void) {
                 continue;
             }
             item_text(&table[i], text, sizeof(text) / sizeof(text[0]));
-            AppendMenuW(sub, MF_STRING, (UINT_PTR)(SPDF_WIN_MENU_ID_BASE + table[i].command), text);
+            if (table[i].command == SPDF_WIN_CMD_OPEN_RECENT) {
+                /* The anchor row becomes a submenu; its rows carry their own ids. */
+                HMENU recents = recent_submenu();
+                if (recents) AppendMenuW(sub, MF_STRING | MF_POPUP, (UINT_PTR)recents, text);
+            } else {
+                AppendMenuW(sub, MF_STRING, (UINT_PTR)(SPDF_WIN_MENU_ID_BASE + table[i].command), text);
+            }
             ++added;
         }
         if (added && title) AppendMenuW(bar, MF_POPUP, (UINT_PTR)sub, title);
@@ -201,6 +245,10 @@ int spdf_win_menu_app_popup(void* hwnd, const SpdfWinMenuState* state, int scree
 }
 
 int spdf_win_menu_open_dialog(void* hwnd, wchar_t* out_path, int out_len) {
+    return spdf_win_menu_open_dialog_in(hwnd, NULL, out_path, out_len);
+}
+
+int spdf_win_menu_open_dialog_in(void* hwnd, const wchar_t* start_dir, wchar_t* out_path, int out_len) {
     ComScope com;
     IFileOpenDialog* dialog = NULL;
     IShellItem* item = NULL;
@@ -237,6 +285,18 @@ int spdf_win_menu_open_dialog(void* hwnd, wchar_t* out_path, int out_len) {
          * rather than handed back as something spdf_open() would fail on. */
         DWORD flags = 0;
         if (SUCCEEDED(dialog->GetOptions(&flags))) dialog->SetOptions(flags | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+    }
+    if (start_dir && start_dir[0]) {
+        /* SetFolder, not SetDefaultFolder: the policy is "start HERE", every
+         * time, and SetDefaultFolder yields to the shell's per-app memory of
+         * the last folder used, which is exactly what the policy replaces. A
+         * folder that no longer exists fails to resolve and the dialog opens
+         * where it would have anyway. */
+        IShellItem* folder = NULL;
+        if (SUCCEEDED(SHCreateItemFromParsingName(start_dir, NULL, IID_PPV_ARGS(&folder))) && folder) {
+            dialog->SetFolder(folder);
+            folder->Release();
+        }
     }
 
     hr = dialog->Show((HWND)hwnd);
