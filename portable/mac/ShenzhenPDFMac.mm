@@ -747,8 +747,13 @@ static char kSPDFPasswordPromptClosesNewTabKey;
     }
     self->_allowSidebarWidthPersistence = YES;
     {
-        SPDFScopedLaunchPhaseLog launchPhase("restoreSidebarWidth");
+        SPDFScopedLaunchPhaseLog launchPhase("restoreSidebarWidth+toolbarOverflow");
         [self restoreSidebarWidth];
+        // buildWindow left overflow updates suppressed: the startup document
+        // work above would otherwise solve the toolbar nine times before the
+        // first frame, none of them displayed. One pass here replaces them.
+        _suppressToolbarOverflowUpdates = NO;
+        [self updateToolbarOverflow];
     }
 
     {
@@ -3038,9 +3043,9 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     if (launchWindowStart > 0.0)
         spdf_launch_profile_log(@"buildWindow.viewsAndConstraints done at %.1fms",
                                 spdf_zoom_profile_now_ms() - launchWindowStart);
-    // Coalesce toolbar-overflow recomputation (toolbar layout + fittingSize
-    // solves) across the calls below into the single explicit pass at the
-    // end; the intermediate results were never observable.
+    // Suppress toolbar-overflow recomputation (toolbar layout + fittingSize
+    // solves) from here through the startup document work; see the single
+    // pass in applicationDidFinishLaunching. Nothing in between is displayed.
     _suppressToolbarOverflowUpdates = YES;
     {
         SPDFScopedLaunchPhaseLog launchPhase("buildWindow.finalSync.restoreSidebarWidth");
@@ -3058,11 +3063,6 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     {
         SPDFScopedLaunchPhaseLog launchPhase("buildWindow.finalSync.updateControls");
         [self updateControls];
-    }
-    _suppressToolbarOverflowUpdates = NO;
-    {
-        SPDFScopedLaunchPhaseLog launchPhase("buildWindow.finalSync.updateToolbarOverflow");
-        [self updateToolbarOverflow];
     }
     if (launchWindowStart > 0.0)
         spdf_launch_profile_log(@"buildWindow.finalSync done at %.1fms",
