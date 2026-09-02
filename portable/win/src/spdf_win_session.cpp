@@ -59,6 +59,21 @@ static void apply_tab(spdf_win_tabs* tabs, const char* obj) {
     view->has_scroll_origin = obj_value(obj, "hasScrollOrigin", NULL)
                                   ? json_bool(obj, "hasScrollOrigin", 0)
                                   : (obj_value(obj, "scrollX", NULL) || obj_value(obj, "scrollY", NULL)) != 0;
+    /* The tab's live query, restored into the find field on show. Truncated on
+     * a character boundary if a mac file carries more than the field holds. */
+    {
+        char* search = json_str(obj, "searchText");
+        if (search) {
+            size_t n = strlen(search);
+            if (n >= sizeof(view->search_text)) {
+                n = sizeof(view->search_text) - 1;
+                while (n > 0 && ((unsigned char)search[n] & 0xC0) == 0x80) --n;
+            }
+            memcpy(view->search_text, search, n);
+            view->search_text[n] = '\0';
+            free(search);
+        }
+    }
 }
 
 /* The window object to restore, or NULL. A root with "tabs" and no "windows"
@@ -87,6 +102,11 @@ static const char* find_window(const char* root, const char* want_id) {
 
 spdf_win_session_status spdf_win_session_restore(spdf_win_tabs* tabs, const char* window_id, char* out_window_id,
                                                  size_t out_len) {
+    return spdf_win_session_restore_ex(tabs, window_id, out_window_id, out_len, NULL);
+}
+
+spdf_win_session_status spdf_win_session_restore_ex(spdf_win_tabs* tabs, const char* window_id, char* out_window_id,
+                                                    size_t out_len, spdf_win_session_frame* out_frame) {
     spdf_win_state_read_status status = SPDF_WIN_STATE_READ_ABSENT;
     char* json;
     const char* window;
@@ -95,6 +115,7 @@ spdf_win_session_status spdf_win_session_restore(spdf_win_tabs* tabs, const char
     const char* element;
     int before, added, selected;
 
+    if (out_frame) memset(out_frame, 0, sizeof(*out_frame));
     if (!tabs) return SPDF_WIN_SESSION_ABSENT;
     json = spdf_win_state_read_json_checked(SPDF_WIN_STATE_SESSION, &status);
     if (status == SPDF_WIN_STATE_READ_FAILED) {
@@ -122,6 +143,16 @@ spdf_win_session_status spdf_win_session_restore(spdf_win_tabs* tabs, const char
             else spdf_win_session_new_window_id(out_window_id, out_len);
             free(id);
         }
+        if (out_frame) {
+            const char* frame = obj_value(window, "frame", NULL);
+            if (frame && *frame == '{') {
+                out_frame->x = json_int(frame, "x", 0);
+                out_frame->y = json_int(frame, "y", 0);
+                out_frame->w = json_int(frame, "width", 0);
+                out_frame->h = json_int(frame, "height", 0);
+                if (out_frame->w <= 0 || out_frame->h <= 0) out_frame->w = out_frame->h = 0;
+            }
+        }
     }
     free(json);
     return added > 0 ? SPDF_WIN_SESSION_RESTORED : SPDF_WIN_SESSION_ABSENT;
@@ -133,8 +164,8 @@ spdf_win_session_status spdf_win_session_restore(spdf_win_tabs* tabs, const char
  * is carried through untouched — including "viewMode", so a markdown or
  * two-page view recorded by another frontend survives a Windows session. */
 static int key_is_owned(const member* m) {
-    static const char* const owned[] = {"path",    "title",   "page",    "zoom",          "customZoom",
-                                        "fitMode", "scrollX", "scrollY", "hasScrollOrigin"};
+    static const char* const owned[] = {"path",    "title",   "page",    "zoom",            "customZoom",
+                                        "fitMode", "scrollX", "scrollY", "hasScrollOrigin", "searchText"};
     size_t i;
     for (i = 0; i < sizeof(owned) / sizeof(owned[0]); ++i)
         if (key_is(m, owned[i])) return 1;
@@ -179,6 +210,12 @@ static void emit_tab(out_buf* out, const spdf_win_tabs* tabs, int index, const c
     emit_fixed(out, view->scroll_y, 4);
     emit_key(out, "hasScrollOrigin");
     buf_puts(out, view->has_scroll_origin ? "true" : "false");
+    /* Only when there is one: the mac writer omits the key for an empty query,
+     * and a tab without a search must read back as a tab without a search. */
+    if (view->search_text[0]) {
+        emit_key(out, "searchText");
+        emit_string(out, view->search_text);
+    }
 
     for (ok = object_first(disk, &m); ok; ok = object_next(&m)) {
         if (key_is_owned(&m)) continue;
@@ -193,19 +230,30 @@ static void emit_tab(out_buf* out, const spdf_win_tabs* tabs, int index, const c
     buf_puts(out, "}");
 }
 
-static void emit_window(out_buf* out, const spdf_win_tabs* tabs, const char* window_id, const char* disk_window) {
-    const char* frame_end = NULL;
-    const char* frame = disk_window ? obj_value(disk_window, "frame", &frame_end) : NULL;
+static void emit_window(out_buf* out, const spdf_win_tabs* tabs, const char* window_id, const char* disk_window,
+                        const spdf_win_session_frame* frame) {
+    const char* disk_frame_end = NULL;
+    const char* disk_frame = disk_window ? obj_value(disk_window, "frame", &disk_frame_end) : NULL;
     int selected = spdf_win_tabs_selected_index(tabs);
     int i, count = spdf_win_tabs_count(tabs);
 
     buf_puts(out, "{\"id\":");
     emit_string(out, window_id);
-    /* This port has no window-geometry persistence yet; dropping the frame
-     * would move a mac user's window the first time they quit on Windows. */
-    if (frame && frame_end) {
+    /* Our frame when the caller has one; else the frame already on disk, so a
+     * save that knows no geometry never moves a mac user's window. */
+    if (frame && frame->w > 0 && frame->h > 0) {
+        buf_puts(out, ",\"frame\":{\"height\":");
+        emit_int(out, frame->h);
+        buf_puts(out, ",\"width\":");
+        emit_int(out, frame->w);
+        buf_puts(out, ",\"x\":");
+        emit_int(out, frame->x);
+        buf_puts(out, ",\"y\":");
+        emit_int(out, frame->y);
+        buf_puts(out, "}");
+    } else if (disk_frame && disk_frame_end) {
         buf_puts(out, ",\"frame\":");
-        buf_put(out, frame, (size_t)(frame_end - frame));
+        buf_put(out, disk_frame, (size_t)(disk_frame_end - disk_frame));
     }
     buf_puts(out, ",\"selectedTab\":");
     emit_int(out, selected < 0 ? 0 : selected);
@@ -218,6 +266,10 @@ static void emit_window(out_buf* out, const spdf_win_tabs* tabs, const char* win
 }
 
 int spdf_win_session_save(const spdf_win_tabs* tabs, const char* window_id) {
+    return spdf_win_session_save_ex(tabs, window_id, NULL);
+}
+
+int spdf_win_session_save_ex(const spdf_win_tabs* tabs, const char* window_id, const spdf_win_session_frame* frame) {
     char dir[SPDF_WIN_PATH_MAX];
     spdf_win_state_session_lock* lock;
     spdf_win_state_read_status status = SPDF_WIN_STATE_READ_ABSENT;
@@ -261,7 +313,7 @@ int spdf_win_session_save(const spdf_win_tabs* tabs, const char* window_id) {
      * -removeSessionStateForCurrentWindow when its last tab closes. */
     if (spdf_win_tabs_count(tabs) > 0) {
         if (written++) buf_puts(&out, ",");
-        emit_window(&out, tabs, window_id, disk_window);
+        emit_window(&out, tabs, window_id, disk_window, frame);
     }
     buf_puts(&out, "]}");
 
@@ -270,4 +322,37 @@ int spdf_win_session_save(const spdf_win_tabs* tabs, const char* window_id) {
     free(existing);
     spdf_win_state_session_lock_release(lock);
     return ok;
+}
+
+/* --- detach --------------------------------------------------------------- */
+
+int spdf_win_session_detach_tab(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
+                                char* out_new_id, size_t out_len) {
+    spdf_win_tabs* one;
+    spdf_win_tab_view* view;
+    const spdf_win_tab_view* source;
+    char id[SPDF_WIN_SESSION_ID_MAX];
+    int ok;
+
+    if (!tabs || !out_new_id || out_len == 0) return 0;
+    source = spdf_win_tabs_view_const(tabs, index);
+    if (!source) return 0;
+    /* A one-tab model, so the hand-over goes through the SAME emit path a
+     * window's own save does -- one schema, one writer. No hooks: nothing may
+     * open the document here, it is the other process's to open. */
+    one = spdf_win_tabs_create();
+    if (!one) return 0;
+    if (spdf_win_tabs_append(one, spdf_win_tabs_path(tabs, index), spdf_win_tabs_title(tabs, index)) < 0) {
+        spdf_win_tabs_destroy(one);
+        return 0;
+    }
+    view = spdf_win_tabs_view(one, 0);
+    *view = *source;
+    spdf_win_tabs_select_deferred(one, 0);
+    spdf_win_session_new_window_id(id, sizeof(id));
+    ok = spdf_win_session_save_ex(one, id, frame);
+    spdf_win_tabs_destroy(one);
+    if (!ok) return 0;
+    snprintf(out_new_id, out_len, "%s", id);
+    return 1;
 }
