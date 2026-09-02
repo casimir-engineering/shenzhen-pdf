@@ -67,6 +67,92 @@ void spdf_win_window_set_dark_frame(spdf_win_window* window, int dark) {
     FreeLibrary(dwmapi);
 }
 
+/* MAKE MENUS AND OTHER COMMON CONTROLS FOLLOW DARK MODE.
+ *
+ * A Win32 menu bar and every TrackPopupMenu are drawn by the system in the
+ * light palette unless the process opts in, and there is no documented way to
+ * ask. The result on a dark desktop is a bright strip between a dark caption
+ * and dark chrome, which reads as a second title bar -- reported from actual
+ * use as "a double top bar like it's a window inside of a window".
+ *
+ * uxtheme.dll's SetPreferredAppMode is ordinal 135 and has no exported name.
+ * That is what every Windows app that themes its menus uses, because it is the
+ * only thing that works; it is also why this is wrapped in as much caution as
+ * it is:
+ *
+ *   - Looked up BY ORDINAL, which is what it is published as. If a future
+ *     Windows renumbers or removes it, GetProcAddress returns NULL and the app
+ *     keeps its light menus. That is a cosmetic loss, never a failure.
+ *   - Version-gated to build 18362 (1903) and later, where the entry point
+ *     appeared. On anything older the ordinal may point at something else
+ *     entirely, so it is not called at all.
+ *   - Return value ignored on purpose: it hands back the PREVIOUS mode, and
+ *     there is nothing useful to do with it.
+ *
+ * The alternative was owner-drawing the whole menu bar, which means taking over
+ * measurement, keyboard navigation and accessibility for a strip this app may
+ * not even keep. Not worth it for the same pixels.
+ *
+ * FlushMenuThemes() afterwards, because menus created before the mode changed
+ * keep their old theme otherwise -- and the menu bar is created right after
+ * this runs. */
+void spdf_win_enable_dark_menus(void) {
+    /* PreferredAppMode: 0 Default, 1 AllowDark, 2 ForceDark, 3 ForceLight. */
+    typedef int(WINAPI * set_preferred_app_mode_fn)(int);
+    typedef void(WINAPI * flush_menu_themes_fn)(void);
+    HMODULE uxtheme;
+    set_preferred_app_mode_fn set_mode;
+    flush_menu_themes_fn flush;
+    DWORD build = 0;
+
+    /* RtlGetNtVersionNumbers rather than GetVersionEx, which lies to
+     * unmanifested processes and would report 6.2 here. */
+    {
+        typedef void(WINAPI * get_version_fn)(DWORD*, DWORD*, DWORD*);
+        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        get_version_fn get_version =
+            ntdll ? (get_version_fn)GetProcAddress(ntdll, "RtlGetNtVersionNumbers") : NULL;
+        DWORD major = 0, minor = 0;
+        if (get_version) {
+            get_version(&major, &minor, &build);
+            build &= 0x0FFFFFFF; /* the top nibble is a flag, not part of the number */
+        }
+        if (major < 10 || build < 18362) return;
+    }
+
+    uxtheme = LoadLibraryW(L"uxtheme.dll");
+    if (!uxtheme) return;
+    set_mode = (set_preferred_app_mode_fn)GetProcAddress(uxtheme, (LPCSTR)135);
+    if (set_mode) {
+        /* AllowDark, not ForceDark: the app then follows the SYSTEM setting, so
+         * a user who flips Windows back to light gets light menus without the
+         * app having to notice. */
+        set_mode(1);
+        flush = (flush_menu_themes_fn)GetProcAddress(uxtheme, (LPCSTR)136);
+        if (flush) flush();
+    }
+    /* uxtheme stays loaded deliberately: the mode is process-wide and menus are
+     * created later, so unloading here could take the theming with it. */
+}
+
+int spdf_win_system_prefers_dark(void) {
+    /* AppsUseLightTheme is the APP theme; SystemUsesLightTheme next to it is the
+     * taskbar's, and the two are independently settable in Windows Settings. A
+     * document reader is an app, so it follows the app one.
+     *
+     * RRF_RT_REG_DWORD makes the type part of the query rather than something to
+     * check afterwards, and a missing key leaves `light` at its initial 1 --
+     * which is what Windows itself assumes when the value has never been
+     * written. So a machine that has never touched the setting reads as light,
+     * not as garbage. */
+    DWORD light = 1;
+    DWORD size = sizeof(light);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                     L"AppsUseLightTheme", RRF_RT_REG_DWORD, NULL, &light, &size) != ERROR_SUCCESS)
+        return 0;
+    return light ? 0 : 1;
+}
+
 void spdf_win_window_set_menu(spdf_win_window* window, void* hmenu) {
     if (!window || !window->hwnd || !hmenu) return;
     if (!SetMenu(window->hwnd, (HMENU)hmenu)) return;

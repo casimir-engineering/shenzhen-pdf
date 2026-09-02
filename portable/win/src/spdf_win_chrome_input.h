@@ -86,6 +86,11 @@ typedef enum spdf_win_chrome_action {
     SPDF_WIN_CA_CLOSE_TAB,    /* `index` */
     SPDF_WIN_CA_NEW_TAB,      /* the strip's `+` */
     SPDF_WIN_CA_TAB_OVERFLOW, /* the strip's `…` */
+    /* The TOOLBAR's `…`. Opens the whole app menu as a popup, which is where
+     * the menu lives now that there is no menu bar -- see
+     * spdf_win_menu_app_popup(). Distinct from TAB_OVERFLOW above: that one
+     * lists documents, this one lists commands. */
+    SPDF_WIN_CA_APP_MENU,
     SPDF_WIN_CA_PREV_PAGE,
     SPDF_WIN_CA_NEXT_PAGE,
     SPDF_WIN_CA_ZOOM_OUT,
@@ -356,6 +361,7 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
                     out->action = segment == 0 ? SPDF_WIN_CA_ZOOM_OUT : SPDF_WIN_CA_ZOOM_IN;
                     return;
                 case SPDF_WIN_TB_FIT_POPUP: out->action = SPDF_WIN_CA_CYCLE_FIT; return;
+                case SPDF_WIN_TB_OVERFLOW: out->action = SPDF_WIN_CA_APP_MENU; return;
                 /* The two text fields and the two find controls. All four were
                  * drawn and inert while the query and the page number could only
                  * be changed from outside the app. */

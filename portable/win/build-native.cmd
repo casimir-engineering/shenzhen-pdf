@@ -181,10 +181,32 @@ rem is built /MT too, and mixing CRTs produces link errors that read like
 rem missing symbols. /STACK:8388608 matches macOS's 8 MB main thread: Windows
 rem defaults to 1 MB and MuPDF's content-stream and CSS recursion can outrun
 rem that on real files.
+rem THE APP IS A GUI PROGRAM; THE TEST BINARIES ARE CONSOLE PROGRAMS.
+rem
+rem Without /SUBSYSTEM the linker defaults to CONSOLE because the entry point is
+rem main(), and Windows then allocates a terminal window for the app that sits
+rem there for the life of the process. Reported from actual use: "it runs from a
+rem terminal window that stays open". macOS and GTK show no such thing.
+rem
+rem /ENTRY:mainCRTStartup keeps main() as written -- the alternative is renaming
+rem it to wWinMain, which would gain nothing and cost every caller of
+rem CommandLineToArgvW below it.
+rem
+rem This is applied ONLY to the app. The ~20 test binaries are console programs
+rem on purpose: they print their results, and a harness reads them.
+rem
+rem stdout still works for the harness. Subsystem controls only whether a console
+rem is ALLOCATED; when a parent redirects stdout to a pipe or a file -- which is
+rem what run-tests-native.d2d.sh and verify-phase1.ps1 do when they parse the
+rem `frame ...` geometry lines -- the CRT picks that handle up from STARTUPINFO
+rem and printf reaches it unchanged. Measured after this change, not assumed.
+set "SUBSYSTEM_FLAGS="
+if /i "%TARGET%"=="ShenzhenPDF" set "SUBSYSTEM_FLAGS=/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+
 cl /nologo /W3 /O2 /MT /utf-8 /D_CRT_SECURE_NO_WARNINGS ^
    /I"%REPO%\portable\core" /I"%REPO%\portable\win\src" /I"%SPDF_MUPDF_INC%" ^
    %SOURCES% /Fe:"%SPDF_OUT%\%TARGET%.exe" /Fo:"%OBJ_DIR%\\" ^
-   /link /STACK:8388608 %MUPDF_LIBS% %SYS_LIBS%
+   /link /STACK:8388608 %SUBSYSTEM_FLAGS% %MUPDF_LIBS% %SYS_LIBS%
 set "CL_RC=%ERRORLEVEL%"
 if not "%CL_RC%"=="0" echo [build-native] cl.exe exited %CL_RC% building %TARGET%
 exit /b %CL_RC%

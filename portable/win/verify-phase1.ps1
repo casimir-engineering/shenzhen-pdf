@@ -78,8 +78,13 @@ function Capture([string]$png, [int]$w, [int]$h, [string[]]$appArgs) {
   return $map
 }
 
-$appArgs = @()
-if ($Dark) { $appArgs = @('--dark') }
+# PIN THE THEME EXPLICITLY, both ways.
+#
+# A window follows the SYSTEM theme now (spdf_win_system_prefers_dark), so on a
+# machine set to dark, launching with no flag gives a dark window while the
+# headless reference below renders light -- and the comparison fails for a reason
+# that is not a defect. --light exists precisely so a test can pin either.
+$appArgs = if ($Dark) { @('--dark') } else { @('--light') }
 $variant = if ($Dark) { 'dark' } else { 'light' }
 
 # ---- 1. the window opens ------------------------------------------------
@@ -153,7 +158,34 @@ function CompareClientToHeadless([hashtable]$cap, [string]$tag) {
   $argv = @('--render-window-png', '--chrome', '--dpi', ("{0}" -f $scale))
   if ($Dark) { $argv += '--dark' }
   $argv += @($Pdf, '0', "$cw", "$ch", $headless)
-  $geom = & $Exe @argv 2>&1
+
+  # Start-Process -Wait with a redirect, NOT `& $Exe`, and this is load-bearing.
+  #
+  # The app is linked /SUBSYSTEM:WINDOWS so that launching it does not open a
+  # terminal window. PowerShell's native-command operator only WAITS for console
+  # subsystem processes; for a GUI one it returns immediately, so `& $Exe` came
+  # back with $geom empty and $LASTEXITCODE stale. The visible symptom was not an
+  # error: the `chrome canvas=` line was simply never seen, this function
+  # silently fell back to comparing the WHOLE CLIENT, and the tab strip -- which
+  # legitimately differs, because the window restores a session and this
+  # invocation has no tabs -- then failed three criteria at 16% of pixels.
+  #
+  # A harness must not depend on the subsystem of the thing it measures. Bash
+  # pipes were unaffected, which is why run-tests-native.sh stayed green and only
+  # this script broke -- a good reminder that "the suite passes" is not the same
+  # as "everything passes".
+  $stdout = Join-Path $OutDir "geom-$tag.txt"
+  # Start-Process joins -ArgumentList with plain spaces and quotes nothing, so a
+  # document path containing a space arrives as several arguments and the app
+  # exits 64. Same trap as screenshot-window.ps1's launch.
+  $argvQ = @()
+  foreach ($t in $argv) {
+    if ($t -match '\s' -and $t -notmatch '^".*"$') { $argvQ += ('"' + $t + '"') } else { $argvQ += $t }
+  }
+  $proc = Start-Process -FilePath $Exe -ArgumentList $argvQ -NoNewWindow -Wait -PassThru `
+                        -RedirectStandardOutput $stdout
+  $geomRc = $proc.ExitCode
+  $geom = if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout } else { @() }
 
   # The CANVAS region is what this criterion is about, and it is the region the
   # two paths can be expected to match in. The chrome cannot match: the window
@@ -168,7 +200,12 @@ function CompareClientToHeadless([hashtable]$cap, [string]$tag) {
       break
     }
   }
-  if ($LASTEXITCODE -ne 0) { return @{ ok = $false; why = "headless render exited $LASTEXITCODE" } }
+  if ($geomRc -ne 0) { return @{ ok = $false; why = "headless render exited $geomRc" } }
+  if (-not $canvasRect) {
+    # Never fall back silently: a whole-client comparison answers a different
+    # question and fails for reasons that are not defects.
+    return @{ ok = $false; why = 'the headless render printed no `chrome canvas=` line, so there is no canvas rect to compare' }
+  }
 
   $crop = Join-Path $OutDir "client-$tag.png"
   $py = Join-Path $OutDir 'cmp_client.py'

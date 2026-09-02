@@ -217,6 +217,48 @@ void spdf_win_window_set_title(spdf_win_window* window, const wchar_t* title);
  * Windows without the attribute simply keeps its light frame. */
 void spdf_win_window_set_dark_frame(spdf_win_window* window, int dark);
 
+/* Does the SYSTEM want dark? 1 dark, 0 light.
+ *
+ * macOS gets this for free -- the reading theme follows the system appearance,
+ * and every AppKit control resolves itself. Windows has no equivalent: the app
+ * shipped light unless `--dark` was passed, so on a machine set to dark it was
+ * the only bright window on the desktop. Reported from actual use: "it does not
+ * respect the system theme".
+ *
+ * Read from HKCU\...\Themes\Personalize\AppsUseLightTheme, which is the APP
+ * theme rather than SystemUsesLightTheme (the taskbar's). A missing value means
+ * light, which is what Windows itself assumes.
+ *
+ * Deliberately NOT in spdf_win_chrome_theme.h. That header's palette is
+ * concrete sRGB on purpose, so the chrome is pixel-testable with no desktop; a
+ * value read from the registry is unavailable in exactly the environment those
+ * tests run in. This function is a WINDOW-layer question -- "what should the app
+ * start as" -- and its answer is fed in as the initial state, not consulted
+ * during paint.
+ *
+ * TWO THINGS THE CALLER MUST GET RIGHT, both learned the hard way:
+ *
+ * 1. ASK BEFORE THE CANVAS EXISTS. spdf_win_canvas takes its render flags AT
+ *    CONSTRUCTION and has no setter -- the reading-theme button changes them by
+ *    rebuilding the canvas over the same document. Applying the system theme
+ *    after spdf_win_tabs_app_show() left the PAGES rendering light while the DWM
+ *    caption and the minimap thumbnails, which read the flag later, went dark. A
+ *    half-dark window is a worse bug than the one being fixed.
+ *
+ * 2. WINDOWED PATHS ONLY. --render-png and --render-window-png must not consult
+ *    it: their output would start depending on a registry value on whichever
+ *    machine runs them, so every pixel comparison in this port would quietly
+ *    read the developer's personal setting. That is exactly what
+ *    spdf_win_chrome_theme.h refuses to do for colours. --dark and --light both
+ *    override, so a case can pin either. */
+int spdf_win_system_prefers_dark(void);
+
+/* Opt the process into dark menus and common controls, so a Win32 menu bar and
+ * every TrackPopupMenu follow the system instead of staying light. Call once,
+ * before any menu is created. Cosmetic and best-effort: on a Windows too old to
+ * support it, nothing happens and the menus stay light. */
+void spdf_win_enable_dark_menus(void);
+
 /* THE MENU BAR. `hmenu` is an HMENU (spdf_win_menu_create()'s return), and the
  * window takes ownership: DestroyWindow destroys the menu with it.
  *

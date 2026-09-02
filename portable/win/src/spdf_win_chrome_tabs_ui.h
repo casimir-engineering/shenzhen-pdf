@@ -1,5 +1,7 @@
 #pragma once
 
+#include "spdf_win_print.h" /* spdf_win_print_allowed, for greying Print */
+
 /* spdf_win_chrome_tabs_ui.h -- the TAB STRIP's commands: select, close, open,
  * the overflow menu and drag-to-reorder.
  *
@@ -106,6 +108,71 @@ static int chrome_open_dialog(app* a) {
  *
  * The titles are the ones the LAST PAINT converted (a->chrome_tabs), so the menu
  * says exactly what the strip says and no conversion happens on the click. */
+/* The TOOLBAR's `...`: the whole app menu, as a popup.
+ *
+ * This is where the menu lives now that the app has no menu bar. The bar was a
+ * strip macOS does not have -- its menus are in the system menu bar, not in the
+ * window -- and on a dark desktop the Win32 bar stayed white however the process
+ * was themed, which read as a second title bar. See spdf_win_menu_app_popup().
+ *
+ * THE CHOICE IS POSTED AS A WM_COMMAND rather than performed here, and that is
+ * not indirection for its own sake: command_perform() lives in
+ * spdf_win_chrome_commands.h, which spdf_win_main.cpp includes AFTER this file,
+ * so it is not callable from here. Posting sends the choice down the same route
+ * an accelerator already takes -- WM_COMMAND, then SPDF_WIN_INPUT_COMMAND, then
+ * command_perform -- so a menu pick and a keystroke cannot diverge, which is
+ * worth more than saving a message.
+ *
+ * Right-aligned under the button: it sits at the trailing end of the toolbar and
+ * a left-aligned popup would hang off the window. */
+static int chrome_app_menu(app* a, const SpdfWinChromeLayout* l) {
+    SpdfWinToolbarLayout tb;
+    SpdfWinMenuState st;
+    SpdfWinChromeRect cell;
+    POINT pt;
+    void* hwnd = a->window ? spdf_win_window_native_handle(a->window) : NULL;
+    float s = l->dpi_scale > 0.0f ? l->dpi_scale : 1.0f;
+    int chosen;
+
+    if (!hwnd) return 0;
+    chrome_release_capture(a); /* a popup needs the mouse -- see chrome_release_capture */
+
+    /* The same layout the painter used, so the popup hangs off the drawn cell. */
+    spdf_win_toolbar_layout(l->toolbar, s, &tb);
+    cell = tb.item[SPDF_WIN_TB_OVERFLOW];
+    if (spdf_win_chrome_rect_empty(cell)) return 0;
+    pt.x = (LONG)(cell.x + cell.w);
+    pt.y = (LONG)(cell.y + cell.h);
+    ClientToScreen((HWND)hwnd, &pt);
+
+    /* The same state the bar was given, so the ticks and the greying match.
+     * Built here rather than shared with chrome_sync_menu() for the include-order
+     * reason above; the fields are all on `app`. */
+    memset(&st, 0, sizeof(st));
+    st.sidebar_visible = a->show_sidebar;
+    st.minimap_visible = a->show_minimap;
+    st.dark_theme = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
+    st.regex = a->find_regex;
+    st.has_document = a->canvas != NULL;
+    st.can_close_tab = spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
+                                                   a->canvas != NULL);
+    /* Only Print is permission-gated. The three Copy Page items never are:
+     * spdf_has_permission(doc,'c') returns 1 by product decision and this
+     * frontend must not add a copy gate. */
+    if (a->tabs && a->canvas) {
+        char err[256] = {0};
+        int sel = spdf_win_tabs_selected_index(a->tabs);
+        spdf_document* doc =
+            sel < 0 ? NULL : (spdf_document*)spdf_win_tabs_document(a->tabs, sel, err, sizeof(err));
+        st.can_print = doc ? spdf_win_print_allowed(doc) : 0;
+    }
+
+    chosen = spdf_win_menu_app_popup(hwnd, &st, pt.x, pt.y);
+    if (chosen == SPDF_WIN_CMD_NONE) return 0;
+    PostMessageW((HWND)hwnd, WM_COMMAND, (WPARAM)(SPDF_WIN_MENU_ID_BASE + chosen), 0);
+    return 0; /* the repaint comes with the command */
+}
+
 static int chrome_tab_overflow(app* a, const SpdfWinChromeLayout* l) {
     const wchar_t* titles[SPDF_WIN_CHROME_MAX_TABS];
     SpdfWinTabRect r;

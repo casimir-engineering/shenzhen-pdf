@@ -423,6 +423,33 @@ void spdf_win_menu_sync(void* hmenu, const SpdfWinMenuState* state);
 int spdf_win_menu_tab_overflow(void* hwnd, const wchar_t* const* titles, int count, int selected, int screen_x,
                                int screen_y);
 
+/* THE WHOLE MENU AS A POPUP, hung off the toolbar's `...` button.
+ *
+ * WHY THE APP HAS NO MENU BAR. macOS's menus live in the SYSTEM menu bar at the
+ * top of the screen -- they are not part of the window at all -- so an in-window
+ * menu strip is a bar macOS does not have, and it showed: dark caption, then a
+ * white Win32 menu strip, then dark chrome, reported from actual use as "a
+ * double top bar like it's a window inside of a window".
+ *
+ * It cannot be fixed by theming. SetPreferredAppMode(AllowDark) darkens POPUP
+ * menus but not the menu BAR, which the frame draws; making that dark means
+ * owner-drawing the strip and taking over its measurement, keyboard navigation
+ * and accessibility. Measured here, not assumed: with dark mode on and the
+ * system set to dark, the bar stayed white.
+ *
+ * So the bar is gone and the same table is shown from the `...` overflow the
+ * toolbar already had -- which is also what every modern Windows app of this
+ * shape does (Edge, VS Code, Explorer all dropped the menu bar for an overflow),
+ * and the button was already drawn and inert. Nothing is lost: every command
+ * keeps its accelerator, because the keymap resolves those itself and never
+ * depended on the bar (spdf_win_chrome_commands.h).
+ *
+ * Returns the chosen spdf_win_command, or SPDF_WIN_CMD_NONE. Takes the same
+ * state the bar took, so ticks and greying are identical -- including that Print
+ * greys on the document's own print flag while the Copy Page items never do.
+ * Modal, like the tab overflow beside it. */
+int spdf_win_menu_app_popup(void* hwnd, const SpdfWinMenuState* state, int screen_x, int screen_y);
+
 /* Ctrl+O / the strip's `+` / the File menu. IFileOpenDialog, with the PDF and
  * e-book types this app opens. Returns 1 and fills `out_path` (UTF-16, NUL
  * terminated), or 0 when the user cancelled or the dialog could not be created.

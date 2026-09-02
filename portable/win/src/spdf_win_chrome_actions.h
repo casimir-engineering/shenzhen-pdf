@@ -266,6 +266,7 @@ static int chrome_perform(app* a, const SpdfWinChromeHit* hit, const SpdfWinChro
          * a press on either from panning the document all along. */
         case SPDF_WIN_CA_NEW_TAB: return chrome_open_dialog(a);
         case SPDF_WIN_CA_TAB_OVERFLOW: return chrome_tab_overflow(a, l);
+        case SPDF_WIN_CA_APP_MENU: return chrome_app_menu(a, l);
         default: return 0;
     }
 }
