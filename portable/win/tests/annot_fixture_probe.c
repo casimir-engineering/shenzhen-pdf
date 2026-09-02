@@ -51,17 +51,19 @@ int main(int argc, char** argv) {
         fprintf(stderr, "open: %s\n", err);
         return 1;
     }
-    rects[0].x0 = 72.0f;
-    rects[0].y0 = 100.0f;
-    rects[0].x1 = 300.0f;
-    rects[0].y1 = 112.0f;
-    rects[1].x0 = 72.0f;
-    rects[1].y0 = 114.0f;
-    rects[1].x1 = 200.0f;
-    rects[1].y1 = 126.0f;
+    /* golden.pdf's page is 200 x 260 pt: two highlight lines across the
+     * title block and a note in the lower margin, all inside the page. */
+    rects[0].x0 = 30.0f;
+    rects[0].y0 = 130.0f;
+    rects[0].x1 = 130.0f;
+    rects[0].y1 = 142.0f;
+    rects[1].x0 = 30.0f;
+    rects[1].y0 = 144.0f;
+    rects[1].x1 = 100.0f;
+    rects[1].y1 = 156.0f;
     if (!spdf_add_highlight_comment(doc, 0, rects, 2, "Check this figure against the appendix", "Rapha\xc3\xabl", err,
                                     sizeof(err)) ||
-        !spdf_add_text_comment(doc, 0, 380.0f, 300.0f, "A note in the margin", "Tester", err, sizeof(err)) ||
+        !spdf_add_text_comment(doc, 0, 150.0f, 200.0f, "A note in the margin", "Tester", err, sizeof(err)) ||
         !spdf_save_document(doc, argv[2], err, sizeof(err))) {
         fprintf(stderr, "write: %s\n", err);
         spdf_close(doc);
