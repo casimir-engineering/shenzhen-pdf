@@ -51,9 +51,31 @@ void strip_known_extension(wchar_t* title) {
 
 } /* namespace */
 
+namespace {
+int g_caption_maximized;
+int g_caption_hot;
+int g_caption_pressed;
+} /* namespace */
+
+void spdf_win_chrome_caption_set_state(int maximized, int hot, int pressed) {
+    g_caption_maximized = maximized ? 1 : 0;
+    /* Out-of-range values are NONE rather than garbage the painter has to
+     * defend against: the enum is spdf_win_tabstrip.h's and 1..3 are the buttons. */
+    g_caption_hot = (hot >= SPDF_WIN_CAPTION_MINIMIZE && hot <= SPDF_WIN_CAPTION_CLOSE) ? hot : SPDF_WIN_CAPTION_NONE;
+    g_caption_pressed =
+        (pressed >= SPDF_WIN_CAPTION_MINIMIZE && pressed <= SPDF_WIN_CAPTION_CLOSE) ? pressed : SPDF_WIN_CAPTION_NONE;
+}
+
+void spdf_win_chrome_caption_state(int* maximized, int* hot, int* pressed) {
+    if (maximized) *maximized = g_caption_maximized;
+    if (hot) *hot = g_caption_hot;
+    if (pressed) *pressed = g_caption_pressed;
+}
+
 void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in) {
     if (!in) return;
     memset(in, 0, sizeof(*in));
+    spdf_win_chrome_caption_state(&in->maximized, &in->caption_hot, &in->caption_pressed);
     /* Both side panels open, as macOS does for a new document
      * (ShenzhenPDFMac.mm:836-840); 0 width asks spdf_win_chrome.h for its own
      * default rather than repeating 240 and 126.5 here. */
@@ -102,6 +124,9 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
     model->zoom = in->zoom;
     model->zoom_dpi_scale = in->zoom_dpi_scale;
     model->fit_mode = in->fit_mode;
+    model->maximized = in->maximized;
+    model->caption_hot = in->caption_hot;
+    model->caption_pressed = in->caption_pressed;
 
     if (!tabs) {
         /* Still fill the find state: a model with no tabs is what the window

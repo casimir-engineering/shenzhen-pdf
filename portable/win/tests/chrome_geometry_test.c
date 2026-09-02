@@ -86,6 +86,22 @@ static void check_tiling(const SpdfWinChromeLayout* l, unsigned w, unsigned h, c
         CHECK_EQF(l->tabstrip.w, (float)w);
         CHECK_EQF(l->tabstrip.y, 0.0f);
         split_top += l->tabstrip.h;
+        /* THE CAPTION RESERVE rides on the strip: same height, flush with the
+         * trailing edge, exactly the three buttons wide, and INSIDE the strip
+         * rather than beside it -- the band and its hairline are still the
+         * strip's. A strip narrower than the reserve has no reserve at all. */
+        if (!spdf_win_chrome_rect_empty(l->caption)) {
+            CHECK_EQF(l->caption.y, 0.0f);
+            CHECK_EQF(l->caption.h, l->tabstrip.h);
+            CHECK_EQF(l->caption.x + l->caption.w, (float)w);
+            CHECK_EQF(l->caption.w, spdf_win_chrome_px(SPDF_WIN_TABSTRIP_TRAILING_INSET, l->dpi_scale));
+            CHECK(l->caption.x >= 0.0f);
+        } else {
+            CHECK((float)w < spdf_win_chrome_px(SPDF_WIN_TABSTRIP_TRAILING_INSET, l->dpi_scale));
+        }
+    } else {
+        /* No strip, no caption buttons: presentation mode is fullscreen-like. */
+        CHECK(spdf_win_chrome_rect_empty(l->caption));
     }
     if (!spdf_win_chrome_rect_empty(l->toolbar)) {
         CHECK_EQF(l->toolbar.x, 0.0f);
@@ -203,6 +219,11 @@ static void test_default_window_1x(void) {
     spdf_win_chrome_layout(&m, 1120, 800, 1.0f, &l);
 
     CHECK_EQF(l.tabstrip.h, 42.0f);
+    /* Three Windows 11 caption buttons at 46 px: 138, macOS's own windowed
+     * traffic-light reserve mirrored to the trailing end. */
+    CHECK_EQF(l.caption.w, 138.0f);
+    CHECK_EQF(l.caption.x, 1120.0f - 138.0f);
+    CHECK_EQF(l.caption.h, 42.0f);
     CHECK_EQF(l.toolbar.h, 42.0f);
     CHECK_EQF(l.toolbar.y, 42.0f);
     CHECK_EQF(l.sidebar.y, 84.0f);
@@ -244,7 +265,7 @@ static void test_whole_pixels(void) {
     SpdfWinChromeModel m = default_model();
     for (i = 0; i < sizeof(scales) / sizeof(scales[0]); ++i) {
         SpdfWinChromeLayout l;
-        const SpdfWinChromeRect* all[7];
+        const SpdfWinChromeRect* all[8];
         int k;
         spdf_win_chrome_layout(&m, 1600, 1000, scales[i], &l);
         all[0] = &l.tabstrip;
@@ -254,7 +275,8 @@ static void test_whole_pixels(void) {
         all[4] = &l.canvas;
         all[5] = &l.minimap_divider;
         all[6] = &l.minimap;
-        for (k = 0; k < 7; ++k) {
+        all[7] = &l.caption;
+        for (k = 0; k < 8; ++k) {
             /* A fractional edge puts a 1 px separator across two rows -- the
              * defect the dark page border already hit at 150%. */
             CHECK_EQF(all[k]->x, floorf(all[k]->x));
@@ -274,6 +296,7 @@ static void test_presentation(void) {
     m.presentation = 1;
     spdf_win_chrome_layout(&m, 1120, 800, 1.5f, &l);
     CHECK(spdf_win_chrome_rect_empty(l.tabstrip));
+    CHECK(spdf_win_chrome_rect_empty(l.caption));
     CHECK(spdf_win_chrome_rect_empty(l.toolbar));
     CHECK_EQF(l.canvas.y, 0.0f);
     CHECK_EQF(l.canvas.h, 800.0f);
@@ -309,6 +332,12 @@ static void test_hit(void) {
 
     CHECK(spdf_win_chrome_hit(&l, 500.0f, 10.0f) == SPDF_WIN_CHROME_TABSTRIP);
     CHECK(spdf_win_chrome_hit(&l, 500.0f, 60.0f) == SPDF_WIN_CHROME_TOOLBAR);
+    /* The caption reserve wins over the strip that contains it, edge to edge
+     * and the full strip height; one pixel left of it is strip again. */
+    CHECK(spdf_win_chrome_hit(&l, l.caption.x, 0.0f) == SPDF_WIN_CHROME_CAPTION);
+    CHECK(spdf_win_chrome_hit(&l, l.caption.x + l.caption.w - 1.0f, l.caption.h - 1.0f) == SPDF_WIN_CHROME_CAPTION);
+    CHECK(spdf_win_chrome_hit(&l, l.caption.x - 1.0f, 10.0f) == SPDF_WIN_CHROME_TABSTRIP);
+    CHECK(spdf_win_chrome_hit(&l, l.caption.x + 10.0f, l.caption.h) == SPDF_WIN_CHROME_TOOLBAR);
     CHECK(spdf_win_chrome_hit(&l, 100.0f, 400.0f) == SPDF_WIN_CHROME_SIDEBAR);
     CHECK(spdf_win_chrome_hit(&l, l.canvas.x + 50.0f, 400.0f) == SPDF_WIN_CHROME_CANVAS);
     CHECK(spdf_win_chrome_hit(&l, l.minimap.x + 10.0f, 400.0f) == SPDF_WIN_CHROME_MINIMAP);

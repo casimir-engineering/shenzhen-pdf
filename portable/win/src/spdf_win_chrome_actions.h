@@ -286,6 +286,10 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
     spdf_win_chrome_input_route(&l, &model, in->x, in->y, in->button, &hit);
 
     if (in->kind == SPDF_WIN_INPUT_CURSOR) {
+        /* The window manager's half of the position query first: it depends on
+         * the geometry alone, never on a drag, and WM_NCHITTEST reads it with
+         * no button down. See spdf_win_chrome_nc. */
+        in->nc = hit.nc;
         /* While a drag is running the cursor belongs to the DRAG, not to
          * wherever the pointer has got to: a divider drag that outran its
          * divider must keep the resize cursor, and a pan must keep IDC_SIZEALL

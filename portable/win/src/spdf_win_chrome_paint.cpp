@@ -228,6 +228,10 @@ void draw_ellipsis_dots(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, I
 
 } /* namespace */
 
+/* The three caption buttons at the strip's trailing end. Depends on the helpers
+ * declared in spdf_win_chrome_paint.h, hence the position. */
+#include "spdf_win_chrome_caption.h"
+
 void spdf_win_chrome_paint_tabstrip(const SpdfWinChromePaintCtx& ctx) {
     const SpdfWinChromeLayout* l = ctx.layout;
     const SpdfWinChromeModel* m = ctx.model;
@@ -374,6 +378,12 @@ void spdf_win_chrome_paint_tabstrip(const SpdfWinChromePaintCtx& ctx) {
         }
         if (glyph) glyph->Release();
     }
+
+    /* The caption buttons, in the trailing reserve the `+` was pinned against.
+     * The strip is the title bar (spdf_win_tabstrip.h), so these are Windows'
+     * minimize / maximize / close, drawn here from the model and hit-tested by
+     * WM_NCHITTEST through the same geometry. */
+    spdf_win_chrome_paint_caption(ctx, strip, s);
 
     /* Hairline under the strip, so the band reads as a surface above the
      * toolbar rather than merging with it. */

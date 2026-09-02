@@ -11,6 +11,10 @@
 /* For SPDF_WIN_MENU_ID_BASE alone. WM_COMMAND's low word is a number the two
  * files have to agree about; the table it indexes stays entirely next door. */
 #include "spdf_win_menu.h"
+/* For spdf_win_chrome_caption_set_state() alone: the three caption facts only
+ * an HWND knows (maximized, hovered button, held button), pushed to the model
+ * the chrome painter reads. See spdf_win_window_caption.h. */
+#include "spdf_win_chrome_model.h"
 
 #include <windowsx.h> /* GET_X_LPARAM / GET_Y_LPARAM */
 #include <shellapi.h> /* DragAcceptFiles / DragQueryFileW / DragFinish */
@@ -52,6 +56,14 @@ struct spdf_win_window {
      * move a second later applies the distance travelled in between. WHAT the
      * gesture means is the caller's now; the capture is the Win32 half. */
     int pressed; /* spdf_win_chrome_button; SPDF_WIN_CB_NONE when nothing is */
+
+    /* THE CAPTION IS OURS (spdf_win_window_caption.h). Whether the window is
+     * maximized, and which of the three drawn caption buttons the pointer is over
+     * or holding, as spdf_win_caption_button. Mirrored into the chrome model
+     * through spdf_win_chrome_caption_set_state() whenever any of them changes. */
+    int maximized;
+    int caption_hot;
+    int caption_pressed;
 };
 
 /* SetProcessDpiAwarenessContext and GetDpiForWindow both arrived in Windows 10
@@ -149,13 +161,17 @@ static void paint(spdf_win_window* window) {
     }
 }
 
-/* The frame, the title, the dark caption and the menu bar. Depends on
- * `struct spdf_win_window` above, hence the position. */
-#include "spdf_win_window_frame.h"
-
 /* Message-to-input translation: dispatch(), dispatch_mouse(), on_wheel() and
  * end_press(). Depends on `struct spdf_win_window` above, hence the position. */
 #include "spdf_win_window_input.h"
+
+/* The caption as client area: WM_NCCALCSIZE, WM_NCHITTEST, the caption buttons.
+ * Depends on dispatch() above, hence the position. */
+#include "spdf_win_window_caption.h"
+
+/* The frame, the title, the dark frame and the menu bar. Depends on
+ * frame_extents() above, hence the position. */
+#include "spdf_win_window_frame.h"
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     spdf_win_window* window = (spdf_win_window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
@@ -182,7 +198,28 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         case WM_SIZE:
             if (wparam != SIZE_MINIMIZED && window->target)
                 window->target->Resize(D2D1::SizeU(LOWORD(lparam), HIWORD(lparam)));
+            sync_maximized(window);
             return 0;
+        /* THE CAPTION IS CLIENT AREA. See spdf_win_window_caption.h for all
+         * six of these; the first two are what make the strip the title bar,
+         * the other four are the three buttons the chrome draws. */
+        case WM_NCCALCSIZE:
+            return nc_calc_size(window, wparam, lparam);
+        case WM_NCHITTEST:
+            return nc_hit_test(window, wparam, lparam);
+        case WM_NCMOUSEMOVE:
+            nc_mouse_move(window, wparam);
+            break;
+        case WM_NCMOUSELEAVE:
+            nc_mouse_leave(window);
+            break;
+        case WM_NCLBUTTONDOWN:
+        case WM_NCLBUTTONDBLCLK:
+            if (nc_lbutton_down(window, wparam)) return 0;
+            break;
+        case WM_NCLBUTTONUP:
+            if (nc_lbutton_up(window, wparam)) return 0;
+            break;
         case WM_MOUSEWHEEL:
             on_wheel(window, wparam, lparam, false);
             return 0;
@@ -207,6 +244,10 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             dispatch_mouse(window, SPDF_WIN_INPUT_MOUSE_DOWN, window->pressed, lparam);
             return 0;
         case WM_MOUSEMOVE:
+            /* The pointer is in the client, so no caption button is under it,
+             * whatever WM_NCMOUSELEAVE did or did not say. */
+            if (window->caption_hot != SPDF_WIN_CAPTION_NONE)
+                caption_set(window, SPDF_WIN_CAPTION_NONE, window->caption_pressed);
             /* Unconditionally, not only while a button is down: hover state is
              * what lights the tab strip, and the handler decides if it changed. */
             dispatch_mouse(window, SPDF_WIN_INPUT_MOUSE_MOVE, window->pressed, lparam);
@@ -219,6 +260,10 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 dispatch_mouse(window, SPDF_WIN_INPUT_MOUSE_MOVE, SPDF_WIN_CB_NONE, (LPARAM)-1);
             return 0;
         case WM_LBUTTONUP:
+            /* A caption button pressed and released over the client is a press
+             * abandoned, not a click. */
+            if (window->caption_pressed != SPDF_WIN_CAPTION_NONE)
+                caption_set(window, SPDF_WIN_CAPTION_NONE, SPDF_WIN_CAPTION_NONE);
             end_press(window, SPDF_WIN_CB_LEFT, lparam);
             return 0;
         case WM_MBUTTONUP:
@@ -253,31 +298,9 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 return TRUE;
             }
             break;
-        case WM_GETMINMAXINFO: {
-            /* THE FLOOR THE USER CANNOT DRAG THROUGH. macOS sets contentMinSize
-             * to 560 x 380 (ShenzhenPDFMac.mm:69-70) and Windows had nothing at
-             * all, so the frame could be dragged down to a caption bar with a
-             * sliver of chrome under it -- and spdf_win_chrome_layout() then
-             * starts dropping bands, which is a graceful degradation meant for a
-             * squeezed panel rather than a normal way to use the app.
-             *
-             * The constants are CLIENT-area points, so they are scaled by this
-             * window's DPI and then grown into a FRAME size: ptMinTrackSize is
-             * the outer window, and clamping the outer window to a client-area
-             * number would leave the client short by the border and caption on
-             * every machine. */
-            MINMAXINFO* mmi = (MINMAXINFO*)lparam;
-            float s = spdf_win_window_dpi_scale(window);
-            RECT rc = {0, 0, (LONG)(SPDF_WIN_CHROME_MIN_CONTENT_W * s), (LONG)(SPDF_WIN_CHROME_MIN_CONTENT_H * s)};
-            DWORD style = (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE);
-            /* The menu bar comes out of the frame, not out of the client area,
-             * so the floor has to grow by its height or the minimum CLIENT area
-             * silently shrinks by ~20 px the moment a menu is installed. */
-            AdjustWindowRectEx(&rc, style ? style : WS_OVERLAPPEDWINDOW, GetMenu(hwnd) != NULL, 0);
-            mmi->ptMinTrackSize.x = rc.right - rc.left;
-            mmi->ptMinTrackSize.y = rc.bottom - rc.top;
+        case WM_GETMINMAXINFO:
+            min_track_size(window, (MINMAXINFO*)lparam);
             return 0;
-        }
         case WM_DPICHANGED: {
             /* Windows hands us the rectangle the window should occupy on the
              * monitor it just moved to. Honouring it is what makes a drag
@@ -287,6 +310,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             RECT* suggested = (RECT*)lparam;
             SetWindowPos(hwnd, NULL, suggested->left, suggested->top, suggested->right - suggested->left,
                          suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+            extend_frame_into_strip(window); /* the caption height changed with the DPI */
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
@@ -416,6 +440,10 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
     window->client_px_w = client_px_w;
     window->client_px_h = client_px_h;
     resize_to_client(window);
+    /* The strip is the title bar: hand DWM the caption region so it keeps
+     * drawing the shadow, the rounded corners and the frame around a window
+     * whose caption is now client area (spdf_win_window_caption.h). */
+    extend_frame_into_strip(window);
     /* THE DROP TARGET. One call, and the only reason it is not in
      * register_class() is that it is a property of the window rather than of the
      * class. WM_DROPFILES is the old shell drop protocol rather than

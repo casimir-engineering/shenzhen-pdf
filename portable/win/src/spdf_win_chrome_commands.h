@@ -437,8 +437,24 @@ static int input_for_window(void* user, spdf_win_input* in) {
         chrome_sync_menu(a);
         return changed;
     }
-    if (!a->canvas) return 0;
 
+    /* NO EARLY RETURN FOR A MISSING CANVAS, and that is deliberate.
+     *
+     * There used to be an `if (!a->canvas) return 0;` here, from when the whole
+     * client area was document. Now the strip IS the title bar, and on a bare
+     * launch -- no session to restore -- the window has chrome and no canvas: the
+     * guard swallowed the cursor query, so WM_NCHITTEST answered HTCLIENT across
+     * the empty strip and the window could not be dragged, its caption buttons
+     * were dead, the `+` did nothing, and Ctrl+O -- the very thing the empty
+     * window's own hint tells the reader to press -- never reached the keymap.
+     *
+     * Every path below tolerates a NULL canvas, and that was checked rather than
+     * assumed: no file in the input layer touches a canvas member directly
+     * (grep for `a->canvas->` finds nothing), and every spdf_win_canvas_*
+     * entry point returns early or a neutral value on NULL. The find bridge
+     * accepts a NULL path. So with no document a scroll is a no-op, a click on
+     * the strip drags or selects a tab, a caption button minimises or closes,
+     * and a keystroke reaches the same keymap it always did. */
     switch (in->kind) {
         case SPDF_WIN_INPUT_SCROLL: return spdf_win_canvas_scroll_by(a->canvas, in->dx, in->dy);
         case SPDF_WIN_INPUT_ZOOM: return chrome_zoom_at_client(a, in);

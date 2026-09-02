@@ -16,7 +16,10 @@
  * The SCROLLERS are routed by the same header and checked in
  * chrome_scroll_input_test.c rather than here, because the two suites together
  * would be past the 500-line cap. What stays here is the sweep over the bands
- * and panels; the sweep over the two troughs is the first function there.
+ * and panels; the sweep over the two troughs is the first function there. The
+ * TITLE-BAR policy -- which strip pixels drag the window and which are the three
+ * caption buttons (SpdfWinChromeHit::nc) -- is chrome_nc_test.c, split off for
+ * the same reason.
  *
  * Both headers are header-only, so no `spdf-test-sources` line is needed --
  * same as chrome_geometry_test.c and tabstrip_geometry_test.c.

@@ -1,6 +1,6 @@
 #pragma once
 
-/* Window PROPERTIES -- the frame, the title, the dark caption, the menu bar --
+/* Window PROPERTIES -- the frame, the title, the dark frame, the menu bar --
  * for spdf_win_window.cpp only.
  *
  * NOT A NEW LAYER, and the same arrangement as spdf_win_window_input.h beside
@@ -19,16 +19,22 @@
  */
 
 /* Grow the FRAME until the CLIENT area is the requested size at this window's
- * DPI and with whatever menu bar it now has. Idempotent, and a no-op at 96 dpi
- * with no menu -- which is exactly the case every headless comparison runs in. */
+ * DPI. Idempotent.
+ *
+ * frame_extents(), not AdjustWindowRectEx: the caption is client area now
+ * (spdf_win_window_caption.h), so the frame around the client is the three
+ * resize borders and nothing else. AdjustWindowRectEx would still add the
+ * caption it no longer has, and the client would come out one caption taller
+ * than every offscreen render this port compares against. The requested size
+ * INCLUDES the strip -- macOS's 1120 x 800 is a full-size content view whose
+ * top 42 pt is the title bar, and so is ours. */
 static void resize_to_client(spdf_win_window* window) {
     float s = spdf_win_window_dpi_scale(window);
-    RECT rc = {0, 0, (LONG)(window->client_px_w * s), (LONG)(window->client_px_h * s)};
-    DWORD style = (DWORD)GetWindowLongPtrW(window->hwnd, GWL_STYLE);
+    int extra_w = 0, extra_h = 0;
     if (!window->hwnd || window->client_px_w <= 0 || window->client_px_h <= 0) return;
-    AdjustWindowRectEx(&rc, style ? style : WS_OVERLAPPEDWINDOW, GetMenu(window->hwnd) != NULL, 0);
-    SetWindowPos(window->hwnd, NULL, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
-                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    frame_extents(window, &extra_w, &extra_h);
+    SetWindowPos(window->hwnd, NULL, 0, 0, (int)(window->client_px_w * s) + extra_w,
+                 (int)(window->client_px_h * s) + extra_h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void spdf_win_window_set_title(spdf_win_window* window, const wchar_t* title) {
@@ -153,15 +159,16 @@ int spdf_win_system_prefers_dark(void) {
     return light ? 0 : 1;
 }
 
+/* NOTE: a menu bar and a client-owned caption do not combine. WM_NCCALCSIZE in
+ * spdf_win_window_caption.h gives the client the whole top of the frame, menu
+ * bar included, so a bar installed here would be painted by DefWindowProc over
+ * the strip. Nothing installs one -- spdf_win_main.cpp deliberately passes no
+ * menu and opens the app menu from the toolbar instead -- and if one ever comes
+ * back it has to be drawn inside the strip like every other control. */
 void spdf_win_window_set_menu(spdf_win_window* window, void* hmenu) {
     if (!window || !window->hwnd || !hmenu) return;
     if (!SetMenu(window->hwnd, (HMENU)hmenu)) return;
     DrawMenuBar(window->hwnd);
-    /* The frame just grew a menu bar out of the client area's height. Re-run the
-     * sizing that spdf_win_window_create() did, now with bMenu TRUE, so the
-     * CLIENT area is still the size that was asked for -- otherwise the first
-     * document opens in a window one menu bar shorter than every offscreen
-     * render this port compares against. */
     resize_to_client(window);
 }
 
