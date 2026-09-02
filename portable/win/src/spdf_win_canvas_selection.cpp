@@ -49,7 +49,13 @@ static int ensure_state(spdf_win_canvas* canvas) {
         canvas->selection = spdf_win_selection_new();
         canvas->press_page = -1;
     }
-    if (!canvas->links) canvas->links = spdf_win_links_new();
+    if (!canvas->links) {
+        canvas->links = spdf_win_links_new();
+        /* The path lets the cache run its text-URL worker over a handle of its
+         * own (spdf_win_links.h section 2). A NULL path -- the headless probe --
+         * leaves hover with annotation links only, as before. */
+        spdf_win_links_set_source(canvas->links, canvas->path);
+    }
     return canvas->selection != NULL;
 }
 

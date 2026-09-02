@@ -83,6 +83,46 @@ int spdf_win_canvas_scroll_to(spdf_win_canvas* canvas, float x, float y);
  * margin), measuring intervening pages as needed. */
 int spdf_win_canvas_scroll_to_page(spdf_win_canvas* canvas, int page_index);
 
+/* --- navigation for search and the map (spdf_win_find_canvas.cpp) ----------
+ *
+ * CENTRE A PAGE RECT IN THE VIEWPORT -- what stepping to a find match does on
+ * macOS (scrollToPageRect:pageIndex:, ShenzhenPDFMac.mm:10680-10709): the
+ * match's rect is mapped through the page's slot at the current zoom and the
+ * viewport origin is set to its centre minus half the viewport, both axes, then
+ * clamped like every other scroll. `rect` is in page space (PDF points, y down,
+ * the space the core returns match rects in). An empty rect falls back to
+ * scroll_to_page, as macOS does. Returns non-zero when the offset moved. */
+int spdf_win_canvas_scroll_to_rect(spdf_win_canvas* canvas, int page_index, spdf_rect rect);
+
+/* A page's slot in the CONTINUOUS layout, in content pixels at the current zoom
+ * -- the same rects build_scene draws from, before the scroll offset is taken
+ * off. Pages the viewport has not reached carry page 0's size as an estimate
+ * (spdf_win_canvas_internal.h explains why launch measures one page). Returns
+ * 0 when the page is out of range. What the minimap's document<->strip mapping
+ * and the nearest-match search consume. */
+int spdf_win_canvas_page_rect(const spdf_win_canvas* canvas, int page_index, double* x, double* y, double* w,
+                              double* h);
+/* The viewport size in device pixels, as last set. */
+void spdf_win_canvas_viewport(const spdf_win_canvas* canvas, unsigned* w, unsigned* h);
+/* The pages whose slots intersect the viewport, inclusive. Falls back to the
+ * current page when the layout has nothing in range. Returns 0 with no canvas. */
+int spdf_win_canvas_visible_range(const spdf_win_canvas* canvas, int* first, int* last);
+
+/* ONE PAGE CHANGED SHAPE -- rotated by spdf_rotate_page. Re-measures it, drops
+ * every cached bitmap (the old ones are the old orientation), invalidates the
+ * in-flight prefetches, the link regions and the selection, and rebuilds the
+ * layout. Returns non-zero. The document itself was changed by the caller; the
+ * canvas only re-learns it. */
+int spdf_win_canvas_page_changed(spdf_win_canvas* canvas, int page_index);
+
+/* SELECT EVERY GLYPH ON A PAGE (Edit > Select All). Runs the ordinary range
+ * gesture from the page's top-left to its bottom-right through the same three
+ * calls the pointer uses, so what Ctrl+A selects is exactly what a drag across
+ * the whole page would. The page must be in the last built frame -- the
+ * selection model hit-tests against what was drawn, by design. Returns non-zero
+ * when the visible selection changed. */
+int spdf_win_canvas_select_page(spdf_win_canvas* canvas, int page_index);
+
 /* WHAT A SCROLLBAR NEEDS, and nothing else: two fractions per axis plus whether
  * the content overflows sideways at all.
  *
