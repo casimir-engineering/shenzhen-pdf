@@ -227,14 +227,18 @@ static BOOL SPDFLayoutsEqual(SPDFMarkdownDiagramLayout* a, SPDFMarkdownDiagramLa
     return YES;
 }
 
-// On the border of some node box: inside the rect grown by a hair, outside the
-// same rect shrunk by one. An endpoint that missed its box, or sank into it,
-// fails both ways round.
+// On the border of some node box: inside the box grown by a hair, and in its
+// outer BAND rather than its middle. The band, rather than the bounding
+// rectangle exactly, because an anchor on a rounded, elliptical or diamond
+// outline legitimately sits a little inside the bounding box -- but never
+// anywhere near the label. An endpoint that stopped short of its box, or sank
+// into it, fails one way or the other.
 static BOOL SPDFOnSomeBorder(NSPoint point, NSArray<SPDFMarkdownDiagramNode*>* nodes) {
     for (SPDFMarkdownDiagramNode* node in nodes) {
         NSRect frame = node.frame;
         if (!NSPointInRect(point, NSInsetRect(frame, -0.75, -0.75))) continue;
-        if (NSPointInRect(point, NSInsetRect(frame, 1.0, 1.0))) continue;
+        CGFloat band = 0.35 * MIN(NSWidth(frame), NSHeight(frame));
+        if (NSPointInRect(point, NSInsetRect(frame, band, band))) continue;
         return YES;
     }
     return NO;

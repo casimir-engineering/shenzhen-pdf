@@ -63,6 +63,7 @@ $PORTABLE/mac/markdown/SPDFMarkdownDiagramStructParsers.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramChartParsers.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramLayout.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramBand.mm
+$PORTABLE/mac/markdown/SPDFMarkdownDiagramGraphEdges.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramGraphShapes.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramSequenceShapes.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDiagramChartShapes.mm
