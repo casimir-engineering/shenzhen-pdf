@@ -140,13 +140,29 @@ static void chrome_inputs_for(app* a, SpdfWinChromeModelInputs* in, float dpi_sc
  * asks for, so the first page is on screen before the annotation walk begins
  * (spdf_win_annot.h). Returns the comment count known so far. */
 static int chrome_annot_sync(app* a) {
-    int sel = a->tabs && a->canvas ? spdf_win_tabs_selected_index(a->tabs) : -1;
     char err[256] = {0};
-    const char* path = sel < 0 ? NULL : spdf_win_tabs_path(a->tabs, sel);
-    spdf_document* doc = sel < 0 ? NULL : (spdf_document*)spdf_win_tabs_document(a->tabs, sel, err, sizeof(err));
+    const char* path = NULL;
+    spdf_document* doc = NULL;
     int deferred = 0;
+    if (a->canvas && a->tabs) {
+        int sel = spdf_win_tabs_selected_index(a->tabs);
+        if (sel >= 0) {
+            path = spdf_win_tabs_path(a->tabs, sel);
+            doc = (spdf_document*)spdf_win_tabs_document(a->tabs, sel, err, sizeof(err));
+        }
+    } else if (a->canvas) {
+        /* The headless paths open one document directly and have no tabs. */
+        path = a->path;
+        doc = a->doc;
+    }
     int count = spdf_win_annot_sync(doc, path, g_paint_frame, &deferred);
-    if (deferred && a->window) spdf_win_window_invalidate(a->window);
+    if (deferred) {
+        /* Windowed: ask for the next frame, which loads. Headless
+         * (--render-window-png): there is no next frame and no launch budget
+         * to protect, so the one frame there is carries the markers. */
+        if (a->window) spdf_win_window_invalidate(a->window);
+        else count = spdf_win_annot_count(doc, path);
+    }
     return count;
 }
 
