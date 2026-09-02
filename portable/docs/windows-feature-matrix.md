@@ -203,6 +203,18 @@ The readme is a release gate; these tags will need updating when a Windows build
 
 ## (c) Release notes and documents that contradict the tree
 
+> **Fixed by the documentation pass in `2741ef114`:** items 3, 5, 6, 7 and 12,
+> plus the release-notes archive gaps, and the dark-theme half of item 2 (the
+> readme bullet is now tagged `macOS · Windows` and "Linux — full parity" is
+> softened). Item 1 was resolved earlier by merging `origin/master`
+> (`31d86c95a`): `releases/26.9.2-1.md` exists at HEAD and the readme says
+> "Latest 26.9.2-1". Still open: item 4 (the three overlapping Markdown notes,
+> not recoverable from the notes), item 8 (`windows-captures/README.md`, owned
+> by the wiring pass), item 9 (the handoff and plan, left as history and now
+> labelled as such), items 10 and 11 (both describe real code divergences, not
+> prose defects — 10's Escape hazard was fixed by `24b940e26`, so the divergence
+> the item names is gone while the release note's claim is now true).
+
 1. **`26.9.2-1` exists as a tag and on `origin/master` only.** HEAD has no `releases/26.9.2-1.md`, the readme at HEAD says 26.9.1-2, and `release-notes-next.md` says "since 26.9.1 build 2". Rebasing or merging `origin/master` is required before any Windows release branch, and the 26.9.2-1 Markdown/tab-outline items above assume that merge.
 2. **readme "Dark reading theme, for every document"** (untagged) and **"Linux — full parity"** vs. `portable/linux/gtk4/`: zero references to `SPDF_RENDER_DARK_THEME`, `SPDF_RENDER_PRESERVE_IMAGES` or `spdf_recolor`. Linux has no dark theme and no Markdown; "full parity" overstates on both counts (plan §1 counts eight missing macOS features).
 3. **`releases/README.md` "Each published release has one tracked YY.M.DD-BUILD.md file"** — releases 26.6.17-1, 26.6.25-1, 26.6.27-1/-2 and 26.7.9-1 have no file; the archive begins at 26.7.17-1. Their feature claims live only in commit bodies (the 26.7.9-1 body is the sole record of the properties panel, nearest-match jump and middle-click close).
