@@ -89,6 +89,13 @@ typedef enum spdf_win_tab_fit {
  * that boundary. `page` is 0-BASED here and in the file, matching the mac
  * schema and spdf_win_main.cpp's rule; the GTK reader migrates its own legacy
  * 1-based pages on read. */
+/* "searchText": the tab's live find query, UTF-8. Each tab remembers its query
+ * across switches and relaunches (readme: "Scrollbar heat-map ... each tab
+ * remembers its query"), which is why it is view state and not app state.
+ * Fixed storage so the view stays a plain value the model can memcpy; the find
+ * engine caps its own query anyway (spdf_win_search_dup_query). */
+#define SPDF_WIN_TAB_SEARCH_MAX 256
+
 typedef struct spdf_win_tab_view {
     int page;
     double zoom;
@@ -97,6 +104,7 @@ typedef struct spdf_win_tab_view {
     double scroll_x;
     double scroll_y;
     int has_scroll_origin;
+    char search_text[SPDF_WIN_TAB_SEARCH_MAX];
 } spdf_win_tab_view;
 
 /* zoom 1, custom_zoom 1, fit_mode 4 (page) — the same defaults

@@ -2,6 +2,7 @@
 #include "spdf_win_chrome_model.h"
 
 #include "spdf_win_chrome_find.h"
+#include "spdf_win_tabs_names.h"
 
 #include <string.h>
 
@@ -55,7 +56,11 @@ namespace {
 int g_caption_maximized;
 int g_caption_hot;
 int g_caption_pressed;
+int g_presentation;
 } /* namespace */
+
+void spdf_win_chrome_presentation_set(int on) { g_presentation = on ? 1 : 0; }
+int spdf_win_chrome_presentation(void) { return g_presentation; }
 
 void spdf_win_chrome_caption_set_state(int maximized, int hot, int pressed) {
     g_caption_maximized = maximized ? 1 : 0;
@@ -88,6 +93,7 @@ void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in) {
     in->page_index = -1;
     in->zoom_dpi_scale = 1.0f;
     in->fit_mode = SPDF_WIN_CHROME_FIT_WIDTH; /* what the canvas opens at */
+    in->presentation = g_presentation;
 }
 
 void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStore* store, spdf_win_tabs* tabs,
@@ -104,8 +110,11 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
     }
 
     model->dark = in->dark;
-    model->show_sidebar = in->show_sidebar;
-    model->show_minimap = in->show_minimap;
+    /* Presenting hides both panels whatever the reader had open; their
+     * preference comes back when presentation ends (:13432, :13455). */
+    model->presentation = in->presentation;
+    model->show_sidebar = in->presentation ? 0 : in->show_sidebar;
+    model->show_minimap = in->presentation ? 0 : in->show_minimap;
     model->sidebar_w = in->sidebar_w;
     model->minimap_w = in->minimap_w;
     model->sidebar_section = 0; /* Chapters, as macOS opens */
@@ -140,9 +149,27 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
     count = spdf_win_tabs_count(tabs);
     if (count > SPDF_WIN_CHROME_MAX_TABS) count = SPDF_WIN_CHROME_MAX_TABS;
 
+    /* THE DISPLAY NAMES, disambiguated together: two tabs called "spec" become
+     * "Alpha/spec" and "Beta/spec" (spdf_win_tabs_names.h, the mac's
+     * spdf_disambiguated_display_names_for_paths). From the PATHS, as the mac
+     * does; the tab model's title is the fallback for a tab with no path
+     * components to speak of. */
+    {
+        const char* paths[SPDF_WIN_CHROME_MAX_TABS];
+        static char names[SPDF_WIN_CHROME_MAX_TABS][SPDF_WIN_TABS_NAME_MAX];
+        for (i = 0; i < count; ++i) paths[i] = spdf_win_tabs_path(tabs, i);
+        spdf_win_tabs_display_names(paths, count, names);
+        for (i = 0; i < count; ++i) {
+            if (names[i][0]) {
+                widen_title(names[i], store->titles[i], SPDF_WIN_CHROME_MAX_TITLE);
+            } else {
+                widen_title(spdf_win_tabs_title(tabs, i), store->titles[i], SPDF_WIN_CHROME_MAX_TITLE);
+                strip_known_extension(store->titles[i]);
+            }
+        }
+    }
+
     for (i = 0; i < count; ++i) {
-        widen_title(spdf_win_tabs_title(tabs, i), store->titles[i], SPDF_WIN_CHROME_MAX_TITLE);
-        strip_known_extension(store->titles[i]);
         store->tabs[i].title = store->titles[i];
         /* read_only needs the SOURCE file's write permission, which the tab
          * model does not carry -- macOS reads it at open and shows an orange dot
@@ -235,6 +262,8 @@ void spdf_win_find_set_query(const wchar_t* query, int regex) {
     if (WideCharToMultiByte(CP_UTF8, 0, g_query_w, -1, g_query_u8, (int)sizeof(g_query_u8), NULL, NULL) <= 0)
         g_query_u8[0] = '\0';
 }
+
+const char* spdf_win_find_query_utf8(void) { return g_query_u8; }
 
 SpdfWinFindSession* spdf_win_find_shared(void) {
     /* Lazy for real, and still lazy after the environment bridge went away: no

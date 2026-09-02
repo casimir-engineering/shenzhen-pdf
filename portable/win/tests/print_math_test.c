@@ -17,9 +17,14 @@
  * cares about in words, that one pins every case.
  */
 #include "spdf_win_print_math.h"
+/* The Scaling page's pure half: radios and a percentage field to a choice and
+ * back. The Win32 page itself is left out (SPDF_WIN_PRINT_SCALING_PURE). */
+#define SPDF_WIN_PRINT_SCALING_PURE
+#include "spdf_win_print_scaling.h"
 
 #include <math.h>
 #include <stdio.h>
+#include <wchar.h>
 
 static int g_failures = 0;
 static int g_checks = 0;
@@ -265,7 +270,57 @@ static void test_page_ranges(void) {
     CHECK(spdf_win_print_expand_ranges(NULL, 0, 0, pages, 16) == -1);
 }
 
+/* --- the Scaling page's choice, both directions ------------------------- */
+static void test_scaling_page_choice(void) {
+    spdf_win_print_choice c;
+    wchar_t text[16];
+
+    /* The percentage the field shows. */
+    spdf_win_print_percent_text(1.5, text, 16);
+    CHECK(wcscmp(text, L"150") == 0);
+    spdf_win_print_percent_text(1.0, text, 16);
+    CHECK(wcscmp(text, L"100") == 0);
+    spdf_win_print_percent_text(0.1, text, 16);
+    CHECK(wcscmp(text, L"10") == 0);
+    spdf_win_print_percent_text(99.0, text, 16); /* clamps to 800% first */
+    CHECK(wcscmp(text, L"800") == 0);
+    spdf_win_print_percent_text(-3.0, text, 16); /* non-positive is 100% */
+    CHECK(wcscmp(text, L"100") == 0);
+
+    /* Radios in mode order; the field only matters for Custom but is always
+     * parsed, so the remembered custom scale survives a Fit print. */
+    CHECK(spdf_win_print_choice_from_page(SPDF_WIN_PRINT_SCALING_CUSTOM, L"150", &c) == 1);
+    CHECK(c.mode == SPDF_WIN_PRINT_SCALING_CUSTOM);
+    CHECK_NEAR(c.custom_scale, 1.5);
+    CHECK(spdf_win_print_choice_from_page(SPDF_WIN_PRINT_SCALING_FIT, L"150", &c) == 0);
+    CHECK(c.mode == SPDF_WIN_PRINT_SCALING_FIT);
+    CHECK_NEAR(c.custom_scale, 1.5);
+    spdf_win_print_choice_from_page(SPDF_WIN_PRINT_SCALING_ACTUAL, L"", &c);
+    CHECK(c.mode == SPDF_WIN_PRINT_SCALING_ACTUAL);
+    CHECK_NEAR(c.custom_scale, 1.0); /* an empty field is 100% */
+
+    /* Tolerant of what a field holds: spaces, a typed percent sign. */
+    CHECK(spdf_win_print_choice_from_page(SPDF_WIN_PRINT_SCALING_CUSTOM, L"  75 %", &c) == 1);
+    CHECK_NEAR(c.custom_scale, 0.75);
+    /* Out of range clamps as SPDFClampPrintCustomScale does, and says so. */
+    CHECK(spdf_win_print_choice_from_page(SPDF_WIN_PRINT_SCALING_CUSTOM, L"5", &c) == 0);
+    CHECK_NEAR(c.custom_scale, 0.10);
+    CHECK(spdf_win_print_choice_from_page(SPDF_WIN_PRINT_SCALING_CUSTOM, L"900", &c) == 0);
+    CHECK_NEAR(c.custom_scale, 8.0);
+    /* Nonsense is 100%, and an unknown radio is Fit. */
+    CHECK(spdf_win_print_choice_from_page(SPDF_WIN_PRINT_SCALING_CUSTOM, L"abc", &c) == 0);
+    CHECK_NEAR(c.custom_scale, 1.0);
+    spdf_win_print_choice_from_page(9, L"100", &c);
+    CHECK(c.mode == SPDF_WIN_PRINT_SCALING_FIT);
+    spdf_win_print_choice_from_page(SPDF_WIN_PRINT_SCALING_CUSTOM, NULL, &c);
+    CHECK_NEAR(c.custom_scale, 1.0);
+    /* The radio ids ARE the modes, offset: the page relies on it. */
+    CHECK(SPDF_WIN_PRINT_ID_ACTUAL - SPDF_WIN_PRINT_ID_FIT == SPDF_WIN_PRINT_SCALING_ACTUAL);
+    CHECK(SPDF_WIN_PRINT_ID_CUSTOM - SPDF_WIN_PRINT_ID_FIT == SPDF_WIN_PRINT_SCALING_CUSTOM);
+}
+
 int main(void) {
+    test_scaling_page_choice();
     test_custom_scale();
     test_mode_scale();
     test_dest_rect();

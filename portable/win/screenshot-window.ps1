@@ -72,7 +72,13 @@ param(
   [int]$Width = 0,
   [int]$Height = 0,
   [int]$SettleMs = 1500,
-  [int]$TimeoutMs = 20000
+  [int]$TimeoutMs = 20000,
+  # Passed to the app as --state-dir: where it reads and writes settings.yaml
+  # and session.yaml instead of %APPDATA%\ShenzhenPDF. A capture that restores
+  # the reader's own session shows the page they left, not the one asked for,
+  # and a capture must never write into their files. A parameter of its own
+  # because a nested `powershell -File` cannot hand -AppArgs an array.
+  [string]$StateDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -305,7 +311,12 @@ $dpiAware = [SpdfShot]::BecomeDpiAware()
 Write-Output ("host_dpi_aware=" + $dpiAware)
 
 $argList = @()
-foreach ($a in @($AppArgs) + @($Pdf)) {
+$launchArgs = @($AppArgs)
+if ($StateDir) {
+  New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+  $launchArgs += @('--state-dir', $StateDir)
+}
+foreach ($a in $launchArgs + @($Pdf)) {
   if ($null -eq $a -or $a -eq '') { continue }
   if ($a -match '\s' -and $a -notmatch '^".*"$') { $argList += ('"' + $a + '"') } else { $argList += $a }
 }

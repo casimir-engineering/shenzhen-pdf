@@ -22,6 +22,12 @@
  * this file know about documents, which is the layering rule it actually has. */
 #include "spdf_win_chrome_input.h"
 
+#if defined(_MSC_VER) && !defined(__cplusplus)
+#define SPDF_WIN_WINDOW_INLINE __inline
+#else
+#define SPDF_WIN_WINDOW_INLINE inline
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -113,7 +119,17 @@ typedef enum spdf_win_input_kind {
      * both questions because they are the same question -- "what is here" --
      * answered by the same routing, and a second kind would be a second switch
      * arm in the caller for no second decision. */
-    SPDF_WIN_INPUT_CURSOR = 6
+    SPDF_WIN_INPUT_CURSOR = 6,
+
+    /* THE RIGHT BUTTON, as its own event rather than as a fourth
+     * spdf_win_chrome_button: that enum belongs to the chrome router, which
+     * routes no right clicks -- nothing in the chrome has a context menu -- and
+     * the one thing this app does with the right button is turn the page BACK
+     * in presentation mode (SPDFMacPresentationIntegration.mm:22, "right mouse
+     * down returns -1"). `x`/`y` are client device pixels like every other mouse
+     * event. Sent on the press; there is no matching release, because nothing
+     * drags with this button. A handler that does not care returns 0. */
+    SPDF_WIN_INPUT_CONTEXT = 10
 } spdf_win_input_kind;
 
 /* A button-up whose `button` is SPDF_WIN_CB_NONE is a CANCELLED drag, not a
@@ -306,6 +322,74 @@ void spdf_win_window_set_menu(spdf_win_window* window, void* hmenu);
  * pixel-testable offscreen; it says nothing about a modal dialog, which has no
  * pixels in the render target at all. Nothing on the paint path may call this. */
 void* spdf_win_window_native_handle(spdf_win_window* window);
+
+/* --- full screen ---------------------------------------------------------
+ *
+ * Borderless, over the whole monitor the window is on, with the previous
+ * placement remembered and put back on exit. A WINDOW property and nothing
+ * more: what is drawn inside it -- chrome or no chrome -- is the caller's model
+ * (SpdfWinChromeModel::presentation), which is how F11 (chrome kept) and F5
+ * (chrome collapsed) share this one function. macOS: SPDFMacPresentation*,
+ * GTK: gtk_window_fullscreen in spdf_window_set_presentation.
+ *
+ * THE ONE KEY POLICY THIS FILE HOLDS: an Escape the handler declined, while
+ * the window is full screen, is delivered back as SPDF_WIN_INPUT_COMMAND
+ * SPDF_WIN_CMD_FULLSCREEN -- "leave full screen", which the caller turns into
+ * leaving presentation when that is what it is in. It is here rather than in
+ * the keymap because the keymap runs FIRST and gets every Escape: a find field
+ * dismisses, then a selection drops, and only an Escape nothing wanted reaches
+ * this. Escape with nothing to dismiss and no full screen does NOTHING -- it
+ * used to close the window, which macOS never does and which every reader who
+ * cancelled a search twice would hit. */
+void spdf_win_window_set_fullscreen(spdf_win_window* window, int on);
+int spdf_win_window_is_fullscreen(const spdf_win_window* window);
+
+/* The policy above as a pure predicate, so a test can pin it without a
+ * window: does an Escape the handler declined leave full screen? 1 only while
+ * the window is full screen. There is deliberately no other outcome -- in
+ * particular no "close the window", which is what the fallback did until
+ * portable/docs/windows-feature-matrix.md listed it as gap 2. */
+static SPDF_WIN_WINDOW_INLINE int spdf_win_window_escape_leaves_fullscreen(int fullscreen) {
+    return fullscreen ? 1 : 0;
+}
+
+/* Keep the display and the system awake while presenting, and let them sleep
+ * again afterwards. Process-wide (SetThreadExecutionState on the UI thread),
+ * idempotent, and safe to call with no window at all. */
+void spdf_win_window_prevent_sleep(int on);
+
+/* --- the frame, for the session -----------------------------------------
+ *
+ * The window's NORMAL placement in screen device pixels -- what it would occupy
+ * if it were neither maximized nor full screen -- which is the rectangle worth
+ * remembering across launches (session.yaml "frame", as the mac and GTK apps
+ * write theirs). get returns 0 when there is no window to ask. set is meant to
+ * run BEFORE the first show: it clamps the rectangle onto the monitor it lands
+ * nearest to, so a frame saved on a monitor that has since been unplugged does
+ * not restore a window nobody can reach. */
+int spdf_win_window_get_frame(const spdf_win_window* window, int* x, int* y, int* w, int* h);
+void spdf_win_window_set_frame(spdf_win_window* window, int x, int y, int w, int h);
+
+/* --- a periodic tick ------------------------------------------------------
+ *
+ * Calls `fn(user)` on the UI thread every `ms` milliseconds, with the same
+ * `user` the input and scene callbacks get. 0 stops it. The session file is
+ * the reason this exists: written only at exit, a crash or a power cut loses
+ * every tab the reader opened since launch, so the caller saves on this tick
+ * too. The window knows nothing about what the tick is for. */
+typedef void (*spdf_win_tick_fn)(void* user);
+void spdf_win_window_set_tick(spdf_win_window* window, unsigned ms, spdf_win_tick_fn fn);
+
+/* --- a tooltip ------------------------------------------------------------
+ *
+ * Shows `text` in a tracking tooltip whose top-left is at the client point
+ * (x, y), after a short delay so a pointer merely crossing a tab does not
+ * flash a path at the reader. NULL text hides it at once. The one caller is
+ * the tab strip's hover preview (macOS's hover panel,
+ * SPDFMacTabStripView.mm:317-345, which shows the tab's full title); anything
+ * that belongs in the window's own pixels is drawn by the chrome painter, not
+ * by this. */
+void spdf_win_window_tooltip(spdf_win_window* window, const wchar_t* text, int x, int y);
 
 /* Runs the message pump until the window closes. Returns WM_QUIT's exit code,
  * which is 0 for a normal close -- the value main() should return. */
