@@ -44,10 +44,11 @@
  *    parts of a tab it does not model. ShenzhenPDF runs one process per window
  *    and merges on write under session.lock; windows belonging to other
  *    processes are copied through byte for byte. Within OUR window, a tab's
- *    keys that this port has no feature for yet — searchText, showSidebar,
- *    readOnly, workingPath — are carried forward from the matching on-disk tab
- *    rather than dropped, so opening a mac user's session on Windows and
- *    quitting does not silently erase their find state.
+ *    keys that this port does not model (whatever a newer mac or Linux build
+ *    writes) are carried forward from the matching on-disk tab rather than
+ *    dropped, so opening a mac user's session on Windows and quitting does not
+ *    silently erase state. searchText, readOnly, workingPath and the roCopy*
+ *    keys, once carried this way, are modelled since the 2026-09-02 wave.
  */
 #ifndef SPDF_WIN_SESSION_H
 #define SPDF_WIN_SESSION_H

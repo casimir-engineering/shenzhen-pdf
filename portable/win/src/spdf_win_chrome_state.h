@@ -67,11 +67,10 @@ typedef struct SpdfWinChromeModel {
      * drop indicator (SPDFMacTabStripView.mm:684-699, whose metrics are
      * SPDF_WIN_TABSTRIP_DROP_INDICATOR_* in spdf_win_tabstrip.h).
      *
-     * THE INDICATOR IS NOT DRAWN YET, and these two fields exist so that it can
-     * be with no change outside spdf_win_chrome_paint.cpp -- which belongs to
-     * another track. The REORDER itself is live: it happens on mouse-up through
-     * spdf_win_tabstrip_move_index(), so the feature works and only its
-     * animation is missing. See this change's report. */
+     * spdf_win_chrome_paint.cpp draws it from these two fields alone (the
+     * wiring pass of 2026-09-02 landed the paint; the geometry is
+     * spdf_win_tabstrip_drop_indicator_rect() in spdf_win_tabs_drag.h). The
+     * REORDER itself happens on mouse-up through spdf_win_tabstrip_move_index(). */
     int drag_tab;
     int drop_slot;
 

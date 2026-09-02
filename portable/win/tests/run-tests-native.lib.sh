@@ -123,6 +123,13 @@ probe_native() {
     MUPDF_READY="libmupdf.lib and libmupdf-third.lib are not built yet (expected in $SPDF_MUPDF_LIBDIR; set SPDF_MUPDF_LIBDIR to point elsewhere, or run portable/win/mupdf-native-build.cmd)"
   fi
   QPDF_READY="$MUPDF_READY"
+  # winget installs qpdf under Program Files without touching PATH; the docs
+  # track found it there on this machine. Prefer PATH, then that directory.
+  if ! command -v qpdf >/dev/null 2>&1; then
+    for d in "/c/Program Files/qpdf"*/bin "$PROGRAMFILES"/qpdf*/bin; do
+      [[ -x "$d/qpdf.exe" ]] && { PATH="$d:$PATH"; export PATH; break; }
+    done
+  fi
   [[ -n "$QPDF_READY" ]] && return
   command -v qpdf > /dev/null 2>&1 || QPDF_READY="qpdf is required to generate the encrypted PDF fixtures (winget install qpdf.qpdf)"
 }

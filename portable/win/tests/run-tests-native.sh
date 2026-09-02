@@ -359,6 +359,7 @@ if [[ $LIST -eq 1 ]]; then
     echo "win.$(basename "$f" .c)"
   done
   printf '%s\n' "${D2D_NATIVE_CASES[@]}"
+  [[ ${#LAUNCH_NATIVE_CASES[@]} -gt 0 ]] && printf '%s\n' "${LAUNCH_NATIVE_CASES[@]}"
   for e in "${CROSS_HOST[@]}"; do field "$e" 1; done
   exit 0
 fi
