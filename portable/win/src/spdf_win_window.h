@@ -108,6 +108,15 @@ typedef enum spdf_win_input_kind {
      * them, so a caller that opens each in a new tab needs no array. */
     SPDF_WIN_INPUT_DROP_FILE = 9,
 
+    /* A MESSAGE IN THE WM_APP RANGE, posted to the window by a worker of the
+     * app's -- the Markdown image fetch, say -- with the message number in
+     * `key`. The window knows no message in that range and never will: which
+     * numbers mean what is the app's, exactly as the command ids are, so
+     * every WM_APP..0xBFFF message is handed over rather than dropped on the
+     * floor by DefWindowProc. wParam and lParam are not carried; a worker
+     * that has more to say than "done" keeps it where the handler can read it. */
+    SPDF_WIN_INPUT_APP_MESSAGE = 10,
+
     /* THE POSITION QUERY: what is at (x, y)? Sent for WM_SETCURSOR, asking
      * which cursor belongs there, and for WM_NCHITTEST, asking whether the point
      * is the app's or the window manager's. The handler writes `cursor` and `nc`

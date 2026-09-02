@@ -329,6 +329,13 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             PostQuitMessage(window->exit_code);
             return 0;
         default:
+            /* The app's own messages: see SPDF_WIN_INPUT_APP_MESSAGE. Nothing
+             * below WM_APP and nothing in the registered-message range
+             * (0xC000 and up) is ours to interpret. */
+            if (msg >= WM_APP && msg < 0xC000) {
+                dispatch_value(window, SPDF_WIN_INPUT_APP_MESSAGE, (unsigned)msg);
+                return 0;
+            }
             break;
     }
     return DefWindowProcW(hwnd, msg, wparam, lparam);

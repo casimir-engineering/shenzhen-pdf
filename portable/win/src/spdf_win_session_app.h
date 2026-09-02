@@ -74,12 +74,21 @@ static void app_restore_find_text(app* a) {
  * placed against the canvas viewport the last input event or the launch laid
  * the chrome out against (a->view_w/h); with none known yet, the first paint's
  * pending_page path places the page alone. */
+/* Defined in spdf_win_md_commands.h, which spdf_win_main.cpp includes after this
+ * header: a Markdown tab whose open recorded remote images not yet in the cache
+ * starts fetching them; a no-op on a PDF tab and with nothing pending. */
+static void spdf_win_md_command_after_open(app* a, HWND window);
+
 static int show_selected_tab(app* a) {
     int shown = spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
     if (shown && spdf_win_tabs_app_apply_view(a->tabs, a->canvas, a->view_w, a->view_h, a->view_dpi))
         a->pending_page = -1;
     app_restore_find_text(a);
     sync_window_title(a);
+    /* Every show goes through here -- open, switch, restore, reload, a theme
+     * rebuild -- so this is the one place a Markdown tab's images are asked
+     * for. The completion message re-shows the tab (spdf_win_md_commands.h). */
+    if (shown && a->window) spdf_win_md_command_after_open(a, (HWND)spdf_win_window_native_handle(a->window));
     return shown;
 }
 

@@ -140,6 +140,26 @@ static void test_modifiers_are_exact(void) {
     CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_TAB, SPDF_WIN_ACCEL_CTRL), SPDF_WIN_CMD_NEXT_TAB);
     CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_TAB, SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT),
               SPDF_WIN_CMD_PREV_TAB);
+    /* The Markdown text size shares the zoom keys and differs by Alt alone:
+     * Ctrl+- zooms, Ctrl+Alt+- shrinks the text. A modifier test that ignored
+     * Alt would make every A- press a zoom out. */
+    CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_OEM_MINUS, SPDF_WIN_ACCEL_CTRL), SPDF_WIN_CMD_ZOOM_OUT);
+    CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_OEM_MINUS, SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_ALT),
+              SPDF_WIN_CMD_MD_TEXT_SMALLER);
+    CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_OEM_PLUS, SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_ALT),
+              SPDF_WIN_CMD_MD_TEXT_LARGER);
+    CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_OEM_PLUS, SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT),
+              SPDF_WIN_CMD_ZOOM_IN);
+    /* Both live on the View menu and grey without a document, like the zooms. */
+    CHECK(spdf_win_menu_item_for_command(SPDF_WIN_CMD_MD_TEXT_SMALLER)->menu == SPDF_WIN_MENU_VIEW);
+    CHECK(spdf_win_menu_item_for_command(SPDF_WIN_CMD_MD_TEXT_LARGER)->menu == SPDF_WIN_MENU_VIEW);
+    {
+        SpdfWinMenuState st;
+        memset(&st, 0, sizeof(st));
+        CHECK(!spdf_win_menu_command_enabled(SPDF_WIN_CMD_MD_TEXT_LARGER, &st));
+        st.has_document = 1;
+        CHECK(spdf_win_menu_command_enabled(SPDF_WIN_CMD_MD_TEXT_LARGER, &st));
+    }
 
     /* AN UNMODIFIED KEY IS NOT AN ACCELERATOR, which is what lets the same key
      * be typed into the find field. Every letter and digit in the table, bare,
