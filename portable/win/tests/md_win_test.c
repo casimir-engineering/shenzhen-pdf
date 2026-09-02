@@ -123,6 +123,11 @@ static void test_cache_names(const char* scratch) {
     snprintf(dir, sizeof(dir), "%s/md-win-cache", scratch);
     spdf_win_md_images_set_dir_override(dir);
     spdf_win_md_images_clear_pending();
+    /* The seed this test plants below survives into the next run under the same
+     * scratch directory, where it would answer the "miss" lookups as a hit:
+     * the suite failed on every second run until this remove. */
+    snprintf(path, sizeof(path), "%s/%s", dir, a);
+    remove(path);
     EXPECT(spdf_win_md_images_dir(path, sizeof(path)) && strcmp(path, dir) == 0, "override directory is used");
     EXPECT(!spdf_win_md_images_lookup(NULL, "http://plain.example/a.png", b, sizeof(b)), "http is never cached");
     EXPECT(spdf_win_md_images_pending_count() == 0, "and never recorded");
