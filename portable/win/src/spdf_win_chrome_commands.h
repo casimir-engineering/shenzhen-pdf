@@ -51,9 +51,13 @@
  * did -- see chrome_layout_for_input's own note on why a cached layout will not
  * do. */
 
-/* --- the document actions: save, print, properties, copy page -------------
+/* --- the document actions: save, properties, copy page --------------------
  *
- * These four subsystems take a document, its path as UTF-16, and a page. The
+ * (Print is spdf_win_cmd_window.h's: it carries the scaling choice from
+ * settings.yaml, so the case that once lived here passed a default the
+ * reader could never change and was dead the moment that handler claimed it.)
+ *
+ * These subsystems take a document, its path as UTF-16, and a page. The
  * app holds the path as UTF-8 (the core's currency) and the document behind the
  * tab model, so this is the one place that widens and resolves. Widening here
  * rather than in each subsystem keeps the CP_UTF8 conversion in one place, which
@@ -191,7 +195,6 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
         case SPDF_WIN_CMD_FIND_PREV: return chrome_find_step(a, -1);
         case SPDF_WIN_CMD_SAVE_AS:
         case SPDF_WIN_CMD_SAVE_PAGE_AS:
-        case SPDF_WIN_CMD_PRINT:
         case SPDF_WIN_CMD_PROPERTIES:
         case SPDF_WIN_CMD_COPY_PAGE:
         case SPDF_WIN_CMD_COPY_PAGE_TEXT:
@@ -206,15 +209,6 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
                     break;
                 case SPDF_WIN_CMD_SAVE_PAGE_AS:
                     spdf_win_export_save_page_as(act.hwnd, act.doc, act.path, act.page, err, sizeof(err));
-                    break;
-                case SPDF_WIN_CMD_PRINT:
-                    /* Scaling mode and custom scale are persisted by the other
-                     * two frontends as settings.json printScalingMode /
-                     * printCustomScale; Windows state does not carry them yet, so
-                     * the default is passed and the enum stays wire-compatible
-                     * (the print differential pins that). */
-                    spdf_win_print_document(act.hwnd, act.doc, act.path, SPDF_WIN_PRINT_SCALING_FIT, 1.0, err,
-                                            sizeof(err));
                     break;
                 case SPDF_WIN_CMD_PROPERTIES:
                     spdf_win_properties_show_for_document(act.hwnd, act.doc, act.path, act.page, 0, 0);
