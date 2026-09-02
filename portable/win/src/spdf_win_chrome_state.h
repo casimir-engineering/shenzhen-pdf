@@ -46,6 +46,19 @@ typedef struct SpdfWinChromeTab {
     int missing;
 } SpdfWinChromeTab;
 
+/* A comment marker as the INPUT ROUTER sees it: the annotation's bounds
+ * inflated by the 3 pt hover slop and the click-to-edit badge inflated by its
+ * 2 pt slop (spdf_win_annot_model.h), both already in CLIENT device pixels, so
+ * the router -- which knows no page geometry -- tests a point against them
+ * with four comparisons (spdf_win_annot_marks.h). `comment_index` is
+ * spdf_comment_item.index, what the core's edit and delete calls take. */
+typedef struct SpdfWinAnnotMark {
+    int comment_index;
+    int page_index;
+    float x0, y0, x1, y1;     /* bounds + hover slop */
+    float bx0, by0, bx1, by1; /* badge + click slop */
+} SpdfWinAnnotMark;
+
 /* What the painters need to know that geometry does not carry. Deliberately a
  * plain value type with no pointers into app state beyond the strings it
  * borrows, so a headless test can build one by hand -- which is how the chrome
@@ -196,6 +209,15 @@ typedef struct SpdfWinChromeModel {
     /* 0 when the current section has nothing to list, so the app can hide the
      * whole panel the way rebuildSidebar does (:9813-9905). */
     int sidebar_has_content;
+
+    /* --- comment markers -------------------------------------------------
+     * One per comment on a drawn page, CLIENT device pixels, published per
+     * paint by the annotations glue (spdf_win_annot.h) and copied into the
+     * ROUTER's model so a badge is hit exactly where it was drawn. Borrowed;
+     * NULL/0 -- the zeroed model, every headless frame -- means none. The
+     * painters never read these: the marks themselves are scene overlays. */
+    const SpdfWinAnnotMark* annot_marks;
+    int annot_mark_count;
 } SpdfWinChromeModel;
 
 /* The fit-mode popup's four fixed items, in macOS's own order

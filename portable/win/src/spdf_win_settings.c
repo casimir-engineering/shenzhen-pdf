@@ -126,6 +126,12 @@ int spdf_win_settings_parse_json(spdf_win_settings* s, const char* json) {
         free(theme);
         found++;
     }
+    theme = json_str(root, "commentAuthor");
+    if (theme) {
+        strncpy_s(s->comment_author, sizeof(s->comment_author), theme, _TRUNCATE);
+        free(theme);
+        found++;
+    }
     return found;
 }
 
@@ -144,7 +150,8 @@ static int key_is_owned(const member* m) {
                                         "printCustomScale",
                                         "windowSize",
                                         "markdownTheme",
-                                        "darkThemePreservesImages"};
+                                        "darkThemePreservesImages",
+                                        "commentAuthor"};
     size_t i;
     for (i = 0; i < sizeof(owned) / sizeof(owned[0]); ++i)
         if (key_is(m, owned[i])) return 1;
@@ -192,6 +199,10 @@ char* spdf_win_settings_to_json(const spdf_win_settings* s, const char* existing
         emit_string(&out, s->theme == SPDF_WIN_THEME_DARK ? "dark" : "light");
     }
     emit_bool_key(&out, "darkThemePreservesImages", s->dark_theme_preserves_images);
+    /* Always, and "" when unset: ShenzhenPDFMac.mm:1799 writes `_commentAuthor
+     * ?: @""`, spdf_state.c:631 the same. */
+    emit_key(&out, "commentAuthor");
+    emit_string(&out, s->comment_author);
 
     /* Everything on disk this file does not model, verbatim. */
     if (root && *root == '{') {

@@ -45,6 +45,13 @@ struct viewport_opts {
      * pixels. Without it the headless frame is a bare canvas, which is what
      * every pre-chrome pixel case compares and must keep comparing. */
     int chrome;
+    /* With --chrome: the sidebar section to show when there is no query,
+     * 1 for Comments; 0 (the zeroed default) leaves the window's own choice,
+     * which the resolve cascade turns into Comments anyway on a document with
+     * comments and no chapters. Filled by a `--sidebar-section N` flag in
+     * spdf_win_main.cpp's option parser (a one-line patch requested of the
+     * wiring pass; the field is harmless until it lands). */
+    int sidebar_section;
 };
 
 /* One more machine-readable line, emitted only when chrome is on, so a caller
@@ -212,6 +219,7 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
          * spdf_win_canvas_settle() above it. */
         SpdfWinFindSession* find;
         int spins = 0;
+        int section = 0;
 
         chrome_inputs_for(a, &chrome_inputs, opts->dpi_scale);
         spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, &chrome_inputs);
@@ -263,18 +271,22 @@ static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int pag
          * markers with no desktop. Without a query this is the Chapters
          * section it always was. */
         if (a->find_text[0]) spdf_win_sidebar_set_section(2);
-        {
-            int section = chrome_sidebar_decide(a, NULL);
-            a->chrome.sidebar_section = section;
-            a->chrome.sidebar_has_content = spdf_win_sidebar_effective_visible();
-            chrome_publish_search(a, &chrome_layout, section, opts->dpi_scale);
-        }
+        else if (opts->sidebar_section > 0) spdf_win_sidebar_set_section(opts->sidebar_section);
+        section = chrome_sidebar_decide(a, NULL);
+        a->chrome.sidebar_section = section;
+        a->chrome.sidebar_has_content = spdf_win_sidebar_effective_visible();
+        chrome_publish_search(a, &chrome_layout, section, opts->dpi_scale);
 
         /* Re-derive the overlays now the matches exist. The earlier call, right
          * after build_scene, ran against an empty result set. scene->pages is
          * still the list build_scene produced, so this recomputes rather than
          * re-laying out. */
         spdf_win_find_apply_overlays(&scene);
+        /* THE COMMENTS, OFFSCREEN: the markers over the pages and, with
+         * --sidebar-section 1, the Comments list -- after find, as the window
+         * orders them (spdf_win_chrome_scene.h chrome_publish_comments). The
+         * cache loads on this one frame: with no window there is no next one. */
+        chrome_publish_comments(a, &scene, &chrome_layout, section, opts->dpi_scale);
     }
     hr = spdf_win_render_scene_to_png(d2d, px_w, px_h, &scene, out_png);
     if (FAILED(hr)) {

@@ -116,6 +116,18 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     {SPDF_WIN_CMD_COPY_PAGE_TEXT, SPDF_WIN_MENU_EDIT, L"Copy Page &Text", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_COPY_PAGE_IMAGE, SPDF_WIN_MENU_EDIT, L"Copy Page &Image", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
+    /* Comments (the annotations track). GTK's context menu lists Add Comment,
+     * Add Highlight Comment, Edit Comment, Delete Comment (spdf_annot.c:1116);
+     * neither original binds a key to them, so the two accelerators are this
+     * port's: Ctrl+Shift+H and Ctrl+Shift+M are free of every other row, and
+     * Delete over a marker is the desktop's own gesture. */
+    {SPDF_WIN_CMD_HIGHLIGHT_SELECTION, SPDF_WIN_MENU_EDIT, L"&Highlight Selection...", L"Ctrl+Shift+H", 'H',
+     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
+    {SPDF_WIN_CMD_ADD_COMMENT, SPDF_WIN_MENU_EDIT, L"Add Co&mment...", L"Ctrl+Shift+M", 'M',
+     SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
+    {SPDF_WIN_CMD_EDIT_COMMENT, SPDF_WIN_MENU_EDIT, L"&Edit Comment...", NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_DELETE_COMMENT, SPDF_WIN_MENU_EDIT, L"&Delete Comment...", L"Del", SPDF_WIN_KEY_DELETE, 0, 0},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_SELECT_ALL, SPDF_WIN_MENU_EDIT, L"Select &All", L"Ctrl+A", 'A', SPDF_WIN_ACCEL_CTRL, 0},
     {SPDF_WIN_CMD_PASTE_SEARCH, SPDF_WIN_MENU_EDIT, L"&Paste to Search", L"Ctrl+V", 'V', SPDF_WIN_ACCEL_CTRL, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
@@ -130,6 +142,9 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_FIND_REGEX, SPDF_WIN_MENU_EDIT, L"&Regex", NULL, 0, 0, 1},
     {SPDF_WIN_CMD_FIND_REGEX_MULTILINE, SPDF_WIN_MENU_EDIT, L"Regex Matches Across &Lines", NULL, 0, 0, 1},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
+    /* The mac's last Edit item (:2096), same title, same place. */
+    {SPDF_WIN_CMD_SET_COMMENT_AUTHOR, SPDF_WIN_MENU_EDIT, L"Set A&uthor for Comments...", NULL, 0, 0, 0},
 
     /* --- accelerator-only rows ----------------------------------------
      *
@@ -152,5 +167,9 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
      SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
     /* Shift+Ctrl+F is the mac's other Presentation key (ShenzhenPDFMac.mm:13432
      * "F5 / Shift+Cmd+F"); the menu prints F5. */
-    {SPDF_WIN_CMD_PRESENTATION, SPDF_WIN_MENU_NONE, NULL, NULL, 'F', SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0}
+    {SPDF_WIN_CMD_PRESENTATION, SPDF_WIN_MENU_NONE, NULL, NULL, 'F', SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 0},
+    /* Backspace deletes the comment under the pointer as Delete does; the menu
+     * prints Del. Both are bare keys: the handler hands them to the focused
+     * field first (spdf_win_cmd_annot.h), so typing is untouched. */
+    {SPDF_WIN_CMD_DELETE_COMMENT, SPDF_WIN_MENU_NONE, NULL, NULL, SPDF_WIN_KEY_BACK, 0, 0}
 };
