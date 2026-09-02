@@ -398,11 +398,16 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGraph(SPDFMarkdownDiagramGra
         CGFloat wrap = kSPDFDiagramLabelWrapLadder[index];
         if (wrap >= widestText) continue;
         NSSize candidate = NSZeroSize;
+        // The measure mutates every node's frame before it can fail, so once it
+        // runs the graph carries THIS attempt's geometry, win or lose. Record
+        // the wrap before the check so a rung that trips the deadline or the
+        // dimension budget is re-laid-out at bestWrap below instead of leaving
+        // its frames behind under an earlier attempt's `natural`.
+        appliedWrap = wrap;
         // A candidate that trips the shared deadline (or the dimension budget)
         // ends the search; the best COMPLETED attempt stands, and attempt zero
         // is the ordinary layout, so the outcome is never worse than before.
         if (!SPDFDiagramLayOutAtWrap(graph, fonts, scale, wrap, deadline, &candidate, NULL)) break;
-        appliedWrap = wrap;
         CGFloat fit = SPDFMarkdownDiagramBoxFit(candidate, contentBox);
         if (fit <= bestFit + 0.0005) continue;
         bestFit = fit;
