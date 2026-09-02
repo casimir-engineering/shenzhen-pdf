@@ -75,6 +75,14 @@ static void chrome_inputs_for(app* a, SpdfWinChromeModelInputs* in, float dpi_sc
     in->minimap_w = a->minimap_w;
     in->hot_tab = a->hot_tab;
     in->hot_close = a->hot_close;
+    in->drag_tab = a->drag_tab;
+    in->drop_slot = a->drop_slot;
+    in->focus = a->focus;
+    /* NULL unless the page field is the one being typed into, which is what
+     * tells the toolbar to show the typed text rather than the current page.
+     * See SpdfWinChromeModel::page_text. */
+    in->page_text = a->focus == SPDF_WIN_FOCUS_PAGE ? a->page_text : NULL;
+    in->sidebar_row_count = a->sidebar_rows;
     in->zoom_dpi_scale = dpi_scale > 0.0f ? dpi_scale : 1.0f;
     if (!a->canvas) return;
     /* 0-BASED out of the canvas and 0-BASED into the model. The `+ 1` that makes
@@ -158,6 +166,21 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
         const char* sel_path = sel < 0 ? NULL : spdf_win_tabs_path(a->tabs, sel);
         spdf_win_chrome_content_set_document(sel_path ? sel_path : a->path,
                                             spdf_win_canvas_current_page(a->canvas));
+        spdf_win_chrome_content_set_filter(a->filter_text);
+        /* HOW MANY ROWS THE LIST IS SHOWING, cached for the input router, which
+         * has no way to ask -- resolving the content provider on a mouse move
+         * would put the outline load on the pointer's path. Read only while the
+         * sidebar is VISIBLE, because spdf_win_chrome_content_current() is what
+         * loads the outline and this file's rule 2 is that nothing runs for a
+         * panel nobody is looking at. */
+        if (a->show_sidebar) {
+            const SpdfWinChromePanelsContent* content = spdf_win_chrome_content_current();
+            a->sidebar_rows = content && content->sidebar ? content->sidebar->row_count : 0;
+            a->chrome.sidebar_row_count = a->sidebar_rows;
+        } else {
+            a->sidebar_rows = 0;
+            a->chrome.sidebar_row_count = 0;
+        }
     }
 
     /* Search highlights, AFTER build_scene because that is what fills
@@ -168,11 +191,21 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
      * Note it OVERWRITES scene->overlays rather than appending -- documented at
      * its declaration in spdf_win_chrome_find.h. A future selection track adding
      * a second producer has to resolve that; today there is one. */
+    /* TWO OVERLAY PRODUCERS, AND THE ORDER IS macOS'S DRAW ORDER: find's
+     * highlights (SPDFMacDocumentView.mm:467), find's active ring (:475), then
+     * the selection (:485). find OVERWRITES scene->overlays -- it says so at its
+     * declaration -- and the selection compositor takes whatever is there as an
+     * immutable base and APPENDS after it, so the two compose only in this
+     * order. Reversed, the selection vanishes on the next keystroke of a query.
+     * Both calls come after spdf_win_canvas_build_scene(), which is what fills
+     * scene->pages and therefore what both derive their rects from. */
     if (spdf_win_canvas_build_scene(a->canvas, scene)) {
         spdf_win_find_apply_overlays(scene);
+        spdf_win_canvas_apply_selection_overlays(a->canvas, scene);
         return 1;
     }
     spdf_win_find_apply_overlays(scene);
+    spdf_win_canvas_apply_selection_overlays(a->canvas, scene);
     scene->message = a->status[0] ? a->status : NULL;
     return 1;
 }

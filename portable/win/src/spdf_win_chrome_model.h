@@ -62,6 +62,24 @@ typedef struct SpdfWinChromeModelInputs {
      * hover branches and nothing else. */
     int hot_tab;
     int hot_close;
+    /* A tab reorder drag in progress, straight into the model's own two fields
+     * (see SpdfWinChromeModel). Both -1 for none, which
+     * spdf_win_chrome_model_inputs_init() sets. */
+    int drag_tab;
+    int drop_slot;
+    /* THE TYPEABLE FIELDS. `page_text` is what the reader has typed into the
+     * page field, borrowed and NULL when the field is not being edited; `focus`
+     * is which field has the keyboard, as spdf_win_text_focus. The FIND field's
+     * text does not come through here -- it lives in the process-wide find
+     * session with the match count and the marks, which is where the model
+     * builder already fetches it from (spdf_win_find_fill_model). */
+    const wchar_t* page_text;
+    int focus;
+    /* The sidebar's list, for the input router: how many rows are showing after
+     * filtering, and how far the list is scrolled. See the fields of the same
+     * names on SpdfWinChromeModel. */
+    int sidebar_row_count;
+    float sidebar_scroll_y;
     /* Toolbar readouts. `page_index` is 0-BASED, as everywhere inside this port;
      * the toolbar adds the one. -1 with page_count 0 is "no document". */
     int page_index;
@@ -79,6 +97,30 @@ void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in);
  * `in`, which yields the initialised defaults. */
 void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStore* store, spdf_win_tabs* tabs,
                                  const SpdfWinChromeModelInputs* in);
+
+/* --- the find query -----------------------------------------------------
+ *
+ * WHAT THIS REPLACED. The process-wide find session lives in
+ * spdf_win_chrome_model.cpp (that file's own comment explains why it is there
+ * and not in spdf_win_chrome_find.cpp or spdf_win_search.cpp), and until now the
+ * query reached it through two environment variables -- SPDF_FIND_QUERY and
+ * SPDF_FIND_REGEX -- because no keyboard input reached that track. Both were
+ * documented as temporary at their definitions and both are GONE: this is the
+ * setter the toolbar's search field calls, and it is the only way in.
+ *
+ * UTF-16 IN, because that is what WM_CHAR produces and what the toolbar draws.
+ * The conversion to the UTF-8 the engine and the core want happens once, here,
+ * rather than at every caller -- and rather than in the model builder, which
+ * runs once per frame.
+ *
+ * STILL LAZY. A process that never types a query still creates no session, no
+ * worker thread and no second document handle: spdf_win_find_shared() checks
+ * this stored query exactly as it used to check the environment. `query` NULL or
+ * empty cancels any live search and clears the toolbar's readout.
+ *
+ * The stored UTF-16 is what SpdfWinChromeModel::query then borrows, so it must
+ * outlive a paint; it is a static buffer inside spdf_win_chrome_model.cpp. */
+void spdf_win_find_set_query(const wchar_t* query, int regex);
 
 #ifdef __cplusplus
 }

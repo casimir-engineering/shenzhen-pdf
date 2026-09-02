@@ -1,19 +1,23 @@
-/* The canvas's private state, shared by exactly two translation units.
+/* The canvas's private state, shared by exactly three translation units.
  *
  * It exists because spdf_win_canvas.cpp reached the repo's 500-line cap and the
- * rule is extraction over cap bumps (tools/file-size-limits.md). The seam is
+ * rule is extraction over cap bumps (tools/file-size-limits.md). Every seam is
  * the honest one: spdf_win_canvas.cpp is geometry and composition -- what is
- * where, at what zoom -- while spdf_win_canvas_prefetch.cpp is everything to do
- * with T5's worker pool. Nothing outside those two files may include this
- * header; spdf_win_canvas.h is the public surface.
+ * where, at what zoom -- spdf_win_canvas_prefetch.cpp is everything to do with
+ * T5's worker pool, and spdf_win_canvas_selection.cpp is the pointer gesture
+ * that turns those two into a text selection and a followed link. Nothing
+ * outside those three files may include this header; spdf_win_canvas.h is the
+ * public surface.
  */
 #ifndef SPDF_WIN_CANVAS_INTERNAL_H
 #define SPDF_WIN_CANVAS_INTERNAL_H
 
 #include "spdf_win_canvas.h"
 #include "spdf_win_layout.h"
+#include "spdf_win_links.h"
 #include "spdf_win_lru.h"
 #include "spdf_win_render.h"
+#include "spdf_win_selection.h"
 
 
 #include <windows.h> /* Sleep, for the headless settle only */
@@ -76,9 +80,38 @@ struct spdf_win_canvas {
     int draws_count;
 
     wchar_t status[256];
+
+    /* --- selection and links, all of it owned by spdf_win_canvas_selection.cpp
+     *
+     * Allocated LAZILY on the first pointer event, so a document nobody clicks
+     * on costs two null pointers and no allocation -- the same rule the find
+     * session states for a document nobody searches.
+     *
+     * They live on the CANVAS rather than beside the window because a selection
+     * belongs to a document view: it survives a scroll, a zoom and a repaint,
+     * it dies with the document, and it needs exactly the geometry this struct
+     * already holds. Per-tab lifetime then comes for free, since a tab owns a
+     * canvas. `doc` is the UI thread's handle, which is what makes the core
+     * calls below legal on the UI thread (shenzhen_pdf_core.c:40-43). */
+    spdf_win_selection* selection;
+    spdf_win_links* links;
+    /* Where the last press landed, in page space, so the release can resolve
+     * the link it was over without re-hit-testing a pointer that has moved. */
+    int press_page;
+    float press_page_x;
+    float press_page_y;
+    /* Owned by the canvas and freed before it is overwritten: spdf_link_target
+     * carries a malloc'd uri for external links. */
+    spdf_link_target nav;
+    int nav_valid;
 };
 
 /* spdf_win_canvas_prefetch.cpp */
 void spdf_win_canvas_prefetch(spdf_win_canvas* canvas, int page);
+
+/* spdf_win_canvas_selection.cpp. Called from spdf_win_canvas_destroy() while
+ * the canvas is still whole, for the same reason the render service is torn
+ * down there rather than by whoever created it. */
+void spdf_win_canvas_selection_teardown(spdf_win_canvas* canvas);
 
 #endif /* SPDF_WIN_CANVAS_INTERNAL_H */

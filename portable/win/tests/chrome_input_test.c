@@ -200,7 +200,14 @@ static SpdfWinChromeHit route(const SpdfWinChromeLayout* l, const SpdfWinChromeM
  * side panel or either divider may route to the canvas -- with either button.
  * A press that fell through would pan the document, which is the exact
  * regression this whole change risked introducing. */
-static void test_no_chrome_pixel_routes_to_the_canvas(float dpi) {
+/* `live` turns on the two states that only exist once the chrome is typeable: a
+ * search query (which RAISES the sidebar's minimum width, so it changes the
+ * layout the sweep runs over) and a filled chapter list (which makes the sidebar
+ * route rows rather than swallowing every press). Both are configurations a
+ * reader is in for most of a session and neither existed when this sweep was
+ * written; running it in both is what keeps "no chrome pixel pans the document"
+ * true of the app people actually use. */
+static void test_no_chrome_pixel_routes_to_the_canvas_in(float dpi, int live) {
     SpdfWinChromeModel m = model_with_tabs(5, 2);
     SpdfWinChromeLayout l;
     unsigned w = (unsigned)(1120.0f * dpi), h = (unsigned)(800.0f * dpi);
@@ -210,6 +217,11 @@ static void test_no_chrome_pixel_routes_to_the_canvas(float dpi) {
 
     buttons[0] = SPDF_WIN_CB_LEFT;
     buttons[1] = SPDF_WIN_CB_MIDDLE;
+    if (live) {
+        m.query = L"outline";
+        m.search_active = 1;
+        m.sidebar_row_count = 40;
+    }
     spdf_win_chrome_layout(&m, w, h, dpi, &l);
 
     for (b = 0; b < 2; ++b) {
@@ -454,7 +466,8 @@ int main(void) {
     for (i = 0; i < 3; ++i) {
         test_toolbar_layout_is_ordered_and_inside(scales[i]);
         test_toolbar_hit_agrees_with_layout(scales[i]);
-        test_no_chrome_pixel_routes_to_the_canvas(scales[i]);
+        test_no_chrome_pixel_routes_to_the_canvas_in(scales[i], 0);
+        test_no_chrome_pixel_routes_to_the_canvas_in(scales[i], 1);
     }
     test_pill_segments();
     test_find_group_drops_when_narrow();

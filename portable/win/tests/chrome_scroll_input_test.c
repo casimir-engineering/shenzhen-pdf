@@ -77,6 +77,17 @@ static SpdfWinChromeModel model_scrollable(void) {
     m.h_pos = 0.3f;
     m.h_visible = 0.5f;
     m.h_scrollable = 1;
+    /* A LIVE SIDEBAR LIST AND A LIVE QUERY, which is the state a reader is in
+     * for most of a session and which did not exist when this suite was
+     * written. Both matter to a SCROLLER sweep for one reason each: the query
+     * raises the sidebar's minimum width (spdf_win_chrome_clamp_sidebar_pt), so
+     * it moves the canvas -- and therefore both troughs -- sideways; and a
+     * non-zero row count makes the sidebar's own routing live, so a trough that
+     * had drifted into the panel would now come back as a chapter row instead of
+     * as a scroller. Neither may change what a press on a trough does. */
+    m.query = L"outline";
+    m.search_active = 1;
+    m.sidebar_row_count = 40;
     return m;
 }
 

@@ -42,6 +42,18 @@
 #define SPDF_WIN_CHROME_INPUT_H
 
 #include "spdf_win_chrome.h"
+/* For spdf_win_sidebar_layout() and spdf_win_sidebar_row_at() -- the sidebar's
+ * own bands, which the panels painter already draws with. Routing the filter
+ * field and the chapter rows anywhere but here would put two thirds of the
+ * hit-testing in one function and one third in another, which is precisely how
+ * the two drift; this header's whole claim is that it is THE ONE ENTRY POINT.
+ *
+ * It costs this header <windows.h>, which the rest of the pure family does
+ * without. Accepted rather than worked around: spdf_win_chrome_content.h is
+ * itself C-compatible and Direct2D-free by design (a plain C test already
+ * compiles it, portable/win/tests/sidebar_rows_test.c), the whole port is
+ * Windows-only, and the alternative is a split hit-test. */
+#include "spdf_win_chrome_content.h"
 #include "spdf_win_chrome_scroll.h"
 #include "spdf_win_chrome_toolbar.h"
 #include "spdf_win_tabstrip.h"
@@ -82,6 +94,25 @@ typedef enum spdf_win_chrome_action {
     SPDF_WIN_CA_TOGGLE_SIDEBAR,
     SPDF_WIN_CA_TOGGLE_MINIMAP,
     SPDF_WIN_CA_TOGGLE_THEME,
+    /* THE THREE TYPEABLE FIELDS. A click on one gives it the keyboard; the
+     * characters then arrive as SPDF_WIN_INPUT_CHAR and are applied with
+     * spdf_win_chrome_text.h. Three actions rather than one carrying a field id
+     * because the caller stores the focus and nothing else, and an id kept
+     * beside it is an id that can go stale against it -- the same reasoning the
+     * two scroller drags already state below. */
+    SPDF_WIN_CA_FOCUS_FIND,
+    SPDF_WIN_CA_FOCUS_PAGE,
+    SPDF_WIN_CA_FOCUS_SIDEBAR_FILTER,
+    /* The find group's other two controls, which had nowhere to go while the
+     * query came from the environment. */
+    SPDF_WIN_CA_TOGGLE_REGEX,
+    SPDF_WIN_CA_FIND_PREV,
+    SPDF_WIN_CA_FIND_NEXT,
+    /* A click on a row of the sidebar's chapter list. `index` is the row, which
+     * the caller turns into a page through the content provider -- the router has
+     * no access to it and must not: it would be the paint path's content
+     * provider being resolved on a mouse move. */
+    SPDF_WIN_CA_SIDEBAR_ROW,
     /* A press on a split divider. The caller then follows the pointer and asks
      * spdf_win_chrome_sidebar_drag_pt() / _minimap_drag_pt() for the new width,
      * which clamp exactly as macOS's NSSplitView does. */
@@ -94,6 +125,22 @@ typedef enum spdf_win_chrome_action {
      * axis kept beside it is an axis that can go stale against it. */
     SPDF_WIN_CA_DRAG_VSCROLL,
     SPDF_WIN_CA_DRAG_HSCROLL,
+    /* A TAB BEING DRAGGED TO A NEW POSITION. THE ROUTER NEVER RETURNS THIS: a
+     * press on a tab is a SELECT_TAB, which must happen immediately (macOS
+     * selects on mouse-down), and the reorder is a gesture the CALLER arms on
+     * top of it. It is in this enum rather than in a second one because the
+     * caller stores exactly one "what is the pointer doing" value, and the
+     * cursor enum next door already carries SPDF_WIN_CC_SIZEALL on the same
+     * terms -- "produced by the caller's drag state rather than by the router". */
+    SPDF_WIN_CA_DRAG_TAB,
+    /* A LEFT DRAG OVER THE PAGE THAT IS SELECTING TEXT rather than panning.
+     * Like SPDF_WIN_CA_DRAG_TAB above, THE ROUTER NEVER RETURNS THIS: a press on
+     * the page is SPDF_WIN_CA_CANVAS, and which of the two gestures it becomes
+     * depends on whether there is text under the pointer -- a question about the
+     * DOCUMENT, which this header knows nothing about and must not learn. The
+     * caller asks the canvas and stores the answer here. See
+     * spdf_win_chrome_canvas_ui.h. */
+    SPDF_WIN_CA_CANVAS_SELECT,
     /* A click on the trough, before or after the thumb. Instantaneous, so the
      * AXIS comes from `part` (VSCROLL or HSCROLL), which the hit always carries.
      * "BACK" is up on the vertical scroller and left on the horizontal one. */
@@ -111,7 +158,14 @@ typedef enum spdf_win_chrome_cursor {
     /* IDC_SIZEALL, shown while a drag is panning the document. Produced by the
      * caller's drag state rather than by the router below: a point over the
      * canvas is an arrow until a button goes down on it. */
-    SPDF_WIN_CC_SIZEALL
+    SPDF_WIN_CC_SIZEALL,
+    /* IDC_IBEAM over selectable text and IDC_HAND over a link. Also produced by
+     * the CALLER rather than by the router: what is under a canvas point is a
+     * question about the document, and this header knows nothing about
+     * documents. The caller asks spdf_win_canvas_cursor_at() and overwrites the
+     * router's SPDF_WIN_CC_ARROW with the answer. */
+    SPDF_WIN_CC_IBEAM,
+    SPDF_WIN_CC_HAND
 } spdf_win_chrome_cursor;
 
 typedef struct SpdfWinChromeHit {
@@ -302,8 +356,42 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
                     out->action = segment == 0 ? SPDF_WIN_CA_ZOOM_OUT : SPDF_WIN_CA_ZOOM_IN;
                     return;
                 case SPDF_WIN_TB_FIT_POPUP: out->action = SPDF_WIN_CA_CYCLE_FIT; return;
+                /* The two text fields and the two find controls. All four were
+                 * drawn and inert while the query and the page number could only
+                 * be changed from outside the app. */
+                case SPDF_WIN_TB_FIND_FIELD: out->action = SPDF_WIN_CA_FOCUS_FIND; return;
+                case SPDF_WIN_TB_PAGE_FIELD: out->action = SPDF_WIN_CA_FOCUS_PAGE; return;
+                case SPDF_WIN_TB_FIND_REGEX: out->action = SPDF_WIN_CA_TOGGLE_REGEX; return;
+                case SPDF_WIN_TB_FIND_PILL:
+                    /* chevron.up / chevron.down -- previous match, then next, the
+                     * order macOS's find segments use (:3073-3079). */
+                    out->action = segment == 0 ? SPDF_WIN_CA_FIND_PREV : SPDF_WIN_CA_FIND_NEXT;
+                    return;
                 default: return;
             }
+        }
+
+        /* THE SIDEBAR'S FILTER FIELD AND ITS LIST. Both were swallowed while the
+         * panel was a placeholder; the rows are real now and the filter is
+         * typeable, so a click on either has somewhere to go. Everything else in
+         * the panel -- the section control, the empty space below the last row --
+         * is still swallowed rather than forwarded, for the reason the default
+         * case below gives. */
+        case SPDF_WIN_CHROME_SIDEBAR: {
+            SpdfWinSidebarLayout sb;
+            int row;
+            if (button != SPDF_WIN_CB_LEFT) return;
+            spdf_win_sidebar_layout(l->sidebar, m->sidebar_section, s, &sb);
+            if (spdf_win_chrome_contains(sb.filter, x, y)) {
+                out->action = SPDF_WIN_CA_FOCUS_SIDEBAR_FILTER;
+                return;
+            }
+            row = spdf_win_sidebar_row_at(&sb, m->sidebar_scroll_y, m->sidebar_row_count, x, y);
+            if (row >= 0) {
+                out->action = SPDF_WIN_CA_SIDEBAR_ROW;
+                out->index = row;
+            }
+            return;
         }
 
         /* THE TWO SCROLLERS, and note where they sit in this switch: BEFORE the

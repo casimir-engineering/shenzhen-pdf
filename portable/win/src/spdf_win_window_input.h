@@ -27,13 +27,45 @@ static int dispatch(spdf_win_window* window, spdf_win_input* input) {
     GetClientRect(window->hwnd, &rc);
     input->view_px_w = (unsigned)(rc.right - rc.left);
     input->view_px_h = (unsigned)(rc.bottom - rc.top);
+    /* VK_MENU is the Alt key, whose name in the VK table is a fossil of the
+     * days when Alt opened menus and nothing else. macOS's page navigation is on
+     * Option, which is the same key in the same role, so the accelerators need
+     * this bit. */
     input->mods = (GetKeyState(VK_CONTROL) < 0 ? SPDF_WIN_MOD_CTRL : 0u) |
-                  (GetKeyState(VK_SHIFT) < 0 ? SPDF_WIN_MOD_SHIFT : 0u);
+                  (GetKeyState(VK_SHIFT) < 0 ? SPDF_WIN_MOD_SHIFT : 0u) |
+                  (GetKeyState(VK_MENU) < 0 ? SPDF_WIN_MOD_ALT : 0u);
     /* So the handler can divide the client area exactly as the painter did. */
     input->dpi_scale = spdf_win_window_dpi_scale(window);
     if (!window->input_fn(window->user, input)) return 0;
     InvalidateRect(window->hwnd, NULL, FALSE);
     return 1;
+}
+
+/* THE CLICK COUNT, accumulated. See spdf_win_window.h's `click_count`.
+ *
+ * The rule is one line and covers every length of series: a press that is soon
+ * enough and near enough to the previous one continues it, and anything else
+ * starts a new one. That works BECAUSE Win32 alternates the two messages -- a
+ * quadruple click is DOWN, DBLCLK, DOWN, DBLCLK -- so the count is simply how
+ * many presses have landed in the same place in a row, whatever Windows chose to
+ * call each of them.
+ *
+ * GetMessageTime, not GetTickCount: the count must be decided by when the click
+ * HAPPENED, not by when a busy UI thread got round to it. SM_CXDOUBLECLK is the
+ * full width of the double-click rectangle, hence the halves. */
+static unsigned next_click_count(spdf_win_window* window, LPARAM lparam) {
+    DWORD now = (DWORD)GetMessageTime();
+    LONG x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
+    int near_enough = labs(x - window->last_click_x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
+                      labs(y - window->last_click_y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+    int soon_enough = (DWORD)(now - window->last_click_time) <= GetDoubleClickTime();
+
+    if (soon_enough && near_enough && window->click_count > 0) window->click_count += 1;
+    else window->click_count = 1;
+    window->last_click_time = now;
+    window->last_click_x = x;
+    window->last_click_y = y;
+    return window->click_count;
 }
 
 /* One mouse event out to the handler, in CLIENT device pixels -- which is what
@@ -53,6 +85,7 @@ static int dispatch_mouse(spdf_win_window* window, spdf_win_input_kind kind, int
     memset(&input, 0, sizeof(input));
     input.kind = kind;
     input.button = button;
+    if (kind == SPDF_WIN_INPUT_MOUSE_DOWN) input.click_count = window->click_count;
     input.x = (float)GET_X_LPARAM(lparam);
     input.y = (float)GET_Y_LPARAM(lparam);
     input.cursor = SPDF_WIN_CC_ARROW;
@@ -107,6 +140,47 @@ static void on_wheel(spdf_win_window* window, WPARAM wparam, LPARAM lparam, bool
     if (horizontal || (GET_KEYSTATE_WPARAM(wparam) & MK_SHIFT)) input.dx = horizontal ? step : -step;
     else input.dy = -step;
     dispatch(window, &input);
+}
+
+/* --- the keyboard, the menu and the drop target -------------------------- */
+
+/* One of the three events that carry nothing but a number. Shared because the
+ * only difference between them is the kind, and three near-identical eight-line
+ * functions is three places for a missing memset. */
+static int dispatch_value(spdf_win_window* window, spdf_win_input_kind kind, unsigned value) {
+    spdf_win_input input;
+    memset(&input, 0, sizeof(input));
+    input.kind = kind;
+    input.key = value;
+    return dispatch(window, &input);
+}
+
+/* WM_DROPFILES, one event per file.
+ *
+ * The order is Windows' own, which for a multi-selection is the order the files
+ * were selected in rather than the order they appear on screen; there is no
+ * other order available, and a caller that opens each in a tab wants them all
+ * regardless. DragFinish is mandatory -- the HDROP is a global allocation the
+ * receiver owns, and leaking one leaks it for the life of the process. */
+static void dispatch_drop(spdf_win_window* window, WPARAM wparam) {
+    HDROP drop = (HDROP)wparam;
+    UINT count, i;
+    if (!drop) return;
+    count = DragQueryFileW(drop, 0xFFFFFFFFu, NULL, 0);
+    for (i = 0; i < count; ++i) {
+        wchar_t path[MAX_PATH * 4];
+        spdf_win_input input;
+        if (DragQueryFileW(drop, i, path, (UINT)(sizeof(path) / sizeof(path[0]))) == 0) continue;
+        memset(&input, 0, sizeof(input));
+        input.kind = SPDF_WIN_INPUT_DROP_FILE;
+        input.text = path;
+        dispatch(window, &input);
+    }
+    DragFinish(drop);
+    /* The window that received a drop is not necessarily the active one -- a
+     * drag from Explorer does not activate its target -- and a viewer that has
+     * just been given a document and stayed behind Explorer looks broken. */
+    SetForegroundWindow(window->hwnd);
 }
 
 /* End a press. `button` is the one that came up, or SPDF_WIN_CB_NONE for a

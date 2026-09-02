@@ -8,7 +8,12 @@
  */
 #include "spdf_win_window.h"
 
+/* For SPDF_WIN_MENU_ID_BASE alone. WM_COMMAND's low word is a number the two
+ * files have to agree about; the table it indexes stays entirely next door. */
+#include "spdf_win_menu.h"
+
 #include <windowsx.h> /* GET_X_LPARAM / GET_Y_LPARAM */
+#include <shellapi.h> /* DragAcceptFiles / DragQueryFileW / DragFinish */
 
 #include <math.h>
 #include <stdio.h>
@@ -27,6 +32,19 @@ struct spdf_win_window {
     void* user;
     UINT dpi;
     int exit_code;
+    /* The CLIENT area that was asked for, in 96-dpi pixels. Kept because two
+     * later events -- the DPI of the monitor the window actually landed on, and
+     * a menu bar being installed -- both change the FRAME needed to deliver it,
+     * and neither can recover the request from the window. */
+    int client_px_w;
+    int client_px_h;
+    /* The multi-click series in progress: how many presses have landed in the
+     * same place in a row, and when and where the last one was. See
+     * next_click_count() in spdf_win_window_input.h. */
+    unsigned click_count;
+    DWORD last_click_time;
+    LONG last_click_x;
+    LONG last_click_y;
 
     /* Which button, if any, is held with the capture. The authority, not
      * GetCapture(): a capture can be taken away (an Alt+Tab, a system modal) and
@@ -131,6 +149,10 @@ static void paint(spdf_win_window* window) {
     }
 }
 
+/* The frame, the title, the dark caption and the menu bar. Depends on
+ * `struct spdf_win_window` above, hence the position. */
+#include "spdf_win_window_frame.h"
+
 /* Message-to-input translation: dispatch(), dispatch_mouse(), on_wheel() and
  * end_press(). Depends on `struct spdf_win_window` above, hence the position. */
 #include "spdf_win_window_input.h"
@@ -167,10 +189,19 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         case WM_MOUSEHWHEEL:
             on_wheel(window, wparam, lparam, true);
             return 0;
+        /* WM_LBUTTONDBLCLK IS AN ORDINARY PRESS HERE, and it exists at all
+         * because the class asks for CS_DBLCLKS. Windows delivers the second
+         * click of a double as this message INSTEAD of a WM_LBUTTONDOWN, so a
+         * window that does not handle it loses every even-numbered click -- a
+         * double-click to select a word would drop half of itself. What makes it
+         * a double rather than a single is the count, which next_click_count()
+         * has already worked out. */
         case WM_LBUTTONDOWN:
+        case WM_LBUTTONDBLCLK:
         case WM_MBUTTONDOWN:
             /* Capture first, so a handler that starts a drag has the pointer. */
-            window->pressed = msg == WM_LBUTTONDOWN ? SPDF_WIN_CB_LEFT : SPDF_WIN_CB_MIDDLE;
+            window->pressed = msg == WM_MBUTTONDOWN ? SPDF_WIN_CB_MIDDLE : SPDF_WIN_CB_LEFT;
+            if (msg != WM_MBUTTONDOWN) next_click_count(window, lparam);
             SetCapture(hwnd);
             SetFocus(hwnd);
             dispatch_mouse(window, SPDF_WIN_INPUT_MOUSE_DOWN, window->pressed, lparam);
@@ -216,6 +247,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 }
                 if (query.cursor == SPDF_WIN_CC_SIZEWE) id = 32644;       /* IDC_SIZEWE */
                 else if (query.cursor == SPDF_WIN_CC_SIZEALL) id = 32646; /* IDC_SIZEALL */
+                else if (query.cursor == SPDF_WIN_CC_IBEAM) id = 32513;   /* IDC_IBEAM */
+                else if (query.cursor == SPDF_WIN_CC_HAND) id = 32649;    /* IDC_HAND */
                 SetCursor(LoadCursorW(NULL, MAKEINTRESOURCEW(id)));
                 return TRUE;
             }
@@ -237,7 +270,10 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             float s = spdf_win_window_dpi_scale(window);
             RECT rc = {0, 0, (LONG)(SPDF_WIN_CHROME_MIN_CONTENT_W * s), (LONG)(SPDF_WIN_CHROME_MIN_CONTENT_H * s)};
             DWORD style = (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE);
-            AdjustWindowRectEx(&rc, style ? style : WS_OVERLAPPEDWINDOW, FALSE, 0);
+            /* The menu bar comes out of the frame, not out of the client area,
+             * so the floor has to grow by its height or the minimum CLIENT area
+             * silently shrinks by ~20 px the moment a menu is installed. */
+            AdjustWindowRectEx(&rc, style ? style : WS_OVERLAPPEDWINDOW, GetMenu(hwnd) != NULL, 0);
             mmi->ptMinTrackSize.x = rc.right - rc.left;
             mmi->ptMinTrackSize.y = rc.bottom - rc.top;
             return 0;
@@ -254,16 +290,47 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
-        case WM_KEYDOWN: {
-            if (wparam == VK_ESCAPE) {
-                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        case WM_COMMAND:
+            /* A menu item, and nothing else: this window has no child controls,
+             * so a WM_COMMAND with a non-zero lParam (a control) or a high word
+             * of 1 (an accelerator table, which this port does not use -- see
+             * spdf_win_menu.h) is not ours. */
+            if (lparam == 0 && HIWORD(wparam) == 0 && LOWORD(wparam) >= SPDF_WIN_MENU_ID_BASE) {
+                dispatch_value(window, SPDF_WIN_INPUT_COMMAND, (unsigned)(LOWORD(wparam) - SPDF_WIN_MENU_ID_BASE));
                 return 0;
             }
+            break;
+        case WM_CHAR:
+            /* Always consumed, handled or not. DefWindowProc does nothing with a
+             * WM_CHAR for a window with no child controls, and a key the handler
+             * declined is a key nobody wanted -- passing it on would only reach
+             * the default beep. Menu mnemonics arrive as WM_SYSCHAR, which is
+             * untouched. */
+            dispatch_value(window, SPDF_WIN_INPUT_CHAR, (unsigned)wparam);
+            return 0;
+        case WM_DROPFILES:
+            dispatch_drop(window, wparam);
+            return 0;
+        /* WM_SYSKEYDOWN as well as WM_KEYDOWN, because Alt+key arrives as the
+         * former and macOS puts page navigation on Option+arrows. Anything the
+         * handler declines falls through to DefWindowProc, which is what keeps
+         * Alt+F opening the File menu and Alt+F4 closing the window. */
+        case WM_SYSKEYDOWN:
+        case WM_KEYDOWN: {
             spdf_win_input input;
             memset(&input, 0, sizeof(input));
             input.kind = SPDF_WIN_INPUT_KEY;
             input.key = (unsigned)wparam;
             if (dispatch(window, &input)) return 0;
+            /* THE LAST RESORT FOR ESCAPE, and it is last now rather than first.
+             * Escape used to close the window unconditionally from here, which
+             * cannot survive a find field -- Escape's first job is to dismiss
+             * whatever is open. The handler gets it, and only an Escape nothing
+             * wanted still closes the window. */
+            if (msg == WM_KEYDOWN && wparam == VK_ESCAPE) {
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                return 0;
+            }
             break;
         }
         case WM_DESTROY:
@@ -286,7 +353,11 @@ static int register_class(HINSTANCE instance) {
     /* Redraw the whole client area on any size change: the page is centred, so
      * a horizontal resize moves pixels that a partial invalidation would
      * leave stale. */
-    wc.style = CS_HREDRAW | CS_VREDRAW;
+    /* CS_DBLCLKS: without it Windows never sends WM_LBUTTONDBLCLK and there is
+     * no way to know a click was a double at all -- double-click-to-select-a-
+     * word is not implementable without it, and adding it later silently changes
+     * which message every second click arrives as. */
+    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     wc.lpfnWndProc = window_proc;
     wc.hInstance = instance;
     /* MAKEINTRESOURCEW, not IDC_ARROW: guest-build.cmd does not define
@@ -342,50 +413,16 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
      * frame was sized in 96-dpi units, so on a 2x display resize it once
      * rather than leaving a half-size window. */
     window->dpi = window_dpi(window->hwnd);
-    if (window->dpi != USER_DEFAULT_SCREEN_DPI) {
-        float s = spdf_win_window_dpi_scale(window);
-        RECT scaled = {0, 0, (LONG)(client_px_w * s), (LONG)(client_px_h * s)};
-        AdjustWindowRectEx(&scaled, WS_OVERLAPPEDWINDOW, FALSE, 0);
-        SetWindowPos(window->hwnd, NULL, 0, 0, scaled.right - scaled.left, scaled.bottom - scaled.top,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    }
+    window->client_px_w = client_px_w;
+    window->client_px_h = client_px_h;
+    resize_to_client(window);
+    /* THE DROP TARGET. One call, and the only reason it is not in
+     * register_class() is that it is a property of the window rather than of the
+     * class. WM_DROPFILES is the old shell drop protocol rather than
+     * IDropTarget: it delivers exactly what this app wants (a list of paths) and
+     * costs no COM, no reference counting and no second object to keep alive. */
+    DragAcceptFiles(window->hwnd, TRUE);
     return window;
-}
-
-void spdf_win_window_set_title(spdf_win_window* window, const wchar_t* title) {
-    if (!window || !window->hwnd || !title) return;
-    SetWindowTextW(window->hwnd, title);
-}
-
-/* DWMWA_USE_IMMERSIVE_DARK_MODE. The attribute number is 20 from Windows 10
- * 2004 (build 19041) onward; on 1809/1903/1909 the same undocumented attribute
- * was 19, and the two were never valid at the same time. So try 20 and fall back
- * to 19: DwmSetWindowAttribute rejects an out-of-range attribute with
- * E_INVALIDARG rather than succeeding quietly, which makes the fallback a real
- * runtime check instead of a guess from a version number. (This machine is
- * 10.0.26200, where 20 is the live one and 19 never runs.)
- *
- * GetProcAddress rather than a link-time import of dwmapi.lib, following
- * spdf_win_enable_dpi_awareness() above for exactly the same reason: one binary
- * that starts everywhere and simply looks slightly wrong on a Windows older than
- * the feature. LoadLibraryW, not GetModuleHandleW -- unlike user32.dll,
- * dwmapi.dll is not already in the process. */
-typedef HRESULT(WINAPI* dwm_set_window_attribute_fn)(HWND, DWORD, LPCVOID, DWORD);
-
-void spdf_win_window_set_dark_frame(spdf_win_window* window, int dark) {
-    if (!window || !window->hwnd) return;
-    HMODULE dwmapi = LoadLibraryW(L"dwmapi.dll");
-    if (!dwmapi) return;
-    dwm_set_window_attribute_fn set_attr =
-        (dwm_set_window_attribute_fn)GetProcAddress(dwmapi, "DwmSetWindowAttribute");
-    if (set_attr) {
-        /* BOOL, 4 bytes: DWM validates the size and fails a plain `int` on some
-         * builds. */
-        BOOL on = dark ? TRUE : FALSE;
-        if (FAILED(set_attr(window->hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &on, sizeof(on))))
-            set_attr(window->hwnd, 19 /* the same attribute pre-2004 */, &on, sizeof(on));
-    }
-    FreeLibrary(dwmapi);
 }
 
 void spdf_win_window_show(spdf_win_window* window) {

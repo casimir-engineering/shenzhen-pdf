@@ -61,6 +61,8 @@ void spdf_win_chrome_model_inputs_init(SpdfWinChromeModelInputs* in) {
     in->show_minimap = 1;
     in->hot_tab = -1;
     in->hot_close = -1;
+    in->drag_tab = -1;
+    in->drop_slot = -1;
     in->page_index = -1;
     in->zoom_dpi_scale = 1.0f;
     in->fit_mode = SPDF_WIN_CHROME_FIT_WIDTH; /* what the canvas opens at */
@@ -88,9 +90,15 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
     model->search_active = 0;
     model->hot_tab = in->hot_tab;
     model->hot_close = in->hot_close;
+    model->drag_tab = in->drag_tab;
+    model->drop_slot = in->drop_slot;
     model->selected_tab = -1;
     model->page_index = in->page_index;
     model->page_count = in->page_count;
+    model->page_text = in->page_text;
+    model->focus = in->focus;
+    model->sidebar_row_count = in->sidebar_row_count;
+    model->sidebar_scroll_y = in->sidebar_scroll_y;
     model->zoom = in->zoom;
     model->zoom_dpi_scale = in->zoom_dpi_scale;
     model->fit_mode = in->fit_mode;
@@ -147,8 +155,8 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
 
 /* --- the find bridge -----------------------------------------------------
  *
- * The process-wide find session, the temporary query bridge, and the fill that
- * puts the result into the model. Here rather than in spdf_win_chrome_find.cpp
+ * The process-wide find session, the query the reader has typed, and the fill
+ * that puts the result into the model. Here rather than in spdf_win_chrome_find.cpp
  * for a linking reason worth stating: that file is the toolbar's find PAINTER,
  * and everything it needs is inline in spdf_win_chrome_find.h. Keeping the
  * bridge out of it means a test that links the toolbar painter does not also
@@ -165,47 +173,51 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
 namespace {
 
 SpdfWinFindSession* g_shared;
-int g_shared_tried;
 
-/* TEMPORARY, and documented as such at its definition -- the same pattern and
- * the same justification as spdf_win_chrome_content.cpp's SPDF_SIDEBAR_FILTER.
- * No keyboard input reaches this track yet (this change's report says exactly
- * what is needed from the input track), so the only way to exercise find in the
- * real app today is the environment. Costs one getenv per process.
+/* THE QUERY THE READER TYPED. Both halves are kept: the UTF-16 the toolbar
+ * draws (and SpdfWinChromeModel::query borrows, which is why this is static
+ * storage and not a stack buffer) and the UTF-8 the engine and the core want.
  *
- *   SPDF_FIND_QUERY=<text>   the query
- *   SPDF_FIND_REGEX=1        treat it as a regular expression
- *
- * Delete both of these the moment the search field is typeable. */
-const char* env_query(void) {
-    static char buf[512];
-    static int tried;
-    size_t got = 0;
-    if (tried) return buf[0] ? buf : NULL;
-    tried = 1;
-    if (getenv_s(&got, buf, sizeof(buf), "SPDF_FIND_QUERY") != 0 || got == 0) buf[0] = 0;
-    return buf[0] ? buf : NULL;
-}
+ * This is what replaced SPDF_FIND_QUERY and SPDF_FIND_REGEX. Those were two
+ * getenv calls documented as temporary at their definitions; the search field is
+ * typeable now (spdf_win_chrome_text.h, routed by SPDF_WIN_CA_FOCUS_FIND) and
+ * the regex flag has the toolbar checkbox and an Edit-menu item, so neither
+ * environment variable has any remaining reason to exist. Do not bring them
+ * back: a debugging hook that bypasses the real control is a hook that keeps
+ * working after the real control has broken. */
+wchar_t g_query_w[512];
+char g_query_u8[1024];
+int g_query_regex;
 
-int env_regex(void) {
-    static int value = -1;
-    char buf[16];
-    size_t got = 0;
-    if (value >= 0) return value;
-    value = 0;
-    if (getenv_s(&got, buf, sizeof(buf), "SPDF_FIND_REGEX") == 0 && got > 0 && buf[0] && buf[0] != '0') value = 1;
-    return value;
-}
+const char* current_query(void) { return g_query_u8[0] ? g_query_u8 : NULL; }
 
 } /* namespace */
 
-SpdfWinFindSession* spdf_win_find_shared(void) {
-    if (!g_shared_tried) {
-        g_shared_tried = 1;
-        /* Lazy for real: no query means no session, no thread and no document
-         * handle, so a process that never searches pays one branch. */
-        if (env_query()) g_shared = spdf_win_find_session_new();
+void spdf_win_find_set_query(const wchar_t* query, int regex) {
+    g_query_regex = regex ? 1 : 0;
+    if (!query || !query[0]) {
+        g_query_w[0] = L'\0';
+        g_query_u8[0] = '\0';
+        return;
     }
+    wcsncpy_s(g_query_w, query, sizeof(g_query_w) / sizeof(g_query_w[0]) - 1);
+    /* No MB_ERR_INVALID_CHARS: an unpaired surrogate cannot reach here (the
+     * field removes a pair as a unit, spdf_win_chrome_text.h), and a query that
+     * silently became empty would look like a search that found nothing. On
+     * overflow the UTF-8 is left empty rather than truncated mid-sequence --
+     * spdf_win_search_dup_query caps the query anyway, and a half-character is a
+     * worse thing to hand a regex compiler than nothing. */
+    if (WideCharToMultiByte(CP_UTF8, 0, g_query_w, -1, g_query_u8, (int)sizeof(g_query_u8), NULL, NULL) <= 0)
+        g_query_u8[0] = '\0';
+}
+
+SpdfWinFindSession* spdf_win_find_shared(void) {
+    /* Lazy for real, and still lazy after the environment bridge went away: no
+     * query means no session, no thread and no document handle, so a process
+     * that never searches pays one branch. The session outlives a query being
+     * cleared, because a reader who deletes the query and types another must not
+     * pay for a second worker thread. */
+    if (!g_shared && current_query()) g_shared = spdf_win_find_session_new();
     return g_shared;
 }
 
@@ -220,7 +232,6 @@ void spdf_win_find_apply_overlays(struct spdf_win_scene* scene) {
 }
 
 void spdf_win_find_fill_model(SpdfWinChromeModel* model, const char* utf8_path) {
-    static wchar_t wide_query[512];
     SpdfWinFindSession* s;
     const char* query;
 
@@ -235,18 +246,20 @@ void spdf_win_find_fill_model(SpdfWinChromeModel* model, const char* utf8_path) 
     model->active_mark = -1;
 
     s = spdf_win_find_shared();
+    /* No session means nothing has ever been typed, so the cleared fields above
+     * are the whole answer -- but the REGEX flag is the reader's setting whether
+     * or not a search is running, and the toolbar checkbox and the Edit menu
+     * both read it back from here. */
+    model->regex = g_query_regex;
     if (!s) return;
-    query = env_query();
-    spdf_win_find_set(s, utf8_path, query, env_regex());
+    query = current_query();
+    spdf_win_find_set(s, utf8_path, query, g_query_regex);
     spdf_win_find_poll(s);
 
-    /* The environment block is ANSI here, so this one string -- and only this
-     * one -- goes through CP_ACP by necessity. It is a debugging hook, not
-     * document data; every other string the chrome draws is CP_UTF8. */
-    if (query && !wide_query[0])
-        MultiByteToWideChar(CP_ACP, 0, query, -1, wide_query, (int)(sizeof(wide_query) / sizeof(wide_query[0])));
-    model->query = query ? wide_query : NULL;
-    model->regex = env_regex();
+    /* Borrowed, and valid for exactly as long as the model is: the buffer is
+     * static and only spdf_win_find_set_query() writes it, which happens on the
+     * UI thread between frames. */
+    model->query = query ? g_query_w : NULL;
     model->searching = spdf_win_find_searching(s);
     model->match_count = spdf_win_find_match_count(s);
     model->match_index = spdf_win_find_match_index(s);

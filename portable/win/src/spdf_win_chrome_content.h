@@ -289,6 +289,21 @@ const SpdfWinChromePanelsContent* spdf_win_chrome_content_current(void);
  * provider has been attached. */
 void spdf_win_chrome_content_set_document(const char* utf8_path, int current_page);
 
+/* THE FILTER FIELD'S TEXT, UTF-16, copied. NULL or empty means no filter, which
+ * shows every row.
+ *
+ * WHAT THIS REPLACED: SPDF_SIDEBAR_FILTER, one getenv read on the first sidebar
+ * paint, documented as temporary at its definition because no keyboard input
+ * reached this track. The field is typeable now and the environment variable is
+ * gone.
+ *
+ * Cheap to call on every keystroke and no-op when nothing changed: it compares,
+ * copies at most 127 units, and marks the row list stale. The rebuild happens on
+ * the next spdf_win_chrome_content_current(), i.e. on the paint that needs it,
+ * and re-filters the outline already in memory rather than reopening the
+ * document. Does nothing once a real provider has been attached. */
+void spdf_win_chrome_content_set_filter(const wchar_t* filter);
+
 /* Releases the document handle, the outline strings, the thumbnail store and
  * the render service the built-in provider owns, joining the store's threads.
  * Idempotent, and safe with nothing ever having been opened.
