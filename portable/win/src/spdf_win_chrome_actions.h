@@ -6,6 +6,8 @@
  * on it in spdf_win_chrome_paint.h. */
 #include "spdf_win_chrome_paint.h"
 #include "spdf_win_chrome_scroll.h"
+/* The drop indicator and the detach test, for the tab drag below. */
+#include "spdf_win_tabs_drag.h"
 /* Performing what spdf_win_chrome_input.h decided.
  *
  * Internal to the Windows frontend and header-only, like spdf_win_tabs_app.h and
