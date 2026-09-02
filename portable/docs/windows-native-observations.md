@@ -380,6 +380,55 @@ the diagnosis rather than leaving it as a plausible story, and the live captures
 in portable/docs/windows-captures/ were taken in the same session.
 
 
+### 4.7 Four defects only a person using the app could report
+
+Reported 2026-09-02 from actual use, after every automated check in this port was
+green: *"cannot be focussed or interacted with; runs from a terminal window that
+stays open; does not respect the system theme; a double top bar like it's a
+window inside of a window."* None of the four is visible in a `PrintWindow`
+capture, which is why they survived.
+
+**The terminal window.** The exe was linked `/SUBSYSTEM:CONSOLE` — confirmed by
+reading the PE header (`Subsystem=3`) — because the entry point is `main()` and
+no subsystem was ever specified. Now `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`,
+for the app only; the test binaries stay console programs because a harness reads
+their output. stdout still reaches a pipe or a file (subsystem controls only
+whether a console is *allocated*), verified both ways before trusting it.
+
+**The system theme.** This machine is set to dark and the app shipped light
+unless told otherwise. It now reads `AppsUseLightTheme`. The ordering mattered
+and was got wrong once: the canvas takes its render flags at construction, so
+applying the theme after `spdf_win_tabs_app_show()` left the pages light while
+the caption and thumbnails went dark. Headless paths deliberately do **not**
+follow it, or every pixel comparison would depend on the developer's registry;
+`--dark` and `--light` both override.
+
+**The double top bar.** Half of it was a Win32 menu bar, which **cannot** be
+themed: `SetPreferredAppMode(AllowDark)` darkens popup menus but not the bar,
+measured — it stayed white between a dark caption and dark chrome. macOS keeps
+its menus in the system menu bar, so an in-window strip was a bar macOS never
+had; it is gone, and the toolbar's `…` opens the same menu. The other half is
+the OS caption above the tab strip — macOS puts the strip *inside* the title bar
+— and that integration is a separate change.
+
+**"Cannot be focussed"** was not the app. Every measurement said healthy —
+responding, enabled, answering `WM_NULL`, a `PostMessage`'d click toggling the
+sidebar — yet physical clicks did nothing. `WindowFromPoint` across the app's
+rect returned the **Claude desktop app** every time: maximized, foreground, and
+the *parent* of the automation that launched the app, so the window opened
+behind it and every real click landed on Claude. `PostMessage` and `PrintWindow`
+ignore z-order, which is exactly why the automated evidence lied. Same session,
+same user, same integrity, same desktop — the launch *parent* was the problem,
+not the launch context. The real-world path (double-click the exe) has no such
+parent, and was impossible: the app exited 64 without a document. It now
+launches bare, restoring the session or opening an empty window.
+
+Two harness lessons from the same afternoon: PowerShell's `&` does not wait for a
+GUI-subsystem process, so `verify-phase1` silently compared the whole client and
+failed three criteria with no error message; and a stray-process check that
+counts by *name* fails whenever the user has their own instance open. Both fixed.
+
+
 ## 5. New tooling, and why each exists
 
 | file | why |
@@ -453,9 +502,9 @@ Items 1, 2 and 3 of the original list are done — the tab strip and toolbar are
 drawn and wired, and the sidebar and minimap show real content. What is left,
 in the order I would take it:
 
-1. **Scrollbars.** The only remaining absence that costs the reader something
-   functional rather than cosmetic. macOS overlays the search heat-map on them,
-   so this and Find want doing together.
+1. ~~Scrollbars~~ and ~~Find~~ — done, with the heat-map on the trough.
+   **Tab strip into the title bar** is in progress: the remaining half of the
+   "double top bar", and the last structural divergence from the macOS window.
 2. **Find.** `portable/linux/gtk4/spdf_search_internal.h` is already
    toolkit-free — 15 `static inline` functions including the heat-map ticks.
    Port it the way `spdf_win_layout.h` was ported and differentially test it with
