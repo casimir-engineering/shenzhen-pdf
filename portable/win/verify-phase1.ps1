@@ -62,7 +62,16 @@ function Record([string]$name, [string]$status, [string]$detail) {
 
 # Parse the `key=value` lines screenshot-window.ps1 emits into a hashtable.
 function Capture([string]$png, [int]$w, [int]$h, [string[]]$appArgs) {
-  $a = @('-Exe', $Exe, '-Pdf', $Pdf, '-Out', $png, '-SettleMs', '2500')
+  # -StateDir: A PRIVATE STATE DIRECTORY, so the run neither reads nor writes
+  # the reader's own %APPDATA%\ShenzhenPDF. This is what used to make the check
+  # sensitive to a saved session (windows-native-observations.md 4.5: "delete
+  # session.yaml first or it remembers a page"): the window restored the page an
+  # earlier click had left while the headless reference rendered page 0. With
+  # its own directory the window has no session and no settings to restore, and
+  # the reader's files are never touched by a test. A parameter of its own
+  # rather than two more entries in -AppArgs, because a nested powershell -File
+  # cannot be handed an array (the elements arrive joined into one string).
+  $a = @('-Exe', $Exe, '-Pdf', $Pdf, '-Out', $png, '-SettleMs', '2500', '-StateDir', (Join-Path $OutDir 'state'))
   if ($w -gt 0) { $a += @('-Width', $w, '-Height', $h) }
   if ($appArgs -and $appArgs.Count) { $a += @('-AppArgs'); $a += (, $appArgs) }
   $raw = & powershell -NoProfile -ExecutionPolicy Bypass -File $shot @a 2>&1
