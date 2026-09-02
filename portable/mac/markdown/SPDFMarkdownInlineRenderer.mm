@@ -27,6 +27,24 @@ CGFloat SPDFMarkdownRenderScale(SPDFMarkdownRenderContext* context) {
     return scale > 0 ? scale : 1;
 }
 
+// Page-sized content — an image figure, a pending placeholder box, an image
+// row, a table's provisional columns, a diagram — budgets against the
+// printable page box when the render carries one, so turning the paper really
+// re-fits it. Without a page (NSZeroSize) the caller's fallback stands
+// unchanged; that fallback is the old constant budget at every call site.
+CGFloat SPDFMarkdownContentWidthBudget(SPDFMarkdownRenderContext* context, CGFloat depthIndent,
+                                       CGFloat pagelessFallback) {
+    CGFloat pageWidth = context.options.pageContentSize.width;
+    return pageWidth > 0 ? pageWidth - depthIndent : pagelessFallback;
+}
+
+CGFloat SPDFMarkdownContentHeightBudget(SPDFMarkdownRenderContext* context, CGFloat pagelessFallback) {
+    CGFloat pageHeight = context.options.pageContentSize.height;
+    if (pageHeight <= 0) return pagelessFallback;
+    CGFloat margin = context.options.paragraphSpacing * SPDFMarkdownRenderScale(context);
+    return MAX(64.0, pageHeight - 2 * margin);
+}
+
 static NSDictionary* SPDFRunAttributes(SPDFMarkdownRenderContext* context, SPDFMarkdownInlineRun* run) {
     BOOL mono = (run.traits & (SPDFMarkdownInlineTraitCode | SPDFMarkdownInlineTraitKeyboard)) != 0;
     NSFont* font = mono ? context.codeFont : context.bodyFont;
@@ -75,7 +93,7 @@ static NSDictionary* SPDFRunAttributes(SPDFMarkdownRenderContext* context, SPDFM
 // (like print decoration colors) via a deferred drawing handler; the concrete
 // NSColors are captured up front, keeping render passes thread-safe.
 static NSTextAttachment* SPDFPendingRemoteImageAttachment(SPDFMarkdownRenderContext* context, NSString* altText) {
-    CGFloat width = MAX(64.0, context.options.maximumImageWidth);
+    CGFloat width = MAX(64.0, SPDFMarkdownContentWidthBudget(context, 0, context.options.maximumImageWidth));
     CGFloat height = MAX(48.0, context.options.remoteImagePlaceholderHeight);
     NSString* caption = altText.length ? altText : @"Loading image";
     NSFont* font = context.bodyFont;
@@ -233,7 +251,8 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
     }
     // HTML width/height attributes are display-size hints: they set the
     // preferred display size (proportional when only one is given), and the
-    // existing image caps stay the maxima.
+    // image budgets stay the maxima: the destination page's printable box when
+    // the render carries one, the constant caps otherwise.
     CGFloat displayWidth = image.size.width;
     CGFloat displayHeight = image.size.height;
     if (run.preferredImageWidth > 0 && run.preferredImageHeight > 0) {
@@ -246,8 +265,9 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
         displayWidth *= run.preferredImageHeight / displayHeight;
         displayHeight = run.preferredImageHeight;
     }
-    CGFloat scale = MIN(1.0, MIN(context.options.maximumImageWidth / displayWidth,
-                                 context.options.maximumImageHeight / displayHeight));
+    CGFloat widthBudget = SPDFMarkdownContentWidthBudget(context, 0, context.options.maximumImageWidth);
+    CGFloat heightBudget = SPDFMarkdownContentHeightBudget(context, context.options.maximumImageHeight);
+    CGFloat scale = MIN(1.0, MIN(widthBudget / displayWidth, heightBudget / displayHeight));
     NSTextAttachment* attachment = [NSTextAttachment new];
     attachment.image = image;
     attachment.bounds = NSMakeRect(0, 0, displayWidth * scale, displayHeight * scale);
@@ -266,13 +286,14 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
 // stay untouched because their total is already under the budget. Pending
 // remote placeholder boxes participate with their placeholder size, so the
 // layout doesn't jump while downloads land (a rerender re-fits from the
-// decoded, capped sizes). The renderer never learns the paginator's printable
-// width — render options carry no container width — so the budget is
+// decoded, capped sizes). The budget is the destination page's printable
+// width when the render carries one (pageContentSize) — the width the
+// paginator will actually lay the row out at — and otherwise the constant
 // maximumImageWidth, which sits safely inside every supported page.
 static const CGFloat SPDFImageRowMinimumFitFactor = 0.45;
 
 static void SPDFFitImageRowToBudget(SPDFMarkdownRenderContext* context, NSRange range) {
-    CGFloat budget = context.options.maximumImageWidth;
+    CGFloat budget = SPDFMarkdownContentWidthBudget(context, 0, context.options.maximumImageWidth);
     if (budget <= 0 || range.length == 0) return;
     NSMutableArray<NSTextAttachment*>* attachments = [NSMutableArray array];
     __block CGFloat imagesWidth = 0;

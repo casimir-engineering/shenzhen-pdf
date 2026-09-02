@@ -97,6 +97,7 @@ for TEST in \
     SPDFMarkdownLanguageTests \
     SPDFMarkdownRendererTests \
     SPDFMarkdownImageFigureTests \
+    SPDFMarkdownPageBudgetTests \
     SPDFMarkdownImageRecolorTests \
     SPDFMarkdownDiagramTests \
     SPDFMarkdownDiagramLayoutTests \
