@@ -194,7 +194,9 @@ The 8 blocked cases are honest blocks, each naming its missing prerequisite:
 need a **macOS host**, because `d2d-cases.sh` and `probe-cases.sh` do not compare
 against committed references — they **compile the reference probe with `cc` on the
 Mac at test time**. There is no committed reference image anywhere in
-`portable/win/tests/`. Any plan to run the port's strongest evidence off a Mac has
+`portable/win/tests/`. (`portable/docs/windows-captures/` holds live screenshots, but
+they are a RECORD, not test references -- a chrome screenshot pins four
+subsystems at once and would fail for reasons unrelated to whatever changed.) Any plan to run the port's strongest evidence off a Mac has
 to commit references first.
 
 ### 3.1 Salvaging the Direct2D cases without a Mac
@@ -364,6 +366,18 @@ and passed a naive uniformity test while the client area was 2.
 
 Neither check can turn a bad frame into a pass. They only ever turn a FAIL into
 a BLOCKED, which is the distinction the harness's BLOCKED convention exists for.
+
+**Confirmed by unlocking.** The same commit, on the same machine, an hour later
+with the workstation unlocked:
+
+```
+phase1[light]: 7 passed, 0 failed, 0 blocked   exit 0
+phase1[dark]:  7 passed, 0 failed, 0 blocked   exit 0
+```
+
+Black while locked, green while unlocked, nothing changed in between. That closes
+the diagnosis rather than leaving it as a plausible story, and the live captures
+in portable/docs/windows-captures/ were taken in the same session.
 
 
 ## 5. New tooling, and why each exists
