@@ -443,6 +443,7 @@ counts by *name* fails whenever the user has their own instance open. Both fixed
 | `portable/win/src/spdf_win_minimap.h` + `tests/minimap_differential.c`, `tests/glib_shim/` | The GTK4 minimap geometry, ported and then differentially tested against the **real** GTK header under MSVC: 131,503 comparisons, all identical. See §4.4. |
 | `portable/win/tests/layout-differential-native.cmd` | Runs `gtk_differential.c` natively — **395,514 comparisons, 0 mismatches**. This is the port's strongest test and had been BLOCKED as "needs glib" since the beginning. Proven to bite: perturbing the ported fit-width zoom by one part in 10⁷ gives 17 mismatches. The two `spdf_lru_*` halves stay skipped, because glib leaves hash iteration order unspecified and a shim would report mismatches that are not transcription errors. |
 | `portable/win/src/spdf_win_search.*`, `spdf_win_chrome_find.*` + `tests/search_differential.c` | Find/search, with the GTK4 search header ported and differentially tested: 37,440 comparisons, 0 differ. |
+| `portable/win/src/spdf_win_window_caption.h`, `spdf_win_chrome_caption.h` + `tests/chrome_nc_test.c`, `tests/chrome_caption_paint_test.c` | The client-owned caption: `WM_NCCALCSIZE`, `WM_NCHITTEST` from the painter's own geometry, and the three caption buttons painted from model state so the paint path still needs no `HWND`. 5,552 hit-test checks; the button pixels pinned in both themes. |
 | `portable/win/drive-window.ps1` | Drives the live window with synthetic `PostMessage` mouse input and captures after each step. `PostMessage`, not `SendInput`, deliberately: the user is sitting at this machine and `SendInput` would move their real cursor. |
 | `portable/win/tests/fixtures/outline.pdf` + `make_outline_fixture.py` | No committed fixture had a document outline, and neither does the NASA scan — so the sidebar's chapter list, its nesting and its UTF-8 titles were untestable. This one carries an accented and a CJK title, which is what a narrow CP1252 conversion mangles silently here. |
 
@@ -502,9 +503,10 @@ Items 1, 2 and 3 of the original list are done — the tab strip and toolbar are
 drawn and wired, and the sidebar and minimap show real content. What is left,
 in the order I would take it:
 
-1. ~~Scrollbars~~ and ~~Find~~ — done, with the heat-map on the trough.
-   **Tab strip into the title bar** is in progress: the remaining half of the
-   "double top bar", and the last structural divergence from the macOS window.
+1. ~~Scrollbars~~, ~~Find~~ and ~~the tab strip into the title bar~~ — all done.
+   The window now has one header band, as macOS does; the "double top bar" is
+   closed. What remains of the frame work is cosmetic: no 1 px top border line
+   when windowed, and the auto-hide-taskbar edge when maximized.
 2. **Find.** `portable/linux/gtk4/spdf_search_internal.h` is already
    toolkit-free — 15 `static inline` functions including the heat-map ticks.
    Port it the way `spdf_win_layout.h` was ported and differentially test it with
