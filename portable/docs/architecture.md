@@ -37,9 +37,33 @@ Useful diagnostic env vars:
   print any instrumented main‑thread op over its threshold (e.g. `drawRect`,
   `updateMinimap`, `evictDistantRenderedPageImages`, the `ADOPT-PAGE`/`ADOPT-CROP`
   markers). The first stop for "why is X slow".
-- `SPDF_LAUNCH_PROFILE=1` — launch timing.
+- `SPDF_LAUNCH_PROFILE=1` — launch timing. The first line stamps the kernel
+  spawn time, so every later `@…` stamp reads as time‑since‑spawn.
 - `SPDF_RENDER_WORKERS=N` — force foreground render concurrency (A/B the
   memory‑bandwidth hypothesis).
+- `SPDF_STATE_DIR=<path>` — use this directory instead of
+  `~/Library/Application Support/ShenzhenPDF` for settings.yaml, session.yaml
+  and every other state file. **Set this for any measurement or test launch**:
+  the app rewrites settings and session on every launch and quit, so an
+  un‑redirected profiling run silently replaces the real session with its own.
+  Everything that reads or writes state must go through
+  `spdf_mac_support_directory()` for this to hold.
+- `SPDF_NO_ACTIVATE=1` — skip the launch‑time `activateIgnoringOtherApps:`, so
+  `open -g -j -n -a <app> --env … <doc>` really does launch hidden and in the
+  background instead of stealing focus. Launch only; user‑initiated window
+  raises still activate.
+
+A non‑disruptive launch measurement is therefore:
+
+```
+open -g -j -n -a dist/ShenzhenPDF.app --stderr /tmp/launch.log \
+  --env SPDF_LAUNCH_PROFILE=1 --env SPDF_NO_ACTIVATE=1 \
+  --env SPDF_STATE_DIR=/tmp/spdf-scratch  <document>
+```
+
+Note that passing the document to `open` (as above) exercises the
+LaunchServices `odoc` path — what Finder does — while `--args <document>`
+exercises the command‑line path. They differ; measure the one you mean.
 
 ---
 

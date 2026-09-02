@@ -428,3 +428,32 @@ double spdf_process_spawn_time_ms(void) {
     });
     return spawnMs;
 }
+
+// Single source of truth for the state directory. SPDF_STATE_DIR redirects it
+// (measurement / test launches), so nothing in the app may recompute
+// "Application Support/ShenzhenPDF" on its own.
+NSString* spdf_mac_support_directory(void) {
+    static NSString* dir = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+      const char* override = getenv("SPDF_STATE_DIR");
+      if (override && override[0]) {
+          dir = [[NSFileManager.defaultManager stringWithFileSystemRepresentation:override
+                                                                          length:strlen(override)] copy];
+          return;
+      }
+      NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                        inDomains:NSUserDomainMask]
+                        .firstObject;
+      dir = [[base.path stringByAppendingPathComponent:@"ShenzhenPDF"] copy];
+    });
+    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return dir;
+}
+
+BOOL spdf_launch_activation_suppressed(void) {
+    static BOOL suppressed;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ suppressed = getenv("SPDF_NO_ACTIVATE") != NULL; });
+    return suppressed;
+}

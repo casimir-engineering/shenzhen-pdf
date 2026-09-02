@@ -25,6 +25,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacFileExplorerPreference.h"
 #import "SPDFMacFindNearest.h"
 #import "SPDFMacInactivePreload.h"
+#import "SPDFMacLaunchPrerenderPrivate.h"
 #import "SPDFMacLaunchWorkIntegration.h"
 #import "SPDFMacZoomSelfTestIntegration.h"
 #import "SPDFMacModels.h"
@@ -47,10 +48,6 @@ static os_log_t SPDFReadOnlyLog(void) {
 #include "shenzhen_pdf_core.h"
 #include "spdf_yaml.h"
 
-// Defined next to stateObjectFromFile:; declared here because the launch
-// prerender peeks at session.yaml before that point in the file.
-static id spdf_state_object_from_yaml_data(NSData* data);
-
 #include <math.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -63,8 +60,10 @@ static id spdf_state_object_from_yaml_data(NSData* data);
 
 static const CGFloat kPageMargin = 44.0;
 static const CGFloat kPageGap = 26.0;
-static const CGFloat kMinZoom = 0.10;
-static const CGFloat kMaxZoom = 8.00;
+// Non-static: shared with the launch prerender worker (SPDFMacLaunchPrerender.mm),
+// declared in SPDFMacLaunchPrerenderPrivate.h.
+const CGFloat kMinZoom = 0.10;
+const CGFloat kMaxZoom = 8.00;
 static const CGFloat kTabStripHeight = 42.0;
 static const CGFloat kMinWindowWidth = 560.0;
 static const CGFloat kMinWindowHeight = 380.0;
@@ -475,11 +474,11 @@ static NSDictionary* spdf_json_dictionary_from_string(NSString* string) {
     return [object isKindOfClass:NSDictionary.class] ? object : nil;
 }
 
-static unsigned long long spdf_file_size_from_attributes(NSDictionary* attributes) {
+unsigned long long spdf_file_size_from_attributes(NSDictionary* attributes) {
     return [attributes[NSFileSize] unsignedLongLongValue];
 }
 
-static NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attributes) {
+NSDate* spdf_file_modification_date_from_attributes(NSDictionary* attributes) {
     NSDate* date = attributes[NSFileModificationDate];
     return [date isKindOfClass:NSDate.class] ? date : nil;
 }
@@ -527,62 +526,7 @@ static BOOL spdf_stat_is_read_only(const struct stat* st) {
     return (mode & S_IWOTH) == 0;
 }
 
-// ---- Launch prerender (prototype) -----------------------------------------
-// Started from main() before NSApplication init. A background worker opens the
-// document the launch sequence will select (restored active tab, or the
-// CLI/Finder-opened file) and, when the restore zoom is viewport-independent
-// (Custom/Actual fit), renders the preferred page through the exact same
-// renderedPageAtIndex: path the synchronous first paint uses. loadSelectedTab
-// adopts the open document and renderDocumentAndScrollToPage adopts the bitmap
-// only on exact (path, size, mtime, page, zoom, scale) match. If foreground
-// loading arrives first, it either cancels before the worker claims spdf_open
-// or takes ownership of that one in-flight open; a second competing open is
-// never started.
-@interface SPDFLaunchPrerenderResult : NSObject
-@property(nonatomic) spdf_document* doc;
-@property(nonatomic, strong) SPDFRenderedPage* page;
-@property(nonatomic, copy) NSString* path;
-@property(nonatomic) unsigned long long fileSize;
-@property(nonatomic, strong) NSDate* modificationDate;
-@property(nonatomic, strong) SPDFMacLaunchPrerenderOwnership* ownership;
-@property(nonatomic, strong) dispatch_group_t group;
-@end
-@implementation SPDFLaunchPrerenderResult
-@end
-
-static SPDFLaunchPrerenderResult* gSPDFLaunchPrerender;
 static char kSPDFPasswordPromptClosesNewTabKey;
-
-// Backing scale of the main display without touching AppKit (the worker runs
-// before/while NSApplication initializes). Adoption later compares against
-// the real window backingScale, so a wrong guess only skips the fast path.
-static CGFloat spdf_launch_prerender_display_scale(void) {
-    CGDirectDisplayID display = CGMainDisplayID();
-    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display);
-    if (!mode) return 0.0;
-    size_t pixelWidth = CGDisplayModeGetPixelWidth(mode);
-    CGDisplayModeRelease(mode);
-    double pointWidth = CGDisplayBounds(display).size.width;
-    if (pointWidth <= 0.0 || pixelWidth == 0) return 0.0;
-    return (CGFloat)((double)pixelWidth / pointWidth);
-}
-
-// Discard a never-adopted prerender without blocking the main thread.
-static void spdf_discard_launch_prerender(void) {
-    SPDFLaunchPrerenderResult* result = gSPDFLaunchPrerender;
-    gSPDFLaunchPrerender = nil;
-    if (!result) return;
-    [result.ownership abandon];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-      dispatch_group_wait(result.group, DISPATCH_TIME_FOREVER);
-      @synchronized(result) {
-          if (result.doc) {
-              spdf_close(result.doc);
-              result.doc = NULL;
-          }
-      }
-    });
-}
 
 @interface ShenzhenMacDelegate ()
 @property(nonatomic, strong) SPDFPasswordSheetController* passwordSheetController;
@@ -593,225 +537,6 @@ static void spdf_discard_launch_prerender(void) {
 - (void)preloadInactiveTabsWithCompletion:(dispatch_block_t _Nullable)completion;
 @end
 @implementation ShenzhenMacDelegate
-
-- (void)startLaunchPrerender {
-    if (self.detachedTabLaunch) return;
-    if (getenv("SPDF_DISABLE_LAUNCH_PRERENDER")) return;
-    // The prerender runs before loadPersistentState, so read the reading theme
-    // here: the prerendered page is stamped with it and is only adopted when it
-    // matches the live one, so a dark session would otherwise throw its own
-    // first paint away. settings.yaml is small and loadPersistentState reads it
-    // again moments later from a warm page cache.
-    {
-        NSDictionary* raw = [self stateObjectFromFile:@"settings.yaml"];
-        NSDictionary* settings = [raw isKindOfClass:[NSDictionary class]] ? raw : nil;
-        _darkReadingTheme = [settings[@"markdownTheme"] isEqual:@"dark"];
-        NSNumber* preservesImages = settings[@"darkThemePreservesImages"];
-        _darkThemePreservesImages = preservesImages ? preservesImages.boolValue : YES;
-    }
-    NSString* initialPath = [self.initialPath copy];
-    NSString* restoreWindowID = [self.restoreWindowID copy];
-    SPDFLaunchPrerenderResult* result = [[SPDFLaunchPrerenderResult alloc] init];
-    result.ownership = [[SPDFMacLaunchPrerenderOwnership alloc] init];
-    result.group = dispatch_group_create();
-    gSPDFLaunchPrerender = result;
-    dispatch_group_async(result.group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      NSString* path = nil;
-      NSInteger pageIndex = 0;
-      double predictedZoom = 0.0; // 0 = open-only prewarm (no page render)
-      // Read-only shadow copy: when the restored source is read-only, prerender
-      // must open the persisted temp copy (never the source) to avoid the macOS
-      // access prompt at launch. These mirror the tab's persisted fields.
-      NSString* persistedWorkingPath = nil;
-      unsigned long long persistedCopyFileSize = 0;
-      double persistedCopyModifiedAt = 0.0;
-      if (initialPath.length > 0) {
-          // CLI/Finder open: that file becomes the selected tab. Its zoom is
-          // viewport-dependent (fit mode), so prewarm the open only.
-          path = initialPath.stringByStandardizingPath;
-      } else {
-          // Peek at session.yaml the same way loadPersistentState resolves the
-          // restored window and selected tab.
-          NSData* data = [NSData dataWithContentsOfFile:[self pathForStateFile:@"session.yaml"]];
-          NSDictionary* session = spdf_state_object_from_yaml_data(data);
-          if (![session isKindOfClass:NSDictionary.class]) session = nil;
-          NSArray* rawWindows = [session[@"windows"] isKindOfClass:NSArray.class] ? session[@"windows"] : @[];
-          NSDictionary* windowState = nil;
-          NSMutableArray<NSDictionary*>* windows = [NSMutableArray array];
-          for (NSDictionary* window in rawWindows) {
-              if (![window isKindOfClass:NSDictionary.class]) continue;
-              NSArray* rawTabs = [window[@"tabs"] isKindOfClass:NSArray.class] ? window[@"tabs"] : @[];
-              NSMutableArray* tabs = [NSMutableArray array];
-              for (NSDictionary* tab in rawTabs) {
-                  if (![tab isKindOfClass:NSDictionary.class]) continue;
-                  NSString* tabPath = [tab[@"path"] isKindOfClass:NSString.class] ? tab[@"path"] : nil;
-                  if (tabPath.length > 0) [tabs addObject:tab];
-              }
-              if (tabs.count == 0) continue;
-              NSMutableDictionary* copy = [window mutableCopy];
-              copy[@"tabs"] = tabs;
-              [windows addObject:copy];
-          }
-          if (restoreWindowID.length > 0) {
-              for (NSDictionary* candidate in windows) {
-                  if ([candidate[@"id"] isKindOfClass:NSString.class] &&
-                      [candidate[@"id"] isEqualToString:restoreWindowID]) {
-                      windowState = candidate;
-                      break;
-                  }
-              }
-          } else {
-              windowState = windows.firstObject;
-          }
-          NSArray* tabs = [windowState[@"tabs"] isKindOfClass:NSArray.class] ? windowState[@"tabs"] : @[];
-          if (tabs.count > 0) {
-              NSInteger selected = MIN(MAX(0, [windowState[@"selectedTab"] integerValue]), (NSInteger)tabs.count - 1);
-              NSDictionary* tab = tabs[(NSUInteger)selected];
-              path = [tab[@"path"] isKindOfClass:NSString.class] ? tab[@"path"] : nil;
-              if ([tab[@"workingPath"] isKindOfClass:NSString.class] && [tab[@"workingPath"] length] > 0)
-                  persistedWorkingPath = tab[@"workingPath"];
-              persistedCopyFileSize = (unsigned long long)[tab[@"roCopyFileSize"] unsignedLongLongValue];
-              persistedCopyModifiedAt = [tab[@"roCopyModifiedAt"] doubleValue];
-              pageIndex = MAX(0, [tab[@"page"] integerValue]);
-              // Replicates loadSelectedTab zoom selection exactly for the two
-              // viewport-independent fit modes; other modes stay open-only.
-              NSInteger fitMode = [tab[@"fitMode"] integerValue];
-              if (fitMode == SPDFFitModeCustom) {
-                  double customZoom = [tab[@"customZoom"] doubleValue];
-                  double zoom = [tab[@"zoom"] doubleValue];
-                  double remembered = customZoom > 0 ? customZoom : (zoom > 0 ? zoom : 1.0);
-                  predictedZoom = MAX(kMinZoom, MIN(kMaxZoom, remembered));
-              } else if (fitMode == SPDFFitModeActual) {
-                  predictedZoom = 1.0;
-              }
-          }
-      }
-      // DriveFS/cloud/network paths are handled by the launch-only deferred
-      // cloud open (loadSelectedTab); do not race a second synchronous open
-      // against it. Same predicate as that deferral (CloudStorage file
-      // providers plus any non-apfs/hfs mount).
-      if (path.length == 0 || spdf_mac_path_is_markdown(path) || [self pathIsOnCloudStorage:path]) {
-          [result.ownership workerDidFinish];
-          return;
-      }
-      // Read-only shadow copy: the source read-only check + change detection use a
-      // BARE lstat (silent) — never the prompting -attributesOfItemAtPath:. For a
-      // read-only source, open the persisted temp copy when it exists and the
-      // bare-lstat (mtime,size) matches the persisted copy stat; otherwise skip
-      // prerender so loadSelectedTab (re)creates the copy on the main thread (the
-      // single prompt site). The prerender identity (openedPath) is the copy, and
-      // the attributes are the bare-lstat source attributes — exactly what
-      // loadSelectedTab passes for adoption. Writable sources keep -attributesOf.
-      NSString* openedPath = path;
-      NSDictionary* attributes = nil;
-      if ([self sourcePathIsReadOnly:path]) {
-          attributes = [self readOnlySourceAttributesForPath:path];
-          BOOL canUseCopy = attributes && persistedWorkingPath.length &&
-                            [NSFileManager.defaultManager fileExistsAtPath:persistedWorkingPath] &&
-                            persistedCopyModifiedAt > 0.0 &&
-                            persistedCopyFileSize == spdf_file_size_from_attributes(attributes);
-          if (canUseCopy) {
-              NSDate* sourceModified = spdf_file_modification_date_from_attributes(attributes);
-              NSDate* persistedModified = [NSDate dateWithTimeIntervalSince1970:persistedCopyModifiedAt];
-              canUseCopy = sourceModified && [persistedModified isEqualToDate:sourceModified];
-          }
-          if (!canUseCopy) {
-              [result.ownership workerDidFinish];
-              return;
-          }
-          openedPath = persistedWorkingPath;
-      } else {
-          attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
-          if (!attributes) {
-              [result.ownership workerDidFinish];
-              return;
-          }
-      }
-      if (![result.ownership workerMayBeginOpen]) {
-          [result.ownership workerDidFinish];
-          return;
-      }
-      double openStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-      char err[1024];
-      spdf_document* doc = [self openSpdfDocumentAtPath:openedPath
-                                             sourcePath:path
-                                                 status:NULL
-                                                  error:err
-                                            errorLength:sizeof(err)];
-      if (openStart > 0.0) {
-          spdf_launch_profile_log(@"prerender spdf_open %@ %.1fms [bg]", path.lastPathComponent,
-                                  spdf_zoom_profile_now_ms() - openStart);
-      }
-      SPDFRenderedPage* rendered = nil;
-      if (doc && predictedZoom > 0.0 && [result.ownership workerMayBeginRender]) {
-          NSInteger pageCount = spdf_page_count(doc);
-          pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
-          CGFloat displayScale = spdf_launch_prerender_display_scale();
-          if (displayScale > 0.0) {
-              double renderStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-              rendered = [self renderedPageAtIndex:pageIndex
-                                          document:doc
-                                              zoom:predictedZoom
-                                      displayScale:displayScale
-                                             error:err
-                                       errorLength:sizeof(err)];
-              if (renderStart > 0.0) {
-                  spdf_launch_profile_log(@"prerender page=%ld zoom=%.2f %.1fms [bg]", (long)pageIndex, predictedZoom,
-                                          spdf_zoom_profile_now_ms() - renderStart);
-              }
-          }
-      }
-      @synchronized(result) {
-          if (result.ownership.abandoned) {
-              if (doc) spdf_close(doc);
-          } else {
-              result.doc = doc;
-              result.page = rendered;
-              // Identity is the path actually opened (temp copy for a read-only
-              // source) so loadSelectedTab's workingPath-keyed adoption matches.
-              // The stat is the source stat: full attributes for writable tabs,
-              // the bare-lstat source attributes for read-only tabs — exactly what
-              // loadSelectedTab passes for adoption.
-              result.path = spdf_mac_normalized_launch_path(openedPath);
-              result.fileSize = spdf_file_size_from_attributes(attributes);
-              result.modificationDate = spdf_file_modification_date_from_attributes(attributes);
-          }
-      }
-      [result.ownership workerDidFinish];
-    });
-}
-
-// Called once from loadSelectedTab. Claims or cancels the speculative open,
-// returns its document on an exact identity match, and leaves the optional page
-// for renderDocumentAndScrollToPage to validate independently.
-- (spdf_document*)takeLaunchPrerenderedDocumentForPath:(NSString*)path attributes:(NSDictionary*)attributes {
-    SPDFLaunchPrerenderResult* result = gSPDFLaunchPrerender;
-    if (!result) return NULL;
-    SPDFMacLaunchPrerenderForegroundAction action = [result.ownership claimForForeground];
-    if (action == SPDFMacLaunchPrerenderForegroundActionUnavailable) return NULL;
-    if (action == SPDFMacLaunchPrerenderForegroundActionOpenInForeground) {
-        gSPDFLaunchPrerender = nil;
-        spdf_launch_profile_log(@"launch prerender yielded immediately; foreground owns open");
-        return NULL;
-    }
-    if (action == SPDFMacLaunchPrerenderForegroundActionWaitForOwnedResult) {
-        spdf_launch_profile_log(@"launch prerender open already running; foreground adopts its result");
-        dispatch_group_wait(result.group, DISPATCH_TIME_FOREVER);
-    }
-    gSPDFLaunchPrerender = nil;
-    [result.ownership markConsumed];
-    NSDate* modificationDate = spdf_file_modification_date_from_attributes(attributes);
-    BOOL match = result.doc &&
-                 spdf_mac_launch_file_identity_matches(result.path, result.fileSize, result.modificationDate, path,
-                                                       spdf_file_size_from_attributes(attributes), modificationDate);
-    if (!match) {
-        if (result.doc) spdf_close(result.doc); // worker is done; single-owner again
-        spdf_launch_profile_log(@"launch prerender discarded (mismatch)");
-        return NULL;
-    }
-    _launchPrerenderedFirstPage = result.page;
-    return result.doc;
-}
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
     (void)notification;
@@ -1030,7 +755,8 @@ static void spdf_discard_launch_prerender(void) {
         SPDFScopedLaunchPhaseLog launchPhase("makeKeyAndOrderFront");
         [_window makeKeyAndOrderFront:nil];
     }
-    if (self.restoreWindowID.length == 0) [NSApp activateIgnoringOtherApps:YES];
+    if (self.restoreWindowID.length == 0 && !spdf_launch_activation_suppressed())
+        [NSApp activateIgnoringOtherApps:YES];
     // Post-first-paint launch tail. The async hop reaches the next runloop
     // pass, displayIfNeeded forces the (already fully laid out) first frame
     // onto screen if it has not drawn yet, and only then does the timer for
@@ -1138,6 +864,7 @@ static void spdf_discard_launch_prerender(void) {
     // Whatever launch path ran above, the prerender had its one adoption
     // chance; release a leftover (e.g. empty session, missing file) off-main.
     spdf_discard_launch_prerender();
+    [self releaseLaunchPrerenderedMetadata];
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
@@ -1220,6 +947,7 @@ static void spdf_discard_launch_prerender(void) {
     if (!_uiReady) {
         if (!_pendingOpenPath.length) _pendingOpenPath = [filename copy];
         if (filename.length && ![_pendingOpenPaths containsObject:filename]) [_pendingOpenPaths addObject:filename];
+        [self retargetLaunchPrerenderToOpenedPath:_pendingOpenPath];
         return YES;
     }
     if ([self canOpenDocumentAtPath:filename showError:YES]) [self openPath:filename];
@@ -1229,10 +957,16 @@ static void spdf_discard_launch_prerender(void) {
 
 - (void)application:(NSApplication*)application openFiles:(NSArray<NSString*>*)filenames {
     (void)application;
+    spdf_launch_profile_log(@"application:openFiles: uiReady=%d n=%lu", (int)_uiReady, (unsigned long)filenames.count);
     if (filenames.count > 0) {
         if (!_uiReady) {
             _pendingOpenPath = [filenames.firstObject copy];
             [_pendingOpenPaths addObjectsFromArray:filenames];
+            // This is the launch's real target — the prerender was started from
+            // main() before the Apple Event arrived and is aimed at the wrong
+            // document until now. -performStartupDocumentWork opens
+            // _pendingOpenPath first, so that is the one to prewarm.
+            [self retargetLaunchPrerenderToOpenedPath:_pendingOpenPath];
         } else {
             NSArray<NSString*>* pathsToOpen = [self openableDocumentPathsFromPaths:filenames showErrors:YES];
             [self openPaths:pathsToOpen];
@@ -1339,16 +1073,7 @@ static void spdf_discard_launch_prerender(void) {
 }
 
 - (NSString*)supportDirectory {
-    static NSString* dir = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-      NSURL* base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
-                                                         inDomains:NSUserDomainMask]
-                        .firstObject;
-      dir = [[base.path stringByAppendingPathComponent:@"ShenzhenPDF"] copy];
-    });
-    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    return dir;
+    return spdf_mac_support_directory();
 }
 
 - (NSString*)pathForStateFile:(NSString*)name {
@@ -1359,7 +1084,9 @@ static void spdf_discard_launch_prerender(void) {
 // using NSJSONSerialization object graphs, converting at this file boundary.
 // A YAML file that fails to parse behaves exactly like the old corrupt-JSON
 // path: the file is ignored and defaults apply.
-static id spdf_state_object_from_yaml_data(NSData* data) {
+// Non-static: the launch prerender worker (SPDFMacLaunchPrerender.mm) peeks at
+// session.yaml through it; declared in SPDFMacLaunchPrerenderPrivate.h.
+id spdf_state_object_from_yaml_data(NSData* data) {
     if (!data) return nil;
     NSMutableData* terminated = [data mutableCopy];
     [terminated appendBytes:"" length:1];
@@ -7170,6 +6897,23 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // is true exactly while the launch document is loading, which is the case we
     // want to preload for (covers both restored open docs and a new document).
     BOOL preloadForFirstFrame = (_startupDocumentWorkInProgress || !_window.visible) && _sidebarPreferredVisible;
+    // The launch prerender loaded these off-main while the window was being
+    // built; adopt them rather than repeating the work on the main thread. The
+    // document check keeps a multi-file launch from handing one file's outline
+    // to another file's tab.
+    if (_launchPrerenderedMetadataDocument && _launchPrerenderedMetadataDocument == _doc) {
+        if (_launchPrerenderedOutlineLoaded && !tab.cachedOutlineLoaded) {
+            [tab replaceCachedOutline:_launchPrerenderedOutline loaded:YES];
+            memset(&_launchPrerenderedOutline, 0, sizeof(_launchPrerenderedOutline));
+            _launchPrerenderedOutlineLoaded = NO;
+        }
+        if (_launchPrerenderedCommentsLoaded && !tab.cachedCommentsLoaded) {
+            [tab replaceCachedComments:_launchPrerenderedComments loaded:YES];
+            memset(&_launchPrerenderedComments, 0, sizeof(_launchPrerenderedComments));
+            _launchPrerenderedCommentsLoaded = NO;
+        }
+        [self releaseLaunchPrerenderedMetadata];
+    }
     if (preloadForFirstFrame && !tab.cachedOutlineLoaded) {
         spdf_outline outline;
         memset(&outline, 0, sizeof(outline));
@@ -14929,8 +14673,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 }
 
 - (NSString*)customTessdataParentPath {
-    return [[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/ShenzhenPDF"]
-        stringByAppendingPathComponent:@"tesseract"];
+    return [[self supportDirectory] stringByAppendingPathComponent:@"tesseract"];
 }
 
 - (BOOL)customTessdataHasOCRLanguage:(NSString*)language {
@@ -16810,7 +16553,11 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 int main(int argc, const char* argv[]) {
     @autoreleasepool {
-        spdf_launch_profile_log(@"main enter");
+        // Anchor the whole timeline on the kernel spawn time, so every later
+        // line's absolute "@" stamp can be read as time-since-spawn without the
+        // harness having to record the spawn itself.
+        spdf_launch_profile_log(@"main enter (spawn @%.1f, +%.1fms)", spdf_process_spawn_time_ms(),
+                                spdf_zoom_profile_now_ms() - spdf_process_spawn_time_ms());
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--version") == 0) {
                 NSDictionary* info = NSBundle.mainBundle.infoDictionary;
