@@ -1,13 +1,15 @@
-/* The canvas's private state, shared by exactly three translation units.
+/* The canvas's private state, shared by exactly four translation units.
  *
  * It exists because spdf_win_canvas.cpp reached the repo's 500-line cap and the
  * rule is extraction over cap bumps (tools/file-size-limits.md). Every seam is
  * the honest one: spdf_win_canvas.cpp is geometry and composition -- what is
  * where, at what zoom -- spdf_win_canvas_prefetch.cpp is everything to do with
- * T5's worker pool, and spdf_win_canvas_selection.cpp is the pointer gesture
- * that turns those two into a text selection and a followed link. Nothing
- * outside those three files may include this header; spdf_win_canvas.h is the
- * public surface.
+ * T5's worker pool, spdf_win_canvas_selection.cpp is the pointer gesture that
+ * turns those two into a text selection and a followed link, and
+ * spdf_win_find_canvas.cpp is the navigation surface the search & map track
+ * drives -- scroll to a match, read a page's slot, re-measure a rotated page.
+ * Nothing outside those four files may include this header; spdf_win_canvas.h
+ * is the public surface.
  */
 #ifndef SPDF_WIN_CANVAS_INTERNAL_H
 #define SPDF_WIN_CANVAS_INTERNAL_H
@@ -30,6 +32,10 @@
 
 struct spdf_win_canvas {
     spdf_document* doc; /* borrowed */
+    /* The document's UTF-8 path, copied; NULL when the caller gave none. The
+     * render workers get it at construction; the links cache gets it lazily,
+     * so its text-URL thread can open a handle of its own. */
+    char* path;
     unsigned render_flags;
     int page_count;
 
@@ -108,6 +114,13 @@ struct spdf_win_canvas {
 
 /* spdf_win_canvas_prefetch.cpp */
 void spdf_win_canvas_prefetch(spdf_win_canvas* canvas, int page);
+
+/* spdf_win_canvas.cpp, for the other three units. Measures pages up to and
+ * including `through`, returning non-zero when the layout went stale; and the
+ * relayout that re-derives the fit zoom and rebuilds every slot. Neither is
+ * public: a caller outside the canvas cannot know when a measure is due. */
+int spdf_win_canvas_ensure_measured(spdf_win_canvas* canvas, int through);
+void spdf_win_canvas_relayout(spdf_win_canvas* canvas);
 
 /* spdf_win_canvas_selection.cpp. Called from spdf_win_canvas_destroy() while
  * the canvas is still whole, for the same reason the render service is torn

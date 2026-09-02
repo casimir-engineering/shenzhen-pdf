@@ -23,6 +23,11 @@
 /* spdf-test-needs: mupdf */
 #include "spdf_win_links.h"
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h> /* Sleep, for polling the text-URL worker */
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -245,6 +250,64 @@ static void test_cache(spdf_document* doc) {
     spdf_win_links_free(cache);
 }
 
+/* THE TEXT-URL WORKER. With a source path the cache runs the structured-text
+ * pass on its own thread and merges the full link set on a later hover; without
+ * one it never does. The fixture's only link is an annotation, so "full set"
+ * and "annotation set" have the same count here -- what is being checked is
+ * that the thread runs, delivers, is adopted on the UI side, survives an
+ * invalidation and is joined by free. The hand over a printed URL is the same
+ * merge with a longer list. */
+static void test_text_url_worker(spdf_document* doc, const char* path) {
+    spdf_win_links* cache = spdf_win_links_new();
+    spdf_rect rects[16];
+    char err[256];
+    int full, spins, x_ok;
+    float x, y;
+
+    CHECK(cache != NULL);
+    if (!cache) return;
+    full = spdf_page_link_rects(doc, 0, 1, rects, 16, err, sizeof(err));
+    CHECK(full >= 1);
+    center_of(rects[0], &x, &y);
+
+    /* No source: annotation links only, and the worker never reports. */
+    CHECK_EQI(spdf_win_links_ensure_page(cache, doc, 0, 0), 1);
+    CHECK_EQI(spdf_win_links_text_urls_ready(cache), 0);
+    spdf_win_links_free(cache);
+
+    cache = spdf_win_links_new();
+    CHECK(cache != NULL);
+    if (!cache) return;
+    spdf_win_links_set_source(cache, path);
+    CHECK_EQI(spdf_win_links_ensure_page(cache, doc, 0, 0), 1);
+    /* Poll the way hover does; 10 s is a hang detector, not a timing claim. */
+    for (spins = 0; spins < 2000 && !spdf_win_links_text_urls_ready(cache); ++spins) {
+        Sleep(5);
+        spdf_win_links_ensure_page(cache, doc, 0, 0);
+    }
+    printf("      text-URL worker delivered after %d polls\n", spins);
+    CHECK_EQI(spdf_win_links_text_urls_ready(cache), 1);
+    /* The merged set still answers the annotation, and a page switch drops it. */
+    x_ok = spdf_win_links_hit(cache, doc, 0, x, y);
+    CHECK_EQI(x_ok, 1);
+    CHECK_EQI(spdf_win_links_region_at(cache, doc, 0, 0, x, y), SPDF_WIN_CURSOR_REGION_LINK);
+    CHECK_EQI(spdf_win_links_hit(cache, doc, 1, x, y), 0);
+    CHECK_EQI(spdf_win_links_text_urls_ready(cache), 0); /* page 1's answer has not landed yet */
+    /* Invalidate, then the same page again: a second delivery, not a stale one. */
+    spdf_win_links_invalidate(cache);
+    CHECK_EQI(spdf_win_links_text_urls_ready(cache), 0);
+    CHECK_EQI(spdf_win_links_hit(cache, doc, 0, x, y), 1);
+    for (spins = 0; spins < 2000 && !spdf_win_links_text_urls_ready(cache); ++spins) {
+        Sleep(5);
+        spdf_win_links_ensure_page(cache, doc, 0, 0);
+    }
+    CHECK_EQI(spdf_win_links_text_urls_ready(cache), 1);
+    CHECK_EQI(spdf_win_links_hit(cache, doc, 0, x, y), 1);
+    CHECK_EQI(spdf_win_links_text_urls_ready(NULL), 0);
+    spdf_win_links_set_source(NULL, path);
+    spdf_win_links_free(cache); /* joins the worker */
+}
+
 int main(int argc, char** argv) {
     char err[512];
     spdf_document* doc;
@@ -262,6 +325,7 @@ int main(int argc, char** argv) {
     }
     test_link_rects(doc);
     test_cache(doc);
+    test_text_url_worker(doc, argv[1]);
     spdf_close(doc);
 
     printf("link_test: %d checks, %d failures\n", g_checks, g_failures);
