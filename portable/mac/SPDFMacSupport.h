@@ -32,3 +32,16 @@ void spdf_launch_profile_log(NSString* format, ...) NS_FORMAT_FUNCTION(1, 2);
 // CFAbsoluteTime (ms) of the kernel process spawn (sysctl p_starttime);
 // predates dyld/code-signature work, so cold pre-main segments are visible.
 double spdf_process_spawn_time_ms(void);
+
+// The per-user state directory holding settings.yaml / session.yaml / etc.
+// Normally ~/Library/Application Support/ShenzhenPDF; SPDF_STATE_DIR points it
+// somewhere else so a measurement or test launch reads and rewrites a scratch
+// copy instead of clobbering the real session. The directory is created on
+// first call. Every state reader/writer in the app must go through this.
+NSString* spdf_mac_support_directory(void);
+
+// SPDF_NO_ACTIVATE=1: skip the launch-time -activateIgnoringOtherApps: so a
+// profiling launch (open -g -j) genuinely stays in the background instead of
+// stealing focus from whatever the user is doing. Affects launch only; every
+// user-initiated window raise still activates normally.
+BOOL spdf_launch_activation_suppressed(void);

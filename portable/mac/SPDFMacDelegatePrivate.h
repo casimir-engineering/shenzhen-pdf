@@ -363,6 +363,12 @@
     NSInteger _pendingFindPreferredPage;
     NSInteger _pendingFindPreferredMatchIndex;
     SPDFRenderedPage* _launchPrerenderedFirstPage;
+    spdf_outline _launchPrerenderedOutline;
+    BOOL _launchPrerenderedOutlineLoaded;
+    spdf_comments _launchPrerenderedComments;
+    BOOL _launchPrerenderedCommentsLoaded;
+    spdf_document* _launchPrerenderedMetadataDocument;
+    BOOL _launchPrerenderSidebarExpected;
     BOOL _suppressToolbarOverflowUpdates;
     // Lazily created watcher for the active (frontmost) tab's file; nil until
     // the first document becomes active. Re-pointed on every tab activation,
@@ -374,12 +380,6 @@
 @property(nonatomic, copy) NSString* initialPath;
 @property(nonatomic, copy) NSString* restoreWindowID;
 @property(nonatomic) BOOL detachedTabLaunch;
-/* Launch prerender (prototype): kicked off from main() before AppKit init;
-   opens the restored active tab's document and renders its preferred page on
-   a background thread, overlapping NSApplication init and window build.
-   Adopted later only on exact (path, attributes, page, zoom, scale) match;
-   any mismatch falls back to the existing synchronous path. */
-- (void)startLaunchPrerender;
 /* One-time flock-guarded JSON -> YAML state-file migration; must run before
    anything reads state, including startLaunchPrerender's session peek. */
 - (void)migrateStateFilesIfNeeded;

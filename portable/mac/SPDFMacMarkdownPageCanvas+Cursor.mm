@@ -41,9 +41,9 @@
 
 - (SPDFCursorRegionKind)cursorRegionAtPoint:(NSPoint)point {
     if (self.presentationMode || !self.pageCount) return SPDFCursorRegionNone;
-    // The code-language control is the strongest affordance (its hit rect
-    // already carries the control's own slop).
-    if ([self codeLanguageBlockAtPoint:point]) return SPDFCursorRegionLink;
+    // The code-box controls are the strongest affordance (their hit rects
+    // already carry the control's own slop).
+    if ([self codeLanguageBlockAtPoint:point] || [self copyCodeBlockAtPoint:point]) return SPDFCursorRegionLink;
     NSInteger pageIndex = [self pageIndexForVisibleRect:NSMakeRect(point.x, point.y, 1.0, 1.0)];
     if (pageIndex < 0 || pageIndex >= (NSInteger)self.pageCount) return SPDFCursorRegionNone;
     NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];

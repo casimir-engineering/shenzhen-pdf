@@ -38,6 +38,8 @@
         _nodes = [NSMutableArray array];
         _edges = [NSMutableArray array];
         _byIdentifier = [NSMutableDictionary dictionary];
+        _classStyles = [NSMutableDictionary dictionary];
+        _classNamesByIdentifier = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -56,6 +58,22 @@
     return node;
 }
 - (SPDFMarkdownDiagramNode*)existingNodeForIdentifier:(NSString*)identifier { return _byIdentifier[identifier]; }
+- (SPDFMarkdownDiagramNodeStyle*)styleForNode:(SPDFMarkdownDiagramNode*)node {
+    // `classDef default ...` is mermaid's catch-all; a node with its own class
+    // never falls back to it.
+    SPDFMarkdownDiagramNodeStyle* own = node.className.length ? _classStyles[node.className] : nil;
+    return own ?: _classStyles[@"default"];
+}
+- (void)applyDeferredClassNames {
+    if (!_classNamesByIdentifier.count) return;
+    for (SPDFMarkdownDiagramNode* node in _nodes) {
+        // A `:::name` written on the node itself wins over a later `class`
+        // statement, so the closer declaration is the one that shows.
+        if (node.className.length) continue;
+        NSString* name = _classNamesByIdentifier[node.identifier];
+        if (name.length) node.className = name;
+    }
+}
 @end
 
 @implementation SPDFMarkdownDiagramSequenceEvent
@@ -179,12 +197,47 @@ NSArray<NSString*>* SPDFMarkdownDiagramSignificantLines(NSString* source) {
     return lines;
 }
 
-// Normalizes a node/edge/message label: strips wrapping quotes and backticks,
-// converts <br> variants to spaces, and collapses whitespace runs.
+// The five entities mermaid labels actually carry. `&amp;` is decoded LAST so
+// `&amp;lt;` comes out as the text `&lt;` rather than as a `<`.
+static NSString* SPDFDiagramDecodeEntities(NSString* text) {
+    if ([text rangeOfString:@"&"].location == NSNotFound) return text;
+    static NSArray<NSArray<NSString*>*>* replacements;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+      replacements = @[
+          @[ @"&lt;", @"<" ], @[ @"&gt;", @">" ], @[ @"&quot;", @"\"" ], @[ @"&#39;", @"'" ],
+          @[ @"&apos;", @"'" ], @[ @"&nbsp;", @" " ], @[ @"&amp;", @"&" ]
+      ];
+    });
+    NSString* decoded = text;
+    for (NSArray<NSString*>* replacement in replacements)
+        decoded = [decoded stringByReplacingOccurrencesOfString:replacement[0]
+                                                     withString:replacement[1]];
+    return decoded;
+}
+
+// Collapses every whitespace run in one line of a label to a single space.
+static NSString* SPDFDiagramCollapseSpaces(NSString* text) {
+    NSMutableArray* kept = [NSMutableArray array];
+    for (NSString* part in [text componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet])
+        if (part.length) [kept addObject:part];
+    return [kept componentsJoinedByString:@" "];
+}
+
+// Normalizes a node/edge/message label: turns the <br> variants into REAL line
+// breaks, strips wrapping quotes and backticks, decodes HTML entities, and
+// collapses whitespace runs inside each line. A label is therefore a
+// newline-separated list of lines, and the wrap/measure pair below is the only
+// place that has to know it.
+//
+// Order matters twice: <br> becomes a newline before the quote strip (the
+// quotes are still at the ends), and entities are decoded AFTER it, so a
+// `&quot;`-quoted label keeps its quotes as text instead of losing them to the
+// syntactic-quote strip.
 NSString* SPDFMarkdownDiagramCleanLabel(NSString* label) {
     NSString* text = SPDFMarkdownDiagramTrim(label);
     for (NSString* br in @[ @"<br/>", @"<br />", @"<br>" ]) {
-        text = [text stringByReplacingOccurrencesOfString:br withString:@" "
+        text = [text stringByReplacingOccurrencesOfString:br withString:@"\n"
                                                   options:NSCaseInsensitiveSearch
                                                     range:NSMakeRange(0, text.length)];
     }
@@ -194,25 +247,30 @@ NSString* SPDFMarkdownDiagramCleanLabel(NSString* label) {
         if ((first == '"' && last == '"') || (first == '`' && last == '`'))
             text = [text substringWithRange:NSMakeRange(1, text.length - 2)];
     }
-    NSArray* parts = [text componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
-    NSMutableArray* kept = [NSMutableArray array];
-    for (NSString* part in parts)
-        if (part.length) [kept addObject:part];
-    return [kept componentsJoinedByString:@" "];
+    text = SPDFDiagramDecodeEntities(text);
+    if ([text rangeOfString:@"\n"].location == NSNotFound) return SPDFDiagramCollapseSpaces(text);
+    NSMutableArray<NSString*>* lines = [NSMutableArray array];
+    for (NSString* line in [text componentsSeparatedByString:@"\n"]) {
+        NSString* collapsed = SPDFDiagramCollapseSpaces(line);
+        if (collapsed.length) [lines addObject:collapsed];
+    }
+    return [lines componentsJoinedByString:@"\n"];
 }
 
 // A diagram label is always ONE line of canonical text at an explicit
 // position, so wrapping is done here, up front, by the same CoreText
 // typesetter the drawing pass uses — never by an implicit drawWithRect: pass.
-NSArray<NSString*>* SPDFMarkdownDiagramWrapText(NSString* text, NSFont* font, CGFloat maximumWidth) {
-    if (!text.length) return @[];
-    if (maximumWidth <= 0) return @[ text ];
+// One <br>-free segment, appended as one line per soft wrap.
+static void SPDFDiagramAppendWrappedSegment(NSMutableArray<NSString*>* lines, NSString* text, NSFont* font,
+                                            CGFloat maximumWidth) {
     NSAttributedString* attributed =
         [[NSAttributedString alloc] initWithString:text attributes:@{NSFontAttributeName: font}];
     CTTypesetterRef typesetter =
         CTTypesetterCreateWithAttributedString((__bridge CFAttributedStringRef)attributed);
-    if (!typesetter) return @[ text ];
-    NSMutableArray<NSString*>* lines = [NSMutableArray array];
+    if (!typesetter) {
+        if (text.length) [lines addObject:text];
+        return;
+    }
     CFIndex start = 0;
     CFIndex length = (CFIndex)text.length;
     while (start < length) {
@@ -224,6 +282,16 @@ NSArray<NSString*>* SPDFMarkdownDiagramWrapText(NSString* text, NSFont* font, CG
         start += count;
     }
     CFRelease(typesetter);
+}
+
+NSArray<NSString*>* SPDFMarkdownDiagramWrapText(NSString* text, NSFont* font, CGFloat maximumWidth) {
+    if (!text.length) return @[];
+    if (maximumWidth <= 0) return [text componentsSeparatedByString:@"\n"];
+    NSMutableArray<NSString*>* lines = [NSMutableArray array];
+    // A `<br/>` in the source is a HARD break: each segment wraps on its own,
+    // so an authored break is never undone by the soft wrapper.
+    for (NSString* segment in [text componentsSeparatedByString:@"\n"])
+        SPDFDiagramAppendWrappedSegment(lines, segment, font, maximumWidth);
     return lines.count ? lines : @[ text ];
 }
 

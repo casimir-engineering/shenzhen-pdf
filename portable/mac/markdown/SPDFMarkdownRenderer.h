@@ -33,6 +33,21 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 // themeVariant; set any custom color AFTER the variant. Copied like fontScale.
 @property(nonatomic) SPDFMarkdownThemeVariant themeVariant;
 @property(nonatomic) CGFloat contentInset;
+// The PRINTABLE BOX of the page this render is destined for, in points, taken
+// off the same SPDFMarkdownPageConfiguration the pagination plan is built with
+// (SPDFMacMarkdownPlanForRendition). It is what page-sized content is budgeted
+// against: diagram figures, image display sizes, the pending remote
+// placeholder box, image-row fitting, and the table renderer's provisional
+// column distribution all use this box instead of the constant image budgets,
+// so a figure uses the whole column and turning the paper (portrait A4's
+// 473 pt against landscape's 719 pt) really does re-fit tables, images and
+// diagrams rather than leaving them at some constant. NSZeroSize (the default)
+// means "no page known" and falls back to the maximumImageWidth /
+// maximumImageHeight constants below, which is what every page-less caller —
+// and every render before this existed — gets.
+@property(nonatomic) NSSize pageContentSize;
+// The page-less display budgets: the width/height caps used wherever
+// pageContentSize is NSZeroSize.
 @property(nonatomic) CGFloat maximumImageWidth;
 @property(nonatomic) CGFloat maximumImageHeight;
 @property(nonatomic) NSUInteger maximumResourceBytes;
@@ -47,8 +62,9 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 // placeholder, and non-https remote schemes are always rejected.
 @property(nonatomic, copy, nullable) NSDictionary<NSString*, NSData*>* remoteImageData;
 @property(nonatomic, copy, nullable) NSSet<NSString*>* failedRemoteImageTargets;
-// Height of the pending remote-image placeholder box (width is
-// maximumImageWidth). Unscaled by fontScale, like the image budgets.
+// Height of the pending remote-image placeholder box (width is the printable
+// page width when the render carries one, else maximumImageWidth). Unscaled
+// by fontScale, like the image budgets.
 @property(nonatomic) CGFloat remoteImagePlaceholderHeight;
 // Shared, thread-safe render cache for native diagram fences (mermaid /
 // sequence / flow — see SPDFMarkdownDiagram.h). One cache lives per document

@@ -24,6 +24,9 @@ FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* l
 @class SPDFMarkdownDiagramBlockInfo;
 @class SPDFMarkdownTableRowInfo;
 
+// SPDFMarkdownPageOrientation is declared beside SPDFMarkdownThemeVariant in
+// SPDFMarkdownDecorations.h, so the session header can name it without pulling
+// in the whole paginator.
 @interface SPDFMarkdownPageConfiguration : NSObject <NSCopying>
 @property(nonatomic) NSSize paperSize;
 @property(nonatomic) NSRect printableRect;
@@ -44,7 +47,15 @@ FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* l
 // vertical margins are symmetric, so every top-anchored coordinate must use
 // this instead of NSMinY(printableRect).
 @property(nonatomic, readonly) CGFloat topContentInset;
+// DERIVED from paperSize (landscape whenever the paper is wider than tall), so
+// a configuration can never disagree with the paper it actually carries and
+// -copyWithZone: has nothing extra to copy.
+@property(nonatomic, readonly) SPDFMarkdownPageOrientation orientation;
 + (instancetype)A4PortraitConfiguration;
++ (instancetype)A4LandscapeConfiguration;
+// A4 in the given orientation. Both A4 factories above route through this, so
+// the margins are the same four numbers whichever way the paper is turned.
++ (instancetype)A4ConfigurationForOrientation:(SPDFMarkdownPageOrientation)orientation;
 + (instancetype)configurationForPaperSize:(NSSize)paperSize printableRect:(NSRect)printableRect;
 @end
 

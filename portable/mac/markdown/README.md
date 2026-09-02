@@ -116,8 +116,9 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   `SPDFMarkdownRenderOptions.remoteImageData`, a map of raw bytes keyed by
   `SPDFMarkdownRemoteImageKeyForTarget` output, synchronously; it never opens
   a connection. A remote target with no bytes yet renders as a fixed-size
-  pending placeholder box (maximumImageWidth x remoteImagePlaceholderHeight,
-  theme-gray with the alt text) that reserves layout space; targets in
+  pending placeholder box (the render's image width budget x
+  remoteImagePlaceholderHeight, theme-gray with the alt text) that reserves
+  layout space; targets in
   `failedRemoteImageTargets`, undecodable bytes, and over-budget bytes render
   the stable `[Image: alt]` text placeholder.
 - The session layer (`SPDFMacMarkdownSession+RemoteImages.mm` +
@@ -138,6 +139,16 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   attempt (macOS rasterizes SVG data natively on modern systems) under the
   same pixel budget; where that fails too, the text placeholder stands. No
   SVG library is vendored.
+- Display SIZE is budgeted by the destination page. When the render carries a
+  page (`SPDFMarkdownRenderOptions.pageContentSize` — see the Diagrams section
+  for the page-box policy), an image's display size caps at that page's
+  printable box (its width, and its height net of the figure air), the pending
+  placeholder box and image-row fitting use the same printable width, and the
+  table renderer's provisional column distribution uses the very formula the
+  paginator rebinds with. Turning the paper therefore re-fits images and
+  tables exactly like diagrams. A page-less render (`NSZeroSize`, the default)
+  keeps the constant `maximumImageWidth` x `maximumImageHeight` caps (440 x
+  320 by default) everywhere, unchanged.
 
 Tables retain column count and per-cell left/center/right alignment in the
 model, and lay out content-aware columns (GFM's `| --- |` separator line is
@@ -155,9 +166,10 @@ tall as its tallest cell. Each row records an `SPDFMarkdownTableRowInfo`
 (table identity, header/body role, body-row ordinal, column boundary x
 positions, per-cell canonical ranges and alignments, natural widths, row
 padding) on its rendered block; the paginator re-distributes the natural
-widths at the real printable width, rebinds the boundaries on the row's
-pagination item, and decoration planning draws GitHub-style table chrome from
-that measured geometry: a
+widths at the real printable width (which the render-time provisional
+distribution already equals when the render carries a page), rebinds the
+boundaries on the row's pagination item, and decoration planning draws
+GitHub-style table chrome from that measured geometry: a
 `tableHeaderFillColor` (#F6F8FA) band behind the header row, a subtle
 `tableStripeFillColor` (#FAFBFC) on alternating body rows (parity is
 per-table, so a split table keeps its striping across the page break), and a
@@ -268,7 +280,7 @@ one seam, `SPDFMarkdownDiagram.h`:
 
 ```objc
 SPDFMarkdownDiagramIsDiagramLanguage(fenceIdentifier);  // O(1) fence triage
-SPDFMarkdownDiagramRender(language, source, width, fontScale, cache);
+SPDFMarkdownDiagramRender(language, source, pageContentBox, fontScale, cache);
 ```
 
 **The seam returns GEOMETRY, not pixels.** An `SPDFMarkdownDiagramLayout` is a
@@ -281,9 +293,24 @@ reading themes; `SPDFMarkdownDiagramRoleColor(role, variant)` resolves a role
 at draw time. Layouts are theme-independent, which is why the cache key has no
 variant in it.
 
+The one exception is AUTHOR color from a mermaid `classDef`, which is not a
+theme role. It rides on the shape/label as the author's own (light) color, and
+the two accessors `SPDFMarkdownDiagramShapeFillColor` /
+`...StrokeColor` / `...LabelColor` resolve it per variant, so a layout stays
+theme-independent and the cache key still needs no variant. **Policy:**
+`classDef` colors are written for mermaid's light default, so the light theme
+paints them verbatim and the dark theme puts them through the same
+`spdf_recolor` LUMA_REMAP (paper `#1E1E1E` / ink `#DCDDDE`) already applied to
+every PDF page and to every image a Markdown document embeds. Chroma survives,
+so the author's hues stay distinguishable, and the luma map is strictly
+decreasing, so a legible fill/text pair cannot come out dark-on-dark. See
+`SPDFMarkdownDiagramAuthorColor` in `SPDFMarkdownDiagram.h` and
+`SPDFMarkdownDiagramStyle.mm`.
+
 Implemented types: mermaid `graph`/`flowchart` (TD/TB/BT/LR/RL, rect, round,
 stadium, circle, diamond and subroutine shapes, labelled solid/dashed/thick
-edges), `sequenceDiagram` (participants and aliases, arrow variants, notes,
+edges, bidirectional `<-->`/`<--`, per-node styling via `classDef` plus
+`:::name` or `class a,b name`), `sequenceDiagram` (participants and aliases, arrow variants, notes,
 activations, `alt`/`opt`/`loop`/`par`/`critical`/`rect` frames), `pie`,
 `stateDiagram`/`stateDiagram-v2`, `classDiagram` (compartments and the UML
 relation set) and `gantt` (`YYYY-MM-DD` dates, durations, `after` chains,
@@ -293,10 +320,19 @@ relation set) and `gantt` (`YYYY-MM-DD` dates, durations, `after` chains,
 the compartments it has members for: a class with neither attributes nor
 methods is a single named box, never two empty strips.
 
+Labels carry real line breaks and entities: `<br>`, `<br/>` and `<br />` are
+HARD breaks (each line wraps and centers on its own, and node sizing counts
+them), and `&lt; &gt; &amp; &quot; &#39; &apos; &nbsp;` decode. A `;` ends a
+statement only at top level, never inside a label.
+
 Simplifications, all deliberate and all lossless on the page: flowchart
-`subgraph` grouping, `classDef`/`style`/`linkStyle`/`click` statements,
-composite-state braces, state notes, class cardinality strings and mermaid's
-`autonumber` are skipped, though their members still render.
+`subgraph` grouping, `style`/`linkStyle`/`click` statements, composite-state
+braces, state notes, class cardinality strings and mermaid's `autonumber` are
+skipped, though their members still render. A `classDef` key this renderer
+cannot express (`stroke-width`, `stroke-dasharray`, `font-*`) and a color value
+it cannot read (a CSS name, `rgb()`, a gradient) are dropped rather than
+rejected: an unreadable style declaration costs a node its colors, never the
+whole diagram.
 
 **Diagram labels are canonical text.** `SPDFMarkdownDiagramBlock.mm` appends
 every label into the attributed string as its own tab-separated run and records
@@ -312,9 +348,62 @@ spanning the whole band, then one positioned line per label whose `xOffset`
 centers the label's real typographic width inside its own node box and whose
 `rowLocalYOffset` is the label's resolved y. The band never splits across a
 page break, stays centered in the printable column, and an over-tall one takes
-the existing uniform band scale. A diagram wider than the column is fitted at
+the existing uniform band scale. A diagram bigger than its box is fitted at
 render time by ONE common factor applied to geometry AND label font sizes —
 never clipped.
+
+**A diagram is a FIGURE, sized by the page.** Its budget is
+`SPDFMarkdownRenderOptions.pageContentSize`: the printable BOX of the
+page the render is destined for, taken off the very
+`SPDFMarkdownPageConfiguration` that `SPDFMacMarkdownPlanForRendition` will
+paginate with (`SPDFMacMarkdownPageContentSize`). Screen, print, Save as PDF and
+Copy Page therefore agree by construction, and turning the paper genuinely
+re-fits the artwork — A4 portrait offers a figure 473 pt, landscape 719 pt.
+Both axes constrain, so an over-tall figure is fitted by height here rather than
+squeezed a second time by the band; a figure that needs the whole printable
+height ends up alone on its page as a consequence, not as a special case. A
+render with no page attached (`NSZeroSize`, the default) keeps the old
+width-only `maximumImageWidth` behaviour.
+
+**A figure the page would make illegible re-lays-out instead of only shrinking.**
+When the box fit would leave a flowchart's labels under
+`SPDFMarkdownDiagramLegibleLabelSize` (7 pt — where the system font stops being
+readable at 100% zoom), `SPDFMarkdownDiagramLayOutGraph` retries the layout down
+a fixed ladder of narrower label wraps (170 → 130 → 100 → 76 pt), trading width
+for height, and keeps whichever attempt the box fits best. Attempt zero is the
+ordinary wrap, so the outcome is never worse than a plain rescale; a wrap at or
+above the widest label, and a diagram that already clears the floor, skip the
+search entirely, so anything that fits comes out byte for byte as before. Ties
+keep the earlier candidate and the whole search shares the one 50 ms deadline,
+which makes the winner a pure function of `(source, box, fontScale)` — the cache
+key. An attempt that would walk off the 2048 pt axis budget is discarded rather
+than allowed to degrade a fence a looser wrap renders fine. The floor is a
+TRIGGER, not a promise: a drawing whose content simply cannot fit A4 still lands
+under it, and is then read by zooming (the artwork is vector) or by turning the
+paper.
+
+Because the ladder re-wraps labels, a figure's canonical label LINES depend on
+the paper — the same rule that already governs body text, which re-wraps to the
+new column when the paper turns. Both are covered by the rerender: turning the
+paper re-renders, re-paginates and re-runs the active search.
+
+**A node is sized by its SAFE INTERIOR, not by its bounding rect.** Those are
+the same thing only for a rectangle. A stadium's caps, a circle, a rhombus and a
+parallelogram's slant all take width back, and the curved ones take back MORE
+the taller the text block is, because they pinch inward toward its first and
+last lines — so sizing tuned on one- and two-line labels started overflowing as
+soon as the ladder above began producing four- and five-line ones.
+`SPDFDiagramInteriorHalfWidth` is the one model of where each outline actually
+runs; `SPDFDiagramBoxForBlock` inverts it per shape to pick the smallest box
+that clears the measured block, and the emitter evaluates it at the block's own
+extreme lines to pick the width it re-wraps the label at. That re-wrap can only
+ever SHED lines, and fewer lines only sit closer to the middle where every
+outline is wider, so the drawn text is inside the drawn shape by construction. A
+rectangle's interior is its frame, so rectangles come out byte for byte as
+before; cylinder `[(…)]` and hexagon `{{…}}` are drawn as stadiums and inherit
+the stadium solve. `SPDFMarkdownDiagramNodeTextTests` re-derives every outline
+independently and asserts containment at one through five lines, at two font
+scales, and on the power-tree fixture at four page boxes.
 
 **Shapes are page decorations.** The band contributes one
 `SPDFMarkdownPageDecorationTypeDiagram` decoration carrying the resolved

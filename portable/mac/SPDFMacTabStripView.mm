@@ -2,6 +2,7 @@
 
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabStripGeometry.h"
+#import "SPDFMacTabStripStyle.h"
 #import "SPDFMacWindowChrome.h"
 
 #include <math.h>
@@ -549,25 +550,20 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     BOOL selected = index == self.selectedIndex;
     SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
     BOOL missing = tab.missingFile;
-    NSColor* fill;
-    NSColor* stroke = nil;
-    if (missing) {
-        fill = [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.36 : 0.22];
-        stroke = [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.95 : 0.65];
-    } else if (selected) {
-        fill = [NSColor.controlAccentColor colorWithAlphaComponent:0.34];
-        stroke = [NSColor.controlAccentColor colorWithAlphaComponent:0.95];
-    } else {
-        fill = NSColor.controlBackgroundColor;
-    }
-    NSBezierPath* tabPath = [NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:7 yRadius:7];
-    [fill setFill];
-    [tabPath fill];
-    if (stroke) {
-        [stroke setStroke];
-        tabPath.lineWidth = selected ? 1.4 : 1.0;
-        [tabPath stroke];
-    }
+    // Fill, then outline every tab — see SPDFMacTabStripStyle.h for why an
+    // unselected tab was previously edgeless. The outline path is inset by half
+    // its width so its centreline lands on a device-pixel boundary.
+    SPDFTabStyle style = spdf_tab_style_for_state(selected, missing);
+    [spdf_tab_style_color(style.fillRole, style.fillAlpha) setFill];
+    CGFloat radius = kSPDFTabCornerRadius;
+    [[NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:radius yRadius:radius] fill];
+    CGFloat inset = spdf_tab_stroke_inset(style.strokeWidth);
+    NSBezierPath* outline = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(tabRect, inset, inset)
+                                                           xRadius:radius - inset
+                                                           yRadius:radius - inset];
+    [spdf_tab_style_color(style.strokeRole, style.strokeAlpha) setStroke];
+    outline.lineWidth = style.strokeWidth;
+    [outline stroke];
 
     NSString* title = [self titleForTabAtIndex:index];
     NSDictionary* titleAttrs = selected || missing ? attrs : dimAttrs;

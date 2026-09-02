@@ -115,10 +115,8 @@ NSUInteger SPDFMarkdownAppendDiagramDecoration(NSArray<SPDFMarkdownPageFragment*
 
 // --- Drawing -------------------------------------------------------------------
 
-static void SPDFDiagramSetColor(CGContextRef context, SPDFMarkdownDiagramRole role, CGFloat alpha,
-                                SPDFMarkdownThemeVariant variant, BOOL stroke) {
-    NSColor* color = [SPDFMarkdownDiagramRoleColor(role, variant)
-        colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+static void SPDFDiagramSetColor(CGContextRef context, NSColor* resolved, CGFloat alpha, BOOL stroke) {
+    NSColor* color = [resolved colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
     if (!color) color = NSColor.clearColor;
     CGFloat components[4] = {color.redComponent, color.greenComponent, color.blueComponent,
                              color.alphaComponent * MAX(0, MIN(1, alpha))};
@@ -181,17 +179,20 @@ void SPDFMarkdownDrawDiagramShapes(CGContextRef context, SPDFMarkdownDiagramLayo
     CGContextTranslateCTM(context, CGRectGetMinX(rect), CGRectGetMaxY(rect));
     CGContextScaleCTM(context, scale, -scale);
     for (SPDFMarkdownDiagramShape* shape in layout.shapes) {
-        BOOL fills = shape.fillRole != SPDFMarkdownDiagramRoleNone && shape.fillAlpha > 0;
-        BOOL strokes = shape.strokeRole != SPDFMarkdownDiagramRoleNone && shape.strokeAlpha > 0 &&
-                       shape.lineWidth > 0;
+        BOOL fills = (shape.fillRole != SPDFMarkdownDiagramRoleNone || shape.authorFillColor) &&
+                     shape.fillAlpha > 0;
+        BOOL strokes = (shape.strokeRole != SPDFMarkdownDiagramRoleNone || shape.authorStrokeColor) &&
+                       shape.strokeAlpha > 0 && shape.lineWidth > 0;
         if (!fills && !strokes) continue;
         if (fills) {
-            SPDFDiagramSetColor(context, shape.fillRole, shape.fillAlpha, variant, NO);
+            SPDFDiagramSetColor(context, SPDFMarkdownDiagramShapeFillColor(shape, variant), shape.fillAlpha,
+                                NO);
             SPDFDiagramAddShapePath(context, shape);
             CGContextFillPath(context);
         }
         if (strokes) {
-            SPDFDiagramSetColor(context, shape.strokeRole, shape.strokeAlpha, variant, YES);
+            SPDFDiagramSetColor(context, SPDFMarkdownDiagramShapeStrokeColor(shape, variant),
+                                shape.strokeAlpha, YES);
             CGContextSetLineWidth(context, shape.lineWidth);
             if (shape.dashLength > 0) {
                 CGFloat pattern[2] = {shape.dashLength, shape.dashLength * 0.75};

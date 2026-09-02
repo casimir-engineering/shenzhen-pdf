@@ -65,11 +65,13 @@ $ROOT/portable/mac/markdown/SPDFMarkdownDiagram.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramModel.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramCanvas.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramFlowchartParser.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramStyle.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramSequenceParser.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramStructParsers.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramChartParsers.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramLayout.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramBand.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownDiagramGraphEdges.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramGraphShapes.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramSequenceShapes.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDiagramChartShapes.mm
@@ -95,8 +97,13 @@ for TEST in \
     SPDFMarkdownLanguageTests \
     SPDFMarkdownRendererTests \
     SPDFMarkdownImageFigureTests \
+    SPDFMarkdownPageBudgetTests \
     SPDFMarkdownImageRecolorTests \
     SPDFMarkdownDiagramTests \
+    SPDFMarkdownDiagramLayoutTests \
+    SPDFMarkdownDiagramEdgeRoutingTests \
+    SPDFMarkdownDiagramNodeTextTests \
+    SPDFMarkdownDiagramStyleTests \
     SPDFMarkdownRemoteImageTests \
     SPDFMarkdownPaginatorTests \
     SPDFMarkdownTableLayoutTests \

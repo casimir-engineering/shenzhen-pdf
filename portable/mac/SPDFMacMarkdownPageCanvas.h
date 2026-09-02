@@ -22,6 +22,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^selectionChangedHandler)(NSRange range);
 @property(nonatomic, copy, nullable) void (^activateDestinationHandler)(NSString* destination, BOOL wikiLink);
 @property(nonatomic, copy, nullable) void (^chooseCodeLanguageHandler)(NSUInteger blockIndex);
+// Asked to copy one code block's RAW source to the clipboard (the reader owns
+// the pasteboard write; it holds the parsed document). Returning YES arms the
+// button's brief "Copied" state; NO beeps.
+@property(nonatomic, copy, nullable) BOOL (^copyCodeBlockHandler)(NSUInteger blockIndex);
 
 - (instancetype)initWithPaginationPlan:(SPDFMarkdownPaginationPlan*)plan
                       attributedString:(NSAttributedString*)attributedString NS_DESIGNATED_INITIALIZER;
@@ -74,14 +78,21 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 // Implemented in SPDFMacMarkdownPageCanvas+Decorations.mm: the dynamic-color
-// page chrome (code boxes, heading rules) and the code-language control that
-// lives in each code box's header band.
+// page chrome (code boxes, heading rules) and the two controls sharing each
+// code box's reserved header band — the copy button on the left and the
+// language control on the right.
 @interface SPDFMacMarkdownPageCanvas (Decorations)
 - (nullable NSNumber*)codeLanguageBlockAtPoint:(NSPoint)point;
+// The code block whose COPY button covers `point` (its own hit slop applied),
+// nil otherwise. Disjoint from codeLanguageBlockAtPoint: — the two controls
+// sit at opposite ends of the row and never share a hit rect.
+- (nullable NSNumber*)copyCodeBlockAtPoint:(NSPoint)point;
 - (nullable NSString*)codeLanguageLabelForBlockIndex:(NSUInteger)blockIndex;
-// Canvas-space frame of the language control for a code block, or NSZeroRect
-// when the block index has no code-language control in the plan.
+// Canvas-space frames of a code block's controls, or NSZeroRect when the block
+// index has no code-box control row in the plan (and, for the copy button,
+// when the row is too narrow to hold both controls).
 - (NSRect)codeLanguageControlFrameForBlockIndex:(NSUInteger)blockIndex;
+- (NSRect)copyCodeControlFrameForBlockIndex:(NSUInteger)blockIndex;
 @end
 
 // Implemented in SPDFMacMarkdownPageCanvas+Cursor.mm: PDF-parity pointer

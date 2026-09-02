@@ -51,6 +51,26 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramRole) {
 FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramRoleColor(SPDFMarkdownDiagramRole role,
                                                         SPDFMarkdownThemeVariant variant);
 
+// One AUTHOR-specified color (a mermaid `classDef` fill/stroke/color) resolved
+// for one reading theme.
+//
+// POLICY: mermaid `classDef` colors are written for mermaid's light default --
+// this repo's fixture uses pale fills with dark strokes and near-black text --
+// so painting them literally on #1E1E1E paper is unreadable. Light keeps them
+// byte for byte. Dark puts them through spdf_recolor's LUMA_REMAP with the
+// same paper #1E1E1E / ink #DCDDDE endpoints the reader already applies to
+// every PDF page (spdf_recolor.h) and to every image a Markdown document
+// embeds (SPDFMarkdownImageRecolor.h). That choice, rather than a bespoke
+// contrast forcing, because (a) it is the app's existing answer to exactly
+// this question for author-supplied raster color, so a diagram and a
+// screenshot of the same diagram now agree; (b) the remap preserves chroma, so
+// the author's four hues stay four distinguishable hues; and (c) its luma map
+// is strictly DECREASING (Y=0 -> 220, Y=255 -> 30), which makes dark-on-dark
+// arithmetically impossible: any fill/text pair the author made legible stays
+// legible, with its contrast magnitude preserved and its polarity flipped.
+FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramAuthorColor(NSColor* authored,
+                                                          SPDFMarkdownThemeVariant variant);
+
 typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
     SPDFMarkdownDiagramShapeRectangle = 0,  // rect + cornerRadius (0 = square corners)
     SPDFMarkdownDiagramShapeEllipse,        // rect
@@ -77,6 +97,11 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
 @property(nonatomic) CGFloat strokeAlpha;
 @property(nonatomic) CGFloat lineWidth;
 @property(nonatomic) CGFloat dashLength;   // 0 = solid; the gap is 0.75 of it
+// Author `classDef` colors overriding the roles above. nil = use the role. A
+// layout stays theme-INDEPENDENT: these are the author's own (light) colors,
+// resolved per variant at draw time by SPDFMarkdownDiagramAuthorColor.
+@property(nonatomic, copy, nullable) NSColor* authorFillColor;
+@property(nonatomic, copy, nullable) NSColor* authorStrokeColor;
 @end
 
 // One single-line text label at its resolved position. `frame` is the box the
@@ -89,12 +114,23 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
 @property(nonatomic) CGFloat fontSize;
 @property(nonatomic) BOOL semibold;
 @property(nonatomic) SPDFMarkdownDiagramRole role;
+@property(nonatomic, copy, nullable) NSColor* authorColor;  // classDef `color:`; nil = use the role
 // The system font this label was measured with, rebuilt from fontSize/semibold.
 - (NSFont*)font;
 @end
 
+// The color a shape/label actually paints with: its author color resolved for
+// `variant` when it has one, else its role. Every draw site goes through these
+// so author styling can never be honored in one output and dropped in another.
+FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramShapeFillColor(SPDFMarkdownDiagramShape* shape,
+                                                             SPDFMarkdownThemeVariant variant);
+FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramShapeStrokeColor(SPDFMarkdownDiagramShape* shape,
+                                                               SPDFMarkdownThemeVariant variant);
+FOUNDATION_EXPORT NSColor* SPDFMarkdownDiagramLabelColor(SPDFMarkdownDiagramLabel* label,
+                                                         SPDFMarkdownThemeVariant variant);
+
 // A finished diagram: its logical size in points plus the vector shapes and
-// text labels that fill it. Already fitted to the caller's content width — one
+// text labels that fill it. Already fitted to the caller's content BOX — one
 // common factor scales geometry AND label font sizes, never a clip.
 @interface SPDFMarkdownDiagramLayout : NSObject
 @property(nonatomic, readonly) NSSize size;
@@ -102,11 +138,12 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownDiagramLabel*>* labels;
 @end
 
-// Thread-safe render cache keyed by (source, language, fontScale, width).
+// Thread-safe render cache keyed by (source, language, fontScale, content box).
 // Failed parses are cached too, so a rerender never re-parses a malformed
 // fence. Owned per document/session and threaded through
-// SPDFMarkdownRenderOptions.diagramCache; text-size and width rerenders hit it,
-// and a THEME switch reuses it outright (a layout carries roles, not colors).
+// SPDFMarkdownRenderOptions.diagramCache; text-size and PAPER rerenders hit it
+// (turning the paper changes the box, so it is part of the key), and a THEME
+// switch reuses it outright (a layout carries roles, not colors).
 @interface SPDFMarkdownDiagramCache : NSObject
 @property(nonatomic, readonly) NSUInteger count;
 - (void)removeAllEntries;
@@ -116,11 +153,24 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
 // flow, case-insensitive first token). O(1); safe to call on every code fence.
 FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramIsDiagramLanguage(NSString* _Nullable fenceIdentifier);
 
-// The single entry seam: (fence language, source, content width budget,
-// fontScale) -> resolved layout, or nil on ANY parse, unsupported-subtype, or
-// over-budget condition. Deterministic per inputs.
+// The smallest effective label size a fitted diagram may be left at before the
+// flowchart family is allowed to RE-LAY-OUT itself narrower rather than shrink
+// further (SPDFMarkdownDiagramLayOutGraph). 7 pt is where the system font stops
+// being readable at 100% zoom; it is a trigger, not a guarantee -- a diagram
+// whose content simply cannot fit the page still ends up under it, and the
+// vector artwork is then read by zooming or by turning the paper.
+FOUNDATION_EXPORT const CGFloat SPDFMarkdownDiagramLegibleLabelSize;
+
+// The single entry seam: (fence language, source, the PAGE BOX the figure has
+// to fit, fontScale) -> resolved layout, or nil on ANY parse,
+// unsupported-subtype, or over-budget condition. Deterministic per inputs.
+//
+// `contentBox` is the printable area the diagram will be drawn into, already
+// net of whatever air the caller reserves around the band. A zero or negative
+// WIDTH refuses the diagram; a zero HEIGHT means "no height budget known", in
+// which case the fit is width-only exactly as it always was.
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramRender(
-    NSString* fenceIdentifier, NSString* source, CGFloat contentWidth, CGFloat fontScale,
+    NSString* fenceIdentifier, NSString* source, NSSize contentBox, CGFloat fontScale,
     SPDFMarkdownDiagramCache* _Nullable cache);
 
 // Test-visible laziness/caching proof: incremented once per actual

@@ -35,10 +35,21 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramArrowHead) {
     SPDFMarkdownDiagramArrowHeadHollowDiamond,   // class aggregation
 };
 
+// Author-specified per-node colors from a mermaid `classDef`. Every field is
+// optional: a nil field means "keep the theme role for this channel", so a
+// `classDef` that only sets `fill:` leaves stroke and text on the theme.
+@interface SPDFMarkdownDiagramNodeStyle : NSObject
+@property(nonatomic, copy, nullable) NSColor* fillColor;
+@property(nonatomic, copy, nullable) NSColor* strokeColor;
+@property(nonatomic, copy, nullable) NSColor* textColor;
+@end
+
 @interface SPDFMarkdownDiagramNode : NSObject
 @property(nonatomic, copy) NSString* identifier;
 @property(nonatomic, copy) NSString* label;
 @property(nonatomic) SPDFMarkdownDiagramNodeShape shape;
+// The `:::name` / `class a,b name` class this node carries (nil when none).
+@property(nonatomic, copy, nullable) NSString* className;
 // classDiagram compartments (nil elsewhere).
 @property(nonatomic, copy, nullable) NSArray<NSString*>* memberAttributes;
 @property(nonatomic, copy, nullable) NSArray<NSString*>* memberMethods;
@@ -46,6 +57,12 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramArrowHead) {
 @property(nonatomic) NSInteger rank;
 @property(nonatomic) NSInteger order;
 @property(nonatomic) NSRect frame;
+// The measured text block the shape was sized around, centered in `frame`:
+// the widest wrapped line by the stack of line heights. This -- not the frame
+// -- is what has to sit inside a curved outline, so it is what the sizing
+// solves for, and it is how far off center the emitter has to ask the outline
+// about before it re-wraps (see SPDFDiagramBoxForBlock).
+@property(nonatomic) NSSize labelBlock;
 @end
 
 @interface SPDFMarkdownDiagramEdge : NSObject
@@ -54,6 +71,12 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramArrowHead) {
 @property(nonatomic, copy, nullable) NSString* label;
 @property(nonatomic) SPDFMarkdownDiagramLineStyle lineStyle;
 @property(nonatomic) SPDFMarkdownDiagramArrowHead head;  // drawn at the `to` end
+@property(nonatomic) SPDFMarkdownDiagramArrowHead tail;  // drawn at the `from` end (`<-->`)
+// Layout result: the bend points a RANK-SKIPPING edge must pass through, one
+// per rank it crosses, in layout coordinates. nil for an edge between adjacent
+// ranks (which needs no detour). The emitter curves through them, which is
+// what keeps a long edge out of the boxes of the ranks it skips.
+@property(nonatomic, copy, nullable) NSArray<NSValue*>* routePoints;
 @end
 
 // A directed graph plus flow direction. `vertical` maps TD/TB (and BT via
@@ -63,8 +86,16 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramArrowHead) {
 @property(nonatomic) BOOL reversed;
 @property(nonatomic, readonly) NSMutableArray<SPDFMarkdownDiagramNode*>* nodes;
 @property(nonatomic, readonly) NSMutableArray<SPDFMarkdownDiagramEdge*>* edges;
+// `classDef` styles by class name, and the `class a,b name` assignments that
+// were stated before their nodes existed (applied once parsing finishes).
+@property(nonatomic, readonly) NSMutableDictionary<NSString*, SPDFMarkdownDiagramNodeStyle*>* classStyles;
+@property(nonatomic, readonly) NSMutableDictionary<NSString*, NSString*>* classNamesByIdentifier;
 - (SPDFMarkdownDiagramNode*)nodeForIdentifier:(NSString*)identifier createWithLabel:(nullable NSString*)label;
 - (nullable SPDFMarkdownDiagramNode*)existingNodeForIdentifier:(NSString*)identifier;
+// The style a node draws with: its own class, else the `default` class, else nil.
+- (nullable SPDFMarkdownDiagramNodeStyle*)styleForNode:(SPDFMarkdownDiagramNode*)node;
+// Folds the deferred `class a,b name` assignments onto the nodes.
+- (void)applyDeferredClassNames;
 @end
 
 typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramSequenceEventKind) {
@@ -199,22 +230,39 @@ FOUNDATION_EXPORT NSSize SPDFMarkdownDiagramMeasureText(NSString* text, NSFont* 
                                     stroke:(SPDFMarkdownDiagramRole)stroke
                                      width:(CGFloat)lineWidth;
 // Wraps `text` to the rect's width and stacks one label per line from the
-// rect's top, aligned inside the rect's horizontal box.
-- (void)addText:(nullable NSString*)text
-         inRect:(NSRect)rect
-           font:(NSFont*)font
-           role:(SPDFMarkdownDiagramRole)role
-      alignment:(NSTextAlignment)alignment;
+// rect's top, aligned inside the rect's horizontal box. Returns the labels it
+// appended so a caller can tint them with author colors.
+- (NSArray<SPDFMarkdownDiagramLabel*>*)addText:(nullable NSString*)text
+                                        inRect:(NSRect)rect
+                                          font:(NSFont*)font
+                                          role:(SPDFMarkdownDiagramRole)role
+                                     alignment:(NSTextAlignment)alignment;
 @end
 
 // Closes a canvas into a resolved layout at its natural size: refuses (nil)
-// any diagram past the dimension budget, then fits an over-wide diagram to
-// contentWidth by scaling geometry AND label font sizes by ONE factor.
+// any diagram past the dimension budget, then fits an over-sized diagram to
+// `contentBox` by scaling geometry AND label font sizes by ONE factor. A zero
+// box height means "no height budget", i.e. a width-only fit.
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramFinishLayout(
-    SPDFMarkdownDiagramCanvas* canvas, NSSize naturalSize, CGFloat contentWidth);
+    SPDFMarkdownDiagramCanvas* canvas, NSSize naturalSize, NSSize contentBox);
+
+// The single common factor `contentBox` imposes on a diagram of `naturalSize`:
+// the smaller of the two axis ratios, never above 1. A zero/negative box axis
+// does not constrain. Shared so the graph emitter's reflow search and the fit
+// itself can never disagree about what "fits" means.
+FOUNDATION_EXPORT CGFloat SPDFMarkdownDiagramBoxFit(NSSize naturalSize, NSSize contentBox);
 
 // The categorical ramp role for the nth slice/bar (wraps at six).
 FOUNDATION_EXPORT SPDFMarkdownDiagramRole SPDFMarkdownDiagramRampRole(NSUInteger index);
+
+// mermaid node styling (SPDFMarkdownDiagramStyle.mm). Both return NO when the
+// statement is not the form they handle OR carries nothing usable, and the
+// flowchart parser then SKIPS the line exactly as it did before styling
+// existed -- an unreadable `classDef` costs a node its colors, never the whole
+// diagram.
+FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramParseClassDef(NSString* statement, SPDFMarkdownDiagramGraph* graph);
+FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramParseClassAssignment(NSString* statement,
+                                                               SPDFMarkdownDiagramGraph* graph);
 
 // Parsers. Every parser returns nil on malformed or over-budget input.
 FOUNDATION_EXPORT SPDFMarkdownDiagramGraph* _Nullable SPDFMarkdownDiagramParseMermaidFlowchart(NSString* source);
@@ -226,24 +274,44 @@ FOUNDATION_EXPORT SPDFMarkdownDiagramSequence* _Nullable SPDFMarkdownDiagramPars
 FOUNDATION_EXPORT SPDFMarkdownDiagramPie* _Nullable SPDFMarkdownDiagramParsePie(NSString* source);
 FOUNDATION_EXPORT SPDFMarkdownDiagramGantt* _Nullable SPDFMarkdownDiagramParseGantt(NSString* source);
 
-// Layered layout: ranks via longest path in flow direction (back edges from a
-// DFS sweep are ignored for ranking), a few barycenter ordering passes, then
-// grid coordinates with generous gaps. Node frames must carry their measured
-// sizes on entry; on success every frame origin is set and *outSize holds the
-// content bounds. Returns NO when `deadline` (absolute time) passes mid-work.
+// Sugiyama layered layout: ranks via longest path in the flow direction (back
+// edges from a DFS sweep are ignored for ranking), routing dummies for every
+// rank-skipping edge, median ordering sweeps for crossing reduction, then
+// coordinate assignment by weighted isotonic regression -- which straightens
+// chains and centers fan-outs on their source while keeping `nodeGap` of clear
+// air between boxes as a HARD constraint, so no two node rects can intersect.
+// Node frames must carry their measured sizes on entry; on success every frame
+// origin is set, every rank-skipping edge carries its `routePoints`, and
+// *outSize holds the content bounds. Returns NO when `deadline` passes.
 FOUNDATION_EXPORT BOOL SPDFMarkdownDiagramLayoutGraph(SPDFMarkdownDiagramGraph* graph, CGFloat nodeGap,
                                                       CGFloat rankGap, CFAbsoluteTime deadline, NSSize* outSize);
 
+// Draws every edge of an already-positioned graph into `canvas`, in
+// `graph.edges` order and BEFORE the node boxes go down (see
+// SPDFMarkdownDiagramGraphEdges.mm). Edges are routed as a family, not one at a
+// time: the anchors of all the edges sharing one border are spread along it in
+// the cross-axis order of their far ends, so a fan-out cannot cross itself
+// where it leaves the box. `labelFont` types the chips on labeled edges.
+FOUNDATION_EXPORT void SPDFMarkdownDiagramEmitGraphEdges(SPDFMarkdownDiagramCanvas* canvas,
+                                                         SPDFMarkdownDiagramGraph* graph, NSFont* labelFont,
+                                                         CGFloat scale);
+
 // Shape emitters: measured+laid-out models -> resolved vector layout, or nil
-// when a budget is exceeded. fontScale scales every font and gap.
+// when a budget is exceeded. fontScale scales every font and gap; `contentBox`
+// is the page box the figure has to fit (see SPDFMarkdownDiagramRender).
+//
+// The graph emitter is the one that can RE-LAY-OUT rather than only rescale: a
+// flowchart the box would shrink below SPDFMarkdownDiagramLegibleLabelSize is
+// retried with tighter label wrapping, trading width for height until it either
+// clears the floor or stops improving.
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutGraph(
-    SPDFMarkdownDiagramGraph* graph, CGFloat contentWidth, CGFloat fontScale, CFAbsoluteTime deadline);
+    SPDFMarkdownDiagramGraph* graph, NSSize contentBox, CGFloat fontScale, CFAbsoluteTime deadline);
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutSequence(
-    SPDFMarkdownDiagramSequence* sequence, CGFloat contentWidth, CGFloat fontScale);
+    SPDFMarkdownDiagramSequence* sequence, NSSize contentBox, CGFloat fontScale);
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutPie(SPDFMarkdownDiagramPie* pie,
-                                                                                    CGFloat contentWidth,
+                                                                                    NSSize contentBox,
                                                                                     CGFloat fontScale);
 FOUNDATION_EXPORT SPDFMarkdownDiagramLayout* _Nullable SPDFMarkdownDiagramLayOutGantt(
-    SPDFMarkdownDiagramGantt* gantt, CGFloat contentWidth, CGFloat fontScale);
+    SPDFMarkdownDiagramGantt* gantt, NSSize contentBox, CGFloat fontScale);
 
 NS_ASSUME_NONNULL_END

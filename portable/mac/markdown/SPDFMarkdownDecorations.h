@@ -34,6 +34,19 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownThemeVariant) {
     SPDFMarkdownThemeVariantDark = 1,
 };
 
+// The PAPER a document is laid out on, the theme variant's sibling: another set
+// of constants threaded explicitly onto SPDFMarkdownPageConfiguration (which
+// owns the paper size and printable rect the two orientations differ in).
+//
+// Landscape swaps the two paper edges and the document RE-FLOWS onto the wider,
+// shorter pages; it is never a rotation of a finished rendition, so every glyph
+// stays upright. That is the whole difference between rotating a Markdown
+// document and rotating a PDF page, whose rendered pixels really do turn.
+typedef NS_ENUM(NSInteger, SPDFMarkdownPageOrientation) {
+    SPDFMarkdownPageOrientationPortrait = 0,
+    SPDFMarkdownPageOrientationLandscape = 1,
+};
+
 // Unpainted page margin kept between a code box edge and its neighbors. The
 // paginator reserves it inside the code item's spacer bands; the decoration
 // geometry insets the drawn box by the same amount, so two consecutive code
