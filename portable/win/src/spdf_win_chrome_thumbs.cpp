@@ -3,6 +3,7 @@
 #include "spdf_win_chrome_thumbs.h"
 
 #include "spdf_win_lru.h"
+#include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 #include "spdf_win_minimap.h"
 #include "spdf_win_render.h"
 
@@ -78,9 +79,11 @@ struct SpdfWinThumbStore {
 static unsigned __stdcall size_sweep(void* arg) {
     SpdfWinThumbStore* s = (SpdfWinThumbStore*)arg;
     char err[256] = {0};
-    spdf_document* doc = spdf_open(s->path, err, sizeof(err));
+    spdf_document* doc;
     int i;
 
+    spdf_win_launch_mark("thumbs-sweep-begin");
+    doc = spdf_open(s->path, err, sizeof(err));
     if (!doc) return 0;
     for (i = 0; i < s->page_count; ++i) {
         float w = 0.0f, h = 0.0f;
@@ -102,6 +105,7 @@ static unsigned __stdcall size_sweep(void* arg) {
         }
     }
     spdf_close(doc);
+    spdf_win_launch_mark_n("thumbs-sweep-end", s->page_count);
     return 0;
 }
 
@@ -115,7 +119,9 @@ static void ensure_pages(SpdfWinThumbStore* s) {
 
     if (!s || s->counted) return;
     s->counted = 1;
+    spdf_win_launch_mark("thumbs-open-begin");
     s->size_doc = spdf_open(s->path, err, sizeof(err));
+    spdf_win_launch_mark("thumbs-doc-opened");
     if (!s->size_doc) return;
     s->page_count = spdf_page_count(s->size_doc);
     if (s->page_count <= 0) return;
@@ -283,6 +289,7 @@ static void thumb_done(spdf_win_render_result* r, void* user) {
         return;
     }
     ++s->ready;
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-thumbnail-adopted");
 }
 
 int spdf_win_thumbs_drain(SpdfWinThumbStore* s) {
@@ -351,6 +358,7 @@ void spdf_win_thumbs_request(SpdfWinThumbStore* s, const SpdfWinPageSizePt* size
     if (!s->svc) {
         s->svc = spdf_win_render_service_new(s->path, NULL, 0, thumb_notify, s);
         if (!s->svc) return;
+        spdf_win_launch_mark("thumbs-service-created");
     }
 
     {

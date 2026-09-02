@@ -114,6 +114,9 @@ CORE_SET="portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c porta
 . "$TESTS_DIR/run-tests-native.lib.sh"
 # The Windows-internal Direct2D compose comparison.
 . "$TESTS_DIR/run-tests-native.d2d.sh"
+# The launch budget: window visible and first page painted inside a generous
+# time, measured by portable/win/measure-launch.ps1 on the built exe.
+. "$TESTS_DIR/run-tests-native.launch.sh"
 
 # --- the app itself --------------------------------------------------------
 
@@ -391,6 +394,7 @@ selected d2d.compose-plain && case_d2d_compose_plain
 selected d2d.compose-dark && case_d2d_compose_dark
 selected d2d.compose-window-plain && case_d2d_compose_window_plain
 selected d2d.compose-window-dark && case_d2d_compose_window_dark
+selected launch.budget && case_launch_budget
 case_cross_host
 
 if [[ ${#names[@]} -eq 0 ]]; then
