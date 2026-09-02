@@ -32,8 +32,8 @@ static const char* docs_selected_path(app* a) {
     return sel < 0 ? NULL : spdf_win_tabs_path(a->tabs, sel);
 }
 
-/* Open a UTF-8 path in a tab (or select its tab), remember it as recent, and
- * land on `page` when one is asked for. The page goes where the tab model puts
+/* Open a UTF-8 path in a tab (or select its tab) -- chrome_open_wide notes it as
+ * recent -- and land on `page` when one is asked for. The page goes where the tab model puts
  * a restored page: into pending_page for the first paint when the canvas was
  * just built, straight to the canvas when the tab was already showing. */
 static int docs_open_utf8(app* a, const char* utf8, int page) {
@@ -46,7 +46,6 @@ static int docs_open_utf8(app* a, const char* utf8, int page) {
     free(wide);
     index = spdf_win_tabs_index_of_path(a->tabs, utf8);
     if (index < 0) return changed; /* at the tab cap, or out of memory */
-    spdf_win_recents_note_opened(utf8, spdf_win_tabs_title(a->tabs, index));
     if (page >= 0) {
         if (a->pending_page >= 0) a->pending_page = page;
         else if (a->canvas) changed |= spdf_win_canvas_scroll_to_page(a->canvas, page);
@@ -201,8 +200,8 @@ static int docs_palette(app* a) {
  * fall through to command_perform()'s own switch, and for Open that switch
  * still runs chrome_open_dialog() -- a cancelled picker would be followed by a
  * second picker. The cost of the rule is one repaint after a no-op, which is
- * nothing. CLOSE_TAB is the one deliberate fall-through: this handler only
- * takes a note before the close runs where it always did. */
+ * nothing. CLOSE_TAB is not claimed: chrome_close_tab() notes the close for
+ * Reopen Last Closed Tab, whichever route -- Ctrl+W or the close box -- ran it. */
 static int spdf_win_cmd_docs_perform(app* a, int command, const spdf_win_input* in) {
     (void)in;
     if (command >= SPDF_WIN_CMD_OPEN_RECENT_FIRST && command <= SPDF_WIN_CMD_OPEN_RECENT_LAST) {
@@ -214,12 +213,6 @@ static int spdf_win_cmd_docs_perform(app* a, int command, const spdf_win_input* 
         case SPDF_WIN_CMD_NEW_TAB: docs_open_dialog(a); return 1;
         case SPDF_WIN_CMD_OPEN_PATH: docs_open_path(a); return 1;
         case SPDF_WIN_CMD_REOPEN_CLOSED_TAB: docs_reopen_closed(a); return 1;
-        case SPDF_WIN_CMD_CLOSE_TAB:
-            /* Remember what Ctrl+W is about to close, then let the close run.
-             * The strip's close box does not come through here; it is asked to
-             * call spdf_win_recents_note_closed() itself. */
-            spdf_win_recents_note_closed(docs_selected_path(a));
-            return 0;
         case SPDF_WIN_CMD_ADD_FAVORITE: docs_toggle_favorite(a); return 1;
         case SPDF_WIN_CMD_PALETTE: docs_palette(a); return 1;
         case SPDF_WIN_CMD_RELOAD: docs_reload(a); return 1;

@@ -129,10 +129,15 @@ static void app_settings_record(app* a) {
     spdf_win_settings_commit();
 }
 
+/* Defined in spdf_win_watch_app.h, included right after this header: the one-off
+ * sweep of orphaned shadow copies, on the first tick. */
+static void app_watch_first_tick(app* a);
+
 static void app_tick(void* user) {
     app* a = (app*)user;
     app_session_save(a);
     app_settings_record(a);
+    app_watch_first_tick(a);
 }
 
 /* THE WINDOW'S OPENING SIZE, AND ITS FLOOR.

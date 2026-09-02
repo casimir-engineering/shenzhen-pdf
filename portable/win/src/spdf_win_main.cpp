@@ -159,6 +159,10 @@ struct app {
  * and on report(); everything below calls show_selected_tab() from it. */
 #include "spdf_win_session_app.h"
 
+/* The watcher's app half: a CHANGED reopens the tab in place, a MISSING marks
+ * it, the first tick sweeps orphaned shadow copies. After show_selected_tab. */
+#include "spdf_win_watch_app.h"
+
 /* --- the window ---------------------------------------------------------- */
 
 /* scene_for_window() -- the paint-time glue -- and the mouse routing. Both
@@ -408,6 +412,11 @@ int main(void) {
         char* launch_path = remaining ? utf8_from_wide(argv[i]) : NULL;
         spdf_win_session_frame frame;
         spdf_win_enable_dpi_awareness();
+        /* The watcher before the model: the launch document is opened by the
+         * show below and its watch is registered by the open hook
+         * (spdf_win_tabs_open.h), which needs somewhere to register it. */
+        spdf_win_tabs_open_configure(app_on_watch, &a);
+        spdf_win_tabs_open_start_watching();
         a.tabs = spdf_win_tabs_app_start(launch_path, restore, a.window_id, sizeof(a.window_id), &frame);
         free(launch_path);
         /* A NAMED document that will not open is an error the user must see. No
@@ -415,7 +424,8 @@ int main(void) {
          * and a line saying how to open one (scene_for_window's no-canvas
          * branch), and every canvas call in the frontend tolerates a NULL
          * canvas -- which was checked rather than assumed. */
-        if (!spdf_win_tabs_app_show(a.tabs, &a.canvas, a.render_flags, &a.pending_page) && remaining) {
+        if (!spdf_win_tabs_app_show(a.tabs, &a.canvas, a.render_flags, &a.pending_page) && remaining &&
+            !spdf_win_tabs_open_cancelled()) {
             report(L"That document could not be opened.", true);
             rc = 1;
         } else {
@@ -434,6 +444,8 @@ int main(void) {
                 /* All of these before the show: no placeholder title, no light
                  * caption, and no window that visibly grows a menu bar. */
                 a.window = window;
+                /* Password prompts from here on are modal to the window. */
+                spdf_win_tabs_open_set_owner(spdf_win_window_native_handle(window));
                 /* The frame the session remembered, clamped onto a monitor. */
                 if (frame.w > 0 && frame.h > 0) spdf_win_window_set_frame(window, frame.x, frame.y, frame.w, frame.h);
                 /* The restored tab's view -- fit mode, page, exact offset --
@@ -477,6 +489,7 @@ int main(void) {
         /* session.yaml, under the shared lock, then close what is still open.
          * The frame was read before the window went away, in app_exit_frame. */
         spdf_win_tabs_app_finish(a.tabs, a.canvas, a.window_id, &a.exit_frame);
+        spdf_win_tabs_open_stop_watching(); /* after the model: no callback can reach a closed tab */
         a.canvas = NULL; /* the model closed it; close_document() must not */
     }
 
