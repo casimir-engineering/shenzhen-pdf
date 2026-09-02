@@ -6,7 +6,6 @@
  * on it in spdf_win_chrome_paint.h. */
 #include "spdf_win_chrome_paint.h"
 #include "spdf_win_chrome_scroll.h"
-
 /* Performing what spdf_win_chrome_input.h decided.
  *
  * Internal to the Windows frontend and header-only, like spdf_win_tabs_app.h and
@@ -89,8 +88,23 @@ static void chrome_layout_for_input(app* a, const spdf_win_input* in, SpdfWinChr
     model->minimap_w = a->minimap_w;
     model->hot_tab = a->hot_tab;
     model->hot_close = a->hot_close;
+    model->drag_tab = a->drag_tab;
+    model->drop_slot = a->drop_slot;
+    model->focus = a->focus;
     model->tab_count = a->tabs ? spdf_win_tabs_count(a->tabs) : 0;
     model->selected_tab = a->tabs ? spdf_win_tabs_selected_index(a->tabs) : -1;
+    /* search_active IS GEOMETRY: it raises the sidebar's minimum width from 176
+     * to 216 pt (spdf_win_chrome_clamp_sidebar_pt, macOS :3138-3144), so a
+     * router that left it zeroed while a query was live would hit-test a narrow
+     * sidebar against the wider one that was drawn. The painter's model gets the
+     * same answer from spdf_win_find_fill_model, which sets it from whether the
+     * query is non-empty -- which is exactly this test. */
+    model->search_active = a->find_text[0] != L'\0';
+    /* The sidebar's list, as it was drawn last frame. sidebar_scroll_y is 0
+     * because nothing scrolls the list yet; when something does, it must be
+     * carried here too or a click will land a row or two out. */
+    model->sidebar_row_count = a->sidebar_rows;
+    model->sidebar_scroll_y = 0.0f;
     /* The scroller fractions ARE geometry here: h_scrollable decides whether the
      * horizontal trough exists (and so how tall the canvas is), and the two
      * `pos`/`visible` pairs decide where each thumb sits. A router that left them
@@ -194,29 +208,6 @@ static int chrome_toggle_theme(app* a) {
     return show_selected_tab(a);
 }
 
-/* Close a tab from the strip. prefer_most_recent_active is 0, matching
- * ShenzhenPDFMac.mm:9115 -- the close box and Ctrl+W both ask for the
- * DETERMINISTIC ADJACENT survivor, and only detaching a tab into its own window
- * asks for the most recently active one (:9300). Getting that argument backwards
- * would make the close box feel like a different app from Ctrl+W. */
-static int chrome_close_tab(app* a, int index) {
-    if (!a->tabs || index < 0) return 0;
-    if (index == spdf_win_tabs_selected_index(a->tabs)) spdf_win_tabs_app_remember(a->tabs, a->canvas);
-    spdf_win_tabs_close(a->tabs, index, 0);
-    if (spdf_win_tabs_count(a->tabs) == 0) {
-        PostQuitMessage(0);
-        return 1;
-    }
-    return show_selected_tab(a);
-}
-
-static int chrome_select_tab(app* a, int index) {
-    if (!a->tabs || index < 0 || index == spdf_win_tabs_selected_index(a->tabs)) return 0;
-    spdf_win_tabs_app_remember(a->tabs, a->canvas);
-    spdf_win_tabs_select_deferred(a->tabs, index);
-    return show_selected_tab(a);
-}
-
 /* A click on the trough, above or below the thumb. A VIEWPORT, less a tenth --
  * the same 0.9 factor Page Down uses in spdf_win_main.cpp's keymap, deliberately
  * shared as a number rather than as a function because the two differ in axis
@@ -239,6 +230,16 @@ static int chrome_scroll_page(app* a, const SpdfWinChromeHit* hit, const SpdfWin
  * the click was tested against. */
 static int chrome_perform(app* a, const SpdfWinChromeHit* hit, const SpdfWinChromeLayout* l) {
     switch (hit->action) {
+        case SPDF_WIN_CA_FOCUS_FIND: return chrome_focus(a, SPDF_WIN_FOCUS_FIND);
+        case SPDF_WIN_CA_FOCUS_PAGE: return chrome_focus(a, SPDF_WIN_FOCUS_PAGE);
+        case SPDF_WIN_CA_FOCUS_SIDEBAR_FILTER: return chrome_focus(a, SPDF_WIN_FOCUS_SIDEBAR_FILTER);
+        case SPDF_WIN_CA_TOGGLE_REGEX:
+            a->find_regex = !a->find_regex;
+            chrome_find_push(a);
+            return 1;
+        case SPDF_WIN_CA_FIND_PREV: return chrome_find_step(a, -1);
+        case SPDF_WIN_CA_FIND_NEXT: return chrome_find_step(a, 1);
+        case SPDF_WIN_CA_SIDEBAR_ROW: return chrome_sidebar_row(a, hit->index);
         case SPDF_WIN_CA_SCROLL_PAGE_BACK: return chrome_scroll_page(a, hit, l, 0);
         case SPDF_WIN_CA_SCROLL_PAGE_FORWARD: return chrome_scroll_page(a, hit, l, 1);
         case SPDF_WIN_CA_SELECT_TAB: return chrome_select_tab(a, hit->index);
@@ -259,13 +260,12 @@ static int chrome_perform(app* a, const SpdfWinChromeHit* hit, const SpdfWinChro
         case SPDF_WIN_CA_DRAG_MINIMAP:
         case SPDF_WIN_CA_DRAG_VSCROLL:
         case SPDF_WIN_CA_DRAG_HSCROLL: return 0;
-        /* The strip's `+` and `…`. Neither has anywhere to go yet: opening a
-         * document needs a file dialog and the overflow needs a menu, and both
-         * are their own work. Returning 0 leaves them inert rather than
-         * pretending -- and, critically, does NOT fall through to the canvas, so
-         * a press on either cannot pan the document. */
-        case SPDF_WIN_CA_NEW_TAB:
-        case SPDF_WIN_CA_TAB_OVERFLOW:
+        /* The strip's `+` and `...`, both live now: the first opens the native
+         * file dialog into a new tab, the second drops a real Win32 popup listing
+         * every tab. Neither falls through to the canvas, which is what has kept
+         * a press on either from panning the document all along. */
+        case SPDF_WIN_CA_NEW_TAB: return chrome_open_dialog(a);
+        case SPDF_WIN_CA_TAB_OVERFLOW: return chrome_tab_overflow(a, l);
         default: return 0;
     }
 }
@@ -290,30 +290,60 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
          * divider must keep the resize cursor, and a pan must keep IDC_SIZEALL
          * even as the page moves out from under the pointer. */
         if (a->drag == SPDF_WIN_CA_CANVAS) in->cursor = SPDF_WIN_CC_SIZEALL;
+        /* A selection in progress keeps the I-beam, whatever it has been dragged
+         * over -- including off the page entirely, which is how a reader selects
+         * to the end of a paragraph. */
+        else if (a->drag == SPDF_WIN_CA_CANVAS_SELECT) in->cursor = SPDF_WIN_CC_IBEAM;
         /* A thumb drag keeps the ARROW, which is what Windows and AppKit both
          * show over a scrollbar. Listed explicitly rather than left to the
          * `!= NONE` branch below, which would give it the divider's resize
          * cursor and make the trough look like a panel edge. */
-        else if (a->drag == SPDF_WIN_CA_DRAG_VSCROLL || a->drag == SPDF_WIN_CA_DRAG_HSCROLL)
+        else if (a->drag == SPDF_WIN_CA_DRAG_VSCROLL || a->drag == SPDF_WIN_CA_DRAG_HSCROLL ||
+                 a->drag == SPDF_WIN_CA_DRAG_TAB)
             in->cursor = SPDF_WIN_CC_ARROW;
         else if (a->drag != SPDF_WIN_CA_NONE) in->cursor = SPDF_WIN_CC_SIZEWE;
         else in->cursor = hit.cursor;
+        /* Over the PAGE, the document has the last word: see
+         * canvas_cursor_override(). */
+        if (a->drag == SPDF_WIN_CA_NONE && hit.action == SPDF_WIN_CA_CANVAS) canvas_cursor_override(a, in, &l);
         return 0; /* a cursor query must never cost a repaint */
     }
 
     if (in->kind == SPDF_WIN_INPUT_MOUSE_UP) {
+        int moved = a->drag == SPDF_WIN_CA_DRAG_TAB ? chrome_drop_tab(a, &l, &model) : 0;
+        /* A selection gesture ends HERE, and this is also where a link is
+         * followed -- on the release, not the press, so a drag that began on a
+         * link selects its text instead of navigating (spdf_win_canvas.h's own
+         * behaviour, which only works if press/drag/release are all routed). A
+         * button of NONE is a CANCELLED drag, not a release. */
+        if (a->drag == SPDF_WIN_CA_CANVAS_SELECT) moved |= canvas_release(a, in->button == SPDF_WIN_CB_NONE);
         a->drag = SPDF_WIN_CA_NONE;
+        a->drag_tab = -1;
+        a->drop_slot = -1;
         /* The thumb stops looking held. Repaint only if it WAS -- a release over
          * the canvas must not cost a frame. */
-        return chrome_set_scroll_hot(hit.part, hit.scroll_part, 0);
+        return moved | chrome_set_scroll_hot(hit.part, hit.scroll_part, 0);
     }
 
     if (in->kind == SPDF_WIN_INPUT_MOUSE_DOWN) {
         int scroll_drag = hit.action == SPDF_WIN_CA_DRAG_VSCROLL || hit.action == SPDF_WIN_CA_DRAG_HSCROLL;
+        int selecting = 0;
         a->drag = hit.action == SPDF_WIN_CA_CANVAS || hit.action == SPDF_WIN_CA_DRAG_SIDEBAR ||
                           hit.action == SPDF_WIN_CA_DRAG_MINIMAP || scroll_drag
                       ? hit.action
                       : SPDF_WIN_CA_NONE;
+        /* A press on the PAGE becomes one of two gestures, chosen from what is
+         * under the pointer. canvas_press() sets a->drag to whichever it is; it
+         * is the only thing allowed to overwrite the CANVAS value just assigned.
+         * A press anywhere else -- including a press that gave a field the
+         * keyboard -- takes the focus away from the toolbar, because that is what
+         * clicking outside a text field means everywhere else on this desktop. */
+        if (hit.action == SPDF_WIN_CA_CANVAS) selecting = canvas_press(a, in, &l);
+        if (hit.action != SPDF_WIN_CA_FOCUS_FIND && hit.action != SPDF_WIN_CA_FOCUS_PAGE &&
+            hit.action != SPDF_WIN_CA_FOCUS_SIDEBAR_FILTER && a->focus != SPDF_WIN_FOCUS_NONE) {
+            a->focus = SPDF_WIN_FOCUS_NONE;
+            selecting = 1;
+        }
         /* For every other gesture drag_last_* is the PREVIOUS pointer position,
          * advanced on each move because a pan consumes deltas. A thumb drag needs
          * the ORIGIN instead: its position is pos_at_press + total travel /
@@ -326,11 +356,36 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
         a->drag_last_y = in->y;
         if (scroll_drag)
             a->drag_scroll_pos = hit.action == SPDF_WIN_CA_DRAG_HSCROLL ? model.h_pos : model.v_pos;
-        return chrome_perform(a, &hit, &l) | chrome_set_scroll_hot(hit.part, hit.scroll_part, scroll_drag);
+        /* A press on a TAB both selects it (below, immediately, as macOS does)
+         * and arms a reorder. Two things from one press, which is why the drag
+         * state is set after the ternary rather than inside it: the router
+         * cannot report SELECT_TAB and DRAG_TAB at once, and a press that only
+         * armed the drag would leave the strip unresponsive to a plain click. */
+        if (hit.action == SPDF_WIN_CA_SELECT_TAB) {
+            a->drag = SPDF_WIN_CA_DRAG_TAB;
+            a->drag_tab = hit.index;
+            a->drop_slot = -1;
+        }
+        return selecting | chrome_perform(a, &hit, &l) | chrome_set_scroll_hot(hit.part, hit.scroll_part, scroll_drag);
     }
 
     /* --- MOUSE_MOVE ----------------------------------------------------- */
     switch (a->drag) {
+        /* Extending a selection. NOT a pan: it never reaches
+         * spdf_win_canvas_scroll_by, so the page stays put under the growing
+         * highlight. */
+        case SPDF_WIN_CA_CANVAS_SELECT: return canvas_drag(a, in, &l);
+        case SPDF_WIN_CA_DRAG_TAB: {
+            /* Only the SLOT is tracked while the pointer moves; the tab model is
+             * not touched until the button comes up. Reordering live would make
+             * every intermediate position a real move, and the reader would have
+             * to land the tab exactly rather than merely release it in the right
+             * gap. */
+            int slot = chrome_drop_slot_at(&l, &model, in->x);
+            if (slot == a->drop_slot) return 0;
+            a->drop_slot = slot;
+            return 1;
+        }
         case SPDF_WIN_CA_CANVAS: {
             /* Dragging the paper down scrolls the document up, so the scroll
              * delta is the negated cursor delta -- grab-and-pull, not

@@ -197,6 +197,7 @@ void spdf_win_canvas_destroy(spdf_win_canvas* canvas) {
      * memory. */
     spdf_win_render_service_free(canvas->service);
     canvas->service = NULL;
+    spdf_win_canvas_selection_teardown(canvas);
     spdf_win_lru_deinit(&canvas->cache);
     spdf_win_layout_clear(&canvas->layout);
     free(canvas->draws);

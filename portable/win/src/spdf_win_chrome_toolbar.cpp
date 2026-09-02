@@ -136,7 +136,7 @@ SpdfWinChromeRect cell_of(SpdfWinChromeRect pill, int index, int segments) {
 /* A text field: rounded, filled, hairline outline, with a Windows 11-ish
  * 4 pt corner rather than a capsule, so it reads as editable. */
 void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wchar_t* text, int placeholder,
-                DWRITE_TEXT_ALIGNMENT align) {
+                DWRITE_TEXT_ALIGNMENT align, int focused) {
     const SpdfWinChromeTheme* th = ctx.theme;
     float s = ctx.dpi_scale;
     float hair = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
@@ -146,9 +146,14 @@ void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wch
 
     if (spdf_win_chrome_rect_empty(r)) return;
     fill = spdf_win_chrome_brush(ctx.target, th->field_fill);
-    stroke = spdf_win_chrome_brush(ctx.target, th->field_stroke);
+    /* THE FOCUS RING, and it is the accent colour rather than a second border:
+     * a field the keyboard is talking to has to be distinguishable from the one
+     * next to it, and there is no caret to say so (spdf_win_chrome_text.h
+     * explains why there is none). A DOUBLED hairline, so the ring reads at 100%
+     * as well as at 200%. */
+    stroke = spdf_win_chrome_brush(ctx.target, focused ? th->accent : th->field_stroke);
 
-    fill_rounded(ctx.target, r, px(4.0, s), fill, stroke, hair);
+    fill_rounded(ctx.target, r, px(4.0, s), fill, stroke, focused ? hair * 2.0f : hair);
     if (fill) fill->Release();
     if (stroke) stroke->Release();
 
@@ -225,7 +230,16 @@ void draw_toggle(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wc
  * the conversion, exactly as macOS does it at ShenzhenPDFMac.mm:10528. An empty
  * field for "no document" is macOS's own `hasDoc` branch on that line. */
 void page_labels(const SpdfWinChromeModel* m, wchar_t* number, size_t number_n, wchar_t* count, size_t count_n) {
-    if (m->page_count > 0 && m->page_index >= 0)
+    /* WHILE THE FIELD IS BEING TYPED INTO IT SHOWS WHAT WAS TYPED, and nothing
+     * else. A field that re-derived its text from page_index on every frame
+     * could not be edited: the first keystroke would be overwritten by the next
+     * paint, which arrives immediately because the keystroke asked for one. An
+     * EMPTY page_text is still page_text -- that is a reader who has just
+     * cleared the field, and snapping the current page back in would make
+     * Backspace look broken. */
+    if (m->page_text)
+        _snwprintf_s(number, number_n, _TRUNCATE, L"%s", m->page_text);
+    else if (m->page_count > 0 && m->page_index >= 0)
         _snwprintf_s(number, number_n, _TRUNCATE, L"%d", m->page_index + 1);
     else
         number[0] = L'\0';
@@ -311,7 +325,8 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
     {
         wchar_t number[16], count[24];
         page_labels(m, number, sizeof(number) / sizeof(number[0]), count, sizeof(count) / sizeof(count[0]));
-        draw_field(ctx, tb.item[SPDF_WIN_TB_PAGE_FIELD], number, 0, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        draw_field(ctx, tb.item[SPDF_WIN_TB_PAGE_FIELD], number, 0, DWRITE_TEXT_ALIGNMENT_TRAILING,
+                   m->focus == SPDF_WIN_FOCUS_PAGE);
         spdf_win_chrome_draw_text(ctx, count, tb.item[SPDF_WIN_TB_PAGE_COUNT], th->label_secondary,
                                   px(SPDF_WIN_CT_FONT_SIZE_FIELD, s), DWRITE_FONT_WEIGHT_NORMAL,
                                   DWRITE_TEXT_ALIGNMENT_LEADING, 0);

@@ -93,6 +93,39 @@ struct app {
     spdf_win_chrome_action drag;
     float drag_last_x;
     float drag_last_y;
+    /* The tab being dragged to a new position and the insertion slot under the
+     * pointer, or -1 for neither. Both go straight into the chrome model, whose
+     * fields of the same names document them and say why the drop indicator is
+     * not drawn yet. */
+    int drag_tab;
+    int drop_slot;
+    /* THE THREE TYPEABLE FIELDS and which of them has the keyboard.
+     *
+     * Here rather than in the chrome model because they are the app's state,
+     * not a description of a frame: the model is rebuilt from scratch every
+     * paint (spdf_win_chrome_scene.h) and a query rebuilt every paint would be
+     * an empty query. The model borrows the page text and the focus from these.
+     *
+     * The find query is ALSO pushed to the process-wide find session
+     * (spdf_win_find_set_query) and the filter to the panel content bridge
+     * (spdf_win_chrome_content_set_filter); those two calls are what replaced the
+     * SPDF_FIND_QUERY / SPDF_FIND_REGEX / SPDF_SIDEBAR_FILTER environment
+     * bridges. Each caret is an index into its own buffer, in wchar_t. */
+    int focus; /* spdf_win_text_focus */
+    wchar_t find_text[256];
+    int find_caret;
+    int find_regex;
+    wchar_t page_text[16];
+    int page_caret;
+    wchar_t filter_text[128];
+    int filter_caret;
+    /* How many rows the sidebar's list drew last frame, so the input router can
+     * work out which one a click landed on without resolving the content
+     * provider on the pointer's path. */
+    int sidebar_rows;
+    /* The menu bar (an HMENU), owned by the window once it is installed. NULL on
+     * every headless path, where nothing calls spdf_win_menu_create(). */
+    void* menu;
     /* The scroll fraction the thumb had when a scroller drag was armed. A thumb
      * drag is absolute -- press position plus total pointer travel -- rather
      * than an accumulation of per-move deltas, so this is the only extra state
@@ -195,87 +228,17 @@ static int show_selected_tab(app* a) {
  *
  * The scene half comes FIRST: the input half calls two of its functions. */
 #include "spdf_win_chrome_scene.h"
+/* The tab strip's own commands -- select, close, open, the overflow menu and
+ * drag-to-reorder -- which chrome_perform() next door calls. */
+#include "spdf_win_chrome_tabs_ui.h"
+/* What the pointer does over the PAGE: select text, follow a link, or pan. */
+#include "spdf_win_chrome_canvas_ui.h"
+/* The find group, which field has the keyboard, and the sidebar's rows. */
+#include "spdf_win_chrome_field_ui.h"
 #include "spdf_win_chrome_actions.h"
-
-/* The keymap. Deliberately here and not in spdf_win_window.cpp: which key
- * pages forward is product policy, and the window has no business knowing a
- * document exists.
- *
- * A KEY THAT MOVES THE VIEW MEASURES THE CANVAS, NOT THE CLIENT AREA. `in`
- * carries the client size, and the canvas is a sub-rect of it now: a Page Down
- * of 0.9 client heights overshoots by the two 42 pt bands, and a `+` about the
- * client centre zooms about a point that is not the middle of the page. So the
- * client area is divided here with the same function the painter uses. */
-static int key_for_window(app* a, const spdf_win_input* in) {
-    SpdfWinChromeModel model;
-    SpdfWinChromeLayout l;
-    float page_step, line = 60.0f;
-
-    chrome_layout_for_input(a, in, &model, &l);
-    page_step = l.canvas.h * 0.9f;
-
-    switch (in->key) {
-        case VK_DOWN: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, line);
-        case VK_UP: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, -line);
-        case VK_RIGHT: return spdf_win_canvas_scroll_by(a->canvas, line, 0.0f);
-        case VK_LEFT: return spdf_win_canvas_scroll_by(a->canvas, -line, 0.0f);
-        case VK_NEXT:
-        case VK_SPACE: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, page_step);
-        case VK_PRIOR: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, -page_step);
-        case VK_HOME: return spdf_win_canvas_scroll_to(a->canvas, 0.0f, 0.0f);
-        case VK_END: return spdf_win_canvas_scroll_to(a->canvas, 0.0f, spdf_win_canvas_content_h(a->canvas));
-        /* Shared with the toolbar's zoom pill, so the two cannot drift apart. */
-        case VK_OEM_PLUS:
-        case VK_ADD: return chrome_zoom_step(a, &l, 1);
-        case VK_OEM_MINUS:
-        case VK_SUBTRACT: return chrome_zoom_step(a, &l, 0);
-        case '0':
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            spdf_win_canvas_set_zoom_mode(a->canvas, SPDF_WIN_ZOOM_ACTUAL);
-            return 1;
-        case '1':
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            spdf_win_canvas_set_zoom_mode(a->canvas, SPDF_WIN_ZOOM_FIT_WIDTH);
-            return 1;
-        case '2':
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            spdf_win_canvas_set_zoom_mode(a->canvas, SPDF_WIN_ZOOM_FIT_PAGE);
-            return 1;
-        /* Ctrl+Tab / Ctrl+W. Where the reader is in the tab being left is
-         * written back first, so returning to it lands on the same page. */
-        case VK_TAB:
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            spdf_win_tabs_app_remember(a->tabs, a->canvas);
-            spdf_win_tabs_select_relative(a->tabs, (in->mods & SPDF_WIN_MOD_SHIFT) ? -1 : 1);
-            return show_selected_tab(a);
-        case 'W':
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            if (!spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
-                                             a->canvas != NULL))
-                return 0;
-            /* The same handler the strip's close box uses, so Ctrl+W and a click
-             * pick the same survivor and both write the reader's place back. */
-            return chrome_close_tab(a, spdf_win_tabs_selected_index(a->tabs));
-        default: return 0;
-    }
-}
-
-static int input_for_window(void* user, spdf_win_input* in) {
-    app* a = (app*)user;
-    if (!a->canvas) return 0;
-    switch (in->kind) {
-        case SPDF_WIN_INPUT_SCROLL: return spdf_win_canvas_scroll_by(a->canvas, in->dx, in->dy);
-        case SPDF_WIN_INPUT_ZOOM: return chrome_zoom_at_client(a, in);
-        case SPDF_WIN_INPUT_KEY: return key_for_window(a, in);
-        /* Every mouse event goes through the chrome router FIRST, and reaches the
-         * document's pan only as SPDF_WIN_CA_CANVAS. */
-        case SPDF_WIN_INPUT_MOUSE_DOWN:
-        case SPDF_WIN_INPUT_MOUSE_UP:
-        case SPDF_WIN_INPUT_MOUSE_MOVE:
-        case SPDF_WIN_INPUT_CURSOR: return chrome_mouse(a, in);
-        default: return 0;
-    }
-}
+/* The keymap, the three typeable fields and the one command switch. LAST,
+ * because it calls into all three above it. */
+#include "spdf_win_chrome_commands.h"
 
 /* THE WINDOW'S OPENING SIZE, AND ITS FLOOR.
  *
@@ -342,7 +305,9 @@ static int usage(void) {
              L"         --zoom-at X,Y     zoom about this viewport point after scrolling\n"
              L"         --zoom-factor F   how much to zoom there (default 2)\n"
              L"         --frames N        render N frames, a viewport apart; last is written\n"
-             L"         --chrome          compose the tab strip, toolbar, sidebar and minimap too\n");
+             L"         --chrome          compose the tab strip, toolbar, sidebar and minimap too\n"
+             L"         --find Q          run a search for Q, so the frame shows the find chrome\n"
+             L"         --find-regex      treat Q as a regular expression\n");
     return 64;
 }
 
@@ -367,6 +332,10 @@ int main(void) {
      * entered the window. */
     a.hot_tab = -1;
     a.hot_close = -1;
+    /* -1 for the same reason: 0 is a valid tab index and a valid drop slot, so a
+     * zeroed drag state is a drag nobody started. */
+    a.drag_tab = -1;
+    a.drop_slot = -1;
     opts.mode = SPDF_WIN_ZOOM_FIT_WIDTH;
     opts.dpi_scale = 1.0f;
     opts.zoom_at_x = -1.0f;
@@ -391,8 +360,29 @@ int main(void) {
             opts.chrome = 1;
             continue;
         }
+        /* Valueless, like --chrome; pairs with --find below. */
+        if (wcscmp(flag, L"--find-regex") == 0) {
+            a.find_regex = 1;
+            continue;
+        }
         if (!value) return usage();
-        if (wcscmp(flag, L"--page") == 0) window_page = _wtoi(value);
+        /* THE HEADLESS ROUTE TO A LIVE SEARCH, and the reason it exists.
+         *
+         * SPDF_FIND_QUERY used to be the only way to see the find chrome in a
+         * frame, and this change deletes it -- the field is typeable now, and a
+         * debugging hook that bypasses the real control is a hook that keeps
+         * working after the real control has broken. But the session on this
+         * machine can be locked, and then `--render-window-png --chrome` is the
+         * ONLY way anyone can look at the window at all, so deleting the bridge
+         * without replacing it would take the find chrome out of the one
+         * verification path this port has.
+         *
+         * So it is a FLAG rather than an environment variable, and it goes
+         * through spdf_win_find_set_query() -- the same function a keystroke
+         * calls, on the same buffer, with the same conversion. It exercises the
+         * real path instead of going round it. */
+        if (wcscmp(flag, L"--find") == 0) wcsncpy_s(a.find_text, value, _TRUNCATE);
+        else if (wcscmp(flag, L"--page") == 0) window_page = _wtoi(value);
         else if (wcscmp(flag, L"--zoom") == 0) opts.zoom = (float)_wtof(value);
         else if (wcscmp(flag, L"--scroll-x") == 0) opts.scroll_x = (float)_wtof(value);
         else if (wcscmp(flag, L"--scroll-y") == 0) opts.scroll_y = (float)_wtof(value);
@@ -414,6 +404,11 @@ int main(void) {
         }
         ++i; /* consumed the value */
     }
+
+    /* After the whole parse, so --find-regex may come on either side of --find.
+     * A no-op with no query: spdf_win_find_set_query(NULL) creates no session. */
+    a.find_caret = (int)wcslen(a.find_text);
+    chrome_find_push(&a);
 
     int remaining = argc - i;
     if ((exact && remaining != 4) || (viewport && remaining != 5) || (!exact && !viewport && remaining != 1))
@@ -457,13 +452,25 @@ int main(void) {
                 report(message, true);
                 rc = 72;
             } else {
-                /* Both before the show: no placeholder title, no light caption. */
+                /* All of these before the show: no placeholder title, no light
+                 * caption, and no window that visibly grows a menu bar. */
                 a.window = window;
                 sync_window_title(&a);
+                /* A NULL menu is not an error. spdf_win_menu_create() returning
+                 * NULL means the shell would not give us an HMENU, and a viewer
+                 * with no menu bar is still a viewer -- every command it lists
+                 * also has an accelerator or a toolbar control. */
+                a.menu = spdf_win_menu_create();
+                spdf_win_window_set_menu(window, a.menu);
+                chrome_sync_menu(&a);
                 spdf_win_window_set_dark_frame(window, (a.render_flags & SPDF_RENDER_DARK_THEME) != 0);
                 spdf_win_window_show(window);
                 rc = spdf_win_window_run(window);
                 a.window = NULL;
+                /* DestroyWindow destroys the menu attached to the window, so
+                 * there is nothing to free here -- only a pointer that must stop
+                 * being followed. */
+                a.menu = NULL;
                 spdf_win_window_destroy(window);
             }
         }

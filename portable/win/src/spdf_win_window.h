@@ -76,6 +76,32 @@ typedef enum spdf_win_input_kind {
     SPDF_WIN_INPUT_MOUSE_UP = 4,
     SPDF_WIN_INPUT_MOUSE_MOVE = 5,
 
+    /* A MENU ITEM (or an accelerator the caller resolved to one) was chosen.
+     * `key` carries the command, already stripped of SPDF_WIN_MENU_ID_BASE. The
+     * window does not know what any of them mean -- exactly as it does not know
+     * what a key means -- it only knows that WM_COMMAND's low word is a command
+     * id and that spdf_win_main.cpp owns the map. */
+    SPDF_WIN_INPUT_COMMAND = 7,
+
+    /* One UTF-16 code unit the user TYPED, from WM_CHAR, in `key`. Separate from
+     * SPDF_WIN_INPUT_KEY because the two answer different questions: a VK is a
+     * key on the keyboard, a WM_CHAR is a character produced by the layout, the
+     * dead keys and the IME. Typing "ü" is one WM_CHAR and no VK anybody could
+     * name, and typing on a French layout produces different characters from the
+     * same VKs -- so a text field that read VKs would work only on the layout it
+     * was written on. Control characters below space arrive here too (Windows
+     * sends WM_CHAR for Backspace, Tab, Return and Escape); a handler ignores
+     * them and acts on the VK instead, which is where the caret keys are anyway.
+     *
+     * SURROGATE PAIRS arrive as two events. A handler that stores what it
+     * receives is correct; one that inspects individual code units is not. */
+    SPDF_WIN_INPUT_CHAR = 8,
+
+    /* A file was dropped on the window. `text` is its path, valid only for the
+     * duration of the call. One event per file, in the order Windows reports
+     * them, so a caller that opens each in a new tab needs no array. */
+    SPDF_WIN_INPUT_DROP_FILE = 9,
+
     /* WM_SETCURSOR, asking which cursor belongs at (x, y). The handler writes
      * `cursor` and MUST return 0: a cursor query happens on every pointer move
      * and must never invalidate. A separate event rather than a value cached
@@ -91,8 +117,14 @@ typedef enum spdf_win_input_kind {
  * The old code had the same hazard and solved it the same way -- see
  * WM_CAPTURECHANGED in spdf_win_window.cpp. */
 
+/* These three bits are spdf_win_menu.h's SPDF_WIN_ACCEL_* bits, deliberately the
+ * same numbers: an input's `mods` is handed straight to
+ * spdf_win_menu_command_for_key() with no conversion, and two spellings of the
+ * same three flags is one translation function away from a Shift that means
+ * Ctrl. */
 #define SPDF_WIN_MOD_CTRL 0x1u
 #define SPDF_WIN_MOD_SHIFT 0x2u
+#define SPDF_WIN_MOD_ALT 0x4u
 
 typedef struct spdf_win_input {
     spdf_win_input_kind kind;
@@ -103,8 +135,23 @@ typedef struct spdf_win_input {
     float y;
     unsigned key;
     unsigned mods;
+    /* SPDF_WIN_INPUT_DROP_FILE only: the dropped path, UTF-16, BORROWED and
+     * valid only for the duration of the call. */
+    const wchar_t* text;
     /* Which mouse button, as spdf_win_chrome_button. Mouse events only. */
     int button;
+    /* THE ACCUMULATED CLICK COUNT for a multi-click series: 1, 2, 3, ...
+     * MOUSE_DOWN only, and 0 on every other event.
+     *
+     * Accumulated HERE rather than by the caller because Win32 does not
+     * accumulate it and the pieces needed to are all Win32: WM_LBUTTONDBLCLK is
+     * the SECOND click of a double, a triple is an ordinary WM_LBUTTONDOWN
+     * arriving within GetDoubleClickTime() and SM_CXDOUBLECLK of it, and the
+     * timestamp that decides "within" is GetMessageTime(), not a clock the caller
+     * has. What a count MEANS -- two selects a word, three selects a block -- is
+     * still entirely the caller's, which is the same division this file already
+     * states for the keymap. */
+    unsigned click_count;
     /* Client area in device pixels at the moment of the event, so a handler
      * can express a page-sized scroll without asking the window anything.
      *
@@ -169,6 +216,30 @@ void spdf_win_window_set_title(spdf_win_window* window, const wchar_t* title);
  * leave a light title bar wrapped around a #121212 canvas. Idempotent; a
  * Windows without the attribute simply keeps its light frame. */
 void spdf_win_window_set_dark_frame(spdf_win_window* window, int dark);
+
+/* THE MENU BAR. `hmenu` is an HMENU (spdf_win_menu_create()'s return), and the
+ * window takes ownership: DestroyWindow destroys the menu with it.
+ *
+ * Here rather than inside spdf_win_window_create() because a menu bar is
+ * PRODUCT POLICY -- which commands exist is the same kind of knowledge as which
+ * key means "next page", and spdf_win_window.h's standing rule is that the
+ * window owns neither. This file only hangs the handle on the HWND and turns the
+ * WM_COMMAND that comes back into SPDF_WIN_INPUT_COMMAND.
+ *
+ * IT CHANGES THE CLIENT AREA. A menu bar comes out of the window's height, so
+ * this is called BEFORE the window is shown and re-runs the sizing that
+ * spdf_win_window_create() did -- otherwise the first document opens in a window
+ * one menu bar shorter than every measurement in this port assumes. */
+void spdf_win_window_set_menu(spdf_win_window* window, void* hmenu);
+
+/* The HWND, as void*, for the two things that genuinely need one: TrackPopupMenu
+ * and IFileOpenDialog both take an owner window.
+ *
+ * THIS IS NOT A CRACK IN spdf_win_d2d.h's RULE. That rule is that
+ * spdf_win_paint() must never require an HWND, which is what keeps the chrome
+ * pixel-testable offscreen; it says nothing about a modal dialog, which has no
+ * pixels in the render target at all. Nothing on the paint path may call this. */
+void* spdf_win_window_native_handle(spdf_win_window* window);
 
 /* Runs the message pump until the window closes. Returns WM_QUIT's exit code,
  * which is 0 for a normal close -- the value main() should return. */

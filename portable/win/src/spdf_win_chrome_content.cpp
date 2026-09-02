@@ -22,10 +22,17 @@
  *
  * It is honest about its limits and they are all listed in this change's report:
  * it opens a SECOND document handle (the render workers already do exactly that,
- * because the core allows one spdf_document per thread), it cannot know the
- * canvas's live scroll offset, and it takes the filter text from an environment
- * variable because no keyboard input reaches this track. Every one of those is a
- * field on a struct owned by another track, not a design.
+ * because the core allows one spdf_document per thread) and it cannot know the
+ * canvas's live scroll offset. Both are a field on a struct owned by another
+ * track, not a design.
+ *
+ * THE FILTER TEXT IS NO LONGER ONE OF THOSE LIMITS. It used to come from
+ * SPDF_SIDEBAR_FILTER -- one getenv, documented as temporary at its definition,
+ * because no keyboard input reached this track. The field is typeable now
+ * (spdf_win_chrome_text.h, routed by SPDF_WIN_CA_FOCUS_SIDEBAR_FILTER) and the
+ * environment variable is gone; spdf_win_chrome_content_set_filter() is the only
+ * way in. Do not bring it back: a debugging hook that bypasses the real control
+ * is a hook that keeps working after the real control has broken.
  */
 
 namespace {
@@ -40,8 +47,15 @@ struct Bridge {
     int outline_tried;
     spdf_outline outline;
     SpdfWinSidebarRow* rows;
+    int row_cap;      /* how many `rows` can hold, and `arena`'s size in units of 320 */
     wchar_t* arena;
     wchar_t filter[128];
+    /* The filter changed and the row list has not caught up. Set by the setter
+     * and cleared by the rebuild, rather than the rebuild comparing strings:
+     * the reader types one character at a time and every keystroke IS a change,
+     * so the flag is the honest representation and the compare would be dead
+     * code that looked like a guard. */
+    int filter_dirty;
     SpdfWinSidebarContent sidebar;
 
     /* Minimap. */
@@ -108,64 +122,51 @@ void ensure_path(Bridge* b) {
     find_document(b);
 }
 
-/* Reads the filter text. No keyboard input reaches this track, so the only way
- * to exercise the filter in the real app today is the environment -- which is
- * enough to see it work and enough for a screenshot, and costs one getenv on the
- * first sidebar paint. */
-void load_filter(Bridge* b) {
-    size_t n = 0;
-    b->filter[0] = 0;
-    if (getenv_s(&n, NULL, 0, "SPDF_SIDEBAR_FILTER") != 0 || n == 0) return;
-    if (n > sizeof(b->filter) / sizeof(b->filter[0])) n = sizeof(b->filter) / sizeof(b->filter[0]);
-    {
-        char narrow[256];
-        size_t got = 0;
-        if (getenv_s(&got, narrow, sizeof(narrow), "SPDF_SIDEBAR_FILTER") != 0 || got == 0) return;
-        /* The environment block is ANSI here, so this one string -- and only
-         * this one -- goes through CP_ACP by necessity. It is a debugging hook,
-         * not document data; every title beside it is CP_UTF8. */
-        MultiByteToWideChar(CP_ACP, 0, narrow, -1, b->filter, (int)(sizeof(b->filter) / sizeof(b->filter[0])));
-    }
-}
-
-void ensure_outline(Bridge* b) {
-    char err[256] = {0};
+/* Rebuild the row list from the loaded outline THROUGH THE CURRENT FILTER.
+ *
+ * Separate from ensure_outline() below because the two have different triggers:
+ * the outline is loaded once per document, and the rows are rebuilt on every
+ * keystroke in the filter field. Reloading the outline per keystroke would mean
+ * reopening the document per keystroke, which is exactly the kind of cost this
+ * file's rule 1 exists to keep off the paint path.
+ *
+ * `rows` and `arena` are sized for the UNFILTERED outline and reused: filtering
+ * can only ever produce fewer rows, so a filter can never need a bigger buffer
+ * than the one the first build allocated. */
+void rebuild_rows(Bridge* b) {
     const char** titles = NULL;
     int* pages = NULL;
     int* levels = NULL;
     size_t arena_wchars;
     int i;
 
-    if (b->outline_tried) return;
-    b->outline_tried = 1;
-    b->sidebar.loaded = 1; /* whatever happens below, the answer is now known */
-    ensure_path(b);
-    if (!b->path) return;
-    load_filter(b);
+    b->sidebar.rows = NULL;
+    b->sidebar.row_count = 0;
     b->sidebar.filter = b->filter[0] ? b->filter : NULL;
-
-    b->doc = spdf_open(b->path, err, sizeof(err));
-    if (!b->doc) return;
-    if (!spdf_load_outline(b->doc, &b->outline, err, sizeof(err))) return;
-    b->sidebar.total_count = b->outline.count;
     if (b->outline.count <= 0) return;
+
+    if (!b->rows || !b->arena) {
+        free(b->rows);
+        free(b->arena);
+        b->row_cap = b->outline.count;
+        b->rows = (SpdfWinSidebarRow*)calloc((size_t)b->row_cap, sizeof(SpdfWinSidebarRow));
+        b->arena = (wchar_t*)calloc((size_t)b->row_cap * 320u, sizeof(wchar_t));
+        if (!b->rows || !b->arena) return;
+    }
+    arena_wchars = (size_t)b->row_cap * 320u;
 
     titles = (const char**)malloc(sizeof(char*) * (size_t)b->outline.count);
     pages = (int*)malloc(sizeof(int) * (size_t)b->outline.count);
     levels = (int*)malloc(sizeof(int) * (size_t)b->outline.count);
-    b->rows = (SpdfWinSidebarRow*)calloc((size_t)b->outline.count, sizeof(SpdfWinSidebarRow));
-    arena_wchars = (size_t)b->outline.count * 320u;
-    b->arena = (wchar_t*)calloc(arena_wchars, sizeof(wchar_t));
-    if (titles && pages && levels && b->rows && b->arena) {
+    if (titles && pages && levels) {
         for (i = 0; i < b->outline.count; ++i) {
             titles[i] = b->outline.items[i].title;
             pages[i] = b->outline.items[i].page_index;
             levels[i] = b->outline.items[i].level;
         }
         b->sidebar.rows = b->rows;
-        b->sidebar.row_count = spdf_win_sidebar_build_rows(titles, pages, levels, b->outline.count,
-                                                           b->sidebar.filter, b->rows, b->outline.count, b->arena,
-                                                           arena_wchars);
+        b->sidebar.row_count = spdf_win_sidebar_build_rows(titles, pages, levels, b->outline.count, b->sidebar.filter,
+                                                           b->rows, b->row_cap, b->arena, arena_wchars);
     }
     free((void*)titles);
     free(pages);
@@ -181,6 +182,25 @@ void ensure_outline(Bridge* b) {
         b->sidebar.selected_row = i;
         break;
     }
+}
+
+void ensure_outline(Bridge* b) {
+    char err[256] = {0};
+
+    if (!b->outline_tried) {
+        b->outline_tried = 1;
+        b->sidebar.loaded = 1; /* whatever happens below, the answer is now known */
+        b->filter_dirty = 1;   /* a new document needs its rows built at least once */
+        ensure_path(b);
+        if (!b->path) return;
+        b->doc = spdf_open(b->path, err, sizeof(err));
+        if (!b->doc) return;
+        if (!spdf_load_outline(b->doc, &b->outline, err, sizeof(err))) return;
+        b->sidebar.total_count = b->outline.count;
+    }
+    if (!b->filter_dirty) return;
+    b->filter_dirty = 0;
+    rebuild_rows(b);
 }
 
 /* `ctx` is the bridge for BOTH hooks: one owner, so a painter never has to know
@@ -275,6 +295,15 @@ void spdf_win_chrome_content_set_document(const char* utf8_path, int current_pag
     b->launch_page = current_page;
 }
 
+void spdf_win_chrome_content_set_filter(const wchar_t* filter) {
+    Bridge* b = &g_bridge;
+    if (g_attached) return;
+    if (!filter) filter = L"";
+    if (wcscmp(b->filter, filter) == 0) return;
+    wcsncpy_s(b->filter, filter, sizeof(b->filter) / sizeof(b->filter[0]) - 1);
+    b->filter_dirty = 1;
+}
+
 const SpdfWinChromePanelsContent* spdf_win_chrome_content_current(void) {
     Bridge* b = &g_bridge;
     if (g_attached) return g_attached;
@@ -295,6 +324,7 @@ void spdf_win_chrome_content_shutdown(void) {
     if (b->outline.items) spdf_free_outline(&b->outline);
     free(b->rows);
     b->rows = NULL;
+    b->row_cap = 0;
     free(b->arena);
     b->arena = NULL;
     if (b->doc) spdf_close(b->doc);

@@ -159,6 +159,77 @@ unsigned long long spdf_win_canvas_prefetched(spdf_win_canvas* canvas);
  * a multi-frame scroll deterministic. */
 int spdf_win_canvas_settle(spdf_win_canvas* canvas, int timeout_ms);
 
+/* --- text selection and links -------------------------------------------
+ *
+ * THE WHOLE INPUT SURFACE THE SHELL HAS TO WIRE, and deliberately no more: six
+ * calls, all of them taking CANVAS-LOCAL DEVICE PIXELS and nothing else. No
+ * HWND, no document, no page number, no PDF point crosses this line, so the
+ * input router can stay a router. spdf_win_selection.h and spdf_win_links.h
+ * hold the model; this is the canvas binding it to its own geometry.
+ *
+ * Everything here runs on the UI thread against the canvas's own document
+ * handle, which is the thread that owns it (shenzhen_pdf_core.c:40-43).
+ * Nothing here needs a window, so the headless probe drives the same calls.
+ *
+ * Each of the three pointer calls returns non-zero when the VISIBLE selection
+ * changed, i.e. when the caller should invalidate. */
+
+typedef enum spdf_win_canvas_cursor {
+    SPDF_WIN_CANVAS_CURSOR_ARROW = 0, /* IDC_ARROW  */
+    SPDF_WIN_CANVAS_CURSOR_TEXT = 1,  /* IDC_IBEAM  */
+    SPDF_WIN_CANVAS_CURSOR_HAND = 2   /* IDC_HAND   */
+} spdf_win_canvas_cursor;
+
+/* What a release wants done about a link, if anything. `uri` is borrowed and
+ * valid until the next pointer call on this canvas. An INTERNAL target has
+ * ALREADY been scrolled to by the time this is filled -- the canvas can do that
+ * itself and the shell would only be forwarding it back. A URI target is NOT
+ * opened here: launching a browser is a shell decision with a shell's security
+ * questions, and the canvas has no business making it. */
+typedef struct spdf_win_canvas_link_nav {
+    int kind;        /* spdf_link_kind: NONE / URI / INTERNAL */
+    int page_index;  /* INTERNAL only: the page scrolled to */
+    const char* uri; /* URI only: borrowed UTF-8 */
+} spdf_win_canvas_link_nav;
+
+/* `click_count` is the accumulated count for a multi-click series (1, 2, 3...).
+ * Win32 does not accumulate it: WM_LBUTTONDBLCLK is the SECOND click, so the
+ * router counts, and a triple click is a WM_LBUTTONDOWN inside
+ * GetDoubleClickTime() of a WM_LBUTTONDBLCLK. Two selects a word, three or more
+ * selects the block. */
+int spdf_win_canvas_pointer_press(spdf_win_canvas* canvas, float x, float y, unsigned click_count);
+/* Only meaningful while a button is down; a no-op otherwise. */
+int spdf_win_canvas_pointer_drag(spdf_win_canvas* canvas, float x, float y);
+/* `out_nav` may be NULL. */
+int spdf_win_canvas_pointer_release(spdf_win_canvas* canvas, spdf_win_canvas_link_nav* out_nav);
+/* Capture lost, or Escape: ends the gesture, keeps a completed selection. */
+void spdf_win_canvas_pointer_cancel(spdf_win_canvas* canvas);
+
+/* Which cursor belongs at this point. `want_text_cursor` asks for the I-beam
+ * over text, which costs one structured-text pass per page visited (see
+ * spdf_win_links.h); 0 answers hand-or-arrow for free. */
+spdf_win_canvas_cursor spdf_win_canvas_cursor_at(spdf_win_canvas* canvas, float x, float y, int want_text_cursor);
+
+/* Copy the selection to the clipboard as CF_UNICODETEXT. Returns 1 when
+ * something was copied. NO PERMISSION GATE, by product decision -- see
+ * spdf_win_selection.h section 5 and shenzhen_pdf_core.h:209-214. */
+int spdf_win_canvas_copy_selection(spdf_win_canvas* canvas);
+/* Borrowed UTF-8, NULL when nothing is selected. */
+const char* spdf_win_canvas_selection_text(const spdf_win_canvas* canvas);
+int spdf_win_canvas_has_selection(const spdf_win_canvas* canvas);
+/* Returns non-zero when something was actually cleared. */
+int spdf_win_canvas_clear_selection(spdf_win_canvas* canvas);
+
+/* THE SECOND OVERLAY PRODUCER. Call it AFTER spdf_win_canvas_build_scene() and
+ * AFTER spdf_win_find_apply_overlays(): it takes whatever overlays the scene
+ * already carries as a base, appends the selection's rects, and re-points the
+ * scene at the combined array. Selection last is macOS's own draw order
+ * (SPDFMacDocumentView.mm :467 highlights, :475 active ring, :485 selection),
+ * and it leaves find's "the active ring is the last thing I emit" contract
+ * intact. See spdf_win_selection.h section 4 for why this shape rather than one
+ * combined producer. A no-op when nothing is selected. */
+void spdf_win_canvas_apply_selection_overlays(spdf_win_canvas* canvas, spdf_win_scene* scene);
+
 #ifdef __cplusplus
 }
 #endif
