@@ -16,7 +16,8 @@
 
 static int usage(void) {
     fwprintf(stderr,
-             L"usage: ShenzhenPDF.exe [--dark] [--page N] <file.pdf>\n"
+             L"usage: ShenzhenPDF.exe [--dark|--light] [--page N] [file.pdf]\n"
+             L"       (no file: restores the last session, or opens an empty window)\n"
              L"       ShenzhenPDF.exe --render-png [--dark] <file.pdf> <page> <zoom> <out.png>\n"
              L"       ShenzhenPDF.exe --render-window-png [opts] <file.pdf> <page> <w> <h> <out.png>\n"
              L"\n"

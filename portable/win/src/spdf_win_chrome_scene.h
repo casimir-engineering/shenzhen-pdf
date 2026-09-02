@@ -106,10 +106,49 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
     SpdfWinChromeLayout chrome_layout;
     unsigned client_w, client_h;
     int h_scrollable_this_frame;
-    if (!a->canvas) return 0; /* the last tab just closed; the pump is exiting */
 
     client_w = scene->client_px_w ? scene->client_px_w : scene->target_px_w;
     client_h = scene->client_px_h ? scene->client_px_h : scene->target_px_h;
+
+    /* NO DOCUMENT: still a window, not a blank one.
+     *
+     * Reached two ways -- a bare launch with nothing to restore, and the moment
+     * after the last tab closed while the pump drains. Returning 0 here used to
+     * paint an empty gutter-coloured client with no chrome at all, which for the
+     * bare-launch case would read as "the app is broken" rather than "open
+     * something". So the chrome is built exactly as below (zero tabs, controls
+     * greyed by the model's has_document rule) and one line in the canvas region
+     * says what to do. Every canvas call is skipped; nothing here needs one.
+     *
+     * target_px_w/h are set to the CANVAS region's size because that is what
+     * spdf_win_canvas_build_scene() would have done and what draw_message()
+     * lays the text out against -- inside the translate spdf_win_paint applies
+     * for chrome, so the hint centres in the document area, not the client. */
+    if (!a->canvas) {
+        chrome_inputs_for(a, &inputs, scene->dpi_scale);
+        spdf_win_chrome_model_build(&a->chrome, &a->chrome_tabs, a->tabs, &inputs);
+        chrome_scroll_into(a, &a->chrome); /* NULL-safe: reports "nothing to scroll" */
+        scene->chrome = &a->chrome;
+        spdf_win_chrome_layout(&a->chrome, client_w, client_h, scene->dpi_scale, &chrome_layout);
+        scene->target_px_w = (unsigned)chrome_layout.canvas.w;
+        scene->target_px_h = (unsigned)chrome_layout.canvas.h;
+        /* The READING theme is the scene's, not the model's, and it is normally
+         * spdf_win_canvas_build_scene() that copies it across from the canvas's
+         * render flags. With no canvas nobody does, so the painter picked the
+         * light palette for the gutter and chrome while the model -- which had
+         * the flag -- drew the dark theme's sun glyph and DWM darkened the
+         * caption. Measured on a dark machine: a light window under a dark title
+         * bar. Set it from the same flags the canvas would have carried. */
+        scene->dark = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
+        /* Release the panels' content: with no selected document the sidebar
+         * and minimap must not keep showing the one that just closed. */
+        spdf_win_chrome_content_set_document(NULL, 0);
+        a->sidebar_rows = 0;
+        a->chrome.sidebar_row_count = 0;
+        scene->message = a->status[0] ? a->status
+                                      : L"No document open — Ctrl+O to open one, or drop a PDF here";
+        return 1;
+    }
 
     /* Built twice, and deliberately. The first build only has to be right about
      * GEOMETRY, because it decides the canvas rect; the readouts it carries are
