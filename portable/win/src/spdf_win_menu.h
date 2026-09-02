@@ -108,6 +108,14 @@ typedef enum spdf_win_command {
     SPDF_WIN_CMD_NEW_TAB,   /* GTK4 win.new-tab; the strip's `+` and Ctrl+T */
     SPDF_WIN_CMD_CLOSE_TAB, /* "Close"    */
     SPDF_WIN_CMD_QUIT,      /* "Quit Shenzhen PDF" */
+    /* Export, print and properties. Greying: only PRINT is gated, on the
+     * document's own print flag -- the three Copy Page items never are, because
+     * spdf_has_permission(doc,'c') returns 1 by product decision
+     * (shenzhen_pdf_core.h:209-214) and this frontend must not add a copy gate. */
+    SPDF_WIN_CMD_SAVE_AS,
+    SPDF_WIN_CMD_SAVE_PAGE_AS,
+    SPDF_WIN_CMD_PRINT,
+    SPDF_WIN_CMD_PROPERTIES,
 
     /* Go To (:2200-2245) */
     SPDF_WIN_CMD_FIRST_PAGE,
@@ -137,6 +145,11 @@ typedef enum spdf_win_command {
     SPDF_WIN_CMD_FIND_NEXT,
     SPDF_WIN_CMD_FIND_PREV,
     SPDF_WIN_CMD_FIND_REGEX,
+    /* macOS and GTK both publish Copy Page as a standalone ONE-PAGE PDF plus its
+     * path, not as text; Copy Page Text is the separate, additional item. */
+    SPDF_WIN_CMD_COPY_PAGE,
+    SPDF_WIN_CMD_COPY_PAGE_TEXT,
+    SPDF_WIN_CMD_COPY_PAGE_IMAGE,
 
     SPDF_WIN_CMD_COUNT
 } spdf_win_command;
@@ -185,6 +198,12 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     {SPDF_WIN_CMD_OPEN, SPDF_WIN_MENU_FILE, L"&Open...", L"Ctrl+O", 'O', SPDF_WIN_ACCEL_CTRL, 0},
     {SPDF_WIN_CMD_NEW_TAB, SPDF_WIN_MENU_FILE, L"Open in New &Tab...", L"Ctrl+T", 'T', SPDF_WIN_ACCEL_CTRL, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_SAVE_AS, SPDF_WIN_MENU_FILE, L"&Save As...", L"Ctrl+S", 'S', SPDF_WIN_ACCEL_CTRL, 0},
+    {SPDF_WIN_CMD_SAVE_PAGE_AS, SPDF_WIN_MENU_FILE, L"Save &Page As...", NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_PRINT, SPDF_WIN_MENU_FILE, L"&Print...", L"Ctrl+P", 'P', SPDF_WIN_ACCEL_CTRL, 0},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_PROPERTIES, SPDF_WIN_MENU_FILE, L"P&roperties...", L"Ctrl+I", 'I', SPDF_WIN_ACCEL_CTRL, 0},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_CLOSE_TAB, SPDF_WIN_MENU_FILE, L"&Close", L"Ctrl+W", 'W', SPDF_WIN_ACCEL_CTRL, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_FILE, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_QUIT, SPDF_WIN_MENU_FILE, L"&Quit Shenzhen PDF", L"Ctrl+Q", 'Q', SPDF_WIN_ACCEL_CTRL, 0},
@@ -224,6 +243,10 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
      * selection to copy on Windows -- the document's -- so the two are one item,
      * on Ctrl+C, which is also GTK4's win.copy. */
     {SPDF_WIN_CMD_COPY, SPDF_WIN_MENU_EDIT, L"&Copy", L"Ctrl+C", 'C', SPDF_WIN_ACCEL_CTRL, 0},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_COPY_PAGE, SPDF_WIN_MENU_EDIT, L"Copy &Page", NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_COPY_PAGE_TEXT, SPDF_WIN_MENU_EDIT, L"Copy Page &Text", NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_COPY_PAGE_IMAGE, SPDF_WIN_MENU_EDIT, L"Copy Page &Image", NULL, 0, 0, 0},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_FIND, SPDF_WIN_MENU_EDIT, L"&Find", L"Ctrl+F", 'F', SPDF_WIN_ACCEL_CTRL, 0},
     {SPDF_WIN_CMD_FIND_NEXT, SPDF_WIN_MENU_EDIT, L"Find &Next", L"Ctrl+G", 'G', SPDF_WIN_ACCEL_CTRL, 0},
@@ -321,6 +344,13 @@ typedef struct SpdfWinMenuState {
     int regex;
     int can_close_tab;
     int has_document;
+    /* The document's OWN print flag. The only permission this menu honours.
+     * spdf_has_permission(doc,'c') returns 1 unconditionally by product decision
+     * (shenzhen_pdf_core.h:209-214) and this frontend must not add a copy gate,
+     * so the three Copy Page items are never greyed on permissions -- only on
+     * there being no document at all. Print is different: print, edit and
+     * annotate still answer the document's own flags. */
+    int can_print;
 } SpdfWinMenuState;
 
 /* Whether an item should be enabled given that state. Pure, so the greying rule
@@ -346,7 +376,16 @@ static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_enabled(int command, const
         case SPDF_WIN_CMD_COPY:
         case SPDF_WIN_CMD_FIND:
         case SPDF_WIN_CMD_FIND_NEXT:
-        case SPDF_WIN_CMD_FIND_PREV: return st->has_document != 0;
+        case SPDF_WIN_CMD_FIND_PREV:
+        case SPDF_WIN_CMD_SAVE_AS:
+        case SPDF_WIN_CMD_SAVE_PAGE_AS:
+        case SPDF_WIN_CMD_PROPERTIES:
+        case SPDF_WIN_CMD_COPY_PAGE:
+        case SPDF_WIN_CMD_COPY_PAGE_TEXT:
+        case SPDF_WIN_CMD_COPY_PAGE_IMAGE: return st->has_document != 0;
+        /* The print job is refused before any dialog appears when the document
+         * forbids it; greying the item says so before the reader asks. */
+        case SPDF_WIN_CMD_PRINT: return st->has_document != 0 && st->can_print != 0;
         default: return 1;
     }
 }

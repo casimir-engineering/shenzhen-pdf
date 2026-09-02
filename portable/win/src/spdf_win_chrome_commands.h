@@ -33,6 +33,10 @@
  */
 
 #include "spdf_win_chrome_text.h"
+#include "spdf_win_clipboard_page.h"
+#include "spdf_win_export.h"
+#include "spdf_win_print.h"
+#include "spdf_win_properties.h"
 #include "spdf_win_menu.h"
 
 /* --- the three fields ---------------------------------------------------
@@ -168,6 +172,58 @@ static int chrome_field_key(app* a, const spdf_win_input* in) {
  * is what the zoom commands need to lay the chrome out the same way the painter
  * did -- see chrome_layout_for_input's own note on why a cached layout will not
  * do. */
+
+/* --- the document actions: save, print, properties, copy page -------------
+ *
+ * These four subsystems take a document, its path as UTF-16, and a page. The
+ * app holds the path as UTF-8 (the core's currency) and the document behind the
+ * tab model, so this is the one place that widens and resolves. Widening here
+ * rather than in each subsystem keeps the CP_UTF8 conversion in one place, which
+ * is the same discipline the tab titles and the outline follow -- this machine's
+ * ANSI code page is 1252 and a narrow conversion loses a CJK filename silently.
+ *
+ * A NULL document means no tab is open; every case below no-ops rather than
+ * reaching into a half-closed tab. */
+typedef struct SpdfWinDocAction {
+    spdf_document* doc;
+    /* 1024 == SPDF_COMPAT_PATH_MAX (spdf_win_compat.h), which matches the
+     * core's own path buffers. Not the header's constant, because this file
+     * does not include the compat shim; kept equal deliberately. */
+    wchar_t path[1024];
+    int page;
+    HWND hwnd;
+} SpdfWinDocAction;
+
+static int doc_action_for(app* a, SpdfWinDocAction* act) {
+    char err[256] = {0};
+    const char* utf8 = NULL;
+    int sel;
+
+    memset(act, 0, sizeof(*act));
+    if (!a->tabs || !a->canvas) return 0;
+    sel = spdf_win_tabs_selected_index(a->tabs);
+    if (sel < 0) return 0;
+    act->doc = (spdf_document*)spdf_win_tabs_document(a->tabs, sel, err, sizeof(err));
+    if (!act->doc) return 0;
+    utf8 = spdf_win_tabs_path(a->tabs, sel);
+    if (utf8 && *utf8 &&
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, act->path,
+                            (int)(sizeof(act->path) / sizeof(act->path[0]))) == 0)
+        act->path[0] = 0;
+    act->page = spdf_win_canvas_current_page(a->canvas);
+    act->hwnd = a->window ? (HWND)spdf_win_window_native_handle(a->window) : NULL;
+    return 1;
+}
+
+/* Report a failure the way the rest of the app does. `err` empty means the user
+ * cancelled a dialog, which is not a failure and says nothing. */
+static void doc_action_report(app* a, const char* err) {
+    wchar_t message[600];
+    if (!err || !err[0]) return;
+    _snwprintf_s(message, _TRUNCATE, L"%hs", err);
+    report(message, a->window != NULL);
+}
+
 static int command_perform(app* a, int command, const spdf_win_input* in) {
     SpdfWinChromeModel model;
     SpdfWinChromeLayout l;
@@ -230,6 +286,50 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
         case SPDF_WIN_CMD_FIND: return chrome_focus(a, SPDF_WIN_FOCUS_FIND);
         case SPDF_WIN_CMD_FIND_NEXT: return chrome_find_step(a, 1);
         case SPDF_WIN_CMD_FIND_PREV: return chrome_find_step(a, -1);
+        case SPDF_WIN_CMD_SAVE_AS:
+        case SPDF_WIN_CMD_SAVE_PAGE_AS:
+        case SPDF_WIN_CMD_PRINT:
+        case SPDF_WIN_CMD_PROPERTIES:
+        case SPDF_WIN_CMD_COPY_PAGE:
+        case SPDF_WIN_CMD_COPY_PAGE_TEXT:
+        case SPDF_WIN_CMD_COPY_PAGE_IMAGE: {
+            SpdfWinDocAction act;
+            char err[512] = {0};
+            unsigned long os_error = 0;
+            if (!doc_action_for(a, &act)) return 0;
+            switch (command) {
+                case SPDF_WIN_CMD_SAVE_AS:
+                    spdf_win_export_save_document_as(act.hwnd, act.doc, act.path, err, sizeof(err));
+                    break;
+                case SPDF_WIN_CMD_SAVE_PAGE_AS:
+                    spdf_win_export_save_page_as(act.hwnd, act.doc, act.path, act.page, err, sizeof(err));
+                    break;
+                case SPDF_WIN_CMD_PRINT:
+                    /* Scaling mode and custom scale are persisted by the other
+                     * two frontends as settings.json printScalingMode /
+                     * printCustomScale; Windows state does not carry them yet, so
+                     * the default is passed and the enum stays wire-compatible
+                     * (the print differential pins that). */
+                    spdf_win_print_document(act.hwnd, act.doc, act.path, SPDF_WIN_PRINT_SCALING_FIT, 1.0, err,
+                                            sizeof(err));
+                    break;
+                case SPDF_WIN_CMD_PROPERTIES:
+                    spdf_win_properties_show_for_document(act.hwnd, act.doc, act.path, act.page, 0, 0);
+                    break;
+                case SPDF_WIN_CMD_COPY_PAGE:
+                    spdf_win_copy_page_pdf(act.doc, act.page, act.path, err, sizeof(err), &os_error);
+                    break;
+                case SPDF_WIN_CMD_COPY_PAGE_TEXT:
+                    spdf_win_copy_page_text(act.doc, act.page, err, sizeof(err), &os_error);
+                    break;
+                default:
+                    spdf_win_copy_page_image(act.doc, act.page, 0.0, err, sizeof(err), &os_error);
+                    break;
+            }
+            doc_action_report(a, err);
+            return 0; /* nothing on screen changed */
+        }
+
         case SPDF_WIN_CMD_FIND_REGEX:
             a->find_regex = !a->find_regex;
             chrome_find_push(a);
@@ -252,6 +352,13 @@ static void chrome_sync_menu(app* a) {
     st.has_document = a->canvas != NULL;
     st.can_close_tab = spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
                                                    a->canvas != NULL);
+    /* The document's own print flag, so Print greys out before the reader picks
+     * it rather than being refused afterwards. Resolved through the tab model
+     * because the app holds no document of its own in windowed mode. */
+    if (a->tabs && a->canvas) {
+        SpdfWinDocAction act;
+        st.can_print = doc_action_for(a, &act) ? spdf_win_print_allowed(act.doc) : 0;
+    }
     spdf_win_menu_sync(a->menu, &st);
 }
 
