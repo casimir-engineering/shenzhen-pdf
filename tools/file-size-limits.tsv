@@ -3,7 +3,7 @@ cmd/build-ci.ts	520	exception	Cohesive CI build orchestration; additions should 
 cmd/build-with-mingw.ts	1838	legacy	Legacy MinGW build orchestration; freeze growth pending extraction.
 cmd/gen-settings.ts	1796	legacy	Legacy settings generator; freeze growth while generated outputs stay excluded.
 cmd/trans-dl.ts	517	exception	Translation download workflow is cohesive; additions should use separate modules.
-portable/core/shenzhen_pdf_core.c	3381	legacy	Legacy shared document core, +85 lines for the dark reading theme fused into copy_pixmap_to_bitmap() and the cached per-page image rectangles behind SPDF_RENDER_PRESERVE_IMAGES (the transform itself lives in spdf_recolor.c); freeze growth pending subsystem extraction.
+portable/core/shenzhen_pdf_core.c	3362	legacy	Legacy shared document core, +85 lines for the dark reading theme fused into copy_pixmap_to_bitmap() and the cached per-page image rectangles behind SPDF_RENDER_PRESERVE_IMAGES (the transform itself lives in spdf_recolor.c); -19 net when struct spdf_document moved to spdf_core_document.h (so spdf_markdown_open.c can construct one) against the alternate dark rendition (dark_doc) the render path selects under SPDF_RENDER_DARK_THEME; freeze growth pending subsystem extraction.
 portable/core/spdf_yaml.c	1147	legacy	Shared strict-YAML-subset state codec (parser + emitter + JSON bridge + flock-guarded migration) serving both frontends, +17 lines for mtime-aware re-migration when a pre-YAML build wrote newer JSON; freeze growth pending parse/emit split.
 portable/linux/gtk4/spdf_annot.c	1301	legacy	Legacy GTK annotation controller; freeze growth pending extraction.
 portable/linux/gtk4/spdf_app.c	726	exception	GTK application lifecycle is cohesive and platform-specific.
