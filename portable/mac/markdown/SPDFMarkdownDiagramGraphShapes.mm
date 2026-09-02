@@ -19,6 +19,14 @@ static const CGFloat kSPDFDiagramLabelWrapLadder[] = {kSPDFDiagramLabelMaxWidth,
 static const CGFloat kSPDFDiagramNodePaddingX = 13;
 static const CGFloat kSPDFDiagramNodePaddingY = 8;
 static const CGFloat kSPDFDiagramClassGutter = 4;
+static const CGFloat kSPDFDiagramSlant = 10;   // parallelogram side slant
+static const CGFloat kSPDFDiagramRound = 8;    // rounded-rectangle corner radius
+// Clear air demanded between the text block's extreme corners and a CURVED
+// outline. A curve only pinches in near those corners, so this is deliberately
+// smaller than the flat padding: at mid-height a stadium keeps the full
+// kSPDFDiagramNodePaddingX. It must stay below kSPDFDiagramNodePaddingY, or a
+// block's corner would sit outside the cap arc's own vertical extent.
+static const CGFloat kSPDFDiagramCurveAir = 4;
 
 typedef struct {
     NSFont* label;
@@ -35,6 +43,131 @@ static NSArray<NSArray<NSString*>*>* SPDFDiagramClassCompartments(SPDFMarkdownDi
     if (node.memberAttributes.count) [compartments addObject:node.memberAttributes];
     if (node.memberMethods.count) [compartments addObject:node.memberMethods];
     return compartments;
+}
+
+// The half-width the DRAWN outline of `shape` still offers `offset` above and
+// below the node's center. This is the whole interior model in one function:
+// SPDFDiagramBoxForBlock inverts it per shape to pick a box, and the emitter
+// evaluates it to pick the width it wraps the label at, so sizing and drawing
+// cannot disagree about where the outline is.
+static CGFloat SPDFDiagramInteriorHalfWidth(SPDFMarkdownDiagramNodeShape shape, NSRect frame, CGFloat offset,
+                                            CGFloat scale) {
+    CGFloat halfWidth = NSWidth(frame) / 2;
+    CGFloat halfHeight = NSHeight(frame) / 2;
+    CGFloat dy = MIN(fabs(offset), halfHeight);
+    switch (shape) {
+        case SPDFMarkdownDiagramNodeShapeStadium:
+        case SPDFMarkdownDiagramNodeShapeRound: {
+            // One formula for both rounded rectangles: flat until the corner
+            // arc starts, then the arc. Radius and clamp match what
+            // SPDFDiagramAddNodeShape asks the canvas for.
+            CGFloat radius = shape == SPDFMarkdownDiagramNodeShapeStadium ? halfHeight
+                                                                         : kSPDFDiagramRound * scale;
+            radius = MAX(0, MIN(radius, MIN(halfWidth, halfHeight)));
+            CGFloat into = dy - (halfHeight - radius);
+            if (into > 0) halfWidth -= radius - sqrt(MAX(0, radius * radius - into * into));
+            break;
+        }
+        case SPDFMarkdownDiagramNodeShapeCircle:
+            if (halfHeight > 0) halfWidth *= sqrt(MAX(0, 1 - (dy / halfHeight) * (dy / halfHeight)));
+            break;
+        case SPDFMarkdownDiagramNodeShapeDiamond:
+            if (halfHeight > 0) halfWidth *= 1 - dy / halfHeight;
+            break;
+        case SPDFMarkdownDiagramNodeShapeParallelogram:
+            halfWidth -= kSPDFDiagramSlant * scale;  // the slant costs the same at every height
+            break;
+        case SPDFMarkdownDiagramNodeShapeSubroutine:
+            halfWidth -= 5 * scale;  // the two vertical bars
+            break;
+        default:
+            break;  // a rectangle's interior is its frame
+    }
+    return MAX(0, halfWidth);
+}
+
+// The smallest box of `shape` whose SAFE INTERIOR holds `block` with clear air
+// on every side.
+//
+// A rectangle's interior IS its frame less the padding, so rectangles keep
+// exactly the size they always had. Every other outline takes back more than
+// the padding, and -- this is the part the old sizing missed -- takes back MORE
+// the taller the block is, because a cap, an ellipse or a taper pinches inward
+// toward the block's first and last lines. Sizing tuned on one- and two-line
+// labels was therefore fine until commit 3f0e19d4b's legibility reflow started
+// producing four- and five-line ones, at which point the power-tree fixture's
+// `VSYS 3.5-4.26 V` stadium printed its top line straight across both caps.
+//
+// Each case below states the containment condition it inverts, so the box is a
+// solved constraint rather than a tuned fudge factor, and each one leaves at
+// least `air` of clearance at the block's extreme lines. Minimums and the
+// shape-normalizing clamps are applied once, at the end, so they can never
+// re-break a constraint the switch just satisfied. Slack any of them leaves is
+// not wasted: SPDFDiagramAddNode re-wraps the label into the interior the
+// chosen box actually has.
+static NSSize SPDFDiagramBoxForBlock(SPDFMarkdownDiagramNodeShape shape, NSSize block, CGFloat scale) {
+    CGFloat padX = kSPDFDiagramNodePaddingX * scale;
+    CGFloat padY = kSPDFDiagramNodePaddingY * scale;
+    CGFloat air = kSPDFDiagramCurveAir * scale;
+    // The flat interior every shape keeps: padding around the block.
+    CGFloat width = block.width + 2 * padX;
+    CGFloat height = block.height + 2 * padY;
+    switch (shape) {
+        case SPDFMarkdownDiagramNodeShapeStadium: {
+            // Caps of radius R = H/2. At height |dy| off the center the outline
+            // has come in by R - sqrt(R^2 - dy^2) on each side. The block's
+            // extreme lines sit at |dy| = block.height / 2, and they need `air`
+            // beyond that, so require the half-width there to cover
+            // block.width / 2 + air.
+            CGFloat radius = height / 2;
+            CGFloat reach = block.height / 2 + air;  // < radius: air < padY by construction
+            CGFloat pinch = radius - sqrt(MAX(0, radius * radius - reach * reach));
+            width = MAX(width, block.width + 2 * air + 2 * pinch);
+            break;
+        }
+        case SPDFMarkdownDiagramNodeShapeCircle:
+            // A centered rect fits a circle exactly when its CORNER does, which
+            // on a circle is just the rect's diagonal. The old `+ 6` keeps a
+            // single-line circle the size it has always been.
+            width = height = MAX(MAX(width, height) + 6 * scale,
+                                 hypot(block.width + 2 * air, block.height + 2 * air));
+            break;
+        case SPDFMarkdownDiagramNodeShapeDiamond:
+            // A rhombus holds a centered w-by-h rect exactly when
+            // w/W + h/H <= 1 -- the usable width falls off LINEARLY toward the
+            // top and bottom vertices, which makes this the worst case of the
+            // family. Splitting the budget evenly between the axes gives each
+            // one twice the block it has to clear.
+            width = MAX(width, 2 * (block.width + 2 * air));
+            height = MAX(height, 2 * (block.height + 2 * air));
+            break;
+        case SPDFMarkdownDiagramNodeShapeParallelogram:
+            // The slant costs the same width at EVERY line, so the usable
+            // column is just the overlap of the top and bottom edges. Keeping
+            // the ordinary padding inside that column is the whole rule.
+            width += 2 * kSPDFDiagramSlant * scale;
+            break;
+        case SPDFMarkdownDiagramNodeShapeRound:
+            // The corner arc has a FIXED radius, so clearing it costs a
+            // constant rather than something that grows with the line count:
+            // keep the block's corner outside the arc's quadrant entirely.
+            // Stated rather than assumed -- the ordinary padding already covers
+            // it, so this max never fires.
+            width = MAX(width, block.width + 2 * (kSPDFDiagramRound * scale + air));
+            break;
+        default:
+            // Rectangles: the padding IS the interior. Subroutines too -- their
+            // two bars sit 5 pt in, well inside the 13 pt of padding.
+            break;
+    }
+    width = MAX(width, 34 * scale);
+    height = MAX(height, 26 * scale);
+    // A stadium narrower than it is tall would have its cap radius clamped to
+    // W/2 by the canvas, invalidating the solve above; a circle must stay
+    // square after the minimums.
+    if (shape == SPDFMarkdownDiagramNodeShapeStadium) width = MAX(width, height);
+    if (shape == SPDFMarkdownDiagramNodeShapeCircle) width = height = MAX(width, height);
+    return NSMakeSize(ceil(width), ceil(height));
 }
 
 // Sizes one node's box for a given label wrap. Returns the width the node's own
@@ -67,20 +200,9 @@ static CGFloat SPDFDiagramMeasureNode(SPDFMarkdownDiagramNode* node, SPDFDiagram
         return width;
     }
     NSSize text = SPDFMarkdownDiagramMeasureText(node.label.length ? node.label : @" ", fonts.label, maxWidth);
-    CGFloat width = text.width + 2 * kSPDFDiagramNodePaddingX * scale;
-    CGFloat height = text.height + 2 * kSPDFDiagramNodePaddingY * scale;
-    if (node.shape == SPDFMarkdownDiagramNodeShapeDiamond) {
-        // The label must fit the inscribed half-size box of the rhombus.
-        width = text.width * 1.9 + 14 * scale;
-        height = text.height * 1.9 + 14 * scale;
-    } else if (node.shape == SPDFMarkdownDiagramNodeShapeCircle) {
-        CGFloat diameter = MAX(width, height) + 6 * scale;
-        width = diameter;
-        height = diameter;
-    } else if (node.shape == SPDFMarkdownDiagramNodeShapeParallelogram) {
-        width += 16 * scale;  // room for the slanted sides
-    }
-    node.frame = NSMakeRect(0, 0, ceil(MAX(width, 34 * scale)), ceil(MAX(height, 26 * scale)));
+    node.labelBlock = text;
+    NSSize box = SPDFDiagramBoxForBlock(node.shape, text, scale);
+    node.frame = NSMakeRect(0, 0, box.width, box.height);
     return text.width;
 }
 
@@ -104,7 +226,7 @@ static SPDFMarkdownDiagramShape* SPDFDiagramAddNodeShape(SPDFMarkdownDiagramCanv
     SPDFMarkdownDiagramRole stroke = SPDFMarkdownDiagramRoleNodeStroke;
     switch (node.shape) {
         case SPDFMarkdownDiagramNodeShapeRound:
-            return [canvas addRect:frame radius:8 * scale fill:fill stroke:stroke width:1];
+            return [canvas addRect:frame radius:kSPDFDiagramRound * scale fill:fill stroke:stroke width:1];
         case SPDFMarkdownDiagramNodeShapeStadium:
             return [canvas addRect:frame radius:NSHeight(frame) / 2 fill:fill stroke:stroke width:1];
         case SPDFMarkdownDiagramNodeShapeCircle:
@@ -120,7 +242,7 @@ static SPDFMarkdownDiagramShape* SPDFDiagramAddNodeShape(SPDFMarkdownDiagramCanv
                                stroke:stroke
                                 width:1];
         case SPDFMarkdownDiagramNodeShapeParallelogram: {
-            CGFloat slant = 10 * scale;
+            CGFloat slant = kSPDFDiagramSlant * scale;
             return [canvas addPolygon:@[
                 SPDFPoint(NSMinX(frame) + slant, NSMinY(frame)), SPDFPoint(NSMaxX(frame), NSMinY(frame)),
                 SPDFPoint(NSMaxX(frame) - slant, NSMaxY(frame)), SPDFPoint(NSMinX(frame), NSMaxY(frame))
@@ -199,16 +321,29 @@ static void SPDFDiagramAddNode(SPDFMarkdownDiagramCanvas* canvas, SPDFMarkdownDi
         SPDFDiagramAddClassBody(canvas, node, fonts, scale);
         return;
     }
-    // A `<br/>`-broken label is several lines tall; the measured height centers
-    // the whole stack on the node and addText: centers each line in the box.
-    NSSize text = SPDFMarkdownDiagramMeasureText(node.label, fonts.label, NSWidth(frame) - 8);
-    NSArray<SPDFMarkdownDiagramLabel*>* labels =
-        [canvas addText:node.label
-                 inRect:NSMakeRect(NSMinX(frame) + 4, NSMidY(frame) - text.height / 2, NSWidth(frame) - 8,
-                                   text.height)
-                   font:fonts.label
-                   role:SPDFMarkdownDiagramRoleText
-              alignment:NSTextAlignmentCenter];
+    // The label re-wraps into the shape's SAFE INTERIOR, not into its bounding
+    // rect -- which is what this used to do, and why a four-line stadium label
+    // could be re-broken into three lines wide enough to cross both caps. The
+    // interior is asked for its width at the block's own extreme lines, so a
+    // tall block gets the pinched width and a short one the generous one.
+    //
+    // Two bounds make that safe. It can never be NARROWER than the block the
+    // box was solved for, so the wrap can only shed lines, never add them; and
+    // shedding lines only moves the extreme lines closer to the center, where
+    // the outline is wider still. So the re-measured block below fits with at
+    // least `air` to spare on every side.
+    CGFloat air = kSPDFDiagramCurveAir * scale;
+    CGFloat safe = 2 * (SPDFDiagramInteriorHalfWidth(node.shape, frame, node.labelBlock.height / 2 + air,
+                                                     scale) -
+                        air);
+    safe = MAX(safe, node.labelBlock.width);
+    NSSize drawn = SPDFMarkdownDiagramMeasureText(node.label, fonts.label, safe);
+    NSRect block = NSMakeRect(NSMidX(frame) - safe / 2, NSMidY(frame) - drawn.height / 2, safe, drawn.height);
+    NSArray<SPDFMarkdownDiagramLabel*>* labels = [canvas addText:node.label
+                                                          inRect:block
+                                                            font:fonts.label
+                                                            role:SPDFMarkdownDiagramRoleText
+                                                       alignment:NSTextAlignmentCenter];
     for (SPDFMarkdownDiagramLabel* label in labels) label.authorColor = style.textColor;
 }
 
