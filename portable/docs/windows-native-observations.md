@@ -429,6 +429,47 @@ failed three criteria with no error message; and a stray-process check that
 counts by *name* fails whenever the user has their own instance open. Both fixed.
 
 
+### 4.8 The phantom second: launch is ~50 ms, the tool that timed it was not
+
+Setting out to make launch "feel instant", the first measurement said the
+app took a constant ~1.0 s to do anything headless: `--render-png` on a
+1.8 KB two-page fixture, `--render-window-png --chrome`, even a *missing
+file* all came in at 1,011-1,029 ms, while the window itself appeared in
+45-88 ms. A constant that survives removing the document is not document
+work; the suspicion was a fixed wait at exit.
+
+It was neither. The runs were timed with PowerShell's
+`Start-Process -Wait -RedirectStandardOutput`, and that cmdlet adds about a
+second of pipe teardown to every process it waits for. Polling
+`$p.HasExited` instead, with `t0` taken before launch (`$p.StartTime` is
+invalid once the process is gone):
+
+| path (warm, published build) | polled |
+|---|---|
+| usage text and exit 64 (no factory, no MuPDF) | 30 ms |
+| `--render-png` golden.pdf, PNG on disk and process gone | 57-124 ms |
+| window visible, outline.pdf | 45-88 ms |
+| WM_CLOSE to process gone | 16-39 ms |
+
+So there is no stall to remove: process start to a visible window is a
+few tens of milliseconds, an order of magnitude under the GTK profile's
+769 ms `first-window-present` (`gtk4-captures/launch-profile.txt`) that
+motivated Linux's resident mode. What is *not* yet measured is
+launch-to-first-page-pixels: the ad-hoc PrintWindow sampler written for
+it returned blank frames (the repo's `screenshot-window.ps1`, which makes
+its host DPI-aware and waits for settle, is the capture path that works),
+so the number the reader actually feels still needs an in-process
+timeline. That is the launch track's first deliverable, not another shell
+stopwatch.
+
+The lesson generalises: two other tool-layer artefacts in the same
+session produced false conclusions -- in Git Bash, `cmd /c` has its `/c`
+rewritten to `C:\` by MSYS path conversion, so a build driver "succeeds
+in one second" having run nothing (use `cmd //c`), and a `build exit=0`
+read that way green-lit a commit that did not compile. Judge by an exit
+code, yes -- but first make sure the exit code belongs to the program you
+think ran.
+
 ## 5. New tooling, and why each exists
 
 | file | why |
