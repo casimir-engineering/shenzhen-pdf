@@ -349,6 +349,65 @@ int spdf_translation_should_translate(const char* utf8, spdf_translation_script 
  * Returns 1 on success, 0 on failure (err is filled). */
 int spdf_save_single_page_pdf(spdf_document* doc, int page_index, const char* path, char* err, size_t err_len);
 
+/* ===========================================================================
+ * Markdown (portable/core/spdf_markdown*.c) -- ADDITIVE. Nothing above this
+ * line changes behaviour for a frontend that never calls these.
+ *
+ * A Markdown file opens as an ordinary spdf_document: md4c parses it,
+ * spdf_markdown.c emits GitHub-flavoured HTML with a generated stylesheet, and
+ * MuPDF's HTML engine paginates it onto A4. Every other call in this header
+ * (render, search, select, outline, links, print, Copy Page...) then works on
+ * it unchanged. See portable/docs/windows-markdown-design.md.
+ * =========================================================================== */
+
+/* Asked for each https image while converting: is `url` in the frontend's disk
+ * cache? Return 1 and write the CACHE FILE NAME (a bare file name inside
+ * options->remote_image_dir, e.g. "3fa9...e1.png") into `cache_name_out`, or
+ * return 0 for "not cached" -- the image then renders as a text placeholder
+ * and the frontend may fetch it and reopen. The converter never opens a
+ * connection; the hook must not either (it runs inside open). */
+typedef int (*spdf_markdown_image_hook)(void* user, const char* url, char* cache_name_out, size_t cap);
+
+typedef struct spdf_markdown_options {
+    /* Body text size multiplier, the A-/A+ control; clamped to [0.5, 3.0] like
+     * macOS's markdownFontScale. 1.0 is an 11pt body on A4. */
+    float text_scale;
+    /* 0: A4 portrait. 1: A4 landscape (the Rotate commands on a Markdown tab). */
+    int landscape;
+    /* Also lay out the Obsidian-dark rendition, drawn when a render carries
+     * SPDF_RENDER_DARK_THEME. Costs a second layout at open; a frontend
+     * without a dark theme passes 0. Print and export never see it. */
+    int dark_rendition;
+    /* Remote images: NULL means every https image is a placeholder. */
+    spdf_markdown_image_hook remote_image;
+    void* remote_image_user;
+    /* Absolute directory holding the files the hook names; mounted into the
+     * document's resource tree so MuPDF can load them. NULL disables. */
+    const char* remote_image_dir;
+} spdf_markdown_options;
+
+/* text_scale 1.0, portrait, dark rendition on, no remote images. */
+spdf_markdown_options spdf_markdown_default_options(void);
+
+/* 1 for a path ending in .md or .markdown (case-insensitive). The core's
+ * spdf_open() does NOT dispatch on this -- a frontend that wants Markdown
+ * calls spdf_open_markdown() for these paths and keeps spdf_open() for the
+ * rest, so existing callers see no change. */
+int spdf_path_is_markdown(const char* path);
+
+/* Open a Markdown file as a paginated document. NULL options = defaults.
+ * Returns NULL with err filled on failure (unreadable file, over the 64 MiB
+ * budget, layout failure). The document carries no password state. */
+spdf_document* spdf_open_markdown(const char* path, const spdf_markdown_options* options, char* err, size_t err_len);
+
+/* Write the document's pages -- all of them when page_index is -1, else the
+ * one page -- as a PDF with vector, selectable text, through MuPDF's document
+ * writer. Works for ANY open document (Markdown, EPUB, XPS...), which is why
+ * it is not a Markdown-named call; for a PDF prefer spdf_save_document /
+ * spdf_save_single_page_pdf, which keep the original bytes. Always the LIGHT
+ * rendition: this path never sees a render flag. Returns 1 on success. */
+int spdf_export_pdf(spdf_document* doc, const char* path, int page_index, char* err, size_t err_len);
+
 #ifdef __cplusplus
 }
 #endif
