@@ -35,8 +35,9 @@
  * reachable as <glib.h>; the .cmd puts glib_shim on the include path. */
 #include "spdf_minimap_internal.h"
 
-/* The port. */
+/* The port: the geometry header and the input-policy header that continues it. */
 #include "spdf_win_minimap.h"
+#include "spdf_win_search_map_input.h"
 
 static int mismatches;
 static int comparisons;
@@ -378,6 +379,11 @@ static void differential_thumb_window(void) {
     same_i("const.EVICT_SLACK", SPDF_WIN_MINIMAP_WINDOW_EVICT_SLACK_PAGES, SPDF_MINIMAP_WINDOW_EVICT_SLACK_PAGES);
 }
 
+/* The input-policy section, spdf_win_search_map_input.h versus the same GTK
+ * header: in minimap_differential_input.h, included here so it sees the
+ * fixtures and comparators above. */
+#include "minimap_differential_input.h"
+
 int main(void) {
     differential_scale();
     differential_strip();
@@ -385,6 +391,7 @@ int main(void) {
     differential_hit_and_range();
     differential_mapping();
     differential_thumb_window();
+    differential_input_policy();
 
     /* One program, one verdict: refuse to report success unless the whole matrix
      * actually ran. The count is a floor, not an exact figure, so adding cases

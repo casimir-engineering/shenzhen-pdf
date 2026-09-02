@@ -53,6 +53,39 @@
  * ever becomes cheap -- if the scene starts carrying the layout, say -- pass the
  * live zoom in here instead of the 1.0 below and this whole comment goes away.
  * Do not "fix" it by scaling the margins; they are content-space on purpose. */
+/* The minimap strip's markers: one (page, fraction-of-page-height) per match,
+ * in match order, so the strip painter places each tick inside its page's own
+ * slot with spdf_win_minimap_marker_y -- the GTK4 minimap's tick model, where
+ * the position inside a page is EXACT rather than the scroller's whole-document
+ * approximation, because the strip draws pages, not a lane. `sizes` is the
+ * measured (or borrowed) page-size array rebuild_marks() already holds. */
+static void rebuild_page_marks(SpdfWinFindSession* s, const SpdfWinPageSizePt* sizes, int size_count) {
+    unsigned i, count = spdf_win_search_match_list_count(&s->list);
+    int n = 0;
+    s->page_mark_count = 0;
+    if (count == 0 || !sizes) return;
+    if ((int)count > s->page_mark_capacity) {
+        SpdfWinFindPageMark* grown =
+            (SpdfWinFindPageMark*)realloc(s->page_marks, sizeof(SpdfWinFindPageMark) * (size_t)count);
+        if (!grown) return;
+        s->page_marks = grown;
+        s->page_mark_capacity = (int)count;
+    }
+    for (i = 0; i < count; ++i) {
+        const SpdfWinSearchMatch* m = spdf_win_search_match_list_get(&s->list, i);
+        double page_h;
+        if (!m || m->page < 0 || m->page >= size_count) continue;
+        page_h = sizes[m->page].height;
+        s->page_marks[n].page = m->page;
+        s->page_marks[n].fraction =
+            page_h > 0.0 ? (float)spdf_win_search_clamp(((double)m->rect.y0 + (double)m->rect.y1) * 0.5 / page_h,
+                                                        0.0, 1.0)
+                         : 0.0f;
+        n++;
+    }
+    s->page_mark_count = n;
+}
+
 static void rebuild_marks(SpdfWinFindSession* s) {
     SpdfWinLayout layout;
     unsigned i, count;
@@ -60,6 +93,7 @@ static void rebuild_marks(SpdfWinFindSession* s) {
 
     s->mark_count = 0;
     s->active_mark = -1;
+    s->page_mark_count = 0;
     count = spdf_win_search_match_list_count(&s->list);
     if (count == 0) return;
 
@@ -80,6 +114,7 @@ static void rebuild_marks(SpdfWinFindSession* s) {
             sizes[0].width = 612.0;
             sizes[0].height = 792.0;
         }
+        rebuild_page_marks(s, sizes, size_count);
         spdf_win_layout_compute(&layout, sizes, size_count, 1.0, 0.0, SPDF_WIN_PAGE_MARGIN_H, SPDF_WIN_PAGE_MARGIN_V);
         free(sizes);
     }

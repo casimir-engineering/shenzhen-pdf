@@ -15,9 +15,12 @@
  * --render-window-png relies on, and the reason the port can be verified on a
  * locked workstation at all.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_canvas.cpp portable/win/src/spdf_win_canvas_prefetch.cpp portable/win/src/spdf_win_canvas_selection.cpp portable/win/src/spdf_win_selection.cpp portable/win/src/spdf_win_links.cpp portable/win/src/spdf_win_lru.c portable/win/src/spdf_win_render.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c */
+/* spdf-test-sources: portable/win/src/spdf_win_canvas.cpp portable/win/src/spdf_win_canvas_prefetch.cpp portable/win/src/spdf_win_canvas_selection.cpp portable/win/src/spdf_win_find_canvas.cpp portable/win/src/spdf_win_selection.cpp portable/win/src/spdf_win_links.cpp portable/win/src/spdf_win_lru.c portable/win/src/spdf_win_render.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c */
 /* spdf-test-args: portable/win/tests/fixtures/selection.pdf */
 /* spdf-test-needs: mupdf */
+#include <math.h>
+
+#include "spdf_win_layout.h" /* SPDF_WIN_PAGE_MARGIN_V, for the slot check */
 #include "spdf_win_canvas.h"
 
 #include <stdio.h>
@@ -257,8 +260,90 @@ int main(int argc, char** argv) {
         }
     }
 
+    /* --- the navigation surface for search and the map ------------------- */
+
+    /* scroll_to_rect centres the rect in the viewport, clamped like every other
+     * scroll: expected = slot.y + midY(rect) * zoom - vp_h / 2, pinned to the
+     * document's travel. Page 2 is far enough down for the centring to bite. */
+    {
+        double sx, sy, sw, sh;
+        spdf_rect target;
+        int page_count = spdf_win_canvas_page_count(canvas);
+        int last = page_count - 1;
+        float pw2 = 0.0f, ph2 = 0.0f;
+        double zoom, want, max_y;
+        unsigned vw = 0, vh = 0;
+        int first_vis = -1, last_vis = -1;
+
+        spdf_win_canvas_viewport(canvas, &vw, &vh);
+        CHECK_EQI(vw, 900);
+        CHECK_EQI(vh, 1200);
+        CHECK(spdf_win_canvas_page_rect(canvas, 0, &sx, &sy, &sw, &sh));
+        CHECK(sy == SPDF_WIN_PAGE_MARGIN_V);
+        CHECK(sw > 0.0 && sh > 0.0);
+        CHECK(!spdf_win_canvas_page_rect(canvas, page_count, &sx, &sy, &sw, &sh));
+        CHECK(!spdf_win_canvas_page_rect(canvas, -1, &sx, &sy, &sw, &sh));
+
+        CHECK(spdf_page_size(doc, last, &pw2, &ph2, err, sizeof(err)));
+        target.x0 = 10.0f;
+        target.y0 = ph2 * 0.5f;
+        target.x1 = pw2 - 10.0f;
+        target.y1 = ph2 * 0.5f + 12.0f;
+        CHECK(spdf_win_canvas_scroll_to_rect(canvas, last, target) != 0);
+        CHECK(spdf_win_canvas_page_rect(canvas, last, &sx, &sy, &sw, &sh));
+        zoom = (double)spdf_win_canvas_zoom(canvas);
+        want = sy + ((double)target.y0 + (double)target.y1) * 0.5 * zoom - (double)vh * 0.5;
+        max_y = (double)spdf_win_canvas_content_h(canvas) - (double)vh;
+        if (want > max_y) want = max_y;
+        if (want < 0.0) want = 0.0;
+        printf("      scroll_to_rect: page %d, want %.1f got %.1f\n", last, want, (double)spdf_win_canvas_scroll_y(canvas));
+        CHECK(fabs((double)spdf_win_canvas_scroll_y(canvas) - want) < 0.5);
+        CHECK(spdf_win_canvas_visible_range(canvas, &first_vis, &last_vis));
+        CHECK(first_vis <= last && last_vis >= last);
+
+        /* An empty rect falls back to the page, top-aligned. */
+        target.x1 = target.x0;
+        CHECK(spdf_win_canvas_scroll_to_rect(canvas, 0, target) != 0);
+        CHECK_EQI(spdf_win_canvas_current_page(canvas), 0);
+        CHECK(!spdf_win_canvas_scroll_to_rect(canvas, page_count, target));
+        CHECK(!spdf_win_canvas_scroll_to_rect(NULL, 0, target));
+        CHECK(!spdf_win_canvas_visible_range(NULL, &first_vis, &last_vis));
+    }
+
+    /* select_page selects the whole page through the ordinary gesture; the
+     * page must be in the last built frame. */
+    CHECK(spdf_win_canvas_build_scene(canvas, &scene) != 0);
+    CHECK(spdf_win_canvas_select_page(canvas, 0) != 0);
+    CHECK_EQI(spdf_win_canvas_has_selection(canvas), 1);
+    text = spdf_win_canvas_selection_text(canvas);
+    printf("      select_page: %d bytes\n", text ? (int)strlen(text) : 0);
+    CHECK(text && strstr(text, "Selection fixture alpha") != NULL);
+    CHECK_EQI(spdf_win_canvas_select_page(canvas, 99), 0);
+    CHECK_EQI(spdf_win_canvas_select_page(NULL, 0), 0);
+
+    /* page_changed after a rotation: the slot's aspect inverts, the cache and
+     * the selection go, and the layout is rebuilt at the new size. */
+    {
+        double w1, h1, w2, h2, dummy;
+        CHECK(spdf_win_canvas_page_rect(canvas, 0, &dummy, &dummy, &w1, &h1));
+        CHECK(spdf_rotate_page(doc, 0, 90, err, sizeof(err)));
+        CHECK(spdf_win_canvas_page_changed(canvas, 0) != 0);
+        CHECK_EQI(spdf_win_canvas_has_selection(canvas), 0);
+        CHECK(spdf_win_canvas_page_rect(canvas, 0, &dummy, &dummy, &w2, &h2));
+        printf("      rotated page 0: %.1fx%.1f -> %.1fx%.1f\n", w1, h1, w2, h2);
+        CHECK(fabs(h2 / w2 - w1 / h1) < 0.01);
+        CHECK(spdf_win_canvas_build_scene(canvas, &scene) != 0);
+        CHECK(spdf_rotate_page(doc, 0, -90, err, sizeof(err))); /* leave the handle as it was */
+        CHECK(spdf_win_canvas_page_changed(canvas, 0) != 0);
+        CHECK_EQI(spdf_win_canvas_page_changed(canvas, 99), 0);
+        CHECK_EQI(spdf_win_canvas_page_changed(NULL, 0), 0);
+        CHECK(spdf_win_canvas_build_scene(canvas, &scene) != 0);
+    }
+
     /* --- clearing, cancelling, and NULLs ---------------------------------- */
 
+    CHECK_EQI(spdf_win_canvas_clear_selection(canvas), 0); /* page_changed already cleared it */
+    CHECK(spdf_win_canvas_select_page(canvas, 0) != 0);
     CHECK_EQI(spdf_win_canvas_clear_selection(canvas), 1);
     CHECK_EQI(spdf_win_canvas_has_selection(canvas), 0);
     CHECK_EQI(spdf_win_canvas_clear_selection(canvas), 0);

@@ -51,8 +51,9 @@ static void destroy_bitmap(void* value) {
 /* --- measurement --------------------------------------------------------- */
 
 /* Measures pages up to and including `through`. Returns non-zero when at least
- * one new page was measured, i.e. when the layout is now stale. */
-static int ensure_measured(spdf_win_canvas* canvas, int through) {
+ * one new page was measured, i.e. when the layout is now stale. Internal to the
+ * canvas's translation units (spdf_win_canvas_internal.h), not public. */
+int spdf_win_canvas_ensure_measured(spdf_win_canvas* canvas, int through) {
     char err[128];
 
     if (through >= canvas->page_count) through = canvas->page_count - 1;
@@ -100,7 +101,7 @@ static void note_zoom_changed(spdf_win_canvas* canvas, double before) {
     if (canvas->service && fabs(canvas->zoom - before) > 1e-9) spdf_win_render_service_bump_generation(canvas->service);
 }
 
-static void relayout(spdf_win_canvas* canvas) {
+void spdf_win_canvas_relayout(spdf_win_canvas* canvas) {
     int page = current_page_of(canvas);
     double before = canvas->zoom;
     double fit = 0.0;
@@ -143,6 +144,7 @@ spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, const char* path, un
     canvas = (spdf_win_canvas*)calloc(1, sizeof(*canvas));
     if (!canvas) return NULL;
     canvas->doc = doc;
+    canvas->path = path ? _strdup(path) : NULL;
     canvas->render_flags = render_flags;
     canvas->page_count = spdf_page_count(doc);
     canvas->zoom = 1.0;
@@ -202,6 +204,7 @@ void spdf_win_canvas_destroy(spdf_win_canvas* canvas) {
     spdf_win_layout_clear(&canvas->layout);
     free(canvas->draws);
     free(canvas->sizes);
+    free(canvas->path);
     free(canvas);
 }
 
@@ -216,13 +219,13 @@ void spdf_win_canvas_set_viewport(spdf_win_canvas* canvas, unsigned px_w, unsign
     canvas->vp_w = px_w;
     canvas->vp_h = px_h;
     canvas->dpi_scale = dpi_scale;
-    relayout(canvas);
+    spdf_win_canvas_relayout(canvas);
 }
 
 void spdf_win_canvas_set_zoom_mode(spdf_win_canvas* canvas, spdf_win_zoom_mode mode) {
     if (!canvas || canvas->mode == mode) return;
     canvas->mode = mode;
-    relayout(canvas);
+    spdf_win_canvas_relayout(canvas);
 }
 
 spdf_win_zoom_mode spdf_win_canvas_zoom_mode(const spdf_win_canvas* canvas) {
@@ -280,7 +283,7 @@ int spdf_win_canvas_scroll_by(spdf_win_canvas* canvas, float dx, float dy) {
 
 int spdf_win_canvas_scroll_to_page(spdf_win_canvas* canvas, int page_index) {
     if (!canvas || page_index < 0 || page_index >= canvas->page_count) return 0;
-    if (ensure_measured(canvas, page_index)) relayout(canvas);
+    if (spdf_win_canvas_ensure_measured(canvas, page_index)) spdf_win_canvas_relayout(canvas);
     if (page_index >= canvas->layout.count) return 0;
     return spdf_win_canvas_scroll_to(canvas, (float)canvas->scroll_x,
                                      (float)(canvas->layout.rects[page_index].y - SPDF_WIN_PAGE_MARGIN_V));
@@ -416,7 +419,7 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
      * per item -- adoption on the UI thread must never do O(n) work. */
     if (canvas->service) spdf_win_render_drain(canvas->service, -1);
     canvas->sync_renders = 0;
-    if (canvas->layout.count != canvas->page_count) relayout(canvas);
+    if (canvas->layout.count != canvas->page_count) spdf_win_canvas_relayout(canvas);
 
     /* Measure forward until the visible range stops changing. Each round can
      * only extend `measured`, which is bounded by the page count, so this
@@ -430,8 +433,8 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
             first = last = current_page_of(canvas);
             visible = canvas->page_count > 0;
         }
-        if (!ensure_measured(canvas, last + 1)) break;
-        relayout(canvas);
+        if (!spdf_win_canvas_ensure_measured(canvas, last + 1)) break;
+        spdf_win_canvas_relayout(canvas);
     }
 
     if (last >= canvas->page_count) last = canvas->page_count - 1;

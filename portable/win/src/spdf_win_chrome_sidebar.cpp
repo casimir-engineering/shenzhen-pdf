@@ -1,5 +1,5 @@
 /* The sidebar: the Chapters/Comments/Search segmented control, the filter
- * field, and the document's real chapter list.
+ * field, the document's real chapter list, and the Search section's results.
  *
  * macOS (ShenzhenPDFMac.mm) -- every number below is cited, and the ones that
  * are not literals there are marked as such:
@@ -7,7 +7,8 @@
  *   - Segmented control of Chapters (0), Comments (1) and Search (2), Search
  *     present only while a query is live (:3138-3144, :9603-9615), segment
  *     widths normalised to floor(max(minSeg, (sidebarWidth - 16) / segments))
- *     with minSeg 66.0 for three segments and 78.0 for two.
+ *     with minSeg 66.0 for three segments and 78.0 for two
+ *     (spdf_win_sidebar_sections_rect, shared with the input router).
  *   - Filter field, "Filter Chapters" / "Filter Comments", hidden and disabled
  *     in Search mode (:3149-3157, :9641).
  *   - A headerless SPDFSidebarTableView, rowHeight 25.0, one column 230.0 wide
@@ -25,23 +26,44 @@
  *     current one (:10613-10620).
  *   - Filtering ignores case AND diacritics (:9666-9670) -- see
  *     spdf_win_sidebar_title_matches.
+ *   - THE SEARCH SECTION (:9506-9550, :15859-15871, :16151-16300): a status
+ *     line while nothing is listed; a 30 pt capsule header whenever the chapter
+ *     changes; a 46 pt row per match with the snippet at 12 pt medium (the
+ *     query's first occurrence bold, as the GTK rows do) over "Page N - match I
+ *     of M" at 11 pt secondary. The rows arrive built -- spdf_win_sidebar_view.h
+ *     explains the side channel and why -- so this file only draws them.
  *
- * NO OUTLINE, AND WHAT macOS ACTUALLY DOES. rebuildSidebar (:9813-9905)
+ * NO OUTLINE, AND WHAT macOS ACTUALLY DOES. rebuildSidebar (:9552-9580)
  * computes `hasSidebar = _doc && (hasChapters || hasComments || hasSearch)` and
  * ends with `[self setSidebarActuallyVisible:hasSidebar && _sidebarPreferredVisible]`.
  * So a document with no outline, no comments and no live search does not get an
- * empty list on macOS -- IT GETS NO SIDEBAR. Windows cannot act on that yet:
- * whether the panel exists is decided by SpdfWinChromeModel.show_sidebar, which
- * belongs to another track. So this file draws the honest interim state -- one
- * centred, quiet "No Chapters" line, which is what an empty NSTableView would
- * read as if AppKit drew one -- and the change's report asks for the model bit
- * that lets Windows hide the panel exactly as macOS does. A filter that
- * excludes everything is a DIFFERENT state and says so ("No matching chapters"),
- * because on macOS the panel stays visible then.
+ * empty list on macOS -- IT GETS NO SIDEBAR. The app decides that per paint
+ * (spdf_win_sidebar_set_effective_visible) and the panel is not laid out at
+ * all; the "No Chapters" line below is what a filter-less empty Chapters
+ * section draws in the one state that still reaches it, a document whose only
+ * content is a live search. A filter that excludes everything is a DIFFERENT
+ * state and says so ("No matching chapters"), because on macOS the panel stays
+ * visible then.
  */
 #include "spdf_win_chrome_panels.h"
+#include "spdf_win_sidebar_view.h"
 
 #include <math.h>
+
+/* --- the side channels (declared in spdf_win_sidebar_view.h) --------------- */
+
+namespace {
+const SpdfWinSidebarResultsView* g_results;
+int g_section;
+int g_effective_visible = 1;
+} /* namespace */
+
+void spdf_win_sidebar_results_publish(const SpdfWinSidebarResultsView* view) { g_results = view; }
+const SpdfWinSidebarResultsView* spdf_win_sidebar_results_current(void) { return g_results; }
+void spdf_win_sidebar_set_section(int section) { g_section = section < 0 || section > 2 ? 0 : section; }
+int spdf_win_sidebar_section(void) { return g_section; }
+void spdf_win_sidebar_set_effective_visible(int visible) { g_effective_visible = visible ? 1 : 0; }
+int spdf_win_sidebar_effective_visible(void) { return g_effective_visible; }
 
 namespace {
 
@@ -88,20 +110,6 @@ void draw_sections(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect bar, int 
     if (fill) fill->Release();
     if (stroke) stroke->Release();
     if (sel) sel->Release();
-}
-
-/* macOS normalises the segment width to floor(max(minSeg, (sidebarWidth - 16) /
- * segments)), so on a narrow sidebar the control can be WIDER than the panel's
- * inner width. It is clamped here rather than allowed to overhang. */
-SpdfWinChromeRect normalised_sections_rect(SpdfWinChromeRect base, SpdfWinChromeRect sidebar, int segments, float s) {
-    double min_seg = (segments == 3) ? 66.0 : 78.0;
-    double side_pt = sidebar.w / s;
-    double seg_pt = floor((side_pt - 16.0) / (double)segments);
-    SpdfWinChromeRect bar = base;
-    if (seg_pt < min_seg) seg_pt = min_seg;
-    bar.w = px(seg_pt * (double)segments, s);
-    if (bar.w > sidebar.w - px(16.0, s)) bar.w = sidebar.w - px(16.0, s);
-    return bar;
 }
 
 void draw_filter_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect f, int section, const wchar_t* text) {
@@ -194,6 +202,130 @@ void draw_rows(const SpdfWinChromePaintCtx& ctx, const SpdfWinSidebarLayout& l, 
     ctx.target->PopAxisAlignedClip();
 }
 
+/* One line of text with a BOLD RANGE -- the query inside a snippet. The shared
+ * helper draws a whole string at one weight, and a range needs the layout in
+ * hand (IDWriteTextLayout::SetFontWeight), so this builds it here from the same
+ * cached format. Trimmed with an ellipsis at the end, as the macOS cell
+ * (NSLineBreakByTruncatingTail). */
+void draw_snippet(const SpdfWinChromePaintCtx& ctx, const wchar_t* text, SpdfWinChromeRect rect,
+                  SpdfWinChromeColor color, float size_px, int bold_start, int bold_len) {
+    IDWriteTextFormat* format;
+    ID2D1SolidColorBrush* brush;
+    IDWriteTextLayout* layout = NULL;
+    UINT32 len;
+
+    if (!text || !text[0] || spdf_win_chrome_rect_empty(rect)) return;
+    format = spdf_win_chrome_text_format(ctx.dwrite, size_px, DWRITE_FONT_WEIGHT_MEDIUM);
+    if (!format) return;
+    brush = spdf_win_chrome_brush(ctx.target, color);
+    if (!brush) return;
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    len = (UINT32)wcslen(text);
+    if (SUCCEEDED(ctx.dwrite->CreateTextLayout(text, len, format, rect.w, rect.h, &layout))) {
+        DWRITE_TRIMMING trimming;
+        IDWriteInlineObject* sign = NULL;
+        memset(&trimming, 0, sizeof(trimming));
+        trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+        if (SUCCEEDED(ctx.dwrite->CreateEllipsisTrimmingSign(format, &sign))) {
+            layout->SetTrimming(&trimming, sign);
+            sign->Release();
+        } else {
+            layout->SetTrimming(&trimming, NULL);
+        }
+        if (bold_start >= 0 && bold_len > 0 && (UINT32)bold_start < len) {
+            DWRITE_TEXT_RANGE range;
+            range.startPosition = (UINT32)bold_start;
+            range.length = (UINT32)bold_start + (UINT32)bold_len > len ? len - (UINT32)bold_start : (UINT32)bold_len;
+            layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, range);
+        }
+        ctx.target->DrawTextLayout(D2D1::Point2F(rect.x, rect.y), layout, brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        layout->Release();
+    }
+    brush->Release();
+}
+
+/* The Search section: the published rows, variable heights, clipped to the
+ * list, only the visible ones drawn. */
+void draw_results(const SpdfWinChromePaintCtx& ctx, const SpdfWinSidebarLayout& l,
+                  const SpdfWinSidebarResultsView* v) {
+    const SpdfWinChromeTheme* th = ctx.theme;
+    float s = ctx.dpi_scale;
+    float y = l.list.y - v->scroll_y;
+    ID2D1SolidColorBrush* sel = spdf_win_chrome_brush(ctx.target, th->row_selected_fill);
+    ID2D1SolidColorBrush* capsule = spdf_win_chrome_brush(ctx.target, th->control_fill);
+    ID2D1SolidColorBrush* line = spdf_win_chrome_brush(ctx.target, th->separator);
+    int i;
+
+    ctx.target->PushAxisAlignedClip(spdf_win_chrome_d2d_rect(l.list), D2D1_ANTIALIAS_MODE_ALIASED);
+    for (i = 0; i < v->row_count; ++i) {
+        const SpdfWinSidebarResultRow* row = &v->rows[i];
+        float h = spdf_win_sidebar_result_row_h(row->kind, s);
+        SpdfWinChromeRect r;
+        r.x = l.list.x;
+        r.y = y;
+        r.w = l.list.w;
+        r.h = h;
+        y += h;
+        if (r.y + r.h < l.list.y || r.y > l.list.y + l.list.h) continue; /* off the list: not laid out */
+
+        if (row->kind == SPDF_WIN_SIDEBAR_RESULT_STATUS) {
+            SpdfWinChromeRect t = r;
+            t.x += px(8.0, s);
+            t.w -= px(16.0, s);
+            spdf_win_chrome_draw_text(ctx, row->title, t, th->label_secondary,
+                                      px(SPDF_WIN_SIDEBAR_RESULT_STATUS_FONT, s), DWRITE_FONT_WEIGHT_NORMAL,
+                                      DWRITE_TEXT_ALIGNMENT_CENTER, 0);
+            continue;
+        }
+        if (row->kind == SPDF_WIN_SIDEBAR_RESULT_HEADER) {
+            /* :16151-16200: a capsule (cornerRadius 8) around the title, a
+             * hairline after it to the trailing inset. */
+            SpdfWinChromeRect cap = r;
+            SpdfWinChromeRect t;
+            cap.y += px(7.0, s);
+            cap.h = px(16.0, s);
+            cap.w = spdf_win_chrome_max(0.0f, r.w - px(SPDF_WIN_SIDEBAR_RESULT_TRAILING, s));
+            spdf_win_chrome_panel_fill_rounded(ctx.target, cap, px(8.0, s), capsule, NULL, 0.0f);
+            t = cap;
+            t.x += px(8.0, s);
+            t.w -= px(12.0, s);
+            spdf_win_chrome_draw_text(ctx, row->title, t, th->label_secondary,
+                                      px(SPDF_WIN_SIDEBAR_RESULT_HEADER_FONT, s), DWRITE_FONT_WEIGHT_MEDIUM,
+                                      DWRITE_TEXT_ALIGNMENT_LEADING, 0);
+            if (line) {
+                float hair = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
+                float ly = floorf(r.y + r.h - px(2.0, s)) + 0.5f * hair;
+                ctx.target->DrawLine(D2D1::Point2F(r.x, ly), D2D1::Point2F(r.x + cap.w, ly), line, hair, NULL);
+            }
+            continue;
+        }
+        /* A match. The current one is highlighted like a selected chapter row. */
+        if (i == v->current_row && sel) ctx.target->FillRectangle(spdf_win_chrome_d2d_rect(r), sel);
+        {
+            SpdfWinChromeRect title = r;
+            SpdfWinChromeRect sub;
+            title.x += px(SPDF_WIN_SIDEBAR_CELL_LEADING, s);
+            title.w -= px(SPDF_WIN_SIDEBAR_CELL_LEADING, s) + px(SPDF_WIN_SIDEBAR_RESULT_TRAILING, s);
+            title.y += px(SPDF_WIN_SIDEBAR_RESULT_TITLE_TOP, s);
+            title.h = px(16.0, s);
+            draw_snippet(ctx, row->title, title, th->label, px(SPDF_WIN_SIDEBAR_RESULT_TITLE_FONT, s),
+                         row->bold_start, row->bold_len);
+            sub = title;
+            sub.y = title.y + title.h + px(SPDF_WIN_SIDEBAR_RESULT_SUBTITLE_GAP, s);
+            sub.h = px(14.0, s);
+            spdf_win_chrome_draw_text(ctx, row->subtitle, sub, th->label_secondary,
+                                      px(SPDF_WIN_SIDEBAR_RESULT_SUBTITLE_FONT, s), DWRITE_FONT_WEIGHT_NORMAL,
+                                      DWRITE_TEXT_ALIGNMENT_LEADING, 0);
+        }
+    }
+    if (sel) sel->Release();
+    if (capsule) capsule->Release();
+    if (line) line->Release();
+    ctx.target->PopAxisAlignedClip();
+}
+
 } /* namespace */
 
 void spdf_win_chrome_paint_sidebar(const SpdfWinChromePaintCtx& ctx, const SpdfWinSidebarContent* content) {
@@ -213,22 +345,21 @@ void spdf_win_chrome_paint_sidebar(const SpdfWinChromePaintCtx& ctx, const SpdfW
 
     spdf_win_sidebar_layout(side, m->sidebar_section, s, &l);
     {
-        SpdfWinChromeRect bar = normalised_sections_rect(l.sections, side, segments, s);
+        SpdfWinChromeRect bar = spdf_win_sidebar_sections_rect(l.sections, side, segments, s);
         if (bar.w > 0.0f) draw_sections(ctx, bar, segments, m->sidebar_section);
     }
     if (!spdf_win_chrome_rect_empty(l.filter))
         draw_filter_field(ctx, l.filter, m->sidebar_section, content ? content->filter : NULL);
 
-    /* Chapters is the only section with content on Windows so far. The rows
-     * below ARE chapters, so drawing them under the Comments or Search heading
-     * would be a lie about what the list is; each of those says what it is
-     * instead, and gets its own content when its own track lands. */
+    /* Comments has no content on Windows yet; it says what it is instead. */
     if (m->sidebar_section == 1) {
         draw_empty_state(ctx, l.list, L"No Comments");
         return;
     }
     if (m->sidebar_section == 2) {
-        draw_empty_state(ctx, l.list, L"No Results");
+        const SpdfWinSidebarResultsView* v = spdf_win_sidebar_results_current();
+        if (v && v->rows && v->row_count > 0) draw_results(ctx, l, v);
+        else draw_empty_state(ctx, l.list, L"No Results");
         return;
     }
 

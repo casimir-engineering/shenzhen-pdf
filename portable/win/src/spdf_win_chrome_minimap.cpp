@@ -27,12 +27,49 @@
  * pages are visible so its bounded window can follow and queue what is missing
  * on spdf_win_render.h's worker pool. Nothing on this path can block, and
  * nothing on this path can call the core.
+ *
+ * SEARCH MARKERS are drawn in the strip the way the GTK4 minimap draws them
+ * (spdf_minimap.c minimap_draw_marker_tick): a 3 px tick inside the page's slot
+ * at the match's fraction of the page height, the scroller heat-map's own two
+ * lane colours, the current match drawn last and on top. The marks arrive
+ * published (spdf_win_search_map.h) because this painter cannot reach the find
+ * session; the frame this paint drew is recorded the same way for the input
+ * layer, so a click lands on the page that was under the pointer.
  */
 #include "spdf_win_chrome_panels.h"
 #include "spdf_win_minimap.h"
+#include "spdf_win_search_map.h"
 
 #include <math.h>
 #include <string.h>
+
+/* --- the side channels (declared in spdf_win_search_map.h) ----------------- */
+
+namespace {
+SpdfWinMapFrame g_frame;
+int g_frame_valid;
+const SpdfWinFindPageMark* g_marks;
+int g_mark_count;
+int g_mark_active = -1;
+} /* namespace */
+
+int spdf_win_map_frame_current(SpdfWinMapFrame* out) {
+    if (!g_frame_valid) return 0;
+    if (out) *out = g_frame;
+    return 1;
+}
+
+void spdf_win_map_marks_publish(const SpdfWinFindPageMark* marks, int count, int active) {
+    g_marks = count > 0 ? marks : NULL;
+    g_mark_count = marks ? count : 0;
+    g_mark_active = g_marks && active >= 0 && active < g_mark_count ? active : -1;
+}
+
+const SpdfWinFindPageMark* spdf_win_map_marks_current(int* out_count, int* out_active) {
+    if (out_count) *out_count = g_mark_count;
+    if (out_active) *out_active = g_mark_active;
+    return g_marks;
+}
 
 namespace {
 
@@ -201,6 +238,45 @@ void draw_placeholder(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, ID2
     }
 }
 
+/* One search-hit tick inside a page's slot (spdf_minimap.c
+ * minimap_draw_marker_tick): x inset 1, at least 1 wide, 3 px tall, placed by
+ * the ported spdf_win_minimap_marker_y so it never leaves the slot. */
+void draw_tick(const SpdfWinChromePaintCtx& ctx, const SpdfWinRect* slot, float panel_x, float slot_y,
+               double fraction, double page_h_pt, ID2D1Brush* brush, float s) {
+    float tick_h = px(SPDF_WIN_MINIMAP_MARKER_TICK_H, s);
+    double y = spdf_win_minimap_marker_y(slot, fraction * page_h_pt, page_h_pt, (double)tick_h);
+    float x0 = panel_x + (float)slot->x + px(1.0, s);
+    float w = spdf_win_chrome_max(1.0f, (float)slot->w - px(2.0, s));
+    float top = slot_y + (float)(y - slot->y);
+    if (!brush) return;
+    ctx.target->FillRectangle(D2D1::RectF(x0, top, x0 + w, top + tick_h), brush);
+}
+
+void draw_marks(const SpdfWinChromePaintCtx& ctx, const SpdfWinMinimapStrip* strip, const SpdfWinMinimapContent* c,
+                SpdfWinChromeRect mm, double content_top, int first, int last, float s) {
+    int count = 0, active = -1, i;
+    const SpdfWinFindPageMark* marks = spdf_win_map_marks_current(&count, &active);
+    ID2D1SolidColorBrush* mark;
+    ID2D1SolidColorBrush* hot;
+    if (!marks || count <= 0) return;
+    mark = spdf_win_chrome_brush(ctx.target, ctx.theme->find_mark);
+    hot = spdf_win_chrome_brush(ctx.target, ctx.theme->find_mark_active);
+    for (i = 0; i < count; ++i) {
+        int page = marks[i].page;
+        if (i == active || page < first || page > last || page >= strip->count || page >= c->page_count) continue;
+        draw_tick(ctx, &strip->rects[page], mm.x, mm.y + (float)(strip->rects[page].y + content_top),
+                  marks[i].fraction, c->sizes[page].height, mark, s);
+    }
+    if (active >= 0 && active < count) {
+        int page = marks[active].page;
+        if (page >= first && page <= last && page < strip->count && page < c->page_count)
+            draw_tick(ctx, &strip->rects[page], mm.x, mm.y + (float)(strip->rects[page].y + content_top),
+                      marks[active].fraction, c->sizes[page].height, hot, s);
+    }
+    if (mark) mark->Release();
+    if (hot) hot->Release();
+}
+
 } /* namespace */
 
 void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfWinMinimapContent* content) {
@@ -216,6 +292,10 @@ void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfW
     ID2D1SolidColorBrush* grey;
     ID2D1SolidColorBrush* panel;
 
+    /* Whatever happens below, the frame the INPUT layer hit-tests is this
+     * paint's or none: a stale frame from a document that is gone would send
+     * a click to a page that no longer exists. */
+    g_frame_valid = 0;
     if (spdf_win_chrome_rect_empty(mm)) return;
 
     panel = spdf_win_chrome_brush(ctx.target, th->panel);
@@ -305,6 +385,9 @@ void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfW
     if (white) white->Release();
     if (grey) grey->Release();
 
+    /* The search hits, over the thumbnails and under the viewport box. */
+    draw_marks(ctx, strip, content, mm, content_top, first, last, s);
+
     /* The viewport rectangle. The per-page document rects the accent-narrowing
      * version needs are the canvas's and do not reach this track yet, so this is
      * spdf_win_minimap_viewport_band -- macOS's own fallback branch
@@ -313,6 +396,16 @@ void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfW
         SpdfWinRect band = spdf_win_minimap_viewport_band((double)mm.w, strip->content_h, content->doc_h,
                                                           content->doc_visible_h, content->scroll_fraction);
         SpdfWinChromeRect vp;
+
+        /* Record what this paint drew for the input layer (spdf_win_search_map.h). */
+        g_frame.panel = mm;
+        g_frame.content_top = content_top;
+        g_frame.strip = strip;
+        g_frame.page_count = strip->count;
+        g_frame.sizes = content->sizes;
+        g_frame.band = band;
+        g_frame.dpi_scale = s;
+        g_frame_valid = 1;
         ID2D1SolidColorBrush* fill = spdf_win_chrome_brush(ctx.target, spdf_win_ct_rgb(0x2E8CEBu, 0.18f));
         ID2D1SolidColorBrush* stroke = spdf_win_chrome_brush(ctx.target, th->accent);
         vp.x = mm.x + (float)band.x;

@@ -11,27 +11,33 @@
  * that discipline has already caught a one-ulp transcription error in this
  * port. Do not "improve" any of it in place; fix it in all three or in none.
  *
- * SECTION 2 IS THIS PORT'S OWN, and its one interesting decision is WHEN THE
+ * SECTION 2 IS THIS PORT'S OWN, and its one interesting decision is WHERE THE
  * EXPENSIVE SCAN RUNS:
  *
- *   Hover asks about links on every mouse move, so hover must be cheap. This
- *   builds its link rects with detect_text_links = 0, which reads the page's
- *   link ANNOTATIONS only. spdf_page_link_rects's own header says to do exactly
- *   that -- "pass 0 for hover/cursor hit-testing and 1 only when actually
- *   following a link on click" -- because detecting plain-text URLs builds the
- *   whole structured-text page and costs hundreds of milliseconds on a dense
- *   one. The CLICK path then calls spdf_link_at_point with detect_text_links=1,
- *   so a bare URL printed in the text is still followed.
+ *   Hover asks about links on every mouse move, so hover must be cheap. The
+ *   UI thread builds its link rects with detect_text_links = 0, which reads the
+ *   page's link ANNOTATIONS only. spdf_page_link_rects's own header says to do
+ *   exactly that -- "pass 0 for hover/cursor hit-testing and 1 only when
+ *   actually following a link on click" -- because detecting plain-text URLs
+ *   builds the whole structured-text page and costs hundreds of milliseconds on
+ *   a dense one.
  *
- *   The consequence is stated rather than hidden: a plain-text URL is
- *   CLICKABLE but does not show a hand on hover, where macOS and GTK show one.
- *   Both of those build the region set on a WORKER THREAD with a document
- *   handle of its own (the core allows one spdf_document per thread and locks
- *   nothing inside it, shenzhen_pdf_core.c:40-43). That thread is the missing
- *   piece here, not the geometry; when it exists, set want_text_links on the
- *   ensure call and the difference disappears.
+ *   The plain-text URLs come from a WORKER THREAD with a document handle of its
+ *   own (the core allows one spdf_document per thread and locks nothing inside
+ *   it, shenzhen_pdf_core.c:40-43), which is what macOS and GTK both do. The
+ *   cache asks for the page the pointer is over, the worker runs the
+ *   structured-text pass once for it, and the UI thread merges the full set --
+ *   annotations plus text URLs -- on the next hover, at which point a bare URL
+ *   printed in the text shows the hand exactly as an annotation does. Until it
+ *   lands the URL is still CLICKABLE: the click path resolves the target itself
+ *   with detect_text_links = 1, once, and never waits for the worker.
  *
- * Everything here is main-thread, against the caller's own document handle.
+ *   spdf_win_links_set_source() gives the cache the path the worker opens;
+ *   without one there is no worker and hover shows annotations only, which is
+ *   the headless probe's case.
+ *
+ * Every function here is main-thread, against the caller's own document handle;
+ * the worker's handle is its own and never escapes spdf_win_links.cpp.
  */
 #ifndef SPDF_WIN_LINKS_H
 #define SPDF_WIN_LINKS_H
@@ -103,9 +109,20 @@ static SPDF_WIN_INLINE SpdfWinCursorRegionKind spdf_win_cursor_region_at_point(c
 typedef struct spdf_win_links spdf_win_links;
 
 spdf_win_links* spdf_win_links_new(void);
+/* Joins the worker, bounded by one structured-text pass. */
 void spdf_win_links_free(spdf_win_links* links);
-/* Drop everything cached. Call when the document is replaced or reloaded. */
+/* Drop everything cached. Call when the document is replaced or reloaded, or a
+ * page changed shape. A worker result in flight for the old page is ignored. */
 void spdf_win_links_invalidate(spdf_win_links* links);
+
+/* The document's UTF-8 path, copied, for the text-URL worker's own handle. Set
+ * once, before the first ensure; later calls are ignored. NULL or empty means
+ * no worker -- annotation links only, which is what the headless paths get. */
+void spdf_win_links_set_source(spdf_win_links* links, const char* utf8_path);
+
+/* Has the worker's full link set for the cached page been merged in? For the
+ * test that waits for the hand; nothing in the app needs to ask. */
+int spdf_win_links_text_urls_ready(const spdf_win_links* links);
 
 /* WHAT `want_text_regions` COSTS. The link half is fz_load_links: microseconds,
  * and safe on every mouse move. The text half is spdf_extract_page_text_lines,

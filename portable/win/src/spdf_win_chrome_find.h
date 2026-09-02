@@ -201,9 +201,57 @@ const char* spdf_win_find_error(const SpdfWinFindSession* s);
 /* Move the selection by `delta` matches with wraparound, as GTK3 find_step and
  * macOS findFromCurrentForward do. Returns the new index, or -1. */
 int spdf_win_find_step(SpdfWinFindSession* s, int delta);
+/* Make match `index` the current one -- a click on a results row, or the
+ * nearest-match jump. Returns 1 when it changed; out of range is a no-op. */
+int spdf_win_find_set_current(SpdfWinFindSession* s, int index);
 /* Where the current match is, for the caller that scrolls to it. Returns 0 when
  * there is no current match. */
 int spdf_win_find_current_target(const SpdfWinFindSession* s, int* out_page, spdf_rect* out_rect);
+
+/* ONE MATCH, for the results sidebar and the nearest-match jump. `snippet` is
+ * the surrounding text line (borrowed UTF-8, never NULL, valid until the next
+ * poll/set on this session); `chapter_index` is the pre-order outline index the
+ * match falls under, -1 before the first chapter or with no outline
+ * (spdf_win_search_chapter_for_page). Returns 0 when `index` is out of range. */
+typedef struct SpdfWinFindMatchInfo {
+    int page;
+    spdf_rect rect;
+    const char* snippet;
+    int chapter_index;
+} SpdfWinFindMatchInfo;
+int spdf_win_find_match_at(const SpdfWinFindSession* s, int index, SpdfWinFindMatchInfo* out);
+
+/* The document's outline titles in spdf_load_outline order, published by the
+ * worker once per search and adopted by poll(). What the results sidebar's
+ * chapter headers are made of (spdf_win_sidebar_chapter_title takes exactly
+ * this array's shape). 0 / NULL without an outline, or before the first poll
+ * that saw one. Borrowed, valid until the next poll/set. */
+int spdf_win_find_chapter_count(const SpdfWinFindSession* s);
+const char* spdf_win_find_chapter_title(const SpdfWinFindSession* s, int chapter_index);
+
+/* The query the session is (or was last) searching for, UTF-8, borrowed; NULL
+ * when empty. What the results rows bold and the status lines quote. */
+const char* spdf_win_find_query(const SpdfWinFindSession* s);
+
+/* Bumped on every change a reader of the results could observe: a batch
+ * adopted, the current match moved, the query replaced. A consumer that caches
+ * a view of the results compares this one integer per frame. */
+unsigned spdf_win_find_revision(const SpdfWinFindSession* s);
+
+/* Forget the document and drop the results, so the next spdf_win_find_set()
+ * with the same query reruns it. For a page rotation: the rects the old search
+ * produced describe pages that no longer look like that. */
+void spdf_win_find_restart(SpdfWinFindSession* s);
+
+/* REGEX MULTILINE -- whether a pattern may span line and paragraph breaks
+ * (spdf_search_page_rects_options' fourth argument). Process-wide, like the
+ * regex flag itself: it is the reader's setting, not a property of one search.
+ * spdf_win_find_set() reads it as a fourth input and restarts the running
+ * search when it changed. Defaults ON, as both originals do
+ * (SPDFMacModels.mm:15, spdf_state.c:780). The Edit menu's check mark reads it
+ * back from here: this IS the source of truth, there is no copy on `app`. */
+void spdf_win_find_set_regex_multiline(int on);
+int spdf_win_find_regex_multiline(void);
 
 /* The heat-map ticks: document-height fractions in [0,1], already sorted and
  * thinned. Borrowed, valid until the next poll/set. `*out_active` is an index
@@ -217,6 +265,18 @@ int spdf_win_find_current_target(const SpdfWinFindSession* s, int* out_page, spd
  * remove it. A caller must not treat a tick as an exact scroll target: to GO to
  * a match, use spdf_win_find_current_target(), which is exact. */
 const float* spdf_win_find_marks(const SpdfWinFindSession* s, int* out_count, int* out_active);
+
+/* THE MINIMAP STRIP'S MARKERS: every match as (page, fraction of that page's
+ * height), in match order, so the strip painter can place each tick inside its
+ * page's slot with spdf_win_minimap_marker_y. EXACT within the page, unlike the
+ * scroller fractions above, because the strip draws pages rather than a lane.
+ * `*out_active` is the index of the current match in this array (which is the
+ * match index itself), or -1. Borrowed, valid until the next poll/set. */
+typedef struct SpdfWinFindPageMark {
+    int page;
+    float fraction; /* match centre y over page height, in [0,1] */
+} SpdfWinFindPageMark;
+const SpdfWinFindPageMark* spdf_win_find_page_marks(const SpdfWinFindSession* s, int* out_count, int* out_active);
 
 /* A batch lands on a worker thread milliseconds to seconds after the frame that
  * asked for it, so something must ask for a repaint or the highlights and the

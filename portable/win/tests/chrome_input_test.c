@@ -271,6 +271,10 @@ static void test_toolbar_actions(void) {
     CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_PAGE_PILL, 0.75f), SPDF_WIN_CB_LEFT).action, SPDF_WIN_CA_NEXT_PAGE);
     CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_ZOOM_PILL, 0.25f), SPDF_WIN_CB_LEFT).action, SPDF_WIN_CA_ZOOM_OUT);
     CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_ZOOM_PILL, 0.75f), SPDF_WIN_CB_LEFT).action, SPDF_WIN_CA_ZOOM_IN);
+    /* The two power tools name their intent; the caller posts the command. */
+    CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_OCR, 0.5f), SPDF_WIN_CB_LEFT).action, SPDF_WIN_CA_OCR);
+    CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_TRANSLATE, 0.5f), SPDF_WIN_CB_LEFT).action,
+              SPDF_WIN_CA_TRANSLATE_SELECTION);
     /* Nothing is wired to the middle button in the toolbar, and a hover is not a
      * click. Both must be inert rather than firing the left-button action. */
     CHECK_EQI(route(&l, &m, AT(SPDF_WIN_TB_ZOOM_PILL, 0.75f), SPDF_WIN_CB_MIDDLE).action, SPDF_WIN_CA_NONE);
