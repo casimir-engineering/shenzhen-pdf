@@ -101,6 +101,12 @@ static int chrome_perform(app* a, const SpdfWinChromeHit* hit, const SpdfWinChro
          * as commands, so they arrive through command_perform like the menu. */
         case SPDF_WIN_CA_OCR: return chrome_post_command(a, SPDF_WIN_CMD_OCR);
         case SPDF_WIN_CA_TRANSLATE_SELECTION: return chrome_post_command(a, SPDF_WIN_CMD_TRANSLATE_SELECTION);
+        /* The Markdown text-size pill, posted for the same reason: the handler
+         * lives past this header's include point (spdf_win_md_commands.h), and
+         * going through the command switch is what makes the pill and the two
+         * View menu rows literally the same code. */
+        case SPDF_WIN_CA_MD_TEXT_SMALLER: return chrome_post_command(a, SPDF_WIN_CMD_MD_TEXT_SMALLER);
+        case SPDF_WIN_CA_MD_TEXT_LARGER: return chrome_post_command(a, SPDF_WIN_CMD_MD_TEXT_LARGER);
         case SPDF_WIN_CA_SCROLL_PAGE_BACK: return chrome_scroll_page(a, hit, l, 0);
         case SPDF_WIN_CA_SCROLL_PAGE_FORWARD: return chrome_scroll_page(a, hit, l, 1);
         case SPDF_WIN_CA_SELECT_TAB: return chrome_select_tab(a, hit->index);

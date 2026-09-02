@@ -201,14 +201,17 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
         case SPDF_WIN_CMD_COPY_PAGE_IMAGE: {
             SpdfWinDocAction act;
             char err[512] = {0};
+            char saved[1024] = {0};
             unsigned long os_error = 0;
             if (!doc_action_for(a, &act)) return 0;
             switch (command) {
                 case SPDF_WIN_CMD_SAVE_AS:
-                    spdf_win_export_save_document_as(act.hwnd, act.doc, act.path, err, sizeof(err));
+                    spdf_win_export_save_document_as(act.hwnd, act.doc, act.path, err, sizeof(err), saved,
+                                                     sizeof(saved));
                     break;
                 case SPDF_WIN_CMD_SAVE_PAGE_AS:
-                    spdf_win_export_save_page_as(act.hwnd, act.doc, act.path, act.page, err, sizeof(err));
+                    spdf_win_export_save_page_as(act.hwnd, act.doc, act.path, act.page, err, sizeof(err), saved,
+                                                 sizeof(saved));
                     break;
                 case SPDF_WIN_CMD_PROPERTIES:
                     spdf_win_properties_show_for_document(act.hwnd, act.doc, act.path, act.page, 0, 0);
@@ -222,6 +225,24 @@ static int command_perform(app* a, int command, const spdf_win_input* in) {
                 default:
                     spdf_win_copy_page_image(act.doc, act.page, 0.0, err, sizeof(err), &os_error);
                     break;
+            }
+            /* A SAVE ONTO THE DOCUMENT'S OWN PATH IS A SELF-SAVE, and the file
+             * watcher has to be told so, or it stats the file, sees a size and
+             * mtime that differ from its baseline, calls it an external change
+             * and reloads the tab out from under the reader -- for a write the
+             * app itself just made. Rotate's in-place save has always noted
+             * this; Save As never did, and Save As onto the same path is how a
+             * reader "saves" a rotated or repaired document.
+             *
+             * The SELECTED tab's path only. If the reader saved over some OTHER
+             * open tab's file, that tab's content on disk really has changed
+             * relative to what it is holding, and reloading it is right.
+             * spdf_win_recents_path_equal is the comparison because the dialog
+             * can hand back the same file spelled differently ("c:/x/a.pdf" for
+             * "C:\x\a.pdf"), and note_self_save is keyed on the watched path. */
+            if (saved[0]) {
+                const char* own = docs_selected_path(a);
+                if (own && spdf_win_recents_path_equal(saved, own)) spdf_win_tabs_open_note_self_save(own);
             }
             doc_action_report(a, err);
             return 0; /* nothing on screen changed */

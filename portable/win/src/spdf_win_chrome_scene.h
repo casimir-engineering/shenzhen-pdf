@@ -61,6 +61,13 @@ static float g_chrome_dpi = 1.0f;
 /* Defined in spdf_win_chrome_field_ui.h; declared here so the paint path can
  * run the reveal at the moment results have arrived. */
 static int chrome_find_reveal_if_pending(app* a);
+/* Defined in spdf_win_md_commands.h, which main.cpp includes after this header
+ * because it calls show_selected_tab(). Declared here for the same reason as
+ * the line above: the toolbar's A−/A＋ pill exists only on a Markdown tab, so
+ * both the paint path (chrome_inputs_for, below) and the input path
+ * (chrome_layout_for_input) need the answer, and both run before that header
+ * is reached. One test, one definition. */
+static int spdf_win_md_selected_tab_is_markdown(app* a);
 
 /* The canvas's zoom mode in the vocabulary the toolbar speaks.
  *
@@ -119,6 +126,7 @@ static void chrome_inputs_for(app* a, SpdfWinChromeModelInputs* in, float dpi_sc
      * See SpdfWinChromeModel::page_text. */
     in->page_text = a->focus == SPDF_WIN_FOCUS_PAGE ? a->page_text : NULL;
     in->sidebar_row_count = a->sidebar_rows;
+    in->markdown = spdf_win_md_selected_tab_is_markdown(a);
     in->zoom_dpi_scale = dpi_scale > 0.0f ? dpi_scale : 1.0f;
     if (!a->canvas) return;
     /* 0-BASED out of the canvas and 0-BASED into the model. The `+ 1` that makes

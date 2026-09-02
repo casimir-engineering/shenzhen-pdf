@@ -195,14 +195,16 @@ done:
  * in their handling of a cancelled dialog, which is the case a copy-paste
  * would get wrong. page_index < 0 means the whole document. */
 static int spdf_win_export_save_common(HWND parent, spdf_document* doc, const wchar_t* doc_path, int page_index,
-                                       char* err, size_t err_len) {
+                                       char* err, size_t err_len, char* out_saved_utf8, size_t out_saved_cap) {
     wchar_t proposed[MAX_PATH];
     wchar_t chosen[MAX_PATH * 2];
     char utf8[MAX_PATH * 4];
     const wchar_t* title;
     int picked;
+    int wrote;
 
     if (err && err_len) err[0] = '\0';
+    if (out_saved_utf8 && out_saved_cap) out_saved_utf8[0] = '\0';
     if (!doc) return 0;
 
     if (page_index >= 0) {
@@ -239,20 +241,24 @@ static int spdf_win_export_save_common(HWND parent, spdf_document* doc, const wc
      * the light rendition -- spdf_export_pdf never sees a render flag, which is
      * this file's light-theme rule met by construction (spdf_win_md.h, "THE
      * DARK THEME NEEDS NOTHING HERE"). A PDF keeps its bytes, as before. */
-    if (spdf_win_export_source_is_markdown(doc_path)) return spdf_export_pdf(doc, utf8, page_index, err, err_len);
-    if (page_index >= 0) return spdf_save_single_page_pdf(doc, page_index, utf8, err, err_len);
-    return spdf_save_document(doc, utf8, err, err_len);
+    if (spdf_win_export_source_is_markdown(doc_path)) wrote = spdf_export_pdf(doc, utf8, page_index, err, err_len);
+    else if (page_index >= 0) wrote = spdf_save_single_page_pdf(doc, page_index, utf8, err, err_len);
+    else wrote = spdf_save_document(doc, utf8, err, err_len);
+    /* Only on success, so a caller cannot mistake a failed write for one the
+     * file watcher should be told about. */
+    if (wrote && out_saved_utf8 && out_saved_cap) _snprintf_s(out_saved_utf8, out_saved_cap, _TRUNCATE, "%s", utf8);
+    return wrote;
 }
 
 int spdf_win_export_save_document_as(HWND parent, spdf_document* doc, const wchar_t* doc_path, char* err,
-                                     size_t err_len) {
-    return spdf_win_export_save_common(parent, doc, doc_path, -1, err, err_len);
+                                     size_t err_len, char* out_saved_utf8, size_t out_saved_cap) {
+    return spdf_win_export_save_common(parent, doc, doc_path, -1, err, err_len, out_saved_utf8, out_saved_cap);
 }
 
 int spdf_win_export_save_page_as(HWND parent, spdf_document* doc, const wchar_t* doc_path, int page_index, char* err,
-                                 size_t err_len) {
+                                 size_t err_len, char* out_saved_utf8, size_t out_saved_cap) {
     if (page_index < 0) return 0;
-    return spdf_win_export_save_common(parent, doc, doc_path, page_index, err, err_len);
+    return spdf_win_export_save_common(parent, doc, doc_path, page_index, err, err_len, out_saved_utf8, out_saved_cap);
 }
 
 /* --- 4. the copy scratch directory ---------------------------------------- */

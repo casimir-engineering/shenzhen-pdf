@@ -36,8 +36,10 @@ static int chrome_close_tab(app* a, int index) {
     int shown;
     if (!a->tabs || index < 0) return 0;
     /* Remembered for Reopen Last Closed Tab, and the watch and any shadow copy
-     * released, while the model still has the path. THE one place a close is
-     * noted: the close box, Ctrl+W and Close Other Tabs all come through here. */
+     * released, while the model still has the path. The close box, Ctrl+W and
+     * a middle-click all come through here; Close Other Tabs does the same two
+     * per-tab steps in its own loop rather than paying for a canvas rebuild and
+     * a session write per tab (spdf_win_cmd_window.h). */
     spdf_win_recents_note_closed(spdf_win_tabs_path(a->tabs, index));
     spdf_win_tabs_open_forget(a->tabs, index);
     if (index == spdf_win_tabs_selected_index(a->tabs)) spdf_win_tabs_app_remember(a->tabs, a->canvas);
@@ -237,8 +239,12 @@ static int chrome_app_menu(app* a, const SpdfWinChromeLayout* l) {
     if (!hwnd) return 0;
     chrome_release_capture(a); /* a popup needs the mouse -- see chrome_release_capture */
 
-    /* The same layout the painter used, so the popup hangs off the drawn cell. */
-    spdf_win_toolbar_layout(l->toolbar, s, &tb);
+    /* The same layout the painter used, so the popup hangs off the drawn cell.
+     * The overflow button is placed by the BACKWARD walk, so the Markdown pill
+     * cannot move it -- but the flag is passed rather than guessed, because
+     * "this caller happens not to care" is not a fact a reader can check from
+     * here and would stop being true the day a control moves. */
+    spdf_win_toolbar_layout(l->toolbar, s, spdf_win_md_selected_tab_is_markdown(a), &tb);
     cell = tb.item[SPDF_WIN_TB_OVERFLOW];
     if (spdf_win_chrome_rect_empty(cell)) return 0;
     pt.x = (LONG)(cell.x + cell.w);

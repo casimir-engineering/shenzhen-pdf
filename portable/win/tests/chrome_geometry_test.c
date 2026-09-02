@@ -21,6 +21,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <wchar.h>
 
 static int g_failures = 0;
 static int g_checks = 0;
@@ -385,6 +386,41 @@ static void test_drags(void) {
     CHECK_EQF(spdf_win_chrome_minimap_drag_pt(NULL, 100.0f), 0.0f);
 }
 
+/* --- the toolbar's two readouts ---------------------------------------- */
+
+/* Moved here from chrome_input_test.c, which needed the lines for the Markdown
+ * pill: these two helpers belong to spdf_win_chrome.h, which is this suite's
+ * subject, and neither has anything to do with routing a mouse event. */
+static void test_fit_labels_and_zoom_percent(void) {
+    SpdfWinChromeModel m = default_model();
+
+    CHECK(wcscmp(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_ACTUAL), L"100%") == 0);
+    CHECK(wcscmp(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_WIDTH), L"Fit Width") == 0);
+    CHECK(wcscmp(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_HEIGHT), L"Fit Height") == 0);
+    CHECK(wcscmp(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_PAGE), L"Fit Page") == 0);
+    /* CUSTOM has no fixed title: macOS inserts a percentage item instead, and
+     * the caller must format it. NULL is how this header says so. */
+    CHECK(spdf_win_chrome_fit_label(SPDF_WIN_CHROME_FIT_CUSTOM) == NULL);
+
+    /* The percentage divides out the DPI scale, or a 150% display would read
+     * 150% at actual size. */
+    m.zoom = 1.0f;
+    m.zoom_dpi_scale = 1.0f;
+    CHECK(spdf_win_chrome_zoom_percent(&m) == 100);
+    m.zoom = 1.5f;
+    m.zoom_dpi_scale = 1.5f;
+    CHECK(spdf_win_chrome_zoom_percent(&m) == 100);
+    m.zoom = 3.0f;
+    m.zoom_dpi_scale = 1.5f;
+    CHECK(spdf_win_chrome_zoom_percent(&m) == 200);
+    m.zoom = 0.435f;
+    m.zoom_dpi_scale = 1.0f;
+    CHECK(spdf_win_chrome_zoom_percent(&m) == 44); /* rounded, as "%.0f%%" rounds */
+    m.zoom = 0.0f;
+    CHECK(spdf_win_chrome_zoom_percent(&m) == 100); /* no zoom yet, not 0% */
+    CHECK(spdf_win_chrome_zoom_percent(NULL) == 100);
+}
+
 /* --- degenerate input -------------------------------------------------- */
 static void test_degenerate(void) {
     SpdfWinChromeModel m = default_model();
@@ -418,6 +454,7 @@ int main(void) {
     test_clamps();
     test_hit();
     test_drags();
+    test_fit_labels_and_zoom_percent();
     test_degenerate();
 
     printf("chrome_geometry_test: %d checks, %d failures\n", g_checks, g_failures);

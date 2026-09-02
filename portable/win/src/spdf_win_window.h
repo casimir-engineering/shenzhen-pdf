@@ -389,6 +389,27 @@ void spdf_win_window_set_frame(spdf_win_window* window, int x, int y, int w, int
 typedef void (*spdf_win_tick_fn)(void* user);
 void spdf_win_window_set_tick(spdf_win_window* window, unsigned ms, spdf_win_tick_fn fn);
 
+/* --- and a ONE-SHOT --------------------------------------------------------
+ *
+ * Calls `fn(user)` once, `ms` after this returns, on the UI thread, then stops
+ * itself. 0 or a NULL fn cancels a pending one.
+ *
+ * WHY THIS EXISTS RATHER THAN "DO IT ON THE FIRST TICK". Deferred launch work
+ * has two requirements and the periodic tick can only meet one of them: it
+ * must not run on the launch path, and it must not wait a whole period. The
+ * orphan sweep of read-only shadow copies is the case (spdf_win_watch_app.h):
+ * riding the 30 s session tick meant that a reader who opened a document and
+ * closed the app inside half a minute never swept at all, and the copies
+ * accumulated in %APPDATA% forever. Ten seconds is off the launch path by any
+ * measure (the first page lands at ~150 ms) and short enough that a brief
+ * session still gets one.
+ *
+ * ONE PENDING ONE-SHOT PER WINDOW, deliberately: two callers each wanting
+ * their own delay is a second timer id, and the moment there are two the
+ * window is scheduling for people rather than ticking. Setting a second one
+ * replaces the first, which the single caller cannot do by accident. */
+void spdf_win_window_set_once(spdf_win_window* window, unsigned ms, spdf_win_tick_fn fn);
+
 /* --- a tooltip ------------------------------------------------------------
  *
  * Shows `text` in a tracking tooltip whose top-left is at the client point

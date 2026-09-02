@@ -4,6 +4,7 @@
 #include "spdf_win_recents.h" /* spdf_win_recents_path_equal: the one dedupe rule */
 #include "spdf_win_recents_json.h"
 #include "spdf_win_state.h"
+#include "spdf_win_watcher.h" /* spdf_win_watcher_is_shadow_path: a copy is not a document */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -195,6 +196,18 @@ int spdf_win_favorites_add(const SpdfWinFavorite* favorite) {
     SpdfWinFavorite* slot;
     int i;
     if (!favorite || !favorite->path[0]) return -1;
+    /* A read-only shadow copy is refused here for the same reason recents
+     * refuses it (spdf_win_recents_note_opened) and with more at stake: a
+     * favorite outlives the session, and the copy it would name is deleted by
+     * the next launch's orphan sweep, so the bookmark would be broken by the
+     * time anyone used it. spdf_win_recents.h has promised this refusal for
+     * both stores since it was written and neither implemented it.
+     *
+     * Today's Ctrl+D already hands over the tab's SOURCE path rather than its
+     * working_path (spdf_win_cmd_docs.h docs_toggle_favorite, spdf_win_tabs.h),
+     * so this is the store refusing to be given the wrong one -- which is where
+     * the check belongs: the next caller does not have to know the rule. */
+    if (spdf_win_watcher_is_shadow_path(favorite->path)) return -1;
     load();
     type = favorite->type[0] ? favorite->type : "page";
     for (i = 0; i < g_count;) {

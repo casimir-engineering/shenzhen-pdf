@@ -119,6 +119,7 @@ void spdf_win_chrome_model_build(SpdfWinChromeModel* model, SpdfWinChromeTabStor
     model->minimap_w = in->minimap_w;
     model->sidebar_section = 0; /* Chapters, as macOS opens */
     model->search_active = 0;
+    model->markdown = in->markdown;
     model->hot_tab = in->hot_tab;
     model->hot_close = in->hot_close;
     model->drag_tab = in->drag_tab;

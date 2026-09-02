@@ -145,6 +145,58 @@ static void test_inactive_close_keeps_the_same_tab_selected(void) {
     spdf_win_tabs_destroy(tabs);
 }
 
+/* CLOSE OTHER TABS, which is not a model operation but a LOOP over this one --
+ * spdf_win_cmd_window.h cmd_window_close_other_tabs(). The loop walks the strip
+ * downwards and skips one index, and what makes that correct is a property of
+ * spdf_win_tabs_close() rather than of the loop: it shifts every index above
+ * the closed one down and leaves those below it alone. So the loop is run here,
+ * against the model and nothing else, on the case that would expose an
+ * off-by-one -- a kept tab in the MIDDLE, so tabs are closed on both sides of
+ * it, at both ends of the walk.
+ *
+ * What a wrong walk looks like: the reader presses Close Other Tabs and is left
+ * looking at a different document. */
+static void test_close_others_keeps_the_selected_tab(void) {
+    spdf_win_tabs* tabs = spdf_win_tabs_create();
+    int keep, i;
+    spdf_win_tabs_append(tabs, "a.pdf", NULL);
+    spdf_win_tabs_append(tabs, "b.pdf", NULL);
+    spdf_win_tabs_append(tabs, "c.pdf", NULL);
+    spdf_win_tabs_append(tabs, "d.pdf", NULL);
+    spdf_win_tabs_append(tabs, "e.pdf", NULL);
+    spdf_win_tabs_select(tabs, 2);
+
+    keep = spdf_win_tabs_selected_index(tabs);
+    for (i = spdf_win_tabs_count(tabs) - 1; i >= 0; --i) {
+        if (i == keep) continue;
+        spdf_win_tabs_close(tabs, i, 0);
+    }
+    check_eq(spdf_win_tabs_count(tabs), 1, "every tab but one is gone");
+    check(selected_path_is(tabs, "c.pdf"), "and the one left is the tab that was selected");
+    check_eq(spdf_win_tabs_selected_index(tabs), 0, "which is now the only index there is");
+    spdf_win_tabs_destroy(tabs);
+
+    /* The first and last positions too: the walk starts and ends at a closed
+     * tab in one of them, which is where a `>= 0` written `> 0` would show. */
+    tabs = three_tabs();
+    spdf_win_tabs_select(tabs, 0);
+    keep = 0;
+    for (i = spdf_win_tabs_count(tabs) - 1; i >= 0; --i)
+        if (i != keep) spdf_win_tabs_close(tabs, i, 0);
+    check(selected_path_is(tabs, "a.pdf"), "keeping the leftmost tab keeps a");
+    check_eq(spdf_win_tabs_count(tabs), 1, "and closes the two to its right");
+    spdf_win_tabs_destroy(tabs);
+
+    tabs = three_tabs();
+    spdf_win_tabs_select(tabs, 2);
+    keep = 2;
+    for (i = spdf_win_tabs_count(tabs) - 1; i >= 0; --i)
+        if (i != keep) spdf_win_tabs_close(tabs, i, 0);
+    check(selected_path_is(tabs, "c.pdf"), "keeping the rightmost tab keeps c");
+    check_eq(spdf_win_tabs_count(tabs), 1, "and closes the two to its left");
+    spdf_win_tabs_destroy(tabs);
+}
+
 /* test_identity_survives_reorder_and_equal_values. Two tabs on the SAME path
  * are two different tabs; a history keyed on the path would restore the wrong
  * one here, and would look correct in every single-path test. */
@@ -320,6 +372,7 @@ int main(void) {
     test_detach_restores_most_recent();
     test_mru_falls_back_to_adjacent();
     test_inactive_close_keeps_the_same_tab_selected();
+    test_close_others_keeps_the_selected_tab();
     test_identity_survives_equal_paths();
     test_closed_tabs_leave_no_history();
     test_close_action_policy();

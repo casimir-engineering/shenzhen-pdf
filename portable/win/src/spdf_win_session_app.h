@@ -129,15 +129,14 @@ static void app_settings_record(app* a) {
     spdf_win_settings_commit();
 }
 
-/* Defined in spdf_win_watch_app.h, included right after this header: the one-off
- * sweep of orphaned shadow copies, on the first tick. */
-static void app_watch_first_tick(app* a);
-
+/* The periodic tick is the SESSION's, and only the session's. The sweep of
+ * orphaned shadow copies used to ride it and now has its own one-shot ten
+ * seconds after the show (spdf_win_watch_app.h app_watch_sweep_once), because
+ * a reader who closed the app inside the first thirty seconds never swept. */
 static void app_tick(void* user) {
     app* a = (app*)user;
     app_session_save(a);
     app_settings_record(a);
-    app_watch_first_tick(a);
 }
 
 /* THE WINDOW'S OPENING SIZE, AND ITS FLOOR.
