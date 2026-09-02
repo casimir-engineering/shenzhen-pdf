@@ -255,6 +255,90 @@ static void test_engine(const char* path) {
      * layout is real, so the last match is well down the document. */
     CHECK(marks[3] > 0.5f);
 
+    /* THE RESULTS SIDEBAR'S INPUTS. Every match carries its page, its line and
+     * the outline entry it falls under; the fixture's outline is
+     * Introduction(p0,l0) Background(p0,l1) Uberblick(p1,l1) Chapter Two(p1,l0)
+     * CJK section(p2,l1) Appendix(p3,l0), so the LAST entry starting on or
+     * before each page is 1, 3, 4, 5 -- the rule spdf_win_search_chapter_for_page
+     * transcribes and the differential pins. */
+    {
+        static const int kChapter[4] = {1, 3, 4, 5};
+        SpdfWinFindMatchInfo info;
+        unsigned rev_before;
+        const SpdfWinFindPageMark* pm;
+        int pm_count = -1, pm_active = -9;
+
+        CHECK_EQI(spdf_win_find_chapter_count(s), 6);
+        CHECK(spdf_win_find_chapter_title(s, 1) && strcmp(spdf_win_find_chapter_title(s, 1), "Background") == 0);
+        CHECK(spdf_win_find_chapter_title(s, 5) && strcmp(spdf_win_find_chapter_title(s, 5), "Appendix") == 0);
+        CHECK(spdf_win_find_chapter_title(s, 6) == NULL);
+        CHECK(spdf_win_find_chapter_title(s, -1) == NULL);
+        CHECK(spdf_win_find_query(s) && strcmp(spdf_win_find_query(s), "outline fixture") == 0);
+        for (i = 0; i < 4; ++i) {
+            memset(&info, 0, sizeof(info));
+            CHECK(spdf_win_find_match_at(s, i, &info));
+            CHECK_EQI(info.page, i);
+            CHECK_EQI(info.chapter_index, kChapter[i]);
+            CHECK(info.snippet && strstr(info.snippet, "outline fixture") != NULL);
+        }
+        CHECK(!spdf_win_find_match_at(s, 4, &info));
+        CHECK(!spdf_win_find_match_at(s, -1, &info));
+
+        /* The minimap markers: one per match, on its own page, inside [0,1]. */
+        pm = spdf_win_find_page_marks(s, &pm_count, &pm_active);
+        CHECK(pm != NULL);
+        CHECK_EQI(pm_count, 4);
+        CHECK_EQI(pm_active, spdf_win_find_match_index(s));
+        for (i = 0; i < pm_count; ++i) {
+            CHECK_EQI(pm[i].page, i);
+            CHECK(pm[i].fraction >= 0.0f && pm[i].fraction <= 1.0f);
+        }
+
+        /* set_current moves the selection and the revision; out of range and
+         * "already there" change neither. */
+        rev_before = spdf_win_find_revision(s);
+        CHECK_EQI(spdf_win_find_set_current(s, 2), 1);
+        CHECK_EQI(spdf_win_find_match_index(s), 2);
+        CHECK(spdf_win_find_revision(s) != rev_before);
+        rev_before = spdf_win_find_revision(s);
+        CHECK_EQI(spdf_win_find_set_current(s, 2), 0);
+        CHECK_EQI(spdf_win_find_set_current(s, 9), 0);
+        CHECK_EQI(spdf_win_find_set_current(s, -1), 0);
+        CHECK(spdf_win_find_revision(s) == rev_before);
+        spdf_win_find_page_marks(s, &pm_count, &pm_active);
+        CHECK_EQI(pm_active, 2);
+        spdf_win_find_marks(s, &mark_count, &active);
+        CHECK_EQI(active, 2);
+        CHECK_EQI(spdf_win_find_set_current(s, 0), 1);
+
+        /* The multiline flag is a fourth input to set(): flipping it reruns the
+         * same query (the results go, the worker restarts), and flipping it
+         * back reruns again. Both directions land on the same four matches. */
+        CHECK_EQI(spdf_win_find_regex_multiline(), 1); /* the originals' default */
+        spdf_win_find_set_regex_multiline(0);
+        CHECK_EQI(spdf_win_find_regex_multiline(), 0);
+        spdf_win_find_set(s, path, "outline fixture", 0);
+        CHECK(wait_for_search(s));
+        CHECK_EQI(spdf_win_find_match_count(s), 4);
+        spdf_win_find_set_regex_multiline(1);
+        spdf_win_find_set(s, path, "outline fixture", 0);
+        CHECK(wait_for_search(s));
+        CHECK_EQI(spdf_win_find_match_count(s), 4);
+        /* Unchanged inputs do not restart: the revision holds still. */
+        rev_before = spdf_win_find_revision(s);
+        spdf_win_find_set(s, path, "outline fixture", 0);
+        CHECK(spdf_win_find_revision(s) == rev_before);
+
+        /* restart() drops the results and lets the same set() rerun them. */
+        spdf_win_find_restart(s);
+        CHECK_EQI(spdf_win_find_match_count(s), 0);
+        CHECK_EQI(spdf_win_find_chapter_count(s), 0);
+        spdf_win_find_set(s, path, "outline fixture", 0);
+        CHECK(wait_for_search(s));
+        CHECK_EQI(spdf_win_find_match_count(s), 4);
+        CHECK_EQI(spdf_win_find_chapter_count(s), 6);
+    }
+
     /* A query with no matches: zero, and no error. */
     spdf_win_find_set(s, path, "zzzznotinthisdocument", 0);
     CHECK(wait_for_search(s));

@@ -27,9 +27,21 @@
  *     cap, the snippet, chapter attribution, the marker fractions -- goes through
  *     spdf_win_search.h, which is differentially tested against that original.
  *
- * The CHROME-FACING half -- the process-wide session, the temporary query bridge
- * and spdf_win_find_fill_model() -- is in spdf_win_chrome_find.cpp, so this file
- * stays the engine and the session struct below stays private to it.
+ * THIS FILE IS THE WORKER AND THE LIFECYCLE. The UI-thread API is in
+ * spdf_win_search_api.h and the two pixel mappings in
+ * spdf_win_search_geometry.h, both included at the BOTTOM so they see the
+ * complete session struct -- internal headers rather than second translation
+ * units, so the struct stays private to one .cpp (tools/file-size-limits.md
+ * asks for extraction, not a raised cap). The CHROME-FACING half -- the
+ * process-wide session, the query bridge and spdf_win_find_fill_model() -- is
+ * in spdf_win_chrome_model.cpp.
+ *
+ * THE OUTLINE TITLES TRAVEL WITH THE RESULTS. The sidebar's Search section
+ * groups matches under their chapter heading (mac rebuildSearchSidebarItems),
+ * which needs the title of every outline entry -- and the worker has the
+ * outline open anyway for chapter attribution. It publishes a copy under the
+ * lock once per search; poll() adopts it onto the UI thread, which is the only
+ * thread that ever reads it afterwards. Nothing borrows across the lock.
  */
 #include "spdf_win_chrome_find.h"
 
@@ -51,10 +63,21 @@ struct SpdfWinFindSession {
     char* path;
     char* query;
     int regex;
+    int regex_multiline;
     SpdfWinSearchMatchList list;
     int current;
     int started;
     char error[512];
+    /* Bumped on every change a reader of the list could see -- a batch
+     * adopted, the current match moved, the query replaced -- so a consumer
+     * that caches a view of the results (the sidebar's rows) can compare one
+     * integer per frame instead of the list. */
+    unsigned revision;
+
+    /* The document's outline titles, in spdf_load_outline order, adopted from
+     * the worker by poll(). Owned here; NULL/0 without an outline. */
+    char** titles;
+    int title_count;
 
     float* marks;
     int mark_count;
@@ -63,6 +86,12 @@ struct SpdfWinFindSession {
     int raw_capacity;
     float lane_h;    /* device px of the scroller trough, from the last frame */
     float dpi_scale; /* device px per logical px, likewise */
+
+    /* The minimap strip's markers: every match as (page, fraction of that
+     * page's height), rebuilt beside the scroller marks. */
+    SpdfWinFindPageMark* page_marks;
+    int page_mark_count;
+    int page_mark_capacity;
 
     spdf_win_overlay* overlays;
     int overlay_capacity;
@@ -75,6 +104,9 @@ struct SpdfWinFindSession {
     int pending_has_error;
     SpdfWinPageSizePt* sizes;
     int size_count;
+    char** pending_titles;
+    int pending_title_count;
+    long pending_titles_gen;
 
     /* --- interlocked ---------------------------------------------------- */
     volatile long generation;
@@ -94,9 +126,20 @@ struct SpdfWinFindSession {
 
 /* Defined in spdf_win_search_geometry.h, which is included at the BOTTOM of this
  * file so it sees the complete struct above. Forward-declared here because the
- * UI-thread API below rebuilds the ticks whenever the match list or the current
- * match moves. */
+ * UI-thread API rebuilds the ticks whenever the match list or the current match
+ * moves. */
 static void rebuild_marks(SpdfWinFindSession* s);
+
+/* THE REGEX MULTILINE FLAG IS PROCESS-WIDE, like the query bridge's regex flag,
+ * and for the same reason: it is the reader's setting, not a property of one
+ * search. spdf_win_find_set() reads it as a fourth input and restarts when it
+ * changed, so the Edit menu row takes effect on the next paint with no caller
+ * having to learn a new argument. Defaults ON, as both originals do
+ * (SPDFMacModels.mm:15 `_searchRegexMultiline = YES`, spdf_state.c:780 TRUE). */
+static volatile long g_regex_multiline = 1;
+
+void spdf_win_find_set_regex_multiline(int on) { InterlockedExchange(&g_regex_multiline, on ? 1 : 0); }
+int spdf_win_find_regex_multiline(void) { return (int)InterlockedCompareExchange(&g_regex_multiline, 0, 0); }
 
 namespace {
 
@@ -114,6 +157,13 @@ int same_str(const char* a, const char* b) {
     if (!a) a = "";
     if (!b) b = "";
     return strcmp(a, b) == 0;
+}
+
+void free_titles(char** titles, int count) {
+    int i;
+    if (!titles) return;
+    for (i = 0; i < count; ++i) free(titles[i]);
+    free(titles);
 }
 
 BOOL CALLBACK collect_window(HWND hwnd, LPARAM param) {
@@ -135,6 +185,7 @@ struct Job {
     char* path;
     char* query;
     int regex;
+    int regex_multiline;
 };
 
 /* One page's worth of snippets, from the page's own text lines. The GTK4 worker
@@ -196,6 +247,25 @@ void post_batch(SpdfWinFindSession* s, long gen, SpdfWinSearchMatchList* batch, 
     invalidate_windows(s);
 }
 
+/* The outline titles, once per search, for the sidebar's chapter headers. A
+ * copy for the UI thread; the outline itself is freed with the worker's. */
+void post_titles(SpdfWinFindSession* s, long gen, const spdf_outline* outline) {
+    char** titles = NULL;
+    int count = outline ? outline->count : 0;
+    int i;
+    if (count > 0) {
+        titles = (char**)calloc((size_t)count, sizeof(char*));
+        if (!titles) count = 0;
+        for (i = 0; i < count; ++i) titles[i] = dup_str(outline->items[i].title ? outline->items[i].title : "");
+    }
+    EnterCriticalSection(&s->lock);
+    free_titles(s->pending_titles, s->pending_title_count);
+    s->pending_titles = titles;
+    s->pending_title_count = count;
+    s->pending_titles_gen = gen;
+    LeaveCriticalSection(&s->lock);
+}
+
 unsigned __stdcall search_worker(void* arg) {
     Job* job = (Job*)arg;
     SpdfWinFindSession* s = job->session;
@@ -224,6 +294,7 @@ unsigned __stdcall search_worker(void* arg) {
             else
                 chapter_count = 0;
         }
+        post_titles(s, job->generation, &outline);
         spdf_free_outline(&outline);
 
         /* The mark layout needs every page's height, and the overlay mapping
@@ -252,7 +323,7 @@ unsigned __stdcall search_worker(void* arg) {
                 LeaveCriticalSection(&s->lock);
             }
 
-            hits = spdf_search_page_rects_options(doc, page, job->query, job->regex, 0, rects,
+            hits = spdf_search_page_rects_options(doc, page, job->query, job->regex, job->regex_multiline, rects,
                                                  SPDF_FIND_PAGE_RECT_MAX, err, sizeof(err));
             if (hits < 0) {
                 /* Graceful invalid-pattern failure: the first error wins. */
@@ -291,9 +362,11 @@ SpdfWinFindSession* spdf_win_find_session_new(void) {
     s->current = -1;
     s->active_mark = -1;
     s->pending_gen = -1;
+    s->pending_titles_gen = -1;
     s->finished_gen = 0;
     s->lane_h = SPDF_FIND_DEFAULT_LANE_H;
     s->dpi_scale = 1.0f;
+    s->regex_multiline = spdf_win_find_regex_multiline();
     return s;
 }
 
@@ -306,9 +379,12 @@ void spdf_win_find_session_free(SpdfWinFindSession* s) {
     while (InterlockedCompareExchange(&s->live_workers, 0, 0) != 0) Sleep(1);
     spdf_win_search_match_list_deinit(&s->list);
     spdf_win_search_match_list_deinit(&s->pending);
+    free_titles(s->titles, s->title_count);
+    free_titles(s->pending_titles, s->pending_title_count);
     free(s->sizes);
     free(s->marks);
     free(s->raw_marks);
+    free(s->page_marks);
     free(s->overlays);
     free(s->path);
     free(s->query);
@@ -316,164 +392,7 @@ void spdf_win_find_session_free(SpdfWinFindSession* s) {
     free(s);
 }
 
-/* --- UI-thread API ------------------------------------------------------- */
-
-static void reset_results(SpdfWinFindSession* s) {
-    spdf_win_search_match_list_clear(&s->list);
-    s->current = -1;
-    s->mark_count = 0;
-    s->active_mark = -1;
-    s->error[0] = 0;
-    s->started = 0;
-    EnterCriticalSection(&s->lock);
-    spdf_win_search_match_list_clear(&s->pending);
-    s->pending_has_error = 0;
-    s->pending_error[0] = 0;
-    LeaveCriticalSection(&s->lock);
-}
-
-void spdf_win_find_set(SpdfWinFindSession* s, const char* utf8_path, const char* utf8_query, int regex) {
-    Job* job;
-    char* capped;
-    HANDLE thread;
-
-    if (!s) return;
-    regex = regex ? 1 : 0;
-    if (same_str(s->path, utf8_path) && same_str(s->query, utf8_query) && s->regex == regex) return;
-
-    free(s->path);
-    free(s->query);
-    s->path = dup_str(utf8_path);
-    s->query = dup_str(utf8_query);
-    s->regex = regex;
-
-    InterlockedIncrement(&s->generation);
-    reset_results(s);
-    if (!s->path || !s->query || !s->query[0]) {
-        InterlockedExchange(&s->finished_gen, InterlockedCompareExchange(&s->generation, 0, 0));
-        return;
-    }
-
-    capped = spdf_win_search_dup_query(s->query);
-    job = (Job*)calloc(1, sizeof(Job));
-    if (!job || !capped) {
-        free(capped);
-        free(job);
-        return;
-    }
-    job->session = s;
-    job->generation = InterlockedCompareExchange(&s->generation, 0, 0);
-    job->path = dup_str(s->path);
-    job->query = capped;
-    job->regex = regex;
-    if (!job->path) {
-        free(job->query);
-        free(job);
-        return;
-    }
-    s->started = 1;
-    InterlockedIncrement(&s->live_workers);
-    thread = (HANDLE)_beginthreadex(NULL, 0, search_worker, job, 0, NULL);
-    if (!thread) {
-        InterlockedDecrement(&s->live_workers);
-        s->started = 0;
-        free(job->path);
-        free(job->query);
-        free(job);
-        return;
-    }
-    CloseHandle(thread); /* detached: the generation counter is the join */
-}
-
-int spdf_win_find_poll(SpdfWinFindSession* s) {
-    long gen;
-    int changed = 0;
-    if (!s) return 0;
-    gen = InterlockedCompareExchange(&s->generation, 0, 0);
-    EnterCriticalSection(&s->lock);
-    if (s->pending_gen == gen) {
-        if (spdf_win_search_match_list_count(&s->pending) > 0) {
-            spdf_win_search_match_list_steal_into(&s->list, &s->pending);
-            changed = 1;
-        }
-        if (s->pending_has_error) {
-            s->pending_has_error = 0;
-            strncpy(s->error, s->pending_error, sizeof(s->error) - 1);
-            s->error[sizeof(s->error) - 1] = 0;
-            spdf_win_search_match_list_clear(&s->list);
-            s->current = -1;
-            changed = 1;
-        }
-    }
-    LeaveCriticalSection(&s->lock);
-    if (changed) {
-        /* Only pick a current match if the reader has not already stepped to
-         * one: indices are stable because batches only append, so recomputing
-         * would yank the view away from their choice (GTK4 deliver_idle). */
-        if (s->current < 0 && spdf_win_search_match_list_count(&s->list) > 0) s->current = 0;
-        rebuild_marks(s);
-    }
-    return changed;
-}
-
-int spdf_win_find_searching(const SpdfWinFindSession* s) {
-    if (!s || !s->started) return 0;
-    return InterlockedCompareExchange((volatile long*)&s->finished_gen, 0, 0) !=
-           InterlockedCompareExchange((volatile long*)&s->generation, 0, 0);
-}
-
-int spdf_win_find_match_count(const SpdfWinFindSession* s) {
-    return s ? (int)spdf_win_search_match_list_count(&s->list) : 0;
-}
-
-int spdf_win_find_match_index(const SpdfWinFindSession* s) { return s ? s->current : -1; }
-
-const char* spdf_win_find_error(const SpdfWinFindSession* s) { return s && s->error[0] ? s->error : NULL; }
-
-int spdf_win_find_step(SpdfWinFindSession* s, int delta) {
-    int count;
-    if (!s) return -1;
-    count = (int)spdf_win_search_match_list_count(&s->list);
-    if (count <= 0) return s->current = -1;
-    if (s->current < 0) s->current = delta >= 0 ? 0 : count - 1;
-    else {
-        /* Wraparound, as GTK3 find_step does. The modulo is written so a
-         * negative delta larger than count still lands in range. */
-        s->current = ((s->current + delta) % count + count) % count;
-    }
-    rebuild_marks(s);
-    return s->current;
-}
-
-int spdf_win_find_current_target(const SpdfWinFindSession* s, int* out_page, spdf_rect* out_rect) {
-    const SpdfWinSearchMatch* m;
-    if (!s || s->current < 0) return 0;
-    m = spdf_win_search_match_list_get(&s->list, (unsigned)s->current);
-    if (!m) return 0;
-    if (out_page) *out_page = m->page;
-    if (out_rect) *out_rect = m->rect;
-    return 1;
-}
-
-const float* spdf_win_find_marks(const SpdfWinFindSession* s, int* out_count, int* out_active) {
-    if (out_count) *out_count = s ? s->mark_count : 0;
-    if (out_active) *out_active = s ? s->active_mark : -1;
-    return s ? s->marks : NULL;
-}
-
-/* The paint thread's windows, for the repaint side channel described on the
- * `windows` field. Exported rather than done inline in the model builder so the
- * session's internals stay inside this translation unit. Idempotent, and a
- * no-op in a headless process, where the painting thread owns no windows. */
-void spdf_win_find_note_paint_thread(SpdfWinFindSession* s) {
-    if (!s || s->noted_paint_thread) return;
-    s->noted_paint_thread = 1;
-    EnterCriticalSection(&s->lock);
-    s->window_count = 0;
-    EnumThreadWindows(GetCurrentThreadId(), collect_window, (LPARAM)s);
-    LeaveCriticalSection(&s->lock);
-}
-
-/* The two mappings from matches to pixels. Included HERE, at the bottom, so it
- * sees the complete session struct; see its own header comment. */
+/* The UI-thread API, then the two pixel mappings. Included HERE, at the bottom,
+ * so both see the complete session struct; see their own header comments. */
+#include "spdf_win_search_api.h"
 #include "spdf_win_search_geometry.h"
