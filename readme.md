@@ -81,7 +81,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **macOS — the original** — Native AppKit + PDFKit.
 - **Linux — parity on the reading path** — Native GTK4 + libadwaita app on the same portable C core and data formats: tabs (drag, detach, reattach), multi-window session restore, document map, chapter-grouped search sidebar, scrollbar heat-map, command palette, favorites, presentation mode, printing, auto-reload, properties panel, OCR, translation, and a minisign-verified auto-updater (deb + tarball). Instant launches via an optional resident mode. Built from `portable/linux/gtk4/`. Two features tagged above are genuinely absent here rather than merely untested: the **dark reading theme** and the **Markdown reader**, neither of which has any code in `portable/linux/gtk4/`.
-- **Windows — native, not yet published** — A native Win32 + Direct2D app on the same portable C core and data formats, built from `portable/win/`: compact tabs with drag-to-reorder, presentation mode and full screen, session restore, the document map, a chapter-grouped search sidebar with incremental find, the scrollbar heat-map, the command palette with recents and favorites, a password prompt for encrypted PDFs, auto-reload when a file changes on disk, the document properties panel, native printing, on-device OCR and offline translation, and the dark reading theme. Markdown opens as paginated pages too, by a different route: converted to HTML and laid out on A4 by MuPDF's own engine rather than by a re-implementation of the macOS text stack, so it gets the GFM typography and palette, tables, syntax-highlighted code and the LaTeX subset, but not yet the native diagrams, the in-place language picker or the copy button. The auto-updater is ported and verified against Authenticode, but is scaffolding until there is something signed to update to — **there is no published Windows binary or installer yet**. Annotations and the Comments sidebar are the largest gap that remains. A separate legacy Win32 C++ tree also remains in `src/`, independent of the portable core.
+- **Windows — native, not yet published** — A native Win32 + Direct2D app on the same portable C core and data formats, built from `portable/win/`: compact tabs with drag-to-reorder, presentation mode and full screen, session restore, the document map, a chapter-grouped search sidebar with incremental find, the scrollbar heat-map, the command palette with recents and favorites, a password prompt for encrypted PDFs, auto-reload when a file changes on disk, the document properties panel, native printing, on-device OCR and offline translation, and the dark reading theme. Markdown opens as paginated pages too, by a different route: converted to HTML and laid out on A4 by MuPDF's own engine rather than by a re-implementation of the macOS text stack, so it gets the GFM typography and palette, tables, syntax-highlighted code and the LaTeX subset, but not yet the native diagrams, the in-place language picker or the copy button. The auto-updater is ported and verified against Authenticode, but is scaffolding until there is something signed to update to — **there is no published Windows binary or installer yet**, so for now the app is built from source. The binary itself is ready to be one: it is a single statically-linked exe with MuPDF embedded, no DLLs and no VC redistributable, so it is **portable — download, double-click, run** — and **self-installing**: `ShenzhenPDF.exe --install` copies it to `%LOCALAPPDATA%\Programs\ShenzhenPDF`, adds a Start Menu shortcut, the `.pdf` association and an *Apps & features* entry, all under HKCU with no administrator rights, and `--uninstall` removes exactly those and keeps your settings unless you ask for `--purge`. The first launch asks which you want. A `ShenzhenPDF.portable` file beside the exe keeps settings and session in `ShenzhenPDF-data` next to it, for a copy on a USB stick. Annotations and the Comments sidebar are the largest gap that remains. A separate legacy Win32 C++ tree also remains in `src/`, independent of the portable core.
 
 ---
 
@@ -172,6 +172,24 @@ It exits 0 only if every selected case ran and passed, 1 on a failure and 2 if
 anything was *blocked* by a missing prerequisite — which a complete run is,
 since the cross-host pixel comparisons need a macOS host and the password suite
 needs `qpdf`. `portable/win/README.md` is the full guide.
+
+The exe it produces needs no installing — it is one statically-linked file with
+MuPDF inside it, so `%SPDF_OUT%\ShenzhenPDF.exe` can simply be run or copied
+anywhere. **The exe is also its own installer**, which is why there is no
+installer to build:
+
+```bat
+portable\win\package-release.cmd %SPDF_OUT%\ShenzhenPDF.exe
+:: -> dist\ShenzhenPDF-win-x64.exe + .sha256, and prints the ProductVersion
+
+ShenzhenPDF.exe --install      :: optional, per-user, HKCU only, no admin
+ShenzhenPDF.exe --uninstall    :: add --purge to delete settings too
+ShenzhenPDF.exe --portable     :: state in ShenzhenPDF-data beside the exe
+```
+
+If you write a script that launches a real window, pass `--state-dir` or set
+`SPDF_WIN_SETUP_NO_PROMPT=1`: the first-run question is a modal dialog and
+appears before the window.
 
 A separate legacy Win32 C++ tree, independent of the portable core, still
 builds with `bun ./cmd/build.ts` into `./out/dbg64/SumatraPDF.exe`. It is not

@@ -94,6 +94,15 @@ typedef struct spdf_win_settings {
     int window_height;
     int theme;                          /* spdf_win_theme_pref, "markdownTheme" */
     int dark_theme_preserves_images;    /* "darkThemePreservesImages" */
+    /* "setupPromptAnswered": the first-run question ("Run this copy" /
+     * "Install" / "Install and run") has been answered, so it is never asked
+     * again. WINDOWS-ONLY, and the Windows analogue of the mac app's own
+     * one-shot flags (fullDiskAccessPromptDismissed, permissionsWizardShown),
+     * which this file carries through untouched -- so a settings.yaml shared
+     * with macOS gains one key those readers will likewise carry through and
+     * ignore. Dismissing the dialog with Esc deliberately does NOT set it:
+     * "I did not answer" must not be recorded as an answer. */
+    int setup_prompt_answered;
     /* "commentAuthor": the author new comments are signed with (mac
      * setCommentAuthor:, GTK spdf_state_internal.h:78). UTF-8; "" means "the
      * account's display name", which is what both apps fall back to. Written

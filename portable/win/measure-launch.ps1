@@ -337,6 +337,15 @@ function Invoke-Run([int]$i) {
   $psi.FileName = $launchExe
   $psi.UseShellExecute = $false
   $psi.EnvironmentVariables['SPDF_WIN_LAUNCH_PROFILE'] = $markFile
+  # NO FIRST-RUN DIALOG. This script launches against the REAL %APPDATA% on
+  # purpose (measuring session restore is the point), so it cannot use
+  # --state-dir to suppress the "Install, or just run it?" question the way
+  # screenshot-window.ps1 does -- and that question is MODAL and appears before
+  # the window, so the poll below would wait for a window that never comes.
+  # SPDF_WIN_LAUNCH_PROFILE above already suppresses it (a timed launch must not
+  # be timed with a human in it); this is the explicit form, so a reader sees
+  # the intent rather than a side effect. spdf_win_setup.h documents both.
+  $psi.EnvironmentVariables['SPDF_WIN_SETUP_NO_PROMPT'] = '1'
   $args = @()
   foreach ($a in $AppArgs) { if ($a -ne '') { $args += $a } }
   if ($Pdf -ne '' -and $RestoreTabs -le 0) { $args += $Pdf }
