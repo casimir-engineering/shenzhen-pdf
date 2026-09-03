@@ -686,3 +686,266 @@ Two things the wave changed about how to read the rest of this file:
   now a record of what this session predicted and how it turned out; where they
   disagree with the matrix, the matrix is newer. The handoff's §1.4 ledger and
   the plan's §0/§4 phase status are older than both.
+
+---
+
+## 10. The live-verification pass of 2026-09-03
+
+Every visual claim in this port had been checked headless; §4.6 records why the
+live half kept coming back BLOCKED — the workstation was locked for the whole
+parity wave, and a locked session is not composited. **This section is that pass
+re-run unlocked**, at HEAD `0fb7d8d92`, against a build made for it
+(`SPDF_OUT=C:\spdf-build\track-live`). It replaces no earlier section; where it
+contradicts one, it says so.
+
+Same machine as §1: x64 Ryzen 5 6600U, Radeon 680M, Windows 11 26200, one
+144 dpi (150%) display, 2880×1800 physical.
+
+### 10.1 Phase 1 is 7/7 in both themes, on a composited desktop
+
+```
+verify-phase1.ps1 -Exe <track-live exe> -Pdf portable\win\tests\fixtures\outline.pdf
+    light:  7 passed, 0 failed, 0 blocked   exit 0
+    -Dark:  7 passed, 0 failed, 0 blocked   exit 0
+```
+
+Criterion by criterion, identical in both: the window opens (352 ms light /
+377 ms dark to a visible `ShenzhenPDFWindow` titled `outline.pdf - Shenzhen
+PDF`); the host is per-monitor-v2; the **canvas region 368,126,509,663 matches
+the headless compose** inside the script's MAE ceiling; DPI is correct at
+144 dpi (1.5×); all three resize sizes (900×700, 1300×900, 700×520) repaint
+correctly against their own headless renders; `WM_CLOSE` exits 0; and nothing
+this run started was left behind.
+
+Nothing had to be fixed to get there. **All three failures the last locked run
+reported were the black frame and only the black frame** — which is what §4.6
+predicted and what could not be shown until now.
+
+### 10.2 A defect only a live window could find: `--find` is dead on the windowed path
+
+`--find <text>` on a **windowed** launch does nothing at HEAD. The find field
+stays empty, the sidebar's Search segment never appears, and no match is
+highlighted. `--render-window-png --chrome --find fixture` — the headless path —
+is unaffected, which is why no test caught it and why capture
+`07-search-section-headless.png` looks right.
+
+The proof is in the captures directory's own history:
+`windows-captures/01-window-light.png`, taken 2026-09-01 with the same flag on
+the same fixture, shows `fixture` in the field, the Search segment present, the
+match ringed and the scroller's heat-map ticks. `08-window-light.png`, taken
+today with the same command, shows none of it. **01 is deliberately left in
+place as the before-picture.**
+
+One line causes it. `main()` parses `--find` into `a.find_text`
+(`spdf_win_main.cpp:265`) and pushes it (`:292`), and then, inside session
+restore, calls `app_restore_find_text(&a)` (`:417`), whose first act is
+
+```c
+a->find_text[0] = L'\0';
+```
+
+before refilling the field from the *selected tab's* remembered `search_text`
+(`spdf_win_session_app.h:59-68`). A tab opened by this launch has none, so the
+command line's query is overwritten with the empty string before the first
+paint. The per-tab query restore is right and wanted — it is what makes Ctrl+Tab
+bring back the query you left in a document — it simply has no case for "the
+command line already asked for one". Not fixed here: this pass owns no source
+file. The fix belongs with whoever owns `spdf_win_main.cpp`, and its shape is to
+let an argv-supplied query win over an empty remembered one.
+
+The feature itself is fine, which is the useful half of the report: typed into
+the field (`drive-uia.ps1 cmd:26` then `type:fixture`) the whole thing works
+live — four results grouped under their chapter headings with "match *n* of 4",
+the active match ringed red over yellow, ticks on the scroller and yellow marker
+bars inside the minimap thumbnails. That is
+`windows-captures/11-search-results-live.png`, the first live picture of the
+Search section; 07 could only be composed offscreen.
+
+### 10.3 Modal windows, driven for real (gap 16)
+
+`windows-feature-matrix.md` gap 16 — "modal windows verified live" — was the
+largest hole in the port's evidence, and `drive-window.ps1` is the wrong tool
+for it: it clicks CLIENT COORDINATES, which is right for chrome the app paints
+itself and wrong for a dialog whose controls are child windows this repo does
+not lay out, and a modal dialog runs its own message loop, so the app's window
+stops answering the "is it alive" probes at the same moment.
+
+`portable/win/drive-uia.ps1` is the new tool: UI Automation to find and read the
+dialog, control ids to press it, `PrintWindow` to capture it, and it never moves
+the reader's cursor. Driven and captured this pass:
+
+| dialog | class | driven | evidence |
+|---|---|---|---|
+| Keyboard Shortcuts (F1) | `SpdfWinShortcutsSheet` | opened by `cmd:55`, dismissed by Escape | `15-shortcuts-sheet.png` |
+| About | `SpdfWinAboutBox` | `cmd:56`, Escape | `16-about-box.png` — 26.9.2 (build 1), MuPDF 1.27.2 |
+| Add Comment | `SpdfWinAnnotDialog` | `cmd:63` after a page click, both fields typed, **Add pressed** | `14-add-comment-dialog.png`, then `12-comments-sidebar.png` |
+| `--install`'s completion box | `#32770` | **OK pressed**, process exited 0 | §10.4 |
+
+The annotation chain is the one worth stating whole, because it is what the
+matrix's annotations row lists as untested: a click on the page, Add Comment,
+author and text typed, Add — and then a note marker on the page, a `Page 1`
+group header in the **Comments** section, and a `Reviewer: Check this heading
+agains…` / `Text - Page 1` row under it. The whole flow, live, end to end. It
+also settles where the annotation goes: **into the document**, which grew from
+6,449 to 7,264 bytes. Never run this against a committed fixture in place; the
+one that was is restored and re-checked against `make_outline_fixture.py`'s own
+output (`sha256 d757157117610c4d…`).
+
+**One trap, and it is a trap for the report rather than for the app.** Through
+`System.Windows.Automation` on this box, every child of every dialog comes back
+as `ControlType.Pane` with the control id as its `AutomationId`, the window text
+as its `Name`, and **no `InvokePattern` and no `ValuePattern`** — so a
+UIA-pattern driver can press nothing. That looks exactly like an accessibility
+defect in the app's dialogs, and it is not: `--install`'s **stock `MessageBoxW`**
+reports its OK button — a plain `L"BUTTON"` in a plain `#32770`, the most
+accessible control in Windows — the same way, `type=Pane name='OK' id='2'
+invokable=False`. When the OS's own message box comes back like that, the missing
+piece is the standard-control proxy providers on the client side.
+**Do not report these dialogs as inaccessible on this evidence.** They are built
+from real `L"EDIT"` and `L"BUTTON"` children
+(`spdf_win_annot_dialog.cpp:203-243`); `drive-uia.ps1` presses them by control id
+through `GetDlgItem`, and its `tree` step still prints what UIA can see, which is
+how the limitation was found.
+
+A second trap, cheap to hit and expensive to notice: `GetWindowTextW` on another
+process's EDIT control returns the CACHED window text, not the field's content.
+`childtext:1101=Reviewer` reported `text='sagan'` and had worked perfectly — the
+capture shows `Reviewer`. Judge a `WM_SETTEXT` by the picture or by the outcome,
+never by reading it back that way.
+
+### 10.4 The first-run dialog: still not drivable, and the gate is why
+
+**This is the one deliverable of the pass that could not be met, and it is no
+longer the lock's fault.** The task was to press the three command links of the
+"Run this copy / Install / Install and run" TaskDialog for real. It cannot be
+done on this machine without writing into the reader's live
+`%APPDATA%\ShenzhenPDF`, and the reason is a deliberate line in the gate.
+
+The dialog appears only when `spdf_win_setup_first_run_action()` returns ASK,
+which needs all six of its inputs to say "ask"
+(`spdf_win_setup_first_run.h`). Five were confirmed absent by measurement: no
+`--install/--uninstall/--quiet/--purge/--portable/--state-dir` on the command
+line, no `ShenzhenPDF.portable` beside the exe (a scratch copy alone in an
+otherwise empty directory), not running from the install directory, and nothing
+installed — `%LOCALAPPDATA%\Programs\ShenzhenPDF`, the per-user Start Menu
+`.lnk`, `HKCU\…\Uninstall\ShenzhenPDF` and the ProgID were all verified absent
+before and after. The sixth is `answered`, read from `settings.yaml`'s
+`setupPromptAnswered`.
+
+A bare launch of that scratch copy — the one intentional bare launch, killed
+while modal so nothing could be committed — **went straight to a window.** So
+`setupPromptAnswered` is already true in the real state directory, written by
+the setup track's own live verification of the install cycle (whose matrix row
+records that it "verified live on the real per-user locations and fully restored
+afterwards"). Clearing it means writing the reader's `settings.yaml`.
+
+And the redirection that exists for exactly this kind of test cannot help,
+because it suppresses the very thing it would isolate:
+
+```c
+/* spdf_win_setup.cpp:418-423 */
+if (!explicit_flag &&
+    (GetEnvironmentVariableW(SPDF_WIN_SETUP_NO_PROMPT_ENV, NULL, 0) > 0 ||
+     GetEnvironmentVariableW(SPDF_WIN_SETUP_PROFILE_ENV, NULL, 0) > 0 ||
+     GetEnvironmentVariableW(SPDF_WIN_SETUP_ROOT_ENV, NULL, 0) > 0))
+    explicit_flag = 1;
+```
+
+`SPDF_WIN_SETUP_ROOT` redirects the install directory, the Start Menu, the
+registry and the purge target — and is itself a reason not to ask. `--state-dir`
+would redirect the settings the answer is remembered in, and is also a reason
+not to ask. **So "the prompt is shown" and "nothing real is written" are
+mutually exclusive as the gate stands**, and after the first answer on any
+machine the dialog becomes permanently unreachable there. That is a testability
+defect, not a correctness one: the truth table is right and `setup_test.c`
+covers all 64 rows.
+
+The smallest honest fix is a suppressor that redirection can distinguish from
+intent — treat `SPDF_WIN_SETUP_ROOT` as "redirect but still ask", or add an
+`SPDF_WIN_SETUP_FORCE_PROMPT` honoured only alongside it. Either would make the
+three links pressable with nothing real on the line. Until then there is no
+capture of this dialog, and the `11-first-run-dialog.png` this pass was asked
+for does not exist.
+
+**What was driven instead**, all under `SPDF_WIN_SETUP_ROOT` pointed at a
+scratch directory, which exercises every consequence the three links have except
+the remembered answer:
+
+| the link | what it does | what was verified live |
+|---|---|---|
+| **Install** | `spdf_win_setup_install(quiet, NULL, 0)` | `--install --quiet` exit **0**; `<root>\Programs\ShenzhenPDF\ShenzhenPDF.exe` (41,620,480 bytes); `<root>\Start Menu\Programs\ShenzhenPDF.lnk` whose `IShellLinkW` target and working directory read back as the installed exe and its folder; ten `Uninstall\ShenzhenPDF` values incl. `DisplayVersion 26.9.2`, `EstimatedSize 40645`, `UninstallString "…" --uninstall`, `NoModify`/`NoRepair` 1; the whole ProgID tree (`ShenzhenPDF.Document`, `Applications\ShenzhenPDF.exe`, `.pdf\OpenWithProgids`, `RegisteredApplications`, `ShenzhenPDF\Capabilities`). **No window opened** — asserted with an `expect-no-dialog` step, not assumed. Run again without `--quiet`, its completion `MessageBoxW` was captured and its **OK pressed**, exit 0 |
+| **Install and run** | the same with `relaunch = 1` | the relaunch is suppressed under the redirection **on purpose** (`spdf_win_setup.cpp:207`: "an installed copy pointed at a scratch directory is not a thing anyone wants to see start"), so the second half was verified by launching `<root>\Programs\ShenzhenPDF\ShenzhenPDF.exe` directly: it opens a window titled `outline.pdf - Shenzhen PDF`, raises no dialog (it *is* the installed copy, so the gate does not ask), and exits 0 |
+| **Run this copy** | remember the answer, then run | the "run" half is every other launch in this pass. **The "remember" half is not verified**: it writes `setupPromptAnswered` into the active state directory and is reachable only from the dialog |
+
+Then `--uninstall --quiet --purge`, exit **0**, and the machine proved clean.
+Gone: the install directory, the installed exe, the `.lnk`, the `Uninstall` key,
+`ShenzhenPDF.Document`, `Applications\ShenzhenPDF.exe`, the `Capabilities` tree,
+the `RegisteredApplications` value, and the redirected state directory the purge
+was aimed at. **Ten keys survive and all ten are correct**: they are empty shared
+containers — `Software\Classes\.pdf\OpenWithProgids`,
+`Software\RegisteredApplications`, `…\CurrentVersion\Uninstall` and their
+parents — holding no value at all. On a real profile those belong to the shell,
+not to the app, and an uninstaller that deleted them would be the bug.
+
+The real per-user locations were verified absent before the cycle and absent
+after: no install directory, no Start Menu `.lnk`, no
+`HKCU\…\Uninstall\ShenzhenPDF`, no `ShenzhenPDF.Document`, no
+`ShenzhenPDF.pdf`, no `RegisteredApplications` value. The scratch root and the
+`HKCU\Software\ShenzhenPDF-setup-test` key were both deleted afterwards.
+
+One asymmetry found while setting the purge up, worth knowing before writing a
+test against it: `SPDF_WIN_SETUP_ROOT` redirects `setup_state_dir()`, which is
+what `--purge` deletes and what the completion message names, but it does **not**
+redirect the app's runtime state directory — `spdf_win_paths.c`'s
+`resolve_roaming_dir()` calls `SHGetKnownFolderPath(FOLDERID_RoamingAppData)`
+and knows nothing about the variable. So a redirected app writes its session and
+settings to the REAL `%APPDATA%\ShenzhenPDF` while a redirected `--purge` aims at
+`<root>\Roaming\ShenzhenPDF`, which nothing ever fills. The purge above had to be
+given a file to delete before it could be seen to delete one.
+
+### 10.5 Two harness bugs of this pass's own making, both worth keeping
+
+**A name-based process sweep closed another track's app.** The first version of
+`drive-uia.ps1`'s cleanup enumerated `Get-Process -Name ShenzhenPDF` and closed
+anything newer than its own launch. It found and closed a
+`C:\spdf-build\track-settings\ShenzhenPDF.exe` belonging to another agent's build
+tree. This is §4.7's trap — the one that made `verify-phase1.ps1` report a false
+leak — in a worse form, because that one only mis-reported and this one acted.
+The rule that follows is not "compare start times": it is that a harness may only
+close a pid that was **absent from a snapshot taken before its own launch** *and*
+whose image path is one this run launched. `drive-uia.ps1` now requires both.
+
+**A PowerShell function returns its output stream.** A capture helper that wrote
+three `Write-Output` lines and then `return 0` handed the caller a four-element
+array; `if ($rc)` read it as true and `exit $rc` threw. The visible symptom was a
+run that stopped silently mid-way with no error text and a stale exit code —
+which reads exactly like the app hanging. Step results now travel in a
+script-scope variable.
+
+A third, milder one: `SetProcessDpiAwarenessContext` succeeds once per process,
+so a script taking several captures from one PowerShell session reports
+`host_dpi_aware=True` for the first and `False` for the rest while remaining
+fully aware. `verify-phase1.ps1` never sees this because it spawns a fresh
+`powershell -File` per capture. Do not read that second `False` as §5.1's
+virtualisation trap.
+
+### 10.6 What is still not verifiable, and why
+
+- **The first-run dialog's three command links** — §10.4. Needs a gate change,
+  not an unlocked desktop.
+- **"Run this copy" remembering the answer** — same cause.
+- **The Open and Save pickers, and a print job end to end.** Not attempted:
+  the pickers are shell dialogs that would browse the reader's own filesystem,
+  and printing needs a printer. `drive-uia.ps1` is now the tool for the first two
+  when someone wants them.
+- **x64 ↔ ARM64 render identity** — still needs a Mac (§1); being unlocked
+  changes nothing about it.
+- **The reader's live state directory was modified during this pass, and not by
+  it.** `%APPDATA%\ShenzhenPDF\documents.yaml` and `settings.yaml` changed at
+  18:29-18:30 while this pass ran. Every launch here carried an explicit
+  `--state-dir` (visible in each harness's echoed `args=` line) except the two
+  `--install`/`--uninstall` invocations, which return before the settings layer
+  is reached (`spdf_win_main.cpp:127-132`), and the one bare launch, which was
+  killed while modal eleven minutes earlier. Other agents were building and
+  launching the app on this machine at the time and are the likely author. It was
+  not checked by reading the files, and should not be: they are the reader's.
