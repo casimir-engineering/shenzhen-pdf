@@ -80,7 +80,7 @@ route.
 | No colour emoji | 🚀 renders as a monochrome Noto glyph | Accept; the Mac uses Apple Color Emoji, MuPDF has no colour font path | — |
 | No WebP decoder | `.webp` images show as `[image]` (this repo's README uses WebP) | **DONE** (§9.1): `spdf_win_md_webp.{h,cpp}` decodes through WIC into a PNG in the same cache the https fetch fills, and the converter's new `local_image` hook rewrites the source to `.spdf-remote/<name>` | C |
 | No interactive controls inside the page | No in-place language picker, no copy button on code blocks | A Direct2D overlay drawn by the canvas over the code box rectangles (found from the structured text: a `<pre>` becomes one text block). Selecting a language re-converts with a per-fence override — the converter already takes the fence id from the info string, so an override map is a small addition | C |
-| Diagram fences (`mermaid`, `sequence`, `flow`) | Highlighted code box — the documented fallback on macOS too | Port the Mac's 7 parsers + layered layout (platform-free, §3 of the port plan) to C emitting **SVG**, served from a `fz_tree_archive` mounted beside the document; MuPDF renders SVG natively. Labels would then be image pixels, not searchable text — the Mac's "labels are canonical text" promise needs a text overlay on top, which is the trade-off to decide then | D |
+| Diagram fences (`mermaid`, `sequence`, `flow`) | Highlighted code box — the documented fallback on macOS too | **The SVG supplement in this row is WITHDRAWN — see §9.2.** The spike renders correctly and as vector, but an SVG's `<text>` is unreachable to `fz_stext`, the export rasterizes it, and MuPDF's CSS cannot position a text overlay over it. The route that satisfies the promise is a small vendored-MuPDF patch (run a display-list image's list instead of filling it), and the fallback holds until then | D |
 | Dark rendition draws images in their original colours | Matches "Keep Image Colors"; the Mac darkens images by default | Apply `spdf_recolor` to image regions only (the inverse of the existing `page_recolor_exclusions`) when the setting is off | C |
 | `<details>` always expanded | Same as macOS | — | — |
 | Remote images need a reopen after the download | First view shows `[Image: alt]` placeholders; the fetch completes, the tab re-shows | This is the Mac's shape too (lazy load, then rerender); wiring in §7 | B |
@@ -314,10 +314,26 @@ override map into the converter. Table header repetition after a split
 (post-layout box walk). Math depth: `\overline`/radical rule via `border-top`
 on an inline span if MuPDF honours it (untested), matrices as tables.
 
-**D — diagrams (separate estimate).** Port the Mac's parsers and layered graph
-layout (platform-free Objective-C++, ~1,300 lines) to C emitting SVG into a
-tree archive; decide whether diagram labels must be searchable text (then a
-text overlay is needed) or image pixels are acceptable for Windows.
+**D — diagrams (separate estimate).** ~~Port the Mac's parsers and layered graph
+layout to C emitting SVG into a tree archive; decide whether diagram labels must
+be searchable text or image pixels are acceptable.~~ **Re-scoped by the spike in
+§9.2, which answered the question the second half of that sentence deferred: on
+this engine SVG labels can only ever be pixels, and pixels are not acceptable
+because the readme and 26.8.31-1 promise selectable labels in as many words.** D
+is now two pieces, in this order: **D1**, the vendored-MuPDF patch that makes a
+display-list image run rather than rasterize (a public accessor plus a branch in
+the HTML draw path — small, benefits every SVG, and testable by inverting
+`md_svg_text_test`); then **D2**, the engine port itself. D2 is bigger than §8
+guessed: the Mac side is 4,783 lines across 18 units, of which the layered layout
+(`SPDFMarkdownDiagramLayout.mm`, 468 lines, already C++ with plain structs), the
+edge routing (369) and the parsers (1,124 across five kinds) transliterate almost
+line for line, while text measurement (`CTTypesetterSuggestLineBreak` plus font
+metrics) needs a real replacement — it is what every box size and every
+label-containment proof rests on. Call it ~5,000 lines of C plus ~2,500 of ported
+tests, and note that those tests assert *properties* (no node overlaps, ranks
+monotone, no fan self-crossing, labels inside their outlines, drawn-within-size,
+determinism), so they will validate a C port that agrees with the Mac's
+pixels nowhere.
 
 **Linux for free.** Add the units to the `linux-gtk4` link line and dispatch
 `.md` to `spdf_open_markdown`; everything in §2 applies unchanged.
@@ -371,3 +387,76 @@ hook on its own), fixtures `webp-figure.md` + `md-shot.webp`. Rendered:
 `C:\spdf-build\track-mdpolish\scratch\webp-after.png` (light),
 `webp-dark.png`, and `readme-webp.png` — this repository's own README, whose
 `macos-main-window.webp` screenshot is now a picture instead of a word.
+
+### 9.2 The diagram route: the SVG spike, and why §3's row is wrong
+
+§3's diagram row and §8's phase D proposed emitting **SVG into a
+`fz_tree_archive` beside the document**, and hedged the label question with "the
+Mac's 'labels are canonical text' promise needs a text overlay on top, which is
+the trade-off to decide then". **The spike says there is no trade-off to decide:
+the SVG route cannot keep the labels, and no text overlay is possible in this
+engine.** Measured, not inferred — `md_svg_text_test` and the four renders below.
+
+**What the SVG route does give.** A hand-written stand-in for a diagram emitter's
+output (`portable/win/tests/fixtures/md-diagram.svg`: two node shapes, a rounded
+rect and a stadium, a routed elbow, an arrowhead, a diamond, three labels) drawn
+through the real pipeline as `![](md-diagram.svg)` renders **correctly and as
+vector**. At 4× zoom the strokes, the corner arcs and the label glyphs are
+resampling-free (`C:\spdf-build\track-mdpolish\scratch\svg-zoom4.png`). The
+figure is centred, captioned and paginated like any other image, so the
+"page-sized figures" work of 26.9.2-1 would come for free. The screen half of
+26.8.31-1's promise is therefore reachable.
+
+**What it does not give — three findings.**
+
+1. **Labels are not searchable or selectable.** A label word that appears nowhere
+   in the prose (`Kumquatlabel`) returns **no matches**, while the prose control
+   word on the same page (`Aardvark`) returns exactly one — so the search works
+   and the picture is what is opaque to it
+   (`scratch\svg-find-unique.png`; the earlier `scratch\svg-find-label.png` shows
+   the same thing from the other side: a word in *both* the prose and the picture
+   reports "match 1 of 1", not 2). `spdf_extract_page_text_lines` agrees, which
+   means the document map, Select All and translate agree too.
+2. **The exported PDF is worse, not equal.** `spdf_export_pdf` writes the figure
+   as an **image XObject** (`/Image` is in the bytes) and the label text is not in
+   the content stream at all. So export loses both halves at once: not selectable
+   *and* not vector — the opposite of "it stays selectable in the exported PDF".
+3. **Why, and why an overlay cannot rescue it.** `<img src="*.svg">` goes to
+   `fz_new_image_from_svg` (`mupdf/source/html/html-parse.c:670`), which builds a
+   display list and then wraps it in an `fz_image`
+   (`fz_new_image_from_display_list`, `mupdf/source/svg/svg-doc.c:241,258`). The
+   HTML layout draws that box with `fz_fill_image`, and `fz_stext` never descends
+   into an image — the glyphs are painted, never recorded. An **inline** `<svg>`
+   is not an escape: `gen2_image_svg` (`html-parse.c:1310`) takes the identical
+   road. And a text overlay cannot be positioned over the picture, because
+   MuPDF's CSS has **no `position`, `top`, `left`, `float` or `transform`**
+   (`mupdf/source/html/css-apply.c` — the property table has none of them). The
+   engine is a pure block/inline flow engine; there is no way to put a glyph at a
+   chosen (x, y) over a figure.
+
+**The verdict.** Shipping the SVG route as designed would put pictures on the
+page that look right and are, to search, selection, the map, translate and every
+exported PDF, blank rectangles — while the readme and release 26.8.31-1 promise
+the opposite in as many words. That is exactly the "shipping pixels silently"
+outcome the track was told not to take, so phase D as written is **withdrawn**.
+
+**The route that can work, and what it costs.** The text is not lost, only
+unrecorded: the SVG's display list contains real `fz_fill_text` calls, and it is
+kept alive inside the image (`fz_display_list_image { fz_image super; fz_matrix
+transform; fz_display_list *list; }`, `mupdf/source/fitz/image.c:1645`). So the
+fix is to make the HTML layout **run that display list under the box's transform**
+instead of filling a pixmap of it. Then the same `fz_stext` pass that reads the
+prose reads the labels, at their drawn positions, in place — and the PDF writer
+receives vector operators and real glyphs, satisfying all three promises at once,
+for every SVG in every Markdown document rather than only for diagrams. The cost
+is a **vendored-MuPDF patch of two small pieces**: a public accessor for a
+display-list image's list (there is none today; the struct is private to
+`image.c`), and a branch in the HTML draw path that prefers it. `ext/_patches`
+already exists for exactly this kind of change. Until that lands, a diagram fence
+stays the syntax-highlighted code box it is today — which is also macOS's
+documented fallback, so nothing regresses and nothing is claimed that is not
+true.
+
+`md_svg_text_test` keeps all of the above executable, including the control. **A
+failure in it is good news**: it would mean the engine had learned to extract SVG
+text, and the SVG route could then be taken as originally designed.
