@@ -125,9 +125,114 @@ static int cmd_window_close_other_tabs(app* a) {
     return 1;
 }
 
+/* --- RECEIVING A TAB DRAGGED IN FROM ANOTHER WINDOW ------------------------
+ *
+ * The other half of spdf_win_tabs_handoff.h, which explains the whole gesture
+ * and why the three messages below are WM_COMMANDs. This window is not dragging
+ * anything: it is being told that a tab is over its bar, that it no longer is,
+ * or that it has been let go there.
+ *
+ * WHERE THE POINTER IS, ASKED OF WINDOWS. The messages carry no coordinates --
+ * SPDF_WIN_INPUT_COMMAND has none to carry -- so the position comes from
+ * GetCursorPos at the moment the message is handled. That is not a compromise:
+ * the indicator has to be drawn where the pointer is when the frame appears,
+ * and a position stamped a few milliseconds earlier by the other process would
+ * be the wrong one to draw.
+ *
+ * THE INDICATOR IS THE REORDER DRAG'S. a->drag_tab and a->drop_slot are what
+ * spdf_win_chrome_paint.cpp reads for the yellow line; setting both here draws
+ * exactly the line a local reorder draws, at the gap the drop will use, with no
+ * second field and no painter change. drag_tab is only a "there is a drag" flag
+ * to the painter -- nothing else reads it -- and every existing path that ends
+ * a gesture already clears both. */
+static int cmd_window_drag_indicator(app* a, int slot) {
+    if (slot == a->drop_slot && (slot < 0) == (a->drag_tab < 0)) return 0;
+    a->drop_slot = slot;
+    a->drag_tab = slot >= 0 ? spdf_win_ts_imax(0, spdf_win_tabs_selected_index(a->tabs)) : -1;
+    return 1;
+}
+
+static int cmd_window_drag_over(app* a) {
+    POINT pt;
+    double strip_x = 0.0, strip_w = 0.0;
+    HWND hwnd = a->window ? (HWND)spdf_win_window_native_handle(a->window) : NULL;
+    if (!hwnd || !GetCursorPos(&pt)) return 0;
+    if (!handoff_strip_hit(hwnd, pt, &strip_x, &strip_w)) return cmd_window_drag_indicator(a, -1);
+    return cmd_window_drag_indicator(a, spdf_win_tabstrip_drop_slot(strip_w, spdf_win_tabs_count(a->tabs),
+                                                                    spdf_win_tabs_selected_index(a->tabs), strip_x));
+}
+
+/* The tab was let go over this window's bar. It is parked in session.yaml under
+ * the hand-off id and this window's job is to take it out, put it where the
+ * indicator said, and show it -- keeping the page, zoom and search text the
+ * other window recorded, which is the whole promise of the gesture.
+ *
+ * The slot is the one the LAST drag-over computed, so the tab lands in the gap
+ * the reader was looking at rather than wherever the pointer has drifted to
+ * between the release and this message. */
+static int cmd_window_drag_drop(app* a) {
+    char path[SPDF_WIN_TAB_PATH_MAX];
+    char title[SPDF_WIN_TAB_PATH_MAX];
+    spdf_win_tab_view view;
+    int start = 0, visible = 0, at, slot = a->drop_slot;
+    double strip_w = 0.0;
+    POINT pt;
+    HWND hwnd = a->window ? (HWND)spdf_win_window_native_handle(a->window) : NULL;
+
+    cmd_window_drag_indicator(a, -1);
+    if (!a->tabs) return 1;
+    if (!spdf_win_session_handoff_take(path, sizeof(path), title, sizeof(title), &view)) return 1;
+
+    /* The slot is among the VISIBLE tabs, so it needs the visible window's
+     * start before it means an index (spdf_win_tabstrip_insert_index). A drop
+     * with no remembered slot -- the release beat every drag-over -- appends. */
+    if (slot >= 0 && hwnd && GetCursorPos(&pt) && handoff_strip_hit(hwnd, pt, NULL, &strip_w))
+        spdf_win_tabstrip_visible_range(strip_w, spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
+                                        &start, &visible);
+    at = slot >= 0 ? spdf_win_tabstrip_insert_index(start, slot, spdf_win_tabs_count(a->tabs))
+                   : spdf_win_tabs_count(a->tabs);
+    /* Where the reader is in the tab being left, before the selection moves. */
+    spdf_win_tabs_app_remember(a->tabs, a->canvas);
+    at = spdf_win_tabs_insert(a->tabs, at, path, title[0] ? title : NULL);
+    if (at < 0) {
+        /* THE TAB MUST NOT VANISH. This window is at SPDF_WIN_TABS_MAX (or out
+         * of memory) and the other one has already let go, so the document
+         * would be gone from the desktop with nobody holding it. Give it a
+         * window of its own instead -- the same destination a release outside
+         * every tab bar reaches. */
+        spdf_win_tabs* one = spdf_win_tabs_create();
+        char id[SPDF_WIN_SESSION_ID_MAX];
+        if (!one) return 1;
+        if (spdf_win_tabs_append(one, path, title[0] ? title : NULL) == 0) {
+            *spdf_win_tabs_view(one, 0) = view;
+            spdf_win_tabs_select_deferred(one, 0);
+            spdf_win_session_new_window_id(id, sizeof(id));
+            if (spdf_win_session_detach_tab_as(one, 0, NULL, id)) app_spawn_window(a, id);
+        }
+        spdf_win_tabs_destroy(one);
+        return 1;
+    }
+    *spdf_win_tabs_view(a->tabs, at) = view;
+    /* The read-only binding travels with the tab, so the watcher must know
+     * about the shadow copy BEFORE the tab is shown -- the same order the
+     * session restore uses (spdf_win_tabs_open_prime). */
+    spdf_win_tabs_open_prime(a->tabs);
+    spdf_win_recents_note_opened(path, title[0] ? title : NULL);
+    spdf_win_tabs_select_deferred(a->tabs, at);
+    show_selected_tab(a);
+    app_session_save(a);
+    return 1;
+}
+
 static int spdf_win_cmd_window_perform(app* a, int command, const spdf_win_input* in) {
     (void)in;
     switch (command) {
+        /* Another window's tab drag, over this one. Claimed here because this is
+         * the multi-window track's file and these are multi-window messages;
+         * see the note above. */
+        case SPDF_WIN_TABS_CMD_DRAG_OVER: return cmd_window_drag_over(a);
+        case SPDF_WIN_TABS_CMD_DRAG_LEAVE: return cmd_window_drag_indicator(a, -1);
+        case SPDF_WIN_TABS_CMD_DRAG_DROP: return cmd_window_drag_drop(a);
         case SPDF_WIN_CMD_PRESENTATION:
             /* macOS refuses with no document (:13433 hasActiveDocument); a
              * presentation of nothing is a black screen with no way to know why. */
@@ -136,7 +241,10 @@ static int spdf_win_cmd_window_perform(app* a, int command, const spdf_win_input
         case SPDF_WIN_CMD_FULLSCREEN: return app_toggle_fullscreen(a);
         case SPDF_WIN_CMD_NEW_WINDOW: return app_spawn_window(a, NULL);
         case SPDF_WIN_CMD_MOVE_TAB_TO_WINDOW:
-            return a->tabs ? chrome_detach_tab(a, spdf_win_tabs_selected_index(a->tabs)) : 0;
+            /* The DESTINATION, not the gesture: a menu row has no pointer to
+             * follow, so it goes straight to a new window rather than through
+             * the drag (spdf_win_chrome_tabs_ui.h). */
+            return a->tabs ? chrome_detach_tab_into_new_window(a, spdf_win_tabs_selected_index(a->tabs)) : 0;
         case SPDF_WIN_CMD_CLOSE_OTHER_TABS: return cmd_window_close_other_tabs(a);
         case SPDF_WIN_CMD_TOGGLE_KEEP_IMAGE_COLORS: return cmd_window_toggle_keep_image_colors(a);
         case SPDF_WIN_CMD_PRINT: return cmd_window_print(a);

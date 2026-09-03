@@ -332,6 +332,15 @@ void spdf_win_window_set_menu(spdf_win_window* window, void* hmenu);
  * pixels in the render target at all. Nothing on the paint path may call this. */
 void* spdf_win_window_native_handle(spdf_win_window* window);
 
+/* THE WINDOW CLASS'S NAME, for the one question that can only be asked of an
+ * HWND that is not ours: "is that window under the pointer a ShenzhenPDF
+ * window?" A tab dragged out of one window and over another is a cross-PROCESS
+ * gesture here (one window per process), so the source has nothing but the
+ * desktop's HWNDs to go on; GetClassNameW against this is what keeps a tab from
+ * being handed to some unrelated application under the pointer. See
+ * spdf_win_tabs_handoff.h. Nothing on the paint path may call this either. */
+const wchar_t* spdf_win_window_class_name(void);
+
 /* --- full screen ---------------------------------------------------------
  *
  * Borderless, over the whole monitor the window is on, with the previous
