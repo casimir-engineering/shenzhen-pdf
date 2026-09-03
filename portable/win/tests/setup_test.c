@@ -228,10 +228,13 @@ static void test_parse(void) {
  * THE ONE TABLE IN THIS FILE THAT CAN HANG A TEST RUN IF IT IS WRONG. The
  * dialog is modal and is shown before the window exists, so a gate that says
  * "ask" on a launch the harness drives does not fail -- it waits forever.
- * verify-phase1.ps1, measure-launch.ps1 and drive-window.ps1 each start a real
- * windowed app with a fresh temp --state-dir, and a fresh state directory looks
- * exactly like "never asked", so the --state-dir arm (explicit_flag) is load
- * bearing rather than tidy. Hence: all 64 combinations, exhaustively. */
+ * screenshot-window.ps1 -- and verify-phase1.ps1, which drives it -- starts a
+ * real windowed app with a fresh temp --state-dir, and a fresh state directory
+ * looks exactly like "never asked", so the --state-dir arm (explicit_flag) is
+ * load bearing rather than tidy. measure-launch.ps1 and drive-window.ps1 cannot
+ * pass --state-dir and set SPDF_WIN_SETUP_NO_PROMPT instead, which
+ * spdf_win_setup_first_run() folds into that same argument. Hence: all 64
+ * combinations, exhaustively. */
 
 static void test_first_run_gate(void) {
     int installed, from_dir, marker, answered, explicit_flag, headless;
