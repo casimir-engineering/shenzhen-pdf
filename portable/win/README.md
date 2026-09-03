@@ -71,6 +71,85 @@ export SPDF_MUPDF_LIBDIR='C:\spdf-build\mupdf'
 `run-tests-native.lib.sh` documents the same pair at its definition, and
 `build-native.cmd --help` prints them. Nothing here is written to `C:\` itself.
 
+## Installing, or not
+
+**`ShenzhenPDF.exe` is already a portable app, and that is the recommended way
+to use it.** One statically-linked `/MT` image, ~41 MB, MuPDF embedded: no DLLs,
+no VC redistributable, nothing to register before it will start. Download it,
+double-click it, run it. **There is no installer binary and no NSIS, WiX, MSI or
+MSIX** — every one of them would exist to copy a single file. So there is
+nothing to build here beyond `build-native.cmd`, and
+`portable/win/package-release.cmd` produces the release asset:
+`dist\ShenzhenPDF-win-x64.exe` plus its `.sha256` sidecar, which is exactly the
+layout the updater already looks for (`spdf_win_updater.h`).
+
+**The exe is its own installer** (`portable/win/src/spdf_win_setup.h`), through
+two flags. Both are per-user: **HKCU only, no administrator rights, nothing
+written outside your profile.**
+
+```bat
+ShenzhenPDF.exe --install                          :: optional
+ShenzhenPDF.exe --uninstall [--quiet] [--purge]
+ShenzhenPDF.exe --portable                         :: state beside the exe
+```
+
+`--install` writes exactly four things, and nothing else:
+
+| what | where |
+|---|---|
+| the program | `%LOCALAPPDATA%\Programs\ShenzhenPDF\ShenzhenPDF.exe` (`FOLDERID_UserProgramFiles`) |
+| a Start Menu shortcut | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\ShenzhenPDF.lnk` (`IShellLinkW`) |
+| the `.pdf` handler | `HKCU\Software\Classes\ShenzhenPDF.Document` + `Capabilities` + `RegisteredApplications` — the *existing* `spdf_win_assoc_register_under()`, pointed at the **installed** path so deleting the download does not break the association |
+| the Apps list entry | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ShenzhenPDF`, whose `UninstallString` is `"<installed exe>" --uninstall` — Windows' own Uninstall button runs the app |
+
+It then relaunches the installed copy, passing through any file argument. Run it
+**again from the installed copy** and the copy step is skipped: that is the
+repair/upgrade path, and it is idempotent.
+
+`--uninstall` removes those four and nothing more. A running exe cannot delete
+itself, so when it is run from the installed copy — which is what the Apps
+list's Uninstall button does — a detached `cmd /c` retry loop removes the
+directory once the process exits, falling back to
+`MoveFileExW(MOVEFILE_DELAY_UNTIL_REBOOT)`; the completion message says which
+happened. **`%APPDATA%\ShenzhenPDF` (settings, session, recents, favorites) is
+KEPT** unless `--purge` is passed, and the message says so. Your documents are
+never touched. To undo an install by hand instead: delete the install folder,
+delete the `.lnk`, and `reg delete` the `Uninstall\ShenzhenPDF` key and the
+association keys above.
+
+**Portable mode is explicit and self-contained.** A file named
+`ShenzhenPDF.portable` next to the exe (or `--portable`) moves the state to
+`<exe dir>\ShenzhenPDF-data`, so a copy on a USB stick carries its own session
+instead of writing into the host machine's profile. `--state-dir` keeps
+precedence over both.
+
+**The first launch asks once** — *Run this copy* / *Install* / *Install and run
+the installed app* — through a `TaskDialogIndirect` resolved at run time, and
+then never asks again (`setupPromptAnswered` in `settings.yaml`; Esc records
+nothing, so the question returns). **It is deliberately silent** for the
+headless paths, for any of `--install`, `--uninstall`, `--quiet`, `--purge`,
+`--portable` and `--state-dir`, when the portable marker is present, when
+running from the install directory, when the app is already installed, and when
+`SPDF_WIN_LAUNCH_PROFILE` or `SPDF_WIN_SETUP_NO_PROMPT` is set.
+**If you add a tool that launches a real window, pass `--state-dir` or set
+`SPDF_WIN_SETUP_NO_PROMPT=1`**: the dialog is modal and appears before the
+window, so a tool that waits for a window would wait forever.
+`measure-launch.ps1` and `drive-window.ps1` set it;
+`screenshot-window.ps1` (and `verify-phase1.ps1` through it) already pass
+`--state-dir`. The whole rule is one pure function,
+`spdf_win_setup_first_run_action()`, and `setup_test.c` drives all 64
+combinations of it.
+
+Tests: `setup_test` (the pure decisions — paths, argv, the "am I already
+installed here?" comparison, the Apps-list value set, the first-run table),
+`setup_registry_test` (the real registry writes, read back under a throwaway
+`HKCU\Software\ShenzhenPDF-test-<pid>` key and deleted, exactly as
+`assoc_test` does) and `setup_e2e_test` (a real `--install` and `--uninstall`
+under `SPDF_WIN_SETUP_ROOT`, a **test-only** env override that redirects the
+program folder, the Start Menu, the registry root *and* the state directory to a
+scratch tree — so `--purge` cannot reach real settings — and which also runs the
+installed copy so the detached self-delete is exercised for real).
+
 ## The machine and the toolchain
 
 The native box, from `portable/docs/windows-native-observations.md` §1 — which
@@ -132,6 +211,7 @@ By subsystem, with the files that own each:
 | OCR, translation, toolchain acquisition, the job panel | `spdf_win_ocr.*`, `spdf_win_translate*`, `spdf_win_toolchain*`, `spdf_win_panel*` |
 | updater: feed, verify, install, store, UI, workers | `spdf_win_updater*` |
 | shell: association, Explorer reveal, About, icon/manifest | `spdf_win_assoc.*`, `spdf_win_shell*`, `spdf_win_about*`, `../spdf_win.{rc,ico,manifest}` |
+| the exe as its own installer: `--install` / `--uninstall` / `--portable`, the first-run question | `spdf_win_setup.{h,cpp}`, `spdf_win_setup_shell.h`, `spdf_win_setup_prompt.h`, `spdf_win_setup_first_run.h`, `../package-release.cmd` |
 | launch instrumentation | `spdf_win_launch_profile.h`, `../measure-launch.ps1` |
 
 `portable/core/spdf_win_compat.c` belongs in **every** Windows source list (see

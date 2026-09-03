@@ -44,7 +44,7 @@ Two facts about the checkout that change how to read this file:
 
 | Check | Result |
 |---|---|
-| `run-tests-native.sh --list` | exit 0, **92 cases** — and `launch.budget` is among them now, so the harness gap the last pass filed as (c) item 14 is closed |
+| `run-tests-native.sh --list` | exit 0, **95 cases** — and `launch.budget` is among them now, so the harness gap the last pass filed as (c) item 14 is closed |
 | `annot-differential-native.cmd` (vs section 1 of `spdf_annot.c`) | exit 0 — **10,139 comparisons, 0 differ** |
 | `palette-differential-native.cmd` (vs `spdf_palette.c` under `SPDF_PALETTE_TESTING`) | exit 0 — **24,494 comparisons, 0 mismatches** |
 | `sidebar-differential-native.cmd` (vs `spdf_sidebar_internal.h`) | exit 0 — **15,203 comparisons, 0 differ** |
@@ -154,19 +154,22 @@ port. "TF" marks a toolkit-free original.
 | Shenzhen Files as the automatic file manager (Show in Folder reveals there; Settings ▸ File Manager) | 26.8.27-1 / 26.8.31-1 | ✓ | ✗ | **N/A-BY-DESIGN** | macOS-only product (readme tags `macOS`; `SPDFMacFileExplorerPreference.mm`) | The Windows form is plain Explorer reveal (row above) |
 | Developer ID signing, hardened runtime, notarization, DMG; "Set Up Permissions…" wizard; security-scoped bookmarks | 26.6.17-1 | ✓ | n/a | **N/A-BY-DESIGN** | Apple platform mechanics. Windows counterpart (Authenticode, installer) belongs to the updater/release row | |
 | App icon, taskbar identity, `.pdf` file association | 26.8.27-1 (new icon) | ✓ | ✓ | **DONE** | `spdf_win.rc`, `spdf_win.ico` and a per-monitor-v2 `spdf_win.manifest` with a version block compiled into the exe (`04425ade3`); the AppUserModelID and the window icons applied after the show (`spdf_win_about_apply_identity`, `b9f3fb6fb`); the `.pdf` ProgID registered by `spdf_win_assoc` (`85ba7fad5`); `about_test`, `assoc_test` | Artwork exists in `portable/mac/Assets.xcassets`. Not yet observed live, but the resource, manifest and registry shapes are pinned |
-| Native build + headless test harness for the frontend | — | ✓ | ✓ | **DONE** | `build-native.cmd`, `run-tests-native.sh` (**92 cases**, and `--list` now prints all of them — see (c) item 14), **ten** `*-differential-native.cmd`, `measure-launch.ps1`, `verify-phase1.ps1`, `screenshot-window.ps1`, `drive-window.ps1` | 8 cases permanently BLOCKED off a Mac until reference PNGs are committed (7 cross-host + `d2d.window-dark`, whose Windows-internal substitute `d2d.compose-window-dark` proves strictly less; observations §3.2, §7.6). `launch.budget` is BLOCKED on a locked workstation |
-| A published Windows binary / installer | — | ✓ | ✓ | **MISSING** | readme: "there is no published Windows binary or installer yet" — still true | Gate for the updater's install path and the last unproven half of the default-reader row |
+| Native build + headless test harness for the frontend | — | ✓ | ✓ | **DONE** | `build-native.cmd`, `run-tests-native.sh` (**95 cases**, and `--list` now prints all of them — see (c) item 14), **ten** `*-differential-native.cmd`, `measure-launch.ps1`, `verify-phase1.ps1`, `screenshot-window.ps1`, `drive-window.ps1` | 8 cases permanently BLOCKED off a Mac until reference PNGs are committed (7 cross-host + `d2d.window-dark`, whose Windows-internal substitute `d2d.compose-window-dark` proves strictly less; observations §3.2, §7.6). `launch.budget` is BLOCKED on a locked workstation |
+| A published Windows binary / installer | — | ✓ | ✓ | **PARTIAL** | **The installer half is DONE, and there is no installer.** The exe is one statically-linked `/MT` image with MuPDF embedded (~41 MB, no DLLs, no VC redistributable), so it is portable already, and it installs ITSELF: `spdf_win_setup.{h,cpp}` + `spdf_win_setup_shell.h` + `spdf_win_setup_prompt.h` + `spdf_win_setup_first_run.h` give `--install` (copy to `%LOCALAPPDATA%\Programs\ShenzhenPDF`, `IShellLinkW` Start Menu shortcut, the association through the *existing* `spdf_win_assoc_register_under` pointed at the installed path, and the `Uninstall\ShenzhenPDF` key whose `UninstallString` is the app's own `--uninstall`), `--uninstall [--quiet] [--purge]` (a detached `cmd` waiter for the self-delete, `MOVEFILE_DELAY_UNTIL_REBOOT` fallback, `%APPDATA%\ShenzhenPDF` kept unless `--purge`), `--portable` / a `ShenzhenPDF.portable` marker for state beside the exe, and a three-choice first-run TaskDialog whose gate is a pure function. All HKCU, no admin. `setup_test` (196 checks, incl. all 64 gate rows), `setup_registry_test` (real writes under a throwaway root key), `setup_e2e_test` (a real install *and* uninstall under the test-only `SPDF_WIN_SETUP_ROOT`, including the installed copy removing itself); **verified live on the real per-user locations and fully restored afterwards**. `package-release.cmd` writes `dist\ShenzhenPDF-win-x64.exe` + `.sha256` — the layout the updater already expects. **The published half is still MISSING**: readme's "there is no published Windows binary or installer yet" stays true until a release exists | What remains is a signed release and `k_spdf_win_pinned_thumbprint`, i.e. the updater row's two external blockers. Nothing in-tree gates it any more |
 
-**Counts (57 rows above): DONE 45 · PARTIAL 7 · MISSING 2 · N/A-BY-DESIGN 3.**
-Was DONE 43 · PARTIAL 8 · MISSING 3 earlier on 2026-09-03, before the
-annotations and wiring2 tracks; DONE 17 · PARTIAL 18 · MISSING 19 · N/A 3 on
-2026-09-02. The two MISSING rows are the macOS-only File-menu leftovers (low
-value, listed for completeness) and **a published Windows binary**, which is the
-only one that gates anything else.
+**Counts (57 rows above): DONE 45 · PARTIAL 8 · MISSING 1 · N/A-BY-DESIGN 3.**
+Was DONE 45 · PARTIAL 7 · MISSING 2 later on 2026-09-03, before the setup track
+turned "A published Windows binary / installer" from MISSING into PARTIAL by
+making the exe its own installer; DONE 43 · PARTIAL 8 · MISSING 3 earlier that
+day, before the annotations and wiring2 tracks; DONE 17 · PARTIAL 18 · MISSING
+19 · N/A 3 on 2026-09-02. **The one MISSING row is the macOS-only File-menu
+leftovers** — low value, listed for completeness — and it gates nothing.
 
-The seven PARTIALs split, which is the useful thing to know about them. **Two
+The eight PARTIALs split, which is the useful thing to know about them. **Three
 wait on something outside the tree**: Save As… on an unlocked session to show
-its dialog once, and the updater on a signed release plus its thumbprint. **Five
+its dialog once, the updater on a signed release plus its thumbprint, and the
+published-binary row on that same release (its installer half is done, and the
+release is now the *only* thing left in it). **Five
 are in-tree work with the hard part already done**: cross-window reattach
 (cross-process DnD, the geometry long since transcribed), the links
 named-destination y (`link_test` already pins which way up it is), Markdown's
@@ -215,7 +218,7 @@ Kept whole so the history can be checked; items the wave closed are marked
 27. ~~**Text-URL hover hand**~~ — **done — `95f1b1433`** (the off-thread region build both originals have, `link_test`).
 28. **Links: the named-destination y** (PARTIAL) — an internal jump lands at the top of the page. Tiny: `link_test` already pins which way up `fz_resolve_link`'s y is, and `spdf_win_links.h:163-174` warns not to borrow the outline code's flip. Also open: delayed external activation (`SPDFMacDelayedLinkActivation.mm`, 35, TF).
 29. **`d2d.window-dark`** — permanently BLOCKED off a Mac. Commit reference PNGs, or accept that `d2d.compose-window-dark` proves strictly less (observations §3.2).
-30. **A published Windows binary** (MISSING) — the gate for items 15's sibling and 17.
+30. **A published Windows binary** (PARTIAL — the installer half is now done) — the gate for items 15's sibling and 17. The *installer* half was struck by the setup track: the exe is one statically-linked file that installs itself (`--install` / `--uninstall` / `--portable`, HKCU only, no admin, a three-choice first-run dialog), `package-release.cmd` writes the `ShenzhenPDF-win-x64.exe` + `.sha256` pair the updater already expects, and the whole cycle was verified live on the real per-user locations and then fully restored. **What is left is external**: a signed release and `k_spdf_win_pinned_thumbprint`. Nothing in-tree gates it.
 31. ~~**Close Other Tabs is never greyed**~~ — done in `ce3c8f42a`: `SpdfWinMenuState.tab_count` and a rule requiring two tabs, pinned by `menu_test`. Was: `d9496ee46` gave it the handler it had been drawn without, but `spdf_win_menu_command_enabled` has no arm for `SPDF_WIN_CMD_CLOSE_OTHER_TABS`, so it falls to `default: return 1` and stays live with one tab or none — where `CLOSE_TAB` beside it is gated on `st->can_close_tab`. One case in a pure function that `menu_test` already covers.
 
 ## (b) readme claims the Windows build now satisfies but is not credited for
@@ -243,7 +246,7 @@ Still to change, now that the wave has landed:
 - **Markdown, read like a document** <sub>macOS</sub> → the section heading still excludes Windows while the platform paragraph below describes the Windows reader. One of the two should move.
 - The Linux parity list credits `properties panel`, `printing`, `command palette`, … — Windows now has all three. A Windows list in the same style would be honest and no longer short.
 - **Annotations** — the readme's Windows platform paragraph ends "Annotations and the Comments sidebar are the largest gap that remains." **That sentence is now false** and is the one line in the readme the annotations track obliges someone to change. The macOS annotations bullet carries no tag, so it also needs one or a Windows mention.
-- `portable/win/README.md` is current (rewritten native-first by the docs pass) except for its case count and LOC: **92 cases**, **46,966 LOC across 195 files** of `src/` and **24,493 across 93** of `tests/` today, ten differentials, and `git ls-files portable/win` is **375**. Its numbers were measured on the docs branch, three merges ago.
+- `portable/win/README.md` is current (rewritten native-first by the docs pass) except for its case count and LOC: **95 cases**, **46,966 LOC across 195 files** of `src/` and **24,493 across 93** of `tests/` today, ten differentials, and `git ls-files portable/win` is **375**. Its numbers were measured on the docs branch, three merges ago.
 
 ## (c) Release notes and documents that contradict the tree
 
@@ -277,7 +280,7 @@ unchanged and are recorded in the note above rather than repeated here.
 ```
 git log --merges --first-parent 731606aae..HEAD --format='%h %s'   :: the ten merges
 git log --no-merges <merge>^1..<merge>^2 --format='%h %s'          :: one track's commits
-bash portable/win/tests/run-tests-native.sh --list                 :: 92 cases
+bash portable/win/tests/run-tests-native.sh --list                 :: 95 cases
 wc -l portable/win/src/*.{c,cpp,h} | tail -1                       :: 46,966 over 195 files
 set SPDF_OUT=C:\spdf-build-matrix
 set SPDF_MUPDF_LIBDIR=C:\spdf-build\mupdf
