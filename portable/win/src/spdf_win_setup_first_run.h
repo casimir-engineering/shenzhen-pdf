@@ -16,11 +16,13 @@
  *
  * THE GATE IS THE DANGEROUS PART AND IS WHY IT IS PURE. A modal dialog shown on
  * a launch the test harness drives does not fail — it HANGS, and takes the whole
- * run with it. portable/win/verify-phase1.ps1, measure-launch.ps1 and
- * drive-window.ps1 each start a real windowed app with a fresh temp --state-dir,
+ * run with it. portable/win/screenshot-window.ps1 — and so verify-phase1.ps1,
+ * which drives it — starts a real windowed app with a fresh temp --state-dir,
  * and a fresh state directory is indistinguishable from "never asked": without
- * the --state-dir arm every one of them would sit at this dialog forever. So
- * every condition is an argument, the truth table is
+ * the --state-dir arm it would sit at this dialog forever. measure-launch.ps1
+ * and drive-window.ps1 cannot use --state-dir and set SPDF_WIN_SETUP_NO_PROMPT
+ * instead, which spdf_win_setup.h explains and spdf_win_setup_first_run() folds
+ * into explicit_flag. So every condition is an argument, the truth table is
  * portable/win/tests/setup_test.c's — all 64 combinations — and nothing about it
  * depends on a machine.
  */

@@ -132,10 +132,12 @@ int main(void) {
     }
     /* Any flag that already states what the reader wants of the install: the
      * first-run question must not second-guess it. --state-dir is in the list
-     * for a reason that is not cosmetic -- verify-phase1.ps1,
-     * measure-launch.ps1 and drive-window.ps1 all launch a real window with a
-     * fresh temp state directory, which would otherwise read as "never asked"
-     * and hang each of them on a modal dialog. */
+     * for a reason that is not cosmetic -- screenshot-window.ps1, and so
+     * verify-phase1.ps1 through it, launches a real window with a fresh temp
+     * state directory, which would otherwise read as "never asked" and hang it
+     * on a modal dialog. (measure-launch.ps1 and drive-window.ps1 cannot use
+     * --state-dir and set SPDF_WIN_SETUP_NO_PROMPT instead; spdf_win_setup.h
+     * says why, and spdf_win_setup_first_run() folds it in here.) */
     const int setup_explicit = setup.install || setup.uninstall || setup.quiet || setup.purge || setup.portable ||
                                setup.state_dir;
     /* Portable mode, before anything reads state: the marker file next to the

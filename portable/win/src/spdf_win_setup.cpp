@@ -366,9 +366,11 @@ int spdf_win_setup_uninstall(int quiet, int purge) {
  *
  * ORDER OF WORK MATTERS FOR LAUNCH TIME, not for correctness. `headless` and
  * `explicit_flag` are answered before any syscall, so a --render-window-png and
- * every harness launch (verify-phase1.ps1, measure-launch.ps1 and
- * drive-window.ps1 all pass --state-dir) leave this function having touched
- * nothing at all. The remembered case costs two GetFileAttributesW calls plus a
+ * every harness launch (screenshot-window.ps1 and verify-phase1.ps1 through
+ * --state-dir; measure-launch.ps1 and drive-window.ps1 through
+ * SPDF_WIN_SETUP_NO_PROMPT, folded into explicit_flag below) leave this
+ * function having touched nothing at all. The remembered case costs two
+ * GetFileAttributesW calls plus a
  * settings read the windowed launch performs three statements later anyway, and
  * a registry open only when the app is NOT installed. No COM, no shell, no
  * dialog. */
