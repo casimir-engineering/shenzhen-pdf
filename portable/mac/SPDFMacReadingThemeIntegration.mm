@@ -90,6 +90,9 @@
     NSColor* gutter = _pageView.viewportBackgroundColor ?: NSColor.windowBackgroundColor;
     _pageScrollView.backgroundColor = gutter;
     _pageScrollView.contentView.backgroundColor = gutter;
+    // The minimap is the same document on the same paper: it needs the same
+    // gutter and page border, or its sheets lose their edges in dark.
+    _minimapView.themeVariant = self.markdownThemeVariant;
 }
 
 - (void)toggleReadingTheme:(id)sender {

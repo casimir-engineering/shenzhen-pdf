@@ -17,6 +17,13 @@ static void Expect(const char* label, BOOL condition) {
     exit(1);
 }
 
+// The 8-bit channel value of an opaque grey role, for stating a contrast gap in
+// the units the palette is written in.
+static int SPDFRedByte(NSColor* color) {
+    NSColor* rgb = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    return (int)lround(rgb.redComponent * 255.0);
+}
+
 static BOOL ColorMatchesHex(NSColor* color, unsigned int hex) {
     NSColor* rgb = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
     if (!rgb) return NO;
@@ -67,13 +74,20 @@ int main(void) {
         // already used, unchanged by the theme work.
         Expect("light gutter role is unset", light.viewportBackgroundColor == nil);
         Expect("light keeps the paper drop shadow", light.drawsPaperShadow);
-        Expect("dark gutter is #121212", ColorMatchesHex(dark.viewportBackgroundColor, 0x121212));
+        Expect("dark gutter is #0A0A0A", ColorMatchesHex(dark.viewportBackgroundColor, 0x0A0A0A));
         Expect("dark drops the paper shadow", !dark.drawsPaperShadow);
         // The whole point: the gutter must read as clearly darker than the
         // paper, or a page edge disappears into it.
         Expect("dark gutter is darker than dark paper",
                Luminance(dark.viewportBackgroundColor) < Luminance(dark.paperColor) - 0.01);
-        Expect("dark paper border is #333333", ColorMatchesHex(dark.paperBorderColor, 0x333333));
+        // A separation that exists but cannot be seen is the bug this guards:
+        // #121212 under #1E1E1E was 12 of 255 levels and read as no edge at all
+        // on a blank page margin. Hold the gap wide enough to be visible.
+        Expect("the gutter/paper gap is visible, not merely nonzero",
+               SPDFRedByte(dark.paperColor) - SPDFRedByte(dark.viewportBackgroundColor) >= 16);
+        Expect("the paper border clears the paper it frames",
+               SPDFRedByte(dark.paperBorderColor) - SPDFRedByte(dark.paperColor) >= 24);
+        Expect("dark paper border is #3D3D3D", ColorMatchesHex(dark.paperBorderColor, 0x3D3D3D));
 
         // --- The document view's page-separation seam --------------------
         SPDFDocumentView* view = [[SPDFDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 320, 380)];
@@ -86,14 +100,14 @@ int main(void) {
         Expect("light page underlay is white", ColorMatchesHex(view.pageFillColor, 0xFFFFFF));
         Expect("light gutter keeps the system canvas background",
                view.viewportBackgroundColor != nil &&
-                   !ColorMatchesHex(view.viewportBackgroundColor, 0x121212));
+                   !ColorMatchesHex(view.viewportBackgroundColor, 0x0A0A0A));
 
         view.themeVariant = SPDFMarkdownThemeVariantDark;
         Expect("dark document view drops the shadow", !view.drawsPageShadow);
         Expect("dark document view draws the theme page border",
-               ColorMatchesHex(view.pageBorderColor, 0x333333));
+               ColorMatchesHex(view.pageBorderColor, 0x3D3D3D));
         Expect("dark document view takes the theme gutter",
-               ColorMatchesHex(view.viewportBackgroundColor, 0x121212));
+               ColorMatchesHex(view.viewportBackgroundColor, 0x0A0A0A));
         // A white underlay showed through as a bright edge wherever a page's
         // bitmap fell a fraction of a point short of its page rect.
         Expect("dark page underlay is the theme paper, never white",
@@ -125,7 +139,7 @@ int main(void) {
         Expect("dark sheet is the theme paper, not white", ColorMatchesHex(sheet, 0x1E1E1E));
         for (size_t i = 0; i < sizeof(edges) / sizeof(edges[0]); ++i) {
             NSColor* sample = SampleAt(darkRaster, view, edges[i].point.x, edges[i].point.y);
-            // #333333 on #1E1E1E paper: every edge must read against the sheet
+            // #3D3D3D on #1E1E1E paper: every edge must read against the sheet
             // it frames, on all four sides, and none may be brighter than
             // another -- an asymmetric edge is the artifact this guards.
             Expect(edges[i].label, Luminance(sample) > Luminance(sheet) + 0.01);
@@ -133,7 +147,7 @@ int main(void) {
             Expect("opposite borders match", fabs(Luminance(sample) - Luminance(opposite)) < 0.02);
         }
         NSColor* gutter = SampleAt(darkRaster, view, 2, 2);
-        Expect("dark gutter is painted around the page", ColorMatchesHex(gutter, 0x121212));
+        Expect("dark gutter is painted around the page", ColorMatchesHex(gutter, 0x0A0A0A));
         Expect("gutter sits below the sheet", Luminance(gutter) < Luminance(sheet));
 
         // Light keeps the sheet edge-to-edge white: no border stroke on it.
