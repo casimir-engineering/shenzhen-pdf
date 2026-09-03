@@ -259,6 +259,51 @@ static void test_bitmap_byte_cost(void) {
     expect(spdf_win_lru_bitmap_bytes(-1, 100) == 0, "a negative dimension costs nothing");
 }
 
+/* THE STAND-IN LOOKUP. Windows-only, like spdf_win_lru_peek: the GTK cache has
+ * no equivalent because GTK never draws a page at a zoom it did not ask for.
+ * It is what lets the canvas render the visible page off-thread and still hand
+ * back a frame with no hole in it, so its answer has to be exactly specified --
+ * nearest zoom, sharper on a tie, never a crop, never another page or scale. */
+static void test_nearest_zoom_stand_in(void) {
+    SpdfWinLru cache = new_cache(1000);
+    SpdfWinLruKey half = spdf_win_lru_key(4, 0.5, 2.0);
+    SpdfWinLruKey two = spdf_win_lru_key(4, 2.0, 2.0);
+    SpdfWinLruKey crop = spdf_win_lru_key_crop(4, 1.0, 2.0, 0, 0, 400, 300);
+    SpdfWinLruKey other_page = spdf_win_lru_key(5, 1.0, 2.0);
+    SpdfWinLruKey other_scale = spdf_win_lru_key(4, 1.0, 1.0);
+    SpdfWinLruKey found;
+
+    expect(spdf_win_lru_lookup_nearest_zoom(&cache, 4, 2.0, 1.0, &found) == NULL, "an empty cache has no stand-in");
+    spdf_win_lru_insert(&cache, &crop, sentinel(9), 10);
+    spdf_win_lru_insert(&cache, &other_page, sentinel(8), 10);
+    spdf_win_lru_insert(&cache, &other_scale, sentinel(7), 10);
+    expect(spdf_win_lru_lookup_nearest_zoom(&cache, 4, 2.0, 1.0, &found) == NULL,
+           "a crop, another page and another scale are not stand-ins for this page");
+
+    spdf_win_lru_insert(&cache, &half, sentinel(1), 10);
+    expect(spdf_win_lru_lookup_nearest_zoom(&cache, 4, 2.0, 1.0, &found) == sentinel(1),
+           "the only cached zoom stands in");
+    expect(found.zoom_q == spdf_win_lru_key(4, 0.5, 2.0).zoom_q, "and says which zoom it was");
+    spdf_win_lru_insert(&cache, &two, sentinel(2), 10);
+    expect(spdf_win_lru_lookup_nearest_zoom(&cache, 4, 2.0, 1.75, &found) == sentinel(2), "2.0 is nearer 1.75 than 0.5");
+    expect(spdf_win_lru_lookup_nearest_zoom(&cache, 4, 2.0, 0.75, &found) == sentinel(1), "0.5 is nearer 0.75 than 2.0");
+    /* Equidistant: 1.25 is 0.75 from both. The sharper texture wins, because
+     * downsampling a bigger one beats magnifying a smaller one. */
+    expect(spdf_win_lru_lookup_nearest_zoom(&cache, 4, 2.0, 1.25, &found) == sentinel(2),
+           "a tie picks the sharper texture");
+    /* An EXACT hit is still just the nearest, and the returned key is how a
+     * caller tells the two apart. */
+    expect(spdf_win_lru_lookup_nearest_zoom(&cache, 4, 2.0, 2.0, &found) == sentinel(2), "an exact zoom is the nearest");
+    expect(found.zoom_q == two.zoom_q, "the exact key comes back");
+    /* It bumps recency like a lookup, so a stand-in in use is not the next
+     * victim: page 4 at 2.0 was just touched, so shrinking to one entry keeps
+     * it and drops everything else. */
+    spdf_win_lru_set_cap(&cache, 10);
+    report("nearest-zoom", &cache);
+    expect(spdf_win_lru_peek(&cache, &two) == 1, "the stand-in that was touched survived the squeeze");
+    spdf_win_lru_deinit(&cache);
+}
+
 int main(void) {
     printf("== spdf_win_lru transcript ==\n");
     test_insert_and_lookup();
@@ -269,6 +314,7 @@ int main(void) {
     test_set_cap_evicts_now();
     test_remove_and_clear();
     test_scripted_workload();
+    test_nearest_zoom_stand_in();
     test_bitmap_byte_cost();
     printf("== %d failures ==\n", failures);
     return failures == 0 ? 0 : 1;
