@@ -25,6 +25,21 @@ static int usage(void) {
              L"       ShenzhenPDF.exe --render-png [--dark] <file.pdf> <page> <zoom> <out.png>\n"
              L"       ShenzhenPDF.exe --render-window-png [opts] <file.pdf> <page> <w> <h> <out.png>\n"
              L"\n"
+             /* The exe IS the installer; spdf_win_setup.h says why there is no
+              * second binary. Portable use is the default, so this block reads
+              * as optional, which is what it is. */
+             L"  This exe is a portable app: nothing has to be installed to run it. Optionally,\n"
+             L"       ShenzhenPDF.exe --install\n"
+             L"           copies itself to %%LOCALAPPDATA%%\\Programs\\ShenzhenPDF, adds a Start Menu\n"
+             L"           shortcut and an Apps & features entry, registers as a .pdf handler and\n"
+             L"           relaunches. Per-user, HKCU only, no administrator rights. Re-run to repair.\n"
+             L"       ShenzhenPDF.exe --uninstall [--quiet] [--purge]\n"
+             L"           undoes exactly that. Settings, session and recents in\n"
+             L"           %%APPDATA%%\\ShenzhenPDF are KEPT unless --purge; documents are never touched.\n"
+             L"       ShenzhenPDF.exe --portable\n"
+             L"           keep state in <exe dir>\\ShenzhenPDF-data instead of %%APPDATA%%, as a file\n"
+             L"           named ShenzhenPDF.portable next to the exe also does. --state-dir wins.\n"
+             L"\n"
              L"  <page> is 0-BASED, matching the core API and spdf_win_probe.\n"
              L"  opts:  --dark            dark reading theme, images preserved\n"
              L"         --light           light theme; both override the system theme a window follows\n"
