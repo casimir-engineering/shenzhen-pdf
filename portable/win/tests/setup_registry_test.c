@@ -12,7 +12,11 @@
  *
  * Exit code is the whole signal.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_setup.cpp portable/win/src/spdf_win_assoc.cpp portable/win/src/spdf_win_paths.c */
+/* The settings module and its file shell come along because spdf_win_setup.cpp
+ * remembers the first-run answer through spdf_win_settings_commit(); the list is
+ * settings_test.c's own, plus assoc and setup. Nothing here reads or writes
+ * settings.yaml -- the symbols are needed at the link, not at run time. */
+/* spdf-test-sources: portable/win/src/spdf_win_setup.cpp portable/win/src/spdf_win_assoc.cpp portable/win/src/spdf_win_settings.c portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_win_compat.c portable/win/src/spdf_win_recents.c portable/win/src/spdf_win_watcher.cpp portable/win/src/spdf_win_watcher_shadow.cpp */
 #include <windows.h>
 
 #include "spdf_win_assoc.h"

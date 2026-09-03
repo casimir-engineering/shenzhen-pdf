@@ -27,7 +27,10 @@
  *
  * Exit code is the whole signal.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_setup.cpp portable/win/src/spdf_win_assoc.cpp portable/win/src/spdf_win_paths.c */
+/* The settings module comes along because spdf_win_setup.cpp remembers the
+ * first-run answer through spdf_win_settings_commit(); this test never shows
+ * that dialog (it is modal) and never reads settings.yaml. */
+/* spdf-test-sources: portable/win/src/spdf_win_setup.cpp portable/win/src/spdf_win_assoc.cpp portable/win/src/spdf_win_settings.c portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_win_compat.c portable/win/src/spdf_win_recents.c portable/win/src/spdf_win_watcher.cpp portable/win/src/spdf_win_watcher_shadow.cpp */
 #include <windows.h>
 
 #include "spdf_win_setup.h"
@@ -174,7 +177,7 @@ int main(int argc, char** argv) {
     CHECK(!exists(installed));
 
     /* --- install ---------------------------------------------------------- */
-    CHECK(spdf_win_setup_install(1, NULL) == 0);
+    CHECK(spdf_win_setup_install(1, NULL, 0) == 0);
     /* 1. the copied exe, byte-identical to the running one. */
     CHECK(exists(installed));
     n = GetModuleFileNameW(NULL, running, BUF);
@@ -198,7 +201,7 @@ int main(int argc, char** argv) {
 
     /* IDEMPOTENT: run it again from the same (non-installed) exe. Everything is
      * still there and the exit code is still 0 -- this is the repair path. */
-    CHECK(spdf_win_setup_install(1, NULL) == 0);
+    CHECK(spdf_win_setup_install(1, NULL, 0) == 0);
     CHECK(exists(installed));
     CHECK(exists(lnk));
     CHECK(key_exists(SPDF_WIN_SETUP_UNINSTALL_KEY));
@@ -238,7 +241,7 @@ int main(int argc, char** argv) {
     /* Installed again, then removed WITH the data. The removal runs in this
      * process, from outside the install directory, which is the other branch:
      * the straight delete rather than the detached waiter. */
-    CHECK(spdf_win_setup_install(1, NULL) == 0);
+    CHECK(spdf_win_setup_install(1, NULL, 0) == 0);
     CHECK(exists(installed));
     CHECK(spdf_win_setup_uninstall(1, 1) == 0);
     CHECK(!exists(install_dir));

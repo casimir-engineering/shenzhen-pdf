@@ -18,6 +18,7 @@
 #include "spdf_win_setup.h"
 
 #include <windows.h>
+#include <commctrl.h>
 #include <objbase.h>
 #include <shlobj.h>
 
@@ -26,6 +27,7 @@
 
 #include "spdf_win_assoc.h"
 #include "spdf_win_paths.h"
+#include "spdf_win_settings.h" /* setupPromptAnswered: the first-run answer, remembered */
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -35,6 +37,10 @@
 /* The known folders, mkdir -p, the registry root, the shortcut and the two
  * ways a directory holding a running exe is made to go away. */
 #include "spdf_win_setup_shell.h"
+/* The first-run dialog. After the shell header, whose SPDF_WIN_SETUP_PATH_MAX
+ * users it sits beside; before spdf_win_setup_first_run() at the bottom, which
+ * is the only caller. */
+#include "spdf_win_setup_prompt.h"
 
 /* --- reporting --------------------------------------------------------------
  *
@@ -209,7 +215,7 @@ static void setup_relaunch(const wchar_t* exe, const wchar_t* file) {
     CloseHandle(pi.hProcess);
 }
 
-int spdf_win_setup_install(int quiet, const wchar_t* file) {
+int spdf_win_setup_install(int quiet, const wchar_t* file, int relaunch) {
     wchar_t running[SPDF_WIN_SETUP_PATH_MAX];
     wchar_t programs[SPDF_WIN_SETUP_PATH_MAX];
     wchar_t dir[SPDF_WIN_SETUP_PATH_MAX];
@@ -280,7 +286,7 @@ int spdf_win_setup_install(int quiet, const wchar_t* file) {
                  shortcut_ok ? lnk : L"could not be created", assoc_ok ? L"registered" : L"could not be registered",
                  key_ok ? L"listed" : L"could not be written", exe);
     setup_say(quiet, 0, message);
-    setup_relaunch(exe, file);
+    if (relaunch) setup_relaunch(exe, file);
     return 0;
 }
 
@@ -346,4 +352,117 @@ int spdf_win_setup_uninstall(int quiet, int purge) {
                  purge ? L" - DELETED, as --purge asked" : L" - kept");
     setup_say(quiet, 0, message);
     return 0;
+}
+
+/* --- the first-run question --------------------------------------------------
+ *
+ * The gate is spdf_win_setup_first_run_action() in the header, pure and covered
+ * combination by combination in setup_test.c. This resolves its six arguments
+ * from the machine and then does what the answer says.
+ *
+ * ORDER OF WORK MATTERS FOR LAUNCH TIME, not for correctness. `headless` and
+ * `explicit_flag` are answered before any syscall, so a --render-window-png and
+ * every harness launch (verify-phase1.ps1, measure-launch.ps1 and
+ * drive-window.ps1 all pass --state-dir) leave this function having touched
+ * nothing at all. The remembered case costs two GetFileAttributesW calls plus a
+ * settings read the windowed launch performs three statements later anyway, and
+ * a registry open only when the app is NOT installed. No COM, no shell, no
+ * dialog. */
+
+static int setup_uninstall_key_present(void) {
+    HKEY root = setup_root_key(0);
+    HKEY key;
+    int present;
+    if (!root) return 0;
+    present = RegOpenKeyExW(root, SPDF_WIN_SETUP_UNINSTALL_KEY, 0, KEY_READ, &key) == ERROR_SUCCESS;
+    if (present) RegCloseKey(key);
+    setup_close_root(root);
+    return present;
+}
+
+/* The answer, in settings.yaml, through the settings module and its
+ * unknown-key carry-through — not a registry value and not a marker file, so a
+ * reader who copies their settings.yaml to another machine is not asked again
+ * there either. */
+static void setup_remember_answered(void) {
+    spdf_win_settings* settings = spdf_win_settings_shared();
+    if (!settings || settings->setup_prompt_answered) return;
+    settings->setup_prompt_answered = 1;
+    spdf_win_settings_commit();
+}
+
+int spdf_win_setup_first_run(int explicit_flag, int headless, const wchar_t* file, int* exit_code) {
+    wchar_t running[SPDF_WIN_SETUP_PATH_MAX];
+    wchar_t running_dir[SPDF_WIN_SETUP_PATH_MAX];
+    wchar_t marker[SPDF_WIN_SETUP_PATH_MAX];
+    wchar_t installed[SPDF_WIN_SETUP_PATH_MAX];
+    wchar_t install_dir[SPDF_WIN_SETUP_PATH_MAX];
+    int marker_present = 0;
+    int from_install_dir = 0;
+    int already_installed = 0;
+    int answered = 0;
+    int action;
+    DWORD n;
+
+    if (exit_code) *exit_code = 0;
+    /* A tool is driving or timing this launch, or the install is redirected to a
+     * test root: all three are "somebody already said what they want", which is
+     * what explicit_flag means. GetEnvironmentVariableW with a zero-length
+     * buffer is a probe, not a read -- see spdf_win_setup.h for why these two
+     * exist at all. */
+    if (!explicit_flag &&
+        (GetEnvironmentVariableW(SPDF_WIN_SETUP_NO_PROMPT_ENV, NULL, 0) > 0 ||
+         GetEnvironmentVariableW(SPDF_WIN_SETUP_PROFILE_ENV, NULL, 0) > 0 ||
+         GetEnvironmentVariableW(SPDF_WIN_SETUP_ROOT_ENV, NULL, 0) > 0))
+        explicit_flag = 1;
+    /* Before anything else and before any further I/O: see the note above. */
+    if (headless || explicit_flag) return SPDF_WIN_SETUP_ACTION_RUN_ONCE;
+
+    n = GetModuleFileNameW(NULL, running, SPDF_WIN_SETUP_PATH_MAX);
+    /* Cannot tell where we are, so cannot tell whether to ask. Launch silently:
+     * a dialog is never the right answer to an unanswerable question. */
+    if (n == 0 || n >= SPDF_WIN_SETUP_PATH_MAX) return SPDF_WIN_SETUP_ACTION_RUN_ONCE;
+    running_dir[0] = L'\0';
+    if (spdf_win_setup_dir_of(running, running_dir, SPDF_WIN_SETUP_PATH_MAX) &&
+        spdf_win_setup_marker_in(running_dir, marker, SPDF_WIN_SETUP_PATH_MAX))
+        marker_present = GetFileAttributesW(marker) != INVALID_FILE_ATTRIBUTES;
+    if (spdf_win_setup_installed_exe(installed, SPDF_WIN_SETUP_PATH_MAX) &&
+        spdf_win_setup_dir_of(installed, install_dir, SPDF_WIN_SETUP_PATH_MAX)) {
+        from_install_dir =
+            spdf_win_setup_same_path(running, installed) || spdf_win_setup_same_path(running_dir, install_dir);
+        already_installed = GetFileAttributesW(installed) != INVALID_FILE_ATTRIBUTES;
+    }
+    /* The registry only when the exe is absent: an install whose file was
+     * deleted by hand still counts as installed, and the Uninstall key is what
+     * says so. Skipped entirely once anything else has already decided. */
+    if (!already_installed && !from_install_dir && !marker_present)
+        already_installed = setup_uninstall_key_present();
+    if (!marker_present && !from_install_dir && !already_installed) {
+        spdf_win_settings* settings = spdf_win_settings_shared();
+        answered = settings && settings->setup_prompt_answered;
+    }
+
+    if (spdf_win_setup_first_run_action(already_installed, from_install_dir, marker_present, answered,
+                                        explicit_flag, headless) != SPDF_WIN_SETUP_FIRST_RUN_ASK)
+        return SPDF_WIN_SETUP_ACTION_RUN_ONCE;
+
+    action = spdf_win_setup_action_for_button(setup_prompt_show());
+    switch (action) {
+        case SPDF_WIN_SETUP_ACTION_RUN_PORTABLE:
+            setup_remember_answered();
+            return action;
+        case SPDF_WIN_SETUP_ACTION_INSTALL:
+            /* No relaunch: this choice installs and closes. */
+            setup_remember_answered();
+            if (exit_code) *exit_code = spdf_win_setup_install(0, NULL, 0);
+            return action;
+        case SPDF_WIN_SETUP_ACTION_INSTALL_AND_RUN:
+            setup_remember_answered();
+            if (exit_code) *exit_code = spdf_win_setup_install(0, file, 1);
+            return action;
+        default:
+            /* Esc, the close box, or a dialog that could not be shown. Run this
+             * copy, remember nothing, ask again next time. */
+            return SPDF_WIN_SETUP_ACTION_RUN_ONCE;
+    }
 }
