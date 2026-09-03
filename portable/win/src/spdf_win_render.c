@@ -10,50 +10,10 @@
  * Renders, done callbacks and the notify hook all run with the lock RELEASED. */
 
 #include "spdf_win_render.h"
-#include "spdf_win_open.h" /* the process opener: spdf_open, or Markdown-aware once main() says so */
+#include "spdf_win_render_thread.h" /* the platform's locks, threads and atomics */
 
 #include <stdlib.h>
 #include <string.h>
-
-#ifdef _WIN32
-#include <process.h>
-#include <windows.h>
-typedef SRWLOCK spdf_mtx;
-typedef CONDITION_VARIABLE spdf_cnd;
-typedef HANDLE spdf_thr;
-#define MTX_INIT(m) InitializeSRWLock(m)
-#define MTX_LOCK(m) AcquireSRWLockExclusive(m)
-#define MTX_UNLOCK(m) ReleaseSRWLockExclusive(m)
-#define CND_INIT(c) InitializeConditionVariable(c)
-#define CND_WAIT(c, m) ((void)SleepConditionVariableSRW((c), (m), INFINITE, 0))
-#define CND_BROADCAST(c) WakeAllConditionVariable(c)
-#define THR_START(out, fn, arg) (((*(out)) = (spdf_thr)_beginthreadex(NULL, 0, (fn), (arg), 0, NULL)) != NULL)
-#define THR_JOIN(t) (WaitForSingleObject((t), INFINITE), (void)CloseHandle(t))
-#define ATOMIC_LOAD(p) ((long)InterlockedCompareExchange((volatile LONG*)(p), 0, 0))
-#define ATOMIC_STORE(p, v) ((void)InterlockedExchange((volatile LONG*)(p), (LONG)(v)))
-#define SPDF_TLS __declspec(thread)
-#define WORKER_ENTRY unsigned __stdcall
-#define WORKER_RETURN 0
-#else
-#include <pthread.h>
-#include <unistd.h>
-typedef pthread_mutex_t spdf_mtx;
-typedef pthread_cond_t spdf_cnd;
-typedef pthread_t spdf_thr;
-#define MTX_INIT(m) pthread_mutex_init((m), NULL)
-#define MTX_LOCK(m) pthread_mutex_lock(m)
-#define MTX_UNLOCK(m) pthread_mutex_unlock(m)
-#define CND_INIT(c) pthread_cond_init((c), NULL)
-#define CND_WAIT(c, m) pthread_cond_wait((c), (m))
-#define CND_BROADCAST(c) pthread_cond_broadcast(c)
-#define THR_START(out, fn, arg) (pthread_create((out), NULL, (fn), (arg)) == 0)
-#define THR_JOIN(t) ((void)pthread_join((t), NULL))
-#define ATOMIC_LOAD(p) __atomic_load_n((p), __ATOMIC_SEQ_CST)
-#define ATOMIC_STORE(p, v) __atomic_store_n((p), (long)(v), __ATOMIC_SEQ_CST)
-#define SPDF_TLS __thread
-#define WORKER_ENTRY void*
-#define WORKER_RETURN NULL
-#endif
 
 typedef struct waiter {
     unsigned long long token;
@@ -98,7 +58,11 @@ int spdf_win_render_aborted(const spdf_win_render_abort* abort) {
     return abort && abort->flag && ATOMIC_LOAD(abort->flag) != 0;
 }
 
-static char* dup_str(const char* s) {
+/* Named for the linker rather than `dup_str`, because spdf_win_render_core.h
+ * forward-declares it: the backend's per-thread document caches the path it was
+ * opened from, and duplicating the duplicator would be two copies of four
+ * lines. */
+static char* spdf_win_render_dup_str(const char* s) {
     size_t n = s ? strlen(s) + 1 : 0;
     char* out = n ? (char*)malloc(n) : NULL;
     if (out) memcpy(out, s, n);
@@ -262,72 +226,36 @@ static WORKER_ENTRY worker_entry(void* arg) {
     worker_body((spdf_win_render_service*)arg);
     return WORKER_RETURN;
 }
-/* --- the default backend: the shipping core ----------------------------
- * One spdf_document per worker thread, per the core's one-document-per-thread
- * contract (shenzhen_pdf_core.c:40-43). Kept across renders so the core's
- * per-page display-list cache stays warm; released when the worker exits. */
-static SPDF_TLS spdf_document* g_slot_doc;
-static SPDF_TLS char* g_slot_path;
-
-static void core_thread_exit(void* ctx) {
-    (void)ctx;
-    if (g_slot_doc) spdf_close(g_slot_doc);
-    free(g_slot_path);
-    g_slot_doc = NULL;
-    g_slot_path = NULL;
-}
-
-static spdf_document* core_doc(const char* path, char* err, size_t err_len) {
-    if (g_slot_doc && g_slot_path && path && strcmp(g_slot_path, path) == 0) return g_slot_doc;
-    core_thread_exit(NULL);
-    if (!path) return NULL;
-    g_slot_doc = spdf_win_open_document(path, err, err_len);
-    if (g_slot_doc) g_slot_path = dup_str(path);
-    return g_slot_doc;
-}
-
-static int core_page_size(void* ctx, const char* path, int page, float* w, float* h, char* err, size_t err_len) {
-    spdf_document* doc = core_doc(path, err, err_len);
-    (void)ctx;
-    return doc ? spdf_page_size(doc, page, w, h, err, err_len) : 0;
-}
-
-/* DARK_THEME / PRESERVE_IMAGES arrive in `flags` and are part of the request's
- * identity; nothing here decides the theme. USE_PAGE_LIST is ours. */
-static int core_render(void* ctx, const char* path, int page, float zoom, unsigned flags,
-                       const spdf_win_render_abort* abort, spdf_bitmap* out, char* err, size_t err_len) {
-    spdf_document* doc = core_doc(path, err, err_len);
-    (void)ctx;
-    return doc ? spdf_render_page_rgba_opts(doc, page, zoom, flags | SPDF_RENDER_USE_PAGE_LIST,
-                                            abort ? abort->token : NULL, out, err, err_len)
-               : 0;
-}
-
-const spdf_win_render_backend* spdf_win_render_core_backend(void) {
-    static const spdf_win_render_backend backend = {NULL, core_page_size, core_render, core_thread_exit};
-    return &backend;
-}
+/* The default backend -- one spdf_document per worker thread against the
+ * shipping core -- is spdf_win_render_core.h, included once, here. */
+#include "spdf_win_render_core.h"
 /* --- the service ------------------------------------------------------- */
-static int worker_target(void) {
+/* `want` is the caller's ceiling: 0 means "whatever the policy says", which is
+ * cores/2 capped at SPDF_WIN_RENDER_MAX_WORKERS. SPDF_RENDER_WORKERS overrides
+ * the policy but NOT a caller's explicit ceiling, because a caller that says
+ * two means two -- the thumbnail store's pool exists to fill a strip nobody is
+ * staring at and must not out-thread the pool rendering the page they are
+ * (windows-launch-performance.md section 5 item 3). */
+static int worker_target(int want) {
     const char* forced = getenv("SPDF_RENDER_WORKERS");
-    int n;
-#ifdef _WIN32
-    SYSTEM_INFO info;
-    GetSystemInfo(&info);
-    n = (int)info.dwNumberOfProcessors / 2;
-#else
-    n = (int)sysconf(_SC_NPROCESSORS_ONLN) / 2;
-#endif
+    int n = SPDF_CPU_COUNT() / 2;
     if (forced && *forced && atoi(forced) > 0) n = atoi(forced);
+    if (want > 0 && want < n) n = want;
     if (n < 1) n = 1;
     return n > SPDF_WIN_RENDER_MAX_WORKERS ? SPDF_WIN_RENDER_MAX_WORKERS : n;
 }
 
 spdf_win_render_service* spdf_win_render_service_new(const char* path, const spdf_win_render_backend* backend,
                                                      size_t max_bytes, spdf_win_render_notify notify, void* ctx) {
+    return spdf_win_render_service_new_ex(path, backend, max_bytes, notify, ctx, 0);
+}
+
+spdf_win_render_service* spdf_win_render_service_new_ex(const char* path, const spdf_win_render_backend* backend,
+                                                        size_t max_bytes, spdf_win_render_notify notify, void* ctx,
+                                                        int max_workers) {
     spdf_win_render_service* svc = path && *path ? (spdf_win_render_service*)calloc(1, sizeof(*svc)) : NULL;
     if (!svc) return NULL;
-    svc->path = dup_str(path);
+    svc->path = spdf_win_render_dup_str(path);
     svc->notify = notify;
     svc->notify_ctx = ctx;
     svc->backend = *(backend ? backend : spdf_win_render_core_backend());
@@ -341,7 +269,7 @@ spdf_win_render_service* spdf_win_render_service_new(const char* path, const spd
     svc->next_token = 1;
     svc->generation = 1;
     svc->max_bytes = max_bytes ? max_bytes : SPDF_WIN_RENDER_MAX_BYTES;
-    svc->worker_target = worker_target();
+    svc->worker_target = worker_target(max_workers);
     return svc;
 }
 
