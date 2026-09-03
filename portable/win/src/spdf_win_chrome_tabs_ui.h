@@ -123,8 +123,15 @@ static int app_spawn_window(app* a, const char* utf8_window_id) {
  * and only then is the child started. Closing the detached tab asks for the
  * MOST RECENTLY ACTIVE survivor, not the adjacent one: that is the one place
  * spdf_win_tabs_close's second argument is 1. A window with one tab does not
- * detach it; that would be two windows where the reader had one. */
-static int chrome_detach_tab(app* a, int index) {
+ * detach it; that would be two windows where the reader had one.
+ *
+ * THIS IS THE DESTINATION, NOT THE GESTURE. File > Move Tab to New Window
+ * arrives here directly; a tab dragged off the strip arrives here only if the
+ * reader lets go outside every tab bar, because the drag can still be slid back
+ * or dropped into another window first. That whole gesture is
+ * chrome_detach_tab() in spdf_win_tabs_handoff.h, included at the foot of this
+ * file, and it is what spdf_win_chrome_actions.h's drag arm calls. */
+static int chrome_detach_tab_into_new_window(app* a, int index) {
     spdf_win_session_frame frame;
     char new_id[SPDF_WIN_SESSION_ID_MAX];
     if (!a->tabs || index < 0 || index >= spdf_win_tabs_count(a->tabs) || spdf_win_tabs_count(a->tabs) < 2) return 0;
@@ -338,3 +345,10 @@ static int chrome_drop_tab(app* a, const SpdfWinChromeLayout* l, const SpdfWinCh
      * index"). */
     return spdf_win_tabs_move(a->tabs, a->drag_tab, to);
 }
+
+/* THE REST OF THE GESTURE: a tab dragged off the bar, still held, and slid back
+ * into this window's bar or into another window's. It defines
+ * chrome_detach_tab(), which is what the drag arm next door calls, and it needs
+ * everything above -- the tear-off destination, the window spawner and the
+ * strip's own drop geometry -- so it comes last. */
+#include "spdf_win_tabs_handoff.h"
