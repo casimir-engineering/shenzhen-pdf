@@ -36,9 +36,12 @@
  *   without one there is no worker and hover shows annotations only, which is
  *   the headless probe's case.
  *
- * SECTION 3 IS A TRANSCRIPTION AGAIN, of where a macOS internal link jump lands
- * (spdf_mac_link_destination_scroll_origin_y). It is pure and it is pinned
- * against the mac unit test's own numbers -- see the section.
+ * SECTIONS 3 AND 4 ARE TRANSCRIPTIONS AGAIN, of the two halves of macOS's link
+ * activation: where an internal jump lands
+ * (spdf_mac_link_destination_scroll_origin_y) and the counter that lets a
+ * second click cancel a link about to leave the document
+ * (SPDFMacDelayedLinkActivation). Both are pure and both are pinned against the
+ * mac unit tests' own numbers and scenarios -- see each section.
  *
  * Every function here is main-thread, against the caller's own document handle;
  * the worker's handle is its own and never escapes spdf_win_links.cpp.
@@ -48,6 +51,8 @@
 
 #include "shenzhen_pdf_core.h"
 #include "spdf_win_layout.h" /* SPDF_WIN_INLINE, SPDF_WIN_PAGE_MARGIN_V, <math.h> */
+
+#include <string.h> /* memcpy/strlen, for the deferred activation's URI copy */
 
 #ifdef __cplusplus
 extern "C" {
@@ -225,6 +230,117 @@ static SPDF_WIN_INLINE double spdf_win_link_destination_scroll_y(double page_slo
     double scale = zoom > 0.0 ? zoom : 1.0;
     double offset = destination_page_y > 0.0 ? destination_page_y * scale : 0.0;
     return spdf_win_max_d(0.0, page_slot_y + offset - SPDF_WIN_PAGE_MARGIN_V);
+}
+
+/* --- 4. the deliberate wait before a link LEAVES the document ------------- */
+
+/* WHY ONE OF THE TWO KINDS OF LINK WAITS AND THE OTHER DOES NOT. Transcribed
+ * from portable/mac/SPDFMacDelayedLinkActivation.mm, whose argument is in
+ * SPDFMacLinkNavigation.mm and in the 26.9.1-1 release note: a jump inside the
+ * document is a scroll, so it is taken IMMEDIATELY and a following multi-click
+ * can take it back; a link that hands the point to another application cannot
+ * be undone by a second click, so it waits out the double-click interval first
+ * and a second click cancels it. Before this the Win32 shell opened the browser
+ * on mouse-up, so a double-click on link text launched it and then selected the
+ * word underneath.
+ *
+ * THE MAC MECHANISM IS A GENERATION COUNTER, and that is what makes this pure.
+ * dispatch_after cannot be cancelled, so the scheduled block captures the
+ * generation it was scheduled at and drops itself when the counter has moved;
+ * -cancel just moves the counter. Every timer facility has the same problem
+ * (WM_TIMER is already queued when KillTimer runs), so the same counter is the
+ * fix here, and it is the half worth testing:
+ * portable/win/tests/link_nav_test.c drives it through the mac unit test's own
+ * scenarios.
+ *
+ * WHAT IS DEFERRED DIFFERS FROM MAC BY ONE STEP, deliberately. Mac defers the
+ * PAGE POINT and re-resolves the link when the timer fires. On Windows the
+ * canvas has already resolved it by the time the shell hears about it
+ * (spdf_win_canvas_link_nav), so the shell defers the RESOLVED URI -- one fewer
+ * resolution, and therefore one fewer chance for the two to disagree about what
+ * is under the point. The URI is copied because the canvas only lends it until
+ * the next pointer call.
+ *
+ * NOT THREAD-SAFE and does not need to be: schedule, cancel and fire all run on
+ * the UI thread, exactly as the mac original's main-queue block does. */
+
+/* Longer than any URI canvas_open_uri() can widen into its 2048 wchar_t buffer,
+ * so a URI that fits here fits there. A URI that does NOT fit is refused rather
+ * than truncated -- opening a PREFIX of a link is opening a different link. */
+#define SPDF_WIN_LINK_ACTIVATION_URI_MAX 2048
+
+typedef struct spdf_win_link_activation {
+    /* mac's _generation. A live token equals this; anything else is stale. */
+    unsigned generation;
+    int pending;
+    char uri[SPDF_WIN_LINK_ACTIVATION_URI_MAX];
+} spdf_win_link_activation;
+
+/* Zeroing the struct is a valid initial state; this is for clarity at the
+ * declaration and for a re-arm after a document is replaced. */
+static SPDF_WIN_INLINE void spdf_win_link_activation_init(spdf_win_link_activation* a) {
+    if (!a) return;
+    memset(a, 0, sizeof(*a));
+}
+
+/* mac's default delay is NSEvent.doubleClickInterval; this port's caller passes
+ * GetDoubleClickTime(). Signed so a bogus system value cannot become an
+ * enormous unsigned one, and clamped at 0 exactly as mac's MAX(0.0, delay) is. */
+static SPDF_WIN_INLINE unsigned spdf_win_link_activation_delay_ms(long system_double_click_ms) {
+    return system_double_click_ms > 0 ? (unsigned)system_double_click_ms : 0u;
+}
+
+/* Arm an activation for `uri` and return the TOKEN the eventual fire must
+ * present. Supersedes any pending one (mac: `NSUInteger generation =
+ * ++_generation`), so the reader's latest click is the one that counts.
+ *
+ * Returns 0 -- never a live token, because the counter skips 0 -- when there is
+ * nothing schedulable: no state, no URI, or a URI too long to copy whole. The
+ * pending activation is still superseded in that case: a click that cannot be
+ * honoured must not leave the previous one to fire. */
+static SPDF_WIN_INLINE unsigned spdf_win_link_activation_schedule(spdf_win_link_activation* a, const char* uri) {
+    size_t n = uri ? strlen(uri) : (size_t)0;
+
+    if (!a) return 0u;
+    ++a->generation;
+    if (a->generation == 0u) ++a->generation; /* wrapped: 0 stays "no token" */
+    a->pending = 0;
+    a->uri[0] = '\0';
+    if (n == 0 || n >= sizeof(a->uri)) return 0u;
+    memcpy(a->uri, uri, n + 1);
+    a->pending = 1;
+    return a->generation;
+}
+
+/* mac's -cancel, which is the counter bump and nothing else. Safe to call with
+ * nothing pending, and safe to call twice. */
+static SPDF_WIN_INLINE void spdf_win_link_activation_cancel(spdf_win_link_activation* a) {
+    if (!a) return;
+    ++a->generation;
+    if (a->generation == 0u) ++a->generation;
+    a->pending = 0;
+    a->uri[0] = '\0';
+}
+
+/* The timer's side. Returns 1 and lends the URI through `out_uri` (valid until
+ * the next call on `a`) when `token` is still the live one; 0 -- having changed
+ * nothing -- when it is stale, which is every cancelled and every superseded
+ * activation. The counter is bumped on success too, mac's `++self->_generation`
+ * before the handler runs, so one schedule can never fire twice. */
+static SPDF_WIN_INLINE int spdf_win_link_activation_fire(spdf_win_link_activation* a, unsigned token,
+                                                         const char** out_uri) {
+    if (out_uri) *out_uri = NULL;
+    if (!a || token == 0u || token != a->generation || !a->pending) return 0;
+    ++a->generation;
+    if (a->generation == 0u) ++a->generation;
+    a->pending = 0;
+    if (out_uri) *out_uri = a->uri;
+    return 1;
+}
+
+/* Is a link still waiting to be handed to another application? */
+static SPDF_WIN_INLINE int spdf_win_link_activation_pending(const spdf_win_link_activation* a) {
+    return a && a->pending;
 }
 
 #ifdef __cplusplus
