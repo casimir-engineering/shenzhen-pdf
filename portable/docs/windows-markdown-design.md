@@ -78,7 +78,7 @@ route.
 | No `border-radius` | Code boxes and `<kbd>` have square corners | Accept. A rounded box could be a `<img>` background pre-rendered per box size, but corners are not worth an image per block | — |
 | No `page-break-inside: avoid`; `<thead>` not repeated after a split | A table row never splits (MuPDF keeps a line whole) but the header is not re-drawn on the continuation page; a code box continues without a closing rule at the break | Accept for now. A converter pre-pass cannot know page positions; a post-pass over the laid-out `fz_html` boxes could duplicate the header row — MuPDF-internal, deferred | C |
 | No colour emoji | 🚀 renders as a monochrome Noto glyph | Accept; the Mac uses Apple Color Emoji, MuPDF has no colour font path | — |
-| No WebP decoder | `.webp` images show as `[image]` (this repo's README uses WebP) | Frontend: transcode WebP → PNG through WIC into the cache directory and rewrite the source, exactly as for https images | C |
+| No WebP decoder | `.webp` images show as `[image]` (this repo's README uses WebP) | **DONE** (§9.1): `spdf_win_md_webp.{h,cpp}` decodes through WIC into a PNG in the same cache the https fetch fills, and the converter's new `local_image` hook rewrites the source to `.spdf-remote/<name>` | C |
 | No interactive controls inside the page | No in-place language picker, no copy button on code blocks | A Direct2D overlay drawn by the canvas over the code box rectangles (found from the structured text: a `<pre>` becomes one text block). Selecting a language re-converts with a per-fence override — the converter already takes the fence id from the info string, so an override map is a small addition | C |
 | Diagram fences (`mermaid`, `sequence`, `flow`) | Highlighted code box — the documented fallback on macOS too | Port the Mac's 7 parsers + layered layout (platform-free, §3 of the port plan) to C emitting **SVG**, served from a `fz_tree_archive` mounted beside the document; MuPDF renders SVG natively. Labels would then be image pixels, not searchable text — the Mac's "labels are canonical text" promise needs a text overlay on top, which is the trade-off to decide then | D |
 | Dark rendition draws images in their original colours | Matches "Keep Image Colors"; the Mac darkens images by default | Apply `spdf_recolor` to image regions only (the inverse of the existing `page_recolor_exclusions`) when the setting is off | C |
@@ -321,3 +321,53 @@ text overlay is needed) or image pixels are acceptable for Windows.
 
 **Linux for free.** Add the units to the `linux-gtk4` link line and dispatch
 `.md` to `spdf_open_markdown`; everything in §2 applies unchanged.
+
+## 9. Phase C, as it lands
+
+### 9.1 WebP through WIC — done
+
+`![](shot.webp)` used to reach MuPDF's `load_html_image()`, fail to decode and
+leave the literal word `[image]` on the page (`mupdf/source/html/html-parse.c
+:714`); MuPDF 1.27 has `load-png/jpeg/gif/bmp/tiff/jpx/psd/pnm/jbig2/jxr.c` and
+no `load-webp.c`. Windows itself can read WebP — WIC gained the "Microsoft Webp
+Decoder" in Windows 10 1809 — so the frontend decodes the file and writes a PNG
+into the cache directory MuPDF has already mounted.
+
+**The core seam is one hook, appended to `spdf_markdown_options`:**
+
+```c
+spdf_markdown_image_hook local_image;   /* same signature as remote_image */
+void* local_image_user;
+const char* document_dir;               /* filled by spdf_open_markdown */
+```
+
+`spdf_markdown_resolve_image` offers a document-relative source to the hook when
+its extension is one MuPDF cannot decode (a one-entry table: `.webp`), joining it
+to `document_dir` first so the hook sees an absolute path; the answer is a bare
+cache file name and is rewritten to `.spdf-remote/<name>` through the same
+`mount_cache_name()` the https branch now shares — a name with a separator or a
+`..` is refused for a local image exactly as for a remote one. **A refusal falls
+straight through to the plain relative path**, so a Windows without the codec
+still shows the `[image]` it always did, with no dialog and no retry loop. With
+no hook installed nothing changes at all, which is what keeps macOS and Linux
+byte-identical.
+
+**`spdf_win_md_webp.{h,cpp}`** is the frontend half: a `.webp` name or a
+`RIFF....WEBP` byte sniff selects a file; the cache name is FNV-1a-64 of the
+case-folded absolute path plus the file's byte size and last-write time, so
+editing the picture changes the name and the stale PNG is simply never asked for
+again; the write is a per-thread `.part` moved into place, which is what makes it
+safe for the several threads that open a Markdown document at once. The
+remote-image lookup runs the same call over a file it downloaded, so a badge
+served as WebP from a URL ending `.svg` is transcoded too — the bytes decide, not
+the URL.
+
+Proof: `md_webp_test` (the pure gates, the transcode, the cache reuse, and
+`spdf_search_page(doc, 0, "[image]")` == 0 with the hook and == 2 without it, so
+the assertion cannot pass vacuously), `SPDFCoreMarkdownTests`'
+`test_local_image_transcode` (the pure rewrite, the path join with and without a
+trailing separator, the escaping answer refused, each requirement disabling the
+hook on its own), fixtures `webp-figure.md` + `md-shot.webp`. Rendered:
+`C:\spdf-build\track-mdpolish\scratch\webp-after.png` (light),
+`webp-dark.png`, and `readme-webp.png` — this repository's own README, whose
+`macos-main-window.webp` screenshot is now a picture instead of a word.

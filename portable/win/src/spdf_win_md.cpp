@@ -2,6 +2,7 @@
 #include "spdf_win_md.h"
 
 #include "spdf_win_md_images.h"
+#include "spdf_win_md_webp.h"
 #include "spdf_win_state.h"
 
 #include <windows.h>
@@ -134,6 +135,10 @@ void spdf_win_md_options(spdf_markdown_options* out) {
         out->remote_image = spdf_win_md_images_lookup;
         out->remote_image_user = NULL;
         out->remote_image_dir = cache_dir;
+        /* The same cache holds the PNGs a local .webp is transcoded into
+         * (spdf_win_md_webp.h); document_dir is filled by spdf_open_markdown. */
+        out->local_image = spdf_win_md_webp_lookup;
+        out->local_image_user = NULL;
     }
 }
 

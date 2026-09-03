@@ -258,6 +258,33 @@ int spdf_markdown_href_allowed(const char* href, size_t len) {
     return equals_fold(href, n, "http") || equals_fold(href, n, "https") || equals_fold(href, n, "mailto");
 }
 
+/* A cache file name is a BARE name inside the mounted directory: no separator,
+ * no parent segment, and it has to fit under the mount prefix. */
+static int mount_cache_name(const char* name, char* out, size_t cap) {
+    size_t i;
+    if (!name || !name[0]) return 0;
+    for (i = 0; name[i]; ++i)
+        if (name[i] == '/' || name[i] == '\\') return 0;
+    if (has_parent_segment(name, strlen(name))) return 0;
+    if (strlen(SPDF_MARKDOWN_REMOTE_MOUNT) + 1 + strlen(name) + 1 > cap) return 0;
+    strcpy(out, SPDF_MARKDOWN_REMOTE_MOUNT "/");
+    strcat(out, name);
+    return 1;
+}
+
+/* The extensions MuPDF has no decoder for but a frontend may be able to
+ * transcode (options->local_image). Only WebP today: mupdf/source/fitz has
+ * load-png/jpeg/gif/bmp/tiff/jpx/psd/pnm/jbig2/jxr and no load-webp. */
+static int needs_transcode(const char* src, size_t len) {
+    static const char* const k_ext[] = {".webp"};
+    size_t e;
+    for (e = 0; e < sizeof(k_ext) / sizeof(k_ext[0]); ++e) {
+        size_t n = strlen(k_ext[e]);
+        if (len > n && equals_fold(src + len - n, n, k_ext[e])) return 1;
+    }
+    return 0;
+}
+
 int spdf_markdown_resolve_image(const spdf_markdown_options* options, const char* src, size_t len, char* out,
                                 size_t cap) {
     char name[512];
@@ -270,24 +297,39 @@ int spdf_markdown_resolve_image(const spdf_markdown_options* options, const char
 
     if (starts_fold(src, len, "https://")) {
         char url[1024];
-        size_t i;
         if (!options || !options->remote_image || !options->remote_image_dir || len >= sizeof(url)) return 0;
         memcpy(url, src, len);
         url[len] = '\0';
         name[0] = '\0';
         if (!options->remote_image(options->remote_image_user, url, name, sizeof(name)) || !name[0]) return 0;
-        for (i = 0; name[i]; ++i)
-            if (name[i] == '/' || name[i] == '\\') return 0;
-        if (has_parent_segment(name, strlen(name))) return 0;
-        if (strlen(SPDF_MARKDOWN_REMOTE_MOUNT) + 1 + strlen(name) + 1 > cap) return 0;
-        strcpy(out, SPDF_MARKDOWN_REMOTE_MOUNT "/");
-        strcat(out, name);
-        return 1;
+        return mount_cache_name(name, out, cap);
     }
     if (scheme_len(src, len)) return 0;              /* http:, data:, file:, ... */
     if (src[0] == '/' || src[0] == '\\') return 0;    /* absolute */
     if (len >= 2 && isalpha((unsigned char)src[0]) && src[1] == ':') return 0; /* drive letter */
     if (has_parent_segment(src, len)) return 0;       /* escapes the document's directory */
+
+    /* A .webp next to the document: offer it to the transcoder before handing
+     * MuPDF a file it cannot read. A refusal falls through to the plain
+     * relative path, which is exactly today's behaviour. */
+    if (options && options->local_image && options->remote_image_dir && options->document_dir &&
+        options->document_dir[0] && needs_transcode(src, len)) {
+        char abs[1280];
+        size_t dir_len = strlen(options->document_dir);
+        char last = options->document_dir[dir_len - 1];
+        int joined = (last == '/' || last == '\\');
+        if (dir_len + (joined ? 0u : 1u) + len + 1 <= sizeof(abs)) {
+            memcpy(abs, options->document_dir, dir_len);
+            if (!joined) abs[dir_len++] = '/';
+            memcpy(abs + dir_len, src, len);
+            abs[dir_len + len] = '\0';
+            name[0] = '\0';
+            if (options->local_image(options->local_image_user, abs, name, sizeof(name)) && name[0] &&
+                mount_cache_name(name, out, cap))
+                return 1;
+            out[0] = '\0';
+        }
+    }
     memcpy(out, src, len);
     out[len] = '\0';
     return 1;

@@ -384,6 +384,23 @@ typedef struct spdf_markdown_options {
     /* Absolute directory holding the files the hook names; mounted into the
      * document's resource tree so MuPDF can load them. NULL disables. */
     const char* remote_image_dir;
+    /* LOCAL IMAGES MuPDF CANNOT DECODE. MuPDF 1.27 has no WebP loader (there is
+     * no load-webp.c in mupdf/source/fitz), so `![](shot.webp)` reaches
+     * load_html_image(), fails to decode and draws MuPDF's own "[image]" word.
+     * When this hook is set, a document-relative image whose extension is one
+     * of those (today only .webp) is offered to the frontend FIRST, as an
+     * absolute path built from document_dir; the frontend transcodes it into
+     * remote_image_dir and answers with the cache file name, exactly as
+     * remote_image answers for an https URL, and the converter points the <img>
+     * at ".spdf-remote/<name>". Answering 0 leaves the original source in
+     * place, so the "[image]" fallback is what a machine without the codec
+     * still gets. Needs remote_image_dir and document_dir to be set too. */
+    spdf_markdown_image_hook local_image;
+    void* local_image_user;
+    /* The document's own folder, no trailing separator. spdf_open_markdown
+     * fills this in from the path it was given; a caller converting HTML by
+     * hand sets it only if it also sets local_image. */
+    const char* document_dir;
 } spdf_markdown_options;
 
 /* text_scale 1.0, portrait, dark rendition on, no remote images. */
