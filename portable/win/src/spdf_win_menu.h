@@ -20,10 +20,10 @@
  * live in spdf_win_menu.cpp.
  *
  * THE GROUPING AND THE TITLES ARE macOS'S, transcribed from
- * portable/mac/ShenzhenPDFMac.mm:2133-2424 -- File, Go To, Zoom, View, Edit, in
- * that order and with those item titles -- minus the commands this port does not
- * have yet. Nothing here is invented: an item exists only if the command behind
- * it exists.
+ * portable/mac/ShenzhenPDFMac.mm:2112-2424 -- File, Go To, Zoom, View, Edit,
+ * Settings, in that order and with those item titles -- minus the commands this
+ * port does not have yet. Nothing here is invented: an item exists only if the
+ * command behind it exists.
  *
  * THE ACCELERATORS ARE Cmd -> Ctrl, which is the mapping the GTK4 frontend
  * already made once (spdf_shortcuts.c:2). Where macOS uses Option (its page
@@ -88,6 +88,7 @@ extern "C" {
 #define SPDF_WIN_KEY_F11 0x7A    /* VK_F11: full screen */
 #define SPDF_WIN_KEY_F1 0x70     /* VK_F1: keyboard shortcuts */
 #define SPDF_WIN_KEY_OEM_PLUS 0xBB  /* VK_OEM_PLUS, the '=' key on a US layout */
+#define SPDF_WIN_KEY_OEM_COMMA 0xBC /* VK_OEM_COMMA: Ctrl+, the mac's Cmd+, */
 #define SPDF_WIN_KEY_OEM_MINUS 0xBD /* VK_OEM_MINUS */
 
 /* The modifier bits, matching spdf_win_window.h's SPDF_WIN_MOD_* exactly so a
@@ -205,6 +206,17 @@ typedef enum spdf_win_command {
     SPDF_WIN_CMD_DELETE_COMMENT,      /* Edit: Delete / Backspace over a marker */
     SPDF_WIN_CMD_SET_COMMENT_AUTHOR,  /* Edit: settings.yaml commentAuthor */
 
+    /* The settings track's five (spdf_win_cmd_shell.h), which with Keep Image
+     * Colors are macOS's whole Settings menu (:2112-2149) -- minus its four
+     * other state files, which have no menu row here for the reason
+     * spdf_win_state.h gives about bookmarks.yaml: a row per file is a mac
+     * habit, and settings.yaml is the one a reader edits by hand. */
+    SPDF_WIN_CMD_TOGGLE_DEFAULT_SIDEBAR,   /* defaultSidebarVisibleForNewDocuments */
+    SPDF_WIN_CMD_TOGGLE_DEFAULT_MINIMAP,   /* defaultMinimapVisibleForNewDocuments */
+    SPDF_WIN_CMD_TOGGLE_SEARCH_NEAREST,    /* searchJumpsToNearestResult */
+    SPDF_WIN_CMD_OPEN_SETTINGS_FILE,       /* settings.yaml in the shell's editor, Ctrl+, */
+    SPDF_WIN_CMD_REVEAL_SETTINGS_FOLDER,   /* the state directory in Explorer */
+
     SPDF_WIN_CMD_COUNT
 } spdf_win_command;
 
@@ -226,6 +238,7 @@ typedef enum spdf_win_menu_id {
     SPDF_WIN_MENU_ZOOM,
     SPDF_WIN_MENU_VIEW,
     SPDF_WIN_MENU_EDIT,
+    SPDF_WIN_MENU_SETTINGS,
     SPDF_WIN_MENU_COUNT
 } spdf_win_menu_id;
 
@@ -264,8 +277,9 @@ static SPDF_WIN_MENU_INLINE const SpdfWinMenuItem* spdf_win_menu_table(int* out_
     return k_spdf_win_menu;
 }
 
-/* The title of a top-level menu, with its mnemonic. macOS's own five, in
- * macOS's own order (:2155, :2200, :2247, :2263, :2342). */
+/* The title of a top-level menu, with its mnemonic. macOS's own six, in macOS's
+ * own order (:2155, :2200, :2247, :2263, :2342, :2112 -- Settings comes after
+ * Edit there too, and last here because Help has no menu of its own). */
 static SPDF_WIN_MENU_INLINE const wchar_t* spdf_win_menu_title(int menu) {
     switch (menu) {
         case SPDF_WIN_MENU_FILE: return L"&File";
@@ -273,6 +287,7 @@ static SPDF_WIN_MENU_INLINE const wchar_t* spdf_win_menu_title(int menu) {
         case SPDF_WIN_MENU_ZOOM: return L"&Zoom";
         case SPDF_WIN_MENU_VIEW: return L"&View";
         case SPDF_WIN_MENU_EDIT: return L"&Edit";
+        case SPDF_WIN_MENU_SETTINGS: return L"&Settings";
         default: return NULL;
     }
 }
@@ -317,7 +332,7 @@ static SPDF_WIN_MENU_INLINE const SpdfWinMenuItem* spdf_win_menu_item_for_comman
 
 /* --- what the menu shows about the app ----------------------------------
  *
- * The three check marks and the one greyed item, gathered into a value so
+ * Every check mark and every greyed item, gathered into a value so
  * spdf_win_menu_sync() takes no app pointer and a test can build one by hand --
  * the same reason SpdfWinChromeModel is a plain value type. */
 typedef struct SpdfWinMenuState {
@@ -327,6 +342,13 @@ typedef struct SpdfWinMenuState {
     /* Settings > Keep Image Colors in Dark Theme: SPDF_RENDER_PRESERVE_IMAGES is
      * set. Shown ticked whatever the theme, like the macOS Settings menu. */
     int keep_image_colors;
+    /* The Settings menu's other three ticks. settings.yaml values rather than
+     * app state, so spdf_win_menu_state_settings() fills them from the one
+     * process-wide copy and spdf_win_menu_sync() calls it -- see there for why.
+     * A caller may leave all three at 0; nothing else here reads them. */
+    int default_sidebar_new_docs;
+    int default_minimap_new_docs;
+    int search_nearest;
     int regex;
     int regex_multiline;
     int can_close_tab;
@@ -341,75 +363,10 @@ typedef struct SpdfWinMenuState {
     int can_print;
 } SpdfWinMenuState;
 
-/* Whether an item should be enabled given that state. Pure, so the greying rule
- * is testable; spdf_win_menu_sync() applies it. */
-static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_enabled(int command, const SpdfWinMenuState* st) {
-    if (!st) return 1;
-    switch (command) {
-        case SPDF_WIN_CMD_CLOSE_TAB: return st->can_close_tab != 0;
-        case SPDF_WIN_CMD_CLOSE_OTHER_TABS: return st->tab_count > 1;
-        /* Everything that needs a document to act on. Open, New Tab and Quit
-         * deliberately stay live with no document -- they are the way out of
-         * that state. */
-        case SPDF_WIN_CMD_FIRST_PAGE:
-        case SPDF_WIN_CMD_PREV_PAGE:
-        case SPDF_WIN_CMD_NEXT_PAGE:
-        case SPDF_WIN_CMD_LAST_PAGE:
-        case SPDF_WIN_CMD_GOTO_PAGE:
-        case SPDF_WIN_CMD_ZOOM_IN:
-        case SPDF_WIN_CMD_ZOOM_OUT:
-        case SPDF_WIN_CMD_ZOOM_ACTUAL:
-        case SPDF_WIN_CMD_FIT_PAGE:
-        case SPDF_WIN_CMD_FIT_WIDTH:
-        case SPDF_WIN_CMD_FIT_HEIGHT:
-        case SPDF_WIN_CMD_COPY:
-        case SPDF_WIN_CMD_FIND:
-        case SPDF_WIN_CMD_FIND_NEXT:
-        case SPDF_WIN_CMD_FIND_PREV:
-        case SPDF_WIN_CMD_SAVE_AS:
-        case SPDF_WIN_CMD_SAVE_PAGE_AS:
-        case SPDF_WIN_CMD_PROPERTIES:
-        case SPDF_WIN_CMD_COPY_PAGE:
-        case SPDF_WIN_CMD_COPY_PAGE_TEXT:
-        case SPDF_WIN_CMD_COPY_PAGE_IMAGE:
-        /* The documents track's: each acts on the current document's PATH. */
-        case SPDF_WIN_CMD_SHOW_IN_FOLDER:
-        case SPDF_WIN_CMD_COPY_PATH:
-        case SPDF_WIN_CMD_OPEN_IN_BROWSER:
-        case SPDF_WIN_CMD_RELOAD:
-        case SPDF_WIN_CMD_ADD_FAVORITE:
-        /* The Markdown text size re-lays the selected document out; inert on a
-         * PDF tab (spdf_win_md_command_text_step) but greyed with no tab at all. */
-        case SPDF_WIN_CMD_MD_TEXT_SMALLER:
-        case SPDF_WIN_CMD_MD_TEXT_LARGER:
-        /* The comment commands act on the current document; whether there IS
-         * a comment under the pointer is the handler's to answer, not a
-         * greying rule -- the menu has no pointer. Set Author is a setting
-         * and stays live with no document at all. */
-        case SPDF_WIN_CMD_HIGHLIGHT_SELECTION:
-        case SPDF_WIN_CMD_ADD_COMMENT:
-        case SPDF_WIN_CMD_EDIT_COMMENT:
-        case SPDF_WIN_CMD_DELETE_COMMENT: return st->has_document != 0;
-        /* The print job is refused before any dialog appears when the document
-         * forbids it; greying the item says so before the reader asks. */
-        case SPDF_WIN_CMD_PRINT: return st->has_document != 0 && st->can_print != 0;
-        default: return 1;
-    }
-}
-
-/* Whether a checkable item is ticked. */
-static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_checked(int command, const SpdfWinMenuState* st) {
-    if (!st) return 0;
-    switch (command) {
-        case SPDF_WIN_CMD_TOGGLE_SIDEBAR: return st->sidebar_visible != 0;
-        case SPDF_WIN_CMD_TOGGLE_MINIMAP: return st->minimap_visible != 0;
-        case SPDF_WIN_CMD_TOGGLE_THEME: return st->dark_theme != 0;
-        case SPDF_WIN_CMD_TOGGLE_KEEP_IMAGE_COLORS: return st->keep_image_colors != 0;
-        case SPDF_WIN_CMD_FIND_REGEX: return st->regex != 0;
-        case SPDF_WIN_CMD_FIND_REGEX_MULTILINE: return st->regex_multiline != 0;
-        default: return 0;
-    }
-}
+/* The rules themselves -- the greying and the ticking; see that header for why
+ * they live apart, and note that it needs SpdfWinMenuState above to be
+ * complete, which is why the include sits here and not at the top. */
+#include "spdf_win_menu_rules.h"
 
 /* --- the Win32 half, in spdf_win_menu.cpp --------------------------------
  *
@@ -423,8 +380,33 @@ void* spdf_win_menu_create(void);
 void spdf_win_menu_destroy(void* hmenu);
 
 /* Applies the check marks and the greying. Cheap enough to call after every
- * command; it is a few CheckMenuItem/EnableMenuItem calls. */
+ * command; it is a few CheckMenuItem/EnableMenuItem calls.
+ *
+ * It fills the three settings.yaml-backed ticks itself, through
+ * spdf_win_menu_state_settings() below, so a caller building a state never has
+ * to remember them. */
 void spdf_win_menu_sync(void* hmenu, const SpdfWinMenuState* state);
+
+/* THE SETTINGS-MENU TICKS THAT ARE NOT APP STATE: default_sidebar_new_docs,
+ * default_minimap_new_docs and search_nearest, read from the one process-wide
+ * spdf_win_settings_shared() copy and written into `st`.
+ *
+ * WHY THE MENU FETCHES THESE RATHER THAN BEING TOLD THEM. They are not facts
+ * about a window -- they are three booleans in one file, of which the process
+ * has exactly one copy, so a caller passing a different value would be
+ * describing a settings.yaml that does not exist. That is the same call
+ * recent_submenu() already makes in spdf_win_menu.cpp, and for the same reason:
+ * a store read at the moment the menu is shown is always current and nothing
+ * has to invalidate it. Everything a WINDOW knows -- the panels, the theme, the
+ * tab count, the document's print flag -- is still passed in, because two
+ * windows disagree about all of it.
+ *
+ * Callers that show these commands somewhere OTHER than through
+ * spdf_win_menu_sync() (the Ctrl+K palette, which draws its own check marks
+ * from spdf_win_menu_command_checked) must call this on their state. Declared
+ * here but defined in the .cpp, which is what keeps spdf_win_menu.h free of
+ * spdf_win_settings.h -- and menu_test.c free of a state directory. */
+void spdf_win_menu_state_settings(SpdfWinMenuState* st);
 
 /* The tab strip's overflow `...`. Shows every tab, radio-marks the selected one,
  * and returns the index the user chose or -1. Modal: TrackPopupMenu runs its own
