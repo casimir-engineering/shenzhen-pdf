@@ -150,6 +150,41 @@ int spdf_win_session_save_ex(const spdf_win_tabs* tabs, const char* window_id, c
 int spdf_win_session_detach_tab(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
                                 char* out_new_id, size_t out_len);
 
+/* --- handing a tab to a window that ALREADY EXISTS --------------------------
+ *
+ * The same file, the same one-tab window object, one difference: the id is not
+ * a new window's, it is the WELL-KNOWN PARKING SPOT below, and no process is
+ * started. The source parks the tab, drops it locally and posts a message to
+ * the window under the pointer; that window takes it back out, inserts it and
+ * removes the entry. macOS hands the live tab over on a pasteboard inside one
+ * process (SPDFMacTabStripView.mm:885-925, -performDragOperation:); one process
+ * per window here means the hand-over has to be a file, and this is the file
+ * that already exists for exactly this purpose.
+ *
+ * WHY ONE FIXED ID RATHER THAN A FRESH ONE. There is one pointer, so there is
+ * at most one tab in flight on the desktop, and the receiving window has to
+ * know which entry is for it without being told a number it has no channel to
+ * receive. A fixed id also makes a crashed hand-over recoverable rather than
+ * permanent: an entry left here is INVISIBLE to a plain launch (find_window
+ * skips it) and is not counted by spdf_win_session_other_windows(), so a stale
+ * one cannot restore itself as a window or keep an empty window alive. */
+#define SPDF_WIN_SESSION_HANDOFF_ID "tab-handoff"
+
+/* As spdf_win_session_detach_tab(), writing the window under `window_id`
+ * instead of a generated one. */
+int spdf_win_session_detach_tab_as(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
+                                   const char* window_id);
+
+/* Take the parked tab back: fills `out_path`, `out_title` and `out_view` from
+ * the hand-off entry and REMOVES that entry. Returns 1 when a tab came back, 0
+ * when there was nothing parked (and nothing is written). */
+int spdf_win_session_handoff_take(char* out_path, size_t path_len, char* out_title, size_t title_len,
+                                  spdf_win_tab_view* out_view);
+
+/* Remove the hand-off entry without taking it: what the source calls when the
+ * drop it parked a tab for did not happen. Safe with nothing parked. */
+void spdf_win_session_handoff_discard(void);
+
 /* How many windows OTHER than `window_id` the file holds: the mac app's "does
  * another ShenzhenPDF window exist" (spdf_win_tabs.h's header), which decides
  * whether closing the last tab closes the window or leaves it empty. One

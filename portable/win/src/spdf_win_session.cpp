@@ -102,6 +102,16 @@ static const char* find_window(const char* root, const char* want_id) {
     if (!windows || *windows != '[') return obj_value(root, "tabs", NULL) ? root : NULL;
     for (element = array_first(windows, &end); element; element = array_next(end, &end)) {
         if (*element != '{') continue;
+        /* THE HAND-OFF PARKING SPOT IS NOT A WINDOW (spdf_win_session.h). Only
+         * an explicit ask reaches it, so a launch never restores a tab that was
+         * in flight when something crashed, and never adopts it as "the first
+         * window in the file". */
+        if (!(want_id && *want_id)) {
+            char* parked = json_str(element, "id");
+            int is_parked = parked && strcmp(parked, SPDF_WIN_SESSION_HANDOFF_ID) == 0;
+            free(parked);
+            if (is_parked) continue;
+        }
         if (!first) first = element;
         if (want_id && *want_id) {
             char* id = json_str(element, "id");
@@ -356,15 +366,14 @@ int spdf_win_session_save_ex(const spdf_win_tabs* tabs, const char* window_id, c
 
 /* --- detach --------------------------------------------------------------- */
 
-int spdf_win_session_detach_tab(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
-                                char* out_new_id, size_t out_len) {
+int spdf_win_session_detach_tab_as(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
+                                   const char* window_id) {
     spdf_win_tabs* one;
     spdf_win_tab_view* view;
     const spdf_win_tab_view* source;
-    char id[SPDF_WIN_SESSION_ID_MAX];
     int ok;
 
-    if (!tabs || !out_new_id || out_len == 0) return 0;
+    if (!tabs || !window_id || !*window_id) return 0;
     source = spdf_win_tabs_view_const(tabs, index);
     if (!source) return 0;
     /* A one-tab model, so the hand-over goes through the SAME emit path a
@@ -379,12 +388,58 @@ int spdf_win_session_detach_tab(const spdf_win_tabs* tabs, int index, const spdf
     view = spdf_win_tabs_view(one, 0);
     *view = *source;
     spdf_win_tabs_select_deferred(one, 0);
-    spdf_win_session_new_window_id(id, sizeof(id));
-    ok = spdf_win_session_save_ex(one, id, frame);
+    ok = spdf_win_session_save_ex(one, window_id, frame);
     spdf_win_tabs_destroy(one);
-    if (!ok) return 0;
+    return ok;
+}
+
+int spdf_win_session_detach_tab(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
+                                char* out_new_id, size_t out_len) {
+    char id[SPDF_WIN_SESSION_ID_MAX];
+    if (!out_new_id || out_len == 0) return 0;
+    spdf_win_session_new_window_id(id, sizeof(id));
+    if (!spdf_win_session_detach_tab_as(tabs, index, frame, id)) return 0;
     snprintf(out_new_id, out_len, "%s", id);
     return 1;
+}
+
+/* --- the hand-off parking spot -------------------------------------------- */
+
+void spdf_win_session_handoff_discard(void) {
+    /* A model with no tabs REMOVES its window from the file, which is exactly
+     * what "the entry is gone" means -- no second code path, and no write at
+     * all when the file cannot be read. */
+    spdf_win_tabs* empty = spdf_win_tabs_create();
+    if (!empty) return;
+    spdf_win_session_save(empty, SPDF_WIN_SESSION_HANDOFF_ID);
+    spdf_win_tabs_destroy(empty);
+}
+
+int spdf_win_session_handoff_take(char* out_path, size_t path_len, char* out_title, size_t title_len,
+                                  spdf_win_tab_view* out_view) {
+    spdf_win_tabs* parked = spdf_win_tabs_create();
+    const char* path;
+    int got = 0;
+
+    if (!parked) return 0;
+    /* The ordinary restore, asked for the one id a launch never asks for. It
+     * opens nothing -- restore is metadata only -- so taking a tab back costs
+     * a file read and no document. */
+    if (spdf_win_session_restore(parked, SPDF_WIN_SESSION_HANDOFF_ID, NULL, 0) == SPDF_WIN_SESSION_RESTORED &&
+        spdf_win_tabs_count(parked) > 0) {
+        path = spdf_win_tabs_path(parked, 0);
+        if (path && *path) {
+            if (out_path && path_len) snprintf(out_path, path_len, "%s", path);
+            if (out_title && title_len) snprintf(out_title, title_len, "%s", spdf_win_tabs_title(parked, 0));
+            if (out_view) *out_view = *spdf_win_tabs_view_const(parked, 0);
+            got = 1;
+        }
+    }
+    spdf_win_tabs_destroy(parked);
+    /* Taken or unusable, the entry goes: leaving it would let the next drop
+     * adopt a stale tab. */
+    if (got) spdf_win_session_handoff_discard();
+    return got;
 }
 
 int spdf_win_session_other_windows(const char* window_id) {
@@ -399,7 +454,12 @@ int spdf_win_session_other_windows(const char* window_id) {
         char* id;
         if (*element != '{') continue;
         id = json_str(element, "id");
-        if (!(id && window_id && strcmp(id, window_id) == 0)) count++;
+        /* A tab in flight is not another window (spdf_win_session.h): counting
+         * it would keep an emptied window open waiting for a sibling that is
+         * a parking spot, not a process. */
+        if (!(id && window_id && strcmp(id, window_id) == 0) &&
+            !(id && strcmp(id, SPDF_WIN_SESSION_HANDOFF_ID) == 0))
+            count++;
         free(id);
     }
     free(json);
