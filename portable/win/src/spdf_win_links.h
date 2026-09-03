@@ -36,6 +36,10 @@
  *   without one there is no worker and hover shows annotations only, which is
  *   the headless probe's case.
  *
+ * SECTION 3 IS A TRANSCRIPTION AGAIN, of where a macOS internal link jump lands
+ * (spdf_mac_link_destination_scroll_origin_y). It is pure and it is pinned
+ * against the mac unit test's own numbers -- see the section.
+ *
  * Every function here is main-thread, against the caller's own document handle;
  * the worker's handle is its own and never escapes spdf_win_links.cpp.
  */
@@ -43,7 +47,7 @@
 #define SPDF_WIN_LINKS_H
 
 #include "shenzhen_pdf_core.h"
-#include "spdf_win_layout.h" /* SPDF_WIN_INLINE */
+#include "spdf_win_layout.h" /* SPDF_WIN_INLINE, SPDF_WIN_PAGE_MARGIN_V, <math.h> */
 
 #ifdef __cplusplus
 extern "C" {
@@ -161,16 +165,67 @@ int spdf_win_links_hit(spdf_win_links* links, spdf_document* doc, int page_index
 int spdf_win_links_target_at(spdf_document* doc, int page_index, float x, float y, spdf_link_target* out);
 
 /* WHERE AN INTERNAL LINK LANDS. The core hands back the target page plus a
- * point from fz_resolve_link. This port navigates to THE TOP OF THE TARGET
- * PAGE and ignores the point, which is what macOS's own link handling does and
- * what every /Fit-style destination forces anyway (it carries no point at all).
+ * point from fz_resolve_link, and this port TOP-ALIGNS THE DESTINATION'S OWN Y
+ * in the viewport -- the two functions below are the whole of it.
  *
- * The point is still exposed on spdf_link_target for a caller that wants to
- * refine it, and portable/win/tests/link_test.c PINS WHICH WAY UP IT IS,
- * measured rather than assumed: fz_resolve_link's y arrives in PAGE space, y
+ * TRANSCRIBED from spdf_mac_link_destination_scroll_origin_y
+ * (portable/mac/SPDFMacPageRendering.mm:45-51), reached through
+ * scrollToLinkDestinationOnPage:pageY: and pinned on that side by
+ * portable/mac/tests/SPDFMacSelectionClickTests.mm's
+ * test_link_destination_scroll_is_target_page_top. Same three inputs, same
+ * three rules: scale the destination's offset by the zoom, ignore an offset
+ * that is not positive, and clamp at the document top.
+ *
+ * TOP-ALIGNED AND NOT CENTRED, which is the decision the mac file argues at
+ * length: centring the destination (what spdf_win_canvas_scroll_to_rect does
+ * for a find hit, correctly) hangs half a viewport of the PRECEDING page above
+ * the thing the reader asked to see, and makes the resulting offset depend on
+ * page N-1's height. Top alignment depends on the TARGET page's slot and the
+ * destination's own y, and nothing else.
+ *
+ * THE LEAD-IN IS THIS PLATFORM'S OWN NUMBER. macOS subtracts
+ * kSPDFPageTopScrollLeadIn (12 pt); this port subtracts SPDF_WIN_PAGE_MARGIN_V
+ * (13 px), because that is what spdf_win_canvas_scroll_to_page() subtracts and
+ * the invariant that matters is the one mac's own comment states: A DESTINATION
+ * WITH NO OFFSET MUST LAND EXACTLY WHERE "GO TO PAGE N" LANDS. The two gutters
+ * differ by a pixel; the equality does not.
+ *
+ * WHICH WAY UP THE Y IS, measured rather than assumed and pinned by
+ * portable/win/tests/link_test.c: fz_resolve_link's y arrives in PAGE space, y
  * DOWN -- the same space as every rect here, and NOT the bottom-left PDF user
  * space that spdf_outline_item.dest_y documents for outline entries. The two
- * differ, so a refinement must not borrow the outline code's flip. */
+ * differ, so nothing here borrows the outline code's flip. */
+
+/* The destination's offset down its target page, in PDF points, or 0 when the
+ * link names only a page. mac's `hasDestinationY` is
+ * `isfinite(target.x) && isfinite(target.y)` -- BOTH axes, because
+ * fz_resolve_link fills them together and a half-finite point is a point the
+ * core could not resolve. And that guard EARNS ITS KEEP: a /Fit-style
+ * destination carries no point, and link_destination_test.c MEASURES what
+ * fz_resolve_link reports for one -- (nan, nan), not (0, 0). Only the isfinite
+ * pair sends that to the page's start; a `> 0.0` test on y alone would too, but
+ * only by accident of how NaN compares. */
+static SPDF_WIN_INLINE double spdf_win_link_destination_page_y(const spdf_link_target* target) {
+    if (!target || target->kind != SPDF_LINK_INTERNAL) return 0.0;
+    if (!isfinite((double)target->x) || !isfinite((double)target->y)) return 0.0;
+    return (double)target->y;
+}
+
+/* The canvas scroll offset that puts `destination_page_y` at the top of the
+ * viewport, given the target page's slot y in CONTENT PIXELS at `zoom` (what
+ * spdf_win_canvas_page_rect reports) and `destination_page_y` in PDF points
+ * (what spdf_win_link_destination_page_y returns).
+ *
+ * The MAX(0, ...) mirrors mac's; spdf_win_canvas_scroll_to() would clamp
+ * anyway, and a destination past the document's end clamps there too. A
+ * non-positive offset -- a page-only destination, or a negative y from a
+ * malformed dest -- cannot pull the preceding page into view. */
+static SPDF_WIN_INLINE double spdf_win_link_destination_scroll_y(double page_slot_y, double destination_page_y,
+                                                                 double zoom) {
+    double scale = zoom > 0.0 ? zoom : 1.0;
+    double offset = destination_page_y > 0.0 ? destination_page_y * scale : 0.0;
+    return spdf_win_max_d(0.0, page_slot_y + offset - SPDF_WIN_PAGE_MARGIN_V);
+}
 
 #ifdef __cplusplus
 } /* extern "C" */
