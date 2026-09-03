@@ -31,6 +31,9 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 // time, which is the mistake that made Okular ship a speed warning next to its
 // own color options.
 @property(nonatomic) BOOL imageDarkTheme;
+// Whether the dark render kept image colors. Only meaningful with
+// imageDarkTheme; a page rendered under the other choice is stale.
+@property(nonatomic) BOOL imagePreservesImageColors;
 @property(nonatomic, strong) NSImage* image;
 @property(nonatomic) CGFloat baseImagePointWidth;
 @property(nonatomic) CGFloat baseImagePointHeight;
@@ -73,6 +76,12 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @property(nonatomic) BOOL showSidebar;
 @property(nonatomic) BOOL showMinimap;
 @property(nonatomic) BOOL hasMinimapPreference;
+// With the dark reading theme on, leave this document's photographs and
+// figures in their own colors. Per document, default YES: one datasheet can
+// keep its color-coded figures while another is recolored whole. Persisted as
+// "preservesImageColors"; a tab restored from a session without the key takes
+// the launch default.
+@property(nonatomic) BOOL preservesImageColors;
 @property(nonatomic) BOOL missingFile;
 @property(nonatomic, copy) NSString* missingMessage;
 @property(nonatomic) NSRange markdownSelectionRange;

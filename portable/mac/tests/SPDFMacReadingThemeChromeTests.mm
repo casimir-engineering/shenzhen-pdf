@@ -150,6 +150,40 @@ int main(void) {
         Expect("dark gutter is painted around the page", ColorMatchesHex(gutter, 0x0A0A0A));
         Expect("gutter sits below the sheet", Luminance(gutter) < Luminance(sheet));
 
+        // --- Every document view the app installs carries the theme ------
+        // The gap that let a real bug ship: SPDFDocumentView is well covered
+        // GIVEN a variant, but nothing asserted the app hands it one. A tab
+        // switch builds a fresh view (-replaceDocumentViewForTabSwitch), and a
+        // fresh view defaults to Light -- so while the page bitmap was recolored
+        // dark by the core, the viewport's gutter fell back to the system canvas
+        // colour (#1C1C1C, two levels off the #1E1E1E paper: no visible edge)
+        // and pageBorderColor was nil, dropping the border that stands in for
+        // the drop shadow in dark. First: the hazard is real.
+        SPDFDocumentView* fresh = [[SPDFDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 120, 160)];
+        Expect("a fresh document view defaults to light", fresh.themeVariant == SPDFMarkdownThemeVariantLight);
+        Expect("so its gutter is not the dark gutter", !ColorMatchesHex(fresh.viewportBackgroundColor, 0x0A0A0A));
+        Expect("and it draws no page border", fresh.pageBorderColor == nil);
+        // Second: the construction site closes it. Source contract, in the style
+        // of SPDFMacTabLifecycleTests -- the wiring is a plain assignment in the
+        // delegate, which this suite cannot instantiate.
+        NSString* testPath = @(__FILE__);
+        NSString* dir = testPath.stringByDeletingLastPathComponent;
+        NSError* readError = nil;
+        NSString* viewState = [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:@"../SPDFMacTabViewState.mm"]
+                                                       encoding:NSUTF8StringEncoding
+                                                          error:&readError];
+        Expect("the tab view-state source is readable", viewState != nil);
+        Expect("the document view a tab switch installs is given the live reading theme",
+               [viewState containsString:@"view.themeVariant = self.markdownThemeVariant"]);
+        NSString* coordinator = [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:@"../ShenzhenPDFMac.mm"]
+                                                         encoding:NSUTF8StringEncoding
+                                                            error:&readError];
+        Expect("the coordinator source is readable", coordinator != nil);
+        // The minimap is constructed after -applyReadingThemeToDocumentViewport
+        // runs, so that call set the variant on nil; it is seeded at creation.
+        Expect("the minimap strip is seeded with the reading theme where it is created",
+               [coordinator containsString:@"_minimapView.themeVariant = self.markdownThemeVariant"]);
+
         // Light keeps the sheet edge-to-edge white: no border stroke on it.
         view.themeVariant = SPDFMarkdownThemeVariantLight;
         NSBitmapImageRep* lightRaster = RasterizeView(view);
