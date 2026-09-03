@@ -221,7 +221,7 @@ int spdf_win_setup_install(int quiet, const wchar_t* file, int relaunch) {
     wchar_t dir[SPDF_WIN_SETUP_PATH_MAX];
     wchar_t exe[SPDF_WIN_SETUP_PATH_MAX];
     wchar_t lnk[SPDF_WIN_SETUP_PATH_MAX];
-    wchar_t message[1200];
+    wchar_t message[2400];
     spdf_win_setup_entry entry;
     HKEY root;
     DWORD n;
@@ -285,9 +285,13 @@ int spdf_win_setup_install(int quiet, const wchar_t* file, int relaunch) {
                  repaired ? L"was already installed here, and has been repaired -" : L"is", exe,
                  shortcut_ok ? lnk : L"could not be created", assoc_ok ? L"registered" : L"could not be registered",
                  key_ok ? L"listed" : L"could not be written", exe);
-    setup_say(quiet, 0, message);
+    setup_say(quiet, shortcut_ok && assoc_ok && key_ok ? 0 : 1, message);
     if (relaunch) setup_relaunch(exe, file);
-    return 0;
+    /* The copy is in place either way -- the app IS installed and runnable --
+     * but a shortcut, an association or an Apps-list row that did not get
+     * written is something that refused, and a script running --install must
+     * be able to see that rather than read the message box. */
+    return shortcut_ok && assoc_ok && key_ok ? 0 : 1;
 }
 
 /* --- --uninstall ------------------------------------------------------------- */
@@ -297,7 +301,7 @@ int spdf_win_setup_uninstall(int quiet, int purge) {
     wchar_t dir[SPDF_WIN_SETUP_PATH_MAX];
     wchar_t lnk[SPDF_WIN_SETUP_PATH_MAX];
     wchar_t state[SPDF_WIN_SETUP_PATH_MAX];
-    wchar_t message[1200];
+    wchar_t message[2400];
     const wchar_t* how;
     HKEY root;
     int have_state;
