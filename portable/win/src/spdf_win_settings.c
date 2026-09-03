@@ -39,6 +39,7 @@ void spdf_win_settings_init_defaults(spdf_win_settings* s) {
     s->window_height = SPDF_WIN_SETTINGS_DEFAULT_WINDOW_H;
     s->theme = SPDF_WIN_THEME_SYSTEM;
     s->dark_theme_preserves_images = 1; /* ShenzhenPDFMac.mm:1153, default ON */
+    s->setup_prompt_answered = 0;       /* the first-run question has not been asked yet */
 }
 
 static int clamp_i(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -100,6 +101,7 @@ int spdf_win_settings_parse_json(spdf_win_settings* s, const char* json) {
     s->prevent_sleep_in_presentation =
         read_bool(root, "preventSleepInPresentation", s->prevent_sleep_in_presentation, &found);
     s->dark_theme_preserves_images = read_bool(root, "darkThemePreservesImages", s->dark_theme_preserves_images, &found);
+    s->setup_prompt_answered = read_bool(root, "setupPromptAnswered", s->setup_prompt_answered, &found);
     if (has_key(root, "printScalingMode")) {
         s->print_scaling_mode = clamp_i(json_int(root, "printScalingMode", s->print_scaling_mode), 0, 2);
         found++;
@@ -151,6 +153,7 @@ static int key_is_owned(const member* m) {
                                         "windowSize",
                                         "markdownTheme",
                                         "darkThemePreservesImages",
+                                        "setupPromptAnswered",
                                         "commentAuthor"};
     size_t i;
     for (i = 0; i < sizeof(owned) / sizeof(owned[0]); ++i)
@@ -183,6 +186,7 @@ char* spdf_win_settings_to_json(const spdf_win_settings* s, const char* existing
     emit_bool_key(&out, "defaultMinimapVisibleForNewDocuments", s->default_minimap_visible);
     emit_bool_key(&out, "searchJumpsToNearestResult", s->search_jumps_to_nearest_result);
     emit_bool_key(&out, "preventSleepInPresentation", s->prevent_sleep_in_presentation);
+    emit_bool_key(&out, "setupPromptAnswered", s->setup_prompt_answered);
     emit_key(&out, "printScalingMode");
     emit_int(&out, s->print_scaling_mode);
     emit_key(&out, "printCustomScale");

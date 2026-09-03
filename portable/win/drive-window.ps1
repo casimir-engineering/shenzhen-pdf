@@ -149,6 +149,12 @@ foreach ($a in @($AppArgs) + @($Pdf)) {
   if ($null -eq $a -or $a -eq '') { continue }
   if ($a -match '\s' -and $a -notmatch '^".*"$') { $argList += ('"' + $a + '"') } else { $argList += $a }
 }
+# NO FIRST-RUN DIALOG, whatever -AppArgs a caller passed. The "Install, or just
+# run it?" question (spdf_win_setup.h) is MODAL and appears before the window,
+# so without this the window poll below would wait 20 s for a window that is
+# behind a dialog nobody is there to answer. Callers that pass --state-dir are
+# already covered; this covers the ones that do not. Inherited by Start-Process.
+$env:SPDF_WIN_SETUP_NO_PROMPT = '1'
 $proc = Start-Process -FilePath $Exe -ArgumentList $argList -PassThru
 $hwnd = [IntPtr]::Zero
 $sw = [Diagnostics.Stopwatch]::StartNew()

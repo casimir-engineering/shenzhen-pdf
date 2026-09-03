@@ -59,6 +59,13 @@
 extern "C" {
 #endif
 
+/* THE FIRST-RUN QUESTION: whether the first launch asks "Run this copy" /
+ * "Install" / "Install and run", and what each answer means. Pure, and its own
+ * file because getting that gate wrong hangs a test run on a modal dialog —
+ * read its header before touching the conditions. Included here, after
+ * SPDF_WIN_SETUP_INLINE, because it uses it. */
+#include "spdf_win_setup_first_run.h"
+
 /* Widen a narrow #define from spdf_win_about_version.h, which is preprocessor
  * only (rc.exe reads it too) and therefore cannot spell its own L"" forms. */
 #define SPDF_WIN_SETUP_WIDE_(x) L##x
@@ -94,6 +101,29 @@ extern "C" {
  * the user's installed-programs list. */
 #define SPDF_WIN_SETUP_ROOT_ENV L"SPDF_WIN_SETUP_ROOT"
 #define SPDF_WIN_SETUP_TEST_KEY L"Software\\ShenzhenPDF-setup-test"
+
+/* TOOL-ONLY, and the second half of the same defence. The first-run dialog is
+ * MODAL and is shown before the window exists, so a tool that launches the app
+ * and then waits for a window does not fail on it — it hangs. --state-dir
+ * covers most of the harness (screenshot-window.ps1, and verify-phase1.ps1
+ * through it), but portable/win/measure-launch.ps1 launches against the REAL
+ * %APPDATA% on purpose, because measuring session restore is the point, and
+ * portable/win/drive-window.ps1 takes whatever arguments its caller passes.
+ *
+ * So two environment facts also suppress the question, and both are honest
+ * statements about the launch rather than conveniences:
+ *
+ *   SPDF_WIN_SETUP_NO_PROMPT   a tool is driving this launch, not a person.
+ *   SPDF_WIN_LAUNCH_PROFILE    this launch is being TIMED
+ *                              (spdf_win_launch_profile.h). A measurement that
+ *                              includes a dialog waiting for a human measures
+ *                              the human.
+ *
+ * They are folded into the `explicit_flag` argument of the pure gate below, so
+ * the gate remains the whole rule and this is only how one of its inputs is
+ * resolved. */
+#define SPDF_WIN_SETUP_NO_PROMPT_ENV L"SPDF_WIN_SETUP_NO_PROMPT"
+#define SPDF_WIN_SETUP_PROFILE_ENV L"SPDF_WIN_LAUNCH_PROFILE"
 
 /* --- argv ------------------------------------------------------------------
  *
@@ -368,8 +398,23 @@ static SPDF_WIN_SETUP_INLINE int spdf_win_setup_uninstall_entry(const wchar_t* i
 /* --install. Returns the process exit code: 0 when the app is installed (or
  * already was and was repaired), 1 when something refused. `file` is the
  * document handed to the relaunched copy, or NULL. `quiet` reports on stdout
- * instead of in a message box. */
-int spdf_win_setup_install(int quiet, const wchar_t* file);
+ * instead of in a message box. `relaunch` starts the installed copy afterwards,
+ * which is what the --install flag and the dialog's "Install and run" want and
+ * what its plain "Install" does not. */
+int spdf_win_setup_install(int quiet, const wchar_t* file, int relaunch);
+
+/* THE FIRST-RUN STEP, whole: decide (through spdf_win_setup_first_run_action
+ * above, with every condition resolved from this machine), show the dialog if
+ * it is warranted, carry out the answer, and remember it. Returns an
+ * spdf_win_setup_action; when spdf_win_setup_action_exits() is true of it,
+ * *exit_code holds the process exit code and main() must stop.
+ *
+ * COSTS ALMOST NOTHING WHEN THE ANSWER IS IN. `headless` and `explicit_flag`
+ * short-circuit before any I/O at all; otherwise it is two GetFileAttributesW
+ * calls, a settings read that the windowed launch performs anyway, and a
+ * registry open only in the case where the app is NOT installed. No COM is
+ * initialised unless a dialog is actually shown. */
+int spdf_win_setup_first_run(int explicit_flag, int headless, const wchar_t* file, int* exit_code);
 
 /* --uninstall. 0 when the shortcut, the key, the association and the install
  * directory are gone (or scheduled to go at the next reboot, which is reported

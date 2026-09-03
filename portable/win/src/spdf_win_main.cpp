@@ -125,11 +125,19 @@ int main(void) {
     spdf_win_setup_args setup;
     spdf_win_setup_parse(argc, argv, &setup);
     if (setup.install || setup.uninstall) {
-        int setup_rc = setup.install ? spdf_win_setup_install(setup.quiet, setup.file)
+        int setup_rc = setup.install ? spdf_win_setup_install(setup.quiet, setup.file, 1)
                                      : spdf_win_setup_uninstall(setup.quiet, setup.purge);
         LocalFree(argv);
         return setup_rc;
     }
+    /* Any flag that already states what the reader wants of the install: the
+     * first-run question must not second-guess it. --state-dir is in the list
+     * for a reason that is not cosmetic -- verify-phase1.ps1,
+     * measure-launch.ps1 and drive-window.ps1 all launch a real window with a
+     * fresh temp state directory, which would otherwise read as "never asked"
+     * and hang each of them on a modal dialog. */
+    const int setup_explicit = setup.install || setup.uninstall || setup.quiet || setup.purge || setup.portable ||
+                               setup.state_dir;
     /* Portable mode, before anything reads state: the marker file next to the
      * exe (or --portable) moves settings.yaml and session.yaml to
      * <exe dir>\ShenzhenPDF-data. A no-op when --state-dir was given, whose own
@@ -291,6 +299,24 @@ int main(void) {
      * started from a command line that named a file. */
     if ((exact && remaining != 4) || (viewport && remaining != 5) || (!exact && !viewport && remaining > 1))
         return usage();
+
+    /* THE FIRST-RUN QUESTION -- "Run this copy", "Install", or "Install and run
+     * the installed app" (spdf_win_setup.h). AFTER the usage check above, so a
+     * bad command line still exits 64 without a dialog in front of it, and
+     * BEFORE the Direct2D device and the GPU prewarm below, so a launch that is
+     * about to install nothing does not load a driver first. It declines to ask
+     * on its own for the headless paths and for every explicit flag; when it
+     * does ask and the answer was Install, the install has already happened and
+     * this process is finished. */
+    {
+        int first_rc = 0;
+        int first_action = spdf_win_setup_first_run(setup_explicit, exact || viewport,
+                                                   remaining ? argv[i] : NULL, &first_rc);
+        if (spdf_win_setup_action_exits(first_action)) {
+            LocalFree(argv);
+            return first_rc;
+        }
+    }
 
     char err[256] = {0};
     spdf_win_d2d* d2d = spdf_win_d2d_create(err, sizeof(err));

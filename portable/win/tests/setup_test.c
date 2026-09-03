@@ -12,6 +12,12 @@
  *
  * Exit code is the whole signal.
  */
+/* <windows.h> for IDOK / IDCANCEL / IDCONTINUE alone: the first-run dialog's
+ * command-link ids have to be provably clear of every common button id, and
+ * comparing against the real constants is the only way that check means
+ * anything. Nothing here calls a Win32 function or links a library. */
+#include <windows.h>
+
 #include "spdf_win_setup.h"
 
 #include <stdio.h>
@@ -217,6 +223,86 @@ static void test_parse(void) {
     CHECK(!spdf_win_setup_flag_takes_value(NULL));
 }
 
+/* --- the first-run question ------------------------------------------------
+ *
+ * THE ONE TABLE IN THIS FILE THAT CAN HANG A TEST RUN IF IT IS WRONG. The
+ * dialog is modal and is shown before the window exists, so a gate that says
+ * "ask" on a launch the harness drives does not fail -- it waits forever.
+ * verify-phase1.ps1, measure-launch.ps1 and drive-window.ps1 each start a real
+ * windowed app with a fresh temp --state-dir, and a fresh state directory looks
+ * exactly like "never asked", so the --state-dir arm (explicit_flag) is load
+ * bearing rather than tidy. Hence: all 64 combinations, exhaustively. */
+
+static void test_first_run_gate(void) {
+    int installed, from_dir, marker, answered, explicit_flag, headless;
+    for (installed = 0; installed < 2; ++installed)
+        for (from_dir = 0; from_dir < 2; ++from_dir)
+            for (marker = 0; marker < 2; ++marker)
+                for (answered = 0; answered < 2; ++answered)
+                    for (explicit_flag = 0; explicit_flag < 2; ++explicit_flag)
+                        for (headless = 0; headless < 2; ++headless) {
+                            /* Ask ONLY when every reason not to is absent. */
+                            int want = (!installed && !from_dir && !marker && !answered && !explicit_flag &&
+                                        !headless)
+                                           ? SPDF_WIN_SETUP_FIRST_RUN_ASK
+                                           : SPDF_WIN_SETUP_FIRST_RUN_NONE;
+                            int got = spdf_win_setup_first_run_action(installed, from_dir, marker, answered,
+                                                                     explicit_flag, headless);
+                            ++g_checks;
+                            if (got != want) {
+                                fprintf(stderr,
+                                        "FAIL first_run_action(installed=%d from_dir=%d marker=%d "
+                                        "answered=%d explicit=%d headless=%d) = %d, want %d (%s:%d)\n",
+                                        installed, from_dir, marker, answered, explicit_flag, headless, got,
+                                        want, __FILE__, __LINE__);
+                                ++g_failures;
+                            }
+                        }
+
+    /* The one row that asks, spelled out so a reader can see it: a fresh
+     * download, double-clicked, with nothing installed and nothing remembered. */
+    CHECK(spdf_win_setup_first_run_action(0, 0, 0, 0, 0, 0) == SPDF_WIN_SETUP_FIRST_RUN_ASK);
+    /* --render-window-png, and any usage or probe path: no desktop, nobody to
+     * answer. */
+    CHECK(spdf_win_setup_first_run_action(0, 0, 0, 0, 0, 1) == SPDF_WIN_SETUP_FIRST_RUN_NONE);
+    /* --state-dir, --portable, --quiet, --purge: already told what to do. */
+    CHECK(spdf_win_setup_first_run_action(0, 0, 0, 0, 1, 0) == SPDF_WIN_SETUP_FIRST_RUN_NONE);
+    /* ShenzhenPDF.portable beside the exe: deliberately portable, forever. */
+    CHECK(spdf_win_setup_first_run_action(0, 0, 1, 0, 0, 0) == SPDF_WIN_SETUP_FIRST_RUN_NONE);
+    /* Launched from the install directory: the question answers itself. */
+    CHECK(spdf_win_setup_first_run_action(0, 1, 0, 0, 0, 0) == SPDF_WIN_SETUP_FIRST_RUN_NONE);
+    /* A second copy of an already-installed app (a build tree, or the download
+     * still in Downloads). */
+    CHECK(spdf_win_setup_first_run_action(1, 0, 0, 0, 0, 0) == SPDF_WIN_SETUP_FIRST_RUN_NONE);
+    /* Answered once, never asked again. */
+    CHECK(spdf_win_setup_first_run_action(0, 0, 0, 1, 0, 0) == SPDF_WIN_SETUP_FIRST_RUN_NONE);
+}
+
+static void test_first_run_buttons(void) {
+    CHECK(spdf_win_setup_action_for_button(SPDF_WIN_SETUP_BUTTON_RUN) == SPDF_WIN_SETUP_ACTION_RUN_PORTABLE);
+    CHECK(spdf_win_setup_action_for_button(SPDF_WIN_SETUP_BUTTON_INSTALL) == SPDF_WIN_SETUP_ACTION_INSTALL);
+    CHECK(spdf_win_setup_action_for_button(SPDF_WIN_SETUP_BUTTON_INSTALL_RUN) ==
+          SPDF_WIN_SETUP_ACTION_INSTALL_AND_RUN);
+    /* Esc, the close box, a dialog that could not be shown, and anything else:
+     * run this copy and REMEMBER NOTHING. "I did not answer" is not an answer,
+     * so the question comes back next launch -- which is the difference between
+     * the RUN_ONCE and RUN_PORTABLE actions and the only reason there are two. */
+    CHECK(spdf_win_setup_action_for_button(IDCANCEL) == SPDF_WIN_SETUP_ACTION_RUN_ONCE);
+    CHECK(spdf_win_setup_action_for_button(IDOK) == SPDF_WIN_SETUP_ACTION_RUN_ONCE);
+    CHECK(spdf_win_setup_action_for_button(0) == SPDF_WIN_SETUP_ACTION_RUN_ONCE);
+    CHECK(spdf_win_setup_action_for_button(-1) == SPDF_WIN_SETUP_ACTION_RUN_ONCE);
+    /* No command-link id can collide with a common button id. */
+    CHECK(SPDF_WIN_SETUP_BUTTON_RUN > IDCONTINUE);
+    CHECK(SPDF_WIN_SETUP_BUTTON_INSTALL != SPDF_WIN_SETUP_BUTTON_RUN);
+    CHECK(SPDF_WIN_SETUP_BUTTON_INSTALL_RUN != SPDF_WIN_SETUP_BUTTON_INSTALL);
+
+    /* Which answers end the process rather than opening a window. */
+    CHECK(!spdf_win_setup_action_exits(SPDF_WIN_SETUP_ACTION_RUN_PORTABLE));
+    CHECK(!spdf_win_setup_action_exits(SPDF_WIN_SETUP_ACTION_RUN_ONCE));
+    CHECK(spdf_win_setup_action_exits(SPDF_WIN_SETUP_ACTION_INSTALL));
+    CHECK(spdf_win_setup_action_exits(SPDF_WIN_SETUP_ACTION_INSTALL_AND_RUN));
+}
+
 /* --- the Apps-list entry ---------------------------------------------------- */
 
 static const spdf_win_setup_value* find(const spdf_win_setup_entry* e, const wchar_t* name) {
@@ -306,6 +392,8 @@ int main(void) {
     test_same_path();
     test_portable();
     test_parse();
+    test_first_run_gate();
+    test_first_run_buttons();
     test_uninstall_entry();
     test_wide_macro();
     printf("setup_test: %d checks, %d failures\n", g_checks, g_failures);
