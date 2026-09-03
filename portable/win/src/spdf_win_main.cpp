@@ -31,6 +31,7 @@
 #include "spdf_win_open_app.h" /* the process opener every by-path open goes through, and its seam */
 #include "spdf_win_paths.h"    /* spdf_win_paths_set_state_dir_override, for --state-dir */
 #include "spdf_win_settings.h" /* settings.yaml: theme, panels, print, window size */
+#include "spdf_win_setup.h"    /* --install / --uninstall / --portable: the exe is its own installer */
 #include "spdf_win_tabs_app.h" /* the tab model, the session, and the glue to this canvas */
 #include "spdf_win_usage.h"
 #include "spdf_win_window.h"
@@ -116,6 +117,35 @@ int main(void) {
      * --render-png and --render-window-png open too. */
     spdf_win_open_set_hook(spdf_win_open_app_document);
 
+    /* THE EXE IS ITS OWN INSTALLER (spdf_win_setup.h), so --install and
+     * --uninstall are answered HERE -- before the option loop, before Direct2D,
+     * before any settings file is read and long before a window exists. An
+     * installer that had already restored the last session would be an
+     * installer with a document open. */
+    spdf_win_setup_args setup;
+    spdf_win_setup_parse(argc, argv, &setup);
+    if (setup.install || setup.uninstall) {
+        int setup_rc = setup.install ? spdf_win_setup_install(setup.quiet, setup.file, 1)
+                                     : spdf_win_setup_uninstall(setup.quiet, setup.purge);
+        LocalFree(argv);
+        return setup_rc;
+    }
+    /* Any flag that already states what the reader wants of the install: the
+     * first-run question must not second-guess it. --state-dir is in the list
+     * for a reason that is not cosmetic -- screenshot-window.ps1, and so
+     * verify-phase1.ps1 through it, launches a real window with a fresh temp
+     * state directory, which would otherwise read as "never asked" and hang it
+     * on a modal dialog. (measure-launch.ps1 and drive-window.ps1 cannot use
+     * --state-dir and set SPDF_WIN_SETUP_NO_PROMPT instead; spdf_win_setup.h
+     * says why, and spdf_win_setup_first_run() folds it in here.) */
+    const int setup_explicit = setup.install || setup.uninstall || setup.quiet || setup.purge || setup.portable ||
+                               setup.state_dir;
+    /* Portable mode, before anything reads state: the marker file next to the
+     * exe (or --portable) moves settings.yaml and session.yaml to
+     * <exe dir>\ShenzhenPDF-data. A no-op when --state-dir was given, whose own
+     * override the loop below installs and which therefore keeps precedence. */
+    spdf_win_setup_apply_portable(setup.portable, setup.state_dir);
+
     app a;
     viewport_opts opts;
     int window_page = 0;
@@ -184,6 +214,9 @@ int main(void) {
             restore = SPDF_WIN_TABS_APP_RESTORE_NONE;
             continue;
         }
+        /* Already acted on above, before any state was read; accepted here so
+         * `--portable file.pdf` is not a usage error. */
+        if (wcscmp(flag, L"--portable") == 0) continue;
         /* The chrome collapsed, as F5 leaves it, so the headless compose can
          * show the presentation frame with no desktop. */
         if (wcscmp(flag, L"--presentation") == 0) {
@@ -268,6 +301,24 @@ int main(void) {
      * started from a command line that named a file. */
     if ((exact && remaining != 4) || (viewport && remaining != 5) || (!exact && !viewport && remaining > 1))
         return usage();
+
+    /* THE FIRST-RUN QUESTION -- "Run this copy", "Install", or "Install and run
+     * the installed app" (spdf_win_setup.h). AFTER the usage check above, so a
+     * bad command line still exits 64 without a dialog in front of it, and
+     * BEFORE the Direct2D device and the GPU prewarm below, so a launch that is
+     * about to install nothing does not load a driver first. It declines to ask
+     * on its own for the headless paths and for every explicit flag; when it
+     * does ask and the answer was Install, the install has already happened and
+     * this process is finished. */
+    {
+        int first_rc = 0;
+        int first_action = spdf_win_setup_first_run(setup_explicit, exact || viewport,
+                                                   remaining ? argv[i] : NULL, &first_rc);
+        if (spdf_win_setup_action_exits(first_action)) {
+            LocalFree(argv);
+            return first_rc;
+        }
+    }
 
     char err[256] = {0};
     spdf_win_d2d* d2d = spdf_win_d2d_create(err, sizeof(err));
