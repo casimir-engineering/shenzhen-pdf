@@ -362,9 +362,26 @@ green check for exactly that reason (observations §4.7). These scripts exist so
 | `verify-phase1.ps1` | turns the five window criteria into one exit code: compares the live client area against the headless compose at the same size **and the same DPI**. 7/7 light and dark. |
 | `screenshot-window.ps1` | `PrintWindow` with `PW_RENDERFULLCONTENT` (mandatory for a D2D client area), enumerates windows by pid rather than trusting `MainWindowHandle`, reports the client offset so a capture can be cropped to what `spdf_win_paint` drew, and always closes the app it started. |
 | `drive-window.ps1` | drives the live window with synthetic `PostMessage` mouse input and captures after each step. `PostMessage`, not `SendInput`, deliberately: a person may be sitting at this machine and `SendInput` would move their real cursor. |
+| `drive-uia.ps1` | drives the app's **modal** windows — task dialogs, message boxes, the annotation and Properties dialogs — and captures them. UI Automation to find and read a dialog, `GetDlgItem` + `WM_SETTEXT`/`WM_COMMAND` to press it, `type:` (one `WM_CHAR` per character) for the app's self-drawn fields. It does **not** move the reader's cursor, and unlike `drive-window.ps1` it does **not** set `SPDF_WIN_SETUP_NO_PROMPT` — a modal dialog is the point. |
 | `measure-launch.ps1` | polled, DPI-aware launch timing over N runs with medians, cold copies and session-restore fixtures. |
 
-Two traps that cost real time and are worth knowing before writing a fifth
+Why `drive-uia.ps1` exists beside `drive-window.ps1` rather than inside it:
+`drive-window.ps1` clicks CLIENT COORDINATES, which is exactly right for chrome
+the app paints itself and exactly wrong for a dialog, whose controls are child
+windows this repo does not lay out — clicking them by coordinate means
+hard-coding offsets into a layout Windows may change with a font, a language or
+a DPI. A modal dialog also runs its own message loop, so the app's window stops
+answering the "is it alive" probes at the same moment.
+
+**A UIA client on this box cannot press a dialog button, and that is the client's
+fault, not the app's.** Every child of every dialog — including the OK button of
+a stock `MessageBoxW`, a plain `L"BUTTON"` in a plain `#32770` — surfaces to
+`System.Windows.Automation` as `ControlType.Pane` with no `InvokePattern` and no
+`ValuePattern`. Hence the `childtext:`/`childclick:` steps, which address a
+control by the id the source names. **Never report a dialog as inaccessible on
+that evidence** (`portable/docs/windows-native-observations.md` §10.3).
+
+Three traps that cost real time and are worth knowing before writing a sixth
 script:
 
 **The capture host must be DPI-aware.** `powershell.exe` is not per-monitor DPI
@@ -388,6 +405,23 @@ run, and a pixel backstop covers the cases `LogonUI` does not name (disconnected
 RDP, a sleeping display, a GPU reset). Neither check can turn a bad frame into a
 pass; they only ever turn a FAIL into a BLOCKED. Full account in observations
 §4.6.
+
+**A harness may only close a pid it can prove it started.** Not "a process
+called ShenzhenPDF.exe", and not "one that started after we did": the first
+version of `drive-uia.ps1`'s cleanup used both of those and closed a
+`C:\spdf-build\track-settings\ShenzhenPDF.exe` belonging to another agent's
+build tree. The reader is at this machine and other tracks build on it, so the
+test is a **pid absent from a snapshot taken before the launch** *and* an image
+path this run launched. `verify-phase1.ps1` already learned the mis-reporting
+half of this lesson (observations §4.7); §10.5 is the version where a harness
+acted on it.
+
+One more, milder: `SetProcessDpiAwarenessContext` succeeds once per process, so
+a script that takes several captures from a single PowerShell session prints
+`host_dpi_aware=True` for the first and `False` for the rest while remaining
+fully aware. Do not read that `False` as the virtualisation trap above.
+`verify-phase1.ps1` never sees it because it spawns a fresh `powershell -File`
+per capture.
 
 `verify-phase1.ps1` is also sensitive to the saved session: the window restores
 the page each tab was on and the headless reference renders page 0, so a session
