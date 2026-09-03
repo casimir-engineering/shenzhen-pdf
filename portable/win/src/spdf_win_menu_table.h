@@ -86,7 +86,6 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     {SPDF_WIN_CMD_TOGGLE_MINIMAP, SPDF_WIN_MENU_VIEW, L"Show &Minimap", NULL, 0, 0, 1},
     {SPDF_WIN_CMD_TOGGLE_THEME, SPDF_WIN_MENU_VIEW, L"&Dark Reading Theme", L"Ctrl+Shift+I", 'I',
      SPDF_WIN_ACCEL_CTRL | SPDF_WIN_ACCEL_SHIFT, 1},
-    {SPDF_WIN_CMD_TOGGLE_KEEP_IMAGE_COLORS, SPDF_WIN_MENU_VIEW, L"&Keep Image Colors in Dark Theme", NULL, 0, 0, 1},
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_VIEW, NULL, NULL, 0, 0, 0},
     {SPDF_WIN_CMD_PRESENTATION, SPDF_WIN_MENU_VIEW, L"&Presentation", L"F5", SPDF_WIN_KEY_F5, 0, 0},
     {SPDF_WIN_CMD_FULLSCREEN, SPDF_WIN_MENU_VIEW, L"F&ull Screen", L"F11", SPDF_WIN_KEY_F11, 0, 0},
@@ -145,6 +144,38 @@ static const SpdfWinMenuItem k_spdf_win_menu[] = {
     {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_EDIT, NULL, NULL, 0, 0, 0},
     /* The mac's last Edit item (:2096), same title, same place. */
     {SPDF_WIN_CMD_SET_COMMENT_AUTHOR, SPDF_WIN_MENU_EDIT, L"Set A&uthor for Comments...", NULL, 0, 0, 0},
+
+    /* --- Settings ------------------------------------------------------
+     *
+     * macOS's own Settings menu (ShenzhenPDFMac.mm:2112-2149): four toggles,
+     * then the state files, then Reveal Settings Folder, in that order and with
+     * those titles. Every row writes settings.yaml through
+     * spdf_win_settings_shared() + _commit() and nothing else, which is why
+     * they are all live with no document open.
+     *
+     * KEEP IMAGE COLORS MOVED HERE FROM THE VIEW MENU, where it was the only
+     * settings row this port had. It sat next to Dark Reading Theme, which
+     * reads well, but macOS has it here and a Settings menu missing one of
+     * macOS's four toggles is a menu a reader has to be told about. Dark
+     * Reading Theme stays on View: it is the state of THIS window, not a
+     * preference for the next document.
+     *
+     * ONE OF THE FIVE STATE FILES, not five rows. The mac lists settings.yaml,
+     * session.yaml, documents.yaml, favorites.yaml and bookmarks.yaml; the last
+     * has no Windows counterpart at all (spdf_win_state.h says why) and the
+     * middle three are records the app writes, not preferences a reader edits.
+     * settings.yaml is the one the mac gives a key to, and it keeps it:
+     * Cmd+, -> Ctrl+, which is also where Windows readers look for settings. */
+    {SPDF_WIN_CMD_TOGGLE_DEFAULT_SIDEBAR, SPDF_WIN_MENU_SETTINGS, L"Open New Documents with &Side Panel", NULL, 0, 0,
+     1},
+    {SPDF_WIN_CMD_TOGGLE_DEFAULT_MINIMAP, SPDF_WIN_MENU_SETTINGS, L"Open New Documents with &Map", NULL, 0, 0, 1},
+    {SPDF_WIN_CMD_TOGGLE_KEEP_IMAGE_COLORS, SPDF_WIN_MENU_SETTINGS, L"&Keep Image Colors in Dark Theme", NULL, 0, 0, 1},
+    {SPDF_WIN_CMD_TOGGLE_SEARCH_NEAREST, SPDF_WIN_MENU_SETTINGS, L"Search Jumps to &Nearest Result", NULL, 0, 0, 1},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_SETTINGS, NULL, NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_OPEN_SETTINGS_FILE, SPDF_WIN_MENU_SETTINGS, L"&Open settings.yaml...", L"Ctrl+,",
+     SPDF_WIN_KEY_OEM_COMMA, SPDF_WIN_ACCEL_CTRL, 0},
+    {SPDF_WIN_CMD_NONE, SPDF_WIN_MENU_SETTINGS, NULL, NULL, 0, 0, 0},
+    {SPDF_WIN_CMD_REVEAL_SETTINGS_FOLDER, SPDF_WIN_MENU_SETTINGS, L"&Reveal Settings Folder", NULL, 0, 0, 0},
 
     /* --- accelerator-only rows ----------------------------------------
      *
