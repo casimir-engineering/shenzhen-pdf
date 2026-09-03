@@ -1,22 +1,36 @@
-/* link_nav_test.c — the PURE model behind where an internal link jump lands
- * (spdf_win_links.h section 3).
+/* link_nav_test.c — the two PURE models behind following a link: where an
+ * internal jump lands (spdf_win_links.h section 3) and the counter that lets a
+ * second click cancel a link about to leave the document (section 4).
  *
- * NO DOCUMENT AND NO MUPDF, on purpose. The model is arithmetic over numbers a
- * caller already has, so this runs on any host and stays exhaustive; the
+ * NO DOCUMENT AND NO MUPDF, on purpose. Both models are arithmetic over numbers
+ * a caller already has, so this runs on any host and stays exhaustive; the
  * real-document half is portable/win/tests/link_destination_test.c, which drives
  * the same two functions through a real canvas at a real zoom.
  *
- * IT IS A TRANSCRIPTION, so the expectations below are the MAC TEST'S OWN cases
- * rather than newly invented ones. spdf_win_link_destination_scroll_y ports
- * spdf_mac_link_destination_scroll_origin_y, pinned on that side by
- * SPDFMacSelectionClickTests.mm's
- * test_link_destination_scroll_is_target_page_top -- page-only destination,
- * offset honoured, offset scaled by zoom, never reaching page N-1, a negative
- * offset, and the first page clamping at the document top. Every one of those
- * six is repeated here with this port's own lead-in constant.
+ * BOTH ARE TRANSCRIPTIONS, so the expectations below are the MAC TESTS' OWN
+ * cases rather than newly invented ones:
+ *
+ *   spdf_win_link_destination_scroll_y   <- spdf_mac_link_destination_scroll_origin_y
+ *     pinned on that side by SPDFMacSelectionClickTests.mm's
+ *     test_link_destination_scroll_is_target_page_top -- page-only destination,
+ *     offset honoured, offset scaled by zoom, never reaching page N-1, a
+ *     negative offset, and the first page clamping at the document top. Every
+ *     one of those six is repeated here with this port's lead-in constant.
+ *
+ *   spdf_win_link_activation_*           <- SPDFMacDelayedLinkActivation.mm
+ *     that class is 35 lines of Objective-C and cannot be compiled here, so
+ *     portable/docs/windows-port-plan.md §2.3's fallback applies: transcribe and
+ *     unit-test. The scenarios are the mac view test's --
+ *     test_single_link_is_delayed (a scheduled activation fires),
+ *     test_double_click_cancels_link_and_selects_word (a cancelled one does
+ *     not), and "only the second run's jump is undone" (a superseded one does
+ *     not) -- plus the cases a C API has and an Objective-C block does not: a
+ *     token of 0, a second fire, a URI that will not fit, and the counter
+ *     wrapping.
  */
 #include "spdf_win_links.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -150,9 +164,167 @@ static void test_destination_page_y(void) {
               SLOT_TARGET - SPDF_WIN_PAGE_MARGIN_V);
 }
 
+/* --- section 4: the wait a second click cancels --------------------------- */
+
+static const char* URI_A = "https://example.invalid/a";
+static const char* URI_B = "mailto:someone@example.invalid";
+
+/* mac test_single_link_is_delayed: the activation is not performed on release,
+ * and IS performed when the wait expires. */
+static void test_scheduled_activation_fires(void) {
+    spdf_win_link_activation a;
+    const char* uri = NULL;
+    unsigned token;
+
+    spdf_win_link_activation_init(&a);
+    CHECK_EQI(spdf_win_link_activation_pending(&a), 0);
+    token = spdf_win_link_activation_schedule(&a, URI_A);
+    CHECK(token != 0u);
+    CHECK_EQI(spdf_win_link_activation_pending(&a), 1);
+    CHECK_EQI(spdf_win_link_activation_fire(&a, token, &uri), 1);
+    CHECK(uri != NULL && strcmp(uri, URI_A) == 0);
+    CHECK_EQI(spdf_win_link_activation_pending(&a), 0);
+
+    /* ONE SCHEDULE, ONE ACTIVATION. mac bumps the counter before running the
+     * handler for exactly this; here it stops a duplicate WM_TIMER. */
+    uri = (const char*)1;
+    CHECK_EQI(spdf_win_link_activation_fire(&a, token, &uri), 0);
+    CHECK(uri == NULL);
+}
+
+/* mac test_double_click_cancels_link_and_selects_word: the second press moves
+ * the counter, so the queued activation drops itself. */
+static void test_cancel_beats_a_pending_activation(void) {
+    spdf_win_link_activation a;
+    const char* uri = (const char*)1;
+    unsigned token;
+
+    spdf_win_link_activation_init(&a);
+    token = spdf_win_link_activation_schedule(&a, URI_A);
+    CHECK(token != 0u);
+    spdf_win_link_activation_cancel(&a);
+    CHECK_EQI(spdf_win_link_activation_pending(&a), 0);
+    CHECK_EQI(spdf_win_link_activation_fire(&a, token, &uri), 0);
+    CHECK(uri == NULL);
+
+    /* Cancelling nothing, and cancelling twice, are both no-ops -- the shell
+     * cancels on EVERY press, which is almost always a press with nothing
+     * pending. */
+    spdf_win_link_activation_cancel(&a);
+    spdf_win_link_activation_cancel(&a);
+    CHECK_EQI(spdf_win_link_activation_pending(&a), 0);
+    spdf_win_link_activation_cancel(NULL);
+    CHECK_EQI(spdf_win_link_activation_pending(NULL), 0);
+    CHECK_EQI(spdf_win_link_activation_schedule(NULL, URI_A), 0u);
+    CHECK_EQI(spdf_win_link_activation_fire(NULL, 1u, &uri), 0);
+    spdf_win_link_activation_init(NULL);
+}
+
+/* mac "only the second run's jump is undone": a second schedule supersedes the
+ * first, and only the newest token is live. */
+static void test_schedule_supersedes(void) {
+    spdf_win_link_activation a;
+    const char* uri = NULL;
+    unsigned first, second;
+
+    spdf_win_link_activation_init(&a);
+    first = spdf_win_link_activation_schedule(&a, URI_A);
+    second = spdf_win_link_activation_schedule(&a, URI_B);
+    CHECK(first != 0u && second != 0u && first != second);
+    CHECK_EQI(spdf_win_link_activation_fire(&a, first, &uri), 0);
+    CHECK(uri == NULL);
+    CHECK_EQI(spdf_win_link_activation_pending(&a), 1);
+    CHECK_EQI(spdf_win_link_activation_fire(&a, second, &uri), 1);
+    CHECK(uri != NULL && strcmp(uri, URI_B) == 0);
+}
+
+static void test_refused_and_boundary_uris(void) {
+    static char too_long[SPDF_WIN_LINK_ACTIVATION_URI_MAX + 8];
+    static char exactly_fits[SPDF_WIN_LINK_ACTIVATION_URI_MAX];
+    spdf_win_link_activation a;
+    const char* uri = NULL;
+    unsigned token, live;
+
+    memset(too_long, 'x', sizeof(too_long) - 1);
+    too_long[sizeof(too_long) - 1] = '\0';
+    memset(exactly_fits, 'y', sizeof(exactly_fits) - 1);
+    exactly_fits[sizeof(exactly_fits) - 1] = '\0';
+
+    /* THE LONGEST URI THAT FITS ROUND-TRIPS WHOLE. */
+    spdf_win_link_activation_init(&a);
+    token = spdf_win_link_activation_schedule(&a, exactly_fits);
+    CHECK(token != 0u);
+    CHECK_EQI(spdf_win_link_activation_fire(&a, token, &uri), 1);
+    CHECK(uri != NULL && strcmp(uri, exactly_fits) == 0);
+    CHECK_EQI(strlen(uri), SPDF_WIN_LINK_ACTIVATION_URI_MAX - 1);
+
+    /* ONE BYTE LONGER IS REFUSED, NOT TRUNCATED: opening a prefix of a link is
+     * opening a different link. */
+    spdf_win_link_activation_init(&a);
+    CHECK_EQI(spdf_win_link_activation_schedule(&a, too_long), 0u);
+    CHECK_EQI(spdf_win_link_activation_pending(&a), 0);
+    CHECK_EQI(spdf_win_link_activation_schedule(&a, NULL), 0u);
+    CHECK_EQI(spdf_win_link_activation_schedule(&a, ""), 0u);
+
+    /* AND A REFUSED SCHEDULE STILL SUPERSEDES THE PENDING ONE: the reader
+     * clicked something else, so the old link must not fire. */
+    spdf_win_link_activation_init(&a);
+    live = spdf_win_link_activation_schedule(&a, URI_A);
+    CHECK(live != 0u);
+    CHECK_EQI(spdf_win_link_activation_schedule(&a, too_long), 0u);
+    CHECK_EQI(spdf_win_link_activation_pending(&a), 0);
+    uri = (const char*)1;
+    CHECK_EQI(spdf_win_link_activation_fire(&a, live, &uri), 0);
+    CHECK(uri == NULL);
+}
+
+static void test_token_zero_and_wrap(void) {
+    spdf_win_link_activation a;
+    const char* uri = (const char*)1;
+    unsigned token;
+
+    /* A ZERO TOKEN IS NEVER LIVE, which is what lets the shell keep 0 as "no
+     * pending activation" in a plain unsigned. It is not live even on a
+     * freshly zeroed struct, whose generation IS 0. */
+    spdf_win_link_activation_init(&a);
+    CHECK_EQI(spdf_win_link_activation_fire(&a, 0u, &uri), 0);
+    CHECK(uri == NULL);
+
+    /* THE COUNTER SKIPS 0 ON THE WAY ROUND, so a process that has followed
+     * 2^32 links does not suddenly hand out a dead token. */
+    spdf_win_link_activation_init(&a);
+    a.generation = UINT_MAX;
+    token = spdf_win_link_activation_schedule(&a, URI_A);
+    CHECK(token != 0u);
+    CHECK_EQI(spdf_win_link_activation_fire(&a, token, &uri), 1);
+    CHECK(uri != NULL && strcmp(uri, URI_A) == 0);
+
+    spdf_win_link_activation_init(&a);
+    a.generation = UINT_MAX;
+    spdf_win_link_activation_cancel(&a);
+    CHECK(a.generation != 0u);
+}
+
+static void test_delay(void) {
+    /* mac's default is NSEvent.doubleClickInterval and its initialiser clamps
+     * with MAX(0.0, delay); the caller here passes GetDoubleClickTime(), whose
+     * Windows default is 500 ms. */
+    CHECK_EQI(spdf_win_link_activation_delay_ms(500), 500u);
+    CHECK_EQI(spdf_win_link_activation_delay_ms(1), 1u);
+    CHECK_EQI(spdf_win_link_activation_delay_ms(0), 0u);
+    CHECK_EQI(spdf_win_link_activation_delay_ms(-1), 0u);
+    CHECK_EQI(spdf_win_link_activation_delay_ms(-500), 0u);
+}
+
 int main(void) {
     test_destination_scroll_y();
     test_destination_page_y();
+    test_scheduled_activation_fires();
+    test_cancel_beats_a_pending_activation();
+    test_schedule_supersedes();
+    test_refused_and_boundary_uris();
+    test_token_zero_and_wrap();
+    test_delay();
 
     printf("link_nav_test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
