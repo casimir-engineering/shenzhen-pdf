@@ -415,10 +415,16 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGraph(SPDFMarkdownDiagramGra
         natural = candidate;
     }
     // The frames on the graph belong to the LAST attempt, which is only the
-    // winner when the search stopped on it.
-    if (appliedWrap != bestWrap &&
-        !SPDFDiagramLayOutAtWrap(graph, fonts, scale, bestWrap, deadline, &natural, NULL))
-        return nil;
+    // winner when the search stopped on it. Reconciling them with `natural`
+    // needs its OWN budget: the usual reason the search stopped is that the
+    // shared deadline expired, and reusing it here failed instantly and dropped
+    // the whole diagram -- trading a mis-fitted figure for no figure at all.
+    // The winning wrap already completed once inside the search, so this pass is
+    // bounded work, and a genuine failure still declines to nil.
+    if (appliedWrap != bestWrap) {
+        CFAbsoluteTime reflowDeadline = CFAbsoluteTimeGetCurrent() + SPDFMarkdownDiagramLayoutBudget();
+        if (!SPDFDiagramLayOutAtWrap(graph, fonts, scale, bestWrap, reflowDeadline, &natural, NULL)) return nil;
+    }
 
     // The margin used to be a drawing-time transform; with geometry as the
     // product it is folded into the node frames so every emitted point is

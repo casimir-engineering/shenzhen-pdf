@@ -40,6 +40,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacPropertiesPanel.h"
 #import "SPDFMacSelectionAdapter.h"
 #import "SPDFMacSupport.h"
+#import "SPDFMacTabViewState.h"
 #import "SPDFMacTabLifecycle.h"
 #import "SPDFMacTabStripView.h"
 #import "SPDFMacUIHelpers.h"
@@ -1150,7 +1151,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
 - (void)loadPersistentState {
     NSDictionary* settings = [self stateObjectFromFile:@"settings.yaml"];
-    _darkThemePreservesImages = YES; /* default ON; a stored key overrides below */
+    _darkThemePreservesImagesDefault = YES; /* default ON; a stored key overrides below */
     if ([settings isKindOfClass:NSDictionary.class]) {
         NSNumber* fit = settings[@"fitMode"];
         /* viewMode is intentionally not read: single-page view mode was removed
@@ -1187,7 +1188,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         if (minimapWidth) _minimapWidth = spdf_clamp_cg(minimapWidth.doubleValue, 72.0, 260.0);
         if (defaultSidebarVisible) _defaultSidebarVisibleForNewDocuments = defaultSidebarVisible.boolValue;
         if (defaultMinimapVisible) _defaultMinimapVisibleForNewDocuments = defaultMinimapVisible.boolValue;
-        if (darkThemePreservesImages) _darkThemePreservesImages = darkThemePreservesImages.boolValue;
+        if (darkThemePreservesImages) _darkThemePreservesImagesDefault = darkThemePreservesImages.boolValue;
         if (collapseWhitespaceWhenCopyingText)
             _collapseWhitespaceWhenCopyingText = collapseWhitespaceWhenCopyingText.boolValue;
         /* Missing key (settings.yaml from an older build) keeps the enabled default. */
@@ -1322,6 +1323,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     [_tabs removeAllObjects];
     for (NSDictionary* item in tabs) {
         SPDFDocumentTab* tab = spdf_tab_from_dictionary(item);
+        if (item[@"preservesImageColors"] == nil) [self seedKeepImageColorsForNewTab:tab];
         if (!tab) continue;
         if (!tab.title.length) tab.title = spdf_display_name_for_path(tab.path);
         if (item[@"showSidebar"] == nil) tab.showSidebar = _defaultSidebarVisibleForNewDocuments;
@@ -1810,7 +1812,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         @"printCustomScale" : @(SPDFClampPrintCustomScale(_printCustomScale)),
         @"markdownFontScale" : @(round(MAX(0.5, MIN(3.0, _markdownFontScale)) * 100.0) / 100.0),
         @"markdownTheme" : _darkReadingTheme ? @"dark" : @"light",
-        @"darkThemePreservesImages" : @(_darkThemePreservesImages),
+        @"darkThemePreservesImages" : @(_darkThemePreservesImagesDefault),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
     }
                    toFile:@"settings.yaml"];
@@ -2175,7 +2177,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.9.2";
+    if (version.length == 0) version = @"26.9.3";
     if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
@@ -2984,6 +2986,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     [_documentContainer addSubview:_minimapDividerView];
 
     _minimapView = [[SPDFMinimapView alloc] init];
+    _minimapView.themeVariant = self.markdownThemeVariant;
     _minimapView.translatesAutoresizingMaskIntoConstraints = NO;
     _minimapView.reader = self;
     _minimapView.wantsLayer = YES;
@@ -3210,7 +3213,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     page.imagePointHeight = pointSize.height;
     page.imageZoom = zoom;
     page.imageScale = requestedDisplayScale;
-    page.imageDarkTheme = (renderFlags & SPDF_RENDER_DARK_THEME) != 0;
+    [self stampReadingThemeOnRenderedPage:page renderFlags:renderFlags];
     page.image = image;
     page.highlights = @[];
     page.selectionRects = @[];
@@ -3400,7 +3403,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (BOOL)renderedPageImage:(SPDFRenderedPage*)page matchesZoom:(CGFloat)zoom displayScale:(CGFloat)displayScale {
     if (!page.image) return NO;
-    if (page.imageDarkTheme != _darkReadingTheme) return NO;
+    if (![self renderedPageMatchesReadingTheme:page]) return NO;
     return fabs(page.imageZoom - zoom) <= 0.001 && fabs(page.imageScale - displayScale) <= 0.001;
 }
 
@@ -5058,7 +5061,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     SPDFRenderedPage* prerendered = _launchPrerenderedFirstPage;
     _launchPrerenderedFirstPage = nil; // single-shot: launch first paint only
     if (prerendered && prerendered.pageIndex == pageIndex && prerendered.imageZoom == _zoom &&
-        prerendered.imageScale == [self backingScale] && prerendered.imageDarkTheme == _darkReadingTheme) {
+        prerendered.imageScale == [self backingScale] && [self renderedPageMatchesReadingTheme:prerendered]) {
         err[0] = '\0';
         preferredPage = prerendered;
         spdf_launch_profile_log(@"sync preferred-page render page=%ld zoom=%.2f adopted from prerender",
@@ -6982,25 +6985,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [_preloadResults removeObjectForKey:standardizedPath];
 }
 
-- (void)prepareSelectedTabViewState:(SPDFDocumentTab*)tab path:(NSString*)path {
-    _path = [path copy];
-    // Render/read path: temp copy when the source is read-only, else the source.
-    // _path stays the SOURCE for title/Recent/Favorites/watcher/Save/edit-gate.
-    _workingPath = tab.workingPath.length ? [tab.workingPath copy] : [path copy];
-    // Every document (re)load and tab switch funnels through here, so this is
-    // the invalidation choke point for the per-page cursor-region caches.
-    [self invalidateCursorRegionCache];
-    _highlightPageIndex = -1;
-    _selectionPageIndex = -1;
-    _selectedText = nil;
-    _searchField.stringValue = tab.searchText ?: @"";
-    _findRegexCheckbox.state = tab.searchRegex ? NSControlStateValueOn : NSControlStateValueOff;
-    _findRegexMultiline = tab.searchRegexMultiline;
-    _sidebarPreferredVisible = tab.showSidebar;
-    _minimapPreferredVisible = tab.showMinimap;
-    [self clearFindResults];
-}
-
 - (void)showUnavailableSelectedTab:(SPDFDocumentTab*)tab
                               path:(NSString*)path
                            message:(NSString*)message
@@ -8737,6 +8721,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
     tab.path = [path copy];
     tab.title = spdf_display_name_for_path(path);
+    [self seedKeepImageColorsForNewTab:tab];
     tab.zoom = 1.0;
     tab.customZoom = 1.0;
     tab.fitMode = SPDFFitModePage;
@@ -9094,34 +9079,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (paths.count == 0) return NO;
     [self openPaths:paths];
     return YES;
-}
-
-- (SPDFDocumentView*)newDocumentView {
-    SPDFDocumentView* view = [[SPDFDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 800, 1000)];
-    view.reader = self;
-    [view registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
-    view.presentationMode = _presentationMode;
-    view.zoom = _zoom;
-    view.currentPageIndex = _pageIndex;
-    view.backingScale = [self backingScale];
-    view.viewportWidthHint = MAX(1.0, _pageScrollView.contentSize.width);
-    view.viewportHeightHint = MAX(1.0, _pageScrollView.contentSize.height);
-    view.activeFindPageIndex = -1;
-    view.emptyMessage = @"Open a document";
-    return view;
-}
-
-- (void)replaceDocumentViewForTabSwitch {
-    [_pageView cancelTransientInteraction];
-    [self clearToolbarFieldFocusForTabSwitch];
-    NSClipView* clipView = _pageScrollView.contentView;
-    BOOL previousPostsBoundsChangedNotifications = clipView.postsBoundsChangedNotifications;
-    clipView.postsBoundsChangedNotifications = NO;
-    _pageScrollView.documentView = nil;
-    _pageView = [self newDocumentView];
-    _pageScrollView.documentView = _pageView;
-    clipView.postsBoundsChangedNotifications = previousPostsBoundsChangedNotifications;
-    [self clearToolbarFieldFocusForTabSwitch];
 }
 
 - (CGFloat)minimumSidebarWidthForCurrentContent {

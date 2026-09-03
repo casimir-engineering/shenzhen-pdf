@@ -7,6 +7,20 @@
 const NSUInteger SPDFMarkdownDiagramMaximumNodes = 200;
 const NSUInteger SPDFMarkdownDiagramMaximumEdges = 400;
 const NSTimeInterval SPDFMarkdownDiagramLayoutDeadline = 0.050;
+
+NSTimeInterval SPDFMarkdownDiagramLayoutBudget(void) {
+    static NSTimeInterval budget;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        budget = SPDFMarkdownDiagramLayoutDeadline;
+        const char* override = getenv("SPDF_DIAGRAM_LAYOUT_DEADLINE");
+        if (override) {
+            double seconds = atof(override);
+            if (seconds > 0.0) budget = (NSTimeInterval)seconds;
+        }
+    });
+    return budget;
+}
 const CGFloat SPDFMarkdownDiagramMaximumDimension = 2048;
 const CGFloat SPDFMarkdownDiagramLegibleLabelSize = 7;
 
@@ -88,7 +102,7 @@ static NSString* SPDFDiagramMermaidKeyword(NSString* source) {
 
 static SPDFMarkdownDiagramLayout* SPDFDiagramRenderUncached(NSString* language, NSString* source,
                                                             NSSize contentBox, CGFloat fontScale) {
-    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + SPDFMarkdownDiagramLayoutDeadline;
+    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + SPDFMarkdownDiagramLayoutBudget();
     if ([language isEqualToString:@"sequence"]) {
         SPDFMarkdownDiagramSequence* sequence = SPDFMarkdownDiagramParseSequence(source, NO);
         return sequence ? SPDFMarkdownDiagramLayOutSequence(sequence, contentBox, fontScale) : nil;

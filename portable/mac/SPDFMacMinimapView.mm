@@ -1,5 +1,6 @@
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
+#import "SPDFMacMinimapViewTheme.h"
 #import "SPDFMacSupport.h"
 
 #include <math.h>
@@ -62,6 +63,7 @@ static CGFloat spdf_smoothstep_cg(CGFloat value) {
     CGFloat _contentImageCacheBoundsWidth;
     NSInteger _contentImageCacheCurrentPageIndex;
     BOOL _contentImageCacheDrawImages;
+    SPDFMarkdownThemeVariant _contentImageCacheThemeVariant;
 }
 
 - (BOOL)isFlipped {
@@ -521,21 +523,6 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     return YES;
 }
 
-- (void)drawPlaceholderInRect:(NSRect)rect {
-    if (NSHeight(rect) < 6.0 || NSWidth(rect) < 10.0) return;
-    [[NSColor colorWithCalibratedWhite:0.76 alpha:0.34] setFill];
-    NSInteger lines = (NSInteger)spdf_clamp_cg(floor(NSHeight(rect) / 7.0), 2.0, 16.0);
-    CGFloat y = NSMinY(rect) + MAX(2.0, NSHeight(rect) * 0.08);
-    CGFloat lineHeight = MAX(1.0, NSHeight(rect) * 0.018);
-    for (NSInteger i = 0; i < lines; ++i) {
-        CGFloat widthFactor = (i % 5 == 4) ? 0.56 : 0.78;
-        NSRect line = NSMakeRect(NSMinX(rect) + NSWidth(rect) * 0.12, y, NSWidth(rect) * widthFactor, lineHeight);
-        NSRectFillUsingOperation(line, NSCompositingOperationSourceOver);
-        y += MAX(3.0, NSHeight(rect) / (CGFloat)(lines + 2));
-        if (y > NSMaxY(rect) - 2.0) break;
-    }
-}
-
 - (void)drawRects:(NSArray<NSValue*>*)rects
          pageRect:(NSRect)pageRect
             scale:(CGFloat)scale
@@ -603,7 +590,7 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     // Page draws are uniformly scaled per page (width/height share one factor by
     // construction), so overlays in page-space points map with this scale.
     CGFloat pageScale = NSWidth(pageRect) / MAX(1.0, page.pageWidth);
-    [[NSColor whiteColor] setFill];
+    [self.pageFillColor setFill];
     NSRectFillUsingOperation(pageRect, NSCompositingOperationSourceOver);
     // Thumbnails first: drawing full page bitmaps here forces whole-image decodes
     // that can cost >100ms across a document strip.
@@ -624,6 +611,7 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
               scale:pageScale
               color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
           minHeight:1.0];
+    [self drawPageBorderInRect:pageRect];
 }
 
 // A thumbnail finished rendering: draw just that page into the existing cached
@@ -683,7 +671,8 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     // across page boundaries reuses the cached strip instead of rebuilding it.
     return _contentImageCache && _contentImageCachePages == self.pages && _contentImageCacheScale == scale &&
            _contentImageCacheGap == gap && _contentImageCacheHeight == contentHeight &&
-           _contentImageCacheBoundsWidth == NSWidth(self.bounds) && _contentImageCacheDrawImages == drawImages;
+           _contentImageCacheBoundsWidth == NSWidth(self.bounds) && _contentImageCacheDrawImages == drawImages &&
+           _contentImageCacheThemeVariant == self.themeVariant;
 }
 
 - (BOOL)rebuildContentImageCacheForScale:(CGFloat)scale
@@ -714,6 +703,7 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     _contentImageCacheBoundsWidth = width;
     _contentImageCacheCurrentPageIndex = self.currentPageIndex;
     _contentImageCacheDrawImages = drawImages;
+    _contentImageCacheThemeVariant = self.themeVariant;
     return YES;
 }
 
@@ -738,7 +728,7 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
     double profileStart = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-    [NSColor.windowBackgroundColor setFill];
+    [self.stripBackgroundColor setFill];
     NSRectFill(self.bounds);
     [NSColor.separatorColor setFill];
     NSRectFill(NSMakeRect(0, 0, 1, NSHeight(self.bounds)));

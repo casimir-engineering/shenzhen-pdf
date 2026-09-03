@@ -108,7 +108,12 @@ void spdf_discard_launch_prerender(void) {
         NSDictionary* settings = [raw isKindOfClass:[NSDictionary class]] ? raw : nil;
         _darkReadingTheme = [settings[@"markdownTheme"] isEqual:@"dark"];
         NSNumber* preservesImages = settings[@"darkThemePreservesImages"];
-        _darkThemePreservesImages = preservesImages ? preservesImages.boolValue : YES;
+        // Per-document now, but no tab exists yet: speculate with the launch
+        // default. A restored document that stored the other choice makes the
+        // prerendered page fail adoption (see renderDocumentAndScrollToPage:)
+        // and it is rendered normally instead -- never shown miscolored.
+        _darkThemePreservesImagesDefault = preservesImages ? preservesImages.boolValue : YES;
+        _darkThemePreservesImages = _darkThemePreservesImagesDefault;
         NSNumber* sidebarVisible = settings[@"defaultSidebarVisibleForNewDocuments"];
         _launchPrerenderSidebarExpected = sidebarVisible ? sidebarVisible.boolValue : YES;
     }

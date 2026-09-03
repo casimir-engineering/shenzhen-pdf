@@ -16,6 +16,7 @@
         _findMatchIndex = -1;
         _showSidebar = YES;
         _showMinimap = YES;
+        _preservesImageColors = YES;
         _missingMessage = @"";
         _markdownSelectionRange = NSMakeRange(0, 0);
     }
@@ -81,6 +82,7 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     copy.showSidebar = source.showSidebar;
     copy.showMinimap = source.showMinimap;
     copy.hasMinimapPreference = source.hasMinimapPreference;
+    copy.preservesImageColors = source.preservesImageColors;
     copy.missingFile = source.missingFile;
     copy.missingMessage = source.missingMessage;
     copy.markdownSelectionRange = source.markdownSelectionRange;
@@ -118,6 +120,7 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
         @"markdownSelectionLength" : @(tab.markdownSelectionRange.length),
         @"showSidebar" : @(tab.showSidebar),
         @"showMinimap" : @(tab.showMinimap),
+        @"preservesImageColors" : @(tab.preservesImageColors),
         @"sourcePID" : @(NSProcessInfo.processInfo.processIdentifier),
         @"sourceWindow" : @(sourceWindowNumber),
         @"readOnly" : @(tab.readOnly),
@@ -158,6 +161,10 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     tab.showSidebar = item[@"showSidebar"] ? [item[@"showSidebar"] boolValue] : YES;
     tab.showMinimap = item[@"showMinimap"] ? [item[@"showMinimap"] boolValue] : YES;
     tab.hasMinimapPreference = item[@"showMinimap"] != nil;
+    // A session written before this was per-document has no key; the caller
+    // seeds those tabs with the launch default (see -seedKeepImageColorsForNewTab:).
+    if (item[@"preservesImageColors"] != nil)
+        tab.preservesImageColors = [item[@"preservesImageColors"] boolValue];
     tab.readOnly = [item[@"readOnly"] boolValue];
     if ([item[@"workingPath"] isKindOfClass:NSString.class] && [item[@"workingPath"] length] > 0)
         tab.workingPath = item[@"workingPath"];

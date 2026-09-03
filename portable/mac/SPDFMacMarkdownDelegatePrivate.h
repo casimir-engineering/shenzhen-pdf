@@ -62,6 +62,10 @@ NS_ASSUME_NONNULL_BEGIN
 // Render flags every fixed-page render must carry, so one preference drives
 // Markdown restyling and pixmap recoloring alike. Print and export never ask.
 - (unsigned)readingThemeRenderFlags;
+// A rendered bitmap carries what it was rendered with, so a stale one can be
+// recognised: the theme, plus this document's keep-image-colors choice.
+- (void)stampReadingThemeOnRenderedPage:(SPDFRenderedPage*)page renderFlags:(unsigned)renderFlags;
+- (BOOL)renderedPageMatchesReadingTheme:(SPDFRenderedPage*)page;
 - (void)buildReadingThemeToolbarButton;
 - (NSString*)readingThemeToggleTitle;
 - (void)updateReadingThemeControls;
