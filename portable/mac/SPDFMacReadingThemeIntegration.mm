@@ -41,6 +41,23 @@
     return SPDF_RENDER_DARK_THEME | (_darkThemePreservesImages ? SPDF_RENDER_PRESERVE_IMAGES : 0u);
 }
 
+// What a dark render encodes: the theme itself and, because recoloring happens
+// in the core, whether image colors were kept. Both are stamped on the bitmap so
+// a cached page can be recognised as stale, which is how a keep-image-colors
+// flip (and a tab switch between documents that disagree) re-renders.
+- (void)stampReadingThemeOnRenderedPage:(SPDFRenderedPage*)page renderFlags:(unsigned)renderFlags {
+    page.imageDarkTheme = (renderFlags & SPDF_RENDER_DARK_THEME) != 0;
+    page.imagePreservesImageColors = (renderFlags & SPDF_RENDER_PRESERVE_IMAGES) != 0;
+}
+
+// Whether an already-rendered bitmap is usable under the live reading theme.
+// preservesImageColors only means anything for a dark render, so a light page is
+// judged on the theme alone.
+- (BOOL)renderedPageMatchesReadingTheme:(SPDFRenderedPage*)page {
+    if (page.imageDarkTheme != _darkReadingTheme) return NO;
+    return !page.imageDarkTheme || page.imagePreservesImageColors == _darkThemePreservesImages;
+}
+
 // While LIGHT is active the button shows the moon (pressing it switches to
 // dark); while DARK is active it shows the sun (pressing switches to light).
 - (NSString*)readingThemeToggleTitle {
@@ -81,6 +98,14 @@
 // document view additionally swaps its drop shadow for a 1px page border in
 // dark (see SPDFDocumentView.drawsPageShadow/pageBorderColor). Presentation
 // mode owns the background while it is on and is never disturbed here.
+// Two callers own the live document chrome and both matter. This one runs at
+// launch and on a theme flip; -newDocumentView applies the variant too, because
+// a tab switch REPLACES the document view (-replaceDocumentViewForTabSwitch)
+// and a fresh one defaults to Light -- its gutter then fell back to the system
+// canvas colour, a hair off the dark paper so a page had no visible edge, and
+// its pageBorderColor was nil, dropping the border that stands in for the
+// shadow in dark. The minimap is seeded where it is created, since it does not
+// exist yet the first time this runs.
 - (void)applyReadingThemeToDocumentViewport {
     if (!_pageScrollView || _presentationMode) return;
     if (_pageView.themeVariant != self.markdownThemeVariant) {
@@ -105,16 +130,33 @@
     if ([self isMarkdownActive]) [self updateControlsForActiveMarkdown];
 }
 
+// Keep-image-colors belongs to the document on screen, not to the app: a
+// datasheet whose figures are color-coded wants its colors kept while the scan
+// in the next tab does not. Only the selected tab changes, so no other tab's
+// cache is dropped.
 - (void)toggleDarkThemePreservesImages:(id)sender {
     (void)sender;
     _darkThemePreservesImages = !_darkThemePreservesImages;
+    SPDFDocumentTab* selected = [self selectedTab];
+    selected.preservesImageColors = _darkThemePreservesImages;
     [self savePersistentState];
     // Only the recolored formats care, and only while the theme is on.
     if (!_darkReadingTheme) return;
-    [self applyReadingThemeToEveryTab];
-    // Markdown repaints in place, so its minimap has to be refreshed too --
-    // its thumbnails are rendered from the same plan and cached per page.
-    if ([self isMarkdownActive]) [self updateMarkdownMinimap];
+    if ([self isMarkdownActive]) {
+        // Draw-time only, so a flip costs a redraw rather than a rerender.
+        self.activeMarkdownSession.preservesImageColors = _darkThemePreservesImages;
+        [self.activeMarkdownSession.rootView setNeedsDisplay:YES];
+        // Markdown repaints in place, so its minimap has to be refreshed too --
+        // its thumbnails are rendered from the same plan and cached per page.
+        [self updateMarkdownMinimap];
+        return;
+    }
+    if (!_doc) return;
+    // Re-render at the current viewport rather than jumping: the user is
+    // reading, and a color flip should not move the page under them.
+    selected.cachedRenderedPages = nil;
+    NSValue* restoreOrigin = [NSValue valueWithPoint:_pageScrollView.contentView.bounds.origin];
+    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO restoreOrigin:restoreOrigin];
 }
 
 // The toggle has to reach EVERY tab, not just the active one, or a background
@@ -127,7 +169,8 @@
     for (SPDFDocumentTab* tab in _tabs) {
         if (tab == selected) continue;
         [tab.cachedMarkdownSession applyThemeVariant:self.markdownThemeVariant];
-        tab.cachedMarkdownSession.preservesImageColors = _darkThemePreservesImages;
+        // That tab's own choice, not the selected document's.
+        tab.cachedMarkdownSession.preservesImageColors = tab.preservesImageColors;
         tab.cachedRenderedPages = nil;
     }
     if ([self isMarkdownActive]) {
