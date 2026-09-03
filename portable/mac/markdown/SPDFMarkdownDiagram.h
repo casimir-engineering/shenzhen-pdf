@@ -23,6 +23,12 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT const NSUInteger SPDFMarkdownDiagramMaximumNodes;        // 200 nodes/actors/slices/tasks
 FOUNDATION_EXPORT const NSUInteger SPDFMarkdownDiagramMaximumEdges;        // 400 edges/events
 FOUNDATION_EXPORT const NSTimeInterval SPDFMarkdownDiagramLayoutDeadline;  // 50 ms of layout wall-clock
+// The budget actually used for one layout: the constant above, unless
+// SPDF_DIAGRAM_LAYOUT_DEADLINE overrides it (seconds). A wall-clock budget makes
+// any test that lays out a real diagram timing-dependent -- the flowchart suite
+// failed 3 of 5 runs on an idle machine -- so the tests raise it and assert
+// geometry instead of racing a clock. Production keeps the 50 ms guard.
+FOUNDATION_EXPORT NSTimeInterval SPDFMarkdownDiagramLayoutBudget(void);
 FOUNDATION_EXPORT const CGFloat SPDFMarkdownDiagramMaximumDimension;       // 2048 pt per diagram axis
 
 // Named palette roles. A resolved layout is theme-INDEPENDENT: every shape and
