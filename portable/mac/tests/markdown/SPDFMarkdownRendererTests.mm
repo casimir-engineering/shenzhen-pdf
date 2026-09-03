@@ -342,9 +342,9 @@ int main(void) {
         // dark.
         SPDFExpect(lightTheme.viewportBackgroundColor == nil && lightTheme.drawsPaperShadow,
                    @"the light theme names no gutter and keeps the paper drop shadow");
-        SPDFExpect(SPDFColorMatchesHex(darkTheme.viewportBackgroundColor, 0x121212) && !darkTheme.drawsPaperShadow &&
-                       SPDFColorMatchesHex(darkTheme.paperBorderColor, 0x333333),
-                   @"the dark theme names a #121212 gutter and swaps the shadow for a #333333 border");
+        SPDFExpect(SPDFColorMatchesHex(darkTheme.viewportBackgroundColor, 0x0A0A0A) && !darkTheme.drawsPaperShadow &&
+                       SPDFColorMatchesHex(darkTheme.paperBorderColor, 0x3D3D3D),
+                   @"the dark theme names a #0A0A0A gutter and swaps the shadow for a #3D3D3D border");
         SPDFExpect(SPDFLuminance(darkTheme.viewportBackgroundColor) < SPDFLuminance(darkTheme.paperColor) - 0.01,
                    @"the dark gutter reads darker than the dark paper");
         SPDFExpect(SPDFColorMatchesHex(darkTheme.paperColor, 0x1E1E1E) &&

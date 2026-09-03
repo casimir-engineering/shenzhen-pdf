@@ -2,6 +2,7 @@
 
 #import "SPDFMacModels.h"
 #import "SPDFMacUIHelpers.h"
+#import "markdown/SPDFMarkdownDecorations.h"
 
 @interface SPDFMinimapView : NSView
 @property(nonatomic, copy) NSArray<SPDFRenderedPage*>* pages;
@@ -12,6 +13,10 @@
 @property(nonatomic) CGFloat documentScale;
 @property(nonatomic) NSInteger currentPageIndex;
 @property(nonatomic) BOOL liveViewportOnly;
+// Reading-theme palette for the strip: the gutter behind the sheets, each
+// sheet's paper, and (in dark, which draws no shadow) its 1px border. Part of
+// the cached strip's key, so changing it rebuilds the baked-in paper/borders.
+@property(nonatomic) SPDFMarkdownThemeVariant themeVariant;
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
 - (NSArray<NSNumber*>*)visiblePageIndexes;
 // Pages within the visible strip expanded by `screens` strip-heights on each

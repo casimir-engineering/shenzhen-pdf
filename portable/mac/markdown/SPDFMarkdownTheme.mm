@@ -21,9 +21,9 @@ static NSColor* SPDFRGB(unsigned int hex) {
     BOOL dark = variant == SPDFMarkdownThemeVariantDark;
     _variant = variant;
     _paperColor = SPDFRGB(dark ? 0x1E1E1E : 0xFFFFFF);
-    _paperBorderColor = SPDFRGB(dark ? 0x333333 : 0xD0D7DE);
+    _paperBorderColor = SPDFRGB(dark ? 0x3D3D3D : 0xD0D7DE);
     // nil in Light: every frontend keeps the system gutter it already used.
-    _viewportBackgroundColor = dark ? SPDFRGB(0x121212) : nil;
+    _viewportBackgroundColor = dark ? SPDFRGB(0x0A0A0A) : nil;
     _drawsPaperShadow = !dark;
     _bodyTextColor = SPDFRGB(dark ? 0xDCDDDE : 0x1F2328);
     _secondaryTextColor = SPDFRGB(dark ? 0x999999 : 0x59636E);
