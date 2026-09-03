@@ -417,3 +417,92 @@ item and not this pass's.
 
 Not re-measured, and blocked for the same reason as before: the external
 first-pixels number, and therefore `launch.budget`, needs a composited desktop.
+
+## 9. Measured unlocked (2026-09-03, live-verification pass)
+
+The two things §8 left blocked were the external **first-page-pixels** number
+and the `launch.budget` case, both because a locked desktop is not composited.
+The workstation was unlocked for this pass, so both have real numbers for the
+first time. Section 8 is not rewritten; this is what the same harness says on a
+composited desktop at HEAD `0fb7d8d92`, which is a **later build** than §8's
+`track-wiring2`.
+
+Medians of 7 warm and 7 cold launches per document, `measure-launch.ps1` against
+`C:\spdf-build\track-live\ShenzhenPDF.exe`, milliseconds from the kernel's
+process-creation time. Every launch carried a private `--state-dir` and the
+harness ran with `APPDATA` redirected, so the reader's real session was neither
+read nor written — which is why these numbers say nothing about session restore.
+
+| case | window visible | **first client pixels (external)** | first-compose-end | page render done | prewarm done | HWND target | ShowWindow returned | WM_CLOSE → exit |
+|---|---|---|---|---|---|---|---|---|
+| golden.pdf, warm | 182 | **274** | 178 | 94 | 135 | 136 | 204 | 78 |
+| golden.pdf, cold | 310 | **412** | 304 | 111 | 185 | 185 | 328 | 99 |
+| outline.pdf, warm | 192 | **278** | 182 | 87 | 146 | 147 | 213 | 77 |
+| outline.pdf, cold | 302 | **404** | 291 | 84 | 172 | 172 | 321 | 87 |
+| pages120.pdf, warm | 181 | **273** | 174 | 87 | 137 | 137 | 201 | 80 |
+| pages120.pdf, cold | 304 | **406** | 300 | 95 | 181 | 182 | 325 | 100 |
+| images.pdf, warm | 240 | **345** | 234 | 187 | 162 | 188 | 269 | 91 |
+| images.pdf, cold | 370 | **479** | 364 | 194 | 217 | 218 | 393 | 107 |
+
+`launch.budget`'s own invocation (outline.pdf, 5 runs, the suite's 300 ms /
+600 ms tripwires) reports **`budget=OK`, exit 0** — window median 174 ms, first
+page 171 ms, first client pixels 265 ms. It was run with a private
+`--state-dir` added, which is the one way it differs from
+`run-tests-native.launch.sh`'s form; that case launches against the real
+`%APPDATA%` on purpose and this pass was not allowed to.
+
+**Four things the numbers say.**
+
+**1. The external first-pixels figure carries ~100 ms of the sampler's own
+cost, and cannot be compared with the in-process mark.** `sampler cost per
+frame` was 89-110 ms in every row: a `PrintWindow` of a 1680×1200 window plus a
+48×48 colour walk. The sampler therefore quantises to about one frame, and
+`first client pixels` lands one sample-cost after `show-window-returned` in
+every single row (274 vs 204, 278 vs 213, 345 vs 269 …). It is an **upper
+bound** on when pixels appeared, not a measurement of it. `first-compose-end`
+remains the number to track; the sampler's value is that it proves pixels
+arrive at all, which is exactly what the lock made unprovable.
+
+**2. First page is 174-182 ms warm here, against §8's 142 ms — and the whole
+difference is the GPU driver, not the app.** `first-compose-end` tracks
+`gpu-prewarm-done` + ~35 ms in every row, and prewarm ranged from **132 ms to
+190 ms across this session** (§8 saw 118, §3.2 documents 50-160 ms for this
+driver). The app's own work did not move: the synchronous page render still
+finishes at 84-95 ms on text documents, 40-60 ms *before* the device is ready,
+and `CreateHwndRenderTarget` on the UI thread still costs **0.4-1.2 ms**. Both
+of the launch track's fixes hold live.
+
+The drift is real and worth naming: repeating outline.pdf warm three times over
+the session gave prewarm 146 → 174 → 190 ms and first page 182 → 220 → 235 ms,
+monotonically, on a machine that was doing *less* each time. A control run with
+the sampler disabled (`-SamplerTimeoutMs 0`) was **slower**, not faster, so the
+sampler is not the cause. The likely one is thermal or driver state on a 6600U
+laptop after ~90 device creations in half an hour. **Anyone comparing against
+§8's 142 ms must re-measure §8's own build in the same sitting**; a single
+median from a different afternoon is not comparable at this resolution.
+
+**3. A composited desktop does not slow the app's own compose.** That was §2's
+open question about `EndDraw` behaving differently once DWM is really
+presenting. It does not: `first-page-render-end`, the render → prewarm gap and
+the 0.4 ms HWND target are all indistinguishable from §8's. The extra
+milliseconds are all in prewarm.
+
+**4. An image-heavy document is the one case where the document IS on the
+critical path.** In every text row the page render finishes before the GPU
+device is ready, so the document costs the launch nothing — §8's conclusion.
+`images.pdf` inverts it: prewarm finishes at 162 ms and the page render at
+187 ms, so the first frame waits 25 ms on the document, and first page lands at
+234 ms rather than 174. One 1700×2200 inflate plus a 2:1 downscale is enough to
+take the lead. Section 5's first-page-prerender item would pay for itself here
+and nowhere else.
+
+**Cold is ~120 ms of constant overhead, not the 872 ms §4 recorded.** Every cold
+row sits 100-130 ms above its warm twin, with the increase split between
+`Process.Start` (2-3 ms → 16-21 ms) and prewarm. `measure-launch.ps1 -Cold`
+writes an unbuffered copy under a fresh name each run, which defeats the image
+cache but not Defender's reputation cache or the driver's shader cache once the
+first such copy has been seen — so this measures cold *paging*, and the
+once-per-binary-identity 872 ms remains a separate, larger effect. Two cold runs
+did show it starting: single-run maxima of 1,057 ms (pages120) and 779 ms
+(images) against medians of 304 and 370.
+
