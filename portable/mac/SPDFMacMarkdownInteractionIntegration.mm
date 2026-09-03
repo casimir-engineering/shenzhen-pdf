@@ -94,6 +94,7 @@
                       documentSize:session.documentCanvasSize
                      documentScale:1.0];
     _minimapView.liveViewportOnly = NO;
+    _minimapView.themeVariant = self.markdownThemeVariant;
     if (_minimapView.pages != model.pages) _minimapView.pages = model.pages;
     _minimapView.documentPageRects = model.documentPageRects;
     _minimapView.documentVisibleRect = model.documentVisibleRect;

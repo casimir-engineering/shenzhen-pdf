@@ -10,6 +10,12 @@ CC=$(xcrun --find clang)
 CXX=$(xcrun --find clang++)
 SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
 SANITIZER_FLAGS=${SPDF_MARKDOWN_SANITIZER_FLAGS:-}
+# Diagram layout is guarded by a 50 ms wall-clock deadline in production. Racing
+# that clock made these suites fail intermittently (3 of 5 runs on an idle
+# machine, different assertions each time), so give layout room here and let the
+# tests assert geometry deterministically. Overridable for a deliberate
+# deadline test.
+export SPDF_DIAGRAM_LAYOUT_DEADLINE=${SPDF_DIAGRAM_LAYOUT_DEADLINE:-5}
 
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/../compile-jobs.sh"

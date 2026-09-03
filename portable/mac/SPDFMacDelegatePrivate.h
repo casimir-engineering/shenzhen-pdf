@@ -347,14 +347,14 @@
     // (settings.yaml "markdownTheme": "light"/"dark" -- the key kept its
     // original name so the choice already in users' settings carries over with
     // no migration). BOOL keeps this header free of markdown-module types;
-    // SPDFMacReadingThemeIntegration.mm maps it to SPDFMarkdownThemeVariant for
-    // Markdown and to SPDF_RENDER_DARK_THEME for everything else.
+    // SPDFMacReadingThemeIntegration.mm maps it to SPDFMarkdownThemeVariant.
     BOOL _darkReadingTheme;
-    // With the dark theme on, leave photographs and figures in their original
-    // colors (settings.yaml "darkThemePreservesImages", default YES; a stored
-    // key wins, so anyone who turned it off keeps it off). A page that is
-    // essentially one big image is a scan and is recolored whole regardless.
+    // Keep-image-colors is per document (SPDFDocumentTab.preservesImageColors).
+    // This mirrors the SELECTED tab's value so the background render wrappers
+    // stay a plain byte read; the default seeds a document that has no stored
+    // choice (settings.yaml "darkThemePreservesImages", default YES).
     BOOL _darkThemePreservesImages;
+    BOOL _darkThemePreservesImagesDefault;
     NSSize _restoredWindowContentSize;
     NSRect _restoredWindowFrame;
     BOOL _hasRestoredWindowFrame;

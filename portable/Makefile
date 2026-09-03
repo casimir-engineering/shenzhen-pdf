@@ -82,6 +82,7 @@ MAC_TRANSLATION_FILTER_TEST := $(BUILD)/SPDFTranslationChineseFilterTests
 MAC_TRANSLATION_COPY_TEST := $(BUILD)/SPDFTranslationCopyTests
 MAC_CURSOR_REGION_TEST := $(BUILD)/SPDFMacCursorRegionsTests
 MAC_TAB_LIFECYCLE_TEST := $(BUILD)/SPDFMacTabLifecycleTests
+MAC_TAB_STATE_TEST := $(BUILD)/SPDFMacTabStateTests
 MAC_FILE_EXPLORER_TEST := $(BUILD)/SPDFMacFileExplorerPreferenceTests
 MAC_SELECTION_CLICK_TEST := $(BUILD)/SPDFMacSelectionClickTests
 MAC_SELECTION_ADAPTER_TEST := $(BUILD)/SPDFMacSelectionAdapterTests
@@ -92,7 +93,7 @@ MAC_RELEASE_NOTES_PREVIEW := $(BUILD)/SPDFReleaseNotesPreview
 MAC_MARKDOWN_SRCS := $(sort $(wildcard mac/markdown/*.mm))
 MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm))) $(MAC_MARKDOWN_SRCS)
 MAC_HDRS := $(sort $(wildcard mac/*.h) $(wildcard mac/markdown/*.h))
-MAC_VERSION ?= 26.9.2
+MAC_VERSION ?= 26.9.3
 MAC_BUILD ?= 1
 MAC_SIGN_IDENTITY ?= -
 NOTARY_PROFILE ?=
@@ -106,7 +107,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-tab-strip-style-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests test-binaries release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-tab-strip-style-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-tab-state-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests test-binaries release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -312,6 +313,12 @@ $(MAC_TAB_LIFECYCLE_TEST): mac/tests/SPDFMacTabLifecycleTests.mm mac/SPDFMacTabL
 
 mac-tab-lifecycle-tests: $(MAC_TAB_LIFECYCLE_TEST)
 	"$(MAC_TAB_LIFECYCLE_TEST)"
+
+$(MAC_TAB_STATE_TEST): mac/tests/SPDFMacTabStateTests.mm mac/SPDFMacModels.mm mac/SPDFMacModels.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStateTests.mm mac/SPDFMacModels.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(MAC_TAB_STATE_TEST)"
+
+mac-tab-state-tests: $(MAC_TAB_STATE_TEST)
+	"$(MAC_TAB_STATE_TEST)"
 
 $(MAC_FILE_EXPLORER_TEST): mac/tests/SPDFMacFileExplorerPreferenceTests.mm mac/SPDFMacFileExplorerPreference.mm mac/SPDFMacFileExplorerPreference.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacFileExplorerPreferenceTests.mm mac/SPDFMacFileExplorerPreference.mm -framework Cocoa -o "$(MAC_FILE_EXPLORER_TEST)"

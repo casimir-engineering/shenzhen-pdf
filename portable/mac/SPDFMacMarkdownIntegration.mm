@@ -260,7 +260,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     [session applyThemeVariant:self.markdownThemeVariant];
     [session applyPageOrientation:tab.markdownLandscape ? SPDFMarkdownPageOrientationLandscape
                                                         : SPDFMarkdownPageOrientationPortrait];
-    session.preservesImageColors = _darkThemePreservesImages;
+    session.preservesImageColors = tab.preservesImageColors;
     state.activeSession = session;
     [self configureMarkdownSession:session forTab:tab];
     if (!state.workQueue)
