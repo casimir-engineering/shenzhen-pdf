@@ -1,7 +1,9 @@
 /* spdf_win_md.cpp -- see spdf_win_md.h. */
 #include "spdf_win_md.h"
 
+#include "spdf_win_md_code.h"
 #include "spdf_win_md_images.h"
+#include "spdf_win_md_webp.h"
 #include "spdf_win_state.h"
 
 #include <windows.h>
@@ -125,15 +127,26 @@ unsigned spdf_win_md_options_generation(void) {
     return (unsigned)g_generation;
 }
 
+void spdf_win_md_bump_options(void) {
+    InterlockedIncrement(&g_generation);
+}
+
 void spdf_win_md_options(spdf_markdown_options* out) {
     static char cache_dir[1024];
     *out = spdf_markdown_default_options();
     out->text_scale = g_text_scale;
     out->dark_rendition = 1;
+    /* The in-page picker's choices. Module storage on the other side, so the
+     * borrowed pointer outlives every handle that reads it. */
+    out->language_overrides = spdf_win_md_code_overrides(&out->language_override_count);
     if (spdf_win_md_images_dir(cache_dir, sizeof(cache_dir))) {
         out->remote_image = spdf_win_md_images_lookup;
         out->remote_image_user = NULL;
         out->remote_image_dir = cache_dir;
+        /* The same cache holds the PNGs a local .webp is transcoded into
+         * (spdf_win_md_webp.h); document_dir is filled by spdf_open_markdown. */
+        out->local_image = spdf_win_md_webp_lookup;
+        out->local_image_user = NULL;
     }
 }
 

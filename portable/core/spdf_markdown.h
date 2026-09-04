@@ -119,6 +119,17 @@ const spdf_markdown_language* spdf_markdown_language_at(int index);
 const spdf_markdown_language* spdf_markdown_language_for_fence(const char* info, size_t len);
 /* mermaid / sequence / flow: the fences macOS draws as diagrams. */
 int spdf_markdown_is_diagram_fence(const char* info, size_t len);
+/* The picker's searchable list, as one predicate: 1 when the catalog entry at
+ * `index` matches `query` -- a case-insensitive SUBSTRING of its id, its display
+ * name or any of its aliases, which is what -languagesMatchingQuery: does on
+ * macOS. An empty or blank query matches everything, so the list opens on the
+ * whole catalog. Not a fuzzy score: substring keeps the catalog's own order,
+ * and the order is the sorted display names the picker shows. */
+int spdf_markdown_language_matches(int index, const char* query);
+/* The language id options->language_overrides names for the fence at `index`,
+ * or NULL when there is no entry -- the fence's own info string then decides.
+ * Last entry wins, so a frontend may append rather than rewrite. */
+const char* spdf_markdown_language_override_for(const spdf_markdown_options* options, int index);
 
 /* Tokenise `code` for language `id`. Returns 0 when the language is not one of
  * the catalog's (or is "plain"), in which case `out` is left empty. Tokens are

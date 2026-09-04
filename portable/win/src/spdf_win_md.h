@@ -71,6 +71,12 @@ void spdf_win_md_options(spdf_markdown_options* out);
  * compares this with the value it saw at open and reopens on mismatch. */
 unsigned spdf_win_md_options_generation(void);
 
+/* Say the options changed for a reason this module does not own -- today the
+ * per-fence language overrides in spdf_win_md_code.h. Same contract as a text
+ * scale change: the next open paginates differently, so every handle has to be
+ * remade, and the generation is how a long-lived one finds out. */
+void spdf_win_md_bump_options(void);
+
 /* --- text size -------------------------------------------------------------- */
 
 float spdf_win_md_text_scale(void);
