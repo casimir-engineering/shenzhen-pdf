@@ -79,7 +79,7 @@ route.
 | No `page-break-inside: avoid`; `<thead>` not repeated after a split | A table row never splits (MuPDF keeps a line whole) but the header is not re-drawn on the continuation page; a code box continues without a closing rule at the break | Accept for now. A converter pre-pass cannot know page positions; a post-pass over the laid-out `fz_html` boxes could duplicate the header row — MuPDF-internal, deferred | C |
 | No colour emoji | 🚀 renders as a monochrome Noto glyph | Accept; the Mac uses Apple Color Emoji, MuPDF has no colour font path | — |
 | No WebP decoder | `.webp` images show as `[image]` (this repo's README uses WebP) | **DONE** (§9.1): `spdf_win_md_webp.{h,cpp}` decodes through WIC into a PNG in the same cache the https fetch fills, and the converter's new `local_image` hook rewrites the source to `.spdf-remote/<name>` | C |
-| No interactive controls inside the page | No in-place language picker, no copy button on code blocks | A Direct2D overlay drawn by the canvas over the code box rectangles (found from the structured text: a `<pre>` becomes one text block). Selecting a language re-converts with a per-fence override — the converter already takes the fence id from the info string, so an override map is a small addition | C |
+| No interactive controls inside the page | No in-place language picker, no copy button on code blocks | **Mostly done (§9.3)**: the row is drawn and routable — but found from an `id` on each `<pre>` and one `spdf_markdown_resolve_anchor`, NOT from the structured text, which would have been a heuristic. Per-fence overrides are in `spdf_markdown_options`. Left: the picker's popup window | C |
 | Diagram fences (`mermaid`, `sequence`, `flow`) | Highlighted code box — the documented fallback on macOS too | **The SVG supplement in this row is WITHDRAWN — see §9.2.** The spike renders correctly and as vector, but an SVG's `<text>` is unreachable to `fz_stext`, the export rasterizes it, and MuPDF's CSS cannot position a text overlay over it. The route that satisfies the promise is a small vendored-MuPDF patch (run a display-list image's list instead of filling it), and the fallback holds until then | D |
 | Dark rendition draws images in their original colours | Matches "Keep Image Colors"; the Mac darkens images by default | Apply `spdf_recolor` to image regions only (the inverse of the existing `page_recolor_exclusions`) when the setting is off | C |
 | `<details>` always expanded | Same as macOS | — | — |
@@ -460,3 +460,156 @@ true.
 `md_svg_text_test` keeps all of the above executable, including the control. **A
 failure in it is good news**: it would mean the engine had learned to extract SVG
 text, and the SVG route could then be taken as originally designed.
+
+### 9.3 The code box's in-page controls — the row, drawn and routable
+
+26.8.29-2 promises "a quiet language control in the box header" and 26.9.2-1 "a
+copy button to the left of its language picker". There are no HTML widgets here
+— the page is a picture MuPDF drew — so both are canvas chrome: a Direct2D pill
+over the page, hit-tested against the very rectangles that were drawn.
+
+**Finding a fence on the page, without looking at the picture.** The converter
+now puts `id="spdf-code-N"` on every `<pre>`, and `spdf_markdown_scan_fences()`
+(`portable/core/spdf_markdown_fences.c`) numbers the same N — both walk md4c
+with identical flags after the identical BOM and front-matter skip, so fence N
+and anchor `#spdf-code-N` are the same block **by construction**, not by a
+geometric match. One `spdf_markdown_resolve_anchor()` per fence then gives the
+page and the y, once per document rather than once per paint.
+`SPDFCoreMarkdownTests`' agreement case counts the converter's anchors against
+the scan's fences over one document, so the two cannot drift apart quietly.
+
+Two traps, both measured rather than reasoned about:
+
+- **MuPDF's HTML anchor y is in CONTENT space.** `htdoc_resolve_link`
+  (`mupdf/source/html/html-doc.c:65-70`) divides by `html->page_h`, the
+  *printable* height, and never adds `html->page_margin[T]` — unlike
+  `fz_load_html_links`, which does (`html-outline.c:138-143`). A caller
+  comparing it with a rendered page is a whole 60pt top margin out, and the
+  symptom looks exactly like an off-by-one-element bug: in the first capture
+  every pill sat on the *previous* block. `spdf_markdown_resolve_anchor` adds
+  the margin once, and `SPDF_MARKDOWN_PAGE_MARGIN_TOP_PT` /
+  `_SIDE_PT` / `SPDF_MARKDOWN_CODE_BOX_PADDING_PT` are exported beside the
+  anchor prefix so a frontend never has to guess the generated stylesheet's own
+  geometry.
+- **What the anchor points at is the first line's baseline**, not the box's
+  edge: `find_box_target` returns `find_first_content(box)->y`
+  (`html-outline.c:149-206`). So the row is placed at `anchor − 12pt` (the box's
+  own padding) and lifted to rest **on** the box's top edge with a 2px lip
+  inside it. A row centred on that edge covered the first four characters of
+  code; a row inside the box covered a whole line.
+
+**The horizontal extent** is the stylesheet's text column — 61pt in from each
+edge of the sheet, in points and so independent of the A-/A+ text size. That is
+an approximation in one case only, a fence nested inside a list, where the real
+box is indented and the pills sit a little wide of it. Reconstructing the box
+from the laid-out text's rectangles would cost a structured-text pass per fence
+to buy a few points, and nothing else in the reader depends on the number.
+
+**Geometry is published, not queried**, exactly as `spdf_win_annot.h` states and
+for the same reason: the paint that drew the pills hands the router each
+rectangle in client device pixels (`spdf_win_md_code_publish_geometry`), and
+`spdf_win_md_code_marks.h` — pure, header-only, the shape of
+`spdf_win_annot_marks.h` — tests points against those. Painting and hit-testing
+cannot disagree because they are the same numbers.
+
+**Nothing reaches print or export**, by construction rather than by a check:
+the pills are drawn only in the canvas phase of a *scene*, and print, Save as
+PDF and Copy Page render through `spdf_export_pdf` and the flagless render path,
+which never build one. `md_code_test` pins the other half of the cost model too
+— a PDF tab finds no fences and publishes no marks, so it pays nothing.
+
+**The picker's list** is `spdf_markdown_language_matches(index, query)`: a
+case-insensitive substring of a language's id, display name or aliases, which is
+`-languagesMatchingQuery:`'s rule, keeping the catalog's own sorted-by-name
+order rather than a fuzzy score. The choice is recorded as a per-fence override
+(`spdf_markdown_options.language_overrides`, honoured in `close_code`), which
+beats the fence's info string *and* the rule that leaves a diagram fence
+uncoloured; `"plain"` tokenises to nothing, which is how Plain Text clears
+highlighting. Recording one bumps the options generation, so every handle that
+reopens the document paginates identically — the same contract a text-size
+change has.
+
+Rendered, with the two patch requests below applied locally and then reverted
+(the §7 precedent): `C:\spdf-build\track-mdpolish\scratch\code-pills-light.png`
+and `code-pills-dark.png` — page 2 of `readme-style.md`, six code boxes, each
+with **Copy** on the left of its top edge and its own language (C, Python, JSON,
+YAML, Shell, Plain Text) with a ▾ on the right, in the light and Obsidian-dark
+palettes, covering no code in either.
+
+#### Patch requests (other tracks' files; exact text)
+
+**1. `portable/win/src/spdf_win_d2d.cpp`** — one include beside the other
+overlay include, and one call after the overlays. `spdf_win_md_code_paint.cpp`
+is already in the app build (the source list is a wildcard over
+`portable\win\src\*.cpp`), so it compiles today and only the call is missing.
+
+| Old | New |
+|---|---|
+| `#include "spdf_win_d2d_overlay.h" /* draw_overlays; needs only the scene */` | `#include "spdf_win_d2d_overlay.h" /* draw_overlays; needs only the scene */`<br>`#include "spdf_win_md_code_paint.h"` |
+| `    draw_overlays(target, scene);` | `    draw_overlays(target, scene);`<br>`    spdf_win_md_code_paint(target, scene);` |
+
+**2. `portable/win/src/spdf_win_chrome_scene.h`** — one include, and one block
+at the end of `chrome_publish_comments()`, which is already the function that
+resolves the selected tab's document and publishes per-paint geometry:
+
+`#include "spdf_win_annot.h"` → `#include "spdf_win_annot.h"` + a new line
+`#include "spdf_win_md_code.h"`
+
+and, after the two `spdf_win_annot_*` lines that close that function:
+
+```c
+    {
+        char md_err[256] = {0};
+        const char* md_path = NULL;
+        spdf_document* md_doc = NULL;
+        if (a->tabs) {
+            int sel = spdf_win_tabs_selected_index(a->tabs);
+            if (sel >= 0) {
+                md_path = spdf_win_tabs_path(a->tabs, sel);
+                md_doc = (spdf_document*)spdf_win_tabs_document(a->tabs, sel, md_err, sizeof(md_err));
+            }
+        } else {
+            md_path = a->path;
+            md_doc = a->doc;
+        }
+        spdf_win_md_code_frame(md_doc, md_path, scene, layout->canvas.x, layout->canvas.y,
+                               spdf_win_canvas_zoom(a->canvas));
+    }
+```
+
+`spdf_win_md_code_frame()` carries the policy (sync only when the path or the
+options generation changed; clear when there is no document), so the call site
+holds none. The early `if (!a->canvas)` return above it should also gain
+`spdf_win_md_code_frame(NULL, NULL, NULL, 0.0f, 0.0f, 1.0f);` beside the
+existing `spdf_win_annot_publish_geometry(NULL, ...)`, so a frame with no canvas
+clears the marks rather than leaving the last document's.
+
+**3. `portable/win/src/spdf_win_chrome_input.h`** — the routing, which is the
+one piece not yet drawn from a capture. After the enum and hit struct are
+complete, `#include "spdf_win_md_code_marks.h"`, and inside the canvas branch —
+**before** the comment-badge test and before the point is offered to the canvas
+as text, which is the mac's precedence
+(`SPDFMacMarkdownPageCanvas.mm`: copy button, then language control, then
+`characterIndexAtPoint`) — call
+
+```c
+    int md_copy = 0;
+    int md_fence = spdf_win_md_code_mark_at(spdf_win_md_code_marks(&md_count), md_count, x, y, &md_copy);
+```
+
+and return a new action rather than `SPDF_WIN_CA_CANVAS`, so a click on a pill
+never starts a text selection. Two commands then: the copy button calls
+`spdf_win_md_code_copy(md_fence)` (clipboard plus the 1.2 s "Copied" title, with
+a failed copy showing no feedback at all), and the language pill opens the
+picker.
+
+**What is left.** The picker's *popup window* — a small owner-drawn list
+anchored to the pill, filtering through `spdf_markdown_language_matches` as the
+reader types, arrow keys and Enter, Escape to dismiss — is not written. Its
+model is (the filter predicate, the catalog's order, the override map and the
+generation bump, all pinned by `md_code_test` and `SPDFCoreMarkdownTests`), and
+choosing a language already re-highlights the fence on the next open; only the
+Win32 shell that turns a click on the pill into a choice is missing. Until it
+lands the pill draws and hit-tests but has nothing to open, so patch request 3
+should wire the copy button first and leave the language pill inert rather than
+route it somewhere that does nothing.

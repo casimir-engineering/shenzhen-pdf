@@ -239,6 +239,36 @@ spdf_document* spdf_open_markdown(const char* path, const spdf_markdown_options*
     return opened;
 }
 
+int spdf_markdown_resolve_anchor(spdf_document* doc, const char* uri, int* page_index, float* page_y) {
+    fz_location loc;
+    float x = 0.0f, y = 0.0f;
+    int page = -1;
+
+    if (!doc || !doc->doc || !uri || !*uri) return 0;
+    fz_try(doc->ctx) {
+        /* The light rendition on purpose: the two paginate identically (the
+         * opener drops the dark one if they ever did not), and every caller of
+         * this wants coordinates it can compare with a rendered page. */
+        loc = fz_resolve_link(doc->ctx, doc->doc, uri, &x, &y);
+        if (loc.page >= 0 || loc.chapter >= 0) page = fz_page_number_from_location(doc->ctx, doc->doc, loc);
+    }
+    fz_catch(doc->ctx) {
+        fz_ignore_error(doc->ctx);
+        return 0;
+    }
+    if (page < 0 || page >= doc->page_count) return 0;
+    if (page_index) *page_index = page;
+    /* MuPDF's HTML anchor y is in CONTENT space, not page space: look at
+     * htdoc_resolve_link (mupdf/source/html/html-doc.c:65-70), which divides by
+     * html->page_h -- the printable height -- and never adds html->page_margin[T],
+     * the way fz_load_html_links does for a link rectangle
+     * (html-outline.c:138-143). A caller comparing this with a rendered page
+     * would be a whole top margin out, which is 60pt of a 842pt sheet and looks
+     * exactly like an off-by-one-element bug. Add it here, once. */
+    if (page_y) *page_y = y + SPDF_MARKDOWN_PAGE_MARGIN_TOP_PT;
+    return 1;
+}
+
 int spdf_export_pdf(spdf_document* doc, const char* path, int page_index, char* err, size_t err_len) {
     fz_document_writer* writer = NULL;
     fz_page* page = NULL;

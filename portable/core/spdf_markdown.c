@@ -60,6 +60,7 @@ typedef struct conv {
 
     spdf_md_buf code;
     char code_lang[64];
+    int code_index; /* the next fence's ordinal; see close_code */
 
     spdf_md_buf html;
     spdf_md_sanitizer sanitizer;
@@ -183,16 +184,32 @@ static void close_image(conv* c) {
 
 static void close_code(conv* c) {
     const spdf_markdown_language* lang;
+    const char* id;
+    char anchor[48];
     size_t len = c->code.len;
+    int index = c->code_index++;
 
     pop(c);
     /* md4c terminates the last line with '\n'; the box should not end with an
      * empty line. */
     if (len && c->code.data[len - 1] == '\n') --len;
-    spdf_md_buf_puts(cur(c), "<pre><code>");
-    lang = spdf_markdown_language_for_fence(c->code_lang, strlen(c->code_lang));
-    if (lang && !spdf_markdown_is_diagram_fence(c->code_lang, strlen(c->code_lang)))
-        spdf_markdown_highlight_html(lang->id, c->code.data ? c->code.data : "", len, cur(c));
+    /* The anchor is how a frontend asks the laid-out document where this fence
+     * ended up, for the in-page language picker and copy button: fence N is
+     * "#spdf-code-N", and spdf_markdown_scan_fences numbers the same N.
+     * Invisible, and MuPDF resolves it through fz_resolve_link like any id. */
+    snprintf(anchor, sizeof(anchor), "%s%d", SPDF_MARKDOWN_CODE_ANCHOR_PREFIX, index);
+    spdf_md_buf_puts(cur(c), "<pre");
+    spdf_md_buf_attr(cur(c), "id", anchor);
+    spdf_md_buf_puts(cur(c), "><code>");
+    /* The picker's choice beats the fence's own info string, and beats the rule
+     * below that leaves a diagram fence uncoloured; "plain" tokenises to nothing,
+     * which is how Plain Text clears highlighting. */
+    id = spdf_markdown_language_override_for(c->opts, index);
+    if (!id) {
+        lang = spdf_markdown_language_for_fence(c->code_lang, strlen(c->code_lang));
+        if (lang && !spdf_markdown_is_diagram_fence(c->code_lang, strlen(c->code_lang))) id = lang->id;
+    }
+    if (id) spdf_markdown_highlight_html(id, c->code.data ? c->code.data : "", len, cur(c));
     else /* unknown language, and diagram fences, which stay a code box here */
         spdf_md_buf_escape(cur(c), c->code.data ? c->code.data : "", len);
     spdf_md_buf_puts(cur(c), "</code></pre>\n");
