@@ -13,7 +13,7 @@
  *   fitMode 0..4, zoom, sidebarWidth, minimapWidth,
  *   defaultSidebarVisibleForNewDocuments, defaultMinimapVisibleForNewDocuments,
  *   searchJumpsToNearestResult, preventSleepInPresentation,
- *   printScalingMode 0..2, printCustomScale, windowSize {width, height},
+ *   printScalingMode 0..2, printCustomScale, printerName, windowSize {width, height},
  *   markdownTheme "light"|"dark", darkThemePreservesImages, commentAuthor.
  *
  * "markdownTheme" IS THE READING THEME FOR EVERY DOCUMENT, and it keeps that
@@ -78,6 +78,9 @@ typedef enum spdf_win_theme_pref {
 #define SPDF_WIN_SETTINGS_MAX_MINIMAP_W 260.0
 #define SPDF_WIN_SETTINGS_DEFAULT_WINDOW_W 1120
 #define SPDF_WIN_SETTINGS_DEFAULT_WINDOW_H 800
+/* A Windows printer name is at most 220 characters plus a server prefix; 256 is
+ * what the spooler's own headers use and what spdf_win_print_dialog.h holds. */
+#define SPDF_WIN_SETTINGS_PRINTER_MAX 256
 
 typedef struct spdf_win_settings {
     int fit_mode;                       /* "fitMode" 0..4 (custom/actual/width/height/page) */
@@ -90,6 +93,14 @@ typedef struct spdf_win_settings {
     int prevent_sleep_in_presentation;  /* "preventSleepInPresentation" */
     int print_scaling_mode;             /* "printScalingMode" 0 fit, 1 actual, 2 custom */
     double print_custom_scale;          /* "printCustomScale" 0.10..8.0 */
+    /* "printerName": the printer the port's own print dialog opens with, UTF-8.
+     * WINDOWS-ONLY, like setupPromptAnswered above, and for the same reason it
+     * is safe: a settings.yaml shared with macOS or Linux gains one key those
+     * readers carry through and ignore. It exists because the fallback print
+     * dialog (spdf_win_print_dialog.h) has to remember a choice Windows' own
+     * dialog would have remembered for us. Written only when non-empty, so a
+     * reader who has never printed adds nothing to the file. */
+    char printer_name[SPDF_WIN_SETTINGS_PRINTER_MAX];
     int window_width;                   /* "windowSize": { "width", "height" }, content points */
     int window_height;
     int theme;                          /* spdf_win_theme_pref, "markdownTheme" */

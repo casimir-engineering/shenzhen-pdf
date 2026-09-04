@@ -43,28 +43,34 @@
  * or a disk spool. Moving it to a worker later needs no change to any of the
  * arithmetic — it needs the private document handle this file already opens.
  *
- * WHAT CANNOT BE DRIVEN HERE, AND IT IS NOT THE PRINTING. Measured on an
- * unlocked Windows 11 Pro 26200 session, 2026-09-03: NO comdlg32 print dialog
- * can be shown on that machine. spdf_win_print_document_ex() reaches
- * PrintDlgExW and PrintDlgExW never returns — no window is created, nothing is
- * shown, and the app can only be killed. That is NOT this file calling it
- * wrongly: an independent process, its own STA, its own pumping message loop,
- * the same flags and the same page-range array, hangs identically inside
- * PrintDlgExW; so does the CLASSIC PrintDlgW with PD_NOPAGENUMS and no ranges
- * at all. The hung process has windows.internal.shellcommon.PrintExperience.dll
- * and Print.PrintSupport.Source.dll loaded, i.e. comdlg32 has handed off to the
- * Windows 11 print experience and that hand-off does not come back. One machine
- * is not every machine, but the app's call is exonerated and the dialog is the
- * only part that cannot be reached.
+ * PRINT CANNOT HANG THE APP, AND IT USED TO BE ABLE TO. Measured on this host
+ * (Windows 11 Pro 26200) by portable/win/tests/print_dialog_probe.c and written
+ * up in portable/docs/windows-print-dialog.md: PrintDlgExW with a valid
+ * hwndOwner NEVER RETURNS and creates no window, and with a NULL one it fails
+ * at once with E_HANDLE. This file used to call it straight from the UI thread,
+ * so File > Print wedged the whole process with nothing on screen to explain
+ * it.
  *
- * SO THE JOB IS DRIVEN WITHOUT IT. spdf_win_print_run_job() below is everything
- * after the dialog — the paper conversion, StartDoc, the per-page loop,
- * EndDoc — against a DC the caller supplies, and
- * portable/win/tests/print_e2e_test.c hands it a real Microsoft Print to PDF
- * device with a real output file and reopens the PDF that comes out through the
- * core. That is a genuine end-to-end print job through the shipping loop rather
- * than a copy of it; what is left untested on this host is PrintDlgEx choosing
- * the printer and the pages, which is Windows' own dialog.
+ * It no longer can. spdf_win_print_document_ex() -- declared here, DEFINED in
+ * spdf_win_print_dialog_choose.cpp, so the job below stays cheap to link -- now
+ * goes through spdf_win_print_dialog.h, which calls PrintDlgExW on a DEDICATED,
+ * WATCHDOGGED thread and, when no dialog appears, ABANDONS that thread (never
+ * TerminateThread) and shows the port's own print dialog instead. Windows' own
+ * dialog is still the normal path and is still tried first, because on a host
+ * where it works it is the right dialog; it is simply no longer allowed to take
+ * the app with it. The measurement, the watchdog and the fallback are all
+ * documented there -- including that the CLASSIC PrintDlgW works perfectly well
+ * on this machine, which corrects the earlier claim in this header that no
+ * comdlg32 print dialog could be shown here at all.
+ *
+ * THE JOB ITSELF NEEDS NO DIALOG, and that is what makes it testable.
+ * spdf_win_print_run_job() below is everything after the reader presses Print —
+ * the paper conversion, StartDoc, the per-page loop, EndDoc — against a DC the
+ * caller supplies, and portable/win/tests/print_e2e_test.c hands it a real
+ * Microsoft Print to PDF device with a real output file and reopens the PDF
+ * that comes out through the core. That is a genuine end-to-end print job
+ * through the shipping loop rather than a copy of it, and it is the one
+ * function both dialogs end in.
  */
 #ifndef SPDF_WIN_PRINT_H
 #define SPDF_WIN_PRINT_H
@@ -114,14 +120,29 @@ spdf_win_print_status spdf_win_print_document(HWND parent, spdf_document* doc, c
                                               spdf_win_print_scaling_mode mode, double custom_scale, char* err,
                                               size_t err_len);
 
-/* The same, WITH THE SCALING PAGE: the dialog gets a "Scaling" tab preset from
- * `choice` (spdf_win_print_scaling.h), the job prints with what the reader
- * chose, and `choice` holds that on return -- the caller persists it as
- * printScalingMode / printCustomScale when the status is OK. On a cancel
- * `choice` is left as it was. This is the entry point the shell uses; the one
- * above is for a caller that has already decided. */
+/* The same, WITH THE SCALING CHOICE: Windows' dialog gets a "Scaling" tab
+ * preset from `choice` (spdf_win_print_scaling.h) and the port's own dialog gets
+ * the same three radios, the job prints with what the reader chose, and
+ * `choice` holds that on return -- the caller persists it as printScalingMode /
+ * printCustomScale when the status is OK. On a cancel `choice` is left as it
+ * was. This is the entry point the shell uses; the one above is for a caller
+ * that has already decided.
+ *
+ * The chosen PRINTER is persisted here rather than by the caller, as
+ * settings.yaml "printerName" -- nothing else in the app reads it. */
 spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc, const wchar_t* doc_path,
                                                  spdf_win_print_choice* choice, char* err, size_t err_len);
+
+/* The same again, TOLD WHICH PAGE THE READER IS ON (0-based), so the fallback
+ * dialog's "Current page" means something. Pass -1 when it is not known, which
+ * is what spdf_win_print_document_ex() above does -- the choice is then greyed
+ * out rather than silently standing for page 1. Additive on purpose: the shell
+ * knows the page (SpdfWinDocAction::page) and can be switched to this entry
+ * point in one line, without that switch being a prerequisite for anything
+ * here to build. */
+spdf_win_print_status spdf_win_print_document_for_view(HWND parent, spdf_document* doc, const wchar_t* doc_path,
+                                                       spdf_win_print_choice* choice, int current_page, char* err,
+                                                       size_t err_len);
 
 /* THE JOB, WITHOUT THE DIALOG: everything spdf_win_print_document_ex() does
  * once the reader has pressed Print, against a DC the caller already has.
