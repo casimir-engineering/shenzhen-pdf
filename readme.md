@@ -5,7 +5,7 @@
 
 <a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg"><img src="https://img.shields.io/badge/Download%20for%20macOS-Apple%20Silicon-2ea44f?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS (Apple Silicon)" height="46"></a>
 
-<sub>Latest <b>26.9.4-2</b> · Apple Silicon</sub>
+<sub>Latest <b>26.9.4-3</b> · Apple Silicon</sub>
 
 <a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest">All releases</a> · <a href="https://github.com/casimir-engineering/shenzhen-pdf">Source</a>
 
@@ -25,7 +25,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Compact tabbed windows** — Keep many documents in one tidy window; a space-efficient tab strip, with every tab outlined, disambiguates same-named files and overflows into a "…" menu.
 - **Draggable & detachable tabs** — Reorder by dragging, or pull a tab into its own window — it reopens exactly where you left it, carrying its view state.
-- **Multi-window session restore** — Quit and relaunch to get every window back, each with its own tabs, selected tab, size **and position — on the display it was left on**, not herded onto the main screen.
+- **Multi-window session restore** — Quit and relaunch to get every window back, each with its own tabs, selected tab, size **and position — on the display it was left on**, not herded onto the main screen. The window you were last using returns in front, and the others open alongside it rather than a moment later.
 - **Resume exactly where you left off** — Reopen any document at the same page, zoom, fit mode, scroll position, and search.
 - **Option + scroll turns pages** <sub>macOS</sub> — Anywhere in the window, over the page or the minimap: it behaves like the page arrows, keeping your zoom and position, and pages faster the faster you spin.
 - **Recents, reopen-last-closed & favorites** — Jump back into recent files, reopen a just-closed tab (<kbd>Cmd+Shift+T</kbd>), or star pages/docs and find them from a palette (<kbd>Cmd+K</kbd>).
@@ -36,7 +36,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 ## <a id="markdown"></a>Markdown, read like a document <sub>macOS</sub>
 
-- **GitHub-grade formatting, paginated** — Markdown opens as real A4 sheets in the same reader as PDFs: GitHub-flavored typography and palette, tables with grids, header bands and zebra striping, and fenced code in continuous rounded boxes. Same tabs, chapters, map, zoom presets, and presentation mode; the Rotate commands turn the paper landscape (the text stays upright), and wide tables, images and diagrams take the room the page gives them. **Live update** — edit the file in another app and the open document re-renders in the background and swaps in complete, keeping your place; nothing blanks.
+- **GitHub-grade formatting, paginated** — Markdown opens as real A4 sheets in the same reader as PDFs: GitHub-flavored typography and palette, tables with grids, header bands and zebra striping, and fenced code in continuous rounded boxes. Same tabs, chapters, map, zoom presets, and presentation mode; the Rotate commands turn the paper landscape (the text stays upright, and each file reopens on the sheet you last read it on), and wide tables, images and diagrams take the room the page gives them. **Live update** — edit the file in another app and the open document re-renders in the background and swaps in complete, keeping your place; nothing blanks.
 - **README HTML, sanitized and native** — The inline HTML that real READMEs lean on renders natively through a strict whitelist: centered `<div>`/`<p align>` blocks, HTML headings, badge images with `width`/`height` hints, `<kbd>` key caps, `<sub>`/`<sup>`, and simple HTML tables. `<details>` sections always render expanded with a bold ▸ summary line. Scripts, styles, iframes, forms, and event handlers are stripped — nothing is ever evaluated, no web engine involved.
 - **Identical navigation, identical search** — Chapter jumps, page stepping, find with in-page highlights, map and scrollbar markers, chapter-grouped results, regex — all the PDF behavior, including an I-beam over text and a pointing hand over links.
 - **31 syntax languages, chosen in place** — C, C++, Rust, Go, TypeScript, SQL, HTML, CSS, YAML, LaTeX, shell and more, picked from a searchable list anchored to the code block; Plain Text clears highlighting. A copy button sits beside the picker on every block.

@@ -709,6 +709,8 @@ static char kSPDFPasswordPromptClosesNewTabKey;
         SPDFScopedLaunchPhaseLog launchPhase("loadPersistentState");
         [self loadPersistentState];
     }
+    // Here, not after the first paint, so the launches overlap (WindowPlacement.h).
+    [self spawnPendingRestoredWindowsIfNeeded];
     // Read-only shadow copy: the orphaned-temp-copy sweep is deferred to
     // -resumePersistentStateSavesAfterLaunch (after first paint, after tabs are
     // restored, after the catch-up save). Running it here against the stale
@@ -777,7 +779,6 @@ static char kSPDFPasswordPromptClosesNewTabKey;
       [self->_pageScrollView displayIfNeeded];
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
-                       [self spawnPendingRestoredWindowsIfNeeded];
                        [self resumePersistentStateSavesAfterLaunch];
                        if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
                        if (self.restoreWindowID.length == 0) {
@@ -1039,6 +1040,10 @@ static char kSPDFPasswordPromptClosesNewTabKey;
     // when applicationDidFinishLaunching runs its critical path).
     dispatch_async(dispatch_get_main_queue(), ^{
       [self checkAllTabsForExternalChangesOnFocus];
+      // Stamp this window as the focused one so a relaunch reopens it in front
+      // (spdf_session_focused_window_index) even if the app is inactive at quit.
+      // Not during launch, whose own session write follows shortly.
+      if (!self->_suspendPersistentStateSaves) [self writeSessionStateForCurrentWindow];
     });
 }
 
@@ -1258,10 +1263,13 @@ id spdf_state_object_from_yaml_data(NSData* data) {
             }
         }
     } else {
-        windowState = windows.firstObject;
-        for (NSUInteger i = 1; i < windows.count; i++) {
+        // This is the process that activates, so it takes the window the reader
+        // left focused; every other window is spawned behind it.
+        NSUInteger focused = spdf_session_focused_window_index(windows);
+        windowState = focused == NSNotFound ? nil : windows[focused];
+        for (NSUInteger i = 0; i < windows.count; i++) {
             NSString* windowID = [windows[i][@"id"] isKindOfClass:NSString.class] ? windows[i][@"id"] : nil;
-            if (windowID.length > 0) [_pendingRestoreWindowIDs addObject:windowID];
+            if (i != focused && windowID.length > 0) [_pendingRestoreWindowIDs addObject:windowID];
         }
     }
     if (windowState)
@@ -1315,7 +1323,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     if (windowID.length > 0) _windowSessionID = [windowID copy];
     NSRect frame;
     if (spdf_window_frame_from_dictionary(windowState[@"frame"], &frame)) {
-        _restoredWindowFrame = spdf_sane_window_frame(frame, NSScreen.mainScreen);
+        _restoredWindowFrame = frame;  // raw: the fallback is chosen at window creation, and never saved
         _hasRestoredWindowFrame = YES;
         _restoredWindowContentSize = _restoredWindowFrame.size;
     }
@@ -1575,7 +1583,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         frame = NSMakeRect(floor(NSMidX(visible) - contentSize.width / 2.0),
                            floor(NSMidY(visible) - contentSize.height / 2.0), contentSize.width, contentSize.height);
     }
-    frame = spdf_sane_window_frame(frame, _window.screen ?: NSScreen.mainScreen);
+    frame = spdf_window_frame_to_persist(_window, spdf_sane_window_frame(frame, _window.screen ?: NSScreen.mainScreen));
     if (!_windowSessionID.length) _windowSessionID = NSUUID.UUID.UUIDString;
     return [@{
         @"id" : _windowSessionID,
@@ -1621,6 +1629,10 @@ id spdf_state_object_from_yaml_data(NSData* data) {
               break;
           }
       }
+      // Stamped only in the active app: a restored window is key in its own process too (SPDFMacTabStateTests).
+      BOOL focusedNow = NSApp.isActive && self->_window.isKeyWindow;
+      id previous = existing == NSNotFound ? nil : windows[existing][@"focusedAt"];
+      currentWindow[@"focusedAt"] = focusedNow ? @(NSDate.timeIntervalSinceReferenceDate) : (previous ?: @0);
       if (existing == NSNotFound) {
           [windows addObject:currentWindow];
           return YES;
@@ -1698,21 +1710,9 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 }
 
 - (void)spawnPendingRestoredWindowsIfNeeded {
-    if (self.detachedTabLaunch || self.restoreWindowID.length > 0 || _pendingRestoreWindowIDs.count == 0) return;
-
-    NSString* executable = NSBundle.mainBundle.executablePath ?: NSProcessInfo.processInfo.arguments.firstObject;
-    if (executable.length == 0) return;
-    NSArray<NSString*>* ids = [_pendingRestoreWindowIDs copy];
+    if (self.detachedTabLaunch || self.restoreWindowID.length > 0) return;
+    spdf_spawn_restored_window_processes(_pendingRestoreWindowIDs, _windowSessionID);
     [_pendingRestoreWindowIDs removeAllObjects];
-    for (NSString* windowID in ids) {
-        if (windowID.length == 0 || [windowID isEqualToString:_windowSessionID]) continue;
-        NSTask* task = [[NSTask alloc] init];
-        task.executableURL = [NSURL fileURLWithPath:executable];
-        task.arguments = @[ @"--restore-window", windowID ];
-        task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
-        task.standardError = [NSFileHandle fileHandleWithNullDevice];
-        [task launchAndReturnError:nil];
-    }
 }
 
 - (void)performWithBatchedPersistentStateSaves:(void (^)(void))block {
@@ -2157,7 +2157,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
     if (version.length == 0) version = @"26.9.4";
-    if (build.length == 0) build = @"2";
+    if (build.length == 0) build = @"3";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
@@ -2644,8 +2644,8 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
     _window.movable = NO;
     _window.movableByWindowBackground = NO;
-    spdf_window_configure_document_window(_window, self, NSMakeSize(kMinWindowWidth, kMinWindowHeight), frame,
-                                          _hasRestoredWindowFrame);
+    spdf_window_configure_document_window(_window, self, NSMakeSize(kMinWindowWidth, kMinWindowHeight),
+                                          _restoredWindowFrame, _hasRestoredWindowFrame);
 
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
     content.reader = self;
@@ -8683,7 +8683,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
     tab.path = [path copy];
     tab.title = spdf_display_name_for_path(path);
-    [self seedKeepImageColorsForNewTab:tab];
+    [self seedNewTabFromDocumentMemory:tab];
     tab.zoom = 1.0;
     tab.customZoom = 1.0;
     tab.fitMode = SPDFFitModePage;

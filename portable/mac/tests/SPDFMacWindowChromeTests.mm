@@ -40,6 +40,46 @@ static void ExpectFrameRoundTrips(const char* what, NSRect frame) {
     if (NSEqualRects(content, frame)) fprintf(stderr, "       (content rect was not converted at all)\n");
 }
 
+// A remembered frame must survive a launch that cannot show it.
+//
+// The defect: a window remembered on an external display, launched once while
+// only the built-in screen was attached, was clamped onto the built-in screen
+// -- and that clamp was then SAVED, so the remembered position was gone for
+// good. Measured on the real session: 342,1307 (external) became 0,65, which is
+// exactly the built-in screen's visible frame.
+static void ExpectUsable(const char* what, NSRect frame, NSArray<NSValue*>* screens, BOOL expected) {
+    if (spdf_window_frame_is_usable_on_screens(frame, screens) == expected) return;
+    fprintf(stderr, "FAIL: %s\n", what);
+    ++gPlacementFailures;
+}
+
+static int TestFrameUsability(void) {
+    // The two screens this was found on: built-in, and a 3440x1440 above it.
+    NSArray<NSValue*>* both = @[
+        [NSValue valueWithRect:NSMakeRect(0, 65, 1800, 1065)],
+        [NSValue valueWithRect:NSMakeRect(-898, 1169, 3440, 1440)]
+    ];
+    NSArray<NSValue*>* builtInOnly = @[ [NSValue valueWithRect:NSMakeRect(0, 65, 1800, 1065)] ];
+
+    ExpectUsable("a frame on the external display is usable while it is attached",
+                 NSMakeRect(342, 1307, 1800, 1065), both, YES);
+    // The same frame with that display gone: NOT usable, so it must be shown
+    // somewhere else -- and, per spdf_window_frame_to_persist, not saved over.
+    ExpectUsable("the same frame is not usable once that display is gone", NSMakeRect(342, 1307, 1800, 1065),
+                 builtInOnly, NO);
+    ExpectUsable("a frame on the built-in screen is usable", NSMakeRect(0, 65, 1800, 1065), builtInOnly, YES);
+    // A sliver hanging onto a screen edge is not somewhere a window can be
+    // used. The bar is an AREA (80x80), matching what spdf_sane_window_frame
+    // already treated as "not really on screen", so a 5pt-wide edge fails it
+    // while a 50pt-wide strip -- 53,000 square points -- passes.
+    ExpectUsable("a 5pt sliver is not usable", NSMakeRect(-1795, 65, 1800, 1065), builtInOnly, NO);
+    // Mostly off-screen but with a real corner on it is fine: the reader can
+    // still grab it, and moving windows there is their prerogative.
+    ExpectUsable("a frame overlapping enough is usable", NSMakeRect(1600, 65, 1800, 1065), builtInOnly, YES);
+    ExpectUsable("no screens at all means nothing is usable", NSMakeRect(0, 65, 800, 600), @[], NO);
+    return gPlacementFailures == 0 ? 0 : 1;
+}
+
 static int TestWindowPlacement(void) {
     ExpectFrameRoundTrips("a frame on the main display", NSMakeRect(220, 230, 1300, 900));
     // AppKit y 1319 on a display mounted above the main one.
@@ -52,6 +92,7 @@ static int TestWindowPlacement(void) {
 
 int main(void) {
     if (TestWindowPlacement()) return 1;
+    if (TestFrameUsability()) return 1;
     @autoreleasepool {
         expect_action(@"single click drags", spdf_window_chrome_action(1, NO, NO, NO), SPDFWindowChromeActionDrag);
         expect_action(@"double click zooms", spdf_window_chrome_action(2, NO, NO, NO), SPDFWindowChromeActionZoom);
