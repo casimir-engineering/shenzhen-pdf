@@ -83,6 +83,8 @@ MAC_TRANSLATION_COPY_TEST := $(BUILD)/SPDFTranslationCopyTests
 MAC_CURSOR_REGION_TEST := $(BUILD)/SPDFMacCursorRegionsTests
 MAC_TAB_LIFECYCLE_TEST := $(BUILD)/SPDFMacTabLifecycleTests
 MAC_TAB_STATE_TEST := $(BUILD)/SPDFMacTabStateTests
+MAC_SIDEBAR_OUTLINE_TEST := $(BUILD)/SPDFMacSidebarOutlineTests
+MAC_PAGE_WHEEL_TEST := $(BUILD)/SPDFMacPageWheelTests
 MAC_FILE_EXPLORER_TEST := $(BUILD)/SPDFMacFileExplorerPreferenceTests
 MAC_SELECTION_CLICK_TEST := $(BUILD)/SPDFMacSelectionClickTests
 MAC_SELECTION_ADAPTER_TEST := $(BUILD)/SPDFMacSelectionAdapterTests
@@ -94,7 +96,7 @@ MAC_MARKDOWN_SRCS := $(sort $(wildcard mac/markdown/*.mm))
 MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm))) $(MAC_MARKDOWN_SRCS)
 MAC_HDRS := $(sort $(wildcard mac/*.h) $(wildcard mac/markdown/*.h))
 MAC_VERSION ?= 26.9.4
-MAC_BUILD ?= 1
+MAC_BUILD ?= 2
 MAC_SIGN_IDENTITY ?= -
 NOTARY_PROFILE ?=
 NOTARY_RESULT ?= $(DIST)/notarytool-$(MAC_VERSION)-$(MAC_BUILD).json
@@ -107,7 +109,7 @@ MAC_CODESIGN_APP = codesign --force --timestamp --options runtime --sign "$(MAC_
 MAC_CODESIGN_DMG = codesign --force --timestamp --sign "$(MAC_SIGN_IDENTITY)" "$(MAC_DMG)"
 endif
 
-.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-tab-strip-style-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-tab-state-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests test-binaries release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-tab-strip-style-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-tab-state-tests mac-sidebar-outline-tests mac-page-wheel-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests test-binaries release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
@@ -189,8 +191,8 @@ $(MAC_WINDOW_SHORTCUT_TEST): mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMa
 mac-window-shortcut-tests: $(MAC_WINDOW_SHORTCUT_TEST)
 	"$(MAC_WINDOW_SHORTCUT_TEST)"
 
-$(MAC_WINDOW_CHROME_TEST): mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm -framework Foundation -o "$(MAC_WINDOW_CHROME_TEST)"
+$(MAC_WINDOW_CHROME_TEST): mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h mac/SPDFMacWindowPlacement.mm mac/SPDFMacWindowPlacement.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowPlacement.mm -framework Cocoa -o "$(MAC_WINDOW_CHROME_TEST)"
 
 mac-window-chrome-tests: $(MAC_WINDOW_CHROME_TEST)
 	"$(MAC_WINDOW_CHROME_TEST)"
@@ -234,7 +236,7 @@ mac-tab-strip-style-tests: $(MAC_TAB_STRIP_STYLE_TEST)
 # pipeline beyond the palette itself.
 MAC_READING_THEME_CHROME_SRCS := mac/tests/SPDFMacReadingThemeChromeTests.mm mac/SPDFMacDocumentView.mm \
 	mac/SPDFMacPageRendering.mm mac/SPDFMacRenderedPage.mm mac/SPDFMacDelayedLinkActivation.mm \
-	mac/SPDFMacDocumentViewTheme.mm mac/SPDFMacSupport.mm mac/SPDFMacSelectionClick.mm mac/SPDFMacInactiveZoom.mm mac/SPDFMacUIHelpers.mm \
+	mac/SPDFMacDocumentViewTheme.mm mac/SPDFMacSupport.mm mac/SPDFMacSelectionClick.mm mac/SPDFMacInactiveZoom.mm mac/SPDFMacUIHelpers.mm mac/SPDFMacPageWheel.mm \
 	mac/SPDFMacCursorRegions.mm mac/SPDFMacWindowChrome.mm mac/SPDFMacTranslationPolicy.mm \
 	mac/markdown/SPDFMarkdownTheme.mm
 
@@ -319,6 +321,18 @@ $(MAC_TAB_STATE_TEST): mac/tests/SPDFMacTabStateTests.mm mac/SPDFMacModels.mm ma
 
 mac-tab-state-tests: $(MAC_TAB_STATE_TEST)
 	"$(MAC_TAB_STATE_TEST)"
+
+$(MAC_SIDEBAR_OUTLINE_TEST): mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm mac/SPDFMacSidebarOutline.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm -framework Foundation -o "$(MAC_SIDEBAR_OUTLINE_TEST)"
+
+mac-sidebar-outline-tests: $(MAC_SIDEBAR_OUTLINE_TEST)
+	"$(MAC_SIDEBAR_OUTLINE_TEST)"
+
+$(MAC_PAGE_WHEEL_TEST): mac/tests/SPDFMacPageWheelTests.mm mac/SPDFMacPageWheel.mm mac/SPDFMacPageWheel.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacPageWheelTests.mm mac/SPDFMacPageWheel.mm -framework Cocoa -o "$(MAC_PAGE_WHEEL_TEST)"
+
+mac-page-wheel-tests: $(MAC_PAGE_WHEEL_TEST)
+	"$(MAC_PAGE_WHEEL_TEST)"
 
 $(MAC_FILE_EXPLORER_TEST): mac/tests/SPDFMacFileExplorerPreferenceTests.mm mac/SPDFMacFileExplorerPreference.mm mac/SPDFMacFileExplorerPreference.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacFileExplorerPreferenceTests.mm mac/SPDFMacFileExplorerPreference.mm -framework Cocoa -o "$(MAC_FILE_EXPLORER_TEST)"

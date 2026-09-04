@@ -5,7 +5,7 @@
 
 <a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg"><img src="https://img.shields.io/badge/Download%20for%20macOS-Apple%20Silicon-2ea44f?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS (Apple Silicon)" height="46"></a>
 
-<sub>Latest <b>26.9.4-1</b> · Apple Silicon</sub>
+<sub>Latest <b>26.9.4-2</b> · Apple Silicon</sub>
 
 <a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest">All releases</a> · <a href="https://github.com/casimir-engineering/shenzhen-pdf">Source</a>
 
@@ -25,8 +25,9 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Compact tabbed windows** — Keep many documents in one tidy window; a space-efficient tab strip, with every tab outlined, disambiguates same-named files and overflows into a "…" menu.
 - **Draggable & detachable tabs** — Reorder by dragging, or pull a tab into its own window — it reopens exactly where you left it, carrying its view state.
-- **Multi-window session restore** — Quit and relaunch to get every window back, each with its own tabs, selected tab, and size.
+- **Multi-window session restore** — Quit and relaunch to get every window back, each with its own tabs, selected tab, size **and position — on the display it was left on**, not herded onto the main screen.
 - **Resume exactly where you left off** — Reopen any document at the same page, zoom, fit mode, scroll position, and search.
+- **Option + scroll turns pages** <sub>macOS</sub> — Anywhere in the window, over the page or the minimap: it behaves like the page arrows, keeping your zoom and position, and pages faster the faster you spin.
 - **Recents, reopen-last-closed & favorites** — Jump back into recent files, reopen a just-closed tab (<kbd>Cmd+Shift+T</kbd>), or star pages/docs and find them from a palette (<kbd>Cmd+K</kbd>).
 - **Presentation mode** — Present full-screen with chrome-free advance and optional sleep prevention (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>).
 - **Dark reading theme, for every document** <sub>macOS · Windows</sub> — One toolbar toggle (<kbd>Shift+Cmd+I</kbd> / <kbd>Ctrl+Shift+I</kbd>) darkens PDF, XPS, EPUB and Markdown alike, onto the same soft #1E1E1E paper rather than pure black. Rendered pages are remapped by lightness with their color kept, so a red warning stays red and a blue hyperlink stays blue instead of flipping to its complement the way an inverted page does. *Settings ▸ Keep Image Colors in Dark Theme* additionally leaves photographs and figures untouched — **per document**, so a datasheet can keep its color-coded figures while the scan in the next tab is darkened whole; it defaults to on and each document remembers its own choice across restarts. Scanned pages are one big image and are darkened anyway, so the setting can never quietly switch dark mode off. Comic archives and image files are left alone entirely, and **printing, Save as PDF and Copy Page always use the document's own colors**, so nothing you send on carries our dark paper. Remembered across documents and sessions, and on Windows it follows the system theme until you express a preference; the per-document choice is macOS-only, where Windows remembers one. The Linux build has no dark-theme code, which is why this bullet carries a tag.
@@ -51,6 +52,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Incremental search with live count** — Type anywhere to start searching and every match appears instantly with a running "current / total" counter, highlighted in-page. <sub>macOS · Linux · Windows</sub>
 - **Chapter-grouped results sidebar** — Every match listed with a snippet, grouped under its chapter heading; click to jump. <sub>macOS · Linux</sub>
+- **Nested chapters** <sub>macOS</sub> — A PDF's outline and a Markdown document's headings both fold: disclosure arrows on every parent, Expand All / Collapse All above the list, and each document remembers what you left collapsed across launches.
 - **Regex & multiline search** — Regular-expression matching, including patterns that span line and paragraph breaks; invalid patterns fail gracefully. <sub>macOS · Linux</sub>
 - **Document map (minimap)** — A live right-side thumbnail strip with a draggable viewport: drag to scroll, click to jump, Cmd-scroll to zoom — search hits show as yellow markers. Scales to hundreds of pages. <sub>macOS · Linux</sub>
 - **Scrollbar heat-map** — The scrollbar doubles as a match heat-map — a tick per hit, the active one hotter. <sub>macOS · Linux · Windows</sub> Each tab remembers its query across switches and relaunches. <sub>macOS · Linux</sub>
