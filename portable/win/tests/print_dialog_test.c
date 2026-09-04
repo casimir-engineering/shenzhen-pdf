@@ -8,7 +8,7 @@
  * it. A dialog that opens but whose combo is empty, or whose page range comes
  * back as the whole document, would lose prints silently.
  *
- * THREE CLAIMS.
+ * FOUR CLAIMS.
  *   1. THE PRINTERS ARE REAL. spdf_win_print_dialog_printers() enumerates this
  *      machine through EnumPrintersW and the DEFAULT printer -- the one
  *      GetDefaultPrinterW names -- is the one it preselects. A machine with no
@@ -25,6 +25,12 @@
  *      exactly as a real click would. The same shape as
  *      properties_dialog_test.c beside it, for the same reason: nothing else in
  *      this port can say whether a window's controls are populated.
+ *   4. THE PREVIEW IS LIVE. It exists as a child window, and its page stepper
+ *      follows the range the reader typed -- "Page 2 of N", forward, and no
+ *      stepper at all once the range is one page. That is the part of the
+ *      preview a window is needed for; the geometry it draws, and that the page
+ *      rectangle IS spdf_win_print_dest_rect()'s output scaled, is
+ *      print_preview_test.c's business and needs no window.
  *
  * IT OPENS A WINDOW ON THE DESKTOP FOR ABOUT A SECOND, and closes it from the
  * driving thread and again from a hard timeout, so the suite cannot leave one
@@ -40,7 +46,8 @@
  * portable/docs/windows-print-dialog.md was written, and it is also how the
  * Properties button was shown to reach the driver's own sheet.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_print_dialog.cpp portable/win/src/spdf_win_print_dialog_run.cpp portable/win/src/spdf_win_print.cpp portable/win/src/spdf_win_about.cpp portable/win/src/spdf_win_export.cpp portable/win/src/spdf_win_clipboard_page.cpp portable/win/src/spdf_win_selection.cpp portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_open.c ext/md4c/md4c.c */
+/* spdf-test-sources: portable/win/src/spdf_win_print_dialog.cpp portable/win/src/spdf_win_print_dialog_controls.cpp portable/win/src/spdf_win_print_dialog_run.cpp portable/win/src/spdf_win_print_dialog_system.cpp portable/win/src/spdf_win_print_preview.cpp portable/win/src/spdf_win_print_preview_measure.cpp portable/win/src/spdf_win_print_preview_sheet.cpp portable/win/src/spdf_win_render.c portable/win/src/spdf_win_open.c portable/win/src/spdf_win_print.cpp portable/win/src/spdf_win_about.cpp portable/win/src/spdf_win_export.cpp portable/win/src/spdf_win_clipboard_page.cpp portable/win/src/spdf_win_selection.cpp portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_open.c ext/md4c/md4c.c */
+/* spdf-test-args: portable/win/tests/fixtures/outline.pdf */
 /* spdf-test-needs: mupdf */
 #include <windows.h>
 
@@ -69,17 +76,25 @@ static int g_skipped = 0;
     } while (0)
 
 #define DIALOG_CLASS L"SpdfWinPrintDialog"
-#define ID_PRINTER 1201
-#define ID_RANGE_ALL 1203
-#define ID_RANGE_CURRENT 1204
-#define ID_RANGE_FROMTO 1205
-#define ID_FROM 1206
-#define ID_TO 1207
-#define ID_COPIES 1208
-#define ID_SCALE_FIT 1209
-#define ID_SCALE_CUSTOM 1211
-#define ID_PERCENT 1212
-#define ID_PRINT 1213
+/* The ids come from the header now (spdf_win_print_dialog.h), not from a copy
+ * in this file: the dialog, the preview and this test all read the same
+ * controls, and three private lists would drift. */
+#define ID_PRINTER SPDF_WIN_PD_ID_PRINTER
+#define ID_RANGE_ALL SPDF_WIN_PD_ID_RANGE_ALL
+#define ID_RANGE_FROMTO SPDF_WIN_PD_ID_RANGE_FROMTO
+#define ID_FROM SPDF_WIN_PD_ID_FROM
+#define ID_TO SPDF_WIN_PD_ID_TO
+#define ID_COPIES SPDF_WIN_PD_ID_COPIES
+#define ID_SCALE_FIT SPDF_WIN_PD_ID_SCALE_FIT
+#define ID_SCALE_CUSTOM SPDF_WIN_PD_ID_SCALE_CUSTOM
+#define ID_PERCENT SPDF_WIN_PD_ID_PERCENT
+#define ID_PRINT SPDF_WIN_PD_ID_PRINT
+
+/* The preview child and its page stepper (spdf_win_print_preview_internal.h). */
+#define PREVIEW_CLASS L"SpdfWinPrintPreview"
+#define ID_PREVIEW_PREV 1301
+#define ID_PREVIEW_NEXT 1302
+#define ID_PREVIEW_COUNT 1303
 
 /* --- 1. the printers ------------------------------------------------------ */
 
@@ -194,6 +209,62 @@ static int g_expected_printers = 0;
  * with both off and closes the window in about a second. */
 static int g_hold_ms = 0;
 static int g_dark = 0;
+/* The fixture's real page count, so the stepper's words can be predicted
+ * without this file hard-coding a fixture's shape. */
+static int g_page_count = 4;
+static spdf_document* g_doc = NULL;
+static const char* g_doc_path = NULL;
+
+/* --- 4. the preview, as a live child of the dialog ------------------------ */
+
+/* THE PREVIEW FOLLOWS THE CONTROLS, checked through the one thing about it that
+ * is visible from outside: its page stepper. With "pages 2 to 3" chosen the
+ * stepper must say "Page 2 of N" and be SHOWN; narrowing to a single page must
+ * take it away entirely rather than leave two dead arrows. Both go through
+ * spdf_win_print_expand_ranges(), the same expansion the job uses, so this also
+ * says the preview cannot offer a page the job would not print.
+ *
+ * The geometry -- that the page rectangle IS spdf_win_print_dest_rect()'s,
+ * scaled -- is print_preview_test.c's business and needs no window at all. */
+static void test_preview(HWND dialog) {
+    HWND preview = FindWindowExW(dialog, NULL, PREVIEW_CLASS, NULL);
+    wchar_t label[64] = L"";
+    wchar_t want[64];
+
+    if (g_page_count < 3) return; /* already recorded as a skip in main */
+    if (!preview) {
+        printf("SKIP print preview: no child with class %ls\n", PREVIEW_CLASS);
+        ++g_skipped;
+        return;
+    }
+    _snwprintf_s(want, 64, _TRUNCATE, L"Page 2 of %d", g_page_count);
+    GetWindowTextW(GetDlgItem(preview, ID_PREVIEW_COUNT), label, 64);
+    CHECK(wcscmp(label, want) == 0);
+    CHECK(IsWindowVisible(GetDlgItem(preview, ID_PREVIEW_NEXT)) != 0);
+    /* Two pages in the range: back is dead at the first of them, forward is not. */
+    CHECK(IsWindowEnabled(GetDlgItem(preview, ID_PREVIEW_PREV)) == 0);
+    CHECK(IsWindowEnabled(GetDlgItem(preview, ID_PREVIEW_NEXT)) != 0);
+    /* Forward once, and the stepper names the DOCUMENT page it moved to, not an
+     * index into the range. */
+    SendMessageW(preview, WM_COMMAND, MAKEWPARAM(ID_PREVIEW_NEXT, BN_CLICKED),
+                 (LPARAM)GetDlgItem(preview, ID_PREVIEW_NEXT));
+    _snwprintf_s(want, 64, _TRUNCATE, L"Page 3 of %d", g_page_count);
+    GetWindowTextW(GetDlgItem(preview, ID_PREVIEW_COUNT), label, 64);
+    CHECK(wcscmp(label, want) == 0);
+    CHECK(IsWindowEnabled(GetDlgItem(preview, ID_PREVIEW_NEXT)) == 0);
+
+    /* One page in the range: no stepper. */
+    SetDlgItemInt(dialog, ID_TO, 2, FALSE);
+    SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(ID_RANGE_FROMTO, BN_CLICKED),
+                 (LPARAM)GetDlgItem(dialog, ID_RANGE_FROMTO));
+    CHECK(IsWindowVisible(GetDlgItem(preview, ID_PREVIEW_NEXT)) == 0);
+    CHECK(IsWindowVisible(GetDlgItem(preview, ID_PREVIEW_COUNT)) == 0);
+    /* Put the range back, so claim 3's assertions still describe pages 2-3. */
+    SetDlgItemInt(dialog, ID_TO, 3, FALSE);
+    SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(ID_RANGE_FROMTO, BN_CLICKED),
+                 (LPARAM)GetDlgItem(dialog, ID_RANGE_FROMTO));
+    printf("print_dialog: the preview stepper followed the range\n");
+}
 
 static DWORD WINAPI drive_dialog(LPVOID unused) {
     HWND dialog = NULL;
@@ -223,6 +294,12 @@ static DWORD WINAPI drive_dialog(LPVOID unused) {
     SetDlgItemInt(dialog, ID_COPIES, 3, FALSE);
     CheckRadioButton(dialog, ID_SCALE_FIT, ID_SCALE_CUSTOM, ID_SCALE_CUSTOM);
     SetDlgItemTextW(dialog, ID_PERCENT, L"25");
+    /* CheckRadioButton does not notify the dialog -- a real click also sends
+     * BN_CLICKED, and that is what makes the preview follow. Sent, not posted,
+     * so the sync has finished before the stepper is read below. */
+    SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(ID_RANGE_FROMTO, BN_CLICKED),
+                 (LPARAM)GetDlgItem(dialog, ID_RANGE_FROMTO));
+    test_preview(dialog);
 
     if (g_hold_ms > 0) Sleep((DWORD)g_hold_ms);
     SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(ID_PRINT, BN_CLICKED), (LPARAM)GetDlgItem(dialog, ID_PRINT));
@@ -259,10 +336,10 @@ static void test_window(const spdf_win_print_printers* list) {
     driver = CreateThread(NULL, 0, drive_dialog, NULL, 0, NULL);
     watchdog = CreateThread(NULL, 0, force_close, NULL, 0, NULL);
 
-    accepted = spdf_win_print_dialog_show(NULL, g_dark, L"print_dialog_test.pdf", 4, 1,
+    accepted = spdf_win_print_dialog_show(NULL, g_dark, L"print_dialog_test.pdf", g_page_count, 1,
                                           "Windows' own print dialog did not open on this computer, so this is "
                                           "Shenzhen PDF's.",
-                                          &req, err, sizeof(err));
+                                          g_doc, g_doc_path, &req, err, sizeof(err));
     if (!InterlockedCompareExchange(&g_window_seen, 0, 0)) {
         printf("SKIP print-dialog window: no window with class %ls was created, err=\"%s\"\n", DIALOG_CLASS, err);
         ++g_skipped;
@@ -297,18 +374,52 @@ static void test_window(const spdf_win_print_printers* list) {
     if (watchdog) CloseHandle(watchdog); /* left to expire; the process exits first */
 }
 
+/* PER-MONITOR-AWARE, LIKE THE APP. The shipping exe declares PerMonitorV2 in
+ * its manifest; a test binary has no manifest and is DPI-UNAWARE, which makes
+ * GetDpiForWindow answer 96 and hands the dialog back its 96-dpi layout,
+ * stretched by the compositor. The dialog's whole DPI path -- MulDiv on every
+ * coordinate, the font, the preview's stepper -- would then never run here, and
+ * a screenshot taken from this binary would not be a screenshot of the dialog
+ * the app shows. Resolved dynamically because a missing export must be a plain
+ * 96 and not a crash, exactly as spdf_win_print_dialog.cpp resolves
+ * GetDpiForWindow. */
+static void claim_dpi_awareness(void) {
+    typedef BOOL(WINAPI * set_ctx_fn)(HANDLE);
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    set_ctx_fn fn = user32 ? (set_ctx_fn)GetProcAddress(user32, "SetProcessDpiAwarenessContext") : NULL;
+    /* DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == -4. */
+    if (fn) fn((HANDLE)(INT_PTR)-4);
+}
+
 int main(int argc, char** argv) {
     spdf_win_print_printers list;
+    char err[512] = "";
     int i;
 
+    claim_dpi_awareness();
     for (i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--dark") == 0) g_dark = 1;
         else if (strncmp(argv[i], "--hold=", 7) == 0) g_hold_ms = atoi(argv[i] + 7) * 1000;
+        else if (argv[i][0] != '-') g_doc_path = argv[i];
+    }
+
+    /* A REAL DOCUMENT, because the preview is only worth looking at with one:
+     * the dialog measures pages on this thread through the handle and the
+     * preview's own workers open the path for themselves. A fixture that cannot
+     * be opened is not fatal -- the dialog then shows the sheet with no page
+     * bitmap, which is a state it has to survive anyway. */
+    if (g_doc_path) g_doc = spdf_open(g_doc_path, err, sizeof(err));
+    if (g_doc) g_page_count = spdf_page_count(g_doc);
+    else printf("SKIP preview bitmap: \"%s\" could not be opened: %s\n", g_doc_path ? g_doc_path : "(none)", err);
+    if (g_page_count < 3) {
+        printf("SKIP preview stepper: the fixture has only %d page(s)\n", g_page_count);
+        ++g_skipped;
     }
 
     test_range_model();
     if (test_printers(&list)) test_window(&list);
 
+    if (g_doc) spdf_close(g_doc);
     printf("print_dialog_test: %d checks, %d failures, %d skipped\n", g_checks, g_failures, g_skipped);
     return g_failures ? 1 : 0;
 }

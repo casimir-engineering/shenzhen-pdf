@@ -343,3 +343,77 @@ spdf_win_print_status spdf_win_print_system_dialog(HWND parent, int doc_page_cou
     system_job_release(job);
     return SPDF_WIN_PRINT_OK;
 }
+
+/* --- Windows' CLASSIC dialog, offered explicitly -------------------------- */
+
+/* WHY THIS ONE IS SAFE ON THE UI THREAD when its sibling above is not. The
+ * probe measured both on this host (portable/docs/windows-print-dialog.md
+ * section 1): PrintDlgExW with a valid owner never returns, PrintDlgW puts a
+ * window up in well under a second and returns TRUE or FALSE like any other
+ * comdlg32 dialog. So this needs no thread, no watchdog and no hand-off -- and
+ * it is the evidence behind this port's claim that comdlg32 is fine here and
+ * only the Windows 11 print experience is not.
+ *
+ * NO PD_RETURNDC. The caller already has one path from a printer name plus a
+ * DEVMODE to a DC (spdf_win_print_dialog_run.cpp's CreateDCW); asking for a
+ * second device here would be a second place for the DEVMODE to be dropped.
+ * What comes back is the ANSWER, not the device. */
+int spdf_win_print_classic_dialog(HWND parent, int page_count, spdf_win_print_request* req, DEVMODEW** devmode) {
+    PRINTDLGW pd;
+    DEVNAMES* names;
+    DEVMODEW* dm;
+    size_t bytes;
+
+    if (!req || !devmode || page_count <= 0) return 0;
+    memset(&pd, 0, sizeof(pd));
+    pd.lStructSize = sizeof(pd);
+    pd.hwndOwner = parent;
+    /* PD_NOSELECTION because a print here has no "selected pages" concept.
+     * PD_USEDEVMODECOPIESANDCOLLATE is deliberately NOT set, so nCopies comes
+     * back as a number this code can honour rather than as the driver's private
+     * business -- the same choice spdf_win_print_run_job() already assumes. */
+    pd.Flags = PD_ALLPAGES | PD_NOSELECTION | PD_HIDEPRINTTOFILE;
+    pd.nFromPage = (WORD)(req->range == SPDF_WIN_PRINT_RANGE_FROM_TO && req->from >= 1 ? req->from : 1);
+    pd.nToPage = (WORD)(req->range == SPDF_WIN_PRINT_RANGE_FROM_TO && req->to >= 1 ? req->to : page_count);
+    pd.nMinPage = 1;
+    pd.nMaxPage = (WORD)(page_count > 0xFFFF ? 0xFFFF : page_count);
+    pd.nCopies = (WORD)(req->copies > 0 ? req->copies : 1);
+    if (!PrintDlgW(&pd)) {
+        /* Cancel and "could not be shown" are the same answer to the caller:
+         * its own dialog is still on screen and still works. */
+        if (pd.hDevMode) GlobalFree(pd.hDevMode);
+        if (pd.hDevNames) GlobalFree(pd.hDevNames);
+        return 0;
+    }
+
+    /* The printer's name lives at an OFFSET INTO the DEVNAMES block, in wchar_t
+     * units from its start -- not at a pointer. */
+    names = pd.hDevNames ? (DEVNAMES*)GlobalLock(pd.hDevNames) : NULL;
+    if (names) {
+        wcsncpy_s(req->printer, SPDF_WIN_PRINT_NAME_MAX, (const wchar_t*)names + names->wDeviceOffset, _TRUNCATE);
+        GlobalUnlock(pd.hDevNames);
+    }
+    dm = pd.hDevMode ? (DEVMODEW*)GlobalLock(pd.hDevMode) : NULL;
+    if (dm) {
+        bytes = (size_t)dm->dmSize + (size_t)dm->dmDriverExtra;
+        free(*devmode);
+        *devmode = (DEVMODEW*)malloc(bytes);
+        if (*devmode) memcpy(*devmode, dm, bytes);
+        GlobalUnlock(pd.hDevMode);
+    }
+    /* PD_PAGENUMS is what the dialog sets when the reader typed a range. The
+     * radio they did not choose leaves nFromPage/nToPage at whatever went in,
+     * so reading them unconditionally would silently narrow an all-pages job. */
+    if (pd.Flags & PD_PAGENUMS) {
+        req->range = SPDF_WIN_PRINT_RANGE_FROM_TO;
+        req->from = (int)pd.nFromPage;
+        req->to = (int)pd.nToPage;
+    } else {
+        req->range = SPDF_WIN_PRINT_RANGE_ALL;
+    }
+    req->copies = pd.nCopies > 0 ? (int)pd.nCopies : 1;
+    if (pd.hDC) DeleteDC(pd.hDC); /* not asked for, but a driver may hand one over */
+    if (pd.hDevMode) GlobalFree(pd.hDevMode);
+    if (pd.hDevNames) GlobalFree(pd.hDevNames);
+    return req->printer[0] != L'\0';
+}

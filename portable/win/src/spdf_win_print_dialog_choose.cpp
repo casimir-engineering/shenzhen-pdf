@@ -97,6 +97,7 @@ spdf_win_print_status spdf_win_print_document_for_view(HWND parent, spdf_documen
     spdf_document* own_doc;
     spdf_document* job_doc;
     spdf_win_print_status status;
+    char preview_path[MAX_PATH * 4];
     int page_count;
 
     if (err && err_len) err[0] = '\0';
@@ -148,12 +149,19 @@ spdf_win_print_status spdf_win_print_document_for_view(HWND parent, spdf_documen
     req.range = SPDF_WIN_PRINT_RANGE_ALL;
     req.copies = 1;
     req.choice = *choice;
+    /* THE PREVIEW'S PATH, in UTF-8 because that is what the render service and
+     * the core take. Its workers open it for themselves; `doc` below is the
+     * caller's handle and the dialog only measures pages with it, on this
+     * thread. An unconvertible path leaves the preview showing the sheet and
+     * the placement with no page bitmap, which is still true. */
+    preview_path[0] = '\0';
+    if (doc_path) spdf_win_export_utf8_path(doc_path, preview_path, (int)sizeof(preview_path));
     if (!spdf_win_print_dialog_show(parent, print_prefers_dark(), print_job_name(doc_path), page_count, current_page,
                                     spdf_win_print_system_dialog_abandoned()
                                         ? "Windows' own print dialog did not open on this computer, so this is "
                                           "Shenzhen PDF's."
                                         : NULL,
-                                    &req, err, err_len)) {
+                                    doc, preview_path, &req, err, err_len)) {
         spdf_win_print_request_free(&req);
         /* A sentence means no window could be made at all; silence means the
          * reader pressed Cancel, which is not a failure and says nothing. */

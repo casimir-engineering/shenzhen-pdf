@@ -178,7 +178,69 @@ void spdf_win_print_request_free(spdf_win_print_request* req);
 int spdf_win_print_dialog_range(const spdf_win_print_request* req, int current_page, int page_count,
                                 spdf_win_print_page_range* out);
 
+/* --- Windows' CLASSIC dialog, offered explicitly -------------------------- */
+
+/* PrintDlgW -- the pre-Vista "Print" dialog -- which UNLIKE PrintDlgExW works
+ * perfectly on this host (see the measurement table above). It is offered as a
+ * NAMED ROUTE out of the port's own dialog, never as the default, for one
+ * reason: it has no property-sheet mechanism, so it cannot carry Fit / Actual
+ * Size / Custom %, and it has no preview. Making it the default would take both
+ * away from every print on this machine.
+ *
+ * SO IT ANSWERS ONLY WHAT IT CAN. On OK the reader's PRINTER, PAGE RANGE and
+ * COPIES are written into `req` and the dialog's DEVMODE into `*devmode`
+ * (malloc'd, replacing whatever was there); `req->choice` -- the scale -- is
+ * left exactly as the caller set it, and the port's dialog says in words, right
+ * under the button that leads here, that the scale it shows is still the one in
+ * force. Nothing is printed here: the answer goes through
+ * spdf_win_print_dialog_run() like any other, so there is still ONE job.
+ *
+ * Returns 1 when the reader pressed Print, 0 on cancel or when the dialog could
+ * not be shown at all. */
+int spdf_win_print_classic_dialog(HWND parent, int page_count, spdf_win_print_request* req, DEVMODEW** devmode);
+
 /* --- the in-app dialog ---------------------------------------------------- */
+
+/* THE CONTROL IDS, in the header rather than in spdf_win_print_dialog.cpp,
+ * because the dialog is no longer the only thing that reads its own controls:
+ * spdf_win_print_preview_sync() (spdf_win_print_preview.h) re-reads the
+ * printer, the range and the scale out of them on every change so the preview
+ * can follow, and portable/win/tests/print_dialog_test.c drives them from a
+ * second thread. One list, so the three cannot drift.
+ *
+ * 1203-1205 are the range radios in spdf_win_print_range_mode order and
+ * 1209-1211 the scaling radios in spdf_win_print_scaling_mode order, so
+ * (id - first) IS the mode in both cases. */
+#define SPDF_WIN_PD_ID_PRINTER 1201
+#define SPDF_WIN_PD_ID_PROPS 1202
+#define SPDF_WIN_PD_ID_RANGE_ALL 1203
+#define SPDF_WIN_PD_ID_RANGE_CURRENT 1204
+#define SPDF_WIN_PD_ID_RANGE_FROMTO 1205
+#define SPDF_WIN_PD_ID_FROM 1206
+#define SPDF_WIN_PD_ID_TO 1207
+#define SPDF_WIN_PD_ID_COPIES 1208
+#define SPDF_WIN_PD_ID_SCALE_FIT 1209
+#define SPDF_WIN_PD_ID_SCALE_ACTUAL 1210
+#define SPDF_WIN_PD_ID_SCALE_CUSTOM 1211
+#define SPDF_WIN_PD_ID_PERCENT 1212
+#define SPDF_WIN_PD_ID_PRINT 1213
+#define SPDF_WIN_PD_ID_CANCEL 1214
+#define SPDF_WIN_PD_ID_NOTE 1215
+#define SPDF_WIN_PD_ID_SYSTEM 1216
+#define SPDF_WIN_PD_ID_SYSTEM_NOTE 1217
+
+/* The reader's choices, read out of `dialog`'s controls: the printer name into
+ * `req` (which must already carry the printer list's answer), the range, the
+ * copies and the scale. PURE WIN32, no spooler — the preview and Print both go
+ * through it, so what the preview shows and what the job does are read from one
+ * place. `printers` supplies the combo's names; `page_count` is the document's.
+ * The DEVMODE is the caller's business. */
+void spdf_win_print_dialog_read_controls(HWND dialog, const spdf_win_print_printers* printers, int page_count,
+                                         spdf_win_print_request* req);
+
+/* Grey out the fields whose radio is not checked -- a page range nobody asked
+ * for should not look editable. Called after every change. */
+void spdf_win_print_dialog_sync_enables(HWND dialog);
 
 /* Show it, modal against `parent` only (never the whole thread -- this app is
  * tabbed and multi-window). `doc_name` titles the job and may be NULL;
@@ -190,9 +252,17 @@ int spdf_win_print_dialog_range(const spdf_win_print_request* req, int current_p
  * `req` is BOTH the preset and the answer: on entry its printer, copies and
  * choice are what the dialog opens with; on Print they are what the reader
  * left. Returns 1 on Print, 0 on cancel or when no window could be created
- * (a locked session, no window station), in which case `err` says so. */
+ * (a locked session, no window station), in which case `err` says so.
+ *
+ * `doc` and `doc_path_utf8` are THE PREVIEW'S, and only the preview's: `doc` is
+ * measured with spdf_page_size() on this thread (the core's one document per
+ * thread — this is the thread that owns it), and `doc_path_utf8` is what the
+ * preview's render workers open for themselves. Both may be NULL, in which case
+ * the preview shows the sheet and the placement with no page bitmap, and every
+ * other part of the dialog is unaffected. */
 int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, int page_count, int current_page,
-                               const char* note, spdf_win_print_request* req, char* err, size_t err_len);
+                               const char* note, spdf_document* doc, const char* doc_path_utf8,
+                               spdf_win_print_request* req, char* err, size_t err_len);
 
 /* The driver's own property sheet for `printer`: DocumentPropertiesW with
  * DM_IN_PROMPT | DM_IN_BUFFER | DM_OUT_BUFFER, which is the documented way to
