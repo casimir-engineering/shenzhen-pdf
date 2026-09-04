@@ -43,13 +43,28 @@
  * or a disk spool. Moving it to a worker later needs no change to any of the
  * arithmetic — it needs the private document handle this file already opens.
  *
- * WHAT CANNOT BE TESTED ON A LOCKED WORKSTATION. PrintDlgEx cannot display a
- * dialog while the session is locked, so spdf_win_print_document() is not
- * exercised end to end here. Everything it decides BEFORE showing anything —
- * the permission verdict, the page list, the paper conversion, the placement,
- * the zoom and the render flags — is reachable without a printer through the
- * functions below and through spdf_win_print_math.h, and that is what
- * print_math_test.c and light_theme_test.c drive.
+ * WHAT CANNOT BE DRIVEN HERE, AND IT IS NOT THE PRINTING. Measured on an
+ * unlocked Windows 11 Pro 26200 session, 2026-09-03: NO comdlg32 print dialog
+ * can be shown on that machine. spdf_win_print_document_ex() reaches
+ * PrintDlgExW and PrintDlgExW never returns — no window is created, nothing is
+ * shown, and the app can only be killed. That is NOT this file calling it
+ * wrongly: an independent process, its own STA, its own pumping message loop,
+ * the same flags and the same page-range array, hangs identically inside
+ * PrintDlgExW; so does the CLASSIC PrintDlgW with PD_NOPAGENUMS and no ranges
+ * at all. The hung process has windows.internal.shellcommon.PrintExperience.dll
+ * and Print.PrintSupport.Source.dll loaded, i.e. comdlg32 has handed off to the
+ * Windows 11 print experience and that hand-off does not come back. One machine
+ * is not every machine, but the app's call is exonerated and the dialog is the
+ * only part that cannot be reached.
+ *
+ * SO THE JOB IS DRIVEN WITHOUT IT. spdf_win_print_run_job() below is everything
+ * after the dialog — the paper conversion, StartDoc, the per-page loop,
+ * EndDoc — against a DC the caller supplies, and
+ * portable/win/tests/print_e2e_test.c hands it a real Microsoft Print to PDF
+ * device with a real output file and reopens the PDF that comes out through the
+ * core. That is a genuine end-to-end print job through the shipping loop rather
+ * than a copy of it; what is left untested on this host is PrintDlgEx choosing
+ * the printer and the pages, which is Windows' own dialog.
  */
 #ifndef SPDF_WIN_PRINT_H
 #define SPDF_WIN_PRINT_H
@@ -107,6 +122,24 @@ spdf_win_print_status spdf_win_print_document(HWND parent, spdf_document* doc, c
  * above is for a caller that has already decided. */
 spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc, const wchar_t* doc_path,
                                                  spdf_win_print_choice* choice, char* err, size_t err_len);
+
+/* THE JOB, WITHOUT THE DIALOG: everything spdf_win_print_document_ex() does
+ * once the reader has pressed Print, against a DC the caller already has.
+ *
+ * `dc` is a printer DC (the dialog's PD_RETURNDC one, or a CreateDCW on a
+ * printer name). `job_name` is what the print queue shows; NULL or "" is
+ * "Shenzhen PDF". `out_file` is DOCINFO::lpszOutput — NULL prints to the port
+ * the DC names, a path makes the driver write there and ask nothing, which is
+ * how a Microsoft Print to PDF job runs with no Save dialog of its own.
+ * `pages` is 0-based indices, `copies` at least 1. `mode`/`custom_scale` are
+ * the reader's scaling choice.
+ *
+ * Returns OK, or FAILED with a sentence in `err`. On any failure after StartDoc
+ * the job is AbortDoc'd, so a half-printed document never reaches the queue. */
+spdf_win_print_status spdf_win_print_run_job(HDC dc, spdf_document* doc, const wchar_t* job_name,
+                                             const wchar_t* out_file, const int* pages, int page_count, int copies,
+                                             spdf_win_print_scaling_mode mode, double custom_scale, char* err,
+                                             size_t err_len);
 
 /* One page onto a device context, at `paper`'s resolution, placed by the
  * arithmetic in spdf_win_print_math.h. Split out of the job loop so it can be
