@@ -13,9 +13,9 @@
 // actually was. On an auto-reload firing on every save, that reads as the
 // render happening in front of you.
 //
-// So the incoming view is built hidden and the outgoing one keeps drawing the
-// last good frame until the restore has finished. This does the handover in a
-// single pass, with implicit animation off so the two never cross-fade -- the
+// So the incoming view is built transparent and the outgoing one keeps drawing
+// the last good frame until the restore has finished. This does the handover in
+// a single pass, with implicit animation off so the two never cross-fade -- the
 // first frame the reader sees of the new document is already correct.
 
 @implementation SPDFMacMarkdownSession (ViewSwap)
@@ -39,7 +39,11 @@
     // -revealPagedView:replacing:.
     NSView* outgoingPagedView = _pagedView;
     _pagedView = [[SPDFMacMarkdownPagedView alloc] initWithPaginationPlan:plan attributedString:interactive];
-    _pagedView.hidden = YES;
+    // Transparent rather than hidden: a HIDDEN scroll view does not scroll into
+    // position, so the re-anchor below silently did nothing and the reader
+    // landed on the wrong page after a rotate. Alpha keeps the view fully laid
+    // out and scrollable while it is invisible.
+    _pagedView.alphaValue = 0.0;
     _pagedView.reader = _reader;
     _minimapModel = [[SPDFMacMarkdownMinimapModel alloc] initWithPaginationPlan:plan attributedString:interactive];
     _sidebarModel = [[SPDFMacMarkdownSidebarModel alloc] initWithRenderedDocument:rendered paginationPlan:plan];
@@ -115,13 +119,13 @@
 
 - (void)revealPagedView:(NSView*)incoming replacing:(NSView*)outgoing {
     if (incoming == outgoing) return;
-    if (!incoming.hidden) {
+    if (incoming.alphaValue >= 1.0) {
         [outgoing removeFromSuperview];
         return;
     }
     [NSAnimationContext beginGrouping];
     NSAnimationContext.currentContext.duration = 0;
-    incoming.hidden = NO;
+    incoming.alphaValue = 1.0;
     [outgoing removeFromSuperview];
     [NSAnimationContext endGrouping];
 }
