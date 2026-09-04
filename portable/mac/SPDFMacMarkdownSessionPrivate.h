@@ -45,6 +45,17 @@ NS_ASSUME_NONNULL_BEGIN
     // disk reload (SPDFMacMarkdownSession+Reload.mm) can cancel and supersede a
     // render exactly the way the in-place rerender does.
     NSAttributedString* _Nullable _interactiveString;
+    // Reached by the install/swap half (SPDFMacMarkdownSession+ViewSwap.mm),
+    // which owns -installRenderedDocument: and the handover it performs.
+    NSPoint _pendingScrollOrigin;
+    NSRange _pendingSelectedRange;
+    NSInteger _pendingPageIndex;
+    CGFloat _pendingZoom;
+    SPDFMacMarkdownPageFitMode _pendingFitMode;
+    NSTextField* _placeholder;
+    __weak id<SPDFMacUIReader> _reader;
+    NSView* _rootView;
+    SPDFMacMarkdownSidebarModel* _sidebarModel;
     SPDFMarkdownCancellationToken* _Nullable _renderToken;
     NSUInteger _renderGeneration;
     CGFloat _renderedFontScale;
@@ -128,6 +139,9 @@ FOUNDATION_EXPORT CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale);
 - (void)rerenderDocumentWithStatus:(NSString* _Nullable)status;
 // Swap a freshly rendered document under the live view. preserveCurrentState
 // keeps the reader's viewport, selection and zoom across the swap.
+// Reveal a configured paged view and drop the one it replaces, in one pass.
+// Implemented in SPDFMacMarkdownSession+ViewSwap.mm.
+- (void)revealPagedView:(NSView*)incoming replacing:(NSView* _Nullable)outgoing;
 - (void)installRenderedDocument:(SPDFMarkdownRenderedDocument*)rendered
                  paginationPlan:(SPDFMarkdownPaginationPlan*)plan
               interactiveString:(NSAttributedString*)interactive
