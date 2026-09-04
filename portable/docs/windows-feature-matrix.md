@@ -306,3 +306,26 @@ real evidence in the tree. Invoke every `.cmd` **by path**: this box sets
 shell reports success). Every verdict above was decided by an exit code or by
 opening the file named in its Evidence column; nothing here was decided by
 grepping a log.
+
+## (d) Upstream features that landed on macOS after this matrix was written
+
+The macOS side ships continuously; four releases landed during the Windows
+parity wave alone. Each row below is a user-facing change upstream made that
+this port does not have yet, with the commit to port from. Probed against
+`portable/win/src`: none of the five mechanisms has any reference there.
+
+Refresh this section on every upstream merge -- the recipe is a `git fetch`
+plus `git log --no-merges 2a3afd434..origin/master -- portable/mac portable/core`
+with the release and documentation commits filtered out. Letting it drift is
+how a port silently falls a release behind.
+
+| Upstream change | Commit | Why it matters on Windows |
+|---|---|---|
+| **Keep Image Colors becomes per document**, remembered in the session, and every document view gets the theme | `42e8c9ca7`, `b551b24a9` | Windows has one global setting (`darkThemePreservesImages`). A datasheet and a scan in two tabs cannot disagree here yet, and the readme now describes the per-document behaviour. |
+| **The minimap follows the reading theme**, and dark pages get wider separation | `61070e502` | Exactly the defect the second wiring pass reported here: light thumbnails on a dark strip. The fix exists upstream; port it rather than re-deriving. |
+| **Nested chapter list**, with per-document memory of what is collapsed, and real buttons under it | `a5820117a`, `665d259ac`, `d7bcb4bf5`, `79f80af11`, `e76e65b6f` | The Windows Chapters panel is flat. `spdf_win_chrome_sidebar.cpp` + `spdf_win_sidebar_results.h` would carry the depth and the collapse state. |
+| **Reopen a window exactly where it was left, including on another display**, and restore its reader, delegate, title and minimum size | `060856589`, `b66c25d50` | Windows writes and restores a frame (`session_frame_test`) but clamps onto the primary monitor and does not remember which display. |
+| **Option + wheel becomes the page arrows**, paging by how far the wheel turned | `f5b941930`, `946cbcb58` | Alt + wheel does nothing on Windows; the wheel-distance rule also makes fast scrolling keep up, which the port's one-notch-one-page cap does not do. |
+| **Markdown reloads in place when its file changes**, shown only once ready, held transparent while it settles | `7c609c997`, `e6f900f7f`, `301348473`, `b44018932` | The Windows watcher reopens the tab instead, which blanks the window. The three commits together are the "no flash" recipe. |
+| **Diagram polish**: `<b>`/`<i>` inside labels rendered, gantt charts use the page width, a diagram whose reflow ran out of time is kept | `eec46368b`, `f9c0b0e68`, `7237f53cb`, `bbef6eff7` | Only relevant once Windows draws diagrams natively (phase D); noted so that work starts from the current behaviour, not the 26.9.1 one. |
+| **Launch**: prerender retargeted to the opened document, sidebar metadata prewarmed on a session-restore launch, toolbar overflow solved once before the first frame | `c2799808b`, `6faaf0ab7`, `534a3987c` | The Windows launch path already paints before `ShowWindow`; the sidebar prewarm and the single overflow pass are the two ideas that transfer. |
