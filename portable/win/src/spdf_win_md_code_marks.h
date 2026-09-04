@@ -27,7 +27,7 @@
 #ifndef SPDF_WIN_MD_CODE_MARKS_H
 #define SPDF_WIN_MD_CODE_MARKS_H
 
-#include "spdf_win_md_code.h"
+#include "spdf_win_chrome_state.h" /* SpdfWinMdCodeMark */
 
 /* The router defines this before including us; a standalone test does not. */
 #ifndef SPDF_WIN_CI_INLINE

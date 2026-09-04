@@ -18,6 +18,8 @@
  * Transcribed from portable/mac/SPDFMacDocumentView.mm:467-485 and :11.
  */
 
+void spdf_win_md_code_paint(ID2D1RenderTarget* target, const struct spdf_win_scene* scene);
+
 static void draw_overlays(ID2D1RenderTarget* target, const spdf_win_scene* scene) {
     if (!scene->overlays || scene->overlay_count <= 0) return;
     float s = scene->dpi_scale > 0.0f ? scene->dpi_scale : 1.0f;
@@ -81,7 +83,8 @@ static void draw_overlays(ID2D1RenderTarget* target, const spdf_win_scene* scene
                     brush->SetColor(D2D1::ColorF(0.55f, 0.35f, 0.0f, 0.9f * a));
                     target->DrawRectangle(inner, brush, bw, NULL);
                     break;
-                }
+                    spdf_win_md_code_paint(target, scene);
+}
                 case SPDF_WIN_OVERLAY_SELECTION:
                 default:
                     /* calibrated(0.40, 0.62, 0.86, 0.20), square fill --
@@ -94,3 +97,9 @@ static void draw_overlays(ID2D1RenderTarget* target, const spdf_win_scene* scene
         brush->Release();
     }
 }
+
+/* THE MARKDOWN CODE BOX'S PILLS, drawn after the overlays so they sit over the
+ * page and anything highlighted on it. Declared in spdf_win_md_code_paint.h and
+ * defined in its own translation unit, because unlike everything else in this
+ * header it needs DirectWrite text and the fence table. A PDF tab publishes no
+ * fences, so this draws nothing and costs nothing. */

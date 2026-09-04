@@ -48,6 +48,8 @@
 #ifndef SPDF_WIN_MD_CODE_H
 #define SPDF_WIN_MD_CODE_H
 
+#include "spdf_win_chrome_state.h" /* SpdfWinMdCodeMark */
+
 #include "shenzhen_pdf_core.h"
 
 #ifdef __cplusplus
@@ -79,12 +81,9 @@ struct spdf_win_scene;
  * router tests a point with four comparisons and knows nothing about pages.
  * `copy_*` are all zero when the copy button stood down for want of room --
  * the language pill always keeps the row, as on the mac. */
-typedef struct SpdfWinMdCodeMark {
-    int fence_index;
-    int page_index;
-    float lx0, ly0, lx1, ly1; /* language pill + slop */
-    float cx0, cy0, cx1, cy1; /* copy button + slop */
-} SpdfWinMdCodeMark;
+/* SpdfWinMdCodeMark is declared in spdf_win_chrome_state.h, beside
+ * SpdfWinAnnotMark and for the same reason: the router that hit-tests these
+ * and the ten tests that include it must not need this module. */
 
 /* What the painter needs for one control, in CANVAS-LOCAL device pixels like
  * every other scene overlay. `title` is UTF-16 because DirectWrite is. */

@@ -475,7 +475,8 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
         draw_message(d2d, target, scene);
     }
 
-    /* Search highlights and the text selection. See spdf_win_d2d_overlay.h. */
+    /* Search highlights, the text selection, and a Markdown code box's pills.
+     * See spdf_win_d2d_overlay.h. */
     draw_overlays(target, scene);
 
 

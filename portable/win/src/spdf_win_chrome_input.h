@@ -169,7 +169,13 @@ typedef enum spdf_win_chrome_action {
     /* A LEFT PRESS ON A COMMENT MARKER'S BADGE: `index` is the comment to edit
      * (spdf_win_annot_marks.h). For a CANVAS hit, `index` is the comment under
      * the pointer for the hover preview, or -1. */
-    SPDF_WIN_CA_ANNOT_EDIT
+    SPDF_WIN_CA_ANNOT_EDIT,
+    /* A LEFT PRESS ON A MARKDOWN CODE BOX'S PILLS: `index` is the fence
+     * (spdf_win_md_code_marks.h). Tested before the badge and before the point
+     * reaches the canvas as text, which is the mac's precedence and what stops
+     * a click on a pill from starting a text selection. */
+    SPDF_WIN_CA_MD_CODE_COPY,
+    SPDF_WIN_CA_MD_CODE_LANGUAGE
 } spdf_win_chrome_action;
 
 /* Cursors as an enum rather than as an HCURSOR, so this header stays free of
@@ -235,7 +241,8 @@ typedef struct SpdfWinChromeHit {
  * types above. */
 #include "spdf_win_chrome_toolbar_route.h"
 #include "spdf_win_sidebar_input.h"
-#include "spdf_win_annot_marks.h" /* the canvas case: comment markers, same reason */
+#include "spdf_win_annot_marks.h"
+#include "spdf_win_md_code_marks.h" /* the canvas case: comment markers, same reason */
 
 /* The band, the track and the two fractions for one scroller, picked by part.
  * A helper rather than an if-else at each of the four call sites (the router
@@ -458,7 +465,23 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
             }
         }
 
-        case SPDF_WIN_CHROME_CANVAS: spdf_win_annot_route(m, x, y, button, out); return;
+        case SPDF_WIN_CHROME_CANVAS: {
+            /* The code pills first, for the reason spdf_win_md_code_marks.h
+             * gives: an action that is not SPDF_WIN_CA_CANVAS never reaches
+             * canvas_press, so a click on a pill cannot begin a selection. */
+            if (button == SPDF_WIN_CB_LEFT && m->md_code_mark_count > 0) {
+                int md_copy = 0;
+                int md_fence =
+                    spdf_win_md_code_mark_at(m->md_code_marks, m->md_code_mark_count, x, y, &md_copy);
+                if (md_fence >= 0) {
+                    out->action = md_copy ? SPDF_WIN_CA_MD_CODE_COPY : SPDF_WIN_CA_MD_CODE_LANGUAGE;
+                    out->index = md_fence;
+                    return;
+                }
+            }
+            spdf_win_annot_route(m, x, y, button, out);
+            return;
+        }
 
         /* Anything else -- a divider's dead pixel, the caption reserve's edge --
          * is swallowed rather than passed to the canvas. Swallowed, not
