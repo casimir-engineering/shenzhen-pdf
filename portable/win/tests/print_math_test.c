@@ -1,12 +1,15 @@
 /* print_math_test.c — the print job's arithmetic, with no printer, no
  * document, no MuPDF and no window.
  *
- * WHY IT CAN RUN WHEN NOTHING ELSE ABOUT PRINTING CAN. This workstation is
- * LOCKED: PrintDlgEx cannot display a dialog, so spdf_win_print_document()
- * cannot be exercised end to end here. Everything it DECIDES before showing
- * anything -- the paper conversion, the placement, the visible-source split,
- * the render zoom, the page range -- is pure double arithmetic in
- * spdf_win_print_math.h, and this suite drives all of it.
+ * WHY IT RUNS ANYWHERE, INCLUDING WHERE THE DIALOGS DO NOT. Everything the job
+ * DECIDES before it needs a printer or a window -- the paper conversion, the
+ * placement, the visible-source split, the render zoom, the page range -- is
+ * pure double arithmetic in spdf_win_print_math.h, and this suite drives all of
+ * it with no desktop and no spooler. It was for a while the only print test
+ * that could run at all: PrintDlgExW does not return on this host
+ * (portable/docs/windows-print-dialog.md). The two suites that now cover the
+ * rest are print_e2e_test.c, which drives a real job to a real printer, and
+ * print_watchdog_test.c, which proves the dialog can no longer hang the app.
  *
  * THIS IS THE HAND-WRITTEN HALF. The other half is
  * portable/win/tests/print_differential.c, which compiles the GTK4 original

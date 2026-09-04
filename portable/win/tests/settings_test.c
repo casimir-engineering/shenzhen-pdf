@@ -188,7 +188,47 @@ static void test_defaults(void) {
     check_eq(s.fit_mode, 4, "and leaves the struct alone");
 }
 
-/* --- 5. the shared copy -------------------------------------------------- */
+/* --- 5. printerName, the Windows-only key -------------------------------- */
+
+/* WHY IT IS ITS OWN CASE. printerName is the one key in this schema no other
+ * frontend has (spdf_win_settings.h), so nothing else in this suite would
+ * notice if it were written unconditionally -- and a key saying `printerName:
+ * ""` in the settings.yaml of a reader who has never printed is exactly the
+ * kind of noise the carry-through rules above exist to prevent. So both halves
+ * are checked: absent while unset, present and non-ASCII-intact once set, and
+ * round-tripping either way. */
+static void test_printer_name(void) {
+    spdf_win_settings s;
+    char* yaml;
+
+    spdf_win_settings_init_defaults(&s);
+    check(s.printer_name[0] == '\0', "no printer is remembered by default");
+
+    remove_file(g_settings_path);
+    check(spdf_win_settings_save(&s), "saving with no printer succeeds");
+    yaml = read_whole(g_settings_path);
+    check(yaml && strstr(yaml, "printerName") == NULL, "an unset printer is not written at all");
+    free(yaml);
+
+    /* A printer name is a display string and can be anything the driver's
+     * vendor typed; UTF-8 out and back is the property that matters. */
+    strncpy_s(s.printer_name, sizeof(s.printer_name), "Brother DCP-L3550CDW s\xc3\xa9ries", _TRUNCATE);
+    check(spdf_win_settings_save(&s), "saving with a printer succeeds");
+    yaml = read_whole(g_settings_path);
+    check(yaml && strstr(yaml, "printerName:") != NULL, "a chosen printer is written");
+    check(yaml && strstr(yaml, "s\xc3\xa9ries") != NULL, "with its bytes intact");
+    free(yaml);
+
+    memset(&s, 0, sizeof(s));
+    check_eq((int)spdf_win_settings_load(&s), SPDF_WIN_SETTINGS_LOADED, "reload");
+    check(strcmp(s.printer_name, "Brother DCP-L3550CDW s\xc3\xa9ries") == 0, "and reads back exactly");
+
+    check_eq(spdf_win_settings_parse_json(&s, "{\"printerName\":\"Microsoft Print to PDF\"}"), 1,
+             "the pure parser applies it");
+    check(strcmp(s.printer_name, "Microsoft Print to PDF") == 0, "as given");
+}
+
+/* --- 6. the shared copy -------------------------------------------------- */
 
 static void test_shared_copy(void) {
     spdf_win_settings* shared;
@@ -218,6 +258,7 @@ int main(int argc, char** argv) {
     test_save_carries_unknown_keys();
     test_theme_absent_stays_absent();
     test_defaults();
+    test_printer_name();
     test_shared_copy();
 
     remove_file(g_settings_path);
