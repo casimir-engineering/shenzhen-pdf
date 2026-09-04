@@ -6735,22 +6735,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
 // loadSelectedTab (reopen + restore). loadSelectedTab clamps the page index to
 // the new page count and re-records the on-disk attributes, so the refreshed
 // cache will match disk and not immediately re-trigger.
-- (void)reloadSelectedTabFromDiskChange {
-    SPDFDocumentTab* tab = [self selectedTab];
-    if (!tab || !tab.path.length) return;
-    if (_reloadInProgress) return;
-    _reloadInProgress = YES;
-
-    // Capture current view state into the tab so loadSelectedTab restores it.
-    [self rememberActiveTabState];
-    // Force a real reopen: drop the cached document/runtime so loadSelectedTab
-    // takes the open-from-disk branch instead of the cache-hit branch.
-    [self discardCachedRuntimeForTab:tab];
-    [self loadSelectedTab];
-    _statusLabel.stringValue = @"Reloaded after the file changed on disk.";
-    _reloadInProgress = NO;
-}
-
 // All non-active tabs are not watched continuously. When the window regains key
 // focus, check each tab once against its cached mtime/size and reload/refresh
 // any that changed. Cheap: a single stat per tab, only the active tab reopens

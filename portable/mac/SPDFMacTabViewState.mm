@@ -1,6 +1,8 @@
 #import "SPDFMacTabViewState.h"
 
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacMarkdownCache.h"
+#import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacSupport.h"
 
 // Implemented in ShenzhenPDFMac.mm, which keeps them private to its own
@@ -9,6 +11,11 @@
 @interface ShenzhenMacDelegate (SPDFMacTabViewStateHost)
 - (void)invalidateCursorRegionCache;
 - (void)clearFindResults;
+- (void)rememberActiveTabState;
+- (void)discardCachedRuntimeForTab:(SPDFDocumentTab*)tab;
+- (void)loadSelectedTab;
+- (NSDictionary*)fileAttributesForPath:(NSString*)path;
+- (void)recordFileAttributes:(NSDictionary*)attributes forTab:(SPDFDocumentTab*)tab;
 - (CGFloat)backingScale;
 - (void)clearToolbarFieldFocusForTabSwitch;
 @end
@@ -91,6 +98,40 @@
     tab.showSidebar = _sidebarPreferredVisible;
     tab.showMinimap = _minimapPreferredVisible;
     tab.markdownLandscape = session.pageOrientation == SPDFMarkdownPageOrientationLandscape;
+}
+
+- (void)reloadSelectedTabFromDiskChange {
+    SPDFDocumentTab* tab = [self selectedTab];
+    if (!tab || !tab.path.length) return;
+    if (_reloadInProgress) return;
+
+    // Markdown reloads IN PLACE. The path below is a full reopen: it discards
+    // the cached runtime and re-runs -loadSelectedTab, which for Markdown tears
+    // the session down, shows the placeholder, and builds a new one -- the
+    // window blanks and comes back, and a document being saved repeatedly reads
+    // as the whole screen flashing. The session instead re-reads the file and
+    // swaps the result under the live view, keeping the viewport.
+    if ([self isMarkdownActive] && spdf_mac_path_is_markdown(tab.path)) {
+        [self rememberActiveMarkdownStateForTab:tab];
+        // Move the change baseline with the content: the watcher compares the
+        // file against these, so leaving them behind would report the same edit
+        // again and reload in a loop.
+        NSDictionary* attributes = [self fileAttributesForPath:tab.path];
+        if (attributes) [self recordFileAttributes:attributes forTab:tab];
+        tab.cachedMarkdownFileIdentity = spdf_mac_markdown_file_identity(tab.path);
+        [self.activeMarkdownSession reloadFromDiskWithStatus:@"Reloaded after the file changed on disk."];
+        return;
+    }
+
+    _reloadInProgress = YES;
+    // Capture current view state into the tab so loadSelectedTab restores it.
+    [self rememberActiveTabState];
+    // Force a real reopen: drop the cached document/runtime so loadSelectedTab
+    // takes the open-from-disk branch instead of the cache-hit branch.
+    [self discardCachedRuntimeForTab:tab];
+    [self loadSelectedTab];
+    _statusLabel.stringValue = @"Reloaded after the file changed on disk.";
+    _reloadInProgress = NO;
 }
 
 @end

@@ -7,10 +7,7 @@
 @implementation SPDFMacMarkdownSession {
     NSView* _rootView;
     NSTextField* _placeholder;
-    NSAttributedString* _interactiveString;
-    SPDFMarkdownCancellationToken* _renderToken;
     NSUInteger _activationGeneration;
-    NSUInteger _renderGeneration;
     // The current activation generation's initial parse+paginate pass is in
     // flight. Cleared by that pass's completion or by cancelAllOperations.
     BOOL _loadInFlight;
