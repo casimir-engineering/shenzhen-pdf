@@ -76,6 +76,53 @@ int spdf_win_shell_show_in_folder(const char* utf8_path) {
     return ok;
 }
 
+int spdf_win_shell_reveal_folder(const char* utf8_dir) {
+    ComScope com;
+    wchar_t* wide = widen(utf8_dir);
+    PIDLIST_ABSOLUTE pidl = NULL;
+    SFGAOF attrs = 0;
+    int ok = 0;
+    if (!wide || !wide[0]) {
+        free(wide);
+        return 0;
+    }
+    if (SUCCEEDED(SHParseDisplayName(wide, NULL, &pidl, 0, &attrs)) && pidl) {
+        /* cidl 0 with no child items: OPEN this folder. show_in_folder above
+         * passes a FILE's pidl for the same call, which selects it in its
+         * parent -- the same API, two jobs, told apart only by what is
+         * parsed. */
+        ok = SUCCEEDED(SHOpenFolderAndSelectItems(pidl, 0, NULL, 0));
+        CoTaskMemFree(pidl);
+    }
+    if (!ok) {
+        wchar_t args[1100];
+        _snwprintf_s(args, _TRUNCATE, L"\"%s\"", wide);
+        ok = (INT_PTR)ShellExecuteW(NULL, L"open", L"explorer.exe", args, NULL, SW_SHOWNORMAL) > 32;
+    }
+    free(wide);
+    return ok;
+}
+
+int spdf_win_shell_open_with_default_app(const char* utf8_path) {
+    ComScope com;
+    wchar_t* wide = widen(utf8_path);
+    int ok = 0;
+    if (!wide || !wide[0]) {
+        free(wide);
+        return 0;
+    }
+    ok = (INT_PTR)ShellExecuteW(NULL, L"open", wide, NULL, NULL, SW_SHOWNORMAL) > 32;
+    if (!ok) {
+        /* Nothing is registered for .yaml on a stock Windows, so "open" fails
+         * with ERROR_NO_ASSOCIATION and the honest answer is the picker the
+         * shell itself would show -- not an error message, and not a guess at
+         * notepad.exe, which would be this app choosing the reader's editor. */
+        ok = (INT_PTR)ShellExecuteW(NULL, L"openas", wide, NULL, NULL, SW_SHOWNORMAL) > 32;
+    }
+    free(wide);
+    return ok;
+}
+
 int spdf_win_shell_copy_text(void* hwnd, const char* utf8_text) {
     wchar_t* wide = widen(utf8_text);
     size_t bytes;

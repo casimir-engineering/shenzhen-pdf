@@ -1,5 +1,6 @@
-/* spdf_win_shell.h — the document's PATH handed to the desktop: Show in Folder,
- * Copy Path, Open in Browser, Open Path..., and where the Open dialog starts.
+/* spdf_win_shell.h — a PATH handed to the desktop: Show in Folder, Copy Path,
+ * Open in Browser, Open Path..., where the Open dialog starts, and the Settings
+ * menu's two shell rows (Open settings.yaml..., Reveal Settings Folder).
  *
  * WHAT THESE ARE THE PORT OF. GTK4's win.show-in-folder, win.copy-path and
  * win.open-in-browser (portable/linux/gtk4/spdf_shortcuts.c:66-68) and macOS's
@@ -88,6 +89,23 @@ int spdf_win_shell_home_dir(wchar_t* out, int out_cap);
  * `explorer /select,` when the shell item cannot be parsed. Returns 1 when
  * something was launched. */
 int spdf_win_shell_show_in_folder(const char* utf8_path);
+
+/* Reveal a DIRECTORY in Explorer -- Settings > Reveal Settings Folder, the
+ * Windows form of the mac's showPathInFolder: on its support directory
+ * (ShenzhenPDFMac.mm:15697). SHOpenFolderAndSelectItems as above, with cidl 0
+ * and no child items, which opens that folder rather than selecting it inside
+ * its parent: the point is to SEE the yaml files, not to look at the folder
+ * icon. Falls back to `explorer "<dir>"`. Returns 1 when something was
+ * launched. */
+int spdf_win_shell_reveal_folder(const char* utf8_dir);
+
+/* Hand a file to whatever the shell opens that kind of file with -- Settings >
+ * Open settings.yaml..., the Windows form of the mac's
+ * [NSWorkspace openURL:] on the same file (:15675-15694). ShellExecuteW's
+ * "open" verb, then its "openas" verb (the "How do you want to open this?"
+ * picker) when nothing is registered for the extension, which for .yaml on a
+ * stock Windows is the usual case. Returns 1 when something was launched. */
+int spdf_win_shell_open_with_default_app(const char* utf8_path);
 
 /* Put `utf8_text` on the clipboard as CF_UNICODETEXT. Returns 1 on success, 0
  * when the clipboard could not be opened (another process holds it, or the
