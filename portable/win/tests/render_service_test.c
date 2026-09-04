@@ -163,7 +163,10 @@ static int wait_idle(spdf_win_render_service* svc, int ms) {
     return spdf_win_render_stat(svc, SPDF_WIN_RENDER_STAT_INFLIGHT) == 0;
 }
 
-static spdf_win_render_service* make_service(stub* s, const char* workers, size_t cap) {
+/* `max_workers` 0 is the plain constructor's behaviour -- the policy default,
+ * i.e. whatever SPDF_RENDER_WORKERS said. Anything else is the per-service
+ * ceiling case_worker_ceiling() drives. */
+static spdf_win_render_service* make_service(stub* s, const char* workers, size_t cap, int max_workers) {
     static spdf_win_render_backend backend;
     backend.ctx = s;
     backend.page_size = stub_page_size;
@@ -174,7 +177,8 @@ static spdf_win_render_service* make_service(stub* s, const char* workers, size_
     s->page_h = 792.0f;
     SET_WORKERS(workers);
     reset_records();
-    return spdf_win_render_service_new("C:\\stub.pdf", &backend, cap, stub_notify, s);
+    return max_workers ? spdf_win_render_service_new_ex("C:\\stub.pdf", &backend, cap, stub_notify, s, max_workers)
+                       : spdf_win_render_service_new("C:\\stub.pdf", &backend, cap, stub_notify, s);
 }
 
 static spdf_win_render_spec spec_of(int page, float zoom, unsigned flags) {
@@ -226,7 +230,7 @@ static void case_identity(void) {
 /* The happy path, plus the byte cap actually applied by a worker. */
 static void case_delivery(void) {
     stub s;
-    spdf_win_render_service* svc = make_service(&s, "2", 0);
+    spdf_win_render_service* svc = make_service(&s, "2", 0, 0);
     unsigned long long a, b, c;
     g_case = "delivery";
     check(svc != NULL, "service created");
@@ -246,7 +250,7 @@ static void case_delivery(void) {
     check(AGET(&s.notified) > 0, "the notify hook fired from a worker");
     spdf_win_render_service_free(svc);
 
-    svc = make_service(&s, "1", 0);
+    svc = make_service(&s, "1", 0, 0);
     if (!svc) return;
     s.page_w = 10900.0f;
     s.page_h = 7539.0f;
@@ -260,7 +264,7 @@ static void case_delivery(void) {
  * the rest are told which token did. A different theme is a different render. */
 static void case_coalescing(void) {
     stub s;
-    spdf_win_render_service* svc = make_service(&s, "1", 0);
+    spdf_win_render_service* svc = make_service(&s, "1", 0, 0);
     unsigned long long a, b, c, d, dark;
     int i;
     g_case = "coalescing";
@@ -295,7 +299,7 @@ static void case_coalescing(void) {
  * never adopted, and a request built against a dead epoch never runs. */
 static void case_supersede(void) {
     stub s;
-    spdf_win_render_service* svc = make_service(&s, "1", 0);
+    spdf_win_render_service* svc = make_service(&s, "1", 0, 0);
     spdf_win_render_spec stale;
     unsigned long long a, old_gen, late;
     g_case = "supersede";
@@ -329,7 +333,7 @@ static void case_supersede(void) {
  * starting. Both still get exactly one callback. */
 static void case_cancel(void) {
     stub s;
-    spdf_win_render_service* svc = make_service(&s, "1", 0);
+    spdf_win_render_service* svc = make_service(&s, "1", 0, 0);
     unsigned long long running, queued;
     g_case = "cancel";
     if (!svc) return;
@@ -359,7 +363,7 @@ static void case_cancel(void) {
  * first, then the order the requests were made. */
 static void case_order(void) {
     stub s;
-    spdf_win_render_service* svc = make_service(&s, "1", 0);
+    spdf_win_render_service* svc = make_service(&s, "1", 0, 0);
     unsigned long long block, warm, mid, vis1, vis2;
     g_case = "order";
     if (!svc) return;
@@ -384,7 +388,7 @@ static void case_order(void) {
 /* Freeing with work in flight still releases every request's user_data. */
 static void case_shutdown(void) {
     stub s;
-    spdf_win_render_service* svc = make_service(&s, "1", 0);
+    spdf_win_render_service* svc = make_service(&s, "1", 0, 0);
     unsigned long long a, b, c;
     int i, all = 1;
     g_case = "shutdown";
@@ -403,11 +407,50 @@ static void case_shutdown(void) {
     check(b != 0, "tokens were issued");
 }
 
+/* THE TIERING KNOB: a real ceiling, not a hint. It is what stops the minimap's
+ * pool from out-threading the canvas's, so that a process running two pools
+ * does not start 2 * cores/2 workers inside its first paint
+ * (portable/docs/windows-launch-performance.md §3.4, §5 item 3).
+ *
+ * Proved through the gate, not the counter alone: while the gate is up every
+ * started render parks inside the stub, so the number that ENTERED is the
+ * number of threads whatever the queue depth. Six distinct pages cannot
+ * coalesce, so a third worker would appear as a third entrant. */
+static void case_worker_ceiling(void) {
+    stub s;
+    spdf_win_render_service* svc = make_service(&s, "4", 0, 2);
+    unsigned long long last = 0;
+    int i;
+    g_case = "worker-ceiling";
+    if (!svc) return;
+    ASET(&s.gate, 1);
+    for (i = 0; i < 6; i++) last = ask(svc, i, 1.0f, 0, SPDF_WIN_RENDER_NEAR);
+    check(wait_entered(&s, 2, 4000), "both permitted workers picked up a render");
+    SLEEP_MS(60); /* long enough for a third worker to have entered, had one existed */
+    check(AGET(&s.entered) == 2, "exactly two renders are in flight, not four");
+    check(spdf_win_render_stat(svc, SPDF_WIN_RENDER_STAT_WORKERS) == 2, "two threads, not SPDF_RENDER_WORKERS' four");
+    ASET(&s.gate, 0);
+    check(wait_idle(svc, 20000), "the capped pool still drains everything");
+    (void)spdf_win_render_drain(svc, 0);
+    check_exactly_once(last);
+    spdf_win_render_service_free(svc);
+
+    /* A ceiling above the policy is not a floor: the cap caps. */
+    svc = make_service(&s, "1", 0, 4);
+    if (!svc) return;
+    last = ask(svc, 0, 1.0f, 0, SPDF_WIN_RENDER_NEAR);
+    check(wait_idle(svc, 20000), "the one-worker pool drained");
+    check(spdf_win_render_stat(svc, SPDF_WIN_RENDER_STAT_WORKERS) == 1, "a ceiling of 4 does not raise a target of 1");
+    (void)spdf_win_render_drain(svc, 0);
+    check_exactly_once(last);
+    spdf_win_render_service_free(svc);
+}
+
 /* The thread-sanitizer case: many workers, requests, cancels and generation
  * bumps racing against draining, with one invariant that must survive it all. */
 static void case_stress(void) {
     stub s;
-    spdf_win_render_service* svc = make_service(&s, "4", 0);
+    spdf_win_render_service* svc = make_service(&s, "4", 0, 0);
     unsigned long long tokens[600];
     unsigned seed = 12345u;
     int i, accepted = 0;
@@ -441,6 +484,7 @@ int main(void) {
     case_cancel();
     case_order();
     case_shutdown();
+    case_worker_ceiling();
     case_stress();
     printf("render_service_test: %s (%d failure%s)\n", g_failures ? "FAIL" : "PASS", g_failures,
            g_failures == 1 ? "" : "s");

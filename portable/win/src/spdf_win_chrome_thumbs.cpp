@@ -38,6 +38,23 @@ struct Pending {
 };
 
 const int kMaxPending = 24;
+
+/* TIER 2: the strip is not what the reader is reading.
+ *
+ * This pool and the canvas's are both spdf_win_render services, and both used
+ * to size themselves at cores/2 -- 6 each on this box, so 12 worker threads and
+ * 12 MuPDF documents, all of them started inside the first paint. That is what
+ * windows-launch-performance.md §3.4 measured as 23 threads and 0.2-1 s of CPU
+ * in the 700 ms after the first page: not a UI-thread stall, but fan noise and
+ * memory bandwidth competing with the first scroll's render of the next page,
+ * which is the one render the reader is actually waiting on.
+ *
+ * Two, because a thumbnail is WARM work by construction (spdf_win_render.h's
+ * priority bands) and the bounded thumb window only ever asks for ~15 pages:
+ * two workers keep the strip filling visibly while leaving the machine to the
+ * page. §5 item 3's "give it 2 workers rather than cores/2", from the file that
+ * measured the cost. */
+const int kThumbWorkers = 2;
 const int kSizeSweepChunk = 32;
 
 } /* namespace */
@@ -357,7 +374,7 @@ void spdf_win_thumbs_request(SpdfWinThumbStore* s, const SpdfWinPageSizePt* size
         s->svc_dark = dark ? 1 : 0;
     }
     if (!s->svc) {
-        s->svc = spdf_win_render_service_new(s->path, NULL, 0, thumb_notify, s);
+        s->svc = spdf_win_render_service_new_ex(s->path, NULL, 0, thumb_notify, s, kThumbWorkers);
         if (!s->svc) return;
         spdf_win_launch_mark("thumbs-service-created");
     }

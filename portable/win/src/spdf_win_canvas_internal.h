@@ -9,7 +9,8 @@
  * spdf_win_find_canvas.cpp is the navigation surface the search & map track
  * drives -- scroll to a match, read a page's slot, re-measure a rotated page.
  * Nothing outside those four files may include this header; spdf_win_canvas.h
- * is the public surface.
+ * is the public surface. (spdf_win_canvas_scrollbar.h is part of
+ * spdf_win_canvas.cpp's own translation unit, not a fifth file.)
  */
 #ifndef SPDF_WIN_CANVAS_INTERNAL_H
 #define SPDF_WIN_CANVAS_INTERNAL_H
@@ -29,6 +30,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+
+/* How many renders the canvas will track as outstanding at once. A viewport
+ * shows one or two pages at a readable zoom and up to a dozen at 10%, plus the
+ * two neighbours; 32 covers that with room to spare, and overflow degrades to a
+ * synchronous render rather than to a duplicate task. */
+#define SPDF_WIN_CANVAS_MAX_INFLIGHT 32
 
 struct spdf_win_canvas {
     spdf_document* doc; /* borrowed */
@@ -62,21 +69,42 @@ struct spdf_win_canvas {
 
     SpdfWinLru cache; /* SpdfWinLruKey -> spdf_bitmap*, owned */
 
-    /* T5's worker pool, used for NEIGHBOUR PREFETCH ONLY. The visible page is
-     * still rendered synchronously, deliberately: it means the canvas can
-     * never hand back a blank frame, and it keeps the headless probe
-     * deterministic -- a viewport PNG that depended on whether a worker had
-     * finished would be a viewport PNG no comparison could trust. What the
-     * pool buys is the page you are about to scroll onto being ready before
-     * you get there, which is the whole difference between a strip that
-     * scrolls and one that stutters at every page break.
+    /* T5's worker pool: neighbour prefetch always, and the VISIBLE page too
+     * once a shell has armed spdf_win_canvas_set_async_visible(). What the
+     * pool buys for the neighbours is the page you are about to scroll onto
+     * being ready before you get there; what it buys for the visible page is
+     * that a zoom or a jump does not stop the UI thread for the length of a
+     * MuPDF render. Async is off until armed, and never applies to the FIRST
+     * frame -- see spdf_win_canvas.cpp's header for both reasons.
      *
-     * Every touch of `cache` therefore stays on one thread: requests are made
-     * from build_scene, and results are adopted in spdf_win_render_drain(),
-     * which runs on whichever thread calls it -- the same one. The LRU needs
-     * no lock because it never sees a second thread. */
+     * Every touch of `cache` stays on one thread: requests are made from
+     * build_scene, and results are adopted in spdf_win_render_drain(), which
+     * runs on whichever thread calls it -- the same one. The LRU needs no lock
+     * because it never sees a second thread. */
     spdf_win_render_service* service;
     int sync_renders; /* synchronous renders during the last build_scene */
+    int stale_draws;  /* pages drawn from a lower/higher-zoom stand-in */
+    int async_visible;
+    unsigned long long frames_built;
+    /* Written once, before async is first armed, and read from a WORKER thread
+     * through the notify trampoline; `notify_armed` is the interlocked word
+     * that publishes them. See spdf_win_canvas_prefetch.cpp. */
+    void (*ready_fn)(void*);
+    void* ready_ctx;
+    volatile long notify_armed;
+
+    /* WHAT IS ALREADY ON ITS WAY, so a repaint at 60 Hz does not ask sixty
+     * times for one render. The service coalesces identical requests, but only
+     * up to SPDF_WIN_RENDER_MAX_WAITERS of them; past that it starts a SECOND
+     * render of the same page, and a 300 ms page under a continuous scroll
+     * would queue a dozen duplicates. A fixed table, so nothing allocates on
+     * the paint path; when it is full the caller falls back to rendering on
+     * this thread, which is slow but never wrong. */
+    struct spdf_win_canvas_inflight {
+        SpdfWinLruKey key;
+        unsigned long long token;
+    } inflight[SPDF_WIN_CANVAS_MAX_INFLIGHT];
+    int inflight_count;
 
     /* Scratch for build_scene's page list, grown and reused rather than
      * reallocated per frame: a malloc on every paint is a malloc on the scroll
@@ -112,8 +140,14 @@ struct spdf_win_canvas {
     int nav_valid;
 };
 
-/* spdf_win_canvas_prefetch.cpp */
+/* spdf_win_canvas_prefetch.cpp -- everything that talks to another thread.
+ * `prefetch` is the NEAR-priority neighbour ask (skipped for an unmeasured
+ * page); `request_visible` is the VISIBLE-priority ask for a page that is on
+ * screen right now, and returns non-zero when the pool took it. `render_notify`
+ * is the service's notify hook: it runs on a WORKER thread. */
 void spdf_win_canvas_prefetch(spdf_win_canvas* canvas, int page);
+int spdf_win_canvas_request_visible(spdf_win_canvas* canvas, int page, double render_zoom);
+void spdf_win_canvas_render_notify(void* ctx);
 
 /* spdf_win_canvas.cpp, for the other three units. Measures pages up to and
  * including `through`, returning non-zero when the layout went stale; and the
