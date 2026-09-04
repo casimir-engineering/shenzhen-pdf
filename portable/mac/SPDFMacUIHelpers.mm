@@ -1,4 +1,5 @@
 #import "SPDFMacUIHelpers.h"
+#import "SPDFMacPageWheel.h"
 #import "SPDFMacSupport.h"
 #import "SPDFMacInactiveZoom.h"
 #import "SPDFMacWindowChrome.h"
@@ -371,15 +372,14 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
 }
 
 - (void)sendEvent:(NSEvent*)event {
+    if (spdf_page_wheel_handle_window_scroll(self, event)) return;  // Option + wheel pages, wherever the pointer is
     spdf_window_activate_for_click_event(self, event);  // any click in the window focuses it, before any handler
-    // A press that arrives while this window is not key is the one AppKit uses
-    // to hand over key and main status, and it only does so while super
-    // processes that very press. The handlers below consume tab-strip clicks
-    // before super ever sees them, which left the window permanently keyless —
-    // grey traffic lights over a window the window server considered main — and
-    // unrepairable, since -makeKeyWindow is refused while AppKit waits for the
-    // mouse-down it never got. Give super the press first; the handlers still
-    // run after it, so the focusing click also does its own job.
+    // AppKit hands over key/main status only while super processes the very
+    // press that arrives while the window is not key. Consuming tab-strip
+    // clicks before super saw them left the window permanently keyless -- grey
+    // traffic lights over a window the server considered main, unrepairable
+    // because -makeKeyWindow is refused while AppKit waits for that mouse-down.
+    // Give super the press first; the handlers still run after it.
     BOOL keyHandshake = spdf_window_event_needs_key_handshake(self, event);
     if (keyHandshake) [super sendEvent:event];
     if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
