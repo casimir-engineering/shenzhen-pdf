@@ -1,11 +1,13 @@
 /* spdf_win_print_dialog.cpp — the WINDOW half of the in-app print dialog. Why
  * it exists at all is spdf_win_print_dialog.h; the spooler half beside it is
- * spdf_win_print_dialog_run.cpp.
+ * spdf_win_print_dialog_run.cpp and the preview on its right is
+ * spdf_win_print_preview.h.
  *
  * NO RESOURCE SCRIPT, NO DIALOG TEMPLATE, for the reason
  * spdf_win_properties_dialog.cpp gives: the port has no .rc for anything but
  * the app's own icon and manifest, and build-native.cmd discovers .c/.cpp and
- * nothing else. So this is a plain window with fifteen child controls and a
+ * nothing else. So this is a plain window with two dozen child controls, a
+ * preview child of its own, and a
  * local modal loop -- which is also what lets it disable exactly one parent
  * window instead of the whole thread, in an app that is tabbed and
  * multi-window.
@@ -24,12 +26,21 @@
  * back into a classic one that honours WM_CTLCOLOR*, which is plainer than
  * Windows 11 but readable, and readable wins. In LIGHT mode nothing is
  * stripped, so the normal case looks like a Windows dialog.
+ *
+ * EVERY CHANGE ENDS IN A SYNC. The preview is not a picture drawn once: the
+ * printer, the driver's own property sheet, the page range, the scaling radios
+ * and the percentage all move it, so each of them calls
+ * spdf_win_print_preview_sync() and nothing else has to remember to. The sync
+ * re-reads the controls through spdf_win_print_dialog_read_controls(), the same
+ * function Print reads them with, so what the reader is shown and what the job
+ * does cannot drift apart.
  */
 
 #include "spdf_win_print_dialog.h"
 
 #include "spdf_win_about.h"        /* spdf_win_about_dark_caption */
 #include "spdf_win_chrome_theme.h" /* the port's own palette */
+#include "spdf_win_print_preview.h"
 
 #include <uxtheme.h>
 
@@ -41,29 +52,16 @@
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "uxtheme.lib")
 
-#define PD_ID_PRINTER 1201
-#define PD_ID_PROPS 1202
-/* 1203-1205 are the range radios in spdf_win_print_range_mode order and
- * 1209-1211 the scaling radios in spdf_win_print_scaling_mode order, so
- * (id - first) IS the mode in both cases. */
-#define PD_ID_RANGE_ALL 1203
-#define PD_ID_RANGE_CURRENT 1204
-#define PD_ID_RANGE_FROMTO 1205
-#define PD_ID_FROM 1206
-#define PD_ID_TO 1207
-#define PD_ID_COPIES 1208
-#define PD_ID_SCALE_FIT 1209
-#define PD_ID_SCALE_ACTUAL 1210
-#define PD_ID_SCALE_CUSTOM 1211
-#define PD_ID_PERCENT 1212
-#define PD_ID_PRINT 1213
-#define PD_ID_CANCEL 1214
-#define PD_ID_NOTE 1215
-
-#define PD_WIDTH 500
-#define PD_HEIGHT 492
+/* The controls column, the preview beside it, and the window that holds both. */
+#define PD_COL_W 500
+#define PD_PREVIEW_W 262
+#define PD_WIDTH (PD_COL_W + PD_PREVIEW_W)
+/* 36 taller than the version without a preview: the classic-dialog button's
+ * caveat line and the fallback note now sit one under the other above the
+ * buttons. 762 x 528 at 96 dpi is 1143 x 792 on the 144 dpi display this was
+ * measured on, which fits its 2880 x 1800 desktop with room to spare. */
+#define PD_HEIGHT 528
 #define PD_MARGIN 16
-#define PD_ROW 24
 #define PD_FIELD_H 22
 #define PD_BUTTON_W 104
 #define PD_BUTTON_H 28
@@ -74,6 +72,7 @@ typedef struct print_dialog_state {
     spdf_win_print_printers printers;
     spdf_win_print_request* req;
     DEVMODEW* devmode; /* the reader's, from Properties; moved into req on Print */
+    spdf_win_print_preview* preview;
     int page_count;
     int current_page;
     int dark;
@@ -88,53 +87,30 @@ static COLORREF theme_ref(SpdfWinChromeColor c) {
     return RGB((int)(c.r * 255.0f + 0.5f), (int)(c.g * 255.0f + 0.5f), (int)(c.b * 255.0f + 0.5f));
 }
 
-/* --- reading the controls back -------------------------------------------- */
+/* --- reading the controls back --------------------------------------------
+ *
+ * spdf_win_print_dialog_read_controls() and
+ * spdf_win_print_dialog_sync_enables() are in
+ * spdf_win_print_dialog_controls.cpp, because the preview reads the same
+ * controls on every change and three copies of "which radio is checked" would
+ * drift. See that file's header. */
 
-static int print_dialog_checked(HWND hwnd, int first, int last) {
-    int id;
-    for (id = first; id <= last; ++id)
-        if (IsDlgButtonChecked(hwnd, id) == BST_CHECKED) return id - first;
-    return 0;
-}
-
-static int print_dialog_number(HWND hwnd, int id, int fallback) {
-    BOOL ok = FALSE;
-    UINT value = GetDlgItemInt(hwnd, id, &ok, FALSE);
-    return ok ? (int)value : fallback;
-}
-
-/* Everything the reader left, into the caller's request. The percentage goes
- * through spdf_win_print_choice_from_page() -- the same clamping the Scaling tab
- * in Windows' own dialog uses, so an empty field or 900% means the same thing
- * whichever dialog was shown. */
-static void print_dialog_read(HWND hwnd, print_dialog_state* st) {
-    wchar_t text[32];
-    int at = (int)SendDlgItemMessageW(hwnd, PD_ID_PRINTER, CB_GETCURSEL, 0, 0);
-
-    if (at >= 0 && at < st->printers.count)
-        wcsncpy_s(st->req->printer, SPDF_WIN_PRINT_NAME_MAX, st->printers.name[at], _TRUNCATE);
-    st->req->range = (spdf_win_print_range_mode)print_dialog_checked(hwnd, PD_ID_RANGE_ALL, PD_ID_RANGE_FROMTO);
-    st->req->from = print_dialog_number(hwnd, PD_ID_FROM, 1);
-    st->req->to = print_dialog_number(hwnd, PD_ID_TO, st->page_count);
-    st->req->copies = print_dialog_number(hwnd, PD_ID_COPIES, 1);
-    if (st->req->copies < 1) st->req->copies = 1;
-    GetDlgItemTextW(hwnd, PD_ID_PERCENT, text, (int)(sizeof(text) / sizeof(text[0])));
-    spdf_win_print_choice_from_page(print_dialog_checked(hwnd, PD_ID_SCALE_FIT, PD_ID_SCALE_CUSTOM), text,
-                                    &st->req->choice);
-    /* The DEVMODE moves; the state must not free what the request now owns. */
+/* The DEVMODE MOVES into the request; the state must not free what the request
+ * now owns. Both ways out of this dialog that end in a print go through here. */
+static void print_dialog_take_devmode(print_dialog_state* st) {
     free(st->req->devmode);
     st->req->devmode = st->devmode;
     st->devmode = NULL;
 }
 
-/* A field is only enabled while the radio that gives it meaning is checked --
- * a page range nobody asked for should not look editable. */
-static void print_dialog_sync_enables(HWND hwnd) {
-    int range = print_dialog_checked(hwnd, PD_ID_RANGE_ALL, PD_ID_RANGE_FROMTO);
-    int scale = print_dialog_checked(hwnd, PD_ID_SCALE_FIT, PD_ID_SCALE_CUSTOM);
-    EnableWindow(GetDlgItem(hwnd, PD_ID_FROM), range == SPDF_WIN_PRINT_RANGE_FROM_TO);
-    EnableWindow(GetDlgItem(hwnd, PD_ID_TO), range == SPDF_WIN_PRINT_RANGE_FROM_TO);
-    EnableWindow(GetDlgItem(hwnd, PD_ID_PERCENT), scale == SPDF_WIN_PRINT_SCALING_CUSTOM);
+static void print_dialog_read(HWND hwnd, print_dialog_state* st) {
+    spdf_win_print_dialog_read_controls(hwnd, &st->printers, st->page_count, st->req);
+    print_dialog_take_devmode(st);
+}
+
+static void print_dialog_changed(HWND hwnd, print_dialog_state* st) {
+    spdf_win_print_dialog_sync_enables(hwnd);
+    if (st) spdf_win_print_preview_sync(st->preview, hwnd, st->devmode);
 }
 
 /* --- the window ----------------------------------------------------------- */
@@ -157,7 +133,8 @@ static LRESULT CALLBACK print_dialog_proc(HWND hwnd, UINT msg, WPARAM wparam, LP
             /* The note is an explanation, not a label, so it takes the quieter
              * of the two text colours -- the same distinction the About box
              * makes between its title and its version lines. */
-            int is_note = GetDlgCtrlID((HWND)lparam) == PD_ID_NOTE;
+            int id = GetDlgCtrlID((HWND)lparam);
+            int is_note = id == SPDF_WIN_PD_ID_NOTE || id == SPDF_WIN_PD_ID_SYSTEM_NOTE;
             SetBkMode((HDC)wparam, TRANSPARENT);
             SetTextColor((HDC)wparam, theme_ref(is_note ? t.label_secondary : t.label));
             return (LRESULT)(st ? st->bg : (HBRUSH)(COLOR_BTNFACE + 1));
@@ -171,15 +148,25 @@ static LRESULT CALLBACK print_dialog_proc(HWND hwnd, UINT msg, WPARAM wparam, LP
         }
         case WM_COMMAND:
             switch (LOWORD(wparam)) {
-                case PD_ID_RANGE_ALL:
-                case PD_ID_RANGE_CURRENT:
-                case PD_ID_RANGE_FROMTO:
-                case PD_ID_SCALE_FIT:
-                case PD_ID_SCALE_ACTUAL:
-                case PD_ID_SCALE_CUSTOM:
-                    if (HIWORD(wparam) == BN_CLICKED) print_dialog_sync_enables(hwnd);
+                case SPDF_WIN_PD_ID_RANGE_ALL:
+                case SPDF_WIN_PD_ID_RANGE_CURRENT:
+                case SPDF_WIN_PD_ID_RANGE_FROMTO:
+                case SPDF_WIN_PD_ID_SCALE_FIT:
+                case SPDF_WIN_PD_ID_SCALE_ACTUAL:
+                case SPDF_WIN_PD_ID_SCALE_CUSTOM:
+                    if (HIWORD(wparam) == BN_CLICKED) print_dialog_changed(hwnd, st);
                     return 0;
-                case PD_ID_PRINTER:
+                case SPDF_WIN_PD_ID_FROM:
+                case SPDF_WIN_PD_ID_TO:
+                case SPDF_WIN_PD_ID_PERCENT:
+                    /* A percentage typed one digit at a time moves the preview
+                     * on every digit. That is affordable because the render is
+                     * keyed on a quantized zoom and coalesces, so "2", "25" and
+                     * "250" are at most three renders and usually one. */
+                    if (HIWORD(wparam) == EN_CHANGE && st)
+                        spdf_win_print_preview_sync(st->preview, hwnd, st->devmode);
+                    return 0;
+                case SPDF_WIN_PD_ID_PRINTER:
                     /* A DEVMODE belongs to ONE driver. Carrying the paper size
                      * the reader chose for printer A over to printer B is how a
                      * job comes out on the wrong stock, so the choice is
@@ -187,23 +174,43 @@ static LRESULT CALLBACK print_dialog_proc(HWND hwnd, UINT msg, WPARAM wparam, LP
                     if (HIWORD(wparam) == CBN_SELCHANGE && st) {
                         free(st->devmode);
                         st->devmode = NULL;
+                        print_dialog_changed(hwnd, st);
                     }
                     return 0;
-                case PD_ID_PROPS:
+                case SPDF_WIN_PD_ID_PROPS:
                     if (st) {
-                        int at = (int)SendDlgItemMessageW(hwnd, PD_ID_PRINTER, CB_GETCURSEL, 0, 0);
+                        int at = (int)SendDlgItemMessageW(hwnd, SPDF_WIN_PD_ID_PRINTER, CB_GETCURSEL, 0, 0);
                         if (at >= 0 && at < st->printers.count)
                             spdf_win_print_dialog_properties(hwnd, st->printers.name[at], &st->devmode);
+                        /* Paper and orientation can BOTH have changed in there,
+                         * so the preview re-measures the sheet. */
+                        print_dialog_changed(hwnd, st);
                     }
                     return 0;
-                case PD_ID_PRINT:
+                case SPDF_WIN_PD_ID_SYSTEM:
+                    /* Windows' CLASSIC dialog, explicitly asked for. It answers
+                     * the printer, the range and the copies; the SCALE stays
+                     * ours, because that dialog has no way to carry one -- which
+                     * is why the line beneath the button says so and why the
+                     * scale is written into the controls here before the hand
+                     * off, so the reader's last look at our dialog is accurate. */
+                    if (st) {
+                        spdf_win_print_dialog_read_controls(hwnd, &st->printers, st->page_count, st->req);
+                        if (spdf_win_print_classic_dialog(hwnd, st->page_count, st->req, &st->devmode)) {
+                            print_dialog_take_devmode(st);
+                            st->accepted = 1;
+                            DestroyWindow(hwnd);
+                        }
+                    }
+                    return 0;
+                case SPDF_WIN_PD_ID_PRINT:
                     if (st && st->printers.count > 0) {
                         print_dialog_read(hwnd, st);
                         st->accepted = 1;
                         DestroyWindow(hwnd);
                     }
                     return 0;
-                case PD_ID_CANCEL:
+                case SPDF_WIN_PD_ID_CANCEL:
                 case IDCANCEL: DestroyWindow(hwnd); return 0;
                 default: break;
             }
@@ -247,9 +254,9 @@ static int print_dialog_register(void) {
  * out two thirds the size it should be, with 15 px text in it. The port's other
  * dialogs (spdf_win_about.cpp, spdf_win_properties_dialog.cpp) have that
  * problem and get away with it because they are a paragraph and two buttons;
- * this one is three groups, a combo, six radios and three fields, and cramping
- * it by a third is the difference between readable and not. So every coordinate
- * and the font go through S() below.
+ * this one is three groups, a combo, six radios, three fields and a preview,
+ * and cramping it by a third is the difference between readable and not. So
+ * every coordinate and the font go through S() below.
  *
  * GetDpiForWindow is Windows 10 1607+, which is what the manifest's
  * supportedOS list already promises; resolved dynamically anyway, because a
@@ -277,7 +284,8 @@ static HWND print_dialog_add(HWND parent, print_dialog_state* st, const wchar_t*
 }
 
 int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, int page_count, int current_page,
-                               const char* note, spdf_win_print_request* req, char* err, size_t err_len) {
+                               const char* note, spdf_document* doc, const char* doc_path_utf8,
+                               spdf_win_print_request* req, char* err, size_t err_len) {
     print_dialog_state st;
     SpdfWinChromeTheme t = spdf_win_chrome_theme_for(dark);
     wchar_t label[160];
@@ -333,17 +341,19 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
     spdf_win_about_dark_caption(hwnd, dark);
     GetClientRect(hwnd, &client);
     W = client.right - client.left;
-    group_w = W - S(PD_MARGIN) * 2;
-    right = W - S(PD_MARGIN);
+    /* The CONTROLS COLUMN is a fixed width and the preview takes what is left,
+     * so widening the window widens the sheet rather than the radio buttons. */
+    group_w = S(PD_COL_W) - S(PD_MARGIN) * 2;
+    right = S(PD_COL_W) - S(PD_MARGIN);
 
     /* --- the printer, and the driver's own settings --- */
     y = S(PD_MARGIN);
     print_dialog_add(hwnd, &st, L"STATIC", L"Printer:", SS_LEFT, 0, S(PD_MARGIN), y + S(3), S(56), S(18), 0);
     combo = print_dialog_add(hwnd, &st, L"COMBOBOX", NULL, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0,
                              S(PD_MARGIN + 60), y, right - S(PD_BUTTON_W + 8 + PD_MARGIN + 60), S(240),
-                             PD_ID_PRINTER);
+                             SPDF_WIN_PD_ID_PRINTER);
     print_dialog_add(hwnd, &st, L"BUTTON", L"P&roperties...", BS_PUSHBUTTON | WS_TABSTOP, 0, right - S(PD_BUTTON_W),
-                     y - S(1), S(PD_BUTTON_W), S(PD_FIELD_H + 2), PD_ID_PROPS);
+                     y - S(1), S(PD_BUTTON_W), S(PD_FIELD_H + 2), SPDF_WIN_PD_ID_PROPS);
     for (i = 0; i < st.printers.count; ++i)
         SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)st.printers.name[i]);
     SendMessageW(combo, CB_SETCURSEL, (WPARAM)at, 0);
@@ -353,71 +363,83 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
     print_dialog_add(hwnd, &st, L"BUTTON", L"Pages", BS_GROUPBOX, 0, S(PD_MARGIN), y, group_w, S(112), 0);
     _snwprintf_s(label, _TRUNCATE, L"&All %d pages", page_count);
     print_dialog_add(hwnd, &st, L"BUTTON", label, BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 0, S(PD_MARGIN + 12),
-                     y + S(22), group_w - S(24), S(20), PD_ID_RANGE_ALL);
+                     y + S(22), group_w - S(24), S(20), SPDF_WIN_PD_ID_RANGE_ALL);
     if (current_page >= 0) _snwprintf_s(label, _TRUNCATE, L"C&urrent page (%d)", current_page + 1);
     else _snwprintf_s(label, _TRUNCATE, L"C&urrent page");
     print_dialog_add(hwnd, &st, L"BUTTON", label, BS_AUTORADIOBUTTON, 0, S(PD_MARGIN + 12), y + S(46),
-                     group_w - S(24), S(20), PD_ID_RANGE_CURRENT);
+                     group_w - S(24), S(20), SPDF_WIN_PD_ID_RANGE_CURRENT);
     /* Greyed rather than guessing: a caller that does not know the page would
      * silently print page 1 (spdf_win_print_dialog_range), and a reader must
      * never be the one making that substitution. */
-    if (current_page < 0) EnableWindow(GetDlgItem(hwnd, PD_ID_RANGE_CURRENT), FALSE);
+    if (current_page < 0) EnableWindow(GetDlgItem(hwnd, SPDF_WIN_PD_ID_RANGE_CURRENT), FALSE);
     print_dialog_add(hwnd, &st, L"BUTTON", L"Pa&ges", BS_AUTORADIOBUTTON, 0, S(PD_MARGIN + 12), y + S(70), S(64),
-                     S(20), PD_ID_RANGE_FROMTO);
+                     S(20), SPDF_WIN_PD_ID_RANGE_FROMTO);
     print_dialog_add(hwnd, &st, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE,
-                     S(PD_MARGIN + 82), y + S(68), S(52), S(PD_FIELD_H), PD_ID_FROM);
+                     S(PD_MARGIN + 82), y + S(68), S(52), S(PD_FIELD_H), SPDF_WIN_PD_ID_FROM);
     print_dialog_add(hwnd, &st, L"STATIC", L"to", SS_CENTER, 0, S(PD_MARGIN + 138), y + S(72), S(20), S(18), 0);
     print_dialog_add(hwnd, &st, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE,
-                     S(PD_MARGIN + 162), y + S(68), S(52), S(PD_FIELD_H), PD_ID_TO);
-    SetDlgItemInt(hwnd, PD_ID_FROM, (UINT)(current_page >= 0 ? current_page + 1 : 1), FALSE);
-    SetDlgItemInt(hwnd, PD_ID_TO, (UINT)page_count, FALSE);
-    CheckRadioButton(hwnd, PD_ID_RANGE_ALL, PD_ID_RANGE_FROMTO, PD_ID_RANGE_ALL);
+                     S(PD_MARGIN + 162), y + S(68), S(52), S(PD_FIELD_H), SPDF_WIN_PD_ID_TO);
+    SetDlgItemInt(hwnd, SPDF_WIN_PD_ID_FROM, (UINT)(current_page >= 0 ? current_page + 1 : 1), FALSE);
+    SetDlgItemInt(hwnd, SPDF_WIN_PD_ID_TO, (UINT)page_count, FALSE);
+    CheckRadioButton(hwnd, SPDF_WIN_PD_ID_RANGE_ALL, SPDF_WIN_PD_ID_RANGE_FROMTO, SPDF_WIN_PD_ID_RANGE_ALL);
 
     /* --- the scale, the app's own, in the macOS accessory's words --- */
     y += S(126);
     print_dialog_add(hwnd, &st, L"BUTTON", L"Scaling", BS_GROUPBOX, 0, S(PD_MARGIN), y, group_w, S(112), 0);
     print_dialog_add(hwnd, &st, L"BUTTON", L"&Fit to the printable area", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,
-                     0, S(PD_MARGIN + 12), y + S(22), group_w - S(24), S(20), PD_ID_SCALE_FIT);
+                     0, S(PD_MARGIN + 12), y + S(22), group_w - S(24), S(20), SPDF_WIN_PD_ID_SCALE_FIT);
     print_dialog_add(hwnd, &st, L"BUTTON", L"Act&ual size (100%)", BS_AUTORADIOBUTTON, 0, S(PD_MARGIN + 12),
-                     y + S(46), group_w - S(24), S(20), PD_ID_SCALE_ACTUAL);
+                     y + S(46), group_w - S(24), S(20), SPDF_WIN_PD_ID_SCALE_ACTUAL);
     print_dialog_add(hwnd, &st, L"BUTTON", L"&Custom:", BS_AUTORADIOBUTTON, 0, S(PD_MARGIN + 12), y + S(70), S(76),
-                     S(20), PD_ID_SCALE_CUSTOM);
+                     S(20), SPDF_WIN_PD_ID_SCALE_CUSTOM);
     print_dialog_add(hwnd, &st, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE,
-                     S(PD_MARGIN + 94), y + S(68), S(52), S(PD_FIELD_H), PD_ID_PERCENT);
+                     S(PD_MARGIN + 94), y + S(68), S(52), S(PD_FIELD_H), SPDF_WIN_PD_ID_PERCENT);
     print_dialog_add(hwnd, &st, L"STATIC", L"%  (10 to 800)", SS_LEFT, 0, S(PD_MARGIN + 152), y + S(72), S(140),
                      S(18), 0);
     spdf_win_print_percent_text(req->choice.custom_scale, label, 16);
-    SetDlgItemTextW(hwnd, PD_ID_PERCENT, label);
-    CheckRadioButton(hwnd, PD_ID_SCALE_FIT, PD_ID_SCALE_CUSTOM,
-                     PD_ID_SCALE_FIT + (req->choice.mode == SPDF_WIN_PRINT_SCALING_ACTUAL   ? 1
-                                        : req->choice.mode == SPDF_WIN_PRINT_SCALING_CUSTOM ? 2
-                                                                                            : 0));
+    SetDlgItemTextW(hwnd, SPDF_WIN_PD_ID_PERCENT, label);
+    CheckRadioButton(hwnd, SPDF_WIN_PD_ID_SCALE_FIT, SPDF_WIN_PD_ID_SCALE_CUSTOM,
+                     SPDF_WIN_PD_ID_SCALE_FIT + (req->choice.mode == SPDF_WIN_PRINT_SCALING_ACTUAL   ? 1
+                                                 : req->choice.mode == SPDF_WIN_PRINT_SCALING_CUSTOM ? 2
+                                                                                                     : 0));
 
-    /* --- copies --- */
+    /* --- copies, and the route to Windows' own classic dialog --- */
     y += S(126);
     print_dialog_add(hwnd, &st, L"STATIC", L"Cop&ies:", SS_LEFT, 0, S(PD_MARGIN), y + S(3), S(56), S(18), 0);
     print_dialog_add(hwnd, &st, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE,
-                     S(PD_MARGIN + 60), y, S(52), S(PD_FIELD_H), PD_ID_COPIES);
-    SetDlgItemInt(hwnd, PD_ID_COPIES, (UINT)(req->copies > 0 ? req->copies : 1), FALSE);
+                     S(PD_MARGIN + 60), y, S(52), S(PD_FIELD_H), SPDF_WIN_PD_ID_COPIES);
+    SetDlgItemInt(hwnd, SPDF_WIN_PD_ID_COPIES, (UINT)(req->copies > 0 ? req->copies : 1), FALSE);
+    print_dialog_add(hwnd, &st, L"BUTTON", L"&Windows print dialog...", BS_PUSHBUTTON | WS_TABSTOP, 0,
+                     S(PD_MARGIN + 130), y - S(1), S(PD_BUTTON_W + 56), S(PD_FIELD_H + 2), SPDF_WIN_PD_ID_SYSTEM);
+    print_dialog_add(hwnd, &st, L"STATIC",
+                     L"Windows' own dialog has no scaling and no preview; the scale chosen above still applies.",
+                     SS_LEFT, 0, S(PD_MARGIN), y + S(30), group_w, S(40), SPDF_WIN_PD_ID_SYSTEM_NOTE);
 
     /* --- why the reader is looking at this and not at Windows' dialog --- */
     if (note && *note && MultiByteToWideChar(CP_UTF8, 0, note, -1, wnote, (int)(sizeof(wnote) / sizeof(wnote[0]))) > 0)
         /* 52, not 36: the sentence wraps to two lines at every width this
          * dialog has, and a static clips rather than growing -- measured at 144
          * dpi, where 36 cut the descenders off the second line. */
-        print_dialog_add(hwnd, &st, L"STATIC", wnote, SS_LEFT, 0, S(PD_MARGIN), y + S(32), group_w, S(52),
-                         PD_ID_NOTE);
+        print_dialog_add(hwnd, &st, L"STATIC", wnote, SS_LEFT, 0, S(PD_MARGIN), y + S(74), group_w, S(52),
+                         SPDF_WIN_PD_ID_NOTE);
 
-    print_dialog_add(hwnd, &st, L"BUTTON", L"&Print", BS_PUSHBUTTON | WS_TABSTOP, 0, right - S(PD_BUTTON_W * 2 + 8),
-                     client.bottom - S(PD_MARGIN + PD_BUTTON_H), S(PD_BUTTON_W), S(PD_BUTTON_H), PD_ID_PRINT);
-    print_dialog_add(hwnd, &st, L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP, 0, right - S(PD_BUTTON_W),
-                     client.bottom - S(PD_MARGIN + PD_BUTTON_H), S(PD_BUTTON_W), S(PD_BUTTON_H), PD_ID_CANCEL);
+    print_dialog_add(hwnd, &st, L"BUTTON", L"&Print", BS_PUSHBUTTON | WS_TABSTOP, 0,
+                     W - S(PD_MARGIN + PD_BUTTON_W * 2 + 8), client.bottom - S(PD_MARGIN + PD_BUTTON_H),
+                     S(PD_BUTTON_W), S(PD_BUTTON_H), SPDF_WIN_PD_ID_PRINT);
+    print_dialog_add(hwnd, &st, L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP, 0, W - S(PD_MARGIN + PD_BUTTON_W),
+                     client.bottom - S(PD_MARGIN + PD_BUTTON_H), S(PD_BUTTON_W), S(PD_BUTTON_H),
+                     SPDF_WIN_PD_ID_CANCEL);
 
-    print_dialog_sync_enables(hwnd);
+    /* --- the preview, on the right, from here on live --- */
+    st.preview = spdf_win_print_preview_create(hwnd, dark, dpi, doc, doc_path_utf8, &st.printers, page_count,
+                                               current_page, S(PD_COL_W), S(PD_MARGIN),
+                                               W - S(PD_COL_W + PD_MARGIN),
+                                               client.bottom - S(PD_MARGIN * 2 + PD_BUTTON_H + 8));
+    print_dialog_changed(hwnd, &st);
     if (parent) parent_was_enabled = IsWindowEnabled(parent);
     if (parent && parent_was_enabled) EnableWindow(parent, FALSE);
     ShowWindow(hwnd, SW_SHOW);
-    focus = GetDlgItem(hwnd, PD_ID_PRINTER);
+    focus = GetDlgItem(hwnd, SPDF_WIN_PD_ID_PRINTER);
     if (focus) SetFocus(focus);
 
     while (!st.finished && GetMessageW(&msg, NULL, 0, 0) > 0) {
@@ -426,7 +448,8 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
             continue;
         }
         if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
-            SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(PD_ID_PRINT, BN_CLICKED), (LPARAM)GetDlgItem(hwnd, PD_ID_PRINT));
+            SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(SPDF_WIN_PD_ID_PRINT, BN_CLICKED),
+                         (LPARAM)GetDlgItem(hwnd, SPDF_WIN_PD_ID_PRINT));
             continue;
         }
         /* Tab, the arrow keys within a radio group, and the &mnemonics. */
@@ -439,6 +462,10 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
         EnableWindow(parent, TRUE);
         SetForegroundWindow(parent);
     }
+    /* The preview holds a render service with a worker and a MuPDF document;
+     * it goes down before the brushes it never touched, because freeing it
+     * drains callbacks and those must not run against a half-torn state. */
+    spdf_win_print_preview_destroy(st.preview);
     free(st.devmode); /* NULL once Print has moved it into the request */
     DeleteObject(st.bg);
     DeleteObject(st.field);
