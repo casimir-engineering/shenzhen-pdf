@@ -37,6 +37,10 @@
                     @"keys" : @[ @"←", @"→" ]
                 },
                 @{@"title" : @"Previous or next page (keeps zoom and position)", @"keys" : @[ @"Cmd", @"↑ / ↓" ]},
+                @{
+                    @"title" : @"Previous or next page, wherever the pointer is",
+                    @"subtitle" : @"Opt + scroll wheel"
+                },
                 @{@"title" : @"Jump a page", @"keys" : @[ @"Shift", @"Arrow" ]},
                 @{@"title" : @"Scroll up or down", @"keys" : @[ @"↑", @"↓" ]},
                 @{@"title" : @"Zoom in or out", @"keys" : @[ @"Cmd", @"+ / -" ]},
