@@ -19,12 +19,16 @@
 }
 @end
 
+@implementation SPDFMarkdownDiagramLabelSpan
+@end
+
 @implementation SPDFMarkdownDiagramLabel
 - (instancetype)init {
     self = [super init];
     if (self) {
         _text = @"";
         _fontSize = 12;
+        _spans = @[];
         _role = SPDFMarkdownDiagramRoleText;
     }
     return self;
@@ -32,6 +36,9 @@
 - (NSFont*)font {
     return self.semibold ? [NSFont systemFontOfSize:self.fontSize weight:NSFontWeightSemibold]
                          : [NSFont systemFontOfSize:self.fontSize];
+}
+- (NSFont*)fontForSpan:(SPDFMarkdownDiagramLabelSpan*)span {
+    return SPDFMarkdownDiagramEmphasizedFont(self.font, span.bold, span.italic);
 }
 @end
 
@@ -216,9 +223,12 @@ SPDFMarkdownDiagramRole SPDFMarkdownDiagramRampRole(NSUInteger index) {
     // face at this size instead of guessing from descriptor traits.
     BOOL semibold = [font.fontName
         isEqualToString:[NSFont systemFontOfSize:font.pointSize weight:NSFontWeightSemibold].fontName];
-    for (NSString* line in SPDFMarkdownDiagramWrapText(text, font, NSWidth(rect))) {
+    for (NSAttributedString* line in SPDFMarkdownDiagramWrapAttributedText(
+             SPDFMarkdownDiagramAttributedLabel(text, font), NSWidth(rect))) {
+        if (!line.length) continue;  // a label that was nothing but markup
         SPDFMarkdownDiagramLabel* label = [SPDFMarkdownDiagramLabel new];
-        label.text = line;
+        label.text = line.string;
+        label.spans = SPDFMarkdownDiagramLabelSpans(line);
         label.frame = NSMakeRect(NSMinX(rect), y, NSWidth(rect), lineHeight);
         label.alignment = alignment;
         label.fontSize = font.pointSize;
@@ -301,6 +311,7 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramFinishLayout(SPDFMarkdownDiagramCa
             copy.alignment = label.alignment;
             copy.fontSize = label.fontSize * fit;
             copy.semibold = label.semibold;
+            copy.spans = label.spans;  // ranges into `text`: size-independent
             copy.role = label.role;
             copy.authorColor = label.authorColor;
             [scaledLabels addObject:copy];

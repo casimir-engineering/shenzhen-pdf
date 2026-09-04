@@ -116,7 +116,18 @@ SPDFMarkdownDiagramLayout* SPDFMarkdownDiagramLayOutGantt(SPDFMarkdownDiagramGan
     if (spanDays > 3660) return nil;
     CGFloat margin = 14 * scale;
     CGFloat labelColumn = MIN(230 * scale, nameWidth + 16 * scale);
-    CGFloat chartWidth = MAX(180 * scale, MIN(520 * scale, (CGFloat)spanDays * 26 * scale));
+    // The chart column takes the width the page actually offers rather than a
+    // fixed ceiling. A 60-day gantt wants 1560pt at its natural 26pt/day; the
+    // old MIN(520pt) pinned it there, and the fit factor only ever shrinks a
+    // diagram, never grows one -- so on a landscape sheet the chart kept its
+    // portrait size and left the rest of the page empty. Bounded by what the
+    // data needs (a one-week chart stretched across a wide sheet is a sparse
+    // ribbon, not a better chart) and by the dimension budget, which would drop
+    // the figure entirely. The tick cadence below adapts to the wider day.
+    CGFloat naturalChart = (CGFloat)spanDays * 26 * scale;
+    CGFloat roomForChart = contentBox.width > 0 ? contentBox.width - margin * 2 - labelColumn : 520 * scale;
+    CGFloat chartCeiling = SPDFMarkdownDiagramMaximumDimension - margin * 2 - labelColumn;
+    CGFloat chartWidth = MAX(180 * scale, MIN(naturalChart, MIN(roomForChart, chartCeiling)));
     CGFloat dayWidth = chartWidth / (CGFloat)spanDays;
     CGFloat rowHeight = lineHeight + 10 * scale;
     CGFloat titleHeight = gantt.title.length

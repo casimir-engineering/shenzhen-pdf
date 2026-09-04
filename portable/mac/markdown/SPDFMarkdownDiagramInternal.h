@@ -190,6 +190,22 @@ FOUNDATION_EXPORT NSString* SPDFMarkdownDiagramCleanLabel(NSString* label);
 // break a long string themselves and place each line at its own position.
 FOUNDATION_EXPORT NSArray<NSString*>* SPDFMarkdownDiagramWrapText(NSString* text, NSFont* font,
                                                                   CGFloat maximumWidth);
+// The same label as an attributed string: `font` everywhere, with the label's
+// `<b>`/`<i>` markup turned into real font runs and removed from the text.
+// This is what makes measurement honest — the tags contribute no width and a
+// bold run is measured in the face it will be drawn in.
+FOUNDATION_EXPORT NSAttributedString* SPDFMarkdownDiagramAttributedLabel(NSString* text, NSFont* font);
+FOUNDATION_EXPORT NSArray<NSAttributedString*>* SPDFMarkdownDiagramWrapAttributedText(
+    NSAttributedString* text, CGFloat maximumWidth);
+// The emphasis runs of one wrapped line, in the line's own coordinates.
+FOUNDATION_EXPORT NSArray<SPDFMarkdownDiagramLabelSpan*>* SPDFMarkdownDiagramLabelSpans(
+    NSAttributedString* line);
+// One face's emphasized variant. `<b>` resolves to the SAME semibold the
+// diagram already sets its own emphasis in (titles, class names, sequence
+// keywords), so one diagram never carries two ideas of bold and a label
+// already set in semibold is unchanged. The single mapping measurement and
+// drawing share, so a run can never be measured in a face it is not drawn in.
+FOUNDATION_EXPORT NSFont* SPDFMarkdownDiagramEmphasizedFont(NSFont* font, BOOL bold, BOOL italic);
 FOUNDATION_EXPORT CGFloat SPDFMarkdownDiagramLineHeight(NSFont* font);
 FOUNDATION_EXPORT NSSize SPDFMarkdownDiagramMeasureText(NSString* text, NSFont* font, CGFloat maximumWidth);
 

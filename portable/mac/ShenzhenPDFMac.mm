@@ -2177,7 +2177,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.9.3";
+    if (version.length == 0) version = @"26.9.4";
     if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
@@ -6609,9 +6609,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)repointActiveFileWatcher {
     SPDFDocumentTab* tab = [self selectedTab];
     NSString* path = tab.path;
-    // Only watch a live, on-disk document. A missing/unavailable tab or a tab
-    // with no open document gets no watcher (existing missing-file UI owns it).
-    if (!_doc || !path.length || tab.missingFile) {
+    // Only watch a live, on-disk document. _doc is the rendered-document handle,
+    // NULL for Markdown -- which is why Markdown never reloaded on a disk change.
+    if ((!_doc && !self.isMarkdownActive) || !path.length || tab.missingFile) {
         [self teardownActiveFileWatcher];
         return;
     }
@@ -6735,22 +6735,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
 // loadSelectedTab (reopen + restore). loadSelectedTab clamps the page index to
 // the new page count and re-records the on-disk attributes, so the refreshed
 // cache will match disk and not immediately re-trigger.
-- (void)reloadSelectedTabFromDiskChange {
-    SPDFDocumentTab* tab = [self selectedTab];
-    if (!tab || !tab.path.length) return;
-    if (_reloadInProgress) return;
-    _reloadInProgress = YES;
-
-    // Capture current view state into the tab so loadSelectedTab restores it.
-    [self rememberActiveTabState];
-    // Force a real reopen: drop the cached document/runtime so loadSelectedTab
-    // takes the open-from-disk branch instead of the cache-hit branch.
-    [self discardCachedRuntimeForTab:tab];
-    [self loadSelectedTab];
-    _statusLabel.stringValue = @"Reloaded after the file changed on disk.";
-    _reloadInProgress = NO;
-}
-
 // All non-active tabs are not watched continuously. When the window regains key
 // focus, check each tab once against its cached mtime/size and reload/refresh
 // any that changed. Cheap: a single stat per tab, only the active tab reopens

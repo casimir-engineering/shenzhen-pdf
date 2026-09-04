@@ -147,6 +147,18 @@ static int test_coordinator_source_contract(void) {
     EXPECT([source containsString:@"spdf_mac_tab_close_action_enabled"]);
     EXPECT([source containsString:@"preferMostRecentActive:index == _selectedTabIndex"]);
     EXPECT([source containsString:@"recordActivationOfIdentifier:tab"]);
+    // A Markdown tab has no spdf_document, so gating the file watcher on _doc
+    // alone left Markdown unwatched: editing the file on disk never reloaded it,
+    // while PDFs did. The watcher must accept an active Markdown session too.
+    EXPECT([source containsString:@"if ((!_doc && !self.isMarkdownActive) || !path.length || tab.missingFile)"]);
+    NSString* markdownPath = [[testPath stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"../SPDFMacMarkdownIntegration.mm"];
+    NSString* markdown = [NSString stringWithContentsOfFile:markdownPath encoding:NSUTF8StringEncoding error:&error];
+    EXPECT(markdown != nil);
+    // ...and it is armed only once the load has recorded the file's stat, which
+    // is the baseline the change handler compares against.
+    EXPECT([markdown containsString:@"[strongSelf recordFileAttributes:attributes forTab:tab];"]);
+    EXPECT([markdown containsString:@"[strongSelf repointActiveFileWatcher];"]);
     return 0;
 }
 

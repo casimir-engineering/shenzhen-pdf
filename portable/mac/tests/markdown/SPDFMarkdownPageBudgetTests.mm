@@ -1,5 +1,6 @@
 #import "SPDFMarkdownTestSupport.h"
 
+#import "../../markdown/SPDFMarkdownDiagram.h"
 #import "../../markdown/SPDFMarkdownDocument.h"
 #import "../../markdown/SPDFMarkdownTableDecorations.h"
 
@@ -131,6 +132,44 @@ int main(void) {
         }
         SPDFExpect(fabs(SPDFLastTableBoundary(pageless) - 440) < 0.01,
                    @"a page-less table keeps the constant provisional width budget");
+    }
+    // --- A chart figure uses the page it is given ------------------------
+    // Diagram geometry is fitted to the page box, but the fit factor only ever
+    // SHRINKS an oversized figure; it never grows a small one. So any chart
+    // that sized itself from a constant stayed that size on a wider sheet. The
+    // gantt did: its chart column was capped at 520pt, and a 60-day chart --
+    // which wants 1560pt at its natural 26pt/day -- sat at the cap with the
+    // rest of a landscape page left empty.
+    {
+        NSString* gantt = @"gantt\n"
+                           "    title Engine\n"
+                           "    dateFormat YYYY-MM-DD\n"
+                           "    section Parsing\n"
+                           "        Grammar        : done, grammar, 2026-01-05, 12d\n"
+                           "        Error handling : done, after grammar, 6d\n"
+                           "    section Layout\n"
+                           "        Ranking        : active, ranking, 2026-01-26, 2w\n"
+                           "        Ordering       : after ranking, 8d\n"
+                           "    section Shapes\n"
+                           "        Drawing        : crit, 2026-02-20, 2026-03-06\n";
+        NSSize portrait = {440, 0};
+        NSSize landscape = {780, 0};
+        SPDFMarkdownDiagramLayout* narrow = SPDFMarkdownDiagramRender(@"mermaid", gantt, portrait, 1.0, nil);
+        SPDFMarkdownDiagramLayout* wide = SPDFMarkdownDiagramRender(@"mermaid", gantt, landscape, 1.0, nil);
+        SPDFExpect(narrow != nil && wide != nil, @"the gantt renders into both page boxes");
+        if (narrow && wide) {
+            printf("Gantt page-box width: portrait %.0f of %.0f, landscape %.0f of %.0f\n",
+                   narrow.size.width, portrait.width, wide.size.width, landscape.width);
+            // Each stays inside its own page...
+            SPDFExpect(narrow.size.width <= portrait.width + 0.5 && wide.size.width <= landscape.width + 0.5,
+                       @"the gantt stays inside the page box it was given");
+            // ...and the wider page actually buys width, rather than the chart
+            // keeping its portrait size with the extra page left blank.
+            SPDFExpect(wide.size.width > narrow.size.width + 1.0,
+                       @"a wider page makes the gantt wider");
+            SPDFExpect(wide.size.width >= landscape.width * 0.9,
+                       @"the gantt uses the width the landscape page offers");
+        }
     }
     return SPDFFinishTests(@"SPDFMarkdownPageBudgetTests");
 }

@@ -157,6 +157,15 @@ FOUNDATION_EXPORT BOOL SPDFMacMarkdownCopyCodeSource(SPDFMarkdownDocumentModel* 
 - (void)applyPageOrientation:(SPDFMarkdownPageOrientation)orientation;
 @end
 
+// Implemented in SPDFMacMarkdownSession+Reload.mm: re-reading the document
+// after its file changed on disk, which is a rerender from a new source rather
+// than a fresh load — see that file for why.
+@interface SPDFMacMarkdownSession (Reload)
+// Re-read the document from disk and swap it under the live view, keeping the
+// reader's viewport, selection and zoom.
+- (void)reloadFromDiskWithStatus:(NSString* _Nullable)status;
+@end
+
 // Implemented in SPDFMacMarkdownSession+Interaction.mm: heading anchors, the
 // code-language picker, the code copy button, and the viewport forwarding onto
 // the paged view.

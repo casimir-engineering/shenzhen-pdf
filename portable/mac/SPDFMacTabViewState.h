@@ -18,5 +18,6 @@
 // border a fresh Light view would silently drop -- is applied here.
 - (SPDFDocumentView*)newDocumentView;
 - (void)replaceDocumentViewForTabSwitch;
+- (void)rememberActiveMarkdownStateForTab:(SPDFDocumentTab*)tab;
 
 @end
