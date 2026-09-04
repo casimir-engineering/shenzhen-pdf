@@ -38,6 +38,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
+#include "scratch_leaf.h" /* a scratch leaf unique to this process */
 #include "silent_failure_support.h" /* check/note, write_whole/read_whole, make_unreadable */
 
 #include "../src/spdf_win_session.h"
@@ -473,22 +474,8 @@ int main(int argc, char** argv) {
     if (!spdf_win_path_join(base, "spdf_session_test", scratch, sizeof(scratch))) return 1;
     /* The proven non-ASCII scratch leaf: every file operation below then runs
      * through a path the narrow CRT would mangle. */
-    /* A LEAF UNIQUE TO THIS PROCESS. %TEMP% is one directory for the whole
-     * machine, and several suites run at once here (one per parallel
-     * worktree), so a fixed leaf let one run rewrite the state another was
-     * mid-way through asserting on -- which is exactly what the reader would
-     * see as a flaky "the session file is byte-for-byte what it was". The
-     * non-ASCII part stays, because putting every file operation through a
-     * path the narrow CRT would mangle is the point of it. */
-    {
-        unsigned long pid;
-#if defined(_WIN32)
-        pid = (unsigned long)GetCurrentProcessId();
-#else
-        pid = (unsigned long)getpid();
-#endif
-        snprintf(scratch_leaf, sizeof(scratch_leaf), "Rapha\xc3\xabl-%lu", pid);
-    }
+    /* Unique per process: several suites share %TEMP%. See scratch_leaf.h. */
+    spdf_test_scratch_leaf(scratch_leaf, sizeof(scratch_leaf), "RaphaÃ«l");
     if (!spdf_win_path_join(scratch, scratch_leaf, dir, sizeof(dir))) return 1;
     if (!spdf_win_paths_ensure_dir(dir)) {
         printf("FAIL: could not create the scratch directory under %s\n", scratch);
