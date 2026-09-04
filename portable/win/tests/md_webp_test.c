@@ -16,7 +16,7 @@
  * than failing -- the product behaviour there is the "[image]" fallback, which
  * is what the un-hooked half already pins.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_md_webp.cpp portable/win/src/spdf_win_md_images.cpp portable/win/src/spdf_win_paths.c portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_open.c ext/md4c/md4c.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c */
+/* spdf-test-sources: portable/win/src/spdf_win_md_webp.cpp portable/win/src/spdf_win_md_images.cpp portable/win/src/spdf_win_paths.c portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_fences.c portable/core/spdf_markdown_open.c ext/md4c/md4c.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c */
 /* spdf-test-args: portable/win/tests/fixtures/webp-figure.md %SCRATCH% */
 /* spdf-test-needs: mupdf */
 #include "spdf_win_md_images.h"

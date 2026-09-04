@@ -5,10 +5,16 @@
  * it must -- and must not -- contain. The end-to-end behaviour on a laid-out
  * document is portable/win/tests/markdown_open_test.c's job.
  *
+ * The in-page code controls' converter side -- the fence table, the per-fence
+ * language override, the picker's filter and the local-image transcode hook --
+ * is SPDFCoreMarkdownCodeTests.c, extracted when this file reached its cap.
+ *
  * Sources: portable/core/spdf_markdown.c spdf_markdown_support.c
  *          spdf_markdown_html.c spdf_markdown_lang.c spdf_markdown_lex.c
  *          spdf_markdown_math.c ext/md4c/md4c.c
  */
+#include "SPDFCoreMarkdownFences.h"
+
 #include "spdf_markdown.h"
 
 #include <stdio.h>
@@ -110,62 +116,6 @@ static void test_images(void) {
     free(h);
 }
 
-/* Answers for exactly one absolute path, which is how the test pins that the
- * relative source was joined to document_dir before the hook saw it. */
-static int fake_local(void* user, const char* path, char* out, size_t cap) {
-    (void)user;
-    if (strcmp(path, "C:/docs/shot.webp") == 0) {
-        snprintf(out, cap, "beef.png");
-        return 1;
-    }
-    if (strcmp(path, "C:/docs/img/deep.WEBP") == 0) {
-        snprintf(out, cap, "../escape.png"); /* refused, like the remote hook's */
-        return 1;
-    }
-    return 0;
-}
-
-static void test_local_image_transcode(void) {
-    spdf_markdown_options o = spdf_markdown_default_options();
-    const char* src = "![a](shot.webp)\n\n![b](img/deep.WEBP)\n\n![c](other.webp)\n\n![d](icon.png)\n";
-    char* h;
-
-    /* No hook: a .webp is an ordinary relative source, and MuPDF -- which has
-     * no WebP decoder -- draws its own "[image]" for it. This is the fallback
-     * every branch below has to degrade to. */
-    h = convert(src);
-    HAS(h, "<img src=\"shot.webp\" alt=\"a\">");
-    free(h);
-
-    o.local_image = fake_local;
-    o.remote_image_dir = "C:/cache";
-    o.document_dir = "C:/docs";
-    h = convert_with(src, &o);
-    HAS(h, "<img src=\".spdf-remote/beef.png\" alt=\"a\">");
-    HAS(h, "<img src=\"img/deep.WEBP\" alt=\"b\">");    /* escaping answer refused */
-    HAS(h, "<img src=\"other.webp\" alt=\"c\">");       /* the hook declined */
-    HAS(h, "<img src=\"icon.png\" alt=\"d\">");         /* not a candidate: never offered */
-    free(h);
-
-    /* A trailing separator on the folder must not double up. */
-    o.document_dir = "C:/docs/";
-    h = convert_with(src, &o);
-    HAS(h, "<img src=\".spdf-remote/beef.png\" alt=\"a\">");
-    free(h);
-
-    /* Each of the three requirements is enough on its own to disable the hook. */
-    o.document_dir = "C:/docs";
-    o.remote_image_dir = NULL;
-    h = convert_with(src, &o);
-    HAS(h, "<img src=\"shot.webp\" alt=\"a\">");
-    free(h);
-    o.remote_image_dir = "C:/cache";
-    o.document_dir = "";
-    h = convert_with(src, &o);
-    HAS(h, "<img src=\"shot.webp\" alt=\"a\">");
-    free(h);
-}
-
 static void test_lists_and_tables(void) {
     char* h = convert("- a\n  - b\n- [x] done\n- [ ] todo\n\n3. three\n4. four\n\n"
                       "| L | C | R |\n|---|:-:|--:|\n| 1 | 2 | 3 |\n");
@@ -179,12 +129,14 @@ static void test_lists_and_tables(void) {
 }
 
 static void test_code_blocks(void) {
-    char* h = convert("```c\nint x = 0; // hi\n```\n\n```nosuchlang\nint y;\n```\n\n"
-                      "```mermaid\ngraph TD\n```\n\n```\nplain <b>\n```\n");
-    HAS(h, "<pre><code><span class=\"hk\">int</span> x = <span class=\"hn\">0</span>; <span class=\"hc\">// hi</span></code></pre>");
-    HAS(h, "<pre><code>int y;</code></pre>");
-    HAS(h, "<pre><code>graph TD</code></pre>"); /* diagram fences keep their code box */
-    HAS(h, "<pre><code>plain &lt;b&gt;</code></pre>");
+    char* h = convert(SPDF_MD_TEST_FOUR_FENCES);
+    /* Every <pre> carries its fence's ordinal as an id, which is how the in-page
+     * language picker and copy button find the box on the laid-out page. */
+    HAS(h, "<pre id=\"spdf-code-0\"><code><span class=\"hk\">int</span> x = <span class=\"hn\">0</span>; "
+           "<span class=\"hc\">// hi</span></code></pre>");
+    HAS(h, "<pre id=\"spdf-code-1\"><code>int y;</code></pre>");
+    HAS(h, "<pre id=\"spdf-code-2\"><code>graph TD</code></pre>"); /* diagram fences keep their code box */
+    HAS(h, "<pre id=\"spdf-code-3\"><code>plain &lt;b&gt;</code></pre>");
     free(h);
 }
 
@@ -429,7 +381,6 @@ int main(void) {
     test_headings_and_slugs();
     test_inline();
     test_images();
-    test_local_image_transcode();
     test_lists_and_tables();
     test_code_blocks();
     test_language_catalog();

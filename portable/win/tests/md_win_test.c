@@ -7,7 +7,7 @@
  * cache directory under the computed name is found on the next lookup -- the
  * whole contract the converter and the frontend rely on, minus the socket.
  */
-/* spdf-test-sources: portable/win/src/spdf_win_md.cpp portable/win/src/spdf_win_md_images.cpp portable/win/src/spdf_win_md_webp.cpp portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_open.c ext/md4c/md4c.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c portable/win/src/spdf_win_open.c */
+/* spdf-test-sources: portable/win/src/spdf_win_md.cpp portable/win/src/spdf_win_md_code.cpp portable/win/src/spdf_win_md_images.cpp portable/win/src/spdf_win_md_webp.cpp portable/win/src/spdf_win_state.c portable/win/src/spdf_win_paths.c portable/core/spdf_yaml.c portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_fences.c portable/core/spdf_markdown_open.c ext/md4c/md4c.c portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c portable/core/spdf_selection_support.c portable/core/spdf_recolor.c portable/core/spdf_win_compat.c portable/win/src/spdf_win_open.c */
 /* spdf-test-args: portable/win/tests/fixtures/golden.pdf portable/win/tests/fixtures/readme-style.md %SCRATCH% */
 /* spdf-test-needs: mupdf */
 #include "spdf_win_md.h"

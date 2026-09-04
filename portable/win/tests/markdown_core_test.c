@@ -11,5 +11,5 @@
  *
  * Pure C: no MuPDF, so it links on a machine that has never built it.
  */
-/* spdf-test-sources: portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c ext/md4c/md4c.c */
+/* spdf-test-sources: portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_fences.c ext/md4c/md4c.c */
 #include "../../core/tests/SPDFCoreMarkdownTests.c"

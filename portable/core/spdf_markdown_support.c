@@ -335,6 +335,17 @@ int spdf_markdown_resolve_image(const spdf_markdown_options* options, const char
     return 1;
 }
 
+const char* spdf_markdown_language_override_for(const spdf_markdown_options* options, int index) {
+    const char* found = NULL;
+    int i;
+    if (!options || !options->language_overrides || index < 0) return NULL;
+    for (i = 0; i < options->language_override_count; ++i)
+        if (options->language_overrides[i].fence_index == index && options->language_overrides[i].language_id &&
+            options->language_overrides[i].language_id[0])
+            found = options->language_overrides[i].language_id;
+    return found;
+}
+
 spdf_markdown_options spdf_markdown_default_options(void) {
     spdf_markdown_options o;
     memset(&o, 0, sizeof(o));
