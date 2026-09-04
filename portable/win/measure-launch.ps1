@@ -106,7 +106,13 @@ New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 # returns), so without a budget the run proceeds and only the sampler is
 # reported BLOCKED. With a budget, the answer would describe a desktop nobody
 # is looking at, so the whole run is BLOCKED (68), as the suite expects.
-$locked = @(Get-Process LogonUI, LockApp -ErrorAction SilentlyContinue).Count -gt 0
+# A SUSPENDED LockApp lingers long after an unlock, so its mere presence is a
+# false positive -- it blocked launch.budget for a whole run on a live,
+# composited desktop (2026-09-05), whose screenshots prove it was awake.
+# LogonUI running always means locked; LockApp only when it is scheduled.
+$locked = (@(Get-Process LogonUI -ErrorAction SilentlyContinue).Count +
+           @(Get-Process LockApp -ErrorAction SilentlyContinue |
+             Where-Object { $_.Threads[0].WaitReason -ne 'Suspended' }).Count) -gt 0
 if ($locked -and ($WindowBudgetMs -gt 0 -or $FirstPageBudgetMs -gt 0)) {
   Write-Output "error=workstation-locked"
   exit 68
