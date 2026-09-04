@@ -134,6 +134,12 @@ int spdf_win_settings_parse_json(spdf_win_settings* s, const char* json) {
         free(theme);
         found++;
     }
+    theme = json_str(root, "printerName");
+    if (theme) {
+        strncpy_s(s->printer_name, sizeof(s->printer_name), theme, _TRUNCATE);
+        free(theme);
+        found++;
+    }
     return found;
 }
 
@@ -154,7 +160,8 @@ static int key_is_owned(const member* m) {
                                         "markdownTheme",
                                         "darkThemePreservesImages",
                                         "setupPromptAnswered",
-                                        "commentAuthor"};
+                                        "commentAuthor",
+                                        "printerName"};
     size_t i;
     for (i = 0; i < sizeof(owned) / sizeof(owned[0]); ++i)
         if (key_is(m, owned[i])) return 1;
@@ -207,6 +214,12 @@ char* spdf_win_settings_to_json(const spdf_win_settings* s, const char* existing
      * ?: @""`, spdf_state.c:631 the same. */
     emit_key(&out, "commentAuthor");
     emit_string(&out, s->comment_author);
+    /* Only when there is one: a reader who has never printed should not find a
+     * key in their settings.yaml saying so. See the header. */
+    if (s->printer_name[0]) {
+        emit_key(&out, "printerName");
+        emit_string(&out, s->printer_name);
+    }
 
     /* Everything on disk this file does not model, verbatim. */
     if (root && *root == '{') {

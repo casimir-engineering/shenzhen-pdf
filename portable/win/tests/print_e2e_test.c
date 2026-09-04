@@ -9,15 +9,14 @@
  * spdf_win_print.h used to carry -- "spdf_win_print_document() is not
  * exercised end to end here" -- stayed true through the whole port.
  *
- * WHAT WAS IN THE WAY, and it was not the workstation being locked. On an
- * UNLOCKED session (Windows 11 Pro 26200, 2026-09-03) no comdlg32 print dialog
- * can be shown on this machine at all: PrintDlgExW never returns and creates no
- * window, and neither does the classic PrintDlgW with PD_NOPAGENUMS and no page
- * ranges. Measured in an independent process with its own STA and its own
- * pumping message loop, so it is not spdf_win_print.cpp calling it wrongly --
- * comdlg32 hands off to the Windows 11 print experience
- * (windows.internal.shellcommon.PrintExperience.dll, Print.PrintSupport.Source.dll
- * are both loaded in the hung process) and the hand-off does not come back.
+ * WHAT WAS IN THE WAY, and it was not the workstation being locked. On this
+ * host (Windows 11 Pro 26200) PrintDlgExW with a valid hwndOwner never returns
+ * and creates no window; with a NULL one it fails at once with E_HANDLE. The
+ * sweep that established that, and the correction it forced -- the CLASSIC
+ * PrintDlgW works perfectly well here, so it is PrintDlgExW and not comdlg32
+ * that is broken -- are portable/win/tests/print_dialog_probe.c and
+ * portable/docs/windows-print-dialog.md. What the app does about it is
+ * spdf_win_print_dialog.h: a watchdog, and its own dialog behind it.
  *
  * SO THE DIALOG IS THE ONE THING THIS SKIPS, and everything after it is real.
  * spdf_win_print_run_job() is the whole job -- the paper conversion from the
@@ -173,11 +172,13 @@ static long print_and_measure(HDC dc, spdf_document* doc, const wchar_t* out_pat
     return ink;
 }
 
-/* A printer DC with the DRIVER'S OWN page choice changed -- the part of the
- * print dialog this host cannot show. The dialog would hand PrintDlgEx's
- * hDevMode to CreateDC; here the DEVMODE is fetched from the driver, two fields
- * are set on it, and it is handed over the same way. NULL when the driver will
- * not produce one, which is a skip and not a failure. */
+/* A printer DC with the DRIVER'S OWN page choice changed -- the part
+ * PrintDlgEx would have chosen for us. The dialog would hand its hDevMode to
+ * CreateDC; here the DEVMODE is fetched from the driver, two fields are set on
+ * it, and it is handed over the same way -- which is also exactly what the
+ * in-app dialog's Properties button ends up doing
+ * (spdf_win_print_dialog_run.cpp). NULL when the driver will not produce one,
+ * which is a skip and not a failure. */
 static HDC printer_dc_with(short orientation, short paper_size) {
     HANDLE printer = NULL;
     DEVMODEW* dm = NULL;
@@ -265,9 +266,10 @@ int main(int argc, char** argv) {
     CHECK(sheet_h > sheet_w);
     printf("print_e2e: default sheet %.1f x %.1f pt\n", (double)sheet_w, (double)sheet_h);
 
-    /* JOB TWO: THE SCALING CHOICE, PROVEN ON PAPER. The dialog's Scaling tab
+    /* JOB TWO: THE SCALING CHOICE, PROVEN ON PAPER. PrintDlgEx's Scaling tab
      * cannot be shown on this machine (see the header), so the choice it edits
-     * is passed straight to the job instead -- and a quarter-size page must
+     * -- the same three radios the in-app dialog offers -- is passed straight
+     * to the job instead, and a quarter-size page must
      * leave visibly less ink on the same paper than Fit does. Without this,
      * every scaling test in this port stops at the arithmetic and nothing
      * anywhere shows the number reaching a printer. A third is a wide margin
