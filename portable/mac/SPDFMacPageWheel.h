@@ -19,11 +19,18 @@ typedef struct {
     bool gestureActive;
 } spdf_page_wheel_state;
 
-// What one wheel event should do: +1 next page, -1 previous page, 0 nothing
-// yet. Mirrors the tuning the presentation-mode wheel paging already uses: a
-// mouse notch turns one page (debounced), a trackpad gesture turns exactly one
-// page however long the flick, and momentum is ignored so a fling does not run
-// away through the document.
+// How many pages this wheel event should turn: positive forward, negative
+// back, 0 not yet. It is a COUNT, not a flag, so scrolling fast keeps up
+// instead of dropping notches.
+//
+// Distance-based rather than one-page-per-gesture: a scroll driver that
+// smooths the wheel (LinearMouse, and macOS itself for some mice) sends a
+// burst of small PRECISE deltas per notch, which is indistinguishable from a
+// trackpad flick -- so "one page per gesture" turned a fast spin of the wheel
+// into a single page. Each threshold's worth of travel turns one page and is
+// SUBTRACTED from the accumulator, so the pages keep pace with the wheel and
+// nothing is lost between events. Momentum is still ignored, so a flick's tail
+// cannot run away through the document.
 int spdf_page_wheel_step(spdf_page_wheel_state* state, double deltaY, bool preciseDeltas, bool phaseBegan,
                          bool phaseEnded, bool momentum, double timestamp);
 
