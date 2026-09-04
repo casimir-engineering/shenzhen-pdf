@@ -63,7 +63,11 @@ static int cmd_window_toggle_keep_image_colors(app* a) {
 
 /* File > Print..., with the scaling choice. Loaded from settings.yaml, shown as
  * a page in the print dialog (spdf_win_print_scaling.h), and written back when
- * the reader printed -- which is when a choice was made. */
+ * the reader printed -- which is when a choice was made.
+ *
+ * The page goes too: Windows' own dialog is watchdogged and may hand over to
+ * the port's (spdf_win_print_dialog.h), whose "Current page" greys itself out
+ * unless it is told which page that is. */
 static int cmd_window_print(app* a) {
     SpdfWinDocAction act;
     spdf_win_settings* s = spdf_win_settings_shared();
@@ -73,7 +77,7 @@ static int cmd_window_print(app* a) {
     if (!doc_action_for(a, &act)) return 0;
     choice.mode = (spdf_win_print_scaling_mode)s->print_scaling_mode;
     choice.custom_scale = s->print_custom_scale;
-    status = spdf_win_print_document_ex(act.hwnd, act.doc, act.path, &choice, err, sizeof(err));
+    status = spdf_win_print_document_for_view(act.hwnd, act.doc, act.path, &choice, act.page, err, sizeof(err));
     if (status == SPDF_WIN_PRINT_OK &&
         ((int)choice.mode != s->print_scaling_mode || choice.custom_scale != s->print_custom_scale)) {
         s->print_scaling_mode = (int)choice.mode;

@@ -12,8 +12,13 @@
  * General page (PRINTDLGEX::lphPropertyPages), which is where Windows puts a
  * printing application's own options and where a reader looks for them.
  *
- * WHAT CANNOT BE TESTED ON A LOCKED WORKSTATION, again: the page only exists
- * inside PrintDlgEx, which cannot show a dialog while the session is locked.
+ * WHAT CANNOT BE TESTED HERE, AND IT IS NOT THE LOCK: the page only exists
+ * inside PrintDlgEx, and PrintDlgExW does not return on this host at all --
+ * with the session unlocked too (portable/docs/windows-print-dialog.md), while
+ * the classic PrintDlgW, PageSetupDlg and the driver's own DocumentProperties
+ * sheet all work. The same three choices are therefore also offered by the
+ * port's own print dialog (spdf_win_print_dialog.h), which is what a reader
+ * here actually sees.
  * Everything the page DECIDES is in the pure half, and the template builder is
  * deterministic arithmetic over WORDs; the dialog procedure is the two lines
  * that join them.
