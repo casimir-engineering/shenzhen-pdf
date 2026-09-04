@@ -151,6 +151,10 @@ static void docs_menu_state(app* a, SpdfWinMenuState* st) {
     st->dark_theme = (a->render_flags & SPDF_RENDER_DARK_THEME) != 0;
     st->keep_image_colors = (a->render_flags & SPDF_RENDER_PRESERVE_IMAGES) != 0;
     st->regex = a->find_regex;
+    /* The Settings menu's three settings.yaml ticks. spdf_win_menu_sync()
+     * fills these itself, but the palette draws its check marks straight from
+     * spdf_win_menu_command_checked(), so it has to ask. */
+    spdf_win_menu_state_settings(st);
     st->regex_multiline = spdf_win_find_regex_multiline();
     st->has_document = a->canvas != NULL;
     st->tab_count = spdf_win_tabs_count(a->tabs);
