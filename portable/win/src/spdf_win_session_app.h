@@ -79,6 +79,18 @@ static void app_restore_find_text(app* a) {
  * starts fetching them; a no-op on a PDF tab and with nothing pending. */
 static void spdf_win_md_command_after_open(app* a, HWND window);
 
+/* WM_APP + 0x5244 ("RD"): a page render landed. Posted by a canvas render
+ * worker; the router turns it into one invalidate. Without it an asynchronous
+ * visible-page render would finish and nothing would ask for the repaint that
+ * shows it. */
+#define SPDF_WIN_WM_RENDER_READY (WM_APP + 0x5244)
+
+/* Called ON A WORKER THREAD by the canvas. PostMessage is the only thing it is
+ * allowed to do here. */
+static void canvas_render_ready(void* ctx) {
+    PostMessageW((HWND)ctx, SPDF_WIN_WM_RENDER_READY, 0, 0);
+}
+
 static int show_selected_tab(app* a) {
     int shown = spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
     if (shown && spdf_win_tabs_app_apply_view(a->tabs, a->canvas, a->view_w, a->view_h, a->view_dpi))
@@ -88,7 +100,15 @@ static int show_selected_tab(app* a) {
     /* Every show goes through here -- open, switch, restore, reload, a theme
      * rebuild -- so this is the one place a Markdown tab's images are asked
      * for. The completion message re-shows the tab (spdf_win_md_commands.h). */
-    if (shown && a->window) spdf_win_md_command_after_open(a, (HWND)spdf_win_window_native_handle(a->window));
+    if (shown && a->window) {
+        HWND hwnd = (HWND)spdf_win_window_native_handle(a->window);
+        /* THE VISIBLE PAGE OFF THE UI THREAD, from this canvas's SECOND frame
+         * on: the canvas renders its first frame on the calling thread come
+         * what may, so a launch still paints a complete window before
+         * ShowWindow and a tab switch still lands finished. */
+        spdf_win_canvas_set_async_visible(a->canvas, canvas_render_ready, hwnd);
+        spdf_win_md_command_after_open(a, hwnd);
+    }
     return shown;
 }
 

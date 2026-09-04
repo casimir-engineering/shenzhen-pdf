@@ -453,6 +453,12 @@ int main(void) {
                  * one thing show_selected_tab() could not do for it -- start
                  * the fetch of a Markdown document's remote images -- is done
                  * here, now there is a window for the completion to reach. */
+                /* The launch tab was shown before this window existed, so it
+                 * missed the arming in show_selected_tab(). After the first
+                 * paint, deliberately: the launch frame stays synchronous by
+                 * placement as well as by the canvas's own first-frame rule. */
+                spdf_win_canvas_set_async_visible(a.canvas, canvas_render_ready,
+                                                  (HWND)spdf_win_window_native_handle(window));
                 spdf_win_md_command_after_open(&a, (HWND)spdf_win_window_native_handle(window));
                 /* The taskbar identity (AppUserModelID, the window's icons) and the
                  * updater's timers, both after the show: nothing in either runs

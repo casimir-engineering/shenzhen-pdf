@@ -402,6 +402,9 @@ static int input_for_window(void* user, spdf_win_input* in) {
          * far: a Markdown document's remote images landed in the cache, so the
          * tab is re-shown and the placeholders become pictures. */
         case SPDF_WIN_INPUT_APP_MESSAGE:
+            /* A canvas render landed: the next paint adopts it from the cache
+             * as it always did, so all this owes is the invalidate. */
+            if (in->key == SPDF_WIN_WM_RENDER_READY) return 1;
             return in->key == SPDF_WIN_MD_WM_IMAGES_ARRIVED ? spdf_win_md_command_images_arrived(a) : 0;
         case SPDF_WIN_INPUT_KEY:
             changed = key_for_window(a, in);

@@ -268,13 +268,18 @@ static int chrome_mouse(app* a, spdf_win_input* in) {
             /* THE TEAR-OFF. Once the pointer has left the strip by the mac's
              * margins (spdf_win_tabstrip_drag_detaches, :1012-1014) the drag
              * stops being a reorder: the tab goes to a new window and the
-             * gesture ends here, capture and all -- the second process owns the
-             * tab now and this window has nothing left to drop. A lone tab stays
-             * put; a window with one tab detaching it would leave two windows
-             * where the reader had one. */
+             * gesture stops being a reorder -- but it is still a drag:
+             * chrome_detach_tab() (spdf_win_tabs_handoff.h) takes the capture
+             * back and runs it to its end, whether that is slid back into this
+             * bar, dropped on another window's bar, released outside every bar
+             * into its own window, or cancelled.
+             *
+             * NO TAB-COUNT GUARD: a lone tab cannot become its own window (it
+             * already is one) but it CAN be dropped on another window's bar,
+             * and only chrome_detach_tab() can tell those two apart. */
             float s = l.dpi_scale > 0.0f ? l.dpi_scale : 1.0f;
             int slot;
-            if (model.tab_count > 1 && !spdf_win_chrome_rect_empty(l.tabstrip) &&
+            if (!spdf_win_chrome_rect_empty(l.tabstrip) &&
                 spdf_win_tabstrip_drag_detaches(l.tabstrip.w / s, l.tabstrip.h / s, (in->x - l.tabstrip.x) / s,
                                                 (in->y - l.tabstrip.y) / s, a->drag_start_y)) {
                 int tab = a->drag_tab;
