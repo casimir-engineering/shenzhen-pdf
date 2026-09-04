@@ -1315,7 +1315,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     if (windowID.length > 0) _windowSessionID = [windowID copy];
     NSRect frame;
     if (spdf_window_frame_from_dictionary(windowState[@"frame"], &frame)) {
-        _restoredWindowFrame = spdf_sane_window_frame(frame, NSScreen.mainScreen);
+        _restoredWindowFrame = frame;  // raw: the fallback is chosen at window creation, and never saved
         _hasRestoredWindowFrame = YES;
         _restoredWindowContentSize = _restoredWindowFrame.size;
     }
@@ -1575,7 +1575,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         frame = NSMakeRect(floor(NSMidX(visible) - contentSize.width / 2.0),
                            floor(NSMidY(visible) - contentSize.height / 2.0), contentSize.width, contentSize.height);
     }
-    frame = spdf_sane_window_frame(frame, _window.screen ?: NSScreen.mainScreen);
+    frame = spdf_window_frame_to_persist(_window, spdf_sane_window_frame(frame, _window.screen ?: NSScreen.mainScreen));
     if (!_windowSessionID.length) _windowSessionID = NSUUID.UUID.UUIDString;
     return [@{
         @"id" : _windowSessionID,
@@ -2644,8 +2644,8 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
     _window.movable = NO;
     _window.movableByWindowBackground = NO;
-    spdf_window_configure_document_window(_window, self, NSMakeSize(kMinWindowWidth, kMinWindowHeight), frame,
-                                          _hasRestoredWindowFrame);
+    spdf_window_configure_document_window(_window, self, NSMakeSize(kMinWindowWidth, kMinWindowHeight),
+                                          _restoredWindowFrame, _hasRestoredWindowFrame);
 
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
     content.reader = self;
