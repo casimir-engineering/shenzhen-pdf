@@ -124,3 +124,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source);
 NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWindowNumber);
 SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item);
+
+// Which saved window the reader was last looking at.
+//
+// A session holds one entry per window, and only one process activates at
+// launch -- so the window that entry belongs to is the one that comes back
+// focused. Picking windows.firstObject made that whichever window happened to
+// be written first, which is not what the reader left in front. Each entry
+// carries the time it last became key ("focusedAt"); the latest one wins, and a
+// session written before that key existed (all zero) still resolves to index 0,
+// exactly as before. Returns NSNotFound for an empty list.
+NSUInteger spdf_session_focused_window_index(NSArray* windows);

@@ -100,6 +100,69 @@ int main(void) {
         Expect("the coordinator no longer inlines a second tab dictionary",
                ![coordinator containsString:@"@(tab.hasScrollOrigin)"]);
 
+        // --- Which window comes back focused -----------------------------
+        // One process activates at launch, and it restores exactly one saved
+        // window -- so that window is the one the reader sees focused. It has to
+        // be the one they left focused, not whichever entry was written first.
+        NSDictionary* older = @{@"id" : @"a", @"focusedAt" : @(1000.0)};
+        NSDictionary* newer = @{@"id" : @"b", @"focusedAt" : @(2000.0)};
+        Expect("the most recently focused window wins",
+               spdf_session_focused_window_index(@[ older, newer ]) == 1);
+        Expect("its position in the list does not matter",
+               spdf_session_focused_window_index(@[ newer, older ]) == 0);
+        // A session written before focusedAt existed has no times at all; it
+        // must keep resolving to the first window, exactly as it used to.
+        Expect("a session with no focus times restores the first window",
+               spdf_session_focused_window_index(@[ @{@"id" : @"a"}, @{@"id" : @"b"} ]) == 0);
+        Expect("an empty session restores nothing", spdf_session_focused_window_index(@[]) == NSNotFound);
+        Expect("a malformed session restores nothing", spdf_session_focused_window_index(nil) == NSNotFound);
+        Expect("a non-dictionary entry is skipped",
+               spdf_session_focused_window_index(@[ @"junk", newer ]) == 1);
+
+        // The coordinator must persist the time it reads back, or the pick above
+        // always sees zeroes and silently degrades to "the first window".
+        Expect("the window's session entry records when it was last focused",
+               [coordinator containsString:@"currentWindow[@\"focusedAt\"] ="] &&
+                   [coordinator containsString:@"focusedNow ? @(NSDate.timeIntervalSinceReferenceDate)"]);
+        // ...only in the ACTIVE app. Measured: a two-window session restores as
+        // two processes, and the spawned one's window becomes key inside its own
+        // process, so keying alone stamped BOTH windows -- handing the focus to
+        // whichever process happened to write last instead of to the window the
+        // reader left in front.
+        Expect("only the active app's key window is the focused one",
+               [coordinator containsString:@"NSApp.isActive && self->_window.isKeyWindow"]);
+        // It also has to reach disk while the window is still key: quitting from
+        // another app leaves every window non-key, with nothing to stamp.
+        Expect("becoming key writes the session",
+               [coordinator containsString:@"if (!self->_suspendPersistentStateSaves) [self "
+                                           @"writeSessionStateForCurrentWindow];"]);
+
+        // --- Markdown page orientation belongs to the document ------------
+        // A sheet turned for a wide table or a gantt chart is a property of that
+        // FILE, so it has to outlive the tab: the rotate command records it
+        // against the document, and a newly opened tab takes it back.
+        NSString* orientation =
+            [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:@"../SPDFMacMarkdownOrientation.mm"]
+                                      encoding:NSUTF8StringEncoding
+                                         error:&readError];
+        Expect("the rotate command source is readable", orientation != nil);
+        Expect("rotating records the orientation against the document",
+               [orientation containsString:@"state[@\"markdownLandscape\"] = @(landscape);"]);
+        NSString* tabViewState =
+            [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:@"../SPDFMacTabViewState.mm"]
+                                      encoding:NSUTF8StringEncoding
+                                         error:&readError];
+        Expect("the tab view-state source is readable", tabViewState != nil);
+        Expect("a newly opened document takes back the orientation it was left on",
+               [tabViewState containsString:@"tab.markdownLandscape = [state[@\"markdownLandscape\"] boolValue]"]);
+        // Only when the document actually has one: an older session already
+        // carries the tab's own orientation, and a missing key must not flip it
+        // back to portrait.
+        Expect("a document with no remembered orientation is left alone",
+               [tabViewState containsString:@"if (state[@\"markdownLandscape\"] != nil)"]);
+        Expect("new tabs go through that seeding",
+               [coordinator containsString:@"[self seedNewTabFromDocumentMemory:tab];"]);
+
         if (gFailures == 0) fprintf(stderr, "SPDFMacTabStateTests passed\n");
     }
     return gFailures == 0 ? 0 : 1;

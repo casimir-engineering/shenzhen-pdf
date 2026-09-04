@@ -105,3 +105,24 @@ void spdf_window_configure_document_window(NSWindow* window, id reader, NSSize m
       spdf_window_note_user_placed(n);
     }];
 }
+
+void spdf_spawn_restored_window_processes(NSArray<NSString*>* windowIDs, NSString* skipWindowID) {
+    if (windowIDs.count == 0) return; // the common single-window launch, off in one branch
+    NSString* executable = NSBundle.mainBundle.executablePath ?: NSProcessInfo.processInfo.arguments.firstObject;
+    if (executable.length == 0) return;
+    NSArray<NSString*>* ids = [windowIDs copy];
+    NSString* skip = [skipWindowID copy];
+    // posix_spawn plus the child's own dyld work has no business on the main
+    // thread of a launch that is still assembling its first frame.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      for (NSString* windowID in ids) {
+          if (windowID.length == 0 || [windowID isEqualToString:skip]) continue;
+          NSTask* task = [[NSTask alloc] init];
+          task.executableURL = [NSURL fileURLWithPath:executable];
+          task.arguments = @[ @"--restore-window", windowID ];
+          task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+          task.standardError = [NSFileHandle fileHandleWithNullDevice];
+          [task launchAndReturnError:nil];
+      }
+    });
+}
