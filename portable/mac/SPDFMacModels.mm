@@ -174,6 +174,21 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     return tab;
 }
 
+NSUInteger spdf_session_focused_window_index(NSArray* windows) {
+    if (![windows isKindOfClass:NSArray.class] || windows.count == 0) return NSNotFound;
+    NSUInteger best = NSNotFound;
+    double bestFocusedAt = -1.0;
+    for (NSUInteger i = 0; i < windows.count; i++) {
+        if (![windows[i] isKindOfClass:NSDictionary.class]) continue;
+        double focusedAt = [windows[i][@"focusedAt"] doubleValue];
+        if (best == NSNotFound || focusedAt > bestFocusedAt) {
+            best = i;
+            bestFocusedAt = focusedAt;
+        }
+    }
+    return best;
+}
+
 @implementation SPDFWorkerDocument
 
 - (void)dealloc {

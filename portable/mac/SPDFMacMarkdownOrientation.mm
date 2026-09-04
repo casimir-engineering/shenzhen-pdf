@@ -36,6 +36,20 @@
     tab.markdownLandscape = landscape;
     [session applyPageOrientation:landscape ? SPDFMarkdownPageOrientationLandscape
                                             : SPDFMarkdownPageOrientationPortrait];
+    // Remembered against the FILE, not just the open tab: a document turned for
+    // a wide table or a gantt chart is still that document tomorrow, so reopening
+    // it brings back the sheet it was last read on (-seedNewTabFromDocumentMemory:).
+    // Merged into the document's entry, which -saveDocumentStateForTab: extends
+    // rather than replaces, and written out by the save below.
+    NSString* key = [self documentStateKeyForPath:tab.path];
+    if (key.length) {
+        NSMutableDictionary* state = _documentStates[key];
+        if (![state isKindOfClass:NSMutableDictionary.class])
+            state = [state mutableCopy] ?: [NSMutableDictionary dictionary];
+        state[@"markdownLandscape"] = @(landscape);
+        state[@"path"] = tab.path ?: state[@"path"] ?: @"";
+        _documentStates[key] = state;
+    }
     // The re-flow is asynchronous; the page count and viewport controls catch
     // up from the session's own viewport handler once the new plan installs.
     [self savePersistentState];
