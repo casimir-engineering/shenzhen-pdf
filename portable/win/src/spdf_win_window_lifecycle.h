@@ -49,6 +49,11 @@ static int register_class(HINSTANCE instance) {
     return GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
 
+/* Here rather than beside the HWND accessors because kWindowClass is the string
+ * register_class() above hands RegisterClassExW: one definition, so the name a
+ * caller compares against is by construction the name the class has. */
+const wchar_t* spdf_win_window_class_name(void) { return kWindowClass; }
+
 spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title, int client_px_w, int client_px_h,
                                         spdf_win_scene_fn scene_fn, spdf_win_input_fn input_fn, void* user, char* err,
                                         size_t err_len) {
