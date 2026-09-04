@@ -339,32 +339,16 @@ static void test_session_lock(const char* dir) {
 }
 
 int main(int argc, char** argv) {
-    char scratch[SPDF_WIN_PATH_MAX];
     char dir[SPDF_WIN_PATH_MAX];
     char ascii_dir[SPDF_WIN_PATH_MAX];
-    char scratch_leaf[64];
-    char ascii_leaf[64];
-    const char* base = argc > 1 ? argv[1] : NULL;
 
     printf("spdf_win_state tests\n");
-    if (!base || !*base) {
-#if defined(_WIN32)
-        base = getenv("TEMP");
-#else
-        base = getenv("TMPDIR");
-#endif
+    if (!spdf_test_state_dir(argc, argv, "spdf_state_test", SPDF_TEST_SCRATCH_STEM, dir, sizeof(dir)) ||
+        !spdf_test_state_dir(argc, argv, "spdf_state_test", "ascii", ascii_dir, sizeof(ascii_dir))) {
+        printf("FAIL: could not create the scratch directories\n");
+        return 1;
     }
-    if (!base || !*base) base = ".";
-    if (!spdf_win_path_join(base, "spdf_state_test", scratch, sizeof(scratch))) return 1;
-    /* A non-ASCII leaf, so every file operation below runs through a path that
-     * the narrow CRT would mangle. */
-    /* Unique per process: several suites share %TEMP%. See scratch_leaf.h. */
-    spdf_test_scratch_leaf(scratch_leaf, sizeof(scratch_leaf), "RaphaÃ«l");
-    spdf_test_scratch_leaf(ascii_leaf, sizeof(ascii_leaf), "ascii");
-    if (!spdf_win_path_join(scratch, scratch_leaf, dir, sizeof(dir))) return 1;
-    if (!spdf_win_path_join(scratch, ascii_leaf, ascii_dir, sizeof(ascii_dir))) return 1;
     if (!spdf_win_paths_ensure_dir(dir) || !spdf_win_paths_ensure_dir(ascii_dir)) {
-        printf("FAIL: could not create the scratch directories under %s\n", scratch);
         return 1;
     }
 

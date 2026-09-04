@@ -204,27 +204,11 @@ static void test_shared_copy(void) {
 }
 
 int main(int argc, char** argv) {
-    char scratch[SPDF_WIN_PATH_MAX];
     char dir[SPDF_WIN_PATH_MAX];
-    char scratch_leaf[64];
-    const char* base = argc > 1 ? argv[1] : NULL;
 
     printf("spdf_win_settings tests\n");
-    if (!base || !*base) {
-#if defined(_WIN32)
-        base = getenv("TEMP");
-#else
-        base = getenv("TMPDIR");
-#endif
-    }
-    if (!base || !*base) base = ".";
-    if (!spdf_win_path_join(base, "spdf_settings_test", scratch, sizeof(scratch))) return 1;
-    /* The proven non-ASCII scratch leaf, as session_test uses. */
-    /* Unique per process: several suites share %TEMP%. See scratch_leaf.h. */
-    spdf_test_scratch_leaf(scratch_leaf, sizeof(scratch_leaf), "RaphaÃ«l");
-    if (!spdf_win_path_join(scratch, scratch_leaf, dir, sizeof(dir))) return 1;
-    if (!spdf_win_paths_ensure_dir(dir)) {
-        printf("FAIL: could not create the scratch directory under %s\n", scratch);
+    if (!spdf_test_state_dir(argc, argv, "spdf_settings_test", SPDF_TEST_SCRATCH_STEM, dir, sizeof(dir))) {
+        printf("FAIL: could not create the scratch directory\n");
         return 1;
     }
     spdf_win_paths_set_state_dir_override(dir);
