@@ -79,6 +79,27 @@ int main(void) {
         Expect("orientation and minimap stay per document",
                neighbours.markdownLandscape && !neighbours.showMinimap && neighbours.hasMinimapPreference);
 
+        // --- One writer, or the round-trip above proves nothing ----------
+        // The defect this guards, which the assertions above missed entirely:
+        // a tab's persisted fields had TWO writers -- this shared one and a
+        // second copy inlined in the session save, "kept in sync" by hand.
+        // preservesImageColors was added here and to the reader, tested through
+        // both, and still never reached session.yaml. Source contract, in the
+        // style of SPDFMacTabLifecycleTests: the coordinator must delegate.
+        NSString* testPath = @(__FILE__);
+        NSString* dir = testPath.stringByDeletingLastPathComponent;
+        NSError* readError = nil;
+        NSString* coordinator =
+            [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:@"../ShenzhenPDFMac.mm"]
+                                      encoding:NSUTF8StringEncoding
+                                         error:&readError];
+        Expect("the coordinator source is readable", coordinator != nil);
+        Expect("the session save uses the shared tab writer",
+               [coordinator containsString:@"spdf_dictionary_from_tab(tab, _window.windowNumber)"]);
+        // A field name that only a hand-rolled tab dictionary would contain.
+        Expect("the coordinator no longer inlines a second tab dictionary",
+               ![coordinator containsString:@"@(tab.hasScrollOrigin)"]);
+
         if (gFailures == 0) fprintf(stderr, "SPDFMacTabStateTests passed\n");
     }
     return gFailures == 0 ? 0 : 1;
