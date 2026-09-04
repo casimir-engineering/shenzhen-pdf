@@ -108,6 +108,7 @@ int spdf_win_canvas_pointer_drag(spdf_win_canvas* canvas, float x, float y) {
 
 int spdf_win_canvas_pointer_release(spdf_win_canvas* canvas, spdf_win_canvas_link_nav* out_nav) {
     int follow;
+    int page;
 
     if (out_nav) {
         out_nav->kind = SPDF_LINK_NONE;
@@ -130,9 +131,29 @@ int spdf_win_canvas_pointer_release(spdf_win_canvas* canvas, spdf_win_canvas_lin
     }
     if (canvas->nav.kind == SPDF_LINK_INTERNAL && canvas->nav.page_index >= 0) {
         /* The canvas can perform this itself, so it does: handing the page back
-         * for the shell to feed straight into spdf_win_canvas_scroll_to_page()
-         * would be a round trip that can only be got wrong. */
-        return spdf_win_canvas_scroll_to_page(canvas, canvas->nav.page_index);
+         * for the shell to feed straight into a scroll would be a round trip
+         * that can only be got wrong.
+         *
+         * TOP-ALIGNED AT THE DESTINATION'S OWN Y, not at the target page's top:
+         * spdf_win_links.h section 3 holds the arithmetic and the reasons, and
+         * a destination that names only a page still lands exactly where
+         * spdf_win_canvas_scroll_to_page() would put it -- which is what
+         * portable/win/tests/link_destination_test.c checks against that call
+         * rather than against a repetition of it.
+         *
+         * The clamp is spdf_win_canvas_scroll_to()'s, so this lands inside the
+         * same travel the wheel does; the measure-then-relayout is the same
+         * pair scroll_to_page runs, because a page the viewport has never
+         * reached carries page 1's size as an estimate and has no slot worth
+         * offsetting from. */
+        page = canvas->nav.page_index;
+        if (page >= canvas->page_count) return 0;
+        if (spdf_win_canvas_ensure_measured(canvas, page)) spdf_win_canvas_relayout(canvas);
+        if (page >= canvas->layout.count) return 0;
+        return spdf_win_canvas_scroll_to(
+            canvas, (float)canvas->scroll_x,
+            (float)spdf_win_link_destination_scroll_y(canvas->layout.rects[page].y,
+                                                      spdf_win_link_destination_page_y(&canvas->nav), canvas->zoom));
     }
     return 0;
 }
