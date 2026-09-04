@@ -285,7 +285,7 @@ static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NS
     // the buttons belongs to the row, not to this margin. Measured on screen at
     // 7pt above and 7.5pt below.
     [_sidebarScrollBelowFilterConstraint setActive:NO];
-    _sidebarScrollBelowFilterConstraint = [scroll.topAnchor constraintEqualToAnchor:collapse.bottomAnchor constant:9];
+    _sidebarScrollBelowFilterConstraint = [scroll.topAnchor constraintEqualToAnchor:collapse.bottomAnchor constant:5];
     [NSLayoutConstraint activateConstraints:@[
         [collapse.topAnchor constraintEqualToAnchor:_sidebarFilterField.bottomAnchor constant:7],
         [collapse.leadingAnchor constraintEqualToAnchor:_sidebarContainer.centerXAnchor constant:2],
@@ -303,7 +303,7 @@ static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NS
     // would be inert, so it goes away and the list takes the space back.
     expand.hidden = !visible;
     collapse.hidden = !visible;
-    _sidebarScrollBelowFilterConstraint.constant = visible ? 9 : -26;
+    _sidebarScrollBelowFilterConstraint.constant = visible ? 5 : -26;
 }
 
 @end
