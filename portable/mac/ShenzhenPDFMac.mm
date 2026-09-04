@@ -42,6 +42,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacSidebarChapters.h"
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabViewState.h"
+#import "SPDFMacWindowPlacement.h"
 #import "SPDFMacTabLifecycle.h"
 #import "SPDFMacTabStripView.h"
 #import "SPDFMacUIHelpers.h"
@@ -2625,28 +2626,27 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     NSSize restoredSize = spdf_sane_window_content_size(_restoredWindowContentSize, screen);
     NSSize contentSize = NSEqualSizes(restoredSize, NSZeroSize) ? NSMakeSize(1120, 800) : restoredSize;
     _restoredWindowContentSize = contentSize;
-    NSRect visibleFrame = screen.visibleFrame;
-    NSRect frame = _hasRestoredWindowFrame ? spdf_sane_window_frame(_restoredWindowFrame, screen)
-                                           : NSMakeRect(floor(NSMidX(visibleFrame) - contentSize.width / 2.0),
-                                                        floor(NSMidY(visibleFrame) - contentSize.height / 2.0),
-                                                        contentSize.width, contentSize.height);
+    NSRect frame = _hasRestoredWindowFrame
+                       ? spdf_sane_window_frame(_restoredWindowFrame, screen)
+                       : NSMakeRect(floor(NSMidX(screen.visibleFrame) - contentSize.width / 2.0),
+                                    floor(NSMidY(screen.visibleFrame) - contentSize.height / 2.0),
+                                    contentSize.width, contentSize.height);
     double launchWindowStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-    _window = [[SPDFWindow alloc] initWithContentRect:frame
+    _window = [[SPDFWindow alloc] initWithContentRect:spdf_window_content_rect_for_saved_frame(frame)
                                             styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                                       NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
                                               backing:NSBackingStoreBuffered
                                                 defer:NO];
     if (launchWindowStart > 0.0)
         spdf_launch_profile_log(@"buildWindow.windowInit %.1fms", spdf_zoom_profile_now_ms() - launchWindowStart);
-    ((SPDFWindow*)_window).reader = self;
-    _window.delegate = self;
-    _window.title = @"Shenzhen PDF";
-    _window.minSize = NSMakeSize(kMinWindowWidth, kMinWindowHeight);
     _window.titleVisibility = NSWindowTitleHidden;
     _window.titlebarAppearsTransparent = YES;
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
     _window.movable = NO;
     _window.movableByWindowBackground = NO;
+    // AppKit repositions the window during -initWithContentRect:, which is how a
+    // frame on a second display came back on the main one; see the placement header.
+    if (_hasRestoredWindowFrame) [_window setFrame:frame display:NO];
 
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
     content.reader = self;

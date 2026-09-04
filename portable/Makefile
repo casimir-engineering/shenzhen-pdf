@@ -190,8 +190,8 @@ $(MAC_WINDOW_SHORTCUT_TEST): mac/tests/SPDFMacWindowShortcutsTests.mm mac/SPDFMa
 mac-window-shortcut-tests: $(MAC_WINDOW_SHORTCUT_TEST)
 	"$(MAC_WINDOW_SHORTCUT_TEST)"
 
-$(MAC_WINDOW_CHROME_TEST): mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm -framework Foundation -o "$(MAC_WINDOW_CHROME_TEST)"
+$(MAC_WINDOW_CHROME_TEST): mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h mac/SPDFMacWindowPlacement.mm mac/SPDFMacWindowPlacement.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowPlacement.mm -framework Cocoa -o "$(MAC_WINDOW_CHROME_TEST)"
 
 mac-window-chrome-tests: $(MAC_WINDOW_CHROME_TEST)
 	"$(MAC_WINDOW_CHROME_TEST)"

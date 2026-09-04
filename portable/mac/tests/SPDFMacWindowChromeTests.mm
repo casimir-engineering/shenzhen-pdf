@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 
 #import "SPDFMacWindowChrome.h"
+#import "SPDFMacWindowPlacement.h"
 
 static void expect_action(NSString* label, SPDFWindowChromeAction actual, SPDFWindowChromeAction expected) {
     if (actual == expected) return;
@@ -14,7 +15,43 @@ static void expect_bool(NSString* label, BOOL actual, BOOL expected) {
     exit(1);
 }
 
+// Restoring a window where it was left, including on a second display.
+//
+// The saved value is a WINDOW frame; -initWithContentRect: wants a CONTENT
+// rect. Handing it the frame made the window a titlebar taller than it was
+// saved, and AppKit then repositioned the oversized window -- a frame left on
+// an external display came back on the main one (measured: saved AppKit y 1319,
+// restored 487). The conversion has to be exact in both directions, and it must
+// not care where the frame sits: a display above or left of the main one has
+// negative origins, which is precisely the case that was broken.
+static int gPlacementFailures;
+
+static void ExpectFrameRoundTrips(const char* what, NSRect frame) {
+    static const NSWindowStyleMask mask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                          NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+    NSRect content = spdf_window_content_rect_for_saved_frame(frame);
+    NSRect back = [NSWindow frameRectForContentRect:content styleMask:mask];
+    if (NSEqualRects(back, frame)) return;
+    fprintf(stderr, "FAIL: %s -- %s became %s\n", what, NSStringFromRect(frame).UTF8String,
+            NSStringFromRect(back).UTF8String);
+    ++gPlacementFailures;
+    // A content rect equal to the frame is the original bug: the window then
+    // ends up a titlebar taller than it was saved.
+    if (NSEqualRects(content, frame)) fprintf(stderr, "       (content rect was not converted at all)\n");
+}
+
+static int TestWindowPlacement(void) {
+    ExpectFrameRoundTrips("a frame on the main display", NSMakeRect(220, 230, 1300, 900));
+    // AppKit y 1319 on a display mounted above the main one.
+    ExpectFrameRoundTrips("a frame on a display above the main one", NSMakeRect(220, 1319, 1300, 900));
+    // A display to the LEFT has negative x.
+    ExpectFrameRoundTrips("a frame on a display left of the main one", NSMakeRect(-898, 1169, 3440, 1440));
+    ExpectFrameRoundTrips("a minimum-size frame", NSMakeRect(0, 0, 480, 320));
+    return gPlacementFailures == 0 ? 0 : 1;
+}
+
 int main(void) {
+    if (TestWindowPlacement()) return 1;
     @autoreleasepool {
         expect_action(@"single click drags", spdf_window_chrome_action(1, NO, NO, NO), SPDFWindowChromeActionDrag);
         expect_action(@"double click zooms", spdf_window_chrome_action(2, NO, NO, NO), SPDFWindowChromeActionZoom);
