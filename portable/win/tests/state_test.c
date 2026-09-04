@@ -26,6 +26,7 @@
 #define _CRT_SECURE_NO_WARNINGS /* fopen/getenv in the POSIX half of the harness */
 #endif
 
+#include "scratch_leaf.h" /* a scratch leaf unique to this process */
 #include "../src/spdf_win_paths.h"
 #include "../src/spdf_win_state.h"
 
@@ -34,9 +35,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if !defined(_WIN32)
-#include <unistd.h> /* getpid, for the unique scratch leaf */
-#endif
 
 static int g_failures = 0;
 
@@ -360,23 +358,9 @@ int main(int argc, char** argv) {
     if (!spdf_win_path_join(base, "spdf_state_test", scratch, sizeof(scratch))) return 1;
     /* A non-ASCII leaf, so every file operation below runs through a path that
      * the narrow CRT would mangle. */
-    /* A LEAF UNIQUE TO THIS PROCESS. %TEMP% is one directory for the whole
-     * machine, and several suites run at once here (one per parallel
-     * worktree), so a fixed leaf let one run rewrite the state another was
-     * mid-way through asserting on -- which is exactly what the reader would
-     * see as a flaky "the session file is byte-for-byte what it was". The
-     * non-ASCII part stays, because putting every file operation through a
-     * path the narrow CRT would mangle is the point of it. */
-    {
-        unsigned long pid;
-#if defined(_WIN32)
-        pid = (unsigned long)GetCurrentProcessId();
-#else
-        pid = (unsigned long)getpid();
-#endif
-        snprintf(scratch_leaf, sizeof(scratch_leaf), "Rapha\xc3\xabl-%lu", pid);
-    }
-    snprintf(ascii_leaf, sizeof(ascii_leaf), "ascii-%s", scratch_leaf + 8);
+    /* Unique per process: several suites share %TEMP%. See scratch_leaf.h. */
+    spdf_test_scratch_leaf(scratch_leaf, sizeof(scratch_leaf), "RaphaÃ«l");
+    spdf_test_scratch_leaf(ascii_leaf, sizeof(ascii_leaf), "ascii");
     if (!spdf_win_path_join(scratch, scratch_leaf, dir, sizeof(dir))) return 1;
     if (!spdf_win_path_join(scratch, ascii_leaf, ascii_dir, sizeof(ascii_dir))) return 1;
     if (!spdf_win_paths_ensure_dir(dir) || !spdf_win_paths_ensure_dir(ascii_dir)) {
