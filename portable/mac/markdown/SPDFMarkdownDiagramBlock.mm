@@ -50,6 +50,16 @@ BOOL SPDFMarkdownRenderDiagramBlock(SPDFMarkdownRenderContext* context, SPDFMark
                                NSFontAttributeName: label.font,
                                NSForegroundColorAttributeName: SPDFMarkdownDiagramLabelColor(label, variant),
                            });
+        // A label's `<b>`/`<i>` runs are set right here, in the canonical
+        // string, because that is the ONE place a diagram's text exists: the
+        // band measures each line off this attributed substring and the page
+        // and the PDF export draw it, so the emphasis reaches all three at
+        // once and can never disagree with what the label was measured at.
+        for (SPDFMarkdownDiagramLabelSpan* span in label.spans) {
+            NSRange range = NSMakeRange(labelStart + span.range.location, span.range.length);
+            if (!range.length || NSMaxRange(range) > context.output.length) continue;
+            [context.output addAttribute:NSFontAttributeName value:[label fontForSpan:span] range:range];
+        }
         [labelRanges addObject:[NSValue valueWithRange:NSMakeRange(labelStart,
                                                                    context.output.length - labelStart)]];
     }

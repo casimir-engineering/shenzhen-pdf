@@ -301,6 +301,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                            [strongSelf setMinimapActuallyVisible:strongSelf->_minimapPreferredVisible];
                            [strongSelf recordFileAttributes:attributes forTab:tab];
                            tab.cachedMarkdownFileIdentity = fileIdentity;
+                           [strongSelf repointActiveFileWatcher]; // after the stat above
                            strongSelf->_statusLabel.stringValue = @"Markdown document ready.";
                            // Restored searches must not scroll away from the
                            // restored viewport (the PDF restore's revealMatch:NO).
@@ -317,29 +318,9 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                        [strongSelf savePersistentState];
                      }];
     [self rebuildSidebar];
-    [self teardownActiveFileWatcher];
+    [self teardownActiveFileWatcher]; // re-pointed by the completion above
     [self rememberRecentlyOpenedPath:path];
     [self savePersistentState];
-}
-
-- (void)rememberActiveMarkdownStateForTab:(SPDFDocumentTab*)tab {
-    if (!tab || ![self isMarkdownActive]) return;
-    SPDFMacMarkdownSession* session = self.markdownState.activeSession;
-    tab.path = _path;
-    tab.title = spdf_display_name_for_path(_path);
-    tab.scrollOrigin = session.scrollOrigin;
-    tab.hasScrollOrigin = YES;
-    tab.markdownSelectionRange = session.selectedRange;
-    tab.pageIndex = session.currentPageIndex;
-    tab.zoom = session.zoom;
-    if (session.fitMode == SPDFMacMarkdownPageFitCustom) tab.customZoom = session.zoom;
-    tab.fitMode = (SPDFFitMode)session.fitMode;
-    tab.searchText = _searchField.stringValue ?: @"";
-    tab.searchRegex = _findRegexCheckbox.state == NSControlStateValueOn;
-    tab.findMatchIndex = session.currentMatchIndex;
-    tab.showSidebar = _sidebarPreferredVisible;
-    tab.showMinimap = _minimapPreferredVisible;
-    tab.markdownLandscape = session.pageOrientation == SPDFMarkdownPageOrientationLandscape;
 }
 
 - (NSString*)markdownSelectedText {

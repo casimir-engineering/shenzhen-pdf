@@ -108,8 +108,10 @@ $PORTABLE/mac/SPDFMacMarkdownSession+Appearance.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Export.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Interaction.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Paper.mm
+$PORTABLE/mac/SPDFMacMarkdownSession+Reload.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+RemoteImages.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+Search.mm
+$PORTABLE/mac/SPDFMacMarkdownSession+ViewSwap.mm
 $PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
 "
 

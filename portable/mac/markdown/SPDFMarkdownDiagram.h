@@ -110,6 +110,15 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
 @property(nonatomic, copy, nullable) NSColor* authorStrokeColor;
 @end
 
+// One inline emphasis run inside a label line: the `<b>`/`<strong>` and
+// `<i>`/`<em>` markup mermaid labels are written with (see
+// SPDFMarkdownDiagramCleanLabel). `range` indexes the label's own `text`.
+@interface SPDFMarkdownDiagramLabelSpan : NSObject
+@property(nonatomic) NSRange range;
+@property(nonatomic) BOOL bold;
+@property(nonatomic) BOOL italic;
+@end
+
 // One single-line text label at its resolved position. `frame` is the box the
 // text aligns inside (diagram-local, y-down, exactly one line tall); the
 // measurement pass centers/left-aligns the real typographic width inside it.
@@ -119,10 +128,17 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
 @property(nonatomic) NSTextAlignment alignment;
 @property(nonatomic) CGFloat fontSize;
 @property(nonatomic) BOOL semibold;
+// The label's inline emphasis runs, already clipped to this line by the
+// wrapper. Spans, not fonts, so the fit scale keeps owning the size: every
+// consumer rebuilds the face from `fontSize` through -fontForSpan:.
+@property(nonatomic, copy) NSArray<SPDFMarkdownDiagramLabelSpan*>* spans;
 @property(nonatomic) SPDFMarkdownDiagramRole role;
 @property(nonatomic, copy, nullable) NSColor* authorColor;  // classDef `color:`; nil = use the role
 // The system font this label was measured with, rebuilt from fontSize/semibold.
 - (NSFont*)font;
+// That same font with one span's emphasis applied — the face that span was
+// measured in and has to be drawn in.
+- (NSFont*)fontForSpan:(SPDFMarkdownDiagramLabelSpan*)span;
 @end
 
 // The color a shape/label actually paints with: its author color resolved for
