@@ -55,6 +55,29 @@ static SPDF_WIN_TS_INLINE SpdfWinTabRect spdf_win_tabstrip_drop_indicator_rect(d
 #define SPDF_WIN_TABSTRIP_DETACH_SLOP_X 18.0
 #define SPDF_WIN_TABSTRIP_DETACH_DY 48.0
 
+/* WHERE A TAB FROM ANOTHER WINDOW LANDS -- the counterpart of
+ * spdf_win_tabstrip_move_index() for a tab that is not in this strip yet.
+ *
+ * The difference is the whole point and it is one line long: move_index
+ * collapses the two slots either side of the dragged tab, because lifting that
+ * tab out shifts every slot past it left by one. A tab arriving from somewhere
+ * else occupies no slot here, so NOTHING shifts and no slot collapses -- the
+ * insertion index is the visible slot plus the visible window's start, clamped
+ * to [0, tab_count]. macOS reaches the same two answers through the same two
+ * functions (-performDragOperation: calls same_window_move_index only on the
+ * same-window branch, SPDFMacTabStripView.mm:906-925). Getting this wrong is
+ * invisible until a reader drops a tab onto the last gap of a scrolled strip
+ * and it lands one place short. */
+static SPDF_WIN_TS_INLINE int spdf_win_tabstrip_insert_index(int start, int slot, int tab_count) {
+    int insertion;
+    if (tab_count < 0) tab_count = 0;
+    if (start < 0) start = 0;
+    if (slot < 0) slot = 0;
+    insertion = start + slot;
+    if (insertion > tab_count) insertion = tab_count;
+    return insertion;
+}
+
 static SPDF_WIN_TS_INLINE int spdf_win_tabstrip_drag_detaches(double strip_w, double strip_h, double x, double y,
                                                               double start_y) {
     SpdfWinTabRect plus = spdf_win_tabstrip_plus_rect(strip_w);
