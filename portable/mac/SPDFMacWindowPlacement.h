@@ -37,3 +37,19 @@ NSRect spdf_window_frame_to_persist(NSWindow* window, NSRect liveFrame);
 // Whether `frame` overlaps any of `visibleFrames` by enough to be usable. Pure,
 // so the fallback rule can be tested without displays to plug in.
 BOOL spdf_window_frame_is_usable_on_screens(NSRect frame, NSArray<NSValue*>* visibleFrames);
+
+// Brings back the windows this process is not restoring itself.
+//
+// A multi-window session comes back as one process per window: this one
+// restores the window the reader left focused (spdf_session_focused_window_index)
+// and activates, and each remaining window is relaunched with
+// --restore-window <id> so it comes up behind the focused one. `skipWindowID`
+// is this process's own window, which must never be spawned twice.
+//
+// Called as soon as the session names those windows -- before this process
+// builds its own window -- so the launches overlap. Started after the first
+// paint instead, a second window arrived a whole launch late: this process
+// finished painting, and only then did the next one begin loading its
+// documents. The spawning itself runs off the main thread; the caller is in the
+// middle of assembling its first frame.
+void spdf_spawn_restored_window_processes(NSArray<NSString*>* windowIDs, NSString* skipWindowID);

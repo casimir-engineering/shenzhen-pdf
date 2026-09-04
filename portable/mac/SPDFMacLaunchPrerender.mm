@@ -210,7 +210,9 @@ void spdf_discard_launch_prerender(void) {
                   }
               }
           } else {
-              windowState = windows.firstObject;
+              // Same window loadPersistentState will restore: the focused one.
+              NSUInteger focused = spdf_session_focused_window_index(windows);
+              if (focused != NSNotFound) windowState = windows[focused];
           }
           NSArray* tabs = [windowState[@"tabs"] isKindOfClass:NSArray.class] ? windowState[@"tabs"] : @[];
           if (tabs.count > 0) {

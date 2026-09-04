@@ -49,6 +49,15 @@
     tab.preservesImageColors = _darkThemePreservesImagesDefault;
 }
 
+- (void)seedNewTabFromDocumentMemory:(SPDFDocumentTab*)tab {
+    [self seedKeepImageColorsForNewTab:tab];
+    NSDictionary* state = _documentStates[[self documentStateKeyForPath:tab.path]];
+    if (![state isKindOfClass:NSDictionary.class]) return;
+    // Absent for every document that has never been turned, and for every PDF:
+    // only the Markdown rotate command writes it (SPDFMacMarkdownOrientation.mm).
+    if (state[@"markdownLandscape"] != nil) tab.markdownLandscape = [state[@"markdownLandscape"] boolValue];
+}
+
 - (SPDFDocumentView*)newDocumentView {
     SPDFDocumentView* view = [[SPDFDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 800, 1000)];
     view.reader = self;
