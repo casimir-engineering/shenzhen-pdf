@@ -16,7 +16,9 @@
  * Geometry comes from T3's spdf_win_layout.h, the page cache is T3's
  * spdf_win_lru, and neighbour prefetch runs on T5's spdf_win_render worker
  * pool. Nothing here re-derives any of the three. The page under the viewport
- * is still rendered synchronously on purpose -- see the .cpp.
+ * renders synchronously unless a shell arms
+ * spdf_win_canvas_set_async_visible() -- and even then never on the first
+ * frame, and never without a stand-in to draw. See the .cpp's header.
  *
  * `path` is the document's UTF-8 path, used only to give the render workers
  * something to open (the core allows one spdf_document per thread, so they
@@ -182,6 +184,31 @@ int spdf_win_canvas_current_page(const spdf_win_canvas* canvas);
  * on this canvas. Returns non-zero when there is something to draw. */
 int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene);
 
+/* RENDER THE VISIBLE PAGE OFF-THREAD TOO, from the next frame on.
+ *
+ * Off by default, and every headless path leaves it off, which is what keeps
+ * --render-window-png and the d2d.compose cases byte-identical by construction.
+ * A windowed shell arms it once, right after creating the canvas; the FIRST
+ * frame is still rendered on the calling thread whatever this says, so a launch
+ * still paints a complete window before ShowWindow. Read spdf_win_canvas.cpp's
+ * header before changing any of that: the three guards are the design.
+ *
+ * `ready` is called ON A WORKER THREAD when a render becomes drainable, and
+ * must be cheap and thread-safe -- PostMessage(hwnd, ..., 0, 0) is the intended
+ * implementation, and it is REQUIRED rather than optional: without it a bitmap
+ * lands and nothing asks for the repaint that would show it, so the reader
+ * keeps looking at the soft stand-in until they move the mouse. The next paint
+ * adopts it, as it always did.
+ *
+ * WRITE-ONCE. The pair is published to the worker with one interlocked store
+ * and never rewritten, so a call with a DIFFERENT hook changes nothing at all:
+ * the canvas keeps the hook it has and stays armed, because silently turning
+ * async off would be a worse surprise than ignoring a call that should not have
+ * been made. `ready` NULL turns async off and leaves the hook in place, so
+ * re-arming with the same hook works. One shell, one canvas, one arming -- and
+ * a canvas dies with its tab. */
+void spdf_win_canvas_set_async_visible(spdf_win_canvas* canvas, void (*ready)(void*), void* ready_ctx);
+
 /* Bytes currently held by the page-bitmap cache. For the render-budget check;
  * never used to make a drawing decision. */
 size_t spdf_win_canvas_cache_bytes(const spdf_win_canvas* canvas);
@@ -189,6 +216,11 @@ size_t spdf_win_canvas_cache_bytes(const spdf_win_canvas* canvas);
  * means every visible page came from the cache -- which, after a scroll onto a
  * new page, is the observable proof that prefetch did its job. */
 int spdf_win_canvas_sync_renders(const spdf_win_canvas* canvas);
+/* How many pages the LAST build_scene drew from a NEARBY zoom because the exact
+ * one was still rendering. Non-zero means the frame is provisional: it is the
+ * right content at the wrong resolution, and the `ready` hook above will ask for
+ * the repaint that replaces it. 0 in a synchronous canvas, always. */
+int spdf_win_canvas_stale_draws(const spdf_win_canvas* canvas);
 /* How many renders the worker pool has started. Diagnostic only. */
 unsigned long long spdf_win_canvas_prefetched(spdf_win_canvas* canvas);
 

@@ -217,6 +217,48 @@ void* spdf_win_lru_lookup(SpdfWinLru* cache, const SpdfWinLruKey* key) {
     return slot->value;
 }
 
+void* spdf_win_lru_lookup_nearest_zoom(SpdfWinLru* cache, int page, double scale, double zoom,
+                                       SpdfWinLruKey* out_key) {
+    spdf_win_lru_slot* slots;
+    spdf_win_lru_slot* best = NULL;
+    long long want;
+    long long scale_q;
+    size_t i;
+
+    if (out_key) memset(out_key, 0, sizeof(*out_key));
+    if (!cache) return NULL;
+    slots = (spdf_win_lru_slot*)cache->slots;
+    if (!slots) return NULL;
+    want = spdf_win_lru_quantize(zoom);
+    scale_q = spdf_win_lru_quantize(scale);
+    for (i = 0; i < cache->capacity; ++i) {
+        spdf_win_lru_slot* slot = &slots[i];
+        long long d;
+        long long bd;
+        if (slot->state != SPDF_WIN_LRU_SLOT_LIVE) continue;
+        if (slot->key.page != page || slot->key.scale_q != scale_q) continue;
+        /* Whole-page renders only. A crop covers a region of the page, so
+         * stretching it over the whole slot would draw the wrong part of the
+         * page at the wrong size -- a hole would be better. */
+        if (slot->key.crop_w != 0 || slot->key.crop_h != 0) continue;
+        d = slot->key.zoom_q > want ? slot->key.zoom_q - want : want - slot->key.zoom_q;
+        if (!best) {
+            best = slot;
+            continue;
+        }
+        bd = best->key.zoom_q > want ? best->key.zoom_q - want : want - best->key.zoom_q;
+        /* Nearest zoom, and on a tie the SHARPER one -- a tie means one entry
+         * either side of the wanted zoom, and upscaling a bigger texture down
+         * looks better than blowing a smaller one up. Total order, so the
+         * answer never depends on table layout. */
+        if (d < bd || (d == bd && slot->key.zoom_q > best->key.zoom_q)) best = slot;
+    }
+    if (!best) return NULL;
+    best->last_used = ++cache->use_counter;
+    if (out_key) *out_key = best->key;
+    return best->value;
+}
+
 int spdf_win_lru_peek(const SpdfWinLru* cache, const SpdfWinLruKey* key) {
     int found = 0;
     if (!cache || !key) return 0;
