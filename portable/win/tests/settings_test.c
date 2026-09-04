@@ -205,6 +205,7 @@ static void test_shared_copy(void) {
 int main(int argc, char** argv) {
     char scratch[SPDF_WIN_PATH_MAX];
     char dir[SPDF_WIN_PATH_MAX];
+    char scratch_leaf[64];
     const char* base = argc > 1 ? argv[1] : NULL;
 
     printf("spdf_win_settings tests\n");
@@ -218,7 +219,23 @@ int main(int argc, char** argv) {
     if (!base || !*base) base = ".";
     if (!spdf_win_path_join(base, "spdf_settings_test", scratch, sizeof(scratch))) return 1;
     /* The proven non-ASCII scratch leaf, as session_test uses. */
-    if (!spdf_win_path_join(scratch, "Rapha\xc3\xabl", dir, sizeof(dir))) return 1;
+    /* A LEAF UNIQUE TO THIS PROCESS. %TEMP% is one directory for the whole
+     * machine, and several suites run at once here (one per parallel
+     * worktree), so a fixed leaf let one run rewrite the state another was
+     * mid-way through asserting on -- which is exactly what the reader would
+     * see as a flaky "the session file is byte-for-byte what it was". The
+     * non-ASCII part stays, because putting every file operation through a
+     * path the narrow CRT would mangle is the point of it. */
+    {
+        unsigned long pid;
+#if defined(_WIN32)
+        pid = (unsigned long)GetCurrentProcessId();
+#else
+        pid = (unsigned long)getpid();
+#endif
+        snprintf(scratch_leaf, sizeof(scratch_leaf), "Rapha\xc3\xabl-%lu", pid);
+    }
+    if (!spdf_win_path_join(scratch, scratch_leaf, dir, sizeof(dir))) return 1;
     if (!spdf_win_paths_ensure_dir(dir)) {
         printf("FAIL: could not create the scratch directory under %s\n", scratch);
         return 1;
