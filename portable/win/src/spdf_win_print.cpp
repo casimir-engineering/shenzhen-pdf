@@ -159,6 +159,65 @@ static int print_selected_pages(const PRINTDLGEXW* pd, int page_count, int** out
     return written;
 }
 
+spdf_win_print_status spdf_win_print_run_job(HDC dc, spdf_document* doc, const wchar_t* job_name,
+                                             const wchar_t* out_file, const int* pages, int page_count, int copies,
+                                             spdf_win_print_scaling_mode mode, double custom_scale, char* err,
+                                             size_t err_len) {
+    spdf_win_print_paper paper;
+    DOCINFOW info;
+    int high_quality;
+    int copy, i;
+
+    if (err && err_len) err[0] = '\0';
+    if (!dc || !doc || !pages || page_count <= 0) return SPDF_WIN_PRINT_NO_DOCUMENT;
+    if (copies < 1) copies = 1;
+    high_quality = spdf_win_print_high_quality_allowed(doc);
+
+    if (!spdf_win_print_paper_from_caps(GetDeviceCaps(dc, LOGPIXELSX), GetDeviceCaps(dc, LOGPIXELSY),
+                                        GetDeviceCaps(dc, HORZRES), GetDeviceCaps(dc, VERTRES), &paper)) {
+        if (err && err_len)
+            _snprintf_s(err, err_len, _TRUNCATE, "The printer did not report a usable page size.");
+        return SPDF_WIN_PRINT_FAILED;
+    }
+
+    memset(&info, 0, sizeof(info));
+    info.cbSize = sizeof(info);
+    info.lpszDocName = job_name && *job_name ? job_name : L"Shenzhen PDF";
+    /* NULL means "the port the DC names", which is the whole point of the
+     * parameter: a caller that has a file to write says so and the driver
+     * never asks. */
+    info.lpszOutput = out_file && *out_file ? out_file : NULL;
+    if (StartDocW(dc, &info) <= 0) {
+        if (err && err_len) _snprintf_s(err, err_len, _TRUNCATE, "The print job could not be started.");
+        return SPDF_WIN_PRINT_FAILED;
+    }
+
+    /* PD_COLLATE is the driver's business when it handles copies itself; when
+     * it does not, nCopies comes back > 1 and the job repeats the range. */
+    for (copy = 0; copy < copies; ++copy) {
+        for (i = 0; i < page_count; ++i) {
+            if (StartPage(dc) <= 0) {
+                AbortDoc(dc);
+                if (err && err_len) _snprintf_s(err, err_len, _TRUNCATE, "The printer stopped accepting pages.");
+                return SPDF_WIN_PRINT_FAILED;
+            }
+            if (!spdf_win_print_page_to_dc(dc, doc, pages[i], &paper, mode, custom_scale, high_quality, err,
+                                           err_len)) {
+                EndPage(dc);
+                AbortDoc(dc);
+                return SPDF_WIN_PRINT_FAILED;
+            }
+            if (EndPage(dc) <= 0) {
+                AbortDoc(dc);
+                if (err && err_len) _snprintf_s(err, err_len, _TRUNCATE, "The printer rejected a finished page.");
+                return SPDF_WIN_PRINT_FAILED;
+            }
+        }
+    }
+    EndDoc(dc);
+    return SPDF_WIN_PRINT_OK;
+}
+
 spdf_win_print_status spdf_win_print_document(HWND parent, spdf_document* doc, const wchar_t* doc_path,
                                               spdf_win_print_scaling_mode mode, double custom_scale, char* err,
                                               size_t err_len) {
@@ -181,8 +240,6 @@ spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc
     spdf_win_print_scaling_mode mode;
     double custom_scale;
     PRINTPAGERANGE ranges[16];
-    DOCINFOW info;
-    spdf_win_print_paper paper;
     spdf_document* job_doc = NULL;
     spdf_document* own_doc = NULL;
     char utf8[MAX_PATH * 4];
@@ -190,9 +247,6 @@ spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc
     int* pages = NULL;
     int page_count;
     int selected = 0;
-    int copies;
-    int copy;
-    int i;
     HRESULT hr;
     spdf_win_print_status status = SPDF_WIN_PRINT_FAILED;
 
@@ -239,9 +293,27 @@ spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc
     hr = PrintDlgExW(&pd);
     if (FAILED(hr)) {
         /* The locked-workstation case, among others. Reported as its own
-         * status: this is not the reader cancelling. */
-        if (err && err_len) _snprintf_s(err, err_len, _TRUNCATE, "The print dialog could not be shown.");
+         * status: this is not the reader cancelling. THE CODE IS IN THE
+         * SENTENCE because the causes are indistinguishable from outside --
+         * a locked session, a default printer whose driver will not load, a
+         * property page the sheet refused -- and the reader (or whoever they
+         * send it to) cannot narrow it down without the HRESULT. */
+        if (err && err_len)
+            _snprintf_s(err, err_len, _TRUNCATE, "The print dialog could not be shown (0x%08lX).",
+                        (unsigned long)hr);
         return SPDF_WIN_PRINT_NO_DIALOG;
+    }
+    /* PD_RESULT_PRINT WITH NO DC IS NOT A CANCEL, and reporting it as one is
+     * how "Print does nothing" happens with nothing on screen to explain it.
+     * PD_RETURNDC asks the dialog for the printer's DC; it comes back NULL
+     * when the driver could not give one, which is a failure of the printer,
+     * not a decision of the reader's. */
+    if (pd.dwResultAction == PD_RESULT_PRINT && !pd.hDC) {
+        if (pd.hDevMode) GlobalFree(pd.hDevMode);
+        if (pd.hDevNames) GlobalFree(pd.hDevNames);
+        if (err && err_len)
+            _snprintf_s(err, err_len, _TRUNCATE, "The printer did not provide a device to print on.");
+        return SPDF_WIN_PRINT_FAILED;
     }
     if (pd.dwResultAction != PD_RESULT_PRINT || !pd.hDC) {
         if (pd.hDC) DeleteDC(pd.hDC);
@@ -262,13 +334,6 @@ spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc
         own_doc = spdf_win_open_document(utf8, open_err, sizeof(open_err));
     job_doc = own_doc ? own_doc : doc;
 
-    if (!spdf_win_print_paper_from_caps(GetDeviceCaps(pd.hDC, LOGPIXELSX), GetDeviceCaps(pd.hDC, LOGPIXELSY),
-                                        GetDeviceCaps(pd.hDC, HORZRES), GetDeviceCaps(pd.hDC, VERTRES), &paper)) {
-        if (err && err_len)
-            _snprintf_s(err, err_len, _TRUNCATE, "The printer did not report a usable page size.");
-        goto cleanup;
-    }
-
     selected = print_selected_pages(&pd, page_count, &pages);
     if (selected <= 0) {
         if (err && err_len) _snprintf_s(err, err_len, _TRUNCATE, "No pages were selected.");
@@ -276,39 +341,17 @@ spdf_win_print_status spdf_win_print_document_ex(HWND parent, spdf_document* doc
         goto cleanup;
     }
 
-    memset(&info, 0, sizeof(info));
-    info.cbSize = sizeof(info);
-    info.lpszDocName = (doc_path && *doc_path) ? spdf_win_export_file_name(doc_path) : L"Shenzhen PDF";
-    if (StartDocW(pd.hDC, &info) <= 0) {
-        if (err && err_len) _snprintf_s(err, err_len, _TRUNCATE, "The print job could not be started.");
-        goto cleanup;
-    }
-
-    /* PD_COLLATE is the driver's business when it handles copies itself; when
-     * it does not, nCopies comes back > 1 and the job repeats the range. */
-    copies = pd.nCopies > 0 ? (int)pd.nCopies : 1;
-    for (copy = 0; copy < copies; ++copy) {
-        for (i = 0; i < selected; ++i) {
-            if (StartPage(pd.hDC) <= 0) {
-                AbortDoc(pd.hDC);
-                if (err && err_len) _snprintf_s(err, err_len, _TRUNCATE, "The printer stopped accepting pages.");
-                goto cleanup;
-            }
-            if (!spdf_win_print_page_to_dc(pd.hDC, job_doc, pages[i], &paper, mode, custom_scale,
-                                           spdf_win_print_high_quality_allowed(job_doc), err, err_len)) {
-                EndPage(pd.hDC);
-                AbortDoc(pd.hDC);
-                goto cleanup;
-            }
-            if (EndPage(pd.hDC) <= 0) {
-                AbortDoc(pd.hDC);
-                if (err && err_len) _snprintf_s(err, err_len, _TRUNCATE, "The printer rejected a finished page.");
-                goto cleanup;
-            }
-        }
-    }
-    EndDoc(pd.hDC);
-    status = SPDF_WIN_PRINT_OK;
+    /* THE JOB ITSELF IS spdf_win_print_run_job(), and it is a separate function
+     * for one reason: this one cannot run on this machine at all -- no
+     * comdlg32 print dialog can be shown here, PrintDlgEx and the classic
+     * PrintDlg both hang before creating a window (see spdf_win_print.h) --
+     * while the loop below it is the whole of printing and CAN be driven
+     * against a real printer. print_e2e_test.c drives THIS function, not a
+     * copy of it, straight to Microsoft Print to PDF. */
+    status = spdf_win_print_run_job(pd.hDC, job_doc,
+                                    (doc_path && *doc_path) ? spdf_win_export_file_name(doc_path) : L"Shenzhen PDF",
+                                    NULL, pages, selected, pd.nCopies > 0 ? (int)pd.nCopies : 1, mode, custom_scale,
+                                    err, err_len);
 
 cleanup:
     if (pages) free(pages);

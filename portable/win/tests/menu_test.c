@@ -338,10 +338,83 @@ static void test_checkable_flag_matches_the_predicate(void) {
     all.sidebar_visible = all.minimap_visible = all.dark_theme = all.regex = 1;
     all.keep_image_colors = 1;
     all.regex_multiline = 1;
+    all.default_sidebar_new_docs = all.default_minimap_new_docs = all.search_nearest = 1;
     for (i = 0; i < n; ++i) {
         if (t[i].command == SPDF_WIN_CMD_NONE || t[i].menu == SPDF_WIN_MENU_NONE) continue;
         CHECK_EQI(spdf_win_menu_command_checked(t[i].command, &all) != 0, t[i].checkable != 0);
     }
+}
+
+/* THE SETTINGS MENU, which for a long time was one row of six.
+ *
+ * macOS's Settings menu (ShenzhenPDFMac.mm:2112-2149) is four toggles, then the
+ * state files, then Reveal Settings Folder; this port has all four toggles, the
+ * one state file a reader edits by hand, and the reveal. What can go wrong is
+ * not Win32 -- it is the table:
+ *
+ *   - a toggle whose tick nothing can set, which is a row that lies about the
+ *     setting behind it every time the setting is on -- and three of these four
+ *     default to ON, so an always-unticked row would be wrong on a fresh
+ *     install rather than merely wrong eventually;
+ *   - Ctrl+, landing on some other command, or on nothing;
+ *   - Keep Image Colors left on the View menu as well as here, which would draw
+ *     it twice -- test_every_command_has_one_menu_row() catches that globally,
+ *     and this pins WHERE the one row is;
+ *   - a Settings row greyed with no document, which would hide the preferences
+ *     exactly when a reader who has just closed everything goes looking. */
+static void test_settings_menu(void) {
+    const int rows[] = {SPDF_WIN_CMD_TOGGLE_DEFAULT_SIDEBAR, SPDF_WIN_CMD_TOGGLE_DEFAULT_MINIMAP,
+                        SPDF_WIN_CMD_TOGGLE_KEEP_IMAGE_COLORS, SPDF_WIN_CMD_TOGGLE_SEARCH_NEAREST,
+                        SPDF_WIN_CMD_OPEN_SETTINGS_FILE, SPDF_WIN_CMD_REVEAL_SETTINGS_FOLDER};
+    SpdfWinMenuState st;
+    int i;
+
+    /* All six on the Settings menu, which exists and has a title. */
+    CHECK(spdf_win_menu_title(SPDF_WIN_MENU_SETTINGS) != NULL);
+    for (i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); ++i) {
+        const SpdfWinMenuItem* it = spdf_win_menu_item_for_command(rows[i]);
+        CHECK(it != NULL);
+        if (!it) continue;
+        CHECK_EQI(it->menu, SPDF_WIN_MENU_SETTINGS);
+    }
+    /* Keep Image Colors moved OFF the View menu; Dark Reading Theme stayed,
+     * because it is the state of THIS window and not a stored preference. */
+    CHECK(spdf_win_menu_item_for_command(SPDF_WIN_CMD_TOGGLE_THEME)->menu == SPDF_WIN_MENU_VIEW);
+
+    /* The mac's Cmd+, is Ctrl+, and it opens settings.yaml. */
+    CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_OEM_COMMA, SPDF_WIN_ACCEL_CTRL),
+              SPDF_WIN_CMD_OPEN_SETTINGS_FILE);
+    CHECK_EQI(spdf_win_menu_command_for_key(SPDF_WIN_KEY_OEM_COMMA, 0), SPDF_WIN_CMD_NONE);
+    /* And VK_OEM_COMMA is not one of the zoom keys, which is the mistake 0xBC
+     * invites: it sits between VK_OEM_PLUS (0xBB) and VK_OEM_MINUS (0xBD), so a
+     * one-digit slip in the #define would make Ctrl+, zoom. */
+    CHECK_EQI(SPDF_WIN_KEY_OEM_COMMA, 0xBC);
+    CHECK(SPDF_WIN_KEY_OEM_COMMA != SPDF_WIN_KEY_OEM_PLUS && SPDF_WIN_KEY_OEM_COMMA != SPDF_WIN_KEY_OEM_MINUS);
+
+    /* NOT ONE OF THEM NEEDS A DOCUMENT. A preference about how the NEXT
+     * document opens is at its most useful when none is open, and settings.yaml
+     * exists whether or not anything is being read. */
+    memset(&st, 0, sizeof(st));
+    for (i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); ++i) CHECK(spdf_win_menu_command_enabled(rows[i], &st));
+
+    /* Each of the three new toggles follows its own field and no one else's. */
+    CHECK(!spdf_win_menu_command_checked(SPDF_WIN_CMD_TOGGLE_DEFAULT_SIDEBAR, &st));
+    CHECK(!spdf_win_menu_command_checked(SPDF_WIN_CMD_TOGGLE_DEFAULT_MINIMAP, &st));
+    CHECK(!spdf_win_menu_command_checked(SPDF_WIN_CMD_TOGGLE_SEARCH_NEAREST, &st));
+    st.default_sidebar_new_docs = 1;
+    CHECK(spdf_win_menu_command_checked(SPDF_WIN_CMD_TOGGLE_DEFAULT_SIDEBAR, &st));
+    CHECK(!spdf_win_menu_command_checked(SPDF_WIN_CMD_TOGGLE_DEFAULT_MINIMAP, &st));
+    st.default_minimap_new_docs = 1;
+    st.search_nearest = 1;
+    CHECK(spdf_win_menu_command_checked(SPDF_WIN_CMD_TOGGLE_DEFAULT_MINIMAP, &st));
+    CHECK(spdf_win_menu_command_checked(SPDF_WIN_CMD_TOGGLE_SEARCH_NEAREST, &st));
+    /* The two rows that DO something rather than record something are never
+     * ticked, however the state reads -- a check mark beside "Reveal Settings
+     * Folder" would claim the folder is revealed. */
+    CHECK(!spdf_win_menu_command_checked(SPDF_WIN_CMD_OPEN_SETTINGS_FILE, &st));
+    CHECK(!spdf_win_menu_command_checked(SPDF_WIN_CMD_REVEAL_SETTINGS_FOLDER, &st));
+    CHECK(!spdf_win_menu_item_for_command(SPDF_WIN_CMD_OPEN_SETTINGS_FILE)->checkable);
+    CHECK(!spdf_win_menu_item_for_command(SPDF_WIN_CMD_REVEAL_SETTINGS_FOLDER)->checkable);
 }
 
 int main(void) {
@@ -356,6 +429,7 @@ int main(void) {
     test_enabled_and_checked_rules();
     test_documents_track_rows();
     test_checkable_flag_matches_the_predicate();
+    test_settings_menu();
 
     printf("menu_test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

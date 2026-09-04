@@ -14,8 +14,9 @@
  */
 #include "spdf_win_menu.h"
 
-#include "spdf_win_paths.h"   /* UTF-8 -> UTF-16 for the recent paths */
-#include "spdf_win_recents.h" /* the Open Recent submenu's rows */
+#include "spdf_win_paths.h"    /* UTF-8 -> UTF-16 for the recent paths */
+#include "spdf_win_recents.h"  /* the Open Recent submenu's rows */
+#include "spdf_win_settings.h" /* the Settings menu's three settings.yaml ticks */
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -136,12 +137,32 @@ void spdf_win_menu_destroy(void* hmenu) {
     if (hmenu) DestroyMenu((HMENU)hmenu);
 }
 
+void spdf_win_menu_state_settings(SpdfWinMenuState* st) {
+    const spdf_win_settings* s;
+    if (!st) return;
+    s = spdf_win_settings_shared();
+    st->default_sidebar_new_docs = s->default_sidebar_visible;
+    st->default_minimap_new_docs = s->default_minimap_visible;
+    st->search_nearest = s->search_jumps_to_nearest_result;
+}
+
 void spdf_win_menu_sync(void* hmenu, const SpdfWinMenuState* state) {
     HMENU bar = (HMENU)hmenu;
+    SpdfWinMenuState filled;
     int i, n = 0;
     const SpdfWinMenuItem* table = spdf_win_menu_table(&n);
 
     if (!bar) return;
+    /* A COPY, because the argument is const and the caller's state is not this
+     * function's to edit. A NULL state is left NULL: it means "know nothing",
+     * which must stay "everything enabled, nothing ticked" -- filling three
+     * ticks into it would make a menu built before the app has any state the
+     * one place those three are shown and nothing else is. */
+    if (state) {
+        filled = *state;
+        spdf_win_menu_state_settings(&filled);
+        state = &filled;
+    }
     for (i = 0; i < n; ++i) {
         UINT id;
         if (table[i].command == SPDF_WIN_CMD_NONE || table[i].menu == SPDF_WIN_MENU_NONE) continue;
@@ -199,7 +220,7 @@ int spdf_win_menu_tab_overflow(void* hwnd, const wchar_t* const* titles, int cou
 
 int spdf_win_menu_app_popup(void* hwnd, const SpdfWinMenuState* state, int screen_x, int screen_y) {
     /* The bar, built and then shown as a popup rather than attached to a window.
-     * spdf_win_menu_create() already produces the whole thing with its five
+     * spdf_win_menu_create() already produces the whole thing with its
      * submenus, the ids, the accelerator text and the separators, so this reuses
      * it verbatim: one table, one builder, and the popup cannot drift from what
      * the bar showed. */
@@ -211,7 +232,7 @@ int spdf_win_menu_app_popup(void* hwnd, const SpdfWinMenuState* state, int scree
     spdf_win_menu_sync(bar, state);
 
     /* A menu BAR cannot be tracked as a popup -- TrackPopupMenu wants a popup
-     * menu -- so the five top-level entries are re-hung as submenus of one
+     * menu -- so the top-level entries are re-hung as submenus of one
      * throwaway popup. The submenu HMENUs are borrowed, not copied, which is why
      * they are detached with RemoveMenu (NOT DeleteMenu, which would destroy
      * them) before the bar is freed. */
