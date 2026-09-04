@@ -2644,9 +2644,8 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _window.styleMask |= NSWindowStyleMaskFullSizeContentView;
     _window.movable = NO;
     _window.movableByWindowBackground = NO;
-    // AppKit repositions the window during -initWithContentRect:, which is how a
-    // frame on a second display came back on the main one; see the placement header.
-    if (_hasRestoredWindowFrame) [_window setFrame:frame display:NO];
+    spdf_window_configure_document_window(_window, self, NSMakeSize(kMinWindowWidth, kMinWindowHeight), frame,
+                                          _hasRestoredWindowFrame);
 
     SPDFDropView* content = [[SPDFDropView alloc] initWithFrame:frame];
     content.reader = self;
