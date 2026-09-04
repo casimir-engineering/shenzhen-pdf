@@ -1,4 +1,5 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacSidebarChapters.h"
 #import "SPDFMacTranslationEnablement.h"
 
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -409,7 +410,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     }
 
     [self syncSidebarTableColumnWidth];
-    [_sidebarTable reloadData];
+    [self applyChapterNestingAndReload];
     if (_sidebarItems.count > 0)
         [_sidebarTable
             noteHeightOfRowsWithIndexesChanged:[NSIndexSet

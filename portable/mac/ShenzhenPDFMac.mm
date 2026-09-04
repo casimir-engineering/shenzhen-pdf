@@ -39,6 +39,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacPrintView.h"
 #import "SPDFMacPropertiesPanel.h"
 #import "SPDFMacSelectionAdapter.h"
+#import "SPDFMacSidebarChapters.h"
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabViewState.h"
 #import "SPDFMacTabLifecycle.h"
@@ -2946,6 +2947,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         [sidebarScroll.bottomAnchor constraintEqualToAnchor:_sidebarContainer.bottomAnchor]
     ]];
 
+    [self installChapterOutlineControls];
     if (launchWindowStart > 0.0)
         spdf_launch_profile_log(@"buildWindow.sidebar done at %.1fms", spdf_zoom_profile_now_ms() - launchWindowStart);
     _pageScrollView = [[SPDFScrollView alloc] init];
@@ -9571,7 +9573,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
     BOOL showingSearchSidebar = hasSidebar && _sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && hasSearch;
     [self syncSidebarTableColumnWidth];
-    [_sidebarTable reloadData];
+    [self applyChapterNestingAndReload];
     if (_sidebarItems.count > 0)
         [_sidebarTable
             noteHeightOfRowsWithIndexesChanged:[NSIndexSet
@@ -16265,21 +16267,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return cell;
     }
 
-    NSTableCellView* cell = [tableView makeViewWithIdentifier:@"SidebarCell" owner:self];
-    if (!cell) {
-        cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 230, 25)];
-        cell.identifier = @"SidebarCell";
-        NSTextField* field = [NSTextField labelWithString:@""];
-        field.translatesAutoresizingMaskIntoConstraints = NO;
-        field.lineBreakMode = NSLineBreakByTruncatingTail;
-        cell.textField = field;
-        [cell addSubview:field];
-        [NSLayoutConstraint activateConstraints:@[
-            [field.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:8],
-            [field.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-6],
-            [field.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor]
-        ]];
-    }
+    NSTableCellView* cell = [self sidebarCellForTableView:tableView];
 
     // Cells are reused across comment and chapter rows, so set the line behavior
     // every time. Comments wrap to a few lines (the row is sized to match in
@@ -16294,17 +16282,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         cell.textField.cell.usesSingleLineMode = YES;
     }
 
-    id levelValue = item[@"level"];
-    NSInteger level = [levelValue respondsToSelector:@selector(integerValue)] ? [levelValue integerValue] : 0;
-    level = MAX(0, MIN(level, 16));
-    id titleValue = item[@"title"];
-    NSString* title = [titleValue isKindOfClass:[NSString class]] ? titleValue : @"";
-    id pageValue = item[@"page"];
-    NSInteger page = [pageValue respondsToSelector:@selector(integerValue)] ? [pageValue integerValue] : -1;
-    NSString* indent = [@"" stringByPaddingToLength:(NSUInteger)(level * 3) withString:@" " startingAtIndex:0];
-    cell.textField.stringValue = [indent stringByAppendingString:title ?: @""];
-    cell.textField.font = [NSFont systemFontOfSize:13];
-    cell.textField.textColor = page >= 0 ? NSColor.labelColor : NSColor.secondaryLabelColor;
+    [self styleSidebarCell:cell item:item];
     return cell;
 }
 
