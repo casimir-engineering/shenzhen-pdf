@@ -33,7 +33,7 @@
  * and asks nothing. That is a documented StartDoc parameter, not a trick, and
  * it is the reason a print job can be driven with nobody at the keyboard.
  *
- * THREE JOBS, EACH ANSWERING SOMETHING THE OTHERS CANNOT.
+ * FOUR JOBS, EACH ANSWERING SOMETHING THE OTHERS CANNOT.
  *   1. Fit, two sheets: the job runs, the file is a PDF the core reopens, and
  *      there is ink on it. Two sheets rather than one because a single page
  *      passes even when StartPage/EndPage sit outside the loop.
@@ -43,6 +43,25 @@
  *      so the DRIVER's orientation and paper size reach the placement through
  *      GetDeviceCaps. That is the only part of the dialog's OUTPUT that can be
  *      reproduced without the dialog.
+ *   4. THE PREVIEW'S SHEET IS THE PRINTED SHEET. The print dialog's preview
+ *      builds the paper with spdf_win_preview_sheet_build() over this same
+ *      driver's caps and puts the page inside it with the job's own
+ *      spdf_win_print_dest_rect(). This measures the printed sheet and the
+ *      BOUNDING BOX OF THE INK on it, and asserts the sheet matches and the ink
+ *      lands inside the rectangle the preview drew -- at Custom 25% a small box
+ *      in the middle of an A4 sheet, which ink does not land inside by luck.
+ *      Together with print_preview_test.c (which proves the preview computes no
+ *      placement of its own) that closes the loop from what a reader is shown
+ *      to what comes off the printer.
+ *
+ * WHAT THIS HOST CAN AND CANNOT SHOW ABOUT THE UNPRINTABLE BORDER. Microsoft
+ * Print to PDF reports PHYSICALWIDTH == HORZRES and a zero PHYSICALOFFSET --
+ * measured 4961 x 7016 px at 600 dpi, i.e. A4 with no border at all -- so it
+ * prints edge to edge and the border band is legitimately empty here. A driver
+ * that keeps a margin is driven by print_preview_test.c from real 600 and
+ * 1200 dpi caps instead; the only other printer on this machine is a network
+ * Brother whose CreateICW FAILS after 47 seconds (error 203), which is what
+ * moved the preview's measurement onto a worker thread in the first place.
  *
  * NOTHING IS WRITTEN NEAR THE USER'S DOCUMENTS. The output goes to %TEMP% and
  * is deleted at the end, whether the checks passed or not.
@@ -60,9 +79,13 @@
 
 #include "spdf_win_open.h"
 #include "spdf_win_print.h"
+/* The PREVIEW's geometry, so job four can check the sheet a reader was SHOWN
+ * against the sheet the driver actually produced. Pure header, no new sources. */
+#include "spdf_win_print_preview_geom.h"
 
 #include <winspool.h>
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -123,13 +146,47 @@ static long ink_on_page(spdf_document* doc, int page_index) {
     return ink;
 }
 
+/* WHERE the ink is, not just how much: the bounding box of everything that is
+ * not paper, in PDF points on the printed sheet, rendered at 1:1 so a point of
+ * the box is a point of the sheet. Returns 0 when the sheet is blank. */
+static int ink_bbox_on_page(spdf_document* doc, int page_index, spdf_win_print_rect* out) {
+    spdf_bitmap bmp;
+    char err[512] = {0};
+    int x0 = 1 << 30, y0 = 1 << 30, x1 = -1, y1 = -1;
+    int x, y;
+
+    memset(&bmp, 0, sizeof(bmp));
+    if (!spdf_render_page_rgba(doc, page_index, 1.0f, &bmp, err, sizeof(err)) || !bmp.rgba || bmp.width <= 0) {
+        printf("print_e2e: bbox render of page %d failed: %s\n", page_index, err);
+        spdf_free_bitmap(&bmp);
+        return 0;
+    }
+    for (y = 0; y < bmp.height; ++y) {
+        const unsigned char* row = bmp.rgba + (size_t)y * (size_t)bmp.stride;
+        for (x = 0; x < bmp.width; ++x)
+            if (row[x * 4] != bmp.rgba[0] || row[x * 4 + 1] != bmp.rgba[1] || row[x * 4 + 2] != bmp.rgba[2]) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+            }
+    }
+    spdf_free_bitmap(&bmp);
+    if (x1 < x0 || y1 < y0) return 0;
+    out->x = (double)x0;
+    out->y = (double)y0;
+    out->w = (double)(x1 - x0 + 1);
+    out->h = (double)(y1 - y0 + 1);
+    return 1;
+}
+
 /* One real print job to `out_path`, then the ink on its first sheet. The
  * printed PDF is reopened THROUGH THE CORE, which is the only way to know that
  * what the driver wrote is a document and not just bytes. -1 on any failure,
  * with the reason printed. */
 static long print_and_measure(HDC dc, spdf_document* doc, const wchar_t* out_path, const int* pages, int page_count,
                               spdf_win_print_scaling_mode mode, double custom_scale, int* out_sheets, float* out_w,
-                              float* out_h) {
+                              float* out_h, spdf_win_print_rect* out_bbox) {
     char err[512] = {0};
     char open_err[512] = {0};
     char out_utf8[MAX_PATH * 4];
@@ -168,6 +225,10 @@ static long print_and_measure(HDC dc, spdf_document* doc, const wchar_t* out_pat
             printf("print_e2e: could not measure the printed sheet: %s\n", serr);
     }
     ink = ink_on_page(printed, 0);
+    if (out_bbox) {
+        out_bbox->x = out_bbox->y = out_bbox->w = out_bbox->h = 0.0;
+        ink_bbox_on_page(printed, 0, out_bbox);
+    }
     spdf_close(printed);
     return ink;
 }
@@ -219,6 +280,7 @@ int main(int argc, char** argv) {
     int page_count;
     float sheet_w = 0.0f, sheet_h = 0.0f;
     float land_w = 0.0f, land_h = 0.0f;
+    spdf_win_print_rect fit_box, small_box;
 
     doc = spdf_win_open_document(fixture, open_err, sizeof(open_err));
     if (!doc) {
@@ -258,7 +320,7 @@ int main(int argc, char** argv) {
      * file the driver wrote is a PDF the core can open, and there is ink on
      * it. Ink is the check that a parseable pair of BLANK sheets cannot pass. */
     fit_ink = print_and_measure(dc, doc, out_path, pages, 2, SPDF_WIN_PRINT_SCALING_FIT, 1.0, &sheets, &sheet_w,
-                                &sheet_h);
+                                &sheet_h, &fit_box);
     CHECK(sheets == 2);
     CHECK(fit_ink > 0);
     /* The driver's default here is portrait; the landscape job below is only
@@ -276,7 +338,7 @@ int main(int argc, char** argv) {
      * around the 1/16 of the area that 25% linear scaling predicts; the point
      * is the direction and the magnitude, not a pixel count. */
     small_ink = print_and_measure(dc, doc, out_path, pages, 2, SPDF_WIN_PRINT_SCALING_CUSTOM, 0.25, &sheets, NULL,
-                                  NULL);
+                                  NULL, &small_box);
     CHECK(sheets == 2);
     CHECK(small_ink > 0);
     if (fit_ink > 0 && small_ink > 0) {
@@ -300,7 +362,7 @@ int main(int argc, char** argv) {
                    (unsigned long)GetLastError());
         } else {
             land_ink = print_and_measure(land, doc, out_path, pages, 1, SPDF_WIN_PRINT_SCALING_FIT, 1.0, &sheets,
-                                         &land_w, &land_h);
+                                         &land_w, &land_h, NULL);
             printf("print_e2e: landscape sheet %.1f x %.1f pt, ink=%ld\n", (double)land_w, (double)land_h, land_ink);
             CHECK(sheets == 1);
             CHECK(land_ink > 0);
@@ -312,6 +374,76 @@ int main(int argc, char** argv) {
             CHECK(land_h > 600.0f && land_h < 620.0f);
             CHECK(land_w != sheet_w || land_h != sheet_h);
             DeleteDC(land);
+        }
+    }
+
+    /* JOB FOUR: THE SHEET A READER WAS SHOWN IS THE SHEET THAT CAME OUT. The
+     * print dialog's preview (spdf_win_print_preview.h) draws the paper from
+     * spdf_win_preview_sheet_build() over this same driver's GetDeviceCaps, and
+     * puts the page inside it with spdf_win_print_dest_rect() -- the job's own
+     * placement. print_preview_test.c proves the preview does not compute a
+     * second placement; this proves the FIRST one describes real paper.
+     *
+     * Two claims, on the two jobs already printed above:
+     *   1. The preview's sheet IS the printed sheet, to a point.
+     *   2. All the ink lands inside the rectangle the preview drew the page in.
+     *      At Custom 25% that rectangle is a small box in the middle of an A4
+     *      sheet, so ink cannot land inside it by accident.
+     * And the two boxes are in the ratio the two scales predict, which is the
+     * check that would fail if the preview and the job disagreed about which
+     * scale was in force. */
+    {
+        spdf_win_preview_sheet sheet;
+        spdf_win_print_rect fit_dest, small_dest;
+        float page_w = 0.0f, page_h = 0.0f;
+        double fit_scale;
+
+        if (!spdf_win_preview_sheet_build(GetDeviceCaps(dc, LOGPIXELSX), GetDeviceCaps(dc, LOGPIXELSY),
+                                          GetDeviceCaps(dc, PHYSICALWIDTH), GetDeviceCaps(dc, PHYSICALHEIGHT),
+                                          GetDeviceCaps(dc, PHYSICALOFFSETX), GetDeviceCaps(dc, PHYSICALOFFSETY),
+                                          GetDeviceCaps(dc, HORZRES), GetDeviceCaps(dc, VERTRES), 0.0, 0.0, &sheet) ||
+            !spdf_page_size(doc, 0, &page_w, &page_h, NULL, 0)) {
+            printf("SKIP preview-vs-paper: the driver reported no usable sheet\n");
+        } else {
+            printf("print_e2e: preview sheet %.1f x %.1f pt, border %.1f/%.1f/%.1f/%.1f pt, measured=%d\n",
+                   sheet.sheet_w_pt, sheet.sheet_h_pt, sheet.margin_l_pt, sheet.margin_t_pt, sheet.margin_r_pt,
+                   sheet.margin_b_pt, sheet.sheet_measured);
+            CHECK(sheet.sheet_measured == 1);
+            CHECK(fabs(sheet.sheet_w_pt - (double)sheet_w) < 1.0);
+            CHECK(fabs(sheet.sheet_h_pt - (double)sheet_h) < 1.0);
+
+            fit_dest = spdf_win_print_dest_rect(page_w, page_h, sheet.imageable_w_pt, sheet.imageable_h_pt,
+                                                SPDF_WIN_PRINT_SCALING_FIT, 1.0);
+            small_dest = spdf_win_print_dest_rect(page_w, page_h, sheet.imageable_w_pt, sheet.imageable_h_pt,
+                                                  SPDF_WIN_PRINT_SCALING_CUSTOM, 0.25);
+            fit_scale = spdf_win_print_mode_scale(page_w, page_h, sheet.imageable_w_pt, sheet.imageable_h_pt,
+                                                  SPDF_WIN_PRINT_SCALING_FIT, 1.0);
+            printf("print_e2e: fit ink box %.0f,%.0f %.0fx%.0f in dest %.0f,%.0f %.0fx%.0f\n", fit_box.x, fit_box.y,
+                   fit_box.w, fit_box.h, fit_dest.x, fit_dest.y, fit_dest.w, fit_dest.h);
+            printf("print_e2e: 25%% ink box %.0f,%.0f %.0fx%.0f in dest %.0f,%.0f %.0fx%.0f\n", small_box.x,
+                   small_box.y, small_box.w, small_box.h, small_dest.x, small_dest.y, small_dest.w, small_dest.h);
+            /* The dest rects are in printable-area coordinates and this driver's
+             * printable area starts at the sheet's corner (offset 0,0), which
+             * the border print above states; add the border so the comparison is
+             * right on a driver where it is not zero. */
+            CHECK(fit_box.w > 0.0 && small_box.w > 0.0);
+            CHECK(fit_box.x >= sheet.margin_l_pt + fit_dest.x - 1.0);
+            CHECK(fit_box.y >= sheet.margin_t_pt + fit_dest.y - 1.0);
+            CHECK(fit_box.x + fit_box.w <= sheet.margin_l_pt + fit_dest.x + fit_dest.w + 1.0);
+            CHECK(fit_box.y + fit_box.h <= sheet.margin_t_pt + fit_dest.y + fit_dest.h + 1.0);
+            CHECK(small_box.x >= sheet.margin_l_pt + small_dest.x - 1.0);
+            CHECK(small_box.y >= sheet.margin_t_pt + small_dest.y - 1.0);
+            CHECK(small_box.x + small_box.w <= sheet.margin_l_pt + small_dest.x + small_dest.w + 1.0);
+            CHECK(small_box.y + small_box.h <= sheet.margin_t_pt + small_dest.y + small_dest.h + 1.0);
+            /* Same content, two scales: the boxes are in the scales' ratio. A
+             * 6% tolerance covers the pixel the bounding box is quantized to at
+             * either end and nothing else. */
+            if (fit_box.w > 0.0 && fit_scale > 0.0) {
+                double want = 0.25 / fit_scale;
+                printf("print_e2e: box ratio %.4f, scales predict %.4f\n", small_box.w / fit_box.w, want);
+                CHECK(fabs(small_box.w / fit_box.w - want) < 0.06 * want);
+                CHECK(fabs(small_box.h / fit_box.h - want) < 0.06 * want);
+            }
         }
     }
 
