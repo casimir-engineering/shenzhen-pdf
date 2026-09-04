@@ -139,7 +139,7 @@ int main(void) {
      * --state-dir and set SPDF_WIN_SETUP_NO_PROMPT instead; spdf_win_setup.h
      * says why, and spdf_win_setup_first_run() folds it in here.) */
     const int setup_explicit = setup.install || setup.uninstall || setup.quiet || setup.purge || setup.portable ||
-                               setup.state_dir;
+                               (setup.state_dir && !spdf_win_setup_prompt_allowed_by_env());
     /* Portable mode, before anything reads state: the marker file next to the
      * exe (or --portable) moves settings.yaml and session.yaml to
      * <exe dir>\ShenzhenPDF-data. A no-op when --state-dir was given, whose own
@@ -147,6 +147,9 @@ int main(void) {
     spdf_win_setup_apply_portable(setup.portable, setup.state_dir);
 
     app a;
+    /* What --find asked for, kept apart from a.find_text because the session
+     * restore below overwrites that from the tab. See its use further down. */
+    wchar_t cli_find_text[256];
     viewport_opts opts;
     int window_page = 0;
     /* Set by --dark or --light. Until one of them appears the theme is the
@@ -290,6 +293,7 @@ int main(void) {
     /* After the whole parse, so --find-regex may come on either side of --find.
      * A no-op with no query: spdf_win_find_set_query(NULL) creates no session. */
     a.find_caret = (int)wcslen(a.find_text);
+    wcsncpy_s(cli_find_text, a.find_text, _TRUNCATE);
     chrome_find_push(&a);
 
     int remaining = argc - i;
@@ -415,6 +419,22 @@ int main(void) {
                     window_page <= 0)
                     a.pending_page = -1;
                 app_restore_find_text(&a);
+                /* THE COMMAND LINE OUTRANKS THE TAB'S MEMORY. --find is how the
+                 * capture scripts and a reader with a shortcut ask to open
+                 * searching for something; app_restore_find_text() above has
+                 * just replaced the field with the selected tab's remembered
+                 * query, which a tab opened by this very launch does not have.
+                 * So it cleared the query and --find did nothing on a windowed
+                 * launch, while the headless path -- which never restores a
+                 * session -- kept working, which is why no test caught it.
+                 * Re-pushed through chrome_find_push() rather than by hand, so
+                 * the bridge and the Search section agree the way they do for a
+                 * keystroke. */
+                if (cli_find_text[0]) {
+                    wcsncpy_s(a.find_text, cli_find_text, _TRUNCATE);
+                    a.find_caret = (int)wcslen(a.find_text);
+                    chrome_find_push(&a);
+                }
                 sync_window_title(&a);
                 spdf_win_window_set_tick(window, SPDF_WIN_SESSION_TICK_MS, app_tick);
                 /* The deferred sweep of orphaned read-only copies, on its own

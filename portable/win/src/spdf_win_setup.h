@@ -125,6 +125,27 @@ extern "C" {
 #define SPDF_WIN_SETUP_NO_PROMPT_ENV L"SPDF_WIN_SETUP_NO_PROMPT"
 #define SPDF_WIN_SETUP_PROFILE_ENV L"SPDF_WIN_LAUNCH_PROFILE"
 
+/* TEST-ONLY, and the exact inverse of the two above. The three suppressors
+ * meant to keep a modal dialog out of a tool's way also made the dialog
+ * untestable: SPDF_WIN_SETUP_ROOT redirects everything an install touches, and
+ * --state-dir redirects everything the answer is written to, and BOTH of them
+ * suppress the question -- so "the prompt is shown" and "nothing real is
+ * written" could not hold at once, and the three command links could only ever
+ * be exercised against the user's own machine.
+ *
+ * This lifts precisely those two suppressors, and only them: --install,
+ * --uninstall, --quiet, --purge, --portable, a headless mode, and
+ * SPDF_WIN_SETUP_NO_PROMPT / SPDF_WIN_LAUNCH_PROFILE all still mean no
+ * question, so no harness script and no test can grow a hang by accident.
+ * Nothing in the app sets it; it exists so a live check can drive the real
+ * dialog with the install redirected under SPDF_WIN_SETUP_ROOT and the answer
+ * written into a --state-dir nobody reads afterwards. */
+#define SPDF_WIN_SETUP_ALLOW_PROMPT_ENV L"SPDF_WIN_SETUP_ALLOW_PROMPT"
+
+/* Whether that variable is set. Declared here because spdf_win_main.cpp needs
+ * the same answer when it decides whether --state-dir counts as explicit. */
+int spdf_win_setup_prompt_allowed_by_env(void);
+
 /* --- argv ------------------------------------------------------------------
  *
  * The setup flags are scanned out of the WHOLE command line before

@@ -139,6 +139,13 @@ int spdf_win_setup_state_dir(wchar_t* out, size_t out_len) { return setup_state_
 
 /* --- portable mode ---------------------------------------------------------- */
 
+/* SPDF_WIN_SETUP_ALLOW_PROMPT: see spdf_win_setup.h for why a variable that
+ * makes a modal dialog MORE likely is the safe direction to add one in. A
+ * zero-length probe, not a read: the value is irrelevant, only its presence. */
+int spdf_win_setup_prompt_allowed_by_env(void) {
+    return GetEnvironmentVariableW(SPDF_WIN_SETUP_ALLOW_PROMPT_ENV, NULL, 0) > 0 ? 1 : 0;
+}
+
 int spdf_win_setup_apply_portable(int flag_passed, int state_dir_given) {
     wchar_t exe[SPDF_WIN_SETUP_PATH_MAX];
     wchar_t dir[SPDF_WIN_SETUP_PATH_MAX];
@@ -419,7 +426,8 @@ int spdf_win_setup_first_run(int explicit_flag, int headless, const wchar_t* fil
     if (!explicit_flag &&
         (GetEnvironmentVariableW(SPDF_WIN_SETUP_NO_PROMPT_ENV, NULL, 0) > 0 ||
          GetEnvironmentVariableW(SPDF_WIN_SETUP_PROFILE_ENV, NULL, 0) > 0 ||
-         GetEnvironmentVariableW(SPDF_WIN_SETUP_ROOT_ENV, NULL, 0) > 0))
+         (GetEnvironmentVariableW(SPDF_WIN_SETUP_ROOT_ENV, NULL, 0) > 0 &&
+          !spdf_win_setup_prompt_allowed_by_env())))
         explicit_flag = 1;
     /* Before anything else and before any further I/O: see the note above. */
     if (headless || explicit_flag) return SPDF_WIN_SETUP_ACTION_RUN_ONCE;
