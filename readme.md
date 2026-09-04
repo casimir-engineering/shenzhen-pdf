@@ -25,7 +25,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Compact tabbed windows** — Keep many documents in one tidy window; a space-efficient tab strip, with every tab outlined, disambiguates same-named files and overflows into a "…" menu.
 - **Draggable & detachable tabs** — Reorder by dragging, or pull a tab into its own window — it reopens exactly where you left it, carrying its view state.
-- **Multi-window session restore** — Quit and relaunch to get every window back, each with its own tabs, selected tab, and size.
+- **Multi-window session restore** — Quit and relaunch to get every window back, each with its own tabs, selected tab, size **and position — on the display it was left on**, not herded onto the main screen.
 - **Resume exactly where you left off** — Reopen any document at the same page, zoom, fit mode, scroll position, and search.
 - **Recents, reopen-last-closed & favorites** — Jump back into recent files, reopen a just-closed tab (<kbd>Cmd+Shift+T</kbd>), or star pages/docs and find them from a palette (<kbd>Cmd+K</kbd>).
 - **Presentation mode** — Present full-screen with chrome-free advance and optional sleep prevention (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>).
@@ -51,6 +51,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Incremental search with live count** — Type anywhere to start searching and every match appears instantly with a running "current / total" counter, highlighted in-page. <sub>macOS · Linux</sub>
 - **Chapter-grouped results sidebar** — Every match listed with a snippet, grouped under its chapter heading; click to jump. <sub>macOS · Linux</sub>
+- **Nested chapters** <sub>macOS</sub> — A PDF's outline and a Markdown document's headings both fold: disclosure arrows on every parent, Expand All / Collapse All above the list, and each document remembers what you left collapsed across launches.
 - **Regex & multiline search** — Regular-expression matching, including patterns that span line and paragraph breaks; invalid patterns fail gracefully. <sub>macOS · Linux</sub>
 - **Document map (minimap)** — A live right-side thumbnail strip with a draggable viewport: drag to scroll, click to jump, Cmd-scroll to zoom — search hits show as yellow markers. Scales to hundreds of pages. <sub>macOS · Linux</sub>
 - **Scrollbar heat-map** — The scrollbar doubles as a match heat-map — a tick per hit, the active one hotter; each tab remembers its query across switches and relaunches. <sub>macOS · Linux</sub>
