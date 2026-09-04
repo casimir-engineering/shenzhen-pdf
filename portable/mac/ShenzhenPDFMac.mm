@@ -1555,37 +1555,14 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     NSMutableArray* tabs = [NSMutableArray array];
     for (SPDFDocumentTab* tab in _tabs) {
         if (!tab.path.length) continue;
-        [tabs addObject:@{
-            @"path" : tab.path,
-            @"title" : tab.title.length ? tab.title : spdf_display_name_for_path(tab.path),
-            @"page" : @(tab.pageIndex),
-            @"zoom" : @(tab.zoom),
-            @"customZoom" : @(tab.customZoom),
-            @"fitMode" : @(tab.fitMode),
-            /* Always continuous now; kept for backward compat (see SPDFMacModels.mm). */
-            @"viewMode" : @1,
-            @"scrollX" : @(tab.scrollOrigin.x),
-            @"scrollY" : @(tab.scrollOrigin.y),
-            @"hasScrollOrigin" : @(tab.hasScrollOrigin),
-            @"searchText" : tab.searchText ?: @"",
-            @"searchRegex" : @(tab.searchRegex),
-            @"searchRegexMultiline" : @(tab.searchRegexMultiline),
-            @"findMatchIndex" : @(tab.findMatchIndex),
-            @"markdownSelectionLocation" : @(tab.markdownSelectionRange.location),
-            @"markdownSelectionLength" : @(tab.markdownSelectionRange.length),
-            @"showSidebar" : @(tab.showSidebar),
-            @"showMinimap" : @(tab.showMinimap),
-            @"markdownLandscape" : @(tab.markdownLandscape),
-            // Read-only shadow copy: persist the temp copy + the source stat it
-            // reflects so relaunch reopens the copy without a source content read.
-            // readOnly is persisted so the orange dot shows immediately on restore for
-            // not-yet-preloaded inactive tabs. (Kept in sync with SPDFMacModels.mm.)
-            @"readOnly" : @(tab.readOnly),
-            @"workingPath" : tab.workingPath ?: @"",
-            @"roCopyFileSize" : @(tab.copiedSourceFileSize),
-            @"roCopyModifiedAt" :
-                @(tab.copiedSourceModificationDate ? tab.copiedSourceModificationDate.timeIntervalSince1970 : 0.0)
-        }];
+        // One writer for a tab's persisted fields, shared with the tab-strip
+        // drag payload. This used to be a second inline copy kept in sync by
+        // hand, and it drifted: preservesImageColors was added to the shared
+        // writer and to the reader, tested through both, and still never
+        // reached session.yaml -- so a document's keep-image-colors choice was
+        // silently lost on relaunch. The drag-only sourcePID/sourceWindow keys
+        // ride along and are ignored on restore.
+        [tabs addObject:spdf_dictionary_from_tab(tab, _window.windowNumber)];
     }
 
     NSRect frame = _window ? _window.frame : _restoredWindowFrame;
