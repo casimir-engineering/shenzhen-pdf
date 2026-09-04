@@ -1,6 +1,7 @@
 #import "SPDFMacTabViewState.h"
 
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacSupport.h"
 
 // Implemented in ShenzhenPDFMac.mm, which keeps them private to its own
 // translation unit; declared here the way the launch prerender declares the
@@ -68,6 +69,28 @@
     _pageScrollView.documentView = _pageView;
     clipView.postsBoundsChangedNotifications = previousPostsBoundsChangedNotifications;
     [self clearToolbarFieldFocusForTabSwitch];
+}
+
+// The Markdown counterpart of capturing a tab's view state: the live session
+// holds it, and it has to land on the tab before any reload or tab switch.
+- (void)rememberActiveMarkdownStateForTab:(SPDFDocumentTab*)tab {
+    if (!tab || ![self isMarkdownActive]) return;
+    SPDFMacMarkdownSession* session = self.activeMarkdownSession;
+    tab.path = _path;
+    tab.title = spdf_display_name_for_path(_path);
+    tab.scrollOrigin = session.scrollOrigin;
+    tab.hasScrollOrigin = YES;
+    tab.markdownSelectionRange = session.selectedRange;
+    tab.pageIndex = session.currentPageIndex;
+    tab.zoom = session.zoom;
+    if (session.fitMode == SPDFMacMarkdownPageFitCustom) tab.customZoom = session.zoom;
+    tab.fitMode = (SPDFFitMode)session.fitMode;
+    tab.searchText = _searchField.stringValue ?: @"";
+    tab.searchRegex = _findRegexCheckbox.state == NSControlStateValueOn;
+    tab.findMatchIndex = session.currentMatchIndex;
+    tab.showSidebar = _sidebarPreferredVisible;
+    tab.showMinimap = _minimapPreferredVisible;
+    tab.markdownLandscape = session.pageOrientation == SPDFMarkdownPageOrientationLandscape;
 }
 
 @end

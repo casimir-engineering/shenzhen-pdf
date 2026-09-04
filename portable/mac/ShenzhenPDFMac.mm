@@ -6609,9 +6609,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)repointActiveFileWatcher {
     SPDFDocumentTab* tab = [self selectedTab];
     NSString* path = tab.path;
-    // Only watch a live, on-disk document. A missing/unavailable tab or a tab
-    // with no open document gets no watcher (existing missing-file UI owns it).
-    if (!_doc || !path.length || tab.missingFile) {
+    // Only watch a live, on-disk document. _doc is the rendered-document handle,
+    // NULL for Markdown -- which is why Markdown never reloaded on a disk change.
+    if ((!_doc && !self.isMarkdownActive) || !path.length || tab.missingFile) {
         [self teardownActiveFileWatcher];
         return;
     }
