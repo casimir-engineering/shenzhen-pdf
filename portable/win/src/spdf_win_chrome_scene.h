@@ -34,7 +34,8 @@
  * which document is selected. Included here rather than relying on it arriving
  * through spdf_win_main.cpp's include order, which is what left this header
  * depending on a declaration it never asked for. */
-#include "spdf_win_annot.h"       /* the comment cache, markers and Comments rows */
+#include "spdf_win_annot.h"
+#include "spdf_win_md_code.h" /* the code pills' geometry, published per paint */       /* the comment cache, markers and Comments rows */
 #include "spdf_win_chrome_content.h"
 #include "spdf_win_chrome_find.h" /* spdf_win_find_apply_overlays */
 #include "spdf_win_search_map.h"  /* spdf_win_map_marks_publish */
@@ -209,6 +210,7 @@ static void chrome_publish_comments(app* a, spdf_win_scene* scene, const SpdfWin
     if (!a->canvas) {
         spdf_win_sidebar_comments_publish(NULL);
         spdf_win_annot_publish_geometry(NULL, 0.0f, 0.0f, 1.0f);
+        spdf_win_md_code_frame(NULL, NULL, NULL, 0.0f, 0.0f, 1.0f);
         return;
     }
     chrome_annot_sync(a);
@@ -225,6 +227,28 @@ static void chrome_publish_comments(app* a, spdf_win_scene* scene, const SpdfWin
      * overlays in canvas-local px like every other producer's. Third in the
      * chain find -> selection -> comments, the mac's draw order (:485, :492). */
     spdf_win_annot_publish_geometry(scene, layout->canvas.x, layout->canvas.y, spdf_win_canvas_zoom(a->canvas));
+
+    /* And the code box's pills, from the same document and the same rectangle.
+     * spdf_win_md_code_frame() carries the policy -- rebuild only when the path
+     * or the options generation changed, clear when there is no document -- so
+     * this call site holds none of it. */
+    {
+        char md_err[256] = {0};
+        const char* md_path = NULL;
+        spdf_document* md_doc = NULL;
+        if (a->tabs) {
+            int sel = spdf_win_tabs_selected_index(a->tabs);
+            if (sel >= 0) {
+                md_path = spdf_win_tabs_path(a->tabs, sel);
+                md_doc = (spdf_document*)spdf_win_tabs_document(a->tabs, sel, md_err, sizeof(md_err));
+            }
+        } else {
+            md_path = a->path;
+            md_doc = a->doc;
+        }
+        spdf_win_md_code_frame(md_doc, md_path, scene, layout->canvas.x, layout->canvas.y,
+                               spdf_win_canvas_zoom(a->canvas));
+    }
     spdf_win_annot_apply_overlays(scene, spdf_win_canvas_zoom(a->canvas));
 }
 

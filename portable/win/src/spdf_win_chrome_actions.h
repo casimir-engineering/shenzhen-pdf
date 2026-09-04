@@ -98,6 +98,18 @@ static int chrome_perform(app* a, const SpdfWinChromeHit* hit, const SpdfWinChro
         case SPDF_WIN_CA_SIDEBAR_ROW: return chrome_sidebar_row(a, hit->index);
         case SPDF_WIN_CA_SIDEBAR_SECTION: return chrome_sidebar_section(a, hit->index);
         /* Click-to-edit on a comment marker's badge (GTK annot_marker_click_pressed). */
+        case SPDF_WIN_CA_MD_CODE_COPY:
+            /* The fence's source to the clipboard, and the pill says "Copied"
+             * for 1.2 s (spdf_win_md_code.h). A failed copy shows nothing,
+             * deliberately: there is nothing the reader could do about it. */
+            return spdf_win_md_code_copy(hit->index) ? 1 : 0;
+        case SPDF_WIN_CA_MD_CODE_LANGUAGE:
+            /* The picker's popup window is not written yet -- only its model is
+             * (spdf_win_md_code.h: the filter, the catalog order, the per-fence
+             * override). Consumed rather than ignored so the click cannot start
+             * a text selection under the pill; it does nothing else until the
+             * list exists. */
+            return 0;
         case SPDF_WIN_CA_ANNOT_EDIT: return annot_edit(a, hit->index);
         /* A press on the minimap arms the strip gesture (spdf_win_search_map_ui.h);
          * the moves and the release below finish it. */

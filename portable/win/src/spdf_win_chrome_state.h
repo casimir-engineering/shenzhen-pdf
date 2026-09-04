@@ -59,6 +59,18 @@ typedef struct SpdfWinAnnotMark {
     float bx0, by0, bx1, by1; /* badge + click slop */
 } SpdfWinAnnotMark;
 
+/* A MARKDOWN CODE BOX'S TWO CONTROLS, in client device pixels, published by the
+ * paint that drew them (spdf_win_md_code.h keeps the authoritative definition;
+ * this is the same layout, declared here for the same reason SpdfWinAnnotMark
+ * is -- the router and its tests must not need the Markdown module). `cx*` is
+ * the Copy button, all zero where it stood down; `lx*` is the language pill. */
+typedef struct SpdfWinMdCodeMark {
+    int fence_index;
+    int page_index;
+    float lx0, ly0, lx1, ly1; /* language pill + slop */
+    float cx0, cy0, cx1, cy1; /* copy button + slop, all zero when it stood down */
+} SpdfWinMdCodeMark;
+
 /* What the painters need to know that geometry does not carry. Deliberately a
  * plain value type with no pointers into app state beyond the strings it
  * borrows, so a headless test can build one by hand -- which is how the chrome
@@ -217,6 +229,10 @@ typedef struct SpdfWinChromeModel {
      * NULL/0 -- the zeroed model, every headless frame -- means none. The
      * painters never read these: the marks themselves are scene overlays. */
     const SpdfWinAnnotMark* annot_marks;
+    /* The code pills the last paint published, and how many. Filled beside
+     * annot_marks in spdf_win_chrome_view_ui.h; zero on a PDF tab. */
+    const SpdfWinMdCodeMark* md_code_marks;
+    int md_code_mark_count;
     int annot_mark_count;
 } SpdfWinChromeModel;
 
