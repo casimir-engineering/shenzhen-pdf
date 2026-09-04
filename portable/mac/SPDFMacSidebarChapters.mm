@@ -231,18 +231,26 @@ static NSLayoutConstraint* SPDFIndentConstraint(NSView* cell) {
 
 #pragma mark - Expand All / Collapse All controls
 
-static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NSString* symbol, NSString* tip,
+// Real buttons rather than bare glyphs, in the same family as the Chapters /
+// Comments control directly above: a recessed bezel, small control size, and
+// the label in the secondary tint so the pair still reads as chrome. They fit
+// the row the bare chevrons occupied, so the list loses no height.
+static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NSString* title, NSString* tip,
                                     SEL action) {
-    NSButton* button = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:symbol
-                                                          accessibilityDescription:tip]
-                                          target:self
-                                          action:action];
-    button.bordered = NO;
-    button.imagePosition = NSImageOnly;
+    NSButton* button = [NSButton buttonWithTitle:title target:self action:action];
+    button.bezelStyle = NSBezelStyleRecessed;
+    button.showsBorderOnlyWhileMouseInside = NO;
+    button.controlSize = NSControlSizeSmall;
+    button.font = [NSFont systemFontOfSize:10];
     button.toolTip = tip;
     button.tag = tag;
-    button.contentTintColor = NSColor.secondaryLabelColor;  // discreet: chrome, not an action
     button.translatesAutoresizingMaskIntoConstraints = NO;
+    button.attributedTitle = [[NSAttributedString alloc]
+        initWithString:title
+            attributes:@{
+                NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
+                NSFontAttributeName : [NSFont systemFontOfSize:10 weight:NSFontWeightMedium]
+            }];
     return button;
 }
 
@@ -251,22 +259,24 @@ static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NS
     NSScrollView* scroll = _sidebarTable.enclosingScrollView;
     if (!_sidebarContainer || !_sidebarFilterField || !scroll) return;
 
-    NSButton* expand = SPDFOutlineControl(self, kSPDFExpandAllTag, @"chevron.down", @"Expand All",
+    NSButton* expand = SPDFOutlineControl(self, kSPDFExpandAllTag, @"Expand All", @"Expand every chapter",
                                           @selector(expandAllChapters:));
-    NSButton* collapse = SPDFOutlineControl(self, kSPDFCollapseAllTag, @"chevron.right", @"Collapse All",
+    NSButton* collapse = SPDFOutlineControl(self, kSPDFCollapseAllTag, @"Collapse All", @"Collapse every chapter",
                                             @selector(collapseAllChapters:));
     [_sidebarContainer addSubview:expand];
     [_sidebarContainer addSubview:collapse];
 
-    // Their own thin row between the filter and the list, right-aligned so the
-    // filter field keeps its full width and the pair stays out of the way.
+    // Their own thin row between the filter and the list, the pair centred on
+    // the panel so it reads as one control rather than something docked to an
+    // edge. The list follows close underneath: this row is chrome, and the
+    // chapters are what the reader came for.
     [_sidebarScrollBelowFilterConstraint setActive:NO];
-    _sidebarScrollBelowFilterConstraint = [scroll.topAnchor constraintEqualToAnchor:collapse.bottomAnchor constant:4];
+    _sidebarScrollBelowFilterConstraint = [scroll.topAnchor constraintEqualToAnchor:collapse.bottomAnchor constant:2];
     [NSLayoutConstraint activateConstraints:@[
         [collapse.topAnchor constraintEqualToAnchor:_sidebarFilterField.bottomAnchor constant:4],
-        [collapse.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-8],
+        [collapse.leadingAnchor constraintEqualToAnchor:_sidebarContainer.centerXAnchor constant:2],
         [expand.centerYAnchor constraintEqualToAnchor:collapse.centerYAnchor],
-        [expand.trailingAnchor constraintEqualToAnchor:collapse.leadingAnchor constant:-2],
+        [expand.trailingAnchor constraintEqualToAnchor:_sidebarContainer.centerXAnchor constant:-2],
         _sidebarScrollBelowFilterConstraint
     ]];
 }
@@ -279,7 +289,7 @@ static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NS
     // would be inert, so it goes away and the list takes the space back.
     expand.hidden = !visible;
     collapse.hidden = !visible;
-    _sidebarScrollBelowFilterConstraint.constant = visible ? 4 : -18;
+    _sidebarScrollBelowFilterConstraint.constant = visible ? 2 : -20;
 }
 
 @end
