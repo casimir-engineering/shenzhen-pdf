@@ -258,6 +258,18 @@ static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NS
     if ([_sidebarContainer viewWithTag:kSPDFExpandAllTag]) return;
     NSScrollView* scroll = _sidebarTable.enclosingScrollView;
     if (!_sidebarContainer || !_sidebarFilterField || !scroll) return;
+    // AppKit had already applied a safe-area content inset to the list, which
+    // is why the gap under the buttons measured ~13pt while the constraint said
+    // 1: the inset sat on top of it. Turning the automatic behaviour off does
+    // not clear an inset already set, so zero it too -- then the constants
+    // below are the gaps that appear.
+    scroll.automaticallyAdjustsContentInsets = NO;
+    scroll.contentInsets = NSEdgeInsetsZero;
+    // The list's own top padding, not this margin, was most of the gap under
+    // the buttons: -rectOfRow:0 started at y=10 under the default (inset)
+    // table style. Pulling the list up with a negative constant only hid the
+    // first row behind the buttons, so drop the padding at its source.
+    if (@available(macOS 11.0, *)) _sidebarTable.style = NSTableViewStyleFullWidth;
 
     NSButton* expand = SPDFOutlineControl(self, kSPDFExpandAllTag, @"Expand All", @"Expand every chapter",
                                           @selector(expandAllChapters:));
@@ -268,12 +280,14 @@ static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NS
 
     // Their own thin row between the filter and the list, the pair centred on
     // the panel so it reads as one control rather than something docked to an
-    // edge. The list follows close underneath: this row is chrome, and the
-    // chapters are what the reader came for.
+    // edge. The two constants differ because the gaps they produce do not: a
+    // chapter row centres its title in a 25pt row, so ~6.5pt of the space under
+    // the buttons belongs to the row, not to this margin. Measured on screen at
+    // 7pt above and 7.5pt below.
     [_sidebarScrollBelowFilterConstraint setActive:NO];
     _sidebarScrollBelowFilterConstraint = [scroll.topAnchor constraintEqualToAnchor:collapse.bottomAnchor constant:2];
     [NSLayoutConstraint activateConstraints:@[
-        [collapse.topAnchor constraintEqualToAnchor:_sidebarFilterField.bottomAnchor constant:4],
+        [collapse.topAnchor constraintEqualToAnchor:_sidebarFilterField.bottomAnchor constant:7],
         [collapse.leadingAnchor constraintEqualToAnchor:_sidebarContainer.centerXAnchor constant:2],
         [expand.centerYAnchor constraintEqualToAnchor:collapse.centerYAnchor],
         [expand.trailingAnchor constraintEqualToAnchor:_sidebarContainer.centerXAnchor constant:-2],
@@ -289,7 +303,7 @@ static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NS
     // would be inert, so it goes away and the list takes the space back.
     expand.hidden = !visible;
     collapse.hidden = !visible;
-    _sidebarScrollBelowFilterConstraint.constant = visible ? 2 : -20;
+    _sidebarScrollBelowFilterConstraint.constant = visible ? 2 : -26;
 }
 
 @end
