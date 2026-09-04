@@ -325,6 +325,17 @@ HARD breaks (each line wraps and centers on its own, and node sizing counts
 them), and `&lt; &gt; &amp; &quot; &#39; &apos; &nbsp;` decode. A `;` ends a
 statement only at top level, never inside a label.
 
+Labels also carry mermaid's inline emphasis: `<b>`/`<strong>` and `<i>`/`<em>`
+become real font RUNS inside the line (`SPDFMarkdownDiagramAttributedLabel`),
+so `USB["<b>USB-C VBUS</b> 5 V"]` draws a semibold half and a plain tail, and
+the markup itself neither prints nor takes width. The runs survive wrapping —
+a soft break inside a `<b>` splits the run with it — and reach the page through
+the label spans the block renderer applies to the canonical string, so the
+drawing, the selection and the exported PDF all agree. Only weight and slant
+are honored, because a positioned label is measured, wrapped, drawn and
+exported through exactly one thing: a font. Everything else — `<u>`, `<code>`,
+an unknown tag, or the bare `<` a `&lt;` decodes to — stays literal text.
+
 Simplifications, all deliberate and all lossless on the page: flowchart
 `subgraph` grouping, `style`/`linkStyle`/`click` statements, composite-state
 braces, state notes, class cardinality strings and mermaid's `autonumber` are
