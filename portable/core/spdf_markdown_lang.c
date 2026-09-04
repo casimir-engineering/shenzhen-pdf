@@ -107,6 +107,31 @@ const spdf_markdown_language* spdf_markdown_language_for_fence(const char* info,
     return NULL;
 }
 
+/* Case-insensitive substring, ASCII-folded -- the language names and ids are
+ * all ASCII, and a query is a person typing at a picker. */
+static int contains_fold(const char* hay, const char* needle) {
+    size_t n = strlen(needle);
+    size_t h = strlen(hay);
+    size_t i, j;
+    if (n == 0) return 1;
+    if (h < n) return 0;
+    for (i = 0; i + n <= h; ++i) {
+        for (j = 0; j < n; ++j)
+            if (tolower((unsigned char)hay[i + j]) != tolower((unsigned char)needle[j])) break;
+        if (j == n) return 1;
+    }
+    return 0;
+}
+
+int spdf_markdown_language_matches(int index, const char* query) {
+    const spdf_markdown_language* l = spdf_markdown_language_at(index);
+    const char* q = query ? query : "";
+    while (*q == ' ' || *q == '\t') ++q;
+    if (!l) return 0;
+    if (!*q) return 1; /* an empty query shows the whole catalog */
+    return contains_fold(l->id, q) || contains_fold(l->name, q) || contains_fold(l->aliases, q);
+}
+
 int spdf_markdown_is_diagram_fence(const char* info, size_t len) {
     const char* tok = NULL;
     size_t n = info ? first_token(info, len, &tok) : 0;

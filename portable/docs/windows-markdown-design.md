@@ -78,9 +78,9 @@ route.
 | No `border-radius` | Code boxes and `<kbd>` have square corners | Accept. A rounded box could be a `<img>` background pre-rendered per box size, but corners are not worth an image per block | — |
 | No `page-break-inside: avoid`; `<thead>` not repeated after a split | A table row never splits (MuPDF keeps a line whole) but the header is not re-drawn on the continuation page; a code box continues without a closing rule at the break | Accept for now. A converter pre-pass cannot know page positions; a post-pass over the laid-out `fz_html` boxes could duplicate the header row — MuPDF-internal, deferred | C |
 | No colour emoji | 🚀 renders as a monochrome Noto glyph | Accept; the Mac uses Apple Color Emoji, MuPDF has no colour font path | — |
-| No WebP decoder | `.webp` images show as `[image]` (this repo's README uses WebP) | Frontend: transcode WebP → PNG through WIC into the cache directory and rewrite the source, exactly as for https images | C |
-| No interactive controls inside the page | No in-place language picker, no copy button on code blocks | A Direct2D overlay drawn by the canvas over the code box rectangles (found from the structured text: a `<pre>` becomes one text block). Selecting a language re-converts with a per-fence override — the converter already takes the fence id from the info string, so an override map is a small addition | C |
-| Diagram fences (`mermaid`, `sequence`, `flow`) | Highlighted code box — the documented fallback on macOS too | Port the Mac's 7 parsers + layered layout (platform-free, §3 of the port plan) to C emitting **SVG**, served from a `fz_tree_archive` mounted beside the document; MuPDF renders SVG natively. Labels would then be image pixels, not searchable text — the Mac's "labels are canonical text" promise needs a text overlay on top, which is the trade-off to decide then | D |
+| No WebP decoder | `.webp` images show as `[image]` (this repo's README uses WebP) | **DONE** (§9.1): `spdf_win_md_webp.{h,cpp}` decodes through WIC into a PNG in the same cache the https fetch fills, and the converter's new `local_image` hook rewrites the source to `.spdf-remote/<name>` | C |
+| No interactive controls inside the page | No in-place language picker, no copy button on code blocks | **Mostly done (§9.3)**: the row is drawn and routable — but found from an `id` on each `<pre>` and one `spdf_markdown_resolve_anchor`, NOT from the structured text, which would have been a heuristic. Per-fence overrides are in `spdf_markdown_options`. Left: the picker's popup window | C |
+| Diagram fences (`mermaid`, `sequence`, `flow`) | Highlighted code box — the documented fallback on macOS too | **The SVG supplement in this row is WITHDRAWN — see §9.2.** The spike renders correctly and as vector, but an SVG's `<text>` is unreachable to `fz_stext`, the export rasterizes it, and MuPDF's CSS cannot position a text overlay over it. The route that satisfies the promise is a small vendored-MuPDF patch (run a display-list image's list instead of filling it), and the fallback holds until then | D |
 | Dark rendition draws images in their original colours | Matches "Keep Image Colors"; the Mac darkens images by default | Apply `spdf_recolor` to image regions only (the inverse of the existing `page_recolor_exclusions`) when the setting is off | C |
 | `<details>` always expanded | Same as macOS | — | — |
 | Remote images need a reopen after the download | First view shows `[Image: alt]` placeholders; the fetch completes, the tab re-shows | This is the Mac's shape too (lazy load, then rerender); wiring in §7 | B |
@@ -314,10 +314,302 @@ override map into the converter. Table header repetition after a split
 (post-layout box walk). Math depth: `\overline`/radical rule via `border-top`
 on an inline span if MuPDF honours it (untested), matrices as tables.
 
-**D — diagrams (separate estimate).** Port the Mac's parsers and layered graph
-layout (platform-free Objective-C++, ~1,300 lines) to C emitting SVG into a
-tree archive; decide whether diagram labels must be searchable text (then a
-text overlay is needed) or image pixels are acceptable for Windows.
+**D — diagrams (separate estimate).** ~~Port the Mac's parsers and layered graph
+layout to C emitting SVG into a tree archive; decide whether diagram labels must
+be searchable text or image pixels are acceptable.~~ **Re-scoped by the spike in
+§9.2, which answered the question the second half of that sentence deferred: on
+this engine SVG labels can only ever be pixels, and pixels are not acceptable
+because the readme and 26.8.31-1 promise selectable labels in as many words.** D
+is now two pieces, in this order: **D1**, the vendored-MuPDF patch that makes a
+display-list image run rather than rasterize (a public accessor plus a branch in
+the HTML draw path — small, benefits every SVG, and testable by inverting
+`md_svg_text_test`); then **D2**, the engine port itself. D2 is bigger than §8
+guessed: the Mac side is 4,783 lines across 18 units, of which the layered layout
+(`SPDFMarkdownDiagramLayout.mm`, 468 lines, already C++ with plain structs), the
+edge routing (369) and the parsers (1,124 across five kinds) transliterate almost
+line for line, while text measurement (`CTTypesetterSuggestLineBreak` plus font
+metrics) needs a real replacement — it is what every box size and every
+label-containment proof rests on. Call it ~5,000 lines of C plus ~2,500 of ported
+tests, and note that those tests assert *properties* (no node overlaps, ranks
+monotone, no fan self-crossing, labels inside their outlines, drawn-within-size,
+determinism), so they will validate a C port that agrees with the Mac's
+pixels nowhere.
 
 **Linux for free.** Add the units to the `linux-gtk4` link line and dispatch
 `.md` to `spdf_open_markdown`; everything in §2 applies unchanged.
+
+## 9. Phase C, as it lands
+
+### 9.1 WebP through WIC — done
+
+`![](shot.webp)` used to reach MuPDF's `load_html_image()`, fail to decode and
+leave the literal word `[image]` on the page (`mupdf/source/html/html-parse.c
+:714`); MuPDF 1.27 has `load-png/jpeg/gif/bmp/tiff/jpx/psd/pnm/jbig2/jxr.c` and
+no `load-webp.c`. Windows itself can read WebP — WIC gained the "Microsoft Webp
+Decoder" in Windows 10 1809 — so the frontend decodes the file and writes a PNG
+into the cache directory MuPDF has already mounted.
+
+**The core seam is one hook, appended to `spdf_markdown_options`:**
+
+```c
+spdf_markdown_image_hook local_image;   /* same signature as remote_image */
+void* local_image_user;
+const char* document_dir;               /* filled by spdf_open_markdown */
+```
+
+`spdf_markdown_resolve_image` offers a document-relative source to the hook when
+its extension is one MuPDF cannot decode (a one-entry table: `.webp`), joining it
+to `document_dir` first so the hook sees an absolute path; the answer is a bare
+cache file name and is rewritten to `.spdf-remote/<name>` through the same
+`mount_cache_name()` the https branch now shares — a name with a separator or a
+`..` is refused for a local image exactly as for a remote one. **A refusal falls
+straight through to the plain relative path**, so a Windows without the codec
+still shows the `[image]` it always did, with no dialog and no retry loop. With
+no hook installed nothing changes at all, which is what keeps macOS and Linux
+byte-identical.
+
+**`spdf_win_md_webp.{h,cpp}`** is the frontend half: a `.webp` name or a
+`RIFF....WEBP` byte sniff selects a file; the cache name is FNV-1a-64 of the
+case-folded absolute path plus the file's byte size and last-write time, so
+editing the picture changes the name and the stale PNG is simply never asked for
+again; the write is a per-thread `.part` moved into place, which is what makes it
+safe for the several threads that open a Markdown document at once. The
+remote-image lookup runs the same call over a file it downloaded, so a badge
+served as WebP from a URL ending `.svg` is transcoded too — the bytes decide, not
+the URL.
+
+Proof: `md_webp_test` (the pure gates, the transcode, the cache reuse, and
+`spdf_search_page(doc, 0, "[image]")` == 0 with the hook and == 2 without it, so
+the assertion cannot pass vacuously), `SPDFCoreMarkdownTests`'
+`test_local_image_transcode` (the pure rewrite, the path join with and without a
+trailing separator, the escaping answer refused, each requirement disabling the
+hook on its own), fixtures `webp-figure.md` + `md-shot.webp`. Rendered:
+`C:\spdf-build\track-mdpolish\scratch\webp-after.png` (light),
+`webp-dark.png`, and `readme-webp.png` — this repository's own README, whose
+`macos-main-window.webp` screenshot is now a picture instead of a word.
+
+### 9.2 The diagram route: the SVG spike, and why §3's row is wrong
+
+§3's diagram row and §8's phase D proposed emitting **SVG into a
+`fz_tree_archive` beside the document**, and hedged the label question with "the
+Mac's 'labels are canonical text' promise needs a text overlay on top, which is
+the trade-off to decide then". **The spike says there is no trade-off to decide:
+the SVG route cannot keep the labels, and no text overlay is possible in this
+engine.** Measured, not inferred — `md_svg_text_test` and the four renders below.
+
+**What the SVG route does give.** A hand-written stand-in for a diagram emitter's
+output (`portable/win/tests/fixtures/md-diagram.svg`: two node shapes, a rounded
+rect and a stadium, a routed elbow, an arrowhead, a diamond, three labels) drawn
+through the real pipeline as `![](md-diagram.svg)` renders **correctly and as
+vector**. At 4× zoom the strokes, the corner arcs and the label glyphs are
+resampling-free (`C:\spdf-build\track-mdpolish\scratch\svg-zoom4.png`). The
+figure is centred, captioned and paginated like any other image, so the
+"page-sized figures" work of 26.9.2-1 would come for free. The screen half of
+26.8.31-1's promise is therefore reachable.
+
+**What it does not give — three findings.**
+
+1. **Labels are not searchable or selectable.** A label word that appears nowhere
+   in the prose (`Kumquatlabel`) returns **no matches**, while the prose control
+   word on the same page (`Aardvark`) returns exactly one — so the search works
+   and the picture is what is opaque to it
+   (`scratch\svg-find-unique.png`; the earlier `scratch\svg-find-label.png` shows
+   the same thing from the other side: a word in *both* the prose and the picture
+   reports "match 1 of 1", not 2). `spdf_extract_page_text_lines` agrees, which
+   means the document map, Select All and translate agree too.
+2. **The exported PDF is worse, not equal.** `spdf_export_pdf` writes the figure
+   as an **image XObject** (`/Image` is in the bytes) and the label text is not in
+   the content stream at all. So export loses both halves at once: not selectable
+   *and* not vector — the opposite of "it stays selectable in the exported PDF".
+3. **Why, and why an overlay cannot rescue it.** `<img src="*.svg">` goes to
+   `fz_new_image_from_svg` (`mupdf/source/html/html-parse.c:670`), which builds a
+   display list and then wraps it in an `fz_image`
+   (`fz_new_image_from_display_list`, `mupdf/source/svg/svg-doc.c:241,258`). The
+   HTML layout draws that box with `fz_fill_image`, and `fz_stext` never descends
+   into an image — the glyphs are painted, never recorded. An **inline** `<svg>`
+   is not an escape: `gen2_image_svg` (`html-parse.c:1310`) takes the identical
+   road. And a text overlay cannot be positioned over the picture, because
+   MuPDF's CSS has **no `position`, `top`, `left`, `float` or `transform`**
+   (`mupdf/source/html/css-apply.c` — the property table has none of them). The
+   engine is a pure block/inline flow engine; there is no way to put a glyph at a
+   chosen (x, y) over a figure.
+
+**The verdict.** Shipping the SVG route as designed would put pictures on the
+page that look right and are, to search, selection, the map, translate and every
+exported PDF, blank rectangles — while the readme and release 26.8.31-1 promise
+the opposite in as many words. That is exactly the "shipping pixels silently"
+outcome the track was told not to take, so phase D as written is **withdrawn**.
+
+**The route that can work, and what it costs.** The text is not lost, only
+unrecorded: the SVG's display list contains real `fz_fill_text` calls, and it is
+kept alive inside the image (`fz_display_list_image { fz_image super; fz_matrix
+transform; fz_display_list *list; }`, `mupdf/source/fitz/image.c:1645`). So the
+fix is to make the HTML layout **run that display list under the box's transform**
+instead of filling a pixmap of it. Then the same `fz_stext` pass that reads the
+prose reads the labels, at their drawn positions, in place — and the PDF writer
+receives vector operators and real glyphs, satisfying all three promises at once,
+for every SVG in every Markdown document rather than only for diagrams. The cost
+is a **vendored-MuPDF patch of two small pieces**: a public accessor for a
+display-list image's list (there is none today; the struct is private to
+`image.c`), and a branch in the HTML draw path that prefers it. `ext/_patches`
+already exists for exactly this kind of change. Until that lands, a diagram fence
+stays the syntax-highlighted code box it is today — which is also macOS's
+documented fallback, so nothing regresses and nothing is claimed that is not
+true.
+
+`md_svg_text_test` keeps all of the above executable, including the control. **A
+failure in it is good news**: it would mean the engine had learned to extract SVG
+text, and the SVG route could then be taken as originally designed.
+
+### 9.3 The code box's in-page controls — the row, drawn and routable
+
+26.8.29-2 promises "a quiet language control in the box header" and 26.9.2-1 "a
+copy button to the left of its language picker". There are no HTML widgets here
+— the page is a picture MuPDF drew — so both are canvas chrome: a Direct2D pill
+over the page, hit-tested against the very rectangles that were drawn.
+
+**Finding a fence on the page, without looking at the picture.** The converter
+now puts `id="spdf-code-N"` on every `<pre>`, and `spdf_markdown_scan_fences()`
+(`portable/core/spdf_markdown_fences.c`) numbers the same N — both walk md4c
+with identical flags after the identical BOM and front-matter skip, so fence N
+and anchor `#spdf-code-N` are the same block **by construction**, not by a
+geometric match. One `spdf_markdown_resolve_anchor()` per fence then gives the
+page and the y, once per document rather than once per paint.
+`SPDFCoreMarkdownTests`' agreement case counts the converter's anchors against
+the scan's fences over one document, so the two cannot drift apart quietly.
+
+Two traps, both measured rather than reasoned about:
+
+- **MuPDF's HTML anchor y is in CONTENT space.** `htdoc_resolve_link`
+  (`mupdf/source/html/html-doc.c:65-70`) divides by `html->page_h`, the
+  *printable* height, and never adds `html->page_margin[T]` — unlike
+  `fz_load_html_links`, which does (`html-outline.c:138-143`). A caller
+  comparing it with a rendered page is a whole 60pt top margin out, and the
+  symptom looks exactly like an off-by-one-element bug: in the first capture
+  every pill sat on the *previous* block. `spdf_markdown_resolve_anchor` adds
+  the margin once, and `SPDF_MARKDOWN_PAGE_MARGIN_TOP_PT` /
+  `_SIDE_PT` / `SPDF_MARKDOWN_CODE_BOX_PADDING_PT` are exported beside the
+  anchor prefix so a frontend never has to guess the generated stylesheet's own
+  geometry.
+- **What the anchor points at is the first line's baseline**, not the box's
+  edge: `find_box_target` returns `find_first_content(box)->y`
+  (`html-outline.c:149-206`). So the row is placed at `anchor − 12pt` (the box's
+  own padding) and lifted to rest **on** the box's top edge with a 2px lip
+  inside it. A row centred on that edge covered the first four characters of
+  code; a row inside the box covered a whole line.
+
+**The horizontal extent** is the stylesheet's text column — 61pt in from each
+edge of the sheet, in points and so independent of the A-/A+ text size. That is
+an approximation in one case only, a fence nested inside a list, where the real
+box is indented and the pills sit a little wide of it. Reconstructing the box
+from the laid-out text's rectangles would cost a structured-text pass per fence
+to buy a few points, and nothing else in the reader depends on the number.
+
+**Geometry is published, not queried**, exactly as `spdf_win_annot.h` states and
+for the same reason: the paint that drew the pills hands the router each
+rectangle in client device pixels (`spdf_win_md_code_publish_geometry`), and
+`spdf_win_md_code_marks.h` — pure, header-only, the shape of
+`spdf_win_annot_marks.h` — tests points against those. Painting and hit-testing
+cannot disagree because they are the same numbers.
+
+**Nothing reaches print or export**, by construction rather than by a check:
+the pills are drawn only in the canvas phase of a *scene*, and print, Save as
+PDF and Copy Page render through `spdf_export_pdf` and the flagless render path,
+which never build one. `md_code_test` pins the other half of the cost model too
+— a PDF tab finds no fences and publishes no marks, so it pays nothing.
+
+**The picker's list** is `spdf_markdown_language_matches(index, query)`: a
+case-insensitive substring of a language's id, display name or aliases, which is
+`-languagesMatchingQuery:`'s rule, keeping the catalog's own sorted-by-name
+order rather than a fuzzy score. The choice is recorded as a per-fence override
+(`spdf_markdown_options.language_overrides`, honoured in `close_code`), which
+beats the fence's info string *and* the rule that leaves a diagram fence
+uncoloured; `"plain"` tokenises to nothing, which is how Plain Text clears
+highlighting. Recording one bumps the options generation, so every handle that
+reopens the document paginates identically — the same contract a text-size
+change has.
+
+Rendered, with the two patch requests below applied locally and then reverted
+(the §7 precedent): `C:\spdf-build\track-mdpolish\scratch\code-pills-light.png`
+and `code-pills-dark.png` — page 2 of `readme-style.md`, six code boxes, each
+with **Copy** on the left of its top edge and its own language (C, Python, JSON,
+YAML, Shell, Plain Text) with a ▾ on the right, in the light and Obsidian-dark
+palettes, covering no code in either.
+
+#### Patch requests (other tracks' files; exact text)
+
+**1. `portable/win/src/spdf_win_d2d.cpp`** — one include beside the other
+overlay include, and one call after the overlays. `spdf_win_md_code_paint.cpp`
+is already in the app build (the source list is a wildcard over
+`portable\win\src\*.cpp`), so it compiles today and only the call is missing.
+
+| Old | New |
+|---|---|
+| `#include "spdf_win_d2d_overlay.h" /* draw_overlays; needs only the scene */` | `#include "spdf_win_d2d_overlay.h" /* draw_overlays; needs only the scene */`<br>`#include "spdf_win_md_code_paint.h"` |
+| `    draw_overlays(target, scene);` | `    draw_overlays(target, scene);`<br>`    spdf_win_md_code_paint(target, scene);` |
+
+**2. `portable/win/src/spdf_win_chrome_scene.h`** — one include, and one block
+at the end of `chrome_publish_comments()`, which is already the function that
+resolves the selected tab's document and publishes per-paint geometry:
+
+`#include "spdf_win_annot.h"` → `#include "spdf_win_annot.h"` + a new line
+`#include "spdf_win_md_code.h"`
+
+and, after the two `spdf_win_annot_*` lines that close that function:
+
+```c
+    {
+        char md_err[256] = {0};
+        const char* md_path = NULL;
+        spdf_document* md_doc = NULL;
+        if (a->tabs) {
+            int sel = spdf_win_tabs_selected_index(a->tabs);
+            if (sel >= 0) {
+                md_path = spdf_win_tabs_path(a->tabs, sel);
+                md_doc = (spdf_document*)spdf_win_tabs_document(a->tabs, sel, md_err, sizeof(md_err));
+            }
+        } else {
+            md_path = a->path;
+            md_doc = a->doc;
+        }
+        spdf_win_md_code_frame(md_doc, md_path, scene, layout->canvas.x, layout->canvas.y,
+                               spdf_win_canvas_zoom(a->canvas));
+    }
+```
+
+`spdf_win_md_code_frame()` carries the policy (sync only when the path or the
+options generation changed; clear when there is no document), so the call site
+holds none. The early `if (!a->canvas)` return above it should also gain
+`spdf_win_md_code_frame(NULL, NULL, NULL, 0.0f, 0.0f, 1.0f);` beside the
+existing `spdf_win_annot_publish_geometry(NULL, ...)`, so a frame with no canvas
+clears the marks rather than leaving the last document's.
+
+**3. `portable/win/src/spdf_win_chrome_input.h`** — the routing, which is the
+one piece not yet drawn from a capture. After the enum and hit struct are
+complete, `#include "spdf_win_md_code_marks.h"`, and inside the canvas branch —
+**before** the comment-badge test and before the point is offered to the canvas
+as text, which is the mac's precedence
+(`SPDFMacMarkdownPageCanvas.mm`: copy button, then language control, then
+`characterIndexAtPoint`) — call
+
+```c
+    int md_copy = 0;
+    int md_fence = spdf_win_md_code_mark_at(spdf_win_md_code_marks(&md_count), md_count, x, y, &md_copy);
+```
+
+and return a new action rather than `SPDF_WIN_CA_CANVAS`, so a click on a pill
+never starts a text selection. Two commands then: the copy button calls
+`spdf_win_md_code_copy(md_fence)` (clipboard plus the 1.2 s "Copied" title, with
+a failed copy showing no feedback at all), and the language pill opens the
+picker.
+
+**What is left.** The picker's *popup window* — a small owner-drawn list
+anchored to the pill, filtering through `spdf_markdown_language_matches` as the
+reader types, arrow keys and Enter, Escape to dismiss — is not written. Its
+model is (the filter predicate, the catalog's order, the override map and the
+generation bump, all pinned by `md_code_test` and `SPDFCoreMarkdownTests`), and
+choosing a language already re-highlights the fence on the next open; only the
+Win32 shell that turns a click on the pill into a choice is missing. Until it
+lands the pill draws and hit-tests but has nothing to open, so patch request 3
+should wire the copy button first and leave the language pill inert rather than
+route it somewhere that does nothing.

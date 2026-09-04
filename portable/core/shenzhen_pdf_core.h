@@ -368,6 +368,13 @@ int spdf_save_single_page_pdf(spdf_document* doc, int page_index, const char* pa
  * connection; the hook must not either (it runs inside open). */
 typedef int (*spdf_markdown_image_hook)(void* user, const char* url, char* cache_name_out, size_t cap);
 
+/* One entry of spdf_markdown_options.language_overrides: "highlight the fence
+ * at this position as this catalog language, whatever its info string says". */
+typedef struct spdf_markdown_language_override {
+    int fence_index;         /* 0-based, document order */
+    const char* language_id; /* a spdf_markdown_language id, or "plain" */
+} spdf_markdown_language_override;
+
 typedef struct spdf_markdown_options {
     /* Body text size multiplier, the A-/A+ control; clamped to [0.5, 3.0] like
      * macOS's markdownFontScale. 1.0 is an 11pt body on A4. */
@@ -384,6 +391,33 @@ typedef struct spdf_markdown_options {
     /* Absolute directory holding the files the hook names; mounted into the
      * document's resource tree so MuPDF can load them. NULL disables. */
     const char* remote_image_dir;
+    /* LOCAL IMAGES MuPDF CANNOT DECODE. MuPDF 1.27 has no WebP loader (there is
+     * no load-webp.c in mupdf/source/fitz), so `![](shot.webp)` reaches
+     * load_html_image(), fails to decode and draws MuPDF's own "[image]" word.
+     * When this hook is set, a document-relative image whose extension is one
+     * of those (today only .webp) is offered to the frontend FIRST, as an
+     * absolute path built from document_dir; the frontend transcodes it into
+     * remote_image_dir and answers with the cache file name, exactly as
+     * remote_image answers for an https URL, and the converter points the <img>
+     * at ".spdf-remote/<name>". Answering 0 leaves the original source in
+     * place, so the "[image]" fallback is what a machine without the codec
+     * still gets. Needs remote_image_dir and document_dir to be set too. */
+    spdf_markdown_image_hook local_image;
+    void* local_image_user;
+    /* The document's own folder, no trailing separator. spdf_open_markdown
+     * fills this in from the path it was given; a caller converting HTML by
+     * hand sets it only if it also sets local_image. */
+    const char* document_dir;
+    /* PER-FENCE LANGUAGE OVERRIDES, the in-page language picker's whole effect
+     * on the document. `count` entries; each names a fence by its 0-based
+     * position in the document and the catalog id to highlight it as. An entry
+     * wins over the fence's own info string, and over the diagram-fence rule
+     * that leaves mermaid uncoloured; "plain" clears highlighting, which is why
+     * Plain Text is an explicit choice rather than the absence of one. An index
+     * no fence has is ignored. Borrowed, not copied: the frontend owns the
+     * array and must outlive the open. */
+    const spdf_markdown_language_override* language_overrides;
+    int language_override_count;
 } spdf_markdown_options;
 
 /* text_scale 1.0, portrait, dark rendition on, no remote images. */
@@ -407,6 +441,53 @@ spdf_document* spdf_open_markdown(const char* path, const spdf_markdown_options*
  * spdf_save_single_page_pdf, which keep the original bytes. Always the LIGHT
  * rendition: this path never sees a render flag. Returns 1 on success. */
 int spdf_export_pdf(spdf_document* doc, const char* path, int page_index, char* err, size_t err_len);
+
+/* --- fenced code blocks, for the in-page controls --------------------------
+ * The language picker and the copy button need three things the laid-out page
+ * cannot tell them: which fence is which, what language it is showing, and the
+ * raw source to put on the clipboard. All three come from one pure scan of the
+ * Markdown, and the ordinals it produces are the SAME ordinals the converter
+ * numbers its <pre> elements with -- both walk md4c with identical flags after
+ * the identical front-matter skip -- so fence N and anchor "#spdf-code-N" are
+ * the same block by construction rather than by a heuristic match. */
+typedef struct spdf_markdown_fence {
+    int index;          /* 0-based, document order */
+    char info[96];      /* the info string as written, trimmed ("c++ title=x") */
+    char language[32];  /* the catalog id it resolves to; "" when unknown */
+    int diagram;        /* 1 for a mermaid/sequence/flow fence */
+    char* code;         /* the raw source, NUL-terminated, newlines kept */
+    size_t code_len;
+} spdf_markdown_fence;
+
+typedef struct spdf_markdown_fences {
+    spdf_markdown_fence* items;
+    int count;
+} spdf_markdown_fences;
+
+/* Every fenced code block, in document order. `out` is zeroed first, so a
+ * document with none succeeds with count 0. Returns 0 only on a parse or
+ * allocation failure, and then `out` is empty. Pure: no I/O, no MuPDF. */
+int spdf_markdown_scan_fences(const char* markdown, size_t len, spdf_markdown_fences* out);
+void spdf_markdown_free_fences(spdf_markdown_fences* list);
+
+/* The id the converter puts on every <pre>, so a frontend can ask the laid-out
+ * document where fence N ended up: "#spdf-code-7". */
+#define SPDF_MARKDOWN_CODE_ANCHOR_PREFIX "spdf-code-"
+
+/* The generated stylesheet's own geometry, in points, for a frontend that has to
+ * turn "where is fence N" into a rectangle: the page box is
+ * @page{margin:60pt 61pt} and a code box pads its first glyph 12pt in from its
+ * own edge (spdf_markdown_support.c). Points, so the A-/A+ text size -- which
+ * changes only the em -- does not change them. */
+#define SPDF_MARKDOWN_PAGE_MARGIN_TOP_PT 60.0f
+#define SPDF_MARKDOWN_PAGE_MARGIN_SIDE_PT 61.0f
+#define SPDF_MARKDOWN_CODE_BOX_PADDING_PT 12.0f
+
+/* Where an internal anchor -- "#name", an id in a reflowable document -- landed:
+ * its page and the y of that point in page space (PDF points, y down). 1 on
+ * success; 0 when the document has no such anchor, and then nothing is written.
+ * Reflowable formats only in practice, which is why it lives with Markdown. */
+int spdf_markdown_resolve_anchor(spdf_document* doc, const char* uri, int* page_index, float* page_y);
 
 #ifdef __cplusplus
 }

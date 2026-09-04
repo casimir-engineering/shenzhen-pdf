@@ -163,7 +163,8 @@ CORE_SUITES=(
   "SPDFCoreSelectionTests|mupdf|$CORE_SET|"
   "SPDFCoreCJKSelectionTests|mupdf|$CORE_SET|"
   "SPDFCorePasswordTests|qpdf|$CORE_SET|%PASSWORD_FIXTURES%"
-  "SPDFCoreMarkdownTests|-|portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c ext/md4c/md4c.c|"
+  "SPDFCoreMarkdownTests|-|portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_fences.c ext/md4c/md4c.c|"
+  "SPDFCoreMarkdownCodeTests|-|portable/core/spdf_markdown.c portable/core/spdf_markdown_support.c portable/core/spdf_markdown_html.c portable/core/spdf_markdown_lang.c portable/core/spdf_markdown_lex.c portable/core/spdf_markdown_math.c portable/core/spdf_markdown_fences.c ext/md4c/md4c.c|"
 )
 
 field() { echo "$1" | cut -d'|' -f"$2"; }

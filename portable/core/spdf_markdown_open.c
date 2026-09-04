@@ -9,7 +9,10 @@
  * letters at conversion time; the directory archive is the second fence).
  * A frontend's remote-image cache is a second directory MOUNTED under
  * ".spdf-remote/", which is the prefix the converter rewrote cached https
- * sources to.
+ * sources to. That same mount carries transcoded LOCAL images: this file works
+ * out the document's folder once and puts it in options.document_dir, which is
+ * what lets the local-image hook turn `![](shot.webp)` -- a format MuPDF has no
+ * decoder for -- into a PNG in the cache.
  *
  * TWO RENDITIONS, ONE PAGINATION. With options->dark_rendition the same body
  * is laid out twice, once per stylesheet, and the dark document is parked in
@@ -73,25 +76,32 @@ static fz_document* open_rendition(fz_context* ctx, fz_archive* dir, const char*
     return doc;
 }
 
-/* The document's folder, plus the remote cache mounted under its prefix. */
-static fz_archive* open_resources(fz_context* ctx, const char* path, const char* remote_dir) {
-    char dir[2048];
-    fz_archive* local = NULL;
-    fz_archive* remote = NULL;
-    fz_archive* multi = NULL;
-    /* Not fz_dirname: it splits on '/' alone, and a Windows path arrives with
-     * backslashes -- the document's folder would silently become ".". */
+/* The document's own folder, as both MuPDF's resource root and the base the
+ * local-image hook resolves a relative source against. 0 when the path is too
+ * long for the buffer. Not fz_dirname: it splits on '/' alone, and a Windows
+ * path arrives with backslashes -- the folder would silently become ".". */
+static int document_dir(const char* path, char* dir, size_t cap) {
     size_t dir_len = spdf_compat_path_dir_len(path);
 
     if (dir_len == 0) {
+        if (cap < 2) return 0;
         strcpy(dir, ".");
-    } else {
-        if (dir_len >= sizeof(dir)) fz_throw(ctx, FZ_ERROR_LIMIT, "Document path is too long.");
-        memcpy(dir, path, dir_len);
-        dir[dir_len] = '\0';
-        if (dir_len > 1 && (dir[dir_len - 1] == '/' || dir[dir_len - 1] == '\\') && dir[dir_len - 2] != ':')
-            dir[dir_len - 1] = '\0'; /* "C:\a\b\" -> "C:\a\b", but keep "C:\" whole */
+        return 1;
     }
+    if (dir_len >= cap) return 0;
+    memcpy(dir, path, dir_len);
+    dir[dir_len] = '\0';
+    if (dir_len > 1 && (dir[dir_len - 1] == '/' || dir[dir_len - 1] == '\\') && dir[dir_len - 2] != ':')
+        dir[dir_len - 1] = '\0'; /* "C:\a\b\" -> "C:\a\b", but keep "C:\" whole */
+    return 1;
+}
+
+/* The document's folder, plus the remote cache mounted under its prefix. */
+static fz_archive* open_resources(fz_context* ctx, const char* dir, const char* remote_dir) {
+    fz_archive* local = NULL;
+    fz_archive* remote = NULL;
+    fz_archive* multi = NULL;
+
     fz_var(local);
     fz_var(remote);
     fz_var(multi);
@@ -130,6 +140,7 @@ spdf_document* spdf_open_markdown(const char* path, const spdf_markdown_options*
     char* body = NULL;
     char* light = NULL;
     char* dark = NULL;
+    char dir_utf8[2048];
     float w, h, em;
 
     set_error(err, err_len, "");
@@ -137,11 +148,17 @@ spdf_document* spdf_open_markdown(const char* path, const spdf_markdown_options*
         set_error(err, err_len, "No document path was supplied.");
         return NULL;
     }
+    if (!document_dir(path, dir_utf8, sizeof(dir_utf8))) {
+        set_error(err, err_len, "Document path is too long.");
+        return NULL;
+    }
     ctx = fz_new_context(NULL, NULL, SPDF_MARKDOWN_STORE_LIMIT);
     if (!ctx) {
         set_error(err, err_len, "Could not create MuPDF context.");
         return NULL;
     }
+    /* The converter's local-image hook resolves `![](a.webp)` against this. */
+    opts.document_dir = dir_utf8;
     opts.text_scale = clamp_scale(opts.text_scale);
     w = opts.landscape ? SPDF_A4_HEIGHT : SPDF_A4_WIDTH;
     h = opts.landscape ? SPDF_A4_WIDTH : SPDF_A4_HEIGHT;
@@ -175,7 +192,7 @@ spdf_document* spdf_open_markdown(const char* path, const spdf_markdown_options*
         fz_drop_buffer(ctx, source);
         source = NULL;
 
-        dir = open_resources(ctx, path, opts.remote_image_dir);
+        dir = open_resources(ctx, dir_utf8, opts.remote_image_dir);
         light_doc = open_rendition(ctx, dir, light, w, h, em);
         if (dark) {
             dark_doc = open_rendition(ctx, dir, dark, w, h, em);
@@ -220,6 +237,36 @@ spdf_document* spdf_open_markdown(const char* path, const spdf_markdown_options*
     /* fz_strdup allocates with the context's allocator (malloc here), and
      * spdf_close frees the title with free(): the same default allocator. */
     return opened;
+}
+
+int spdf_markdown_resolve_anchor(spdf_document* doc, const char* uri, int* page_index, float* page_y) {
+    fz_location loc;
+    float x = 0.0f, y = 0.0f;
+    int page = -1;
+
+    if (!doc || !doc->doc || !uri || !*uri) return 0;
+    fz_try(doc->ctx) {
+        /* The light rendition on purpose: the two paginate identically (the
+         * opener drops the dark one if they ever did not), and every caller of
+         * this wants coordinates it can compare with a rendered page. */
+        loc = fz_resolve_link(doc->ctx, doc->doc, uri, &x, &y);
+        if (loc.page >= 0 || loc.chapter >= 0) page = fz_page_number_from_location(doc->ctx, doc->doc, loc);
+    }
+    fz_catch(doc->ctx) {
+        fz_ignore_error(doc->ctx);
+        return 0;
+    }
+    if (page < 0 || page >= doc->page_count) return 0;
+    if (page_index) *page_index = page;
+    /* MuPDF's HTML anchor y is in CONTENT space, not page space: look at
+     * htdoc_resolve_link (mupdf/source/html/html-doc.c:65-70), which divides by
+     * html->page_h -- the printable height -- and never adds html->page_margin[T],
+     * the way fz_load_html_links does for a link rectangle
+     * (html-outline.c:138-143). A caller comparing this with a rendered page
+     * would be a whole top margin out, which is 60pt of a 842pt sheet and looks
+     * exactly like an off-by-one-element bug. Add it here, once. */
+    if (page_y) *page_y = y + SPDF_MARKDOWN_PAGE_MARGIN_TOP_PT;
+    return 1;
 }
 
 int spdf_export_pdf(spdf_document* doc, const char* path, int page_index, char* err, size_t err_len) {

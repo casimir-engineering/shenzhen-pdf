@@ -1,6 +1,7 @@
 /* spdf_win_md_images.cpp -- see spdf_win_md_images.h. */
 #include "spdf_win_md_images.h"
 
+#include "spdf_win_md_webp.h"
 #include "spdf_win_paths.h"
 
 #include <shlobj.h>
@@ -220,6 +221,15 @@ int spdf_win_md_images_lookup(void* user, const char* url, char* name_out, size_
     if (strlen(name) >= cap) return 0;
     if (spdf_win_md_images_dir(dir, sizeof(dir)) && spdf_win_path_join(dir, name, path, sizeof(path)) &&
         file_exists_utf8(path)) {
+        /* A downloaded WebP is a file MuPDF cannot decode, whatever the URL
+         * called it. Hand back the transcoded PNG beside it instead; a failure
+         * (no WIC codec) falls through to the original name and the "[image]"
+         * placeholder, which is what an older Windows has always shown. */
+        char png[64];
+        if (spdf_win_md_webp_lookup(NULL, path, png, sizeof(png)) && strlen(png) < cap) {
+            strcpy(name_out, png);
+            return 1;
+        }
         strcpy(name_out, name);
         return 1;
     }

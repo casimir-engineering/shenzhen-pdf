@@ -5,10 +5,16 @@
  * it must -- and must not -- contain. The end-to-end behaviour on a laid-out
  * document is portable/win/tests/markdown_open_test.c's job.
  *
+ * The in-page code controls' converter side -- the fence table, the per-fence
+ * language override, the picker's filter and the local-image transcode hook --
+ * is SPDFCoreMarkdownCodeTests.c, extracted when this file reached its cap.
+ *
  * Sources: portable/core/spdf_markdown.c spdf_markdown_support.c
  *          spdf_markdown_html.c spdf_markdown_lang.c spdf_markdown_lex.c
  *          spdf_markdown_math.c ext/md4c/md4c.c
  */
+#include "SPDFCoreMarkdownFences.h"
+
 #include "spdf_markdown.h"
 
 #include <stdio.h>
@@ -123,12 +129,14 @@ static void test_lists_and_tables(void) {
 }
 
 static void test_code_blocks(void) {
-    char* h = convert("```c\nint x = 0; // hi\n```\n\n```nosuchlang\nint y;\n```\n\n"
-                      "```mermaid\ngraph TD\n```\n\n```\nplain <b>\n```\n");
-    HAS(h, "<pre><code><span class=\"hk\">int</span> x = <span class=\"hn\">0</span>; <span class=\"hc\">// hi</span></code></pre>");
-    HAS(h, "<pre><code>int y;</code></pre>");
-    HAS(h, "<pre><code>graph TD</code></pre>"); /* diagram fences keep their code box */
-    HAS(h, "<pre><code>plain &lt;b&gt;</code></pre>");
+    char* h = convert(SPDF_MD_TEST_FOUR_FENCES);
+    /* Every <pre> carries its fence's ordinal as an id, which is how the in-page
+     * language picker and copy button find the box on the laid-out page. */
+    HAS(h, "<pre id=\"spdf-code-0\"><code><span class=\"hk\">int</span> x = <span class=\"hn\">0</span>; "
+           "<span class=\"hc\">// hi</span></code></pre>");
+    HAS(h, "<pre id=\"spdf-code-1\"><code>int y;</code></pre>");
+    HAS(h, "<pre id=\"spdf-code-2\"><code>graph TD</code></pre>"); /* diagram fences keep their code box */
+    HAS(h, "<pre id=\"spdf-code-3\"><code>plain &lt;b&gt;</code></pre>");
     free(h);
 }
 
