@@ -29,8 +29,11 @@
 #ifndef SPDF_WIN_MD_COMMANDS_H
 #define SPDF_WIN_MD_COMMANDS_H
 
+#include "spdf_win_chrome_content.h" /* the panels rebuild after a reload */
+#include "spdf_win_chrome_find.h"    /* so does the search */
 #include "spdf_win_md.h"
 #include "spdf_win_md_images.h"
+#include "spdf_win_md_reload.h"      /* the off-thread re-read this file installs */
 
 /* WM_APP + 0x4D44 ("MD"): "remote images landed in the cache". Posted by the
  * fetch thread to the main window; main.cpp routes it to
@@ -73,6 +76,48 @@ static void spdf_win_md_command_after_open(app* a, HWND window) {
 /* The SPDF_WIN_MD_WM_IMAGES_ARRIVED handler. */
 static int spdf_win_md_command_images_arrived(app* a) {
     return spdf_win_md_command_reopen(a);
+}
+
+/* THE SPDF_WIN_MD_WM_RELOADED HANDLER: the file changed on disk, the re-read
+ * finished off-thread (spdf_win_md_reload.h, started by spdf_win_watch_app.h),
+ * and the new document is swapped under the canvas -- zoom and offset kept, no
+ * empty frame (spdf_win_canvas_replace_document). This is the mac's
+ * -installRenderedDocument:preserveCurrentState:YES, at the one place in this
+ * frontend that can do it.
+ *
+ * The TAB's own handle is now the old bytes. It is released rather than
+ * swapped, because the tab model materialises documents through its open hook
+ * and has no adopt: the canvas owns the new document, and the next thing that
+ * asks the tab for one (Save As, Print, a switch away and back) opens the file
+ * as it is then -- one open, at the moment it is needed, instead of a stale
+ * handle answering forever. Released AFTER the swap, while the canvas no longer
+ * borrows it.
+ *
+ * The reader may have moved on while the read ran: a different tab selected, or
+ * the tab closed. The result is then closed and dropped -- that tab reopens from
+ * disk whenever it is shown -- rather than swapped under a document it does not
+ * describe. */
+static int spdf_win_md_command_reloaded(app* a) {
+    char path[1024];
+    const char* selected_path;
+    int index;
+    spdf_document* doc = spdf_win_md_reload_take(path, sizeof(path));
+    if (!doc) return 0; /* a failed read keeps the last good document on screen */
+    index = a->tabs ? spdf_win_tabs_selected_index(a->tabs) : -1;
+    selected_path = index >= 0 ? spdf_win_tabs_path(a->tabs, index) : NULL;
+    if (!a->canvas || !selected_path || strcmp(selected_path, path) != 0 ||
+        !spdf_win_canvas_replace_document(a->canvas, doc)) {
+        spdf_close(doc);
+        return 0;
+    }
+    spdf_win_tabs_release_document(a->tabs, index);
+    /* The search's rects and the panels' handles describe the old text; both
+     * rebuild on the next paint, as after Rotate and after a PDF reload. */
+    spdf_win_find_restart(spdf_win_find_shared());
+    spdf_win_chrome_content_set_document(NULL, 0);
+    /* The new text may reference remote images the cache does not have yet. */
+    if (a->window) spdf_win_md_command_after_open(a, (HWND)spdf_win_window_native_handle(a->window));
+    return 1;
 }
 
 #endif /* SPDF_WIN_MD_COMMANDS_H */

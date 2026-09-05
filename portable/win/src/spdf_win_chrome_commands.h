@@ -442,6 +442,9 @@ static int input_for_window(void* user, spdf_win_input* in) {
             /* A canvas render landed: the next paint adopts it from the cache
              * as it always did, so all this owes is the invalidate. */
             if (in->key == SPDF_WIN_WM_RENDER_READY) return 1;
+            /* The Markdown file's off-thread re-read is ready: swap it under
+             * the canvas, keeping the reader's place (spdf_win_md_commands.h). */
+            if (in->key == SPDF_WIN_MD_WM_RELOADED) return spdf_win_md_command_reloaded(a);
             return in->key == SPDF_WIN_MD_WM_IMAGES_ARRIVED ? spdf_win_md_command_images_arrived(a) : 0;
         case SPDF_WIN_INPUT_KEY:
             changed = key_for_window(a, in);
