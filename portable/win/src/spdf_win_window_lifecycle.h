@@ -112,7 +112,9 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
     return window;
 }
 
-void spdf_win_window_show(spdf_win_window* window) {
+void spdf_win_window_show(spdf_win_window* window) { spdf_win_window_show_ex(window, 1); }
+
+void spdf_win_window_show_ex(spdf_win_window* window, int claim_foreground) {
     if (!window || !window->hwnd) return;
     /* THE FIRST FRAME IS PAINTED BEFORE THE WINDOW IS SHOWN.
      *
@@ -129,10 +131,13 @@ void spdf_win_window_show(spdf_win_window* window) {
      * current even if the hidden present was discarded. */
     paint(window);
     spdf_win_launch_mark("pre-show-paint-done");
-    ShowWindow(window->hwnd, SW_SHOWNORMAL);
+    /* SW_SHOWNOACTIVATE for a sibling: mapped, painted, and left behind the
+     * window that is meant to be in front (spdf_win_window.h, show_ex). */
+    ShowWindow(window->hwnd, claim_foreground ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE);
     spdf_win_launch_mark("show-window-returned");
     UpdateWindow(window->hwnd);
     spdf_win_launch_mark("update-window-returned");
+    if (!claim_foreground) return;
 
     /* AND THEN ASK FOR THE FOREGROUND, WHICH ShowWindow DOES NOT.
      *
