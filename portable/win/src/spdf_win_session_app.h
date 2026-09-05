@@ -91,8 +91,27 @@ static void canvas_render_ready(void* ctx) {
     PostMessageW((HWND)ctx, SPDF_WIN_WM_RENDER_READY, 0, 0);
 }
 
+/* THE RENDER FLAGS FOR THE SELECTED TAB: the app's theme with THAT document's
+ * Keep Image Colors in the SPDF_RENDER_PRESERVE_IMAGES bit. The choice is per
+ * document (spdf_win_tab_view::preserves_image_colors), so it is composed
+ * every time a tab is shown -- open, switch, restore, reload, a theme rebuild
+ * -- rather than held in the app: a datasheet keeps its colour-coded figures
+ * while the scan in the next tab is recoloured whole. The bit is set whatever
+ * the theme, because the Settings menu ticks the row from it whatever the
+ * theme (as the mac's does); the core only acts on it while dark. With no tab
+ * the flags are left as they are. */
+static unsigned app_render_flags_for_selected_tab(const app* a) {
+    const spdf_win_tab_view* view =
+        a->tabs ? spdf_win_tabs_view_const(a->tabs, spdf_win_tabs_selected_index(a->tabs)) : NULL;
+    unsigned flags = a->render_flags & ~(unsigned)SPDF_RENDER_PRESERVE_IMAGES;
+    if (!view) return a->render_flags;
+    return view->preserves_image_colors != 0 ? flags | SPDF_RENDER_PRESERVE_IMAGES : flags;
+}
+
 static int show_selected_tab(app* a) {
-    int shown = spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
+    int shown;
+    a->render_flags = app_render_flags_for_selected_tab(a);
+    shown = spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
     if (shown && spdf_win_tabs_app_apply_view(a->tabs, a->canvas, a->view_w, a->view_h, a->view_dpi))
         a->pending_page = -1;
     app_restore_find_text(a);
@@ -112,23 +131,127 @@ static int show_selected_tab(app* a) {
     return shown;
 }
 
-/* The window's frame for the session, or a zero frame when there is no window
- * (the headless paths, or after it closed). */
+/* The window's frame for the session -- the one the reader left, which while
+ * the window is parked at a fallback is NOT the one on screen
+ * (spdf_win_window_get_placement) -- with the display it is on; or a zero
+ * frame when there is no window (the headless paths, or after it closed). The
+ * two structs are the same shape on purpose and kept apart on purpose: the
+ * session's is toolkit-free and tested headlessly, the window's is Win32's. */
 static spdf_win_session_frame app_session_frame(app* a) {
     spdf_win_session_frame f;
+    spdf_win_placement p;
     memset(&f, 0, sizeof(f));
-    if (a->window) spdf_win_window_get_frame(a->window, &f.x, &f.y, &f.w, &f.h);
+    if (!a->window || !spdf_win_window_get_placement(a->window, &p)) return f;
+    f.x = p.frame.x;
+    f.y = p.frame.y;
+    f.w = p.frame.w;
+    f.h = p.frame.h;
+    strncpy_s(f.display, sizeof(f.display), p.display, _TRUNCATE);
+    f.display_x = p.display_rect.x;
+    f.display_y = p.display_rect.y;
+    f.display_w = p.display_rect.w;
+    f.display_h = p.display_rect.h;
     return f;
 }
 
+/* The saved placement, back into the window's shape, for the launch. */
+static spdf_win_placement app_placement_of(const spdf_win_session_frame* f) {
+    spdf_win_placement p;
+    memset(&p, 0, sizeof(p));
+    p.frame.x = f->x;
+    p.frame.y = f->y;
+    p.frame.w = f->w;
+    p.frame.h = f->h;
+    strncpy_s(p.display, sizeof(p.display), f->display, _TRUNCATE);
+    p.display_rect.x = f->display_x;
+    p.display_rect.y = f->display_y;
+    p.display_rect.w = f->display_w;
+    p.display_rect.h = f->display_h;
+    return p;
+}
+
 /* Write this window into session.yaml now: the reader's place in the selected
- * tab, every tab's metadata, and the frame. */
+ * tab, every tab's metadata, the frame, and -- while this is the foreground
+ * window -- the focus stamp that brings it back in front (spdf_win_session.h). */
 static int app_session_save(app* a) {
     spdf_win_session_frame f;
     if (!a->tabs) return 0;
     spdf_win_tabs_app_remember(a->tabs, a->canvas);
     f = app_session_frame(a);
-    return spdf_win_session_save_ex(a->tabs, a->window_id, &f);
+    return spdf_win_session_save_focused(a->tabs, a->window_id, &f, spdf_win_window_is_foreground(a->window));
+}
+
+/* --- the other windows of a restored session ---------------------------------
+ *
+ * ONE PROCESS PER WINDOW, so "every other window opens with the first" means
+ * starting the sibling processes -- and starting them NOW, the moment the
+ * session names them, rather than after this window's first paint as the
+ * detach path's app_spawn_window() would from the tail of a launch: measured on
+ * the mac (5776dd6cf), both windows then reach the screen together instead of a
+ * launch apart. Each sibling restores its own id (`--window`) and is told to
+ * show BEHIND (`--behind`, spdf_win_window_show_ex), so the window the reader
+ * left focused -- the one this process restored -- is the one that ends up in
+ * front however the two launches interleave. --state-dir is passed along when
+ * this process was given one, so a test's windows share the test's file.
+ *
+ * On a worker thread: CreateProcessW is milliseconds each, and this launch is
+ * still assembling its first frame. The command lines are built here, where the
+ * app's state is, and the thread owns the copy. */
+typedef struct sibling_launch {
+    wchar_t exe[MAX_PATH * 4];
+    int count;
+    wchar_t cmd[SPDF_WIN_SESSION_MAX_WINDOWS][MAX_PATH * 8];
+} sibling_launch;
+
+static DWORD WINAPI app_spawn_siblings_thread(void* arg) {
+    sibling_launch* launch = (sibling_launch*)arg;
+    int i;
+    for (i = 0; i < launch->count; ++i) {
+        STARTUPINFOW si;
+        PROCESS_INFORMATION pi;
+        memset(&si, 0, sizeof(si));
+        si.cb = sizeof(si);
+        memset(&pi, 0, sizeof(pi));
+        if (CreateProcessW(launch->exe, launch->cmd[i], NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        }
+    }
+    free(launch);
+    return 0;
+}
+
+static void app_spawn_siblings(app* a) {
+    char ids[SPDF_WIN_SESSION_MAX_WINDOWS][SPDF_WIN_SESSION_ID_MAX];
+    int n = spdf_win_session_window_ids(ids, SPDF_WIN_SESSION_MAX_WINDOWS), i;
+    sibling_launch* launch;
+    HANDLE thread;
+    if (n <= 1) return; /* the common single-window launch, off in one branch */
+    launch = (sibling_launch*)calloc(1, sizeof(*launch));
+    if (!launch) return;
+    if (!GetModuleFileNameW(NULL, launch->exe, (DWORD)(sizeof(launch->exe) / sizeof(launch->exe[0])))) {
+        free(launch);
+        return;
+    }
+    for (i = 0; i < n; ++i) {
+        wchar_t id[SPDF_WIN_SESSION_ID_MAX];
+        wchar_t* cmd;
+        if (strcmp(ids[i], a->window_id) == 0) continue;
+        if (MultiByteToWideChar(CP_UTF8, 0, ids[i], -1, id, (int)(sizeof(id) / sizeof(id[0]))) <= 0) continue;
+        cmd = launch->cmd[launch->count++];
+        if (a->state_dir[0])
+            _snwprintf_s(cmd, MAX_PATH * 8, _TRUNCATE, L"\"%s\" --window %s --behind --state-dir \"%s\"", launch->exe,
+                         id, a->state_dir);
+        else
+            _snwprintf_s(cmd, MAX_PATH * 8, _TRUNCATE, L"\"%s\" --window %s --behind", launch->exe, id);
+    }
+    if (launch->count == 0) {
+        free(launch);
+        return;
+    }
+    thread = CreateThread(NULL, 0, app_spawn_siblings_thread, launch, 0, NULL);
+    if (thread) CloseHandle(thread);
+    else app_spawn_siblings_thread(launch); /* no thread: still spawned, just not overlapped */
 }
 
 /* Preferences that are the window's to record: the two panel widths the reader
@@ -207,14 +330,13 @@ static void initial_client_size(int* out_w, int* out_h) {
 
 /* The reading theme a window STARTS in, from the settings and then the system:
  * an expressed preference wins (the reader toggled it once), else the system's
- * app theme (spdf_win_system_prefers_dark). Keep Image Colors rides along as
- * the mac composes it (SPDFMacReadingThemeIntegration.mm:41). Windowed path
- * only, and BEFORE the canvas exists, for the two reasons spdf_win_window.h
- * gives at spdf_win_system_prefers_dark(). */
+ * app theme (spdf_win_system_prefers_dark). Keep Image Colors is NOT composed
+ * here any more: it is the selected document's own, and show_selected_tab()
+ * puts it in the flags for each tab as it is shown. Windowed path only, and
+ * BEFORE the canvas exists, for the two reasons spdf_win_window.h gives at
+ * spdf_win_system_prefers_dark(). */
 static unsigned app_initial_render_flags(void) {
     const spdf_win_settings* s = spdf_win_settings_shared();
     int dark = s->theme == SPDF_WIN_THEME_DARK ? 1 : s->theme == SPDF_WIN_THEME_LIGHT ? 0 : spdf_win_system_prefers_dark();
-    unsigned flags = SPDF_RENDER_DEFAULT;
-    if (dark) flags |= SPDF_RENDER_DARK_THEME | (s->dark_theme_preserves_images ? SPDF_RENDER_PRESERVE_IMAGES : 0u);
-    return flags;
+    return dark ? (unsigned)(SPDF_RENDER_DEFAULT | SPDF_RENDER_DARK_THEME) : (unsigned)SPDF_RENDER_DEFAULT;
 }
