@@ -72,6 +72,22 @@ struct spdf_win_window {
     int fullscreen;
     WINDOWPLACEMENT placement;
 
+    /* THE RESTORED PLACEMENT (spdf_win_window_frame.h, rules in
+     * spdf_win_placement.h). `desired` is the frame the reader left, valid
+     * while has_desired. `parked` says the window is showing a fallback because
+     * that frame's display is missing, and parked_rect is the fallback we put
+     * it at -- a normal rect that differs from it is the reader's own move,
+     * which ends the parking. `placing` marks our own SetWindowPlacement /
+     * SetWindowPos so their WM_WINDOWPOSCHANGED is not mistaken for one. */
+    spdf_win_placement desired;
+    int has_desired;
+    int parked;
+    RECT parked_rect;
+    int placing;
+    /* Whether this was the foreground window when WM_CLOSE arrived: the
+     * answer spdf_win_window_is_foreground gives once the HWND is gone. */
+    int foreground_at_close;
+
     /* The periodic tick (spdf_win_window_set_tick), or NULL. */
     spdf_win_tick_fn tick_fn;
     /* The pending one-shot (spdf_win_window_set_once), or NULL. Cleared before
@@ -275,12 +291,35 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
              * same size instead of doubling. */
             window->dpi = HIWORD(wparam);
             RECT* suggested = (RECT*)lparam;
-            SetWindowPos(hwnd, NULL, suggested->left, suggested->top, suggested->right - suggested->left,
-                         suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+            /* NOT while a saved placement is being applied: that frame is
+             * already in its own display's device pixels, and the suggested
+             * rectangle would rescale it from the display it was created on --
+             * a 1300-wide window came back 1300 * (144/96) and grew on every
+             * relaunch. The DPI itself is still taken. */
+            if (!window->placing) {
+                placement_own_move(window, suggested);
+            }
             extend_frame_into_strip(window); /* the caption height changed with the DPI */
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
+        /* A display came or went. If the window is parked because its own
+         * display was missing and that frame can be shown now, put it back. */
+        case WM_DISPLAYCHANGE:
+            placement_displays_changed(window);
+            break;
+        /* Every position change, ours and the reader's; the placement code tells
+         * them apart. `break`, not `return`: DefWindowProc turns this into the
+         * WM_SIZE and WM_MOVE the rest of the window runs on. */
+        case WM_WINDOWPOSCHANGED:
+            placement_note_moved(window);
+            break;
+        /* Recorded HERE, where the window is still the one the reader closed:
+         * DestroyWindow deactivates it before WM_DESTROY, so asking then always
+         * says no. Then DefWindowProc destroys it. */
+        case WM_CLOSE:
+            window->foreground_at_close = GetForegroundWindow() == hwnd;
+            break;
         case WM_COMMAND:
             /* A menu item, and nothing else: this window has no child controls,
              * so a WM_COMMAND with a non-zero lParam (a control) or a high word

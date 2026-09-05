@@ -57,6 +57,9 @@ void spdf_win_window_set_fullscreen(spdf_win_window* window, int on) {
     on = on ? 1 : 0;
     if (on == window->fullscreen) return;
     style = GetWindowLongPtrW(window->hwnd, GWL_STYLE);
+    /* Both transitions move the window by our hand, not the reader's: a parked
+     * window (spdf_win_window_restore_placement) must stay parked through them. */
+    window->placing = 1;
     if (on) {
         MONITORINFO mi;
         HMONITOR mon = MonitorFromWindow(window->hwnd, MONITOR_DEFAULTTONEAREST);
@@ -79,6 +82,7 @@ void spdf_win_window_set_fullscreen(spdf_win_window* window, int on) {
         SetWindowPos(window->hwnd, NULL, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
     }
+    window->placing = 0;
     InvalidateRect(window->hwnd, NULL, FALSE);
 }
 
@@ -91,12 +95,160 @@ void spdf_win_window_prevent_sleep(int on) {
     SetThreadExecutionState(on ? (ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) : ES_CONTINUOUS);
 }
 
-/* --- the frame ----------------------------------------------------------- */
+/* --- the placement --------------------------------------------------------
+ *
+ * The Win32 half of spdf_win_placement.h, which states the rules and the
+ * defect. Everything about "is this frame showable" is decided there, on plain
+ * rectangles; this file only enumerates the displays, reads and writes the
+ * WINDOWPLACEMENT, and tells its own moves from the reader's. */
 
-int spdf_win_window_get_frame(const spdf_win_window* window, int* x, int* y, int* w, int* h) {
+static spdf_win_rect rect_of(const RECT* r) {
+    spdf_win_rect out;
+    out.x = r->left;
+    out.y = r->top;
+    out.w = r->right - r->left;
+    out.h = r->bottom - r->top;
+    return out;
+}
+
+/* szDevice is ASCII ("\\.\DISPLAY2"); anything else is truncated to the
+ * bytes that fit, which still compares unequal to every other display. */
+static void display_name_utf8(const wchar_t* wide, char* out, size_t out_len) {
+    size_t i;
+    for (i = 0; i + 1 < out_len && wide[i]; ++i) out[i] = wide[i] < 0x80 ? (char)wide[i] : '?';
+    out[i] = '\0';
+}
+
+typedef struct display_list {
+    spdf_win_display items[16];
+    int count;
+} display_list;
+
+static BOOL CALLBACK collect_display(HMONITOR mon, HDC hdc, LPRECT rect, LPARAM lparam) {
+    display_list* list = (display_list*)lparam;
+    MONITORINFOEXW mi;
+    (void)hdc;
+    (void)rect;
+    if (list->count >= (int)(sizeof(list->items) / sizeof(list->items[0]))) return FALSE;
+    memset(&mi, 0, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(mon, (MONITORINFO*)&mi)) return TRUE;
+    display_name_utf8(mi.szDevice, list->items[list->count].name, sizeof(list->items[list->count].name));
+    list->items[list->count].monitor = rect_of(&mi.rcMonitor);
+    list->items[list->count].work = rect_of(&mi.rcWork);
+    list->count++;
+    return TRUE;
+}
+
+static void attached_displays(display_list* list) {
+    list->count = 0;
+    EnumDisplayMonitors(NULL, NULL, collect_display, (LPARAM)list);
+}
+
+/* The display a rectangle is (mostly) on, for the identity the session keeps. */
+static void display_of_rect(const RECT* r, spdf_win_placement* out) {
+    MONITORINFOEXW mi;
+    HMONITOR mon = MonitorFromRect(r, MONITOR_DEFAULTTONEAREST);
+    out->display[0] = '\0';
+    memset(&out->display_rect, 0, sizeof(out->display_rect));
+    memset(&mi, 0, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    if (!mon || !GetMonitorInfoW(mon, (MONITORINFO*)&mi)) return;
+    display_name_utf8(mi.szDevice, out->display, sizeof(out->display));
+    out->display_rect = rect_of(&mi.rcMonitor);
+}
+
+/* Put the NORMAL rect somewhere, as our own doing. Through the placement
+ * rather than SetWindowPos: rcNormalPosition is what get_placement reads, so a
+ * save-restore-save round trip is the identity. A hidden window stays hidden;
+ * a shown one keeps whatever state it is in. */
+static void place_normal_rect(spdf_win_window* window, const RECT* r) {
+    WINDOWPLACEMENT wp;
+    memset(&wp, 0, sizeof(wp));
+    wp.length = sizeof(wp);
+    if (!GetWindowPlacement(window->hwnd, &wp)) return;
+    if (!IsWindowVisible(window->hwnd)) wp.showCmd = SW_HIDE;
+    wp.rcNormalPosition = *r;
+    window->placing = 1;
+    SetWindowPlacement(window->hwnd, &wp);
+    window->placing = 0;
+    if (window->parked) window->parked_rect = *r;
+}
+
+/* WM_DPICHANGED's suggested rectangle, applied as our own move. */
+static void placement_own_move(spdf_win_window* window, const RECT* suggested) {
+    WINDOWPLACEMENT wp;
+    window->placing = 1;
+    SetWindowPos(window->hwnd, NULL, suggested->left, suggested->top, suggested->right - suggested->left,
+                 suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+    window->placing = 0;
+    memset(&wp, 0, sizeof(wp));
+    wp.length = sizeof(wp);
+    if (window->parked && GetWindowPlacement(window->hwnd, &wp)) window->parked_rect = wp.rcNormalPosition;
+}
+
+void spdf_win_window_restore_placement(spdf_win_window* window, const spdf_win_placement* saved) {
+    display_list displays;
+    RECT r;
+    spdf_win_rect frame;
+    if (!window || !window->hwnd || !saved || saved->frame.w <= 0 || saved->frame.h <= 0) return;
+    window->desired = *saved;
+    window->has_desired = 1;
+    window->parked = 0;
+    frame = saved->frame;
+    attached_displays(&displays);
+    if (!spdf_win_placement_is_usable(saved, displays.items, displays.count)) {
+        /* The main display's work area: the monitor at the origin. */
+        RECT work = {0, 0, 1280, 800};
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+        frame = spdf_win_placement_fallback(saved->frame, rect_of(&work));
+        window->parked = !spdf_win_rect_equal(frame, saved->frame);
+    }
+    r.left = frame.x;
+    r.top = frame.y;
+    r.right = frame.x + frame.w;
+    r.bottom = frame.y + frame.h;
+    place_normal_rect(window, &r);
+}
+
+/* WM_DISPLAYCHANGE: a parked window whose frame can be shown now goes back. */
+static void placement_displays_changed(spdf_win_window* window) {
+    display_list displays;
+    RECT r;
+    if (!window->hwnd || !window->has_desired || !window->parked) return;
+    attached_displays(&displays);
+    if (!spdf_win_placement_is_usable(&window->desired, displays.items, displays.count)) return;
+    r.left = window->desired.frame.x;
+    r.top = window->desired.frame.y;
+    r.right = r.left + window->desired.frame.w;
+    r.bottom = r.top + window->desired.frame.h;
+    window->parked = 0;
+    place_normal_rect(window, &r);
+}
+
+/* WM_WINDOWPOSCHANGED: the reader moved or resized a parked window, so what
+ * is on screen is now their choice and supersedes the remembered frame. Only a
+ * change to the NORMAL rect counts -- showing, maximizing and our own placing
+ * leave it alone -- and full screen is a placement of ours too. */
+static void placement_note_moved(spdf_win_window* window) {
+    WINDOWPLACEMENT wp;
+    if (!window->parked || window->placing || window->fullscreen || !window->hwnd) return;
+    memset(&wp, 0, sizeof(wp));
+    wp.length = sizeof(wp);
+    if (!GetWindowPlacement(window->hwnd, &wp)) return;
+    if (!EqualRect(&wp.rcNormalPosition, &window->parked_rect)) window->parked = 0;
+}
+
+int spdf_win_window_get_placement(const spdf_win_window* window, spdf_win_placement* out) {
     WINDOWPLACEMENT wp;
     const RECT* r;
-    if (!window) return 0;
+    if (!window || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    /* Still parked at a fallback: the reader's frame, not our stand-in. */
+    if (window->has_desired && window->parked) {
+        *out = window->desired;
+        return 1;
+    }
     /* While full screen the live placement is the monitor; the one worth
      * remembering is the one that will come back. After WM_DESTROY there is no
      * HWND and the placement is what it recorded on the way out -- which is
@@ -111,48 +263,15 @@ int spdf_win_window_get_frame(const spdf_win_window* window, int* x, int* y, int
     }
     r = &wp.rcNormalPosition;
     if (r->right <= r->left || r->bottom <= r->top) return 0;
-    if (x) *x = r->left;
-    if (y) *y = r->top;
-    if (w) *w = r->right - r->left;
-    if (h) *h = r->bottom - r->top;
+    out->frame = rect_of(r);
+    display_of_rect(r, out);
     return 1;
 }
 
-void spdf_win_window_set_frame(spdf_win_window* window, int x, int y, int w, int h) {
-    RECT want, work;
-    MONITORINFO mi;
-    HMONITOR mon;
-    WINDOWPLACEMENT wp;
-    if (!window || !window->hwnd || w <= 0 || h <= 0) return;
-    want.left = x;
-    want.top = y;
-    want.right = x + w;
-    want.bottom = y + h;
-    /* Onto the nearest monitor's WORK area, so a frame saved on a screen that
-     * is gone -- or under a taskbar that has moved -- comes back reachable. */
-    mon = MonitorFromRect(&want, MONITOR_DEFAULTTONEAREST);
-    memset(&mi, 0, sizeof(mi));
-    mi.cbSize = sizeof(mi);
-    if (!mon || !GetMonitorInfoW(mon, &mi)) return;
-    work = mi.rcWork;
-    if (w > work.right - work.left) w = work.right - work.left;
-    if (h > work.bottom - work.top) h = work.bottom - work.top;
-    if (x + w > work.right) x = work.right - w;
-    if (y + h > work.bottom) y = work.bottom - h;
-    if (x < work.left) x = work.left;
-    if (y < work.top) y = work.top;
-    /* Through the placement rather than SetWindowPos: rcNormalPosition is what
-     * get_frame reads, so a save-restore-save round trip is the identity. The
-     * window is not shown yet, and SW_HIDE keeps it that way. */
-    memset(&wp, 0, sizeof(wp));
-    wp.length = sizeof(wp);
-    if (!GetWindowPlacement(window->hwnd, &wp)) return;
-    wp.showCmd = SW_HIDE;
-    wp.rcNormalPosition.left = x;
-    wp.rcNormalPosition.top = y;
-    wp.rcNormalPosition.right = x + w;
-    wp.rcNormalPosition.bottom = y + h;
-    SetWindowPlacement(window->hwnd, &wp);
+int spdf_win_window_is_foreground(const spdf_win_window* window) {
+    if (!window) return 0;
+    if (window->hwnd) return GetForegroundWindow() == window->hwnd;
+    return window->foreground_at_close;
 }
 
 /* Grow the FRAME until the CLIENT area is the requested size at this window's

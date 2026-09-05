@@ -21,6 +21,8 @@
  * -- that header is pure, toolkit-free and header-only -- and it does not make
  * this file know about documents, which is the layering rule it actually has. */
 #include "spdf_win_chrome_input.h"
+/* The placement struct and its rules: pure, toolkit-free, tested on their own. */
+#include "spdf_win_placement.h"
 
 #if defined(_MSC_VER) && !defined(__cplusplus)
 #define SPDF_WIN_WINDOW_INLINE __inline
@@ -231,7 +233,13 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
                                         size_t err_len);
 void spdf_win_window_destroy(spdf_win_window* window);
 
+/* Paint the first frame, show the window and claim the foreground. The
+ * sibling windows a session-restore launch starts show BEHIND the one the
+ * reader left focused instead: show_ex(window, 0) maps the window without
+ * activating it and claims nothing, so a window spawned to reappear cannot
+ * steal the foreground from the one that is meant to have it. */
 void spdf_win_window_show(spdf_win_window* window);
+void spdf_win_window_show_ex(spdf_win_window* window, int claim_foreground);
 void spdf_win_window_invalidate(spdf_win_window* window);
 float spdf_win_window_dpi_scale(const spdf_win_window* window);
 
@@ -376,17 +384,31 @@ static SPDF_WIN_WINDOW_INLINE int spdf_win_window_escape_leaves_fullscreen(int f
  * idempotent, and safe to call with no window at all. */
 void spdf_win_window_prevent_sleep(int on);
 
-/* --- the frame, for the session -----------------------------------------
+/* --- the placement, for the session -------------------------------------
  *
- * The window's NORMAL placement in screen device pixels -- what it would occupy
- * if it were neither maximized nor full screen -- which is the rectangle worth
- * remembering across launches (session.yaml "frame", as the mac and GTK apps
- * write theirs). get returns 0 when there is no window to ask. set is meant to
- * run BEFORE the first show: it clamps the rectangle onto the monitor it lands
- * nearest to, so a frame saved on a monitor that has since been unplugged does
- * not restore a window nobody can reach. */
-int spdf_win_window_get_frame(const spdf_win_window* window, int* x, int* y, int* w, int* h);
-void spdf_win_window_set_frame(spdf_win_window* window, int x, int y, int w, int h);
+ * The window's NORMAL frame in virtual-screen device pixels -- what it occupies
+ * when neither maximized nor full screen -- plus the display it is on, which
+ * is what is worth remembering across launches (session.yaml "frame" as the
+ * mac and GTK apps write theirs, and "display" as only this port does). The
+ * rules are in spdf_win_placement.h; this is their Win32 half.
+ *
+ * restore runs BEFORE the first show and applies the saved frame RAW when its
+ * display is attached where it was or the frame is visible somewhere. A frame
+ * the desktop cannot show is parked centred on the main display instead --
+ * and that stand-in is display-only: get keeps returning the frame the reader
+ * left until they move or resize the window themselves, and the frame goes
+ * back to its display when that display reappears (WM_DISPLAYCHANGE). It used
+ * to clamp onto the nearest monitor and let the clamp be saved, which is how
+ * one launch with an external display asleep forgot the position for good.
+ * get returns 0 when there is no window to ask. */
+int spdf_win_window_get_placement(const spdf_win_window* window, spdf_win_placement* out);
+void spdf_win_window_restore_placement(spdf_win_window* window, const spdf_win_placement* saved);
+
+/* Whether this window is the foreground window -- live while it exists, and
+ * after it closed, whether it was when WM_CLOSE arrived. The session stamps the
+ * window it saves with "focusedAt" only when this says so, which is how the
+ * window the reader was last using is the one that comes back in front. */
+int spdf_win_window_is_foreground(const spdf_win_window* window);
 
 /* --- a periodic tick ------------------------------------------------------
  *

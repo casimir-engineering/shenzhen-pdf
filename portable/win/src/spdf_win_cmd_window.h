@@ -42,22 +42,25 @@ static void app_canvas_viewport(app* a, unsigned client_w, unsigned client_h, fl
     if (out_h) *out_h = (unsigned)l.canvas.h;
 }
 
-/* Settings > Keep Image Colors in Dark Theme. The setting is written whatever
- * the theme (the mac ticks it whatever the theme too); the render flag changes
- * only while dark, where it means anything, and the canvas is rebuilt over the
- * same document with the reader's place kept (chrome_rebuild_canvas). */
+/* Settings > Keep Image Colors in Dark Theme -- for THIS DOCUMENT. It used to
+ * flip the one global setting; it now flips the selected tab's own choice, as
+ * the mac's row does (-toggleDarkThemePreservesImages:, 42e8c9ca7): a datasheet
+ * whose figures are colour-coded keeps them while the scan in the next tab is
+ * recoloured whole. The choice is written to the session it will be restored
+ * from (b551b24a9: the tab's keep-image-colors did not survive a relaunch until
+ * the session writer carried it), and settings.yaml's darkThemePreservesImages
+ * is left as it is -- it is the default a NEW document starts from
+ * (spdf_win_tabs_app_seed_view), not this document's choice. The menu ticks
+ * the row whatever the theme; the canvas is rebuilt only while dark, where the
+ * choice means anything, over the same document with the reader's place kept
+ * (chrome_rebuild_canvas). */
 static int cmd_window_toggle_keep_image_colors(app* a) {
-    spdf_win_settings* s = spdf_win_settings_shared();
-    s->dark_theme_preserves_images = !s->dark_theme_preserves_images;
-    spdf_win_settings_commit();
-    if (!(a->render_flags & SPDF_RENDER_DARK_THEME)) {
-        /* Not dark: nothing on screen changes, but the flag the menu ticks does. */
-        if (s->dark_theme_preserves_images) a->render_flags |= SPDF_RENDER_PRESERVE_IMAGES;
-        else a->render_flags &= ~(unsigned)SPDF_RENDER_PRESERVE_IMAGES;
-        return 1;
-    }
-    if (s->dark_theme_preserves_images) a->render_flags |= SPDF_RENDER_PRESERVE_IMAGES;
-    else a->render_flags &= ~(unsigned)SPDF_RENDER_PRESERVE_IMAGES;
+    spdf_win_tab_view* view = a->tabs ? spdf_win_tabs_view(a->tabs, spdf_win_tabs_selected_index(a->tabs)) : NULL;
+    if (!view) return 0;
+    view->preserves_image_colors = view->preserves_image_colors != 0 ? 0 : 1;
+    a->render_flags = app_render_flags_for_selected_tab(a);
+    app_session_save(a);
+    if (!(a->render_flags & SPDF_RENDER_DARK_THEME)) return 1; /* nothing on screen changes; the tick did */
     return chrome_rebuild_canvas(a);
 }
 
@@ -217,6 +220,9 @@ static int cmd_window_drag_drop(app* a) {
         return 1;
     }
     *spdf_win_tabs_view(a->tabs, at) = view;
+    /* A tab handed over by a window that had no Keep Image Colors of its own
+     * takes the default here, as a restored one does. */
+    spdf_win_tabs_app_seed_view(spdf_win_tabs_view(a->tabs, at));
     /* The read-only binding travels with the tab, so the watcher must know
      * about the shadow copy BEFORE the tab is shown -- the same order the
      * session restore uses (spdf_win_tabs_open_prime). */

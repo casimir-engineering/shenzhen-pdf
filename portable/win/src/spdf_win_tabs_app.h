@@ -48,6 +48,7 @@
 #include "spdf_win_tabs_open.h" /* the document hooks: password, shadow copy, watch */
 #include "spdf_win_chrome_model.h" /* spdf_win_find_query_utf8: the query the tab remembers */
 #include "spdf_win_session.h"
+#include "spdf_win_settings.h" /* darkThemePreservesImages: the default a new document's own choice starts from */
 
 /* The model's document hooks -- the password prompt, the read-only shadow copy
  * and the watch on the source -- are spdf_win_tabs_open.h's, included above.
@@ -128,10 +129,31 @@ static int spdf_win_tabs_app_apply_view(spdf_win_tabs* tabs, spdf_win_canvas* ca
  * page, the mac and GTK default, and is right for a restored tab whose file
  * carries no fitMode; it is not the launch behaviour here. One place for the
  * rule, used by the launch document and by File > Open alike. */
+/* KEEP IMAGE COLORS IS THE DOCUMENT'S OWN (spdf_win_tab_view::preserves_image_colors).
+ * A tab that has no choice yet -- one the reader just opened, one restored
+ * from a session written before the choice was per-document, one handed over
+ * by such a window -- takes the launch default from settings.yaml
+ * "darkThemePreservesImages", exactly as the mac seeds a new tab
+ * (-seedKeepImageColorsForNewTab:, 42e8c9ca7). So an existing global choice is
+ * not discarded, and the Settings row is what a NEW document starts from. */
+static void spdf_win_tabs_app_seed_view(spdf_win_tab_view* view) {
+    if (view && view->preserves_image_colors < 0)
+        view->preserves_image_colors = spdf_win_settings_shared()->dark_theme_preserves_images ? 1 : 0;
+}
+
+static void spdf_win_tabs_app_seed_views(spdf_win_tabs* tabs) {
+    int i, count = spdf_win_tabs_count(tabs);
+    for (i = 0; i < count; ++i) spdf_win_tabs_app_seed_view(spdf_win_tabs_view(tabs, i));
+}
+
 static int spdf_win_tabs_app_append(spdf_win_tabs* tabs, const char* utf8_path) {
     int index = spdf_win_tabs_append(tabs, utf8_path, NULL);
     spdf_win_tab_view* view = spdf_win_tabs_view(tabs, index);
-    if (view) view->fit_mode = SPDF_WIN_TAB_FIT_WIDTH;
+    if (view) {
+        view->fit_mode = SPDF_WIN_TAB_FIT_WIDTH;
+        view->preserves_image_colors = -1; /* a new document: the Settings default, seeded now */
+        spdf_win_tabs_app_seed_view(view);
+    }
     return index;
 }
 
@@ -161,7 +183,7 @@ static int spdf_win_tabs_app_show(spdf_win_tabs* tabs, spdf_win_canvas** canvas,
 
 /* How a launch finds its tabs. */
 typedef enum spdf_win_tabs_app_restore {
-    SPDF_WIN_TABS_APP_RESTORE_FIRST = 0, /* a plain launch: the first window in the file */
+    SPDF_WIN_TABS_APP_RESTORE_FIRST = 0, /* a plain launch: the window the reader was last using */
     SPDF_WIN_TABS_APP_RESTORE_ID = 1,    /* --window <id>: the window another process handed over */
     SPDF_WIN_TABS_APP_RESTORE_NONE = 2   /* --new-window: nothing, a fresh empty window */
 } spdf_win_tabs_app_restore;
@@ -192,6 +214,8 @@ static spdf_win_tabs* spdf_win_tabs_app_start(const char* utf8_path, spdf_win_ta
     /* A handed-over id that is not in the file keeps the id it was given, so
      * the parent's later merge and ours agree about which window this is. */
     if (!restored && !(how == SPDF_WIN_TABS_APP_RESTORE_ID && want[0])) spdf_win_session_new_window_id(window_id, id_len);
+    /* A restored tab with no Keep Image Colors of its own takes the default. */
+    spdf_win_tabs_app_seed_views(tabs);
     /* Every restored read-only binding goes to the watcher BEFORE any tab is
      * shown, so an unchanged source reopens its copy without a content read. */
     spdf_win_tabs_open_prime(tabs);
@@ -205,11 +229,14 @@ static spdf_win_tabs* spdf_win_tabs_app_start(const char* utf8_path, spdf_win_ta
     return tabs;
 }
 
+/* The exit save. `focused` is whether this was the foreground window when it
+ * closed (spdf_win_window_is_foreground), which stamps it as the one a
+ * relaunch brings back in front. */
 static void spdf_win_tabs_app_finish(spdf_win_tabs* tabs, spdf_win_canvas* canvas, const char* window_id,
-                                     const spdf_win_session_frame* frame) {
+                                     const spdf_win_session_frame* frame, int focused) {
     if (!tabs) return;
     spdf_win_tabs_app_remember(tabs, canvas);
-    spdf_win_session_save_ex(tabs, window_id, frame);
+    spdf_win_session_save_focused(tabs, window_id, frame, focused);
     spdf_win_canvas_destroy(canvas);
     spdf_win_tabs_destroy(tabs);
 }
