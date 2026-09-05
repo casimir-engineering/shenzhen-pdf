@@ -3,9 +3,13 @@
 Everything the app does today, grouped by what you would be doing at the time.
 The [readme](../readme.md) is the short version; this is the exhaustive one.
 
-Platform tags: **mac** = macOS (AppKit), **linux** = GTK4 + libadwaita. An
-untagged entry works on both. The Win32 tree in `src/` is legacy and ships no
-binary.
+Platform tags: **mac** = macOS (AppKit), **linux** = GTK4 + libadwaita,
+**win** = the native Win32 + Direct2D frontend in `portable/win/`. An untagged
+entry works on all three. (The separate Win32 tree in `src/` is the legacy
+SumatraPDF-era code and is not the Windows app; see
+`portable/docs/windows-feature-matrix.md` for the Windows frontend's
+feature-by-feature status.) No Windows binary is published yet; the build
+is a single self-installing executable, `dist\ShenzhenPDF-win-x64.exe`.
 
 - [Formats](#formats)
 - [Opening documents](#opening)
@@ -412,14 +416,20 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 
 | | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| Frontend | AppKit | GTK4 + libadwaita | Legacy Win32 tree, no binary |
-| Reading, tabs, session restore | Yes | Yes | — |
-| Search, map, scrollbar heat-map | Yes | Yes | — |
-| Command palette, favorites | Yes | Yes | — |
-| Presentation mode, printing, properties | Yes | Yes | — |
-| OCR and translation | Yes | Yes | — |
-| Markdown renderer, diagrams, math | Yes | — | — |
-| Nested chapters, Option+scroll paging | Yes | — | — |
-| Auto-updater | Developer ID + notarization | minisign (deb, tarball) | — |
+| Frontend | AppKit | GTK4 + libadwaita | Win32 + Direct2D (`portable/win/`), no published binary yet |
+| Reading, tabs, session restore | Yes | Yes | Yes |
+| Search, map, scrollbar heat-map | Yes | Yes | Yes |
+| Command palette, favorites | Yes | Yes | Yes |
+| Presentation mode, printing, properties | Yes | Yes | Yes (print preview; Windows' own dialog where it opens) |
+| OCR and translation | Yes | Yes | Yes (winget Tesseract, pip OCRmyPDF, Argos in a venv) |
+| Markdown renderer, diagrams, math | Yes | — | Markdown and math via MuPDF's HTML engine; diagrams still draw as code boxes |
+| Nested chapters, Option+scroll paging | Yes | — | Nested chapters yes; Alt+scroll paging not yet |
+| Auto-updater | Developer ID + notarization | minisign (deb, tarball) | Authenticode, pending a signed release |
 
 Linux additionally offers an optional resident mode for instant launches.
+
+Windows is a single statically linked executable that launches in about 130 ms
+to a window with its first page already painted, so it needs no resident mode.
+Everything above marked "Yes" for Windows is pinned by the native test suite in
+`portable/win/tests/`; the exhaustive per-feature status, with evidence, is
+`portable/docs/windows-feature-matrix.md`.

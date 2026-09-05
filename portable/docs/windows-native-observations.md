@@ -949,3 +949,49 @@ virtualisation trap.
   killed while modal eleven minutes earlier. Other agents were building and
   launching the app on this machine at the time and are the likely author. It was
   not checked by reading the files, and should not be: they are the reader's.
+
+
+## 11. Two launch defects a person found that no test did (2026-09-05)
+
+"When I launch the app from dist I can't interact with it at all, not even
+focus it with Alt+Tab." Every test was green; the app's own window was visible,
+enabled, foreground and answering messages. Two defects, both from the launch
+work merged the day before:
+
+1. The GPU prewarm created a top-level WS_OVERLAPPEDWINDOW on a worker thread
+   and then parked that thread forever without pumping. To Windows that is a
+   HUNG window for the life of the process: every desktop broadcast stalls on
+   it for its timeout, the shell's enumeration of the process slows to the
+   same timeout, and activating the app's real window becomes unreliable.
+   Measured with IsHungAppWindow: true from seconds after launch until exit,
+   on that window and the IME window it owned. It is now a WS_POPUP tool
+   window (excluded from Alt+Tab and the taskbar by definition) whose thread
+   parks in MsgWaitForMultipleObjects and dispatches what arrives.
+2. spdf_win_window_show() never asked for the foreground. ShowWindow maps a
+   window; it does not decide who is in front, and the launch now does about
+   145 ms of work before showing anything so the window appears complete.
+   The launching window had the foreground back by then and the app arrived
+   at z-order position 1, underneath it, with a sliver to click. It now calls
+   SetForegroundWindow, BringWindowToTop and SetFocus, and flashes the
+   taskbar button when the system refuses.
+
+Verified from Explorer with another app maximized and focused: before, the
+app sat at z-index 1 behind it; after, z-index 0, foreground, and still there
+two seconds later, with no hung window in the process.
+
+The lesson for the harness: headless composes and even live captures cannot
+see a z-order or a hung-window problem. A launch check that asserts "is the
+foreground window AND at z-index 0 AND no window of the process is hung"
+would have caught both in the launch budget case. Filed as a follow-up.
+
+## 12. The upstream parity wave (2026-09-06)
+
+The macOS behaviours from 26.9.3 through 26.9.5-1 that section (d) of the
+feature matrix listed, ported in three tracks: nested chapters with
+per-document collapse memory and the single Expand/Collapse button, the
+minimap following the reading theme (merge 386590a08); windows reopening on
+their display with the last-used one focused and siblings opening together,
+Keep Image Colors per document (merge 340ce34f6); Alt+wheel paging by wheel
+distance and in-place Markdown reload (in flight). Each verified from a clean
+build: full suite with only the seven macOS-host cases blocked, ratchet green,
+sidebar differential unchanged at 15,203/0.
