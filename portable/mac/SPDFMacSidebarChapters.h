@@ -3,7 +3,8 @@
 #import "SPDFMacDelegatePrivate.h"
 
 // The chapter list's nesting: the disclosure triangles, the expand/collapse
-// controls above the list, and the per-document memory of what is collapsed.
+// button beside the filter field, and the per-document memory of what is
+// collapsed.
 // The hierarchy itself is derived in SPDFMacSidebarOutline.{h,mm}; this half
 // owns the AppKit side and where the state is kept.
 @interface ShenzhenMacDelegate (SPDFMacSidebarChapters)
@@ -18,8 +19,9 @@
 // -reloadData at the end of both sidebar builders.
 - (void)applyChapterNestingAndReload;
 
-// The Expand All / Collapse All pair above the list.
+// The one expand / collapse all button, on the filter field's row.
 - (void)installChapterOutlineControls;
+- (void)toggleAllChapters:(nullable id)sender;
 - (void)expandAllChapters:(nullable id)sender;
 - (void)collapseAllChapters:(nullable id)sender;
 
