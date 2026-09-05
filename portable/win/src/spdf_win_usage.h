@@ -16,10 +16,12 @@
 
 static int usage(void) {
     fwprintf(stderr,
-             L"usage: ShenzhenPDF.exe [--dark|--light] [--page N] [--window ID | --new-window]\n"
+             L"usage: ShenzhenPDF.exe [--dark|--light] [--page N] [--window ID [--behind] | --new-window]\n"
              L"                       [--state-dir DIR] [file.pdf]\n"
-             L"       (no file: restores the last session, or opens an empty window;\n"
-             L"        --window ID restores the session window another window handed over,\n"
+             L"       (no file: restores the last session -- the window last used in front,\n"
+             L"        every other window started alongside it -- or opens an empty window;\n"
+             L"        --window ID restores one session window, as a sibling launch or a\n"
+             L"        hand-over asks; --behind shows it without taking the foreground;\n"
              L"        --new-window restores nothing; --state-dir reads and writes the\n"
              L"        settings and session there instead of %%APPDATA%%\\ShenzhenPDF)\n"
              L"       ShenzhenPDF.exe --render-png [--dark] <file.pdf> <page> <zoom> <out.png>\n"

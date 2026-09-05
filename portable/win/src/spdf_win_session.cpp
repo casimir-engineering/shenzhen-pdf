@@ -12,6 +12,7 @@
 #include "spdf_win_paths.h"
 #include "spdf_win_session_json.h"
 #include "spdf_win_state.h"
+#include "spdf_win_session_window.h" /* the window object's keys; after the two above */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -87,40 +88,36 @@ static void apply_tab(spdf_win_tabs* tabs, const char* obj) {
     }
     view->ro_copy_file_size = (unsigned long long)json_num(obj, "roCopyFileSize", 0.0);
     view->ro_copy_modified_at = json_num(obj, "roCopyModifiedAt", 0.0);
+    /* This document's own Keep Image Colors (the mac's per-tab key, 42e8c9ca7).
+     * A tab written before the choice was per-document has no key and reads
+     * as -1: the frontend seeds it with the settings default, which this file
+     * does not read (spdf_win_tabs_app_seed_views). */
+    view->preserves_image_colors =
+        obj_value(obj, "preservesImageColors", NULL) ? json_bool(obj, "preservesImageColors", 1) : -1;
 }
 
 /* The window object to restore, or NULL. A root with "tabs" and no "windows"
- * is a pre-multi-window file and counts as one window. */
+ * is a pre-multi-window file and counts as one window. With no id wanted it is
+ * the window the reader was last using (focused_window, spdf_win_session_window.h). */
 static const char* find_window(const char* root, const char* want_id) {
     const char* windows;
-    const char* first = NULL;
     const char* end = NULL;
     const char* element;
 
     root = skip_ws(root);
     windows = obj_value(root, "windows", NULL);
     if (!windows || *windows != '[') return obj_value(root, "tabs", NULL) ? root : NULL;
+    if (!(want_id && *want_id)) return focused_window(windows);
     for (element = array_first(windows, &end); element; element = array_next(end, &end)) {
+        char* id;
+        int hit;
         if (*element != '{') continue;
-        /* THE HAND-OFF PARKING SPOT IS NOT A WINDOW (spdf_win_session.h). Only
-         * an explicit ask reaches it, so a launch never restores a tab that was
-         * in flight when something crashed, and never adopts it as "the first
-         * window in the file". */
-        if (!(want_id && *want_id)) {
-            char* parked = json_str(element, "id");
-            int is_parked = parked && strcmp(parked, SPDF_WIN_SESSION_HANDOFF_ID) == 0;
-            free(parked);
-            if (is_parked) continue;
-        }
-        if (!first) first = element;
-        if (want_id && *want_id) {
-            char* id = json_str(element, "id");
-            int hit = id && strcmp(id, want_id) == 0;
-            free(id);
-            if (hit) return element;
-        }
+        id = json_str(element, "id");
+        hit = id && strcmp(id, want_id) == 0;
+        free(id);
+        if (hit) return element;
     }
-    return (want_id && *want_id) ? NULL : first;
+    return NULL;
 }
 
 spdf_win_session_status spdf_win_session_restore(spdf_win_tabs* tabs, const char* window_id, char* out_window_id,
@@ -166,16 +163,7 @@ spdf_win_session_status spdf_win_session_restore_ex(spdf_win_tabs* tabs, const c
             else spdf_win_session_new_window_id(out_window_id, out_len);
             free(id);
         }
-        if (out_frame) {
-            const char* frame = obj_value(window, "frame", NULL);
-            if (frame && *frame == '{') {
-                out_frame->x = json_int(frame, "x", 0);
-                out_frame->y = json_int(frame, "y", 0);
-                out_frame->w = json_int(frame, "width", 0);
-                out_frame->h = json_int(frame, "height", 0);
-                if (out_frame->w <= 0 || out_frame->h <= 0) out_frame->w = out_frame->h = 0;
-            }
-        }
+        if (out_frame) read_window_frame(window, out_frame);
     }
     free(json);
     return added > 0 ? SPDF_WIN_SESSION_RESTORED : SPDF_WIN_SESSION_ABSENT;
@@ -187,9 +175,10 @@ spdf_win_session_status spdf_win_session_restore_ex(spdf_win_tabs* tabs, const c
  * is carried through untouched — including "viewMode", so a markdown or
  * two-page view recorded by another frontend survives a Windows session. */
 static int key_is_owned(const member* m) {
-    static const char* const owned[] = {"path",    "title",   "page",    "zoom",            "customZoom",
-                                        "fitMode", "scrollX", "scrollY", "hasScrollOrigin", "searchText",
-                                        "readOnly", "workingPath", "roCopyFileSize", "roCopyModifiedAt"};
+    static const char* const owned[] = {"path",     "title",       "page",           "zoom",
+                                        "customZoom", "fitMode",   "scrollX",        "scrollY",
+                                        "hasScrollOrigin", "searchText", "readOnly", "workingPath",
+                                        "roCopyFileSize", "roCopyModifiedAt", "preservesImageColors"};
     size_t i;
     for (i = 0; i < sizeof(owned) / sizeof(owned[0]); ++i)
         if (key_is(m, owned[i])) return 1;
@@ -256,6 +245,11 @@ static void emit_tab(out_buf* out, const spdf_win_tabs* tabs, int index, const c
         emit_key(out, "roCopyModifiedAt");
         emit_fixed(out, view->ro_copy_modified_at, 7);
     }
+    /* Always, as the mac writes it, once the tab has a choice at all. */
+    if (view->preserves_image_colors >= 0) {
+        emit_key(out, "preservesImageColors");
+        buf_puts(out, view->preserves_image_colors ? "true" : "false");
+    }
 
     for (ok = object_first(disk, &m); ok; ok = object_next(&m)) {
         if (key_is_owned(&m)) continue;
@@ -271,30 +265,15 @@ static void emit_tab(out_buf* out, const spdf_win_tabs* tabs, int index, const c
 }
 
 static void emit_window(out_buf* out, const spdf_win_tabs* tabs, const char* window_id, const char* disk_window,
-                        const spdf_win_session_frame* frame) {
-    const char* disk_frame_end = NULL;
-    const char* disk_frame = disk_window ? obj_value(disk_window, "frame", &disk_frame_end) : NULL;
+                        const spdf_win_session_frame* frame, int focused_now) {
     int selected = spdf_win_tabs_selected_index(tabs);
     int i, count = spdf_win_tabs_count(tabs);
 
     buf_puts(out, "{\"id\":");
     emit_string(out, window_id);
-    /* Our frame when the caller has one; else the frame already on disk, so a
-     * save that knows no geometry never moves a mac user's window. */
-    if (frame && frame->w > 0 && frame->h > 0) {
-        buf_puts(out, ",\"frame\":{\"height\":");
-        emit_int(out, frame->h);
-        buf_puts(out, ",\"width\":");
-        emit_int(out, frame->w);
-        buf_puts(out, ",\"x\":");
-        emit_int(out, frame->x);
-        buf_puts(out, ",\"y\":");
-        emit_int(out, frame->y);
-        buf_puts(out, "}");
-    } else if (disk_frame && disk_frame_end) {
-        buf_puts(out, ",\"frame\":");
-        buf_put(out, disk_frame, (size_t)(disk_frame_end - disk_frame));
-    }
+    /* The window's own keys -- frame, display, focusedAt -- spdf_win_session_window.h. */
+    emit_window_frame(out, frame, disk_window);
+    emit_focused_at(out, disk_window, focused_now);
     buf_puts(out, ",\"selectedTab\":");
     emit_int(out, selected < 0 ? 0 : selected);
     buf_puts(out, ",\"tabs\":[");
@@ -310,6 +289,11 @@ int spdf_win_session_save(const spdf_win_tabs* tabs, const char* window_id) {
 }
 
 int spdf_win_session_save_ex(const spdf_win_tabs* tabs, const char* window_id, const spdf_win_session_frame* frame) {
+    return spdf_win_session_save_focused(tabs, window_id, frame, 0);
+}
+
+int spdf_win_session_save_focused(const spdf_win_tabs* tabs, const char* window_id,
+                                  const spdf_win_session_frame* frame, int focused_now) {
     char dir[SPDF_WIN_PATH_MAX];
     spdf_win_state_session_lock* lock;
     spdf_win_state_read_status status = SPDF_WIN_STATE_READ_ABSENT;
@@ -353,7 +337,7 @@ int spdf_win_session_save_ex(const spdf_win_tabs* tabs, const char* window_id, c
      * -removeSessionStateForCurrentWindow when its last tab closes. */
     if (spdf_win_tabs_count(tabs) > 0) {
         if (written++) buf_puts(&out, ",");
-        emit_window(&out, tabs, window_id, disk_window, frame);
+        emit_window(&out, tabs, window_id, disk_window, frame, focused_now);
     }
     buf_puts(&out, "]}");
 
