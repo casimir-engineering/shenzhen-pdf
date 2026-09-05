@@ -89,6 +89,16 @@ typedef enum spdf_win_tab_fit {
  * that boundary. `page` is 0-BASED here and in the file, matching the mac
  * schema and spdf_win_main.cpp's rule; the GTK reader migrates its own legacy
  * 1-based pages on read. */
+/* "searchText": the tab's live find query, UTF-8. Each tab remembers its query
+ * across switches and relaunches (readme: "Scrollbar heat-map ... each tab
+ * remembers its query"), which is why it is view state and not app state.
+ * Fixed storage so the view stays a plain value the model can memcpy; the find
+ * engine caps its own query anyway (spdf_win_search_dup_query). */
+#define SPDF_WIN_TAB_SEARCH_MAX 256
+/* The shadow copy's path: SPDF_WIN_WATCHER_PATH_MAX, spelled here so this header
+ * stays free of the watcher's. */
+#define SPDF_WIN_TAB_PATH_MAX 1024
+
 typedef struct spdf_win_tab_view {
     int page;
     double zoom;
@@ -97,6 +107,20 @@ typedef struct spdf_win_tab_view {
     double scroll_x;
     double scroll_y;
     int has_scroll_origin;
+    char search_text[SPDF_WIN_TAB_SEARCH_MAX];
+    /* --- a read-only source and its shadow copy (spdf_win_watcher.h) ---------
+     * "readOnly", "workingPath", "roCopyFileSize", "roCopyModifiedAt": the
+     * binding the watcher hands out when the tab is opened and takes back on
+     * restore, so an unchanged source reopens its copy with no content read.
+     * Written only when read_only is set, as the mac omits the keys otherwise. */
+    int read_only;
+    char working_path[SPDF_WIN_TAB_PATH_MAX];
+    unsigned long long ro_copy_file_size;
+    double ro_copy_modified_at;
+    /* RUNTIME ONLY, never written: the source was gone for the watcher's whole
+     * grace period (SPDF_WIN_WATCH_MISSING) and the strip colours the tab red
+     * (SpdfWinChromeTab::missing). Cleared by the reopen that follows a CHANGED. */
+    int missing;
 } spdf_win_tab_view;
 
 /* zoom 1, custom_zoom 1, fit_mode 4 (page) — the same defaults

@@ -104,6 +104,32 @@ void spdf_win_lru_deinit(SpdfWinLru* cache);
  * value stays owned by the cache. */
 void* spdf_win_lru_lookup(SpdfWinLru* cache, const SpdfWinLruKey* key);
 
+/* THE STAND-IN LOOKUP: this page, at whatever zoom we happen to have it.
+ *
+ * Returns the cached whole-page bitmap for `page` at this display `scale` whose
+ * zoom is NEAREST `zoom`, bumping its recency like an ordinary lookup, or NULL
+ * when the page is not cached at any zoom. `out_key` (optional) comes back with
+ * the key that was found, so a caller can tell an exact hit from a stand-in.
+ *
+ * It exists so that a view rendering the visible page ASYNCHRONOUSLY has
+ * something honest to draw for the frame or two before the real bitmap lands:
+ * the same page, the same content, the same aspect ratio, one resolution out of
+ * date -- and the compose layer already stretches a bitmap over its slot for the
+ * byte-cap case, so nothing downstream needs to know. Without it the choice is
+ * a hole in the frame or a synchronous render, which is the asymmetry
+ * spdf_win_canvas.cpp's header used to have to defend.
+ *
+ * CROPS ARE NEVER RETURNED. A crop key covers a device-pixel region of the
+ * page; stretched over the whole slot it would draw the wrong part of the page,
+ * which is worse than drawing nothing.
+ *
+ * O(capacity), not O(1), and that is the one place this cache scans. The table
+ * holds tens of entries under a 96 MB budget and this is asked at most once per
+ * visible page per frame -- but it is a scan, so it must not migrate onto a
+ * path that runs per page of the document rather than per page on screen. */
+void* spdf_win_lru_lookup_nearest_zoom(SpdfWinLru* cache, int page, double scale, double zoom,
+                                       SpdfWinLruKey* out_key);
+
 /* Is this key resident? Answers WITHOUT bumping recency, so an
  * is-it-already-rendered check made while deciding what to prefetch cannot make
  * a page that nobody is looking at outlive one that is on screen. The GTK

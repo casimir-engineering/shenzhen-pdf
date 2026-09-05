@@ -38,6 +38,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
+#include "scratch_leaf.h" /* a scratch leaf unique to this process */
 #include "silent_failure_support.h" /* check/note, write_whole/read_whole, make_unreadable */
 
 #include "../src/spdf_win_session.h"
@@ -456,25 +457,11 @@ static void test_concurrent_writers_serialise(const char* dir) {
 /* --- drive ---------------------------------------------------------------- */
 
 int main(int argc, char** argv) {
-    char scratch[SPDF_WIN_PATH_MAX];
     char dir[SPDF_WIN_PATH_MAX];
-    const char* base = argc > 1 ? argv[1] : NULL;
 
     printf("spdf_win_session tests\n");
-    if (!base || !*base) {
-#if defined(_WIN32)
-        base = getenv("TEMP");
-#else
-        base = getenv("TMPDIR");
-#endif
-    }
-    if (!base || !*base) base = ".";
-    if (!spdf_win_path_join(base, "spdf_session_test", scratch, sizeof(scratch))) return 1;
-    /* The proven non-ASCII scratch leaf: every file operation below then runs
-     * through a path the narrow CRT would mangle. */
-    if (!spdf_win_path_join(scratch, "Rapha\xc3\xabl", dir, sizeof(dir))) return 1;
-    if (!spdf_win_paths_ensure_dir(dir)) {
-        printf("FAIL: could not create the scratch directory under %s\n", scratch);
+    if (!spdf_test_state_dir(argc, argv, "spdf_session_test", SPDF_TEST_SCRATCH_STEM, dir, sizeof(dir))) {
+        printf("FAIL: could not create the scratch directory\n");
         return 1;
     }
     spdf_win_paths_set_state_dir_override(dir);
