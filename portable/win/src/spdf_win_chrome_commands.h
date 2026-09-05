@@ -38,6 +38,7 @@
 #include "spdf_win_print.h"
 #include "spdf_win_properties.h"
 #include "spdf_win_menu.h"
+#include "spdf_win_page_wheel.h" /* Alt + wheel pages, by how far the wheel turned */
 
 /* The three typeable fields -- which buffer has the keyboard, a typed code unit,
  * a key while a field is focused. Step 2 of key_for_window() below, in its own
@@ -354,6 +355,38 @@ static int key_for_window(app* a, const spdf_win_input* in) {
     }
 }
 
+/* --- Alt + wheel: the page arrows, wherever the pointer is ----------------
+ *
+ * Decided HERE, before the wheel is routed by position (chrome_wheel), because
+ * "regardless of where you hover" is the point: the mac routes it from the
+ * window's -sendEvent: for the same reason. The policy -- one notch is one
+ * page, a fast spin earns several, the remainder carries -- is
+ * spdf_win_page_wheel.h; this is the glue: the notch the window converted the
+ * wheel into, the clock, and the page arrows themselves (chrome_step_page, so a
+ * fitted page simply advances and a zoomed page lands on the next page at the
+ * same zoom, exactly as the toolbar arrows do). Consumed whether or not a page
+ * turned, so an Alt + wheel never also scrolls whatever is under the pointer.
+ *
+ * Alt + Ctrl + wheel never arrives: the window routes every Ctrl + wheel to
+ * SPDF_WIN_INPUT_ZOOM first, which is the mac's "Command and Control already
+ * mean zoom". Shift rides along -- the window put the distance in dx, so the
+ * vertical is taken when there is one and the horizontal otherwise. */
+static int chrome_page_wheel(app* a, const spdf_win_input* in) {
+    static SpdfWinPageWheel wheel;
+    UINT lines = 3;
+    double notch, delta;
+    int pages, i, changed = 0;
+    SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+    notch = spdf_win_page_wheel_notch_px(lines, in->dpi_scale, in->view_px_h);
+    delta = fabs(in->dy) > 1e-4f ? in->dy : in->dx;
+    pages = spdf_win_page_wheel_step(&wheel, delta, notch, (double)GetTickCount64() / 1000.0);
+    /* A COUNT: a fast spin earns several pages and must get them all. The
+     * document's ends stop the loop, as they stop the arrows. */
+    for (i = 0; i < pages; ++i) changed |= chrome_step_page(a, 1);
+    for (i = 0; i > pages; --i) changed |= chrome_step_page(a, -1);
+    return changed;
+}
+
 /* --- the one input entry point ------------------------------------------ */
 
 static int input_for_window(void* user, spdf_win_input* in) {
@@ -393,9 +426,13 @@ static int input_for_window(void* user, spdf_win_input* in) {
      * the strip drags or selects a tab, a caption button minimises or closes,
      * and a keystroke reaches the same keymap it always did. */
     switch (in->kind) {
-        /* A wheel goes where the pointer is: the strip, the Search list or the
-         * document (chrome_wheel, spdf_win_chrome_field_ui.h). */
-        case SPDF_WIN_INPUT_SCROLL: return chrome_wheel(a, in);
+        /* Alt + wheel is the page arrows wherever the pointer is
+         * (chrome_page_wheel above); any other wheel goes where the pointer is:
+         * the strip, the Search list or the document (chrome_wheel,
+         * spdf_win_chrome_field_ui.h). */
+        case SPDF_WIN_INPUT_SCROLL:
+            if (spdf_win_page_wheel_modifiers_page(in->mods)) return chrome_page_wheel(a, in);
+            return chrome_wheel(a, in);
         case SPDF_WIN_INPUT_ZOOM: return chrome_zoom_at_client(a, in);
         case SPDF_WIN_INPUT_CHAR: return chrome_char(a, in->key);
         /* A worker's message to the window (spdf_win_window.h). The only one so
