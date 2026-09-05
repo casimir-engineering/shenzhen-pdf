@@ -31,9 +31,11 @@
  *      state -- see the note on spdf_win_chrome_content_current() for the exact
  *      shape of that seam and what is meant to replace it.
  *
- * C-compatible on purpose: no Direct2D types appear here, so
- * portable/win/tests/sidebar_rows_test.c can compile the row geometry, the
- * filter and the outline conversion as plain C with no render target in sight.
+ * C-compatible on purpose: no Direct2D types appear here. The Chapters list's
+ * own half -- its rows, bands, disclosure geometry and the outline -> rows
+ * builder -- is spdf_win_sidebar_rows.h, included below, so
+ * portable/win/tests/sidebar_rows_test.c compiles it as plain C with no render
+ * target in sight; this file is the seam and the folding calls.
  */
 #ifndef SPDF_WIN_CHROME_CONTENT_H
 #define SPDF_WIN_CHROME_CONTENT_H
@@ -46,179 +48,12 @@
 #include <wchar.h>
 
 #include "spdf_win_chrome.h"
-#include "spdf_win_layout.h" /* SpdfWinPageSizePt */
+#include "spdf_win_layout.h"          /* SpdfWinPageSizePt */
+#include "spdf_win_sidebar_rows.h"    /* the Chapters list: rows, bands, builder */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* --- the sidebar's Chapters list ----------------------------------------
- *
- * macOS: a headerless NSTableView, rowHeight 25.0, one column 230.0 wide in a
- * 240 pt sidebar (ShenzhenPDFMac.mm:3149-3213). The cell's text field is inset
- * 8 leading and 6 trailing and centred vertically, systemFontOfSize:13, single
- * line, truncating TAIL (:16584-16597, :16620-16624). Nesting is expressed by
- * padding the title with level*3 SPACES with the level clamped to [0, 16]
- * (:16613-16619) -- so it is the string that is indented, not the cell, and
- * this port does the same thing for the same reason: an indent that lives in
- * the text survives truncation and selection highlighting for free.
- *
- * A row whose destination did not resolve (page_index < 0: a /Fit-less dest, a
- * missing target, an external URL -- all three are in the core's conformance
- * suite) is drawn in secondaryLabelColor rather than labelColor, which is
- * exactly macOS's `page >= 0 ? labelColor : secondaryLabelColor`. */
-
-#define SPDF_WIN_SIDEBAR_ROW_H 25.0        /* :3160 rowHeight */
-#define SPDF_WIN_SIDEBAR_COLUMN_W 230.0    /* :3166 single column width */
-#define SPDF_WIN_SIDEBAR_INSET 8.0         /* panel edge -> column, in a 240 pt sidebar */
-#define SPDF_WIN_SIDEBAR_CELL_LEADING 8.0  /* :16590 */
-#define SPDF_WIN_SIDEBAR_CELL_TRAILING 6.0 /* :16591 */
-#define SPDF_WIN_SIDEBAR_FONT_SIZE 13.0    /* :16622 systemFontOfSize:13 */
-#define SPDF_WIN_SIDEBAR_INDENT_SPACES 3   /* :16619 level * 3 spaces */
-#define SPDF_WIN_SIDEBAR_MAX_LEVEL 16      /* :16615 clamp */
-
-/* Rows above the list, in points: the segmented control and the filter field
- * are both 24 pt with 8 pt around them, and 6 pt separates the field from the
- * first row. Transcribed from spdf_win_chrome_panels.cpp, which had them as
- * literals at its draw sites; they are here now so the hit-test and the paint
- * cannot disagree. */
-#define SPDF_WIN_SIDEBAR_TOP_PAD 8.0
-#define SPDF_WIN_SIDEBAR_CONTROL_H 24.0
-#define SPDF_WIN_SIDEBAR_FIELD_H 24.0
-#define SPDF_WIN_SIDEBAR_FIELD_GAP 6.0
-
-typedef struct SpdfWinSidebarRow {
-    const wchar_t* title;  /* UTF-16, already indented by level*3 spaces; borrowed */
-    int page_index;        /* < 0 when the outline entry has no resolvable page */
-    int level;             /* clamped [0, 16] */
-    int outline_index;     /* position in spdf_load_outline order, for the click route */
-} SpdfWinSidebarRow;
-
-typedef struct SpdfWinSidebarContent {
-    const SpdfWinSidebarRow* rows;
-    int row_count;   /* rows AFTER filtering */
-    int total_count; /* rows before filtering; 0 means the document has no outline */
-    int loaded;      /* 0 while the outline has not been read yet */
-    int selected_row;
-    int hot_row;   /* -1 when nothing is hovered */
-    float scroll_y; /* device px, 0 at the top of the list */
-    const wchar_t* filter; /* the live filter text; NULL or empty means none */
-} SpdfWinSidebarContent;
-
-/* The sidebar's bands, in the panel's own device-pixel coordinates. One
- * function so the painter and the input router cannot drift: this is
- * spdf_win_chrome.h's rule 2 applied one level down. `filter` comes back empty
- * in Search mode, where macOS hides and disables the field (:3149-3157). */
-typedef struct SpdfWinSidebarLayout {
-    SpdfWinChromeRect sections;
-    SpdfWinChromeRect filter;
-    SpdfWinChromeRect list;
-    float row_h;
-} SpdfWinSidebarLayout;
-
-static SPDF_WIN_CHROME_INLINE void spdf_win_sidebar_layout(SpdfWinChromeRect sidebar, int section, float dpi_scale,
-                                                           SpdfWinSidebarLayout* out) {
-    float s = dpi_scale > 0.0f ? dpi_scale : 1.0f;
-    float y;
-
-    if (!out) return;
-    out->sections = spdf_win_chrome_zero();
-    out->filter = spdf_win_chrome_zero();
-    out->list = spdf_win_chrome_zero();
-    out->row_h = spdf_win_chrome_px(SPDF_WIN_SIDEBAR_ROW_H, s);
-    if (spdf_win_chrome_rect_empty(sidebar)) return;
-
-    y = sidebar.y + spdf_win_chrome_px(SPDF_WIN_SIDEBAR_TOP_PAD, s);
-    out->sections.x = sidebar.x + spdf_win_chrome_px(SPDF_WIN_SIDEBAR_INSET, s);
-    out->sections.w = sidebar.w - 2.0f * spdf_win_chrome_px(SPDF_WIN_SIDEBAR_INSET, s);
-    out->sections.y = y;
-    out->sections.h = spdf_win_chrome_px(SPDF_WIN_SIDEBAR_CONTROL_H, s);
-    y = out->sections.y + out->sections.h + spdf_win_chrome_px(SPDF_WIN_SIDEBAR_TOP_PAD, s);
-
-    if (section != 2) {
-        out->filter = out->sections;
-        out->filter.y = y;
-        out->filter.h = spdf_win_chrome_px(SPDF_WIN_SIDEBAR_FIELD_H, s);
-        y = out->filter.y + out->filter.h + spdf_win_chrome_px(SPDF_WIN_SIDEBAR_FIELD_GAP, s);
-    }
-
-    out->list.x = sidebar.x + spdf_win_chrome_px(SPDF_WIN_SIDEBAR_INSET, s);
-    out->list.w = sidebar.w - 2.0f * spdf_win_chrome_px(SPDF_WIN_SIDEBAR_INSET, s);
-    out->list.y = y;
-    out->list.h = spdf_win_chrome_max(0.0f, sidebar.y + sidebar.h - y);
-    if (out->list.w < 0.0f) out->list.w = 0.0f;
-}
-
-/* One row's rect in panel coordinates, scroll included. Rows outside the list
- * viewport come back non-empty and simply do not intersect it, so the caller
- * clips rather than special-casing. */
-static SPDF_WIN_CHROME_INLINE SpdfWinChromeRect spdf_win_sidebar_row_rect(const SpdfWinSidebarLayout* l, float scroll_y,
-                                                                          int row) {
-    SpdfWinChromeRect r;
-    if (!l || row < 0 || l->row_h <= 0.0f) return spdf_win_chrome_zero();
-    r.x = l->list.x;
-    r.w = l->list.w;
-    r.h = l->row_h;
-    r.y = l->list.y - scroll_y + l->row_h * (float)row;
-    return r;
-}
-
-/* Which row a point lands in, or -1. Used by the input router; the painter uses
- * the same arithmetic through spdf_win_sidebar_row_rect. */
-static SPDF_WIN_CHROME_INLINE int spdf_win_sidebar_row_at(const SpdfWinSidebarLayout* l, float scroll_y, int row_count,
-                                                          float x, float y) {
-    int row;
-    if (!l || row_count <= 0 || l->row_h <= 0.0f) return -1;
-    if (!spdf_win_chrome_contains(l->list, x, y)) return -1;
-    row = (int)floorf((y - l->list.y + scroll_y) / l->row_h);
-    if (row < 0 || row >= row_count) return -1;
-    return row;
-}
-
-/* How far the list can scroll, in device px. */
-static SPDF_WIN_CHROME_INLINE float spdf_win_sidebar_max_scroll(const SpdfWinSidebarLayout* l, int row_count) {
-    float content;
-    if (!l || row_count <= 0) return 0.0f;
-    content = l->row_h * (float)row_count;
-    return spdf_win_chrome_max(0.0f, content - l->list.h);
-}
-
-/* The filter, macOS's semantics exactly (:9666-9670): an empty filter matches
- * everything, an empty title matches nothing, and otherwise it is a substring
- * test that ignores BOTH case and diacritics -- NSCaseInsensitiveSearch |
- * NSDiacriticInsensitiveSearch. FindNLSStringEx with LINGUISTIC_IGNORECASE |
- * NORM_IGNORENONSPACE is the Windows spelling of that same pair, which is why
- * this is not a hand-rolled towupper loop: "Zürich" must match "zurich" on both
- * platforms, and a chapter title is exactly where an accented or CJK name shows
- * up. The towupper loop is kept only as the fallback for a locale that cannot
- * do the linguistic compare at all. */
-static SPDF_WIN_CHROME_INLINE int spdf_win_sidebar_ascii_fold_find(const wchar_t* hay, const wchar_t* needle) {
-    size_t i, j;
-    for (i = 0; hay[i]; ++i) {
-        for (j = 0; needle[j]; ++j) {
-            wchar_t a = hay[i + j];
-            wchar_t b = needle[j];
-            if (!a) return 0;
-            if (a >= L'a' && a <= L'z') a = (wchar_t)(a - L'a' + L'A');
-            if (b >= L'a' && b <= L'z') b = (wchar_t)(b - L'a' + L'A');
-            if (a != b) break;
-        }
-        if (!needle[j]) return 1;
-    }
-    return 0;
-}
-
-static SPDF_WIN_CHROME_INLINE int spdf_win_sidebar_title_matches(const wchar_t* title, const wchar_t* filter) {
-    int found;
-    if (!filter || !filter[0]) return 1;
-    if (!title || !title[0]) return 0;
-    SetLastError(ERROR_SUCCESS);
-    found = FindNLSStringEx(LOCALE_NAME_USER_DEFAULT, FIND_FROMSTART | LINGUISTIC_IGNORECASE | NORM_IGNORENONSPACE,
-                            title, -1, filter, -1, NULL, NULL, NULL, 0);
-    if (found >= 0) return 1;
-    if (GetLastError() == ERROR_SUCCESS) return 0; /* a real "not found" */
-    return spdf_win_sidebar_ascii_fold_find(title, filter);
-}
 
 /* --- the minimap's thumbnails -------------------------------------------
  *
@@ -317,87 +152,75 @@ void spdf_win_chrome_content_set_filter(const wchar_t* filter);
  * change's report. */
 void spdf_win_chrome_content_shutdown(void);
 
-/* --- outline -> rows -----------------------------------------------------
+/* --- folding (spdf_win_chrome_content.cpp) --------------------------------
  *
- * Header-only, and deliberately: portable/win/tests/sidebar_rows_test.c drives
- * these with hand-built outlines -- CJK, accented and malformed titles, the
- * cases a narrow conversion mangles silently on this machine's 1252 code page --
- * and it should not have to link the thumbnail store, the render pool and MuPDF
- * to do it. `titles`/`pages`/`levels` are the three parallel arrays
- * spdf_outline holds; `text_arena` receives the indented UTF-16 the rows point
- * into. Returns the number of rows written. */
-/* UTF-8 in, UTF-16 out, and never anything narrower. A chapter title is exactly
- * where a CJK or accented name turns up, and this machine's ANSI code page is
- * 1252 -- so MultiByteToWideChar(CP_UTF8, ...) is not a stylistic choice, it is
- * the difference between "Überblick" and "Ãœberblick". Returns the number of
- * wchar_t written INCLUDING the terminator, or 0 on failure. */
-static SPDF_WIN_CHROME_INLINE int spdf_win_sidebar_utf16_from_utf8(const char* utf8, wchar_t* out, int out_max) {
-    int n;
-    if (!out || out_max <= 0) return 0;
-    if (!utf8 || !*utf8) {
-        out[0] = 0;
-        return 1;
-    }
-    n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, out, out_max);
-    if (n > 0) return n;
-    /* Malformed UTF-8 from a hostile or damaged document must not lose the row.
-     * Without MB_ERR_INVALID_CHARS the conversion substitutes U+FFFD and cannot
-     * fail for that reason, so reaching here means the buffer was too small; the
-     * title is truncated rather than dropped. */
-    n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
-    if (n <= 0) {
-        out[0] = 0;
-        return 1;
-    }
-    if (MultiByteToWideChar(CP_UTF8, 0, utf8, out_max - 1, out, out_max - 1) <= 0) {
-        out[0] = 0;
-        return 1;
-    }
-    out[out_max - 1] = 0;
-    return out_max;
-}
+ * WHERE THE MEMORY IS KEPT is a seam, not a dependency. The provider asks a
+ * SpdfWinChapterStore for the document's collapsed keys when it loads the
+ * outline and hands them back on every change; spdf_win_chapter_state.cpp is
+ * that store (chapters.yaml beside documents.yaml, and the mac's own record as
+ * the fallback), and spdf_win_chapter_store_register.cpp REGISTERS it when
+ * linked, which the app always is. A binary that does not link that unit --
+ * the pixel tests, which link this provider for its rows and thumbnails --
+ * folds for the session only and touches no file. The seam is what keeps the
+ * state module's four translation units (spdf_win_state, spdf_win_paths,
+ * spdf_yaml, spdf_win_compat) out of every painter test's link line;
+ * portable/win/tests/sidebar_collapse_test.c links the store and proves the
+ * memory survives a release and a reopen. */
+typedef struct SpdfWinChapterStore {
+    /* 1 and a malloc'd array (free with free_keys) when a record exists. */
+    int (*load)(const char* utf8_path, char*** out_keys, int* out_count);
+    /* Persist `count` keys for the path; 0 removes the record. */
+    int (*save)(const char* utf8_path, const char* const* keys, int count);
+    void (*free_keys)(char** keys, int count);
+} SpdfWinChapterStore;
+void spdf_win_chrome_content_set_chapter_store(const SpdfWinChapterStore* store);
 
-static SPDF_WIN_CHROME_INLINE int spdf_win_sidebar_build_rows(const char* const* titles, const int* pages, const int* levels, int count,
-                                const wchar_t* filter, SpdfWinSidebarRow* out_rows, int out_max, wchar_t* text_arena,
-                                size_t arena_wchars) {
-    int i;
-    int written = 0;
-    size_t used = 0;
+/* THE PROVIDER'S HALF OF FOLDING, for spdf_win_chrome_content_fold.cpp: a view
+ * of what the built-in provider holds -- the rows as shown, the outline's raw
+ * levels, the collapsed keys -- and the one way to replace the keys. `view`
+ * loads the outline if it has not been (a press is not the paint path) and
+ * returns 0 when a real provider is attached or there is no outline. `apply`
+ * takes ownership of a malloc'd key array, writes it through the store, and
+ * marks the rows stale; the next spdf_win_chrome_content_current() -- the
+ * paint that needs them -- rebuilds from the outline already in memory. */
+typedef struct SpdfWinContentFoldView {
+    const SpdfWinSidebarContent* sidebar; /* rows, counts, filter, scroll */
+    const int* levels;                    /* the outline's raw levels, outline_count of them */
+    int outline_count;
+    const char* const* collapsed;
+    int collapsed_count;
+} SpdfWinContentFoldView;
+int spdf_win_chrome_content_fold_view(SpdfWinContentFoldView* out);
+void spdf_win_chrome_content_fold_apply(char** keys, int count);
 
-    if (!out_rows || out_max <= 0 || !text_arena || arena_wchars == 0) return 0;
-    for (i = 0; i < count; ++i) {
-        wchar_t title[512];
-        int level = levels ? levels[i] : 0;
-        int indent;
-        size_t need;
-        wchar_t* dst;
-        int k;
+/* The three ways the collapse state changes (spdf_win_chrome_content_fold.cpp),
+ * all on the built-in provider's document and all written through the store so
+ * a relaunch restores exactly what was collapsed. Return non-zero when
+ * something changed. */
 
-        if (written >= out_max) break;
-        if (!spdf_win_sidebar_utf16_from_utf8(titles ? titles[i] : NULL, title, (int)(sizeof(title) / sizeof(title[0])))) continue;
-        /* macOS substitutes "Untitled" for a missing title (:9876) and filters
-         * on the UNINDENTED text, so the indent below cannot affect a match. */
-        if (!title[0]) wcscpy_s(title, sizeof(title) / sizeof(title[0]), L"Untitled");
-        if (!spdf_win_sidebar_title_matches(title, filter)) continue;
+/* Fold or unfold the chapter at visible `row` (toggleChapterAtSidebarRow:). A
+ * row without children, or out of range, changes nothing. */
+int spdf_win_chrome_content_toggle_row(int row);
 
-        if (level < 0) level = 0;
-        if (level > SPDF_WIN_SIDEBAR_MAX_LEVEL) level = SPDF_WIN_SIDEBAR_MAX_LEVEL;
-        indent = level * SPDF_WIN_SIDEBAR_INDENT_SPACES;
-        need = (size_t)indent + wcslen(title) + 1;
-        if (used + need > arena_wchars) break;
-        dst = text_arena + used;
-        for (k = 0; k < indent; ++k) dst[k] = L' ';
-        wcscpy_s(dst + indent, need - (size_t)indent, title);
-        used += need;
+/* The one button: collapse every chapter while any is open, expand every one
+ * once none is (toggleAllChapters:). Nothing nestable: nothing happens. */
+int spdf_win_chrome_content_toggle_all(void);
 
-        out_rows[written].title = dst;
-        out_rows[written].page_index = pages ? pages[i] : -1;
-        out_rows[written].level = level;
-        out_rows[written].outline_index = i;
-        ++written;
-    }
-    return written;
-}
+/* A LEFT PRESS the router attributed to the Chapters list or its filter field,
+ * refined against the content: on a row's disclosure triangle it folds that
+ * row; on the toggle button's slot, while the button is up, it toggles all.
+ * Returns 1 when it consumed the press, 0 when the caller should do what it
+ * would have done -- navigate to the row, or focus the field. `row` is the
+ * router's index for SPDF_WIN_CA_SIDEBAR_ROW and -1 for
+ * SPDF_WIN_CA_FOCUS_SIDEBAR_FILTER; `sidebar` the layout's panel rect the click
+ * was routed against; x/y the press in the same client device pixels.
+ *
+ * WHY THE ROUTER DOES NOT DECIDE THIS ITSELF: the triangle's x depends on the
+ * row's LEVEL and whether it has children, and the router has the model's row
+ * count and nothing else -- resolving the content provider on a mouse move
+ * would put an outline load on the pointer's path. On a press the content is
+ * already warm, because the paint that drew the row resolved it. */
+int spdf_win_chrome_content_sidebar_press(int row, SpdfWinChromeRect sidebar, float x, float y, float dpi_scale);
 
 
 #ifdef __cplusplus
