@@ -12,12 +12,20 @@
  *   - Filter field, "Filter Chapters" / "Filter Comments", hidden and disabled
  *     in Search mode (:3149-3157, :9641).
  *   - A headerless SPDFSidebarTableView, rowHeight 25.0, one column 230.0 wide
- *     (:3149-3213). The cell's text field is inset 8 leading, 6 trailing,
- *     vertically centred, systemFontOfSize:13, single line, truncating TAIL
- *     (:16584-16597, :16620-16624).
- *   - Nesting is level*3 SPACES prepended to the title, level clamped [0,16]
- *     (:16613-16619). Not an indented cell -- an indented string -- so it
- *     survives truncation and selection for free. This port does the same.
+ *     (:3149-3213). The row view is SPDFMacSidebarChapters.mm's (a5820117a):
+ *     a 14 pt disclosure chevron -- pointing down when open, right when
+ *     collapsed, 9 pt semibold in the secondary tint, HIDDEN but keeping its
+ *     width on a childless row -- whose leading edge is 6 + level*13 pt, then
+ *     the title 2 pt after it, inset 6 trailing, vertically centred,
+ *     systemFontOfSize:13, single line, truncating TAIL. The geometry is
+ *     spdf_win_sidebar_rows.h's, shared with the press resolution.
+ *   - ONE EXPAND / COLLAPSE BUTTON at the trailing end of the filter field's
+ *     row (0a1f0845c), 22 pt wide, 4 pt from the field, icon only, secondary
+ *     tint, bezel shown only under the pointer (so none here): arrows drawing
+ *     in while anything is expanded ("Collapse All"), arrows opening out once
+ *     everything is collapsed ("Expand All"). Hidden -- and the field takes
+ *     the width back -- when nothing nests: a flat outline, a live filter,
+ *     Comments, search results.
  *   - A row whose destination did not resolve is secondaryLabelColor rather
  *     than labelColor (:16623). The core's outline suite has three such cases
  *     (a missing target, an external URL, a dest-less entry), so this is not a
@@ -155,6 +163,70 @@ void draw_filter_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect f, in
     }
 }
 
+/* The disclosure chevron: SF Symbols chevron.right / chevron.down at 9 pt
+ * semibold, drawn as two strokes so it stays crisp at any DPI. Centred in the
+ * 14 pt slot; half-extent 3 pt, which is what a 9 pt chevron glyph measures. */
+void draw_disclosure(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect slot, int collapsed, ID2D1Brush* brush) {
+    float s = ctx.dpi_scale;
+    float cx = slot.x + slot.w * 0.5f;
+    float cy = slot.y + slot.h * 0.5f;
+    float a = px(3.0, s);
+    float lw = spdf_win_chrome_stroke_px(1.5f, s);
+    if (!brush || spdf_win_chrome_rect_empty(slot)) return;
+    if (collapsed) {
+        /* Pointing right: the section is folded away. */
+        ctx.target->DrawLine(D2D1::Point2F(cx - a * 0.5f, cy - a), D2D1::Point2F(cx + a * 0.5f, cy), brush, lw, NULL);
+        ctx.target->DrawLine(D2D1::Point2F(cx + a * 0.5f, cy), D2D1::Point2F(cx - a * 0.5f, cy + a), brush, lw, NULL);
+    } else {
+        /* Pointing down: open. */
+        ctx.target->DrawLine(D2D1::Point2F(cx - a, cy - a * 0.5f), D2D1::Point2F(cx, cy + a * 0.5f), brush, lw, NULL);
+        ctx.target->DrawLine(D2D1::Point2F(cx, cy + a * 0.5f), D2D1::Point2F(cx + a, cy - a * 0.5f), brush, lw, NULL);
+    }
+}
+
+/* One diagonal arrow from `from` to `to` with its head at `to`: a shaft and two
+ * 2.5 pt barbs at 45 degrees to it. */
+void draw_arrow(const SpdfWinChromePaintCtx& ctx, D2D1_POINT_2F from, D2D1_POINT_2F to, ID2D1Brush* brush, float s) {
+    float lw = spdf_win_chrome_stroke_px(1.5f, s);
+    float dx = to.x - from.x, dy = to.y - from.y;
+    float len = sqrtf(dx * dx + dy * dy);
+    float ux, uy, barb;
+    if (len <= 0.0f) return;
+    ux = dx / len;
+    uy = dy / len;
+    barb = px(2.5, s);
+    ctx.target->DrawLine(from, to, brush, lw, NULL);
+    /* The barbs run back from the tip along the axes, which for a diagonal
+     * shaft are the two directions 45 degrees off it -- the SF Symbol's shape. */
+    ctx.target->DrawLine(to, D2D1::Point2F(to.x - ux * barb * 1.41421f, to.y), brush, lw, NULL);
+    ctx.target->DrawLine(to, D2D1::Point2F(to.x, to.y - uy * barb * 1.41421f), brush, lw, NULL);
+}
+
+/* The expand / collapse button's glyph: arrow.down.right.and.arrow.up.left
+ * while it collapses (two arrows drawing IN toward the centre from the
+ * top-left and bottom-right), arrow.up.left.and.arrow.down.right once it
+ * expands (the same two arrows pointing OUT). 10 pt medium on the mac; the
+ * glyph box here is 10 pt centred in the 22 pt slot. */
+void draw_toggle(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect slot, int collapses, SpdfWinChromeColor color) {
+    float s = ctx.dpi_scale;
+    float cx = slot.x + slot.w * 0.5f;
+    float cy = slot.y + slot.h * 0.5f;
+    float outer = px(5.0, s);
+    float inner = px(1.0, s);
+    ID2D1SolidColorBrush* brush;
+    if (spdf_win_chrome_rect_empty(slot)) return;
+    brush = spdf_win_chrome_brush(ctx.target, color);
+    if (!brush) return;
+    if (collapses) {
+        draw_arrow(ctx, D2D1::Point2F(cx - outer, cy - outer), D2D1::Point2F(cx - inner, cy - inner), brush, s);
+        draw_arrow(ctx, D2D1::Point2F(cx + outer, cy + outer), D2D1::Point2F(cx + inner, cy + inner), brush, s);
+    } else {
+        draw_arrow(ctx, D2D1::Point2F(cx - inner, cy - inner), D2D1::Point2F(cx - outer, cy - outer), brush, s);
+        draw_arrow(ctx, D2D1::Point2F(cx + inner, cy + inner), D2D1::Point2F(cx + outer, cy + outer), brush, s);
+    }
+    brush->Release();
+}
+
 void draw_empty_state(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect list, const wchar_t* line) {
     SpdfWinChromeRect r = list;
     float s = ctx.dpi_scale;
@@ -175,6 +247,7 @@ void draw_rows(const SpdfWinChromePaintCtx& ctx, const SpdfWinSidebarLayout& l, 
     int first, last, i;
     ID2D1SolidColorBrush* sel = NULL;
     ID2D1SolidColorBrush* hot = NULL;
+    ID2D1SolidColorBrush* chevron = NULL;
 
     if (l.row_h <= 0.0f || c->row_count <= 0) return;
     first = (int)floorf(c->scroll_y / l.row_h);
@@ -185,23 +258,26 @@ void draw_rows(const SpdfWinChromePaintCtx& ctx, const SpdfWinSidebarLayout& l, 
     ctx.target->PushAxisAlignedClip(spdf_win_chrome_d2d_rect(l.list), D2D1_ANTIALIAS_MODE_ALIASED);
     sel = spdf_win_chrome_brush(ctx.target, th->row_selected_fill);
     hot = spdf_win_chrome_brush(ctx.target, th->row_hot_fill);
+    chevron = spdf_win_chrome_brush(ctx.target, th->label_secondary);
     for (i = first; i <= last; ++i) {
         SpdfWinChromeRect row = spdf_win_sidebar_row_rect(&l, c->scroll_y, i);
-        SpdfWinChromeRect text;
         if (i == c->selected_row && sel)
             ctx.target->FillRectangle(spdf_win_chrome_d2d_rect(row), sel);
         else if (i == c->hot_row && hot)
             ctx.target->FillRectangle(spdf_win_chrome_d2d_rect(row), hot);
-        text = row;
-        text.x += px(SPDF_WIN_SIDEBAR_CELL_LEADING, s);
-        text.w -= px(SPDF_WIN_SIDEBAR_CELL_LEADING, s) + px(SPDF_WIN_SIDEBAR_CELL_TRAILING, s);
-        spdf_win_chrome_draw_text(ctx, c->rows[i].title, text,
+        /* The chevron's slot is the indent; a childless row keeps the slot
+         * empty so titles at one depth align (spdf_win_sidebar_rows.h). */
+        if (c->rows[i].has_children)
+            draw_disclosure(ctx, spdf_win_sidebar_disclosure_rect(row, c->rows[i].level, s), c->rows[i].collapsed,
+                            chevron);
+        spdf_win_chrome_draw_text(ctx, c->rows[i].title, spdf_win_sidebar_title_rect(row, c->rows[i].level, s),
                                   c->rows[i].page_index >= 0 ? th->label : th->label_secondary,
                                   px(SPDF_WIN_SIDEBAR_FONT_SIZE, s), DWRITE_FONT_WEIGHT_NORMAL,
                                   DWRITE_TEXT_ALIGNMENT_LEADING, 0);
     }
     if (sel) sel->Release();
     if (hot) hot->Release();
+    if (chevron) chevron->Release();
     ctx.target->PopAxisAlignedClip();
 }
 
@@ -351,8 +427,16 @@ void spdf_win_chrome_paint_sidebar(const SpdfWinChromePaintCtx& ctx, const SpdfW
         SpdfWinChromeRect bar = spdf_win_sidebar_sections_rect(l.sections, side, segments, s);
         if (bar.w > 0.0f) draw_sections(ctx, bar, segments, m->sidebar_section);
     }
-    if (!spdf_win_chrome_rect_empty(l.filter))
-        draw_filter_field(ctx, l.filter, m->sidebar_section, content ? content->filter : NULL);
+    if (!spdf_win_chrome_rect_empty(l.filter)) {
+        /* The one expand / collapse button shares the field's row while the
+         * list nests; the field stops short of it and takes the width back when
+         * it goes away (see this file's header). */
+        int nestable = m->sidebar_section == 0 && content && content->loaded && content->collapsible_count > 0 &&
+                       !spdf_win_chrome_rect_empty(l.toggle);
+        draw_filter_field(ctx, nestable ? spdf_win_sidebar_filter_beside_toggle(&l, s) : l.filter, m->sidebar_section,
+                          content ? content->filter : NULL);
+        if (nestable) draw_toggle(ctx, l.toggle, content->open_count > 0, ctx.theme->label_secondary);
+    }
 
     /* Comments: the published rows -- a header per page, a row per comment,
      * built by spdf_win_annot.h from the comment cache -- through the Search
