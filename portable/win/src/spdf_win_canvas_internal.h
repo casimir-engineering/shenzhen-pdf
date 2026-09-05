@@ -1,16 +1,18 @@
-/* The canvas's private state, shared by exactly four translation units.
+/* The canvas's private state, shared by exactly five translation units.
  *
  * It exists because spdf_win_canvas.cpp reached the repo's 500-line cap and the
  * rule is extraction over cap bumps (tools/file-size-limits.md). Every seam is
  * the honest one: spdf_win_canvas.cpp is geometry and composition -- what is
  * where, at what zoom -- spdf_win_canvas_prefetch.cpp is everything to do with
  * T5's worker pool, spdf_win_canvas_selection.cpp is the pointer gesture that
- * turns those two into a text selection and a followed link, and
+ * turns those two into a text selection and a followed link,
  * spdf_win_find_canvas.cpp is the navigation surface the search & map track
- * drives -- scroll to a match, read a page's slot, re-measure a rotated page.
- * Nothing outside those four files may include this header; spdf_win_canvas.h
+ * drives -- scroll to a match, read a page's slot, re-measure a rotated page --
+ * and spdf_win_canvas_swap.cpp is the one operation that changes the DOCUMENT
+ * under a live viewport (a Markdown file re-read after it changed on disk).
+ * Nothing outside those five files may include this header; spdf_win_canvas.h
  * is the public surface. (spdf_win_canvas_scrollbar.h is part of
- * spdf_win_canvas.cpp's own translation unit, not a fifth file.)
+ * spdf_win_canvas.cpp's own translation unit, not a sixth file.)
  */
 #ifndef SPDF_WIN_CANVAS_INTERNAL_H
 #define SPDF_WIN_CANVAS_INTERNAL_H
@@ -38,7 +40,12 @@
 #define SPDF_WIN_CANVAS_MAX_INFLIGHT 32
 
 struct spdf_win_canvas {
-    spdf_document* doc; /* borrowed */
+    spdf_document* doc; /* borrowed at create(); the adopted one after a replace */
+    /* A document handed over by spdf_win_canvas_replace_document(), which the
+     * canvas OWNS: closed on the next replace and on destroy. NULL while the
+     * canvas still shows the document it was created over, which stays the
+     * caller's -- the two ownerships never mix (spdf_win_canvas_swap.cpp). */
+    spdf_document* owned_doc;
     /* The document's UTF-8 path, copied; NULL when the caller gave none. The
      * render workers get it at construction; the links cache gets it lazily,
      * so its text-URL thread can open a handle of its own. */

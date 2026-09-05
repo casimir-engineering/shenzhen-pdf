@@ -234,6 +234,10 @@ void spdf_win_canvas_destroy(spdf_win_canvas* canvas) {
     spdf_win_canvas_selection_teardown(canvas);
     spdf_win_lru_deinit(&canvas->cache);
     spdf_win_layout_clear(&canvas->layout);
+    /* A document adopted by spdf_win_canvas_replace_document() is the canvas's
+     * to close; the one create() was given never is. After the service and the
+     * selection, both of which may still name it. */
+    if (canvas->owned_doc) spdf_close(canvas->owned_doc);
     free(canvas->draws);
     free(canvas->sizes);
     free(canvas->path);

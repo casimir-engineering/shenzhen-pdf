@@ -117,6 +117,29 @@ int spdf_win_canvas_visible_range(const spdf_win_canvas* canvas, int* first, int
  * canvas only re-learns it. */
 int spdf_win_canvas_page_changed(spdf_win_canvas* canvas, int page_index);
 
+/* THE WHOLE DOCUMENT CHANGED UNDER THE CANVAS -- a Markdown file re-read after
+ * it changed on disk (spdf_win_md_reload.h), or any other re-open of the same
+ * path. The canvas keeps its viewport: zoom mode, zoom and scroll offset stay
+ * where they were and are clamped to the new document, so the reader's place
+ * survives (the mac's preserveCurrentState:YES). Page sizes are re-estimated
+ * from the new first page and measured lazily as before; every cached bitmap
+ * goes, the in-flight renders are superseded, the link regions and the
+ * selection are dropped, and the render workers are restarted so their handles
+ * re-open the path -- they are keyed on path alone (spdf_win_render.h) and
+ * would otherwise keep rendering the old bytes.
+ *
+ * NO EMPTY FRAME, by construction: nothing here paints. The old document keeps
+ * drawing until this returns, and the next build_scene finds an empty cache and
+ * renders the visible page on the calling thread, exactly as the first frame of
+ * a fresh canvas does -- the compose layer never sees a hole.
+ *
+ * OWNERSHIP: unlike create(), this TAKES `doc`; it is closed when replaced again
+ * or when the canvas is destroyed. The document create() was given stays the
+ * caller's, untouched -- the caller decides when the old bytes go. Returns 0,
+ * taking nothing, for a NULL or empty document, so the caller can keep what it
+ * has on screen. Implemented in spdf_win_canvas_swap.cpp. */
+int spdf_win_canvas_replace_document(spdf_win_canvas* canvas, spdf_document* doc);
+
 /* SELECT EVERY GLYPH ON A PAGE (Edit > Select All). Runs the ordinary range
  * gesture from the page's top-left to its bottom-right through the same three
  * calls the pointer uses, so what Ctrl+A selects is exactly what a drag across

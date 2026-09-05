@@ -482,6 +482,11 @@ int main(void) {
          * The frame was read before the window went away, in app_exit_frame. */
         spdf_win_tabs_app_finish(a.tabs, a.canvas, a.window_id, &a.exit_frame);
         spdf_win_tabs_open_stop_watching(); /* after the model: no callback can reach a closed tab */
+        /* A Markdown re-read the watcher started (spdf_win_md_reload.h) may
+         * still be running; its result has no window to land in now. Waiting
+         * for it here ends the thread inside MuPDF cleanly rather than under
+         * ExitProcess, and closes the document it parked. */
+        spdf_win_md_reload_shutdown();
         a.canvas = NULL; /* the model closed it; close_document() must not */
     }
 
