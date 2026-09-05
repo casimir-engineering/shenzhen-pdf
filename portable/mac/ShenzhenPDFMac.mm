@@ -9267,15 +9267,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
            (_searchField.stringValue.length > 0 || _findSearchInProgress || _findMatches.count > 0);
 }
 
-- (void)syncSidebarModeControlSegmentsForSearchAvailability:(BOOL)hasSearch {
-    NSInteger segmentCount = hasSearch ? 3 : 2;
-    if (_sidebarModeControl.segmentCount != segmentCount) _sidebarModeControl.segmentCount = segmentCount;
-    [_sidebarModeControl setLabel:@"Chapters" forSegment:SPDFSidebarModeChapters];
-    [_sidebarModeControl setLabel:@"Comments" forSegment:SPDFSidebarModeComments];
-    if (hasSearch) [_sidebarModeControl setLabel:@"Search" forSegment:SPDFSidebarModeSearch];
-    [self normalizeSidebarModeControlWidths];
-}
-
 - (NSString*)sidebarFilterTextForCurrentMode {
     if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch) return @"";
     if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments) return _commentFilterText ?: @"";
