@@ -26,7 +26,9 @@
  * The dummy target is KEPT until finish(): releasing the last hardware target
  * lets the factory drop the device, which would be the same cost paid twice.
  * Its window belongs to the worker thread (DestroyWindow must run there), so
- * the thread parks on an event until finish() and tears both down itself.
+ * the thread parks until finish() and tears both down itself -- parks with
+ * MsgWaitForMultipleObjects, dispatching what arrives, because a thread that
+ * owns a window and stops pumping is a hung window to the whole desktop.
  *
  *   start(d2d): windowed path only, right after spdf_win_d2d_create(). The
  *          headless PNG paths must NOT call it: they draw through a software
@@ -79,9 +81,20 @@ static unsigned __stdcall spdf_win_gpu_prewarm_thread(void* arg) {
     wc.hInstance = GetModuleHandleW(NULL);
     wc.lpszClassName = L"ShenzhenPDFGpuPrewarm";
     RegisterClassW(&wc); /* ERROR_CLASS_ALREADY_EXISTS is fine: start() runs once */
-    /* Never shown, never painted, never pumped: CreateHwndRenderTarget only
-     * needs a live HWND to size itself against. */
-    hwnd = CreateWindowExW(0, wc.lpszClassName, L"", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, NULL, NULL, wc.hInstance, NULL);
+    /* Never shown and never painted -- CreateHwndRenderTarget only needs a live
+     * HWND to size itself against -- but NOT never pumped, and not an ordinary
+     * top-level window. See the park below.
+     *
+     * WS_POPUP with WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE: an unowned
+     * WS_OVERLAPPEDWINDOW is a window the SHELL takes an interest in even while
+     * it is invisible -- it is enumerated, asked for its title and its icon, and
+     * considered when the window manager decides what to activate. A tool window
+     * is excluded from the Alt+Tab list and the taskbar by definition, and
+     * NOACTIVATE says it must never take the foreground. This window exists only
+     * to hold a render target's back buffer; it should be invisible to the
+     * desktop in every sense, not just unmapped. */
+    hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, wc.lpszClassName, L"", WS_POPUP, 0, 0, 64, 64, NULL,
+                           NULL, wc.hInstance, NULL);
     if (hwnd) {
         /* The same properties spdf_win_window.cpp's ensure_target uses, so the
          * device the factory creates for this is the one the real target gets. */
@@ -91,7 +104,38 @@ static unsigned __stdcall spdf_win_gpu_prewarm_thread(void* arg) {
         s->factory->CreateHwndRenderTarget(props, D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(64, 64)), &target);
     }
     spdf_win_launch_mark(target ? "gpu-prewarm-done" : "gpu-prewarm-failed");
-    WaitForSingleObject(s->finish, INFINITE);
+    /* PARK, BUT KEEP PUMPING. The dummy target is held until finish() because
+     * releasing the factory's last hardware target lets it drop the device --
+     * the whole cost this exists to hide, paid twice. So this thread outlives
+     * the prewarm, and it owns a window.
+     *
+     * A thread that owns a window and stops dispatching messages is a HUNG
+     * window as far as Windows is concerned, for as long as the app runs, and
+     * that is not a private matter: USER32 answers cross-process SendMessage on
+     * behalf of a window's thread, so a hung window stalls every broadcast on
+     * the desktop (WM_SETTINGCHANGE, theme and DPI changes, device arrival) for
+     * its timeout, the shell's own enumeration of this process slows to that
+     * same timeout, and activating this app's real window becomes unreliable --
+     * which is exactly how it was reported: "I can't interact with it at all,
+     * not even focus it with alt tab". Measured before this change with
+     * IsHungAppWindow: true, from a few seconds after launch until exit.
+     *
+     * MsgWaitForMultipleObjects wakes on the event OR on an arriving message,
+     * so the wait still costs nothing while idle and the window stays
+     * answerable. DispatchMessageW goes to DefWindowProc, which is all this
+     * window has ever needed. */
+    for (;;) {
+        DWORD w = MsgWaitForMultipleObjects(1, &s->finish, FALSE, INFINITE, QS_ALLINPUT);
+        MSG msg;
+        if (w == WAIT_OBJECT_0) break;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        /* WAIT_FAILED would spin: the event is the caller's and cannot vanish
+         * while this thread runs, so treat anything unexpected as "stop". */
+        if (w != WAIT_OBJECT_0 + 1) break;
+    }
     if (target) target->Release();
     if (hwnd) DestroyWindow(hwnd);
     return 0;
