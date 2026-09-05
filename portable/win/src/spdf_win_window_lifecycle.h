@@ -133,6 +133,43 @@ void spdf_win_window_show(spdf_win_window* window) {
     spdf_win_launch_mark("show-window-returned");
     UpdateWindow(window->hwnd);
     spdf_win_launch_mark("update-window-returned");
+
+    /* AND THEN ASK FOR THE FOREGROUND, WHICH ShowWindow DOES NOT.
+     *
+     * ShowWindow maps the window; it does not decide who is in front.
+     * Ordinarily that does not matter, because Windows hands a newly launched
+     * process the right to take the foreground and the first window it shows
+     * takes it. But that grant is not open-ended: it lapses when the launching
+     * application's input goes elsewhere, and this app now does real work --
+     * open the document, build the scene, render and present the first frame,
+     * about 145 ms of it -- BEFORE it shows anything, precisely so the window
+     * appears complete rather than blank. By the time ShowWindow runs, the
+     * window that launched us can easily have the foreground back, and the app
+     * then appears BEHIND it, unfocused, with only a sliver visible. Reported
+     * as "I can't interact with it at all, not even focus it with alt tab" --
+     * from a maximized window, that sliver is all there is to click.
+     *
+     * So the window asks, the way any application does after showing its main
+     * window. SetForegroundWindow may still refuse -- the foreground lock is
+     * the system's to enforce and another app may legitimately own it -- and
+     * refusing is not an error worth reporting: FlashWindowEx then does what
+     * Windows itself does in that case and marks the taskbar button, so the
+     * reader can see where the window went. BringWindowToTop covers the case
+     * where activation is granted without a raise (a foreground window sitting
+     * below another in the z-order is a state this has actually been observed
+     * in), and SetFocus puts the caret in the window rather than nowhere. */
+    SetForegroundWindow(window->hwnd);
+    BringWindowToTop(window->hwnd);
+    SetFocus(window->hwnd);
+    if (GetForegroundWindow() != window->hwnd) {
+        FLASHWINFO flash;
+        flash.cbSize = sizeof(flash);
+        flash.hwnd = window->hwnd;
+        flash.dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG;
+        flash.uCount = 3;
+        flash.dwTimeout = 0;
+        FlashWindowEx(&flash);
+    }
 }
 
 void spdf_win_window_invalidate(spdf_win_window* window) {
