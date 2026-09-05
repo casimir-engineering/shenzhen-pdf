@@ -248,9 +248,33 @@ cl /nologo /W3 /O2 /MT /utf-8 /D_CRT_SECURE_NO_WARNINGS ^
    /link /STACK:8388608 %SUBSYSTEM_FLAGS% %MUPDF_LIBS% %SYS_LIBS%
 set "CL_RC=%ERRORLEVEL%"
 if not "%CL_RC%"=="0" echo [build-native] cl.exe exited %CL_RC% building %TARGET%
+if "%CL_RC%"=="0" if /i "%TARGET%"=="ShenzhenPDF" call :publish_dist
 exit /b %CL_RC%
 
 rem ---- subroutines -------------------------------------------------------
+
+:publish_dist
+rem THE ONE PLACE TO LOOK FOR THE APP. %SPDF_OUT% is a working directory: it
+rem holds the app beside forty test executables, their object directories and
+rem the harness's scratch, and a parallel build points it somewhere else
+rem entirely. So the app -- and only the app, not the tests -- is also copied
+rem to dist\, next to where the macOS build leaves ShenzhenPDF.app, under the
+rem exact name a release carries (portable\win\package-release.cmd writes the
+rem same name plus its .sha256 sidecar). dist\ is git-ignored.
+rem
+rem A FAILED COPY IS NOT A FAILED BUILD: the usual cause is that the last copy
+rem is running, which is a thing a reader does on purpose. Say so and leave the
+rem build's exit code alone.
+if not exist "%REPO%\dist" mkdir "%REPO%\dist"
+copy /y "%SPDF_OUT%\%TARGET%.exe" "%REPO%\dist\ShenzhenPDF-win-x64.exe" >nul 2>&1
+if errorlevel 1 (
+  echo [build-native] built %SPDF_OUT%\%TARGET%.exe, but could not copy it to dist\ShenzhenPDF-win-x64.exe
+  echo [build-native] ^(is that copy running? the build itself succeeded^)
+  exit /b 0
+)
+echo [build-native] %SPDF_OUT%\%TARGET%.exe -^> dist\ShenzhenPDF-win-x64.exe
+exit /b 0
+
 
 :begin_sources
 rem Start the response file for %TARGET% (see the header): its directory is the
