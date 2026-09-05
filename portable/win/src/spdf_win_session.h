@@ -44,10 +44,11 @@
  *    parts of a tab it does not model. ShenzhenPDF runs one process per window
  *    and merges on write under session.lock; windows belonging to other
  *    processes are copied through byte for byte. Within OUR window, a tab's
- *    keys that this port has no feature for yet — searchText, showSidebar,
- *    readOnly, workingPath — are carried forward from the matching on-disk tab
- *    rather than dropped, so opening a mac user's session on Windows and
- *    quitting does not silently erase their find state.
+ *    keys that this port does not model (whatever a newer mac or Linux build
+ *    writes) are carried forward from the matching on-disk tab rather than
+ *    dropped, so opening a mac user's session on Windows and quitting does not
+ *    silently erase state. searchText, readOnly, workingPath and the roCopy*
+ *    keys, once carried this way, are modelled since the 2026-09-02 wave.
  */
 #ifndef SPDF_WIN_SESSION_H
 #define SPDF_WIN_SESSION_H
@@ -104,6 +105,92 @@ spdf_win_session_status spdf_win_session_restore(spdf_win_tabs* tabs, const char
  * existing file is present but unreadable, or the write fails. A 0 means
  * nothing was written; retrying later is always safe. */
 int spdf_win_session_save(const spdf_win_tabs* tabs, const char* window_id);
+
+/* --- the window's frame ---------------------------------------------------
+ *
+ * "frame": { "x", "y", "width", "height" } on the window object -- the mac
+ * writes its NSWindow frame in points, GTK its size in pixels; this port writes
+ * the window's normal placement in screen device pixels
+ * (spdf_win_window_get_frame). Cross-platform the numbers mean little (a mac
+ * screen's y grows upward), which is why the restore clamps onto a monitor
+ * before trusting them. `w`/`h` <= 0 means "no frame". */
+typedef struct spdf_win_session_frame {
+    int x, y, w, h;
+} spdf_win_session_frame;
+
+/* As spdf_win_session_restore(), and also reads the window's frame into
+ * `out_frame` when there is one (else w = h = 0). NULL is allowed. */
+spdf_win_session_status spdf_win_session_restore_ex(spdf_win_tabs* tabs, const char* window_id, char* out_window_id,
+                                                    size_t out_len, spdf_win_session_frame* out_frame);
+
+/* As spdf_win_session_save(), writing `frame` as the window's frame. NULL, or a
+ * frame with w or h <= 0, keeps whatever frame the file already had for this
+ * window -- so a save that knows nothing about geometry never moves a mac
+ * user's window. */
+int spdf_win_session_save_ex(const spdf_win_tabs* tabs, const char* window_id, const spdf_win_session_frame* frame);
+
+/* --- detaching a tab into a new window -------------------------------------
+ *
+ * ONE PROCESS PER WINDOW, so tearing a tab off the strip means: write that tab
+ * into session.yaml as a NEW window under a fresh id, remove it from this
+ * window, and start a second ShenzhenPDF.exe that restores that id
+ * (`--window <id>`). The file is the hand-over -- the same file the two
+ * processes will keep merging into under session.lock from then on -- so
+ * nothing else has to be invented for the second process to find its
+ * document, its page and its zoom. macOS detaches in-process
+ * (SPDFMacTabStripView.mm:788-836, -detachTabAtIndex:); GTK hands the page to a
+ * fresh AdwTabView (spdf_window.c:391). Both keep the tab's whole view state,
+ * and so does this.
+ *
+ * Writes the window under the lock and returns 1 with the new id in
+ * `out_new_id`; the caller then closes the tab locally (with
+ * prefer_most_recent_active, as :9300 does for a detach) and spawns the
+ * process. 0 and nothing written for a bad index, an unreadable file or a
+ * failed write -- the tab stays where it is. */
+int spdf_win_session_detach_tab(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
+                                char* out_new_id, size_t out_len);
+
+/* --- handing a tab to a window that ALREADY EXISTS --------------------------
+ *
+ * The same file, the same one-tab window object, one difference: the id is not
+ * a new window's, it is the WELL-KNOWN PARKING SPOT below, and no process is
+ * started. The source parks the tab, drops it locally and posts a message to
+ * the window under the pointer; that window takes it back out, inserts it and
+ * removes the entry. macOS hands the live tab over on a pasteboard inside one
+ * process (SPDFMacTabStripView.mm:885-925, -performDragOperation:); one process
+ * per window here means the hand-over has to be a file, and this is the file
+ * that already exists for exactly this purpose.
+ *
+ * WHY ONE FIXED ID RATHER THAN A FRESH ONE. There is one pointer, so there is
+ * at most one tab in flight on the desktop, and the receiving window has to
+ * know which entry is for it without being told a number it has no channel to
+ * receive. A fixed id also makes a crashed hand-over recoverable rather than
+ * permanent: an entry left here is INVISIBLE to a plain launch (find_window
+ * skips it) and is not counted by spdf_win_session_other_windows(), so a stale
+ * one cannot restore itself as a window or keep an empty window alive. */
+#define SPDF_WIN_SESSION_HANDOFF_ID "tab-handoff"
+
+/* As spdf_win_session_detach_tab(), writing the window under `window_id`
+ * instead of a generated one. */
+int spdf_win_session_detach_tab_as(const spdf_win_tabs* tabs, int index, const spdf_win_session_frame* frame,
+                                   const char* window_id);
+
+/* Take the parked tab back: fills `out_path`, `out_title` and `out_view` from
+ * the hand-off entry and REMOVES that entry. Returns 1 when a tab came back, 0
+ * when there was nothing parked (and nothing is written). */
+int spdf_win_session_handoff_take(char* out_path, size_t path_len, char* out_title, size_t title_len,
+                                  spdf_win_tab_view* out_view);
+
+/* Remove the hand-off entry without taking it: what the source calls when the
+ * drop it parked a tab for did not happen. Safe with nothing parked. */
+void spdf_win_session_handoff_discard(void);
+
+/* How many windows OTHER than `window_id` the file holds: the mac app's "does
+ * another ShenzhenPDF window exist" (spdf_win_tabs.h's header), which decides
+ * whether closing the last tab closes the window or leaves it empty. One
+ * process per window, so the file is the only place the answer lives. 0 for no
+ * file or an unreadable one. */
+int spdf_win_session_other_windows(const char* window_id);
 
 #ifdef __cplusplus
 }

@@ -9,12 +9,22 @@
  * same, so every deviation below is deliberate and named):
  *
  *   - Worker pool sized min(4, max(1, cores/2)), overridable by
- *     SPDF_RENDER_WORKERS. Matches portable/linux/gtk4/spdf_render.c
- *     (SPDF_RENDER_MAX_WORKERS) and the macOS _renderQueue, which caps at 3
- *     because more concurrent renders saturate memory bandwidth and stall
- *     main-thread input even though the work is off-main (architecture.md
- *     §3.3). Threads are spawned LAZILY on the first request: launching the
- *     app must not cost four thread stacks nobody asked for.
+ *     SPDF_RENDER_WORKERS and by a per-service ceiling
+ *     (spdf_win_render_service_new_ex). Matches portable/linux/gtk4/
+ *     spdf_render.c (SPDF_RENDER_MAX_WORKERS) and the macOS _renderQueue,
+ *     which caps at 3 because more concurrent renders saturate memory
+ *     bandwidth and stall main-thread input even though the work is off-main
+ *     (architecture.md §3.3). Threads are spawned LAZILY on the first request:
+ *     launching the app must not cost four thread stacks nobody asked for.
+ *
+ *     THE CEILING IS A TIERING TOOL, not a tuning knob. A process runs more
+ *     than one of these pools -- the canvas's, and the minimap thumbnail
+ *     store's -- and cores/2 each meant 12 worker threads and 12 MuPDF
+ *     documents on a 12-thread box, every one of them started inside the first
+ *     paint (windows-launch-performance.md §3.4 measured 23 threads and
+ *     0.2-1 s of CPU in the 700 ms after the first page). The pages the reader
+ *     is looking at must out-thread the ones they are not, so the pool behind
+ *     a background strip asks for a ceiling and the canvas's does not.
  *
  *   - Priority (0 visible, 1 near, 2 warm) then FIFO sequence, exactly the
  *     GTK4 render_task_compare ordering and the macOS
@@ -218,6 +228,14 @@ typedef struct spdf_win_render_service spdf_win_render_service;
  * No threads are started until the first request. */
 spdf_win_render_service* spdf_win_render_service_new(const char* path, const spdf_win_render_backend* backend,
                                                      size_t max_bytes, spdf_win_render_notify notify, void* ctx);
+/* The same, plus a CEILING on the worker count for this service: `max_workers`
+ * of 0 means the policy default (cores/2, capped at
+ * SPDF_WIN_RENDER_MAX_WORKERS), and anything smaller than the default wins.
+ * A larger value does not raise the default -- the cap is a cap. Read the
+ * tiering note in the policy section above before passing one. */
+spdf_win_render_service* spdf_win_render_service_new_ex(const char* path, const spdf_win_render_backend* backend,
+                                                        size_t max_bytes, spdf_win_render_notify notify, void* ctx,
+                                                        int max_workers);
 /* Cancels everything in flight, joins the workers, then delivers every
  * outstanding request with SPDF_WIN_RENDER_SHUTDOWN on the calling thread so
  * user_data is released. Safe with NULL. */

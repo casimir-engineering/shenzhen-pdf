@@ -26,6 +26,7 @@
 #define _CRT_SECURE_NO_WARNINGS /* fopen/getenv in the POSIX half of the harness */
 #endif
 
+#include "scratch_leaf.h" /* a scratch leaf unique to this process */
 #include "../src/spdf_win_paths.h"
 #include "../src/spdf_win_state.h"
 
@@ -338,27 +339,16 @@ static void test_session_lock(const char* dir) {
 }
 
 int main(int argc, char** argv) {
-    char scratch[SPDF_WIN_PATH_MAX];
     char dir[SPDF_WIN_PATH_MAX];
     char ascii_dir[SPDF_WIN_PATH_MAX];
-    const char* base = argc > 1 ? argv[1] : NULL;
 
     printf("spdf_win_state tests\n");
-    if (!base || !*base) {
-#if defined(_WIN32)
-        base = getenv("TEMP");
-#else
-        base = getenv("TMPDIR");
-#endif
+    if (!spdf_test_state_dir(argc, argv, "spdf_state_test", SPDF_TEST_SCRATCH_STEM, dir, sizeof(dir)) ||
+        !spdf_test_state_dir(argc, argv, "spdf_state_test", "ascii", ascii_dir, sizeof(ascii_dir))) {
+        printf("FAIL: could not create the scratch directories\n");
+        return 1;
     }
-    if (!base || !*base) base = ".";
-    if (!spdf_win_path_join(base, "spdf_state_test", scratch, sizeof(scratch))) return 1;
-    /* A non-ASCII leaf, so every file operation below runs through a path that
-     * the narrow CRT would mangle. */
-    if (!spdf_win_path_join(scratch, "Rapha\xc3\xabl", dir, sizeof(dir))) return 1;
-    if (!spdf_win_path_join(scratch, "ascii", ascii_dir, sizeof(ascii_dir))) return 1;
     if (!spdf_win_paths_ensure_dir(dir) || !spdf_win_paths_ensure_dir(ascii_dir)) {
-        printf("FAIL: could not create the scratch directories under %s\n", scratch);
         return 1;
     }
 

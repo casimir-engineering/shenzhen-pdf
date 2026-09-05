@@ -13,24 +13,49 @@
  *  - THE WORKER POOL IS REAL. T5's spdf_win_render service prefetches the
  *    pages either side of the viewport off-thread.
  *
- * The one deliberate asymmetry: the pages actually ON SCREEN are rendered
- * SYNCHRONOUSLY, in ensure_page(), even though a worker pool is right there.
- * Two reasons, and both are worth more than the symmetry:
+ * THE VISIBLE PAGE CAN NOW RENDER OFF-THREAD TOO, and the three conditions on
+ * that are the whole design. The asymmetry this header used to defend --
+ * on-screen pages rendered SYNCHRONOUSLY in ensure_page() even though a worker
+ * pool was right there -- rested on two claims that are both still true, so
+ * neither is given up:
  *
- *   - the canvas can then never hand back a frame with a hole in it, so the
- *     placeholder path in the compose layer is a safety net rather than
+ *   - the canvas must never hand back a frame with a HOLE in it, so the
+ *     placeholder path in the compose layer stays a safety net rather than
  *     something a reader sees on every page break;
- *   - and the headless viewport probe stays deterministic. A --render-window-png
- *     whose pixels depended on whether a worker had finished yet would be a PNG
- *     no comparison against macOS could trust, and that comparison is the only
- *     evidence this port is correct.
+ *   - and the headless viewport probe must stay DETERMINISTIC. A
+ *     --render-window-png whose pixels depended on whether a worker had
+ *     finished yet would be a PNG no comparison against macOS could trust, and
+ *     that comparison is the only evidence this port is correct.
  *
- * What the pool buys is the page you are ABOUT to reach being ready before you
- * get there, which is the whole difference between a strip that scrolls and one
- * that stutters at every boundary. Moving the visible page onto it too is a
- * later change, and wants a placeholder that does not flash.
+ * So the async path is guarded three ways and the guards are what let it exist:
+ *
+ *   1. OPT-IN. Nothing is asynchronous until a shell calls
+ *      spdf_win_canvas_set_async_visible(), which the headless paths never do.
+ *      Every --render-window-png frame and every d2d.compose case is therefore
+ *      pixel-for-pixel what it was, by construction rather than by measurement.
+ *   2. NEVER THE FIRST FRAME. frames_built gates it, so the frame a launch
+ *      paints before ShowWindow (spdf_win_window_lifecycle.h) is rendered here,
+ *      complete, exactly as before. Launch measures the synchronous page render
+ *      finishing 45 ms BEFORE the GPU device is ready
+ *      (windows-launch-performance.md §8), so that render costs the launch
+ *      nothing at all: it is spent inside a wait that existed anyway, and
+ *      moving it off-thread could only trade a complete first window for a
+ *      blank one.
+ *   3. NEVER WITHOUT A STAND-IN. When the exact key misses, the async path asks
+ *      the pool at VISIBLE priority and then draws this same page at the
+ *      nearest zoom the cache does hold (spdf_win_lru_lookup_nearest_zoom) --
+ *      right content, right aspect, one resolution behind, stretched over its
+ *      slot by the machinery that already stretches byte-capped textures. If
+ *      the cache holds nothing at all for that page, it renders here after all.
+ *      A soft page for a frame or two is the honest cost; a hole is not.
+ *
+ * What the pool buys for the NEIGHBOURS is unchanged and is still the bigger
+ * half: the page you are about to reach is ready before you get there. What it
+ * buys for the visible page is that a zoom step, a jump to a match or a
+ * restored page does not stop the UI thread for the length of a MuPDF render.
  */
 #include "spdf_win_canvas_internal.h"
+#include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 
 #include <math.h>
 #include <stdio.h>
@@ -51,8 +76,9 @@ static void destroy_bitmap(void* value) {
 /* --- measurement --------------------------------------------------------- */
 
 /* Measures pages up to and including `through`. Returns non-zero when at least
- * one new page was measured, i.e. when the layout is now stale. */
-static int ensure_measured(spdf_win_canvas* canvas, int through) {
+ * one new page was measured, i.e. when the layout is now stale. Internal to the
+ * canvas's translation units (spdf_win_canvas_internal.h), not public. */
+int spdf_win_canvas_ensure_measured(spdf_win_canvas* canvas, int through) {
     char err[128];
 
     if (through >= canvas->page_count) through = canvas->page_count - 1;
@@ -100,7 +126,7 @@ static void note_zoom_changed(spdf_win_canvas* canvas, double before) {
     if (canvas->service && fabs(canvas->zoom - before) > 1e-9) spdf_win_render_service_bump_generation(canvas->service);
 }
 
-static void relayout(spdf_win_canvas* canvas) {
+void spdf_win_canvas_relayout(spdf_win_canvas* canvas) {
     int page = current_page_of(canvas);
     double before = canvas->zoom;
     double fit = 0.0;
@@ -113,6 +139,8 @@ static void relayout(spdf_win_canvas* canvas) {
             fit = spdf_win_fit_width_zoom(size->width, (double)canvas->vp_w);
         else if (canvas->mode == SPDF_WIN_ZOOM_FIT_PAGE)
             fit = spdf_win_fit_page_zoom(size->width, size->height, (double)canvas->vp_w, (double)canvas->vp_h);
+        else if (canvas->mode == SPDF_WIN_ZOOM_FIT_HEIGHT)
+            fit = spdf_win_fit_height_zoom(size->height, (double)canvas->vp_h);
         else if (canvas->mode == SPDF_WIN_ZOOM_ACTUAL)
             fit = spdf_win_clamp_d(canvas->dpi_scale, SPDF_WIN_MIN_ZOOM, SPDF_WIN_MAX_ZOOM);
     }
@@ -141,6 +169,7 @@ spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, const char* path, un
     canvas = (spdf_win_canvas*)calloc(1, sizeof(*canvas));
     if (!canvas) return NULL;
     canvas->doc = doc;
+    canvas->path = path ? _strdup(path) : NULL;
     canvas->render_flags = render_flags;
     canvas->page_count = spdf_page_count(doc);
     canvas->zoom = 1.0;
@@ -159,11 +188,13 @@ spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, const char* path, un
         free(canvas);
         return NULL;
     }
+    spdf_win_launch_mark("canvas-create-begin");
     if (!spdf_page_size(doc, 0, &w, &h, err, err_len) || w <= 0.0f || h <= 0.0f) {
         free(canvas->sizes);
         free(canvas);
         return NULL;
     }
+    spdf_win_launch_mark("canvas-page0-measured");
     for (int i = 0; i < canvas->page_count; ++i) {
         canvas->sizes[i].width = w;
         canvas->sizes[i].height = h;
@@ -178,11 +209,16 @@ spdf_win_canvas* spdf_win_canvas_create(spdf_document* doc, const char* path, un
      * calling thread. Starting it costs nothing here; T5 spawns threads on the
      * first request, not on construction, so launch pays for no worker it does
      * not use. */
-    /* No notify hook on purpose: this canvas drains as it builds a frame,
-     * so a PostMessage per completion would only ask for a repaint the next
-     * paint was going to do anyway. A prefetched page is by definition not on
-     * screen yet, so nothing needs redrawing when it lands. */
-    canvas->service = spdf_win_render_service_new(path, NULL, SPDF_WIN_MAX_RENDER_SURFACE_BYTES, NULL, NULL);
+    /* The notify hook is the canvas's own trampoline, installed here because
+     * the service's is immutable after construction, and INERT until a shell
+     * arms it with spdf_win_canvas_set_async_visible(). Unarmed it costs one
+     * interlocked read per completion, which is the price of the visible page
+     * being able to render off-thread at all: without a notify, the bitmap
+     * would land and nothing would ask for the repaint that shows it, and the
+     * reader would sit looking at the stand-in until they moved the mouse. */
+    canvas->service =
+        spdf_win_render_service_new(path, NULL, SPDF_WIN_MAX_RENDER_SURFACE_BYTES, spdf_win_canvas_render_notify,
+                                    canvas);
     return canvas;
 }
 
@@ -195,10 +231,12 @@ void spdf_win_canvas_destroy(spdf_win_canvas* canvas) {
      * memory. */
     spdf_win_render_service_free(canvas->service);
     canvas->service = NULL;
+    spdf_win_canvas_selection_teardown(canvas);
     spdf_win_lru_deinit(&canvas->cache);
     spdf_win_layout_clear(&canvas->layout);
     free(canvas->draws);
     free(canvas->sizes);
+    free(canvas->path);
     free(canvas);
 }
 
@@ -213,13 +251,13 @@ void spdf_win_canvas_set_viewport(spdf_win_canvas* canvas, unsigned px_w, unsign
     canvas->vp_w = px_w;
     canvas->vp_h = px_h;
     canvas->dpi_scale = dpi_scale;
-    relayout(canvas);
+    spdf_win_canvas_relayout(canvas);
 }
 
 void spdf_win_canvas_set_zoom_mode(spdf_win_canvas* canvas, spdf_win_zoom_mode mode) {
     if (!canvas || canvas->mode == mode) return;
     canvas->mode = mode;
-    relayout(canvas);
+    spdf_win_canvas_relayout(canvas);
 }
 
 spdf_win_zoom_mode spdf_win_canvas_zoom_mode(const spdf_win_canvas* canvas) {
@@ -277,11 +315,17 @@ int spdf_win_canvas_scroll_by(spdf_win_canvas* canvas, float dx, float dy) {
 
 int spdf_win_canvas_scroll_to_page(spdf_win_canvas* canvas, int page_index) {
     if (!canvas || page_index < 0 || page_index >= canvas->page_count) return 0;
-    if (ensure_measured(canvas, page_index)) relayout(canvas);
+    if (spdf_win_canvas_ensure_measured(canvas, page_index)) spdf_win_canvas_relayout(canvas);
     if (page_index >= canvas->layout.count) return 0;
     return spdf_win_canvas_scroll_to(canvas, (float)canvas->scroll_x,
                                      (float)(canvas->layout.rects[page_index].y - SPDF_WIN_PAGE_MARGIN_V));
 }
+
+/* The scrollbar arithmetic -- fractions, and the current page's pan range --
+ * is spdf_win_canvas_scrollbar.h, included once, here, because it needs
+ * current_page_of() and spdf_win_canvas_scroll_to() above it and belongs
+ * after them in the reading order too. */
+#include "spdf_win_canvas_scrollbar.h"
 
 float spdf_win_canvas_scroll_x(const spdf_win_canvas* canvas) { return canvas ? (float)canvas->scroll_x : 0.0f; }
 float spdf_win_canvas_scroll_y(const spdf_win_canvas* canvas) { return canvas ? (float)canvas->scroll_y : 0.0f; }
@@ -295,7 +339,8 @@ size_t spdf_win_canvas_cache_bytes(const spdf_win_canvas* canvas) {
 
 /* --- rendering ----------------------------------------------------------- */
 
-/* THE T5 SEAM. Cache hit, or a synchronous render. See the file header.
+/* THE T5 SEAM. Cache hit, then the stand-in, then a synchronous render. See the
+ * file header for why in that order.
  * The zoom is byte-capped before it reaches the core, so a 10900x7539 pt sheet
  * renders a smaller texture that the compose layer stretches back over its
  * full slot -- geometry never sees the cap, which is what keeps the zoom
@@ -311,14 +356,41 @@ static const spdf_bitmap* ensure_page(spdf_win_canvas* canvas, int page) {
     bitmap = (spdf_bitmap*)spdf_win_lru_lookup(&canvas->cache, &key);
     if (bitmap) return bitmap;
 
+    /* THE ASYNC PATH, and the stand-in that makes it safe. Both lookups bump
+     * recency, so every bitmap this frame points at is among the most recently
+     * used and the eviction a later insert triggers cannot take one out from
+     * under the scene -- the invariant that made the synchronous path's
+     * borrowed pointers safe, unchanged. */
+    if (canvas->async_visible && canvas->frames_built > 0) {
+        /* The stand-in is looked for FIRST, and the request is only made when
+         * one exists. Asking first and then finding nothing to draw would leave
+         * a render in flight that this thread is about to duplicate -- two
+         * renders of one page, the second one thrown away. */
+        bitmap = (spdf_bitmap*)spdf_win_lru_lookup_nearest_zoom(&canvas->cache, page, canvas->dpi_scale, render_zoom,
+                                                                NULL);
+        if (bitmap && spdf_win_canvas_request_visible(canvas, page, render_zoom)) {
+            canvas->stale_draws++;
+            return bitmap;
+        }
+        /* Either the page has never been rendered at any zoom -- a fresh
+         * document, a fresh tab -- or the in-flight table is full. Both fall
+         * through to the render below, which is slower but never wrong. */
+    }
+
     canvas->sync_renders++;
     bitmap = (spdf_bitmap*)calloc(1, sizeof(*bitmap));
     if (!bitmap) return NULL;
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-page-render-begin");
     if (!spdf_render_page_rgba_opts(canvas->doc, page, (float)render_zoom, canvas->render_flags, NULL, bitmap, err,
                                     sizeof(err))) {
         _snwprintf_s(canvas->status, _TRUNCATE, L"Could not render page %d: %hs", page + 1, err);
         free(bitmap);
         return NULL;
+    }
+    if (spdf_win_launch_enabled()) {
+        char tag[64];
+        _snprintf_s(tag, sizeof(tag), _TRUNCATE, "first-page-render-end %dx%d", bitmap->width, bitmap->height);
+        SPDF_WIN_LAUNCH_MARK_ONCE(tag);
     }
     if (!spdf_win_lru_insert(&canvas->cache, &key, bitmap, spdf_win_lru_bitmap_bytes(bitmap->width, bitmap->height)))
         return NULL; /* insert destroyed it; a placeholder is drawn this frame */
@@ -335,7 +407,8 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
      * per item -- adoption on the UI thread must never do O(n) work. */
     if (canvas->service) spdf_win_render_drain(canvas->service, -1);
     canvas->sync_renders = 0;
-    if (canvas->layout.count != canvas->page_count) relayout(canvas);
+    canvas->stale_draws = 0;
+    if (canvas->layout.count != canvas->page_count) spdf_win_canvas_relayout(canvas);
 
     /* Measure forward until the visible range stops changing. Each round can
      * only extend `measured`, which is bounded by the page count, so this
@@ -349,8 +422,8 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
             first = last = current_page_of(canvas);
             visible = canvas->page_count > 0;
         }
-        if (!ensure_measured(canvas, last + 1)) break;
-        relayout(canvas);
+        if (!spdf_win_canvas_ensure_measured(canvas, last + 1)) break;
+        spdf_win_canvas_relayout(canvas);
     }
 
     if (last >= canvas->page_count) last = canvas->page_count - 1;
@@ -390,5 +463,10 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
     scene->dpi_scale = (float)canvas->dpi_scale;
     scene->dark = (canvas->render_flags & SPDF_RENDER_DARK_THEME) != 0;
     scene->message = canvas->draws_count > 0 ? NULL : (canvas->status[0] ? canvas->status : NULL);
+    /* Counted only for a frame that HAS something in it, because it is the
+     * gate on the async path and "the first frame is synchronous" has to mean
+     * the first frame a reader can see, not the first call made against a
+     * canvas that had no viewport yet. */
+    if (canvas->draws_count > 0) canvas->frames_built++;
     return canvas->draws_count > 0;
 }

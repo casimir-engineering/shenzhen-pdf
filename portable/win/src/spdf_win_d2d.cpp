@@ -24,6 +24,11 @@
  */
 #include "spdf_win_d2d.h"
 
+#include "spdf_win_chrome_content.h" /* spdf_win_chrome_content_shutdown */
+#include "spdf_win_chrome_paint.h"
+#include "spdf_win_d2d_overlay.h" /* draw_overlays; needs only the scene */
+#include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
+
 #include <dwrite.h>
 
 #include <math.h>
@@ -100,6 +105,7 @@ spdf_win_d2d* spdf_win_d2d_create(char* err, size_t err_len) {
      * in main() means a console probe that only ever calls into this file
      * needs no ceremony. RPC_E_CHANGED_MODE means the caller already chose a
      * different apartment -- fine, use theirs and do not uninitialize it. */
+    spdf_win_launch_mark("d2d-create-begin");
     hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     if (SUCCEEDED(hr)) {
         d2d->co_initialized = true;
@@ -109,29 +115,59 @@ spdf_win_d2d* spdf_win_d2d_create(char* err, size_t err_len) {
         return NULL;
     }
 
-    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &d2d->factory);
+    spdf_win_launch_mark("com-initialized");
+    /* MULTI_THREADED, not SINGLE_THREADED, since the GPU prewarm: a factory
+     * shares its internal D3D device between all the hardware targets it
+     * creates, and the multi-threaded kind does so across threads, which is
+     * what lets spdf_win_gpu_prewarm.cpp pay for the device on a worker while
+     * the UI thread opens the document. Every target is still used from one
+     * thread only; the factory merely takes a lock per call. */
+    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, &d2d->factory);
     if (FAILED(hr)) {
         set_err(err, err_len, "D2D1CreateFactory", hr);
         spdf_win_d2d_destroy(d2d);
         return NULL;
     }
 
-    hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d2d->wic));
-    if (FAILED(hr)) {
-        set_err(err, err_len, "CoCreateInstance(WICImagingFactory)", hr);
-        spdf_win_d2d_destroy(d2d);
-        return NULL;
-    }
+    spdf_win_launch_mark("d2d-factory");
+    /* WIC is created on first use (spdf_win_d2d_wic), not here. Only the PNG
+     * writers, the clipboard and export need it; the window never does, and
+     * the CoCreateInstance -- which is also what loads WindowsCodecs.dll's
+     * object model -- measured 2-3 ms on the launch path for nothing. */
 
     /* Deliberately not fatal. A machine with a broken font stack should still
      * show the page; only the status line goes missing. */
+    spdf_win_launch_mark("wic-factory");
     DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                         reinterpret_cast<IUnknown**>(&d2d->dwrite));
+    spdf_win_launch_mark("dwrite-factory");
     return d2d;
 }
 
 void spdf_win_d2d_destroy(spdf_win_d2d* d2d) {
     if (!d2d) return;
+
+    /* The chrome's two process-lifetime caches, released here because this is
+     * the one place that runs after the last paint and before the DirectWrite
+     * factory goes away. Order matters both times:
+     *
+     *  - content first: it joins the thumbnail store's worker threads, and a
+     *    worker that woke up mid-teardown would otherwise touch a freed store.
+     *  - paint second but still BEFORE safe_release(d2d->dwrite): it holds
+     *    IDWriteTextFormat objects created from that factory.
+     *
+     * Neither was called by anyone until now. Both are idempotent and safe when
+     * nothing was ever drawn, which is the case on the --render-png path. An
+     * atexit handler was the alternative and is worse: it runs during CRT
+     * teardown, where a blocked worker becomes a hang on exit. */
+    spdf_win_chrome_content_shutdown();
+    spdf_win_chrome_paint_shutdown();
+
+    /* The GPU prewarm thread (if the windowed path started one) is joined
+     * here for the same reason as the two shutdowns above: a driver still
+     * initialising at process exit is a hang or a crash in someone else's
+     * DllMain. A no-op on the headless paths. */
+    spdf_win_gpu_prewarm_finish();
     spdf_win_d2d_release_target(d2d, NULL);
     safe_release(d2d->dwrite);
     safe_release(d2d->wic);
@@ -141,7 +177,11 @@ void spdf_win_d2d_destroy(spdf_win_d2d* d2d) {
 }
 
 ID2D1Factory* spdf_win_d2d_factory(spdf_win_d2d* d2d) { return d2d ? d2d->factory : NULL; }
-IWICImagingFactory* spdf_win_d2d_wic(spdf_win_d2d* d2d) { return d2d ? d2d->wic : NULL; }
+IWICImagingFactory* spdf_win_d2d_wic(spdf_win_d2d* d2d) {
+    if (!d2d) return NULL;
+    if (!d2d->wic) CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d2d->wic));
+    return d2d->wic; /* NULL when the codecs are unavailable; every caller checks */
+}
 
 void spdf_win_d2d_release_target(spdf_win_d2d* d2d, ID2D1RenderTarget* target) {
     if (!d2d) return;
@@ -174,11 +214,25 @@ static unsigned char* rgba_to_bgra(const spdf_bitmap* page) {
         const unsigned char* src = page->rgba + (size_t)y * (size_t)page->stride;
         unsigned char* dst = out + (size_t)y * row_bytes;
         for (int x = 0; x < page->width; ++x) {
-            unsigned a = src[3];
-            dst[0] = a == 255 ? src[2] : (unsigned char)((src[2] * a + 127) / 255);
-            dst[1] = a == 255 ? src[1] : (unsigned char)((src[1] * a + 127) / 255);
-            dst[2] = a == 255 ? src[0] : (unsigned char)((src[0] * a + 127) / 255);
-            dst[3] = (unsigned char)a;
+            /* One 32-bit load, one store. In memory the core's pixel is
+             * R,G,B,A, i.e. the little-endian word A<<24|B<<16|G<<8|R; D2D
+             * wants A<<24|R<<16|G<<8|B. Alpha and green stay put and the
+             * other two swap. Byte-for-byte what the per-channel form below
+             * produces at alpha 255 -- the d2d.compose-* cases pin that --
+             * and about three times faster on a 1.5-Mpx page, which is on the
+             * first-paint path: the first texture upload measured 8-12 ms. */
+            unsigned p;
+            memcpy(&p, src, 4);
+            if ((p >> 24) == 0xFFu) {
+                p = (p & 0xFF00FF00u) | ((p & 0xFFu) << 16) | ((p >> 16) & 0xFFu);
+                memcpy(dst, &p, 4);
+            } else {
+                unsigned a = src[3];
+                dst[0] = (unsigned char)((src[2] * a + 127) / 255);
+                dst[1] = (unsigned char)((src[1] * a + 127) / 255);
+                dst[2] = (unsigned char)((src[0] * a + 127) / 255);
+                dst[3] = (unsigned char)a;
+            }
             src += 4;
             dst += 4;
         }
@@ -216,6 +270,7 @@ static ID2D1Bitmap* page_texture(spdf_win_d2d* d2d, ID2D1RenderTarget* target, c
                                       (UINT32)(page->width * 4), &props, &bitmap);
     free(bgra);
     if (FAILED(hr)) return NULL;
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-page-texture");
 
     safe_release(d2d->cache[victim].bitmap);
     d2d->cache_target = target;
@@ -227,14 +282,19 @@ static ID2D1Bitmap* page_texture(spdf_win_d2d* d2d, ID2D1RenderTarget* target, c
     return bitmap;
 }
 
-/* One page on the continuous canvas: a soft edge, then the texture stretched
- * over the slot the layout assigned it. Whole-pixel placement, because a
- * half-pixel offset makes D2D resample a blit that should have been exact --
- * which at fit-width, where the texture is already the slot's size, is the
- * difference between the page's own pixels and a resampled copy of them. */
+/* One page on the continuous canvas: its separation from the gutter, then the
+ * texture stretched over the slot the layout assigned it. Whole-pixel
+ * placement, because a half-pixel offset makes D2D resample a blit that should
+ * have been exact -- which at fit-width, where the texture is already the slot's
+ * size, is the difference between the page's own pixels and a resampled copy of
+ * them.
+ *
+ * `shade` and `border` are the two halves of SPDFMarkdownTheme's
+ * drawsPaperShadow seam and exactly one of them is ever non-NULL; the caller
+ * decides which, from the theme. */
 static void draw_canvas_page(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_win_scene* scene,
                              const spdf_win_page_draw* draw, ID2D1SolidColorBrush* shade,
-                             ID2D1SolidColorBrush* paper) {
+                             ID2D1SolidColorBrush* paper, ID2D1SolidColorBrush* border) {
     float s = scene->dpi_scale > 0.0f ? scene->dpi_scale : 1.0f;
     float x = floorf(draw->dest_x + 0.5f);
     float y = floorf(draw->dest_y + 0.5f);
@@ -254,9 +314,43 @@ static void draw_canvas_page(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const
      * live in once T5's async pipeline replaces the synchronous render. */
     if (!texture) {
         if (paper) target->FillRectangle(dest, paper);
-        return;
+    } else {
+        target->DrawBitmap(texture, dest, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
     }
-    target->DrawBitmap(texture, dest, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
+
+    /* AFTER the page content, so the hairline stays crisp at the page edge, and
+     * inset half a stroke so the stroke's centreline lands on a device-pixel
+     * boundary -- SPDFMacDocumentViewTheme.mm:76-83 draws its
+     * NSInsetRect(pageRect, 0.5, 0.5) / lineWidth 1.0 frame for the same two
+     * reasons. The stroke is dpi-scaled like every other chrome metric here, so
+     * it stays one logical pixel rather than thinning out on a 2x display,
+     * which is what makes it a 1 pt border on macOS too. */
+    if (border) {
+        /* WHOLE device pixels, which is not the same as 1.0f * s.
+         *
+         * Measured on a 144-dpi display (s = 1.5) on 2026-09-01: a 1.5 px
+         * stroke cannot land on the pixel grid whatever it is inset by, so it
+         * covers one full row and half of the next. The window's GPU target
+         * antialiases that half-covered row (#282828 against #1E1E1E paper)
+         * while spdf_win_render_scene_to_png's SOFTWARE target snaps it away --
+         * so the border blurred on screen AND the two compose paths stopped
+         * agreeing, with a channel delta of 85 on the row inside the frame
+         * where every other row matched exactly.
+         *
+         * Rounding to whole pixels fixes both: the border is crisp, and the
+         * windowed and headless paths produce the same pixels, which is what
+         * makes an offscreen pixel test evidence about the window.
+         *
+         * macOS never meets this case -- AppKit backing scales are 1x and 2x,
+         * where a 1 pt lineWidth is already 1 or 2 whole pixels. Windows'
+         * 125%/150%/175% steps are the reason this needs saying. */
+        float w = floorf(s + 0.5f);
+        D2D1_RECT_F frame;
+        if (w < 1.0f) w = 1.0f;
+        frame = D2D1::RectF(dest.left + w * 0.5f, dest.top + w * 0.5f, dest.right - w * 0.5f, dest.bottom - w * 0.5f);
+        if (frame.right > frame.left && frame.bottom > frame.top)
+            target->DrawRectangle(frame, border, w, NULL);
+    }
 }
 
 static void draw_message(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_win_scene* scene) {
@@ -292,18 +386,17 @@ static void draw_message(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spd
 HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_win_scene* scene) {
     if (!d2d || !target || !scene) return E_POINTER;
 
+    SPDF_WIN_LAUNCH_MARK_ONCE("first-compose-begin");
     /* Everything downstream is in device pixels. */
     target->SetDpi(96.0f, 96.0f);
     target->BeginDraw();
 
-    D2D1_COLOR_F background;
-    if (scene->fit == SPDF_WIN_FIT_EXACT)
-        background = D2D1::ColorF(1.0f, 1.0f, 1.0f); /* paper, so an oversized target still reads as a page */
-    else if (scene->dark)
-        background = D2D1::ColorF(0.129f, 0.129f, 0.137f);
-    else
-        background = D2D1::ColorF(0.878f, 0.878f, 0.886f);
-    target->Clear(background);
+    spdf_win_theme theme = spdf_win_theme_for(scene->dark);
+
+    /* FIT_EXACT is the pixel-comparison path and has no chrome at all, so its
+     * ground is the theme's own paper: an oversized target still reads as a
+     * page rather than as a page on a gutter. */
+    target->Clear(D2D1::ColorF(scene->fit == SPDF_WIN_FIT_EXACT ? theme.paper_rgb : theme.gutter_rgb));
 
     if (scene->fit == SPDF_WIN_FIT_EXACT) {
         ID2D1Bitmap* texture = NULL;
@@ -317,88 +410,90 @@ HRESULT spdf_win_paint(spdf_win_d2d* d2d, ID2D1RenderTarget* target, const spdf_
         return target->EndDraw();
     }
 
+    /* CHROME. Drawn before the pages, and the pages are then clipped and
+     * translated into the canvas region, so a page scrolled under the toolbar
+     * cannot paint over it. Everything here goes through the same
+     * ID2D1RenderTarget as the canvas, so the chrome is on the headless compose
+     * path too -- which is what makes it pixel-testable at all, and the reason
+     * the whole chrome layer is laid out by a pure header rather than from an
+     * HWND. */
+    SpdfWinChromeLayout chrome_layout;
+    bool has_chrome = false;
+    if (scene->chrome) {
+        SpdfWinChromePaintCtx ctx;
+        SpdfWinChromeTheme chrome_theme = spdf_win_chrome_theme_for(scene->dark);
+        unsigned cw = scene->client_px_w ? scene->client_px_w : scene->target_px_w;
+        unsigned ch = scene->client_px_h ? scene->client_px_h : scene->target_px_h;
+        spdf_win_chrome_layout(scene->chrome, cw, ch, scene->dpi_scale, &chrome_layout);
+        has_chrome = !spdf_win_chrome_rect_empty(chrome_layout.canvas);
+        ctx.target = target;
+        ctx.dwrite = d2d->dwrite;
+        ctx.theme = &chrome_theme;
+        ctx.model = scene->chrome;
+        ctx.layout = &chrome_layout;
+        ctx.dpi_scale = chrome_layout.dpi_scale;
+        spdf_win_chrome_paint_all(ctx);
+        SPDF_WIN_LAUNCH_MARK_ONCE("first-chrome-painted");
+
+        if (has_chrome) {
+            /* PushAxisAlignedClip, then a translate, so draw_canvas_page needs
+             * no notion of the chrome at all: it keeps drawing at the canvas
+             * coordinates the layout gave it. */
+            target->PushAxisAlignedClip(spdf_win_chrome_d2d_rect(chrome_layout.canvas),
+                                        D2D1_ANTIALIAS_MODE_ALIASED);
+            target->SetTransform(D2D1::Matrix3x2F::Translation(chrome_layout.canvas.x, chrome_layout.canvas.y));
+            /* The gutter under the pages is the canvas region's own, not the
+             * whole client's: the Clear above painted the gutter everywhere,
+             * and the chrome has since covered its own bands. */
+        }
+    }
+
     if (scene->pages && scene->page_count > 0) {
-        /* Two brushes for the whole strip rather than two per page: a
+        /* Brushes for the whole strip rather than per page: a
          * CreateSolidColorBrush per page per frame is an allocation on the
          * scroll hot path, which architecture.md sec 9 says must stay O(1)-ish
-         * per event. A cheap one-band drop shadow, not a gaussian -- just
-         * enough to separate paper from surround the way the mac app does. */
+         * per event.
+         *
+         * EXACTLY ONE of shade/border is created, from the theme. Light gets the
+         * cheap one-band drop shadow -- not a gaussian, just enough to separate
+         * paper from surround the way the mac app's blurred NSShadow does. Dark
+         * gets the 1 px paperBorderColor frame instead, because black at 10%
+         * over the #121212 gutter is not a separation at all: it is invisible on
+         * three edges and the reason macOS made the same swap. */
         ID2D1SolidColorBrush* shade = NULL;
         ID2D1SolidColorBrush* paper = NULL;
-        target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f), &shade);
-        target->CreateSolidColorBrush(scene->dark ? D2D1::ColorF(0.114f, 0.114f, 0.122f) : D2D1::ColorF(1.0f, 1.0f, 1.0f),
-                                      &paper);
-        for (int i = 0; i < scene->page_count; ++i) draw_canvas_page(d2d, target, scene, &scene->pages[i], shade, paper);
+        ID2D1SolidColorBrush* border = NULL;
+        if (theme.draws_page_shadow) target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f), &shade);
+        if (theme.draws_page_border) target->CreateSolidColorBrush(D2D1::ColorF(theme.page_border_rgb), &border);
+        target->CreateSolidColorBrush(D2D1::ColorF(theme.paper_rgb), &paper);
+        for (int i = 0; i < scene->page_count; ++i)
+            draw_canvas_page(d2d, target, scene, &scene->pages[i], shade, paper, border);
+        safe_release(border);
         safe_release(paper);
         safe_release(shade);
     } else {
         draw_message(d2d, target, scene);
     }
 
-    return target->EndDraw();
-}
+    /* Search highlights, the text selection, and a Markdown code box's pills.
+     * See spdf_win_d2d_overlay.h. */
+    draw_overlays(target, scene);
 
-static HRESULT write_wic_png(spdf_win_d2d* d2d, IWICBitmap* bitmap, unsigned w, unsigned h, const wchar_t* path) {
-    IWICStream* stream = NULL;
-    IWICBitmapEncoder* encoder = NULL;
-    IWICBitmapFrameEncode* frame = NULL;
-    IWICBitmapSource* converted = NULL;
-    IPropertyBag2* options = NULL;
-    GUID format = GUID_WICPixelFormat32bppBGRA;
 
-    HRESULT hr = d2d->wic->CreateStream(&stream);
-    if (SUCCEEDED(hr)) hr = stream->InitializeFromFilename(path, GENERIC_WRITE);
-    if (SUCCEEDED(hr)) hr = d2d->wic->CreateEncoder(GUID_ContainerFormatPng, NULL, &encoder);
-    if (SUCCEEDED(hr)) hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
-    if (SUCCEEDED(hr)) hr = encoder->CreateNewFrame(&frame, &options);
-    if (SUCCEEDED(hr)) hr = frame->Initialize(options);
-    if (SUCCEEDED(hr)) hr = frame->SetSize(w, h);
-    if (SUCCEEDED(hr)) hr = frame->SetPixelFormat(&format);
-    /* D2D can only draw into a premultiplied target, but a PNG's alpha is
-     * straight. Convert rather than hand the encoder a format it has to guess
-     * about. With an opaque page the two are byte-identical anyway. */
-    if (SUCCEEDED(hr)) hr = WICConvertBitmapSource(GUID_WICPixelFormat32bppBGRA, bitmap, &converted);
-    if (SUCCEEDED(hr)) hr = frame->WriteSource(converted, NULL);
-    if (SUCCEEDED(hr)) hr = frame->Commit();
-    if (SUCCEEDED(hr)) hr = encoder->Commit();
-
-    safe_release(converted);
-    safe_release(options);
-    safe_release(frame);
-    safe_release(encoder);
-    safe_release(stream);
-    return hr;
-}
-
-HRESULT spdf_win_render_scene_to_png(spdf_win_d2d* d2d, unsigned px_w, unsigned px_h, const spdf_win_scene* scene,
-                                     const wchar_t* png_path) {
-    if (!d2d || !scene || !png_path) return E_POINTER;
-    if (px_w == 0 || px_h == 0) return E_INVALIDARG;
-
-    IWICBitmap* bitmap = NULL;
-    HRESULT hr = d2d->wic->CreateBitmap(px_w, px_h, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap);
-    if (FAILED(hr)) return hr;
-
-    /* SOFTWARE, not DEFAULT. `prlctl exec` runs in the SYSTEM session: there
-     * is no desktop and there may be no usable display adapter, and a target
-     * that quietly wants a GPU is a target that fails only on the machine we
-     * cannot see. */
-    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
-        D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
-
-    ID2D1RenderTarget* target = NULL;
-    hr = d2d->factory->CreateWicBitmapRenderTarget(bitmap, props, &target);
-    if (SUCCEEDED(hr)) {
-        spdf_win_scene local = *scene;
-        local.target_px_w = px_w;
-        local.target_px_h = px_h;
-        hr = spdf_win_paint(d2d, target, &local);
-        spdf_win_d2d_release_target(d2d, target);
+    if (has_chrome) {
+        target->SetTransform(D2D1::Matrix3x2F::Identity());
+        target->PopAxisAlignedClip();
     }
-    safe_release(target);
 
-    if (SUCCEEDED(hr)) hr = write_wic_png(d2d, bitmap, px_w, px_h, png_path);
-    safe_release(bitmap);
-    return hr;
+    {
+        /* EndDraw on an HWND target is the present: after it returns, the
+         * frame is on its way to DWM. This is the mark the launch harness
+         * reads as "first page pixels". */
+        SPDF_WIN_LAUNCH_MARK_ONCE("first-compose-draws-issued");
+        HRESULT end = target->EndDraw();
+        SPDF_WIN_LAUNCH_MARK_ONCE("first-compose-end");
+        return end;
+    }
 }
+
+#include "spdf_win_d2d_png.h"

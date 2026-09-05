@@ -30,7 +30,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 - **Option + scroll turns pages** <sub>macOS</sub> — Anywhere in the window, over the page or the minimap: it behaves like the page arrows, keeping your zoom and position, and pages faster the faster you spin.
 - **Recents, reopen-last-closed & favorites** — Jump back into recent files, reopen a just-closed tab (<kbd>Cmd+Shift+T</kbd>), or star pages/docs and find them from a palette (<kbd>Cmd+K</kbd>).
 - **Presentation mode** — Present full-screen with chrome-free advance and optional sleep prevention (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>).
-- **Dark reading theme, for every document** — One toolbar toggle (<kbd>Shift+Cmd+I</kbd>) darkens PDF, XPS, EPUB and Markdown alike, onto the same soft #1E1E1E paper rather than pure black. Rendered pages are remapped by lightness with their color kept, so a red warning stays red and a blue hyperlink stays blue instead of flipping to its complement the way an inverted page does. *Settings ▸ Keep Image Colors in Dark Theme* additionally leaves photographs and figures untouched — **per document**, so a datasheet can keep its color-coded figures while the scan in the next tab is darkened whole; it defaults to on and each document remembers its own choice across restarts. Scanned pages are one big image and are darkened anyway, so the setting can never quietly switch dark mode off. Comic archives and image files are left alone entirely, and **printing, Save as PDF and Copy Page always use the document's own colors**, so nothing you send on carries our dark paper.
+- **Dark reading theme, for every document** <sub>macOS · Windows</sub> — One toolbar toggle (<kbd>Shift+Cmd+I</kbd> / <kbd>Ctrl+Shift+I</kbd>) darkens PDF, XPS, EPUB and Markdown alike, onto the same soft #1E1E1E paper rather than pure black. Rendered pages are remapped by lightness with their color kept, so a red warning stays red and a blue hyperlink stays blue instead of flipping to its complement the way an inverted page does. *Settings ▸ Keep Image Colors in Dark Theme* additionally leaves photographs and figures untouched — **per document**, so a datasheet can keep its color-coded figures while the scan in the next tab is darkened whole; it defaults to on and each document remembers its own choice across restarts. Scanned pages are one big image and are darkened anyway, so the setting can never quietly switch dark mode off. Comic archives and image files are left alone entirely, and **printing, Save as PDF and Copy Page always use the document's own colors**, so nothing you send on carries our dark paper. Remembered across documents and sessions, and on Windows it follows the system theme until you express a preference; the per-document choice is macOS-only, where Windows remembers one. The Linux build has no dark-theme code, which is why this bullet carries a tag.
 
 <p align="center"><img src="docs/images/portable/macos-multi-window.webp" alt="Two ShenzhenPDF windows side by side, each with its own tabs, outline sidebar, and document map" width="880"></p>
 
@@ -50,12 +50,12 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 <p align="center"><img src="docs/images/portable/macos-search-highlights.webp" alt="Chapter-grouped search results with in-page highlights and a 2 / 19 match counter" width="880"></p>
 
-- **Incremental search with live count** — Type anywhere to start searching and every match appears instantly with a running "current / total" counter, highlighted in-page. <sub>macOS · Linux</sub>
+- **Incremental search with live count** — Type anywhere to start searching and every match appears instantly with a running "current / total" counter, highlighted in-page. <sub>macOS · Linux · Windows</sub>
 - **Chapter-grouped results sidebar** — Every match listed with a snippet, grouped under its chapter heading; click to jump. <sub>macOS · Linux</sub>
 - **Nested chapters** <sub>macOS</sub> — A PDF's outline and a Markdown document's headings both fold: disclosure arrows on every parent, one expand / collapse all button at the end of the filter row, and each document remembers what you left collapsed across launches.
 - **Regex & multiline search** — Regular-expression matching, including patterns that span line and paragraph breaks; invalid patterns fail gracefully. <sub>macOS · Linux</sub>
 - **Document map (minimap)** — A live right-side thumbnail strip with a draggable viewport: drag to scroll, click to jump, Cmd-scroll to zoom — search hits show as yellow markers. Scales to hundreds of pages. <sub>macOS · Linux</sub>
-- **Scrollbar heat-map** — The scrollbar doubles as a match heat-map — a tick per hit, the active one hotter; each tab remembers its query across switches and relaunches. <sub>macOS · Linux</sub>
+- **Scrollbar heat-map** — The scrollbar doubles as a match heat-map — a tick per hit, the active one hotter. <sub>macOS · Linux · Windows</sub> Each tab remembers its query across switches and relaunches. <sub>macOS · Linux</sub>
 
 ## <a id="powertools"></a>Power tools — 100% on-device <sub>macOS · Linux</sub>
 
@@ -69,7 +69,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 ## <a id="fast"></a>Fast by design
 
 - **Snappy native rendering** — The page you're viewing renders first at high priority while nearby pages and inactive tabs warm up quietly — tab-switching is instant. Cached display lists and crop-to-viewport rendering make repeat renders cheap; stale renders abort within milliseconds. <sub>macOS · Linux</sub>
-- **MuPDF-backed C core** — A compact ~93 KB C core wraps statically-linked MuPDF 1.27.2 behind a small stable ABI shared by both frontends — no Win32 emulation. Adds highlights/comments, page rotate, and single-page PDF export on top of viewing.
+- **MuPDF-backed C core** — A compact ~93 KB C core wraps statically-linked MuPDF 1.27.2 behind a small stable ABI shared by all three frontends — no Win32 emulation. Adds highlights/comments, page rotate, and single-page PDF export on top of viewing.
 - **Far more than PDF** — Opens everything MuPDF recognizes — XPS, CBZ comics, EPUB/MOBI e-books, images, FB2, and HTML — plus Markdown through a native paginated renderer. PDF is the primary, most-polished path.
 
 ## Files, printing & updates
@@ -77,7 +77,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 - **Verified daily auto-updater** — A once-a-day background check against GitHub Releases, kept off the launch path. Every update is verified offline against a pinned Apple Developer ID (Team 66LJ4BV7Q3), hardened runtime, bundle id, and stapled notarization before an atomic swap. An installation failure restores the working app immediately; a mismatched relaunch keeps and reveals the previous `.old` app for manual recovery.
 - **Shenzhen Files as your file manager** <sub>macOS</sub> — Install Shenzhen Files and it becomes the app's file manager on its own, with nothing to configure: *Show in Folder* reveals there instead of in Finder, anywhere the app offers it. *Settings ▸ File Manager* switches back to Finder whenever you want, and an explicit choice always wins (the automatically-derived one is marked *(Automatic)* so you can tell them apart); every launch falls back to Finder if Shenzhen Files is missing or fails to start. **Choosing files stays native by design** — **Open…** (<kbd>Cmd+O</kbd>), the path prompt (<kbd>Cmd+Shift+O</kbd>) and every save panel use the standard macOS panel, because picking a file has to hand the selection back to the app and no external file manager can return one. Open… does start in the folder you're most likely to want: the current document's, else your last opened one's, else home.
 - **High-quality native printing** — Prints through the standard macOS pipeline with Fit / Actual Size / Custom scaling
-- **One-click default reader & readable YAML state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as human-readable YAML you can read, diff, and edit. Existing JSON state files migrate automatically (originals kept as `.migrated-backup`). <sub>YAML state: macOS · Linux</sub>
+- **One-click default reader & readable YAML state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as human-readable YAML you can read, diff, and edit. Existing JSON state files migrate automatically (originals kept as `.migrated-backup`). <sub>YAML state: macOS · Linux · Windows</sub>
 
 Every feature, listed exhaustively — including the full Markdown syntax and diagram support tables and the
 keyboard shortcuts — is in **[docs/features.md](docs/features.md)**.
@@ -85,8 +85,8 @@ keyboard shortcuts — is in **[docs/features.md](docs/features.md)**.
 ## Platform support
 
 - **macOS — the original** — Native AppKit + PDFKit.
-- **Linux — full parity** — Native GTK4 + libadwaita app on the same portable C core and data formats: tabs (drag, detach, reattach), multi-window session restore, document map, chapter-grouped search sidebar, scrollbar heat-map, command palette, favorites, presentation mode, printing, auto-reload, properties panel, OCR, translation, and a minisign-verified auto-updater (deb + tarball). Instant launches via an optional resident mode. Built from `portable/linux/gtk4/`.
-- **Windows — legacy** — A separate Win32 C++ tree remains in-tree but is independent of the portable core; no published Windows binary.
+- **Linux — parity on the reading path** — Native GTK4 + libadwaita app on the same portable C core and data formats: tabs (drag, detach, reattach), multi-window session restore, document map, chapter-grouped search sidebar, scrollbar heat-map, command palette, favorites, presentation mode, printing, auto-reload, properties panel, OCR, translation, and a minisign-verified auto-updater (deb + tarball). Instant launches via an optional resident mode. Built from `portable/linux/gtk4/`. Two features tagged above are genuinely absent here rather than merely untested: the **dark reading theme** and the **Markdown reader**, neither of which has any code in `portable/linux/gtk4/`.
+- **Windows — native, not yet published** — A native Win32 + Direct2D app on the same portable C core and data formats, built from `portable/win/`: compact tabs with drag-to-reorder, presentation mode and full screen, session restore, the document map, a chapter-grouped search sidebar with incremental find, the scrollbar heat-map, the command palette with recents and favorites, a password prompt for encrypted PDFs, auto-reload when a file changes on disk, the document properties panel, native printing, on-device OCR and offline translation, and the dark reading theme. Markdown opens as paginated pages too, by a different route: converted to HTML and laid out on A4 by MuPDF's own engine rather than by a re-implementation of the macOS text stack, so it gets the GFM typography and palette, tables, syntax-highlighted code and the LaTeX subset, but not yet the native diagrams, the in-place language picker or the copy button. The auto-updater is ported and verified against Authenticode, but is scaffolding until there is something signed to update to — **there is no published Windows binary or installer yet**, so for now the app is built from source. The binary itself is ready to be one: it is a single statically-linked exe with MuPDF embedded, no DLLs and no VC redistributable, so it is **portable — download, double-click, run** — and **self-installing**: `ShenzhenPDF.exe --install` copies it to `%LOCALAPPDATA%\Programs\ShenzhenPDF`, adds a Start Menu shortcut, the `.pdf` association and an *Apps & features* entry, all under HKCU with no administrator rights, and `--uninstall` removes exactly those and keeps your settings unless you ask for `--purge`. The first launch asks which you want. A `ShenzhenPDF.portable` file beside the exe keeps settings and session in `ShenzhenPDF-data` next to it, for a copy on a USB stick. Annotations and the Comments sidebar are the largest gap that remains. A separate legacy Win32 C++ tree also remains in `src/`, independent of the portable core.
 
 ---
 
@@ -141,13 +141,72 @@ Fedora container), and a Flatpak via the manifest in
 `portable/linux/pkg/flatpak/` (see its README; Flathub submission notes
 included).
 
-### Windows (legacy)
+### Windows
 
-```sh
-bun ./cmd/build.ts
+Needs Visual Studio 2022 Build Tools (MSVC toolset 14.44 or newer) and a
+Windows SDK. Run from the Windows machine that owns the checkout, addressing
+each script **by path** — some systems set
+`NoDefaultCurrentDirectoryInExePath=1`, which stops `cmd` finding a script in
+the current directory:
+
+```bat
+portable\win\mupdf-native-build.cmd     :: libmupdf for x64, once (~70 s)
+portable\win\build-native.cmd           :: -> dist\ShenzhenPDF-win-x64.exe
 ```
 
-This creates `./out/dbg64/SumatraPDF.exe`. Run from an environment where the Visual Studio command-line tools are on `PATH`. This Win32 tree is legacy and not yet rebranded under the ShenzhenPDF name.
+**The built app is `dist\ShenzhenPDF-win-x64.exe`**, copied there by every
+successful build, under the name a release carries and beside where the macOS
+build leaves `ShenzhenPDF.app`. That is the one to run. It is a single
+self-contained executable -- MuPDF, the fonts and the icon are compiled in, it
+links nothing but Windows' own DLLs and needs no redistributable -- so it can be
+copied anywhere and started. `--install` is optional, and only adds a Start Menu
+entry, the `.pdf` association and a row in Apps.
+
+Two environment variables control where things go, and both matter when more
+than one build shares a machine:
+
+```bat
+set SPDF_OUT=C:\spdf-build                :: default; objects, test exes, scratch
+set SPDF_MUPDF_LIBDIR=%SPDF_OUT%\mupdf    :: default; where libmupdf.lib is looked for
+```
+
+Give a parallel build its own `SPDF_OUT` (a running instance holds a lock on
+`ShenzhenPDF.exe`), and point `SPDF_MUPDF_LIBDIR` at an already-built shared
+copy so it does not rebuild MuPDF.
+
+The test suite runs in Git Bash on the same machine:
+
+```sh
+bash portable/win/tests/run-tests-native.sh --list   # the case inventory, no build
+bash portable/win/tests/run-tests-native.sh          # build and run everything
+```
+
+It exits 0 only if every selected case ran and passed, 1 on a failure and 2 if
+anything was *blocked* by a missing prerequisite — which a complete run is,
+since the cross-host pixel comparisons need a macOS host and the password suite
+needs `qpdf`. `portable/win/README.md` is the full guide.
+
+The exe it produces needs no installing — it is one statically-linked file with
+MuPDF inside it, so `%SPDF_OUT%\ShenzhenPDF.exe` can simply be run or copied
+anywhere. **The exe is also its own installer**, which is why there is no
+installer to build:
+
+```bat
+portable\win\package-release.cmd %SPDF_OUT%\ShenzhenPDF.exe
+:: -> dist\ShenzhenPDF-win-x64.exe + .sha256, and prints the ProductVersion
+
+ShenzhenPDF.exe --install      :: optional, per-user, HKCU only, no admin
+ShenzhenPDF.exe --uninstall    :: add --purge to delete settings too
+ShenzhenPDF.exe --portable     :: state in ShenzhenPDF-data beside the exe
+```
+
+If you write a script that launches a real window, pass `--state-dir` or set
+`SPDF_WIN_SETUP_NO_PROMPT=1`: the first-run question is a modal dialog and
+appears before the window.
+
+A separate legacy Win32 C++ tree, independent of the portable core, still
+builds with `bun ./cmd/build.ts` into `./out/dbg64/SumatraPDF.exe`. It is not
+rebranded and is not the app described above.
 
 </details>
 
@@ -158,6 +217,7 @@ This creates `./out/dbg64/SumatraPDF.exe`. Run from an environment where the Vis
 
 macOS: `~/Library/Application Support/ShenzhenPDF/`
 Linux: `~/.config/shenzhenpdf/`
+Windows: `%APPDATA%\ShenzhenPDF\`
 
 Typical files (human-readable YAML you can read, diff, and edit; recents live
 inside `settings.yaml`):
@@ -169,6 +229,10 @@ documents.yaml
 favorites.yaml
 bookmarks.yaml
 ```
+
+`bookmarks.yaml` is macOS-only: it holds security-scoped bookmarks, which have
+no counterpart on the other two platforms. The other four are the same schema
+everywhere, so a `session.yaml` written by one frontend is read by the others.
 
 On first launch after updating, existing `.json` state files are converted to
 `.yaml` and the originals are kept next to them as `<name>.json.migrated-backup`.
@@ -183,7 +247,8 @@ On first launch after updating, existing `.json` state files are converted to
 - `portable/core/`: shared document, render, search, OCR-facing, and save core.
 - `portable/mac/`: native macOS AppKit application.
 - `portable/linux/gtk4/`: native Linux GTK4 + libadwaita application.
-- `src/`: Windows C++/Win32 application code.
+- `portable/win/`: native Windows Win32 + Direct2D application, its test harness and its build scripts.
+- `src/`: the separate legacy Win32 C++ tree, independent of the portable core.
 - `mupdf/`: MuPDF dependency.
 - `ext/`: third-party dependencies.
 - `portable/docs/`: release, updater, and portability notes.

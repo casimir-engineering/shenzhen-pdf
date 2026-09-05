@@ -1,7 +1,8 @@
 /* ShenzhenPDF for Windows -- entry point.
  *
- *   ShenzhenPDF.exe [--dark] [--page N] <file.pdf>
- *       Opens a window on the continuous scrolling canvas at fit-width.
+ *   ShenzhenPDF.exe [--dark|--light] [--page N] [--window ID | --new-window] [--state-dir DIR] [file.pdf]
+ *       Opens a window on the continuous scrolling canvas, restoring the last
+ *       session (or the window another process handed over as ID, or nothing).
  *
  *   ShenzhenPDF.exe --render-png [--dark] <file.pdf> <page> <zoom> <out.png>
  *       One page through the core, written 1:1 as a PNG. No window, no window
@@ -25,8 +26,14 @@
  * for whoever draws one.
  */
 #include "spdf_win_canvas.h"
+#include "spdf_win_chrome_model.h" /* the chrome model the window paints */
 #include "spdf_win_layout.h" /* SPDF_WIN_PAGE_MARGIN_* for the initial window size */
+#include "spdf_win_open_app.h" /* the process opener every by-path open goes through, and its seam */
+#include "spdf_win_paths.h"    /* spdf_win_paths_set_state_dir_override, for --state-dir */
+#include "spdf_win_settings.h" /* settings.yaml: theme, panels, print, window size */
+#include "spdf_win_setup.h"    /* --install / --uninstall / --portable: the exe is its own installer */
 #include "spdf_win_tabs_app.h" /* the tab model, the session, and the glue to this canvas */
+#include "spdf_win_usage.h"
 #include "spdf_win_window.h"
 
 #include <math.h>
@@ -38,330 +45,135 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "user32.lib")
 
-/* Local, static and small on purpose. T6 owns the shared UTF-8/UTF-16 helpers
- * in spdf_win_paths.{h,c}; duplicating six lines here rather than taking a
- * cross-track build dependency keeps this binary buildable from its own
- * sources plus the core and T3's two files. */
-static char* utf8_from_wide(const wchar_t* w) {
-    if (!w) return NULL;
-    int need = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
-    if (need <= 0) return NULL;
-    char* out = (char*)malloc((size_t)need);
-    if (!out) return NULL;
-    if (WideCharToMultiByte(CP_UTF8, 0, w, -1, out, need, NULL, NULL) <= 0) {
-        free(out);
-        return NULL;
-    }
-    return out;
-}
+/* `struct app`, the one window's state: in its own header since this file reached
+ * its cap. Everything below depends on it. */
+#include "spdf_win_app.h"
 
-struct app {
-    spdf_document* doc;
-    char* path; /* UTF-8, owned; the render workers open their own handle to it */
-    spdf_win_canvas* canvas;
-    unsigned render_flags;
-    /* Applied on the first paint, not at open: the canvas cannot place a page
-     * until it knows how big the viewport is, and the viewport is not known
-     * until the window has been laid out. -1 once it has been honoured. */
-    int pending_page;
-    /* Windowed: documents come from the model, and `doc`/`path` stay NULL. */
-    spdf_win_tabs* tabs;
-    char window_id[SPDF_WIN_SESSION_ID_MAX];
-    wchar_t status[512];
-};
+/* utf8_from_wide(), report(), open_document() and close_document(). Depends on
+ * `struct app` above; everything below reports through it. */
+#include "spdf_win_window_doc.h"
 
-static void report(const wchar_t* text, bool interactive) {
-    fwprintf(stderr, L"ShenzhenPDF: %s\n", text);
-    if (interactive) MessageBoxW(NULL, text, L"ShenzhenPDF", MB_OK | MB_ICONERROR);
-}
+/* The window title, the selected tab with its remembered view, the frame, the
+ * periodic session save and the opening size. Depends on `struct app` above
+ * and on report(); everything below calls show_selected_tab() from it. */
+#include "spdf_win_session_app.h"
 
-static bool open_document(app* a, const wchar_t* wpath, int page_index, bool interactive) {
-    char err[256] = {0};
-    wchar_t message[600];
-
-    a->path = utf8_from_wide(wpath);
-    if (!a->path) {
-        report(L"That path could not be converted to UTF-8.", interactive);
-        return false;
-    }
-    a->doc = spdf_open(a->path, err, sizeof(err));
-    if (!a->doc) {
-        _snwprintf_s(message, _TRUNCATE, L"Could not open %s\n\n%hs", wpath, err[0] ? err : "unknown error");
-        report(message, interactive);
-        return false;
-    }
-
-    int pages = spdf_page_count(a->doc);
-    if (page_index < 0 || page_index >= pages) {
-        _snwprintf_s(message, _TRUNCATE, L"Page %d is outside this document (0-%d).", page_index, pages - 1);
-        report(message, interactive);
-        return false;
-    }
-
-    /* The canvas reads page 0's size and nothing else. Every other page is
-     * measured when the viewport reaches it, so opening a 500-page document
-     * costs the same as opening a 2-page one. The path goes with it so the
-     * render workers can open their own handle -- the core allows one
-     * spdf_document per thread, so they cannot borrow ours. */
-    a->canvas = spdf_win_canvas_create(a->doc, a->path, a->render_flags, err, sizeof(err));
-    if (!a->canvas) {
-        _snwprintf_s(message, _TRUNCATE, L"Could not lay out %s: %hs", wpath, err[0] ? err : "unknown error");
-        report(message, interactive);
-        return false;
-    }
-    return true;
-}
-
-static void close_document(app* a) {
-    spdf_win_canvas_destroy(a->canvas);
-    a->canvas = NULL;
-    if (a->doc) spdf_close(a->doc);
-    a->doc = NULL;
-    free(a->path);
-    a->path = NULL;
-}
+/* The watcher's app half: a CHANGED reopens the tab in place, a MISSING marks
+ * it, the first tick sweeps orphaned shadow copies. After show_selected_tab. */
+#include "spdf_win_watch_app.h"
 
 /* --- the window ---------------------------------------------------------- */
 
-static int scene_for_window(void* user, spdf_win_scene* scene) {
-    app* a = (app*)user;
-    if (!a->canvas) return 0; /* the last tab just closed; the pump is exiting */
-    spdf_win_canvas_set_viewport(a->canvas, scene->target_px_w, scene->target_px_h, scene->dpi_scale);
-    if (a->pending_page > 0) {
-        spdf_win_canvas_scroll_to_page(a->canvas, a->pending_page);
-        a->pending_page = -1;
-    }
-    if (spdf_win_canvas_build_scene(a->canvas, scene)) return 1;
-    scene->message = a->status[0] ? a->status : NULL;
-    return 1;
-}
-
-/* The keymap. Deliberately here and not in spdf_win_window.cpp: which key
- * pages forward is product policy, and the window has no business knowing a
- * document exists. */
-static int key_for_window(app* a, const spdf_win_input* in) {
-    float page_step = (float)in->view_px_h * 0.9f;
-    float line = 60.0f;
-    float cx = (float)in->view_px_w * 0.5f;
-    float cy = (float)in->view_px_h * 0.5f;
-
-    switch (in->key) {
-        case VK_DOWN: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, line);
-        case VK_UP: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, -line);
-        case VK_RIGHT: return spdf_win_canvas_scroll_by(a->canvas, line, 0.0f);
-        case VK_LEFT: return spdf_win_canvas_scroll_by(a->canvas, -line, 0.0f);
-        case VK_NEXT:
-        case VK_SPACE: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, page_step);
-        case VK_PRIOR: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, -page_step);
-        case VK_HOME: return spdf_win_canvas_scroll_to(a->canvas, 0.0f, 0.0f);
-        case VK_END: return spdf_win_canvas_scroll_to(a->canvas, 0.0f, spdf_win_canvas_content_h(a->canvas));
-        case VK_OEM_PLUS:
-        case VK_ADD: spdf_win_canvas_zoom_at(a->canvas, 1.25f, cx, cy); return 1;
-        case VK_OEM_MINUS:
-        case VK_SUBTRACT: spdf_win_canvas_zoom_at(a->canvas, 0.8f, cx, cy); return 1;
-        case '0':
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            spdf_win_canvas_set_zoom_mode(a->canvas, SPDF_WIN_ZOOM_ACTUAL);
-            return 1;
-        case '1':
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            spdf_win_canvas_set_zoom_mode(a->canvas, SPDF_WIN_ZOOM_FIT_WIDTH);
-            return 1;
-        case '2':
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            spdf_win_canvas_set_zoom_mode(a->canvas, SPDF_WIN_ZOOM_FIT_PAGE);
-            return 1;
-        /* Ctrl+Tab / Ctrl+W. Where the reader is in the tab being left is
-         * written back first, so returning to it lands on the same page. */
-        case VK_TAB:
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            spdf_win_tabs_app_remember(a->tabs, a->canvas);
-            spdf_win_tabs_select_relative(a->tabs, (in->mods & SPDF_WIN_MOD_SHIFT) ? -1 : 1);
-            return spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
-        case 'W':
-            if (!(in->mods & SPDF_WIN_MOD_CTRL)) return 0;
-            if (!spdf_win_tabs_close_enabled(spdf_win_tabs_count(a->tabs), spdf_win_tabs_selected_index(a->tabs),
-                                             a->canvas != NULL))
-                return 0;
-            spdf_win_tabs_close(a->tabs, spdf_win_tabs_selected_index(a->tabs), 0);
-            if (spdf_win_tabs_count(a->tabs) == 0) PostQuitMessage(0);
-            return spdf_win_tabs_app_show(a->tabs, &a->canvas, a->render_flags, &a->pending_page);
-        default: return 0;
-    }
-}
-
-static int input_for_window(void* user, const spdf_win_input* in) {
-    app* a = (app*)user;
-    if (!a->canvas) return 0;
-    switch (in->kind) {
-        case SPDF_WIN_INPUT_SCROLL: return spdf_win_canvas_scroll_by(a->canvas, in->dx, in->dy);
-        case SPDF_WIN_INPUT_ZOOM: spdf_win_canvas_zoom_at(a->canvas, in->factor, in->x, in->y); return 1;
-        case SPDF_WIN_INPUT_KEY: return key_for_window(a, in);
-        default: return 0;
-    }
-}
-
-static const wchar_t* file_name_of(const wchar_t* path) {
-    const wchar_t* name = path;
-    for (const wchar_t* p = path; *p; ++p)
-        if (*p == L'\\' || *p == L'/') name = p + 1;
-    return name;
-}
-
-/* Page 1 at 100%, shrunk to a comfortable share of the work area. Done before
- * the window exists, so it uses the system DPI; WM_DPICHANGED corrects
- * anything the real monitor disagrees with. */
-static void initial_client_size(spdf_document* doc, int* out_w, int* out_h) {
-    RECT work = {0, 0, 1280, 800};
-    float page_w = 612.0f;
-    float page_h = 792.0f;
-    char err[128];
-
-    spdf_page_size(doc, 0, &page_w, &page_h, err, sizeof(err)); /* already cached by the canvas */
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-
-    float w = page_w + 2.0f * (float)SPDF_WIN_PAGE_MARGIN_H;
-    float h = page_h + 2.0f * (float)SPDF_WIN_PAGE_MARGIN_V;
-    float scale = 1.0f;
-    if (w > (float)(work.right - work.left) * 0.80f) scale = (float)(work.right - work.left) * 0.80f / w;
-    if (h > (float)(work.bottom - work.top) * 0.90f && (float)(work.bottom - work.top) * 0.90f / h < scale)
-        scale = (float)(work.bottom - work.top) * 0.90f / h;
-    *out_w = (int)(w * scale);
-    *out_h = (int)(h * scale);
-}
+/* scene_for_window() -- the paint-time glue -- and the mouse routing. Both
+ * depend on `struct app` and on show_selected_tab() above them, and both stay
+ * out of this file because this file is at its 500-line cap and
+ * tools/file-size-limits.md asks for an extracted file rather than a raised one.
+ * Same arrangement as spdf_win_tabs_app.h and spdf_win_headless_viewport.h.
+ *
+ * The scene half comes FIRST: the input half calls two of its functions. */
+#include "spdf_win_chrome_scene.h"
+/* Presentation mode and full screen: what F5 and F11 do, and the pointer while
+ * presenting. Before the tab strip's commands, which detach into new windows,
+ * and before the router, which hands it the pointer. */
+#include "spdf_win_window_presentation.h"
+/* The tab strip's own commands -- select, close, open, the overflow menu,
+ * drag-to-reorder, tear-off and new windows -- which chrome_perform() next door
+ * calls. */
+#include "spdf_win_chrome_tabs_ui.h"
+/* The strip's hover preview, which the router's hover branch shows. */
+#include "spdf_win_tabs_hover.h"
+/* What the pointer does over the PAGE: select text, follow a link, or pan. */
+#include "spdf_win_chrome_canvas_ui.h"
+/* The find group, which field has the keyboard, and the sidebar's rows. */
+#include "spdf_win_chrome_field_ui.h"
+#include "spdf_win_chrome_actions.h"
+/* The Markdown commands -- the A-/A+ text size and the image-cache arrival --
+ * in the shape the command switch expects. After the tab strip and the
+ * actions, whose show_selected_tab and spdf_win_tabs_app_remember it calls. */
+#include "spdf_win_md_commands.h"
+/* The keymap, the three typeable fields and the one command switch. LAST,
+ * because it calls into all three above it. */
+#include "spdf_win_chrome_commands.h"
 
 /* --- headless ------------------------------------------------------------ */
 
-/* Everything --render-window-png can be told. Defaults are the window's own:
- * fit-width, no extra scroll, 96 dpi. */
-struct viewport_opts {
-    spdf_win_zoom_mode mode;
-    float zoom;      /* > 0 overrides the mode */
-    float scroll_x;  /* added to the top of `page` */
-    float scroll_y;
-    float dpi_scale;
-    float zoom_at_x; /* < 0 means "no zoom-at step" */
-    float zoom_at_y;
-    float zoom_factor;
-    /* Render N frames, scrolling a viewport height between each. One
-     * invocation is one process, so this is the only way to observe anything
-     * that is supposed to happen BETWEEN frames -- notably whether the worker
-     * pool had the next page ready. Only the last frame is written. */
-    int frames;
-};
-
-/* One machine-readable block per frame, on stdout. The consumer is a script
- * that crops the macOS reference render to the same source rectangle, so the
- * numbers here are the interface: change them and the comparison silently
- * starts measuring something else. */
-static void print_geometry(const char* label, spdf_win_canvas* canvas, const spdf_win_scene* scene) {
-    printf("%s viewport=%ux%u zoom=%.6f scroll=%.4f,%.4f content=%.4f,%.4f page=%d cache=%zu sync=%d started=%llu\n",
-           label, scene->target_px_w, scene->target_px_h, (double)spdf_win_canvas_zoom(canvas),
-           (double)spdf_win_canvas_scroll_x(canvas), (double)spdf_win_canvas_scroll_y(canvas),
-           (double)spdf_win_canvas_content_w(canvas), (double)spdf_win_canvas_content_h(canvas),
-           spdf_win_canvas_current_page(canvas), spdf_win_canvas_cache_bytes(canvas),
-           spdf_win_canvas_sync_renders(canvas), spdf_win_canvas_prefetched(canvas));
-    for (int i = 0; i < scene->page_count; ++i) {
-        const spdf_win_page_draw* d = &scene->pages[i];
-        printf("%s draw page=%d dest=%.4f,%.4f size=%.4f,%.4f bitmap=%dx%d\n", label, d->page_index, (double)d->dest_x,
-               (double)d->dest_y, (double)d->dest_w, (double)d->dest_h, d->bitmap ? d->bitmap->width : 0,
-               d->bitmap ? d->bitmap->height : 0);
-    }
-}
-
-static int run_viewport(app* a, spdf_win_d2d* d2d, const wchar_t* wpath, int page_index, unsigned px_w, unsigned px_h,
-                        const viewport_opts* opts, const wchar_t* out_png) {
-    spdf_win_scene scene;
-    HRESULT hr;
-
-    if (px_w == 0 || px_h == 0) {
-        report(L"The viewport must have a non-zero width and height.", false);
-        return 64;
-    }
-    if (!open_document(a, wpath, page_index, false)) return 1;
-
-    spdf_win_canvas_set_viewport(a->canvas, px_w, px_h, opts->dpi_scale);
-    if (opts->zoom > 0.0f) spdf_win_canvas_set_zoom_at(a->canvas, opts->zoom, 0.0f, 0.0f);
-    else spdf_win_canvas_set_zoom_mode(a->canvas, opts->mode);
-    /* Anchor on the page, then apply the offset. Expressing the scroll
-     * relative to a page rather than in absolute canvas pixels is what makes a
-     * case like "the boundary between page 0 and page 1" mean the same thing
-     * at every zoom and on every document. */
-    spdf_win_canvas_scroll_to_page(a->canvas, page_index);
-    spdf_win_canvas_scroll_by(a->canvas, opts->scroll_x, opts->scroll_y);
-
-    memset(&scene, 0, sizeof(scene));
-    if (opts->zoom_at_x >= 0.0f) {
-        /* Render the pre-zoom scene first so the anchor can be checked: the
-         * document point under (zoom_at_x, zoom_at_y) is derivable from these
-         * numbers, and must land back on the same viewport pixel afterwards. */
-        spdf_win_canvas_build_scene(a->canvas, &scene);
-        print_geometry("pre", a->canvas, &scene);
-        spdf_win_canvas_zoom_at(a->canvas, opts->zoom_factor, opts->zoom_at_x, opts->zoom_at_y);
-        memset(&scene, 0, sizeof(scene));
-    }
-    spdf_win_canvas_build_scene(a->canvas, &scene);
-    print_geometry("frame", a->canvas, &scene);
-
-    /* Extra frames, each a viewport further down, with the pool given a moment
-     * to land its prefetch in between -- the wait a real reader's hand supplies
-     * for free and a back-to-back loop does not. `sync=` on each frame is the
-     * measurement: 0 means every visible page was already in the cache. */
-    for (int frame = 1; frame < opts->frames; ++frame) {
-        char label[32];
-        spdf_win_canvas_scroll_by(a->canvas, 0.0f, (float)px_h);
-        spdf_win_canvas_settle(a->canvas, 4000);
-        memset(&scene, 0, sizeof(scene));
-        spdf_win_canvas_build_scene(a->canvas, &scene);
-        _snprintf_s(label, sizeof(label), _TRUNCATE, "frame%d", frame);
-        print_geometry(label, a->canvas, &scene);
-    }
-
-    hr = spdf_win_render_scene_to_png(d2d, px_w, px_h, &scene, out_png);
-    if (FAILED(hr)) {
-        wchar_t message[256];
-        _snwprintf_s(message, _TRUNCATE, L"Compose to %s failed (hr=0x%08lX)", out_png, (unsigned long)hr);
-        report(message, false);
-        return 1;
-    }
-    wprintf(L"wrote %s\n", out_png);
-    return 0;
-}
+#include "spdf_win_headless_viewport.h"
 
 /* Depends on `app` and spdf_win_d2d above, so it is included here rather
  * than with the headers at the top. */
 #include "spdf_win_headless.h"
 
-static int usage(void) {
-    fwprintf(stderr,
-             L"usage: ShenzhenPDF.exe [--dark] [--page N] <file.pdf>\n"
-             L"       ShenzhenPDF.exe --render-png [--dark] <file.pdf> <page> <zoom> <out.png>\n"
-             L"       ShenzhenPDF.exe --render-window-png [opts] <file.pdf> <page> <w> <h> <out.png>\n"
-             L"\n"
-             L"  <page> is 0-BASED, matching the core API and spdf_win_probe.\n"
-             L"  opts:  --dark            dark reading theme, images preserved\n"
-             L"         --fit MODE        width (default) | page | actual\n"
-             L"         --zoom Z          device pixels per PDF point; overrides --fit\n"
-             L"         --scroll-x X      viewport pixels, added to the top of <page>\n"
-             L"         --scroll-y Y\n"
-             L"         --dpi S           device pixels per logical pixel (default 1)\n"
-             L"         --zoom-at X,Y     zoom about this viewport point after scrolling\n"
-             L"         --zoom-factor F   how much to zoom there (default 2)\n"
-             L"         --frames N        render N frames, a viewport apart; last is written\n");
-    return 64;
-}
 
 int main(void) {
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) return 70;
 
+    /* THE ONE CALL, INSTALLED ONCE (spdf_win_open_app.h): from here on every
+     * by-path open in the process -- the headless paths, the tab model, the
+     * render workers, search, thumbnails, links, print -- opens a Markdown file
+     * as pages, opens a read-only source's working copy when one exists, and
+     * opens everything else exactly as before. Before the flag parse, because
+     * --render-png and --render-window-png open too. */
+    spdf_win_open_set_hook(spdf_win_open_app_document);
+
+    /* THE EXE IS ITS OWN INSTALLER (spdf_win_setup.h), so --install and
+     * --uninstall are answered HERE -- before the option loop, before Direct2D,
+     * before any settings file is read and long before a window exists. An
+     * installer that had already restored the last session would be an
+     * installer with a document open. */
+    spdf_win_setup_args setup;
+    spdf_win_setup_parse(argc, argv, &setup);
+    if (setup.install || setup.uninstall) {
+        int setup_rc = setup.install ? spdf_win_setup_install(setup.quiet, setup.file, 1)
+                                     : spdf_win_setup_uninstall(setup.quiet, setup.purge);
+        LocalFree(argv);
+        return setup_rc;
+    }
+    /* Any flag that already states what the reader wants of the install: the
+     * first-run question must not second-guess it. --state-dir is in the list
+     * for a reason that is not cosmetic -- screenshot-window.ps1, and so
+     * verify-phase1.ps1 through it, launches a real window with a fresh temp
+     * state directory, which would otherwise read as "never asked" and hang it
+     * on a modal dialog. (measure-launch.ps1 and drive-window.ps1 cannot use
+     * --state-dir and set SPDF_WIN_SETUP_NO_PROMPT instead; spdf_win_setup.h
+     * says why, and spdf_win_setup_first_run() folds it in here.) */
+    const int setup_explicit = setup.install || setup.uninstall || setup.quiet || setup.purge || setup.portable ||
+                               (setup.state_dir && !spdf_win_setup_prompt_allowed_by_env());
+    /* Portable mode, before anything reads state: the marker file next to the
+     * exe (or --portable) moves settings.yaml and session.yaml to
+     * <exe dir>\ShenzhenPDF-data. A no-op when --state-dir was given, whose own
+     * override the loop below installs and which therefore keeps precedence. */
+    spdf_win_setup_apply_portable(setup.portable, setup.state_dir);
+
     app a;
+    /* What --find asked for, kept apart from a.find_text because the session
+     * restore below overwrites that from the tab. See its use further down. */
+    wchar_t cli_find_text[256];
     viewport_opts opts;
     int window_page = 0;
+    /* Set by --dark or --light. Until one of them appears the theme is the
+     * SYSTEM's, resolved below -- but only for the windowed path. */
+    int theme_explicit = 0;
+    /* --window / --new-window: how the windowed path finds its tabs. */
+    spdf_win_tabs_app_restore restore = SPDF_WIN_TABS_APP_RESTORE_FIRST;
     memset(&a, 0, sizeof(a));
     memset(&opts, 0, sizeof(opts));
     a.render_flags = SPDF_RENDER_DEFAULT;
+    /* Both side panels open, as macOS does for a new document
+     * (ShenzhenPDFMac.mm:836-840). 0 width asks spdf_win_chrome.h for
+     * its default. */
+    a.show_sidebar = 1;
+    a.show_minimap = 1;
+    /* -1, not the 0 the memset left: 0 is a valid tab index, so a zeroed hover
+     * state would draw the first tab hovered before the pointer has ever
+     * entered the window. */
+    a.hot_tab = -1;
+    a.hot_close = -1;
+    /* -1 for the same reason: 0 is a valid tab index and a valid drop slot, so a
+     * zeroed drag state is a drag nobody started. */
+    a.drag_tab = -1;
+    a.drop_slot = -1;
     opts.mode = SPDF_WIN_ZOOM_FIT_WIDTH;
     opts.dpi_scale = 1.0f;
     opts.zoom_at_x = -1.0f;
@@ -378,22 +190,97 @@ int main(void) {
         const wchar_t* value = i + 1 < argc ? argv[i + 1] : NULL;
         if (wcscmp(flag, L"--dark") == 0) {
             a.render_flags |= SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES;
+            theme_explicit = 1;
+            continue;
+        }
+        /* The counterpart, so a dark machine can still be told to open light and
+         * a pixel case can pin either. */
+        if (wcscmp(flag, L"--light") == 0) {
+            a.render_flags &= ~(unsigned)(SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES);
+            theme_explicit = 1;
+            continue;
+        }
+        /* Valueless, like --dark. Composes the window chrome into the headless
+         * frame, so the whole window's pixels can be compared without a desktop. */
+        if (wcscmp(flag, L"--chrome") == 0) {
+            opts.chrome = 1;
+            continue;
+        }
+        /* Valueless, like --chrome; pairs with --find below. */
+        if (wcscmp(flag, L"--find-regex") == 0) {
+            a.find_regex = 1;
+            continue;
+        }
+        /* A fresh empty window with its own session id: what File > New Window
+         * spawns. Restores nothing. */
+        if (wcscmp(flag, L"--new-window") == 0) {
+            restore = SPDF_WIN_TABS_APP_RESTORE_NONE;
+            continue;
+        }
+        /* Already acted on above, before any state was read; accepted here so
+         * `--portable file.pdf` is not a usage error. */
+        if (wcscmp(flag, L"--portable") == 0) continue;
+        /* The chrome collapsed, as F5 leaves it, so the headless compose can
+         * show the presentation frame with no desktop. */
+        if (wcscmp(flag, L"--presentation") == 0) {
+            spdf_win_chrome_presentation_set(1);
+            a.presentation = 1;
             continue;
         }
         if (!value) return usage();
-        if (wcscmp(flag, L"--page") == 0) window_page = _wtoi(value);
+        /* The window another process handed over through session.yaml
+         * (spdf_win_session_detach_tab): restore exactly that one. */
+        if (wcscmp(flag, L"--window") == 0) {
+            if (WideCharToMultiByte(CP_UTF8, 0, value, -1, a.window_id, (int)sizeof(a.window_id), NULL, NULL) <= 0)
+                return usage();
+            restore = SPDF_WIN_TABS_APP_RESTORE_ID;
+            ++i;
+            continue;
+        }
+        /* Where settings.yaml and session.yaml live, instead of %APPDATA%: the
+         * explicit portable-mode switch spdf_win_paths.h reserves for the
+         * frontend, and what lets a test drive a real window without touching
+         * the reader's own state. Inherited by every window this one spawns. */
+        if (wcscmp(flag, L"--state-dir") == 0) {
+            char* dir = utf8_from_wide(value);
+            if (!dir) return usage();
+            spdf_win_paths_set_state_dir_override(dir);
+            free(dir);
+            wcsncpy_s(a.state_dir, value, _TRUNCATE);
+            ++i;
+            continue;
+        }
+        /* THE HEADLESS ROUTE TO A LIVE SEARCH, and the reason it exists.
+         *
+         * SPDF_FIND_QUERY used to be the only way to see the find chrome in a
+         * frame, and this change deletes it -- the field is typeable now, and a
+         * debugging hook that bypasses the real control is a hook that keeps
+         * working after the real control has broken. But the session on this
+         * machine can be locked, and then `--render-window-png --chrome` is the
+         * ONLY way anyone can look at the window at all, so deleting the bridge
+         * without replacing it would take the find chrome out of the one
+         * verification path this port has.
+         *
+         * So it is a FLAG rather than an environment variable, and it goes
+         * through spdf_win_find_set_query() -- the same function a keystroke
+         * calls, on the same buffer, with the same conversion. It exercises the
+         * real path instead of going round it. */
+        if (wcscmp(flag, L"--find") == 0) wcsncpy_s(a.find_text, value, _TRUNCATE);
+        else if (wcscmp(flag, L"--page") == 0) window_page = _wtoi(value);
         else if (wcscmp(flag, L"--zoom") == 0) opts.zoom = (float)_wtof(value);
         else if (wcscmp(flag, L"--scroll-x") == 0) opts.scroll_x = (float)_wtof(value);
         else if (wcscmp(flag, L"--scroll-y") == 0) opts.scroll_y = (float)_wtof(value);
         else if (wcscmp(flag, L"--dpi") == 0) opts.dpi_scale = (float)_wtof(value);
         else if (wcscmp(flag, L"--zoom-factor") == 0) opts.zoom_factor = (float)_wtof(value);
         else if (wcscmp(flag, L"--frames") == 0) opts.frames = _wtoi(value);
+        else if (wcscmp(flag, L"--sidebar-section") == 0) opts.sidebar_section = _wtoi(value);
         else if (wcscmp(flag, L"--zoom-at") == 0) {
             wchar_t* comma = NULL;
             opts.zoom_at_x = (float)wcstod(value, &comma);
             opts.zoom_at_y = comma && *comma == L',' ? (float)wcstod(comma + 1, NULL) : 0.0f;
         } else if (wcscmp(flag, L"--fit") == 0) {
             if (wcscmp(value, L"width") == 0) opts.mode = SPDF_WIN_ZOOM_FIT_WIDTH;
+            else if (wcscmp(value, L"height") == 0) opts.mode = SPDF_WIN_ZOOM_FIT_HEIGHT;
             else if (wcscmp(value, L"page") == 0) opts.mode = SPDF_WIN_ZOOM_FIT_PAGE;
             else if (wcscmp(value, L"actual") == 0) opts.mode = SPDF_WIN_ZOOM_ACTUAL;
             else return usage();
@@ -403,9 +290,39 @@ int main(void) {
         ++i; /* consumed the value */
     }
 
+    /* After the whole parse, so --find-regex may come on either side of --find.
+     * A no-op with no query: spdf_win_find_set_query(NULL) creates no session. */
+    a.find_caret = (int)wcslen(a.find_text);
+    wcsncpy_s(cli_find_text, a.find_text, _TRUNCATE);
+    chrome_find_push(&a);
+
     int remaining = argc - i;
-    if ((exact && remaining != 4) || (viewport && remaining != 5) || (!exact && !viewport && remaining != 1))
+    /* The windowed path takes AT MOST one document, and may take none: a bare
+     * launch restores the session, or opens an empty window that File > Open,
+     * the strip's `+` and a dropped file can all fill. That is macOS's launch
+     * behaviour, and it is what a double-click on the exe has to do -- until now
+     * that printed this usage text and exited 64, so the app could only ever be
+     * started from a command line that named a file. */
+    if ((exact && remaining != 4) || (viewport && remaining != 5) || (!exact && !viewport && remaining > 1))
         return usage();
+
+    /* THE FIRST-RUN QUESTION -- "Run this copy", "Install", or "Install and run
+     * the installed app" (spdf_win_setup.h). AFTER the usage check above, so a
+     * bad command line still exits 64 without a dialog in front of it, and
+     * BEFORE the Direct2D device and the GPU prewarm below, so a launch that is
+     * about to install nothing does not load a driver first. It declines to ask
+     * on its own for the headless paths and for every explicit flag; when it
+     * does ask and the answer was Install, the install has already happened and
+     * this process is finished. */
+    {
+        int first_rc = 0;
+        int first_action = spdf_win_setup_first_run(setup_explicit, exact || viewport,
+                                                   remaining ? argv[i] : NULL, &first_rc);
+        if (spdf_win_setup_action_exits(first_action)) {
+            LocalFree(argv);
+            return first_rc;
+        }
+    }
 
     char err[256] = {0};
     spdf_win_d2d* d2d = spdf_win_d2d_create(err, sizeof(err));
@@ -425,23 +342,59 @@ int main(void) {
         rc = run_viewport(&a, d2d, argv[i], _wtoi(argv[i + 1]), (unsigned)_wtoi(argv[i + 2]),
                           (unsigned)_wtoi(argv[i + 3]), &opts, argv[i + 4]);
     } else {
-        char* launch_path = utf8_from_wide(argv[i]);
+        /* The settings, then the theme -- BEFORE the canvas exists, which takes
+         * its render flags at construction. Windowed path only; the headless
+         * ones must not depend on a file or a registry value. Both points are
+         * argued at spdf_win_system_prefers_dark() in spdf_win_window.h. */
+        /* AND THE GPU DEVICE, ON A WORKER, FIRST. Nothing between here and the
+         * first paint needs it and nothing here needs more than one core, so
+         * the driver load overlaps the settings read, the session restore, the
+         * document open and CreateWindowExW instead of following them. Windowed
+         * path only: see spdf_win_gpu_prewarm.h. */
+        spdf_win_gpu_prewarm_start(d2d);
+        {
+            const spdf_win_settings* settings = spdf_win_settings_shared();
+            if (!theme_explicit) a.render_flags = app_initial_render_flags();
+            a.show_sidebar = settings->default_sidebar_visible;
+            a.show_minimap = settings->default_minimap_visible;
+            a.sidebar_w = (float)settings->sidebar_width;
+            a.minimap_w = (float)settings->minimap_width;
+        }
+        /* markdownFontScale, once, before the first Markdown tab is laid out;
+         * the headless paths keep the default so a pixel case depends on no
+         * file. */
+        spdf_win_md_load_settings();
+
+        spdf_win_enable_dark_menus(); /* before any menu exists */
+
+        /* NULL when launched bare: utf8_from_wide(NULL) is NULL, and
+         * spdf_win_tabs_app_start(NULL, ...) restores the saved session and
+         * selects its tab, or leaves the model empty. */
+        char* launch_path = remaining ? utf8_from_wide(argv[i]) : NULL;
+        spdf_win_session_frame frame;
         spdf_win_enable_dpi_awareness();
-        a.tabs = spdf_win_tabs_app_start(launch_path, a.window_id, sizeof(a.window_id));
+        /* The watcher before the model: the launch document is opened by the
+         * show below and its watch is registered by the open hook
+         * (spdf_win_tabs_open.h), which needs somewhere to register it. */
+        spdf_win_tabs_open_configure(app_on_watch, &a);
+        spdf_win_tabs_open_start_watching();
+        a.tabs = spdf_win_tabs_app_start(launch_path, restore, a.window_id, sizeof(a.window_id), &frame);
         free(launch_path);
-        if (!spdf_win_tabs_app_show(a.tabs, &a.canvas, a.render_flags, &a.pending_page)) {
+        /* A NAMED document that will not open is an error the user must see. No
+         * document at all is not: the window opens empty, with the chrome drawn
+         * and a line saying how to open one (scene_for_window's no-canvas
+         * branch), and every canvas call in the frontend tolerates a NULL
+         * canvas -- which was checked rather than assumed. */
+        if (!spdf_win_tabs_app_show(a.tabs, &a.canvas, a.render_flags, &a.pending_page) && remaining &&
+            !spdf_win_tabs_open_cancelled()) {
             report(L"That document could not be opened.", true);
             rc = 1;
         } else {
             int client_w, client_h;
-            wchar_t title[320];
-            int selected = spdf_win_tabs_selected_index(a.tabs);
             if (window_page > 0) a.pending_page = window_page;
-            initial_client_size((spdf_document*)spdf_win_tabs_document(a.tabs, selected, err, sizeof(err)), &client_w,
-                                &client_h);
-            _snwprintf_s(title, _TRUNCATE, L"%s \x2014 ShenzhenPDF", file_name_of(argv[i]));
+            initial_client_size(&client_w, &client_h);
 
-            spdf_win_window* window = spdf_win_window_create(d2d, title, client_w, client_h, scene_for_window,
+            spdf_win_window* window = spdf_win_window_create(d2d, NULL, client_w, client_h, scene_for_window,
                                                             input_for_window, &a, err, sizeof(err));
             if (!window) {
                 wchar_t message[400];
@@ -449,13 +402,86 @@ int main(void) {
                 report(message, true);
                 rc = 72;
             } else {
+                /* All of these before the show: no placeholder title, no light
+                 * caption, and no window that visibly grows a menu bar. */
+                a.window = window;
+                /* Password prompts from here on are modal to the window. */
+                spdf_win_tabs_open_set_owner(spdf_win_window_native_handle(window));
+                /* The frame the session remembered, clamped onto a monitor. */
+                if (frame.w > 0 && frame.h > 0) spdf_win_window_set_frame(window, frame.x, frame.y, frame.w, frame.h);
+                /* The restored tab's view -- fit mode, page, exact offset --
+                 * placed now against the canvas rect the first paint will use,
+                 * rather than the page alone on the first paint. */
+                a.view_dpi = spdf_win_window_dpi_scale(window);
+                app_canvas_viewport(&a, (unsigned)(client_w * a.view_dpi), (unsigned)(client_h * a.view_dpi),
+                                    a.view_dpi, &a.view_w, &a.view_h);
+                if (spdf_win_tabs_app_apply_view(a.tabs, a.canvas, a.view_w, a.view_h, a.view_dpi) &&
+                    window_page <= 0)
+                    a.pending_page = -1;
+                app_restore_find_text(&a);
+                /* THE COMMAND LINE OUTRANKS THE TAB'S MEMORY. --find is how the
+                 * capture scripts and a reader with a shortcut ask to open
+                 * searching for something; app_restore_find_text() above has
+                 * just replaced the field with the selected tab's remembered
+                 * query, which a tab opened by this very launch does not have.
+                 * So it cleared the query and --find did nothing on a windowed
+                 * launch, while the headless path -- which never restores a
+                 * session -- kept working, which is why no test caught it.
+                 * Re-pushed through chrome_find_push() rather than by hand, so
+                 * the bridge and the Search section agree the way they do for a
+                 * keystroke. */
+                if (cli_find_text[0]) {
+                    wcsncpy_s(a.find_text, cli_find_text, _TRUNCATE);
+                    a.find_caret = (int)wcslen(a.find_text);
+                    chrome_find_push(&a);
+                }
+                sync_window_title(&a);
+                spdf_win_window_set_tick(window, SPDF_WIN_SESSION_TICK_MS, app_tick);
+                /* The deferred sweep of orphaned read-only copies, on its own
+                 * one-shot rather than on the session tick -- see
+                 * app_watch_sweep_once() for why thirty seconds was too late. */
+                spdf_win_window_set_once(window, SPDF_WIN_WATCH_SWEEP_MS, app_watch_sweep_once);
+                /* NO MENU BAR, deliberately: macOS's menus are in the system
+                 * menu bar, not the window, and a Win32 bar cannot be themed
+                 * dark. The same menu opens from the toolbar's `...` instead.
+                 * The full reasoning, and how to put the bar back, is at
+                 * spdf_win_menu_app_popup() in spdf_win_menu.h. */
+                a.menu = NULL;
+                spdf_win_window_set_dark_frame(window, (a.render_flags & SPDF_RENDER_DARK_THEME) != 0);
                 spdf_win_window_show(window);
+                /* The launch tab was shown before the window existed, so the
+                 * one thing show_selected_tab() could not do for it -- start
+                 * the fetch of a Markdown document's remote images -- is done
+                 * here, now there is a window for the completion to reach. */
+                /* The launch tab was shown before this window existed, so it
+                 * missed the arming in show_selected_tab(). After the first
+                 * paint, deliberately: the launch frame stays synchronous by
+                 * placement as well as by the canvas's own first-frame rule. */
+                spdf_win_canvas_set_async_visible(a.canvas, canvas_render_ready,
+                                                  (HWND)spdf_win_window_native_handle(window));
+                spdf_win_md_command_after_open(&a, (HWND)spdf_win_window_native_handle(window));
+                /* The taskbar identity (AppUserModelID, the window's icons) and the
+                 * updater's timers, both after the show: nothing in either runs
+                 * before first paint (spdf_win_about.h, spdf_win_updater.h). */
+                spdf_win_about_apply_identity(spdf_win_window_native_handle(window));
+                spdf_win_updater_start_background(spdf_win_window_native_handle(window));
                 rc = spdf_win_window_run(window);
+                /* What the session and the settings need from the window, read
+                 * while it still exists. */
+                a.exit_frame = app_session_frame(&a);
+                app_settings_record(&a);
+                a.window = NULL;
+                /* DestroyWindow destroys the menu attached to the window, so
+                 * there is nothing to free here -- only a pointer that must stop
+                 * being followed. */
+                a.menu = NULL;
                 spdf_win_window_destroy(window);
             }
         }
-        /* session.yaml, under the shared lock, then close what is still open. */
-        spdf_win_tabs_app_finish(a.tabs, a.canvas, a.window_id);
+        /* session.yaml, under the shared lock, then close what is still open.
+         * The frame was read before the window went away, in app_exit_frame. */
+        spdf_win_tabs_app_finish(a.tabs, a.canvas, a.window_id, &a.exit_frame);
+        spdf_win_tabs_open_stop_watching(); /* after the model: no callback can reach a closed tab */
         a.canvas = NULL; /* the model closed it; close_document() must not */
     }
 

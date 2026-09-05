@@ -3,9 +3,12 @@
  * WHAT THIS IS: a straight port of the GTK4 frontend's pure layout layer,
  * portable/linux/gtk4/spdf_docview_internal.h. Every function below has a
  * one-to-one counterpart there and is required to return bit-identical results
- * for identical inputs; portable/win/tests/layout_geometry_test.c asserts that
- * against the real GTK header, and portable/win/tests/layout_transcript_test.c
- * pins the same numbers byte-for-byte across clang/arm64 and MSVC/ARM64.
+ * for identical inputs; portable/win/tests/layout_geometry_test.c pins those
+ * numbers, and portable/win/tests/gtk_differential.c compares this header
+ * against the real GTK one in a single binary -- run it natively with
+ * portable/win/tests/layout-differential-native.cmd (395,514 comparisons, 0
+ * mismatches). There is no layout_transcript_test.c; this header cited one for
+ * a long time and no such file has ever existed.
  *
  *   spdf_win_capped_render_zoom*   <- spdf_capped_render_zoom*
  *   spdf_win_layout_*              <- spdf_layout_*
