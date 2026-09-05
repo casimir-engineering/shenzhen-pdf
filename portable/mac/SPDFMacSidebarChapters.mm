@@ -75,7 +75,7 @@ static NSString* const kSPDFCollapsedChaptersKey = @"collapsedChapters";
 - (void)applyChapterNestingAndReload {
     NSArray<NSNumber*>* levels = [self chapterLevelsForCurrentSidebar];
     NSSet<NSString*>* collapsible = levels ? spdf_sidebar_outline_collapsible_keys(levels) : nil;
-    [self setChapterOutlineControlsVisible:collapsible.count > 0];
+    [self updateChapterOutlineToggleForCollapsible:collapsible];
     if (levels.count) {
         NSSet<NSString*>* collapsed = [self collapsedChapterKeys];
         NSIndexSet* visible = spdf_sidebar_outline_visible_indexes(levels, collapsed);
@@ -127,6 +127,17 @@ static NSString* const kSPDFCollapsedChaptersKey = @"collapsedChapters";
     [self rebuildSidebar];
 }
 
+- (void)toggleAllChapters:(id)sender {
+    NSArray<NSNumber*>* levels = [self chapterLevelsForCurrentSidebar];
+    NSMutableSet<NSString*>* open =
+        levels.count ? [spdf_sidebar_outline_collapsible_keys(levels) mutableCopy] : [NSMutableSet set];
+    [open minusSet:[self collapsedChapterKeys]];
+    if (open.count)
+        [self collapseAllChapters:sender];
+    else
+        [self expandAllChapters:sender];
+}
+
 - (void)collapseAllChapters:(id)sender {
     (void)sender;
     NSArray<NSNumber*>* levels = [self chapterLevelsForCurrentSidebar];
@@ -141,9 +152,9 @@ static NSString* const kSPDFCollapsedChaptersKey = @"collapsedChapters";
 // Tags let the reused cell (and the sidebar container) find their pieces again
 // without a bespoke NSTableCellView subclass.
 static const NSInteger kSPDFTriangleTag = 8800;
-static const NSInteger kSPDFExpandAllTag = 8801;
-static const NSInteger kSPDFCollapseAllTag = 8802;
+static const NSInteger kSPDFOutlineToggleTag = 8801;
 static NSString* const kSPDFIndentConstraintID = @"SPDFChapterIndent";
+static NSString* const kSPDFFilterTrailingConstraintID = @"SPDFSidebarFilterTrailing";
 
 // The traditional disclosure pair: pointing right when collapsed, down when
 // open. Drawn small and in the secondary tint so it reads as chrome.
@@ -229,33 +240,48 @@ static NSLayoutConstraint* SPDFIndentConstraint(NSView* cell) {
     cell.textField.textColor = page >= 0 ? NSColor.labelColor : NSColor.secondaryLabelColor;
 }
 
-#pragma mark - Expand All / Collapse All controls
+#pragma mark - The expand / collapse all control
 
-// Real buttons rather than bare glyphs, in the same family as the Chapters /
-// Comments control directly above: a recessed bezel, small control size, and
-// the label in the secondary tint so the pair still reads as chrome. They fit
-// the row the bare chevrons occupied, so the list loses no height.
-static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NSString* title, NSString* tip,
-                                    SEL action) {
-    NSButton* button = [NSButton buttonWithTitle:title target:self action:action];
+// One button, on the filter field's own row at the trailing edge, showing the
+// action it performs: arrows drawing in when there is something to collapse,
+// arrows opening out when everything is already collapsed. A single control
+// beats a labelled pair here -- it costs the list no height at all, and the
+// state it would otherwise spell out is already visible in the rows.
+static const CGFloat kSPDFOutlineToggleWidth = 22.0;
+static const CGFloat kSPDFOutlineToggleGap = 4.0;
+static const CGFloat kSPDFSidebarEdgeInset = 8.0;
+
+static NSImage* SPDFOutlineToggleImage(BOOL collapses) {
+    NSString* symbol = collapses ? @"arrow.down.right.and.arrow.up.left" : @"arrow.up.left.and.arrow.down.right";
+    NSImage* image = [NSImage imageWithSystemSymbolName:symbol
+                               accessibilityDescription:collapses ? @"Collapse All" : @"Expand All"];
+    NSImageSymbolConfiguration* configuration =
+        [NSImageSymbolConfiguration configurationWithPointSize:10 weight:NSFontWeightMedium];
+    return [image imageWithSymbolConfiguration:configuration] ?: image;
+}
+
+static NSButton* SPDFOutlineToggleControl(ShenzhenMacDelegate* self, SEL action) {
+    NSButton* button = [NSButton buttonWithImage:SPDFOutlineToggleImage(YES) target:self action:action];
     button.bezelStyle = NSBezelStyleRecessed;
-    button.showsBorderOnlyWhileMouseInside = NO;
+    button.showsBorderOnlyWhileMouseInside = YES;
     button.controlSize = NSControlSizeSmall;
-    button.font = [NSFont systemFontOfSize:10];
-    button.toolTip = tip;
-    button.tag = tag;
+    button.imagePosition = NSImageOnly;
+    button.contentTintColor = NSColor.secondaryLabelColor;
+    button.toolTip = @"Collapse All";
+    button.tag = kSPDFOutlineToggleTag;
     button.translatesAutoresizingMaskIntoConstraints = NO;
-    button.attributedTitle = [[NSAttributedString alloc]
-        initWithString:title
-            attributes:@{
-                NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
-                NSFontAttributeName : [NSFont systemFontOfSize:10 weight:NSFontWeightMedium]
-            }];
     return button;
 }
 
+static NSLayoutConstraint* SPDFFilterTrailingConstraint(NSView* container) {
+    for (NSLayoutConstraint* constraint in container.constraints) {
+        if ([constraint.identifier isEqualToString:kSPDFFilterTrailingConstraintID]) return constraint;
+    }
+    return nil;
+}
+
 - (void)installChapterOutlineControls {
-    if ([_sidebarContainer viewWithTag:kSPDFExpandAllTag]) return;
+    if ([_sidebarContainer viewWithTag:kSPDFOutlineToggleTag]) return;
     NSScrollView* scroll = _sidebarTable.enclosingScrollView;
     if (!_sidebarContainer || !_sidebarFilterField || !scroll) return;
     // AppKit had already applied a safe-area content inset to the list, which
@@ -271,39 +297,42 @@ static NSButton* SPDFOutlineControl(ShenzhenMacDelegate* self, NSInteger tag, NS
     // first row behind the buttons, so drop the padding at its source.
     if (@available(macOS 11.0, *)) _sidebarTable.style = NSTableViewStyleFullWidth;
 
-    NSButton* expand = SPDFOutlineControl(self, kSPDFExpandAllTag, @"Expand All", @"Expand every chapter",
-                                          @selector(expandAllChapters:));
-    NSButton* collapse = SPDFOutlineControl(self, kSPDFCollapseAllTag, @"Collapse All", @"Collapse every chapter",
-                                            @selector(collapseAllChapters:));
-    [_sidebarContainer addSubview:expand];
-    [_sidebarContainer addSubview:collapse];
+    NSButton* toggle = SPDFOutlineToggleControl(self, @selector(toggleAllChapters:));
+    [_sidebarContainer addSubview:toggle];
 
-    // Their own thin row between the filter and the list, the pair centred on
-    // the panel so it reads as one control rather than something docked to an
-    // edge. The two constants differ because the gaps they produce do not: a
-    // chapter row centres its title in a 25pt row, so ~6.5pt of the space under
-    // the buttons belongs to the row, not to this margin. Measured on screen at
-    // 7pt above and 7.5pt below.
-    [_sidebarScrollBelowFilterConstraint setActive:NO];
-    _sidebarScrollBelowFilterConstraint = [scroll.topAnchor constraintEqualToAnchor:collapse.bottomAnchor constant:5];
+    // The filter field's trailing edge is owned here rather than by the
+    // coordinator, because it is what makes room for the button: it stops short
+    // of the panel edge while the button is up, and reclaims the width when a
+    // flat outline (or Comments, or search results) takes the button away.
+    NSLayoutConstraint* filterTrailing =
+        [_sidebarFilterField.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor
+                                                          constant:-kSPDFSidebarEdgeInset];
+    filterTrailing.identifier = kSPDFFilterTrailingConstraintID;
     [NSLayoutConstraint activateConstraints:@[
-        [collapse.topAnchor constraintEqualToAnchor:_sidebarFilterField.bottomAnchor constant:7],
-        [collapse.leadingAnchor constraintEqualToAnchor:_sidebarContainer.centerXAnchor constant:2],
-        [expand.centerYAnchor constraintEqualToAnchor:collapse.centerYAnchor],
-        [expand.trailingAnchor constraintEqualToAnchor:_sidebarContainer.centerXAnchor constant:-2],
-        _sidebarScrollBelowFilterConstraint
+        filterTrailing,
+        [toggle.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor
+                                              constant:-kSPDFSidebarEdgeInset],
+        [toggle.centerYAnchor constraintEqualToAnchor:_sidebarFilterField.centerYAnchor],
+        [toggle.widthAnchor constraintEqualToConstant:kSPDFOutlineToggleWidth]
     ]];
 }
 
-- (void)setChapterOutlineControlsVisible:(BOOL)visible {
-    NSButton* expand = [_sidebarContainer viewWithTag:kSPDFExpandAllTag];
-    NSButton* collapse = [_sidebarContainer viewWithTag:kSPDFCollapseAllTag];
-    if (!expand || !collapse) return;
-    // Nothing nestable (a flat outline, comments, search results): the pair
-    // would be inert, so it goes away and the list takes the space back.
-    expand.hidden = !visible;
-    collapse.hidden = !visible;
-    _sidebarScrollBelowFilterConstraint.constant = visible ? 5 : -26;
+- (void)updateChapterOutlineToggleForCollapsible:(NSSet<NSString*>*)collapsible {
+    NSButton* toggle = [_sidebarContainer viewWithTag:kSPDFOutlineToggleTag];
+    if (!toggle) return;
+    // Nothing nestable (a flat outline, comments, search results): the button
+    // would be inert, so it goes away and the filter takes the width back.
+    BOOL visible = collapsible.count > 0;
+    toggle.hidden = !visible;
+    SPDFFilterTrailingConstraint(_sidebarContainer).constant =
+        visible ? -(kSPDFSidebarEdgeInset + kSPDFOutlineToggleWidth + kSPDFOutlineToggleGap) : -kSPDFSidebarEdgeInset;
+    if (!visible) return;
+    // Collapse while anything is still open, expand once nothing is.
+    NSMutableSet<NSString*>* open = [collapsible mutableCopy];
+    [open minusSet:[self collapsedChapterKeys]];
+    BOOL collapses = open.count > 0;
+    toggle.image = SPDFOutlineToggleImage(collapses);
+    toggle.toolTip = collapses ? @"Collapse All" : @"Expand All";
 }
 
 @end

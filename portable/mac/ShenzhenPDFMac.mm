@@ -2916,7 +2916,6 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         [_sidebarModeControl.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-8],
         _sidebarFilterTopConstraint,
         [_sidebarFilterField.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor constant:8],
-        [_sidebarFilterField.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-8],
         _sidebarScrollBelowFilterConstraint,
         [sidebarScroll.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor],
         [sidebarScroll.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor],
