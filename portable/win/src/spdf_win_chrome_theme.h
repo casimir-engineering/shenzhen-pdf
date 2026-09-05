@@ -40,11 +40,13 @@
  * so the window reads as a Windows app rather than a transplanted Mac one, while
  * keeping every macOS relationship intact.
  *
- * The READING theme is NOT here. Paper #FFFFFF/#1E1E1E, gutter #121212, page
- * border #333333, ink #DCDDDE and the recolor endpoints live in
- * spdf_win_d2d.h / portable/core/spdf_recolor.h and are exact matches for
- * SPDFMarkdownTheme.mm. Chrome and reading surface are different problems: one
- * should look native, the other must look identical across platforms.
+ * The READING theme is NOT here. Paper #FFFFFF/#1E1E1E, the gutter, the page
+ * border, ink #DCDDDE and the recolor endpoints live in spdf_win_d2d.h /
+ * portable/core/spdf_recolor.h and are exact matches for SPDFMarkdownTheme.mm.
+ * Chrome and reading surface are different problems: one should look native,
+ * the other must look identical across platforms. The one exception is the
+ * minimap strip's four roles at the end of the struct, which the mac draws in
+ * the reading theme because the strip IS the document; the note there says why.
  */
 #ifndef SPDF_WIN_CHROME_THEME_H
 #define SPDF_WIN_CHROME_THEME_H
@@ -184,6 +186,39 @@ typedef struct SpdfWinChromeTheme {
      * not vary it either. */
     SpdfWinChromeColor find_mark_active;
     SpdfWinChromeColor find_mark;
+
+    /* --- the minimap strip -----------------------------------------------
+     *
+     * THE ONE PLACE THE READING THEME REACHES INTO THIS FILE, and deliberately
+     * so: the minimap is the same document on the same paper, and macOS gives it
+     * the reading theme's gutter, paper and page border (SPDFMacMinimapViewTheme.mm,
+     * 61070e502) rather than the window's chrome colours. Before that change its
+     * strip was windowBackgroundColor with every slot filled WHITE under the
+     * thumbnail -- which in dark put a #1E1E1E page on a backdrop of a similar
+     * value with no edge at all, the defect the Windows wiring pass reported as
+     * "light thumbnails on a dark strip".
+     *
+     * Light keeps the panel colour behind the sheets (the mac keeps
+     * windowBackgroundColor there), white paper, and no border -- the light
+     * theme separates pages with a shadow, and the strip is too small for one.
+     * Dark takes the theme's gutter, paper and 1 px border. The values are the
+     * mac's own literals (SPDFMarkdownTheme.mm after 61070e502): gutter #0A0A0A
+     * under #1E1E1E paper is 20 of 255 levels, border #3D3D3D over that paper
+     * is 31 -- the widened separation, measured there on a live dark window
+     * because #121212 and #333333 read as no edge on a blank margin.
+     *
+     * The paper MUST stay the recolor transform's white endpoint
+     * (spdf_win_d2d.h's paper_rgb): a thumbnail can fall a fraction of a pixel
+     * short of its slot at fractional scales, and any other underlay leaks a
+     * sliver along that edge. portable/win/tests/minimap_theme_test.c pins that
+     * equality and the two gaps. The canvas's gutter and border live in
+     * spdf_win_d2d.h and are another track's; this change's report asks for
+     * them to take the same two values so the strip and the page agree. */
+    SpdfWinChromeColor minimap_gutter;      /* behind the sheets */
+    SpdfWinChromeColor minimap_paper;       /* under each thumbnail */
+    SpdfWinChromeColor minimap_page_border; /* the 1 px frame; drawn only when minimap_draws_page_border */
+    SpdfWinChromeColor minimap_placeholder; /* the ruled-lines stand-in for a page not rendered yet */
+    int minimap_draws_page_border;
 } SpdfWinChromeTheme;
 
 /* Radii and strokes that ARE literals on macOS, so they transfer exactly. */
@@ -302,6 +337,24 @@ static SPDF_WIN_CT_INLINE SpdfWinChromeTheme spdf_win_chrome_theme_for(int dark)
     /* SPDFMacUIHelpers.mm:453-479, component for component. */
     t.find_mark_active = spdf_win_ct_calibrated(1.0f, 0.38f, 0.08f, 0.95f);
     t.find_mark = spdf_win_ct_calibrated(1.0f, 0.86f, 0.12f, 0.82f);
+
+    /* The minimap strip: the reading theme's chrome, see the struct. The
+     * placeholder's ruled lines read as ink on the sheet, so dark paper gets a
+     * light tint and light paper a grey one, both at the mac's 0.34 alpha
+     * (calibratedWhite 0.62 -> 0x9E, 0.76 -> 0xC2). */
+    if (dark) {
+        t.minimap_gutter = spdf_win_ct_rgb(0x0A0A0Au, 1.0f);
+        t.minimap_paper = spdf_win_ct_rgb(0x1E1E1Eu, 1.0f);
+        t.minimap_page_border = spdf_win_ct_rgb(0x3D3D3Du, 1.0f);
+        t.minimap_placeholder = spdf_win_ct_rgb(0x9E9E9Eu, 0.34f);
+        t.minimap_draws_page_border = 1;
+    } else {
+        t.minimap_gutter = t.panel;
+        t.minimap_paper = spdf_win_ct_rgb(0xFFFFFFu, 1.0f);
+        t.minimap_page_border = spdf_win_ct_rgb(0xD0D7DEu, 1.0f);
+        t.minimap_placeholder = spdf_win_ct_rgb(0xC2C2C2u, 0.34f);
+        t.minimap_draws_page_border = 0;
+    }
     return t;
 }
 
