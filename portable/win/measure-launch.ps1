@@ -162,6 +162,48 @@ public static class SpdfLaunch {
     // from the process's kernel creation time.
     public static long NowFileTime() { long ft; GetSystemTimePreciseAsFileTime(out ft); return ft; }
 
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+
+    // THE HEALTH OF A LAUNCHED WINDOW, as a person experiences it. Two defects
+    // shipped with every test green because nothing asked these questions
+    // (windows-native-observations.md section 11): a window that came up
+    // BEHIND the window that launched it, and a hidden helper window whose
+    // thread never pumped -- a hung window to the whole desktop. Both are
+    // invisible to a headless compose and to a PrintWindow capture.
+    //
+    // ZIndex: position among visible top-level windows larger than 200 px
+    // (the same band the shell's Alt+Tab list draws from), 0 = in front.
+    public static int ZIndex(IntPtr target) {
+        IntPtr h = GetTopWindow(IntPtr.Zero); int i = 0;
+        while (h != IntPtr.Zero) {
+            if (IsWindowVisible(h)) {
+                RECT r;
+                if (GetWindowRect(h, out r) && (r.Right - r.Left) > 200 && (r.Bottom - r.Top) > 200) {
+                    if (h == target) return i;
+                    i++;
+                }
+            }
+            h = GetWindow(h, 2 /* GW_HWNDNEXT */);
+        }
+        return -1;
+    }
+
+    // Every window of the process, visible or not, whose thread has stopped
+    // answering -- IsHungAppWindow is the same test the shell uses before it
+    // ghosts a window, and it is true of an invisible window just the same.
+    public static int HungWindows(uint pid) {
+        int hung = 0;
+        EnumWindows(delegate(IntPtr h, IntPtr p) {
+            uint owner; GetWindowThreadProcessId(h, out owner);
+            if (owner == pid && IsHungAppWindow(h)) hung++;
+            return true;
+        }, IntPtr.Zero);
+        return hung;
+    }
+
     public static IntPtr FirstVisibleWindow(uint pid) {
         IntPtr found = IntPtr.Zero;
         EnumWindows(delegate(IntPtr h, IntPtr p) {
@@ -406,6 +448,10 @@ function Invoke-Run([int]$i) {
     $r.cpu_settled_ms = [math]::Round($proc.TotalProcessorTime.TotalMilliseconds, 1)
     $r.counters_settled = [SpdfLaunch]::Counters($proc.Handle)
     $r.threads_settled = $proc.Threads.Count
+    # Health, taken while the window is up and idle (see SpdfLaunch.ZIndex).
+    $r.foreground = ([SpdfLaunch]::GetForegroundWindow() -eq $hwnd)
+    $r.zindex = [SpdfLaunch]::ZIndex($hwnd)
+    $r.hung_windows = [SpdfLaunch]::HungWindows([uint32]$proc.Id)
 
     $tClose = [SpdfLaunch]::NowFileTime()
     [SpdfLaunch]::Close($hwnd)
@@ -457,6 +503,12 @@ $phases = @($phases | Sort-Object { $_.median })
 $summary = [ordered]@{
   label = $Label; exe = $Exe; pdf = $Pdf; args = ($AppArgs -join ' '); cold = [bool]$Cold; restore_tabs = $RestoreTabs
   runs = $Runs; ok_runs = $ok.Count; host_dpi_aware = $dpiAware; sampler = $samplerState
+  health = @{
+    runs = $ok.Count
+    foreground_runs = @($ok | Where-Object { $_.foreground }).Count
+    front_runs = @($ok | Where-Object { $_.zindex -eq 0 }).Count
+    hung_runs = @($ok | Where-Object { $_.hung_windows -gt 0 }).Count
+  }
   window_ms = @{ median = Median(@($ok | % { $_.window_ms })); min = ($ok | % { $_.window_ms } | Measure-Object -Minimum).Minimum; max = ($ok | % { $_.window_ms } | Measure-Object -Maximum).Maximum }
   first_pixels_ms = @{ median = Median(@($ok | % { $_.first_pixels_ms })); min = ($ok | % { $_.first_pixels_ms } | Measure-Object -Minimum).Minimum; max = ($ok | % { $_.first_pixels_ms } | Measure-Object -Maximum).Maximum }
   spawn_ms = Median(@($ok | % { $_.spawn_ms }))
@@ -492,6 +544,7 @@ if ($Json) {
   Write-Output ("  {0,-34} {1,9:n1} {2,9:n1}" -f 'cpu ms at pixels / settled', $summary.cpu_at_pixels_ms, $summary.cpu_settled_ms)
   Write-Output ("  {0,-34} {1,9:n1}" -f 'sampler cost per frame', $summary.sample_cost_ms)
   Write-Output ("  {0,-34} {1,9}" -f 'threads when settled', $summary.threads_settled)
+  Write-Output ("  {0,-34} {1}/{2} runs foreground, {3}/{2} in front, {4}/{2} with a hung window" -f 'health', $summary.health.foreground_runs, $summary.health.runs, $summary.health.front_runs, $summary.health.hung_runs)
   if ($phases.Count -gt 0) {
     Write-Output ("  {0,-34} {1,9}   {2}" -f 'in-process (SPDF-LAUNCH)', 'median', 'delta')
     $prev = 0.0
@@ -527,6 +580,18 @@ if ($FirstPageBudgetMs -gt 0) {
   foreach ($p in $phases) { if ($p.name -eq 'first-compose-end') { $fp = $p.median } }
   if ($fp -eq $null) { $fp = $summary.first_pixels_ms.median }
   if ($fp -gt $FirstPageBudgetMs) { Write-Output ("budget=FAIL first page median {0} ms > {1} ms" -f $fp, $FirstPageBudgetMs); $rc = 1 }
+}
+if ($WindowBudgetMs -gt 0 -or $FirstPageBudgetMs -gt 0) {
+  $hl = $summary.health
+  if ($hl.hung_runs -gt 0) { Write-Output ("health=FAIL a window of the process was hung in {0} of {1} runs" -f $hl.hung_runs, $hl.runs); $rc = 1 }
+  # Foreground is reported, not judged: Windows grants the foreground only to a
+  # process launched BY the foreground process, and this harness never is one
+  # (it runs under a shell under an editor), so the app is refused, correctly,
+  # and flashes its taskbar button instead. Measured 0 of 5 here on a desktop
+  # where a hand launch is foreground every time. Z-order and hung windows do
+  # not depend on who holds the foreground, so those are the judgement.
+  if ($hl.front_runs * 2 -lt $hl.runs) { Write-Output ("health=FAIL the window was in front (z-index 0) in only {0} of {1} runs" -f $hl.front_runs, $hl.runs); $rc = 1 }
+  if ($rc -eq 0) { Write-Output "health=OK" }
 }
 if ($rc -eq 0 -and ($WindowBudgetMs -gt 0 -or $FirstPageBudgetMs -gt 0)) { Write-Output "budget=OK" }
 exit $rc
