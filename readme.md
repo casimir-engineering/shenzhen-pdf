@@ -148,14 +148,22 @@ the current directory:
 
 ```bat
 portable\win\mupdf-native-build.cmd     :: libmupdf for x64, once (~70 s)
-portable\win\build-native.cmd           :: ShenzhenPDF.exe
+portable\win\build-native.cmd           :: -> dist\ShenzhenPDF-win-x64.exe
 ```
+
+**The built app is `dist\ShenzhenPDF-win-x64.exe`**, copied there by every
+successful build, under the name a release carries and beside where the macOS
+build leaves `ShenzhenPDF.app`. That is the one to run. It is a single
+self-contained executable -- MuPDF, the fonts and the icon are compiled in, it
+links nothing but Windows' own DLLs and needs no redistributable -- so it can be
+copied anywhere and started. `--install` is optional, and only adds a Start Menu
+entry, the `.pdf` association and a row in Apps.
 
 Two environment variables control where things go, and both matter when more
 than one build shares a machine:
 
 ```bat
-set SPDF_OUT=C:\spdf-build                :: default; the exe, objects and scratch
+set SPDF_OUT=C:\spdf-build                :: default; objects, test exes, scratch
 set SPDF_MUPDF_LIBDIR=%SPDF_OUT%\mupdf    :: default; where libmupdf.lib is looked for
 ```
 

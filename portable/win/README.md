@@ -53,6 +53,16 @@ soon as more than one agent or worktree is building:
 | variable | default | what it is |
 |---|---|---|
 | `SPDF_OUT` | `C:\spdf-build` | build output: `ShenzhenPDF.exe`, `obj-<target>\`, the harness's scratch |
+
+**Where the app lands.** Every successful build of the app target also copies it
+to `dist\ShenzhenPDF-win-x64.exe` in the checkout -- one predictable place, the
+name a release carries, beside where the macOS build leaves `ShenzhenPDF.app`.
+That is the copy to run. `%SPDF_OUT%` is a working directory: the app sits
+there among forty test executables and their object directories, a parallel
+build points it somewhere else entirely, and nothing prunes it, so which
+`ShenzhenPDF.exe` you find there depends on what ran last. `dist\` is
+git-ignored; `portable\win\package-release.cmd` writes the same name plus its
+`.sha256` sidecar for a release.
 | `SPDF_MUPDF_LIBDIR` | `%SPDF_OUT%\mupdf` | where `libmupdf.lib` and `libmupdf-third.lib` are looked for |
 
 **`SPDF_OUT` is the isolation boundary; `SPDF_MUPDF_LIBDIR` is why it can be.**
