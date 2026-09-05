@@ -13,6 +13,7 @@
 #include "spdf_win_md.h"
 #include "spdf_win_md_images.h"
 #include "spdf_win_open.h"
+#include "spdf_win_paths.h" /* the state-directory override, for the orientation round trip */
 
 #include <direct.h>
 #include <math.h>
@@ -188,6 +189,93 @@ static void test_open_seam(const char* pdf, const char* md) {
     EXPECT(doc == NULL && err[0], "a missing .pdf fails with a message");
 }
 
+/* PAGE ORIENTATION, PER FILE: the table, its JSON, the path comparison, the
+ * generation bump, the real round trip through the state directory, and the
+ * sheet the open seam actually produces for a turned file. */
+static void test_orientation(const char* md, const char* scratch) {
+    char* json;
+    char state_dir[1024];
+    unsigned gen;
+    spdf_document* doc;
+    char err[512] = {0};
+    float w = 0.0f, h = 0.0f;
+
+    spdf_win_md_orientation_from_json(NULL);
+    EXPECT(!spdf_win_md_landscape_for(md), "an unknown file is portrait");
+    EXPECT(!spdf_win_md_landscape_for(NULL), "NULL is portrait");
+    EXPECT(!spdf_win_md_set_landscape(md, 0), "portrait on an unknown file is a no-op");
+
+    /* The path comparison: what Windows itself considers the same file. */
+    EXPECT(spdf_win_md_path_equal("C:\\Docs\\Notes.md", "c:/docs/notes.MD"), "separators and ASCII case fold");
+    EXPECT(!spdf_win_md_path_equal("C:\\Docs\\Notes.md", "C:\\Docs\\Notes2.md"), "different files differ");
+    EXPECT(!spdf_win_md_path_equal("C:\\Docs\\Notes.md", "C:\\Docs\\Note"), "a prefix is not equal");
+    EXPECT(!spdf_win_md_path_equal(NULL, "x"), "NULL never matches");
+
+    gen = spdf_win_md_options_generation();
+    EXPECT(spdf_win_md_set_landscape("C:\\Docs\\Wide Table.md", 1), "turning a file landscape changes the table");
+    EXPECT(spdf_win_md_options_generation() == gen + 1, "and bumps the generation once");
+    EXPECT(!spdf_win_md_set_landscape("c:/docs/wide table.md", 1), "the same file spelled differently is a no-op");
+    EXPECT(spdf_win_md_options_generation() == gen + 1, "with no second bump");
+    EXPECT(spdf_win_md_landscape_for("C:/DOCS/WIDE TABLE.MD"), "looked up under any spelling");
+    EXPECT(!spdf_win_md_landscape_for("C:\\Docs\\Other.md"), "other files stay portrait");
+    EXPECT(spdf_win_md_toggle_landscape("C:\\Docs\\Other.md") == 1, "toggle turns portrait landscape");
+    EXPECT(spdf_win_md_toggle_landscape("C:\\Docs\\Other.md") == 0, "and back");
+    EXPECT(!spdf_win_md_landscape_for("C:\\Docs\\Other.md"), "back means portrait");
+
+    /* The JSON: the mac's record shape, landscape files only, paths escaped. */
+    json = spdf_win_md_orientation_to_json();
+    EXPECT(json != NULL, "the table serialises");
+    if (json) {
+        EXPECT(strcmp(json, "{\"C:\\\\Docs\\\\Wide Table.md\":{\"markdownLandscape\":true,\"path\":\"C:\\\\Docs\\\\Wide "
+                            "Table.md\"}}") == 0,
+               "one landscape record in the documents.yaml shape: %s", json);
+        EXPECT(spdf_win_md_orientation_from_json(json) == 1, "it reads back as one record");
+        EXPECT(spdf_win_md_landscape_for("C:\\Docs\\Wide Table.md"), "the file is still landscape after the round trip");
+        free(json);
+    }
+    EXPECT(spdf_win_md_orientation_from_json("{\"C:\\\\a.md\":{\"markdownLandscape\":false,\"path\":\"C:\\\\a.md\"},"
+                                             "\"C:\\\\b \\\"quoted\\\".md\":{\"path\":\"x\",\"markdownLandscape\":true},"
+                                             "\"C:\\\\c.md\":{\"title\":\"c\"}}") == 1,
+           "false and absent both mean portrait; an escaped key is unescaped");
+    EXPECT(!spdf_win_md_landscape_for("C:\\a.md") && spdf_win_md_landscape_for("C:\\b \"quoted\".md") &&
+               !spdf_win_md_landscape_for("C:\\c.md"),
+           "the records land on the right files");
+    EXPECT(spdf_win_md_orientation_from_json("not json") == 0, "garbage empties the table");
+    EXPECT(!spdf_win_md_landscape_for("C:\\b \"quoted\".md"), "...really empties it");
+    json = spdf_win_md_orientation_to_json();
+    EXPECT(json && strcmp(json, "{}") == 0, "an empty table is {}");
+    free(json);
+
+    /* The round trip through a real state directory. */
+    snprintf(state_dir, sizeof(state_dir), "%s/md-orientation-state", scratch);
+    (void)_mkdir(state_dir);
+    spdf_win_paths_set_state_dir_override(state_dir);
+    EXPECT(spdf_win_md_load_orientation() == 0, "no file yet: nothing loaded");
+    EXPECT(spdf_win_md_set_landscape(md, 1), "turn the fixture landscape");
+    EXPECT(spdf_win_md_save_orientation(), "and save it");
+    spdf_win_md_orientation_from_json(NULL);
+    EXPECT(!spdf_win_md_landscape_for(md), "forgotten in memory");
+    EXPECT(spdf_win_md_load_orientation() == 1, "one record comes back from the file");
+    EXPECT(spdf_win_md_landscape_for(md), "the fixture reopens landscape");
+
+    /* And the sheet the seam produces follows the table. */
+    doc = spdf_win_md_open_any(md, err, sizeof(err));
+    EXPECT(doc != NULL, "the turned fixture opens: %s", err);
+    if (doc) {
+        EXPECT(spdf_page_size(doc, 0, &w, &h, err, sizeof(err)) && w > h, "landscape: %gx%g", w, h);
+        spdf_close(doc);
+    }
+    EXPECT(spdf_win_md_set_landscape(md, 0), "turn it back");
+    EXPECT(spdf_win_md_save_orientation(), "save the empty table");
+    doc = spdf_win_md_open_any(md, err, sizeof(err));
+    EXPECT(doc != NULL, "the fixture opens again: %s", err);
+    if (doc) {
+        EXPECT(spdf_page_size(doc, 0, &w, &h, err, sizeof(err)) && w < h, "portrait again: %gx%g", w, h);
+        spdf_close(doc);
+    }
+    spdf_win_paths_set_state_dir_override(NULL);
+}
+
 /* The process opener (spdf_win_open.h): spdf_open until the hook is installed,
  * and this module's open_any afterwards -- which is how the render workers,
  * the search worker and the headless paths come to open Markdown without
@@ -218,6 +306,7 @@ int main(int argc, char** argv) {
     test_settings_json();
     test_cache_names(scratch);
     test_open_seam(pdf, md);
+    test_orientation(md, scratch);
     test_open_seam_hook(md);
 
     if (g_failures) {

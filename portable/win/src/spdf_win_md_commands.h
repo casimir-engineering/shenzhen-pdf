@@ -65,6 +65,34 @@ static int spdf_win_md_command_text_step(app* a, int direction) {
     return spdf_win_md_command_reopen(a);
 }
 
+/* ROTATE ON A MARKDOWN TAB TURNS THE PAPER (26.9.2-1, mac e775e1d35; per file
+ * since 26.9.4-3, mac 5776dd6cf). There is no page to rotate in a document
+ * MuPDF laid out itself, and rotating the picture would put the text on its
+ * side; the mac turns the sheet landscape instead, and back, whichever way the
+ * command turns, and now remembers that against the file. Here the file's
+ * orientation is flipped in the module's table, persisted, and the tab is
+ * re-laid out through the same re-show A-/A+ takes -- the options are read at
+ * open time by every handle, so the canvas and its workers agree on the sheet.
+ *
+ * The reader lands on the top of the page they were on rather than at the same
+ * absolute offset: a landscape sheet holds a different amount of text, so an
+ * offset in device pixels would name a different page after the turn, while
+ * the page index is the nearer of the two guesses. (The mac re-anchors by the
+ * text under the viewport, which this frontend has no interactive string to
+ * do.) Returns 1 when redrawn; 0 on a PDF tab, which cmd_search_rotate then
+ * rotates in the document as before. */
+static int spdf_win_md_command_rotate(app* a) {
+    int index = a->tabs ? spdf_win_tabs_selected_index(a->tabs) : -1;
+    const char* path = index >= 0 ? spdf_win_tabs_path(a->tabs, index) : NULL;
+    spdf_win_tab_view* view;
+    if (!a->canvas || !path || !spdf_path_is_markdown(path)) return 0;
+    spdf_win_md_toggle_landscape(path);
+    spdf_win_tabs_app_remember(a->tabs, a->canvas);
+    view = spdf_win_tabs_view(a->tabs, index);
+    if (view) view->has_scroll_origin = 0; /* the page, not the offset: see above */
+    return show_selected_tab(a);
+}
+
 /* Call once a tab has been shown: if the open recorded https images that were
  * not in the cache, fetch them in the background; the completion message
  * re-shows the tab. Harmless on a PDF tab (nothing is pending). */
