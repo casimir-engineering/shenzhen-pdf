@@ -17,7 +17,7 @@
 
 ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and does the heavy work - OCR and translation - entirely on-device. **Inspired by SumatraPDF, a separate project, not affiliated with it.**
 
-<sub><a href="#reading">Reading</a> · <a href="#markdown">Markdown</a> · <a href="#search">Search &amp; map</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a></sub>
+<sub><a href="#reading">Reading</a> · <a href="#markdown">Markdown</a> · <a href="#search">Search &amp; map</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
 
 ---
 
@@ -52,7 +52,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Incremental search with live count** — Type anywhere to start searching and every match appears instantly with a running "current / total" counter, highlighted in-page. <sub>macOS · Linux</sub>
 - **Chapter-grouped results sidebar** — Every match listed with a snippet, grouped under its chapter heading; click to jump. <sub>macOS · Linux</sub>
-- **Nested chapters** <sub>macOS</sub> — A PDF's outline and a Markdown document's headings both fold: disclosure arrows on every parent, Expand All / Collapse All above the list, and each document remembers what you left collapsed across launches.
+- **Nested chapters** <sub>macOS</sub> — A PDF's outline and a Markdown document's headings both fold: disclosure arrows on every parent, one expand / collapse all button at the end of the filter row, and each document remembers what you left collapsed across launches.
 - **Regex & multiline search** — Regular-expression matching, including patterns that span line and paragraph breaks; invalid patterns fail gracefully. <sub>macOS · Linux</sub>
 - **Document map (minimap)** — A live right-side thumbnail strip with a draggable viewport: drag to scroll, click to jump, Cmd-scroll to zoom — search hits show as yellow markers. Scales to hundreds of pages. <sub>macOS · Linux</sub>
 - **Scrollbar heat-map** — The scrollbar doubles as a match heat-map — a tick per hit, the active one hotter; each tab remembers its query across switches and relaunches. <sub>macOS · Linux</sub>
@@ -78,6 +78,9 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 - **Shenzhen Files as your file manager** <sub>macOS</sub> — Install Shenzhen Files and it becomes the app's file manager on its own, with nothing to configure: *Show in Folder* reveals there instead of in Finder, anywhere the app offers it. *Settings ▸ File Manager* switches back to Finder whenever you want, and an explicit choice always wins (the automatically-derived one is marked *(Automatic)* so you can tell them apart); every launch falls back to Finder if Shenzhen Files is missing or fails to start. **Choosing files stays native by design** — **Open…** (<kbd>Cmd+O</kbd>), the path prompt (<kbd>Cmd+Shift+O</kbd>) and every save panel use the standard macOS panel, because picking a file has to hand the selection back to the app and no external file manager can return one. Open… does start in the folder you're most likely to want: the current document's, else your last opened one's, else home.
 - **High-quality native printing** — Prints through the standard macOS pipeline with Fit / Actual Size / Custom scaling
 - **One-click default reader & readable YAML state** — Make ShenzhenPDF the system default for PDFs in a click; settings, sessions, favorites, and recents live as human-readable YAML you can read, diff, and edit. Existing JSON state files migrate automatically (originals kept as `.migrated-backup`). <sub>YAML state: macOS · Linux</sub>
+
+Every feature, listed exhaustively — including the full Markdown syntax and diagram support tables and the
+keyboard shortcuts — is in **[docs/features.md](docs/features.md)**.
 
 ## Platform support
 
