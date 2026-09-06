@@ -1141,3 +1141,194 @@ records who held the foreground and where the app's keyboard focus was
 (exit 69) rather than as the app's failure. And PowerShell's comma binds
 tighter than `%`, so an index computed inside a `-f` argument list silently
 shortened the list; it is computed on its own line.
+---
+
+## 14. A disabled main window is indistinguishable from a hung app (2026-09-07)
+
+The report was: **"the app was never responsive to any user input and not even
+focusable"**, launched from `dist\ShenzhenPDF-win-x64.exe`. Nobody could
+reproduce it. Launched from PowerShell or from Explorer, the window comes up
+foreground, enabled, not hung, answers `WM_NULL`, and repaints under `SendInput`
+clicks and keys.
+
+There is one state that produces exactly that description and passes every one
+of those checks:
+
+> **A main window that is DISABLED, with no visible dialog in front of it.**
+
+`EnableWindow(hwnd, FALSE)` does not stop the window painting, does not stop it
+answering messages, and does not make Windows mark the process "not responding".
+It only makes the window refuse input — and a disabled window **cannot be
+activated**, not by a click, not by Alt+Tab, not by `SetForegroundWindow`. So it
+is not focusable either. Every dialog in this port disables its owner. If the
+dialog that did the disabling is invisible, off-screen, on a thread that is not
+answering, or never appeared at all, the app is a picture of itself.
+
+This section is the inventory of every place that can happen, the one place it
+actually did, and what now makes it structurally impossible.
+
+### 13.1 The inventory
+
+Every site that disables a window of ours or runs a modal loop, with the thread
+it runs on and what happens when the dialog function fails.
+
+**Our own windows, our own modal loop** — each of these created a window,
+called `EnableWindow(parent, FALSE)` by hand, ran a `GetMessageW` loop, and
+re-enabled after it:
+
+| site | thread | on failure | placement |
+| --- | --- | --- | --- |
+| `spdf_win_about.cpp` About | UI (`SPDF_WIN_CMD_ABOUT`) | `CreateWindowExW` fails *before* the disable | `CW_USEDEFAULT` |
+| `spdf_win_annot_dialog.cpp` comment/author | UI (`spdf_win_chrome_annot_ui.h`) | same | `CW_USEDEFAULT` |
+| `spdf_win_print_dialog.cpp` our print dialog | UI (`SPDF_WIN_CMD_PRINT`) | same | `CW_USEDEFAULT` |
+| `spdf_win_properties_dialog.cpp` Properties | UI (`spdf_win_cmd_annot.h`) | same | `CW_USEDEFAULT`, and `WS_VISIBLE` at creation |
+| `spdf_win_shortcuts.cpp` Keyboard Shortcuts | UI (`SPDF_WIN_CMD_SHORTCUTS`) | same | `CW_USEDEFAULT` |
+
+None of the five could strand the owner through an early return: the only
+failure path is window creation, which returns before anything is disabled. Two
+weaknesses were real, though. **`CW_USEDEFAULT` cascades onto the PRIMARY
+monitor, not the owner's** — with the app on a second display that is a modal
+dialog the reader cannot see in front of a window they cannot click, which is
+the reported symptom exactly. And each one called `SetForegroundWindow(parent)`
+unconditionally on the way out, which takes the foreground back from whatever
+application the reader had switched to meanwhile.
+
+**System dialogs owned by one of our windows** — comdlg32, comctl32 and the
+print drivers do their own disable/enable, and none of them leaves an owner
+disabled when the call fails:
+
+| site | thread | on failure |
+| --- | --- | --- |
+| `spdf_win_print_dialog_system.cpp` `PrintDlgExW` | **worker**, owner disabled from the UI thread | **see 13.2** |
+| `spdf_win_print_dialog_system.cpp` `PrintDlgW` (classic) | UI, owner = our print dialog | returns FALSE, owner untouched |
+| `spdf_win_print_dialog_run.cpp` `DocumentPropertiesW DM_IN_PROMPT` | UI, owner = our print dialog | returns non-`IDOK` |
+| `spdf_win_updater_ui.cpp` `ask()`/`inform()` | UI — the sink is `HWND_MESSAGE`, created by `ensure_sink()` on the UI thread from `spdf_win_launch_window.h`, so its timers *and* the worker threads' posted results are both dispatched there | `TaskDialogIndirect` returns `E_*` without a common-controls-6 context, then `MessageBoxW` |
+| `spdf_win_shell_dialog.h` `DialogBoxIndirectParamW` (password, Open Path) | UI (`spdf_win_tabs_open.h`) | returns −1, having disabled nothing |
+| `spdf_win_annot_dialog.cpp`, `spdf_win_assoc.cpp`, `spdf_win_panel_jobs.cpp` `MessageBoxW` | UI thread of the owner in each case | returns 0 |
+
+**No owner at all, so nothing to strand**: `spdf_win_setup_prompt.h` (the
+first-run TaskDialog and its `MessageBoxW` fallback), `spdf_win_setup.cpp:57`
+and `:323`, `spdf_win_window_doc.h:39`. **Its own modal loop and no
+`EnableWindow`**: `TrackPopupMenu` in `spdf_win_menu.cpp` and
+`spdf_win_chrome_annot_ui.h`. And the search found **no calls at all** to
+`GetOpenFileNameW`, `GetSaveFileNameW`, `IFileDialog`, `PageSetupDlgW` or
+`DoDragDrop` in `portable/win/src` — the only occurrences of the last two are
+prose in comments explaining why they are not used.
+
+### 13.2 The one site that could leave the window disabled forever, and did
+
+`spdf_win_print_system_dialog()` is the only place where the dialog runs on a
+**worker** thread while the owner is disabled by the **UI** thread. That is
+deliberate and documented (`spdf_win_print_dialog.h`): on this host `PrintDlgExW`
+with a valid `hwndOwner` never returns and creates no window, so it is called on
+a thread it is allowed to wedge in, and a watchdog gives up after
+`SPDF_WIN_PRINT_DIALOG_WATCHDOG_MS` = 4 s.
+
+The watchdog decided "the dialog is up, stop the clock" from a snapshot of the
+process's visible top-level windows: **any** new one counted. The comment
+justifying that said the app creates nothing during the wait, "the calling
+thread is in this loop and the parent is disabled". Both halves are wrong:
+
+- the calling thread is in that loop **pumping its own queue** —
+  `MsgWaitForMultipleObjects` + `PeekMessageW`/`DispatchMessageW` — so anything
+  the UI thread was going to do, it still does. The updater's sink window lives
+  on that thread; its 5-second one-shot and its hourly tick both fire into that
+  pump, and `on_check_done()` puts a task dialog up from inside it;
+- the parent being disabled does not stop a *second* window of this process
+  (another app window, a tools panel) from putting a menu or a message box up.
+
+Once one of those windows appeared, `window_up` latched at 1, the clock stopped,
+and the loop waited on an event that on this host is never signalled. When the
+window closed again there was nothing left on screen — and the main window was
+disabled, painting, answering, and unfocusable. Indefinitely.
+
+**Measured**, by `portable/win/tests/modal_scope_test.c` (case 4: a visible
+top-level window of this process, created on another thread 800 ms into the
+wait and destroyed 1.5 s later):
+
+```
+before   FAIL spdf_win_print_system_dialog did not return within 45 s -- the owner is still disabled
+after    modal_scope: print dialog returned 4 after 6375 ms, err="Windows' print dialog did not open within 4 seconds."
+         modal_scope_test: 31 checks, 0 failures
+```
+
+6375 ms is 800 + 1500 + the re-armed 4000, which is the fix behaving exactly as
+described. Two changes, belt and braces:
+
+1. **The calling thread's own windows are never the print dialog.** The snapshot
+   and the sweep both skip windows whose thread is the one doing the waiting.
+   That is precisely the updater case, and it is now not even a pause.
+2. **The clock is re-armed when the window that stopped it goes away.** A window
+   that appears and then closes while `PrintDlgExW` has still not returned was
+   never the dialog. This is the general fix: it covers a second app window, a
+   menu, a tooltip, anything nobody has thought of.
+
+### 13.3 `spdf_win_modal_scope.h`, so it cannot come back
+
+The five hand-written copies of
+
+```c
+if (parent) was_enabled = IsWindowEnabled(parent);
+if (parent && was_enabled) EnableWindow(parent, FALSE);
+...
+if (parent && was_enabled) { EnableWindow(parent, TRUE); SetForegroundWindow(parent); }
+```
+
+are now one scope, `SpdfWinModalGuard`, used by all five plus the print
+watchdog and the updater's `ask()`. A scope cannot be left: the destructor runs
+on the early return, on the exception, and on the watchdog giving up. It adds
+three things the copies did not have:
+
+- **the owner's thread.** `EnableWindow` works across threads, so a dialog run on
+  a worker against a main-window owner disables that owner from a thread that
+  does not own it. No site does that today; if one is ever added the scope
+  **refuses the disable** rather than performing it, and says so through
+  `OutputDebugStringW`. A dialog that is merely not modal is a bug you can click
+  your way out of; a main window disabled from a foreign thread is not.
+- **activation, conditionally.** The owner gets `SetActiveWindow` +
+  `SetForegroundWindow` back — Windows does not reliably return it after a
+  cross-thread dialog or after one that failed to appear — but **only** if this
+  process held the foreground when the scope opened and still holds it now, and
+  never if the owner is minimised. A dialog finishing in the background no
+  longer yanks the reader out of another application.
+- **nesting.** A scope that finds the owner already disabled records that it did
+  not do it and leaves it disabled on the way out, so a message box opened from
+  inside a dialog cannot un-modal the dialog.
+
+`spdf_win_modal_place_point()` is the placement, pure and therefore testable
+headlessly: centre on the owner, then clamp into **the owner's monitor's** work
+area, pulling the right and bottom edges in first so a dialog larger than the
+work area is pinned to the top-left, where the title bar and the first controls
+are. All five of our dialogs now place themselves with it before they are shown
+— Properties lost its `WS_VISIBLE` at creation so that it is placed before it
+appears rather than jumping afterwards.
+
+The updater's `ask()` gained one more thing: `g.main` is remembered at start-up
+and **never cleared**, so a task dialog parented on a destroyed HWND fails, and
+the `MessageBoxW` fallback fails with it — no dialog, no answer, and the update
+silently not offered. It is now validated with `IsWindow()` and degrades to an
+unowned dialog.
+
+### 13.4 The entry path, checked and found sound
+
+The first-run prompt (`spdf_win_setup_prompt.h`,
+`SPDF_WIN_SETUP_ALLOW_PROMPT=1` with a fresh `--state-dir`) runs **before the
+main window exists**, with a `NULL` owner: there is nothing to leave disabled.
+Answering "Run this copy" with a document on the command line then goes through
+`spdf_win_window_show_ex()`, which is already `ShowWindow` **and** an explicit
+`SetForegroundWindow` (`spdf_win_window_lifecycle.h`) — so the window claims the
+foreground back from the Explorer window that got it while the prompt was up.
+Nothing to fix.
+
+### 13.5 The test
+
+`portable/win/tests/modal_scope_test.c`, registered automatically as
+`win.modal_scope_test`. Four cases in increasing cost: the placement arithmetic
+headless (edges, a second monitor, an oversized dialog, no owner); the scope
+against a real owner window (disable, re-enable, nesting, double close, and a
+scope opened from a foreign thread refusing to disable); the real placement
+landing inside the owner's monitor work area; and the regression of 13.2. A hard
+timeout kills the process at 45 s rather than letting the test become the hang
+it tests for, and on a **locked workstation** — where no window can be created
+at all — it exits **68**, which `run-tests-native.sh` now records as BLOCKED for
+every `win.*` case, the code `run-tests-native.launch.sh` already used.

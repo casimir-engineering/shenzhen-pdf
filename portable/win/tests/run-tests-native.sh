@@ -318,6 +318,13 @@ case_win_tests() {
     rc=$?
     if [[ $rc -eq 0 ]]; then
       record "win.$stem" PASS "passes natively"
+    elif [[ $rc -eq 68 ]]; then
+      # 68 is the desktop tests' "I could not run here at all" -- a locked
+      # workstation, no window station. The same code run-tests-native.launch.sh
+      # already uses. BLOCKED, so the suite still exits non-zero: a case that
+      # could not open a window has proved nothing.
+      record "win.$stem" BLOCKED "the test needs an interactive desktop and exited 68; unlock the workstation and re-run"
+      log_tail "$OUT/win-$stem.run.log" 5
     else
       record "win.$stem" FAIL "exited $rc"
       log_tail "$OUT/win-$stem.run.log" 20

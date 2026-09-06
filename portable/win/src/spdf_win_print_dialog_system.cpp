@@ -5,6 +5,7 @@
 
 #include "spdf_win_print_dialog.h"
 
+#include "spdf_win_modal_scope.h"
 #include "spdf_win_print_scaling.h" /* the Scaling page, Win32 half */
 
 #include <commdlg.h>
@@ -100,13 +101,20 @@ typedef struct system_windows {
     HWND h[SYSTEM_MAX_WINDOWS];
     int count;
     int found_new;
+    /* THE CALLING THREAD'S OWN WINDOWS ARE NOT THE DIALOG. This thread sits
+     * in the wait below pumping its queue, and what it dispatches can put a
+     * window up: the updater's task dialog is on a timer that fires into
+     * exactly this pump (spdf_win_updater_ui.cpp). Counting that as "the
+     * print dialog appeared" stops the watchdog clock for good -- section 13
+     * of portable/docs/windows-native-observations.md measures it. */
+    DWORD skip_thread;
 } system_windows;
 
 static BOOL CALLBACK system_collect(HWND hwnd, LPARAM param) {
     system_windows* w = (system_windows*)param;
     DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
-    if (pid != GetCurrentProcessId() || !IsWindowVisible(hwnd)) return TRUE;
+    DWORD tid = GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != GetCurrentProcessId() || tid == w->skip_thread || !IsWindowVisible(hwnd)) return TRUE;
     if (w->count < SYSTEM_MAX_WINDOWS) w->h[w->count++] = hwnd;
     return TRUE;
 }
@@ -114,9 +122,10 @@ static BOOL CALLBACK system_collect(HWND hwnd, LPARAM param) {
 static BOOL CALLBACK system_look_for_new(HWND hwnd, LPARAM param) {
     system_windows* before = (system_windows*)param;
     DWORD pid = 0;
+    DWORD tid;
     int i;
-    GetWindowThreadProcessId(hwnd, &pid);
-    if (pid != GetCurrentProcessId() || !IsWindowVisible(hwnd)) return TRUE;
+    tid = GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != GetCurrentProcessId() || tid == before->skip_thread || !IsWindowVisible(hwnd)) return TRUE;
     for (i = 0; i < before->count; ++i)
         if (before->h[i] == hwnd) return TRUE;
     before->found_new = 1;
@@ -245,6 +254,7 @@ spdf_win_print_status spdf_win_print_system_dialog(HWND parent, int doc_page_cou
     }
 
     memset(&before, 0, sizeof(before));
+    before.skip_thread = GetCurrentThreadId();
     EnumWindows(system_collect, (LPARAM)&before);
 
     thread = CreateThread(NULL, 0, system_dialog_thread, job, 0, NULL);
@@ -263,8 +273,11 @@ spdf_win_print_status spdf_win_print_system_dialog(HWND parent, int doc_page_cou
      * is the dialog's owner, and an owner whose thread stops answering messages
      * is a deadlock waiting to happen. */
     {
-        BOOL was_enabled = IsWindowEnabled(parent);
-        if (was_enabled) EnableWindow(parent, FALSE);
+        /* The scope, not four hand-written lines: every path out of this block
+         * -- the abandonment below included -- re-enables the owner and gives
+         * it the activation back. spdf_win_modal_scope.h says why that is not
+         * left to the reader of this function. */
+        SpdfWinModalGuard modal(parent);
         started = GetTickCount64();
         for (;;) {
             MSG msg;
@@ -274,19 +287,27 @@ spdf_win_print_status spdf_win_print_system_dialog(HWND parent, int doc_page_cou
                 DispatchMessageW(&msg);
             }
             if (w == WAIT_OBJECT_0) break;
-            if (!window_up && system_dialog_window_is_up(&before)) window_up = 1;
-            /* THE CLOCK RUNS ONLY UNTIL THE DIALOG IS UP. After that the reader
-             * may take as long as they like. */
+            /* THE CLOCK RUNS ONLY UNTIL THE DIALOG IS UP -- after that the
+             * reader may take as long as they like -- AND IT IS RE-ARMED IF
+             * THAT WINDOW GOES AWAY AGAIN. A window that appears and then
+             * closes while PrintDlgEx has still not returned was never the
+             * dialog; leaving the clock stopped for it is how the owner ends up
+             * disabled forever with nothing on screen, which is the exact
+             * "not responsive and not even focusable" report section 13 of
+             * portable/docs/windows-native-observations.md chased down. */
+            if (system_dialog_window_is_up(&before)) {
+                window_up = 1;
+            } else if (window_up) {
+                window_up = 0;
+                started = GetTickCount64();
+            }
             if (!window_up && GetTickCount64() - started >= SPDF_WIN_PRINT_DIALOG_WATCHDOG_MS) {
                 if (InterlockedCompareExchange(&job->handoff, 2, 0) == 0) {
                     /* The thread is still inside PrintDlgEx and will free the
                      * block itself if it ever comes out. Nothing here may touch
                      * `job` again. */
                     InterlockedExchange(&g_system_state, 2);
-                    if (was_enabled) {
-                        EnableWindow(parent, TRUE);
-                        SetForegroundWindow(parent);
-                    }
+                    modal.end();
                     if (err && err_len)
                         _snprintf_s(err, err_len, _TRUNCATE,
                                     "Windows' print dialog did not open within %d seconds.",
@@ -297,10 +318,6 @@ spdf_win_print_status spdf_win_print_system_dialog(HWND parent, int doc_page_cou
                 WaitForSingleObject(job->done, INFINITE);
                 break;
             }
-        }
-        if (was_enabled) {
-            EnableWindow(parent, TRUE);
-            SetForegroundWindow(parent);
         }
     }
 
