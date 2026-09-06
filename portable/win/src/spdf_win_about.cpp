@@ -18,6 +18,7 @@
 
 #include "spdf_win_about_version.h"
 #include "spdf_win_chrome_theme.h"
+#include "spdf_win_modal_scope.h"
 
 #include <windows.h>
 #include <dwmapi.h>
@@ -226,7 +227,6 @@ int spdf_win_about_show(void* parent_handle, int dark) {
     HWND hwnd, edit, button;
     MSG msg;
     RECT client;
-    BOOL parent_was_enabled = FALSE;
     SpdfWinChromeTheme t = spdf_win_chrome_theme_for(dark);
     int i, w = 0;
 
@@ -277,8 +277,13 @@ int spdf_win_about_show(void* parent_handle, int dark) {
                              (HMENU)(INT_PTR)ABOUT_ID_CLOSE, GetModuleHandleW(NULL), NULL);
     SendMessageW(edit, WM_SETFONT, (WPARAM)st.font, TRUE);
     SendMessageW(button, WM_SETFONT, (WPARAM)st.font, TRUE);
-    if (parent) parent_was_enabled = IsWindowEnabled(parent);
-    if (parent && parent_was_enabled) EnableWindow(parent, FALSE);
+    /* CENTRED ON THE OWNER'S MONITOR before it is shown. CW_USEDEFAULT cascades
+     * onto the PRIMARY display; with the app on a second one that is a modal
+     * dialog the reader cannot see in front of a window they cannot click. */
+    spdf_win_modal_place_on_owner(hwnd, parent);
+    /* From here the owner is disabled, and there is no path out of this
+     * function that leaves it that way -- see spdf_win_modal_scope.h. */
+    SpdfWinModalGuard modal(parent);
     ShowWindow(hwnd, SW_SHOW);
     SetFocus(button);
 
@@ -290,10 +295,7 @@ int spdf_win_about_show(void* parent_handle, int dark) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-    if (parent && parent_was_enabled) {
-        EnableWindow(parent, TRUE);
-        SetForegroundWindow(parent);
-    }
+    modal.end();
     DeleteObject(st.bg);
     DeleteObject(st.title_font);
     DeleteObject(st.font);
