@@ -47,6 +47,10 @@ struct spdf_win_links {
     HANDLE wake;
     CRITICAL_SECTION lock;
     volatile long quit;
+    /* Who still holds this block: the canvas, and the worker while it runs.
+     * Whoever lets go last frees it (links_release), so the UI thread never
+     * has to wait for the worker to be done with it. */
+    volatile long refs;
     /* under `lock` */
     int want_page; /* the page whose text URLs are wanted; -1 when none */
     int done_page; /* the page `done_rects` describe; -1 when none */
@@ -61,25 +65,41 @@ spdf_win_links* spdf_win_links_new(void) {
     links->merged_page = -1;
     links->want_page = -1;
     links->done_page = -1;
+    links->refs = 1;
     InitializeCriticalSection(&links->lock);
     return links;
 }
 
-void spdf_win_links_free(spdf_win_links* links) {
-    if (!links) return;
-    if (links->thread) {
-        /* Bounded by one structured-text pass: the worker checks `quit` after
-         * every page and the wait wakes it if it is idle. */
-        InterlockedExchange(&links->quit, 1);
-        SetEvent(links->wake);
-        WaitForSingleObject(links->thread, INFINITE);
-        CloseHandle(links->thread);
-    }
+/* The last holder out frees the block: the canvas from spdf_win_links_free(),
+ * or the worker when it finds the canvas already gone. */
+static void links_release(spdf_win_links* links) {
+    if (InterlockedDecrement(&links->refs) != 0) return;
     if (links->wake) CloseHandle(links->wake);
     DeleteCriticalSection(&links->lock);
     free(links->path);
     free(links->text);
     free(links);
+}
+
+void spdf_win_links_free(spdf_win_links* links) {
+    if (!links) return;
+    if (links->thread) {
+        /* NO JOIN. This runs on the UI thread every time a canvas goes -- a
+         * tab switch, a reload from disk, a theme flip -- and the worker may
+         * be inside spdf_page_link_rects(detect_text_links = 1), which is one
+         * page's structured-text pass, or inside its first open of the
+         * document. Neither is interruptible and on a dense or a large file
+         * either is whole seconds, during which a joining UI thread would
+         * answer nothing (the shell ghosts a window after five). The worker
+         * checks `quit` after every page and is woken if idle, so it ends on
+         * its own soon enough; the block outlives the canvas until it does
+         * (links_release) and the thread handle is simply let go of. */
+        InterlockedExchange(&links->quit, 1);
+        SetEvent(links->wake);
+        CloseHandle(links->thread);
+        links->thread = NULL;
+    }
+    links_release(links);
 }
 
 void spdf_win_links_invalidate(spdf_win_links* links) {
@@ -137,6 +157,7 @@ static unsigned __stdcall text_link_worker(void* arg) {
         LeaveCriticalSection(&links->lock);
     }
     if (doc) spdf_close(doc);
+    links_release(links); /* the canvas may already be gone: see spdf_win_links_free */
     return 0;
 }
 
@@ -152,8 +173,14 @@ static void request_text_links(spdf_win_links* links, int page) {
     links->want_page = page;
     LeaveCriticalSection(&links->lock);
     if (!links->thread) {
+        /* The worker's hold is taken BEFORE the thread exists, so it can never
+         * observe a count it has not been given. */
+        InterlockedIncrement(&links->refs);
         links->thread = (HANDLE)_beginthreadex(NULL, 0, text_link_worker, links, 0, NULL);
-        if (!links->thread) return;
+        if (!links->thread) {
+            InterlockedDecrement(&links->refs);
+            return;
+        }
     }
     SetEvent(links->wake);
 }
