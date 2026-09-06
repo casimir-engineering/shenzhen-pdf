@@ -90,9 +90,16 @@ struct SpdfWinThumbStore {
     int window_count;
     int noted_paint_thread;
     CRITICAL_SECTION lock;
+
+    /* Who still holds the store: its owner, and the sizing sweep while it
+     * runs. The last one out frees it (store_release), so freeing the store
+     * never waits for the sweep. */
+    volatile long refs;
 };
 
 /* --- the sizing sweep ---------------------------------------------------- */
+
+static void store_release(SpdfWinThumbStore* s);
 
 static unsigned __stdcall size_sweep(void* arg) {
     SpdfWinThumbStore* s = (SpdfWinThumbStore*)arg;
@@ -124,6 +131,7 @@ static unsigned __stdcall size_sweep(void* arg) {
     }
     spdf_close(doc);
     spdf_win_launch_mark_n("thumbs-sweep-end", s->page_count);
+    store_release(s); /* the owner may already be gone: see spdf_win_thumbs_free */
     return 0;
 }
 
@@ -167,8 +175,13 @@ static void ensure_pages(SpdfWinThumbStore* s) {
      * two. */
     spdf_close(s->size_doc);
     s->size_doc = NULL;
-    if (s->page_count > 1)
+    if (s->page_count > 1) {
+        /* The sweep's hold, taken BEFORE the thread exists so it can never
+         * observe a count it has not been given. */
+        InterlockedIncrement(&s->refs);
         s->size_thread = (HANDLE)_beginthreadex(NULL, 0, size_sweep, s, 0, NULL);
+        if (!s->size_thread) InterlockedDecrement(&s->refs);
+    }
 }
 
 /* --- construction -------------------------------------------------------- */
@@ -189,8 +202,21 @@ SpdfWinThumbStore* spdf_win_thumbs_new(const char* utf8_path) {
     memcpy(s->path, utf8_path, n);
     s->window = spdf_win_minimap_thumb_window_empty();
     s->svc_dark = -1;
+    s->refs = 1;
     InitializeCriticalSection(&s->lock);
     return s;
+}
+
+/* The last holder out frees the store: the owner from spdf_win_thumbs_free(),
+ * or the sizing sweep when it finds the owner already gone. */
+static void store_release(SpdfWinThumbStore* s) {
+    if (InterlockedDecrement(&s->refs) != 0) return;
+    if (s->size_doc) spdf_close(s->size_doc);
+    if (s->cache_ready) spdf_win_lru_deinit(&s->cache);
+    free(s->sizes);
+    free(s->path);
+    DeleteCriticalSection(&s->lock);
+    free(s);
 }
 
 void spdf_win_thumbs_free(SpdfWinThumbStore* s) {
@@ -198,15 +224,16 @@ void spdf_win_thumbs_free(SpdfWinThumbStore* s) {
     InterlockedExchange(&s->stop, 1);
     if (s->svc) spdf_win_render_service_free(s->svc);
     if (s->size_thread) {
-        WaitForSingleObject(s->size_thread, 5000);
+        /* NO WAIT. The sweep checks `stop` between pages, but its first step
+         * is its own open of the document, and on a large file that alone is
+         * seconds -- which this used to spend blocked on the UI thread, up to
+         * a five-second cap, with the window answering nothing. The sweep
+         * holds its own reference and lets go when it ends (store_release);
+         * the handle is closed, the thread is not waited for. */
         CloseHandle(s->size_thread);
+        s->size_thread = NULL;
     }
-    if (s->size_doc) spdf_close(s->size_doc);
-    if (s->cache_ready) spdf_win_lru_deinit(&s->cache);
-    free(s->sizes);
-    free(s->path);
-    DeleteCriticalSection(&s->lock);
-    free(s);
+    store_release(s);
 }
 
 int spdf_win_thumbs_page_count(SpdfWinThumbStore* s) {
