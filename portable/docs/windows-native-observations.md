@@ -1003,3 +1003,141 @@ Keep Image Colors per document (merge 340ce34f6); Alt+wheel paging by wheel
 distance and in-place Markdown reload (in flight). Each verified from a clean
 build: full suite with only the seven macOS-host cases blocked, ratchet green,
 sidebar differential unchanged at 15,203/0.
+
+## 13. Everything the UI thread waits on, and what it waited on that it did not control (2026-09-07)
+
+"The app was never responsive to any user input and not even focusable",
+reported twice over two days after two different builds of the dist exe. The
+same exe launched here -- from PowerShell and through Explorer -- gave a
+healthy window every time: foreground, z-index 0, `IsHungAppWindow` false,
+`WM_NULL` answered in under a millisecond, real `SendInput` clicks and keys
+repainting it. Windows Error Reporting had meanwhile filed two hangs of the
+build-tree exe (`AppHang_ShenzhenPDF.exe_*`, 2026-09-02 13:14 and 2026-09-03
+07:06) with ConsentKey **AppHangXProcB1**: the UI thread was blocked on
+ANOTHER PROCESS when the shell ghosted the window. No dump was kept. So the
+question this pass answers is not "what does the window do at launch" but
+"what can the window's thread ever wait on that is not its own", and the
+method is an audit of every wait, then a measurement of each one that could
+last.
+
+### 13.1 The inventory
+
+Every blocking construct reachable from the window's thread -- the window
+procedure, paint, the two timers, the watcher's callbacks, render completion,
+the thumbnail store, the print watchdog, the updater sink, the session and
+settings writes, and every dialog and nested loop -- with what it waits on,
+who else can hold that, and how long it can last. Line numbers are this
+tree's after the fixes below.
+
+| Site | Waits on | Held or answered by | Worst case before | Now |
+|---|---|---|---|---|
+| `spdf_win_state.c:184` `lock_file_exclusive()` -- every session save: tab open/close/select, the 30 s tick (`app_tick`), exit | `LockFileEx` on `<state dir>\session.lock`, exclusive, no `LOCKFILE_FAIL_IMMEDIATELY` | ANY OTHER ShenzhenPDF WINDOW: a window is a process here, and every one merges into the same file under this lock | forever (measured, 13.2) | polled with `LOCKFILE_FAIL_IMMEDIATELY` for at most 1 s, then the save proceeds unlocked |
+| `spdf_win_render.c:343` `spdf_win_render_service_free()` -- every canvas teardown: tab switch, reload from disk, theme flip, exit; also the thumbnail pool | join of every render worker, `INFINITE` | a worker inside `spdf_render_page`: cancellation is a `fz_cookie` MuPDF checks between operators, so normally milliseconds, but one image decode is not interruptible | one uninterruptible decode: seconds on a large JPX/JBIG2 page | 500 ms, then the service is abandoned to its last worker, which frees it |
+| `spdf_win_links.cpp:99` `spdf_win_links_free()` -- every canvas teardown | `WaitForSingleObject(thread, INFINITE)` | the text-URL worker inside `spdf_page_link_rects(detect_text_links = 1)` -- a structured-text pass of one page -- or its first `spdf_win_open_document` | seconds on a dense or a large document | no join: the block is reference-counted and the worker frees it when it finds the canvas gone |
+| `spdf_win_chrome_thumbs.cpp:233` `spdf_win_thumbs_free()` -- `spdf_win_chrome_content_shutdown()`, i.e. every reload and every document change | `WaitForSingleObject(size_thread, 5000)` | the sizing sweep inside its own `spdf_win_open_document` (the sweep checks `stop` only between pages) | 5 s | no wait: reference-counted like the links |
+| `spdf_win_assoc.cpp:162`, `spdf_win_setup.cpp:284,337` `SHChangeNotify(SHCNF_FLUSH)` -- File > Make Default PDF Reader, --install, --uninstall | Explorer taking delivery of the notification | explorer.exe | as long as Explorer takes; a hung Explorer, forever -- a textbook AppHangXProcB1 | `SHCNF_FLUSHNOWAIT` |
+| `spdf_win_watcher.cpp:222` `stop_watch()` -- unwatch on tab close, reload, exit | join of the `ReadDirectoryChangesW` thread, `INFINITE` | the thread is parked in `WaitForMultipleObjects(io_event, stop)` and `SetEvent(stop)` + `CancelIoEx` wake it | the kernel's I/O cancel: milliseconds on a local disk | unchanged |
+| `spdf_win_watcher.cpp:303` `spdf_win_watcher_watch()`, and `spdf_win_watcher_stat()` from the debounce and retry timers | `CreateFileW` on the document's directory, `GetFileAttributesExW` on the file | the file system; on a share whose server has gone, the SMB redirector's reconnect | tens of seconds per call on a dead share; milliseconds locally | unchanged: the path is the reader's own document, and every other open of it in the app has the same exposure |
+| `spdf_win_md_reload.cpp:100` `spdf_win_md_reload_shutdown()` -- exit, after the window is destroyed | join of the Markdown re-read thread, `INFINITE` | md4c + the HTML conversion + MuPDF's layout of one document | seconds on a large Markdown file, as a lingering process with no window | unchanged: never a hung window |
+| `spdf_win_gpu_prewarm.h:163` `spdf_win_gpu_prewarm_finish()` -- `spdf_win_d2d_destroy`, exit | join of the prewarm thread | a thread parked in `MsgWaitForMultipleObjects` on the finish event, pumping | milliseconds | unchanged (section 11 made it pump) |
+| `spdf_win_print_dialog_system.cpp:271-297` PrintDlgEx watchdog | `MsgWaitForMultipleObjects(50 ms)` in a pumping loop; `:297` `INFINITE` only after the thread has already won the hand-off race | the dialog thread | the watchdog's own bound; `:297` microseconds | unchanged |
+| `spdf_win_search.cpp:380` `spdf_win_find_session_free()` | spin with `Sleep(1)` until the workers exit | one page's search | one page | unchanged: nothing in the app calls it (the shared session lives for the process) |
+| `spdf_win_panel_jobs.cpp:37` `join_worker()` -- OCR / translate panel, on the same thread | `WaitForSingleObject(worker, INFINITE)` | the job thread; cancel is `TerminateProcess` + `WaitForSingleObject(process, 5000)` in `spdf_win_toolchain_process.cpp:294` | ~5 s after a cancel, while the panel is up | unchanged |
+| `spdf_win_selection.cpp:372,404`, `spdf_win_clipboard_page.cpp:234`, `spdf_win_shell.cpp:152` `OpenClipboard` retries | the clipboard owner letting go | another process mid-copy | 200 / 100 / 50 ms, bounded | unchanged |
+| `spdf_win_selection.cpp:408` `GetClipboardData(CF_UNICODETEXT)` -- paste into a field | `WM_RENDERFORMAT` to the clipboard owner when it used delayed rendering; synchronous, no timeout | the process that last copied | as long as that process takes; a hung owner stalls the paste | unchanged: user-initiated, and there is no asynchronous form |
+| `spdf_win_shell.cpp:73,100,114,120,192,197`, `spdf_win_assoc.cpp:165,166`, `spdf_win_chrome_canvas_ui.h:118` `ShellExecuteW` -- reveal in Explorer, open in browser, follow a link, the Settings page | `ShellExecute` behaves as `SEE_MASK_NOASYNC`: it waits out the DDE conversation with the target | Explorer, the browser, the URL handler | the shell's DDE timeout when the target is hung (tens of seconds) | unchanged: every one is a click the reader just made, and the fix (`ShellExecuteExW` + `SEE_MASK_ASYNCOK`) touches nine sites in three tracks' files |
+| the modal loops: `TrackPopupMenu`, `IFileOpenDialog`, `TaskDialogIndirect` / `MessageBoxW`, the about / annotation / shortcuts / properties / print dialogs' `GetMessageW` loops, the tab drag in `spdf_win_tabs_handoff.h:277` | messages | -- | they pump; the tab drag asks foreign windows only through `WindowFromPoint`, `GetClientRect`, `ScreenToClient` and `GetDpiForWindow`, none of which sends, and talks to them only by `PostMessageW` | unchanged |
+| the locks shared with workers: `svc->lock` (render), `links->lock`, the find session's, the thumbnail store's, the preview measurer's, the Markdown reload's SRW lock | a critical section | a worker | every one is held for a queue or pointer operation and RELEASED around the render, the text pass, the search and the measure (`spdf_win_render.c` "Renders ... run with the lock RELEASED"; `spdf_win_links.cpp` copies the page number out and the rects in) | microseconds | unchanged |
+| `spdf_win_canvas_prefetch.cpp:212` `spdf_win_canvas_settle()` `Sleep(2)` loop | render completion | -- | headless probe only, by its own comment | unchanged |
+| `spdf_win_launch_profile.h:105` `SwitchToThread` spin | a mark being written on another thread | -- | microseconds | unchanged |
+
+Not on the list: `spdf_compat_lock_acquire()` in `portable/core/spdf_win_compat.c`
+is the same blocking `LockFileEx`, but its only caller is the YAML migration
+`spdf_state_migrate_dir()`, which the Windows frontend never runs at runtime
+(only `state_test.c` does). No `SendMessage` to a window of another process
+exists anywhere in `portable/win/src`; the only cross-process synchronous calls
+were the two shell ones above.
+
+### 13.2 The one that reproduces the report's class
+
+Two windows are two processes, and both save `session.yaml` under
+`session.lock`. Holding that lock from a third process -- a PowerShell
+`FileStream.Lock` on the whole range, shared read/write exactly as the app
+opens it -- and launching the tree's exe against that state directory:
+
+| | before (`ShenzhenPDF-baseline.exe`) | after |
+|---|---|---|
+| window, first 30 s | up at 798 ms, 114 pings answered, max 0.63 ms | up at 228 ms, every ping answered |
+| the 30 s session tick | the UI thread enters `LockFileEx` and stays: **11 consecutive `WM_NULL` timeouts (500 ms each), `IsHungAppWindow` = true** | one pause of at most `SPDF_WIN_STATE_LOCK_WAIT_MS` (1 s): 1 timeout out of 136 pings, the next answered in 164 ms, `IsHungAppWindow` false (with the constant at 2 s it was 2 timeouts) |
+| `WM_CLOSE` while the lock is held | the window is destroyed, the exit save blocks on the lock, the process is **still running 6 s later**, 26 threads all in `Wait` | exits in 1,093 ms: the bound, then the unlocked save |
+| release the lock | exits 6.1 s after `WM_CLOSE`, i.e. the instant the lock went | already gone |
+
+That is a hung window, ghosted by the shell, on a process that has done
+nothing wrong -- which is what AppHangXProcB1 says, and the hang stays
+exactly as long as the other process holds the lock. What made the other
+process hold it is not recoverable from the reports (no dump), and an honest
+hold is milliseconds; what can hold it for minutes is a process suspended
+while Windows Error Reporting collects it, or under a debugger, or itself
+hung inside the save -- which is a way for one wedged old build to take down
+every later window that shares its state directory. The fix (`spdf_win_state.c`)
+asks for the lock with `LOCKFILE_FAIL_IMMEDIATELY` in 10 ms steps for at most
+`SPDF_WIN_STATE_LOCK_WAIT_MS` and then saves anyway, which is what the code
+already did when the lock file could not be opened at all; a merge lost to a
+wedged sibling is repaired at the next save, and a window that never answers
+again is not.
+
+The report itself said "from the start". On this tree the first save under
+the lock is the first tab change or the 30 s tick, not the launch, and the
+launch's own health is section 11's -- so this is the mechanism of the class
+WER recorded, measured; it is not a proof of what the reader's two builds
+were waiting on.
+
+### 13.3 The flood: `window.stress`
+
+The suite never drove a window for longer than a launch, so a thread that
+pumps for two seconds and then parks was invisible to it.
+`portable/win/tests/stress-window.ps1` (case `window.stress`, registered
+beside `launch.budget`) launches the built exe on a private copy of
+`outline.pdf` with a private `--state-dir`, takes the foreground, and for 20 s
+sends real input through `SendInput` -- wheel, PageDown/Up, Home/End,
+Ctrl+plus/minus, Ctrl+F and typing, Escape, the sidebar toggle button,
+resizes through `SetWindowPos(SWP_ASYNCWINDOWPOS)` -- while rewriting the
+open file every 2 s (in place, then through a temp file, alternately) so the
+watcher's reload, the canvas teardown and the render-worker join run under
+load. Every 250 ms it asserts `SendMessageTimeout(WM_NULL, SMTO_ABORTIFHUNG |
+SMTO_BLOCK, 500)` answers and no window of the process is hung; at the end,
+that Home then PageDown change more than 2 % of the client pixels
+(`PrintWindow`, `PW_RENDERFULLCONTENT`) and that `WM_CLOSE` ends the process
+inside 10 s. The harness sends nothing synchronous of its own -- `MoveWindow`
+would have hung the harness on the very defect it measures -- and only the
+ping has a timeout, which is the assertion.
+
+Measured on this machine, 1400x900 window, 150 %:
+
+| | baseline | fixed |
+|---|---|---|
+| actions / rewrites | 80 / 9 | 80 / 9 |
+| pings answered | 80 of 80 | 80 of 80 |
+| ping max / mean | 5.46 / 0.17 ms | 0.52 / 0.15 ms |
+| hung samples | 0 | 0 |
+| Home then PageDown at the end | 123,283 px of 1,225,042 changed | 123,283 px |
+| `WM_CLOSE` to exit | 120 ms | 344 ms |
+
+The flood alone does not stall this tree: the nine reloads join render
+workers that cancel within a frame and a link worker that is idle, and the
+lock is uncontended. That is why 13.2 is a separate measurement -- the stall
+needs a second holder, and the flood does not create one. The case's value is
+as the tripwire that was missing: any wait that grows past 500 ms on this
+path, or any input that stops repainting, now fails the suite.
+
+Two things the harness itself had to learn on a shared desktop. A first run
+reported "PageDown changed 0 px" against a perfectly live window: another
+agent's ShenzhenPDF window (a different pid, the same class) had taken the
+foreground mid-flood and the final keystrokes went to it. The harness now
+re-takes the foreground before every keyboard action, checks `WindowFromPoint`
+before every pointer action, counts what it had to skip as `obstructed`,
+records who held the foreground and where the app's keyboard focus was
+(`GetGUIThreadInfo`), and reports a foreground it cannot get back as BLOCKED
+(exit 69) rather than as the app's failure. And PowerShell's comma binds
+tighter than `%`, so an index computed inside a `-f` argument list silently
+shortened the list; it is computed on its own line.
