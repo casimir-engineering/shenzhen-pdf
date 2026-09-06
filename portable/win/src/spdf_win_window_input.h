@@ -18,6 +18,11 @@
  * proc next door is the only thing that calls these.
  */
 
+/* What one wheel event is worth in pixels and in zoom -- pure, and therefore
+ * tested (portable/win/tests/wheel_input_test.c). See its header for the
+ * precision-touchpad case, which is the reason it is not inline below. */
+#include "spdf_win_wheel.h"
+
 /* Fills in the fields every event carries and dispatches. Returns non-zero when
  * the handler changed the view, and invalidates when it did. */
 static int dispatch(spdf_win_window* window, spdf_win_input* input) {
@@ -92,27 +97,29 @@ static int dispatch_mouse(spdf_win_window* window, spdf_win_input_kind kind, int
     return dispatch(window, &input);
 }
 
-/* One wheel notch in device pixels. SPI_GETWHEELSCROLLLINES is the user's own
- * setting and honouring it is the difference between a viewer that feels like
- * the rest of the desktop and one that does not; WHEEL_PAGESCROLL (0xFFFFFFFF)
- * is its "scroll a screenful" value, which the caller can only express if we
- * hand it a distance rather than a notch count. */
-static float wheel_step(const spdf_win_window* window, unsigned view_px_h) {
+/* The user's own SPI_GETWHEELSCROLLLINES, including its WHEEL_PAGESCROLL
+ * spelling of "a screenful". Asked on every event rather than cached because it
+ * is a live setting and a wheel event is not a hot path. What a notch is WORTH
+ * is spdf_win_wheel.h's, which is pure and therefore tested. */
+static UINT wheel_lines(void) {
     UINT lines = 3;
-    float scale = spdf_win_window_dpi_scale(window);
-
     SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
-    if (lines == WHEEL_PAGESCROLL) return (float)view_px_h * 0.9f;
-    if (lines == 0) lines = 3;
-    return (float)lines * 20.0f * scale;
+    return lines;
 }
 
 /* Mouse wheel, both axes. Ctrl zooms at the cursor; Shift turns a vertical
- * wheel horizontal, which is the Windows convention for a one-axis mouse. */
+ * wheel horizontal, which is the Windows convention for a one-axis mouse.
+ *
+ * THE DELTA IS NOT ASSUMED TO BE A MULTIPLE OF 120. A Windows Precision
+ * Touchpad reports the finger's travel, so it sends a stream of small arbitrary
+ * deltas -- and its pinch arrives here too, as Ctrl + wheel. Every conversion
+ * below is fractional (spdf_win_wheel.h); rounding a notch count to an integer
+ * would make every one of those events worth exactly nothing, which is a view
+ * that will not move for a reader who has no mouse. */
 static void on_wheel(spdf_win_window* window, WPARAM wparam, LPARAM lparam, bool horizontal) {
     spdf_win_input input;
     POINT pt;
-    float notches = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
+    int delta = GET_WHEEL_DELTA_WPARAM(wparam);
     RECT rc = {0, 0, 0, 0};
 
     memset(&input, 0, sizeof(input));
@@ -128,14 +135,17 @@ static void on_wheel(spdf_win_window* window, WPARAM wparam, LPARAM lparam, bool
 
     if (!horizontal && (GET_KEYSTATE_WPARAM(wparam) & MK_CONTROL)) {
         input.kind = SPDF_WIN_INPUT_ZOOM;
-        /* Geometric, so N notches out exactly undo N notches in. */
-        input.factor = powf(1.1f, notches);
+        /* Geometric, so N notches out exactly undo N notches in -- and so a
+         * pinch delivered as forty small deltas lands on the same zoom as one
+         * notch of the same travel. */
+        input.factor = spdf_win_wheel_zoom_factor(delta);
         dispatch(window, &input);
         return;
     }
 
     GetClientRect(window->hwnd, &rc);
-    float step = notches * wheel_step(window, (unsigned)(rc.bottom - rc.top));
+    float step = spdf_win_wheel_distance_px(delta, wheel_lines(), spdf_win_window_dpi_scale(window),
+                                            (unsigned)(rc.bottom - rc.top));
     input.kind = SPDF_WIN_INPUT_SCROLL;
     if (horizontal || (GET_KEYSTATE_WPARAM(wparam) & MK_SHIFT)) input.dx = horizontal ? step : -step;
     else input.dy = -step;
@@ -143,6 +153,55 @@ static void on_wheel(spdf_win_window* window, WPARAM wparam, LPARAM lparam, bool
 }
 
 /* --- the keyboard, the menu and the drop target -------------------------- */
+
+/* THE CHARACTER A VIRTUAL-KEY CODE STANDS FOR ON THE ACTIVE LAYOUT, or 0.
+ *
+ * spdf_win_input::key_char, and the whole of why it exists is next to that
+ * field: a virtual-key code is a property of the layout, and VK_OEM_MINUS is on
+ * no French key at all. MapVirtualKeyW answers for the layout of the thread that
+ * owns the window -- which is this thread -- so a reader who switches layouts
+ * mid-session gets the new answer on the next keystroke with no WM_INPUTLANGCHANGE
+ * bookkeeping of our own.
+ *
+ * MAPVK_VK_TO_CHAR (2), NOT ToUnicode: ToUnicode CONSUMES the kernel's pending
+ * dead-key state, so calling it on every WM_KEYDOWN would silently eat the
+ * accent a reader had just started composing in the find field. MapVirtualKeyW
+ * has no state at all. Its high bit marks a dead key, which is not a character
+ * anyone can bind, so it is reported as none.
+ *
+ * `hwnd` is unused today and named for the contract: this answer is about a
+ * window's thread's layout, not about the process. */
+static unsigned key_char_for(HWND hwnd, unsigned vk) {
+    UINT ch = MapVirtualKeyW(vk, 2 /* MAPVK_VK_TO_CHAR */);
+    (void)hwnd;
+    if (ch == 0 || (ch & 0x80000000u)) return 0; /* none, or a dead key */
+    ch &= 0x7FFFFFFFu;
+    /* Letters come back uppercase already; the guard is for a layout that does
+     * not, so the keymap can compare against 'A'..'Z' without a case rule. */
+    if (ch >= L'a' && ch <= L'z') ch -= 32;
+    return ch < 0x10000u ? (unsigned)ch : 0u;
+}
+
+/* WHETHER THIS KEYSTROKE IS TEXT: spdf_win_input::text_key.
+ *
+ * Asked of the QUEUE rather than of the layout, and that is the cheap, exact
+ * and side-effect-free way to ask it. The pump calls TranslateMessage before
+ * DispatchMessageW (spdf_win_window_lifecycle.h), so by the time this WM_KEYDOWN
+ * reaches the window procedure the WM_CHAR it produces -- if it produces one --
+ * is ALREADY sitting in this thread's queue. PM_NOREMOVE looks without taking:
+ * the WM_CHAR still arrives afterwards and still reaches the find field.
+ *
+ * Printable only. Ctrl+F also queues a WM_CHAR (0x06), and treating that as text
+ * would disable every accelerator in the table; 0x20 and up is the same test
+ * spdf_win_chrome_text.h applies to what it will insert.
+ *
+ * A caller that posts WM_KEYDOWN without TranslateMessage -- a test harness --
+ * gets 0, which is the behaviour this port had before the field existed. */
+static int key_is_text(HWND hwnd) {
+    MSG next;
+    if (!PeekMessageW(&next, hwnd, WM_CHAR, WM_CHAR, PM_NOREMOVE)) return 0;
+    return next.wParam >= 0x20 && next.wParam != 0x7F;
+}
 
 /* One of the three events that carry nothing but a number. Shared because the
  * only difference between them is the kind, and three near-identical eight-line

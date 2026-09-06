@@ -1332,3 +1332,176 @@ timeout kills the process at 45 s rather than letting the test become the hang
 it tests for, and on a **locked workstation** — where no window can be created
 at all — it exits **68**, which `run-tests-native.sh` now records as BLOCKED for
 every `win.*` case, the code `run-tests-native.launch.sh` already used.
+## 15. The input path is device- and layout-dependent (2026-09-07)
+
+Section 11 fixed the two ways the app's window arrived un-clickable. The report
+behind it said something a little wider than z-order -- "never responsive to any
+user input" -- and the reporter's machine differs from the harness in three more
+ways at once: a French AZERTY layout is loaded, the pointer is a precision
+touchpad rather than a mouse, and the display is at 150%. Synthetic input misses
+all three, because SendInput sends US virtual-key codes and wheel deltas of
+exactly 120. So each was measured against the real thing.
+
+### (a) VK_OEM_MINUS is on no French key. Zoom Out had no accelerator.
+
+The accelerator table (`spdf_win_menu_table.h`) names its keys by VIRTUAL-KEY
+code, and a virtual-key code is a property of the LAYOUT, not of the keyboard.
+Measured on this machine against `LoadKeyboardLayoutW(L"0000040C")`:
+
+| VK | US (00000409) | FR (0000040C) |
+| --- | --- | --- |
+| `0xBD` VK_OEM_MINUS | scan 0x0C, `-` | **scan 0x00 -- not on the layout** |
+| `0x36` VK_6 | `6` | `-` |
+| `0xBB` VK_OEM_PLUS | `=` | `=` |
+| `0xBC` VK_OEM_COMMA | `,` | `,` |
+| `0xBF` VK_OEM_2 | `/` | `:` |
+| `0x30` VK_0 | `0` | `a-grave` (the digit is Shift) |
+
+`MapVirtualKeyExW(VK_OEM_MINUS, MAPVK_VK_TO_VSC, hkl)` returns 0 for the French
+layout: no key on a French keyboard produces that code at all. So every table
+row keyed on it was dead for a French reader -- **Zoom Out (Ctrl+-)** and
+**Smaller Text (Ctrl+Alt+-)** -- and so was the bare `-` in `key_for_window()`'s
+keymap. The `-` key they press reports VK_6, which no row named. Zoom In
+survived only because VK_OEM_PLUS happens to sit on both layouts.
+
+The macOS original does not have this problem, and the way it avoids it is the
+fix: `ShenzhenPDFMac.mm:1963-1964` binds Zoom In and Zoom Out with
+`keyEquivalent:@"+"` and `keyEquivalent:@"-"` -- CHARACTERS, which AppKit matches
+against what the active layout produces. The port now carries the same thing.
+`spdf_win_input` gained `key_char`, the character the pressed key produces on the
+active layout with no modifiers, from `MapVirtualKeyW(vk, MAPVK_VK_TO_CHAR)`;
+`spdf_win_menu_layout.h` matches it AFTER the exact virtual-key match, so the US
+path is what it always was (asserted over every row of the table) and the
+fallback can only add. `MAPVK_VK_TO_CHAR` and not `ToUnicode`: `ToUnicode`
+consumes the kernel's pending dead-key state, so calling it on every WM_KEYDOWN
+would eat the accent a reader had begun composing in the find field.
+
+Two smaller things came with it. A digit row now also matches with Shift on a
+layout that shifts its digits -- `key_char` is not the digit there, which is how
+the case is recognised, and on US the rule is inert. And the bare `+`/`-` keys
+now require no Ctrl or Alt: the old switch tested the virtual-key code and never
+looked at `mods`, so Ctrl+Alt+Shift+= zoomed.
+
+### (b) AltGr is Ctrl+Alt, and the port had two Ctrl+Alt accelerators.
+
+On every European layout AltGr is reported as Ctrl+Alt. Measured on FR: AltGr+`=`
+is `}`, AltGr+`0` is `@`, AltGr+`4` is `{`, AltGr+`5` is `[`. The table's Smaller
+/ Larger Text rows are Ctrl+Alt+`-`/`=`, from the mac's Cmd+Alt -- where Option
+is not AltGr. So **a French reader typing `}` -- in the find field, in the page
+field, anywhere -- also resized the Markdown text**, and the `}` was inserted as
+well. This is a porting incompatibility rather than a transcription error: the
+original has nothing to say about it.
+
+Settled in the only direction that can be right: a keystroke the layout turns
+into a character is text, and text is not an accelerator. `spdf_win_input` gained
+`text_key`, and the window answers it from the QUEUE rather than from the layout.
+`TranslateMessage` runs before `DispatchMessageW`, so by the time a WM_KEYDOWN
+reaches the window procedure the WM_CHAR it produces is already sitting there,
+and `PeekMessageW(..., WM_CHAR, WM_CHAR, PM_NOREMOVE)` reads it without taking
+it -- no `ToUnicodeEx`, no dead-key side effect, no version gate. It gates ONLY
+the Ctrl+Alt rows: Ctrl+F queues a WM_CHAR too (0x06), and gating on that would
+disable the whole table, so the test is `>= 0x20` -- the same one
+`spdf_win_chrome_text.h` applies to what it will insert.
+
+Neither `key_char` nor `text_key` is cached, so WM_INPUTLANGCHANGE needs no
+handler: a reader who switches layout mid-session gets the new answer on the
+next keystroke, because both are asked of the ACTIVE layout each time. The IME
+is likewise untouched -- the port never calls `ImmAssociateContext`, so every
+window keeps its default context and DefWindowProc's WM_IME_* handling turns a
+composition into the WM_CHARs the find field already accepts. One gap remains
+and is cosmetic rather than a swallow: nothing calls `ImmSetCompositionWindow`,
+so a CJK candidate list appears at the window's origin instead of under the
+caret in the field being typed into. Recorded here rather than fixed; it needs
+the caret's screen position, which only the chrome painter knows.
+
+### (c) The pointer path was already device-independent. Measured, not assumed.
+
+Nothing in `portable/win/src` calls `EnableMouseInPointer`,
+`RegisterTouchWindow`, `SetWindowFeedbackSetting` or `GetMessageExtraInfo`, none
+of it looks for `MOUSEEVENTF_FROMTOUCH`, and there is no
+WM_POINTER*/WM_TOUCH/WM_GESTURE handler -- so Windows' default mouse synthesis
+for touch and pen is untouched and nothing drops an injected message. Two-finger
+tap arrives as WM_RBUTTONDOWN and is already routed.
+
+The wheel is the part that needed work, and not because it was wrong. A
+Precision Touchpad does not send notches: it reports the finger's travel as a
+stream of small arbitrary deltas (3, 8, 17), sends its inertial tail the same
+way, and delivers PINCH as Ctrl+wheel with those same small deltas. The
+arithmetic in `on_wheel` was already fractional and therefore correct -- but it
+was inline in a window procedure, which cannot be tested, so nothing said so. It
+moved to `spdf_win_wheel.h` (pure, no Win32) and `wheel_input_test.c` now pins
+the properties that matter: a delta of 1 moves the view by more than the canvas's
+0.01 px "did anything change" threshold at every scroll-lines setting; 120 deltas
+of 1 travel exactly as far as one delta of 120; a realistic burst summing to 120
+does too; 120 pinch steps of 1 compose to exactly one notch's zoom factor; and
+the notch formula agrees with `spdf_win_page_wheel.h`'s independent copy at every
+DPI and setting, so Alt+wheel cannot come to page at a different rate than the
+wheel scrolls.
+
+### (d) DPI hit-testing parity holds at 96, 120, 144 and 192. It is not the bug.
+
+Painter and router take the SAME `dpi_scale` from the same place --
+`spdf_win_window_dpi_scale(window)`, which is `window->dpi / 96`, filled into
+`spdf_win_scene` in `spdf_win_window_target.h` and into `spdf_win_input` in
+`spdf_win_window_input.h`. The Direct2D target is created at 96 dpi, so DIPs are
+device pixels and there is no second scale anywhere; the router receives client
+device pixels, which is the unit every rect in `SpdfWinChromeLayout` is expressed
+in. That is the structural argument. `dpi_hit_parity_test.c` is the measurement:
+for every toolbar control (both halves of all four pills), the sidebar's
+segments, its filter field and its list rows, and the five bands, it takes the
+rect the PAINTER would draw and asserts that the whole router --
+`spdf_win_chrome_input_route`, band classification included -- names that
+control, at all four DPIs, on a window sized in real device pixels. 255 checks,
+0 failures. Nothing is off at 150%.
+
+### (e) Nothing in the port can make the window uninteractable.
+
+The five ways a Win32 window is visible and takes no input are
+`WS_EX_TRANSPARENT`, `WS_EX_LAYERED` with alpha 0, `WS_EX_NOACTIVATE`,
+`WS_DISABLED`, and answering `MA_NOACTIVATE` to WM_MOUSEACTIVATE (or eating
+WM_NCACTIVATE). A grep across `portable/win/src` for `GWL_EXSTYLE`,
+`SetLayeredWindowAttributes`, `WM_MOUSEACTIVATE` and `WM_NCACTIVATE` finds
+exactly one hit: `spdf_win_gpu_prewarm.h`'s offscreen 64x64 `WS_EX_TOOLWINDOW |
+WS_EX_NOACTIVATE` popup, which is never shown and dies with its worker
+(section 11). The Markdown swap's "held transparent while it settles" is not a
+transparent window at all -- `spdf_win_canvas_swap.cpp` keeps drawing the old
+document and simply never composes an empty frame -- and the tab hand-off drag
+takes a capture and releases it, touching no style.
+
+`EnableWindow` is a different matter and was read rather than grepped past: the
+five owner-modal dialogs (About, Keyboard Shortcuts, Properties, the comment
+editor, the print dialog) each disable the parent while they are up, which is
+the standard pattern and also the standard way to leave a main window
+permanently dead. All five were checked line by line and all five are correctly
+paired: the disable happens only after the dialog window exists, the re-enable
+is the statement immediately after the modal loop, and there is no `return`
+between them. One thing near it is worth recording and is NOT fixed here --
+those loops end on `GetMessageW(...) > 0`, which is also how WM_QUIT arrives,
+and they consume it rather than re-posting it, so a quit that lands while a
+modal is up would never reach the outer pump.
+
+`window_activation_test.c` is the live half: a real app window, and after
+create, show, full screen, leaving full screen, maximize and restore the extended
+style carries none of the three bits, the window stays enabled,
+`WindowFromPoint` over the canvas returns it, WM_MOUSEACTIVATE answers
+`MA_ACTIVATE` and WM_NCACTIVATE is not eaten. It also drives the new `text_key`
+through the real queue: a posted WM_KEYDOWN with a `}` behind it reports text,
+one with 0x06 behind it does not. 26 checks. What it cannot reach is stated
+rather than glossed -- the Markdown reload and the hand-off drag live on `struct
+app`, which no test can build; what stands for them is the invariant above plus
+the sweep over every transition the window performs itself.
+
+### What this leaves
+
+(a) and (b) are real and are fixed. Either alone makes the app feel broken to a
+French reader, and (b) makes typing in the find field do something alarming. But
+neither makes an app take NO input, so neither is the whole of the original
+report -- section 11's two launch defects remain the best explanation for that,
+and the reporter had not run a build containing them. (c), (d) and (e) are
+negative results, recorded as such: the pointer path, the DPI path and the
+window's activation state were measured and are not where the input went.
+
+Reproduce the layout measurements without the app: `keyboard_layout_test.c` does
+them itself with `LoadKeyboardLayoutW` + `VkKeyScanExW` + `MapVirtualKeyExW`, and
+SKIPS with a printed reason on a machine where the French layout is not
+installed, so the evidence is either collected or its absence is said out loud.
