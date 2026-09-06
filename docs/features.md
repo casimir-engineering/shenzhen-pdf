@@ -423,7 +423,7 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 | Presentation mode, printing, properties | Yes | Yes | Yes (print preview; Windows' own dialog where it opens) |
 | OCR and translation | Yes | Yes | Yes (winget Tesseract, pip OCRmyPDF, Argos in a venv) |
 | Markdown renderer, diagrams, math | Yes | — | Markdown and math via MuPDF's HTML engine; diagrams still draw as code boxes |
-| Nested chapters, Option+scroll paging | Yes | — | Nested chapters yes; Alt+scroll paging not yet |
+| Nested chapters, Option+scroll paging | Yes | — | Yes (Alt+scroll) |
 | Auto-updater | Developer ID + notarization | minisign (deb, tarball) | Authenticode, pending a signed release |
 
 Linux additionally offers an optional resident mode for instant launches.
