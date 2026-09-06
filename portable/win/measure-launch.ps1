@@ -110,14 +110,16 @@ New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 # false positive -- it blocked launch.budget for a whole run on a live,
 # composited desktop (2026-09-05), whose screenshots prove it was awake.
 # LogonUI running always means locked; LockApp only when it is scheduled.
-$locked = (@(Get-Process LogonUI -ErrorAction SilentlyContinue).Count +
-           @(Get-Process LockApp -ErrorAction SilentlyContinue |
-             Where-Object { $_.Threads[0].WaitReason -ne 'Suspended' }).Count) -gt 0
+. (Join-Path $PSScriptRoot 'desktop-available.ps1')
+# Only the states that stop a window being SHOWN: this case measures painting,
+# not input, and it stays valid while the screen saver owns the input desktop.
+$unavailable = Spdf-DesktopNotComposited
+$locked = [bool]$unavailable
 if ($locked -and ($WindowBudgetMs -gt 0 -or $FirstPageBudgetMs -gt 0)) {
-  Write-Output "error=workstation-locked"
+  Write-Output ("error=desktop-unavailable detail=" + $unavailable)
   exit 68
 }
-$samplerState = if ($locked) { 'BLOCKED: workstation locked, desktop not composited' } else { 'active' }
+$samplerState = if ($locked) { 'BLOCKED: ' + $unavailable } else { 'active' }
 
 if (-not ('SpdfLaunch' -as [type])) {
   # /unsafe for the LockBits pointer walk in SampleClientColors; the references
