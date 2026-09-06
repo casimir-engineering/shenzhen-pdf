@@ -272,8 +272,20 @@ static DWORD WINAPI drive_dialog(LPVOID unused) {
     (void)unused;
 
     /* Poll rather than sleep-then-look: the window is created synchronously by
-     * the show function, but this thread may start before it. */
-    while (waited < 5000 && !(dialog = FindWindowW(DIALOG_CLASS, NULL))) {
+     * the show function, but this thread may start before it.
+     *
+     * AND WAIT FOR IT TO BE VISIBLE, not merely findable. FindWindowW finds a
+     * window the moment CreateWindowExW returns -- before its printer combo,
+     * its radio groups and its preview exist -- and a driver that wins that
+     * race reads an empty combo, writes into controls that are not there yet,
+     * and then fails a dozen assertions about state it never actually set. The
+     * dialog is shown only once it is completely built, so IsWindowVisible is
+     * exactly the "a reader could now use this" line, and it is the only one
+     * this thread is entitled to act after. */
+    while (waited < 5000) {
+        dialog = FindWindowW(DIALOG_CLASS, NULL);
+        if (dialog && IsWindowVisible(dialog)) break;
+        dialog = NULL;
         Sleep(25);
         waited += 25;
     }
