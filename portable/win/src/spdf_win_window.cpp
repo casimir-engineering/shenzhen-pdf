@@ -351,6 +351,12 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             memset(&input, 0, sizeof(input));
             input.kind = SPDF_WIN_INPUT_KEY;
             input.key = (unsigned)wparam;
+            /* THE SAME KEY AS THE ACTIVE LAYOUT SPELLS IT, and whether the
+             * layout made text of it. Both are spdf_win_window.h's fields and
+             * both are pure Win32 -- deciding what they MEAN is the keymap's,
+             * which is the division this file already states for `key`. */
+            input.key_char = key_char_for(hwnd, (unsigned)wparam);
+            input.text_key = key_is_text(hwnd);
             if (dispatch(window, &input)) return 0;
             /* AN ESCAPE NOBODY WANTED. It used to close the window from here,
              * which macOS never does and which bit anyone who cancelled a search
