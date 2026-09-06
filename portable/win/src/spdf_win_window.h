@@ -167,6 +167,32 @@ typedef struct spdf_win_input {
     float y;
     unsigned key;
     unsigned mods;
+    /* SPDF_WIN_INPUT_KEY only: THE SAME KEY, AS THE ACTIVE LAYOUT SPELLS IT.
+     *
+     * `key` is a virtual-key code, and a virtual-key code is a property of the
+     * LAYOUT rather than of the keyboard: VK_OEM_MINUS is on no French key at
+     * all (MapVirtualKeyExW maps it to scan code 0 under 0000040C), so a keymap
+     * that names it has no '-' on a French machine. This is the character the
+     * key produces with no modifiers, uppercased for letters, or 0 when it
+     * produces none (a function key, an arrow, a dead key) -- which is what
+     * makes an accelerator layout-independent, exactly as the macOS original's
+     * character keyEquivalents are. See spdf_win_menu_layout.h.
+     *
+     * Both are carried, not one: a command keyed to a POSITION (the arrows,
+     * Page Up, F11) wants the virtual-key code, and a command keyed to a GLYPH
+     * ('-', ',') wants the character. */
+    unsigned key_char;
+    /* SPDF_WIN_INPUT_KEY only: this keystroke is TEXT -- the layout turned it
+     * into a printable character, which TranslateMessage has already queued as
+     * a WM_CHAR behind this WM_KEYDOWN.
+     *
+     * It exists for AltGr. On every European layout AltGr is reported as
+     * Ctrl+Alt, so AltGr+'=' (a French '}') is indistinguishable from a
+     * deliberate Ctrl+Alt+= accelerator by modifiers alone. The keystroke that
+     * produces a character is the one that is text. Only the Ctrl+Alt
+     * accelerators consult this; Ctrl+letter produces a WM_CHAR too -- a control
+     * character -- and gating on it would kill the whole table. */
+    int text_key;
     /* SPDF_WIN_INPUT_DROP_FILE only: the dropped path, UTF-16, BORROWED and
      * valid only for the duration of the call. */
     const wchar_t* text;
