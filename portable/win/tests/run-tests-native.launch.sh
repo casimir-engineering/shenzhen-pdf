@@ -32,7 +32,7 @@
 # Sourced by run-tests-native.sh, never executed. Needs harness-lib.sh and
 # run-tests-native.lib.sh.
 
-LAUNCH_NATIVE_CASES=(launch.budget window.stress)
+LAUNCH_NATIVE_CASES=(launch.budget launch.invariant window.stress)
 LAUNCH_WINDOW_BUDGET_MS=300
 LAUNCH_FIRST_PAGE_BUDGET_MS=600
 LAUNCH_RUNS=5
@@ -43,6 +43,66 @@ LAUNCH_RUNS=5
 STRESS_DURATION_MS=20000
 STRESS_PING_EVERY_MS=250
 STRESS_PING_TIMEOUT_MS=500
+
+# THE LAUNCH INVARIANT (portable/win/launch-invariant.ps1): after a launch,
+# every window of the app is enabled, not hung and reachable -- its tab strip
+# inside a work area it overlaps by 80 x 80 -- and the window the session left
+# focused is the topmost of the app's windows. Four launches that broke it, each
+# from a session.yaml written into a private --state-dir on the live display
+# geometry: a late --behind sibling that came up OVER the focused window at its
+# exact frame (z-index 0, the keyboard underneath it); a saved frame with a
+# 60 x 28 corner on screen; one with its title bar 1100 px above the display;
+# one on a display that is not attached. windows-native-observations.md,
+# section 13, has the measurements. BLOCKED (68) on a locked workstation, as
+# launch.budget is: a z-order and a work area describe a desktop somebody sees.
+case_launch_invariant() {
+  local case_name="launch.invariant"
+  if [[ -n "$MUPDF_READY" ]]; then
+    record "$case_name" BLOCKED "$MUPDF_READY"
+    return
+  fi
+  if ! command -v powershell.exe > /dev/null 2>&1; then
+    record "$case_name" BLOCKED "powershell.exe is not on PATH (launch-invariant.ps1 drives the launches)"
+    return
+  fi
+  local fixture="$REPO_ROOT/portable/win/tests/fixtures/golden.pdf"
+  local fixture2="$REPO_ROOT/portable/win/tests/fixtures/outline.pdf"
+  if [[ ! -f "$fixture" || ! -f "$fixture2" ]]; then
+    record "$case_name" BLOCKED "fixtures golden.pdf / outline.pdf are missing under portable/win/tests/fixtures"
+    return
+  fi
+  native_app_build
+  if [[ $? -ne 0 ]]; then
+    record "$case_name" FAIL "ShenzhenPDF.exe does not build (see $OUT/app-build.log)"
+    return
+  fi
+  local log="$OUT/launch-invariant.log"
+  local out_dir="$SCRATCH/launch-invariant"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$REPO_ROOT/portable/win/launch-invariant.ps1")" \
+      -Exe "$SPDF_OUT\\ShenzhenPDF.exe" -Pdf "$(cygpath -w "$fixture")" -Pdf2 "$(cygpath -w "$fixture2")" \
+      -OutDir "$(cygpath -w "$out_dir")" > "$log" 2>&1
+  local rc=$?
+  case $rc in
+    0)
+      record "$case_name" PASS "behind, sliver, strip, gone: every window enabled, unhung, reachable; the focused window on top"
+      ;;
+    1)
+      record "$case_name" FAIL "the launch invariant does not hold: $(grep -m 3 'FAIL' "$log" | tr '\n' ';')"
+      log_tail "$log" 30
+      ;;
+    68)
+      record "$case_name" BLOCKED "the workstation is locked; unlock and re-run (see $log)"
+      ;;
+    65)
+      record "$case_name" FAIL "a launch produced no window (launch-invariant.ps1 exited 65)"
+      log_tail "$log" 20
+      ;;
+    *)
+      record "$case_name" FAIL "launch-invariant.ps1 exited $rc"
+      log_tail "$log" 20
+      ;;
+  esac
+}
 
 case_launch_budget() {
   local case_name="launch.budget"

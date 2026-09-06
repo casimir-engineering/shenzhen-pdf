@@ -407,6 +407,7 @@ selected d2d.compose-window-plain && case_d2d_compose_window_plain
 selected d2d.compose-window-dark && case_d2d_compose_window_dark
 selected launch.budget && case_launch_budget
 selected window.stress && case_window_stress
+selected launch.invariant && case_launch_invariant
 case_cross_host
 
 if [[ ${#names[@]} -eq 0 ]]; then
