@@ -28,6 +28,8 @@
  * the health check confirms pendingTag.
  */
 #include "spdf_win_updater.h"
+
+#include "spdf_win_modal_scope.h"
 #include "spdf_win_updater_internal.h"
 
 #include <windows.h>
@@ -70,10 +72,23 @@ static int ask(const wchar_t* title, const wchar_t* heading, const wchar_t* body
     TASKDIALOG_BUTTON tb[4];
     int pressed = 0;
     int i;
+    /* THE OWNER MAY BE GONE. g.main is remembered at start-up and never
+     * cleared; a task dialog parented on a destroyed HWND fails, and the
+     * MessageBox fallback below fails with it, leaving nothing on screen and no
+     * answer. NULL is a dialog with no owner, which is worse-looking and works.
+     *
+     * THE SCOPE, not because TaskDialog forgets to re-enable -- it does not --
+     * but because it never disabled anything when it FAILED to appear, and
+     * because Windows does not reliably hand the activation back to the owner
+     * afterwards. Every exit from this function now does both.
+     * (spdf_win_modal_scope.h, and section 13 of
+     * portable/docs/windows-native-observations.md.) */
+    HWND owner = g.main && IsWindow(g.main) ? g.main : NULL;
+    SpdfWinModalGuard modal(owner);
 
     memset(&cfg, 0, sizeof(cfg));
     cfg.cbSize = sizeof(cfg);
-    cfg.hwndParent = g.main;
+    cfg.hwndParent = owner;
     cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | TDF_SIZE_TO_CONTENT;
     cfg.pszWindowTitle = title;
     cfg.pszMainInstruction = heading;
@@ -94,10 +109,10 @@ static int ask(const wchar_t* title, const wchar_t* heading, const wchar_t* body
         int rc;
         _snwprintf_s(text, _countof(text), _TRUNCATE, L"%s\n\n%s", heading, body ? body : L"");
         if (count <= 1) {
-            MessageBoxW(g.main, text, title, MB_OK | (question ? MB_ICONINFORMATION : MB_ICONWARNING));
+            MessageBoxW(owner, text, title, MB_OK | (question ? MB_ICONINFORMATION : MB_ICONWARNING));
             return 0;
         }
-        rc = MessageBoxW(g.main, text, title, MB_YESNO | MB_ICONQUESTION);
+        rc = MessageBoxW(owner, text, title, MB_YESNO | MB_ICONQUESTION);
         return rc == IDYES ? 0 : 1;
     }
 }
