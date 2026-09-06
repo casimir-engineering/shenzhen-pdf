@@ -1003,3 +1003,112 @@ Keep Image Colors per document (merge 340ce34f6); Alt+wheel paging by wheel
 distance and in-place Markdown reload (in flight). Each verified from a clean
 build: full suite with only the seven macOS-host cases blocked, ratchet green,
 sidebar differential unchanged at 15,203/0.
+
+## 13. The launches that leave no window to use (2026-09-07)
+
+"The app was never responsive to any user input and not even focusable",
+twice in two days from `dist\ShenzhenPDF-win-x64.exe`, on a state nobody
+else has. A plain launch here is healthy every time (section 11's probe:
+foreground, enabled, z-index 0, answers WM_NULL), so this pass went through
+the restore track that merged after those two fixes -- windows reopened on
+their saved display, the last-used one focused, the others started as
+`--behind` processes -- and put each way it could go wrong on the desktop, with
+a session.yaml written for it into a private `--state-dir` and a probe that
+enumerates every process running from the exe (the launch AND its siblings):
+each window's visibility, enabled and hung state, rect, monitor and work-area
+overlap, z-index among Alt+Tab-sized windows, and what WindowFromPoint finds
+at its centre. 2880 x 1800 at 150%, work area 2880 x 1728.
+
+What holds, measured: two or three saved windows with distinct, equal, absent,
+negative, absurd (`1e300`) or non-numeric `focusedAt`; the focused window's
+document missing, or its only document missing, or held open with no sharing
+by another process (the tab opens empty, the window still claims the front);
+a file argument on top of a two-window session; two launches 60 ms apart
+(four processes, the first launch's focused window in front, the rest behind);
+an exit while maximized (the normal frame is what is saved and restored); a
+frame on a display that is not attached, or wholly off screen with no display
+named (centred on the main display, the saved frame kept). In every one of
+these exactly one window was foreground and topmost, and every window was
+enabled, unhung and clickable at its centre.
+
+Three things do not hold.
+
+1. **A `--behind` sibling can come up OVER the focused window.**
+   SW_SHOWNOACTIVATE withholds activation and nothing else: the window keeps
+   the z-position CreateWindowExW gave it, which is the top. The design has
+   the focused window claim the foreground and BringWindowToTop while the
+   siblings show NOACTIVATE, and that is correct only when every sibling shows
+   FIRST. Measured with a third process started `--window <id> --behind` three
+   seconds after the launch: it came up at z-index 0 at the exact frame of the
+   focused window (z-index 1, still foreground, still holding the keyboard).
+   A window nobody can see has the focus; the window they can see is not
+   active. Which finishes first is decided by the documents -- a launch on a
+   session whose focused window holds a slow document and whose other window
+   holds a small one runs the race the wrong way every time (see 4 below). The
+   sibling now places itself: `spdf_win_window_show_ex(window, 0)` finds the
+   frontmost visible window of the app's class already on the desktop,
+   whichever process owns it, and shows with `SetWindowPos(hwnd, front, ...
+   SWP_NOACTIVATE | SWP_SHOWWINDOW)`, directly beneath it; with none yet it
+   shows on top, inactive, and the focused window's BringWindowToTop passes it.
+   After: the late sibling at z-index 2, the focused window z-index 0 and
+   foreground, its centre its own.
+
+2. **A saved frame with a 60 x 28 corner on screen came back as that corner.**
+   `spdf_win_placement.h` applied a frame exactly whenever its display was
+   attached at its saved rectangle, whatever the frame overlapped -- the
+   identity rule was meant for a frame on a second display, and it also
+   admitted a frame dragged almost entirely off its own. Frame 2820,1700 on a
+   2880 x 1800 display: visible=True, foreground=True, 60 x 28 of it inside the
+   work area (most of that under the taskbar). Focused and, to a person,
+   absent.
+
+3. **A saved frame with its title bar above the display came back as a strip.**
+   Frame y = -1100, height 1211: 1702 x 111 of it inside the work area, which
+   passes the 80 x 80 visibility rule, with the tab strip -- the only title bar
+   this window has, and the only thing to drag it by -- 1100 px above the
+   screen. Windows' own SetWindowPlacement pulls a frame that misses every
+   monitor back to the nearest edge (measured: x = 3500 came back at 1178,
+   y = -1500 at 0) and leaves one that touches a monitor alone, so the partial
+   cases were ours.
+
+   Both are one rule now (rule 4 in `spdf_win_placement.h`): a frame is applied
+   as saved only when it is REACHABLE -- 80 x 80 inside a work area with its top
+   edge inside that work area. Otherwise it is parked: clamped whole into the
+   work area of its home display (the one it overlaps most, else the one it
+   names when that is attached), keeping the reader's size and as much of the
+   position as fits; with no home, centred on the main display as before. The
+   parked rect is still not what is saved: after each of these launches the
+   file kept 2820,1700 and 228,-1100. After: the corner frame at 1178,517
+   (whole), the strip frame at 228,0 (whole), both foreground.
+
+4. **The first paint has no budget, and the siblings show while it runs.** The
+   window paints its first frame before ShowWindow so it appears complete; on
+   a page with 400,000 stroked paths that frame took longer than 45 s, during
+   which the focused window was hidden and IsHungAppWindow-hung while its
+   sibling was on screen, inactive, with nobody in the foreground. A reader
+   sees an app that opened a window it did not focus, and a second window that
+   arrives whenever it arrives and takes the foreground then. Not fixed here:
+   it is the canvas's first-frame rule (spdf_win_canvas_set_async_visible
+   starts async rendering from the SECOND frame), and a bound on it is a
+   rendering decision, not a placement one. Recorded so the next report of a
+   window that "never" appears is read against it.
+
+Pinned: `placement_test.c` section 4 (reachable, home display, clamp, resolve,
+parked flag, on this desktop's geometry) and `launch.invariant`
+(`portable/win/launch-invariant.ps1`), which writes the four sessions --
+behind, sliver, strip, gone -- on the live display geometry, launches each,
+starts the late sibling for the first, and asserts every window of the app
+enabled, unhung and reachable with the focused window topmost; parked
+scenarios also assert the file still holds the saved frame after exit. Against
+the pre-fix dist exe it fails 4 assertions (topmost is the late sibling; the
+corner and the strip unreachable); against the fix it passes. BLOCKED (68) on
+a locked workstation, like `launch.budget`. The foreground is reported and not
+judged, for section 11's reason.
+
+Not reproduced, and not verifiable here: a launch while another application
+holds the foreground lock (SetForegroundWindow refused). The code path after a
+refusal still shows, raises and flashes, and the window is enabled; forcing
+the refusal needs a foreground process with recent input, which a harness on
+this desktop is not. Nor is the reporter's own session known -- the three
+defects above are the only launches found on which a person could see a window
+of the app and not use it.
