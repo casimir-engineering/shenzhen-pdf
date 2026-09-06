@@ -89,7 +89,16 @@ extern "C" {
  * for a human is the normal case and must never be cut short. 4 s is generous
  * against the measurements here -- the classic dialog and the driver's property
  * sheet both put a window up in well under a second -- and short enough that a
- * reader on a broken host is not left wondering. */
+ * reader on a broken host is not left wondering.
+ *
+ * TWO RULES KEEP "A WINDOW OF OURS" HONEST, and both were learned the hard way
+ * (portable/docs/windows-native-observations.md section 13). The calling thread
+ * keeps pumping while it waits, so a window IT puts up -- the updater's task
+ * dialog fires into exactly that pump -- is never the print dialog and is not
+ * counted. And a window that appears and then CLOSES AGAIN while PrintDlgEx has
+ * still not returned was not the dialog either: the clock is re-armed. Without
+ * those two the owner stays disabled with nothing on screen, forever, which is
+ * a hung app in every way a person can check. */
 #define SPDF_WIN_PRINT_DIALOG_WATCHDOG_MS 4000
 
 /* --- Windows' own dialog, watchdogged ------------------------------------- */

@@ -40,6 +40,7 @@
 
 #include "spdf_win_about.h"        /* spdf_win_about_dark_caption */
 #include "spdf_win_chrome_theme.h" /* the port's own palette */
+#include "spdf_win_modal_scope.h"
 #include "spdf_win_print_preview.h"
 
 #include <uxtheme.h>
@@ -293,7 +294,6 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
     HWND hwnd, combo, focus;
     RECT client;
     MSG msg;
-    BOOL parent_was_enabled = FALSE;
     int i, at, W, y, group_w, right, dpi;
 
     if (err && err_len) err[0] = '\0';
@@ -436,8 +436,13 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
                                                W - S(PD_COL_W + PD_MARGIN),
                                                client.bottom - S(PD_MARGIN * 2 + PD_BUTTON_H + 8));
     print_dialog_changed(hwnd, &st);
-    if (parent) parent_was_enabled = IsWindowEnabled(parent);
-    if (parent && parent_was_enabled) EnableWindow(parent, FALSE);
+    /* CENTRED ON THE OWNER'S MONITOR before it is shown. CW_USEDEFAULT cascades
+     * onto the PRIMARY display; with the app on a second one that is a modal
+     * dialog the reader cannot see in front of a window they cannot click. */
+    spdf_win_modal_place_on_owner(hwnd, parent);
+    /* From here the owner is disabled, and there is no path out of this
+     * function that leaves it that way -- see spdf_win_modal_scope.h. */
+    SpdfWinModalGuard modal(parent);
     ShowWindow(hwnd, SW_SHOW);
     focus = GetDlgItem(hwnd, SPDF_WIN_PD_ID_PRINTER);
     if (focus) SetFocus(focus);
@@ -458,10 +463,7 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
         DispatchMessageW(&msg);
     }
 
-    if (parent && parent_was_enabled) {
-        EnableWindow(parent, TRUE);
-        SetForegroundWindow(parent);
-    }
+    modal.end();
     /* The preview holds a render service with a worker and a MuPDF document;
      * it goes down before the brushes it never touched, because freeing it
      * drains callbacks and those must not run against a half-torn state. */
