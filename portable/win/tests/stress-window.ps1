@@ -89,13 +89,14 @@ if (-not (Test-Path -LiteralPath $Pdf)) { Write-Output "error=no-pdf path=$Pdf";
 if ($OutDir -eq '') { $OutDir = Join-Path $env:TEMP 'spdf-stress' }
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
-# Same test as measure-launch.ps1, for the same reason: LogonUI running always
-# means locked; a LockApp lingers suspended long after an unlock and only
-# counts when it is scheduled.
-$locked = (@(Get-Process LogonUI -ErrorAction SilentlyContinue).Count +
-           @(Get-Process LockApp -ErrorAction SilentlyContinue |
-             Where-Object { $_.Threads[0].WaitReason -ne 'Suspended' }).Count) -gt 0
-if ($locked) { Write-Output "error=workstation-locked"; exit 68 }
+# Can this desktop take synthetic input at all? Not only the lock screen: the
+# SCREEN SAVER switches the input desktop too, and on that desktop
+# GetForegroundWindow answers NULL and SendInput reaches nothing -- which is
+# how this case first failed, reporting a refused foreground instead of the
+# reason. desktop-available.ps1 asks Windows directly.
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'desktop-available.ps1')
+$unavailable = Spdf-DesktopUnavailable
+if ($unavailable) { Write-Output ("error=desktop-unavailable detail=" + $unavailable); exit 68 }
 
 if (-not ('SpdfStress' -as [type])) {
   Add-Type -ReferencedAssemblies System.Drawing -Language CSharp -TypeDefinition @'
@@ -410,6 +411,10 @@ function Run-Flood {
 
   if (-not [SpdfStress]::ForceForeground($hwnd)) {
     $fg = [SpdfStress]::GetForegroundWindow()
+    # A screen saver can start DURING the run, so ask again before blaming the
+    # app: an unavailable desktop is this machine's state, not a defect.
+    $late = Spdf-DesktopUnavailable
+    if ($late) { Write-Output ("error=desktop-unavailable detail=" + $late); $script:rc = 68; return }
     Write-Output ("error=foreground-refused foreground_class={0} hung_windows={1}" -f [SpdfStress]::ClassOf($fg), [SpdfStress]::HungWindows([uint32]$proc.Id))
     $script:rc = 69
     return

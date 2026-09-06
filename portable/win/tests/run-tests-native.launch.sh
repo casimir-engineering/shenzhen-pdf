@@ -82,7 +82,7 @@ case_launch_budget() {
       log_tail "$log" 30
       ;;
     68)
-      record "$case_name" BLOCKED "the workstation is locked or the desktop is not composited; unlock and re-run (see $log)"
+      record "$case_name" BLOCKED "$(desktop_block_reason "$log")"
       ;;
     65|66)
       record "$case_name" FAIL "no window appeared (measure-launch.ps1 exited $rc)"
@@ -149,7 +149,7 @@ case_window_stress() {
       log_tail "$log" 30
       ;;
     68)
-      record "$case_name" BLOCKED "the workstation is locked or the desktop is not composited; unlock and re-run (see $log)"
+      record "$case_name" BLOCKED "$(desktop_block_reason "$log")"
       ;;
     69)
       record "$case_name" BLOCKED "the desktop refused the launched window the foreground, so SendInput could reach nothing (see $log)"
@@ -163,6 +163,19 @@ case_window_stress() {
       log_tail "$log" 20
       ;;
   esac
+}
+
+# The script's own reason for blocking, which names the state it found (the
+# lock screen, the screen saver's desktop, a session with no input desktop).
+# The generic sentence is only the fallback for a log that lacks the line.
+desktop_block_reason() {
+  local detail
+  detail=$(sed -n 's/^error=desktop-unavailable detail=//p' "$1" 2>/dev/null | tail -1)
+  if [ -n "$detail" ]; then
+    printf '%s (see %s)' "$detail" "$1"
+  else
+    printf 'the desktop cannot take synthetic input; unlock the session and re-run (see %s)' "$1"
+  fi
 }
 
 # The ping line and the final repaint, for the record.
