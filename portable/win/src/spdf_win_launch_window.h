@@ -148,6 +148,16 @@ static int run_window(app* a, spdf_win_d2d* d2d, const wchar_t* path_arg, int wi
             /* A sibling shows behind the window the reader left focused; every
              * other launch claims the foreground (spdf_win_window_show_ex). */
             spdf_win_window_show_ex(window, !behind);
+            /* THE APP NOW WRITES DOWN WHAT STATE IT CAME UP IN. Three lines
+             * into <state dir>\launch-health.log, at 1 s, 5 s and 30 s from
+             * here, plus a `stall` line whenever the watchdog finds the UI
+             * thread's heartbeat older than three seconds. Right after the show
+             * because that is the moment every field of the line becomes
+             * meaningful (there is no z-index and no foreground before it), and
+             * because a launch nobody is standing over is the only witness to
+             * the report this exists for -- spdf_win_health_log.h, and section
+             * 13 of portable/docs/windows-native-observations.md. */
+            spdf_win_health_log_start(spdf_win_window_native_handle(window));
             /* The launch tab was shown before this window existed, so it
              * missed the arming in show_selected_tab(). After the first
              * paint, deliberately: the launch frame stays synchronous by

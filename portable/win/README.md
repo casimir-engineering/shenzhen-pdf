@@ -127,6 +127,32 @@ never touched. To undo an install by hand instead: delete the install folder,
 delete the `.lnk`, and `reg delete` the `Uninstall\ShenzhenPDF` key and the
 association keys above.
 
+**When a window misbehaves, the app has already written it down.** Every
+windowed launch appends one line to `<state dir>\launch-health.log` at 1 s, 5 s
+and 30 s after the window is shown — foreground, enabled, visible, iconic, rect,
+monitor, on-screen, z-index, hung windows of the process, modal state, the input
+messages the window procedure received, paints completed, and the UI thread's
+heartbeat — plus a `stall` line from a watchdog thread whenever that heartbeat
+goes older than three seconds, which is the one thing no UI-thread timer can
+report. It costs an `InterlockedIncrement` per counted message and a
+`GetTickCount64` per turn of the message loop
+(`portable/win/src/spdf_win_health.h`, `spdf_win_health_log.h`).
+
+```bat
+ShenzhenPDF.exe --diagnose > health.txt    :: every live window + every log's tail
+ShenzhenPDF.exe --print-layout 1680 1200 1.5   :: where each toolbar control is
+```
+
+`--diagnose` prints one line per live window of class `ShenzhenPDFWindow` on the
+desktop, whatever process owns it, then the tail of every `launch-health.log` it
+can find, and exits 0. **Redirect it**: the exe is `/SUBSYSTEM:WINDOWS` and
+writes to whatever standard output handle it inherited. `--print-layout` prints
+the chrome bands and every toolbar control as `kind name x y w h` in client
+device pixels, from the same layout the painter and the input router share — it
+is how `portable/win/tests/launch-health.ps1` clicks the *button* rather than a
+coordinate measured once. The field guide is section 13 of
+`portable/docs/windows-native-observations.md`.
+
 **Portable mode is explicit and self-contained.** A file named
 `ShenzhenPDF.portable` next to the exe (or `--portable`) moves the state to
 `<exe dir>\ShenzhenPDF-data`, so a copy on a USB stick carries its own session

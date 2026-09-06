@@ -15,6 +15,12 @@
  * an HWND knows (maximized, hovered button, held button), pushed to the model
  * the chrome painter reads. See spdf_win_window_caption.h. */
 #include "spdf_win_chrome_model.h"
+/* The launch-health counters. One call at the top of window_proc and one after
+ * EndPaint; both are a switch and an InterlockedIncrement, and the whole reason
+ * they are here is that "the window received no input at all" and "the window
+ * received the input and did nothing with it" look identical from outside.
+ * spdf_win_health.h says what is done with them. */
+#include "spdf_win_health.h"
 #include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 
 #include <windowsx.h> /* GET_X_LPARAM / GET_Y_LPARAM */
@@ -137,6 +143,10 @@ float spdf_win_window_dpi_scale(const spdf_win_window* window) {
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     spdf_win_window* window = (spdf_win_window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
 
+    /* BEFORE the switch, so a message a handler returns early on is still
+     * counted: the counters answer "did it arrive", not "was it used". */
+    spdf_win_health_note_message(msg);
+
     if (msg == WM_NCCREATE) {
         CREATESTRUCTW* cs = (CREATESTRUCTW*)lparam;
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
@@ -150,6 +160,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             BeginPaint(hwnd, &ps);
             paint(window);
             EndPaint(hwnd, &ps);
+            /* AFTER EndPaint, so the count is frames COMPLETED. */
+            spdf_win_health_note_paint();
             return 0;
         }
         /* D2D repaints the whole client area every time, so letting GDI erase
