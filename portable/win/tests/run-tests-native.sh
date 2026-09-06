@@ -115,9 +115,11 @@ CORE_SET="portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c porta
 # The Windows-internal Direct2D compose comparison.
 . "$TESTS_DIR/run-tests-native.d2d.sh"
 # The launch budget: window visible and first page painted inside a generous
-# time, measured by portable/win/measure-launch.ps1 on the built exe. And the
-# window stress: the UI thread still answering after twenty seconds of input
-# and reloads (portable/win/tests/stress-window.ps1).
+# time, measured by portable/win/measure-launch.ps1 on the built exe. Beside
+# it, launch.invariant (every launch leaves one usable window), launch.health
+# (real input, checked against the launch-health.log the app writes about
+# itself) and window.stress (the UI thread still answering after twenty
+# seconds of input and reloads).
 . "$TESTS_DIR/run-tests-native.launch.sh"
 
 # --- the app itself --------------------------------------------------------
@@ -408,6 +410,7 @@ selected d2d.compose-window-dark && case_d2d_compose_window_dark
 selected launch.budget && case_launch_budget
 selected window.stress && case_window_stress
 selected launch.invariant && case_launch_invariant
+selected launch.health && case_launch_health
 case_cross_host
 
 if [[ ${#names[@]} -eq 0 ]]; then

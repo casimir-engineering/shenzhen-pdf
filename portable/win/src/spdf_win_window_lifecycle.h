@@ -242,7 +242,20 @@ int spdf_win_window_run(spdf_win_window* window) {
     MSG msg;
     if (!window) return 1;
     for (;;) {
-        BOOL got = GetMessageW(&msg, NULL, 0, 0);
+        BOOL got;
+        /* THE PUMP'S HEARTBEAT, in two halves, and the halves are the point.
+         * A thread parked in GetMessageW is IDLE, not stuck, and could sit
+         * there for an hour; a thread that has not come back from
+         * DispatchMessageW for three seconds is stuck. So the loop says which
+         * of the two it is entering, and the watchdog thread in
+         * spdf_win_health_log.h only reports a stall against the second. This
+         * is the one instrument that can see a blocked UI thread at all: a
+         * timer on THIS thread proves the thread runs by firing. Two aligned
+         * stores and one GetTickCount64 (a read of KUSER_SHARED_DATA, no
+         * syscall) per message. */
+        spdf_win_health_pump_wait();
+        got = GetMessageW(&msg, NULL, 0, 0);
+        spdf_win_health_pump_run();
         /* GetMessageW's third state is -1, and it leaves msg untouched. Reading
          * msg.wParam then would hand the shell a garbage exit code, which is
          * exactly the signal every headless check in this port relies on. */
