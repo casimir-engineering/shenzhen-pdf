@@ -17,6 +17,14 @@
  *      somewhere else (the desktop was rearranged: the overlap rule decides).
  *   3. The fallback is CENTRED in the main display's work area, no bigger than
  *      it, and never the corner a clamp would have produced.
+ *   4. A frame is applied as saved only when it is REACHABLE -- its top edge,
+ *      the strip that is its title bar, inside a work area it overlaps by the
+ *      minimum -- whatever its display's identity says; an unreachable frame
+ *      that is still partly on a display is pulled whole into that display's
+ *      work area, and one on no display is centred as in 3. Both are parked.
+ *      Measured on the 2880 x 1800 desktop (windows-native-observations.md,
+ *      section 13): a 60 x 28 corner and a 111 px strip with the title bar
+ *      above the screen were both "usable" by the identity rule alone.
  *
  * Header-only under test -- every rule is inline -- so no `spdf-test-sources`
  * line is needed. Exit code is the whole signal: 0 pass, 1 fail.
@@ -106,8 +114,13 @@ int main(void) {
     CHECK(spdf_win_placement_is_usable(&p, both, 2));
     CHECK(spdf_win_placement_is_usable(&p, builtin_only, 1));
     /* A sliver is not on screen: 79 px of a window poking in from the right
-     * edge of the built-in display, with no display of its own to vouch for it. */
+     * edge of the built-in display -- with no display of its own to vouch for
+     * it, and equally with one: the display's identity does not make the
+     * frame reachable (rule 4). */
     p = placement(rect(1800 - 79, 200, 1300, 900), NULL, rect(0, 0, 0, 0));
+    CHECK(!spdf_win_placement_is_usable(&p, both, 2));
+    p = placement(rect(1800 - 79, 200, 1300, 900), "\\\\.\\DISPLAY1", kBuiltIn);
+    CHECK(spdf_win_placement_display_attached(&p, both, 2));
     CHECK(!spdf_win_placement_is_usable(&p, both, 2));
     /* Exactly 80 x 80 is the threshold, inclusive, as kSPDFMinimumVisibleArea. */
     p = placement(rect(1800 - 80, 200, 1300, 900), NULL, rect(0, 0, 0, 0));
@@ -166,6 +179,89 @@ int main(void) {
      * frame itself, which is how restore tells "parked" from "as saved". */
     fallback = spdf_win_placement_fallback(rect(250, 110, 1300, 900), builtin_only[0].work);
     CHECK(spdf_win_rect_equal(fallback, rect(250, 110, 1300, 900)));
+
+    /* 4. Reachable, and the parking that follows from not being reachable. The
+     * two frames measured on the 2880 x 1800 desktop with its 72 px taskbar,
+     * on that desktop's geometry. */
+    {
+        spdf_win_display desk[1];
+        spdf_win_rect main_work, got;
+        int parked = -1;
+        desk[0] = display("\\\\.\\DISPLAY1", rect(0, 0, 2880, 1800), 72);
+        main_work = desk[0].work;
+        /* The 60 x 28 corner: visible by no rule, on its own attached display.
+         * Parked by CLAMPING onto that display -- the reader's size, pulled to
+         * the bottom-right of the work area -- not centred. */
+        p = placement(rect(2820, 1700, 1702, 1211), "\\\\.\\DISPLAY1", rect(0, 0, 2880, 1800));
+        CHECK(!spdf_win_frame_is_reachable(p.frame, desk, 1));
+        CHECK(spdf_win_placement_home_display(&p, desk, 1) == 0);
+        got = spdf_win_placement_resolve(&p, desk, 1, main_work, &parked);
+        CHECK(parked == 1);
+        CHECK(spdf_win_rect_equal(got, rect(2880 - 1702, 1728 - 1211, 1702, 1211)));
+        /* The 111 px strip: 1702 x 111 of it inside the work area passes the
+         * visibility rule, but its top edge is 1100 px above the display, so
+         * the title bar is not on the screen. Not reachable; pulled down to
+         * y = 0 and otherwise left where the reader had it. */
+        p = placement(rect(228, -1100, 1702, 1211), "\\\\.\\DISPLAY1", rect(0, 0, 2880, 1800));
+        CHECK(spdf_win_frame_is_visible(p.frame, desk, 1));
+        CHECK(!spdf_win_frame_is_reachable(p.frame, desk, 1));
+        CHECK(!spdf_win_placement_is_usable(&p, desk, 1));
+        got = spdf_win_placement_resolve(&p, desk, 1, main_work, &parked);
+        CHECK(parked == 1);
+        CHECK(spdf_win_rect_equal(got, rect(228, 0, 1702, 1211)));
+        /* Reachable is the threshold's own inclusive edge: the top edge on the
+         * work area's first row with 80 rows inside, and 80 columns inside. */
+        p = placement(rect(2880 - 80, 0, 1702, 1211), NULL, rect(0, 0, 0, 0));
+        CHECK(spdf_win_frame_is_reachable(p.frame, desk, 1));
+        got = spdf_win_placement_resolve(&p, desk, 1, main_work, &parked);
+        CHECK(parked == 0 && spdf_win_rect_equal(got, p.frame));
+        p = placement(rect(2880 - 80, -1, 1702, 1211), NULL, rect(0, 0, 0, 0));
+        CHECK(!spdf_win_frame_is_reachable(p.frame, desk, 1));
+        /* Under the taskbar: on the display (its home) but in no work area, so
+         * it is pulled up into the work area rather than centred. */
+        p = placement(rect(100, 1740, 1300, 900), NULL, rect(0, 0, 0, 0));
+        CHECK(spdf_win_placement_home_display(&p, desk, 1) == 0);
+        got = spdf_win_placement_resolve(&p, desk, 1, main_work, &parked);
+        CHECK(parked == 1 && spdf_win_rect_equal(got, rect(100, 1728 - 900, 1300, 900)));
+        /* Wholly off every monitor, its display attached: the display it
+         * names is its home, and it is clamped to that display's edge -- what
+         * SetWindowPlacement itself does with a frame that misses every
+         * monitor, now decided here so the two agree. */
+        p = placement(rect(3500, 100, 1702, 1211), "\\\\.\\DISPLAY1", rect(0, 0, 2880, 1800));
+        CHECK(spdf_win_placement_home_display(&p, desk, 1) == 0);
+        got = spdf_win_placement_resolve(&p, desk, 1, main_work, &parked);
+        CHECK(parked == 1 && spdf_win_rect_equal(got, rect(2880 - 1702, 100, 1702, 1211)));
+        /* Wholly off, and its display gone: no home, centred as in 3. */
+        p = placement(rect(3000, 100, 1702, 1211), "\\\\.\\DISPLAY7", rect(2880, 0, 3440, 1440));
+        CHECK(spdf_win_placement_home_display(&p, desk, 1) == -1);
+        got = spdf_win_placement_resolve(&p, desk, 1, main_work, &parked);
+        CHECK(parked == 1 && spdf_win_rect_equal(got, spdf_win_placement_fallback(p.frame, main_work)));
+        /* Bigger than the work area and off it: shrunk to the work area, at its
+         * origin. Bigger but reachable is applied as saved (the system trims). */
+        p = placement(rect(-100, -200, 4000, 3000), NULL, rect(0, 0, 0, 0));
+        got = spdf_win_placement_resolve(&p, desk, 1, main_work, &parked);
+        CHECK(parked == 1 && spdf_win_rect_equal(got, rect(0, 0, 2880, 1728)));
+        p = placement(rect(0, 0, 4000, 3000), NULL, rect(0, 0, 0, 0));
+        got = spdf_win_placement_resolve(&p, desk, 1, main_work, &parked);
+        CHECK(parked == 0 && spdf_win_rect_equal(got, p.frame));
+        /* The home display is the one overlapped MOST, so a frame straddling
+         * two displays with its top edge above both is pulled onto the one it
+         * is mostly on -- and the clamp is idempotent. */
+        {
+            spdf_win_display two[2];
+            two[0] = display("\\\\.\\DISPLAY1", rect(0, 0, 2880, 1800), 72);
+            two[1] = display("\\\\.\\DISPLAY2", rect(2880, 0, 3440, 1440), 0);
+            p = placement(rect(2500, -200, 1702, 1211), NULL, rect(0, 0, 0, 0));
+            CHECK(spdf_win_placement_home_display(&p, two, 2) == 1);
+            got = spdf_win_placement_resolve(&p, two, 2, two[0].work, &parked);
+            CHECK(parked == 1 && spdf_win_rect_equal(got, rect(2880, 0, 1702, 1211)));
+            CHECK(spdf_win_rect_equal(spdf_win_placement_clamp(got, two[1].work), got));
+        }
+        /* And the measured-good frame of the report, as saved: reachable, as is. */
+        p = placement(rect(228, 228, 1702, 1211), "\\\\.\\DISPLAY1", rect(0, 0, 2880, 1800));
+        got = spdf_win_placement_resolve(&p, desk, 1, main_work, &parked);
+        CHECK(parked == 0 && spdf_win_rect_equal(got, p.frame));
+    }
 
     printf("placement_test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

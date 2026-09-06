@@ -195,14 +195,15 @@ void spdf_win_window_restore_placement(spdf_win_window* window, const spdf_win_p
     window->desired = *saved;
     window->has_desired = 1;
     window->parked = 0;
-    frame = saved->frame;
     attached_displays(&displays);
-    if (!spdf_win_placement_is_usable(saved, displays.items, displays.count)) {
-        /* The main display's work area: the monitor at the origin. */
+    {
+        /* The main display's work area: the monitor at the origin. Only the
+         * frame with no home among the attached displays is centred there;
+         * a frame hanging off a display it is still partly on is pulled onto
+         * that display instead (spdf_win_placement_resolve, rule 4). */
         RECT work = {0, 0, 1280, 800};
         SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-        frame = spdf_win_placement_fallback(saved->frame, rect_of(&work));
-        window->parked = !spdf_win_rect_equal(frame, saved->frame);
+        frame = spdf_win_placement_resolve(saved, displays.items, displays.count, rect_of(&work), &window->parked);
     }
     r.left = frame.x;
     r.top = frame.y;
