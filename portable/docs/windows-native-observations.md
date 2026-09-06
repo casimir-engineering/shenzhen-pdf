@@ -1003,3 +1003,127 @@ Keep Image Colors per document (merge 340ce34f6); Alt+wheel paging by wheel
 distance and in-place Markdown reload (in flight). Each verified from a clean
 build: full suite with only the seven macOS-host cases blocked, ratchet green,
 sidebar differential unchanged at 15,203/0.
+
+## 13. The app now writes down what state it came up in (2026-09-07)
+
+"The app was never responsive to any user input and not even focusable",
+launched from `dist\ShenzhenPDF-win-x64.exe`. Nobody has reproduced it. The same
+exe launched from PowerShell and from Explorer on this machine gives a healthy
+window every time -- foreground, enabled, not hung, answering WM_NULL, and
+repainting under SendInput -- and Windows Error Reporting recorded no hang of
+it. Section 11's two defects were found because someone was standing over the
+bad launch with a probe; this one is not reproducible, so nobody will be.
+
+Every instrument this port had can only measure a launch someone is watching. So
+the app is now its own witness.
+
+### What it writes, and when
+
+Every windowed launch appends to `<state dir>\launch-health.log` -- beside
+settings.yaml and session.yaml, so `--state-dir` moves it with everything else
+and a test never writes into the reader's own state. One line each at **1 s, 5 s
+and 30 s** after the window is shown (one-shot `SetTimer` callbacks on the UI
+thread, so they need no case in the window procedure), plus a **`stall`** line
+from a watchdog thread whenever the UI thread's heartbeat is older than three
+seconds. The file is trimmed to its last 200 lines when it passes 192 KB.
+
+One real line, from a launch on this machine:
+
+```
+2026-09-06T17:53:01.095Z at=5.3s phase=5s pid=16128 hwnd=0x009F0864 build=26.9.2-1
+fg=1 enabled=1 visible=1 iconic=0 rect=380,380,2082,1591 monitor=\\.\DISPLAY1
+mon_rect=0,0,2880,1800 onscreen=1 zindex=0 windows=5 hung=0 modal=0 owned=0
+msg=lbdown:1,keydown:6,char:4,mousemove:2,wheel:0,activate:1,setfocus:1,killfocus:0
+paints=10 last_input_age_ms=156 heartbeat_age_ms=0 pump=busy
+exe=C:\spdf-build\health\ShenzhenPDF.exe
+```
+
+(one line in the file; wrapped here). How to read it:
+
+| field | what it answers |
+| --- | --- |
+| `at=` / `phase=` | seconds since **process creation** (the kernel's timestamp, the same origin `SPDF-LAUNCH` marks use), and which of the four lines this is |
+| `fg=` `enabled=` `visible=` `iconic=` | the four states a reader means by "it does not respond". `fg=0` is section 11's defect 2; `enabled=0` is a modal dialog somewhere |
+| `rect=` `monitor=` `mon_rect=` `onscreen=` | where the window is, which display it is on, and whether its frame overlaps **any** monitor's work area. `onscreen=0` is a window that is visible, enabled, healthy and entirely off the desktop |
+| `zindex=` | position among visible top-level windows larger than 200 px, 0 = in front. Section 11's defect 2 read 1. -1 means it is not in that walk at all |
+| `windows=` `hung=` | every top-level window of this process, and how many `IsHungAppWindow` reports. Section 11's defect 1 read `hung=2` -- and both were invisible windows |
+| `modal=` `owned=` | visible windows owned by this one, and whether one of them is enabled while this one is not, i.e. a modal dialog holding the app |
+| `msg=` | messages the window procedure has **received**, counted before any handler runs. This is the field that separates "the input never arrived" from "the input arrived and nothing happened", which is the whole question |
+| `paints=` | `WM_PAINT`s that returned, counted after `EndPaint` |
+| `last_input_age_ms=` `heartbeat_age_ms=` | ms since the last input message, and since the message loop last went round |
+| `pump=` | `idle` = parked in `GetMessageW` (healthy, however long); `busy` = inside a dispatch. A timer line always says `busy`, because a timer callback IS a dispatch |
+
+### Why the watchdog is a separate thread
+
+A timer that fires on the UI thread proves the UI thread is running **by
+firing**, so no UI-thread timer can ever report a blocked pump -- the exact
+failure the report describes. `spdf_win_window_run` therefore stamps a heartbeat
+in two halves (about to park in `GetMessageW`; back and about to dispatch), and a
+plain thread wakes every second and writes a `stall` line when the heartbeat is
+stale *while the loop is inside a dispatch*. Parked in `GetMessageW` is health,
+not a stall: an idle app waits there for as long as the reader is away.
+
+A modal dialog looks like a stall too, and deliberately: it runs its own message
+loop and never returns to ours, which is exactly what "the window ignores every
+click" feels like. The line says which -- `modal=1` with `owned>0` is a dialog,
+`modal=0` with `owned=0` is a pump that is genuinely stuck.
+
+### Reading it back: `--diagnose`
+
+`ShenzhenPDF.exe --diagnose` prints one line per live window of class
+`ShenzhenPDFWindow` on the desktop, whatever process owns it, then the tail of
+every `launch-health.log` it can find (the resolved state directory, and
+`<exe dir>\ShenzhenPDF-data`), then exits 0. It is one line to type while the
+bad window is still on screen and one block to paste. The in-process half of the
+line (`msg=`, `paints=`, `heartbeat_age_ms=`, `pump=`) prints as `-` for another
+process's window and is read from that process's own log below it.
+
+The exe is `/SUBSYSTEM:WINDOWS` and has no console of its own, so it writes to
+whatever standard output handle it inherited, borrowing the parent's console
+when there is none. **Redirect it** (`ShenzhenPDF.exe --diagnose > health.txt`)
+if nothing appears: measured on this machine, the same call captures its output
+from an interactive prompt but not from inside a `powershell -File` script.
+
+### The test that would have caught it: `launch.health`
+
+`launch.budget` proves a window appeared and painted. It cannot prove the window
+reacts, because it never touches it -- and that is precisely the gap the report
+lives in. `launch.health` (portable/win/tests/launch-health.ps1) launches the
+built exe on `golden.pdf` with a private `--state-dir`, then sends **real
+input** through `SendInput`: PageDown, a click on the toolbar's next-page
+button, then Ctrl+F with `the` typed into it. Each must change more than 1% of
+the window's `PrintWindow(PW_RENDERFULLCONTENT)` capture (0.1% for the find
+sequence, which may only light the toolbar). Then it reads the app's own log
+back and asserts the 1 s line says foreground, enabled, visible, not iconic, not
+hung, z-index 0, a monitor found, on screen, not modal, and that the input
+counters and the paint total have moved by the 5 s line.
+
+Three things it does that are worth keeping:
+
+1. **The click coordinate comes from the app.** `--print-layout W H SCALE`
+   prints the chrome bands and every toolbar control as `kind name x y w h`,
+   from the same pure layout the painter draws and the input router hit-tests
+   (`spdf_win_chrome_toolbar.h`), with pills resolved into the halves that map
+   to commands (`action next-page ...`). The test clicks the *button*, not a
+   coordinate someone measured once at 150% on one machine.
+2. **It asks for the foreground before the 1 s line is written.** Windows grants
+   the foreground to a process launched *by* the foreground process, and a
+   harness under a shell under an editor never is one, so the app's own
+   `SetForegroundWindow` is correctly refused (measure-launch.ps1 measures 0/5
+   here against 5/5 for a hand launch). Asking on its behalf turns `fg=` and
+   `zindex=` into an assertion worth making: not "was it granted the
+   foreground", which is the system's decision, but "given it, does it hold it
+   and stay on top".
+3. **It refuses to type into somebody else's window.** Before every action it
+   re-checks that the app is the foreground window and that `WindowFromPoint` at
+   the click target belongs to the app's process; a locked workstation, or a
+   desktop it cannot come to the front of, exits 68 and reads BLOCKED. Real
+   input goes to whoever is in front, and typing into another application is
+   worse than not testing.
+
+One flake is known and mitigated: if the pointer is left over the tab strip from
+a previous run, the strip's hover preview -- an owned, always-on-top window of
+the same process -- catches the click, which the failing runs' `owned=1` gives
+away. The case parks the pointer over the canvas before it starts. When it does
+fail it runs `--diagnose` against the still-open window and prints it, so the
+next unreproducible thing is diagnosed the first time rather than the third.
