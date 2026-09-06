@@ -27,6 +27,13 @@
  */
 #include "spdf_win_canvas.h"
 #include "spdf_win_chrome_model.h" /* the chrome model the window paints */
+/* The launch-health log the windowed launch arms, and the two switches that
+ * read it back: --diagnose (every live window of this app, plus the tail of
+ * every log it can find) and --print-layout (where the toolbar's controls are,
+ * so a test that sends real input clicks where the router hit-tests). */
+#include "spdf_win_diagnose.h"
+#include "spdf_win_health_log.h"
+#include "spdf_win_layout_print.h"
 #include "spdf_win_layout.h" /* SPDF_WIN_PAGE_MARGIN_* for the initial window size */
 #include "spdf_win_open_app.h" /* the process opener every by-path open goes through, and its seam */
 #include "spdf_win_paths.h"    /* spdf_win_paths_set_state_dir_override, for --state-dir */
@@ -189,7 +196,14 @@ int main(void) {
     int i = 1;
     bool exact = i < argc && wcscmp(argv[i], L"--render-png") == 0;
     bool viewport = i < argc && wcscmp(argv[i], L"--render-window-png") == 0;
-    if (exact || viewport) ++i;
+    /* Leading, like the two above, because it takes positional arguments of its
+     * own and answers before there is a document, a device or a window
+     * (spdf_win_layout_print.h). */
+    bool layout = i < argc && wcscmp(argv[i], L"--print-layout") == 0;
+    /* Valueless and position-free, because the moment it is needed is a moment
+     * nobody wants to look up an argument order for (spdf_win_diagnose.h). */
+    int diagnose = 0;
+    if (exact || viewport || layout) ++i;
 
     for (; i < argc && argv[i][0] == L'-'; ++i) {
         const wchar_t* flag = argv[i];
@@ -210,6 +224,13 @@ int main(void) {
          * frame, so the whole window's pixels can be compared without a desktop. */
         if (wcscmp(flag, L"--chrome") == 0) {
             opts.chrome = 1;
+            continue;
+        }
+        /* Valueless. Acted on right after this loop, so --state-dir (which may
+         * come on either side of it) has already installed its override and the
+         * log dumped is the one that launch belongs to. */
+        if (wcscmp(flag, L"--diagnose") == 0) {
+            diagnose = 1;
             continue;
         }
         /* Valueless, like --chrome; pairs with --find below. */
@@ -299,6 +320,23 @@ int main(void) {
             return usage();
         }
         ++i; /* consumed the value */
+    }
+
+    /* THE TWO DIAGNOSTICS ANSWER HERE: after the parse, so --state-dir has been
+     * honoured, and before the first-run question, the Direct2D device and any
+     * state file is touched. Neither opens a document, and neither may ever
+     * become a reason the app fails to start. */
+    if (diagnose) {
+        int diagnose_rc = run_diagnose();
+        LocalFree(argv);
+        return diagnose_rc;
+    }
+    if (layout) {
+        if (argc - i < 3 || argc - i > 4) return usage();
+        int layout_rc = run_print_layout((unsigned)_wtoi(argv[i]), (unsigned)_wtoi(argv[i + 1]),
+                                         (float)_wtof(argv[i + 2]), argc - i == 4 ? _wtoi(argv[i + 3]) : 0);
+        LocalFree(argv);
+        return layout_rc;
     }
 
     /* After the whole parse, so --find-regex may come on either side of --find.
