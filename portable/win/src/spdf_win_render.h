@@ -236,9 +236,12 @@ spdf_win_render_service* spdf_win_render_service_new(const char* path, const spd
 spdf_win_render_service* spdf_win_render_service_new_ex(const char* path, const spdf_win_render_backend* backend,
                                                         size_t max_bytes, spdf_win_render_notify notify, void* ctx,
                                                         int max_workers);
-/* Cancels everything in flight, joins the workers, then delivers every
- * outstanding request with SPDF_WIN_RENDER_SHUTDOWN on the calling thread so
- * user_data is released. Safe with NULL. */
+/* Cancels everything in flight, waits for the workers -- for a bounded time,
+ * because the caller is the UI thread -- then delivers every outstanding
+ * request with SPDF_WIN_RENDER_SHUTDOWN on the calling thread so user_data is
+ * released. A worker still inside a render past that bound is left to finish
+ * on its own and the service outlives this call until it does; that one
+ * request's user_data is then never delivered. Safe with NULL. */
 void spdf_win_render_service_free(spdf_win_render_service* svc);
 
 /* Bump on anything that invalidates rendered pixels -- reload, zoom change,
