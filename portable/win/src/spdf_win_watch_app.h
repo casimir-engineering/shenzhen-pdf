@@ -22,10 +22,30 @@
  * The callback runs on the UI thread, from the watcher's own message-only
  * window, so it is outside the input path that normally repaints -- hence the
  * explicit invalidate.
+ *
+ * MARKDOWN RELOADS IN PLACE INSTEAD (26.9.4-1, mac e6f900f7f). The re-show
+ * above is a full reopen, and for a Markdown file "reopen" means md4c, the HTML
+ * conversion and MuPDF's whole layout -- run here, on the UI thread, inside
+ * this callback, with the canvas already destroyed, so nothing new can be
+ * painted until it is done, and every derived store (thumbnails, search, the
+ * panels) rebuilt from nothing. The mac stopped its window blanking by making
+ * the disk reload a RERENDER whose source is the file: render off the main
+ * thread, then install under the reader's viewport. Here that is
+ * spdf_win_md_reload_begin() -- the same opener the workers use, on its own
+ * thread -- and, when SPDF_WIN_MD_WM_RELOADED arrives,
+ * spdf_win_md_command_reloaded() swaps the document under the canvas with
+ * spdf_win_canvas_replace_document(), which keeps zoom and offset and never
+ * composes an empty frame. The canvas keeps drawing the old document until
+ * then. A PDF keeps the reopen: its handle genuinely has to be reopened. So
+ * does a read-only Markdown source, whose shadow copy is refreshed only by the
+ * open hook's resolve (spdf_win_tabs_open.h); the in-place route reads the
+ * source, and a stale copy under a fresh source would be exactly the
+ * disagreement spdf_win_open_app.h exists to prevent.
  */
 
 #include "spdf_win_chrome_content.h" /* the panels reload their document */
 #include "spdf_win_chrome_find.h"    /* the results describe pages that changed shape */
+#include "spdf_win_md_reload.h"      /* the Markdown re-read, off the UI thread */
 
 static void app_watch_repaint(app* a) {
     if (a->window) InvalidateRect((HWND)spdf_win_window_native_handle(a->window), NULL, FALSE);
@@ -47,6 +67,15 @@ static void app_on_watch(void* user, const char* path, int event) {
     }
     if (event != SPDF_WIN_WATCH_CHANGED) return;
     view->missing = 0;
+    if (index == spdf_win_tabs_selected_index(a->tabs) && a->canvas && a->window && !view->read_only &&
+        spdf_path_is_markdown(path)) {
+        /* In place: the re-read runs on its own thread and the swap happens
+         * when SPDF_WIN_MD_WM_RELOADED lands (spdf_win_md_command_reloaded).
+         * Nothing on screen changes until then. The watcher already advanced
+         * its baseline, so the swap itself is never reported back as a change. */
+        spdf_win_md_reload_begin(path, (HWND)spdf_win_window_native_handle(a->window), SPDF_WIN_MD_WM_RELOADED);
+        return;
+    }
     if (index == spdf_win_tabs_selected_index(a->tabs)) {
         spdf_win_tabs_app_remember(a->tabs, a->canvas);
         spdf_win_canvas_destroy(a->canvas);

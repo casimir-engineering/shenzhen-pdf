@@ -34,13 +34,17 @@
  *                   saves; GTK annot_rotate_cont saves or reloads), then tell
  *                   the canvas, the find session and the panels the page
  *                   changed shape. A non-PDF, or a save that fails, is reported
- *                   and nothing on screen changes.
+ *                   and nothing on screen changes. EXCEPT MARKDOWN, where the
+ *                   command turns the paper landscape and back, remembered per
+ *                   file (spdf_win_md_command_rotate, 26.9.2-1 / 26.9.4-3).
  */
 
 static int cmd_search_rotate(app* a, int degrees) {
     SpdfWinDocAction act;
     char err[512] = {0};
     char utf8_path[1024];
+    /* A Markdown document has no page to rotate; its sheet turns instead. */
+    if (spdf_win_md_selected_tab_is_markdown(a)) return spdf_win_md_command_rotate(a);
     if (!doc_action_for(a, &act)) return 0;
     if (WideCharToMultiByte(CP_UTF8, 0, act.path, -1, utf8_path, (int)sizeof(utf8_path), NULL, NULL) <= 0) return 0;
     if (!spdf_rotate_page(act.doc, act.page, degrees, err, sizeof(err)) ||

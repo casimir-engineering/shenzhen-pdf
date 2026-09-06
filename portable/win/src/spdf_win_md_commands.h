@@ -29,8 +29,11 @@
 #ifndef SPDF_WIN_MD_COMMANDS_H
 #define SPDF_WIN_MD_COMMANDS_H
 
+#include "spdf_win_chrome_content.h" /* the panels rebuild after a reload */
+#include "spdf_win_chrome_find.h"    /* so does the search */
 #include "spdf_win_md.h"
 #include "spdf_win_md_images.h"
+#include "spdf_win_md_reload.h"      /* the off-thread re-read this file installs */
 
 /* WM_APP + 0x4D44 ("MD"): "remote images landed in the cache". Posted by the
  * fetch thread to the main window; main.cpp routes it to
@@ -62,6 +65,34 @@ static int spdf_win_md_command_text_step(app* a, int direction) {
     return spdf_win_md_command_reopen(a);
 }
 
+/* ROTATE ON A MARKDOWN TAB TURNS THE PAPER (26.9.2-1, mac e775e1d35; per file
+ * since 26.9.4-3, mac 5776dd6cf). There is no page to rotate in a document
+ * MuPDF laid out itself, and rotating the picture would put the text on its
+ * side; the mac turns the sheet landscape instead, and back, whichever way the
+ * command turns, and now remembers that against the file. Here the file's
+ * orientation is flipped in the module's table, persisted, and the tab is
+ * re-laid out through the same re-show A-/A+ takes -- the options are read at
+ * open time by every handle, so the canvas and its workers agree on the sheet.
+ *
+ * The reader lands on the top of the page they were on rather than at the same
+ * absolute offset: a landscape sheet holds a different amount of text, so an
+ * offset in device pixels would name a different page after the turn, while
+ * the page index is the nearer of the two guesses. (The mac re-anchors by the
+ * text under the viewport, which this frontend has no interactive string to
+ * do.) Returns 1 when redrawn; 0 on a PDF tab, which cmd_search_rotate then
+ * rotates in the document as before. */
+static int spdf_win_md_command_rotate(app* a) {
+    int index = a->tabs ? spdf_win_tabs_selected_index(a->tabs) : -1;
+    const char* path = index >= 0 ? spdf_win_tabs_path(a->tabs, index) : NULL;
+    spdf_win_tab_view* view;
+    if (!a->canvas || !path || !spdf_path_is_markdown(path)) return 0;
+    spdf_win_md_toggle_landscape(path);
+    spdf_win_tabs_app_remember(a->tabs, a->canvas);
+    view = spdf_win_tabs_view(a->tabs, index);
+    if (view) view->has_scroll_origin = 0; /* the page, not the offset: see above */
+    return show_selected_tab(a);
+}
+
 /* Call once a tab has been shown: if the open recorded https images that were
  * not in the cache, fetch them in the background; the completion message
  * re-shows the tab. Harmless on a PDF tab (nothing is pending). */
@@ -73,6 +104,48 @@ static void spdf_win_md_command_after_open(app* a, HWND window) {
 /* The SPDF_WIN_MD_WM_IMAGES_ARRIVED handler. */
 static int spdf_win_md_command_images_arrived(app* a) {
     return spdf_win_md_command_reopen(a);
+}
+
+/* THE SPDF_WIN_MD_WM_RELOADED HANDLER: the file changed on disk, the re-read
+ * finished off-thread (spdf_win_md_reload.h, started by spdf_win_watch_app.h),
+ * and the new document is swapped under the canvas -- zoom and offset kept, no
+ * empty frame (spdf_win_canvas_replace_document). This is the mac's
+ * -installRenderedDocument:preserveCurrentState:YES, at the one place in this
+ * frontend that can do it.
+ *
+ * The TAB's own handle is now the old bytes. It is released rather than
+ * swapped, because the tab model materialises documents through its open hook
+ * and has no adopt: the canvas owns the new document, and the next thing that
+ * asks the tab for one (Save As, Print, a switch away and back) opens the file
+ * as it is then -- one open, at the moment it is needed, instead of a stale
+ * handle answering forever. Released AFTER the swap, while the canvas no longer
+ * borrows it.
+ *
+ * The reader may have moved on while the read ran: a different tab selected, or
+ * the tab closed. The result is then closed and dropped -- that tab reopens from
+ * disk whenever it is shown -- rather than swapped under a document it does not
+ * describe. */
+static int spdf_win_md_command_reloaded(app* a) {
+    char path[1024];
+    const char* selected_path;
+    int index;
+    spdf_document* doc = spdf_win_md_reload_take(path, sizeof(path));
+    if (!doc) return 0; /* a failed read keeps the last good document on screen */
+    index = a->tabs ? spdf_win_tabs_selected_index(a->tabs) : -1;
+    selected_path = index >= 0 ? spdf_win_tabs_path(a->tabs, index) : NULL;
+    if (!a->canvas || !selected_path || strcmp(selected_path, path) != 0 ||
+        !spdf_win_canvas_replace_document(a->canvas, doc)) {
+        spdf_close(doc);
+        return 0;
+    }
+    spdf_win_tabs_release_document(a->tabs, index);
+    /* The search's rects and the panels' handles describe the old text; both
+     * rebuild on the next paint, as after Rotate and after a PDF reload. */
+    spdf_win_find_restart(spdf_win_find_shared());
+    spdf_win_chrome_content_set_document(NULL, 0);
+    /* The new text may reference remote images the cache does not have yet. */
+    if (a->window) spdf_win_md_command_after_open(a, (HWND)spdf_win_window_native_handle(a->window));
+    return 1;
 }
 
 #endif /* SPDF_WIN_MD_COMMANDS_H */
