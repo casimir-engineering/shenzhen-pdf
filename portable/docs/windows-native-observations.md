@@ -1594,6 +1594,10 @@ Three things do not hold.
    rendering decision, not a placement one. Recorded so the next report of a
    window that "never" appears is read against it.
 
+   FIXED IN SECTION 18: the first frame now has a 250 ms budget, and the same
+   400,000-path page puts its window up in 325 ms instead of 4.5 s. Finding it
+   also turned up why no repaint had ever arrived for an asynchronous render.
+
 Pinned: `placement_test.c` section 4 (reachable, home display, clamp, resolve,
 parked flag, on this desktop's geometry) and `launch.invariant`
 (`portable/win/launch-invariant.ps1`), which writes the four sessions --
@@ -1736,3 +1740,142 @@ the same process -- catches the click, which the failing runs' `owned=1` gives
 away. The case parks the pointer over the canvas before it starts. When it does
 fail it runs `--diagnose` against the still-open window and prints it, so the
 next unreproducible thing is diagnosed the first time rather than the third.
+
+## 18. The first paint had no budget, and the repaint that would have saved it was never delivered (2026-09-07)
+
+Section 16 item 4 left one launch unfixed: the window paints its first frame
+before `ShowWindow`, so on a slow page there is no window at all for as long as
+that page takes. Measured on this desktop (2880 x 1800 at 150%, work area
+2880 x 1728) against fixtures generated for it -- one page carrying N stroked
+subpaths, `x y m x y l S` each, so MuPDF walks N display-list nodes and strokes
+N times. The generator is a 60-line script; the files it writes (5 MB and
+26 MB) are not in the repo.
+
+| launch | window on screen | page on screen |
+| --- | --- | --- |
+| `outline.pdf`, before | 132 ms | 122 ms |
+| `outline.pdf`, after | 133 ms | 123 ms |
+| 400,000 paths, before | 4518 ms | 4503 ms |
+| 400,000 paths, after | **325 ms** | 5090 ms |
+| 2,000,000 paths, before | 35343 ms | 35326 ms |
+| 2,000,000 paths, after | **358 ms** | 28895-37739 ms |
+
+Medians of 10 runs for `outline.pdf`, interleaved between the two builds; 3 runs
+for 400,000 paths and 2 for 2,000,000. The heavy fixtures vary run to run far
+more than `outline.pdf` does -- the first measurement of the 400,000-path page,
+taken while another track was building, was 8.6 s rather than 4.5 s -- so read
+their absolute numbers as a scale, not a constant. "Window on screen" is a host
+poll for a visible top-level window of the process. "Page on screen" is the
+app's own
+`first-compose-end` before and the new `first-page-scene` mark after -- the
+first composed frame that had a page draw in it, a distinction the old timeline
+did not need because its first frame always had one.
+
+Before the fix, and for the whole of those 4.5 and 35 seconds, the process was
+`IsHungAppWindow`-hung with no window of its own on screen. That is the report,
+word for word: never responsive to any user input, and not even focusable.
+
+### The bound is 250 ms, and why that number
+
+`spdf_win_canvas_set_first_frame_budget()` gives the first frame of a launch a
+budget: the page is asked of T5's worker pool at VISIBLE priority and waited
+for, on the UI thread, for at most that long. Inside the budget the launch is
+unchanged -- same pixels, one render, presented before the same `ShowWindow`.
+Past it the frame comes back with no page draws and the canvas's status line
+("Opening…"), the window goes up, and the pool's completion brings the page in.
+
+250 ms is longer than the whole healthy launch measured here -- 122 ms to a
+composed page, of which the page render is 39 ms -- and longer than the 145 ms
+the launch doc records, so nothing that is fast today waits any differently. The
+worst case it admits is a window at about 350 ms: the 60-100 ms before the first
+frame, plus the budget, plus a compose with no page texture to upload. A tenth
+of a second either way would do as well; what matters is that it is clear of a
+healthy render and inside the time a person will wait for a window.
+
+Waiting on the UI thread is what `spdf_win_canvas_settle()` forbids in terms,
+and this is the one place it is allowed, for reasons that are written at the
+wait: there is no window yet, so there is no message to pump and nothing else
+this thread could be doing; the wait is bounded; and what it buys is that the
+UNBOUNDED wait never happens.
+
+**The fast path is free because the wait is spent inside a wait that already
+existed.** The timeline puts `gpu-prewarm-done` 41 ms after the page render
+ends, and the first compose cannot start before the GPU device is ready. Moving
+the render to a worker costs the pool's own document open plus the Sleep(1)
+granularity of the poll -- measured as `first-scene-built` moving from 77 ms to
+89 ms -- and all of it is absorbed: the window and first-composed-page medians
+are 132/122 ms before and 133/123 ms after.
+
+### The repaint was never delivered, and never had been
+
+With the budget in place the heavy launch put its window up in 325 ms and then
+never drew the page -- not in 200 seconds. The window was healthy throughout
+(`launch-health.log`: enabled, visible, unhung, z-index 0) and its `paints`
+count stopped at 3. Marks added to the canvas's notify hook showed the pool
+finishing at 6.2 s and calling the hook with `notify_armed=1`, and the results
+being drained only at shutdown 30 s later.
+
+`SPDF_WIN_WM_RENDER_READY` was `WM_APP + 0x5244` -- "RD" as a mnemonic, 0xD244
+as a number. The window procedure's default case forwards `msg >= WM_APP && msg
+< 0xC000` and nothing above, because 0xC000 up is the `RegisterWindowMessage`
+range and not the app's to interpret. Every one of those posts went to
+`DefWindowProc`. **The same mistake was in all three app messages**:
+`SPDF_WIN_MD_WM_IMAGES_ARRIVED` ("MD", 0xCD44) and `SPDF_WIN_MD_WM_RELOADED`
+("ME", 0xCD45) too. So a Markdown file rewritten on disk was re-read off-thread
+and the result never reached the window, remote images never turned their
+placeholders into pictures, and an asynchronous visible-page render never asked
+for the repaint that shows it -- which is exactly what `spdf_win_canvas.h`
+warned would happen without a notify: "the reader keeps looking at the soft
+stand-in until they move the mouse". Nobody noticed, because until this change
+every one of those cases had a stand-in to look at and a mouse to move. The
+first frame of a fresh document has neither.
+
+All three are now `WM_APP` plus a number under 0x4000, and
+`SPDF_WIN_APP_MSG_OK(name, msg)` beside each `#define` fails the build for a
+number outside the routable range. A comment would not have caught this one:
+the mnemonic looked deliberate.
+
+### Two smaller things the measurements forced
+
+1. **No neighbour prefetch while a frame is still waiting for its own page.**
+   `build_scene` asked for pages `last + 1` and `first - 1` at the end of every
+   frame, deferred ones included, so a second heavy render ran beside the one
+   somebody was waiting for. Two MuPDF renders of a 400,000-path page share one
+   machine's memory bandwidth: the page landed at 6435 ms with the neighbour
+   and at 5090 ms without it. The neighbours are asked for on the first frame
+   that has something in it, a few milliseconds later, which for a page nobody
+   has scrolled to is soon enough.
+2. **A frame with no page draws keeps its message.** `scene_for_window` assigned
+   `scene->message = a->status[0] ? a->status : NULL` unconditionally after a
+   `build_scene` that returned 0, throwing away the message the canvas had just
+   put there. Harmless while the only such frame was a broken document; wrong
+   the moment one can also mean "still rendering". The app's status still
+   outranks the canvas's, but only when it has one.
+
+### What is pinned, and what is not
+
+`win.canvas_async_test` builds the same first frame twice, on the same document
+at the same zoom -- once unbounded, once with a 1 ms budget -- and requires the
+bounded one to cost less than half the unbounded one, with no page draws, a
+non-empty message, and nothing rendered on the calling thread. No wall-clock
+constant appears in the assertion: the unbounded run is the constant. A second
+canvas at a normal zoom pins the recovery -- the pool finishes, the `ready` hook
+rings, and the next frame is whole. It is headless, so it needs no desktop and
+blocks for nothing. The zoom for the bounded pair is pushed to the render byte
+cap, which is how a slow page comes out of a fixture small enough to commit;
+that is also why the recovery is a separate canvas, since at the cap one page
+fills the whole 96 MB bitmap cache and the neighbour evicts it as fast as it
+arrives.
+
+Not verified here: what the deferred frame LOOKS like. This machine's screen
+saver ran throughout, and while a window can still be shown on that desktop,
+`PrintWindow` returns a flat client area for a Direct2D surface --
+`screenshot-window.ps1` exits 68 and says so. The status frame's appearance
+rests on the compose layer's existing message path, which the no-document launch
+has always used and the `d2d` cases cover.
+
+Not changed, deliberately: a TAB SWITCH into a heavy document still renders its
+first frame on the UI thread. It has a window, so it is a freeze rather than an
+absence, and `show_selected_tab`'s promise that a switch "lands finished" is a
+different decision from this one. The machinery is one call away if that promise
+is ever traded.

@@ -116,7 +116,11 @@ typedef enum spdf_win_input_kind {
      * numbers mean what is the app's, exactly as the command ids are, so
      * every WM_APP..0xBFFF message is handed over rather than dropped on the
      * floor by DefWindowProc. wParam and lParam are not carried; a worker
-     * that has more to say than "done" keeps it where the handler can read it. */
+     * that has more to say than "done" keeps it where the handler can read it.
+     * THAT RANGE IS ALSO A LIMIT: three messages were WM_APP plus a two-letter
+     * mnemonic ("RD" = 0x5244 -> 0xD244), above 0xBFFF, so all three were
+     * posted, dropped here and silently dead (observations sec 18). Declare a
+     * number with SPDF_WIN_APP_MSG_OK below and the build says so instead. */
     SPDF_WIN_INPUT_APP_MESSAGE = 11, /* 10 is SPDF_WIN_INPUT_CONTEXT, declared below */
 
     /* THE POSITION QUERY: what is at (x, y)? Sent for WM_SETCURSOR, asking
@@ -142,6 +146,11 @@ typedef enum spdf_win_input_kind {
      * drags with this button. A handler that does not care returns 0. */
     SPDF_WIN_INPUT_CONTEXT = 10
 } spdf_win_input_kind;
+
+/* Put this beside an app message's #define: a number outside WM_APP..0xBFFF
+ * makes the array size negative and the build stops, which is the only kind of
+ * check that survives a mnemonic that looked fine. */
+#define SPDF_WIN_APP_MSG_OK(name, msg) typedef char name[((msg) >= WM_APP && (msg) < 0xC000) ? 1 : -1]
 
 /* A button-up whose `button` is SPDF_WIN_CB_NONE is a CANCELLED drag, not a
  * release: the capture was taken away (an Alt+Tab, a system modal), and a

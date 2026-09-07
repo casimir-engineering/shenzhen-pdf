@@ -4,8 +4,9 @@
  * rule is extraction over cap bumps (tools/file-size-limits.md). Every seam is
  * the honest one: spdf_win_canvas.cpp is geometry and composition -- what is
  * where, at what zoom -- spdf_win_canvas_prefetch.cpp is everything to do with
- * T5's worker pool, spdf_win_canvas_selection.cpp is the pointer gesture that
- * turns those two into a text selection and a followed link,
+ * T5's worker pool -- up to and including which bitmap this frame draws a page
+ * with (spdf_win_canvas_ensure_page) -- spdf_win_canvas_selection.cpp is the
+ * pointer gesture that turns those two into a text selection and a followed link,
  * spdf_win_find_canvas.cpp is the navigation surface the search & map track
  * drives -- scroll to a match, read a page's slot, re-measure a rotated page --
  * and spdf_win_canvas_swap.cpp is the one operation that changes the DOCUMENT
@@ -100,6 +101,16 @@ struct spdf_win_canvas {
     void* ready_ctx;
     volatile long notify_armed;
 
+    /* THE FIRST FRAME'S BOUND (spdf_win_canvas.h, set_first_frame_budget).
+     * `first_frame_budget_ms` is the launch's ask and 0 everywhere else;
+     * `first_frame_deadline` is the GetTickCount64 it turns into on the first
+     * wait, so two visible pages share ONE budget rather than one each.
+     * `page_deferred` is the last ensure_page's answer: the pool owns this
+     * page and the frame must leave it out. All three are prefetch.cpp's. */
+    int first_frame_budget_ms;
+    unsigned long long first_frame_deadline;
+    int page_deferred;
+
     /* WHAT IS ALREADY ON ITS WAY, so a repaint at 60 Hz does not ask sixty
      * times for one render. The service coalesces identical requests, but only
      * up to SPDF_WIN_RENDER_MAX_WAITERS of them; past that it starts a SECOND
@@ -155,6 +166,13 @@ struct spdf_win_canvas {
 void spdf_win_canvas_prefetch(spdf_win_canvas* canvas, int page);
 int spdf_win_canvas_request_visible(spdf_win_canvas* canvas, int page, double render_zoom);
 void spdf_win_canvas_render_notify(void* ctx);
+
+/* THE T5 SEAM, for build_scene: the bitmap to draw page `page` with this frame,
+ * from the cache, from the pool, or rendered here. NULL means there is nothing
+ * to draw -- with `canvas->page_deferred` set the page is merely still
+ * rendering and the frame must leave it out; without it the page failed and the
+ * compose layer's placeholder is the honest answer. */
+const spdf_bitmap* spdf_win_canvas_ensure_page(spdf_win_canvas* canvas, int page);
 
 /* spdf_win_canvas.cpp, for the other three units. Measures pages up to and
  * including `through`, returning non-zero when the layout went stale; and the
