@@ -49,8 +49,16 @@ static void fill_rounded(ID2D1RenderTarget* target, SpdfWinChromeRect r, float r
 
 /* A capsule of `segments` equal cells with hairline dividers between them. One
  * function for both the paired and the single form, which is the whole point of
- * macOS routing both through spdf_toolbar_segments(). */
-static void draw_pill(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, int segments) {
+ * macOS routing both through spdf_toolbar_segments().
+ *
+ * `alpha` is 1.0 for a live control and SPDF_WIN_CHROME_DISABLED_ALPHA for one
+ * the row has greyed out. A DEFAULT ARGUMENT rather than a second function,
+ * because every one of the eight existing call sites means "live" and having to
+ * restate that eight times is how one of them would come to say something else
+ * by accident. spdf_win_chrome_find.cpp's own copy of this helper has taken an
+ * alpha since the find pill needed to dim itself with nothing to step through;
+ * this is the same number, now named (spdf_win_chrome_empty.h). */
+static void draw_pill(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, int segments, float alpha = 1.0f) {
     const SpdfWinChromeTheme* th = ctx.theme;
     float s = ctx.dpi_scale;
     float hair = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
@@ -65,6 +73,8 @@ static void draw_pill(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, int
     if (spdf_win_chrome_rect_empty(r)) return;
     fill = spdf_win_chrome_brush(ctx.target, th->control_fill);
     stroke = spdf_win_chrome_brush(ctx.target, th->control_stroke);
+    if (fill) fill->SetOpacity(alpha);
+    if (stroke) stroke->SetOpacity(alpha);
 
     /* Fully rounded: radius half the height makes a capsule, which is what
      * NSSegmentStyleRounded looks like at 28 pt. */
@@ -111,7 +121,7 @@ static void draw_plus_minus(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect 
 /* A text field: rounded, filled, hairline outline, with a Windows 11-ish
  * 4 pt corner rather than a capsule, so it reads as editable. */
 static void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wchar_t* text, int placeholder,
-                       DWRITE_TEXT_ALIGNMENT align, int focused) {
+                       DWRITE_TEXT_ALIGNMENT align, int focused, int enabled = 1) {
     const SpdfWinChromeTheme* th = ctx.theme;
     float s = ctx.dpi_scale;
     float hair = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
@@ -120,13 +130,14 @@ static void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, co
     SpdfWinChromeRect text_rect = r;
 
     if (spdf_win_chrome_rect_empty(r)) return;
-    fill = spdf_win_chrome_brush(ctx.target, th->field_fill);
+    fill = spdf_win_chrome_brush(ctx.target, spdf_win_chrome_dim(th->field_fill, enabled));
     /* THE FOCUS RING, and it is the accent colour rather than a second border:
      * a field the keyboard is talking to has to be distinguishable from the one
      * next to it, and there is no caret to say so (spdf_win_chrome_text.h
      * explains why there is none). A DOUBLED hairline, so the ring reads at 100%
      * as well as at 200%. */
-    stroke = spdf_win_chrome_brush(ctx.target, focused ? th->accent : th->field_stroke);
+    stroke = spdf_win_chrome_brush(ctx.target,
+                                   spdf_win_chrome_dim(focused ? th->accent : th->field_stroke, enabled));
 
     fill_rounded(ctx.target, r, px(4.0, s), fill, stroke, focused ? hair * 2.0f : hair);
     if (fill) fill->Release();
@@ -134,7 +145,8 @@ static void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, co
 
     text_rect.x += px(6.0, s);
     text_rect.w -= px(12.0, s);
-    spdf_win_chrome_draw_text(ctx, text, text_rect, placeholder ? th->field_placeholder : th->label,
+    spdf_win_chrome_draw_text(ctx, text, text_rect,
+                              spdf_win_chrome_dim(placeholder ? th->field_placeholder : th->label, enabled),
                               px(SPDF_WIN_CT_FONT_SIZE_FIELD, s), DWRITE_FONT_WEIGHT_NORMAL, align, 0);
 }
 
@@ -143,7 +155,8 @@ static void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, co
  * transfer directly: intrinsic width titleWidth + 50.0, height 28.0, title at
  * systemFontOfSize:12 Light, switch track 32.0 x 18.0 anchored 5 pt from maxX,
  * fully rounded, knob 14.0 inset 2 pt. */
-static void draw_toggle(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wchar_t* title, int on) {
+static void draw_toggle(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wchar_t* title, int on,
+                        int enabled = 1) {
     const SpdfWinChromeTheme* th = ctx.theme;
     float s = ctx.dpi_scale;
     float hair = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
@@ -157,13 +170,19 @@ static void draw_toggle(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, c
 
     label = r;
     label.w = track.x - r.x - px(4.0, s);
-    spdf_win_chrome_draw_text(ctx, title, label, th->label, px(SPDF_WIN_CT_FONT_SIZE_LABEL, s),
-                              DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, 0);
+    spdf_win_chrome_draw_text(ctx, title, label, spdf_win_chrome_dim(th->label, enabled),
+                              px(SPDF_WIN_CT_FONT_SIZE_LABEL, s), DWRITE_FONT_WEIGHT_NORMAL,
+                              DWRITE_TEXT_ALIGNMENT_LEADING, 0);
 
     {
-        ID2D1SolidColorBrush* tf =
-            spdf_win_chrome_brush(ctx.target, on ? th->accent : th->control_fill_pressed);
-        ID2D1SolidColorBrush* ts = spdf_win_chrome_brush(ctx.target, th->control_stroke);
+        /* THE TRACK IS WHERE A DISABLED SWITCH HAS TO BE BELIEVED. An accent
+         * track reads as "on and ready" from across a room, which is exactly
+         * what the empty window's Map switch was saying while nothing could
+         * change it -- the single most misleading pixel in the whole defect.
+         * Dimmed, the switch still tells the reader which way it is set. */
+        ID2D1SolidColorBrush* tf = spdf_win_chrome_brush(
+            ctx.target, spdf_win_chrome_dim(on ? th->accent : th->control_fill_pressed, enabled));
+        ID2D1SolidColorBrush* ts = spdf_win_chrome_brush(ctx.target, spdf_win_chrome_dim(th->control_stroke, enabled));
         fill_rounded(ctx.target, track, track.h * 0.5f, tf, ts, hair);
         if (tf) tf->Release();
         if (ts) ts->Release();
@@ -180,7 +199,7 @@ static void draw_toggle(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, c
          * track, so that is what is used here; the toggle's meaning is carried
          * by the track colour either way. */
         SpdfWinChromeColor c = on ? spdf_win_ct_rgb(0xFFFFFFu, 1.0f) : ctx.theme->label_secondary;
-        ID2D1SolidColorBrush* kb = spdf_win_chrome_brush(ctx.target, c);
+        ID2D1SolidColorBrush* kb = spdf_win_chrome_brush(ctx.target, spdf_win_chrome_dim(c, enabled));
         D2D1_ELLIPSE e;
         e.point.x = knob.x + knob.w * 0.5f;
         e.point.y = knob.y + knob.h * 0.5f;
