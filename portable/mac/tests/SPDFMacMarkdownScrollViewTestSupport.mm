@@ -138,9 +138,45 @@ void spdf_assert_markdown_exact_fit_and_vertical_centering(SPDFMacMarkdownPagedV
            NSHeight(multiPageView.contentView.bounds) + 0.5);  // still scrollable
     assert(multiPageView.hasVerticalScroller);
     assert(multiPageView.verticalScrollElasticity == NSScrollElasticityAllowed);
+    // The fit placed the CURRENT page flush in the viewport; if that was the last
+    // page there is nothing below it to scroll to, so start from the top.
+    [multiPageView goToPageAtIndex:0 alignTop:YES];
     NSPoint beforeScroll = multiPageView.documentVisibleRect.origin;
     [multiPageView scrollByDocumentDeltaX:0.0 deltaY:200.0];
     assert(multiPageView.documentVisibleRect.origin.y > beforeScroll.y + 100.0);
+
+    // --- A fit is not only a zoom: the CURRENT page is then placed in the
+    // viewport the way a one-page document's sheet is. Land on page 2, drag it
+    // so it straddles the viewport, and re-apply each fit. ---
+    assert(multiPageView.pageCount >= 3);
+    [multiPageView goToPageAtIndex:2 alignTop:YES];
+    [multiPageView scrollByDocumentDeltaX:0.0 deltaY:150.0];  // a slice of page 1 shows above
+    NSRect page2 = [multiCanvas frameForPageAtIndex:2];
+    assert(multiPageView.documentVisibleRect.origin.y > NSMinY(page2) + 50.0);  // genuinely straddling
+    // Fit Page: page 2's top flush with the viewport top (exact height), centered horizontally.
+    [multiPageView applyFitMode:SPDFMacMarkdownPageFitPage];
+    page2 = [multiCanvas frameForPageAtIndex:2];
+    assert(fabs(NSMinY(multiPageView.documentVisibleRect) - NSMinY(page2)) <= 0.5);
+    assert(fabs(NSMidX(multiPageView.documentVisibleRect) - NSMidX(page2)) <= 1.0);
+    assert(multiPageView.currentPageIndex == 2);
+    // Fit Height: same alignment, page height exact.
+    [multiPageView scrollByDocumentDeltaX:0.0 deltaY:120.0];
+    [multiPageView applyFitMode:SPDFMacMarkdownPageFitHeight];
+    page2 = [multiCanvas frameForPageAtIndex:2];
+    assert(fabs(NSMinY(multiPageView.documentVisibleRect) - NSMinY(page2)) <= 0.5);
+    assert(fabs(NSHeight(page2) * multiPageView.magnification - multiPageView.contentSize.height) <= 0.5);
+    // Fit Width: the page is taller than the viewport, so it starts at its top.
+    [multiPageView scrollByDocumentDeltaX:0.0 deltaY:120.0];
+    [multiPageView applyFitMode:SPDFMacMarkdownPageFitWidth];
+    page2 = [multiCanvas frameForPageAtIndex:2];
+    assert(fabs(NSMinY(multiPageView.documentVisibleRect) - NSMinY(page2)) <= 0.5);
+    assert(fabs(NSWidth(page2) * multiPageView.magnification - multiPageView.contentSize.width) <= 0.5);
+
+    // --- The PDF path's fitted scroll origin, shared pure geometry ---
+    assert(spdf_mac_fit_scroll_origin_y(1226.0, 600.0, 600.0, 12.0) == 1226.0);  // exact fit: flush, no strip
+    assert(spdf_mac_fit_scroll_origin_y(1226.0, 400.0, 600.0, 12.0) == 1126.0);  // shorter page: centered
+    assert(spdf_mac_fit_scroll_origin_y(1226.0, 900.0, 600.0, 12.0) == 1214.0);  // taller page: breathing room
+    assert(spdf_mac_fit_scroll_origin_y(0.0, 900.0, 600.0, 12.0) == 0.0);        // never above the canvas
 }
 
 // Focused Markdown test executables do not link the complete app UI helpers.

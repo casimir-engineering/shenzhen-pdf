@@ -54,7 +54,6 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownPageFitMode) {
 - (void)redrawPages;
 - (void)setZoom:(CGFloat)zoom centeredAtPoint:(NSPoint)point;
 - (void)zoomByFactor:(CGFloat)factor;
-- (void)applyFitMode:(SPDFMacMarkdownPageFitMode)fitMode;
 - (void)goToPageAtIndex:(NSInteger)pageIndex alignTop:(BOOL)alignTop;
 - (BOOL)revealRange:(NSRange)range;
 // Centers the range's first fragment rect in the viewport (clamped through
@@ -84,6 +83,18 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownPageFitMode) {
 // anchoring popovers. NSZeroRect when the block has no control or the control
 // is scrolled outside the viewport.
 - (NSRect)codeLanguageControlFrameInViewForBlockIndex:(NSUInteger)blockIndex;
+@end
+
+
+// Exact-viewport fit (SPDFMacMarkdownPagedView+Fit.mm). A fit is two things: the
+// magnification a mode means against the raw viewport, and the placing of the
+// CURRENT page once that zoom is in -- centered where it is smaller than the
+// viewport, flush with its top where it is taller, as a one-page document's
+// sheet sits and as the PDF view places a fitted page.
+@interface SPDFMacMarkdownPagedView (Fit)
+- (void)applyFitMode:(SPDFMacMarkdownPageFitMode)fitMode;
+- (CGFloat)zoomForFitMode:(SPDFMacMarkdownPageFitMode)fitMode;
+- (void)alignCurrentPageAfterFit;
 @end
 
 NS_ASSUME_NONNULL_END
