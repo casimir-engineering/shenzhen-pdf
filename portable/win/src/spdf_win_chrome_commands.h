@@ -305,7 +305,9 @@ static int key_for_window(app* a, const spdf_win_input* in) {
     int command = spdf_win_menu_command_for_key_ex(in->key, in->key_char, in->mods, in->text_key);
 
     if (command != SPDF_WIN_CMD_NONE) return command_perform(a, command, in);
-    if (a->focus != SPDF_WIN_FOCUS_NONE) return chrome_field_key(a, in);
+    /* A BARE TAB GOES THERE TOO, focused or not: with no document it moves the
+     * keyboard onto the empty canvas's Open button (spdf_win_chrome_typing.h). */
+    if (a->focus != SPDF_WIN_FOCUS_NONE || in->key == SPDF_WIN_KEY_TAB) return chrome_field_key(a, in);
 
     chrome_layout_for_input(a, in, &model, &l);
     page_step = l.canvas.h * 0.9f;

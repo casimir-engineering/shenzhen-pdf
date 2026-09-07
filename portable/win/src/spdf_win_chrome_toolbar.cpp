@@ -78,13 +78,22 @@ struct ToolsState {
 };
 ToolsState g_tools; /* written by spdf_win_chrome_toolbar_set_tools_state() below */
 
-void draw_tool_button(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, int translate, int enabled) {
+/* `enabled` is this tool's own state -- a document open and that tool not
+ * already running -- and drives the GLYPH colour, exactly as it always has.
+ * `alpha` is the ROW's state, which is 1.0 whenever a document is open, so a
+ * busy tool looks precisely as it did and only an empty window dims the capsule
+ * as well (spdf_win_chrome_empty.h). Two parameters rather than one because they
+ * answer two different questions and collapsing them would change how a running
+ * OCR looks on a window that has a document -- which this change is not
+ * entitled to touch. */
+void draw_tool_button(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, int translate, int enabled, float alpha) {
     float s = ctx.dpi_scale, cx = r.x + r.w * 0.5f, cy = r.y + r.h * 0.5f, a = px(6.0, s);
     float lw = spdf_win_chrome_stroke_px(1.4f, s);
     SpdfWinChromeColor col = enabled ? ctx.theme->control_glyph : ctx.theme->label_secondary;
     ID2D1SolidColorBrush* b;
     if (spdf_win_chrome_rect_empty(r)) return;
-    draw_pill(ctx, r, 1);
+    col.a *= alpha;
+    draw_pill(ctx, r, 1, alpha);
     if (translate) {
         SpdfWinChromeRect t = r;
         t.w = r.w * 0.5f;
@@ -167,8 +176,19 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
     float s = ctx.dpi_scale > 0.0f ? ctx.dpi_scale : 1.0f;
     ID2D1SolidColorBrush* band = NULL;
     ID2D1SolidColorBrush* glyph = NULL;
+    /* WITH NO DOCUMENT MOST OF THIS ROW IS DEAD, and it now looks it. macOS
+     * disables the same controls one by one in -updateControls
+     * (ShenzhenPDFMac.mm:10218-10248); which ones, and the alpha they dim to,
+     * are spdf_win_chrome_empty.h's -- the SAME header the input router refuses
+     * them from, so a control cannot be drawn grey and still be clickable, or
+     * drawn live and be refused. `live` is the row's own answer, kept in a local
+     * because a dozen call sites below ask it. */
+    int live;
+    float dim;
 
     if (!l || !th || !m) return;
+    live = spdf_win_chrome_has_document(m);
+    dim = live ? 1.0f : SPDF_WIN_CHROME_DISABLED_ALPHA;
     bar = l->toolbar;
     if (spdf_win_chrome_rect_empty(bar)) return;
 
@@ -177,7 +197,12 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
         ctx.target->FillRectangle(spdf_win_chrome_d2d_rect(bar), band);
         band->Release();
     }
+    /* ONE glyph brush for the row, at the row's opacity. The two controls that
+     * stay live with no document -- the reading theme and the overflow `...` --
+     * set it back to 1.0 for themselves below, which is a smaller and more
+     * visible exception than a second brush would be. */
     glyph = spdf_win_chrome_brush(ctx.target, th->control_glyph);
+    if (glyph) glyph->SetOpacity(dim);
 
     /* WHERE each control goes comes from spdf_win_chrome_toolbar.h and from
      * nowhere else, so the input router hit-tests the rectangles this function
@@ -185,16 +210,20 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
      * helper above bails on an empty rect. */
     spdf_win_toolbar_layout(bar, s, m->markdown, &tb);
 
-    /* 1. Side Panel toggle. */
-    draw_toggle(ctx, tb.item[SPDF_WIN_TB_SIDEBAR_TOGGLE], L"Side Panel", m->show_sidebar);
+    /* 1. Side Panel toggle. Disabled with no document, as :10227 does -- and
+     * disabled is the honest state rather than a courtesy: the panel is hidden
+     * whatever the switch says while there is nothing to list
+     * (spdf_win_chrome_scene.h chrome_sidebar_decide), so flicking it changed
+     * literally nothing on screen. */
+    draw_toggle(ctx, tb.item[SPDF_WIN_TB_SIDEBAR_TOGGLE], L"Side Panel", m->show_sidebar, live);
 
     /* 2-3. OCR and translate, icon buttons 32 wide. Drawn as capsule singles so
      * they match half a pill, per the shared-factory rule. Enabled while a
      * document is open and that tool is not already running -- the Mac policy
      * (SPDFMacTranslationPolicy.mm: a PDF tab is enabled whenever a document is
      * open and idle; with a selection the button translates that). */
-    draw_tool_button(ctx, tb.item[SPDF_WIN_TB_OCR], 0, m->page_count > 0 && !g_tools.ocr_busy);
-    draw_tool_button(ctx, tb.item[SPDF_WIN_TB_TRANSLATE], 1, m->page_count > 0 && !g_tools.translate_busy);
+    draw_tool_button(ctx, tb.item[SPDF_WIN_TB_OCR], 0, live && !g_tools.ocr_busy, dim);
+    draw_tool_button(ctx, tb.item[SPDF_WIN_TB_TRANSLATE], 1, live && !g_tools.translate_busy, dim);
 
     /* 4. Separator: an NSBox of width 1, inset 4 pt top and bottom. */
     {
@@ -210,8 +239,9 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
         wchar_t number[16], count[24];
         page_labels(m, number, sizeof(number) / sizeof(number[0]), count, sizeof(count) / sizeof(count[0]));
         draw_field(ctx, tb.item[SPDF_WIN_TB_PAGE_FIELD], number, 0, DWRITE_TEXT_ALIGNMENT_TRAILING,
-                   m->focus == SPDF_WIN_FOCUS_PAGE);
-        spdf_win_chrome_draw_text(ctx, count, tb.item[SPDF_WIN_TB_PAGE_COUNT], th->label_secondary,
+                   m->focus == SPDF_WIN_FOCUS_PAGE, live);
+        spdf_win_chrome_draw_text(ctx, count, tb.item[SPDF_WIN_TB_PAGE_COUNT],
+                                  spdf_win_chrome_dim(th->label_secondary, live),
                                   px(SPDF_WIN_CT_FONT_SIZE_FIELD, s), DWRITE_FONT_WEIGHT_NORMAL,
                                   DWRITE_TEXT_ALIGNMENT_LEADING, 0);
     }
@@ -219,7 +249,7 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
     /* 7. Page pill: chevron.left / chevron.right. */
     {
         SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_PAGE_PILL];
-        draw_pill(ctx, r, 2);
+        draw_pill(ctx, r, 2, dim);
         draw_chevron(ctx, cell_of(r, 0, 2), 1, glyph);
         draw_chevron(ctx, cell_of(r, 1, 2), 0, glyph);
     }
@@ -229,13 +259,14 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
         SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_FIT_POPUP];
         wchar_t label[24];
         fit_label(m, label, sizeof(label) / sizeof(label[0]));
-        draw_pill(ctx, r, 1);
+        draw_pill(ctx, r, 1, dim);
         if (!spdf_win_chrome_rect_empty(r)) {
             SpdfWinChromeRect t = r;
             t.x += px(8.0, s);
             t.w -= px(24.0, s);
-            spdf_win_chrome_draw_text(ctx, label, t, th->label, px(SPDF_WIN_CT_FONT_SIZE_LABEL, s),
-                                      DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, 0);
+            spdf_win_chrome_draw_text(ctx, label, t, spdf_win_chrome_dim(th->label, live),
+                                      px(SPDF_WIN_CT_FONT_SIZE_LABEL, s), DWRITE_FONT_WEIGHT_NORMAL,
+                                      DWRITE_TEXT_ALIGNMENT_LEADING, 0);
             /* The popup's disclosure chevron, pointing down. */
             if (glyph) {
                 float cx = r.x + r.w - px(11.0, s);
@@ -253,7 +284,7 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
     /* 9. Zoom pill: minus / plus. */
     {
         SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_ZOOM_PILL];
-        draw_pill(ctx, r, 2);
+        draw_pill(ctx, r, 2, dim);
         draw_plus_minus(ctx, cell_of(r, 0, 2), 0, glyph);
         draw_plus_minus(ctx, cell_of(r, 1, 2), 1, glyph);
     }
@@ -269,18 +300,25 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
      * bars. Each half is centred in the cell the router splits with. */
     {
         SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_MD_TEXT_PILL];
-        draw_pill(ctx, r, 2);
+        draw_pill(ctx, r, 2, dim);
         if (!spdf_win_chrome_rect_empty(r)) {
-            spdf_win_chrome_draw_text(ctx, L"A−", cell_of(r, 0, 2), th->label, px(12.0, s),
+            spdf_win_chrome_draw_text(ctx, L"A−", cell_of(r, 0, 2), spdf_win_chrome_dim(th->label, live), px(12.0, s),
                                       DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER, 0);
-            spdf_win_chrome_draw_text(ctx, L"A＋", cell_of(r, 1, 2), th->label, px(12.0, s),
+            spdf_win_chrome_draw_text(ctx, L"A＋", cell_of(r, 1, 2), spdf_win_chrome_dim(th->label, live), px(12.0, s),
                                       DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER, 0);
         }
     }
 
     /* 11. Reading-theme button: a SINGLE-segment pill, 32 wide -- deliberately
      * the same object as half of a pair. moon.stars in light, sun.max in dark,
-     * following model->dark. */
+     * following model->dark.
+     *
+     * FULL CONTRAST EVEN ON AN EMPTY WINDOW, and it earns it: macOS does not
+     * disable this one (it is absent from -updateControls's list) because the
+     * reading theme is a setting, and chrome_toggle_theme() now flips it with no
+     * canvas to rebuild. The glyph brush is set back to 1.0 for the two live
+     * controls and left there -- nothing after them is dimmed. */
+    if (glyph) glyph->SetOpacity(1.0f);
     {
         SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_READING_THEME];
         draw_pill(ctx, r, 1);
@@ -321,8 +359,13 @@ void spdf_win_chrome_paint_toolbar(const SpdfWinChromePaintCtx& ctx) {
         }
     }
 
-    /* 18. Minimap toggle, from the trailing edge. 17. Overflow next to it. */
-    draw_toggle(ctx, tb.item[SPDF_WIN_TB_MINIMAP_TOGGLE], L"Map", m->show_minimap);
+    /* 18. Minimap toggle, from the trailing edge. 17. Overflow next to it.
+     *
+     * The Map switch goes with the document (:10236), and so does the strip:
+     * -setMinimapActuallyVisible: is `visible && hasActiveDocument` (:9137), so
+     * an empty window has no strip for the switch to show. An accent-filled
+     * switch on an empty window was the loudest false promise in the row. */
+    draw_toggle(ctx, tb.item[SPDF_WIN_TB_MINIMAP_TOGGLE], L"Map", m->show_minimap, live);
     {
         SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_OVERFLOW];
         draw_pill(ctx, r, 1);

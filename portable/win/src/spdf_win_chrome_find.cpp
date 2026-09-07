@@ -104,7 +104,7 @@ void draw_chevron(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect cell, int 
  * `placeholder` is drawn in the secondary label colour, which is what makes an
  * empty field read as empty rather than as containing the word "Find". */
 void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wchar_t* text,
-                const wchar_t* placeholder) {
+                const wchar_t* placeholder, int enabled) {
     const SpdfWinChromeTheme* th = ctx.theme;
     float s = ctx.dpi_scale;
     ID2D1SolidColorBrush* fill;
@@ -112,8 +112,8 @@ void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wch
     int empty;
 
     if (spdf_win_chrome_rect_empty(r)) return;
-    fill = spdf_win_chrome_brush(ctx.target, th->field_fill);
-    stroke = spdf_win_chrome_brush(ctx.target, th->control_stroke);
+    fill = spdf_win_chrome_brush(ctx.target, spdf_win_chrome_dim(th->field_fill, enabled));
+    stroke = spdf_win_chrome_brush(ctx.target, spdf_win_chrome_dim(th->control_stroke, enabled));
     fill_rounded(ctx.target, r, px(5.0, s), fill, stroke, spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s));
     if (fill) fill->Release();
     if (stroke) stroke->Release();
@@ -123,7 +123,7 @@ void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wch
         /* A magnifier is what makes this field readable AS a search field before
          * anything is typed; macOS gets one free from NSSearchField. Two strokes
          * -- a circle and a handle -- so it stays crisp at any DPI. */
-        ID2D1SolidColorBrush* glyph = spdf_win_chrome_brush(ctx.target, th->label_secondary);
+        ID2D1SolidColorBrush* glyph = spdf_win_chrome_brush(ctx.target, spdf_win_chrome_dim(th->label_secondary, enabled));
         SpdfWinChromeRect t = r;
         float inset = px(8.0, s);
         if (glyph) {
@@ -145,8 +145,9 @@ void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wch
         t.w = r.w - px(22.0, s) - inset;
         if (t.w > 0.0f)
             spdf_win_chrome_draw_text(ctx, empty ? placeholder : text, t,
-                                      empty ? th->label_secondary : th->label, px(SPDF_WIN_CT_FONT_SIZE_FIELD, s),
-                                      DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, 1);
+                                      spdf_win_chrome_dim(empty ? th->label_secondary : th->label, enabled),
+                                      px(SPDF_WIN_CT_FONT_SIZE_FIELD, s), DWRITE_FONT_WEIGHT_NORMAL,
+                                      DWRITE_TEXT_ALIGNMENT_LEADING, 1);
     }
 }
 
@@ -154,7 +155,7 @@ void draw_field(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wch
  * NSButton's checkbox is system-drawn on macOS, so as with the pills the thing
  * to reproduce is the relationship -- box, tick, label, all on the row's
  * baseline -- rather than a literal. */
-void draw_checkbox(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wchar_t* label, int on) {
+void draw_checkbox(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const wchar_t* label, int on, int enabled) {
     const SpdfWinChromeTheme* th = ctx.theme;
     float s = ctx.dpi_scale;
     float box = px(14.0, s);
@@ -168,8 +169,8 @@ void draw_checkbox(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const 
     b.y = r.y + (r.h - box) * 0.5f;
     b.w = box;
     b.h = box;
-    fill = spdf_win_chrome_brush(ctx.target, on ? th->accent : th->field_fill);
-    stroke = spdf_win_chrome_brush(ctx.target, th->control_stroke);
+    fill = spdf_win_chrome_brush(ctx.target, spdf_win_chrome_dim(on ? th->accent : th->field_fill, enabled));
+    stroke = spdf_win_chrome_brush(ctx.target, spdf_win_chrome_dim(th->control_stroke, enabled));
     fill_rounded(ctx.target, b, px(3.0, s), fill, stroke, spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s));
     if (fill) fill->Release();
     if (stroke) stroke->Release();
@@ -180,7 +181,8 @@ void draw_checkbox(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const 
          * is the same NSColor.controlAccentColor the selected tab is stroked
          * with), so the knockout that reads on it is the same knockout. A
          * theme-following tick would be invisible in one of the two. */
-        ID2D1SolidColorBrush* tick = spdf_win_chrome_brush(ctx.target, spdf_win_ct_calibrated(1.0f, 1.0f, 1.0f, 0.96f));
+        ID2D1SolidColorBrush* tick =
+            spdf_win_chrome_brush(ctx.target, spdf_win_chrome_dim(spdf_win_ct_calibrated(1.0f, 1.0f, 1.0f, 0.96f), enabled));
         if (tick) {
             float lw = spdf_win_chrome_stroke_px(1.6f, s);
             float cx = b.x + b.w * 0.5f;
@@ -197,8 +199,9 @@ void draw_checkbox(const SpdfWinChromePaintCtx& ctx, SpdfWinChromeRect r, const 
     t.x = b.x + box + px(5.0, s);
     t.w = r.x + r.w - t.x;
     if (t.w > 0.0f)
-        spdf_win_chrome_draw_text(ctx, label, t, th->label, px(SPDF_WIN_CT_FONT_SIZE_LABEL, s),
-                                  DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, 0);
+        spdf_win_chrome_draw_text(ctx, label, t, spdf_win_chrome_dim(th->label, enabled),
+                                  px(SPDF_WIN_CT_FONT_SIZE_LABEL, s), DWRITE_FONT_WEIGHT_NORMAL,
+                                  DWRITE_TEXT_ALIGNMENT_LEADING, 0);
 }
 
 } /* namespace */
@@ -209,16 +212,23 @@ void spdf_win_chrome_paint_find(const SpdfWinChromePaintCtx& ctx, const SpdfWinT
     float s = ctx.dpi_scale;
     int live = spdf_win_find_has_query(m);
     ID2D1SolidColorBrush* glyph;
+    /* THERE IS NOTHING TO SEARCH WITH NO DOCUMENT, and macOS says so control by
+     * control: `_searchField.enabled = hasDoc` (:10232) and
+     * `_findRegexCheckbox.enabled = hasDoc` (:10233). Same test the input router
+     * refuses these two from (spdf_win_chrome_empty.h), so the field cannot be
+     * drawn grey and still take the keyboard. */
+    int has_doc;
 
     if (!m || !th) return;
+    has_doc = spdf_win_chrome_has_document(m);
 
     /* 12. The search field, showing the live query. */
-    draw_field(ctx, tb.item[SPDF_WIN_TB_FIND_FIELD], m->query, L"Find");
+    draw_field(ctx, tb.item[SPDF_WIN_TB_FIND_FIELD], m->query, L"Find", has_doc);
 
     /* 13. The regex checkbox. Always shown -- it is not hidden with the query on
      * macOS either; it is only collapsed by width, which the layout already
      * did. */
-    draw_checkbox(ctx, tb.item[SPDF_WIN_TB_FIND_REGEX], L"Regex", m->regex);
+    draw_checkbox(ctx, tb.item[SPDF_WIN_TB_FIND_REGEX], L"Regex", m->regex, has_doc);
 
     if (!live) return; /* the counter and the pill are hidden with no query */
 
@@ -226,7 +236,8 @@ void spdf_win_chrome_paint_find(const SpdfWinChromePaintCtx& ctx, const SpdfWinT
     {
         wchar_t text[SPDF_WIN_FIND_COUNTER_MAX];
         spdf_win_find_counter_text(m, text, SPDF_WIN_FIND_COUNTER_MAX);
-        spdf_win_chrome_draw_text(ctx, text, tb.item[SPDF_WIN_TB_FIND_COUNT], th->label_secondary,
+        spdf_win_chrome_draw_text(ctx, text, tb.item[SPDF_WIN_TB_FIND_COUNT],
+                                  spdf_win_chrome_dim(th->label_secondary, has_doc),
                                   px(SPDF_WIN_CT_FONT_SIZE_LABEL, s), DWRITE_FONT_WEIGHT_NORMAL,
                                   DWRITE_TEXT_ALIGNMENT_CENTER, 0);
     }
@@ -236,11 +247,15 @@ void spdf_win_chrome_paint_find(const SpdfWinChromePaintCtx& ctx, const SpdfWinT
      * state a reader is in for the whole of a query that matches nothing. */
     {
         SpdfWinChromeRect r = tb.item[SPDF_WIN_TB_FIND_PILL];
-        int enabled = m->match_count > 0;
-        draw_pill(ctx, r, 2, enabled ? 1.0f : 0.44f);
+        /* The literal 0.44 that was here is SPDF_WIN_CHROME_DISABLED_ALPHA now:
+         * this pill's "nothing to step through" grey IS the row's disabled grey,
+         * and the whole point of naming it is that the two cannot drift. */
+        int enabled = has_doc && m->match_count > 0;
+        float alpha = enabled ? 1.0f : SPDF_WIN_CHROME_DISABLED_ALPHA;
+        draw_pill(ctx, r, 2, alpha);
         glyph = spdf_win_chrome_brush(ctx.target, th->control_glyph);
         if (glyph) {
-            glyph->SetOpacity(enabled ? 1.0f : 0.44f);
+            glyph->SetOpacity(alpha);
             draw_chevron(ctx, spdf_win_toolbar_cell(r, 0, 2), 1, glyph);
             draw_chevron(ctx, spdf_win_toolbar_cell(r, 1, 2), 0, glyph);
             glyph->Release();

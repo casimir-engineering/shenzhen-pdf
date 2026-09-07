@@ -8,6 +8,10 @@
 
 #include "spdf_win_tabstrip.h"
 #include "spdf_win_tabs_drag.h" /* the drop indicator's rect */
+/* The empty canvas's "Open a PDF…" button, extracted when this file hit its line
+ * cap -- the same cut, for the same reason, as
+ * spdf_win_chrome_toolbar_controls.h. */
+#include "spdf_win_chrome_empty_paint.h"
 
 #include <math.h>
 #include <string.h>
@@ -435,6 +439,10 @@ void spdf_win_chrome_paint_all(const SpdfWinChromePaintCtx& ctx) {
      * canvas region and shrinks the canvas away from them). So a page scrolled
      * to the right edge cannot paint over the vertical trough. */
     spdf_win_chrome_paint_scrollers(ctx);
+    /* The empty state's Open button, inside the canvas region -- so it goes
+     * BEFORE the two bands, which must be able to draw over anything that
+     * strayed, and it is a no-op on every window that has a document. */
+    spdf_win_chrome_paint_empty(ctx);
     spdf_win_chrome_paint_toolbar(ctx);
     spdf_win_chrome_paint_tabstrip(ctx);
 }
