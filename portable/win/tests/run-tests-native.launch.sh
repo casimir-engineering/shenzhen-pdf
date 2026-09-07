@@ -32,7 +32,7 @@
 # Sourced by run-tests-native.sh, never executed. Needs harness-lib.sh and
 # run-tests-native.lib.sh.
 
-LAUNCH_NATIVE_CASES=(launch.budget launch.invariant launch.health window.stress)
+LAUNCH_NATIVE_CASES=(launch.budget launch.invariant launch.health window.stress dialog.open)
 LAUNCH_WINDOW_BUDGET_MS=300
 LAUNCH_FIRST_PAGE_BUDGET_MS=600
 LAUNCH_RUNS=5
@@ -339,4 +339,78 @@ case_launch_health() {
 # The per-step repaint percentages on one line, for the record.
 health_summary_line() {
   sed -n 's/^[0-9][0-9] \([a-z-]*\) .*changed=\([0-9.]*\)%.*/\1 \2%/p' "$1" | tr '\n' ' ' | sed 's/ *$//'
+}
+
+# --- dialog.open -----------------------------------------------------------
+#
+# DOES THE OPEN DIALOG HAVE ANYTHING IN IT? "When you click open pdf, then
+# everything freezes": the shell's Open dialog came up with its file list, its
+# File name box and its two buttons as blank white rectangles and stood there.
+# Not a hang -- the window answered SendMessageTimeout in 0 ms and
+# IsHungAppWindow was false -- so nothing already in this suite could see it.
+# The cause was a WM_MOUSELEAVE loop in the port's own window proc that pinned
+# the UI thread and starved WM_PAINT (windows-native-observations.md 20).
+#
+# portable/win/tests/open-dialog.ps1 launches the built exe bare, finds the
+# empty state's accent button BY COLOUR, clicks it, and then measures the
+# DIALOG'S OWN client pixels -- distinct colours and flat white, over the whole
+# client and over the bottom band alone -- plus the CPU the process burns while
+# the dialog just sits there, which is the cause measured rather than the
+# symptom. Then it types a real path in, presses Enter and asserts the document
+# opened. It also reads the app's launch-health.log back: a modal dialog must be
+# recorded as phase=modal, never as a false phase=stall.
+#
+# BLOCKED (68) on a locked workstation, the screen saver's desktop, or a desktop
+# that refuses the launched window the foreground: this drives real SendInput and
+# captures the screen, so none of those can answer the question.
+case_dialog_open() {
+  local case_name="dialog.open"
+  if [[ -n "$MUPDF_READY" ]]; then
+    record "$case_name" BLOCKED "$MUPDF_READY"
+    return
+  fi
+  if ! command -v powershell.exe > /dev/null 2>&1; then
+    record "$case_name" BLOCKED "powershell.exe is not on PATH (open-dialog.ps1 drives the dialog)"
+    return
+  fi
+  local fixture="$REPO_ROOT/portable/win/tests/fixtures/golden.pdf"
+  if [[ ! -f "$fixture" ]]; then
+    record "$case_name" BLOCKED "fixture portable/win/tests/fixtures/golden.pdf is missing"
+    return
+  fi
+  native_app_build
+  if [[ $? -ne 0 ]]; then
+    record "$case_name" FAIL "ShenzhenPDF.exe does not build (see $OUT/app-build.log)"
+    return
+  fi
+  local log="$OUT/dialog-open.log"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$REPO_ROOT/portable/win/tests/open-dialog.ps1")" \
+      -Exe "$SPDF_OUT\\ShenzhenPDF.exe" -StateDir "$SCRATCH_WIN\\dialog-open-state" \
+      -OutDir "$SCRATCH_WIN\\dialog-open" -Pdf "$(cygpath -w "$fixture")" > "$log" 2>&1
+  local rc=$?
+  case $rc in
+    0)
+      record "$case_name" PASS "the Open dialog renders, does not spin, and opens the document ($(dialog_open_summary_line "$log"))"
+      ;;
+    1)
+      record "$case_name" FAIL "the Open dialog is not usable: $(grep -m 3 '^FAIL' "$log" | tr '\n' ';')"
+      log_tail "$log" 30
+      ;;
+    68)
+      record "$case_name" BLOCKED "$(desktop_block_reason "$log")"
+      ;;
+    65 | 66 | 67)
+      record "$case_name" FAIL "no window, no accent button, or no dialog (open-dialog.ps1 exited $rc)"
+      log_tail "$log" 20
+      ;;
+    *)
+      record "$case_name" FAIL "open-dialog.ps1 exited $rc"
+      log_tail "$log" 20
+      ;;
+  esac
+}
+
+# The dialog's own numbers, for the record.
+dialog_open_summary_line() {
+  sed -n 's/^02 .*client \(distinct=[0-9]*\) \(near_white=[0-9]*%\).*/\1 \2/p' "$1" | sed -n 1p
 }
