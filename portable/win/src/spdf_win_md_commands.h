@@ -46,6 +46,7 @@
  * time (spdf_win_window.h). */
 #define SPDF_WIN_MD_WM_IMAGES_ARRIVED (WM_APP + 0x0D44)
 SPDF_WIN_APP_MSG_OK(spdf_win_md_images_arrived_is_routable, SPDF_WIN_MD_WM_IMAGES_ARRIVED);
+SPDF_WIN_APP_MSG_OK(spdf_win_md_reloaded_is_routable, SPDF_WIN_MD_WM_RELOADED);
 
 /* Is the selected tab a Markdown document? The commands below are no-ops on
  * anything else, so a PDF reader never pays for them. */
