@@ -310,6 +310,7 @@ int spdf_win_shortcuts_show(void* parent_handle, int dark) {
     sc_state* st;
     HWND hwnd;
     MSG msg;
+    BOOL msg_got = 1; /* GetMessageW's answer: 0 is WM_QUIT, see spdf_win_modal_scope.h */
     SpdfWinChromeTheme t = spdf_win_chrome_theme_for(dark);
 
     if (!sc_register_class()) return 0;
@@ -350,10 +351,11 @@ int spdf_win_shortcuts_show(void* parent_handle, int dark) {
     ShowWindow(hwnd, SW_SHOW);
     SetFocus(hwnd);
 
-    while (!st->finished && GetMessageW(&msg, NULL, 0, 0) > 0) {
+    while (!st->finished && (msg_got = GetMessageW(&msg, NULL, 0, 0)) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    spdf_win_modal_requeue_quit(msg_got, &msg);
     modal.end();
     DeleteObject(st->bg);
     DeleteObject(st->font);
