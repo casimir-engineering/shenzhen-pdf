@@ -1,5 +1,9 @@
 #import <Cocoa/Cocoa.h>
 
+// The exact-fit canvas geometry this view lays pages out with; the reader that
+// scrolls those pages into place (ShenzhenPDFMac.mm) uses the same rules.
+#import "SPDFMacFitGeometry.h"
+
 #import "SPDFMacModels.h"
 #import "markdown/SPDFMarkdownDecorations.h"
 #import "SPDFMacSelectionClick.h"

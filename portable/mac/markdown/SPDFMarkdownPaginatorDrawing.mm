@@ -208,6 +208,39 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
     }
 }
 
+NSString* SPDFMarkdownPageFooterText(NSUInteger pageIndex, NSUInteger pageCount) {
+    return [NSString stringWithFormat:@"Page %lu of %lu", (unsigned long)pageIndex + 1, (unsigned long)pageCount];
+}
+
+// The sheet's footer: "Page 2 of 10", right-aligned to the printable edge and
+// centred in the bottom margin, in the muted caption tint. Drawn here, with the
+// page, so the screen, Print, Save as PDF and Copy Page all carry the same
+// footer -- and drawn, not typeset into the canonical string, so it is neither
+// searchable nor selectable and cannot shift a page break.
+static void SPDFDrawPageFooter(SPDFMarkdownPageConfiguration* configuration, SPDFMarkdownTheme* theme,
+                               NSUInteger pageIndex, NSUInteger pageCount, CGContextRef context) {
+    NSRect printable = configuration.printableRect;
+    CGFloat bottomMargin = NSMinY(printable);
+    if (bottomMargin < 12.0) return;  // no margin to write in (test-sized pages)
+    CGFloat fontSize = 9.0;
+    NSAttributedString* text = [[NSAttributedString alloc]
+        initWithString:SPDFMarkdownPageFooterText(pageIndex, pageCount)
+            attributes:@{
+                NSFontAttributeName : [NSFont systemFontOfSize:fontSize],
+                NSForegroundColorAttributeName : theme.secondaryTextColor
+            }];
+    CTLineRef line = CTLineCreateWithAttributedString((CFAttributedStringRef)text);
+    CGFloat ascent = 0, descent = 0;
+    double width = CTLineGetTypographicBounds(line, &ascent, &descent, NULL);
+    CGContextSaveGState(context);
+    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+    // Centre the glyph box (ascent above, descent below) on the margin's midline.
+    CGContextSetTextPosition(context, NSMaxX(printable) - width, bottomMargin / 2.0 - (ascent - descent) / 2.0);
+    CTLineDraw(line, context);
+    CGContextRestoreGState(context);
+    CFRelease(line);
+}
+
 - (BOOL)drawPageAtIndex:(NSUInteger)pageIndex
        attributedString:(NSAttributedString*)attributedString
               inContext:(CGContextRef)context {
@@ -224,6 +257,7 @@ static void SPDFSetContextColor(CGContextRef context, NSColor* color, BOOL strok
     SPDFSetContextColor(context, theme.paperColor, NO);
     CGContextFillRect(context, CGRectMake(0, 0, self.configuration.paperSize.width, paperHeight));
     [self spdf_drawDecorationsForPageIndex:pageIndex inContext:context];
+    SPDFDrawPageFooter(self.configuration, theme, pageIndex, self.pages.count, context);
     CGContextSetTextMatrix(context, CGAffineTransformIdentity);
     for (SPDFMarkdownPageFragment* fragment in page.fragments) {
         if (NSMaxRange(fragment.attributedRange) > attributedString.length) continue;

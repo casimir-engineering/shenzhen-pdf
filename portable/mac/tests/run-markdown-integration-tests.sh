@@ -98,6 +98,9 @@ $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Navigation.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Pan.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Search.mm
 $PORTABLE/mac/SPDFMacMarkdownPagedView.mm
+$PORTABLE/mac/SPDFMacMarkdownPagedView+Fit.mm
+$PORTABLE/mac/SPDFMacMarkdownClipView.mm
+$PORTABLE/mac/SPDFMacMarkdownCopyText.mm
 $PORTABLE/mac/SPDFMacRenderedPage.mm
 $PORTABLE/mac/SPDFMacMarkdownMinimapModel.mm
 $PORTABLE/mac/SPDFMacMarkdownSidebarModel.mm
@@ -119,6 +122,9 @@ TESTS="
 SPDFMacMarkdownKeyboardPolicyTests
 SPDFMacMarkdownRoutingTests
 SPDFMacMarkdownPagedViewTests
+SPDFMacMarkdownPanTests
+SPDFMacMarkdownCopyTextTests
+SPDFMacMarkdownLinkHitTests
 SPDFMacMarkdownCopySelectionTests
 SPDFMacMarkdownMinimapModelTests
 SPDFMacMarkdownSidebarModelTests

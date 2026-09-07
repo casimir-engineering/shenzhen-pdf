@@ -283,6 +283,23 @@ static NSRect SPDFCodeControlHitRect(NSRect controlRect) {
     return linkRects;
 }
 
+// Whether a click at `point` (canvas coordinates) is ON a link: inside one of
+// the link rects above, with the same 2pt slop the hover hand uses. The click
+// path used to map the point to the horizontally NEAREST fragment in its band
+// and read the destination at that character -- fine in running text, but a
+// table row's cells share one band, so a click in the empty part of the left
+// cell resolved to the link cell's first character and opened the link from
+// half a row away. Hand and click now agree on where a link is.
+- (BOOL)pointIsOnLink:(NSPoint)point {
+    NSInteger pageIndex = [self pageIndexForVisibleRect:NSMakeRect(point.x, point.y, 1.0, 1.0)];
+    if (pageIndex < 0 || pageIndex >= (NSInteger)self.pageCount) return NO;
+    NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];
+    for (NSValue* value in [self linkRectsForPage:self.plan.pages[(NSUInteger)pageIndex] pageFrame:pageFrame]) {
+        if (NSPointInRect(point, NSInsetRect(value.rectValue, -2.0, -2.0))) return YES;
+    }
+    return NO;
+}
+
 // One pill of the chrome row: the theme's quiet code-control fill, hairline
 // stroke and muted text, so both controls read as the same control in both
 // reading themes. Skips an empty rect (a header band too narrow for two).
