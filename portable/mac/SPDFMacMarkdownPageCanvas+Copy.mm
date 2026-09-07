@@ -1,5 +1,7 @@
 #import "SPDFMacMarkdownPageCanvasPrivate.h"
 
+#import "SPDFMacMarkdownCopyText.h"
+
 // Image-aware selection copy backing the Markdown tab's Cmd+C / Copy chain
 // (the canvas's copy: fallback and the reader's copySelection:). An
 // image-only selection writes the attachment's image itself, a mixed
@@ -74,11 +76,15 @@ static NSImage* SPDFMarkdownAttachmentImage(NSTextAttachment* attachment) {
                 plainTextTransform:(NSString* (^)(NSString* text))transform {
     NSRange range = self.selectedRange;
     if (!pasteboard || !range.length || NSMaxRange(range) > self.attributedString.length) return NO;
+    // Structure-aware plain text (blocks apart, list items and table rows on
+    // their own lines, cells tab-separated); the transform runs inside each
+    // cell, never across a break. See SPDFMacMarkdownCopyText.h.
     NSString* plain = [self.attributedString.string substringWithRange:range];
+    NSString* text = SPDFMacMarkdownCopyText(self.attributedString, range, transform);
     NSArray<NSImage*>* images = [self spdf_imagesInSelection];
     if (!images.count) {
         [pasteboard clearContents];
-        return [pasteboard setString:transform ? transform(plain) : plain forType:NSPasteboardTypeString];
+        return [pasteboard setString:text forType:NSPasteboardTypeString];
     }
     // Exactly one image and nothing but its attachment character (plus
     // surrounding whitespace) selected: the pasteboard gets the image itself
@@ -91,7 +97,7 @@ static NSImage* SPDFMarkdownAttachmentImage(NSTextAttachment* attachment) {
     // Mixed selection: the plain text exactly as a text-only copy writes it,
     // plus an RTFD rendition carrying the selected attachments.
     NSPasteboardItem* item = [NSPasteboardItem new];
-    [item setString:transform ? transform(plain) : plain forType:NSPasteboardTypeString];
+    [item setString:text forType:NSPasteboardTypeString];
     NSData* rtfd = [self spdf_RTFDDataForSelectionRange:range];
     if (rtfd.length) [item setData:rtfd forType:NSPasteboardTypeRTFD];
     [pasteboard clearContents];

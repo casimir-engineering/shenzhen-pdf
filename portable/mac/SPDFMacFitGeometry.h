@@ -32,6 +32,23 @@ static inline CGFloat spdf_mac_vertical_canvas_inset(NSUInteger pageCount,
     return MAX(0.0, MIN(decorativeInset, centered));
 }
 
+// Where the viewport's top goes when a page is brought in by a fit or a page
+// step. A page that fits the viewport vertically is CENTERED on it -- which,
+// at exact fit, puts its top flush with the viewport's top, so no gutter shows
+// above or below a Fit Page / Fit Height sheet on any page of the document. A
+// page taller than the viewport keeps the small breathing room above its top
+// that page stepping has always had. Before this the breathing room applied to
+// every page, so Fit Page on page 2 of a PDF showed a 12pt strip of the gutter
+// above the sheet ("black on top") while page 1, whose canvas inset had
+// collapsed to 0, did not.
+static inline CGFloat spdf_mac_fit_scroll_origin_y(CGFloat pageMinY,
+                                                        CGFloat pageHeight,
+                                                        CGFloat viewportHeight,
+                                                        CGFloat breathingRoom) {
+    if (pageHeight <= viewportHeight + 0.5) return MAX(0.0, pageMinY - (viewportHeight - pageHeight) / 2.0);
+    return MAX(0.0, pageMinY - breathingRoom);
+}
+
 // Horizontal mirror for the near-fit band: the side margin beside a page keeps
 // its decorative value while there is room, shrinks continuously once the
 // widest page is within one margin of the viewport width, and reaches 0 at

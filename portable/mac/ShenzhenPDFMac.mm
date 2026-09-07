@@ -5593,7 +5593,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         CGFloat x = NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5
                         ? [self centeredHorizontalScrollOriginXForPageRect:pageRect]
                         : MAX(0, pageRect.origin.x - 12.0);
-        CGFloat y = MAX(0, pageRect.origin.y - 12);
+        CGFloat y = spdf_mac_fit_scroll_origin_y(NSMinY(pageRect), NSHeight(pageRect), NSHeight(clipView.bounds), 12);
         if (_presentationMode) y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
         NSPoint point = NSMakePoint(x, y);
         [self scrollDocumentClipViewToOrigin:point notify:NO];
