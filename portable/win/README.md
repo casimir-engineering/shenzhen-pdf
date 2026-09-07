@@ -134,7 +134,10 @@ monitor, on-screen, z-index, hung windows of the process, modal state, the input
 messages the window procedure received, paints completed, and the UI thread's
 heartbeat — plus a `stall` line from a watchdog thread whenever that heartbeat
 goes older than three seconds, which is the one thing no UI-thread timer can
-report. It costs an `InterlockedIncrement` per counted message and a
+report. A nested modal loop makes the heartbeat go stale too and is **not** a
+stall: while one of our own dialogs is up the watchdog writes one `modal` line
+and then stays quiet, so a `stall` line means a pump that is genuinely stuck.
+It costs an `InterlockedIncrement` per counted message and a
 `GetTickCount64` per turn of the message loop
 (`portable/win/src/spdf_win_health.h`, `spdf_win_health_log.h`).
 
