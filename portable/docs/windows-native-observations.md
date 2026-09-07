@@ -1889,3 +1889,234 @@ first frame on the UI thread. It has a window, so it is a freeze rather than an
 absence, and `show_selected_tab`'s promise that a switch "lands finished" is a
 different decision from this one. The machinery is one call away if that promise
 is ever traded.
+
+## 19. The empty window was not unresponsive; it was dishonest (2026-09-07)
+
+Sections 13-17 each found a real defect behind the same report -- "the app was
+never responsive to any user input and not even focusable", from a double-click
+on `dist\ShenzhenPDF-win-x64.exe`. None of them was what was on the screen. This
+is what was.
+
+His `%APPDATA%\ShenzhenPDF\session.yaml` holds `windows: []` and his
+`settings.yaml` holds `recentlyOpened: []`, so there is nothing to restore and
+the app comes up in its EMPTY state. That state drew the full toolbar exactly as
+it draws it with a document open -- the Side Panel switch, the two power tools, a
+page field, `/ 0`, the page arrows, the Fit Width popup, the zoom pill, the
+reading-theme button, the Find field, the Regex box, the overflow `...` and the
+Map switch accent-filled and ON -- at full contrast, every one of them inert.
+Down the right edge was a minimap strip with nothing in it. The only affordance
+was one line of grey text: "No document open â€” Ctrl+O to open one, or drop a PDF
+here".
+
+Measured on that window, at 1, 5 and 30 seconds after launch: foreground,
+`IsWindowEnabled` true, `IsHungAppWindow` false, on screen, z-order 0, answering
+`WM_NULL` via `SendMessageTimeout` in 0 ms. Ctrl+O reached the keymap and put a
+real system `#32770 'Open'` dialog on screen. The window was healthy the whole
+time.
+
+So the defect is not a window that does not respond. It is a window on which
+thirteen controls respond to nothing, drawn identically to the same thirteen
+controls when they work. A person who clicks the page arrow, drags the zoom and
+flicks the Side Panel switch has performed a complete, correct test of the
+application and has been told, three times, that it is broken. No crash test, no
+`launch.health` probe and no responsiveness measurement can see that, because
+every one of them passes.
+
+### What the original does, and where that is written
+
+macOS never presents an open panel at launch. `-performStartupDocumentWork`
+(`portable/mac/ShenzhenPDFMac.mm:845-877`) has three arms -- paths on the command
+line, tabs to restore, and neither -- and the third is
+`[self showEmptyDocumentViewWithMessage:@"Open a document"]` (`:860-862`). There
+is no `applicationOpenUntitledFile:` and no `applicationShouldOpenUntitledFile:`
+in the tree; the only `NSOpenPanel` is `SPDFMacFileBrowsing.mm:12-20`, reachable
+from File > Open, from the tab strip's `+` and from a typed path that turns out
+to be a folder.
+
+The window is built and shown unconditionally, before any document work
+(`:737-769`), and the toolbar is built in full. Enablement is then imperative,
+control by control, in `-updateControls` (`:10218-10248`):
+`_sidebarToggleButton`, `_pageField`, both `_zoomSegments`, `_fitModePopup`,
+`_searchField`, `_findRegexCheckbox`, `_ocrButton`, `_minimapToggleButton` and
+both `_pageSegments` (`:10188-10189`) all take `hasDoc`. The page field's text
+becomes `@""`, the count label reads `/ 0`, and the minimap is force-hidden
+whatever the preference says (`-setMinimapActuallyVisible:` is
+`visible && [self hasActiveDocument]`, `:9137`, called with `NO` at `:5267`).
+`-validateMenuItem:` greys every command except a whitelist that is mostly ways
+IN -- `openDocument:`, `openRecentDocument:`, `showAboutPanel:` (`:16317-16325`)
+-- and then `if (!hasDoc) return action == @selector(unimplementedMenuItem:);`
+(`:16424`). The placeholder itself is 16 pt medium `secondaryLabelColor`, one
+centred line at midY - 18 (`SPDFMacDocumentView.mm:509-530`).
+
+The GTK original is the same policy with less decoration: a presented window with
+zero tabs and no file dialog (`spdf_app.c:340-379`), `update_page_controls`
+desensitising the same row (`spdf_window.c:142-160`), `"/ â€“"` for the count, and
+`"No Recent Documents"` appended with no action name so GTK renders it
+insensitive.
+
+So the port had the STRUCTURE right -- full window, full toolbar, one centred
+line -- and had simply never ported the enablement pass. That is the whole of the
+visual defect.
+
+### The one place this port cannot follow, and what it does instead
+
+macOS's way out of the empty state is File > Open in the menu bar. This port has
+no menu bar: the menu moved into the toolbar's `...` overflow button when the tab
+strip became the title bar (`spdf_win_chrome_input.h`, `SPDF_WIN_CA_APP_MENU`). A
+three-dot button is not a discoverable way to open a document, and naming a
+keyboard shortcut in grey text is not an affordance -- it is a fact the reader has
+to already have. So the empty canvas gets a primary "Open a PDFâ€¦" button, routed
+to `SPDF_WIN_CMD_OPEN`: the same command Ctrl+O and the strip's `+` post, so
+there is one open dialog however it is reached. The placeholder shrinks to "No
+document open" -- as short as the mac's own -- and the drop hint moves under the
+button.
+
+### Where the two sides agree
+
+The router used to be unable to ask the question at all.
+`chrome_layout_for_input()` builds the model the input router hit-tests against,
+and it `memset`s it and then fills only the fields that affect GEOMETRY -- so
+`page_count` was 0 on every event, with a document open or not. Gating the row on
+it without fixing that would have refused the entire toolbar of every document
+this app opens. Both page fields are filled from the canvas now, beside
+`markdown`, which is there for exactly the same reason.
+
+With that, `spdf_win_chrome_empty.h` holds one predicate
+(`spdf_win_toolbar_item_enabled`) and one rect
+(`spdf_win_chrome_empty_open_rect`), and the painter and the router each call
+both. A control the painter dims is a control the router reports as "not a
+target"; a button the painter draws is a button the router routes. That is
+`spdf_win_chrome.h`'s standing rule -- "hit-testing and painting must agree
+exactly ... here they agree only if they call the same functions" -- applied to
+state rather than to position.
+
+Every handler behind those thirteen controls already refused a NULL canvas, so a
+click on a dimmed arrow was already inert. It was inert BY ACCIDENT, four files
+away, and the press still took the focus off whatever had it and still cost a
+frame. Refusing it in the router is what makes the dimming true rather than
+decorative.
+
+### Three controls stay live, and one had to be repaired to earn it
+
+The overflow `...` is this port's File menu and the thing an empty window most
+needs; its own greying is `spdf_win_menu_rules.h`'s and already reads
+`has_document`. The separator is a hairline of decoration. The reading-theme
+button is the interesting one: macOS does not disable it, because a reading theme
+is a setting and not a property of the document -- but on Windows
+`chrome_toggle_theme()` opened with `if (!a->canvas) return 0;`, so it was the one
+button on the empty window that looked live and was not. It flips the setting and
+repaints without a canvas now. `settings.yaml` gets the choice either way, so the
+next launch opens in it.
+
+The Map switch went the other way. It was drawn accent-filled and ON next to a
+strip with nothing in it -- the loudest false promise in the row. Both the switch
+and the strip now follow the document, which is what `:10236` and `:9137` do
+together.
+
+### Measured, before and after
+
+| | before | after |
+| --- | --- | --- |
+| document-dependent controls at full contrast | 13 | 0 |
+| clicks on them the router accepts | 13 | 0 |
+| empty minimap strip | drawn | gone |
+| ways to open a document without knowing a shortcut | 0 | 1 (mouse, Tab, Enter) |
+| with-document window, 1120 x 800 at 144 dpi | -- | **byte-identical** |
+
+The last row is the one that matters for the layout: the same fixture captured
+through `screenshot-window.ps1` from both builds differs in zero pixels, and the
+layout differential reports 0 mismatches in 395,514 comparisons. The disable is a
+colour and a refusal; no rect moved, at 1.0, 1.25, 1.5 or 2.0 scale, which
+`empty_state_test.c` asserts edge by edge for every item in the row.
+
+### The keyboard, and why the button is in the focus enum
+
+Tab with no document focuses the button and Return or Space presses it.
+`SPDF_WIN_FOCUS_OPEN` joins `spdf_win_text_focus` -- the enum of the three
+typeable fields -- as its one member that is not a field, because that enum is
+already where the window keeps "what does the keyboard belong to", and a second
+variable beside it is a variable that can go stale against it.
+`chrome_focused_field()` returns 0 for it, so no edit call can be handed a NULL
+buffer.
+
+Tab with a document open is left exactly as it was: unbound. A focus ring order
+over eighteen toolbar controls is a feature this port has not written, and
+half-writing it here would be worse than not having it.
+
+Ctrl+F and Ctrl+G now do nothing on an empty window. macOS keeps `focusFind:` on
+its always-enabled whitelist even while it disables the field itself, and this
+port takes the field's word for it: a control drawn dead must not be focusable by
+any route, or the fix reappears as an accent focus ring on a grey field. That is a
+deliberate divergence and it is the one that leaves nothing on screen
+contradicting itself.
+
+### Driven with real input
+
+The probe launches the exe with `SPDF_WIN_SETUP_NO_PROMPT=1` and a private
+`--state-dir`, sizes the window, checks it is foreground before sending anything,
+then drives it with `SendInput` and enumerates every window of the process
+afterwards. Three ways in were exercised on the built binary and all three put a
+real `#32770 'Open'` dialog on screen, enabled and on-screen, which the probe then
+cancels:
+
+| gesture | result |
+| --- | --- |
+| click at the button's centre | `#32770 'Open'` at 91,80-1531,980 |
+| Tab, Return | `#32770 'Open'` at 92,80-1532,980 |
+| Tab, Space | `#32770 'Open'` at 92,80-1532,980 |
+| Tab alone | focus ring drawn, no dialog |
+| Ctrl+O (unchanged) | `#32770 'Open'` |
+
+The reading-theme button was driven the same way, and it is the cleanest single
+measurement in this section because it is the same click on both builds:
+
+| build | click on the reading-theme button of the EMPTY window |
+| --- | --- |
+| before | **0 pixels changed** |
+| after | client area 11,0-1109,789 changed -- the window is in the other theme |
+
+One measurement worth writing down because it cost twenty minutes: the FIRST run
+of a freshly built exe missed the Tab. The probe sends Tab 900 ms after the
+window appears, and a cold binary's first launch is still settling then -- a
+Ctrl+O sent later in the same run worked. It reproduced as "the keyboard route
+does not work" and was a warm-up artefact. Interleave runs, or launch the binary
+once before measuring it.
+
+### One suite case fails here and it is the desktop, not the code
+
+`launch.budget` records FAIL on this machine with
+`health=FAIL the window was in front (z-index 0) in only 0 of 5 runs`, while its
+actual budgets pass with room to spare -- 145 ms to a window against 300, 141 ms
+to a page against 600. `ZIndex()` counts position among visible top-level windows
+wider and taller than 200 px, and while an agent session is open the Claude
+desktop window sits at z=0 and holds the foreground, so a process the harness
+launches can never come to the front. Windows' foreground-activation rules are
+doing exactly what they are meant to.
+
+Measured both ways, because "it is environmental" is a claim and not a
+measurement:
+
+| | in-harness `--filter launch.budget` | `measure-launch.ps1` run directly, same 300/600 budgets, 5 runs |
+| --- | --- | --- |
+| this branch | FAIL, 0/5 in front | `health=OK budget=OK`, 5/5 in front |
+| the same branch with the change stashed | FAIL, 0/5 in front | `health=OK budget=OK`, 5/5 in front |
+
+Identical on both trees, so it is not this change; and it passes on both trees
+the moment the launching process is itself in the foreground.
+`launch.invariant`, whose whole job is "the focused window on top", passes in the
+harness -- it activates the windows it checks rather than relying on a launch to
+do it. `launch.health` and `window.stress` pass too.
+
+### What is not covered
+
+The button's PIXELS are not pinned by a headless expectation.
+`empty_state_test.c` asserts its geometry, its hit test and its route, all of
+which are pure; the drawing is a `static` function in
+`spdf_win_chrome_empty_paint.h` reached only through
+`spdf_win_chrome_paint_all()`, so it is on the headless compose path but no `d2d`
+case names it. The before/after captures are the evidence for the appearance.
+
+Also not covered: the empty state's vertical scroller. It is still drawn, with a
+full-length thumb in a trough that scrolls nothing. That is macOS's behaviour
+too -- `autohidesScrollers = NO` on both its scroll views -- so it was left alone
+rather than folded into this change.
