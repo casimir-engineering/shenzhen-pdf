@@ -154,7 +154,7 @@ void spdf_win_window_show_ex(spdf_win_window* window, int claim_foreground) {
          *
          * SW_SHOWNOACTIVATE withholds activation and nothing else: a window
          * shown that way keeps the z-position CreateWindowExW gave it, which
-         * is the TOP. Measured (windows-native-observations.md, section 13):
+         * is the TOP. Measured (windows-native-observations.md, section 16):
          * a --behind sibling whose window was created after the focused
          * window had claimed the foreground came up at z-index 0, over that
          * window and at its exact frame, while the focused window kept the

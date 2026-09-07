@@ -323,7 +323,7 @@ case_launch_health() {
       log_tail "$log" 30
       ;;
     68)
-      record "$case_name" BLOCKED "the workstation is locked, or the app could not be brought to the foreground so no input could be sent (see $log)"
+      record "$case_name" BLOCKED "$(desktop_block_reason "$log")"
       ;;
     65|66)
       record "$case_name" FAIL "no window appeared (launch-health.ps1 exited $rc)"

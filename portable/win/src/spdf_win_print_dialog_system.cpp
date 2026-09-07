@@ -105,7 +105,7 @@ typedef struct system_windows {
      * in the wait below pumping its queue, and what it dispatches can put a
      * window up: the updater's task dialog is on a timer that fires into
      * exactly this pump (spdf_win_updater_ui.cpp). Counting that as "the
-     * print dialog appeared" stops the watchdog clock for good -- section 13
+     * print dialog appeared" stops the watchdog clock for good -- section 14
      * of portable/docs/windows-native-observations.md measures it. */
     DWORD skip_thread;
 } system_windows;
@@ -293,7 +293,7 @@ spdf_win_print_status spdf_win_print_system_dialog(HWND parent, int doc_page_cou
              * closes while PrintDlgEx has still not returned was never the
              * dialog; leaving the clock stopped for it is how the owner ends up
              * disabled forever with nothing on screen, which is the exact
-             * "not responsive and not even focusable" report section 13 of
+             * "not responsive and not even focusable" report section 14 of
              * portable/docs/windows-native-observations.md chased down. */
             if (system_dialog_window_is_up(&before)) {
                 window_up = 1;

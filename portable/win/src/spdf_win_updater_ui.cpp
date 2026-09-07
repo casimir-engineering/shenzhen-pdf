@@ -81,7 +81,7 @@ static int ask(const wchar_t* title, const wchar_t* heading, const wchar_t* body
      * but because it never disabled anything when it FAILED to appear, and
      * because Windows does not reliably hand the activation back to the owner
      * afterwards. Every exit from this function now does both.
-     * (spdf_win_modal_scope.h, and section 13 of
+     * (spdf_win_modal_scope.h, and section 14 of
      * portable/docs/windows-native-observations.md.) */
     HWND owner = g.main && IsWindow(g.main) ? g.main : NULL;
     SpdfWinModalGuard modal(owner);

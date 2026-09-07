@@ -17,7 +17,7 @@
   sits is irrelevant. Then it reads the app's OWN launch-health.log back from
   the private --state-dir it handed it, and asserts what the 1 s and 5 s lines
   say. The full account, including the field guide for that log and the three
-  design points worth keeping, is section 13 of
+  design points worth keeping, is section 17 of
   portable/docs/windows-native-observations.md.
 
   BLOCKED, NOT FAILED, when the desktop cannot answer the question: a locked
@@ -73,10 +73,9 @@ Remove-Item -Recurse -Force $StateDir -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
 
 # measure-launch.ps1's lock test. See the .DESCRIPTION note.
-$locked = (@(Get-Process LogonUI -ErrorAction SilentlyContinue).Count +
-           @(Get-Process LockApp -ErrorAction SilentlyContinue |
-             Where-Object { $_.Threads[0].WaitReason -ne 'Suspended' }).Count) -gt 0
-if ($locked) { Write-Output "error=workstation-locked"; exit 68 }
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'desktop-available.ps1')
+$unavailable = Spdf-DesktopUnavailable
+if ($unavailable) { Write-Output ("error=desktop-unavailable detail=" + $unavailable); exit 68 }
 
 Add-Type -AssemblyName System.Drawing
 if (-not ('SpdfInput' -as [type])) {

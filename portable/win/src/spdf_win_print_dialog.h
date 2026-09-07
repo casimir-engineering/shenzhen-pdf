@@ -92,7 +92,7 @@ extern "C" {
  * reader on a broken host is not left wondering.
  *
  * TWO RULES KEEP "A WINDOW OF OURS" HONEST, and both were learned the hard way
- * (portable/docs/windows-native-observations.md section 13). The calling thread
+ * (portable/docs/windows-native-observations.md section 14). The calling thread
  * keeps pumping while it waits, so a window IT puts up -- the updater's task
  * dialog fires into exactly that pump -- is never the print dialog and is not
  * counted. And a window that appears and then CLOSES AGAIN while PrintDlgEx has

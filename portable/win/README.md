@@ -150,7 +150,7 @@ writes to whatever standard output handle it inherited. `--print-layout` prints
 the chrome bands and every toolbar control as `kind name x y w h` in client
 device pixels, from the same layout the painter and the input router share — it
 is how `portable/win/tests/launch-health.ps1` clicks the *button* rather than a
-coordinate measured once. The field guide is section 13 of
+coordinate measured once. The field guide is section 17 of
 `portable/docs/windows-native-observations.md`.
 
 **Portable mode is explicit and self-contained.** A file named
