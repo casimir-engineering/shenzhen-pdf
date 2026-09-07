@@ -588,11 +588,23 @@ if ($WindowBudgetMs -gt 0 -or $FirstPageBudgetMs -gt 0) {
   if ($hl.hung_runs -gt 0) { Write-Output ("health=FAIL a window of the process was hung in {0} of {1} runs" -f $hl.hung_runs, $hl.runs); $rc = 1 }
   # Foreground is reported, not judged: Windows grants the foreground only to a
   # process launched BY the foreground process, and this harness never is one
-  # (it runs under a shell under an editor), so the app is refused, correctly,
-  # and flashes its taskbar button instead. Measured 0 of 5 here on a desktop
-  # where a hand launch is foreground every time. Z-order and hung windows do
-  # not depend on who holds the foreground, so those are the judgement.
-  if ($hl.front_runs * 2 -lt $hl.runs) { Write-Output ("health=FAIL the window was in front (z-index 0) in only {0} of {1} runs" -f $hl.front_runs, $hl.runs); $rc = 1 }
+  # (it runs under a shell, under an editor whose own window is at z-index 0
+  # while a session is open), so the app is refused, correctly, and flashes its
+  # taskbar button instead. Measured 0 of 5 here on a desktop where a hand
+  # launch is foreground every time.
+  #
+  # AND Z-ORDER CANNOT BE JUDGED WHEN THE FOREGROUND WAS REFUSED, which an
+  # earlier version of this block got wrong: it claimed the two were
+  # independent, and then failed the case 0/5 on a machine where the window was
+  # healthy, because a window that may not take the foreground also may not be
+  # raised above the window holding it. The z-order defect worth catching is the
+  # narrower one that was actually seen (section 11): activation GRANTED and the
+  # window still not raised. So z-order is judged only over the runs that got
+  # the foreground, and reported for the rest.
+  if ($hl.foreground_runs * 2 -ge $hl.runs -and $hl.front_runs * 2 -lt $hl.runs) {
+    Write-Output ("health=FAIL the window took the foreground in {0} of {1} runs but was in front (z-index 0) in only {2}" -f $hl.foreground_runs, $hl.runs, $hl.front_runs)
+    $rc = 1
+  }
   if ($rc -eq 0) { Write-Output "health=OK" }
 }
 if ($rc -eq 0 -and ($WindowBudgetMs -gt 0 -or $FirstPageBudgetMs -gt 0)) { Write-Output "budget=OK" }
