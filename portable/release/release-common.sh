@@ -30,10 +30,15 @@ spdf_require_fresh_readme() {
   [[ "${SPDF_README_UNCHANGED:-0}" == "1" ]] && return 0
   [[ -n "$previous_tag" ]] || return 0  # first release ever: nothing to diff
   git -C "$repo_root" rev-parse -q --verify "refs/tags/$previous_tag" >/dev/null || return 0
-  if git -C "$repo_root" diff "$previous_tag"..HEAD -- readme.md \
-      | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -vqF 'Latest <b>'; then
-    return 0
-  fi
+  # Consume the whole diff rather than ending the pipe in `grep -q`: with
+  # pipefail, -q exits at its first hit and the upstream greps die of SIGPIPE
+  # (141), so a README that changed a LOT -- the very case this gate exists to
+  # wave through -- read as unchanged. A rewrite of 94 lines was rejected as
+  # "only the version badge moved".
+  local content_changes
+  content_changes="$(git -C "$repo_root" diff "$previous_tag"..HEAD -- readme.md \
+      | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -vF 'Latest <b>' || true)"
+  [[ -n "$content_changes" ]] && return 0
   spdf_release_fail "README checklist: readme.md content is unchanged since $previous_tag (only the version badge moved). Update the README for this release, or set SPDF_README_UNCHANGED=1 to state that nothing user-visible changed."
 }
 
