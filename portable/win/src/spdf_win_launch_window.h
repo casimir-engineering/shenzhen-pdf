@@ -145,6 +145,31 @@ static int run_window(app* a, spdf_win_d2d* d2d, const wchar_t* path_arg, int wi
              * spdf_win_menu_app_popup() in spdf_win_menu.h. */
             a->menu = NULL;
             spdf_win_window_set_dark_frame(window, (a->render_flags & SPDF_RENDER_DARK_THEME) != 0);
+            /* ARMED BEFORE THE FIRST PAINT, WITH A BOUND ON IT -- and this is
+             * the one launch that does, which is why it is here and not in
+             * show_selected_tab().
+             *
+             * The launch tab was shown before this window existed, so it missed
+             * the arming in show_selected_tab() and used to be armed AFTER the
+             * show: the first frame was rendered on this thread come what may,
+             * so the window that ShowWindow revealed was always complete. What
+             * that costs is that the frame has no end. Measured here: a page of
+             * 400,000 stroked paths took 4.5 s and one of 2,000,000 took 35 s,
+             * and for all of it there was NO WINDOW OF THIS APP ON SCREEN and
+             * the process was IsHungAppWindow-hung -- "the app was never
+             * responsive to any user input and not even focusable", exactly
+             * (windows-native-observations.md sections 16 and 18).
+             *
+             * So async goes on FIRST and the first frame gets a budget. Inside
+             * it nothing about this launch changes: the same page, rendered
+             * once, presented before the same ShowWindow. Past it the window
+             * goes up NOW with "Opening…" in the canvas area, enabled,
+             * activatable and answering messages, and canvas_render_ready --
+             * armed above, which is the whole reason the order moved -- posts
+             * the repaint that puts the page in when it lands. */
+            spdf_win_canvas_set_async_visible(a->canvas, canvas_render_ready,
+                                              (HWND)spdf_win_window_native_handle(window));
+            spdf_win_canvas_set_first_frame_budget(a->canvas, SPDF_WIN_CANVAS_FIRST_FRAME_BUDGET_MS);
             /* A sibling shows behind the window the reader left focused; every
              * other launch claims the foreground (spdf_win_window_show_ex). */
             spdf_win_window_show_ex(window, !behind);
@@ -158,14 +183,10 @@ static int run_window(app* a, spdf_win_d2d* d2d, const wchar_t* path_arg, int wi
              * the report this exists for -- spdf_win_health_log.h, and section
              * 13 of portable/docs/windows-native-observations.md. */
             spdf_win_health_log_start(spdf_win_window_native_handle(window));
-            /* The launch tab was shown before this window existed, so it
-             * missed the arming in show_selected_tab(). After the first
-             * paint, deliberately: the launch frame stays synchronous by
-             * placement as well as by the canvas's own first-frame rule. The
-             * same goes for the fetch of a Markdown document's remote images,
-             * which now has a window for the completion to reach. */
-            spdf_win_canvas_set_async_visible(a->canvas, canvas_render_ready,
-                                              (HWND)spdf_win_window_native_handle(window));
+            /* The fetch of a Markdown document's remote images stays AFTER the
+             * show, where the arming used to be: it now has a window for the
+             * completion to reach, and nothing about the first frame waits on
+             * it. */
             spdf_win_md_command_after_open(a, (HWND)spdf_win_window_native_handle(window));
             /* The taskbar identity (AppUserModelID, the window's icons) and the
              * updater's timers, both after the show: nothing in either runs

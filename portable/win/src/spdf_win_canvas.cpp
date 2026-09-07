@@ -33,14 +33,24 @@
  *      spdf_win_canvas_set_async_visible(), which the headless paths never do.
  *      Every --render-window-png frame and every d2d.compose case is therefore
  *      pixel-for-pixel what it was, by construction rather than by measurement.
- *   2. NEVER THE FIRST FRAME. frames_built gates it, so the frame a launch
- *      paints before ShowWindow (spdf_win_window_lifecycle.h) is rendered here,
- *      complete, exactly as before. Launch measures the synchronous page render
- *      finishing 45 ms BEFORE the GPU device is ready
- *      (windows-launch-performance.md §8), so that render costs the launch
- *      nothing at all: it is spent inside a wait that existed anyway, and
- *      moving it off-thread could only trade a complete first window for a
- *      blank one.
+ *   2. NEVER THE FIRST FRAME, UNLESS IT WAS GIVEN A BUDGET. frames_built gates
+ *      it, so the frame a launch paints before ShowWindow
+ *      (spdf_win_window_lifecycle.h) is rendered here, complete, exactly as
+ *      before. Launch measures the synchronous page render finishing 41-45 ms
+ *      BEFORE the GPU device is ready (windows-launch-performance.md §8), so
+ *      that render costs the launch nothing at all: it is spent inside a wait
+ *      that existed anyway, and moving it off-thread could only trade a
+ *      complete first window for a blank one.
+ *
+ *      What it CAN cost is unbounded, which is the one thing that argument
+ *      never covered: a page of 400,000 stroked paths held that frame for 4.5 s
+ *      and one of 2,000,000 for 35 s, with no window of the app on screen and
+ *      the process hung. So a launch may hand the first frame a BUDGET
+ *      (spdf_win_canvas_set_first_frame_budget): the page is asked of the pool
+ *      and waited for, briefly, and a frame that misses the budget comes back
+ *      with no page draws and a status line rather than not coming back. The
+ *      headless paths set no budget and are unchanged by construction, twice
+ *      over -- they never arm async either.
  *   3. NEVER WITHOUT A STAND-IN. When the exact key misses, the async path asks
  *      the pool at VISIBLE priority and then draws this same page at the
  *      nearest zoom the cache does hold (spdf_win_lru_lookup_nearest_zoom) --
@@ -341,65 +351,15 @@ size_t spdf_win_canvas_cache_bytes(const spdf_win_canvas* canvas) {
     return canvas ? spdf_win_lru_bytes(&canvas->cache) : 0;
 }
 
-/* --- rendering ----------------------------------------------------------- */
-
-/* THE T5 SEAM. Cache hit, then the stand-in, then a synchronous render. See the
- * file header for why in that order.
- * The zoom is byte-capped before it reaches the core, so a 10900x7539 pt sheet
- * renders a smaller texture that the compose layer stretches back over its
- * full slot -- geometry never sees the cap, which is what keeps the zoom
- * anchor exact on giant pages. */
-static const spdf_bitmap* ensure_page(spdf_win_canvas* canvas, int page) {
-    SpdfWinLruKey key;
-    const SpdfWinPageSizePt* size = &canvas->sizes[page];
-    double render_zoom = spdf_win_capped_render_zoom(canvas->zoom, size->width, size->height);
-    spdf_bitmap* bitmap;
-    char err[256];
-
-    key = spdf_win_lru_key(page, render_zoom, canvas->dpi_scale);
-    bitmap = (spdf_bitmap*)spdf_win_lru_lookup(&canvas->cache, &key);
-    if (bitmap) return bitmap;
-
-    /* THE ASYNC PATH, and the stand-in that makes it safe. Both lookups bump
-     * recency, so every bitmap this frame points at is among the most recently
-     * used and the eviction a later insert triggers cannot take one out from
-     * under the scene -- the invariant that made the synchronous path's
-     * borrowed pointers safe, unchanged. */
-    if (canvas->async_visible && canvas->frames_built > 0) {
-        /* The stand-in is looked for FIRST, and the request is only made when
-         * one exists. Asking first and then finding nothing to draw would leave
-         * a render in flight that this thread is about to duplicate -- two
-         * renders of one page, the second one thrown away. */
-        bitmap = (spdf_bitmap*)spdf_win_lru_lookup_nearest_zoom(&canvas->cache, page, canvas->dpi_scale, render_zoom,
-                                                                NULL);
-        if (bitmap && spdf_win_canvas_request_visible(canvas, page, render_zoom)) {
-            canvas->stale_draws++;
-            return bitmap;
-        }
-        /* Either the page has never been rendered at any zoom -- a fresh
-         * document, a fresh tab -- or the in-flight table is full. Both fall
-         * through to the render below, which is slower but never wrong. */
-    }
-
-    canvas->sync_renders++;
-    bitmap = (spdf_bitmap*)calloc(1, sizeof(*bitmap));
-    if (!bitmap) return NULL;
-    SPDF_WIN_LAUNCH_MARK_ONCE("first-page-render-begin");
-    if (!spdf_render_page_rgba_opts(canvas->doc, page, (float)render_zoom, canvas->render_flags, NULL, bitmap, err,
-                                    sizeof(err))) {
-        _snwprintf_s(canvas->status, _TRUNCATE, L"Could not render page %d: %hs", page + 1, err);
-        free(bitmap);
-        return NULL;
-    }
-    if (spdf_win_launch_enabled()) {
-        char tag[64];
-        _snprintf_s(tag, sizeof(tag), _TRUNCATE, "first-page-render-end %dx%d", bitmap->width, bitmap->height);
-        SPDF_WIN_LAUNCH_MARK_ONCE(tag);
-    }
-    if (!spdf_win_lru_insert(&canvas->cache, &key, bitmap, spdf_win_lru_bitmap_bytes(bitmap->width, bitmap->height)))
-        return NULL; /* insert destroyed it; a placeholder is drawn this frame */
-    return bitmap;
-}
+/* --- rendering -----------------------------------------------------------
+ *
+ * THE T5 SEAM -- cache hit, then the stand-in, then the first frame's bound,
+ * then a synchronous render -- is spdf_win_canvas_ensure_page(), and it lives
+ * in spdf_win_canvas_prefetch.cpp with the rest of the pool's business. It
+ * moved when this file reached its 500-line cap, to the seam
+ * spdf_win_canvas_internal.h had already drawn: every clause of that decision
+ * except the last is about the worker pool, and the last one is what happens
+ * when the pool is not used. What is left here is geometry and composition. */
 
 int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) {
     int first = 0;
@@ -444,9 +404,18 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
     canvas->draws_count = 0;
     for (int i = first; i <= last && visible; ++i) {
         const SpdfWinRect* rect = &canvas->layout.rects[i];
-        spdf_win_page_draw* draw = &canvas->draws[canvas->draws_count++];
+        spdf_win_page_draw* draw = &canvas->draws[canvas->draws_count];
+        draw->bitmap = spdf_win_canvas_ensure_page(canvas, i);
+        /* A PAGE THE POOL IS STILL RENDERING GETS NO SLOT AT ALL. A slot with a
+         * NULL bitmap is the compose layer's placeholder, which is the right
+         * answer for a page that FAILED and the wrong one for a page that is
+         * merely not here yet: the frame would then claim to hold something,
+         * and the status line -- the only thing there is to show -- would not
+         * be drawn. Dropping the draw is what keeps "no frame has a hole in
+         * it" true while the first page is still on its way. */
+        if (!draw->bitmap && canvas->page_deferred) continue;
+        ++canvas->draws_count;
         draw->page_index = i;
-        draw->bitmap = ensure_page(canvas, i);
         draw->dest_x = (float)(rect->x - canvas->scroll_x);
         draw->dest_y = (float)(rect->y - canvas->scroll_y);
         draw->dest_w = (float)rect->w;
@@ -454,9 +423,18 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
     }
 
     /* The two pages the reader is most likely to reach next, off-thread. Both
-     * directions, because scrolling back up is as common as scrolling down. */
-    spdf_win_canvas_prefetch(canvas, last + 1);
-    spdf_win_canvas_prefetch(canvas, first - 1);
+     * directions, because scrolling back up is as common as scrolling down --
+     * but NOT WHILE THIS FRAME IS STILL WAITING FOR ITS FIRST PAGE. A
+     * neighbour rendered beside the page somebody is actually waiting for
+     * costs that page real time: measured 6.4 s against 4.6 s on a page of
+     * 400,000 stroked paths, because two MuPDF renders of one heavy page share
+     * one machine's memory bandwidth. They are asked for on the frame that
+     * finally has something in it, which for a page nobody has scrolled to yet
+     * is soon enough. */
+    if (canvas->draws_count > 0 || !canvas->page_deferred) {
+        spdf_win_canvas_prefetch(canvas, last + 1);
+        spdf_win_canvas_prefetch(canvas, first - 1);
+    }
 
     scene->page = NULL;
     scene->pages = canvas->draws;
@@ -471,6 +449,12 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene) 
      * gate on the async path and "the first frame is synchronous" has to mean
      * the first frame a reader can see, not the first call made against a
      * canvas that had no viewport yet. */
-    if (canvas->draws_count > 0) canvas->frames_built++;
+    if (canvas->draws_count > 0) {
+        /* The launch timeline's answer to "when was there a PAGE on screen",
+         * which first-compose-end stopped answering the moment a first frame
+         * could be a status line instead. */
+        SPDF_WIN_LAUNCH_MARK_ONCE("first-page-scene");
+        canvas->frames_built++;
+    }
     return canvas->draws_count > 0;
 }

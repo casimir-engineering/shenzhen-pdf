@@ -50,9 +50,12 @@
 extern "C" {
 #endif
 
-/* WM_APP + 0x4D45 ("ME"): "the re-read of the Markdown file is ready". Beside
- * SPDF_WIN_MD_WM_IMAGES_ARRIVED (0x4D44) in spdf_win_md_commands.h. */
-#define SPDF_WIN_MD_WM_RELOADED (WM_APP + 0x4D45)
+/* WM_APP + 0x0D45: "the re-read of the Markdown file is ready". Beside
+ * SPDF_WIN_MD_WM_IMAGES_ARRIVED (0x0D45's neighbour) in spdf_win_md_commands.h,
+ * and renumbered with it: the old 0x4D45 was 0xCD45, above the WM_APP..0xBFFF
+ * range the window forwards, so a Markdown file that changed on disk was
+ * re-read off-thread and the result never reached the window. */
+#define SPDF_WIN_MD_WM_RELOADED (WM_APP + 0x0D45)
 
 /* Start a background re-read of `utf8_path` with the module's current options.
  * Any read already in flight is superseded (its result is discarded when it
