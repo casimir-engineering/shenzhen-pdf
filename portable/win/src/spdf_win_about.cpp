@@ -226,6 +226,7 @@ int spdf_win_about_show(void* parent_handle, int dark) {
     wchar_t crlf[1400];
     HWND hwnd, edit, button;
     MSG msg;
+    BOOL msg_got = 1; /* GetMessageW's answer: 0 is WM_QUIT, see spdf_win_modal_scope.h */
     RECT client;
     SpdfWinChromeTheme t = spdf_win_chrome_theme_for(dark);
     int i, w = 0;
@@ -287,7 +288,7 @@ int spdf_win_about_show(void* parent_handle, int dark) {
     ShowWindow(hwnd, SW_SHOW);
     SetFocus(button);
 
-    while (!st.finished && GetMessageW(&msg, NULL, 0, 0) > 0) {
+    while (!st.finished && (msg_got = GetMessageW(&msg, NULL, 0, 0)) > 0) {
         if (msg.message == WM_KEYDOWN && (msg.wParam == VK_ESCAPE || msg.wParam == VK_RETURN)) {
             DestroyWindow(hwnd);
             continue;
@@ -295,6 +296,7 @@ int spdf_win_about_show(void* parent_handle, int dark) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    spdf_win_modal_requeue_quit(msg_got, &msg);
     modal.end();
     DeleteObject(st.bg);
     DeleteObject(st.title_font);

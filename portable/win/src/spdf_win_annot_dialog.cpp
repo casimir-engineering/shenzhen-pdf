@@ -171,6 +171,7 @@ static int annot_run(HWND parent, int dark, const wchar_t* title, const wchar_t*
     annot_dlg_state st;
     HWND hwnd, author_edit, text_edit = NULL;
     MSG msg;
+    BOOL msg_got = 1; /* GetMessageW's answer: 0 is WM_QUIT, see spdf_win_modal_scope.h */
     RECT client;
     int y, w, h = text ? ANNOT_DLG_H : ANNOT_AUTHOR_DLG_H;
     wchar_t* prefill = NULL;
@@ -261,7 +262,7 @@ static int annot_run(HWND parent, int dark, const wchar_t* title, const wchar_t*
     SetFocus(text_edit ? text_edit : author_edit);
     SendMessageW(text_edit ? text_edit : author_edit, EM_SETSEL, 0, -1);
 
-    while (!st.finished && GetMessageW(&msg, NULL, 0, 0) > 0) {
+    while (!st.finished && (msg_got = GetMessageW(&msg, NULL, 0, 0)) > 0) {
         if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN && (GetKeyState(VK_CONTROL) & 0x8000)) {
             annot_accept(hwnd, &st);
             continue;
@@ -273,6 +274,7 @@ static int annot_run(HWND parent, int dark, const wchar_t* title, const wchar_t*
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    spdf_win_modal_requeue_quit(msg_got, &msg);
     modal.end();
     DeleteObject(st.bg);
     DeleteObject(st.field);

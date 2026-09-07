@@ -137,6 +137,33 @@ static void spdf_win_modal_scope_end(SpdfWinModalScope* s) {
     SetForegroundWindow(owner);
 }
 
+/* --- WM_QUIT, which a nested loop must not eat --------------------------- */
+
+/* EVERY MODAL LOOP IN THIS PORT IS SHAPED `while (!finished && GetMessageW(...)
+ * > 0)`, and GetMessageW answers 0 for exactly one message: WM_QUIT. So the
+ * condition that ends the loop cleanly is also the condition that SWALLOWS a
+ * request to quit. WM_QUIT is not dispatched and not re-queued; it is returned
+ * once and consumed. The outer pump in spdf_win_window.cpp then never sees it,
+ * and an app asked to close while any dialog was open simply carried on with
+ * the dialog gone.
+ *
+ * Windows itself posts WM_QUIT on a session end, and so does anything that
+ * calls PostQuitMessage while a dialog is up. The fix is one line at the bottom
+ * of each loop, and it has to distinguish the two ways out, which is why it
+ * takes the value GetMessageW returned rather than guessing:
+ *
+ *     BOOL got;
+ *     while (!st.finished && (got = GetMessageW(&msg, NULL, 0, 0)) > 0) { ... }
+ *     spdf_win_modal_requeue_quit(got, &msg);
+ *
+ * -1 is GetMessageW's error return (an invalid window, usually a race with
+ * teardown); there is no quit to forward and re-posting one would invent a
+ * shutdown nobody asked for. */
+static void spdf_win_modal_requeue_quit(int got, const MSG* msg) {
+    if (got != 0) return;
+    PostQuitMessage(msg ? (int)msg->wParam : 0);
+}
+
 /* --- placement ------------------------------------------------------------ */
 
 /* PURE. Where a `w` x `h` dialog goes: centred on `owner` when there is one,

@@ -350,6 +350,94 @@ static void test_print_watchdog_with_intruder(void) {
     }
 }
 
+/* --- the quit a nested loop must not eat --------------------------------- */
+static void test_requeue_quit_body(void);
+
+
+/* spdf_win_modal_requeue_quit's whole job, checked on this thread's own queue.
+ * Headless: it needs no window, because the message it forwards is a THREAD
+ * message. Each case drains first, so one case cannot pass on the leftovers of
+ * another. */
+static int quit_in_queue(int* code) {
+    MSG msg;
+    if (!PeekMessageW(&msg, NULL, WM_QUIT, WM_QUIT, PM_REMOVE)) return 0;
+    if (code) *code = (int)msg.wParam;
+    return 1;
+}
+
+static void drain_queue(void) {
+    MSG msg;
+    while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+        if (msg.message == WM_QUIT) continue;
+    }
+}
+
+/* ON ITS OWN THREAD, and that is not fastidiousness. WM_QUIT is a THREAD
+ * message and PostQuitMessage sets a flag on the thread that posted it, so
+ * exercising it on the thread that later runs test_print_watchdog_with_intruder
+ * leaves that flag where the watchdog's own pump can find it: measured, the
+ * watchdog case then failed with "did not return within 45 s -- the owner is
+ * still disabled", which is the very defect it exists to catch. A test may not
+ * hand the next test a queue it did not expect. */
+static DWORD WINAPI requeue_quit_thread(LPVOID unused) {
+    (void)unused;
+    test_requeue_quit_body();
+    return 0;
+}
+
+static void test_requeue_quit(void) {
+    HANDLE t = CreateThread(NULL, 0, requeue_quit_thread, NULL, 0, NULL);
+    if (!t) {
+        printf("BLOCKED modal-scope: could not create the requeue thread, GetLastError=%lu\n",
+               (unsigned long)GetLastError());
+        return;
+    }
+    WaitForSingleObject(t, 30000);
+    CloseHandle(t);
+}
+
+static void test_requeue_quit_body(void) {
+    MSG msg;
+    int code;
+
+    /* GetMessageW answered 0, so a WM_QUIT was consumed and its exit code must
+     * come back out. The exit code travels: an app told to quit with 3 must not
+     * quit with 0. */
+    drain_queue();
+    memset(&msg, 0, sizeof(msg));
+    msg.message = WM_QUIT;
+    msg.wParam = 3;
+    spdf_win_modal_requeue_quit(0, &msg);
+    code = -1;
+    CHECK(quit_in_queue(&code) == 1);
+    CHECK(code == 3);
+
+    /* The ordinary way out: the loop ended because the dialog finished, and
+     * GetMessageW's last answer was a real message. Nothing may be posted --
+     * inventing a WM_QUIT here would close the app every time a dialog closed,
+     * which is the opposite failure and a far worse one. */
+    drain_queue();
+    memset(&msg, 0, sizeof(msg));
+    msg.message = WM_KEYDOWN;
+    spdf_win_modal_requeue_quit(1, &msg);
+    CHECK(quit_in_queue(NULL) == 0);
+
+    /* -1 is GetMessageW's error return, not a quit. */
+    drain_queue();
+    memset(&msg, 0, sizeof(msg));
+    spdf_win_modal_requeue_quit(-1, &msg);
+    CHECK(quit_in_queue(NULL) == 0);
+
+    /* A NULL msg with got == 0 still has to forward SOMETHING: the quit was
+     * real even if the caller kept no copy of it. */
+    drain_queue();
+    spdf_win_modal_requeue_quit(0, NULL);
+    code = -1;
+    CHECK(quit_in_queue(&code) == 1);
+    CHECK(code == 0);
+    drain_queue();
+}
+
 int main(void) {
     HANDLE stop;
     int code;
@@ -372,6 +460,7 @@ int main(void) {
     }
 
     stop = CreateThread(NULL, 0, hard_stop, NULL, 0, NULL);
+    test_requeue_quit();
     test_scope();
     test_placement_real();
     test_print_watchdog_with_intruder();

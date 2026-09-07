@@ -154,6 +154,7 @@ int spdf_win_properties_show(HWND parent, const spdf_win_properties* props) {
     HWND edit;
     HFONT font;
     MSG msg;
+    BOOL msg_got = 1; /* GetMessageW's answer: 0 is WM_QUIT, see spdf_win_modal_scope.h */
     RECT client;
     int text_h;
 
@@ -216,7 +217,7 @@ int spdf_win_properties_show(HWND parent, const spdf_win_properties* props) {
     ShowWindow(hwnd, SW_SHOW);
     SetFocus(edit);
 
-    while (!state.finished && GetMessageW(&msg, NULL, 0, 0) > 0) {
+    while (!state.finished && (msg_got = GetMessageW(&msg, NULL, 0, 0)) > 0) {
         if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
             DestroyWindow(hwnd);
             continue;
@@ -224,6 +225,7 @@ int spdf_win_properties_show(HWND parent, const spdf_win_properties* props) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    spdf_win_modal_requeue_quit(msg_got, &msg);
 
     modal.end();
     free(text);

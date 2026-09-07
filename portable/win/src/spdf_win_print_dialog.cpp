@@ -294,6 +294,7 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
     HWND hwnd, combo, focus;
     RECT client;
     MSG msg;
+    BOOL msg_got = 1; /* GetMessageW's answer: 0 is WM_QUIT, see spdf_win_modal_scope.h */
     int i, at, W, y, group_w, right, dpi;
 
     if (err && err_len) err[0] = '\0';
@@ -447,7 +448,7 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
     focus = GetDlgItem(hwnd, SPDF_WIN_PD_ID_PRINTER);
     if (focus) SetFocus(focus);
 
-    while (!st.finished && GetMessageW(&msg, NULL, 0, 0) > 0) {
+    while (!st.finished && (msg_got = GetMessageW(&msg, NULL, 0, 0)) > 0) {
         if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
             DestroyWindow(hwnd);
             continue;
@@ -462,6 +463,7 @@ int spdf_win_print_dialog_show(HWND parent, int dark, const wchar_t* doc_name, i
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    spdf_win_modal_requeue_quit(msg_got, &msg);
 
     modal.end();
     /* The preview holds a render service with a worker and a MuPDF document;
