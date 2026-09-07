@@ -119,6 +119,7 @@ TESTS="
 SPDFMacMarkdownKeyboardPolicyTests
 SPDFMacMarkdownRoutingTests
 SPDFMacMarkdownPagedViewTests
+SPDFMacMarkdownPanTests
 SPDFMacMarkdownCopySelectionTests
 SPDFMacMarkdownMinimapModelTests
 SPDFMacMarkdownSidebarModelTests
