@@ -118,8 +118,9 @@ CORE_SET="portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c porta
 # time, measured by portable/win/measure-launch.ps1 on the built exe. Beside
 # it, launch.invariant (every launch leaves one usable window), launch.health
 # (real input, checked against the launch-health.log the app writes about
-# itself) and window.stress (the UI thread still answering after twenty
-# seconds of input and reloads).
+# itself), window.stress (the UI thread still answering after twenty
+# seconds of input and reloads) and dialog.open (the shell's Open dialog
+# actually has pixels in it, and the process is not spinning while it is up).
 . "$TESTS_DIR/run-tests-native.launch.sh"
 
 # --- the app itself --------------------------------------------------------
@@ -411,6 +412,7 @@ selected launch.budget && case_launch_budget
 selected window.stress && case_window_stress
 selected launch.invariant && case_launch_invariant
 selected launch.health && case_launch_health
+selected dialog.open && case_dialog_open
 case_cross_host
 
 if [[ ${#names[@]} -eq 0 ]]; then
