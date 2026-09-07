@@ -34,7 +34,13 @@ int main(void) {
         NSString* source = [root stringByAppendingPathComponent:@"source.md"];
         NSString* child = [root stringByAppendingPathComponent:@"Child.md"];
         NSString* escaped = [outside stringByAppendingPathComponent:@"Escape.md"];
-        WriteText(@"# Source\nplain foo [foo](Child.md), [Child](Child.md) and [[Child]].\n", source);
+        // The table row is the regression: the renderer records a rendered block
+        // per ROW and never per cell, and the destination walk used to skip any
+        // block without its own rendered range -- so a link in a cell was drawn
+        // as a link and did nothing when clicked.
+        WriteText(@"# Source\nplain foo [foo](Child.md), [Child](Child.md) and [[Child]].\n\n"
+                  @"| Where | Link |\n| --- | --- |\n| In a cell | [table link](Child.md) |\n",
+                  source);
         WriteText(@"# Child\n", child);
         WriteText(@"# Escape\n", escaped);
         NSURL* sourceURL = [NSURL fileURLWithPath:source];
@@ -89,6 +95,15 @@ int main(void) {
         assert(wikiRange.location != NSNotFound);
         assert([[interactive attribute:SPDFMacMarkdownWikiDestinationAttribute
                               atIndex:wikiRange.location effectiveRange:NULL] isEqualToString:@"Child"]);
+        NSRange tableLink = [interactive.string rangeOfString:@"table link"];
+        assert(tableLink.location != NSNotFound);
+        assert([[interactive attribute:SPDFMacMarkdownDestinationAttribute
+                              atIndex:tableLink.location effectiveRange:NULL] isEqualToString:@"Child.md"]);
+        // ...and the cell's plain text next to it is not a link.
+        NSRange tableText = [interactive.string rangeOfString:@"In a cell"];
+        assert(tableText.location != NSNotFound);
+        assert([interactive attribute:SPDFMacMarkdownDestinationAttribute
+                            atIndex:tableText.location effectiveRange:NULL] == nil);
 
         // Atomic replacement can preserve both size and mtime. The inode-based
         // identity must still invalidate the cached rendered Markdown.
