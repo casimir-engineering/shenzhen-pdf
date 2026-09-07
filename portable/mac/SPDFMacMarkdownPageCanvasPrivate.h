@@ -73,6 +73,10 @@
 // Canvas-space rects of every link-run portion inside the page's line
 // fragments, using the same CTLine offset mapping the highlight drawing uses.
 - (NSArray<NSValue*>*)linkRectsForPage:(SPDFMarkdownPage*)page pageFrame:(NSRect)pageFrame;
+// Whether a canvas point is on link text (inside a link rect, hover slop
+// included). The click path checks this before opening anything, so a click in
+// a table row's empty space cannot reach the link cell beside it.
+- (BOOL)pointIsOnLink:(NSPoint)point;
 @end
 
 // Search/highlight geometry internals implemented alongside the public
