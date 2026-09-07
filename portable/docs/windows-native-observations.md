@@ -2120,3 +2120,153 @@ Also not covered: the empty state's vertical scroller. It is still drawn, with a
 full-length thumb in a trough that scrolls nothing. That is macOS's behaviour
 too -- `autohidesScrollers = NO` on both its scroll views -- so it was left alone
 rather than folded into this change.
+
+## 20. The Open dialog was starved of its first paint by our own message loop (2026-09-07)
+
+"When you click open pdf, then everything freezes." From the empty state, the
+`Open a PDF…` button -- or Ctrl+O -- put a real `#32770 'Open'` on screen with
+its title bar and its dark navigation pane painted, and everything else a flat
+white rectangle: the file list, the `File name` box, the file-type combo, and the
+Open and Cancel buttons, all blank, indefinitely.
+
+### It was never a hang, and that is why nothing caught it
+
+Measured for 30 s with the dialog up:
+
+| | |
+| --- | --- |
+| dialog `SendMessageTimeout(WM_NULL)` | 0 ms |
+| dialog `IsHungAppWindow` | false |
+| main window ping / hung / `Process.Responding` | 0 ms / false / true |
+| threads, top-level windows | 33, 21 |
+| `launch-health.log` | `phase=stall … modal=1 owned=1`, every 2 s |
+
+A control on the same desktop, same 2880x1800 at 150%: `powershell.exe -Sta`
+showing `System.Windows.Forms.OpenFileDialog` -- which is the same
+`IFileOpenDialog` -- rendered perfectly. So it was this app.
+
+### The dialog was whole; only the pixels were missing
+
+Walked from a worker thread while `Show()` was in its nested loop, every child
+existed, was visible, was enabled and had a sane rect: `DUIViewWndClassName`,
+`DirectUIHWND`, `NamespaceTreeControl`, `SysTreeView32 'Navigation Pane'`,
+`SHELLDLL_DefView 'ShellView'`, the breadcrumb `ToolbarWindow32`, the
+`ComboBoxEx32`, the buttons. GDI and USER handles were 164 and 157 -- nowhere
+near a quota. Three measurements then separated "cannot draw" from "was not
+asked to":
+
+| | distinct colours | near-white |
+| --- | --- | --- |
+| the dialog's client, off the screen | 13 | 77.2% |
+| `PrintWindow(dlg, dc, PW_RENDERFULLCONTENT)` | 4584 | 0.7% |
+| the screen again, after one `RedrawWindow` with `RDW_INVALIDATE`, `RDW_ALLCHILDREN` and `RDW_UPDATENOW` | 4886 | 0.5% |
+
+The dialog draws itself correctly the moment anything invalidates it, and then
+stays correct. Sampling the screen every 400 ms from the click showed content at
+t=412 ms (720 colours, 0.1% white) and the blank state from t=873 ms onwards: the
+window was erased on being shown and never painted again.
+
+A `WH_CALLWNDPROC` + `WH_GETMESSAGE` pair on the UI thread said why. At
+t=547 ms `WM_SHOWWINDOW` reached the `#32770` and `WM_NCPAINT` + `WM_ERASEBKGND`
+went to every window in its tree; between t=562 ms and the forced repaint at
+t=4000 ms **no `WM_PAINT` was generated for any of them**. `WM_PAINT` is not
+posted, it is SYNTHESISED by `GetMessage`/`PeekMessage` for a window with an
+update region -- and only when the queue holds nothing else.
+
+### What the queue held
+
+Two facts, measured together, name it. First, the process was burning CPU while
+the dialog sat there doing nothing: **1484 ms of processor time over 1504 ms of
+wall clock**, one core pinned. Second, the same hooks with the message whitelist
+removed end in an unbroken run of one message, retrieved by the pump, in the same
+millisecond, forever:
+
+```
+t=1313ms post 0x02A3   hwnd=…4F0112 cls=ShenzhenPDFWindow w=0x0 l=0x0
+t=1313ms post 0x02A3   hwnd=…4F0112 cls=ShenzhenPDFWindow w=0x0 l=0x0
+…
+```
+
+`0x02A3` is `WM_MOUSELEAVE`, on our own window. The loop was four lines of our
+own code:
+
+- `window_proc`'s `WM_MOUSELEAVE` case sent a synthetic `(-1, -1)` mouse move
+  through `dispatch_mouse()` to clear the chrome's hot flags;
+- `dispatch_mouse()` armed `TrackMouseEvent(TME_LEAVE)` for every
+  `SPDF_WIN_INPUT_MOUSE_MOVE`, including that one;
+- `TrackMouseEvent` called while the pointer is NOT over `hwndTrack` posts
+  `WM_MOUSELEAVE` back immediately -- documented behaviour, not a quirk;
+- so: leave, arm, leave, at the speed of the pump, for as long as the pointer was
+  outside the window.
+
+The Open dialog appears UNDER the pointer, which is by definition outside our
+window, so it arrives into a queue that is never empty and never gets the paint
+it needs. Two further consequences follow from the same fact and were both
+reported separately: posted messages outrank hardware input in `GetMessage`'s
+order, so **keystrokes starved too** -- Escape on the Ctrl+Shift+O `Open Path`
+dialog did nothing, measured: dialog still up, main window still disabled -- and
+our own window stopped repainting as well, which is the whole of "everything
+freezes".
+
+Every other hypothesis was tested and eliminated first, each with a measurement:
+COM apartment (the UI thread is `MAINSTA`, a proper STA; `CoGetApartmentType`
+logged at the call site), the owner window (`Show(NULL)`, a plain
+`WS_OVERLAPPEDWINDOW` owner, and hiding the main window all still blank -- note
+`Show(NULL)` is not ownerless, comdlg32 falls back to `GetActiveWindow()`), the
+custom `WM_NCCALCSIZE` frame, the GPU prewarm, `SetPreferredAppMode(AllowDark)`,
+the embedded manifest, PerMonitorV2, Common Controls 6, Direct2D with a live
+`ID2D1HwndRenderTarget`, every `SetFileTypes` / `SetOptions` / `SetTitle` /
+`SetFolder` call on the dialog, every feature the launch arms after the window is
+shown, and draining the queue before `Show()` (it refills instantly). The one
+thing that DID render was `Show()` on a fresh STA worker with its own pump -- a
+thread whose queue is not being flooded -- which is what pointed at the pump
+rather than at the dialog. `portable/win/tests/open_dialog_probe.cpp` is the
+standalone half of that bisection: it shows the same dialog with each app
+ingredient switchable, and it renders in every combination, which is what proved
+the fault was ours.
+
+### The fix
+
+`TrackMouseEvent` is now called from one place, `track_mouse_leave()` in
+`spdf_win_window_input.h`, reached only from `WM_MOUSEMOVE` -- the one message
+that proves the pointer is in our client area -- and guarded by a
+`tracking_leave` flag so it is armed once per entry. `WM_MOUSELEAVE` clears the
+flag and asks for nothing. `dispatch_mouse()` no longer arms anything, which is
+what makes the loop unreachable rather than merely absent. The caption's
+`TME_NONCLIENT` tracker in `spdf_win_window_caption.h` already had that shape:
+armed from `WM_NCMOUSEMOVE`, never from `WM_NCMOUSELEAVE`.
+
+After: the dialog's client is 4957 distinct colours and 0.6% near-white, the
+process burns 0 ms of CPU while it sits there, Escape closes the `Open Path`
+dialog and re-enables the window, and a typed path plus Enter opens the document
+(title `Shenzhen PDF` to `golden.pdf - Shenzhen PDF`, 98% of pixels changed).
+
+### The watchdog was crying wolf
+
+While the dialog was up, `spdf_win_health_log.h`'s watchdog wrote `phase=stall`
+every two seconds, because a nested modal loop does not turn OUR pump so the
+heartbeat goes stale. A nested modal loop is not a stall, and the one instrument
+this port has for a genuinely wedged pump must not fill itself with false alarms
+every time a reader takes a moment over a file picker. The watchdog now asks
+`spdf_win_health_is_modal()` -- disabled window with an enabled visible window of
+ours owned by it, the same computation as the line's `modal=` field, and no
+message sent -- and writes one `phase=modal` line per episode instead, then stays
+quiet until the dialog goes away. A `stall` line now means a stall.
+
+### The case that would have caught it
+
+`dialog.open` (`portable/win/tests/open-dialog.ps1`, registered beside
+`launch.health` and `window.stress`). It launches the built exe bare, finds the
+empty state's accent button BY COLOUR so a changed constant cannot make it click
+somewhere harmless, clicks it, and then measures the DIALOG'S OWN client pixels:
+distinct colours and flat white, over the whole client and over the bottom band
+alone, because the bottom band is only 15% of the pixels and a whole-client
+threshold could pass with the buttons blank. It also measures the CPU the process
+burns while the dialog is idle -- the cause, not the symptom -- types a real path
+in and asserts the document opens, and reads `launch-health.log` back to assert
+no false `stall`. BLOCKED (68) on a locked workstation, the screen saver's
+desktop, or a desktop that refuses the window the foreground.
+
+Verdict on master: FAIL on all five assertions -- `distinct=13 near_white=77%`,
+bottom band `distinct=12`, `cpu=1484 ms over 1504 ms`, dialog never closed, five
+`phase=stall` lines. On this branch: all five pass.

@@ -73,20 +73,49 @@ static unsigned next_click_count(spdf_win_window* window, LPARAM lparam) {
     return window->click_count;
 }
 
+/* ASK FOR ONE WM_MOUSELEAVE -- AND ONLY WHILE THE POINTER IS INSIDE.
+ *
+ * A hover highlight that is lit when the pointer leaves stays lit unless Win32
+ * is asked for a WM_MOUSELEAVE; AppKit clears that free. But TrackMouseEvent is
+ * only meaningful while the pointer is over hwndTrack: called when it is NOT,
+ * USER32 posts WM_MOUSELEAVE back IMMEDIATELY, by documented design.
+ *
+ * This used to be armed from dispatch_mouse() for every SPDF_WIN_INPUT_MOUSE_MOVE
+ * -- including the synthetic (-1, -1) move the WM_MOUSELEAVE case itself sends to
+ * clear the hot flags. That closed a loop with no exit: leave -> arm -> leave,
+ * posted messages, at the speed of the pump, for as long as the pointer was
+ * outside the window. The pump never went idle, so USER32 never reached the
+ * point where it SYNTHESISES WM_PAINT (it does that only for an otherwise empty
+ * queue), and posted messages outrank hardware input, so keystrokes starved too.
+ * That is the whole of the "click Open a PDF and everything freezes" report: the
+ * shell's Open dialog appears -- under the pointer, hence outside this window --
+ * constructs itself correctly, erases its children, and then never receives the
+ * WM_PAINT that would fill them in, so it stands there as white rectangles while
+ * the process spins. Section 20 of portable/docs/windows-native-observations.md
+ * is the measurement.
+ *
+ * So the arming lives HERE and is called from WM_MOUSEMOVE only -- the one
+ * message that proves the pointer is in this client area -- and `tracking_leave`
+ * makes it once per entry rather than once per move. WM_MOUSELEAVE clears the
+ * flag and asks for nothing. dispatch_mouse() no longer arms anything, which is
+ * what makes the loop unreachable rather than merely absent. (The caption's
+ * TME_NONCLIENT tracker in spdf_win_window_caption.h is armed from
+ * WM_NCMOUSEMOVE and never from WM_NCMOUSELEAVE, so it has the same property.) */
+static void track_mouse_leave(spdf_win_window* window) {
+    TRACKMOUSEEVENT tme;
+    if (window->tracking_leave) return;
+    tme.cbSize = sizeof(tme);
+    tme.dwFlags = TME_LEAVE;
+    tme.hwndTrack = window->hwnd;
+    tme.dwHoverTime = 0;
+    if (!TrackMouseEvent(&tme)) return;
+    window->tracking_leave = 1;
+}
+
 /* One mouse event out to the handler, in CLIENT device pixels -- which is what
  * every mouse message but WM_MOUSEWHEEL carries (see on_wheel). */
 static int dispatch_mouse(spdf_win_window* window, spdf_win_input_kind kind, int button, LPARAM lparam) {
     spdf_win_input input;
-    if (kind == SPDF_WIN_INPUT_MOUSE_MOVE) {
-        /* One WM_MOUSELEAVE per entry, or a hover highlight stays lit after the
-         * pointer leaves. AppKit clears that free; Win32 must be asked, always. */
-        TRACKMOUSEEVENT tme;
-        tme.cbSize = sizeof(tme);
-        tme.dwFlags = TME_LEAVE;
-        tme.hwndTrack = window->hwnd;
-        tme.dwHoverTime = 0;
-        TrackMouseEvent(&tme);
-    }
     memset(&input, 0, sizeof(input));
     input.kind = kind;
     input.button = button;

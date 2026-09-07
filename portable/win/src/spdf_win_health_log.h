@@ -45,6 +45,11 @@
  * SPDF_WIN_HEALTH_STALL_REPEAT_MS while the stall lasts and at most
  * SPDF_WIN_HEALTH_STALL_MAX in the life of the process, so a genuinely wedged
  * app leaves evidence rather than a gigabyte.
+ *
+ * A NESTED MODAL LOOP IS NOT A STALL. A system dialog turns its own pump, not
+ * ours, so the heartbeat goes stale while one is up. That state is written as
+ * `phase=modal`, once per dialog, and never as `stall` -- the reasoning is at
+ * the check itself.
  */
 #ifndef SPDF_WIN_HEALTH_LOG_H
 #define SPDF_WIN_HEALTH_LOG_H
@@ -172,6 +177,7 @@ static DWORD WINAPI spdf_win_health_watchdog(LPVOID param) {
     HWND hwnd = (HWND)param;
     LONG64 last_report = 0;
     int reports = 0;
+    int modal_reported = 0;
     for (;;) {
         LONG64 now, beat;
         Sleep(1000);
@@ -185,6 +191,30 @@ static DWORD WINAPI spdf_win_health_watchdog(LPVOID param) {
          * taken while the loop is INSIDE a dispatch counts. */
         if (spdf_win_health.idle) continue;
         if (!beat || now - beat < SPDF_WIN_HEALTH_STALL_MS) continue;
+        /* A NESTED MODAL LOOP IS NOT A STALL, AND MUST NOT BE LOGGED AS ONE.
+         *
+         * A system dialog -- the shell's Open dialog, a TaskDialog, the print
+         * dialog -- runs its OWN message loop and never returns to ours, so the
+         * heartbeat goes stale for as long as it is up. The old code reported
+         * that as `phase=stall`, once every two seconds: the one instrument this
+         * port has for a genuinely wedged pump filled itself with false alarms
+         * whenever a reader took a moment over a file picker, which is worse
+         * than having no instrument at all.
+         *
+         * So the state is named. One `modal` line per episode -- enough to say
+         * in the log that a dialog was up and from when -- and then silence
+         * until the dialog goes away, which is when modal_reported clears and a
+         * later real stall can still be reported. The `modal` line carries every
+         * other field unchanged, including `owned`, so a reader can still see
+         * WHICH window is in front of the disabled one. */
+        if (spdf_win_health_is_modal(hwnd)) {
+            if (!modal_reported) {
+                modal_reported = 1;
+                spdf_win_health_write(hwnd, "modal");
+            }
+            continue;
+        }
+        modal_reported = 0;
         if (reports >= SPDF_WIN_HEALTH_STALL_MAX) continue;
         if (last_report && now - last_report < SPDF_WIN_HEALTH_STALL_REPEAT_MS) continue;
         last_report = now;
@@ -193,15 +223,8 @@ static DWORD WINAPI spdf_win_health_watchdog(LPVOID param) {
          * that heartbeat_age_ms is now large, and that everything AROUND it
          * (foreground, enabled, hung, z-index, the counters that stopped
          * advancing) is captured at the moment the pump was stuck rather than
-         * afterwards.
-         *
-         * A MODAL DIALOG LOOKS LIKE THIS TOO, and deliberately so: a TaskDialog
-         * or a password prompt runs its own message loop and never returns to
-         * ours, so a reader who leaves one open for three seconds gets a stall
-         * line. That is not noise -- "the window ignores every click" is exactly
-         * what a modal dialog behind another window feels like -- and the line
-         * says which it was: modal=1 with owned>0 is a dialog, modal=0 with
-         * owned=0 is a pump that is genuinely stuck. */
+         * afterwards. A modal dialog was excluded above, so a line that says
+         * `stall` now means a pump that is genuinely stuck. */
         spdf_win_health_write(hwnd, "stall");
     }
 }
