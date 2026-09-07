@@ -79,11 +79,21 @@ static void app_restore_find_text(app* a) {
  * starts fetching them; a no-op on a PDF tab and with nothing pending. */
 static void spdf_win_md_command_after_open(app* a, HWND window);
 
-/* WM_APP + 0x5244 ("RD"): a page render landed. Posted by a canvas render
- * worker; the router turns it into one invalidate. Without it an asynchronous
- * visible-page render would finish and nothing would ask for the repaint that
- * shows it. */
-#define SPDF_WIN_WM_RENDER_READY (WM_APP + 0x5244)
+/* WM_APP + 0x0244: a page render landed. Posted by a canvas render worker; the
+ * router turns it into one invalidate. Without it an asynchronous visible-page
+ * render would finish and nothing would ask for the repaint that shows it.
+ *
+ * IT WAS WM_APP + 0x5244 ("RD"), WHICH IS 0xD244 AND WAS NEVER DELIVERED. The
+ * window forwards WM_APP..0xBFFF and nothing above, because 0xC000 up is the
+ * RegisterWindowMessage range; 0xD244 fell straight through to
+ * DefWindowProc. Every asynchronous render since the pool landed finished
+ * without asking for a repaint, which is why the visible page only ever
+ * appeared on the next mouse move -- and why, once the launch's first frame was
+ * allowed to wait for the pool, the page never appeared at all. The mnemonic
+ * is kept in the low three nibbles, and SPDF_WIN_APP_MSG_OK below is a
+ * compile-time check that this number is one the window will hand over. */
+#define SPDF_WIN_WM_RENDER_READY (WM_APP + 0x0244)
+SPDF_WIN_APP_MSG_OK(spdf_win_render_ready_is_routable, SPDF_WIN_WM_RENDER_READY);
 
 /* Called ON A WORKER THREAD by the canvas. PostMessage is the only thing it is
  * allowed to do here. */
