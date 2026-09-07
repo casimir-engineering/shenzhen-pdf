@@ -71,6 +71,8 @@ does not re-trigger the macOS access prompt.
 
 ## <a id="tabs"></a>Tabs and windows
 
+<p align="center"><img src="images/portable/macos-multi-window.webp" alt="Two windows side by side, each with its own tabs, one showing a Markdown document and one a PDF" width="880"></p>
+
 - **Compact tab strip** — every tab outlined, same-named files disambiguated by
   their folder, overflow into a "…" menu.
 - **Drag to reorder**, drag out to **detach into a new window**, drag back to
@@ -114,6 +116,8 @@ does not re-trigger the macOS access prompt.
 
 ## <a id="search"></a>Search
 
+<p align="center"><img src="images/portable/macos-search-highlights.webp" alt="A search with in-page highlights, chapter-grouped results and a current / total counter" width="880"></p>
+
 - **Type anywhere to search** — no need to focus a field first.
 - **Live match count** — a running "current / total" as you type, with every
   match highlighted in the page.
@@ -142,6 +146,8 @@ does not re-trigger the macOS access prompt.
 
 ## <a id="sidepanel"></a>Chapters, comments and the side panel
 
+<p align="center"><img src="images/portable/macos-chapters.webp" alt="Nested chapters with disclosure arrows, the filter field and the expand / collapse all button" width="320"></p>
+
 - **Three modes in one panel** — Chapters, Comments, and search results.
 - **Nested chapters** **mac** — a PDF's outline and a Markdown document's
   headings both fold, with the traditional disclosure arrows on every parent.
@@ -155,6 +161,8 @@ does not re-trigger the macOS access prompt.
 - **Per-document panel preference**, with a default for newly opened documents.
 
 ## <a id="markdown"></a>Markdown **mac**
+
+<p align="center"><img src="images/portable/macos-markdown.webp" alt="A Markdown document as an A4 sheet with a native flowchart and a table" width="880"></p>
 
 Markdown opens as real A4 sheets in the same reader as PDFs — same tabs,
 chapters, map, search, zoom presets, presentation mode and export. There is no
@@ -174,6 +182,8 @@ web engine, no JavaScript, and no network in the rendering path.
   and still text in an exported PDF. That includes labels inside diagrams.
 
 ### <a id="markdown-syntax"></a>Markdown syntax support
+
+<p align="center"><img src="images/portable/macos-markdown-code.webp" alt="Inline LaTeX math and a highlighted C code block with its Copy button and language pill" width="620"></p>
 
 Strict UTF-8 CommonMark through vendored MD4C, plus:
 
@@ -228,6 +238,8 @@ to the block, which also clears highlighting.
 
 ### <a id="diagrams"></a>Diagrams
 
+<p align="center"><img src="images/portable/macos-markdown-gantt.webp" alt="A mermaid gantt chart rendered as vector art" width="620"></p>
+
 Fenced `mermaid`, `sequence` (js-sequence) and `flow` (flowchart.js) blocks
 render as native vector artwork — parsing plus geometry, no web engine, no
 JavaScript, no network, no bitmaps. They stay crisp at any zoom and export to
@@ -276,6 +288,8 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 
 ## <a id="translation"></a>Translation — on-device **mac · linux**
 
+<p align="center"><img src="images/portable/macos-translate.webp" alt="A whole PDF translated offline from English to Chinese, opened beside the original" width="880"></p>
+
 - **Argos Translate**, running locally across ~19 languages including Chinese.
   Text never leaves the machine.
 - **Translate a selection** into a panel, or **a whole document**.
@@ -297,6 +311,8 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
   the document's own colors — for Markdown as much as for a PDF.
 
 ## <a id="theme"></a>Appearance and reading theme
+
+<p align="center"><img src="images/portable/macos-dark-theme.webp" alt="The same page in the light and dark reading themes; colored chart bars keep their hues" width="880"></p>
 
 - **One dark reading theme for every document** (<kbd>Cmd+Shift+I</kbd>) —
   PDF, XPS, EPUB and Markdown alike, onto the same soft `#1E1E1E` paper rather

@@ -96,7 +96,7 @@ MAC_MARKDOWN_SRCS := $(sort $(wildcard mac/markdown/*.mm))
 MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm))) $(MAC_MARKDOWN_SRCS)
 MAC_HDRS := $(sort $(wildcard mac/*.h) $(wildcard mac/markdown/*.h))
 MAC_VERSION ?= 26.9.5
-MAC_BUILD ?= 1
+MAC_BUILD ?= 2
 MAC_SIGN_IDENTITY ?= -
 NOTARY_PROFILE ?=
 NOTARY_RESULT ?= $(DIST)/notarytool-$(MAC_VERSION)-$(MAC_BUILD).json
@@ -322,8 +322,8 @@ $(MAC_TAB_STATE_TEST): mac/tests/SPDFMacTabStateTests.mm mac/SPDFMacModels.mm ma
 mac-tab-state-tests: $(MAC_TAB_STATE_TEST)
 	"$(MAC_TAB_STATE_TEST)"
 
-$(MAC_SIDEBAR_OUTLINE_TEST): mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm mac/SPDFMacSidebarOutline.h | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm -framework Foundation -o "$(MAC_SIDEBAR_OUTLINE_TEST)"
+$(MAC_SIDEBAR_OUTLINE_TEST): mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm mac/SPDFMacSidebarOutline.h mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarModeControl.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm mac/SPDFMacSidebarModeControl.mm -framework Cocoa -o "$(MAC_SIDEBAR_OUTLINE_TEST)"
 
 mac-sidebar-outline-tests: $(MAC_SIDEBAR_OUTLINE_TEST)
 	"$(MAC_SIDEBAR_OUTLINE_TEST)"

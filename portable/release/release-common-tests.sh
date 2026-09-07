@@ -70,6 +70,17 @@ printf '%s\n' 'New feature paragraph.' >> "$readme_repo/readme.md"
 git -C "$readme_repo" add readme.md
 git -C "$readme_repo" -c user.name=t -c user.email=t@t commit -qm content
 spdf_require_fresh_readme "$readme_repo" "26.8.1-1" >/dev/null
+# A README rewritten wholesale is the clearest possible pass, and it was the one
+# case that failed: the gate ended its pipe in `grep -q`, which exits at the
+# first changed line, and under pipefail the SIGPIPE'd upstream greps turned a
+# 94-line rewrite into "only the version badge moved". Big enough to overrun
+# the pipe buffer, so a regression cannot hide behind a diff that fits in it.
+seq 1 20000 | sed 's/^/Rewritten line /' > "$readme_repo/readme.md"
+printf '%s\n' '<sub>Latest <b>26.8.2-1</b></sub>' >> "$readme_repo/readme.md"
+git -C "$readme_repo" add readme.md
+git -C "$readme_repo" -c user.name=t -c user.email=t@t commit -qm rewrite
+expect_equal "a wholesale readme rewrite is accepted" \
+  "$(spdf_require_fresh_readme "$readme_repo" "26.8.1-1" && echo ok)" "ok"
 
 if ((failures)); then
   printf 'release-common-tests: %d failure(s)\n' "$failures" >&2

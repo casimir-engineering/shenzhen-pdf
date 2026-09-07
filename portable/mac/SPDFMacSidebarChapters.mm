@@ -1,5 +1,6 @@
 #import "SPDFMacSidebarChapters.h"
 
+#import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacSidebarOutline.h"
 
 // Chapter nesting, end to end.
@@ -53,6 +54,25 @@ static NSString* const kSPDFCollapsedChaptersKey = @"collapsedChapters";
     state[@"path"] = [self selectedTab].path ?: state[@"path"] ?: @"";
     _documentStates[key] = state;
     [self savePersistentState];
+}
+
+#pragma mark - The mode control's segments
+
+// Chapters / Comments / Search, the last present only while a search is. This
+// lives beside the nesting rather than with the rest of the sidebar
+// coordinator because the nesting is what a lost selection destroys: the
+// projection below answers nil for any mode but Chapters, so a control left
+// with nothing selected -- which is what AppKit does when a search ends while
+// the reader is in its results -- rebuilds the chapters flat and takes the
+// expand/collapse button away with them.
+- (void)syncSidebarModeControlSegmentsForSearchAvailability:(BOOL)hasSearch {
+    // Chapters as the fallback: Search is the segment that just went away, and
+    // both builders re-point Chapters at Comments for a document that has none.
+    spdf_sidebar_mode_control_set_segment_count(_sidebarModeControl, hasSearch ? 3 : 2, SPDFSidebarModeChapters);
+    [_sidebarModeControl setLabel:@"Chapters" forSegment:SPDFSidebarModeChapters];
+    [_sidebarModeControl setLabel:@"Comments" forSegment:SPDFSidebarModeComments];
+    if (hasSearch) [_sidebarModeControl setLabel:@"Search" forSegment:SPDFSidebarModeSearch];
+    [self normalizeSidebarModeControlWidths];
 }
 
 #pragma mark - Projection

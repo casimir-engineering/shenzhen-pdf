@@ -2157,7 +2157,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
     if (version.length == 0) version = @"26.9.5";
-    if (build.length == 0) build = @"1";
+    if (build.length == 0) build = @"2";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
@@ -9265,15 +9265,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (BOOL)hasSearchSidebar {
     return [self hasActiveDocument] &&
            (_searchField.stringValue.length > 0 || _findSearchInProgress || _findMatches.count > 0);
-}
-
-- (void)syncSidebarModeControlSegmentsForSearchAvailability:(BOOL)hasSearch {
-    NSInteger segmentCount = hasSearch ? 3 : 2;
-    if (_sidebarModeControl.segmentCount != segmentCount) _sidebarModeControl.segmentCount = segmentCount;
-    [_sidebarModeControl setLabel:@"Chapters" forSegment:SPDFSidebarModeChapters];
-    [_sidebarModeControl setLabel:@"Comments" forSegment:SPDFSidebarModeComments];
-    if (hasSearch) [_sidebarModeControl setLabel:@"Search" forSegment:SPDFSidebarModeSearch];
-    [self normalizeSidebarModeControlWidths];
 }
 
 - (NSString*)sidebarFilterTextForCurrentMode {
