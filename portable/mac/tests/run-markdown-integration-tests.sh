@@ -124,6 +124,7 @@ SPDFMacMarkdownRoutingTests
 SPDFMacMarkdownPagedViewTests
 SPDFMacMarkdownPanTests
 SPDFMacMarkdownCopyTextTests
+SPDFMacMarkdownLinkHitTests
 SPDFMacMarkdownCopySelectionTests
 SPDFMacMarkdownMinimapModelTests
 SPDFMacMarkdownSidebarModelTests
