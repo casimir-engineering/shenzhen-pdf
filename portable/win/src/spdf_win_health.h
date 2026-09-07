@@ -13,8 +13,10 @@
  *
  * So it writes. Three lines per windowed launch (1 s, 5 s and 30 s after the
  * window is shown) into <state dir>\launch-health.log, plus a `stall` line from
- * a watchdog thread whenever the UI thread's heartbeat goes stale -- see
- * spdf_win_health_log.h for the timers, the file and the watchdog. This header
+ * a watchdog thread whenever the UI thread's heartbeat goes stale -- or a
+ * `modal` line when a dialog of ours is what is holding the pump, which is not
+ * a stall -- see spdf_win_health_log.h for the timers, the file and the
+ * watchdog, and spdf_win_health_is_modal() below for the test. This header
  * is the MEASUREMENT half: the counters the window proc bumps, the heartbeat the
  * message loop stamps, and the one function that turns all of it plus a live
  * HWND into one greppable line.
@@ -235,6 +237,27 @@ static BOOL CALLBACK spdf_win_health_enum(HWND h, LPARAM param) {
         if (IsWindowEnabled(h)) ++w->owned_enabled;
     }
     return TRUE;
+}
+
+/* IS A MODAL DIALOG UP OVER `hwnd`? Disabled, with an enabled visible window of
+ * ours owned by it. Asked of the desktop only -- no message is sent -- so the
+ * watchdog may call it while the UI thread is not pumping, which is exactly when
+ * it needs to know: a nested modal loop (a TaskDialog, a password prompt, the
+ * shell's Open dialog) does not turn OUR pump, so the heartbeat goes stale and
+ * looks like a wedged thread. It is not one, and the log must not say it is --
+ * see spdf_win_health_log.h's watchdog. Same computation as the `modal=` field
+ * of the line below, factored out so the two cannot disagree. */
+static int spdf_win_health_is_modal(HWND hwnd) {
+    spdf_win_health_windows walk;
+    DWORD pid = 0;
+    if (!hwnd || IsWindowEnabled(hwnd)) return 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return 0;
+    memset(&walk, 0, sizeof(walk));
+    walk.target = hwnd;
+    walk.pid = pid;
+    EnumWindows(spdf_win_health_enum, (LPARAM)&walk);
+    return walk.owned_enabled > 0;
 }
 
 /* Does the window rect overlap any monitor's WORK area? A window whose frame
