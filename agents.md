@@ -10,6 +10,7 @@ Read these rather than duplicating them here:
 
 | Topic | Where |
 |---|---|
+| **Start here**: architecture map, philosophy, tools, release flow, traps, open threads | `portable/docs/agent-handoff.md` |
 | Portable layout, build/test commands, release process | `portable/README.md` |
 | Rendering pipeline, view, scroll, zoom, minimap internals | `portable/docs/architecture.md` |
 | Per-file size caps and how to change one | `tools/file-size-limits.md` |
