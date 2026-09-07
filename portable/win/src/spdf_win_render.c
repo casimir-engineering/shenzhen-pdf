@@ -6,7 +6,9 @@
  * LOCKING RULE: svc->lock covers every field of the service and of every task
  * except task.abort_flag, which is atomic precisely so a running render can
  * poll it without contending with the UI thread. Everything set in
- * spdf_win_render_service_new() is immutable thereafter and needs no lock.
+ * spdf_win_render_service_new() is immutable thereafter and needs no lock --
+ * except `notify`, which free() clears under the lock when it abandons a
+ * worker (see there), so a worker copies it out under the lock before calling.
  * Renders, done callbacks and the notify hook all run with the lock RELEASED. */
 
 #include "spdf_win_render.h"
@@ -47,12 +49,22 @@ struct spdf_win_render_service {
     task *pending, *running;
     completion *ready_head, *ready_tail;
     int ready_count, inflight, shutdown, worker_target, worker_count;
+    /* Workers between entry and exit, and whether free() has given up waiting
+     * for them: when it has, the last worker out frees the service. Under the
+     * lock, both. */
+    int live_workers, abandoned;
     unsigned long long next_token, next_seq, generation, tasks_started;
     size_t max_bytes;
     spdf_thr workers[SPDF_WIN_RENDER_MAX_WORKERS];
-    spdf_win_render_notify notify; /* immutable: read without the lock */
+    spdf_win_render_notify notify; /* cleared by free() on abandon; read under the lock */
     void* notify_ctx;
 };
+
+/* How long free() waits for the workers before it leaves them to finish on
+ * their own. A render notices its abort at the next MuPDF operator, which is
+ * milliseconds; what does not is a single long decode, and a UI thread that
+ * waits out a decode answers nothing for as long as it takes. */
+#define SPDF_WIN_RENDER_JOIN_WAIT_MS 500
 
 int spdf_win_render_aborted(const spdf_win_render_abort* abort) {
     return abort && abort->flag && ATOMIC_LOAD(abort->flag) != 0;
@@ -197,6 +209,8 @@ static void worker_body(spdf_win_render_service* svc) {
         char err[256];
         double zoom = 0.0;
         int status;
+        spdf_win_render_notify notify;
+        void* notify_ctx;
         MTX_LOCK(&svc->lock);
         while (!svc->shutdown && (t = pick_pending(svc)) == NULL) CND_WAIT(&svc->wake, &svc->lock);
         if (svc->shutdown) {
@@ -216,14 +230,26 @@ static void worker_body(spdf_win_render_service* svc) {
         if (status == SPDF_WIN_RENDER_OK && t->spec.generation != svc->generation)
             status = SPDF_WIN_RENDER_SUPERSEDED;
         finish_task(svc, t, &bitmap, status, err, (float)zoom);
+        notify = svc->notify; /* NULL once the owner has gone: see free() */
+        notify_ctx = svc->notify_ctx;
         MTX_UNLOCK(&svc->lock);
-        if (svc->notify) svc->notify(svc->notify_ctx);
+        if (notify) notify(notify_ctx);
     }
     if (svc->backend.thread_exit) svc->backend.thread_exit(svc->backend.ctx);
 }
 
+static void service_destroy(spdf_win_render_service* svc);
+
 static WORKER_ENTRY worker_entry(void* arg) {
-    worker_body((spdf_win_render_service*)arg);
+    spdf_win_render_service* svc = (spdf_win_render_service*)arg;
+    int last;
+    worker_body(svc);
+    /* The last worker out of an abandoned service frees it. Under the lock,
+     * so free() setting `abandoned` and this decrement cannot cross. */
+    MTX_LOCK(&svc->lock);
+    last = --svc->live_workers == 0 && svc->abandoned;
+    MTX_UNLOCK(&svc->lock);
+    if (last) service_destroy(svc);
     return WORKER_RETURN;
 }
 /* The default backend -- one spdf_document per worker thread against the
@@ -273,9 +299,26 @@ spdf_win_render_service* spdf_win_render_service_new_ex(const char* path, const 
     return svc;
 }
 
+/* The block itself. Completions nobody drained belong to an owner that has
+ * gone (the abandon path below), so they are dropped, not delivered. */
+static void service_destroy(spdf_win_render_service* svc) {
+    completion* c;
+    while ((c = svc->ready_head) != NULL) {
+        svc->ready_head = c->next;
+        free(c->result.rgba);
+        free(c);
+    }
+#ifndef _WIN32
+    pthread_mutex_destroy(&svc->lock);
+    pthread_cond_destroy(&svc->wake);
+#endif
+    free(svc->path);
+    free(svc);
+}
+
 void spdf_win_render_service_free(spdf_win_render_service* svc) {
     task* t;
-    int i;
+    int joined, none_left;
     if (!svc) return;
     MTX_LOCK(&svc->lock);
     svc->shutdown = 1;
@@ -286,20 +329,32 @@ void spdf_win_render_service_free(spdf_win_render_service* svc) {
     CND_BROADCAST(&svc->wake);
     MTX_UNLOCK(&svc->lock);
     /* svc->workers is only ever written under the lock we just released, and
-     * shutdown bars any further request, so reading it here is ordered. */
-    for (i = 0; i < svc->worker_count; i++) THR_JOIN(svc->workers[i]);
-    /* Single-threaded from here. Everything queued is still delivered, so
-     * per-request user_data always has its one release point. */
+     * shutdown bars any further request, so reading it here is ordered.
+     *
+     * A BOUNDED WAIT, because this is the UI thread: every canvas teardown --
+     * a tab switch, a reload from disk, a theme flip -- lands here, and a
+     * worker inside one decode the cookie cannot interrupt used to hold the
+     * whole window for the length of it. Past SPDF_WIN_RENDER_JOIN_WAIT_MS
+     * the service is ABANDONED: the workers still running finish their page,
+     * find no owner to notify, and the last one out frees the block
+     * (worker_entry). What that costs is one late completion's user_data,
+     * leaked with the service, per abandoned render -- the price of not
+     * calling TerminateThread, as spdf_win_print_dialog_system.cpp puts it. */
+    joined = THR_JOIN_ALL(svc->workers, svc->worker_count, SPDF_WIN_RENDER_JOIN_WAIT_MS);
+    /* Everything queued is still delivered, so per-request user_data has its
+     * one release point -- for every request a worker is not still holding. */
     MTX_LOCK(&svc->lock);
     while (svc->pending) retire_pending(svc, svc->pending, SPDF_WIN_RENDER_SHUTDOWN);
+    if (!joined) {
+        svc->abandoned = 1;
+        svc->notify = NULL; /* the owner is about to go; nothing may call into it */
+    }
+    none_left = svc->live_workers == 0;
     MTX_UNLOCK(&svc->lock);
     (void)spdf_win_render_drain(svc, 0);
-#ifndef _WIN32
-    pthread_mutex_destroy(&svc->lock);
-    pthread_cond_destroy(&svc->wake);
-#endif
-    free(svc->path);
-    free(svc);
+    /* Joined, or every worker left between the timeout and the lock above
+     * (then it saw `abandoned` unset and left the block to us). */
+    if (joined || none_left) service_destroy(svc);
 }
 
 /* Everything older stops now: a running render loses its waiters (which aborts
@@ -368,8 +423,10 @@ unsigned long long spdf_win_render_request(spdf_win_render_service* svc, const s
         retire_pending(svc, t, SPDF_WIN_RENDER_SUPERSEDED); /* born stale: still gets its one callback */
     } else {
         /* Threads start only once there is work. */
-        while (svc->worker_count < svc->worker_target && THR_START(&svc->workers[svc->worker_count], worker_entry, svc))
+        while (svc->worker_count < svc->worker_target && THR_START(&svc->workers[svc->worker_count], worker_entry, svc)) {
             svc->worker_count++;
+            svc->live_workers++;
+        }
         CND_BROADCAST(&svc->wake);
     }
     MTX_UNLOCK(&svc->lock);

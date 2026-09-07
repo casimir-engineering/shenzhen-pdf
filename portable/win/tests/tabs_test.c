@@ -269,6 +269,11 @@ static void test_view_state_is_per_tab(void) {
     spdf_win_tab_view* first = spdf_win_tabs_view(tabs, 0);
     const spdf_win_tab_view* second = spdf_win_tabs_view_const(tabs, 1);
     check(first->zoom == 1.0 && first->fit_mode == SPDF_WIN_TAB_FIT_PAGE, "a new tab starts at the shared defaults");
+    /* The mac's default (SPDFDocumentTab: _preservesImageColors = YES), and per
+     * tab: two documents may disagree (SPDFMacTabStateTests, 42e8c9ca7). */
+    check(first->preserves_image_colors == 1, "a new tab keeps image colours, the mac's default");
+    first->preserves_image_colors = 0;
+    check(second->preserves_image_colors == 1, "and the choice is the tab's own, not its neighbour's");
     first->page = 17;
     first->zoom = 2.5;
     first->scroll_y = 400.0;

@@ -152,8 +152,14 @@ int spdf_win_assoc_make_default(void* hwnd_handle) {
                     L"Shenzhen PDF", MB_OK | MB_ICONWARNING);
         return 0;
     }
-    /* Tell the shell the associations changed so the Settings list is fresh. */
-    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSH, NULL, NULL);
+    /* Tell the shell the associations changed so the Settings list is fresh.
+     * FLUSHNOWAIT, not FLUSH: SHCNF_FLUSH makes this call wait until Explorer
+     * has taken delivery, and this runs on the window's thread from a menu
+     * click. An Explorer that is busy or hung would then hold this window
+     * hostage for as long as it liked -- a cross-process hang, in Error
+     * Reporting's words (AppHangXProcB1), with nothing of ours at fault. The
+     * notification is delivered either way; nothing here needs to know when. */
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSHNOWAIT, NULL, NULL);
     /* Windows 11 opens the app's own page; older builds ignore the query and
      * fall back to the general page, so both are tried in order. */
     rc = ShellExecuteW(hwnd, L"open", SPDF_WIN_ASSOC_SETTINGS_URI, NULL, NULL, SW_SHOWNORMAL);

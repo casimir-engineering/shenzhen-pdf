@@ -21,6 +21,7 @@
  * transcript it would have displayed are covered by properties_test.c.
  */
 
+#include "spdf_win_modal_scope.h"
 #include "spdf_win_properties.h"
 
 #include "spdf_win_selection.h" /* spdf_win_clipboard_put_utf8, the CF_UNICODETEXT rule */
@@ -155,7 +156,6 @@ int spdf_win_properties_show(HWND parent, const spdf_win_properties* props) {
     MSG msg;
     RECT client;
     int text_h;
-    BOOL parent_was_enabled = FALSE;
 
     if (!props || props->count <= 0) return 0;
     if (!props_register_class()) return 0;
@@ -166,9 +166,11 @@ int spdf_win_properties_show(HWND parent, const spdf_win_properties* props) {
     state.transcript = transcript;
     state.finished = 0;
 
+    /* NOT WS_VISIBLE: the window is placed on the owner's monitor first and
+     * shown after, so it never appears at the cascade position and jumps. */
     hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, k_props_class, L"Properties",
-                           WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-                           PROPS_WIDTH, PROPS_HEIGHT, parent, NULL, GetModuleHandleW(NULL), NULL);
+                           WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, PROPS_WIDTH,
+                           PROPS_HEIGHT, parent, NULL, GetModuleHandleW(NULL), NULL);
     if (!hwnd) {
         free(text);
         return 0;
@@ -204,8 +206,14 @@ int spdf_win_properties_show(HWND parent, const spdf_win_properties* props) {
     /* Modal against the parent only. Disabling the whole thread would freeze
      * every other window this process owns, which is wrong in a tabbed,
      * multi-window app. */
-    if (parent) parent_was_enabled = IsWindowEnabled(parent);
-    if (parent && parent_was_enabled) EnableWindow(parent, FALSE);
+    /* CENTRED ON THE OWNER'S MONITOR before it is shown. CW_USEDEFAULT cascades
+     * onto the PRIMARY display; with the app on a second one that is a modal
+     * dialog the reader cannot see in front of a window they cannot click. */
+    spdf_win_modal_place_on_owner(hwnd, parent);
+    /* From here the owner is disabled, and there is no path out of this
+     * function that leaves it that way -- see spdf_win_modal_scope.h. */
+    SpdfWinModalGuard modal(parent);
+    ShowWindow(hwnd, SW_SHOW);
     SetFocus(edit);
 
     while (!state.finished && GetMessageW(&msg, NULL, 0, 0) > 0) {
@@ -217,10 +225,7 @@ int spdf_win_properties_show(HWND parent, const spdf_win_properties* props) {
         DispatchMessageW(&msg);
     }
 
-    if (parent && parent_was_enabled) {
-        EnableWindow(parent, TRUE);
-        SetForegroundWindow(parent);
-    }
+    modal.end();
     free(text);
     return 1;
 }

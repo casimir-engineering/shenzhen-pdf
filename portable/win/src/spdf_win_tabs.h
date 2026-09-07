@@ -117,6 +117,16 @@ typedef struct spdf_win_tab_view {
     char working_path[SPDF_WIN_TAB_PATH_MAX];
     unsigned long long ro_copy_file_size;
     double ro_copy_modified_at;
+    /* "preservesImageColors": with the dark reading theme on, leave THIS
+     * document's photographs and figures in their own colours. Per document,
+     * as the mac made it (SPDFDocumentTab.preservesImageColors, 42e8c9ca7): a
+     * datasheet whose figures are colour-coded keeps them while the scan in the
+     * next tab is recoloured whole. 1 or 0 once chosen; -1 for a tab read from
+     * a session written before the choice was per-document, which the frontend
+     * seeds with settings.yaml's darkThemePreservesImages -- the launch default
+     * for a new document, exactly as the mac seeds it. init() says 1, the
+     * mac's own default, so a tab that never meets the seed still has an answer. */
+    int preserves_image_colors;
     /* RUNTIME ONLY, never written: the source was gone for the watcher's whole
      * grace period (SPDF_WIN_WATCH_MISSING) and the strip colours the tab red
      * (SpdfWinChromeTab::missing). Cleared by the reopen that follows a CHANGED. */

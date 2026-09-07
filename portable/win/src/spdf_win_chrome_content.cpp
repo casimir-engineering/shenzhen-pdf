@@ -48,10 +48,22 @@ struct Bridge {
     /* Sidebar. */
     int outline_tried;
     spdf_outline outline;
+    /* The outline as the three parallel arrays the builder takes, filled once
+     * per document: the rows are rebuilt on every keystroke and every fold, and
+     * neither should re-walk the outline items. */
+    const char** titles;
+    int* pages;
+    int* levels;
+    unsigned char* visible; /* the builder's scratch: one flag per outline entry */
     SpdfWinSidebarRow* rows;
     int row_cap;      /* how many `rows` can hold, and `arena`'s size in units of 320 */
     wchar_t* arena;
     wchar_t filter[128];
+    /* The chapters this document left collapsed, by positional key
+     * (spdf_win_sidebar_outline.h), loaded with the outline and written through
+     * on every change. Empty is the default and means expanded. */
+    char** collapsed;
+    int collapsed_count;
     /* The filter changed and the row list has not caught up. Set by the setter
      * and cleared by the rebuild, rather than the rebuild comparing strings:
      * the reader types one character at a time and every keystroke IS a change,
@@ -71,6 +83,17 @@ struct Bridge {
 
 Bridge g_bridge;
 const SpdfWinChromePanelsContent* g_attached;
+/* The per-document memory, if a store registered (spdf_win_chrome_content.h
+ * says who does and what a binary without one gets). */
+const SpdfWinChapterStore* g_store;
+
+/* Keys come from the store's load or from _strdup here; both are malloc'd. */
+void free_keys(char** keys, int count) {
+    int i;
+    if (!keys) return;
+    for (i = 0; i < count; ++i) free(keys[i]);
+    free(keys);
+}
 
 char* utf8_dup_from_wide(const wchar_t* w) {
     int need;
@@ -136,43 +159,54 @@ void ensure_path(Bridge* b) {
  * can only ever produce fewer rows, so a filter can never need a bigger buffer
  * than the one the first build allocated. */
 void rebuild_rows(Bridge* b) {
-    const char** titles = NULL;
-    int* pages = NULL;
-    int* levels = NULL;
     size_t arena_wchars;
     int i;
+    int nesting;
 
     b->sidebar.rows = NULL;
     b->sidebar.row_count = 0;
+    b->sidebar.collapsible_count = 0;
+    b->sidebar.open_count = 0;
     b->sidebar.filter = b->filter[0] ? b->filter : NULL;
     if (b->outline.count <= 0) return;
 
-    if (!b->rows || !b->arena) {
+    if (!b->rows || !b->arena || !b->titles) {
         free(b->rows);
         free(b->arena);
+        free((void*)b->titles);
+        free(b->pages);
+        free(b->levels);
+        free(b->visible);
         b->row_cap = b->outline.count;
         b->rows = (SpdfWinSidebarRow*)calloc((size_t)b->row_cap, sizeof(SpdfWinSidebarRow));
         b->arena = (wchar_t*)calloc((size_t)b->row_cap * 320u, sizeof(wchar_t));
-        if (!b->rows || !b->arena) return;
+        b->titles = (const char**)calloc((size_t)b->row_cap, sizeof(char*));
+        b->pages = (int*)calloc((size_t)b->row_cap, sizeof(int));
+        b->levels = (int*)calloc((size_t)b->row_cap, sizeof(int));
+        b->visible = (unsigned char*)calloc((size_t)b->row_cap, 1);
+        if (!b->rows || !b->arena || !b->titles || !b->pages || !b->levels || !b->visible) return;
+        for (i = 0; i < b->outline.count; ++i) {
+            b->titles[i] = b->outline.items[i].title;
+            b->pages[i] = b->outline.items[i].page_index;
+            b->levels[i] = b->outline.items[i].level;
+        }
     }
     arena_wchars = (size_t)b->row_cap * 320u;
 
-    titles = (const char**)malloc(sizeof(char*) * (size_t)b->outline.count);
-    pages = (int*)malloc(sizeof(int) * (size_t)b->outline.count);
-    levels = (int*)malloc(sizeof(int) * (size_t)b->outline.count);
-    if (titles && pages && levels) {
-        for (i = 0; i < b->outline.count; ++i) {
-            titles[i] = b->outline.items[i].title;
-            pages[i] = b->outline.items[i].page_index;
-            levels[i] = b->outline.items[i].level;
-        }
-        b->sidebar.rows = b->rows;
-        b->sidebar.row_count = spdf_win_sidebar_build_rows(titles, pages, levels, b->outline.count, b->sidebar.filter,
-                                                           b->rows, b->row_cap, b->arena, arena_wchars);
-    }
-    free((void*)titles);
-    free(pages);
-    free(levels);
+    b->sidebar.rows = b->rows;
+    b->sidebar.row_count = spdf_win_sidebar_build_rows_ex(b->titles, b->pages, b->levels, b->outline.count,
+                                                          b->sidebar.filter, (const char* const*)b->collapsed,
+                                                          b->collapsed_count, b->visible, b->rows, b->row_cap,
+                                                          b->arena, arena_wchars);
+    /* The toggle button's facts. A live filter turns nesting off, and with it
+     * the button (the mac hides it: chapterLevelsForCurrentSidebar is nil). */
+    nesting = b->sidebar.filter == NULL;
+    b->sidebar.collapsible_count =
+        nesting ? spdf_win_sidebar_outline_collapsible_count(b->levels, b->outline.count) : 0;
+    b->sidebar.open_count = nesting ? spdf_win_sidebar_outline_open_count(b->levels, b->outline.count,
+                                                                           (const char* const*)b->collapsed,
+                                                                           b->collapsed_count)
+                                    : 0;
 
     /* macOS selects the first row whose page is the current page
      * (:10613-10620). The live page is not reachable from here, so the launch
@@ -202,11 +236,54 @@ void ensure_outline(Bridge* b) {
         if (!spdf_load_outline(b->doc, &b->outline, err, sizeof(err))) return;
         spdf_win_launch_mark_n("outline-loaded", b->outline.count);
         b->sidebar.total_count = b->outline.count;
+        /* What this file's reader left collapsed, from the per-document store.
+         * Read here, beside the outline it applies to, so a document with no
+         * outline pays nothing and one with an outline pays it once. */
+        if (b->outline.count > 0 && g_store && g_store->load)
+            g_store->load(b->path, &b->collapsed, &b->collapsed_count);
     }
     if (!b->filter_dirty) return;
     b->filter_dirty = 0;
     rebuild_rows(b);
 }
+
+} /* namespace */
+
+/* --- the folding seam (spdf_win_chrome_content_fold.cpp does the folding) --- */
+
+void spdf_win_chrome_content_set_chapter_store(const SpdfWinChapterStore* store) {
+    g_store = store;
+}
+
+int spdf_win_chrome_content_fold_view(SpdfWinContentFoldView* out) {
+    Bridge* b = &g_bridge;
+    if (!out) return 0;
+    memset(out, 0, sizeof(*out));
+    if (g_attached) return 0;
+    ensure_outline(b);
+    if (!b->rows || !b->levels || b->outline.count <= 0) return 0;
+    out->sidebar = &b->sidebar;
+    out->levels = b->levels;
+    out->outline_count = b->outline.count;
+    out->collapsed = (const char* const*)b->collapsed;
+    out->collapsed_count = b->collapsed_count;
+    return 1;
+}
+
+void spdf_win_chrome_content_fold_apply(char** keys, int count) {
+    Bridge* b = &g_bridge;
+    if (g_attached) {
+        free_keys(keys, count);
+        return;
+    }
+    free_keys(b->collapsed, b->collapsed_count);
+    b->collapsed = keys;
+    b->collapsed_count = count;
+    if (b->path && g_store && g_store->save) g_store->save(b->path, (const char* const*)keys, count);
+    b->filter_dirty = 1; /* the row set changes under the list: re-derive it */
+}
+
+namespace {
 
 /* `ctx` is the bridge for BOTH hooks: one owner, so a painter never has to know
  * which half of the store it is talking to. */
@@ -333,6 +410,17 @@ void spdf_win_chrome_content_shutdown(void) {
     b->row_cap = 0;
     free(b->arena);
     b->arena = NULL;
+    free((void*)b->titles);
+    b->titles = NULL;
+    free(b->pages);
+    b->pages = NULL;
+    free(b->levels);
+    b->levels = NULL;
+    free(b->visible);
+    b->visible = NULL;
+    free_keys(b->collapsed, b->collapsed_count);
+    b->collapsed = NULL;
+    b->collapsed_count = 0;
     if (b->doc) spdf_close(b->doc);
     b->doc = NULL;
     free(b->path);

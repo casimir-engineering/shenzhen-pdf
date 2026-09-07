@@ -1,15 +1,23 @@
 /* The minimap: the real page strip, with real thumbnails.
  *
- * macOS (portable/mac/SPDFMacMinimapView.mm):
- *   - Background windowBackgroundColor plus a 1 pt separatorColor line at x = 0
- *     (:741-744).
+ * macOS (portable/mac/SPDFMacMinimapView.mm, its theme half in
+ * SPDFMacMinimapViewTheme.mm since 61070e502):
+ *   - Background is the READING theme's gutter (stripBackgroundColor: the
+ *     theme's viewportBackgroundColor in dark, windowBackgroundColor in light)
+ *     plus a 1 pt separatorColor line at x = 0 (:728-732).
  *   - Strip layout (:308-343): usable width boundsWidth - 18.0, inter-page gap
  *     4.0, top inset 8.0 when scrolled or vertically CENTRED when the strip
  *     fits. Scale comes from the MEDIAN page width with any single page capped
  *     at kMinimapMaxWidthRatio = 2.5x the median (:113, :139-147); each page
  *     centred horizontally, aspect preserved.
- *   - Per page: white fill, then the thumbnail at NSImageInterpolationLow, or a
- *     placeholder of grey lines calibratedWhite:0.76 @0.34 (:524-536, :606-607).
+ *   - Per page: the theme's PAPER (pageFillColor -- not white, which leaked a
+ *     bright sliver under a dark page that fell a fraction short of its slot),
+ *     then the thumbnail at NSImageInterpolationLow, or a placeholder of ruled
+ *     lines at calibratedWhite 0.76 (light) / 0.62 (dark) @0.34, then in dark
+ *     the same 1 px paperBorderColor frame a PDF page gets
+ *     (drawPageBorderInRect:, half-pixel inset so the stroke sits on the pixel
+ *     grid); light draws a shadow on the canvas and nothing here.
+ *     spdf_win_chrome_theme.h's minimap_* roles carry those four colours.
  *   - Current-page outline calibratedWhite:0.75 @0.9, rect outset 1 pt,
  *     lineWidth 1.5 -- deliberately GREY so it does not compete with the
  *     viewport box, which is the accent (:664-675).
@@ -288,8 +296,9 @@ void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfW
     double gap = (double)px(SPDF_WIN_MINIMAP_GAP, s);
     double content_top;
     int first = 0, last = -1, i;
-    ID2D1SolidColorBrush* white;
-    ID2D1SolidColorBrush* grey;
+    ID2D1SolidColorBrush* white; /* the theme's paper: white in light, #1E1E1E in dark */
+    ID2D1SolidColorBrush* grey;  /* the placeholder tint */
+    ID2D1SolidColorBrush* border; /* the dark theme's 1 px sheet frame; NULL in light */
     ID2D1SolidColorBrush* panel;
 
     /* Whatever happens below, the frame the INPUT layer hit-tests is this
@@ -298,7 +307,10 @@ void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfW
     g_frame_valid = 0;
     if (spdf_win_chrome_rect_empty(mm)) return;
 
-    panel = spdf_win_chrome_brush(ctx.target, th->panel);
+    /* The reading theme's gutter, not the chrome's panel colour: the strip is
+     * the same document on the same paper, and in dark a #1E1E1E sheet on a
+     * #202020 panel had no edge at all. */
+    panel = spdf_win_chrome_brush(ctx.target, th->minimap_gutter);
     if (panel) {
         ctx.target->FillRectangle(spdf_win_chrome_d2d_rect(mm), panel);
         panel->Release();
@@ -336,9 +348,11 @@ void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfW
         content->request(content->ctx, first, last, (double)mm.w, side_inset, ctx.model && ctx.model->dark);
 
     ctx.target->PushAxisAlignedClip(spdf_win_chrome_d2d_rect(mm), D2D1_ANTIALIAS_MODE_ALIASED);
-    white = spdf_win_chrome_brush(ctx.target, spdf_win_ct_rgb(0xFFFFFFu, 1.0f));
-    /* calibratedWhite:0.76 @0.34 -- 0.76 in sRGB is 0xC2. */
-    grey = spdf_win_chrome_brush(ctx.target, spdf_win_ct_rgb(0xC2C2C2u, 0.34f));
+    /* The theme's paper and placeholder tint (see the header): white and 0xC2
+     * in light, #1E1E1E and 0x9E in dark. */
+    white = spdf_win_chrome_brush(ctx.target, th->minimap_paper);
+    grey = spdf_win_chrome_brush(ctx.target, th->minimap_placeholder);
+    border = th->minimap_draws_page_border ? spdf_win_chrome_brush(ctx.target, th->minimap_page_border) : NULL;
 
     for (i = first; i <= last && i < strip->count; ++i) {
         SpdfWinChromeRect p;
@@ -350,8 +364,8 @@ void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfW
         p.w = (float)strip->rects[i].w;
         p.h = (float)strip->rects[i].h;
 
-        /* White first, always: a minimap slot is a picture of paper, and macOS
-         * fills white before it draws anything into it. */
+        /* Paper first, always: a minimap slot is a picture of paper, and macOS
+         * fills the theme's paper before it draws anything into it. */
         if (white) ctx.target->FillRectangle(spdf_win_chrome_d2d_rect(p), white);
 
         memset(&t, 0, sizeof(t));
@@ -363,6 +377,17 @@ void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfW
                                    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
         } else {
             draw_placeholder(ctx, p, grey, s);
+        }
+
+        /* Dark draws no paper shadow (a black shadow is invisible on a dark
+         * gutter), so without this frame a #1E1E1E sheet has no edge against
+         * the gutter and the strip reads as one continuous dark column -- only
+         * the selected page, outlined below, stayed visible. Same 1 px frame a
+         * PDF page gets, drawn after the content and before the outline
+         * (drawPageBorderInRect:). Slots under 3 pt are too small to frame. */
+        if (border && p.w >= px(3.0, s) && p.h >= px(3.0, s)) {
+            float hair = spdf_win_chrome_stroke_px(SPDF_WIN_CT_HAIRLINE, s);
+            ctx.target->DrawRectangle(spdf_win_chrome_stroke_rect(p, hair), border, hair, NULL);
         }
 
         if (i == content->current_page) {
@@ -384,6 +409,7 @@ void spdf_win_chrome_paint_minimap(const SpdfWinChromePaintCtx& ctx, const SpdfW
     }
     if (white) white->Release();
     if (grey) grey->Release();
+    if (border) border->Release();
 
     /* The search hits, over the thumbnails and under the viewport box. */
     draw_marks(ctx, strip, content, mm, content_top, first, last, s);

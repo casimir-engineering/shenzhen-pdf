@@ -11,11 +11,14 @@
  *     "windows": [
  *       { "id": "<per-window session id>",
  *         "frame": { "x":…, "y":…, "width":…, "height":… },
+ *         "display": { "name": "\\\\.\\DISPLAY2", "x":…, … },   (this port only)
+ *         "focusedAt": 812345678.0,
  *         "selectedTab": 0,
  *         "tabs": [ { "path": "…", "title": "…", "page": 0, "zoom": 1.0000,
  *                     "customZoom": 1.0000, "fitMode": 4, "viewMode": 1,
  *                     "scrollX": 0.0000, "scrollY": 0.0000,
- *                     "hasScrollOrigin": false, … } ] } ] }
+ *                     "hasScrollOrigin": false, "preservesImageColors": true,
+ *                     … } ] } ] }
  *
  * (mac: ShenzhenPDFMac.mm -sessionWindowState/-loadSessionWindowState:, GTK:
  * portable/linux/gtk4/spdf_state.c session_window_to_json/parse_session_window.
@@ -84,8 +87,12 @@ typedef enum spdf_win_session_status {
 void spdf_win_session_new_window_id(char* out, size_t out_len);
 
 /* Populate `tabs` from session.yaml. `window_id` selects which window to
- * restore; NULL or "" takes the first one in the file, which is what a plain
- * launch wants.
+ * restore; NULL or "" takes the window the reader was last using -- the one
+ * with the newest "focusedAt", the first in the file when no entry has one --
+ * which is what a plain launch wants: the process that launches is the one
+ * that takes the foreground, so the window it restores is the one that comes
+ * back in front (mac: spdf_session_focused_window_index, 5776dd6cf). Picking
+ * the first entry made that whichever window happened to be written first.
  *
  * Restores paths, titles and view state, sets the persisted selection with
  * spdf_win_tabs_select_deferred() — so NO DOCUMENT IS OPENED — and, when
@@ -110,12 +117,22 @@ int spdf_win_session_save(const spdf_win_tabs* tabs, const char* window_id);
  *
  * "frame": { "x", "y", "width", "height" } on the window object -- the mac
  * writes its NSWindow frame in points, GTK its size in pixels; this port writes
- * the window's normal placement in screen device pixels
- * (spdf_win_window_get_frame). Cross-platform the numbers mean little (a mac
- * screen's y grows upward), which is why the restore clamps onto a monitor
- * before trusting them. `w`/`h` <= 0 means "no frame". */
+ * the window's normal placement in virtual-screen device pixels
+ * (spdf_win_window_get_placement). Cross-platform the numbers mean little (a
+ * mac screen's y grows upward), which is why the window layer judges a frame
+ * against the attached displays before showing it there -- and, since the
+ * 26.9.4-3 port, NEVER clamps it on the way in: a frame whose display is
+ * missing is parked centred on the main display and the parked position is
+ * never what gets saved (spdf_win_placement.h). `w`/`h` <= 0 means "no frame".
+ *
+ * "display": { "name", "x", "y", "width", "height" } beside it is this port's
+ * own: the MONITORINFOEXW device name and monitor rectangle the frame was on,
+ * so "the display it was left on" has an identity and not just a position. A
+ * mac file has none and restores from the frame alone; a mac save drops it. */
 typedef struct spdf_win_session_frame {
     int x, y, w, h;
+    char display[32]; /* "" when unknown */
+    int display_x, display_y, display_w, display_h;
 } spdf_win_session_frame;
 
 /* As spdf_win_session_restore(), and also reads the window's frame into
@@ -128,6 +145,24 @@ spdf_win_session_status spdf_win_session_restore_ex(spdf_win_tabs* tabs, const c
  * window -- so a save that knows nothing about geometry never moves a mac
  * user's window. */
 int spdf_win_session_save_ex(const spdf_win_tabs* tabs, const char* window_id, const spdf_win_session_frame* frame);
+
+/* --- which window the reader was last using ---------------------------------
+ *
+ * "focusedAt" on the window object: when this window last had the foreground,
+ * in the mac's own unit -- seconds since 2001-01-01 UTC, NSDate's reference
+ * date -- so a file both apps write compares the same way. Stamped only when
+ * `focused_now` says the window IS the foreground window at the time of the
+ * save (a restored sibling is the foreground window of its own process too,
+ * and must not stamp itself); otherwise the entry keeps the stamp it had on
+ * disk, or 0 when it never had one. save_ex() is save_focused(..., 0). */
+int spdf_win_session_save_focused(const spdf_win_tabs* tabs, const char* window_id,
+                                  const spdf_win_session_frame* frame, int focused_now);
+
+/* Every window id in the file, in file order, the hand-off parking spot
+ * excluded, up to `max`. Returns how many. What a session-restore launch spawns
+ * its siblings from -- all of them at once, right after its own restore, so
+ * they reach the screen together rather than a launch apart. 0 for no file. */
+int spdf_win_session_window_ids(char ids[][SPDF_WIN_SESSION_ID_MAX], int max);
 
 /* --- detaching a tab into a new window -------------------------------------
  *

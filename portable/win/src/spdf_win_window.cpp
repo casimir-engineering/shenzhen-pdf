@@ -15,6 +15,12 @@
  * an HWND knows (maximized, hovered button, held button), pushed to the model
  * the chrome painter reads. See spdf_win_window_caption.h. */
 #include "spdf_win_chrome_model.h"
+/* The launch-health counters. One call at the top of window_proc and one after
+ * EndPaint; both are a switch and an InterlockedIncrement, and the whole reason
+ * they are here is that "the window received no input at all" and "the window
+ * received the input and did nothing with it" look identical from outside.
+ * spdf_win_health.h says what is done with them. */
+#include "spdf_win_health.h"
 #include "spdf_win_launch_profile.h" /* SPDF-LAUNCH markers; free when unset */
 
 #include <windowsx.h> /* GET_X_LPARAM / GET_Y_LPARAM */
@@ -72,6 +78,22 @@ struct spdf_win_window {
     int fullscreen;
     WINDOWPLACEMENT placement;
 
+    /* THE RESTORED PLACEMENT (spdf_win_window_frame.h, rules in
+     * spdf_win_placement.h). `desired` is the frame the reader left, valid
+     * while has_desired. `parked` says the window is showing a fallback because
+     * that frame's display is missing, and parked_rect is the fallback we put
+     * it at -- a normal rect that differs from it is the reader's own move,
+     * which ends the parking. `placing` marks our own SetWindowPlacement /
+     * SetWindowPos so their WM_WINDOWPOSCHANGED is not mistaken for one. */
+    spdf_win_placement desired;
+    int has_desired;
+    int parked;
+    RECT parked_rect;
+    int placing;
+    /* Whether this was the foreground window when WM_CLOSE arrived: the
+     * answer spdf_win_window_is_foreground gives once the HWND is gone. */
+    int foreground_at_close;
+
     /* The periodic tick (spdf_win_window_set_tick), or NULL. */
     spdf_win_tick_fn tick_fn;
     /* The pending one-shot (spdf_win_window_set_once), or NULL. Cleared before
@@ -121,6 +143,10 @@ float spdf_win_window_dpi_scale(const spdf_win_window* window) {
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     spdf_win_window* window = (spdf_win_window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
 
+    /* BEFORE the switch, so a message a handler returns early on is still
+     * counted: the counters answer "did it arrive", not "was it used". */
+    spdf_win_health_note_message(msg);
+
     if (msg == WM_NCCREATE) {
         CREATESTRUCTW* cs = (CREATESTRUCTW*)lparam;
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
@@ -134,6 +160,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             BeginPaint(hwnd, &ps);
             paint(window);
             EndPaint(hwnd, &ps);
+            /* AFTER EndPaint, so the count is frames COMPLETED. */
+            spdf_win_health_note_paint();
             return 0;
         }
         /* D2D repaints the whole client area every time, so letting GDI erase
@@ -275,12 +303,35 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
              * same size instead of doubling. */
             window->dpi = HIWORD(wparam);
             RECT* suggested = (RECT*)lparam;
-            SetWindowPos(hwnd, NULL, suggested->left, suggested->top, suggested->right - suggested->left,
-                         suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+            /* NOT while a saved placement is being applied: that frame is
+             * already in its own display's device pixels, and the suggested
+             * rectangle would rescale it from the display it was created on --
+             * a 1300-wide window came back 1300 * (144/96) and grew on every
+             * relaunch. The DPI itself is still taken. */
+            if (!window->placing) {
+                placement_own_move(window, suggested);
+            }
             extend_frame_into_strip(window); /* the caption height changed with the DPI */
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
+        /* A display came or went. If the window is parked because its own
+         * display was missing and that frame can be shown now, put it back. */
+        case WM_DISPLAYCHANGE:
+            placement_displays_changed(window);
+            break;
+        /* Every position change, ours and the reader's; the placement code tells
+         * them apart. `break`, not `return`: DefWindowProc turns this into the
+         * WM_SIZE and WM_MOVE the rest of the window runs on. */
+        case WM_WINDOWPOSCHANGED:
+            placement_note_moved(window);
+            break;
+        /* Recorded HERE, where the window is still the one the reader closed:
+         * DestroyWindow deactivates it before WM_DESTROY, so asking then always
+         * says no. Then DefWindowProc destroys it. */
+        case WM_CLOSE:
+            window->foreground_at_close = GetForegroundWindow() == hwnd;
+            break;
         case WM_COMMAND:
             /* A menu item, and nothing else: this window has no child controls,
              * so a WM_COMMAND with a non-zero lParam (a control) or a high word
@@ -312,6 +363,12 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             memset(&input, 0, sizeof(input));
             input.kind = SPDF_WIN_INPUT_KEY;
             input.key = (unsigned)wparam;
+            /* THE SAME KEY AS THE ACTIVE LAYOUT SPELLS IT, and whether the
+             * layout made text of it. Both are spdf_win_window.h's fields and
+             * both are pure Win32 -- deciding what they MEAN is the keymap's,
+             * which is the division this file already states for `key`. */
+            input.key_char = key_char_for(hwnd, (unsigned)wparam);
+            input.text_key = key_is_text(hwnd);
             if (dispatch(window, &input)) return 0;
             /* AN ESCAPE NOBODY WANTED. It used to close the window from here,
              * which macOS never does and which bit anyone who cancelled a search

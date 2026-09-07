@@ -139,10 +139,24 @@ struct spdf_win_state_session_lock {
     HANDLE handle;
 };
 
+/* How long the UI thread may wait for another window's process to let go of
+ * session.lock before it gives up on the lock. An honest hold is one read and
+ * one write-through replace of session.yaml -- single-digit milliseconds on
+ * an SSD, tens on a disk -- so anything still holding it after this is a
+ * process that is not going to release it on a human timescale: suspended
+ * under a debugger, frozen while Error Reporting collects it, or wedged. See
+ * lock_file_exclusive(). Measured with another process holding the lock
+ * (windows-native-observations.md section 13): before, the window was hung
+ * from the first save until that process let go; with this bound it pauses
+ * once per save and goes on. */
+#define SPDF_WIN_STATE_LOCK_WAIT_MS 1000
+#define SPDF_WIN_STATE_LOCK_POLL_MS 10
+
 static void* lock_file_exclusive(const char* path) {
     wchar_t wide[SPDF_WIN_PATH_MAX];
     OVERLAPPED ov;
     HANDLE h;
+    ULONGLONG started;
     struct spdf_win_state_session_lock* lock;
 
     if (!widen_path(path, wide, SPDF_WIN_PATH_MAX)) return NULL;
@@ -150,9 +164,31 @@ static void* lock_file_exclusive(const char* path) {
                     OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) return NULL;
     memset(&ov, 0, sizeof(ov));
-    if (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &ov)) {
-        CloseHandle(h);
-        return NULL;
+    /* NEVER AN UNBOUNDED WAIT ON THE UI THREAD. Every session save runs on
+     * the window's thread -- a tab switch, the thirty-second tick, exit -- and
+     * without LOCKFILE_FAIL_IMMEDIATELY this call parks that thread inside the
+     * kernel until whichever OTHER ShenzhenPDF process holds session.lock
+     * lets go. A holder that has stalled (Windows Error Reporting suspends a
+     * hung process while it collects it; so does a debugger) then takes every
+     * live window down with it, each one a "cross-process hang" to the shell
+     * (WER's AppHangXProcB1) and none of them the process at fault. So the
+     * lock is asked for without waiting, in short steps, for at most
+     * SPDF_WIN_STATE_LOCK_WAIT_MS; past that the caller proceeds as it always
+     * has when the lock could not be had at all (spdf_win_session.cpp treats
+     * a NULL lock as "save anyway"), because a merge lost to a wedged sibling
+     * is repaired by the next save and a window that never answers again is
+     * not. Sleep() rather than an overlapped wait: the handle is synchronous,
+     * and ten milliseconds of granularity is far below anything a reader can
+     * feel. */
+    started = GetTickCount64();
+    while (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD, MAXDWORD, &ov)) {
+        DWORD error = GetLastError();
+        if ((error != ERROR_LOCK_VIOLATION && error != ERROR_IO_PENDING) ||
+            GetTickCount64() - started >= SPDF_WIN_STATE_LOCK_WAIT_MS) {
+            CloseHandle(h);
+            return NULL;
+        }
+        Sleep(SPDF_WIN_STATE_LOCK_POLL_MS);
     }
     lock = (struct spdf_win_state_session_lock*)malloc(sizeof(*lock));
     if (!lock) {

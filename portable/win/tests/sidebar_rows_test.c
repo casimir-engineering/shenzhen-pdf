@@ -11,10 +11,13 @@
  *      UTF-8 BYTES (written as \xNN escapes, so this file's own encoding cannot
  *      change what is being tested) and the expected UTF-16 is written as \u
  *      escapes. Those two cannot both be wrong in the same direction.
- *   2. AN INDENT THAT IS NOT macOS's. Nesting is level*3 SPACES prepended to the
- *      title with the level clamped to [0, 16] (ShenzhenPDFMac.mm:16613-16619).
- *      An indent implemented as a rect offset would look similar and diverge
- *      under truncation and selection.
+ *   2. AN INDENT THAT IS NOT macOS's. Since a5820117a the indent is GEOMETRY:
+ *      the disclosure triangle's leading edge sits 6 + level*13 pt in, the
+ *      title 16 pt after that, level clamped to [0, 16]
+ *      (SPDFMacSidebarChapters.mm styleSidebarCell:). The title string itself
+ *      carries no spaces any more -- the nesting checks proper are in
+ *      sidebar_outline_test.c; here the rows must come out unindented and the
+ *      rects must land where the mac's constraints put them.
  *   3. A FILTER THAT IS ONLY CASE-INSENSITIVE. macOS uses
  *      NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch (:9666-9670), so
  *      "zurich" must match U+005A U+00FC "rich". A towupper loop passes the case half and
@@ -101,10 +104,11 @@ static void test_utf8(void) {
     if (n != kCount) return;
 
     expect_wstr(g_rows[0].title, L"Introduction", "an ASCII title survives");
-    /* Level 1 -> three leading spaces. */
-    expect_wstr(g_rows[1].title, L"   \u00DCberblick", "a Latin-1 title converts through CP_UTF8, indented once");
-    expect_wstr(g_rows[2].title, L"      \u7b2c\u4e00\u7ae0", "a CJK title converts through CP_UTF8, indented twice");
-    expect_wstr(g_rows[3].title, L"   Z\u00FCrich", "an accented title keeps its accent");
+    /* The level is carried on the row; the title is the title alone. */
+    expect_wstr(g_rows[1].title, L"\u00DCberblick", "a Latin-1 title converts through CP_UTF8, unindented");
+    expect(g_rows[1].level == 1 && g_rows[2].level == 2, "the levels ride on the rows, not in the text");
+    expect_wstr(g_rows[2].title, L"\u7b2c\u4e00\u7ae0", "a CJK title converts through CP_UTF8, unindented");
+    expect_wstr(g_rows[3].title, L"Z\u00FCrich", "an accented title keeps its accent");
     expect_wstr(g_rows[4].title, L"\u0391lpha", "a Greek title converts");
     /* U+1F4C4 is D83D DCC4 in UTF-16. Written as the surrogate pair explicitly:
      * a compiler that mishandled \U0001F4C4 would otherwise hide the bug. */
@@ -117,8 +121,8 @@ static void test_utf8(void) {
     /* NOT mojibake: had the conversion gone through CP_ACP on this 1252 box,
      * row 1 would begin with U+00C3 rather than U+00DC. Asserted
      * directly, because that is the exact failure being guarded. */
-    expect(g_rows[1].title[3] == 0x00DC, "the Latin-1 title is not double-encoded mojibake");
-    expect(g_rows[2].title[6] == 0x7B2C, "the CJK title is not question marks");
+    expect(g_rows[1].title[0] == 0x00DC, "the Latin-1 title is not double-encoded mojibake");
+    expect(g_rows[2].title[0] == 0x7B2C, "the CJK title is not question marks");
 }
 
 static void test_levels_and_pages(void) {
@@ -127,13 +131,10 @@ static void test_levels_and_pages(void) {
 
     expect(g_rows[0].level == 0, "level 0 stays 0");
     expect(g_rows[8].level == 4, "level 4 survives");
-    /* macOS clamps to 16, so a corrupt outline claiming depth 99 indents 48
-     * spaces and no more. */
+    /* macOS clamps to 16, so a corrupt outline claiming depth 99 indents 16
+     * levels and no more (the rects it produces are sidebar_outline_test.c's). */
     expect(g_rows[9].level == SPDF_WIN_SIDEBAR_MAX_LEVEL, "an absurd level clamps to 16");
-    expect(wcslen(g_rows[9].title) == (size_t)(16 * SPDF_WIN_SIDEBAR_INDENT_SPACES) + wcslen(L"Absurdly nested"),
-           "the clamped level indents by 48 spaces exactly");
-    expect(g_rows[9].title[0] == L' ' && g_rows[9].title[47] == L' ' && g_rows[9].title[48] == L'A',
-           "the indent is spaces and the title starts right after them");
+    expect_wstr(g_rows[9].title, L"Absurdly nested", "the title carries no indent of its own");
 
     expect(g_rows[0].page_index == 0, "page 0 is carried through");
     expect(g_rows[5].page_index == 40, "a later page is carried through");
@@ -182,11 +183,12 @@ static void test_filter_matching(void) {
 static void test_filter_rows(void) {
     int n;
 
-    /* Filtering runs on the UNINDENTED title, so a nested row is reachable by
-     * its own text and a filter of spaces does not select every nested row. */
+    /* A nested row is reachable by its own text, and it keeps its level, so it
+     * still draws indented under a filter. */
     n = build(L"berblick");
     expect(n == 1, "one row survives a filter that matches one title");
-    expect_wstr(g_rows[0].title, L"   \u00DCberblick", "the surviving row is still indented");
+    expect_wstr(g_rows[0].title, L"\u00DCberblick", "the surviving row is the title");
+    expect(g_rows[0].level == 1, "the surviving row keeps its level");
     expect(g_rows[0].outline_index == 1, "the surviving row remembers where it came from");
 
     n = build(L"uber");
@@ -244,6 +246,9 @@ static void test_layout(float dpi) {
                 "the segmented control sits 8 pt below the panel top");
     expect(!spdf_win_chrome_rect_empty(l.filter), "the filter field exists in Chapters mode");
     expect(l.filter.y > l.sections.y + l.sections.h - 0.001f, "the filter field is below the segmented control");
+    /* The expand / collapse button's slot on the field's row is
+     * sidebar_outline_test.c's; here only that the field itself is unchanged. */
+    expect_near(l.filter.w, l.sections.w, "the filter field spans the panel like the control above it");
     expect(l.list.y > l.filter.y + l.filter.h - 0.001f, "the list is below the filter field");
     expect_near(l.list.x, side.x + inset, "the list is inset like the controls above it");
     expect_near(l.list.y + l.list.h, side.y + side.h, "the list runs to the bottom of the panel");

@@ -38,6 +38,7 @@
 #include "spdf_win_print.h"
 #include "spdf_win_properties.h"
 #include "spdf_win_menu.h"
+#include "spdf_win_page_wheel.h" /* Alt + wheel pages, by how far the wheel turned */
 
 /* The three typeable fields -- which buffer has the keyboard, a typed code unit,
  * a key while a field is focused. Step 2 of key_for_window() below, in its own
@@ -295,7 +296,13 @@ static int key_for_window(app* a, const spdf_win_input* in) {
     SpdfWinChromeModel model;
     SpdfWinChromeLayout l;
     float page_step, line = 60.0f;
-    int command = spdf_win_menu_command_for_key(in->key, in->mods);
+    /* _ex, not the bare matcher: the table names its keys by virtual-key code
+     * and VK_OEM_MINUS is on no French key at all, so Zoom Out had no French
+     * accelerator (spdf_win_menu_layout.h has the measurement). The character
+     * the ACTIVE layout puts on the key recovers it, exactly as the mac's
+     * `keyEquivalent:@"-"` does, and `text_key` keeps an AltGr character from
+     * being read as a Ctrl+Alt accelerator. */
+    int command = spdf_win_menu_command_for_key_ex(in->key, in->key_char, in->mods, in->text_key);
 
     if (command != SPDF_WIN_CMD_NONE) return command_perform(a, command, in);
     if (a->focus != SPDF_WIN_FOCUS_NONE) return chrome_field_key(a, in);
@@ -341,17 +348,71 @@ static int key_for_window(app* a, const spdf_win_input* in) {
         case SPDF_WIN_KEY_PRIOR: return spdf_win_canvas_scroll_by(a->canvas, 0.0f, -page_step);
         case SPDF_WIN_KEY_HOME: return spdf_win_canvas_scroll_to(a->canvas, 0.0f, 0.0f);
         case SPDF_WIN_KEY_END: return spdf_win_canvas_scroll_to(a->canvas, 0.0f, spdf_win_canvas_content_h(a->canvas));
-        /* Unmodified `+` and `-`, which this port has always had. The Ctrl forms
-         * are accelerators and were matched above; these two are the bare keys,
-         * which cost nothing to keep and are what a reader with no modifier
-         * reaches for. Shared with the toolbar's zoom pill through
-         * chrome_zoom_step, so the two cannot drift apart. */
-        case SPDF_WIN_KEY_OEM_PLUS:
+        /* The two KEYPAD keys, which are the same virtual-key codes on every
+         * layout there is. The main row's `+` and `-` are below, by character:
+         * on a French keyboard the '-' key reports VK_6 and VK_OEM_MINUS does
+         * not exist, so naming the code here bound nothing at all. */
         case SPDF_WIN_KEY_ADD: return chrome_zoom_step(a, &l, 1);
-        case SPDF_WIN_KEY_OEM_MINUS:
         case SPDF_WIN_KEY_SUBTRACT: return chrome_zoom_step(a, &l, 0);
+        default: break;
+    }
+
+    /* Unmodified `+` and `-`, which this port has always had -- by the character
+     * the ACTIVE layout puts on the key, which is how the mac's
+     * `keyEquivalent:@"+"`/@"-" behave and the only spelling that reaches a
+     * reader who is not on a US keyboard. '=' counts as '+' for the same reason
+     * the accelerator table carries a Ctrl+= row: it is the key '+' is printed
+     * on. Shared with the toolbar's zoom pill through chrome_zoom_step, so the
+     * two cannot drift apart.
+     *
+     * CTRL AND ALT DISQUALIFY: a Ctrl combination the table did not claim is an
+     * accelerator nobody bound, not a bare zoom key. (It used to zoom -- the
+     * switch above tested the virtual-key code and never looked at `mods`.)
+     *
+     * SHIFT DISQUALIFIES '-' AND NOT '=', because that is where the glyphs are:
+     * on both layouts '-' is the unshifted position of its key and '+' is the
+     * shifted position of '='. Without the rule a French reader typing '6' --
+     * which is Shift on the key whose unshifted character is '-' -- would zoom
+     * out on every digit. */
+    if (in->mods & (SPDF_WIN_MOD_CTRL | SPDF_WIN_MOD_ALT)) return 0;
+    switch (spdf_win_menu_zoom_char(in->key, in->key_char)) {
+        case '+':
+        case '=': return chrome_zoom_step(a, &l, 1);
+        case '-': return (in->mods & SPDF_WIN_MOD_SHIFT) ? 0 : chrome_zoom_step(a, &l, 0);
         default: return 0;
     }
+}
+
+/* --- Alt + wheel: the page arrows, wherever the pointer is ----------------
+ *
+ * Decided HERE, before the wheel is routed by position (chrome_wheel), because
+ * "regardless of where you hover" is the point: the mac routes it from the
+ * window's -sendEvent: for the same reason. The policy -- one notch is one
+ * page, a fast spin earns several, the remainder carries -- is
+ * spdf_win_page_wheel.h; this is the glue: the notch the window converted the
+ * wheel into, the clock, and the page arrows themselves (chrome_step_page, so a
+ * fitted page simply advances and a zoomed page lands on the next page at the
+ * same zoom, exactly as the toolbar arrows do). Consumed whether or not a page
+ * turned, so an Alt + wheel never also scrolls whatever is under the pointer.
+ *
+ * Alt + Ctrl + wheel never arrives: the window routes every Ctrl + wheel to
+ * SPDF_WIN_INPUT_ZOOM first, which is the mac's "Command and Control already
+ * mean zoom". Shift rides along -- the window put the distance in dx, so the
+ * vertical is taken when there is one and the horizontal otherwise. */
+static int chrome_page_wheel(app* a, const spdf_win_input* in) {
+    static SpdfWinPageWheel wheel;
+    UINT lines = 3;
+    double notch, delta;
+    int pages, i, changed = 0;
+    SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+    notch = spdf_win_page_wheel_notch_px(lines, in->dpi_scale, in->view_px_h);
+    delta = fabs(in->dy) > 1e-4f ? in->dy : in->dx;
+    pages = spdf_win_page_wheel_step(&wheel, delta, notch, (double)GetTickCount64() / 1000.0);
+    /* A COUNT: a fast spin earns several pages and must get them all. The
+     * document's ends stop the loop, as they stop the arrows. */
+    for (i = 0; i < pages; ++i) changed |= chrome_step_page(a, 1);
+    for (i = 0; i > pages; --i) changed |= chrome_step_page(a, -1);
+    return changed;
 }
 
 /* --- the one input entry point ------------------------------------------ */
@@ -393,9 +454,13 @@ static int input_for_window(void* user, spdf_win_input* in) {
      * the strip drags or selects a tab, a caption button minimises or closes,
      * and a keystroke reaches the same keymap it always did. */
     switch (in->kind) {
-        /* A wheel goes where the pointer is: the strip, the Search list or the
-         * document (chrome_wheel, spdf_win_chrome_field_ui.h). */
-        case SPDF_WIN_INPUT_SCROLL: return chrome_wheel(a, in);
+        /* Alt + wheel is the page arrows wherever the pointer is
+         * (chrome_page_wheel above); any other wheel goes where the pointer is:
+         * the strip, the Search list or the document (chrome_wheel,
+         * spdf_win_chrome_field_ui.h). */
+        case SPDF_WIN_INPUT_SCROLL:
+            if (spdf_win_page_wheel_modifiers_page(in->mods)) return chrome_page_wheel(a, in);
+            return chrome_wheel(a, in);
         case SPDF_WIN_INPUT_ZOOM: return chrome_zoom_at_client(a, in);
         case SPDF_WIN_INPUT_CHAR: return chrome_char(a, in->key);
         /* A worker's message to the window (spdf_win_window.h). The only one so
@@ -405,6 +470,9 @@ static int input_for_window(void* user, spdf_win_input* in) {
             /* A canvas render landed: the next paint adopts it from the cache
              * as it always did, so all this owes is the invalidate. */
             if (in->key == SPDF_WIN_WM_RENDER_READY) return 1;
+            /* The Markdown file's off-thread re-read is ready: swap it under
+             * the canvas, keeping the reader's place (spdf_win_md_commands.h). */
+            if (in->key == SPDF_WIN_MD_WM_RELOADED) return spdf_win_md_command_reloaded(a);
             return in->key == SPDF_WIN_MD_WM_IMAGES_ARRIVED ? spdf_win_md_command_images_arrived(a) : 0;
         case SPDF_WIN_INPUT_KEY:
             changed = key_for_window(a, in);

@@ -70,6 +70,7 @@ void spdf_win_tab_view_init(spdf_win_tab_view* view) {
     view->zoom = 1.0;
     view->custom_zoom = 1.0;
     view->fit_mode = SPDF_WIN_TAB_FIT_PAGE;
+    view->preserves_image_colors = 1; /* the mac's default (SPDFMacModels.mm: _preservesImageColors = YES) */
 }
 
 static int valid_index(const spdf_win_tabs* tabs, int index) {

@@ -112,7 +112,24 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
     return window;
 }
 
-void spdf_win_window_show(spdf_win_window* window) {
+void spdf_win_window_show(spdf_win_window* window) { spdf_win_window_show_ex(window, 1); }
+
+/* The frontmost visible window of this class on the desktop that is not
+ * `self`, whichever process owns it, or NULL. GetTopWindow walks the z-order
+ * from the top; the class name is the one register_class() gave every window
+ * of every ShenzhenPDF process, so a sibling can find the window it is meant
+ * to stay behind without an id, a pipe or a shared handle. */
+static HWND frontmost_other_app_window(HWND self) {
+    HWND h;
+    wchar_t cls[64];
+    for (h = GetTopWindow(NULL); h; h = GetWindow(h, GW_HWNDNEXT)) {
+        if (h == self || !IsWindowVisible(h)) continue;
+        if (GetClassNameW(h, cls, (int)(sizeof(cls) / sizeof(cls[0]))) && wcscmp(cls, kWindowClass) == 0) return h;
+    }
+    return NULL;
+}
+
+void spdf_win_window_show_ex(spdf_win_window* window, int claim_foreground) {
     if (!window || !window->hwnd) return;
     /* THE FIRST FRAME IS PAINTED BEFORE THE WINDOW IS SHOWN.
      *
@@ -129,10 +146,41 @@ void spdf_win_window_show(spdf_win_window* window) {
      * current even if the hidden present was discarded. */
     paint(window);
     spdf_win_launch_mark("pre-show-paint-done");
-    ShowWindow(window->hwnd, SW_SHOWNORMAL);
+    if (claim_foreground) {
+        ShowWindow(window->hwnd, SW_SHOWNORMAL);
+    } else {
+        /* A SIBLING SHOWS BEHIND THE WINDOW THAT IS MEANT TO BE IN FRONT -- AND
+         * "NOT ACTIVATED" IS NOT "BEHIND".
+         *
+         * SW_SHOWNOACTIVATE withholds activation and nothing else: a window
+         * shown that way keeps the z-position CreateWindowExW gave it, which
+         * is the TOP. Measured (windows-native-observations.md, section 16):
+         * a --behind sibling whose window was created after the focused
+         * window had claimed the foreground came up at z-index 0, over that
+         * window and at its exact frame, while the focused window kept the
+         * activation and the keyboard underneath it. Every keystroke went to
+         * a window nobody could see; the one they could see was not active.
+         * Which window's launch finishes first is a race the documents
+         * decide -- the sibling's short document against the focused
+         * window's long one -- so the sibling has to place itself.
+         *
+         * SetWindowPos with an insert-after handle does the show and the
+         * placement in one step: directly beneath the frontmost window of
+         * this class already on the desktop, whichever process owns it. When
+         * there is none yet (this sibling won the race) it is shown where it
+         * is, on top and inactive, and the focused window's own
+         * BringWindowToTop below passes it a moment later. */
+        HWND front = frontmost_other_app_window(window->hwnd);
+        if (front)
+            SetWindowPos(window->hwnd, front, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+        else
+            ShowWindow(window->hwnd, SW_SHOWNOACTIVATE);
+    }
     spdf_win_launch_mark("show-window-returned");
     UpdateWindow(window->hwnd);
     spdf_win_launch_mark("update-window-returned");
+    if (!claim_foreground) return;
 
     /* AND THEN ASK FOR THE FOREGROUND, WHICH ShowWindow DOES NOT.
      *
@@ -194,7 +242,20 @@ int spdf_win_window_run(spdf_win_window* window) {
     MSG msg;
     if (!window) return 1;
     for (;;) {
-        BOOL got = GetMessageW(&msg, NULL, 0, 0);
+        BOOL got;
+        /* THE PUMP'S HEARTBEAT, in two halves, and the halves are the point.
+         * A thread parked in GetMessageW is IDLE, not stuck, and could sit
+         * there for an hour; a thread that has not come back from
+         * DispatchMessageW for three seconds is stuck. So the loop says which
+         * of the two it is entering, and the watchdog thread in
+         * spdf_win_health_log.h only reports a stall against the second. This
+         * is the one instrument that can see a blocked UI thread at all: a
+         * timer on THIS thread proves the thread runs by firing. Two aligned
+         * stores and one GetTickCount64 (a read of KUSER_SHARED_DATA, no
+         * syscall) per message. */
+        spdf_win_health_pump_wait();
+        got = GetMessageW(&msg, NULL, 0, 0);
+        spdf_win_health_pump_run();
         /* GetMessageW's third state is -1, and it leaves msg untouched. Reading
          * msg.wParam then would hand the shell a garbage exit code, which is
          * exactly the signal every headless check in this port relies on. */
