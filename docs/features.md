@@ -169,6 +169,9 @@ chapters, map, search, zoom presets, presentation mode and export. There is no
 web engine, no JavaScript, and no network in the rendering path.
 
 - **GitHub-flavored typography and palette**, paginated onto sheets.
+- **Numbered sheets** — every page carries "Page 2 of 10" right-aligned in its
+  footer, on screen and in every print and export, drawn rather than typeset so
+  it is never a search hit.
 - **Live update** — edit the file in another app and the document re-renders in
   the background and swaps in complete, keeping your place.
 - **Landscape paper** — the Rotate commands turn the sheet; wide tables, images

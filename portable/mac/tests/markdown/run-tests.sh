@@ -113,6 +113,7 @@ for TEST in \
     SPDFMarkdownDiagramLabelMarkupTests \
     SPDFMarkdownRemoteImageTests \
     SPDFMarkdownPaginatorTests \
+    SPDFMarkdownPageFooterTests \
     SPDFMarkdownTableLayoutTests \
     SPDFMarkdownAsyncTests \
     SPDFMarkdownPDFAdapterTests \
