@@ -1,7 +1,13 @@
 #pragma once
 
 /* spdf_win_chrome_toolbar_route.h -- what a mouse event over the TOOLBAR means:
- * which of the row's eighteen controls, and for a pill which half.
+ * which of the row's eighteen controls, and for a pill which half. Plus, since
+ * the empty state landed, the one control that is not in the row at all: the
+ * "Open a PDF…" button in an empty canvas, whose geometry and whose whole policy
+ * are in spdf_win_chrome_empty.h and whose ROUTE is at the bottom of this file --
+ * here rather than there because turning a point into an action needs the enum
+ * and the hit struct, and that header is deliberately reachable from the
+ * PAINTERS too, which have neither.
  *
  * The toolbar case of spdf_win_chrome_input_route(), extracted when the
  * Markdown A−/A＋ pill took the router past the repo's 500-line cap
@@ -20,6 +26,12 @@
  * documents this app opens.
  */
 
+/* Which controls a window with no document may offer, and where its one button
+ * is. Included HERE rather than from spdf_win_chrome_input.h so the dependency
+ * sits with the code that uses it; the header is #pragma once and reachable from
+ * the painters too, so this costs nothing twice. */
+#include "spdf_win_chrome_empty.h"
+
 static SPDF_WIN_CI_INLINE void spdf_win_toolbar_route(const SpdfWinChromeLayout* l, const SpdfWinChromeModel* m,
                                                       float x, float y, int button, float s, SpdfWinChromeHit* out) {
     SpdfWinToolbarLayout tb;
@@ -29,6 +41,16 @@ static SPDF_WIN_CI_INLINE void spdf_win_toolbar_route(const SpdfWinChromeLayout*
     if (button != SPDF_WIN_CB_LEFT) return;
     spdf_win_toolbar_layout(l->toolbar, s, m->markdown, &tb);
     item = spdf_win_toolbar_hit(&tb, x, y, &segment);
+    /* A CONTROL DRAWN DISABLED IS NOT A TARGET. With no document open the
+     * painter greys most of this row (spdf_win_chrome_empty.h transcribes
+     * macOS's -updateControls list), and it is not enough for those controls to
+     * happen to do nothing: every handler below would refuse a NULL canvas
+     * anyway, so a click on a dimmed arrow was already inert -- but inert BY
+     * ACCIDENT, four files away, and the press still took the focus off whatever
+     * had it and still cost a repaint. Refused HERE, from the same test the
+     * painter dimmed with, a dimmed control reports "not a target" and the point
+     * is swallowed by the bar exactly as a click between two controls is. */
+    if (!spdf_win_toolbar_item_enabled(m, item)) return;
     switch (item) {
         case SPDF_WIN_TB_SIDEBAR_TOGGLE: out->action = SPDF_WIN_CA_TOGGLE_SIDEBAR; return;
         case SPDF_WIN_TB_MINIMAP_TOGGLE: out->action = SPDF_WIN_CA_TOGGLE_MINIMAP; return;
@@ -68,4 +90,21 @@ static SPDF_WIN_CI_INLINE void spdf_win_toolbar_route(const SpdfWinChromeLayout*
             return;
         default: return;
     }
+}
+
+/* WHAT A POINT IN THE EMPTY CANVAS MEANS. Returns 1 when the point belongs to
+ * the "Open a PDF…" button, which is when the caller must not go on to route it
+ * as canvas.
+ *
+ * IT CLAIMS THE POINT FOR EVERY BUTTON AND FOR A BARE HOVER TOO, not just for a
+ * left press. That is the rule the minimap strip and the two scrollers already
+ * follow in spdf_win_chrome_input.h: a press inside a control must never fall
+ * through and become a document gesture. There is no document to pan here, so
+ * the practical difference is nil today -- and it is the kind of nil that stops
+ * being nil the first time anything else is drawn on this canvas. */
+static SPDF_WIN_CI_INLINE int spdf_win_chrome_empty_route(const SpdfWinChromeLayout* l, const SpdfWinChromeModel* m,
+                                                          float x, float y, int button, SpdfWinChromeHit* out) {
+    if (!out || !spdf_win_chrome_empty_open_hit(l, m, x, y)) return 0;
+    if (button == SPDF_WIN_CB_LEFT) out->action = SPDF_WIN_CA_OPEN_DOC;
+    return 1;
 }

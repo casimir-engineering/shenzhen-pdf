@@ -44,7 +44,12 @@ static void chrome_layout_for_input(app* a, const spdf_win_input* in, SpdfWinChr
      * clicks, and the Search section's list is not the Chapters section's rows. */
     model->show_sidebar = a->presentation ? 0 : (a->show_sidebar && spdf_win_sidebar_effective_visible());
     model->sidebar_section = spdf_win_sidebar_section();
-    model->show_minimap = a->presentation ? 0 : a->show_minimap;
+    /* AND NO MINIMAP WITH NO DOCUMENT, which macOS forces the same way
+     * (-setMinimapActuallyVisible:, ShenzhenPDFMac.mm:9137, is
+     * `visible && [self hasActiveDocument]`). Before this the empty window drew
+     * a bare strip down its right-hand edge with nothing in it, and the Map
+     * switch that could not change anything sat next to it looking on. */
+    model->show_minimap = a->presentation ? 0 : (a->show_minimap && a->canvas != NULL);
     model->sidebar_w = a->sidebar_w;
     model->minimap_w = a->minimap_w;
     model->hot_tab = a->hot_tab;
@@ -66,6 +71,16 @@ static void chrome_layout_for_input(app* a, const spdf_win_input* in, SpdfWinChr
      * that left this zeroed on a Markdown tab would send every click right of
      * the zoom pill to the wrong control. */
     model->markdown = spdf_win_md_selected_tab_is_markdown(a);
+    /* WHETHER THERE IS A DOCUMENT AT ALL, which the router needs for the same
+     * reason it needs `markdown`: the painter greys the row's document-dependent
+     * controls when there is none (spdf_win_chrome_empty.h), and a router that
+     * left this at memset's zero would refuse the WHOLE toolbar on every
+     * document this app opens -- or, read the other way, would accept a click on
+     * every control the painter had just drawn dead. Same fields, same source as
+     * the painter's chrome_inputs_for(); neither is read by
+     * spdf_win_chrome_layout(), so no rect moves. */
+    model->page_index = a->canvas ? spdf_win_canvas_current_page(a->canvas) : -1;
+    model->page_count = a->canvas ? spdf_win_canvas_page_count(a->canvas) : 0;
     /* The sidebar's list, as it was drawn last frame. sidebar_scroll_y is 0
      * because nothing scrolls the list yet; when something does, it must be
      * carried here too or a click will land a row or two out. */
@@ -200,11 +215,23 @@ static int chrome_rebuild_canvas(app* a) {
 static int chrome_toggle_theme(app* a) {
     spdf_win_settings* s = spdf_win_settings_shared();
     int dark = !(a->render_flags & SPDF_RENDER_DARK_THEME);
-    if (!a->canvas) return 0;
     a->render_flags &= ~(unsigned)SPDF_RENDER_DARK_THEME;
     if (dark) a->render_flags |= SPDF_RENDER_DARK_THEME;
     s->theme = dark ? SPDF_WIN_THEME_DARK : SPDF_WIN_THEME_LIGHT;
     spdf_win_settings_commit();
+    /* WITH NO DOCUMENT THIS STILL WORKS, and that is the point rather than a
+     * tolerance. It used to `return 0` on a NULL canvas, which made the one
+     * toolbar button macOS does NOT disable with no document (it is absent from
+     * -updateControls's list, :10218-10248, because a reading theme is a SETTING
+     * and not a property of the document) the one button on the empty window
+     * that looked live and was not. There is no canvas to rebuild, so the frame,
+     * the tools panel and the repaint are all that is owed -- and settings.yaml
+     * has the choice either way, so the next launch opens in it. */
+    if (!a->canvas) {
+        if (a->window) spdf_win_window_set_dark_frame(a->window, dark);
+        spdf_win_panel_set_dark(dark);
+        return 1;
+    }
     return chrome_rebuild_canvas(a);
 }
 

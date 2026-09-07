@@ -30,6 +30,11 @@
 
 #include "spdf_win_chrome.h"
 #include "spdf_win_chrome_theme.h"
+/* WHICH CONTROLS ARE LIVE, and the one disabled alpha they all share. Here
+ * rather than in each region painter because the answer must be the same in all
+ * of them and the same one the input router refuses by
+ * (spdf_win_chrome_empty.h). */
+#include "spdf_win_chrome_empty.h"
 
 /* Everything a region painter is handed. One struct rather than eight
  * arguments, because each painter needs almost all of it and a positional list
@@ -85,7 +90,14 @@ void spdf_win_chrome_scroll_set_hot(int bar, int part, int pressed);
 void spdf_win_chrome_scroll_hot(int* bar, int* part, int* pressed);
 
 /* Paints every region present in the layout, in back-to-front order. This is
- * what spdf_win_paint() calls; it does not begin or end a draw. */
+ * what spdf_win_paint() calls; it does not begin or end a draw.
+ *
+ * The EMPTY canvas's "Open a PDF…" button and drop hint are drawn from inside
+ * it and are deliberately NOT declared here: the drawing is a `static` function
+ * in spdf_win_chrome_empty_paint.h, included by spdf_win_chrome_paint.cpp alone,
+ * exactly as the toolbar's control helpers are. WHETHER and WHERE -- the part a
+ * test or the input router needs -- is in spdf_win_chrome_empty.h, which is pure
+ * and included above. */
 void spdf_win_chrome_paint_all(const SpdfWinChromePaintCtx& ctx);
 
 /* --- shared helpers, implemented in spdf_win_chrome_paint.cpp ------------ */

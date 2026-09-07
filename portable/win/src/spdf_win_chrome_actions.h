@@ -151,6 +151,12 @@ static int chrome_perform(app* a, const SpdfWinChromeHit* hit, const SpdfWinChro
          * Neither falls through to the canvas, which is what has kept a press on
          * either from panning the document all along. */
         case SPDF_WIN_CA_NEW_TAB: return chrome_post_command(a, SPDF_WIN_CMD_OPEN);
+        /* The empty canvas's "Open a PDF…" button, and the SAME command as the
+         * `+` above it and as Ctrl+O -- which is the point. An empty window's
+         * only affordance must reach the documents track's real picker, with its
+         * start folder and its recents, and not a second dialog that drifts from
+         * it (spdf_win_chrome_empty.h). */
+        case SPDF_WIN_CA_OPEN_DOC: return chrome_post_command(a, SPDF_WIN_CMD_OPEN);
         case SPDF_WIN_CA_TAB_OVERFLOW: return chrome_tab_overflow(a, l);
         case SPDF_WIN_CA_APP_MENU: return chrome_app_menu(a, l);
         default: return 0;

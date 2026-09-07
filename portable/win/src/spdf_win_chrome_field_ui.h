@@ -57,6 +57,17 @@
  * the ordinary sense of "the field shows what it is replacing". */
 static int chrome_focus(app* a, int focus) {
     if (a->focus == focus) return 0;
+    /* THE TWO DOCUMENT FIELDS CANNOT BE FOCUSED WITH NO DOCUMENT, BY ANY ROUTE.
+     * The painter draws them disabled then and the input router refuses a click
+     * on them (spdf_win_chrome_empty.h), so leaving the KEYBOARD able to focus
+     * them would put an accent focus ring on a control drawn dead -- the same
+     * lie in a smaller frame. Ctrl+F and Ctrl+G therefore do nothing on an empty
+     * window; macOS keeps focusFind: on -validateMenuItem:'s always-enabled
+     * whitelist (:16317-16325) even though it disables the field itself
+     * (:10232), and this port takes the field's word for it. A deliberate
+     * divergence, and the one that leaves nothing on screen contradicting
+     * itself. */
+    if (!a->canvas && (focus == SPDF_WIN_FOCUS_FIND || focus == SPDF_WIN_FOCUS_PAGE)) return 0;
     a->focus = focus;
     if (focus == SPDF_WIN_FOCUS_PAGE) {
         int page = a->canvas ? spdf_win_canvas_current_page(a->canvas) + 1 : 1;

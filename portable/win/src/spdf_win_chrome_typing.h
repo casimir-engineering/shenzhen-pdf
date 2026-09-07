@@ -120,6 +120,35 @@ static int chrome_char(app* a, unsigned unit) {
 static int chrome_field_key(app* a, const spdf_win_input* in) {
     SpdfWinFocusedField f;
     int changed = 0;
+
+    /* THE EMPTY CANVAS'S OPEN BUTTON IS A TAB STOP, and this is the whole of its
+     * keyboard. It is handled here, before chrome_focused_field(), because it is
+     * the one focus target that is not a text buffer -- and it is reached here at
+     * all because key_for_window() forwards a bare Tab into this function even
+     * with nothing focused (see its call site). Both halves in one place, so
+     * "Tab reaches it, Return presses it" is four lines rather than a policy
+     * spread over two files.
+     *
+     * SPACE AS WELL AS RETURN: that is what a focused button answers to
+     * everywhere on this desktop, and there is no document for Space to scroll
+     * on this window. Escape and a second Tab give the keyboard back -- with one
+     * stop there is nowhere else to go, and a Tab that did nothing would look
+     * like the focus had been lost. */
+    if (a->focus == SPDF_WIN_FOCUS_OPEN) {
+        if (in->key == SPDF_WIN_KEY_RETURN || in->key == VK_SPACE) return chrome_open_dialog(a);
+        if (in->key != SPDF_WIN_KEY_TAB && in->key != SPDF_WIN_KEY_ESCAPE) return 0;
+        a->focus = SPDF_WIN_FOCUS_NONE;
+        return 1;
+    }
+    /* A BARE TAB WITH NO DOCUMENT REACHES THE BUTTON. With one, Tab is left
+     * exactly as it was -- unbound, swallowed by the keymap's default -- because
+     * a real focus ring order over eighteen toolbar controls is a feature this
+     * port has not written and must not half-write here. */
+    if (in->key == SPDF_WIN_KEY_TAB && a->focus == SPDF_WIN_FOCUS_NONE) {
+        if (a->canvas) return 0;
+        a->focus = SPDF_WIN_FOCUS_OPEN;
+        return 1;
+    }
     if (!chrome_focused_field(a, &f)) return 0;
 
     switch (in->key) {
