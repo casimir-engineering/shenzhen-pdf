@@ -315,6 +315,15 @@ static SPDF_WIN_MENU_INLINE int spdf_win_menu_command_for_key(unsigned key, unsi
     return SPDF_WIN_CMD_NONE;
 }
 
+/* THE SAME QUESTION ASKED OF A REAL KEYBOARD, which may not be a US one.
+ *
+ * A virtual-key code is a property of the LAYOUT: VK_OEM_MINUS is on no French
+ * key at all, so every row above that names it was dead for a French reader.
+ * spdf_win_menu_command_for_key_ex() adds the character match the macOS original
+ * gets from AppKit for free, AFTER the exact match above and without changing
+ * it. Read that header before touching either. */
+#include "spdf_win_menu_layout.h"
+
 /* The row that DRAWS a command, for a caller that wants its title or its
  * printed accelerator (the command palette, and the menu builder). NULL for a
  * command with no menu row. */

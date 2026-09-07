@@ -188,11 +188,12 @@ static int chrome_rebuild_canvas(app* a) {
     return show_selected_tab(a);
 }
 
-/* The reading-theme button. Dark comes with images preserved when the Keep
- * Image Colors setting says so, as the mac composes its flags
- * (SPDFMacReadingThemeIntegration.mm:41). The choice is WRITTEN to
- * settings.yaml as "markdownTheme" -- the mac's key, kept on purpose -- so the
- * next launch opens in it rather than following the system again.
+/* The reading-theme button. Dark comes with THIS document's Keep Image Colors,
+ * which show_selected_tab() composes into the flags on the rebuild below
+ * (app_render_flags_for_selected_tab) -- the choice is per document now, not
+ * the setting's. The theme itself is WRITTEN to settings.yaml as
+ * "markdownTheme" -- the mac's key, kept on purpose -- so the next launch opens
+ * in it rather than following the system again.
  *
  * The window frame follows, or `--dark`'s own fix -- a light caption around a
  * #121212 canvas -- comes straight back the first time anyone presses this. */
@@ -200,8 +201,8 @@ static int chrome_toggle_theme(app* a) {
     spdf_win_settings* s = spdf_win_settings_shared();
     int dark = !(a->render_flags & SPDF_RENDER_DARK_THEME);
     if (!a->canvas) return 0;
-    a->render_flags &= ~(unsigned)(SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES);
-    if (dark) a->render_flags |= SPDF_RENDER_DARK_THEME | (s->dark_theme_preserves_images ? SPDF_RENDER_PRESERVE_IMAGES : 0u);
+    a->render_flags &= ~(unsigned)SPDF_RENDER_DARK_THEME;
+    if (dark) a->render_flags |= SPDF_RENDER_DARK_THEME;
     s->theme = dark ? SPDF_WIN_THEME_DARK : SPDF_WIN_THEME_LIGHT;
     spdf_win_settings_commit();
     return chrome_rebuild_canvas(a);

@@ -21,6 +21,8 @@
  * -- that header is pure, toolkit-free and header-only -- and it does not make
  * this file know about documents, which is the layering rule it actually has. */
 #include "spdf_win_chrome_input.h"
+/* The placement struct and its rules: pure, toolkit-free, tested on their own. */
+#include "spdf_win_placement.h"
 
 #if defined(_MSC_VER) && !defined(__cplusplus)
 #define SPDF_WIN_WINDOW_INLINE __inline
@@ -114,7 +116,11 @@ typedef enum spdf_win_input_kind {
      * numbers mean what is the app's, exactly as the command ids are, so
      * every WM_APP..0xBFFF message is handed over rather than dropped on the
      * floor by DefWindowProc. wParam and lParam are not carried; a worker
-     * that has more to say than "done" keeps it where the handler can read it. */
+     * that has more to say than "done" keeps it where the handler can read it.
+     * THAT RANGE IS ALSO A LIMIT: three messages were WM_APP plus a two-letter
+     * mnemonic ("RD" = 0x5244 -> 0xD244), above 0xBFFF, so all three were
+     * posted, dropped here and silently dead (observations sec 18). Declare a
+     * number with SPDF_WIN_APP_MSG_OK below and the build says so instead. */
     SPDF_WIN_INPUT_APP_MESSAGE = 11, /* 10 is SPDF_WIN_INPUT_CONTEXT, declared below */
 
     /* THE POSITION QUERY: what is at (x, y)? Sent for WM_SETCURSOR, asking
@@ -141,6 +147,11 @@ typedef enum spdf_win_input_kind {
     SPDF_WIN_INPUT_CONTEXT = 10
 } spdf_win_input_kind;
 
+/* Put this beside an app message's #define: a number outside WM_APP..0xBFFF
+ * makes the array size negative and the build stops, which is the only kind of
+ * check that survives a mnemonic that looked fine. */
+#define SPDF_WIN_APP_MSG_OK(name, msg) typedef char name[((msg) >= WM_APP && (msg) < 0xC000) ? 1 : -1]
+
 /* A button-up whose `button` is SPDF_WIN_CB_NONE is a CANCELLED drag, not a
  * release: the capture was taken away (an Alt+Tab, a system modal), and a
  * handler that treats it as a release would finish a gesture the user abandoned.
@@ -165,6 +176,32 @@ typedef struct spdf_win_input {
     float y;
     unsigned key;
     unsigned mods;
+    /* SPDF_WIN_INPUT_KEY only: THE SAME KEY, AS THE ACTIVE LAYOUT SPELLS IT.
+     *
+     * `key` is a virtual-key code, and a virtual-key code is a property of the
+     * LAYOUT rather than of the keyboard: VK_OEM_MINUS is on no French key at
+     * all (MapVirtualKeyExW maps it to scan code 0 under 0000040C), so a keymap
+     * that names it has no '-' on a French machine. This is the character the
+     * key produces with no modifiers, uppercased for letters, or 0 when it
+     * produces none (a function key, an arrow, a dead key) -- which is what
+     * makes an accelerator layout-independent, exactly as the macOS original's
+     * character keyEquivalents are. See spdf_win_menu_layout.h.
+     *
+     * Both are carried, not one: a command keyed to a POSITION (the arrows,
+     * Page Up, F11) wants the virtual-key code, and a command keyed to a GLYPH
+     * ('-', ',') wants the character. */
+    unsigned key_char;
+    /* SPDF_WIN_INPUT_KEY only: this keystroke is TEXT -- the layout turned it
+     * into a printable character, which TranslateMessage has already queued as
+     * a WM_CHAR behind this WM_KEYDOWN.
+     *
+     * It exists for AltGr. On every European layout AltGr is reported as
+     * Ctrl+Alt, so AltGr+'=' (a French '}') is indistinguishable from a
+     * deliberate Ctrl+Alt+= accelerator by modifiers alone. The keystroke that
+     * produces a character is the one that is text. Only the Ctrl+Alt
+     * accelerators consult this; Ctrl+letter produces a WM_CHAR too -- a control
+     * character -- and gating on it would kill the whole table. */
+    int text_key;
     /* SPDF_WIN_INPUT_DROP_FILE only: the dropped path, UTF-16, BORROWED and
      * valid only for the duration of the call. */
     const wchar_t* text;
@@ -231,7 +268,13 @@ spdf_win_window* spdf_win_window_create(spdf_win_d2d* d2d, const wchar_t* title,
                                         size_t err_len);
 void spdf_win_window_destroy(spdf_win_window* window);
 
+/* Paint the first frame, show the window and claim the foreground. The
+ * sibling windows a session-restore launch starts show BEHIND the one the
+ * reader left focused instead: show_ex(window, 0) maps the window without
+ * activating it and claims nothing, so a window spawned to reappear cannot
+ * steal the foreground from the one that is meant to have it. */
 void spdf_win_window_show(spdf_win_window* window);
+void spdf_win_window_show_ex(spdf_win_window* window, int claim_foreground);
 void spdf_win_window_invalidate(spdf_win_window* window);
 float spdf_win_window_dpi_scale(const spdf_win_window* window);
 
@@ -376,17 +419,31 @@ static SPDF_WIN_WINDOW_INLINE int spdf_win_window_escape_leaves_fullscreen(int f
  * idempotent, and safe to call with no window at all. */
 void spdf_win_window_prevent_sleep(int on);
 
-/* --- the frame, for the session -----------------------------------------
+/* --- the placement, for the session -------------------------------------
  *
- * The window's NORMAL placement in screen device pixels -- what it would occupy
- * if it were neither maximized nor full screen -- which is the rectangle worth
- * remembering across launches (session.yaml "frame", as the mac and GTK apps
- * write theirs). get returns 0 when there is no window to ask. set is meant to
- * run BEFORE the first show: it clamps the rectangle onto the monitor it lands
- * nearest to, so a frame saved on a monitor that has since been unplugged does
- * not restore a window nobody can reach. */
-int spdf_win_window_get_frame(const spdf_win_window* window, int* x, int* y, int* w, int* h);
-void spdf_win_window_set_frame(spdf_win_window* window, int x, int y, int w, int h);
+ * The window's NORMAL frame in virtual-screen device pixels -- what it occupies
+ * when neither maximized nor full screen -- plus the display it is on, which
+ * is what is worth remembering across launches (session.yaml "frame" as the
+ * mac and GTK apps write theirs, and "display" as only this port does). The
+ * rules are in spdf_win_placement.h; this is their Win32 half.
+ *
+ * restore runs BEFORE the first show and applies the saved frame RAW when its
+ * display is attached where it was or the frame is visible somewhere. A frame
+ * the desktop cannot show is parked centred on the main display instead --
+ * and that stand-in is display-only: get keeps returning the frame the reader
+ * left until they move or resize the window themselves, and the frame goes
+ * back to its display when that display reappears (WM_DISPLAYCHANGE). It used
+ * to clamp onto the nearest monitor and let the clamp be saved, which is how
+ * one launch with an external display asleep forgot the position for good.
+ * get returns 0 when there is no window to ask. */
+int spdf_win_window_get_placement(const spdf_win_window* window, spdf_win_placement* out);
+void spdf_win_window_restore_placement(spdf_win_window* window, const spdf_win_placement* saved);
+
+/* Whether this window is the foreground window -- live while it exists, and
+ * after it closed, whether it was when WM_CLOSE arrived. The session stamps the
+ * window it saves with "focusedAt" only when this says so, which is how the
+ * window the reader was last using is the one that comes back in front. */
+int spdf_win_window_is_foreground(const spdf_win_window* window);
 
 /* --- a periodic tick ------------------------------------------------------
  *

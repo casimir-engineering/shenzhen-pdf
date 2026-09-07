@@ -34,7 +34,9 @@ typedef HANDLE spdf_thr;
 #define CND_WAIT(c, m) ((void)SleepConditionVariableSRW((c), (m), INFINITE, 0))
 #define CND_BROADCAST(c) WakeAllConditionVariable(c)
 #define THR_START(out, fn, arg) (((*(out)) = (spdf_thr)_beginthreadex(NULL, 0, (fn), (arg), 0, NULL)) != NULL)
-#define THR_JOIN(t) (WaitForSingleObject((t), INFINITE), (void)CloseHandle(t))
+/* Wait for every worker to exit, for at most `ms`; 1 when all of them did.
+ * The handles are closed either way -- a thread outlives its handle. */
+#define THR_JOIN_ALL(handles, n, ms) spdf_win_render_join_all((handles), (n), (ms))
 #define ATOMIC_LOAD(p) ((long)InterlockedCompareExchange((volatile LONG*)(p), 0, 0))
 #define ATOMIC_STORE(p, v) ((void)InterlockedExchange((volatile LONG*)(p), (LONG)(v)))
 #define SPDF_TLS __declspec(thread)
@@ -45,6 +47,12 @@ static int spdf_win_render_cpu_count(void) {
     SYSTEM_INFO info;
     GetSystemInfo(&info);
     return (int)info.dwNumberOfProcessors;
+}
+static int spdf_win_render_join_all(spdf_thr* handles, int n, unsigned ms) {
+    int i;
+    int ok = n <= 0 || WaitForMultipleObjects((DWORD)n, handles, TRUE, ms) == WAIT_OBJECT_0;
+    for (i = 0; i < n; i++) CloseHandle(handles[i]);
+    return ok;
 }
 #else
 #include <pthread.h>
@@ -59,13 +67,21 @@ typedef pthread_t spdf_thr;
 #define CND_WAIT(c, m) pthread_cond_wait((c), (m))
 #define CND_BROADCAST(c) pthread_cond_broadcast(c)
 #define THR_START(out, fn, arg) (pthread_create((out), NULL, (fn), (arg)) == 0)
-#define THR_JOIN(t) ((void)pthread_join((t), NULL))
+/* No timed join in pthreads, and this branch exists for ThreadSanitizer, not
+ * for a desktop: it joins outright, so the abandon path is Windows-only. */
+#define THR_JOIN_ALL(handles, n, ms) spdf_win_render_join_all((handles), (n), (ms))
 #define ATOMIC_LOAD(p) __atomic_load_n((p), __ATOMIC_SEQ_CST)
 #define ATOMIC_STORE(p, v) __atomic_store_n((p), (long)(v), __ATOMIC_SEQ_CST)
 #define SPDF_TLS __thread
 #define WORKER_ENTRY void*
 #define WORKER_RETURN NULL
 #define SPDF_CPU_COUNT() ((int)sysconf(_SC_NPROCESSORS_ONLN))
+static int spdf_win_render_join_all(spdf_thr* handles, int n, unsigned ms) {
+    int i;
+    (void)ms;
+    for (i = 0; i < n; i++) (void)pthread_join(handles[i], NULL);
+    return 1;
+}
 #endif
 
 #endif /* SPDF_WIN_RENDER_THREAD_H */

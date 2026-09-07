@@ -949,3 +949,933 @@ virtualisation trap.
   killed while modal eleven minutes earlier. Other agents were building and
   launching the app on this machine at the time and are the likely author. It was
   not checked by reading the files, and should not be: they are the reader's.
+
+
+## 11. Two launch defects a person found that no test did (2026-09-05)
+
+"When I launch the app from dist I can't interact with it at all, not even
+focus it with Alt+Tab." Every test was green; the app's own window was visible,
+enabled, foreground and answering messages. Two defects, both from the launch
+work merged the day before:
+
+1. The GPU prewarm created a top-level WS_OVERLAPPEDWINDOW on a worker thread
+   and then parked that thread forever without pumping. To Windows that is a
+   HUNG window for the life of the process: every desktop broadcast stalls on
+   it for its timeout, the shell's enumeration of the process slows to the
+   same timeout, and activating the app's real window becomes unreliable.
+   Measured with IsHungAppWindow: true from seconds after launch until exit,
+   on that window and the IME window it owned. It is now a WS_POPUP tool
+   window (excluded from Alt+Tab and the taskbar by definition) whose thread
+   parks in MsgWaitForMultipleObjects and dispatches what arrives.
+2. spdf_win_window_show() never asked for the foreground. ShowWindow maps a
+   window; it does not decide who is in front, and the launch now does about
+   145 ms of work before showing anything so the window appears complete.
+   The launching window had the foreground back by then and the app arrived
+   at z-order position 1, underneath it, with a sliver to click. It now calls
+   SetForegroundWindow, BringWindowToTop and SetFocus, and flashes the
+   taskbar button when the system refuses.
+
+Verified from Explorer with another app maximized and focused: before, the
+app sat at z-index 1 behind it; after, z-index 0, foreground, and still there
+two seconds later, with no hung window in the process.
+
+The lesson for the harness: headless composes and even live captures cannot
+see a z-order or a hung-window problem. A launch check that asserts "is the
+foreground window AND at z-index 0 AND no window of the process is hung"
+would have caught both in the launch budget case. It now does: `measure-launch.ps1`
+records, per run and while the window is up, whether it is the foreground window,
+its z-index among Alt+Tab-sized visible top-level windows, and how many windows
+of the process `IsHungAppWindow` reports; `launch.budget` FAILS on any hung
+window or on a z-index other than 0 in a majority of runs. Foreground is reported
+but not judged -- Windows grants it only to a process launched BY the foreground
+process, which a harness under a shell under an editor never is, so it reads
+0/5 there while a hand launch is 5/5. Before the two fixes this case would have
+read "1 hung window, z-index 1"; after, "5/5 in front, 0 hung".
+
+## 12. The upstream parity wave (2026-09-06)
+
+The macOS behaviours from 26.9.3 through 26.9.5-1 that section (d) of the
+feature matrix listed, ported in three tracks: nested chapters with
+per-document collapse memory and the single Expand/Collapse button, the
+minimap following the reading theme (merge 386590a08); windows reopening on
+their display with the last-used one focused and siblings opening together,
+Keep Image Colors per document (merge 340ce34f6); Alt+wheel paging by wheel
+distance and in-place Markdown reload (in flight). Each verified from a clean
+build: full suite with only the seven macOS-host cases blocked, ratchet green,
+sidebar differential unchanged at 15,203/0.
+
+## 13. Everything the UI thread waits on, and what it waited on that it did not control (2026-09-07)
+
+"The app was never responsive to any user input and not even focusable",
+reported twice over two days after two different builds of the dist exe. The
+same exe launched here -- from PowerShell and through Explorer -- gave a
+healthy window every time: foreground, z-index 0, `IsHungAppWindow` false,
+`WM_NULL` answered in under a millisecond, real `SendInput` clicks and keys
+repainting it. Windows Error Reporting had meanwhile filed two hangs of the
+build-tree exe (`AppHang_ShenzhenPDF.exe_*`, 2026-09-02 13:14 and 2026-09-03
+07:06) with ConsentKey **AppHangXProcB1**: the UI thread was blocked on
+ANOTHER PROCESS when the shell ghosted the window. No dump was kept. So the
+question this pass answers is not "what does the window do at launch" but
+"what can the window's thread ever wait on that is not its own", and the
+method is an audit of every wait, then a measurement of each one that could
+last.
+
+### 13.1 The inventory
+
+Every blocking construct reachable from the window's thread -- the window
+procedure, paint, the two timers, the watcher's callbacks, render completion,
+the thumbnail store, the print watchdog, the updater sink, the session and
+settings writes, and every dialog and nested loop -- with what it waits on,
+who else can hold that, and how long it can last. Line numbers are this
+tree's after the fixes below.
+
+| Site | Waits on | Held or answered by | Worst case before | Now |
+|---|---|---|---|---|
+| `spdf_win_state.c:184` `lock_file_exclusive()` -- every session save: tab open/close/select, the 30 s tick (`app_tick`), exit | `LockFileEx` on `<state dir>\session.lock`, exclusive, no `LOCKFILE_FAIL_IMMEDIATELY` | ANY OTHER ShenzhenPDF WINDOW: a window is a process here, and every one merges into the same file under this lock | forever (measured, 13.2) | polled with `LOCKFILE_FAIL_IMMEDIATELY` for at most 1 s, then the save proceeds unlocked |
+| `spdf_win_render.c:343` `spdf_win_render_service_free()` -- every canvas teardown: tab switch, reload from disk, theme flip, exit; also the thumbnail pool | join of every render worker, `INFINITE` | a worker inside `spdf_render_page`: cancellation is a `fz_cookie` MuPDF checks between operators, so normally milliseconds, but one image decode is not interruptible | one uninterruptible decode: seconds on a large JPX/JBIG2 page | 500 ms, then the service is abandoned to its last worker, which frees it |
+| `spdf_win_links.cpp:99` `spdf_win_links_free()` -- every canvas teardown | `WaitForSingleObject(thread, INFINITE)` | the text-URL worker inside `spdf_page_link_rects(detect_text_links = 1)` -- a structured-text pass of one page -- or its first `spdf_win_open_document` | seconds on a dense or a large document | no join: the block is reference-counted and the worker frees it when it finds the canvas gone |
+| `spdf_win_chrome_thumbs.cpp:233` `spdf_win_thumbs_free()` -- `spdf_win_chrome_content_shutdown()`, i.e. every reload and every document change | `WaitForSingleObject(size_thread, 5000)` | the sizing sweep inside its own `spdf_win_open_document` (the sweep checks `stop` only between pages) | 5 s | no wait: reference-counted like the links |
+| `spdf_win_assoc.cpp:162`, `spdf_win_setup.cpp:284,337` `SHChangeNotify(SHCNF_FLUSH)` -- File > Make Default PDF Reader, --install, --uninstall | Explorer taking delivery of the notification | explorer.exe | as long as Explorer takes; a hung Explorer, forever -- a textbook AppHangXProcB1 | `SHCNF_FLUSHNOWAIT` |
+| `spdf_win_watcher.cpp:222` `stop_watch()` -- unwatch on tab close, reload, exit | join of the `ReadDirectoryChangesW` thread, `INFINITE` | the thread is parked in `WaitForMultipleObjects(io_event, stop)` and `SetEvent(stop)` + `CancelIoEx` wake it | the kernel's I/O cancel: milliseconds on a local disk | unchanged |
+| `spdf_win_watcher.cpp:303` `spdf_win_watcher_watch()`, and `spdf_win_watcher_stat()` from the debounce and retry timers | `CreateFileW` on the document's directory, `GetFileAttributesExW` on the file | the file system; on a share whose server has gone, the SMB redirector's reconnect | tens of seconds per call on a dead share; milliseconds locally | unchanged: the path is the reader's own document, and every other open of it in the app has the same exposure |
+| `spdf_win_md_reload.cpp:100` `spdf_win_md_reload_shutdown()` -- exit, after the window is destroyed | join of the Markdown re-read thread, `INFINITE` | md4c + the HTML conversion + MuPDF's layout of one document | seconds on a large Markdown file, as a lingering process with no window | unchanged: never a hung window |
+| `spdf_win_gpu_prewarm.h:163` `spdf_win_gpu_prewarm_finish()` -- `spdf_win_d2d_destroy`, exit | join of the prewarm thread | a thread parked in `MsgWaitForMultipleObjects` on the finish event, pumping | milliseconds | unchanged (section 11 made it pump) |
+| `spdf_win_print_dialog_system.cpp:271-297` PrintDlgEx watchdog | `MsgWaitForMultipleObjects(50 ms)` in a pumping loop; `:297` `INFINITE` only after the thread has already won the hand-off race | the dialog thread | the watchdog's own bound; `:297` microseconds | unchanged |
+| `spdf_win_search.cpp:380` `spdf_win_find_session_free()` | spin with `Sleep(1)` until the workers exit | one page's search | one page | unchanged: nothing in the app calls it (the shared session lives for the process) |
+| `spdf_win_panel_jobs.cpp:37` `join_worker()` -- OCR / translate panel, on the same thread | `WaitForSingleObject(worker, INFINITE)` | the job thread; cancel is `TerminateProcess` + `WaitForSingleObject(process, 5000)` in `spdf_win_toolchain_process.cpp:294` | ~5 s after a cancel, while the panel is up | unchanged |
+| `spdf_win_selection.cpp:372,404`, `spdf_win_clipboard_page.cpp:234`, `spdf_win_shell.cpp:152` `OpenClipboard` retries | the clipboard owner letting go | another process mid-copy | 200 / 100 / 50 ms, bounded | unchanged |
+| `spdf_win_selection.cpp:408` `GetClipboardData(CF_UNICODETEXT)` -- paste into a field | `WM_RENDERFORMAT` to the clipboard owner when it used delayed rendering; synchronous, no timeout | the process that last copied | as long as that process takes; a hung owner stalls the paste | unchanged: user-initiated, and there is no asynchronous form |
+| `spdf_win_shell.cpp:73,100,114,120,192,197`, `spdf_win_assoc.cpp:165,166`, `spdf_win_chrome_canvas_ui.h:118` `ShellExecuteW` -- reveal in Explorer, open in browser, follow a link, the Settings page | `ShellExecute` behaves as `SEE_MASK_NOASYNC`: it waits out the DDE conversation with the target | Explorer, the browser, the URL handler | the shell's DDE timeout when the target is hung (tens of seconds) | unchanged: every one is a click the reader just made, and the fix (`ShellExecuteExW` + `SEE_MASK_ASYNCOK`) touches nine sites in three tracks' files |
+| the modal loops: `TrackPopupMenu`, `IFileOpenDialog`, `TaskDialogIndirect` / `MessageBoxW`, the about / annotation / shortcuts / properties / print dialogs' `GetMessageW` loops, the tab drag in `spdf_win_tabs_handoff.h:277` | messages | -- | they pump; the tab drag asks foreign windows only through `WindowFromPoint`, `GetClientRect`, `ScreenToClient` and `GetDpiForWindow`, none of which sends, and talks to them only by `PostMessageW` | unchanged |
+| the locks shared with workers: `svc->lock` (render), `links->lock`, the find session's, the thumbnail store's, the preview measurer's, the Markdown reload's SRW lock | a critical section | a worker | every one is held for a queue or pointer operation and RELEASED around the render, the text pass, the search and the measure (`spdf_win_render.c` "Renders ... run with the lock RELEASED"; `spdf_win_links.cpp` copies the page number out and the rects in) | microseconds | unchanged |
+| `spdf_win_canvas_prefetch.cpp:212` `spdf_win_canvas_settle()` `Sleep(2)` loop | render completion | -- | headless probe only, by its own comment | unchanged |
+| `spdf_win_launch_profile.h:105` `SwitchToThread` spin | a mark being written on another thread | -- | microseconds | unchanged |
+
+Not on the list: `spdf_compat_lock_acquire()` in `portable/core/spdf_win_compat.c`
+is the same blocking `LockFileEx`, but its only caller is the YAML migration
+`spdf_state_migrate_dir()`, which the Windows frontend never runs at runtime
+(only `state_test.c` does). No `SendMessage` to a window of another process
+exists anywhere in `portable/win/src`; the only cross-process synchronous calls
+were the two shell ones above.
+
+### 13.2 The one that reproduces the report's class
+
+Two windows are two processes, and both save `session.yaml` under
+`session.lock`. Holding that lock from a third process -- a PowerShell
+`FileStream.Lock` on the whole range, shared read/write exactly as the app
+opens it -- and launching the tree's exe against that state directory:
+
+| | before (`ShenzhenPDF-baseline.exe`) | after |
+|---|---|---|
+| window, first 30 s | up at 798 ms, 114 pings answered, max 0.63 ms | up at 228 ms, every ping answered |
+| the 30 s session tick | the UI thread enters `LockFileEx` and stays: **11 consecutive `WM_NULL` timeouts (500 ms each), `IsHungAppWindow` = true** | one pause of at most `SPDF_WIN_STATE_LOCK_WAIT_MS` (1 s): 1 timeout out of 136 pings, the next answered in 164 ms, `IsHungAppWindow` false (with the constant at 2 s it was 2 timeouts) |
+| `WM_CLOSE` while the lock is held | the window is destroyed, the exit save blocks on the lock, the process is **still running 6 s later**, 26 threads all in `Wait` | exits in 1,093 ms: the bound, then the unlocked save |
+| release the lock | exits 6.1 s after `WM_CLOSE`, i.e. the instant the lock went | already gone |
+
+That is a hung window, ghosted by the shell, on a process that has done
+nothing wrong -- which is what AppHangXProcB1 says, and the hang stays
+exactly as long as the other process holds the lock. What made the other
+process hold it is not recoverable from the reports (no dump), and an honest
+hold is milliseconds; what can hold it for minutes is a process suspended
+while Windows Error Reporting collects it, or under a debugger, or itself
+hung inside the save -- which is a way for one wedged old build to take down
+every later window that shares its state directory. The fix (`spdf_win_state.c`)
+asks for the lock with `LOCKFILE_FAIL_IMMEDIATELY` in 10 ms steps for at most
+`SPDF_WIN_STATE_LOCK_WAIT_MS` and then saves anyway, which is what the code
+already did when the lock file could not be opened at all; a merge lost to a
+wedged sibling is repaired at the next save, and a window that never answers
+again is not.
+
+The report itself said "from the start". On this tree the first save under
+the lock is the first tab change or the 30 s tick, not the launch, and the
+launch's own health is section 11's -- so this is the mechanism of the class
+WER recorded, measured; it is not a proof of what the reader's two builds
+were waiting on.
+
+### 13.3 The flood: `window.stress`
+
+The suite never drove a window for longer than a launch, so a thread that
+pumps for two seconds and then parks was invisible to it.
+`portable/win/tests/stress-window.ps1` (case `window.stress`, registered
+beside `launch.budget`) launches the built exe on a private copy of
+`outline.pdf` with a private `--state-dir`, takes the foreground, and for 20 s
+sends real input through `SendInput` -- wheel, PageDown/Up, Home/End,
+Ctrl+plus/minus, Ctrl+F and typing, Escape, the sidebar toggle button,
+resizes through `SetWindowPos(SWP_ASYNCWINDOWPOS)` -- while rewriting the
+open file every 2 s (in place, then through a temp file, alternately) so the
+watcher's reload, the canvas teardown and the render-worker join run under
+load. Every 250 ms it asserts `SendMessageTimeout(WM_NULL, SMTO_ABORTIFHUNG |
+SMTO_BLOCK, 500)` answers and no window of the process is hung; at the end,
+that Home then PageDown change more than 2 % of the client pixels
+(`PrintWindow`, `PW_RENDERFULLCONTENT`) and that `WM_CLOSE` ends the process
+inside 10 s. The harness sends nothing synchronous of its own -- `MoveWindow`
+would have hung the harness on the very defect it measures -- and only the
+ping has a timeout, which is the assertion.
+
+Measured on this machine, 1400x900 window, 150 %:
+
+| | baseline | fixed |
+|---|---|---|
+| actions / rewrites | 80 / 9 | 80 / 9 |
+| pings answered | 80 of 80 | 80 of 80 |
+| ping max / mean | 5.46 / 0.17 ms | 0.52 / 0.15 ms |
+| hung samples | 0 | 0 |
+| Home then PageDown at the end | 123,283 px of 1,225,042 changed | 123,283 px |
+| `WM_CLOSE` to exit | 120 ms | 344 ms |
+
+The flood alone does not stall this tree: the nine reloads join render
+workers that cancel within a frame and a link worker that is idle, and the
+lock is uncontended. That is why 13.2 is a separate measurement -- the stall
+needs a second holder, and the flood does not create one. The case's value is
+as the tripwire that was missing: any wait that grows past 500 ms on this
+path, or any input that stops repainting, now fails the suite.
+
+Two things the harness itself had to learn on a shared desktop. A first run
+reported "PageDown changed 0 px" against a perfectly live window: another
+agent's ShenzhenPDF window (a different pid, the same class) had taken the
+foreground mid-flood and the final keystrokes went to it. The harness now
+re-takes the foreground before every keyboard action, checks `WindowFromPoint`
+before every pointer action, counts what it had to skip as `obstructed`,
+records who held the foreground and where the app's keyboard focus was
+(`GetGUIThreadInfo`), and reports a foreground it cannot get back as BLOCKED
+(exit 69) rather than as the app's failure. And PowerShell's comma binds
+tighter than `%`, so an index computed inside a `-f` argument list silently
+shortened the list; it is computed on its own line.
+---
+
+## 14. A disabled main window is indistinguishable from a hung app (2026-09-07)
+
+The report was: **"the app was never responsive to any user input and not even
+focusable"**, launched from `dist\ShenzhenPDF-win-x64.exe`. Nobody could
+reproduce it. Launched from PowerShell or from Explorer, the window comes up
+foreground, enabled, not hung, answers `WM_NULL`, and repaints under `SendInput`
+clicks and keys.
+
+There is one state that produces exactly that description and passes every one
+of those checks:
+
+> **A main window that is DISABLED, with no visible dialog in front of it.**
+
+`EnableWindow(hwnd, FALSE)` does not stop the window painting, does not stop it
+answering messages, and does not make Windows mark the process "not responding".
+It only makes the window refuse input — and a disabled window **cannot be
+activated**, not by a click, not by Alt+Tab, not by `SetForegroundWindow`. So it
+is not focusable either. Every dialog in this port disables its owner. If the
+dialog that did the disabling is invisible, off-screen, on a thread that is not
+answering, or never appeared at all, the app is a picture of itself.
+
+This section is the inventory of every place that can happen, the one place it
+actually did, and what now makes it structurally impossible.
+
+### 13.1 The inventory
+
+Every site that disables a window of ours or runs a modal loop, with the thread
+it runs on and what happens when the dialog function fails.
+
+**Our own windows, our own modal loop** — each of these created a window,
+called `EnableWindow(parent, FALSE)` by hand, ran a `GetMessageW` loop, and
+re-enabled after it:
+
+| site | thread | on failure | placement |
+| --- | --- | --- | --- |
+| `spdf_win_about.cpp` About | UI (`SPDF_WIN_CMD_ABOUT`) | `CreateWindowExW` fails *before* the disable | `CW_USEDEFAULT` |
+| `spdf_win_annot_dialog.cpp` comment/author | UI (`spdf_win_chrome_annot_ui.h`) | same | `CW_USEDEFAULT` |
+| `spdf_win_print_dialog.cpp` our print dialog | UI (`SPDF_WIN_CMD_PRINT`) | same | `CW_USEDEFAULT` |
+| `spdf_win_properties_dialog.cpp` Properties | UI (`spdf_win_cmd_annot.h`) | same | `CW_USEDEFAULT`, and `WS_VISIBLE` at creation |
+| `spdf_win_shortcuts.cpp` Keyboard Shortcuts | UI (`SPDF_WIN_CMD_SHORTCUTS`) | same | `CW_USEDEFAULT` |
+
+None of the five could strand the owner through an early return: the only
+failure path is window creation, which returns before anything is disabled. Two
+weaknesses were real, though. **`CW_USEDEFAULT` cascades onto the PRIMARY
+monitor, not the owner's** — with the app on a second display that is a modal
+dialog the reader cannot see in front of a window they cannot click, which is
+the reported symptom exactly. And each one called `SetForegroundWindow(parent)`
+unconditionally on the way out, which takes the foreground back from whatever
+application the reader had switched to meanwhile.
+
+**System dialogs owned by one of our windows** — comdlg32, comctl32 and the
+print drivers do their own disable/enable, and none of them leaves an owner
+disabled when the call fails:
+
+| site | thread | on failure |
+| --- | --- | --- |
+| `spdf_win_print_dialog_system.cpp` `PrintDlgExW` | **worker**, owner disabled from the UI thread | **see 13.2** |
+| `spdf_win_print_dialog_system.cpp` `PrintDlgW` (classic) | UI, owner = our print dialog | returns FALSE, owner untouched |
+| `spdf_win_print_dialog_run.cpp` `DocumentPropertiesW DM_IN_PROMPT` | UI, owner = our print dialog | returns non-`IDOK` |
+| `spdf_win_updater_ui.cpp` `ask()`/`inform()` | UI — the sink is `HWND_MESSAGE`, created by `ensure_sink()` on the UI thread from `spdf_win_launch_window.h`, so its timers *and* the worker threads' posted results are both dispatched there | `TaskDialogIndirect` returns `E_*` without a common-controls-6 context, then `MessageBoxW` |
+| `spdf_win_shell_dialog.h` `DialogBoxIndirectParamW` (password, Open Path) | UI (`spdf_win_tabs_open.h`) | returns −1, having disabled nothing |
+| `spdf_win_annot_dialog.cpp`, `spdf_win_assoc.cpp`, `spdf_win_panel_jobs.cpp` `MessageBoxW` | UI thread of the owner in each case | returns 0 |
+
+**No owner at all, so nothing to strand**: `spdf_win_setup_prompt.h` (the
+first-run TaskDialog and its `MessageBoxW` fallback), `spdf_win_setup.cpp:57`
+and `:323`, `spdf_win_window_doc.h:39`. **Its own modal loop and no
+`EnableWindow`**: `TrackPopupMenu` in `spdf_win_menu.cpp` and
+`spdf_win_chrome_annot_ui.h`. And the search found **no calls at all** to
+`GetOpenFileNameW`, `GetSaveFileNameW`, `IFileDialog`, `PageSetupDlgW` or
+`DoDragDrop` in `portable/win/src` — the only occurrences of the last two are
+prose in comments explaining why they are not used.
+
+### 13.2 The one site that could leave the window disabled forever, and did
+
+`spdf_win_print_system_dialog()` is the only place where the dialog runs on a
+**worker** thread while the owner is disabled by the **UI** thread. That is
+deliberate and documented (`spdf_win_print_dialog.h`): on this host `PrintDlgExW`
+with a valid `hwndOwner` never returns and creates no window, so it is called on
+a thread it is allowed to wedge in, and a watchdog gives up after
+`SPDF_WIN_PRINT_DIALOG_WATCHDOG_MS` = 4 s.
+
+The watchdog decided "the dialog is up, stop the clock" from a snapshot of the
+process's visible top-level windows: **any** new one counted. The comment
+justifying that said the app creates nothing during the wait, "the calling
+thread is in this loop and the parent is disabled". Both halves are wrong:
+
+- the calling thread is in that loop **pumping its own queue** —
+  `MsgWaitForMultipleObjects` + `PeekMessageW`/`DispatchMessageW` — so anything
+  the UI thread was going to do, it still does. The updater's sink window lives
+  on that thread; its 5-second one-shot and its hourly tick both fire into that
+  pump, and `on_check_done()` puts a task dialog up from inside it;
+- the parent being disabled does not stop a *second* window of this process
+  (another app window, a tools panel) from putting a menu or a message box up.
+
+Once one of those windows appeared, `window_up` latched at 1, the clock stopped,
+and the loop waited on an event that on this host is never signalled. When the
+window closed again there was nothing left on screen — and the main window was
+disabled, painting, answering, and unfocusable. Indefinitely.
+
+**Measured**, by `portable/win/tests/modal_scope_test.c` (case 4: a visible
+top-level window of this process, created on another thread 800 ms into the
+wait and destroyed 1.5 s later):
+
+```
+before   FAIL spdf_win_print_system_dialog did not return within 45 s -- the owner is still disabled
+after    modal_scope: print dialog returned 4 after 6375 ms, err="Windows' print dialog did not open within 4 seconds."
+         modal_scope_test: 31 checks, 0 failures
+```
+
+6375 ms is 800 + 1500 + the re-armed 4000, which is the fix behaving exactly as
+described. Two changes, belt and braces:
+
+1. **The calling thread's own windows are never the print dialog.** The snapshot
+   and the sweep both skip windows whose thread is the one doing the waiting.
+   That is precisely the updater case, and it is now not even a pause.
+2. **The clock is re-armed when the window that stopped it goes away.** A window
+   that appears and then closes while `PrintDlgExW` has still not returned was
+   never the dialog. This is the general fix: it covers a second app window, a
+   menu, a tooltip, anything nobody has thought of.
+
+### 13.3 `spdf_win_modal_scope.h`, so it cannot come back
+
+The five hand-written copies of
+
+```c
+if (parent) was_enabled = IsWindowEnabled(parent);
+if (parent && was_enabled) EnableWindow(parent, FALSE);
+...
+if (parent && was_enabled) { EnableWindow(parent, TRUE); SetForegroundWindow(parent); }
+```
+
+are now one scope, `SpdfWinModalGuard`, used by all five plus the print
+watchdog and the updater's `ask()`. A scope cannot be left: the destructor runs
+on the early return, on the exception, and on the watchdog giving up. It adds
+three things the copies did not have:
+
+- **the owner's thread.** `EnableWindow` works across threads, so a dialog run on
+  a worker against a main-window owner disables that owner from a thread that
+  does not own it. No site does that today; if one is ever added the scope
+  **refuses the disable** rather than performing it, and says so through
+  `OutputDebugStringW`. A dialog that is merely not modal is a bug you can click
+  your way out of; a main window disabled from a foreign thread is not.
+- **activation, conditionally.** The owner gets `SetActiveWindow` +
+  `SetForegroundWindow` back — Windows does not reliably return it after a
+  cross-thread dialog or after one that failed to appear — but **only** if this
+  process held the foreground when the scope opened and still holds it now, and
+  never if the owner is minimised. A dialog finishing in the background no
+  longer yanks the reader out of another application.
+- **nesting.** A scope that finds the owner already disabled records that it did
+  not do it and leaves it disabled on the way out, so a message box opened from
+  inside a dialog cannot un-modal the dialog.
+
+`spdf_win_modal_place_point()` is the placement, pure and therefore testable
+headlessly: centre on the owner, then clamp into **the owner's monitor's** work
+area, pulling the right and bottom edges in first so a dialog larger than the
+work area is pinned to the top-left, where the title bar and the first controls
+are. All five of our dialogs now place themselves with it before they are shown
+— Properties lost its `WS_VISIBLE` at creation so that it is placed before it
+appears rather than jumping afterwards.
+
+The updater's `ask()` gained one more thing: `g.main` is remembered at start-up
+and **never cleared**, so a task dialog parented on a destroyed HWND fails, and
+the `MessageBoxW` fallback fails with it — no dialog, no answer, and the update
+silently not offered. It is now validated with `IsWindow()` and degrades to an
+unowned dialog.
+
+### 13.4 The entry path, checked and found sound
+
+The first-run prompt (`spdf_win_setup_prompt.h`,
+`SPDF_WIN_SETUP_ALLOW_PROMPT=1` with a fresh `--state-dir`) runs **before the
+main window exists**, with a `NULL` owner: there is nothing to leave disabled.
+Answering "Run this copy" with a document on the command line then goes through
+`spdf_win_window_show_ex()`, which is already `ShowWindow` **and** an explicit
+`SetForegroundWindow` (`spdf_win_window_lifecycle.h`) — so the window claims the
+foreground back from the Explorer window that got it while the prompt was up.
+Nothing to fix.
+
+### 13.5 The test
+
+`portable/win/tests/modal_scope_test.c`, registered automatically as
+`win.modal_scope_test`. Four cases in increasing cost: the placement arithmetic
+headless (edges, a second monitor, an oversized dialog, no owner); the scope
+against a real owner window (disable, re-enable, nesting, double close, and a
+scope opened from a foreign thread refusing to disable); the real placement
+landing inside the owner's monitor work area; and the regression of 13.2. A hard
+timeout kills the process at 45 s rather than letting the test become the hang
+it tests for, and on a **locked workstation** — where no window can be created
+at all — it exits **68**, which `run-tests-native.sh` now records as BLOCKED for
+every `win.*` case, the code `run-tests-native.launch.sh` already used.
+## 15. The input path is device- and layout-dependent (2026-09-07)
+
+Section 11 fixed the two ways the app's window arrived un-clickable. The report
+behind it said something a little wider than z-order -- "never responsive to any
+user input" -- and the reporter's machine differs from the harness in three more
+ways at once: a French AZERTY layout is loaded, the pointer is a precision
+touchpad rather than a mouse, and the display is at 150%. Synthetic input misses
+all three, because SendInput sends US virtual-key codes and wheel deltas of
+exactly 120. So each was measured against the real thing.
+
+### (a) VK_OEM_MINUS is on no French key. Zoom Out had no accelerator.
+
+The accelerator table (`spdf_win_menu_table.h`) names its keys by VIRTUAL-KEY
+code, and a virtual-key code is a property of the LAYOUT, not of the keyboard.
+Measured on this machine against `LoadKeyboardLayoutW(L"0000040C")`:
+
+| VK | US (00000409) | FR (0000040C) |
+| --- | --- | --- |
+| `0xBD` VK_OEM_MINUS | scan 0x0C, `-` | **scan 0x00 -- not on the layout** |
+| `0x36` VK_6 | `6` | `-` |
+| `0xBB` VK_OEM_PLUS | `=` | `=` |
+| `0xBC` VK_OEM_COMMA | `,` | `,` |
+| `0xBF` VK_OEM_2 | `/` | `:` |
+| `0x30` VK_0 | `0` | `a-grave` (the digit is Shift) |
+
+`MapVirtualKeyExW(VK_OEM_MINUS, MAPVK_VK_TO_VSC, hkl)` returns 0 for the French
+layout: no key on a French keyboard produces that code at all. So every table
+row keyed on it was dead for a French reader -- **Zoom Out (Ctrl+-)** and
+**Smaller Text (Ctrl+Alt+-)** -- and so was the bare `-` in `key_for_window()`'s
+keymap. The `-` key they press reports VK_6, which no row named. Zoom In
+survived only because VK_OEM_PLUS happens to sit on both layouts.
+
+The macOS original does not have this problem, and the way it avoids it is the
+fix: `ShenzhenPDFMac.mm:1963-1964` binds Zoom In and Zoom Out with
+`keyEquivalent:@"+"` and `keyEquivalent:@"-"` -- CHARACTERS, which AppKit matches
+against what the active layout produces. The port now carries the same thing.
+`spdf_win_input` gained `key_char`, the character the pressed key produces on the
+active layout with no modifiers, from `MapVirtualKeyW(vk, MAPVK_VK_TO_CHAR)`;
+`spdf_win_menu_layout.h` matches it AFTER the exact virtual-key match, so the US
+path is what it always was (asserted over every row of the table) and the
+fallback can only add. `MAPVK_VK_TO_CHAR` and not `ToUnicode`: `ToUnicode`
+consumes the kernel's pending dead-key state, so calling it on every WM_KEYDOWN
+would eat the accent a reader had begun composing in the find field.
+
+Two smaller things came with it. A digit row now also matches with Shift on a
+layout that shifts its digits -- `key_char` is not the digit there, which is how
+the case is recognised, and on US the rule is inert. And the bare `+`/`-` keys
+now require no Ctrl or Alt: the old switch tested the virtual-key code and never
+looked at `mods`, so Ctrl+Alt+Shift+= zoomed.
+
+### (b) AltGr is Ctrl+Alt, and the port had two Ctrl+Alt accelerators.
+
+On every European layout AltGr is reported as Ctrl+Alt. Measured on FR: AltGr+`=`
+is `}`, AltGr+`0` is `@`, AltGr+`4` is `{`, AltGr+`5` is `[`. The table's Smaller
+/ Larger Text rows are Ctrl+Alt+`-`/`=`, from the mac's Cmd+Alt -- where Option
+is not AltGr. So **a French reader typing `}` -- in the find field, in the page
+field, anywhere -- also resized the Markdown text**, and the `}` was inserted as
+well. This is a porting incompatibility rather than a transcription error: the
+original has nothing to say about it.
+
+Settled in the only direction that can be right: a keystroke the layout turns
+into a character is text, and text is not an accelerator. `spdf_win_input` gained
+`text_key`, and the window answers it from the QUEUE rather than from the layout.
+`TranslateMessage` runs before `DispatchMessageW`, so by the time a WM_KEYDOWN
+reaches the window procedure the WM_CHAR it produces is already sitting there,
+and `PeekMessageW(..., WM_CHAR, WM_CHAR, PM_NOREMOVE)` reads it without taking
+it -- no `ToUnicodeEx`, no dead-key side effect, no version gate. It gates ONLY
+the Ctrl+Alt rows: Ctrl+F queues a WM_CHAR too (0x06), and gating on that would
+disable the whole table, so the test is `>= 0x20` -- the same one
+`spdf_win_chrome_text.h` applies to what it will insert.
+
+Neither `key_char` nor `text_key` is cached, so WM_INPUTLANGCHANGE needs no
+handler: a reader who switches layout mid-session gets the new answer on the
+next keystroke, because both are asked of the ACTIVE layout each time. The IME
+is likewise untouched -- the port never calls `ImmAssociateContext`, so every
+window keeps its default context and DefWindowProc's WM_IME_* handling turns a
+composition into the WM_CHARs the find field already accepts. One gap remains
+and is cosmetic rather than a swallow: nothing calls `ImmSetCompositionWindow`,
+so a CJK candidate list appears at the window's origin instead of under the
+caret in the field being typed into. Recorded here rather than fixed; it needs
+the caret's screen position, which only the chrome painter knows.
+
+### (c) The pointer path was already device-independent. Measured, not assumed.
+
+Nothing in `portable/win/src` calls `EnableMouseInPointer`,
+`RegisterTouchWindow`, `SetWindowFeedbackSetting` or `GetMessageExtraInfo`, none
+of it looks for `MOUSEEVENTF_FROMTOUCH`, and there is no
+WM_POINTER*/WM_TOUCH/WM_GESTURE handler -- so Windows' default mouse synthesis
+for touch and pen is untouched and nothing drops an injected message. Two-finger
+tap arrives as WM_RBUTTONDOWN and is already routed.
+
+The wheel is the part that needed work, and not because it was wrong. A
+Precision Touchpad does not send notches: it reports the finger's travel as a
+stream of small arbitrary deltas (3, 8, 17), sends its inertial tail the same
+way, and delivers PINCH as Ctrl+wheel with those same small deltas. The
+arithmetic in `on_wheel` was already fractional and therefore correct -- but it
+was inline in a window procedure, which cannot be tested, so nothing said so. It
+moved to `spdf_win_wheel.h` (pure, no Win32) and `wheel_input_test.c` now pins
+the properties that matter: a delta of 1 moves the view by more than the canvas's
+0.01 px "did anything change" threshold at every scroll-lines setting; 120 deltas
+of 1 travel exactly as far as one delta of 120; a realistic burst summing to 120
+does too; 120 pinch steps of 1 compose to exactly one notch's zoom factor; and
+the notch formula agrees with `spdf_win_page_wheel.h`'s independent copy at every
+DPI and setting, so Alt+wheel cannot come to page at a different rate than the
+wheel scrolls.
+
+### (d) DPI hit-testing parity holds at 96, 120, 144 and 192. It is not the bug.
+
+Painter and router take the SAME `dpi_scale` from the same place --
+`spdf_win_window_dpi_scale(window)`, which is `window->dpi / 96`, filled into
+`spdf_win_scene` in `spdf_win_window_target.h` and into `spdf_win_input` in
+`spdf_win_window_input.h`. The Direct2D target is created at 96 dpi, so DIPs are
+device pixels and there is no second scale anywhere; the router receives client
+device pixels, which is the unit every rect in `SpdfWinChromeLayout` is expressed
+in. That is the structural argument. `dpi_hit_parity_test.c` is the measurement:
+for every toolbar control (both halves of all four pills), the sidebar's
+segments, its filter field and its list rows, and the five bands, it takes the
+rect the PAINTER would draw and asserts that the whole router --
+`spdf_win_chrome_input_route`, band classification included -- names that
+control, at all four DPIs, on a window sized in real device pixels. 255 checks,
+0 failures. Nothing is off at 150%.
+
+### (e) Nothing in the port can make the window uninteractable.
+
+The five ways a Win32 window is visible and takes no input are
+`WS_EX_TRANSPARENT`, `WS_EX_LAYERED` with alpha 0, `WS_EX_NOACTIVATE`,
+`WS_DISABLED`, and answering `MA_NOACTIVATE` to WM_MOUSEACTIVATE (or eating
+WM_NCACTIVATE). A grep across `portable/win/src` for `GWL_EXSTYLE`,
+`SetLayeredWindowAttributes`, `WM_MOUSEACTIVATE` and `WM_NCACTIVATE` finds
+exactly one hit: `spdf_win_gpu_prewarm.h`'s offscreen 64x64 `WS_EX_TOOLWINDOW |
+WS_EX_NOACTIVATE` popup, which is never shown and dies with its worker
+(section 11). The Markdown swap's "held transparent while it settles" is not a
+transparent window at all -- `spdf_win_canvas_swap.cpp` keeps drawing the old
+document and simply never composes an empty frame -- and the tab hand-off drag
+takes a capture and releases it, touching no style.
+
+`EnableWindow` is a different matter and was read rather than grepped past: the
+five owner-modal dialogs (About, Keyboard Shortcuts, Properties, the comment
+editor, the print dialog) each disable the parent while they are up, which is
+the standard pattern and also the standard way to leave a main window
+permanently dead. All five were checked line by line and all five are correctly
+paired: the disable happens only after the dialog window exists, the re-enable
+is the statement immediately after the modal loop, and there is no `return`
+between them. One thing near it is worth recording and is NOT fixed here --
+those loops end on `GetMessageW(...) > 0`, which is also how WM_QUIT arrives,
+and they consume it rather than re-posting it, so a quit that lands while a
+modal is up would never reach the outer pump.
+
+`window_activation_test.c` is the live half: a real app window, and after
+create, show, full screen, leaving full screen, maximize and restore the extended
+style carries none of the three bits, the window stays enabled,
+`WindowFromPoint` over the canvas returns it, WM_MOUSEACTIVATE answers
+`MA_ACTIVATE` and WM_NCACTIVATE is not eaten. It also drives the new `text_key`
+through the real queue: a posted WM_KEYDOWN with a `}` behind it reports text,
+one with 0x06 behind it does not. 26 checks. What it cannot reach is stated
+rather than glossed -- the Markdown reload and the hand-off drag live on `struct
+app`, which no test can build; what stands for them is the invariant above plus
+the sweep over every transition the window performs itself.
+
+### What this leaves
+
+(a) and (b) are real and are fixed. Either alone makes the app feel broken to a
+French reader, and (b) makes typing in the find field do something alarming. But
+neither makes an app take NO input, so neither is the whole of the original
+report -- section 11's two launch defects remain the best explanation for that,
+and the reporter had not run a build containing them. (c), (d) and (e) are
+negative results, recorded as such: the pointer path, the DPI path and the
+window's activation state were measured and are not where the input went.
+
+Reproduce the layout measurements without the app: `keyboard_layout_test.c` does
+them itself with `LoadKeyboardLayoutW` + `VkKeyScanExW` + `MapVirtualKeyExW`, and
+SKIPS with a printed reason on a machine where the French layout is not
+installed, so the evidence is either collected or its absence is said out loud.
+## 16. The launches that leave no window to use (2026-09-07)
+
+"The app was never responsive to any user input and not even focusable",
+twice in two days from `dist\ShenzhenPDF-win-x64.exe`, on a state nobody
+else has. A plain launch here is healthy every time (section 11's probe:
+foreground, enabled, z-index 0, answers WM_NULL), so this pass went through
+the restore track that merged after those two fixes -- windows reopened on
+their saved display, the last-used one focused, the others started as
+`--behind` processes -- and put each way it could go wrong on the desktop, with
+a session.yaml written for it into a private `--state-dir` and a probe that
+enumerates every process running from the exe (the launch AND its siblings):
+each window's visibility, enabled and hung state, rect, monitor and work-area
+overlap, z-index among Alt+Tab-sized windows, and what WindowFromPoint finds
+at its centre. 2880 x 1800 at 150%, work area 2880 x 1728.
+
+What holds, measured: two or three saved windows with distinct, equal, absent,
+negative, absurd (`1e300`) or non-numeric `focusedAt`; the focused window's
+document missing, or its only document missing, or held open with no sharing
+by another process (the tab opens empty, the window still claims the front);
+a file argument on top of a two-window session; two launches 60 ms apart
+(four processes, the first launch's focused window in front, the rest behind);
+an exit while maximized (the normal frame is what is saved and restored); a
+frame on a display that is not attached, or wholly off screen with no display
+named (centred on the main display, the saved frame kept). In every one of
+these exactly one window was foreground and topmost, and every window was
+enabled, unhung and clickable at its centre.
+
+Three things do not hold.
+
+1. **A `--behind` sibling can come up OVER the focused window.**
+   SW_SHOWNOACTIVATE withholds activation and nothing else: the window keeps
+   the z-position CreateWindowExW gave it, which is the top. The design has
+   the focused window claim the foreground and BringWindowToTop while the
+   siblings show NOACTIVATE, and that is correct only when every sibling shows
+   FIRST. Measured with a third process started `--window <id> --behind` three
+   seconds after the launch: it came up at z-index 0 at the exact frame of the
+   focused window (z-index 1, still foreground, still holding the keyboard).
+   A window nobody can see has the focus; the window they can see is not
+   active. Which finishes first is decided by the documents -- a launch on a
+   session whose focused window holds a slow document and whose other window
+   holds a small one runs the race the wrong way every time (see 4 below). The
+   sibling now places itself: `spdf_win_window_show_ex(window, 0)` finds the
+   frontmost visible window of the app's class already on the desktop,
+   whichever process owns it, and shows with `SetWindowPos(hwnd, front, ...
+   SWP_NOACTIVATE | SWP_SHOWWINDOW)`, directly beneath it; with none yet it
+   shows on top, inactive, and the focused window's BringWindowToTop passes it.
+   After: the late sibling at z-index 2, the focused window z-index 0 and
+   foreground, its centre its own.
+
+2. **A saved frame with a 60 x 28 corner on screen came back as that corner.**
+   `spdf_win_placement.h` applied a frame exactly whenever its display was
+   attached at its saved rectangle, whatever the frame overlapped -- the
+   identity rule was meant for a frame on a second display, and it also
+   admitted a frame dragged almost entirely off its own. Frame 2820,1700 on a
+   2880 x 1800 display: visible=True, foreground=True, 60 x 28 of it inside the
+   work area (most of that under the taskbar). Focused and, to a person,
+   absent.
+
+3. **A saved frame with its title bar above the display came back as a strip.**
+   Frame y = -1100, height 1211: 1702 x 111 of it inside the work area, which
+   passes the 80 x 80 visibility rule, with the tab strip -- the only title bar
+   this window has, and the only thing to drag it by -- 1100 px above the
+   screen. Windows' own SetWindowPlacement pulls a frame that misses every
+   monitor back to the nearest edge (measured: x = 3500 came back at 1178,
+   y = -1500 at 0) and leaves one that touches a monitor alone, so the partial
+   cases were ours.
+
+   Both are one rule now (rule 4 in `spdf_win_placement.h`): a frame is applied
+   as saved only when it is REACHABLE -- 80 x 80 inside a work area with its top
+   edge inside that work area. Otherwise it is parked: clamped whole into the
+   work area of its home display (the one it overlaps most, else the one it
+   names when that is attached), keeping the reader's size and as much of the
+   position as fits; with no home, centred on the main display as before. The
+   parked rect is still not what is saved: after each of these launches the
+   file kept 2820,1700 and 228,-1100. After: the corner frame at 1178,517
+   (whole), the strip frame at 228,0 (whole), both foreground.
+
+4. **The first paint has no budget, and the siblings show while it runs.** The
+   window paints its first frame before ShowWindow so it appears complete; on
+   a page with 400,000 stroked paths that frame took longer than 45 s, during
+   which the focused window was hidden and IsHungAppWindow-hung while its
+   sibling was on screen, inactive, with nobody in the foreground. A reader
+   sees an app that opened a window it did not focus, and a second window that
+   arrives whenever it arrives and takes the foreground then. Not fixed here:
+   it is the canvas's first-frame rule (spdf_win_canvas_set_async_visible
+   starts async rendering from the SECOND frame), and a bound on it is a
+   rendering decision, not a placement one. Recorded so the next report of a
+   window that "never" appears is read against it.
+
+   FIXED IN SECTION 18: the first frame now has a 250 ms budget, and the same
+   400,000-path page puts its window up in 325 ms instead of 4.5 s. Finding it
+   also turned up why no repaint had ever arrived for an asynchronous render.
+
+Pinned: `placement_test.c` section 4 (reachable, home display, clamp, resolve,
+parked flag, on this desktop's geometry) and `launch.invariant`
+(`portable/win/launch-invariant.ps1`), which writes the four sessions --
+behind, sliver, strip, gone -- on the live display geometry, launches each,
+starts the late sibling for the first, and asserts every window of the app
+enabled, unhung and reachable with the focused window topmost; parked
+scenarios also assert the file still holds the saved frame after exit. Against
+the pre-fix dist exe it fails 4 assertions (topmost is the late sibling; the
+corner and the strip unreachable); against the fix it passes. BLOCKED (68) on
+a locked workstation, like `launch.budget`. The foreground is reported and not
+judged, for section 11's reason.
+
+Not reproduced, and not verifiable here: a launch while another application
+holds the foreground lock (SetForegroundWindow refused). The code path after a
+refusal still shows, raises and flashes, and the window is enabled; forcing
+the refusal needs a foreground process with recent input, which a harness on
+this desktop is not. Nor is the reporter's own session known -- the three
+defects above are the only launches found on which a person could see a window
+of the app and not use it.
+## 17. The app now writes down what state it came up in (2026-09-07)
+
+"The app was never responsive to any user input and not even focusable",
+launched from `dist\ShenzhenPDF-win-x64.exe`. Nobody has reproduced it. The same
+exe launched from PowerShell and from Explorer on this machine gives a healthy
+window every time -- foreground, enabled, not hung, answering WM_NULL, and
+repainting under SendInput -- and Windows Error Reporting recorded no hang of
+it. Section 11's two defects were found because someone was standing over the
+bad launch with a probe; this one is not reproducible, so nobody will be.
+
+Every instrument this port had can only measure a launch someone is watching. So
+the app is now its own witness.
+
+### What it writes, and when
+
+Every windowed launch appends to `<state dir>\launch-health.log` -- beside
+settings.yaml and session.yaml, so `--state-dir` moves it with everything else
+and a test never writes into the reader's own state. One line each at **1 s, 5 s
+and 30 s** after the window is shown (one-shot `SetTimer` callbacks on the UI
+thread, so they need no case in the window procedure), plus a **`stall`** line
+from a watchdog thread whenever the UI thread's heartbeat is older than three
+seconds. The file is trimmed to its last 200 lines when it passes 192 KB.
+
+One real line, from a launch on this machine:
+
+```
+2026-09-06T17:53:01.095Z at=5.3s phase=5s pid=16128 hwnd=0x009F0864 build=26.9.2-1
+fg=1 enabled=1 visible=1 iconic=0 rect=380,380,2082,1591 monitor=\\.\DISPLAY1
+mon_rect=0,0,2880,1800 onscreen=1 zindex=0 windows=5 hung=0 modal=0 owned=0
+msg=lbdown:1,keydown:6,char:4,mousemove:2,wheel:0,activate:1,setfocus:1,killfocus:0
+paints=10 last_input_age_ms=156 heartbeat_age_ms=0 pump=busy
+exe=C:\spdf-build\health\ShenzhenPDF.exe
+```
+
+(one line in the file; wrapped here). How to read it:
+
+| field | what it answers |
+| --- | --- |
+| `at=` / `phase=` | seconds since **process creation** (the kernel's timestamp, the same origin `SPDF-LAUNCH` marks use), and which of the four lines this is |
+| `fg=` `enabled=` `visible=` `iconic=` | the four states a reader means by "it does not respond". `fg=0` is section 11's defect 2; `enabled=0` is a modal dialog somewhere |
+| `rect=` `monitor=` `mon_rect=` `onscreen=` | where the window is, which display it is on, and whether its frame overlaps **any** monitor's work area. `onscreen=0` is a window that is visible, enabled, healthy and entirely off the desktop |
+| `zindex=` | position among visible top-level windows larger than 200 px, 0 = in front. Section 11's defect 2 read 1. -1 means it is not in that walk at all |
+| `windows=` `hung=` | every top-level window of this process, and how many `IsHungAppWindow` reports. Section 11's defect 1 read `hung=2` -- and both were invisible windows |
+| `modal=` `owned=` | visible windows owned by this one, and whether one of them is enabled while this one is not, i.e. a modal dialog holding the app |
+| `msg=` | messages the window procedure has **received**, counted before any handler runs. This is the field that separates "the input never arrived" from "the input arrived and nothing happened", which is the whole question |
+| `paints=` | `WM_PAINT`s that returned, counted after `EndPaint` |
+| `last_input_age_ms=` `heartbeat_age_ms=` | ms since the last input message, and since the message loop last went round |
+| `pump=` | `idle` = parked in `GetMessageW` (healthy, however long); `busy` = inside a dispatch. A timer line always says `busy`, because a timer callback IS a dispatch |
+
+### Why the watchdog is a separate thread
+
+A timer that fires on the UI thread proves the UI thread is running **by
+firing**, so no UI-thread timer can ever report a blocked pump -- the exact
+failure the report describes. `spdf_win_window_run` therefore stamps a heartbeat
+in two halves (about to park in `GetMessageW`; back and about to dispatch), and a
+plain thread wakes every second and writes a `stall` line when the heartbeat is
+stale *while the loop is inside a dispatch*. Parked in `GetMessageW` is health,
+not a stall: an idle app waits there for as long as the reader is away.
+
+A modal dialog looks like a stall too, and deliberately: it runs its own message
+loop and never returns to ours, which is exactly what "the window ignores every
+click" feels like. The line says which -- `modal=1` with `owned>0` is a dialog,
+`modal=0` with `owned=0` is a pump that is genuinely stuck.
+
+### Reading it back: `--diagnose`
+
+`ShenzhenPDF.exe --diagnose` prints one line per live window of class
+`ShenzhenPDFWindow` on the desktop, whatever process owns it, then the tail of
+every `launch-health.log` it can find (the resolved state directory, and
+`<exe dir>\ShenzhenPDF-data`), then exits 0. It is one line to type while the
+bad window is still on screen and one block to paste. The in-process half of the
+line (`msg=`, `paints=`, `heartbeat_age_ms=`, `pump=`) prints as `-` for another
+process's window and is read from that process's own log below it.
+
+The exe is `/SUBSYSTEM:WINDOWS` and has no console of its own, so it writes to
+whatever standard output handle it inherited, borrowing the parent's console
+when there is none. **Redirect it** (`ShenzhenPDF.exe --diagnose > health.txt`)
+if nothing appears: measured on this machine, the same call captures its output
+from an interactive prompt but not from inside a `powershell -File` script.
+
+### The test that would have caught it: `launch.health`
+
+`launch.budget` proves a window appeared and painted. It cannot prove the window
+reacts, because it never touches it -- and that is precisely the gap the report
+lives in. `launch.health` (portable/win/tests/launch-health.ps1) launches the
+built exe on `golden.pdf` with a private `--state-dir`, then sends **real
+input** through `SendInput`: PageDown, a click on the toolbar's next-page
+button, then Ctrl+F with `the` typed into it. Each must change more than 1% of
+the window's `PrintWindow(PW_RENDERFULLCONTENT)` capture (0.1% for the find
+sequence, which may only light the toolbar). Then it reads the app's own log
+back and asserts the 1 s line says foreground, enabled, visible, not iconic, not
+hung, z-index 0, a monitor found, on screen, not modal, and that the input
+counters and the paint total have moved by the 5 s line.
+
+Three things it does that are worth keeping:
+
+1. **The click coordinate comes from the app.** `--print-layout W H SCALE`
+   prints the chrome bands and every toolbar control as `kind name x y w h`,
+   from the same pure layout the painter draws and the input router hit-tests
+   (`spdf_win_chrome_toolbar.h`), with pills resolved into the halves that map
+   to commands (`action next-page ...`). The test clicks the *button*, not a
+   coordinate someone measured once at 150% on one machine.
+2. **It asks for the foreground before the 1 s line is written.** Windows grants
+   the foreground to a process launched *by* the foreground process, and a
+   harness under a shell under an editor never is one, so the app's own
+   `SetForegroundWindow` is correctly refused (measure-launch.ps1 measures 0/5
+   here against 5/5 for a hand launch). Asking on its behalf turns `fg=` and
+   `zindex=` into an assertion worth making: not "was it granted the
+   foreground", which is the system's decision, but "given it, does it hold it
+   and stay on top".
+3. **It refuses to type into somebody else's window.** Before every action it
+   re-checks that the app is the foreground window and that `WindowFromPoint` at
+   the click target belongs to the app's process; a locked workstation, or a
+   desktop it cannot come to the front of, exits 68 and reads BLOCKED. Real
+   input goes to whoever is in front, and typing into another application is
+   worse than not testing.
+
+One flake is known and mitigated: if the pointer is left over the tab strip from
+a previous run, the strip's hover preview -- an owned, always-on-top window of
+the same process -- catches the click, which the failing runs' `owned=1` gives
+away. The case parks the pointer over the canvas before it starts. When it does
+fail it runs `--diagnose` against the still-open window and prints it, so the
+next unreproducible thing is diagnosed the first time rather than the third.
+
+## 18. The first paint had no budget, and the repaint that would have saved it was never delivered (2026-09-07)
+
+Section 16 item 4 left one launch unfixed: the window paints its first frame
+before `ShowWindow`, so on a slow page there is no window at all for as long as
+that page takes. Measured on this desktop (2880 x 1800 at 150%, work area
+2880 x 1728) against fixtures generated for it -- one page carrying N stroked
+subpaths, `x y m x y l S` each, so MuPDF walks N display-list nodes and strokes
+N times. The generator is a 60-line script; the files it writes (5 MB and
+26 MB) are not in the repo.
+
+| launch | window on screen | page on screen |
+| --- | --- | --- |
+| `outline.pdf`, before | 132 ms | 122 ms |
+| `outline.pdf`, after | 133 ms | 123 ms |
+| 400,000 paths, before | 4518 ms | 4503 ms |
+| 400,000 paths, after | **325 ms** | 5090 ms |
+| 2,000,000 paths, before | 35343 ms | 35326 ms |
+| 2,000,000 paths, after | **358 ms** | 28895-37739 ms |
+
+Medians of 10 runs for `outline.pdf`, interleaved between the two builds; 3 runs
+for 400,000 paths and 2 for 2,000,000. The heavy fixtures vary run to run far
+more than `outline.pdf` does -- the first measurement of the 400,000-path page,
+taken while another track was building, was 8.6 s rather than 4.5 s -- so read
+their absolute numbers as a scale, not a constant. "Window on screen" is a host
+poll for a visible top-level window of the process. "Page on screen" is the
+app's own
+`first-compose-end` before and the new `first-page-scene` mark after -- the
+first composed frame that had a page draw in it, a distinction the old timeline
+did not need because its first frame always had one.
+
+Before the fix, and for the whole of those 4.5 and 35 seconds, the process was
+`IsHungAppWindow`-hung with no window of its own on screen. That is the report,
+word for word: never responsive to any user input, and not even focusable.
+
+### The bound is 250 ms, and why that number
+
+`spdf_win_canvas_set_first_frame_budget()` gives the first frame of a launch a
+budget: the page is asked of T5's worker pool at VISIBLE priority and waited
+for, on the UI thread, for at most that long. Inside the budget the launch is
+unchanged -- same pixels, one render, presented before the same `ShowWindow`.
+Past it the frame comes back with no page draws and the canvas's status line
+("Opening…"), the window goes up, and the pool's completion brings the page in.
+
+250 ms is longer than the whole healthy launch measured here -- 122 ms to a
+composed page, of which the page render is 39 ms -- and longer than the 145 ms
+the launch doc records, so nothing that is fast today waits any differently. The
+worst case it admits is a window at about 350 ms: the 60-100 ms before the first
+frame, plus the budget, plus a compose with no page texture to upload. A tenth
+of a second either way would do as well; what matters is that it is clear of a
+healthy render and inside the time a person will wait for a window.
+
+Waiting on the UI thread is what `spdf_win_canvas_settle()` forbids in terms,
+and this is the one place it is allowed, for reasons that are written at the
+wait: there is no window yet, so there is no message to pump and nothing else
+this thread could be doing; the wait is bounded; and what it buys is that the
+UNBOUNDED wait never happens.
+
+**The fast path is free because the wait is spent inside a wait that already
+existed.** The timeline puts `gpu-prewarm-done` 41 ms after the page render
+ends, and the first compose cannot start before the GPU device is ready. Moving
+the render to a worker costs the pool's own document open plus the Sleep(1)
+granularity of the poll -- measured as `first-scene-built` moving from 77 ms to
+89 ms -- and all of it is absorbed: the window and first-composed-page medians
+are 132/122 ms before and 133/123 ms after.
+
+### The repaint was never delivered, and never had been
+
+With the budget in place the heavy launch put its window up in 325 ms and then
+never drew the page -- not in 200 seconds. The window was healthy throughout
+(`launch-health.log`: enabled, visible, unhung, z-index 0) and its `paints`
+count stopped at 3. Marks added to the canvas's notify hook showed the pool
+finishing at 6.2 s and calling the hook with `notify_armed=1`, and the results
+being drained only at shutdown 30 s later.
+
+`SPDF_WIN_WM_RENDER_READY` was `WM_APP + 0x5244` -- "RD" as a mnemonic, 0xD244
+as a number. The window procedure's default case forwards `msg >= WM_APP && msg
+< 0xC000` and nothing above, because 0xC000 up is the `RegisterWindowMessage`
+range and not the app's to interpret. Every one of those posts went to
+`DefWindowProc`. **The same mistake was in all three app messages**:
+`SPDF_WIN_MD_WM_IMAGES_ARRIVED` ("MD", 0xCD44) and `SPDF_WIN_MD_WM_RELOADED`
+("ME", 0xCD45) too. So a Markdown file rewritten on disk was re-read off-thread
+and the result never reached the window, remote images never turned their
+placeholders into pictures, and an asynchronous visible-page render never asked
+for the repaint that shows it -- which is exactly what `spdf_win_canvas.h`
+warned would happen without a notify: "the reader keeps looking at the soft
+stand-in until they move the mouse". Nobody noticed, because until this change
+every one of those cases had a stand-in to look at and a mouse to move. The
+first frame of a fresh document has neither.
+
+All three are now `WM_APP` plus a number under 0x4000, and
+`SPDF_WIN_APP_MSG_OK(name, msg)` beside each `#define` fails the build for a
+number outside the routable range. A comment would not have caught this one:
+the mnemonic looked deliberate.
+
+### Two smaller things the measurements forced
+
+1. **No neighbour prefetch while a frame is still waiting for its own page.**
+   `build_scene` asked for pages `last + 1` and `first - 1` at the end of every
+   frame, deferred ones included, so a second heavy render ran beside the one
+   somebody was waiting for. Two MuPDF renders of a 400,000-path page share one
+   machine's memory bandwidth: the page landed at 6435 ms with the neighbour
+   and at 5090 ms without it. The neighbours are asked for on the first frame
+   that has something in it, a few milliseconds later, which for a page nobody
+   has scrolled to is soon enough.
+2. **A frame with no page draws keeps its message.** `scene_for_window` assigned
+   `scene->message = a->status[0] ? a->status : NULL` unconditionally after a
+   `build_scene` that returned 0, throwing away the message the canvas had just
+   put there. Harmless while the only such frame was a broken document; wrong
+   the moment one can also mean "still rendering". The app's status still
+   outranks the canvas's, but only when it has one.
+
+### What is pinned, and what is not
+
+`win.canvas_async_test` builds the same first frame twice, on the same document
+at the same zoom -- once unbounded, once with a 1 ms budget -- and requires the
+bounded one to cost less than half the unbounded one, with no page draws, a
+non-empty message, and nothing rendered on the calling thread. No wall-clock
+constant appears in the assertion: the unbounded run is the constant. A second
+canvas at a normal zoom pins the recovery -- the pool finishes, the `ready` hook
+rings, and the next frame is whole. It is headless, so it needs no desktop and
+blocks for nothing. The zoom for the bounded pair is pushed to the render byte
+cap, which is how a slow page comes out of a fixture small enough to commit;
+that is also why the recovery is a separate canvas, since at the cap one page
+fills the whole 96 MB bitmap cache and the neighbour evicts it as fast as it
+arrives.
+
+Not verified here: what the deferred frame LOOKS like. This machine's screen
+saver ran throughout, and while a window can still be shown on that desktop,
+`PrintWindow` returns a flat client area for a Direct2D surface --
+`screenshot-window.ps1` exits 68 and says so. The status frame's appearance
+rests on the compose layer's existing message path, which the no-document launch
+has always used and the `d2d` cases cover.
+
+Not changed, deliberately: a TAB SWITCH into a heavy document still renders its
+first frame on the UI thread. It has a window, so it is a freeze rather than an
+absence, and `show_selected_tab`'s promise that a switch "lands finished" is a
+different decision from this one. The machinery is one call away if that promise
+is ever traded.

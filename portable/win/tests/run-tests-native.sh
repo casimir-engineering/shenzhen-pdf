@@ -115,7 +115,11 @@ CORE_SET="portable/core/shenzhen_pdf_core.c portable/core/spdf_selection.c porta
 # The Windows-internal Direct2D compose comparison.
 . "$TESTS_DIR/run-tests-native.d2d.sh"
 # The launch budget: window visible and first page painted inside a generous
-# time, measured by portable/win/measure-launch.ps1 on the built exe.
+# time, measured by portable/win/measure-launch.ps1 on the built exe. Beside
+# it, launch.invariant (every launch leaves one usable window), launch.health
+# (real input, checked against the launch-health.log the app writes about
+# itself) and window.stress (the UI thread still answering after twenty
+# seconds of input and reloads).
 . "$TESTS_DIR/run-tests-native.launch.sh"
 
 # --- the app itself --------------------------------------------------------
@@ -316,6 +320,13 @@ case_win_tests() {
     rc=$?
     if [[ $rc -eq 0 ]]; then
       record "win.$stem" PASS "passes natively"
+    elif [[ $rc -eq 68 ]]; then
+      # 68 is the desktop tests' "I could not run here at all" -- a locked
+      # workstation, no window station. The same code run-tests-native.launch.sh
+      # already uses. BLOCKED, so the suite still exits non-zero: a case that
+      # could not open a window has proved nothing.
+      record "win.$stem" BLOCKED "the test needs an interactive desktop and exited 68; unlock the workstation and re-run"
+      log_tail "$OUT/win-$stem.run.log" 5
     else
       record "win.$stem" FAIL "exited $rc"
       log_tail "$OUT/win-$stem.run.log" 20
@@ -397,6 +408,9 @@ selected d2d.compose-dark && case_d2d_compose_dark
 selected d2d.compose-window-plain && case_d2d_compose_window_plain
 selected d2d.compose-window-dark && case_d2d_compose_window_dark
 selected launch.budget && case_launch_budget
+selected window.stress && case_window_stress
+selected launch.invariant && case_launch_invariant
+selected launch.health && case_launch_health
 case_cross_host
 
 if [[ ${#names[@]} -eq 0 ]]; then

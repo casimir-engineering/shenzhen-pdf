@@ -96,8 +96,15 @@ static DWORD WINAPI drive_dialog(LPVOID unused) {
 
     (void)unused;
     /* Poll rather than sleep-then-look: the window is created synchronously by
-     * spdf_win_properties_show(), but this thread may start before it. */
-    while (waited < 5000 && !(dialog = FindWindowW(DIALOG_CLASS, NULL))) {
+     * spdf_win_properties_show(), but this thread may start before it -- and
+     * wait for VISIBLE rather than merely findable, because FindWindowW finds
+     * the window before its EDIT and its buttons exist. The panel is placed on
+     * the owner's monitor and shown only once it is built, so being visible is
+     * the line after which this thread may drive it. */
+    while (waited < 5000) {
+        dialog = FindWindowW(DIALOG_CLASS, NULL);
+        if (dialog && IsWindowVisible(dialog)) break;
+        dialog = NULL;
         Sleep(25);
         waited += 25;
     }

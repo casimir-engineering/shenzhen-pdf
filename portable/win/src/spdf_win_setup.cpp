@@ -278,8 +278,10 @@ int spdf_win_setup_install(int quiet, const wchar_t* file, int relaunch) {
         key_ok = spdf_win_setup_write_uninstall_under(root, &entry);
     setup_close_root(root);
     /* The .pdf candidate list changed, so tell the shell rather than waiting for
-     * Explorer to notice on its own. */
-    if (assoc_ok) SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSH, NULL, NULL);
+     * Explorer to notice on its own. FLUSHNOWAIT: a synchronous flush waits on
+     * Explorer, and a process that waits on Explorer hangs whenever Explorer
+     * does (spdf_win_assoc.cpp says the rest). */
+    if (assoc_ok) SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSHNOWAIT, NULL, NULL);
 
     _snwprintf_s(message, _countof(message), _TRUNCATE,
                  L"Shenzhen PDF %s installed for your user account.\n\n"
@@ -332,7 +334,7 @@ int spdf_win_setup_uninstall(int quiet, int purge) {
         spdf_win_setup_remove_uninstall_under(root);
         spdf_win_assoc_unregister_under(root);
         setup_close_root(root);
-        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSH, NULL, NULL);
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSHNOWAIT, NULL, NULL);
     }
 
     /* A RUNNING EXE CANNOT DELETE ITSELF. When --uninstall was launched from the

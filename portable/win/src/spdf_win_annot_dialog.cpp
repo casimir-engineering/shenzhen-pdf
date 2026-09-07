@@ -3,6 +3,7 @@
 
 #include "spdf_win_about.h" /* spdf_win_about_dark_caption */
 #include "spdf_win_chrome_theme.h"
+#include "spdf_win_modal_scope.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -172,7 +173,6 @@ static int annot_run(HWND parent, int dark, const wchar_t* title, const wchar_t*
     MSG msg;
     RECT client;
     int y, w, h = text ? ANNOT_DLG_H : ANNOT_AUTHOR_DLG_H;
-    BOOL parent_was_enabled = FALSE;
     wchar_t* prefill = NULL;
 
     if (!annot_register_class()) return 0;
@@ -247,8 +247,13 @@ static int annot_run(HWND parent, int dark, const wchar_t* title, const wchar_t*
     EnumChildWindows(hwnd, annot_set_font, (LPARAM)GetStockObject(DEFAULT_GUI_FONT));
     free(prefill);
 
-    if (parent) parent_was_enabled = IsWindowEnabled(parent);
-    if (parent && parent_was_enabled) EnableWindow(parent, FALSE);
+    /* CENTRED ON THE OWNER'S MONITOR before it is shown. CW_USEDEFAULT cascades
+     * onto the PRIMARY display; with the app on a second one that is a modal
+     * dialog the reader cannot see in front of a window they cannot click. */
+    spdf_win_modal_place_on_owner(hwnd, parent);
+    /* From here the owner is disabled, and there is no path out of this
+     * function that leaves it that way -- see spdf_win_modal_scope.h. */
+    SpdfWinModalGuard modal(parent);
     ShowWindow(hwnd, SW_SHOW);
     /* The caret goes to the comment, selected whole, so a prefilled selection
      * is accepted with Ctrl+Return or replaced by typing (GTK selects the
@@ -268,10 +273,7 @@ static int annot_run(HWND parent, int dark, const wchar_t* title, const wchar_t*
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-    if (parent && parent_was_enabled) {
-        EnableWindow(parent, TRUE);
-        SetForegroundWindow(parent);
-    }
+    modal.end();
     DeleteObject(st.bg);
     DeleteObject(st.field);
     return st.ok;
