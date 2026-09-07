@@ -143,7 +143,7 @@ static int run_diagnose(void) {
                 "(one line per live window of class ShenzhenPDFWindow, measured from outside; `-`\n"
                 " fields are in-process facts only that window's own process can know -- read them\n"
                 " from its launch-health.log below. Field guide: portable/docs/\n"
-                " windows-native-observations.md section 13.)\n",
+                " windows-native-observations.md section 17.)\n",
                 stamp, SPDF_WIN_RELEASE_TAG, utf8_exe);
     spdf_win_health_print(text);
 

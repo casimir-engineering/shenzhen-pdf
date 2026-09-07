@@ -7,7 +7,7 @@
  * app is indistinguishable from a hung one: it repaints, it answers WM_NULL,
  * it is not marked "not responding" -- and no input reaches it. That is the
  * exact shape of the report this file was written for ("the app was never
- * responsive to any user input and not even focusable"), and section 13 of
+ * responsive to any user input and not even focusable"), and section 14 of
  * portable/docs/windows-native-observations.md is the measurement.
  *
  * Before this header every modal site in the port spelled the same four lines
