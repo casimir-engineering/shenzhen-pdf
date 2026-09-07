@@ -35,10 +35,17 @@
 #include "spdf_win_md_images.h"
 #include "spdf_win_md_reload.h"      /* the off-thread re-read this file installs */
 
-/* WM_APP + 0x4D44 ("MD"): "remote images landed in the cache". Posted by the
+/* WM_APP + 0x0D44: "remote images landed in the cache". Posted by the
  * fetch thread to the main window; main.cpp routes it to
- * spdf_win_md_command_images_arrived. */
-#define SPDF_WIN_MD_WM_IMAGES_ARRIVED (WM_APP + 0x4D44)
+ * spdf_win_md_command_images_arrived.
+ *
+ * It was WM_APP + 0x4D44 ("MD"), i.e. 0xCD44, which is above the WM_APP..0xBFFF
+ * range the window forwards -- so this message was posted and dropped, and the
+ * placeholders never became pictures until something else caused a re-show. The
+ * same mistake in three places; SPDF_WIN_APP_MSG_OK now catches it at compile
+ * time (spdf_win_window.h). */
+#define SPDF_WIN_MD_WM_IMAGES_ARRIVED (WM_APP + 0x0D44)
+SPDF_WIN_APP_MSG_OK(spdf_win_md_images_arrived_is_routable, SPDF_WIN_MD_WM_IMAGES_ARRIVED);
 
 /* Is the selected tab a Markdown document? The commands below are no-ops on
  * anything else, so a PDF reader never pays for them. */
