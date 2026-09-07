@@ -10,11 +10,16 @@
  *      out of an identical script the same either way -- which is why every
  *      --render-window-png frame is byte-identical and why that is true by
  *      construction rather than by a pixel comparison.
- *   2. THE FIRST FRAME IS ALWAYS SYNCHRONOUS, armed or not. That is what keeps
- *      the launch path painting a COMPLETE window before ShowWindow.
+ *   2. THE FIRST FRAME IS SYNCHRONOUS, armed or not, UNLESS IT WAS GIVEN A
+ *      BUDGET. That is what keeps the launch path painting a COMPLETE window
+ *      before ShowWindow -- and the budget is what keeps a page that takes
+ *      four seconds to render from meaning four seconds with no window at all
+ *      (spdf_win_canvas_set_first_frame_budget; case 3b).
  *   3. NO FRAME EVER HAS A HOLE. Every draw in every frame of every case below
  *      carries a bitmap, including the frames that had to draw a page at the
- *      wrong zoom while the right one rendered.
+ *      wrong zoom while the right one rendered. A frame that is still waiting
+ *      for its first page has no DRAWS at all and carries a message instead,
+ *      which is the same invariant seen from the other side.
  *
  * Plus the thing threading changes have to earn: a stress run of rapid scrolls,
  * zooms and rebuilds that ends with the pool idle, nothing in flight, and the
@@ -246,6 +251,103 @@ static void case_zoom_uses_stand_in_then_settles(const char* path) {
     spdf_close(doc);
 }
 
+/* --- 3b: the first frame has a bound ------------------------------------
+ *
+ * THE ONE FRAME WITH NOTHING TO FALL BACK ON. A fresh canvas has no exact
+ * bitmap and no stand-in, so the first frame used to render on this thread
+ * however long that took -- and a launch paints that frame BEFORE ShowWindow,
+ * so its cost is measured in seconds with no window on screen at all.
+ *
+ * spdf_win_canvas_set_first_frame_budget() bounds it, and this case pins the
+ * bound against the SAME document at the SAME zoom on whatever machine it runs
+ * on: build the first frame twice, once unbounded and once with a 1 ms budget,
+ * and compare how long build_scene() held the calling thread. No wall-clock
+ * constant appears in an assertion -- the unbounded run is the constant.
+ *
+ * A slow first page has to come from a fixture small enough to keep in the
+ * repo, so the zoom is pushed to the render byte cap: a ~100 MB raster of a
+ * 612x792 page, which is tens of milliseconds of writing pixels however fast
+ * the box is. That is also why the bound and the RECOVERY are two separate
+ * canvases below -- at the cap, one page fills the whole 96 MB bitmap cache, so
+ * the neighbour prefetch evicts it as fast as it arrives, and a frame that
+ * never keeps its page is a cache-pressure story rather than this one. */
+static void case_first_frame_budget(const char* path) {
+    spdf_document* doc = NULL;
+    spdf_win_canvas* canvas;
+    spdf_win_scene scene;
+    double unbounded_ms;
+    double bounded_ms;
+    double t0;
+    int first_ok;
+
+    /* --- the bound. Run 1: no budget, which is the launch as it shipped --
+     * one MuPDF render, on this thread, inside build_scene. */
+    canvas = open_canvas(path, &doc);
+    if (!canvas) return;
+    spdf_win_canvas_set_async_visible(canvas, on_ready, NULL);
+    spdf_win_canvas_set_zoom_at(canvas, 40.0f, 560.0f, 400.0f); /* capped to ~7.2 */
+    t0 = now_ms();
+    CHECK(build(canvas, &scene) != 0);
+    unbounded_ms = now_ms() - t0;
+    CHECK(frame_is_whole(&scene));
+    CHECK(spdf_win_canvas_sync_renders(canvas) >= 1);
+    spdf_win_canvas_destroy(canvas);
+    spdf_close(doc);
+
+    /* Run 2: the same first frame at the same zoom, with a budget of 1 ms. */
+    canvas = open_canvas(path, &doc);
+    if (!canvas) return;
+    spdf_win_canvas_set_async_visible(canvas, on_ready, NULL);
+    spdf_win_canvas_set_first_frame_budget(canvas, 1);
+    spdf_win_canvas_set_zoom_at(canvas, 40.0f, 560.0f, 400.0f);
+    t0 = now_ms();
+    CHECK(build(canvas, &scene) == 0); /* nothing to draw yet -- and it said so */
+    bounded_ms = now_ms() - t0;
+    /* THE BOUND. Not "fast" in milliseconds, which would be a flake generator
+     * on a box building five other tracks: a fraction of what the same frame
+     * costs with no bound, which is the claim being made. */
+    CHECK(bounded_ms < unbounded_ms * 0.5);
+    /* NEVER A HOLE. The frame has no page draws at all rather than a slot with
+     * no bitmap in it, and it carries the line the compose layer draws when a
+     * scene has nothing to show. */
+    CHECK(scene.page_count == 0);
+    CHECK(scene.message != NULL && scene.message[0] != L'\0');
+    /* And the page went to the POOL rather than to this thread. */
+    CHECK(spdf_win_canvas_sync_renders(canvas) == 0);
+    printf("first frame: %.1f ms unbounded, %.1f ms with a 1 ms budget, message \"%ls\"\n", unbounded_ms, bounded_ms,
+           scene.message ? scene.message : L"");
+    spdf_win_canvas_destroy(canvas);
+    spdf_close(doc);
+
+    /* --- the recovery, at a zoom where the cache holds what it is given.
+     * Whether this first frame beats its 1 ms budget or misses it is the
+     * machine's business; what must hold either way is that nothing rendered
+     * on this thread and that the page is THERE on the frame after the pool
+     * finishes -- in a window, the repaint the `ready` hook asks for. */
+    canvas = open_canvas(path, &doc);
+    if (!canvas) return;
+    InterlockedExchange(&g_notified, 0);
+    spdf_win_canvas_set_async_visible(canvas, on_ready, NULL);
+    spdf_win_canvas_set_first_frame_budget(canvas, 1);
+    first_ok = build(canvas, &scene);
+    CHECK(spdf_win_canvas_sync_renders(canvas) == 0);
+    if (!first_ok) {
+        CHECK(scene.page_count == 0);
+        CHECK(scene.message != NULL);
+    } else {
+        CHECK(frame_is_whole(&scene));
+    }
+    CHECK(spdf_win_canvas_settle(canvas, 60000) >= 1);
+    CHECK(InterlockedCompareExchange(&g_notified, 0, 0) >= 1);
+    CHECK(build(canvas, &scene) != 0);
+    CHECK(frame_is_whole(&scene));
+    CHECK(spdf_win_canvas_sync_renders(canvas) == 0);
+    printf("first frame recovery: deferred=%d, then %d page(s), %d rendered here\n", !first_ok, scene.page_count,
+           spdf_win_canvas_sync_renders(canvas));
+    spdf_win_canvas_destroy(canvas);
+    spdf_close(doc);
+}
+
 /* --- 4: the stress case ------------------------------------------------- */
 
 /* Rapid scrolls, zooms and rebuilds with no settle anywhere -- the shape of a
@@ -333,6 +435,7 @@ int main(int argc, char** argv) {
     case_unarmed_is_unchanged(path);
     case_first_frame_is_synchronous(path);
     case_zoom_uses_stand_in_then_settles(path);
+    case_first_frame_budget(path);
     case_arming_is_write_once(path);
     case_stress(path);
     printf("canvas_async_test: %s (%d failure%s of %d checks)\n", g_failures ? "FAIL" : "PASS", g_failures,

@@ -18,7 +18,9 @@
  * pool. Nothing here re-derives any of the three. The page under the viewport
  * renders synchronously unless a shell arms
  * spdf_win_canvas_set_async_visible() -- and even then never on the first
- * frame, and never without a stand-in to draw. See the .cpp's header.
+ * frame (unless that frame was given a budget,
+ * spdf_win_canvas_set_first_frame_budget), and never without a stand-in to
+ * draw. See the .cpp's header.
  *
  * `path` is the document's UTF-8 path, used only to give the render workers
  * something to open (the core allows one spdf_document per thread, so they
@@ -231,6 +233,37 @@ int spdf_win_canvas_build_scene(spdf_win_canvas* canvas, spdf_win_scene* scene);
  * re-arming with the same hook works. One shell, one canvas, one arming -- and
  * a canvas dies with its tab. */
 void spdf_win_canvas_set_async_visible(spdf_win_canvas* canvas, void (*ready)(void*), void* ready_ctx);
+
+/* HOW LONG THE FIRST FRAME MAY TAKE, in milliseconds; 0 (the default) means no
+ * bound at all, which is what every headless path keeps.
+ *
+ * The first frame of a fresh document has nothing in the cache and no stand-in
+ * to draw, so it renders on the calling thread however long that takes, and a
+ * launch paints it BEFORE ShowWindow so the window appears complete. On a page
+ * with 400,000 stroked paths that is 4.5 s (2,000,000: 35 s) with NO WINDOW ON
+ * SCREEN, the process IsHungAppWindow-hung, which is exactly the report this
+ * bound exists for (windows-native-observations.md sections 16 and 18).
+ *
+ * With a budget set, and only with async armed first, the first frame ASKS the
+ * pool for its page and waits that long for it. Inside the budget nothing
+ * changes: the same pixels, from the same render, before the same ShowWindow.
+ * Past it the frame comes back with NO page draws and the canvas's status line
+ * instead ("Opening…"), the window goes up enabled and answering, and the
+ * `ready` hook above brings the page in when it lands. The invariant that a
+ * frame never has a HOLE in it is kept by dropping the draw rather than
+ * drawing an empty one -- a missing page is a message, not a blank slot.
+ *
+ * Set it on the LAUNCH path only, before the first paint. A canvas whose first
+ * frame is already built ignores it. */
+void spdf_win_canvas_set_first_frame_budget(spdf_win_canvas* canvas, int ms);
+
+/* 250 ms. Longer than the whole healthy launch this port measures -- 194 ms
+ * from process creation to the first composed frame, of which the page render
+ * is 39 ms -- so no launch that is fast today waits any differently; and short
+ * enough that the worst case is a window in about a third of a second rather
+ * than one in nine seconds. Justified with numbers in section 18 of
+ * portable/docs/windows-native-observations.md; move it with a measurement. */
+#define SPDF_WIN_CANVAS_FIRST_FRAME_BUDGET_MS 250
 
 /* Bytes currently held by the page-bitmap cache. For the render-budget check;
  * never used to make a drawing decision. */

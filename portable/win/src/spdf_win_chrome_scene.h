@@ -448,6 +448,12 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
     spdf_win_find_apply_overlays(scene);
     spdf_win_canvas_apply_selection_overlays(a->canvas, scene);
     chrome_publish_comments(a, scene, &chrome_layout, section, g_chrome_dpi);
-    scene->message = a->status[0] ? a->status : NULL;
+    /* THE APP'S STATUS OUTRANKS THE CANVAS'S, AND ONLY WHEN IT HAS ONE. This
+     * used to assign unconditionally, which threw away the message
+     * build_scene had just put on the scene whenever the app had nothing to
+     * say -- harmless while the only frame with no page draws was a broken
+     * document, and wrong the moment a frame can also mean "the first page is
+     * still rendering" (spdf_win_canvas_set_first_frame_budget). */
+    if (a->status[0]) scene->message = a->status;
     return 1;
 }
