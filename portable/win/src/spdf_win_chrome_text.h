@@ -52,7 +52,17 @@ typedef enum spdf_win_text_focus {
     SPDF_WIN_FOCUS_NONE = 0,
     SPDF_WIN_FOCUS_FIND,
     SPDF_WIN_FOCUS_PAGE,
-    SPDF_WIN_FOCUS_SIDEBAR_FILTER
+    SPDF_WIN_FOCUS_SIDEBAR_FILTER,
+    /* NOT A FIELD, and the only member of this enum that is not. The empty
+     * canvas's "Open a PDF…" button (spdf_win_chrome_empty.h) is a Tab stop, and
+     * this enum is where the window already keeps "what does the keyboard belong
+     * to" -- one value the app stores, which is the same argument
+     * spdf_win_chrome_input.h makes for three FOCUS_* actions rather than one
+     * carrying a field id: a second variable kept beside this one is a variable
+     * that can go stale against it. chrome_focused_field() returns 0 for it, so
+     * no edit call can ever be handed a NULL buffer, and chrome_field_key()
+     * answers Return and Space for it before it asks for one. */
+    SPDF_WIN_FOCUS_OPEN
 } spdf_win_text_focus;
 
 /* Is this a code unit a field should accept? Everything below space is a
