@@ -120,7 +120,15 @@ static void chrome_inputs_for(app* a, SpdfWinChromeModelInputs* in, float dpi_sc
     /* The EFFECTIVE visibility, decided by scene_for_window before the build
      * and published for the router (spdf_win_sidebar_view.h). */
     in->show_sidebar = a->show_sidebar && spdf_win_sidebar_effective_visible();
-    in->show_minimap = a->show_minimap;
+    /* NO MINIMAP WITHOUT A DOCUMENT, which is macOS's own force
+     * (-setMinimapActuallyVisible: is `visible && [self hasActiveDocument]`,
+     * ShenzhenPDFMac.mm:9137, and showEmptyDocumentViewWithMessage: calls it with
+     * NO at :5267). The empty window used to draw a bare strip down its right
+     * edge with nothing in it -- and the same test greys the Map switch beside
+     * it, so the switch and the strip now agree. The ROUTER's model applies the
+     * identical clause (chrome_layout_for_input), because show_minimap IS
+     * geometry: it takes the strip's width out of the canvas. */
+    in->show_minimap = a->show_minimap && a->canvas != NULL;
     in->sidebar_w = a->sidebar_w;
     in->minimap_w = a->minimap_w;
     in->hot_tab = a->hot_tab;
@@ -337,8 +345,21 @@ static int scene_for_window(void* user, spdf_win_scene* scene) {
         a->chrome.sidebar_row_count = 0;
         chrome_publish_search(a, &chrome_layout, section, g_chrome_dpi);
         chrome_publish_comments(a, NULL, &chrome_layout, section, g_chrome_dpi);
-        scene->message = a->status[0] ? a->status
-                                      : L"No document open — Ctrl+O to open one, or drop a PDF here";
+        /* THE HEADLINE ONLY, now that the canvas has a button.
+         *
+         * This line used to be the whole empty state: "No document open —
+         * Ctrl+O to open one, or drop a PDF here". Naming a shortcut is not an
+         * affordance, and it was the ONLY thing on that window a reader could
+         * act on -- everything else was drawn live and was not. The call to
+         * action is a real button now and the drop hint sits under it, both from
+         * spdf_win_chrome_empty.h, so what is left here is the STATE. macOS's
+         * own placeholder is exactly this long: @"Open a document"
+         * (ShenzhenPDFMac.mm:861).
+         *
+         * `a->status` still outranks it, and that is why this stays a message
+         * rather than moving into the chrome painter with the button: an error
+         * from a failed open has to be able to take this line. */
+        scene->message = a->status[0] ? a->status : L"No document open";
         return 1;
     }
 

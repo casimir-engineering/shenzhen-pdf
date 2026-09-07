@@ -83,6 +83,9 @@ typedef enum spdf_win_chrome_action {
      * spdf_win_menu_app_popup(). Distinct from TAB_OVERFLOW above: that one
      * lists documents, this one lists commands. */
     SPDF_WIN_CA_APP_MENU,
+    /* The EMPTY canvas's "Open a PDF…" button (spdf_win_chrome_empty.h), posted
+     * as SPDF_WIN_CMD_OPEN -- the command Ctrl+O and the strip's `+` also post. */
+    SPDF_WIN_CA_OPEN_DOC,
     SPDF_WIN_CA_PREV_PAGE,
     SPDF_WIN_CA_NEXT_PAGE,
     SPDF_WIN_CA_ZOOM_OUT,
@@ -237,8 +240,8 @@ typedef struct SpdfWinChromeHit {
     spdf_win_chrome_cursor cursor;
 } SpdfWinChromeHit;
 
-/* The sidebar and toolbar cases, extracted for the size ratchet; both need the
- * types above. */
+/* The sidebar, toolbar and empty-canvas cases, extracted for the size ratchet;
+ * all three need the types above. */
 #include "spdf_win_chrome_toolbar_route.h"
 #include "spdf_win_sidebar_input.h"
 #include "spdf_win_annot_marks.h"
@@ -479,7 +482,9 @@ static SPDF_WIN_CI_INLINE void spdf_win_chrome_input_route(const SpdfWinChromeLa
                     return;
                 }
             }
-            spdf_win_annot_route(m, x, y, button, out);
+            /* The empty state's Open button first, for the same precedence
+             * reason: it is drawn on this canvas (spdf_win_chrome_empty.h). */
+            if (!spdf_win_chrome_empty_route(l, m, x, y, button, out)) spdf_win_annot_route(m, x, y, button, out);
             return;
         }
 
