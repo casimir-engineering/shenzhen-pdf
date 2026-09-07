@@ -65,6 +65,16 @@ struct spdf_win_window {
      * gesture means is the caller's now; the capture is the Win32 half. */
     int pressed; /* spdf_win_chrome_button; SPDF_WIN_CB_NONE when nothing is */
 
+    /* A WM_MOUSELEAVE HAS BEEN ASKED FOR AND HAS NOT ARRIVED. Set by
+     * track_mouse_leave(), which only WM_MOUSEMOVE calls because that is the one
+     * message that proves the pointer is in this client area; cleared by
+     * WM_MOUSELEAVE. It exists so the request is made once per entry -- and, more
+     * importantly, so the leave handler cannot ask again: TrackMouseEvent called
+     * with the pointer OUTSIDE hwndTrack posts WM_MOUSELEAVE straight back, which
+     * is a message loop with no exit. See track_mouse_leave() in
+     * spdf_win_window_input.h. */
+    int tracking_leave;
+
     /* THE CAPTION IS OURS (spdf_win_window_caption.h). Whether the window is
      * maximized, and which of the three drawn caption buttons the pointer is over
      * or holding, as spdf_win_caption_button. Mirrored into the chrome model
@@ -222,11 +232,18 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
              * whatever WM_NCMOUSELEAVE did or did not say. */
             if (window->caption_hot != SPDF_WIN_CAPTION_NONE)
                 caption_set(window, SPDF_WIN_CAPTION_NONE, window->caption_pressed);
+            /* The pointer is HERE, which is what makes this the one place that
+             * may ask for a WM_MOUSELEAVE at all -- see track_mouse_leave(). */
+            track_mouse_leave(window);
             /* Unconditionally, not only while a button is down: hover state is
              * what lights the tab strip, and the handler decides if it changed. */
             dispatch_mouse(window, SPDF_WIN_INPUT_MOUSE_MOVE, window->pressed, lparam);
             return 0;
         case WM_MOUSELEAVE:
+            /* The request is spent. NOTHING BELOW MAY ASK FOR ANOTHER: the
+             * pointer is outside, and TrackMouseEvent from here posts this
+             * message straight back (track_mouse_leave()). */
+            window->tracking_leave = 0;
             /* A position no chrome contains, so the router clears every hot flag.
              * Not while a button is down: the capture keeps the gesture alive
              * outside the window and (-1, -1) would pan the whole way there. */
