@@ -21,6 +21,10 @@ NS_ASSUME_NONNULL_BEGIN
 // matching how TextKit places attachments on the baseline. Caller releases.
 FOUNDATION_EXPORT CTLineRef SPDFMarkdownCreateFragmentLine(NSAttributedString* lineString) CF_RETURNS_RETAINED;
 
+// The footer every drawn sheet carries in its bottom margin: "Page 2 of 10".
+// One-based, because that is how a reader counts pages.
+FOUNDATION_EXPORT NSString* SPDFMarkdownPageFooterText(NSUInteger pageIndex, NSUInteger pageCount);
+
 @class SPDFMarkdownDiagramBlockInfo;
 @class SPDFMarkdownTableRowInfo;
 
