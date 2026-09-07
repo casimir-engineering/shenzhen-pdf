@@ -408,7 +408,11 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     BOOL activateLink = _draggingSelection && _selectedRange.length == 0 && event.clickCount == 1;
     _draggingSelection = NO;
     if (!activateLink) return;
-    NSUInteger index = [self characterIndexAtPoint:[self convertPoint:event.locationInWindow fromView:nil]];
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    // Only a click ON the link text opens it: the nearest-fragment index below
+    // reaches across a table row's empty space (see pointIsOnLink:).
+    if (![self pointIsOnLink:point]) return;
+    NSUInteger index = [self characterIndexAtPoint:point];
     if (index == NSNotFound || index >= _attributedString.length) return;
     NSString* destination = [_attributedString attribute:SPDFMacMarkdownDestinationAttribute
                                                  atIndex:index

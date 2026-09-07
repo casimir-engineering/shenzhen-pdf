@@ -2156,8 +2156,8 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     NSDictionary* info = NSBundle.mainBundle.infoDictionary;
     NSString* version = info[@"CFBundleShortVersionString"];
     NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.9.5";
-    if (build.length == 0) build = @"2";
+    if (version.length == 0) version = @"26.9.7";
+    if (build.length == 0) build = @"1";
     return [NSString stringWithFormat:@"%@-%@", version, build];
 }
 
@@ -5593,7 +5593,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         CGFloat x = NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5
                         ? [self centeredHorizontalScrollOriginXForPageRect:pageRect]
                         : MAX(0, pageRect.origin.x - 12.0);
-        CGFloat y = MAX(0, pageRect.origin.y - 12);
+        CGFloat y = spdf_mac_fit_scroll_origin_y(NSMinY(pageRect), NSHeight(pageRect), NSHeight(clipView.bounds), 12);
         if (_presentationMode) y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
         NSPoint point = NSMakePoint(x, y);
         [self scrollDocumentClipViewToOrigin:point notify:NO];

@@ -5,19 +5,38 @@
 NSAttributedStringKey const SPDFMacMarkdownDestinationAttribute = @"SPDFMacMarkdownDestination";
 NSAttributedStringKey const SPDFMacMarkdownWikiDestinationAttribute = @"SPDFMacMarkdownWikiDestination";
 
+// Stamps every link run under `block` with its destination, searching for the
+// run's text inside `scope` from `*cursor` on.
+//
+// Not every model block has a rendered block of its own: the renderer records
+// a TABLE ROW as one block and never its cells, yet the cells are what carry
+// the inline runs. The first version of this walk only searched inside the
+// block's OWN rendered range and simply skipped a block without one -- so a
+// link in a table cell was drawn as a link, underlined and coloured, and did
+// nothing when clicked. A block without a rendered range now inherits the
+// nearest recorded ancestor's range and cursor, so its cells' runs are found
+// in order inside the row, exactly as a paragraph's runs are found inside the
+// paragraph.
 static void SPDFAddRunDestinations(SPDFMarkdownBlock* block,
                                    SPDFMarkdownRenderedDocument* rendered,
-                                   NSMutableAttributedString* output) {
+                                   NSMutableAttributedString* output,
+                                   NSRange scope,
+                                   NSUInteger* cursor) {
     SPDFMarkdownRenderedBlock* renderedBlock = [rendered renderedBlockWithIndex:block.blockIndex];
+    NSUInteger ownCursor = 0;
     if (renderedBlock && NSMaxRange(renderedBlock.attributedRange) <= output.length) {
-        NSUInteger cursor = renderedBlock.attributedRange.location;
-        NSUInteger end = NSMaxRange(renderedBlock.attributedRange);
+        scope = renderedBlock.attributedRange;
+        ownCursor = scope.location;
+        cursor = &ownCursor;
+    }
+    if (cursor) {
+        NSUInteger end = NSMaxRange(scope);
         for (SPDFMarkdownInlineRun* run in block.runs) {
-            if (!run.text.length || cursor >= end) continue;
-            NSRange remaining = NSMakeRange(cursor, end - cursor);
+            if (!run.text.length || *cursor >= end) continue;
+            NSRange remaining = NSMakeRange(*cursor, end - *cursor);
             NSRange found = [output.string rangeOfString:run.text options:0 range:remaining];
             if (found.location == NSNotFound) continue;
-            cursor = NSMaxRange(found);
+            *cursor = NSMaxRange(found);
             if (!(run.traits & (SPDFMarkdownInlineTraitLink | SPDFMarkdownInlineTraitWikiLink))) continue;
             NSAttributedStringKey key = (run.traits & SPDFMarkdownInlineTraitWikiLink)
                 ? SPDFMacMarkdownWikiDestinationAttribute : SPDFMacMarkdownDestinationAttribute;
@@ -25,14 +44,18 @@ static void SPDFAddRunDestinations(SPDFMarkdownBlock* block,
             [output removeAttribute:NSLinkAttributeName range:found];
         }
     }
-    for (SPDFMarkdownBlock* child in block.children) SPDFAddRunDestinations(child, rendered, output);
+    for (SPDFMarkdownBlock* child in block.children)
+        SPDFAddRunDestinations(child, rendered, output, scope, cursor);
 }
 
 NSAttributedString* SPDFMacMarkdownInteractiveString(SPDFMarkdownDocumentModel* model,
                                                      SPDFMarkdownRenderedDocument* rendered) {
     NSMutableAttributedString* output = [rendered.attributedString mutableCopy];
     [output removeAttribute:NSLinkAttributeName range:NSMakeRange(0, output.length)];
-    for (SPDFMarkdownBlock* block in model.blocks) SPDFAddRunDestinations(block, rendered, output);
+    // No scope at the root: a top-level block always records its own rendered
+    // range, and a run reached without any recorded ancestor has nowhere to be.
+    for (SPDFMarkdownBlock* block in model.blocks)
+        SPDFAddRunDestinations(block, rendered, output, NSMakeRange(0, 0), NULL);
     return output;
 }
 

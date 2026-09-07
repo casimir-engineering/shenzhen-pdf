@@ -1,10 +1,5 @@
-#import "SPDFMacMarkdownPagedView.h"
+#import "SPDFMacMarkdownPagedViewPrivate.h"
 
-#import "SPDFMacMarkdownPageCanvas.h"
-#import "markdown/SPDFMarkdownPaginator.h"
-
-static const CGFloat kSPDFMarkdownMinimumZoom = 0.10;
-static const CGFloat kSPDFMarkdownMaximumZoom = 5.00;
 static const CGFloat kSPDFMarkdownFitInset = 48.0;
 
 // The scroll/clip background behind the sheets. The dark theme names its own
@@ -15,15 +10,7 @@ static NSColor* SPDFMacMarkdownGutterColor(SPDFMarkdownPaginationPlan* plan) {
     return theme.viewportBackgroundColor ?: NSColor.windowBackgroundColor;
 }
 
-@implementation SPDFMacMarkdownPagedView {
-    SPDFMacMarkdownPageCanvas* _canvas;
-    SPDFMarkdownPaginationPlan* _plan;
-    NSAttributedString* _attributedString;
-    NSInteger _currentPageIndex;
-    BOOL _updatingGeometry;
-    BOOL _updatingScrollLock;
-    BOOL _liveMagnifying;
-}
+@implementation SPDFMacMarkdownPagedView
 
 - (instancetype)initWithPaginationPlan:(SPDFMarkdownPaginationPlan*)plan
                       attributedString:(NSAttributedString*)attributedString {
@@ -53,8 +40,10 @@ static NSColor* SPDFMacMarkdownGutterColor(SPDFMarkdownPaginationPlan* plan) {
     self.maxMagnification = kSPDFMarkdownMaximumZoom;
     // Custom clip view so horizontal panning can be locked on pages that fit the
     // viewport — same mechanism as the PDF document scroll view (see
-    // updateHorizontalScrollLock).
-    SPDFDocumentClipView* clipView = [[SPDFDocumentClipView alloc] init];
+    // updateHorizontalScrollLock) — and so every scroll origin lands on a whole
+    // device pixel, which is what keeps live CoreText from wobbling as it moves
+    // (see SPDFMacMarkdownClipView.h).
+    SPDFDocumentClipView* clipView = [[SPDFMacMarkdownClipView alloc] init];
     clipView.drawsBackground = YES;
     clipView.backgroundColor = self.backgroundColor;
     self.contentView = clipView;
@@ -314,40 +303,6 @@ static NSColor* SPDFMacMarkdownGutterColor(SPDFMarkdownPaginationPlan* plan) {
 - (void)zoomByFactor:(CGFloat)factor {
     NSRect visible = _canvas.visibleRect;
     [self setZoom:self.magnification * factor centeredAtPoint:NSMakePoint(NSMidX(visible), NSMidY(visible))];
-}
-
-// Exact-viewport fit (PDF parity): fits are computed against the raw viewport
-// with no decorative inset — Fit Width fills the viewport width exactly and
-// Fit Page makes the page height equal the viewport height exactly, page top
-// at the viewport top (the canvas inset collapses at exact fit, see
-// SPDFMacMarkdownPageCanvas's layoutViewportSize).
-- (CGFloat)zoomForFitMode:(SPDFMacMarkdownPageFitMode)fitMode {
-    NSSize viewport = self.contentSize;
-    NSSize paper = _plan.configuration.paperSize;
-    CGFloat width = MAX(1, viewport.width) / paper.width;
-    CGFloat height = MAX(1, viewport.height) / paper.height;
-    if (fitMode == SPDFMacMarkdownPageFitWidth) return width;
-    if (fitMode == SPDFMacMarkdownPageFitHeight) return height;
-    if (fitMode == SPDFMacMarkdownPageFitPage) return MIN(width, height);
-    if (fitMode == SPDFMacMarkdownPageFitActual) return 1.0;
-    return self.magnification;
-}
-
-- (void)applyFitMode:(SPDFMacMarkdownPageFitMode)fitMode {
-    _fitMode = fitMode;
-    // Two passes, PDF parity with the tab-switch fit reconciliation: applying a
-    // fit can show/hide the vertical scroller, which (with legacy scrollers)
-    // changes the viewport the fit was computed against. The second pass
-    // recomputes against the settled viewport so the fit stays exact.
-    for (int pass = 0; pass < 2; ++pass) {
-        CGFloat zoom = MAX(kSPDFMarkdownMinimumZoom, MIN(kSPDFMarkdownMaximumZoom, [self zoomForFitMode:fitMode]));
-        if (pass > 0 && fabs(zoom - self.magnification) < 0.0001) break;
-        NSRect page = [_canvas frameForPageAtIndex:(NSUInteger)MAX(0, _currentPageIndex)];
-        [self setMagnification:zoom centeredAtPoint:NSMakePoint(NSMidX(page), NSMidY(page))];
-        _fitMode = fitMode;
-        [self updateCanvasGeometryPreservingCenter:YES];
-    }
-    [self viewportDidChange:nil];
 }
 
 - (void)setFitMode:(SPDFMacMarkdownPageFitMode)fitMode {
