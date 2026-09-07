@@ -985,12 +985,22 @@ foreground window AND at z-index 0 AND no window of the process is hung"
 would have caught both in the launch budget case. It now does: `measure-launch.ps1`
 records, per run and while the window is up, whether it is the foreground window,
 its z-index among Alt+Tab-sized visible top-level windows, and how many windows
-of the process `IsHungAppWindow` reports; `launch.budget` FAILS on any hung
-window or on a z-index other than 0 in a majority of runs. Foreground is reported
-but not judged -- Windows grants it only to a process launched BY the foreground
-process, which a harness under a shell under an editor never is, so it reads
-0/5 there while a hand launch is 5/5. Before the two fixes this case would have
-read "1 hung window, z-index 1"; after, "5/5 in front, 0 hung".
+of the process `IsHungAppWindow` reports. Before the two fixes this case would
+have read "1 hung window, z-index 1"; after, "5/5 in front, 0 hung".
+
+What it JUDGES took a second pass to get right, and the first version was wrong
+in a way worth keeping written down. Foreground is reported and not judged:
+Windows grants it only to a process launched BY the foreground process, which a
+harness under a shell under an editor never is, so it reads 0/5 here while a
+hand launch is 5/5. The first version then judged z-order as if it were
+independent -- and failed the case 0/5 on a healthy window, because a process
+that may not take the foreground also may not be raised above the window that
+holds it. On this machine the editor's own window sits at z-index 0 for as long
+as a session is open, so nothing the harness launches can ever be in front of
+it. The defect actually seen in section 11 was narrower than "not in front": it
+was activation GRANTED and the window still not raised. So z-order is judged
+only over the runs that took the foreground, and reported for the rest. A hung
+window needs no such qualification and remains a hard failure at one.
 
 ## 12. The upstream parity wave (2026-09-06)
 
