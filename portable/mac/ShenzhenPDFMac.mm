@@ -29,6 +29,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacLaunchWorkIntegration.h"
 #import "SPDFMacZoomSelfTestIntegration.h"
 #import "SPDFMacModels.h"
+#import "SPDFMacOCRInstall.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
@@ -14638,54 +14639,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     return env;
 }
 
-- (NSString*)ocrInstallScriptForLanguage:(NSString*)language {
-    NSString* languageList = [spdf_ocr_language_components(language) componentsJoinedByString:@" "];
-    return [NSString
-        stringWithFormat:@"set -e\n"
-                          "export PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"\n"
-                          "export NONINTERACTIVE=1\n"
-                          "OCR_LANGS=\"%@\"\n"
-                          "BREW=\"\"\n"
-                          "if command -v brew >/dev/null 2>&1; then BREW=$(command -v brew); "
-                          "elif [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
-                          "elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; fi\n"
-                          "if ! command -v ocrmypdf >/dev/null 2>&1 || ! command -v tesseract >/dev/null 2>&1; "
-                          "then "
-                          "if [ -z \"$BREW\" ]; then echo 'Homebrew not found. Installing Homebrew...'; "
-                          "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/"
-                          "install.sh)\"; "
-                          "if [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
-                          "elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; "
-                          "else echo 'Homebrew installation did not produce a brew executable.'; exit 1; fi; fi; "
-                          "echo \"Using $BREW\"; \"$BREW\" install ocrmypdf tesseract; "
-                          "else echo 'OCRmyPDF and Tesseract are already installed.'; fi\n"
-                          "if [ -n \"$BREW\" ] && printf '%%s\\n' \"$OCR_LANGS\" | grep -qv '^eng$'; then "
-                          "echo 'Installing Tesseract language data...'; \"$BREW\" install tesseract-lang || true; "
-                          "fi\n"
-                          "TESS_PARENT=\"$HOME/Library/Application Support/ShenzhenPDF/tesseract\"\n"
-                          "mkdir -p \"$TESS_PARENT/tessdata\"\n"
-                          "download_lang() {\n"
-                          "  lang=\"$1\"\n"
-                          "  url=\"https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/$lang."
-                          "traineddata\"\n"
-                          "  dest=\"$TESS_PARENT/tessdata/$lang.traineddata\"\n"
-                          "  echo \"Downloading $lang traineddata...\"\n"
-                          "  if command -v curl >/dev/null 2>&1; then curl -LfsS \"$url\" -o \"$dest\"; "
-                          "elif command -v wget >/dev/null 2>&1; then wget -q \"$url\" -O \"$dest\"; "
-                          "else echo 'curl or wget is required to download OCR language data.'; return 1; fi\n"
-                          "}\n"
-                          "for lang in $OCR_LANGS; do\n"
-                          "  if command -v tesseract >/dev/null 2>&1 && tesseract --list-langs 2>/dev/null | "
-                          "grep -qx \"$lang\"; then echo \"Tesseract language $lang is installed.\"; "
-                          "elif [ -f \"$TESS_PARENT/tessdata/$lang.traineddata\" ]; then "
-                          "echo \"Bundled Shenzhen PDF language $lang is installed.\"; "
-                          "else download_lang \"$lang\"; fi\n"
-                          "done\n"
-                          "command -v ocrmypdf >/dev/null 2>&1\n"
-                          "command -v tesseract >/dev/null 2>&1\n",
-                         languageList];
-}
-
 - (void)installOCRAndRunAfterwardsWithLanguage:(NSString*)language displayName:(NSString*)displayName {
     if (_ocrInstallRunning) {
         [_ocrInstallPanel makeKeyAndOrderFront:nil];
@@ -14971,6 +14924,10 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     _statusLabel.stringValue = runningDetail;
     [self showOCRProgressWithDetail:runningDetail];
 
+    // ocrmypdf needs a Noto face to DRAW the text it recognises; fetch any that
+    // is missing in the background (see SPDFMacOCRInstall.h) without delaying
+    // this run by a download.
+    [self ensureOCRFontsForLanguage:language];
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:tool];
     task.arguments = args;
