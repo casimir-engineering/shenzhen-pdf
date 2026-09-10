@@ -78,6 +78,7 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 @property(nonatomic, strong) NSColor* secondaryTextColor;
 @property(nonatomic, strong) NSColor* linkColor;
 @property(nonatomic, strong) NSColor* codeBackgroundColor;
+@property(nonatomic, strong) NSColor* markHighlightColor;
 @property(nonatomic, strong) NSColor* quoteColor;
 + (instancetype)defaultOptions;
 // defaultOptions carrying the given variant's palette roles.

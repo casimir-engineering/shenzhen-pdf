@@ -65,6 +65,8 @@ SPDFMarkdownInlineTraits SPDFMarkdownHTMLTraitForTag(NSString* name) {
           @"del": @(SPDFMarkdownInlineTraitStrikethrough),
           @"sub": @(SPDFMarkdownInlineTraitSubscript), @"sup": @(SPDFMarkdownInlineTraitSuperscript),
           @"kbd": @(SPDFMarkdownInlineTraitKeyboard),
+          @"u": @(SPDFMarkdownInlineTraitUnderline), @"ins": @(SPDFMarkdownInlineTraitUnderline),
+          @"mark": @(SPDFMarkdownInlineTraitHighlight),
       };
     });
     return traits[name].unsignedIntegerValue;

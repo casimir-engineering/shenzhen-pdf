@@ -41,7 +41,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Real sheets, same reader** — GitHub-flavored typography, paginated onto numbered A4 sheets ("Page 2 of 10" in every footer); same tabs, chapters, map, search, zoom and export as a PDF. Rotate turns the paper landscape, and each file reopens on the sheet you last read it on.
 - **Live update** — edit the file elsewhere and the page re-renders in the background and swaps in whole. Nothing blanks.
-- **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML (badges, `<kbd>`, `<details>`, tables) renders natively. No web engine, no JavaScript, no network.
+- **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine, no JavaScript, no network.
 
 ## <a id="search"></a>Search-oriented architecture
 

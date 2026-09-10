@@ -72,6 +72,8 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   `SPDFMarkdownHTMLBlocks.mm`). Nothing is ever evaluated — HTML only
   translates into ordinary model blocks and styled runs:
   - Inline: `b`/`strong`, `i`/`em`, `code`/`tt`/`samp`, `s`/`strike`/`del`,
+    `u`/`ins` (single underline), `mark` (the theme's `markHighlightColor`
+    background, which beats the inline-code chip when both apply),
     `sub`/`sup` (smaller baseline-shifted runs, mirroring the math scripts),
     `kbd` (key-cap chip: smaller mono type on the inline-code background),
     `br`, `a href` (http/https/mailto/#anchor destinations only; other schemes

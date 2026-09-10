@@ -264,14 +264,16 @@ NSString* SPDFMarkdownDiagramCleanLabel(NSString* label) {
 // the tags reached the canvas as ordinary characters, which both printed them
 // and made every node wide enough to hold them.
 //
-// Only the weight/slant tags are honored, because a positioned label is
-// measured, wrapped, drawn and exported through exactly one thing — a FONT.
-// `<u>`, `<code>`, `<mark>` and friends would need attributes the label model
-// does not carry, so they stay literal text, as does anything else: an unknown
-// tag, or the bare `<` that a `&lt;` in the source decodes to.
+// Weight and slant change the FONT a span is measured and drawn in; underline
+// and strikethrough do not, so they ride along as span flags the emitter turns
+// into text attributes on the label's canonical text (SPDFMarkdownDiagramBlock).
+// Everything else stays literal: `<code>`, `<mark>`, an unknown tag, or the
+// bare `<` that a `&lt;` in the source decodes to.
 typedef NS_OPTIONS(NSUInteger, SPDFDiagramLabelTraits) {
     SPDFDiagramLabelTraitBold = 1 << 0,
     SPDFDiagramLabelTraitItalic = 1 << 1,
+    SPDFDiagramLabelTraitUnderline = 1 << 2,
+    SPDFDiagramLabelTraitStrikethrough = 1 << 3,
 };
 
 // Carried alongside the font on a wrapped line so the canvas can hand the page
@@ -285,6 +287,9 @@ static const NSUInteger kSPDFDiagramMaximumOpenTags = 64;
 static SPDFDiagramLabelTraits SPDFDiagramTraitsForTag(NSString* name) {
     if ([name isEqualToString:@"b"] || [name isEqualToString:@"strong"]) return SPDFDiagramLabelTraitBold;
     if ([name isEqualToString:@"i"] || [name isEqualToString:@"em"]) return SPDFDiagramLabelTraitItalic;
+    if ([name isEqualToString:@"u"] || [name isEqualToString:@"ins"]) return SPDFDiagramLabelTraitUnderline;
+    if ([name isEqualToString:@"s"] || [name isEqualToString:@"strike"] || [name isEqualToString:@"del"])
+        return SPDFDiagramLabelTraitStrikethrough;
     return 0;
 }
 
@@ -386,6 +391,8 @@ NSArray<SPDFMarkdownDiagramLabelSpan*>* SPDFMarkdownDiagramLabelSpans(NSAttribut
                     span.range = range;
                     span.bold = (traits & SPDFDiagramLabelTraitBold) != 0;
                     span.italic = (traits & SPDFDiagramLabelTraitItalic) != 0;
+                    span.underline = (traits & SPDFDiagramLabelTraitUnderline) != 0;
+                    span.strikethrough = (traits & SPDFDiagramLabelTraitStrikethrough) != 0;
                     [spans addObject:span];
                   }];
     return spans;

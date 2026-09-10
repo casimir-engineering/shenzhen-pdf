@@ -110,13 +110,19 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownDiagramShapeKind) {
 @property(nonatomic, copy, nullable) NSColor* authorStrokeColor;
 @end
 
-// One inline emphasis run inside a label line: the `<b>`/`<strong>` and
-// `<i>`/`<em>` markup mermaid labels are written with (see
-// SPDFMarkdownDiagramCleanLabel). `range` indexes the label's own `text`.
+// One inline emphasis run inside a label line: the `<b>`/`<strong>`,
+// `<i>`/`<em>`, `<u>`/`<ins>` and `<s>`/`<strike>`/`<del>` markup mermaid
+// labels are written with (see SPDFMarkdownDiagramCleanLabel). `range` indexes
+// the label's own `text`.
 @interface SPDFMarkdownDiagramLabelSpan : NSObject
 @property(nonatomic) NSRange range;
 @property(nonatomic) BOOL bold;
 @property(nonatomic) BOOL italic;
+// Not font traits: the emitter sets these as underline/strikethrough
+// attributes on the label's canonical text, which is what the band, the page
+// and the PDF export all draw from.
+@property(nonatomic) BOOL underline;
+@property(nonatomic) BOOL strikethrough;
 @end
 
 // One single-line text label at its resolved position. `frame` is the box the

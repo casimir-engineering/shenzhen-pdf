@@ -26,6 +26,7 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     self.secondaryTextColor = theme.secondaryTextColor;
     self.linkColor = theme.linkColor;
     self.codeBackgroundColor = theme.inlineCodeChipColor;
+    self.markHighlightColor = theme.markHighlightColor;
     self.quoteColor = theme.secondaryTextColor;
 }
 // The reading palette lives in SPDFMarkdownTheme: body text is a softened
@@ -86,6 +87,7 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     copy.secondaryTextColor = self.secondaryTextColor;
     copy.linkColor = self.linkColor;
     copy.codeBackgroundColor = self.codeBackgroundColor;
+    copy.markHighlightColor = self.markHighlightColor;
     copy.quoteColor = self.quoteColor;
     return copy;
 }

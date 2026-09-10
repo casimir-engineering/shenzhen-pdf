@@ -99,6 +99,7 @@ TESTS=""
 for TEST in \
     SPDFMarkdownParserTests \
     SPDFMarkdownHTMLTests \
+    SPDFMarkdownInlineFormattingTests \
     SPDFMarkdownMathTests \
     SPDFMarkdownLanguageTests \
     SPDFMarkdownRendererTests \

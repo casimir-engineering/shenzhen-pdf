@@ -54,6 +54,11 @@ typedef NS_OPTIONS(NSUInteger, SPDFMarkdownInlineTraits) {
     SPDFMarkdownInlineTraitSubscript = 1 << 9,
     SPDFMarkdownInlineTraitSuperscript = 1 << 10,
     SPDFMarkdownInlineTraitKeyboard = 1 << 11,
+    // <u>/<ins> draw a single underline; <mark> sets the highlight background.
+    // Both are plain text attributes on the run, so they reach the screen, the
+    // print pass and the PDF export through the one canonical string.
+    SPDFMarkdownInlineTraitUnderline = 1 << 12,
+    SPDFMarkdownInlineTraitHighlight = 1 << 13,
 };
 
 @interface SPDFMarkdownInlineRun : NSObject

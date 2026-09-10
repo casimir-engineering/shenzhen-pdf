@@ -29,6 +29,9 @@ static NSColor* SPDFRGB(unsigned int hex) {
     _secondaryTextColor = SPDFRGB(dark ? 0x999999 : 0x59636E);
     _linkColor = SPDFRGB(dark ? 0x7F6DF2 : 0x0969DA);
     _inlineCodeChipColor = SPDFRGB(dark ? 0x2A2A2A : 0xEFF1F2);
+    // GitHub's <mark> yellow in light; in dark, the same hue sunk into the
+    // paper so the body text on top keeps its contrast.
+    _markHighlightColor = SPDFRGB(dark ? 0x4A3B12 : 0xFFF8C5);
     _syntaxCommentColor = SPDFRGB(dark ? 0x7F848E : 0x59636E);
     _syntaxStringColor = SPDFRGB(dark ? 0x98C379 : 0x0A3069);
     _syntaxNumberColor = SPDFRGB(dark ? 0xD19A66 : 0x0550AE);
