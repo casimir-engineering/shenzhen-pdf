@@ -59,6 +59,15 @@ BOOL SPDFMarkdownRenderDiagramBlock(SPDFMarkdownRenderContext* context, SPDFMark
             NSRange range = NSMakeRange(labelStart + span.range.location, span.range.length);
             if (!range.length || NSMaxRange(range) > context.output.length) continue;
             [context.output addAttribute:NSFontAttributeName value:[label fontForSpan:span] range:range];
+            // Underline and strikethrough are not font traits, so they are set
+            // here as ordinary text attributes — the same ones body text uses,
+            // drawn by the same CTLine pass in the band, the page and the export.
+            if (span.underline)
+                [context.output addAttribute:NSUnderlineStyleAttributeName
+                                       value:@(NSUnderlineStyleSingle)
+                                       range:range];
+            if (span.strikethrough)
+                [context.output addAttribute:NSStrikethroughStyleAttributeName value:@1 range:range];
         }
         [labelRanges addObject:[NSValue valueWithRange:NSMakeRange(labelStart,
                                                                    context.output.length - labelStart)]];

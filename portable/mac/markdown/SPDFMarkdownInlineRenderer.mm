@@ -66,6 +66,8 @@ static NSDictionary* SPDFRunAttributes(SPDFMarkdownRenderContext* context, SPDFM
     attributes[NSFontAttributeName] = font;
     attributes[NSForegroundColorAttributeName] = context.options.textColor;
     if (run.traits & SPDFMarkdownInlineTraitStrikethrough) attributes[NSStrikethroughStyleAttributeName] = @1;
+    if (run.traits & SPDFMarkdownInlineTraitUnderline)
+        attributes[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
     if (run.traits & (SPDFMarkdownInlineTraitCode | SPDFMarkdownInlineTraitKeyboard)) {
         attributes[NSBackgroundColorAttributeName] = context.options.codeBackgroundColor;
     }
@@ -82,6 +84,10 @@ static NSDictionary* SPDFRunAttributes(SPDFMarkdownRenderContext* context, SPDFM
     if (run.traits & SPDFMarkdownInlineTraitWikiLink) {
         attributes[SPDFMarkdownWikiLinkAttribute] = run.destination ?: @"";
     }
+    // Last, so <mark> wins over the quieter inline-code chip when both apply and
+    // a marked link keeps its own color while gaining the highlight.
+    if (run.traits & SPDFMarkdownInlineTraitHighlight)
+        attributes[NSBackgroundColorAttributeName] = context.options.markHighlightColor;
     if (run.title.length) attributes[NSToolTipAttributeName] = run.title;
     return attributes;
 }

@@ -86,6 +86,7 @@ FOUNDATION_EXPORT const CGFloat SPDFMarkdownCodeBoxOuterMargin;
 @property(nonatomic, readonly) NSColor* secondaryTextColor;  // #59636E / #999999 muted: markers, captions, quotes, H6
 @property(nonatomic, readonly) NSColor* linkColor;           // #0969DA / #7F6DF2 links and accents
 @property(nonatomic, readonly) NSColor* inlineCodeChipColor; // #EFF1F2 / #2A2A2A inline-code and kbd chips
+@property(nonatomic, readonly) NSColor* markHighlightColor;  // #FFF8C5 / #4A3B12 <mark> background
 // Syntax token roles (Primer light / Obsidian-flavored dark).
 @property(nonatomic, readonly) NSColor* syntaxCommentColor;  // #59636E / #7F848E
 @property(nonatomic, readonly) NSColor* syntaxStringColor;   // #0A3069 / #98C379

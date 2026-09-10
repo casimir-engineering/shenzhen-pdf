@@ -215,9 +215,10 @@ Strict UTF-8 CommonMark through vendored MD4C, plus:
 **Inline HTML** renders natively through a strict sanitizing whitelist (vendored
 Gumbo HTML5 parser). Nothing is ever evaluated:
 
-- Inline: `b`/`strong`, `i`/`em`, `code`/`tt`/`samp`, `s`/`strike`/`del`,
-  `sub`/`sup`, `kbd` (as a key-cap chip), `br`, `a href` (http/https/mailto/
-  anchor only), `img` (with `width`/`height` size hints).
+- Inline: `b`/`strong`, `i`/`em`, `u`/`ins` (underline), `s`/`strike`/`del`
+  (strikethrough), `mark` (highlight), `code`/`tt`/`samp`, `sub`/`sup`,
+  `kbd` (as a key-cap chip), `br`, `a href` (http/https/mailto/anchor only),
+  `img` (with `width`/`height` size hints).
 - Block: `h1`–`h6`, `hr`, `p`/`div`/`center` with `align`, `blockquote`,
   `ul`/`ol`/`li`, `pre`, and simple `table`/`tr`/`th`/`td`. `details`/`summary`
   as above.
@@ -259,7 +260,8 @@ PDF as vector art.
 | `sequence` fences | js-sequence grammar, including its `Title:` line |
 | `flow` fences | flowchart.js grammar |
 
-`<b>`/`<i>` inside a label render as real bold and italic runs, `<br/>` breaks
+`<b>`/`<i>` inside a label render as real bold and italic runs, `<u>`/`<ins>`
+underline and `<s>`/`<strike>`/`<del>` strike through them, `<br/>` breaks
 the line, and labels are fitted to the shape they sit in. Author colors from
 `classDef` are painted verbatim in the light theme and put through the same
 luma remap as everything else in the dark one, so hues stay distinguishable. A
