@@ -3330,6 +3330,7 @@ static int stext_block_has_text(fz_stext_block* block) {
 int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t err_len) {
     fz_stext_page* text = NULL;
     int page_count;
+    int found = 0;
     int i;
 
     set_error(err, err_len, "");
@@ -3338,18 +3339,17 @@ int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t 
     page_count = doc->page_count;
     if (max_pages > 0 && max_pages < page_count) page_count = max_pages;
 
+    /* Never return from inside fz_try: fz_catch pops the frame, so an early
+     * return leaks it, and call 245 then hit "exception stack overflow!". */
     fz_try(doc->ctx) {
         for (i = 0; i < page_count; ++i) {
             text = fz_new_stext_page_from_page_number(doc->ctx, doc->doc, i, NULL);
-            if (text && stext_block_has_text(text->first_block)) {
-                fz_drop_stext_page(doc->ctx, text);
-                text = NULL;
-                return 1;
-            }
+            if (text && stext_block_has_text(text->first_block)) found = 1;
             if (text) {
                 fz_drop_stext_page(doc->ctx, text);
                 text = NULL;
             }
+            if (found) break;
         }
     }
     fz_catch(doc->ctx) {
@@ -3358,5 +3358,5 @@ int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t 
         return -1;
     }
 
-    return 0;
+    return found;
 }
