@@ -408,7 +408,6 @@
 - (void)saveDocumentAs:(id)sender;
 - (BOOL)saveActiveDocumentAsWithPanelTitle:(NSString*)panelTitle statusMessage:(NSString*)statusMessage;
 - (BOOL)ensureActivePDFCanBeModifiedForOperation:(NSString*)operationName;
-- (NSInteger)selectableTextStateForPDFAtPath:(NSString*)path errorMessage:(NSString**)errorMessage;
 - (void)translateDocument:(id)sender;
 - (void)rotateClockwise:(id)sender;
 - (void)rotateAnticlockwise:(id)sender;
