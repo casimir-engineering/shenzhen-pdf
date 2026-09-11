@@ -1,5 +1,7 @@
 #import "SPDFMacOCRInstall.h"
 
+#import "SPDFMacToolEnvironment.h"
+
 // The app-facing half of SPDFMacOCRInstall.h: the OCR panel's installer
 // script and the background font fetch. Split from the pure script builders
 // so those can be linked, and tested, without the whole app delegate.
@@ -26,6 +28,7 @@
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/bin/sh"];
     task.arguments = @[ @"-c", spdf_mac_ocr_font_script(language) ];
+    task.environment = spdf_mac_tool_environment(NSProcessInfo.processInfo.environment, @[], nil);
     task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
     task.standardError = [NSFileHandle fileHandleWithNullDevice];
     [task launchAndReturnError:nil];
