@@ -31,6 +31,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacModels.h"
 #import "SPDFMacOCRInstall.h"
 #import "SPDFMacOCRValidation.h"
+#import "SPDFMacToolEnvironment.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
@@ -11101,7 +11102,10 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
-    task.arguments = @[ @"-lc", [self argosInstallScript] ];
+    // Not `-lc`: a login shell would source the dotfiles whose conda/pyenv hook
+    // is exactly what made this install differ between machines.
+    task.arguments = @[ @"-c", [self argosInstallScript] ];
+    task.environment = [self taskEnvironmentWithToolPaths:@[]];
 
     __weak ShenzhenMacDelegate* weakSelf = self;
     [self runTranslationInstallTask:task
@@ -11158,6 +11162,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:packageTool];
     task.arguments = @[ @"install", packageName ];
+    task.environment = [self taskEnvironmentWithToolPaths:@[ packageTool ]];
 
     __weak ShenzhenMacDelegate* weakSelf = self;
     [self runTranslationInstallTask:task
@@ -13599,13 +13604,10 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
 - (NSString*)executablePathForTool:(NSString*)tool candidates:(NSArray<NSString*>*)candidates {
     NSFileManager* fm = NSFileManager.defaultManager;
-    NSString* userPath =
-        [[NSHomeDirectory() stringByAppendingPathComponent:@".local/bin"] stringByAppendingPathComponent:tool];
-    NSMutableArray<NSString*>* allCandidates = [candidates mutableCopy] ?: [NSMutableArray array];
-    [allCandidates addObject:userPath];
-    for (NSString* path in allCandidates) {
+    // The app's own virtualenv is tried before anything on PATH: it is the one
+    // install whose Python cannot be a different machine's (SPDFMacToolEnvironment.h).
+    for (NSString* path in spdf_mac_tool_candidate_paths(tool, candidates))
         if ([fm isExecutableFileAtPath:path]) return path;
-    }
 
     NSString* pathEnv = NSProcessInfo.processInfo.environment[@"PATH"] ?: @"";
     for (NSString* dir in [pathEnv componentsSeparatedByString:@":"]) {
@@ -13617,52 +13619,16 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 }
 
 - (NSDictionary<NSString*, NSString*>*)taskEnvironmentWithToolPaths:(NSArray<NSString*>*)toolPaths {
-    NSMutableDictionary<NSString*, NSString*>* env = [NSProcessInfo.processInfo.environment mutableCopy];
-    NSMutableArray<NSString*>* dirs = [NSMutableArray array];
-    void (^addDir)(NSString*) = ^(NSString* dir) {
-      if (!dir.length) return;
-      if (![dirs containsObject:dir]) [dirs addObject:dir];
-    };
+    return [self taskEnvironmentWithToolPaths:toolPaths extra:nil];
+}
 
-    for (NSString* toolPath in toolPaths) addDir(toolPath.stringByDeletingLastPathComponent);
-    addDir([NSHomeDirectory() stringByAppendingPathComponent:@".local/bin"]);
-    addDir(@"/opt/homebrew/bin");
-    addDir(@"/opt/homebrew/sbin");
-    addDir(@"/usr/local/bin");
-    addDir(@"/usr/local/sbin");
-    addDir(@"/opt/local/bin");
-    addDir(@"/usr/bin");
-    addDir(@"/bin");
-    addDir(@"/usr/sbin");
-    addDir(@"/sbin");
-
-    for (NSString* dir in [env[@"PATH"] componentsSeparatedByString:@":"]) addDir(dir);
-    env[@"PATH"] = [dirs componentsJoinedByString:@":"];
-    return env;
+- (NSDictionary<NSString*, NSString*>*)taskEnvironmentWithToolPaths:(NSArray<NSString*>*)toolPaths
+                                                              extra:(NSDictionary<NSString*, NSString*>*)extra {
+    return spdf_mac_tool_environment(NSProcessInfo.processInfo.environment, toolPaths, extra);
 }
 
 - (NSString*)argosInstallScript {
-    return @"set -e\n"
-           @"export "
-           @"PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/"
-           @"bin:/usr/sbin:/sbin:$PATH\"\n"
-           @"echo 'Checking for Argos Translate...'\n"
-           @"if command -v argos-translate >/dev/null 2>&1 && command -v argospm >/dev/null 2>&1; then "
-           @"echo 'Argos Translate is already installed.'; exit 0; fi\n"
-           @"if command -v pipx >/dev/null 2>&1; then PIPX=$(command -v pipx); "
-           @"elif command -v brew >/dev/null 2>&1; then echo 'Installing pipx with Homebrew...'; brew install pipx; "
-           @"PIPX=$(command -v pipx); "
-           @"else PIPX=\"\"; fi\n"
-           @"if [ -n \"$PIPX\" ]; then echo 'Installing or upgrading argostranslate with pipx...'; "
-           @"\"$PIPX\" install --include-deps argostranslate || \"$PIPX\" upgrade argostranslate; "
-           @"elif command -v python3 >/dev/null 2>&1; then echo 'Installing argostranslate with pip...'; python3 -m "
-           @"pip "
-           @"install --user --upgrade argostranslate; "
-           @"else echo 'Python 3, pipx, or Homebrew is required to install Argos "
-           @"Translate.'; exit 1; fi\n"
-           @"command -v argos-translate >/dev/null 2>&1\n"
-           @"command -v argospm >/dev/null 2>&1\n"
-           @"echo 'Argos Translate installed.'\n";
+    return spdf_mac_tool_argos_install_script();
 }
 
 - (void)showTranslationProgressWithTitle:(NSString*)title totalUnits:(double)totalUnits {
@@ -14038,6 +14004,7 @@ static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:packageTool];
     task.arguments = @[ @"install", packageName ];
+    task.environment = [self taskEnvironmentWithToolPaths:@[ packageTool ]];
 
     __weak ShenzhenMacDelegate* weakSelf = self;
     [self runTranslationInstallTask:task
@@ -14154,6 +14121,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:tool];
     task.arguments = @[ @"--from-lang", sourceLanguage, @"--to-lang", targetLanguage ];
+    task.environment = [self taskEnvironmentWithToolPaths:@[ tool ]];
     NSPipe* inputPipe = [NSPipe pipe];
     NSPipe* outputPipe = [NSPipe pipe];
     NSPipe* errorPipe = [NSPipe pipe];
@@ -14409,7 +14377,10 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
-    task.arguments = @[ @"-lc", [self argosInstallScript] ];
+    // Not `-lc`: a login shell would source the dotfiles whose conda/pyenv hook
+    // is exactly what made this install differ between machines.
+    task.arguments = @[ @"-c", [self argosInstallScript] ];
+    task.environment = [self taskEnvironmentWithToolPaths:@[]];
 
     __weak ShenzhenMacDelegate* weakSelf = self;
     [self runTranslationInstallTask:task
@@ -14634,10 +14605,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 - (NSDictionary<NSString*, NSString*>*)ocrTaskEnvironmentWithTool:(NSString*)tool
                                                         tesseract:(NSString*)tesseract
                                                          language:(NSString*)language {
-    NSMutableDictionary<NSString*, NSString*>* env =
-        [[self taskEnvironmentWithToolPaths:@[ tool ?: @"", tesseract ?: @"" ]] mutableCopy];
-    if ([self customTessdataHasOCRLanguage:language]) env[@"TESSDATA_PREFIX"] = [self customTessdataParentPath];
-    return env;
+    NSMutableDictionary<NSString*, NSString*>* extra = [NSMutableDictionary dictionary];
+    if ([self customTessdataHasOCRLanguage:language]) extra[@"TESSDATA_PREFIX"] = [self customTessdataParentPath];
+    return [self taskEnvironmentWithToolPaths:@[ tool ?: @"", tesseract ?: @"" ] extra:extra];
 }
 
 - (void)installOCRAndRunAfterwardsWithLanguage:(NSString*)language displayName:(NSString*)displayName {
@@ -14654,7 +14624,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
     NSTask* task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
-    task.arguments = @[ @"-lc", [self ocrInstallScriptForLanguage:language] ];
+    // No login shell, same reason as the Argos installer above.
+    task.arguments = @[ @"-c", [self ocrInstallScriptForLanguage:language] ];
+    task.environment = [self taskEnvironmentWithToolPaths:@[]];
     NSPipe* pipe = [NSPipe pipe];
     task.standardOutput = pipe;
     task.standardError = pipe;

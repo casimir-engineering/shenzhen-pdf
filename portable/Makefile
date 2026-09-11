@@ -59,6 +59,7 @@ CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
 CORE_TEXT_DETECTION_TEST := $(BUILD)/SPDFCoreTextDetectionTests
 CORE_PARTIAL_OCR_TEST := $(BUILD)/SPDFCorePartialOCRTests
 MAC_OCR_INSTALL_TEST := $(BUILD)/SPDFMacOCRInstallTests
+MAC_TOOL_ENV_TEST := $(BUILD)/SPDFMacToolEnvironmentTests
 CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
 CORE_RECOLOR_TEST := $(BUILD)/SPDFCoreRecolorTests
 CORE_RENDER_THEME_TEST := $(BUILD)/SPDFCoreRenderThemeTests
@@ -169,6 +170,12 @@ $(MAC_OCR_INSTALL_TEST): mac/tests/SPDFMacOCRInstallTests.mm mac/SPDFMacOCRInsta
 
 mac-ocr-install-tests: $(MAC_OCR_INSTALL_TEST)
 	"$(MAC_OCR_INSTALL_TEST)"
+
+$(MAC_TOOL_ENV_TEST): mac/tests/SPDFMacToolEnvironmentTests.mm mac/SPDFMacToolEnvironment.mm mac/SPDFMacToolEnvironment.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacToolEnvironmentTests.mm mac/SPDFMacToolEnvironment.mm -framework Cocoa -o "$@"
+
+mac-tool-environment-tests: $(MAC_TOOL_ENV_TEST)
+	"$(MAC_TOOL_ENV_TEST)"
 
 $(CORE_PASSWORD_TEST): core/tests/SPDFCorePasswordTests.c $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
 	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
