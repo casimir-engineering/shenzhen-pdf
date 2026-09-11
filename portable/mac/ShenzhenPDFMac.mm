@@ -30,6 +30,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacZoomSelfTestIntegration.h"
 #import "SPDFMacModels.h"
 #import "SPDFMacOCRInstall.h"
+#import "SPDFMacOCRValidation.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
@@ -14853,31 +14854,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         [NSString stringWithFormat:@"All text removed. Backup saved as %@.", backupPath.lastPathComponent];
 }
 
-- (NSInteger)selectableTextStateForPDFAtPath:(NSString*)path errorMessage:(NSString**)errorOut {
-    if (errorOut) *errorOut = nil;
-    if (!path.length) {
-        if (errorOut) *errorOut = @"No PDF path was supplied.";
-        return -1;
-    }
-
-    char err[1024];
-    spdf_document* doc = [self openSpdfDocumentAtPath:path
-                                           sourcePath:path
-                                               status:NULL
-                                                error:err
-                                          errorLength:sizeof(err)];
-    if (!doc) {
-        if (errorOut) *errorOut = [NSString stringWithUTF8String:err[0] ? err : "Could not open PDF."];
-        return -1;
-    }
-
-    int hasText = spdf_document_has_text(doc, 0, err, sizeof(err));
-    spdf_close(doc);
-    if (hasText < 0 && errorOut)
-        *errorOut = [NSString stringWithUTF8String:err[0] ? err : "Could not inspect PDF text."];
-    return hasText;
-}
-
 - (NSMutableArray<NSString*>*)ocrArgumentsForLanguage:(NSString*)language
                                          originalPath:(NSString*)originalPath
                                               tmpPath:(NSString*)tmp
@@ -14985,9 +14961,16 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
         NSString* validationError = nil;
         NSInteger outputHasText = [strongSelf selectableTextStateForPDFAtPath:tmp errorMessage:&validationError];
-        if (outputHasText <= 0 && !sourceHasText && !forceOCR) {
+        // ocrmypdf skips any page with no raster image ("page has no images -
+        // skipping all processing"), so a scan-cover, vector-body datasheet comes
+        // back with text on page 1 and none on 2..8 -- which the old "any text at
+        // all?" check called a success. A page left empty means a partial pass.
+        BOOL partial = outputHasText > 0 && [strongSelf ocrOutputIsPartialAtPath:tmp];
+        if ((outputHasText <= 0 || partial) && !sourceHasText && !forceOCR) {
             [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
-            [strongSelf updateOCRProgressDetail:@"No text found yet. Retrying with forced image OCR..."];
+            [strongSelf updateOCRProgressDetail:partial
+                                              ? @"Some pages were skipped. Retrying with forced image OCR..."
+                                              : @"No text found yet. Retrying with forced image OCR..."];
             [strongSelf runOCRTaskWithTool:tool
                                  tesseract:tesseract
                                   language:language

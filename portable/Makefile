@@ -57,6 +57,7 @@ MAC_GUMBO_SRCS := $(sort $(wildcard ../ext/gumbo-parser/src/*.c))
 MAC_GUMBO_OBJS := $(patsubst ../ext/gumbo-parser/src/%.c,$(BUILD)/gumbo-%.o,$(MAC_GUMBO_SRCS))
 CORE_OUTLINE_TEST := $(BUILD)/SPDFCoreOutlineTests
 CORE_TEXT_DETECTION_TEST := $(BUILD)/SPDFCoreTextDetectionTests
+CORE_PARTIAL_OCR_TEST := $(BUILD)/SPDFCorePartialOCRTests
 MAC_OCR_INSTALL_TEST := $(BUILD)/SPDFMacOCRInstallTests
 CORE_PASSWORD_TEST := $(BUILD)/SPDFCorePasswordTests
 CORE_RECOLOR_TEST := $(BUILD)/SPDFCoreRecolorTests
@@ -156,6 +157,12 @@ $(CORE_TEXT_DETECTION_TEST): core/tests/SPDFCoreTextDetectionTests.c $(CORE_OBJ)
 
 core-text-detection-tests: $(CORE_TEXT_DETECTION_TEST)
 	"$(CORE_TEXT_DETECTION_TEST)"
+
+$(CORE_PARTIAL_OCR_TEST): core/tests/SPDFCorePartialOCRTests.c $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	$(CC) $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -I$(MUPDF_DIR)/include $< "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) $(if $(filter Darwin,$(UNAME_S)),-framework Foundation) -lm -o "$@"
+
+core-partial-ocr-tests: $(CORE_PARTIAL_OCR_TEST)
+	"$(CORE_PARTIAL_OCR_TEST)"
 
 $(MAC_OCR_INSTALL_TEST): mac/tests/SPDFMacOCRInstallTests.mm mac/SPDFMacOCRInstall.mm mac/SPDFMacOCRInstall.h mac/SPDFMacSupport.mm | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacOCRInstallTests.mm mac/SPDFMacOCRInstall.mm mac/SPDFMacSupport.mm -framework Cocoa -framework UniformTypeIdentifiers -o "$@"
