@@ -92,11 +92,21 @@ int main(void) {
         // --- The installer it is spliced into ---------------------------------
         NSString* install = spdf_mac_ocr_install_script(@"chi_sim+eng");
         Expect([install containsString:@"NotoSansCJKsc-Regular.otf"], @"a fresh install gets the fonts too");
-        Expect([install containsString:@"ocrmypdf tesseract"], @"it still installs the toolchain");
+        // ocrmypdf is a Python program and is NEVER installed globally: Homebrew
+        // provides only the two C binaries it shells out to.
+        Expect([install containsString:@"install tesseract ghostscript"],
+               @"Homebrew provides tesseract and ghostscript, the programs ocrmypdf runs");
+        // The ONLY ocrmypdf install is the pip one, into the app's environment.
+        Expect([install rangeOfString:@"$BREW\" install ocrmypdf"].location == NSNotFound &&
+                   [install rangeOfString:@"brew install ocrmypdf"].location == NSNotFound,
+               @"never a global ocrmypdf: that copy is the thing this moves away from");
+        Expect([install containsString:@"-m pip install --upgrade ocrmypdf"],
+               @"it is installed into the virtualenv instead");
         NSRange fontStep = [install rangeOfString:@"spdf_fetch_font"];
-        // Backwards: the same text appears early, in the Homebrew detection.
-        NSRange finalCheck = [install rangeOfString:@"command -v ocrmypdf >/dev/null 2>&1"
-                                            options:NSBackwardsSearch];
+        // The install is judged on the app's own environment, not on PATH.
+        NSRange finalCheck = [install rangeOfString:@"test -x" options:NSBackwardsSearch];
+        Expect([install containsString:@"/ocrmypdf\"\n"],
+               @"the final check is the virtualenv's ocrmypdf");
         Expect(fontStep.location != NSNotFound && finalCheck.location != NSNotFound &&
                    fontStep.location < finalCheck.location,
                @"the fonts are fetched before the checks that decide the install succeeded");
