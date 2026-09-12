@@ -62,7 +62,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 <p align="center"><img src="docs/images/portable/macos-dark-theme.webp" alt="The same Markdown page in the light and the dark reading theme side by side: dark paper, the gantt chart's orange and blue bars keep their hues" width="880"></p>
 
-- **One toggle** (<kbd>Shift+Cmd+I</kbd>) darkens PDF, XPS, EPUB and Markdown alike, onto soft #1E1E1E paper rather than pure black.
+- **One toggle** (<kbd>Cmd+I</kbd>) darkens PDF, XPS, EPUB and Markdown alike, onto soft #1E1E1E paper rather than pure black.
 - **A remap, not an inversion** — rendered pages are remapped by lightness with their color kept, so a red warning stays red and a blue link stays blue. *Keep Image Colors* leaves photographs untouched, per document, on by default.
 - **Exports stay light** — Print, Save as PDF and Copy Page always use the document's own colors.
 
