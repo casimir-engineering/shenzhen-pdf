@@ -104,6 +104,47 @@ int main(void) {
                @"an existing working install is still found, so nobody is broken by this");
         Expect([candidates.lastObject hasSuffix:@".local/bin/argos-translate"], @"the pip --user path stays last");
 
+        // --- Adopting a machine that already has the tools ----------------------
+        // The installers only ran when a tool was MISSING, so a machine with
+        // Argos from pipx or ocrmypdf from brew never saw any of this.
+        Expect([spdf_mac_tool_pip_package_for_tool(@"ocrmypdf") isEqualToString:@"ocrmypdf"],
+               @"ocrmypdf is a Python program and can move into the virtualenv");
+        Expect([spdf_mac_tool_pip_package_for_tool(@"argos-translate") isEqualToString:@"argostranslate"] &&
+                   [spdf_mac_tool_pip_package_for_tool(@"argospm") isEqualToString:@"argostranslate"],
+               @"both Argos executables come from the one package");
+        Expect(spdf_mac_tool_pip_package_for_tool(@"tesseract") == nil,
+               @"tesseract is a C++ binary: it stays where the package manager put it");
+        Expect(spdf_mac_tool_pip_package_for_tool(@"") == nil, @"and an empty name asks for nothing");
+
+        NSArray<NSString*>* adopt = spdf_mac_tool_packages_to_adopt(
+            @[ @"/opt/homebrew/bin/ocrmypdf", @"/opt/homebrew/bin/tesseract",
+               [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/argos-translate"],
+               [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/argospm"] ]);
+        Expect([adopt containsObject:@"ocrmypdf"], @"a Homebrew ocrmypdf is adopted");
+        Expect([adopt containsObject:@"argostranslate"], @"so is a pip --user Argos");
+        Expect(adopt.count == 2, @"argos-translate and argospm ask for their package once, not twice");
+        Expect(![adopt containsObject:@"tesseract"], @"and tesseract is never asked for");
+
+        NSString* venvTool = [spdf_mac_tool_venv_bin_path() stringByAppendingPathComponent:@"ocrmypdf"];
+        Expect(spdf_mac_tool_packages_to_adopt(@[ venvTool ]).count == 0,
+               @"a tool already running from the virtualenv is not adopted again");
+        Expect(spdf_mac_tool_packages_to_adopt(@[]).count == 0, @"no tools, no work");
+
+        NSString* adoption = spdf_mac_tool_adoption_script(@[ @"ocrmypdf", @"argostranslate" ]);
+        Expect([adoption containsString:@"-m venv"], @"the adoption builds the environment if it is missing");
+        Expect([adoption containsString:@"pip install --upgrade ocrmypdf"] &&
+                   [adoption containsString:@"pip install --upgrade argostranslate"],
+               @"and installs each package into it");
+        Expect([adoption rangeOfString:@"command -v python3"].location == NSNotFound,
+               @"by the same fixed-path Python as the installer");
+        Expect([adoption rangeOfString:@"set -e"].location == NSNotFound &&
+                   [adoption rangeOfString:@"exit"].location == NSNotFound,
+               @"no set -e and no exit: this runs beside a live OCR run and must not affect it");
+        Expect([adoption hasSuffix:@"true\n"], @"it always ends successfully");
+        Expect([spdf_mac_tool_adoption_script(@[]) isEqualToString:@"true\n"],
+               @"an empty adoption is a no-op, not an empty venv build");
+        Expect(ShellParses(adoption), @"the adoption script parses");
+
         // --- The Argos installer ------------------------------------------------
         NSString* install = spdf_mac_tool_argos_install_script();
         Expect([install rangeOfString:@"command -v python3"].location == NSNotFound,

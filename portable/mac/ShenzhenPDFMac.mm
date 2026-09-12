@@ -13618,15 +13618,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     return nil;
 }
 
-- (NSDictionary<NSString*, NSString*>*)taskEnvironmentWithToolPaths:(NSArray<NSString*>*)toolPaths {
-    return [self taskEnvironmentWithToolPaths:toolPaths extra:nil];
-}
-
-- (NSDictionary<NSString*, NSString*>*)taskEnvironmentWithToolPaths:(NSArray<NSString*>*)toolPaths
-                                                              extra:(NSDictionary<NSString*, NSString*>*)extra {
-    return spdf_mac_tool_environment(NSProcessInfo.processInfo.environment, toolPaths, extra);
-}
-
 - (NSString*)argosInstallScript {
     return spdf_mac_tool_argos_install_script();
 }
