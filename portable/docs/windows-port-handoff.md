@@ -128,8 +128,8 @@ nothing draws it.
 | Continuous scroll canvas | yes | **yes** — same geometry, differentially tested |
 | Cursor-anchored zoom | yes | **yes**, Ctrl+wheel, `powf(1.1f, notches)` |
 | Fit width / page / actual | yes | **yes**, Ctrl+1 / Ctrl+2 / Ctrl+0 |
-| Dark reading theme | toolbar toggle, Shift+Cmd+I, every tab, persisted | **`--dark` command-line flag only.** No toggle, no persistence, no OS-theme following |
-| Keep Image Colors | Settings menu item, **defaults ON** (`f27d28f6f`) | forced on whenever `--dark` is passed; not separable (`spdf_win_main.cpp:379-382`) |
+| Dark reading theme | toolbar toggle, Cmd+I, every tab, persisted | **`--dark` command-line flag only.** No toggle, no persistence, no OS-theme following |
+| Keep Image Colors | View menu item, Cmd+Shift+I, **defaults ON** (`f27d28f6f`) | forced on whenever `--dark` is passed; not separable (`spdf_win_main.cpp:379-382`) |
 | Session restore | multi-window, per-tab page/zoom/fit/scroll | **yes**, same `session.yaml`, cross-process merge under `session.lock`; **window geometry not persisted** |
 | Open a file | Cmd+O, drag & drop, Finder association, recents, favorites | **command line only.** No `WM_DROPFILES`, no `IFileOpenDialog`, no association |
 | Selection / links / annotations | yes | none — `WM_LBUTTONUP` only ends a drag |

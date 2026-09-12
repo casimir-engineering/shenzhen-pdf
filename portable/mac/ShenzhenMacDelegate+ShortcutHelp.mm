@@ -47,7 +47,12 @@
                 @{@"title" : @"Fit page", @"keys" : @[ @"Cmd", @"1" ]},
                 @{@"title" : @"Fit width", @"keys" : @[ @"Cmd", @"2" ]},
                 @{@"title" : @"Fit height", @"keys" : @[ @"Cmd", @"3" ]},
-                @{@"title" : @"Actual size", @"keys" : @[ @"Cmd", @"4" ]}
+                @{@"title" : @"Actual size", @"keys" : @[ @"Cmd", @"4" ]},
+                @{@"title" : @"Invert colors (light or dark reading theme)", @"keys" : @[ @"Cmd", @"I" ]},
+                @{
+                    @"title" : @"Invert images with the page",
+                    @"subtitle" : @"Cmd + Shift + I — off by default, so photographs keep their own colors"
+                }
             ]
         },
         @{
@@ -59,7 +64,7 @@
                 @{@"title" : @"Open path (file opens it; folder opens the browser there)",
                   @"keys" : @[ @"Cmd", @"Shift", @"O" ]},
                 @{@"title" : @"Reopen last closed document", @"keys" : @[ @"Cmd", @"Shift", @"T" ]},
-                @{@"title" : @"Document properties", @"keys" : @[ @"Cmd", @"I" ]},
+                @{@"title" : @"Document properties", @"keys" : @[ @"Opt", @"I" ]},
                 @{@"title" : @"Rotate page clockwise", @"keys" : @[ @"Cmd", @"R" ]},
                 @{@"title" : @"Rotate page anticlockwise", @"keys" : @[ @"Cmd", @"Shift", @"R" ]},
                 @{@"title" : @"Presentation mode", @"keys" : @[ @"F5", @"Cmd", @"Shift", @"F" ]},

@@ -73,6 +73,12 @@ FOUNDATION_EXPORT NSString* spdf_mac_tool_pip_package_for_tool(NSString* toolNam
 // the virtualenv. A tool already running from it is skipped, so this empties
 // out once a machine has been adopted and the check costs a stat thereafter.
 FOUNDATION_EXPORT NSArray<NSString*>* spdf_mac_tool_packages_to_adopt(NSArray<NSString*>* toolPaths);
+// The same answer against an arbitrary bin directory. The result depends on
+// what is installed, so a test that asked the real one would pass or fail
+// depending on whether this machine had been adopted yet -- which is exactly
+// what happened the first time the adoption ran here.
+FOUNDATION_EXPORT NSArray<NSString*>* spdf_mac_tool_packages_to_adopt_in(NSArray<NSString*>* toolPaths,
+                                                                         NSString* venvBinPath);
 
 // Creates the virtualenv if it is missing and installs `packages` into it.
 // Guarded throughout and ends in `true`: an adoption that cannot run must never

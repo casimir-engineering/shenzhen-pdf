@@ -108,7 +108,7 @@ does not re-trigger the macOS access prompt.
   *paper* landscape, and the text stays upright.
 - **Presentation mode** (<kbd>F5</kbd> or <kbd>Cmd+Shift+F</kbd>) — chrome-free
   full screen, pure black surround, optional sleep prevention.
-- **Properties** (<kbd>Cmd+I</kbd>) — title, author, producer, dates, page size,
+- **Properties** (<kbd>Opt+I</kbd>) — title, author, producer, dates, page size,
   encryption, file size.
 - **Auto-reload** — a document edited on disk refreshes in place, keeping your
   place. For Markdown the new render is prepared off-screen and swapped in
@@ -319,12 +319,13 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 
 <p align="center"><img src="images/portable/macos-dark-theme.webp" alt="The same page in the light and dark reading themes; colored chart bars keep their hues" width="880"></p>
 
-- **One dark reading theme for every document** (<kbd>Cmd+Shift+I</kbd>) —
+- **One dark reading theme for every document** (<kbd>Cmd+I</kbd>) —
   PDF, XPS, EPUB and Markdown alike, onto the same soft `#1E1E1E` paper rather
   than pure black.
 - **Lightness remap, not inversion** — a rendered page keeps its chroma, so a
   red warning stays red and a blue link stays blue.
-- **Keep Image Colors in Dark Theme** — leaves photographs and figures
+- **Keep Image Colors in Dark Theme** (<kbd>Cmd+Shift+I</kbd>, View menu) —
+  leaves photographs and figures
   untouched, **per document**, defaulting to on and remembered per file. Scanned
   pages (one big image) are darkened anyway, so the setting can never quietly
   switch dark mode off.
@@ -410,6 +411,8 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 | Zoom in / out | <kbd>Cmd++</kbd> / <kbd>Cmd+-</kbd> |
 | Fit page / width / height | <kbd>Cmd+1</kbd> / <kbd>Cmd+2</kbd> / <kbd>Cmd+3</kbd> |
 | Actual size | <kbd>Cmd+4</kbd> |
+| Invert colors (light or dark reading theme) | <kbd>Cmd+I</kbd> |
+| Invert images with the page | <kbd>Cmd+Shift+I</kbd> |
 
 ### Tabs and tools
 
@@ -420,7 +423,7 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 | Open file | <kbd>Cmd+O</kbd> |
 | Open path | <kbd>Cmd+Shift+O</kbd> |
 | Reopen last closed document | <kbd>Cmd+Shift+T</kbd> |
-| Document properties | <kbd>Cmd+I</kbd> |
+| Document properties | <kbd>Opt+I</kbd> |
 | Rotate clockwise / anticlockwise | <kbd>Cmd+R</kbd> / <kbd>Cmd+Shift+R</kbd> |
 | Presentation mode | <kbd>F5</kbd> or <kbd>Cmd+Shift+F</kbd> |
 | Leave presentation mode | <kbd>Esc</kbd> |
@@ -431,7 +434,6 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 | --- | --- |
 | Show or hide chapters and comments | View menu or the Side Panel toggle |
 | Show or hide the map | View menu or the Map toggle |
-| Light or dark reading theme | <kbd>Cmd+Shift+I</kbd> |
 
 ## Platform support
 
