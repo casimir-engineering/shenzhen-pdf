@@ -174,8 +174,8 @@ $(CORE_PARTIAL_OCR_TEST): core/tests/SPDFCorePartialOCRTests.c $(CORE_OBJ) $(COR
 core-partial-ocr-tests: $(CORE_PARTIAL_OCR_TEST)
 	"$(CORE_PARTIAL_OCR_TEST)"
 
-$(MAC_OCR_INSTALL_TEST): mac/tests/SPDFMacOCRInstallTests.mm mac/SPDFMacOCRInstall.mm mac/SPDFMacOCRInstall.h mac/SPDFMacSupport.mm | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacOCRInstallTests.mm mac/SPDFMacOCRInstall.mm mac/SPDFMacSupport.mm -framework Cocoa -framework UniformTypeIdentifiers -o "$@"
+$(MAC_OCR_INSTALL_TEST): mac/tests/SPDFMacOCRInstallTests.mm mac/SPDFMacOCRInstall.mm mac/SPDFMacOCRInstall.h mac/SPDFMacToolEnvironment.mm mac/SPDFMacSupport.mm | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacOCRInstallTests.mm mac/SPDFMacOCRInstall.mm mac/SPDFMacToolEnvironment.mm mac/SPDFMacSupport.mm -framework Cocoa -framework UniformTypeIdentifiers -o "$@"
 
 mac-ocr-install-tests: $(MAC_OCR_INSTALL_TEST)
 	"$(MAC_OCR_INSTALL_TEST)"

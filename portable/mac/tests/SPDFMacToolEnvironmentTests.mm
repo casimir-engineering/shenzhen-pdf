@@ -162,6 +162,37 @@ int main(void) {
                @"an empty adoption is a no-op, not an empty venv build");
         Expect(ShellParses(adoption), @"the adoption script parses");
 
+        // --- An adoption that does nothing must still say so --------------------
+        // The first version sent stdout and stderr to /dev/null, so a machine
+        // that never got the environment could not say why. That is precisely
+        // the report this had to answer.
+        Expect([adoption containsString:spdf_mac_tool_adoption_log_path()],
+               @"the adoption records what it did, under Application Support");
+        Expect([adoption containsString:@"exec >>"], @"and records ALL of it, pip output included");
+        Expect([adoption containsString:@"mkdir -p"], @"creating the directory first, on a machine with no venv yet");
+        Expect([adoption containsString:@"No Python 3 with venv support was found at"],
+               @"a machine with no usable Python says so by name, instead of failing silently");
+        Expect([spdf_mac_tool_adoption_log_path() hasSuffix:@"ShenzhenPDF/ocr-environment.log"],
+               @"in a place a bug report can quote");
+
+        // --- The same build as an installer step ---------------------------------
+        // The install panel is the ONLY thing a machine with no OCR reaches: the
+        // adoption needs a resolved tool path, and there is none until something
+        // is installed. Leaving this out left every fresh install on Homebrew.
+        NSString* step = spdf_mac_tool_environment_install_step(@[ @"ocrmypdf" ]);
+        Expect([step containsString:@"-m venv"] && [step containsString:spdf_mac_tool_venv_path()],
+               @"installing OCR builds the private environment too");
+        Expect([step containsString:@"pip install --upgrade ocrmypdf"], @"and puts ocrmypdf in it");
+        Expect([step rangeOfString:@"exit"].location == NSNotFound && [step hasSuffix:@"true\n"],
+               @"guarded: it is spliced into a script under `set -e` and must not abort the install");
+        Expect([step containsString:@"No Python 3 with venv support was found"],
+               @"a machine that cannot have the environment is told, in the visible install log");
+        Expect([step rangeOfString:@"'s "].location == NSNotFound,
+               @"no apostrophe: this text sits inside single quotes in the generated shell");
+        Expect(ShellParses(step), @"the installer step parses");
+        Expect([spdf_mac_tool_environment_install_step(@[]) isEqualToString:@"true\n"],
+               @"asking for no packages builds nothing");
+
         // --- The Argos installer ------------------------------------------------
         NSString* install = spdf_mac_tool_argos_install_script();
         Expect([install rangeOfString:@"command -v python3"].location == NSNotFound,

@@ -121,20 +121,65 @@ NSArray<NSString*>* spdf_mac_tool_packages_to_adopt_in(NSArray<NSString*>* toolP
     return packages;
 }
 
+NSString* spdf_mac_tool_adoption_log_path(void) {
+    return [NSHomeDirectory()
+        stringByAppendingPathComponent:@"Library/Application Support/ShenzhenPDF/ocr-environment.log"];
+}
+
+static NSString* spdf_adoption_install_lines(NSArray<NSString*>* packages, NSString* indent) {
+    NSMutableString* lines = [NSMutableString string];
+    for (NSString* package in packages)
+        [lines appendFormat:@"%@\"$VENV/bin/python\" -m pip install --upgrade %@ || "
+                             "echo \"Could not install %@ into the private environment; the existing install "
+                             "keeps being used.\"\n",
+                            indent, package, package];
+    return lines;
+}
+
 NSString* spdf_mac_tool_adoption_script(NSArray<NSString*>* packages) {
     if (!packages.count) return @"true\n";
-    NSMutableString* script = [spdf_venv_preamble() mutableCopy];
+    NSMutableString* script = [NSMutableString string];
+    // Everything this does is recorded. A silent adoption cannot be diagnosed
+    // from a bug report, which is exactly the position the first one left us in.
+    [script appendFormat:@"LOG=\"%@\"\n"
+                          "mkdir -p \"$(dirname \"$LOG\")\" 2>/dev/null || true\n"
+                          "exec >>\"$LOG\" 2>&1\n"
+                          "echo \"--- $(date '+%%Y-%%m-%%d %%H:%%M:%%S') adopting: %@\"\n",
+                         spdf_mac_tool_adoption_log_path(), [packages componentsJoinedByString:@" "]];
+    [script appendString:spdf_venv_preamble()];
     // No `set -e` and no `exit`: this runs beside a live OCR or translation run
     // and must be incapable of affecting it.
-    [script appendString:@"if [ -n \"$PY\" ]; then\n"
-                          "  if [ ! -x \"$VENV/bin/python\" ]; then \"$PY\" -m venv \"$VENV\" || true; fi\n"
+    [script appendString:@"if [ -z \"$PY\" ]; then\n"
+                          "  echo 'No Python 3 with venv support was found at /opt/homebrew/bin/python3, "
+                          "/usr/local/bin/python3 or /usr/bin/python3. Install Python 3 (or Homebrew, or the "
+                          "Xcode Command Line Tools) and OCR will move into its own environment on the next run.'\n"
+                          "else\n"
+                          "  echo \"Using $PY\"\n"
+                          "  if [ ! -x \"$VENV/bin/python\" ]; then \"$PY\" -m venv \"$VENV\" || "
+                          "echo 'Could not create the private Python environment.'; fi\n"
                           "  if [ -x \"$VENV/bin/python\" ]; then\n"
                           "    \"$VENV/bin/python\" -m pip install --upgrade pip >/dev/null 2>&1 || true\n"];
-    for (NSString* package in packages)
-        [script appendFormat:@"    \"$VENV/bin/python\" -m pip install --upgrade %@ || "
-                              "echo \"Could not move %@ into the private environment; the existing "
-                              "install keeps being used.\"\n",
-                             package, package];
+    [script appendString:spdf_adoption_install_lines(packages, @"    ")];
+    [script appendString:@"  fi\nfi\necho \"--- done\"\ntrue\n"];
+    return script;
+}
+
+NSString* spdf_mac_tool_environment_install_step(NSArray<NSString*>* packages) {
+    if (!packages.count) return @"true\n";
+    NSMutableString* script = [NSMutableString string];
+    // No apostrophe: this text sits inside single quotes in the generated shell.
+    [script appendString:@"echo 'Setting up the private Python environment...'\n"];
+    [script appendString:spdf_venv_preamble()];
+    [script appendString:@"if [ -z \"$PY\" ]; then\n"
+                          "  echo 'No Python 3 with venv support was found; OCR will use the copy installed "
+                          "above. Install Python 3 or the Xcode Command Line Tools to get the private "
+                          "environment.'\n"
+                          "else\n"
+                          "  if [ ! -x \"$VENV/bin/python\" ]; then \"$PY\" -m venv \"$VENV\" || "
+                          "echo 'Could not create the private Python environment.'; fi\n"
+                          "  if [ -x \"$VENV/bin/python\" ]; then\n"
+                          "    \"$VENV/bin/python\" -m pip install --upgrade pip >/dev/null 2>&1 || true\n"];
+    [script appendString:spdf_adoption_install_lines(packages, @"    ")];
     [script appendString:@"  fi\nfi\ntrue\n"];
     return script;
 }
