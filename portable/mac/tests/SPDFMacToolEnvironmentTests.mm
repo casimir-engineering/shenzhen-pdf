@@ -116,19 +116,36 @@ int main(void) {
                @"tesseract is a C++ binary: it stays where the package manager put it");
         Expect(spdf_mac_tool_pip_package_for_tool(@"") == nil, @"and an empty name asks for nothing");
 
-        NSArray<NSString*>* adopt = spdf_mac_tool_packages_to_adopt(
+        // An empty bin directory this test owns: asking the real virtualenv would
+        // make the answer depend on whether this machine had been adopted yet.
+        NSString* emptyBin = [NSTemporaryDirectory()
+            stringByAppendingPathComponent:[NSString stringWithFormat:@"spdf-bin-%@", NSUUID.UUID.UUIDString]];
+        [NSFileManager.defaultManager createDirectoryAtPath:emptyBin
+                                withIntermediateDirectories:YES
+                                                 attributes:nil
+                                                      error:nil];
+        NSArray<NSString*>* machineTools =
             @[ @"/opt/homebrew/bin/ocrmypdf", @"/opt/homebrew/bin/tesseract",
                [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/argos-translate"],
-               [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/argospm"] ]);
+               [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/argospm"] ];
+        NSArray<NSString*>* adopt = spdf_mac_tool_packages_to_adopt_in(machineTools, emptyBin);
         Expect([adopt containsObject:@"ocrmypdf"], @"a Homebrew ocrmypdf is adopted");
         Expect([adopt containsObject:@"argostranslate"], @"so is a pip --user Argos");
         Expect(adopt.count == 2, @"argos-translate and argospm ask for their package once, not twice");
         Expect(![adopt containsObject:@"tesseract"], @"and tesseract is never asked for");
 
-        NSString* venvTool = [spdf_mac_tool_venv_bin_path() stringByAppendingPathComponent:@"ocrmypdf"];
-        Expect(spdf_mac_tool_packages_to_adopt(@[ venvTool ]).count == 0,
+        Expect([spdf_mac_tool_packages_to_adopt_in(@[ [emptyBin stringByAppendingPathComponent:@"ocrmypdf"] ],
+                                                   emptyBin) count] == 0,
                @"a tool already running from the virtualenv is not adopted again");
-        Expect(spdf_mac_tool_packages_to_adopt(@[]).count == 0, @"no tools, no work");
+        // And once pip has put it there, the adoption stops asking for it.
+        NSString* installed = [emptyBin stringByAppendingPathComponent:@"ocrmypdf"];
+        [NSFileManager.defaultManager createFileAtPath:installed
+                                              contents:[NSData data]
+                                            attributes:@{NSFilePosixPermissions : @(0755)}];
+        Expect(![spdf_mac_tool_packages_to_adopt_in(machineTools, emptyBin) containsObject:@"ocrmypdf"],
+               @"an adopted tool is not adopted a second time");
+        Expect(spdf_mac_tool_packages_to_adopt_in(@[], emptyBin).count == 0, @"no tools, no work");
+        [NSFileManager.defaultManager removeItemAtPath:emptyBin error:nil];
 
         NSString* adoption = spdf_mac_tool_adoption_script(@[ @"ocrmypdf", @"argostranslate" ]);
         Expect([adoption containsString:@"-m venv"], @"the adoption builds the environment if it is missing");

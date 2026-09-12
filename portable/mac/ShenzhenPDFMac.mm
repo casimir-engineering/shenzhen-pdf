@@ -31,6 +31,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacModels.h"
 #import "SPDFMacOCRInstall.h"
 #import "SPDFMacOCRValidation.h"
+#import "SPDFMacReadingTheme.h"
 #import "SPDFMacToolEnvironment.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
@@ -1910,7 +1911,12 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     [fileMenu addItemWithTitle:@"OCR Document..." action:@selector(ocrDocument:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Delete All Text..." action:@selector(deleteAllTextFromDocument:) keyEquivalent:@""];
     [fileMenu addItemWithTitle:@"Translate..." action:@selector(translateDocument:) keyEquivalent:@""];
-    [fileMenu addItemWithTitle:@"Properties..." action:@selector(showProperties:) keyEquivalent:@"i"];
+    NSMenuItem* propertiesItem = [fileMenu addItemWithTitle:@"Properties..."
+                                                     action:@selector(showProperties:)
+                                              keyEquivalent:@"i"];
+    // Opt+I, not Cmd+I: Cmd+I is the colour inversion, which is reached far more
+    // often than a document's metadata.
+    propertiesItem.keyEquivalentModifierMask = NSEventModifierFlagOption;
     fileItem.submenu = fileMenu;
 
     NSMenuItem* goItem = [[NSMenuItem alloc] initWithTitle:@"Go To" action:nil keyEquivalent:@""];
@@ -1987,13 +1993,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                                                   action:@selector(toggleMinimap:)
                                            keyEquivalent:@""];
     minimapItem.target = self;
-    // Title flips between "Dark"/"Light" in -validateMenuItem:, matching the
-    // toolbar button's moon/sun.
-    NSMenuItem* readingThemeItem = [viewMenu addItemWithTitle:@"Switch to Dark Reading Theme"
-                                                       action:@selector(toggleReadingTheme:)
-                                                keyEquivalent:@"i"];
-    readingThemeItem.target = self;
-    readingThemeItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    SPDFMacInstallReadingThemeMenuItems(viewMenu, self);
     [viewMenu addItem:[NSMenuItem separatorItem]];
     // One visible Presentation Mode row: it shows ⇧⌘F natively and advertises
     // the F5 shortcut via the "(F5)" suffix added in -validateMenuItem:. F5 keeps
@@ -2104,10 +2104,6 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                                                              action:@selector(toggleDefaultMinimapForNewDocuments:)
                                                       keyEquivalent:@""];
     defaultMinimapItem.target = self;
-    NSMenuItem* preserveImagesItem = [settingsMenu addItemWithTitle:@"Keep Image Colors in Dark Theme"
-                                                             action:@selector(toggleDarkThemePreservesImages:)
-                                                      keyEquivalent:@""];
-    preserveImagesItem.target = self;
     NSMenuItem* nearestSearchItem = [settingsMenu addItemWithTitle:@"Search Jumps to Nearest Result"
                                                             action:@selector(toggleSearchJumpsToNearestResult:)
                                                      keyEquivalent:@""];

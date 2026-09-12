@@ -102,7 +102,10 @@ NSString* spdf_mac_tool_pip_package_for_tool(NSString* toolName) {
 }
 
 NSArray<NSString*>* spdf_mac_tool_packages_to_adopt(NSArray<NSString*>* toolPaths) {
-    NSString* bin = spdf_mac_tool_venv_bin_path();
+    return spdf_mac_tool_packages_to_adopt_in(toolPaths, spdf_mac_tool_venv_bin_path());
+}
+
+NSArray<NSString*>* spdf_mac_tool_packages_to_adopt_in(NSArray<NSString*>* toolPaths, NSString* bin) {
     NSMutableArray<NSString*>* packages = [NSMutableArray array];
     for (NSString* toolPath in toolPaths) {
         NSString* name = toolPath.lastPathComponent;

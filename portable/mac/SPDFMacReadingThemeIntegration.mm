@@ -1,5 +1,7 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 
+#import "SPDFMacReadingTheme.h"
+
 #import "SPDFMacSupport.h"
 #import "markdown/SPDFMarkdown.h"
 
@@ -200,3 +202,18 @@
 }
 
 @end
+
+void SPDFMacInstallReadingThemeMenuItems(NSMenu* viewMenu, id target) {
+    // Title flips between "Dark"/"Light" in -validateMenuItem:, matching the
+    // toolbar button's moon/sun.
+    NSMenuItem* theme = [viewMenu addItemWithTitle:@"Switch to Dark Reading Theme"
+                                            action:@selector(toggleReadingTheme:)
+                                     keyEquivalent:@"i"];
+    theme.target = target;
+    theme.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    NSMenuItem* images = [viewMenu addItemWithTitle:@"Keep Image Colors in Dark Theme"
+                                             action:@selector(toggleDarkThemePreservesImages:)
+                                      keyEquivalent:@"I"];
+    images.target = target;
+    images.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+}
