@@ -13750,22 +13750,6 @@ static NSString* SPDFLastMeaningfulOCRLine(NSString* text) {
     return @"";
 }
 
-static NSString* SPDFHumanReadableOCRFailure(NSString* detail) {
-    if (!detail.length) return @"OCRmyPDF exited with an error.";
-    if ([detail rangeOfString:@"--redo-ocr"].location != NSNotFound &&
-        [detail rangeOfString:@"not compatible"].location != NSNotFound) {
-        return @"OCRmyPDF could not redo OCR on this PDF.\n\n"
-               @"This document already contains selectable text, and this OCRmyPDF version cannot combine redo OCR "
-               @"with cleanup operations for it. OCR is probably not needed for text-only or vector-text PDFs.";
-    }
-    if ([detail rangeOfString:@"Traceback"].location != NSNotFound) {
-        return @"OCRmyPDF crashed while processing this PDF.\n\n"
-               @"This looks like an OCRmyPDF compatibility error rather than a Shenzhen PDF error. Try updating "
-               @"OCRmyPDF and Tesseract, or run OCRmyPDF from Terminal for the full traceback.";
-    }
-    return detail;
-}
-
 - (void)showOCRProgressWithDetail:(NSString*)detail {
     if (!_ocrProgressPanel) {
         _ocrProgressPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 460, 132)
@@ -14921,12 +14905,27 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         if (!strongSelf) return;
         if (finishedTask.terminationStatus != 0) {
             [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
+            // ocrmypdf can refuse a file outright and name the flag that would
+            // have worked. Take its advice once instead of reporting defeat.
+            if (spdf_mac_ocr_failure_wants_forced_pass(output) && !sourceHasText && !forceOCR) {
+                [strongSelf updateOCRProgressDetail:@"OCRmyPDF refused this PDF. Retrying with forced image OCR..."];
+                [strongSelf runOCRTaskWithTool:tool
+                                     tesseract:tesseract
+                                      language:language
+                                   displayName:displayName
+                                  originalPath:originalPath
+                                       tmpPath:tmp
+                                    backupPath:backupPath
+                                  originalPage:originalPage
+                                 sourceHasText:sourceHasText
+                                      forceOCR:YES
+                                          jobs:jobs];
+                return;
+            }
             strongSelf->_ocrButton.enabled =
                 strongSelf->_doc != NULL && [strongSelf->_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
             [strongSelf finishOCRProgressWithDetail:@"OCR failed."];
-            NSString* detail = SPDFHumanReadableOCRFailure(output);
-            if (detail.length > 1200) detail = [detail substringToIndex:1200];
-            [strongSelf showError:@"OCR failed" detail:detail.length ? detail : @"OCRmyPDF exited with an error."];
+            [strongSelf showError:@"OCR failed" detail:spdf_mac_ocr_human_readable_failure(output)];
             strongSelf->_statusLabel.stringValue = @"OCR failed.";
             return;
         }

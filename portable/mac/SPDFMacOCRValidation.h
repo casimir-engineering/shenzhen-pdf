@@ -22,6 +22,21 @@
 // this arms a single retry and not a loop.
 FOUNDATION_EXPORT NSInteger spdf_mac_ocr_pages_without_text(spdf_document* doc);
 
+// YES when ocrmypdf refused the file for a reason the forced image pass fixes,
+// and said so itself. The case that prompted this: a scanned purchase order
+// carrying /Marked true, which ocrmypdf rejects with
+//   "This PDF is marked as a Tagged PDF ... Use --force-ocr, --skip-text or
+//    --redo-ocr to override this error."
+// and exit 2. The tag says the file came from an office document and needs no
+// OCR; here it was nine scanned pages with no text on any of them, and forcing
+// the pass recognised all nine. A refusal like that arrives on the FAILURE
+// path, before the page-coverage check, so it needs its own retry.
+FOUNDATION_EXPORT BOOL spdf_mac_ocr_failure_wants_forced_pass(NSString* output);
+
+// ocrmypdf's own output turned into something worth putting in an alert, and
+// capped at a length a dialog can show. Never empty.
+FOUNDATION_EXPORT NSString* spdf_mac_ocr_human_readable_failure(NSString* output);
+
 @interface ShenzhenMacDelegate (SPDFMacOCRValidation)
 // Whether `path` has any selectable text at all: 1 yes, 0 no, -1 unreadable.
 - (NSInteger)selectableTextStateForPDFAtPath:(NSString*)path errorMessage:(NSString**)errorOut;
