@@ -1,5 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
+#import "SPDFMacDelegatePrivate.h"
+
 // The environment external tools run in.
 //
 // Shenzhen PDF shells out to two Python programs -- ocrmypdf and Argos
@@ -52,7 +54,44 @@ FOUNDATION_EXPORT NSDictionary<NSString*, NSString*>* spdf_mac_tool_environment(
     NSDictionary<NSString*, NSString*>* inherited, NSArray<NSString*>* toolPaths,
     NSDictionary<NSString*, NSString*>* extra);
 
+// Moving a machine that ALREADY has these tools onto the virtualenv.
+//
+// The installers only ever ran when a tool was missing, so a machine that had
+// Argos from `pipx`, from `pip install --user`, or ocrmypdf from a Python that
+// has since changed underneath it, stayed on that copy forever: discovery found
+// it, the installer never fired, and none of this applied to it. These adopt an
+// existing install instead -- the packages are installed into the virtualenv in
+// the background, and because pip only creates the executables at the END of a
+// successful install, discovery keeps using the copy already on the machine
+// until the new one is complete. A failed or abandoned adoption changes nothing.
+
+// The pip package providing `tool`, or nil for one that is not a Python program:
+// tesseract is a C++ binary and stays wherever the package manager put it.
+FOUNDATION_EXPORT NSString* spdf_mac_tool_pip_package_for_tool(NSString* toolName);
+
+// Which packages a set of resolved tool paths would need in order to run from
+// the virtualenv. A tool already running from it is skipped, so this empties
+// out once a machine has been adopted and the check costs a stat thereafter.
+FOUNDATION_EXPORT NSArray<NSString*>* spdf_mac_tool_packages_to_adopt(NSArray<NSString*>* toolPaths);
+
+// Creates the virtualenv if it is missing and installs `packages` into it.
+// Guarded throughout and ends in `true`: an adoption that cannot run must never
+// take down the OCR or translation run that triggered it.
+FOUNDATION_EXPORT NSString* spdf_mac_tool_adoption_script(NSArray<NSString*>* packages);
+
 // The installer for Argos Translate: builds the app's virtualenv from a Python
 // found at a FIXED path (never `command -v python3`, which is the ambiguity
 // this whole file exists to remove) and installs argostranslate into it.
 FOUNDATION_EXPORT NSString* spdf_mac_tool_argos_install_script(void);
+
+@interface ShenzhenMacDelegate (SPDFMacToolEnvironment)
+// The controlled environment for an external tool launch. Every NSTask that
+// runs a tool goes through this, and it is also where a machine still on its
+// own copies is put on the path to the virtualenv.
+- (NSDictionary<NSString*, NSString*>*)taskEnvironmentWithToolPaths:(NSArray<NSString*>*)toolPaths;
+- (NSDictionary<NSString*, NSString*>*)taskEnvironmentWithToolPaths:(NSArray<NSString*>*)toolPaths
+                                                              extra:(NSDictionary<NSString*, NSString*>*)extra;
+// Starts the background adoption for any of `toolPaths` not yet in the
+// virtualenv. Returns immediately; at most one adoption per package per session.
+- (void)adoptToolsIntoPrivateEnvironment:(NSArray<NSString*>*)toolPaths;
+@end

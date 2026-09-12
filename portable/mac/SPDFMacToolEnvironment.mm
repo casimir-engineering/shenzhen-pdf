@@ -78,20 +78,72 @@ NSDictionary<NSString*, NSString*>* spdf_mac_tool_environment(NSDictionary<NSStr
     return env;
 }
 
-NSString* spdf_mac_tool_argos_install_script(void) {
-    // No `command -v python3`: that is the interpreter the user's dotfiles
-    // chose, and it is the thing that differs between machines. These three
-    // paths are the ones macOS and Homebrew actually put a python3 at, and the
-    // `import venv` probe rejects a stub that cannot build an environment.
+// Finding a Python and building the virtualenv. Shared by the installer and by
+// the adoption of a machine that already has the tools, because both need the
+// same guarantee: a Python chosen by path, not by whatever a shell profile put
+// first.
+static NSString* spdf_venv_preamble(void) {
     return [NSString
-        stringWithFormat:@"set -e\n"
-                          "VENV=\"%@\"\n"
+        stringWithFormat:@"VENV=\"%@\"\n"
                           "PY=\"\"\n"
                           "for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 "
                           "/usr/bin/python3; do\n"
                           "  if [ -x \"$candidate\" ] && \"$candidate\" -c 'import venv' >/dev/null 2>&1; "
                           "then PY=\"$candidate\"; break; fi\n"
-                          "done\n"
+                          "done\n",
+                         spdf_mac_tool_venv_path()];
+}
+
+NSString* spdf_mac_tool_pip_package_for_tool(NSString* toolName) {
+    if ([toolName isEqualToString:@"ocrmypdf"]) return @"ocrmypdf";
+    if ([toolName isEqualToString:@"argos-translate"] || [toolName isEqualToString:@"argospm"])
+        return @"argostranslate";
+    return nil;  // tesseract, and anything else that is not a Python program.
+}
+
+NSArray<NSString*>* spdf_mac_tool_packages_to_adopt(NSArray<NSString*>* toolPaths) {
+    NSString* bin = spdf_mac_tool_venv_bin_path();
+    NSMutableArray<NSString*>* packages = [NSMutableArray array];
+    for (NSString* toolPath in toolPaths) {
+        NSString* name = toolPath.lastPathComponent;
+        NSString* package = spdf_mac_tool_pip_package_for_tool(name);
+        if (!package || [packages containsObject:package]) continue;
+        // Already running from the virtualenv, or already installed there:
+        // nothing to adopt, and this is the stat that ends the work for good.
+        if ([toolPath hasPrefix:[bin stringByAppendingString:@"/"]]) continue;
+        if ([NSFileManager.defaultManager isExecutableFileAtPath:[bin stringByAppendingPathComponent:name]])
+            continue;
+        [packages addObject:package];
+    }
+    return packages;
+}
+
+NSString* spdf_mac_tool_adoption_script(NSArray<NSString*>* packages) {
+    if (!packages.count) return @"true\n";
+    NSMutableString* script = [spdf_venv_preamble() mutableCopy];
+    // No `set -e` and no `exit`: this runs beside a live OCR or translation run
+    // and must be incapable of affecting it.
+    [script appendString:@"if [ -n \"$PY\" ]; then\n"
+                          "  if [ ! -x \"$VENV/bin/python\" ]; then \"$PY\" -m venv \"$VENV\" || true; fi\n"
+                          "  if [ -x \"$VENV/bin/python\" ]; then\n"
+                          "    \"$VENV/bin/python\" -m pip install --upgrade pip >/dev/null 2>&1 || true\n"];
+    for (NSString* package in packages)
+        [script appendFormat:@"    \"$VENV/bin/python\" -m pip install --upgrade %@ || "
+                              "echo \"Could not move %@ into the private environment; the existing "
+                              "install keeps being used.\"\n",
+                             package, package];
+    [script appendString:@"  fi\nfi\ntrue\n"];
+    return script;
+}
+
+NSString* spdf_mac_tool_argos_install_script(void) {
+    // No `command -v python3`: that is the interpreter the user's dotfiles
+    // chose, and it is the thing that differs between machines. The preamble
+    // probes fixed paths instead, and `import venv` rejects a stub that cannot
+    // build an environment.
+    return [NSString
+        stringWithFormat:@"set -e\n"
+                          "%@"
                           "if [ -z \"$PY\" ]; then echo 'No Python 3 with venv support was found. Install "
                           "Python 3 (or Homebrew) and try again.'; exit 1; fi\n"
                           "if [ ! -x \"$VENV/bin/python\" ]; then\n"
@@ -107,5 +159,5 @@ NSString* spdf_mac_tool_argos_install_script(void) {
                           "test -x \"$VENV/bin/argos-translate\"\n"
                           "test -x \"$VENV/bin/argospm\"\n"
                           "echo 'Argos Translate installed.'\n",
-                         spdf_mac_tool_venv_path()];
+                         spdf_venv_preamble()];
 }
