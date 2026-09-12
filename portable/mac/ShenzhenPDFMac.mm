@@ -32,6 +32,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacOCRInstall.h"
 #import "SPDFMacOCRValidation.h"
 #import "SPDFMacReadingTheme.h"
+#import "SPDFMacTranslationInstall.h"
 #import "SPDFMacToolEnvironment.h"
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
@@ -11007,7 +11008,8 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
                        offeredInstaller:(BOOL)offeredInstaller {
     NSUInteger generation = ++_selectionTranslationGeneration;
     NSString* tool = [self argosToolPath];
-    if (!tool.length) {
+    if (!tool.length || (!spdf_mac_tool_venv_has_tool(@"argos-translate") &&
+                         !spdf_mac_tool_environment_install_attempted())) {
         [self promptToInstallArgosAndContinueSelectionText:text
                                             sourceLanguage:sourceLanguage
                                             targetLanguage:targetLanguage];
@@ -11077,57 +11079,6 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     }
     _selectionTranslationOutputView.string = @"";
     [self runSelectionTranslationWithText:text sourceLanguage:source targetLanguage:target offeredInstaller:NO];
-}
-
-- (void)promptToInstallArgosAndContinueSelectionText:(NSString*)text
-                                      sourceLanguage:(NSString*)sourceLanguage
-                                      targetLanguage:(NSString*)targetLanguage {
-    if (_translationInstallRunning) return;
-
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = @"Install Argos Translate?";
-    alert.informativeText = @"Shenzhen PDF uses Argos Translate locally for offline selection translation. "
-                            @"Install it, then continue translation.";
-    [alert addButtonWithTitle:@"Install"];
-    [alert addButtonWithTitle:@"Cancel"];
-    alert.alertStyle = NSAlertStyleInformational;
-    if ([alert runModal] != NSAlertFirstButtonReturn) {
-        _selectionTranslationStatusLabel.stringValue = @"Argos Translate is required for local translation.";
-        return;
-    }
-
-    NSTask* task = [[NSTask alloc] init];
-    task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
-    // Not `-lc`: a login shell would source the dotfiles whose conda/pyenv hook
-    // is exactly what made this install differ between machines.
-    task.arguments = @[ @"-c", [self argosInstallScript] ];
-    task.environment = [self taskEnvironmentWithToolPaths:@[]];
-
-    __weak ShenzhenMacDelegate* weakSelf = self;
-    [self runTranslationInstallTask:task
-                              title:@"Installing Translation Support"
-                            heading:@"Installing Argos Translate"
-                         initialLog:@"Preparing Argos Translate installer...\n"
-                         completion:^(NSTask* finishedTask, NSString* output) {
-                           (void)output;
-                           ShenzhenMacDelegate* strongSelf = weakSelf;
-                           if (!strongSelf) return;
-                           strongSelf->_translationInstallRunning = NO;
-                           [strongSelf updateTranslateCommandEnablement];
-                           if (finishedTask.terminationStatus == 0 && [strongSelf argosToolPath].length) {
-                               [strongSelf appendTranslationInstallLog:@"\nArgos Translate installed.\n"];
-                               [strongSelf->_translationInstallPanel orderOut:nil];
-                               [strongSelf runSelectionTranslationWithText:text
-                                                            sourceLanguage:sourceLanguage
-                                                            targetLanguage:targetLanguage
-                                                          offeredInstaller:NO];
-                           } else {
-                               [strongSelf appendTranslationInstallLog:
-                                               @"\nArgos Translate installation failed. The log above can be selected "
-                                               @"and copied.\n"];
-                               strongSelf->_selectionTranslationStatusLabel.stringValue = @"Argos installation failed.";
-                           }
-                         }];
 }
 
 - (void)runArgosPackageInstallForSelectionFromLanguage:(NSString*)sourceLanguage
@@ -14152,7 +14103,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                      targetLanguage:(NSString*)targetLanguage
                          outputPath:(NSString*)outputPath
                    offeredInstaller:(BOOL)offeredInstaller {
-    if (!tool.length) {
+    if (!tool.length || (!spdf_mac_tool_venv_has_tool(@"argos-translate") &&
+                         !spdf_mac_tool_environment_install_attempted())) {
         [self promptToInstallArgosAndContinueWithSourceText:sourceText
                                              sourceLanguage:sourceLanguage
                                              targetLanguage:targetLanguage
@@ -14352,6 +14304,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     // is exactly what made this install differ between machines.
     task.arguments = @[ @"-c", [self argosInstallScript] ];
     task.environment = [self taskEnvironmentWithToolPaths:@[]];
+    spdf_mac_tool_note_environment_install_attempt();
 
     __weak ShenzhenMacDelegate* weakSelf = self;
     [self runTranslationInstallTask:task
@@ -14588,6 +14541,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     }
 
     _ocrInstallRunning = YES;
+    spdf_mac_tool_note_environment_install_attempt();
     _ocrButton.enabled = NO;
     [self showOCRInstallPanel];
     _ocrInstallLog.string = @"";
@@ -15025,9 +14979,15 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     NSString* tool = [self ocrToolPath];
     NSString* tesseract = [self tesseractToolPath];
     BOOL languageReady = tesseract.length && [self tesseractPath:tesseract hasOCRLanguage:language];
-    if (!tool.length || !tesseract.length || !languageReady) {
+    // ocrmypdf is never installed globally, so the environment holding it is
+    // part of what "OCR is installed" means. A machine that cannot build one is
+    // asked once and then left alone with whatever it already has.
+    BOOL environmentMissing =
+        !spdf_mac_tool_venv_has_tool(@"ocrmypdf") && !spdf_mac_tool_environment_install_attempted();
+    if (!tool.length || !tesseract.length || !languageReady || environmentMissing) {
         NSAlert* alert = [[NSAlert alloc] init];
-        alert.messageText = !tool.length || !tesseract.length ? @"Install OCR support?" : @"Install OCR language data?";
+        alert.messageText =
+            !tool.length || !tesseract.length || environmentMissing ? @"Install OCR support?" : @"Install OCR language data?";
         alert.informativeText = [NSString
             stringWithFormat:@"Shenzhen PDF can install OCRmyPDF, Tesseract, and the %@ traineddata, then continue OCR "
                              @"automatically when installation finishes.",

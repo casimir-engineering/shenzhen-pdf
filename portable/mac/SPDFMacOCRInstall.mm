@@ -92,7 +92,7 @@ NSString* spdf_mac_ocr_install_script(NSString* language) {
                           "if command -v brew >/dev/null 2>&1; then BREW=$(command -v brew); "
                           "elif [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
                           "elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; fi\n"
-                          "if ! command -v ocrmypdf >/dev/null 2>&1 || ! command -v tesseract >/dev/null 2>&1; "
+                          "if ! command -v tesseract >/dev/null 2>&1 || ! command -v gs >/dev/null 2>&1; "
                           "then "
                           "if [ -z \"$BREW\" ]; then echo 'Homebrew not found. Installing Homebrew...'; "
                           "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/"
@@ -100,8 +100,8 @@ NSString* spdf_mac_ocr_install_script(NSString* language) {
                           "if [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; "
                           "elif [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; "
                           "else echo 'Homebrew installation did not produce a brew executable.'; exit 1; fi; fi; "
-                          "echo \"Using $BREW\"; \"$BREW\" install ocrmypdf tesseract; "
-                          "else echo 'OCRmyPDF and Tesseract are already installed.'; fi\n"
+                          "echo \"Using $BREW\"; \"$BREW\" install tesseract ghostscript; "
+                          "else echo 'Tesseract and Ghostscript are already installed.'; fi\n"
                           "if [ -n \"$BREW\" ] && printf '%%s\\n' \"$OCR_LANGS\" | grep -qv '^eng$'; then "
                           "echo 'Installing Tesseract language data...'; \"$BREW\" install tesseract-lang || true; "
                           "fi\n"
@@ -126,8 +126,12 @@ NSString* spdf_mac_ocr_install_script(NSString* language) {
                           "done\n"
                           "%@"
                           "%@"
-                          "command -v ocrmypdf >/dev/null 2>&1\n"
+                          // ocrmypdf is ONLY ever installed into the app's own environment, so that
+                          // is what the install has to produce. Under `set -e` this fails the install
+                          // loudly, with the environment step's own reason already in the log.
+                          "test -x \"%@/ocrmypdf\"\n"
                           "command -v tesseract >/dev/null 2>&1\n",
                          languageList, spdf_mac_ocr_font_script(language),
-                         spdf_mac_tool_environment_install_step(@[ @"ocrmypdf" ])];
+                         spdf_mac_tool_environment_install_step(@[ @"ocrmypdf" ]),
+                         spdf_mac_tool_venv_bin_path()];
 }

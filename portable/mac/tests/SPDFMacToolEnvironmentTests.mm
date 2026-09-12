@@ -104,76 +104,16 @@ int main(void) {
                @"an existing working install is still found, so nobody is broken by this");
         Expect([candidates.lastObject hasSuffix:@".local/bin/argos-translate"], @"the pip --user path stays last");
 
-        // --- Adopting a machine that already has the tools ----------------------
-        // The installers only ran when a tool was MISSING, so a machine with
-        // Argos from pipx or ocrmypdf from brew never saw any of this.
-        Expect([spdf_mac_tool_pip_package_for_tool(@"ocrmypdf") isEqualToString:@"ocrmypdf"],
-               @"ocrmypdf is a Python program and can move into the virtualenv");
-        Expect([spdf_mac_tool_pip_package_for_tool(@"argos-translate") isEqualToString:@"argostranslate"] &&
-                   [spdf_mac_tool_pip_package_for_tool(@"argospm") isEqualToString:@"argostranslate"],
-               @"both Argos executables come from the one package");
-        Expect(spdf_mac_tool_pip_package_for_tool(@"tesseract") == nil,
-               @"tesseract is a C++ binary: it stays where the package manager put it");
-        Expect(spdf_mac_tool_pip_package_for_tool(@"") == nil, @"and an empty name asks for nothing");
-
-        // An empty bin directory this test owns: asking the real virtualenv would
-        // make the answer depend on whether this machine had been adopted yet.
-        NSString* emptyBin = [NSTemporaryDirectory()
-            stringByAppendingPathComponent:[NSString stringWithFormat:@"spdf-bin-%@", NSUUID.UUID.UUIDString]];
-        [NSFileManager.defaultManager createDirectoryAtPath:emptyBin
-                                withIntermediateDirectories:YES
-                                                 attributes:nil
-                                                      error:nil];
-        NSArray<NSString*>* machineTools =
-            @[ @"/opt/homebrew/bin/ocrmypdf", @"/opt/homebrew/bin/tesseract",
-               [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/argos-translate"],
-               [NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/argospm"] ];
-        NSArray<NSString*>* adopt = spdf_mac_tool_packages_to_adopt_in(machineTools, emptyBin);
-        Expect([adopt containsObject:@"ocrmypdf"], @"a Homebrew ocrmypdf is adopted");
-        Expect([adopt containsObject:@"argostranslate"], @"so is a pip --user Argos");
-        Expect(adopt.count == 2, @"argos-translate and argospm ask for their package once, not twice");
-        Expect(![adopt containsObject:@"tesseract"], @"and tesseract is never asked for");
-
-        Expect([spdf_mac_tool_packages_to_adopt_in(@[ [emptyBin stringByAppendingPathComponent:@"ocrmypdf"] ],
-                                                   emptyBin) count] == 0,
-               @"a tool already running from the virtualenv is not adopted again");
-        // And once pip has put it there, the adoption stops asking for it.
-        NSString* installed = [emptyBin stringByAppendingPathComponent:@"ocrmypdf"];
-        [NSFileManager.defaultManager createFileAtPath:installed
-                                              contents:[NSData data]
-                                            attributes:@{NSFilePosixPermissions : @(0755)}];
-        Expect(![spdf_mac_tool_packages_to_adopt_in(machineTools, emptyBin) containsObject:@"ocrmypdf"],
-               @"an adopted tool is not adopted a second time");
-        Expect(spdf_mac_tool_packages_to_adopt_in(@[], emptyBin).count == 0, @"no tools, no work");
-        [NSFileManager.defaultManager removeItemAtPath:emptyBin error:nil];
-
-        NSString* adoption = spdf_mac_tool_adoption_script(@[ @"ocrmypdf", @"argostranslate" ]);
-        Expect([adoption containsString:@"-m venv"], @"the adoption builds the environment if it is missing");
-        Expect([adoption containsString:@"pip install --upgrade ocrmypdf"] &&
-                   [adoption containsString:@"pip install --upgrade argostranslate"],
-               @"and installs each package into it");
-        Expect([adoption rangeOfString:@"command -v python3"].location == NSNotFound,
-               @"by the same fixed-path Python as the installer");
-        Expect([adoption rangeOfString:@"set -e"].location == NSNotFound &&
-                   [adoption rangeOfString:@"exit"].location == NSNotFound,
-               @"no set -e and no exit: this runs beside a live OCR run and must not affect it");
-        Expect([adoption hasSuffix:@"true\n"], @"it always ends successfully");
-        Expect([spdf_mac_tool_adoption_script(@[]) isEqualToString:@"true\n"],
-               @"an empty adoption is a no-op, not an empty venv build");
-        Expect(ShellParses(adoption), @"the adoption script parses");
-
-        // --- An adoption that does nothing must still say so --------------------
-        // The first version sent stdout and stderr to /dev/null, so a machine
-        // that never got the environment could not say why. That is precisely
-        // the report this had to answer.
-        Expect([adoption containsString:spdf_mac_tool_adoption_log_path()],
-               @"the adoption records what it did, under Application Support");
-        Expect([adoption containsString:@"exec >>"], @"and records ALL of it, pip output included");
-        Expect([adoption containsString:@"mkdir -p"], @"creating the directory first, on a machine with no venv yet");
-        Expect([adoption containsString:@"No Python 3 with venv support was found at"],
-               @"a machine with no usable Python says so by name, instead of failing silently");
-        Expect([spdf_mac_tool_adoption_log_path() hasSuffix:@"ShenzhenPDF/ocr-environment.log"],
-               @"in a place a bug report can quote");
+        // --- Nothing is ever installed globally ---------------------------------
+        Expect(!spdf_mac_tool_venv_has_tool(@"SPDFDefinitelyNotATool"),
+               @"a tool that is not in the environment is not in the environment");
+        Expect(!spdf_mac_tool_venv_has_tool(@""), @"and no name is not a tool");
+        // The gate that sends a machine to the installer, and the latch that
+        // stops it asking again when the environment cannot be built at all.
+        Expect(!spdf_mac_tool_environment_install_attempted(), @"no attempt has been made yet");
+        spdf_mac_tool_note_environment_install_attempt();
+        Expect(spdf_mac_tool_environment_install_attempted(),
+               @"after one attempt a machine with no Python is left alone rather than asked every run");
 
         // --- The same build as an installer step ---------------------------------
         // The install panel is the ONLY thing a machine with no OCR reaches: the
