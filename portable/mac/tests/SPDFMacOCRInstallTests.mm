@@ -100,6 +100,14 @@ int main(void) {
         Expect(fontStep.location != NSNotFound && finalCheck.location != NSNotFound &&
                    fontStep.location < finalCheck.location,
                @"the fonts are fetched before the checks that decide the install succeeded");
+        // A fresh machine reaches this script and nothing else, so the private
+        // environment has to be built here or it is never built at all.
+        Expect([install containsString:@"-m venv"] && [install containsString:@"pip install --upgrade ocrmypdf"],
+               @"installing OCR also builds the app's own Python environment");
+        NSRange venvStep = [install rangeOfString:@"-m venv"];
+        Expect(venvStep.location != NSNotFound && finalCheck.location != NSNotFound &&
+                   venvStep.location < finalCheck.location,
+               @"and does it before the checks that decide the install succeeded");
         Expect(ShellParses(install, @"the installer script"), @"the installer script parses");
 
         if (gFailures == 0) puts("SPDFMacOCRInstallTests passed");

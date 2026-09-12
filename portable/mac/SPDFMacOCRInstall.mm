@@ -1,6 +1,7 @@
 #import "SPDFMacOCRInstall.h"
 
 #import "SPDFMacSupport.h"
+#import "SPDFMacToolEnvironment.h"
 
 // Verified against ocrmypdf 17.4.2's SystemFontProvider: it matches these exact
 // file names in these exact directories, so the names below are a contract with
@@ -124,7 +125,9 @@ NSString* spdf_mac_ocr_install_script(NSString* language) {
                           "else download_lang \"$lang\"; fi\n"
                           "done\n"
                           "%@"
+                          "%@"
                           "command -v ocrmypdf >/dev/null 2>&1\n"
                           "command -v tesseract >/dev/null 2>&1\n",
-                         languageList, spdf_mac_ocr_font_script(language)];
+                         languageList, spdf_mac_ocr_font_script(language),
+                         spdf_mac_tool_environment_install_step(@[ @"ocrmypdf" ])];
 }

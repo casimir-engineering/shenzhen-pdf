@@ -85,6 +85,18 @@ FOUNDATION_EXPORT NSArray<NSString*>* spdf_mac_tool_packages_to_adopt_in(NSArray
 // take down the OCR or translation run that triggered it.
 FOUNDATION_EXPORT NSString* spdf_mac_tool_adoption_script(NSArray<NSString*>* packages);
 
+// Where the background adoption records what it did. Its whole output goes
+// here: an adoption that finds no usable Python, or whose pip install fails,
+// used to vanish into /dev/null, so a machine that did not get the environment
+// could not say why.
+FOUNDATION_EXPORT NSString* spdf_mac_tool_adoption_log_path(void);
+
+// The environment build as an INSTALLER step, for the panel that shows a live
+// log: same virtualenv, but it says what it is doing and why it stopped. It is
+// spliced into a script running under `set -e`, so it is guarded throughout --
+// a machine with no usable Python still finishes installing the rest.
+FOUNDATION_EXPORT NSString* spdf_mac_tool_environment_install_step(NSArray<NSString*>* packages);
+
 // The installer for Argos Translate: builds the app's virtualenv from a Python
 // found at a FIXED path (never `command -v python3`, which is the ambiguity
 // this whole file exists to remove) and installs argostranslate into it.

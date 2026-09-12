@@ -37,7 +37,13 @@ FOUNDATION_EXPORT NSString* spdf_mac_ocr_font_script(NSString* language);
 
 // The toolchain installer the OCR install panel runs: Homebrew for ocrmypdf and
 // tesseract, tesseract-lang for non-English, per-language traineddata into
-// Application Support, and the font step above appended.
+// Application Support, the font step above, and the app's own Python
+// environment (SPDFMacToolEnvironment.h).
+//
+// That last step is here because the install panel is the ONLY thing a machine
+// without OCR ever reaches: the background adoption runs off a resolved tool
+// path, and there is none to resolve until something is installed. Leaving it
+// out meant a fresh install ended on Homebrew's copy and never moved.
 FOUNDATION_EXPORT NSString* spdf_mac_ocr_install_script(NSString* language);
 
 @interface ShenzhenMacDelegate (SPDFMacOCRInstall)
