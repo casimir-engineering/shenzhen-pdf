@@ -31,6 +31,13 @@ int main(void) {
         Expect([ValueAfter(scan, @"--oversample") isEqualToString:@"400"],
                @"pages are recognised at 400 dpi, not at whatever DPI the scan happens to carry");
 
+        // --- Layout analysis, the thing that decides whether a DRAWING is read --
+        // A USB-C footprint whose five dimension numbers the app recognised none
+        // of: psm 11 recovered four, psm 3 recovered two. Not a trade against
+        // prose either -- 137 real words to psm 3's 128 on a text page.
+        Expect([ValueAfter(scan, @"--tesseract-pagesegmode") isEqualToString:@"11"],
+               @"sparse-text segmentation: a dimension number alone among line art is not a column of prose");
+
         // --- A source with no text is a scan --------------------------------
         Expect([scan containsObject:@"--deskew"], @"a scan is straightened before recognition");
         Expect(![scan containsObject:@"--force-ocr"], @"but is not forced on the first pass");

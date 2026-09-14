@@ -2730,7 +2730,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _fitModePopup.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightLight];
     _fitModePopup.cell.font = _fitModePopup.font;
     _fitModePopup.translatesAutoresizingMaskIntoConstraints = NO;
-    [_fitModePopup.widthAnchor constraintEqualToConstant:96].active = YES;
+    [_fitModePopup.widthAnchor constraintEqualToConstant:108].active = YES;  // "Fit Height" needs 106pt
     [_fitModePopup setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                             forOrientation:NSLayoutConstraintOrientationHorizontal];
 
@@ -14961,10 +14961,10 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     // asked once and then left alone with whatever it already has.
     BOOL environmentMissing =
         !spdf_mac_tool_venv_has_tool(@"ocrmypdf") && !spdf_mac_tool_environment_install_attempted();
-    if (!tool.length || !tesseract.length || !languageReady || environmentMissing) {
+    BOOL supportMissing = !tool.length || !tesseract.length || environmentMissing;
+    if (supportMissing || !languageReady) {
         NSAlert* alert = [[NSAlert alloc] init];
-        alert.messageText =
-            !tool.length || !tesseract.length || environmentMissing ? @"Install OCR support?" : @"Install OCR language data?";
+        alert.messageText = supportMissing ? @"Install OCR support?" : @"Install OCR language data?";
         alert.informativeText = [NSString
             stringWithFormat:@"Shenzhen PDF can install OCRmyPDF, Tesseract, and the %@ traineddata, then continue OCR "
                              @"automatically when installation finishes.",
