@@ -58,7 +58,8 @@ does not re-trigger the macOS access prompt.
 - **Open Path…** (<kbd>Cmd+Shift+O</kbd>) — type or paste a path; a file opens
   it, a folder opens the file browser there.
 - **Drag and drop** onto the window or the tab strip.
-- **Recents** — the recently-opened list lives in `settings.yaml`.
+- **Recents** — the last 25 documents, on the Recently Opened menu and
+  findable in the command palette. The list lives in `settings.yaml`.
 - **Reopen Last Closed** (<kbd>Cmd+Shift+T</kbd>) — brings a just-closed tab
   back with its view state.
 - **Favorites** — star a page or a whole document, give it a name and optional
