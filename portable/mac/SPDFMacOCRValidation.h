@@ -17,6 +17,14 @@
 // The honest test is per page: any page still without text means the pass was
 // partial, and the image pass (--force-ocr) is the one that covers it.
 
+// Whether the document's text sits on top of a full-page scan. Such a text
+// layer is itself OCR output, not text the document was authored with, so
+// re-recognising the pixels loses nothing -- whereas --redo-ocr trusts it and
+// leaves whatever the previous pass missed missing. Measured on a USB-C
+// footprint: redo recovered four of five dimension numbers and left one that
+// forcing the same page at the same resolution recovered.
+FOUNDATION_EXPORT BOOL spdf_mac_ocr_document_is_image_backed(spdf_document* doc);
+
 // How many of the document's pages have no extractable text, or -1 if the file
 // could not be read. A blank sheet counts as a page without text, which is why
 // this arms a single retry and not a loop.
