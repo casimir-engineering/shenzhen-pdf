@@ -29,6 +29,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacLaunchWorkIntegration.h"
 #import "SPDFMacZoomSelfTestIntegration.h"
 #import "SPDFMacModels.h"
+#import "SPDFMacOCRCommand.h"
 #import "SPDFMacOCRInstall.h"
 #import "SPDFMacOCRValidation.h"
 #import "SPDFMacReadingTheme.h"
@@ -71,7 +72,7 @@ static const CGFloat kPageGap = 26.0;
 // Non-static: shared with the launch prerender worker (SPDFMacLaunchPrerender.mm),
 // declared in SPDFMacLaunchPrerenderPrivate.h.
 const CGFloat kMinZoom = 0.10;
-const CGFloat kMaxZoom = 8.00;
+const CGFloat kMaxZoom = 16.00;
 static const CGFloat kTabStripHeight = 42.0;
 static const CGFloat kMinWindowWidth = 560.0;
 static const CGFloat kMinWindowHeight = 380.0;
@@ -14751,26 +14752,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         [NSString stringWithFormat:@"All text removed. Backup saved as %@.", backupPath.lastPathComponent];
 }
 
-- (NSMutableArray<NSString*>*)ocrArgumentsForLanguage:(NSString*)language
-                                         originalPath:(NSString*)originalPath
-                                              tmpPath:(NSString*)tmp
-                                                 jobs:(NSInteger)jobs
-                                        sourceHasText:(BOOL)sourceHasText
-                                             forceOCR:(BOOL)forceOCR {
-    NSMutableArray<NSString*>* args =
-        [@[ @"--jobs", [NSString stringWithFormat:@"%ld", (long)jobs], @"--rotate-pages", @"--optimize", @"1" ]
-            mutableCopy];
-    [args addObjectsFromArray:@[ @"-l", language ]];
-    if (!sourceHasText) {
-        [args addObject:@"--deskew"];
-        if (forceOCR) [args addObject:@"--force-ocr"];
-    } else {
-        [args addObject:@"--redo-ocr"];
-    }
-    [args addObject:originalPath];
-    [args addObject:tmp];
-    return args;
-}
 
 - (void)runOCRTaskWithTool:(NSString*)tool
                  tesseract:(NSString*)tesseract
@@ -14783,12 +14764,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
              sourceHasText:(BOOL)sourceHasText
                   forceOCR:(BOOL)forceOCR
                       jobs:(NSInteger)jobs {
-    NSMutableArray<NSString*>* args = [self ocrArgumentsForLanguage:language
-                                                       originalPath:originalPath
-                                                            tmpPath:tmp
-                                                               jobs:jobs
-                                                      sourceHasText:sourceHasText
-                                                           forceOCR:forceOCR];
+    NSArray<NSString*>* args =
+        spdf_mac_ocr_arguments(language, originalPath, tmp, jobs, sourceHasText, forceOCR);
     NSString* runningDetail =
         forceOCR
             ? [NSString stringWithFormat:@"Retrying OCR (%@) with forced image pass...", displayName ?: language]
