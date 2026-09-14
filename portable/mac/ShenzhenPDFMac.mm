@@ -11010,7 +11010,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     NSUInteger generation = ++_selectionTranslationGeneration;
     NSString* tool = [self argosToolPath];
     if (!tool.length || (!spdf_mac_tool_venv_has_tool(@"argos-translate") &&
-                         !spdf_mac_tool_environment_install_attempted())) {
+                         !spdf_mac_tool_install_attempted())) {
         [self promptToInstallArgosAndContinueSelectionText:text
                                             sourceLanguage:sourceLanguage
                                             targetLanguage:targetLanguage];
@@ -14105,7 +14105,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                          outputPath:(NSString*)outputPath
                    offeredInstaller:(BOOL)offeredInstaller {
     if (!tool.length || (!spdf_mac_tool_venv_has_tool(@"argos-translate") &&
-                         !spdf_mac_tool_environment_install_attempted())) {
+                         !spdf_mac_tool_install_attempted())) {
         [self promptToInstallArgosAndContinueWithSourceText:sourceText
                                              sourceLanguage:sourceLanguage
                                              targetLanguage:targetLanguage
@@ -14305,7 +14305,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     // is exactly what made this install differ between machines.
     task.arguments = @[ @"-c", [self argosInstallScript] ];
     task.environment = [self taskEnvironmentWithToolPaths:@[]];
-    spdf_mac_tool_note_environment_install_attempt();
+    spdf_mac_tool_note_install_attempt();
 
     __weak ShenzhenMacDelegate* weakSelf = self;
     [self runTranslationInstallTask:task
@@ -14542,7 +14542,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     }
 
     _ocrInstallRunning = YES;
-    spdf_mac_tool_note_environment_install_attempt();
+    spdf_mac_tool_note_install_attempt();
     _ocrButton.enabled = NO;
     [self showOCRInstallPanel];
     _ocrInstallLog.string = @"";
@@ -14959,8 +14959,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     // ocrmypdf is never installed globally, so the environment holding it is
     // part of what "OCR is installed" means. A machine that cannot build one is
     // asked once and then left alone with whatever it already has.
-    BOOL environmentMissing =
-        !spdf_mac_tool_venv_has_tool(@"ocrmypdf") && !spdf_mac_tool_environment_install_attempted();
+    BOOL environmentMissing = !spdf_mac_tool_venv_has_tool(@"ocrmypdf") && !spdf_mac_tool_install_attempted();
     BOOL supportMissing = !tool.length || !tesseract.length || environmentMissing;
     if (supportMissing || !languageReady) {
         NSAlert* alert = [[NSAlert alloc] init];
@@ -14978,6 +14977,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     }
 
     char err[1024];
+    BOOL imageBacked = spdf_mac_ocr_document_is_image_backed(_doc);
     int hasText = spdf_document_has_text(_doc, 0, err, sizeof(err));
     if (hasText < 0) {
         [self showError:@"Could not inspect document text"
@@ -15018,8 +15018,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                      tmpPath:tmp
                   backupPath:backupPath
                 originalPage:originalPage
-               sourceHasText:hasText > 0
-                    forceOCR:NO
+               sourceHasText:hasText > 0 && !imageBacked
+                    forceOCR:imageBacked
                         jobs:jobs];
 }
 

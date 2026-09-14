@@ -65,8 +65,8 @@ FOUNDATION_EXPORT BOOL spdf_mac_tool_venv_has_tool(NSString* toolName);
 // installer looks cannot build the environment, and must not be asked again on
 // every run; after one attempt the caller falls through to whatever is already
 // on the machine rather than refusing to work.
-FOUNDATION_EXPORT BOOL spdf_mac_tool_environment_install_attempted(void);
-FOUNDATION_EXPORT void spdf_mac_tool_note_environment_install_attempt(void);
+FOUNDATION_EXPORT BOOL spdf_mac_tool_install_attempted(void);
+FOUNDATION_EXPORT void spdf_mac_tool_note_install_attempt(void);
 
 // The environment build as an INSTALLER step, for the panel that shows a live
 // log: same virtualenv, but it says what it is doing and why it stopped. It is

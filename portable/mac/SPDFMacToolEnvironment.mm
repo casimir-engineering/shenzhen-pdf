@@ -114,9 +114,9 @@ BOOL spdf_mac_tool_venv_has_tool(NSString* toolName) {
 // single OCR run; after one try it falls through to whatever it already has.
 static BOOL g_environment_install_attempted;
 
-BOOL spdf_mac_tool_environment_install_attempted(void) { return g_environment_install_attempted; }
+BOOL spdf_mac_tool_install_attempted(void) { return g_environment_install_attempted; }
 
-void spdf_mac_tool_note_environment_install_attempt(void) { g_environment_install_attempted = YES; }
+void spdf_mac_tool_note_install_attempt(void) { g_environment_install_attempted = YES; }
 
 NSString* spdf_mac_tool_environment_install_step(NSArray<NSString*>* packages) {
     if (!packages.count) return @"true\n";

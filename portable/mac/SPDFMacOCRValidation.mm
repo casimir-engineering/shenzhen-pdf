@@ -1,5 +1,23 @@
 #import "SPDFMacOCRValidation.h"
 
+BOOL spdf_mac_ocr_document_is_image_backed(spdf_document* doc) {
+    if (!doc) return NO;
+    int pageCount = spdf_page_count(doc);
+    if (pageCount <= 0) return NO;
+    // Every page, not just the first: a cover scan in front of an authored
+    // document must not turn the whole file into a rasterising job.
+    for (int page = 0; page < pageCount; ++page) {
+        spdf_text_lines lines;
+        memset(&lines, 0, sizeof(lines));
+        char err[1024] = {0};
+        if (!spdf_extract_page_text_lines(doc, page, &lines, err, sizeof(err))) return NO;
+        BOOL backed = lines.image_backed != 0;
+        spdf_free_text_lines(&lines);
+        if (!backed) return NO;
+    }
+    return YES;
+}
+
 NSInteger spdf_mac_ocr_pages_without_text(spdf_document* doc) {
     if (!doc) return -1;
     int pageCount = spdf_page_count(doc);

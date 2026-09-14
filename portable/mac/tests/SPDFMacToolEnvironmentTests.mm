@@ -110,9 +110,9 @@ int main(void) {
         Expect(!spdf_mac_tool_venv_has_tool(@""), @"and no name is not a tool");
         // The gate that sends a machine to the installer, and the latch that
         // stops it asking again when the environment cannot be built at all.
-        Expect(!spdf_mac_tool_environment_install_attempted(), @"no attempt has been made yet");
-        spdf_mac_tool_note_environment_install_attempt();
-        Expect(spdf_mac_tool_environment_install_attempted(),
+        Expect(!spdf_mac_tool_install_attempted(), @"no attempt has been made yet");
+        spdf_mac_tool_note_install_attempt();
+        Expect(spdf_mac_tool_install_attempted(),
                @"after one attempt a machine with no Python is left alone rather than asked every run");
 
         // --- The same build as an installer step ---------------------------------

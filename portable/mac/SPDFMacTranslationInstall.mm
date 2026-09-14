@@ -53,7 +53,7 @@
     // is exactly what made this install differ between machines.
     task.arguments = @[ @"-c", [self argosInstallScript] ];
     task.environment = [self taskEnvironmentWithToolPaths:@[]];
-    spdf_mac_tool_note_environment_install_attempt();
+    spdf_mac_tool_note_install_attempt();
 
     __weak ShenzhenMacDelegate* weakSelf = self;
     [self runTranslationInstallTask:task
