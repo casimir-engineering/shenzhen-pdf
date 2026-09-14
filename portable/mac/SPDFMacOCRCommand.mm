@@ -4,7 +4,7 @@ NSArray<NSString*>* spdf_mac_ocr_arguments(NSString* language, NSString* origina
                                            NSInteger jobs, BOOL sourceHasText, BOOL forceOCR) {
     NSMutableArray<NSString*>* args = [@[
         @"--jobs", [NSString stringWithFormat:@"%ld", (long)jobs], @"--rotate-pages", @"--optimize", @"1",
-        @"--oversample", @"400", @"-l", language ?: @"eng"
+        @"--oversample", @"400", @"--tesseract-pagesegmode", @"11", @"-l", language ?: @"eng"
     ] mutableCopy];
     if (!sourceHasText) {
         [args addObject:@"--deskew"];
