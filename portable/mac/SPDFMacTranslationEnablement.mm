@@ -34,16 +34,20 @@
         [self showSelectionTranslationPanel:sender];
         return NO;
     }
-    // Whole-document translation rewrites a rendered PDF's own lines in place,
-    // so it has nothing to write into on a Markdown tab. Say that plainly
-    // instead of leaving the command inert.
-    if (spdf_translation_whole_document_available(context) && _path.length) return YES;
-    if (context.markdownActive) {
-        [self showError:@"Translate a selection"
-                 detail:@"Whole-document translation writes translated lines back into a PDF's own pages. "
-                        @"For a Markdown document, select the text you want and translate that."];
+    // Both busy checks live here rather than in the command, so every entry
+    // point is gated the same way.
+    if (_translationInstallRunning) {
+        [_translationInstallPanel makeKeyAndOrderFront:nil];
+        _statusLabel.stringValue = @"Translation installer is already running.";
         return NO;
     }
+    if (_translationRunning) {
+        _statusLabel.stringValue = @"Translation is already running.";
+        return NO;
+    }
+    // A Markdown tab reaches this too: it is rendered to a PDF first, and that
+    // is what gets translated (SPDFMacMarkdownTranslate.h).
+    if (spdf_translation_whole_document_available(context) && _path.length) return YES;
     NSBeep();
     return NO;
 }

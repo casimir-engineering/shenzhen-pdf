@@ -243,15 +243,19 @@ int main(void) {
         busyPDF.translationInstallRunning = true;
         Expect("a running installer blocks translation", !spdf_translation_command_enabled(busyPDF));
 
-        // Markdown: text is all selection translation needs. Whole-document
-        // translation writes into a PDF's own page geometry, so it stays
-        // PDF-only.
+        // Markdown: text is all selection translation needs, and a whole
+        // document is reached by rendering it to a PDF first, so neither is
+        // blocked.
         spdf_translation_context markdownNoSelection = {};
         markdownNoSelection.markdownActive = true;
-        Expect("Markdown without a selection has nothing to translate",
-               !spdf_translation_command_enabled(markdownNoSelection));
-        Expect("whole-document translation stays PDF-only",
-               !spdf_translation_whole_document_available(markdownNoSelection));
+        Expect("Markdown without a selection translates as a whole document",
+               spdf_translation_command_enabled(markdownNoSelection));
+        Expect("whole-document translation reaches Markdown through its PDF rendition",
+               spdf_translation_whole_document_available(markdownNoSelection));
+        spdf_translation_context busyMarkdownWhole = markdownNoSelection;
+        busyMarkdownWhole.translationRunning = true;
+        Expect("but not while one is already running",
+               !spdf_translation_command_enabled(busyMarkdownWhole));
 
         spdf_translation_context markdownSelection = markdownNoSelection;
         markdownSelection.hasSelection = true;

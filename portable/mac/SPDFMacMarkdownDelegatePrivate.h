@@ -107,6 +107,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)installMarkdownHostInDocumentContainer;
 - (SPDFMacMarkdownSession*)activeMarkdownSession;
 - (BOOL)isMarkdownActive;
+// Whole-document translation for Markdown; see SPDFMacMarkdownTranslate.h.
+- (BOOL)beginWholeDocumentTranslationForMarkdown;
 - (BOOL)hasActiveDocument;
 - (void)deactivateActiveMarkdownView;
 - (void)ensureActiveMarkdownTabHasContent;

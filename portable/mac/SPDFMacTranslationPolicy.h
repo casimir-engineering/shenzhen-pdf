@@ -6,12 +6,13 @@
 //
 // SELECTION translation only needs text, so it works on any tab that has a
 // selection it may copy — a Markdown tab included, since Markdown has no
-// copy-permission concept at all. WHOLE-DOCUMENT translation rewrites a
-// rendered PDF in place (translated lines are drawn back at each source line's
-// position, page by page, through the mupdf render path), so it stays
-// PDF-only: a Markdown tab has no page raster and no per-line geometry to
-// write into. That limit is surfaced in the UI as an explicit "select some
-// text" message rather than a silently greyed-out button.
+// copy-permission concept at all.
+//
+// WHOLE-DOCUMENT translation rewrites a rendered PDF in place: translated lines
+// are drawn back at each source line's position, page by page, through the
+// mupdf render path. A Markdown tab has no such geometry of its own, so it is
+// first rendered to a PDF — the same rendition Save as PDF writes — and that
+// PDF is what gets translated. It is therefore available on both kinds of tab.
 typedef struct {
     bool markdownActive;             // the active tab is a Markdown document
     bool pdfDocumentOpen;            // a mupdf document is loaded (PDF/XPS/EPUB/CBZ path)
