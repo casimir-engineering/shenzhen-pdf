@@ -32,7 +32,13 @@ void spdf_assert_paged_view_go_to_page_scrolls(SPDFMacMarkdownPagedView* view) {
         NSPoint before = view.documentVisibleRect.origin;
         [view goToPageAtIndex:2 alignTop:alignTopValues[i]];
         assert(!NSEqualPoints(view.documentVisibleRect.origin, before)); // the viewport actually moved
-        assert(fabs(NSMinY(view.documentVisibleRect) - (NSMinY(page) - 12.0)) < 1.5); // top-aligned
+        // The 12pt breathing room belongs to a page TALLER than the viewport; a
+        // page that fits is centred, which at exact fit means flush with the
+        // top. This fixture's page height equals the viewport height, so the
+        // sheet's top must sit exactly at the viewport top -- stepping used to
+        // subtract 12 unconditionally and leave a strip of canvas above it.
+        assert(fabs(NSHeight(page) - NSHeight(view.documentVisibleRect)) <= 0.5);
+        assert(fabs(NSMinY(view.documentVisibleRect) - NSMinY(page)) < 1.5);
         assert(view.currentPageIndex == 2);
     }
     [view goToPageAtIndex:-7 alignTop:YES];
@@ -159,6 +165,17 @@ void spdf_assert_markdown_exact_fit_and_vertical_centering(SPDFMacMarkdownPagedV
     assert(fabs(NSMinY(multiPageView.documentVisibleRect) - NSMinY(page2)) <= 0.5);
     assert(fabs(NSMidX(multiPageView.documentVisibleRect) - NSMidX(page2)) <= 1.0);
     assert(multiPageView.currentPageIndex == 2);
+    // STEPPING to a page at Fit Page must land flush too, not 12pt below the
+    // top: the breathing room belongs to a page taller than the viewport. This
+    // path subtracted 12 unconditionally, so every stepped-to sheet showed a
+    // strip of canvas above it while the PDF view, sharing the same rule, did not.
+    [multiPageView goToPageAtIndex:1 alignTop:YES];
+    NSRect page1 = [multiCanvas frameForPageAtIndex:1];
+    assert(fabs(NSMinY(multiPageView.documentVisibleRect) - NSMinY(page1)) <= 0.5);
+    [multiPageView goToPageAtIndex:2 alignTop:YES];
+    page2 = [multiCanvas frameForPageAtIndex:2];
+    assert(fabs(NSMinY(multiPageView.documentVisibleRect) - NSMinY(page2)) <= 0.5);
+    [multiPageView applyFitMode:SPDFMacMarkdownPageFitPage];
     // Fit Height: same alignment, page height exact.
     [multiPageView scrollByDocumentDeltaX:0.0 deltaY:120.0];
     [multiPageView applyFitMode:SPDFMacMarkdownPageFitHeight];

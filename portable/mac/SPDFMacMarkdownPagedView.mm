@@ -1,5 +1,7 @@
 #import "SPDFMacMarkdownPagedViewPrivate.h"
 
+#import "SPDFMacFitGeometry.h"
+
 static const CGFloat kSPDFMarkdownFitInset = 48.0;
 
 // The scroll/clip background behind the sheets. The dark theme names its own
@@ -324,7 +326,13 @@ static NSColor* SPDFMacMarkdownGutterColor(SPDFMarkdownPaginationPlan* plan) {
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)self.pageCount - 1));
     NSRect page = [_canvas frameForPageAtIndex:(NSUInteger)pageIndex];
     NSRect visible = self.documentVisibleRect;
-    [self scrollToDocumentOrigin:NSMakePoint(NSMidX(page) - NSWidth(visible) * 0.5, NSMinY(page) - 12.0)];
+    // The 12pt breathing room belongs to a page TALLER than the viewport; a page
+    // that fits is centred, which at exact fit puts its top flush with the
+    // viewport top. Subtracting 12 unconditionally left a strip of gutter above
+    // every stepped-to sheet -- the PDF path has gone through this helper since
+    // the same bug was fixed there (SPDFMacFitGeometry.h).
+    CGFloat y = spdf_mac_fit_scroll_origin_y(NSMinY(page), NSHeight(page), NSHeight(visible), 12.0);
+    [self scrollToDocumentOrigin:NSMakePoint(NSMidX(page) - NSWidth(visible) * 0.5, y)];
 }
 
 - (BOOL)revealRange:(NSRange)range {
