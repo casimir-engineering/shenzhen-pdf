@@ -11,7 +11,9 @@ bool spdf_translation_selection_enabled(spdf_translation_context context) {
 }
 
 bool spdf_translation_whole_document_available(spdf_translation_context context) {
-    return context.pdfDocumentOpen && !context.markdownActive;
+    // Markdown too: it has no page geometry of its own, but the app can render
+    // it to a PDF (the same rendition Save as PDF writes) and translate that.
+    return context.pdfDocumentOpen || context.markdownActive;
 }
 
 bool spdf_translation_command_enabled(spdf_translation_context context) {

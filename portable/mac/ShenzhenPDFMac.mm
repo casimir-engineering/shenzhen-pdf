@@ -14339,16 +14339,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 - (void)translateDocument:(id)sender {
     if (![self beginTranslateCommandForSender:sender]) return;
+    if ([self beginWholeDocumentTranslationForMarkdown]) return;  // renders to PDF, then re-enters
     if (![self ensureActivePDFCanBeModifiedForOperation:@"translation"]) return;
-    if (_translationInstallRunning) {
-        [_translationInstallPanel makeKeyAndOrderFront:nil];
-        _statusLabel.stringValue = @"Translation installer is already running.";
-        return;
-    }
-    if (_translationRunning) {
-        _statusLabel.stringValue = @"Translation is already running.";
-        return;
-    }
 
     BOOL usingSelection = NO;
     NSString* textError = nil;
