@@ -70,7 +70,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 <p align="center"><img src="docs/images/portable/macos-translate.webp" alt="A paper translated whole from English to Chinese, offline: the translated PDF opened as a second tab next to the original, with the translation overlaid line by line" width="880"></p>
 
-- **Offline translation (Argos Translate)** — a selection into a panel, or a whole PDF into a real translated file (`<name>_<lang>.pdf`) that opens when it finishes. ~19 languages incl. Chinese; text never leaves your machine.
+- **Offline translation (Argos Translate)** — a selection into a panel, or a whole document into a real translated file (`<name>_<lang>.pdf`) that opens when it finishes. Works on PDFs and Markdown. ~19 languages incl. Chinese; text never leaves your machine.
 - **Local OCR for scanned PDFs** — OCRmyPDF + Tesseract on your own machine; Simplified/Traditional Chinese, English and ~20 more, language data fetched on demand.
 - **One-click toolchain install** — a missing tool or language pack is installed for you (Homebrew; apt/dnf/pacman/zypper) and the job resumes.
 

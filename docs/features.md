@@ -298,7 +298,8 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 
 - **Argos Translate**, running locally across ~19 languages including Chinese.
   Text never leaves the machine.
-- **Translate a selection** into a panel, or **a whole document**.
+- **Translate a selection** into a panel, or **a whole document** — a PDF, or
+  a Markdown document, which is rendered to a PDF beside it and translated.
 - **Whole-document mode writes a real PDF** (`<name>_<lang>.pdf`) with the
   translated text overlaid at each source line's position, and opens it when it
   finishes.
