@@ -2730,7 +2730,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _fitModePopup.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightLight];
     _fitModePopup.cell.font = _fitModePopup.font;
     _fitModePopup.translatesAutoresizingMaskIntoConstraints = NO;
-    [_fitModePopup.widthAnchor constraintEqualToConstant:108].active = YES;  // "Fit Height" needs 106pt
+    spdf_fit_popup_select_and_size(_fitModePopup, nil);
     [_fitModePopup setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                             forOrientation:NSLayoutConstraintOrientationHorizontal];
 
@@ -10157,7 +10157,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     }
     NSMenuItem* selectedFitItem = [self fitModePopupItemForMode:_fitMode];
     if (!selectedFitItem && _fitMode == SPDFFitModeCustom) selectedFitItem = actualItem;
-    if (selectedFitItem) [_fitModePopup selectItem:selectedFitItem];
+    spdf_fit_popup_select_and_size(_fitModePopup, selectedFitItem);
     [self styleToolbarPanelButton:_sidebarToggleButton
                             title:@"Side Panel"
                            active:_sidebarVisible

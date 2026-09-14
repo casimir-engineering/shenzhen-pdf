@@ -171,3 +171,19 @@
 }
 
 @end
+
+void spdf_fit_popup_select_and_size(NSPopUpButton* popup, NSMenuItem* itemToSelect) {
+    if (!popup) return;
+    if (itemToSelect) [popup selectItem:itemToSelect];
+    NSString* title = popup.titleOfSelectedItem ?: @"";
+    NSFont* font = popup.font ?: [NSFont systemFontOfSize:13.0 weight:NSFontWeightLight];
+    // 49 is the chrome either side of the label plus the chevrons; it does not
+    // vary with the title. The floor keeps a one-character title from collapsing.
+    CGFloat width = MAX(78.0, ceil([title sizeWithAttributes:@{NSFontAttributeName : font}].width) + 49.0);
+    for (NSLayoutConstraint* constraint in popup.constraints)
+        if (constraint.firstAttribute == NSLayoutAttributeWidth && constraint.secondItem == nil) {
+            constraint.constant = width;
+            return;
+        }
+    [popup.widthAnchor constraintEqualToConstant:width].active = YES;
+}

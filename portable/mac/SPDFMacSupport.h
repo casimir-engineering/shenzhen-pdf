@@ -14,6 +14,13 @@ NSImage* spdf_translate_toolbar_image(void);
 NSImage* spdf_ocr_toolbar_image(void);
 NSImage* spdf_markdown_font_size_toolbar_image(BOOL larger);
 NSSegmentedControl* spdf_paired_toolbar_segments(id target, SEL action, NSImage* leadingImage, NSImage* trailingImage);
+
+// Sizes the fit-mode popup to the title it is CURRENTLY showing, rather than to
+// the widest title in its menu. An NSPopUpButton's intrinsic width is the widest
+// item plus a constant 48.6pt of chrome (measured across every title this menu
+// uses), so a fixed width leaves the short ones -- "100%", "1600%" -- floating in
+// the middle of a box sized for "Fit Height".
+void spdf_fit_popup_select_and_size(NSPopUpButton* popup, NSMenuItem* itemToSelect);
 // The one-segment pill, configured identically to the paired one (rounded
 // style, momentary tracking) so a lone toolbar toggle matches the pills beside
 // it instead of reading as a differently-bezeled push button.
