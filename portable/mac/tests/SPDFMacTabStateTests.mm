@@ -163,6 +163,25 @@ int main(void) {
         Expect("new tabs go through that seeding",
                [coordinator containsString:@"[self seedNewTabFromDocumentMemory:tab];"]);
 
+        // --- The detach handoff name -------------------------------------
+        // Detaching a tab launches a NEW PROCESS, and the reading position is
+        // handed over in a file both sides name from the document's path alone
+        // -- no argument passes between them, so the two must agree exactly.
+        NSString* handoff = spdf_mac_detach_handoff_name(@"/Users/someone/Reading/report.pdf");
+        Expect("the handoff is a recognisable state file",
+               [handoff hasPrefix:@"detach-"] && [handoff hasSuffix:@".yaml"]);
+        Expect("the same path always names the same handoff",
+               [handoff isEqualToString:spdf_mac_detach_handoff_name(@"/Users/someone/Reading/report.pdf")]);
+        Expect("and so does a messier route to the same document",
+               [handoff isEqualToString:
+                            spdf_mac_detach_handoff_name(@"/Users/someone/Reading/../Reading/report.pdf")]);
+        Expect("different documents never share one handoff",
+               ![handoff isEqualToString:spdf_mac_detach_handoff_name(@"/Users/someone/Reading/report2.pdf")] &&
+                   ![handoff isEqualToString:spdf_mac_detach_handoff_name(@"/Users/other/Reading/report.pdf")]);
+        Expect("it is a bare name joined onto the state directory, never a path",
+               [handoff rangeOfString:@"/"].location == NSNotFound);
+        Expect("no path, no handoff", spdf_mac_detach_handoff_name(@"").length == 0);
+
         if (gFailures == 0) fprintf(stderr, "SPDFMacTabStateTests passed\n");
     }
     return gFailures == 0 ? 0 : 1;

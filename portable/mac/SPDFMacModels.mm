@@ -196,3 +196,17 @@ NSUInteger spdf_session_focused_window_index(NSArray* windows) {
 }
 
 @end
+
+NSString* spdf_mac_detach_handoff_name(NSString* path) {
+    NSString* standardized = path.stringByStandardizingPath ?: @"";
+    if (!standardized.length) return @"";
+    // A stable, filesystem-safe name both sides compute from the path alone.
+    // Hashing keeps it short and keeps the document's name out of the state
+    // directory, where a listing would otherwise leak what is open.
+    unsigned long long hash = 1469598103934665603ULL;  // FNV-1a
+    for (NSUInteger i = 0; i < standardized.length; ++i) {
+        hash ^= (unsigned long long)[standardized characterAtIndex:i];
+        hash *= 1099511628211ULL;
+    }
+    return [NSString stringWithFormat:@"detach-%016llx.yaml", hash];
+}

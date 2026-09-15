@@ -33,6 +33,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacOCRInstall.h"
 #import "SPDFMacOCRValidation.h"
 #import "SPDFMacReadingTheme.h"
+#import "SPDFMacTabDetach.h"
 #import "SPDFMacTranslationInstall.h"
 #import "SPDFMacToolEnvironment.h"
 #import "SPDFMacMinimapView.h"
@@ -1255,7 +1256,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         _documentStates = [NSMutableDictionary dictionary];
     [self loadSecurityBookmarks];
 
-    if (self.detachedTabLaunch) return;
+    if (self.detachedTabLaunch) return [self adoptDetachedTabForLaunch];
 
     NSMutableDictionary* session =
         [self normalizedMultiWindowSessionFromObject:[self stateObjectFromFile:@"session.yaml"]];
@@ -8962,31 +8963,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self savePersistentState];
 }
 
-- (void)detachTabAtIndex:(NSInteger)index {
-    if (index < 0 || index >= (NSInteger)_tabs.count) return;
-
-    [self rememberActiveTabState];
-    SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
-    NSString* path = [tab.path copy];
-    if (path.length == 0) return;
-
-    NSString* executable = NSBundle.mainBundle.executablePath ?: NSProcessInfo.processInfo.arguments.firstObject;
-    if (executable.length == 0) return;
-
-    NSTask* task = [[NSTask alloc] init];
-    task.executableURL = [NSURL fileURLWithPath:executable];
-    task.arguments = @[ @"--detached-tab", path ];
-    task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
-    task.standardError = [NSFileHandle fileHandleWithNullDevice];
-
-    NSError* error = nil;
-    if (![task launchAndReturnError:&error]) {
-        [self showError:@"Could not detach tab" detail:error.localizedDescription ?: @"Launch failed"];
-        return;
-    }
-
-    [self closeTabAtIndex:index preferMostRecentActive:index == _selectedTabIndex];
-}
 
 - (void)newTabRequested:(id)sender {
     [self openDocument:sender];
