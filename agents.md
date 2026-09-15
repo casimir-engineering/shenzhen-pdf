@@ -1,10 +1,11 @@
 # Working in this repository
 
 ShenzhenPDF is a native **macOS** reader (AppKit) for PDFs and Markdown, built on a
-portable C core wrapping MuPDF, with a GTK4 Linux frontend sharing that core. The
-inherited SumatraPDF Win32 tree in `src/` is legacy: it is not built or shipped
-from here, and its own conventions (Win32 APIs, `src/utils` containers instead of
-the STL, generated settings/commands/flags under `cmd/`) apply only inside it.
+portable C core wrapping MuPDF, with a GTK4 Linux frontend and a native Win32
+frontend sharing that core. Everything lives under `portable/`; the inherited
+SumatraPDF Win32 tree that used to sit in `src/`, with its build tooling and CI,
+has been deleted. `ext/` and `mupdf/` remain because the portable build compiles
+against them, and `gfx/` because the macOS icon is built from it.
 
 Read these rather than duplicating them here:
 
