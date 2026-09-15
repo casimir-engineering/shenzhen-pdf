@@ -5,11 +5,9 @@ The [readme](../readme.md) is the short version; this is the exhaustive one.
 
 Platform tags: **mac** = macOS (AppKit), **linux** = GTK4 + libadwaita,
 **win** = the native Win32 + Direct2D frontend in `portable/win/`. An untagged
-entry works on all three. (The separate Win32 tree in `src/` is the legacy
-SumatraPDF-era code and is not the Windows app; see
-`portable/docs/windows-feature-matrix.md` for the Windows frontend's
-feature-by-feature status.) No Windows binary is published yet; the build
-is a single self-installing executable, `dist\ShenzhenPDF-win-x64.exe`.
+entry works on all three. (See `portable/docs/windows-feature-matrix.md` for the
+Windows frontend's feature-by-feature status.) No Windows binary is published
+yet; the build is a single self-installing executable, `dist\ShenzhenPDF-win-x64.exe`.
 
 - [Formats](#formats)
 - [Opening documents](#opening)

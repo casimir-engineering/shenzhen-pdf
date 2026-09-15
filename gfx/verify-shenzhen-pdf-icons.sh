@@ -26,12 +26,6 @@ for size in 16 32 48 128 256; do
         "$script_dir/SumatraPDF-${size}x${size}x32.png"
 done
 
-assert_png_size "$repo_root/appx/SumatraPDF_44x44.png" "44x44"
-assert_png_size "$repo_root/appx/SumatraPDF_StoreLogo_150x150.png" "150x150"
-assert_png_size "$repo_root/appx/SumatraLogo310x310.png" "310x310"
-assert_png_size "$repo_root/appx/SumatraLogo310x150.png" "310x150"
-cmp "$script_dir/ShenzhenPDF-256x256x32.png" "$repo_root/appx/fileicon.png"
-
 expected_frames=$'16x16\n32x32\n48x48\n64x64\n128x128\n256x256'
 for icon in SumatraPDF.ico SumatraPDF-smaller.ico PdfDoc.ico pdf-32bit.ico; do
     actual_frames="$(magick identify -format '%wx%h\n' "$script_dir/$icon")"
