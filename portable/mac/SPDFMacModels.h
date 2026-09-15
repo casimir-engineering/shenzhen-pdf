@@ -125,6 +125,11 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source);
 NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWindowNumber);
 SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item);
 
+// The file a tab detach hands its reading position over in, named from the
+// document's path so the launching and launched processes agree without an
+// argument passing between them. See SPDFMacTabDetach.h.
+NSString* spdf_mac_detach_handoff_name(NSString* path);
+
 // Which saved window the reader was last looking at.
 //
 // A session holds one entry per window, and only one process activates at

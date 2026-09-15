@@ -145,7 +145,14 @@ static int test_coordinator_source_contract(void) {
     EXPECT(source != nil);
     EXPECT([source containsString:@"if (action == @selector(closeDocument:))"]);
     EXPECT([source containsString:@"spdf_mac_tab_close_action_enabled"]);
-    EXPECT([source containsString:@"preferMostRecentActive:index == _selectedTabIndex"]);
+    // Detaching moved to SPDFMacTabDetach.mm, which hands the tab's reading
+    // position to the process it launches; the close-here half went with it.
+    NSString* detachPath =
+        [[testPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"../SPDFMacTabDetach.mm"];
+    NSString* detach = [NSString stringWithContentsOfFile:detachPath encoding:NSUTF8StringEncoding error:nil];
+    EXPECT(detach != nil);
+    EXPECT([detach containsString:@"preferMostRecentActive:index == _selectedTabIndex"]);
+    EXPECT([detach containsString:@"spdf_mac_detach_handoff_name"]);
     EXPECT([source containsString:@"recordActivationOfIdentifier:tab"]);
     // A Markdown tab has no spdf_document, so gating the file watcher on _doc
     // alone left Markdown unwatched: editing the file on disk never reloaded it,
