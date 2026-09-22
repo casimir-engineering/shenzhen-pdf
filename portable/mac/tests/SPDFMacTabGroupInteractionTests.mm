@@ -7,6 +7,7 @@
 @property(nonatomic, strong) SPDFTabGroup* group;
 @property(nonatomic, copy) NSString* path;
 @property(nonatomic, copy) NSString* title;
+@property(nonatomic, copy) NSString* collectionVersionLabel;
 @property(nonatomic) BOOL readOnly;
 @property(nonatomic) BOOL missingFile;
 @end
@@ -17,6 +18,9 @@
 @property(nonatomic) NSInteger toggles;
 @property(nonatomic) NSInteger createdGroups;
 @property(nonatomic) NSInteger movedToGroup;
+@property(nonatomic) NSInteger selectedTab;
+@property(nonatomic) NSInteger closedTab;
+@property(nonatomic) NSInteger newTabRequests;
 @property(nonatomic, strong) SPDFTabGroup* lastDestination;
 @property(nonatomic, copy) NSString* lastColor;
 @end
@@ -41,12 +45,12 @@
 - (NSArray<NSDictionary*>*)snapshotTabGroup:(SPDFTabGroup*)group { (void)group; return @[]; }
 - (void)insertDraggedGroup:(NSArray<NSDictionary*>*)tabs atIndex:(NSInteger)index { (void)tabs, (void)index; }
 - (void)detachTabGroup:(SPDFTabGroup*)group atScreenPoint:(NSPoint)point { (void)group, (void)point; }
-- (void)newTabRequested:(id)sender { (void)sender; }
-- (void)selectTabAtIndex:(NSInteger)index { (void)index; }
+- (void)newTabRequested:(id)sender { (void)sender; self.newTabRequests++; }
+- (void)selectTabAtIndex:(NSInteger)index { self.selectedTab = index; }
 - (void)moveTabFromIndex:(NSInteger)sourceIndex toIndex:(NSInteger)targetIndex {
     (void)sourceIndex, (void)targetIndex;
 }
-- (void)closeTabAtIndex:(NSInteger)index { (void)index; }
+- (void)closeTabAtIndex:(NSInteger)index { self.closedTab = index; }
 - (void)detachTabAtIndex:(NSInteger)index { (void)index; }
 - (void)insertDraggedTab:(id)tab atIndex:(NSInteger)index { (void)tab, (void)index; }
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event { (void)event; return NO; }
@@ -150,6 +154,15 @@ int main(void) {
         SPDFTabGroup* general = SPDFTabGroup.generalGroup;
         SPDFTabGroup* blue = [SPDFTabGroup groupWithColor:@"Blue"];
         SPDFTabGroup* green = [SPDFTabGroup groupWithColor:@"Green"];
+        strip.frame = NSMakeRect(0,0,1120,42);
+        strip.tabs = (id)@[tab(@"General A", general), tab(@"Archive", general), tab(@"Blue A", blue)];
+        strip.selectedIndex = 2;
+        expect(strip.groupedVisibleTabIndexes.count == 3 && !strip.groupedHasOverflow,
+               @"three tabs must use available space before overflowing");
+        SPDFGroupFakeTab* archived = (id)strip.tabs[1];
+        archived.collectionVersionLabel = @"Archived · Sep 23 · Notes · Read-only";
+        expect([[strip titleForTabAtIndex:1] isEqual:archived.collectionVersionLabel], @"archive label must bypass path disambiguation");
+        strip.frame = NSMakeRect(0,0,900,42);
         NSMutableArray* tabs = [NSMutableArray arrayWithObjects:tab(@"General A", general),
                                  tab(@"General B", general), nil];
         for (NSInteger i = 0; i < 8; ++i) [tabs addObject:tab([NSString stringWithFormat:@"Blue %ld", (long)i], blue)];
@@ -308,6 +321,59 @@ int main(void) {
                @"selected tab in an overflowed late group became unreachable");
         expect([crowdedHidden containsObject:@0] && [crowdedHidden containsObject:@1],
                @"collapsed group members were omitted from overflow");
+        NSMenu* groupedOverflow = [strip overflowMenu];
+        NSUInteger overflowHeadings = 0;
+        for (NSMenuItem* item in groupedOverflow.itemArray)
+            if (!item.enabled && !item.separatorItem && item.image) ++overflowHeadings;
+        expect(overflowHeadings >= 2, @"grouped overflow omitted named color headings");
+
+        // Context moves enumerate every existing destination once, including
+        // General, and identify current membership without relying on color.
+        strip.tabs = (id)tabs;
+        strip.selectedIndex = 9;
+        NSMenu* destinations = [strip moveToGroupMenuForTabAtIndex:9];
+        expect(destinations.numberOfItems == 3, @"Move to Group omitted an existing destination");
+        expect([destinations.itemArray[0].title isEqualToString:@"General"] &&
+                   [destinations.itemArray[1].title isEqualToString:blue.displayName] &&
+                   [destinations.itemArray[2].title isEqualToString:green.displayName],
+               @"Move to Group did not preserve visible group order");
+        expect(destinations.itemArray[1].state == NSControlStateValueOn,
+               @"Move to Group did not check the tab's current group");
+        expect(destinations.itemArray[0].image != nil && destinations.itemArray[1].image != nil,
+               @"Move to Group destinations omitted color swatches");
+        [strip tabContextMoveToGroup:destinations.itemArray[0]];
+        expect(reader.lastDestination == general, @"Move to Group did not route the General destination");
+
+        // The custom-drawn strip must expose actionable virtual children: all
+        // tabs (including overflow), group disclosure controls and the plus.
+        NSArray* accessible = strip.accessibilityChildren;
+        NSPredicate* blueGroup = [NSPredicate predicateWithBlock:^BOOL(id item, NSDictionary* bindings) {
+          (void)bindings;
+          return [[item accessibilityRole] isEqualToString:NSAccessibilityDisclosureTriangleRole] &&
+                 [[item accessibilityLabel] isEqualToString:blue.displayName];
+        }];
+        expect([[accessible filteredArrayUsingPredicate:blueGroup] count] == 1,
+               @"accessibility tree omitted the Blue group disclosure");
+        id blueAX = [accessible filteredArrayUsingPredicate:blueGroup].firstObject;
+        expect([[blueAX accessibilityHelp] containsString:@"Press to"],
+               @"group accessibility omitted collapse/expand help");
+        expect([[[blueAX accessibilityCustomActions] valueForKey:@"name"] containsObject:@"Show Group Menu"],
+               @"group accessibility omitted its context menu action");
+        NSPredicate* selectedTab = [NSPredicate predicateWithBlock:^BOOL(id item, NSDictionary* bindings) {
+          (void)bindings;
+          return [[item accessibilityRole] isEqualToString:NSAccessibilityRadioButtonRole] &&
+                 [item isAccessibilitySelected];
+        }];
+        NSArray* selectedChildren = [accessible filteredArrayUsingPredicate:selectedTab];
+        expect(selectedChildren.count == 1, @"accessibility tree did not expose one selected tab");
+        expect([selectedChildren.firstObject isAccessibilityEnabled],
+               @"virtual tab accessibility element was exposed as disabled");
+        expect([[[selectedChildren.firstObject accessibilityCustomActions] valueForKey:@"name"]
+                    containsObject:@"Show Tab Menu"],
+               @"tab accessibility omitted its context menu action");
+        expect([selectedChildren.firstObject accessibilityPerformPress],
+               @"selected tab accessibility press was rejected");
+        expect(reader.selectedTab == 9, @"tab accessibility press did not route selection");
     }
     puts("SPDF mac tab-group interaction tests passed");
     return 0;

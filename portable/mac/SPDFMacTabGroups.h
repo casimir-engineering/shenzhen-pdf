@@ -20,6 +20,7 @@
 NSArray<NSString*>* spdf_tab_group_colors(void);
 NSColor* spdf_tab_group_accent(NSString* color);
 NSColor* spdf_tab_group_selected_fill(NSString* color, BOOL dark);
+NSImage* spdf_tab_group_swatch_image(NSString* color);
 NSString* spdf_tab_group_unused_color(NSArray<SPDFDocumentTab*>* tabs);
 // Canonicalizes decoded identities and keeps each group's tabs contiguous,
 // preserving first-occurrence group order and intra-group tab order.

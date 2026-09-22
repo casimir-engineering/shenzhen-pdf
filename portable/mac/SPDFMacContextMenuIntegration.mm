@@ -1,6 +1,8 @@
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacMarkdownPageCanvas.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacContextPage.h"
+#import "SPDFMacCollectionPathPolicy.h"
 #import "SPDFMacTranslationEnablement.h"
 
 #import <objc/runtime.h>
@@ -108,22 +110,23 @@
                                                    action:@selector(openMarkdownInEditor:)
                                             keyEquivalent:@""];
         openInEditor.target = self;
-        openInEditor.enabled = _path.length > 0;
+        openInEditor.enabled = _path.length > 0 && !SPDFMacPathIsCollectionArchive(_path);
     }
     NSMenuItem* copyDocument = [menu addItemWithTitle:@"Copy Document"
                                                action:@selector(copyCurrentDocumentFile:)
                                         keyEquivalent:@""];
     copyDocument.enabled = [self hasActiveDocument] && _path.length > 0;
-    NSMenuItem* copyPage = [menu addItemWithTitle:@"Copy Page"
+    NSInteger copyPageIndex = _contextPageIndex >= 0 ? _contextPageIndex : _pageIndex;
+    NSMenuItem* copyPage = [menu addItemWithTitle:SPDFMacCopyPageMenuTitle(copyPageIndex, NO)
                                            action:@selector(copyCurrentPageAsPDF:)
                                     keyEquivalent:@""];
     copyPage.enabled = markdown ? [self canCopyCurrentPageAsPDF]
                                 : _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
     if (_contextPageIndex >= 0) copyPage.representedObject = @(_contextPageIndex);
-    NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
+    NSMenuItem* copyImage = [menu addItemWithTitle:SPDFMacCopyPageMenuTitle(copyPageIndex, YES)
                                             action:@selector(copyCurrentPageImage:)
                                      keyEquivalent:@""];
-    NSInteger imagePageIndex = _contextPageIndex >= 0 ? _contextPageIndex : _pageIndex;
+    NSInteger imagePageIndex = copyPageIndex;
     copyImage.enabled = markdown ? [self canCopyCurrentPageImage]
                                  : imagePageIndex >= 0 && imagePageIndex < (NSInteger)_renderedPages.count &&
                                        _renderedPages[(NSUInteger)imagePageIndex].image != nil;

@@ -25,3 +25,11 @@ static inline NSInteger SPDFMacPageIndexForActionSender(id sender, NSInteger con
     }
     return contextPageIndex >= 0 ? contextPageIndex : currentPageIndex;
 }
+
+// Menu wording names both the pointer/current page and the output type. Page
+// indexes are zero-based internally and one-based everywhere the user sees.
+static inline NSString* SPDFMacCopyPageMenuTitle(NSInteger pageIndex, BOOL image) {
+    NSString* kind = image ? @"Image" : @"PDF";
+    if (pageIndex < 0) return [NSString stringWithFormat:@"Copy Page as %@", kind];
+    return [NSString stringWithFormat:@"Copy Page %ld as %@", (long)pageIndex + 1, kind];
+}

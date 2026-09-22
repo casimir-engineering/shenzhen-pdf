@@ -31,6 +31,15 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 - **Option + scroll turns pages** <sub>macOS</sub> — anywhere in the window, at the speed you spin.
 - **Presentation mode** (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>), favorites and a command palette (<kbd>Cmd+K</kbd>), reopen-last-closed (<kbd>Cmd+Shift+T</kbd>).
 
+## Collection and history <sub>macOS</sub>
+
+<p align="center"><img src="docs/images/portable/macos-collection.png" alt="Collection showing dated document versions, thumbnail selection, recovery actions and local storage settings" width="880"></p>
+
+- **Keep local copies and history** — choose at first use, then continue opening the originals. Protected versions stay read-only; copies and history can be turned off in Settings.
+- **Find and recover documents** — <kbd>Cmd+K</kbd> searches open names, groups, open text, and Collection. Use `col:` for Collection alone. A missing original can be recovered from its protected copy or located by an exact content match.
+- **Compare revisions** — PDF and Markdown versions open side by side, with removed content in red and added content in green. Change markers and paired navigation help inspect revisions.
+- **Return to the previous tab** — <kbd>Cmd+Backspace</kbd> toggles between the last two documents, reopening a closed tab with its reading position.
+
 ## <a id="markdown"></a>Markdown, read like a document <sub>macOS</sub>
 
 <p align="center"><img src="docs/images/portable/macos-markdown.webp" alt="A Markdown document rendered as an A4 sheet: heading, flowchart drawn natively, a table with header band and grid, nested chapters in the side panel, page thumbnails in the map" width="880"></p>

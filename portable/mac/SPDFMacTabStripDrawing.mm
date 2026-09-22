@@ -7,6 +7,7 @@
             attributes:(NSDictionary*)attrs
          dimAttributes:(NSDictionary*)dimAttrs {
     if (index < 0 || index >= (NSInteger)self.tabs.count || NSWidth(tabRect) < 40.0) return;
+    (void)dimAttrs;
 
     BOOL selected = index == self.selectedIndex;
     SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
@@ -41,13 +42,11 @@
     [outline stroke];
 
     NSString* title = [self titleForTabAtIndex:index];
-    NSDictionary* titleAttrs = selected || missing ? attrs : dimAttrs;
-    if (selected && !missing) {
-        NSMutableDictionary* selectedAttrs = [attrs mutableCopy];
-        selectedAttrs[NSForegroundColorAttributeName] = NSColor.whiteColor;
-        selectedAttrs[NSFontAttributeName] = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
-        titleAttrs = selectedAttrs;
-    }
+    // Selection is carried by the fill, outline and font weight. Keeping one
+    // foreground colour across every title avoids making an inactive document
+    // look disabled, especially in the dark appearance.
+    NSMutableDictionary* titleAttrs = [attrs mutableCopy];
+    if (selected) titleAttrs[NSFontAttributeName] = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
     CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
     CGFloat leftInset = 12.0;
     CGFloat rightInset = 34.0;
@@ -77,12 +76,12 @@
 
     NSRect closeRect = [self closeCircleRectForTabRect:tabRect];
     NSBezierPath* closeCircle = [NSBezierPath bezierPathWithOvalInRect:closeRect];
-    NSColor* closeFill = selected ? [NSColor.whiteColor colorWithAlphaComponent:0.16]
+    NSColor* closeFill = selected ? [NSColor.labelColor colorWithAlphaComponent:0.13]
                                   : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.13];
     [closeFill setFill];
     [closeCircle fill];
 
-    NSColor* closeStroke = selected ? [NSColor.whiteColor colorWithAlphaComponent:0.90]
+    NSColor* closeStroke = selected ? [NSColor.labelColor colorWithAlphaComponent:0.90]
                                     : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.82];
     [closeStroke setStroke];
     NSBezierPath* closeX = [NSBezierPath bezierPath];
@@ -107,9 +106,11 @@
         NSForegroundColorAttributeName : NSColor.labelColor,
         NSParagraphStyleAttributeName : tabTitleStyle
     };
+    // Kept as a separate argument while older callers/tests use the drawing
+    // seam; it deliberately has the exact same foreground as attrs.
     NSDictionary* dimAttrs = @{
         NSFontAttributeName : [NSFont systemFontOfSize:12],
-        NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
+        NSForegroundColorAttributeName : NSColor.labelColor,
         NSParagraphStyleAttributeName : tabTitleStyle
     };
 

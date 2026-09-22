@@ -3,8 +3,13 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #import "SPDFMacMarkdownRouting.h"
+#import "SPDFMacCollectionPathPolicy.h"
 
 NSString* const SPDFMacMarkdownEditorPreferenceDefaultsKey = @"SPDFMarkdownEditorBundleIdentifier";
+
+NSURL* SPDFMacMarkdownEditorPickerDirectoryURL(void) {
+    return [NSURL fileURLWithPath:@"/Applications" isDirectory:YES];
+}
 
 NSString* SPDFMacStoredMarkdownEditorBundleIdentifier(void) {
     NSString* value = [NSUserDefaults.standardUserDefaults
@@ -88,6 +93,7 @@ static SPDFMacEditorApplicationPicker spdf_native_editor_picker(NSWindow* parent
       panel.canChooseDirectories = NO;
       panel.allowsMultipleSelection = NO;
       panel.allowedContentTypes = @[ UTTypeApplicationBundle ];
+      panel.directoryURL = SPDFMacMarkdownEditorPickerDirectoryURL();
       void (^finish)(NSModalResponse) = ^(NSModalResponse response) {
         NSURL* applicationURL = response == NSModalResponseOK ? panel.URL : nil;
         NSString* bundleIdentifier = applicationURL ? [NSBundle bundleWithURL:applicationURL].bundleIdentifier : nil;
@@ -101,6 +107,7 @@ static SPDFMacEditorApplicationPicker spdf_native_editor_picker(NSWindow* parent
 }
 
 BOOL SPDFMacOpenMarkdownSourceInEditor(NSString* path, NSWindow* parentWindow) {
+    if (SPDFMacPathIsCollectionArchive(path)) return NO;
     return SPDFMacOpenMarkdownSourceWithHandlers(
         path, SPDFMacStoredMarkdownEditorBundleIdentifier(), spdf_workspace_editor_lookup(),
         spdf_native_editor_picker(parentWindow), spdf_workspace_editor_launcher(),

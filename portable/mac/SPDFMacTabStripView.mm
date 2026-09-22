@@ -3,6 +3,7 @@
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabStripGeometry.h"
 #import "SPDFMacTabStripStyle.h"
+#import "SPDFMacTabAccessibility.h"
 #import "SPDFMacWindowChrome.h"
 
 #include <math.h>
@@ -81,6 +82,8 @@
     _groupLayout = nil;
     _displayTitles = nil;
     _tabs = [tabs copy];
+    _accessibilityChildrenSnapshot = nil;
+    NSAccessibilityPostNotification(self, NSAccessibilityLayoutChangedNotification);
     [self setNeedsDisplay:YES];
     [self rebuildReadOnlyTooltips];
     if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint, self.bounds)) [self updateHoverForPoint:_lastHoverPoint];
@@ -90,8 +93,29 @@
 - (void)setSelectedIndex:(NSInteger)selectedIndex {
     _groupLayout = nil;
     _selectedIndex = selectedIndex;
+    _accessibilityChildrenSnapshot = nil;
+    NSAccessibilityPostNotification(self, NSAccessibilitySelectedChildrenChangedNotification);
     [self setNeedsDisplay:YES];
     [self rebuildReadOnlyTooltips];
+}
+
+- (BOOL)isAccessibilityElement { return NO; }
+
+- (NSArray*)accessibilityChildren {
+    if (!_accessibilityChildrenSnapshot)
+        _accessibilityChildrenSnapshot = SPDFMacTabAccessibilityChildren(self);
+    return _accessibilityChildrenSnapshot;
+}
+
+- (NSArray*)accessibilitySelectedChildren {
+    for (NSAccessibilityElement* child in self.accessibilityChildren)
+        if (child.isAccessibilitySelected) return @[ child ];
+    return @[];
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+    [super setFrameSize:newSize];
+    _accessibilityChildrenSnapshot = nil;
 }
 
 - (NSRect)closeCircleRectForTabRect:(NSRect)tabRect {

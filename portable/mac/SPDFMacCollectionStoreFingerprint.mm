@@ -1,0 +1,41 @@
+#import "SPDFMacCollectionStorePrivate.h"
+NSDictionary* SPDFCollectionFingerprint(NSString* path) {
+    struct stat st={};
+    if (stat(path.fileSystemRepresentation,&st)!=0 || !S_ISREG(st.st_mode)) return @{};
+    return SPDFCollectionFingerprintFromStat(&st);
+}
+NSDictionary* SPDFCollectionFingerprintFromStat(const struct stat* value) {
+    struct stat st=*value;
+    return @{@"device":@((unsigned long long)st.st_dev),@"inode":@((unsigned long long)st.st_ino),
+      @"size":@((unsigned long long)st.st_size),@"mtime":@((long long)st.st_mtimespec.tv_sec),
+      @"mtimeNS":@(st.st_mtimespec.tv_nsec),@"ctime":@((long long)st.st_ctimespec.tv_sec),@"ctimeNS":@(st.st_ctimespec.tv_nsec)};
+}
+@implementation SPDFMacCollectionStore (Fingerprint)
+- (void)recordFingerprints:(NSMutableDictionary*)doc source:(NSDictionary*)source dependencies:(NSDictionary*)dependencies {
+    NSDictionary* version=[doc[@"versions"] lastObject];
+    doc[@"sourceFingerprint"]=source;
+    NSMutableDictionary* objects=[NSMutableDictionary dictionary];
+    objects[version[@"hash"]]=SPDFCollectionFingerprint([self blobURL:version[@"hash"]].path);
+    for (NSDictionary* asset in version[@"assets"]) {
+        objects[asset[@"hash"]]=SPDFCollectionFingerprint([self blobURL:asset[@"hash"]].path);
+    }
+    doc[@"dependencyFingerprints"]=dependencies; doc[@"objectFingerprints"]=objects;
+}
+- (BOOL)canReuseProtection:(NSDictionary*)doc path:(NSString*)path {
+    if (![doc[@"status"] isEqual:@"Protected"] || ![doc[@"path"] isEqual:path]) return NO;
+    NSDictionary* version=[doc[@"versions"] lastObject];
+    // Missing dependencies can become available without source edits; a capture retries those explicitly.
+    if (!version || [version[@"assetWarnings"] count]) return NO;
+    NSDictionary* source=SPDFCollectionFingerprint(path);
+    if (!source.count || ![source isEqual:doc[@"sourceFingerprint"]]) return NO;
+    NSDictionary* dependencies=doc[@"dependencyFingerprints"]; NSDictionary* objects=doc[@"objectFingerprints"];
+    if (!objects.count || dependencies.count!=[version[@"assets"] count]) return NO;
+    for (NSString* relative in dependencies) {
+        NSString* assetPath=[path.stringByDeletingLastPathComponent stringByAppendingPathComponent:relative];
+        if (![SPDFCollectionFingerprint(assetPath) isEqual:dependencies[relative]]) return NO;
+    }
+    for (NSString* hash in objects)
+        if (![SPDFCollectionFingerprint([self blobURL:hash].path) isEqual:objects[hash]]) return NO;
+    return YES;
+}
+@end

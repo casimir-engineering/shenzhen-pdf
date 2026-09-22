@@ -34,8 +34,10 @@
 - (NSString*)view:(NSView*)view stringForToolTip:(NSToolTipTag)tag point:(NSPoint)point userData:(void*)userData {
     (void)view;
     (void)tag;
-    (void)point;
     (void)userData;
+    NSInteger index = [self tabIndexAtPoint:point];
+    if (index >= 0 && index < (NSInteger)self.tabs.count && self.tabs[(NSUInteger)index].collectionVersionLabel.length)
+        return [self.tabs[(NSUInteger)index].collectionVersionLabel stringByAppendingString:@". This protected snapshot never changes. Use Save a Copy to create an editable document."];
     return @"Read-only file. You're viewing a local copy, so opening it doesn't "
            @"prompt for access. Changes to the original are picked up automatically "
            @"(and on reopen). Editing will ask to save a copy.";

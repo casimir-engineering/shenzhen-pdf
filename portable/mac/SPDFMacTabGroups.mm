@@ -59,11 +59,21 @@ NSColor* spdf_tab_group_accent(NSString* color) {
                                0xe4ad98, 0xd8bf86, 0xa5afe1, 0xc0a0c4, 0xa8bbc8};
     return RGB(index < names.count ? values[index] : 0xb5b5be);
 }
+NSImage* spdf_tab_group_swatch_image(NSString* color) {
+    NSString* label = color.length ? color : @"Gray";
+    return [NSImage imageWithSize:NSMakeSize(12, 12) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+      [spdf_tab_group_accent(label) setFill];
+      [[NSBezierPath bezierPathWithOvalInRect:NSInsetRect(rect, 1, 1)] fill];
+      return YES;
+    }];
+}
 NSColor* spdf_tab_group_selected_fill(NSString* color, BOOL dark) {
-    if (!color.length || [color isEqualToString:@"Gray"]) return RGB(dark ? 0x16161b : 0x41414a);
+    if (!color.length || [color isEqualToString:@"Gray"]) return RGB(dark ? 0x16161b : 0xe3e3e9);
     NSUInteger index = [spdf_tab_group_colors() indexOfObject:color ?: @""];
-    const unsigned light[] = {0x67448c, 0x27634c, 0x315c87, 0x226169, 0x873a5f,
-                              0x89482f, 0x72561e, 0x4b508c, 0x754979, 0x455d6e};
+    // Aqua uses labelColor (black) for every tab title, so selected fills are
+    // pale tints. Dark Aqua keeps the deep fills below for white labelColor.
+    const unsigned light[] = {0xe8dbf6, 0xd8eee5, 0xdbeaf7, 0xd6edef, 0xf3dce7,
+                              0xf5e0d8, 0xefe6ce, 0xdfe2f7, 0xeadceb, 0xdde7ed};
     const unsigned night[] = {0x30203f, 0x153b2c, 0x1d334c, 0x17393e, 0x482337,
                               0x492a1e, 0x443412, 0x292d4f, 0x402944, 0x283844};
     return RGB(index < spdf_tab_group_colors().count ? (dark ? night[index] : light[index])

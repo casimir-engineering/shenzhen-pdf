@@ -5,6 +5,42 @@
 - (void)tabContextNewGroup:(NSMenuItem*)sender {
     [self.groupReader createGroupForTabAtIndex:[sender.representedObject integerValue] withTabAtIndex:-1 color:nil];
 }
+- (NSMenu*)moveToGroupMenuForTabAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.tabs.count || ![self hasTabGroups]) return nil;
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Move to Group"];
+    SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
+    NSMutableSet<NSString*>* seen = [NSMutableSet set];
+    for (SPDFDocumentTab* candidate in self.tabs) {
+        SPDFTabGroup* group = candidate.group;
+        if (!group.identifier.length || [seen containsObject:group.identifier]) continue;
+        [seen addObject:group.identifier];
+        NSMenuItem* item = [menu addItemWithTitle:group.displayName
+                                           action:@selector(tabContextMoveToGroup:)
+                                    keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = @{ @"index" : @(index), @"group" : group };
+        item.image = spdf_tab_group_swatch_image(group.colorName);
+        item.state = [tab.group.identifier isEqualToString:group.identifier]
+                         ? NSControlStateValueOn : NSControlStateValueOff;
+        item.toolTip = [NSString stringWithFormat:@"Move %@ to the %@ group", tab.title ?: @"this tab",
+                                                   group.displayName];
+    }
+    return menu;
+}
+- (void)tabContextMoveToGroup:(NSMenuItem*)sender {
+    NSDictionary* payload = [sender.representedObject isKindOfClass:NSDictionary.class]
+                                ? sender.representedObject : nil;
+    NSNumber* indexNumber = [payload[@"index"] isKindOfClass:NSNumber.class] ? payload[@"index"] : nil;
+    SPDFTabGroup* group = [payload[@"group"] isKindOfClass:SPDFTabGroup.class] ? payload[@"group"] : nil;
+    NSInteger index = indexNumber.integerValue;
+    if (!indexNumber || !group || index < 0 || index >= (NSInteger)self.tabs.count) return;
+    SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
+    if ([tab.group.identifier isEqualToString:group.identifier]) return;
+    NSArray* members = spdf_tab_group_members(self.tabs, group);
+    NSUInteger last = [self.tabs indexOfObjectIdenticalTo:members.lastObject];
+    NSInteger destination = last == NSNotFound ? (NSInteger)self.tabs.count : (NSInteger)last + 1;
+    [self.groupReader moveTabAtIndex:index toGroup:group atIndex:destination];
+}
 - (void)renameGroup:(SPDFTabGroup*)group {
     if (!group || !self.window) return;
     NSAlert* alert = [[NSAlert alloc] init];
@@ -28,9 +64,8 @@
 - (void)groupToggleMenu:(NSMenuItem*)sender { [self.groupReader toggleTabGroup:sender.representedObject]; }
 - (void)groupUngroupMenu:(NSMenuItem*)sender { [self.groupReader ungroupTabs:sender.representedObject]; }
 - (void)groupCloseMenu:(NSMenuItem*)sender { [self.groupReader closeTabGroup:sender.representedObject]; }
-- (BOOL)handleGroupRightMouseDown:(NSEvent*)event {
-    SPDFTabGroup* group = [self groupAtPoint:[self convertPoint:event.locationInWindow fromView:nil] headerOnly:YES];
-    if (!group) return NO;
+- (NSMenu*)contextMenuForGroup:(SPDFTabGroup*)group {
+    if (!group) return nil;
     NSMenu* menu = [[NSMenu alloc] initWithTitle:group.displayName];
     {
         NSMenuItem* rename = [menu addItemWithTitle:@"Rename Group…" action:@selector(groupRenameMenu:) keyEquivalent:@""];
@@ -45,11 +80,7 @@
             item.target = self;
             item.representedObject = group;
             item.state = [group.colorName isEqualToString:color] ? NSControlStateValueOn : NSControlStateValueOff;
-            item.image = [NSImage imageWithSize:NSMakeSize(12, 12) flipped:NO drawingHandler:^BOOL(NSRect rect) {
-                [spdf_tab_group_accent(color) setFill];
-                [[NSBezierPath bezierPathWithOvalInRect:NSInsetRect(rect, 1, 1)] fill];
-                return YES;
-            }];
+            item.image = spdf_tab_group_swatch_image(color);
         }
         [menu addItem:NSMenuItem.separatorItem];
     }
@@ -65,6 +96,21 @@
     NSMenuItem* close = [menu addItemWithTitle:@"Close Group" action:@selector(groupCloseMenu:) keyEquivalent:@""];
     close.target = self;
     close.representedObject = group;
+    return menu;
+}
+- (void)showContextMenuForGroup:(SPDFTabGroup*)group {
+    NSMenu* menu = [self contextMenuForGroup:group]; if (!menu) return;
+    [self dismissHoverPanel];
+    NSRect rect = NSZeroRect;
+    for (id layout in [self groupLayouts]) if ([layout valueForKey:@"group"] == group) {
+        rect = [[layout valueForKey:@"header"] rectValue]; break;
+    }
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(NSMinX(rect), NSMinY(rect)) inView:self];
+}
+- (BOOL)handleGroupRightMouseDown:(NSEvent*)event {
+    SPDFTabGroup* group = [self groupAtPoint:[self convertPoint:event.locationInWindow fromView:nil] headerOnly:YES];
+    if (!group) return NO;
+    NSMenu* menu = [self contextMenuForGroup:group];
     [self dismissHoverPanel];
     [NSMenu popUpContextMenu:menu withEvent:event forView:self];
     return YES;

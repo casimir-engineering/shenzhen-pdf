@@ -41,6 +41,17 @@ int main(void) {
         SPDFDocumentTab* restoredOn = spdf_tab_from_dictionary(on);
         Expect("restoring keeps it on", restoredOn != nil && restoredOn.preservesImageColors);
 
+        fresh.collectionHistoryDocumentID = @"collection-history-example";
+        SPDFDocumentTab* historyRestored = spdf_tab_from_dictionary(RoundTrip(fresh));
+        Expect("history sidebar identity survives session restore", [historyRestored.collectionHistoryDocumentID isEqual:fresh.collectionHistoryDocumentID]);
+        Expect("history sidebar identity survives detach", [spdf_copy_document_tab(fresh).collectionHistoryDocumentID isEqual:fresh.collectionHistoryDocumentID]);
+        fresh.collectionVersionLabel = @"Archived · 23 Sep 2026 · Notes · Read-only";
+        Expect("archive identity survives restore", [spdf_tab_from_dictionary(RoundTrip(fresh)).collectionVersionLabel isEqual:fresh.collectionVersionLabel]);
+        Expect("archive identity survives detach", [spdf_copy_document_tab(fresh).collectionVersionLabel isEqual:fresh.collectionVersionLabel]);
+        fresh.collectionVersionLabel = nil;
+        fresh.collectionHistoryDocumentID = nil;
+        Expect("ordinary tabs store no Collection history key", RoundTrip(fresh)[@"collectionHistoryID"] == nil);
+
         fresh.preservesImageColors = NO;
         SPDFDocumentTab* restoredOff = spdf_tab_from_dictionary(RoundTrip(fresh));
         Expect("restoring keeps it off", restoredOff != nil && !restoredOff.preservesImageColors);

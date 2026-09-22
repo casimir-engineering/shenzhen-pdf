@@ -4,7 +4,9 @@ paper-margin: 30
 ---
 # Reader review and Collection
 
-Independent critic · 22 September 2026 · Proposal, not implemented
+Independent critic · 22 September 2026 · Implemented 23 September 2026
+
+The findings below preserve the original review and approved design. Implementation, repairs, screenshots and final critic scores are recorded in the [action journal](../journals/collection-implementation/action-journal.md).
 
 ## Improve the existing reader
 

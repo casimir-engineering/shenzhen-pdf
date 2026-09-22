@@ -10,6 +10,8 @@
 #import "SPDFMacMarkdownPrinting.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacMarkdownSidebarModel.h"
+#import "SPDFMacViewportCheckpoint.h"
+#import "SPDFMacCollectionIntegration.h"
 #import "SPDFMacSupport.h"
 #import "markdown/SPDFMarkdown.h"
 
@@ -18,6 +20,7 @@
 @property(nonatomic, strong) SPDFMacMarkdownSession* activeSession;
 @property(nonatomic, strong) dispatch_queue_t workQueue;
 @property(nonatomic) BOOL controlsUpdateScheduled;
+@property(nonatomic, strong) SPDFMacViewportCheckpoint* viewportCheckpoint;
 @end
 
 @implementation SPDFMacMarkdownDelegateState
@@ -144,6 +147,8 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
 
 - (void)deactivateActiveMarkdownView {
     SPDFMacMarkdownDelegateState* state = self.markdownState;
+    [state.viewportCheckpoint cancel];
+    state.viewportCheckpoint = nil;
     [state.activeSession deactivate];
     state.activeSession = nil;
     state.hostView.hidden = YES;
@@ -206,7 +211,12 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
       tab.zoom = zoom;
       tab.customZoom = fitMode == SPDFMacMarkdownPageFitCustom ? zoom : tab.customZoom;
       tab.fitMode = (SPDFFitMode)fitMode;
+      // Capture the live scroll origin and checkpoint session.yaml after
+      // movement settles; the helper is born here, never on ordinary launch.
       SPDFMacMarkdownDelegateState* state = strongSelf.markdownState;
+      if (!state.viewportCheckpoint)
+          state.viewportCheckpoint = [[SPDFMacViewportCheckpoint alloc] initWithDelay:0.5];
+      spdf_schedule_markdown_checkpoint(state.viewportCheckpoint, strongSelf, tab, weakSession);
       if (state.controlsUpdateScheduled) return;
       state.controlsUpdateScheduled = YES;
       dispatch_async(dispatch_get_main_queue(), ^{
@@ -231,8 +241,10 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
         [self showUnavailableSelectedTab:tab path:path message:tab.missingMessage showOpenError:NO error:NULL];
         return;
     }
-    if (![self markdownCacheForTab:tab matchesAttributes:attributes fileIdentity:fileIdentity])
+    if (![self markdownCacheForTab:tab matchesAttributes:attributes fileIdentity:fileIdentity]) {
+        if (tab.cachedMarkdownSession) [self collectionRecordObservedChangeAtPath:path];
         [tab clearCachedRuntime];
+    }
 
     [self clearActiveMetadata];
     [self prepareSelectedTabViewState:tab path:path];
@@ -312,6 +324,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                                                               reveal:NO];
                            [strongSelf rebuildSidebar];
                            [strongSelf updateMarkdownMinimap];
+                           [strongSelf collectionDidOpenPath:path];
                        }
                        [strongSelf updateControlsForActiveMarkdown];
                        /* After the control pass: it drops first responder. */

@@ -124,6 +124,7 @@
 - (NSString*)titleForTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)self.tabs.count) return @"";
     SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
+    if (tab.collectionVersionLabel.length) return tab.collectionVersionLabel;
     if (!tab.path.length) return spdf_display_label_without_extension(tab.title);
 
     if (!_displayTitles) {

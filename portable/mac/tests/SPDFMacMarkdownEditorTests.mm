@@ -129,6 +129,14 @@ static void test_persistence_and_settings(void) {
     else [defaults removeObjectForKey:SPDFMacMarkdownEditorPreferenceDefaultsKey];
 }
 
+static void test_picker_starts_in_applications(void) {
+    NSURL* directory = SPDFMacMarkdownEditorPickerDirectoryURL();
+    CHECK(directory.isFileURL && directory.hasDirectoryPath,
+          "editor picker directory is not a local directory URL");
+    CHECK([directory.path isEqualToString:@"/Applications"],
+          "first editor picker does not start in Applications");
+}
+
 int main(void) {
     @autoreleasepool {
         NSString* source = make_source();
@@ -136,6 +144,7 @@ int main(void) {
         test_first_use_picks_persists_then_launches(source);
         test_invalid_source_is_rejected();
         test_persistence_and_settings();
+        test_picker_starts_in_applications();
         [NSFileManager.defaultManager removeItemAtPath:source.stringByDeletingLastPathComponent error:nil];
     }
     if (failures) return 1;

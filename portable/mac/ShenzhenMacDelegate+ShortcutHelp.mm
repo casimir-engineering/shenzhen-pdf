@@ -19,7 +19,7 @@
         @{
             @"category" : @"Favorites",
             @"items" : @[
-                @{@"title" : @"Search all open documents and favorites (command palette)", @"keys" : @[ @"Cmd", @"K" ]},
+                @{@"title" : @"Search documents, groups and Collection (col: restricts Collection)", @"keys" : @[ @"Cmd", @"K" ]},
                 @{@"title" : @"Favorite current page", @"keys" : @[ @"Cmd", @"B" ]},
                 @{@"title" : @"Favorite current document", @"keys" : @[ @"Cmd", @"Shift", @"B" ]}
             ]
@@ -64,6 +64,8 @@
                 @{@"title" : @"Open path (file opens it; folder opens the browser there)",
                   @"keys" : @[ @"Cmd", @"Shift", @"O" ]},
                 @{@"title" : @"Reopen last closed document", @"keys" : @[ @"Cmd", @"Shift", @"T" ]},
+                @{@"title" : @"Return to previous active tab (press twice to toggle)", @"keys" : @[ @"Cmd", @"Backspace" ]},
+                @{@"title" : @"Group tab, move to group, or open version history", @"keys" : @[ @"Tab context menu" ]},
                 @{@"title" : @"Document properties", @"keys" : @[ @"Opt", @"I" ]},
                 @{@"title" : @"Rotate page clockwise", @"keys" : @[ @"Cmd", @"R" ]},
                 @{@"title" : @"Rotate page anticlockwise", @"keys" : @[ @"Cmd", @"Shift", @"R" ]},
