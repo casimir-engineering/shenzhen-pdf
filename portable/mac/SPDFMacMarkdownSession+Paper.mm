@@ -29,6 +29,11 @@
 // -installRenderedDocument:paginationPlan:interactiveString:preserveCurrentState:).
 - (void)applyPageOrientation:(SPDFMarkdownPageOrientation)orientation {
     if (orientation == _pageOrientation) return;
+    SPDFMarkdownPageConfiguration* paper = SPDFMarkdownPageConfigurationByOrienting(self.currentPageConfiguration, orientation);
+    if (NSWidth(paper.printableRect) < 72 || NSHeight(paper.printableRect) < 72) {
+        if (self.statusHandler) self.statusHandler(@"The paper margins do not fit this orientation.");
+        return;
+    }
     _pageOrientation = orientation;
     if (!_active || !self.document) return;
     _pendingReanchorLocation = self.visibleAttributedLocation;
@@ -38,3 +43,39 @@
 }
 
 @end
+
+@implementation SPDFMacMarkdownSession (PaperConfiguration)
+- (SPDFMarkdownPageConfiguration*)currentPageConfiguration {
+    SPDFMarkdownPageConfiguration* authored = self.document.authoredPageConfiguration;
+    return authored ? SPDFMarkdownPageConfigurationByOrienting(authored, _pageOrientation)
+        : [SPDFMarkdownPageConfiguration A4ConfigurationForOrientation:_pageOrientation];
+}
+@end
+
+SPDFMarkdownDocument* SPDFMacMarkdownLoadDocument(NSURL* URL, SPDFMarkdownRenderOptions* options,
+    SPDFMarkdownPageOrientation orientation, NSDictionary* previousFrontMatter,
+    SPDFMarkdownPageConfiguration** configuration, NSError** error) {
+    SPDFMarkdownDocumentModel* model = [[SPDFMarkdownParser new] loadURL:URL error:error];
+    if (!model) return nil;
+    SPDFMarkdownPageConfiguration* fallback = [SPDFMarkdownPageConfiguration A4ConfigurationForOrientation:orientation];
+    SPDFMarkdownPageConfiguration* paper = SPDFMarkdownPageConfigurationForFrontMatter(model.frontMatter, fallback, error);
+    if (!paper) return nil;
+    // A reload preserves the reader's rotation unless the source orientation
+    // changed. An explicit source edit takes effect immediately on reload.
+    if (previousFrontMatter && [previousFrontMatter[@"paper-orientation"] ?: @""
+            isEqual:model.frontMatter[@"paper-orientation"] ?: @""])
+        paper = SPDFMarkdownPageConfigurationByOrienting(paper, orientation);
+    // Extremely asymmetric author margins may fit only one orientation.
+    if (NSWidth(paper.printableRect) < 72 || NSHeight(paper.printableRect) < 72) {
+        if (error) *error = [NSError errorWithDomain:SPDFMarkdownErrorDomain code:SPDFMarkdownErrorParseFailed
+            userInfo:@{NSLocalizedDescriptionKey:@"The paper margins do not fit this orientation."}];
+        return nil;
+    }
+    SPDFMarkdownRenderOptions* fitted = options;
+    if (!NSEqualSizes(options.pageContentSize, paper.printableRect.size)) {
+        fitted = [options copy];
+        fitted.pageContentSize = paper.printableRect.size;
+    }
+    if (configuration) *configuration = paper;
+    return [[SPDFMarkdownDocument alloc] initWithModel:model options:fitted];
+}

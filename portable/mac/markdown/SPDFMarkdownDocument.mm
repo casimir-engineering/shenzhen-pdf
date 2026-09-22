@@ -1,4 +1,5 @@
 #import "SPDFMarkdownDocument.h"
+#import "SPDFMarkdownAuthoring.h"
 
 @implementation SPDFMarkdownDocument {
     SPDFMarkdownRenderer* _renderer;
@@ -10,7 +11,14 @@
     SPDFMarkdownParser* parser = [SPDFMarkdownParser new];
     SPDFMarkdownDocumentModel* model = [parser loadURL:URL error:error];
     if (!model) return nil;
-    return [[self alloc] initWithModel:model options:options ?: SPDFMarkdownRenderOptions.defaultOptions];
+    if (!SPDFMarkdownHasAuthorPageConfiguration(model.frontMatter))
+        return [[self alloc] initWithModel:model options:options ?: SPDFMarkdownRenderOptions.defaultOptions];
+    SPDFMarkdownPageConfiguration* paper = SPDFMarkdownPageConfigurationForFrontMatter(
+        model.frontMatter, SPDFMarkdownPageConfiguration.A4PortraitConfiguration, error);
+    if (!paper) return nil;
+    SPDFMarkdownRenderOptions* effective = [options ?: SPDFMarkdownRenderOptions.defaultOptions copy];
+    effective.pageContentSize = paper.printableRect.size;
+    return [[self alloc] initWithModel:model options:effective];
 }
 
 - (instancetype)initWithModel:(SPDFMarkdownDocumentModel*)model options:(SPDFMarkdownRenderOptions*)options {
@@ -18,6 +26,9 @@
     if (self) {
         _model = model;
         _renderOptions = [options copy];
+        if (SPDFMarkdownHasAuthorPageConfiguration(model.frontMatter))
+            _authoredPageConfiguration = SPDFMarkdownPageConfigurationForFrontMatter(
+                model.frontMatter, SPDFMarkdownPageConfiguration.A4PortraitConfiguration, nil);
         _renderer = [SPDFMarkdownRenderer new];
         _paginator = [SPDFMarkdownPaginator new];
         _mutableLanguageOverrides = [NSMutableDictionary dictionary];

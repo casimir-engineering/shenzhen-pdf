@@ -160,8 +160,9 @@ glyphs clear of the drawn grid) and `SPDFMarkdownTableLayout` distributes the
 widths: a table narrower than the width budget keeps its compact natural
 columns; a wider one caps at the budget with a fair-share waterfall — columns
 at or below their fair share keep their natural width, and only the over-wide
-columns split the rest, so long cells wrap inside their own column box while
-short columns never wrap. Alignment applies per cell inside its column, so a
+columns share the rest equally, so a huge cell cannot starve a neighboring
+column below its minimum. Short columns keep their natural width when that
+width fits their fair share. Alignment applies per cell inside its column, so a
 right-aligned
 column flushes to its own edge and never bleeds into a neighbor. A row is as
 tall as its tallest cell. Each row records an `SPDFMarkdownTableRowInfo`
@@ -448,6 +449,66 @@ override, a self-heal — reuses the resolved layouts.
 cases.
 
 
+## Author-controlled paper and inspection
+
+A document can choose its paper through flat YAML front matter. Measurements
+are points (72 points = one inch). Omitted values keep the reader's defaults.
+
+```markdown
+---
+paper-size: Letter
+paper-orientation: landscape
+paper-margin: 36
+paper-margin-top: 48
+---
+# First page
+
+Content before the break.
+
+<!-- pagebreak -->
+
+# Next page
+```
+
+`paper-size` accepts A3, A4, A5, Letter, and Legal, case-insensitively;
+`paper-orientation` accepts portrait and landscape. `paper-margin` sets all four
+sides; `paper-margin-top`, `paper-margin-right`, `paper-margin-bottom`, and
+`paper-margin-left` override individual sides. Margins must be nonnegative
+finite numbers and must leave at least 72 points of printable width and height.
+Invalid settings return an actionable error; an invalid disk reload keeps the
+last good document on screen. The source orientation applies when opening;
+a manual rotation persists through reloads until that source value changes.
+
+The exact standalone HTML block `<!-- pagebreak -->` starts the following
+content on a fresh page. It contributes no visible text or canonical characters.
+Leading, repeated and trailing directives do not create empty pages. Examples
+inside inline code or fenced code remain literal. Place directives between
+blocks, separated by blank lines; they do not split an individual table row or
+fenced code block. Ordinary HTML comments keep their existing behavior.
+
+`SPDFMarkdownAuthoring.h` exposes explicit page-option resolution and the
+on-demand `SPDFMarkdownLayoutReport(model, rendered, plan)` function. Its
+versioned JSON dictionary contains canonical text, one-based pages, fragment
+ranges and rectangles, blocks, heading sections, table groups, and diagnostics
+for split tables/code, scaled blocks and overflowing fragments. Each block,
+section and table reports the fraction of its visible canonical UTF-16 units on
+each page. Fractions exclude structural separators with no visible fragment;
+they describe text distribution, not area or source-line percentages. Heading
+sections include descendants and end before the next equal/higher-level heading.
+
+Canonical ranges remain UTF-16 offsets into `rendered.attributedString`, never
+source offsets. The report says `sourceOffsetsAvailable: false`; consumers
+must not mistake canonical coordinates for Markdown file offsets. Fragment
+rectangles use points from the printable area's upper-left corner, y down.
+`paper.printableRect` retains AppKit's paper-bottom-left coordinates; its
+`topContentInset` gives the equivalent top margin. Report building is explicit:
+no report or source map is allocated during ordinary loading or rendering.
+
+The session resolves author paper before fitting images/diagrams and uses that
+same configuration for screen and light export. A document with no author
+paper keys keeps its previous defaults and allocates no authored configuration.
+All requested configuration and inspection work stays off the app launch path.
+
 ## Pagination and drawing
 
 `SPDFMarkdownPaginator` asks TextKit for real line fragments at the target
@@ -489,7 +550,7 @@ across pages gets one box per portion), a 1px underline rule beneath level
 grid) described in the styling section above.
 
 Save as PDF, preview and Print all reuse the session's export
-`SPDFMarkdownPaginationPlan` (A4 portrait, current font scale, reserved
+`SPDFMarkdownPaginationPlan` (current paper and font scale, reserved
 language-control band) — a differing printer paper only scales the finished
 page, it never repaginates. That export plan IS the live on-screen plan while
 the reader is LIGHT: the identical object, no extra render, no extra

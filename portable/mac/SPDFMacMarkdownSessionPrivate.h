@@ -124,6 +124,18 @@ FOUNDATION_EXPORT SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(
 // different page than the one it lands on.
 FOUNDATION_EXPORT NSSize SPDFMacMarkdownPageContentSize(SPDFMarkdownPageOrientation orientation);
 
+FOUNDATION_EXPORT SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForConfiguration(
+    SPDFMarkdownRenderedDocument* rendered, SPDFMarkdownThemeVariant variant, BOOL preservesImageColors,
+    SPDFMarkdownPageConfiguration* configuration);
+// Parse once, resolve author paper before fitting figures, then render once.
+FOUNDATION_EXPORT SPDFMarkdownDocument* _Nullable SPDFMacMarkdownLoadDocument(
+    NSURL* URL, SPDFMarkdownRenderOptions* options, SPDFMarkdownPageOrientation orientation,
+    NSDictionary* _Nullable previousFrontMatter, SPDFMarkdownPageConfiguration* _Nullable* _Nullable configuration,
+    NSError* _Nullable* _Nullable error);
+@interface SPDFMacMarkdownSession (PaperConfiguration)
+- (SPDFMarkdownPageConfiguration*)currentPageConfiguration;
+@end
+
 // Clamps a reader font scale into the supported range.
 FOUNDATION_EXPORT CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale);
 

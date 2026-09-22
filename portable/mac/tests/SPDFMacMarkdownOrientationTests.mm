@@ -390,6 +390,54 @@ static void TestFiguresFollowThePaper(NSView* host, dispatch_queue_t queue) {
     [NSFileManager.defaultManager removeItemAtPath:path error:nil];
 }
 
+static void TestAuthorPaper(NSView* host, dispatch_queue_t queue) {
+    NSString* path = [NSTemporaryDirectory() stringByAppendingPathComponent:
+        [NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"md"]];
+    NSString* source = @"---\npaper-size: Letter\npaper-orientation: landscape\npaper-margin: 36\n"
+        @"paper-margin-top: 48\n---\n# First\n\nBefore.\n\n<!-- pagebreak -->\n\n# Second\n\nAfter.\n";
+    assert([source writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    SPDFMacMarkdownSession* session = [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:path]];
+    ActivateSession(session, host, queue, 1, SPDFMacMarkdownPageFitPage);
+    assert(NSEqualSizes(session.paginationPlan.configuration.paperSize, NSMakeSize(792, 612)));
+    assert(session.pageOrientation == SPDFMarkdownPageOrientationLandscape);
+    assert(session.pageCount == 2 && session.paginationPlan.configuration.topContentInset == 48);
+    assert(NSEqualSizes(session.document.renderOptions.pageContentSize, session.paginationPlan.configuration.printableRect.size));
+    assert(session.exportPaginationPlan == session.paginationPlan);
+    [session applyThemeVariant:SPDFMarkdownThemeVariantDark];
+    assert(SpinUntil(^BOOL { return session.paginationPlan.configuration.themeVariant == SPDFMarkdownThemeVariantDark; }, 10));
+    SPDFMarkdownPaginationPlan* exported = session.exportPaginationPlan;
+    assert(NSEqualSizes(exported.configuration.paperSize, NSMakeSize(792, 612)));
+    assert([PageBreakLocations(exported) isEqual:PageBreakLocations(session.paginationPlan)]);
+    NSData* data = [SPDFMacMarkdownPrintAdapter PDFDataForPageAtIndex:0 paginationPlan:exported
+        attributedString:session.exportAttributedString];
+    NSRect media = [[[[PDFDocument alloc] initWithData:data] pageAtIndex:0] boundsForBox:kPDFDisplayBoxMediaBox];
+    assert(fabs(NSWidth(media) - 792) < 1 && fabs(NSHeight(media) - 612) < 1);
+    [session applyPageOrientation:SPDFMarkdownPageOrientationPortrait];
+    assert(SpinUntil(^BOOL { return session.paginationPlan.configuration.orientation == SPDFMarkdownPageOrientationPortrait; }, 10));
+    assert(NSEqualSizes(session.paginationPlan.configuration.paperSize, NSMakeSize(612, 792)));
+    assert(session.paginationPlan.configuration.topContentInset == 48);
+    SPDFMarkdownRenderedDocument* previous = session.renderedDocument;
+    [session reloadFromDiskWithStatus:nil];
+    assert(SpinUntil(^BOOL { return session.renderedDocument != previous; }, 10));
+    assert(session.paginationPlan.configuration.orientation == SPDFMarkdownPageOrientationPortrait);
+    NSString* edited = [source stringByReplacingOccurrencesOfString:@"paper-size: Letter" withString:@"paper-size: A5"];
+    assert([edited writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    previous = session.renderedDocument;
+    [session reloadFromDiskWithStatus:nil];
+    assert(SpinUntil(^BOOL { return session.renderedDocument != previous; }, 10));
+    assert(fabs(session.paginationPlan.configuration.paperSize.width - 419.5276) < 0.01);
+    assert(session.paginationPlan.configuration.orientation == SPDFMarkdownPageOrientationPortrait);
+    assert([@"# Default paper\n\nRestored.\n" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    previous = session.renderedDocument;
+    [session reloadFromDiskWithStatus:nil];
+    assert(SpinUntil(^BOOL { return session.renderedDocument != previous; }, 10));
+    assert(!session.document.authoredPageConfiguration);
+    assert(fabs(session.paginationPlan.configuration.paperSize.width - 595.2756) < 0.01);
+    assert(NSEqualSizes(session.document.renderOptions.pageContentSize, session.paginationPlan.configuration.printableRect.size));
+    [session deactivate];
+    [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+}
+
 int main(void) {
     @autoreleasepool {
         (void)NSApplication.sharedApplication;
@@ -402,6 +450,7 @@ int main(void) {
         TestViewportReanchor(path, host, queue);
         TestExportsFollowThePaper(path, host, queue);
         TestFiguresFollowThePaper(host, queue);
+        TestAuthorPaper(host, queue);
 
         [NSFileManager.defaultManager removeItemAtPath:path error:nil];
         puts("SPDFMacMarkdownOrientationTests passed");

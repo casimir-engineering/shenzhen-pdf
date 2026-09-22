@@ -224,12 +224,13 @@
     dispatch_queue_t workQueue = _workQueue ?: dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     dispatch_async(workQueue, ^{
       NSError* error = nil;
-      SPDFMarkdownDocument* document = [SPDFMarkdownDocument documentWithURL:URL options:renderOptions error:&error];
+      SPDFMarkdownPageConfiguration* paper = nil;
+      SPDFMarkdownDocument* document = SPDFMacMarkdownLoadDocument(URL, renderOptions, orientation, nil, &paper, &error);
       SPDFMarkdownPaginationPlan* plan = nil;
       NSAttributedString* interactive = nil;
       if (document) {
-          plan = SPDFMacMarkdownPlanForRendition(document.renderedDocument, renderOptions.themeVariant,
-                                                self->_preservesImageColors, orientation);
+          plan = SPDFMacMarkdownPlanForConfiguration(document.renderedDocument, renderOptions.themeVariant,
+                                                self->_preservesImageColors, paper);
           interactive = SPDFMacMarkdownInteractiveString(document.model, document.renderedDocument);
       }
       dispatch_async(dispatch_get_main_queue(), ^{
@@ -250,7 +251,8 @@
         self->_interactiveString = interactive;
         self->_renderedFontScale = renderOptions.fontScale;
         self->_renderedThemeVariant = renderOptions.themeVariant;
-        self->_renderedOrientation = orientation;
+        self->_renderedOrientation = paper.orientation;
+        if (self->_pageOrientation == orientation) self->_pageOrientation = paper.orientation;
         self.state = SPDFMacMarkdownSessionReady;
         [self installRenderedDocument:self.renderedDocument
                        paginationPlan:plan
@@ -351,6 +353,7 @@
     CGFloat fontScale = _fontScale;
     SPDFMarkdownThemeVariant themeVariant = _themeVariant;
     SPDFMarkdownPageOrientation orientation = _pageOrientation;
+    SPDFMarkdownPageConfiguration* paper = self.currentPageConfiguration;
     NSDictionary* overrides = [_languageOverrides copy];
     __weak SPDFMacMarkdownSession* weakSelf = self;
     _renderToken = [self.document
@@ -364,7 +367,7 @@
                      renderGeneration != strongSelf->_renderGeneration || !rendered)
                      return;
                  SPDFMarkdownPaginationPlan* plan =
-                     SPDFMacMarkdownPlanForRendition(rendered, themeVariant, self->_preservesImageColors, orientation);
+                     SPDFMacMarkdownPlanForConfiguration(rendered, themeVariant, self->_preservesImageColors, paper);
                  NSAttributedString* interactive =
                      SPDFMacMarkdownInteractiveString(strongSelf.document.model, rendered);
                  dispatch_async(dispatch_get_main_queue(), ^{

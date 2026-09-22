@@ -237,6 +237,7 @@ static CGFloat SPDFHeadingSectionLeadHeight(NSArray<SPDFMarkdownPaginationItem*>
     CGFloat height = 0;
     for (NSUInteger i = headingIndex; i < items.count; ++i) {
         SPDFMarkdownPaginationItem* item = items[i];
+        if (item.kind == SPDFMarkdownBlockKindPageBreak) break;
         if (i > headingIndex && item.kind == SPDFMarkdownBlockKindHeading && item.headingLevel <= heading.headingLevel)
             break;
         if (item.bandLayout) {
@@ -311,6 +312,10 @@ static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<S
 
     for (NSUInteger itemIndex = 0; itemIndex < items.count; ++itemIndex) {
         SPDFMarkdownPaginationItem* item = items[itemIndex];
+        if (item.kind == SPDFMarkdownBlockKindPageBreak) {
+            if (current.count) finishPage(); // Leading/repeated/trailing breaks never add blank sheets.
+            continue;
+        }
         CGFloat remaining = pageHeight - used;
         if (item.kind == SPDFMarkdownBlockKindHeading && used >= pageHeight * configuration.headingKeepThreshold) {
             CGFloat freshLead = SPDFHeadingSectionLeadHeight(items, itemIndex, pageHeight);
@@ -386,6 +391,11 @@ static NSArray<SPDFMarkdownPaginationItem*>* SPDFItemsForConfiguration(NSArray<S
     // widths at this container width and shared by every row of the table.
     NSMutableDictionary<NSNumber*, NSArray<NSNumber*>*>* tableBoundaries = [NSMutableDictionary dictionary];
     for (SPDFMarkdownRenderedBlock* block in document.renderedBlocks) {
+        if (block.kind == SPDFMarkdownBlockKindPageBreak) {
+            [result addObject:[[SPDFMarkdownPaginationItem alloc] initWithBlockIndex:block.blockIndex
+                kind:block.kind headingLevel:0 lines:@[]]];
+            continue;
+        }
         if (!block.attributedRange.length || NSMaxRange(block.attributedRange) > storage.length) continue;
         if (block.diagramInfo) {
             // A native diagram is ONE atomic band: its labels are canonical

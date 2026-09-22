@@ -44,7 +44,7 @@ static void SPDFApplyCodeTokens(SPDFMarkdownRenderContext* context, NSRange rang
 
 static void SPDFRecordWithTableRow(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block, NSRange range,
                                    NSUInteger depth, SPDFMarkdownTableRowInfo* tableRowInfo) {
-    if (!range.length) return;
+    if (!range.length && block.kind != SPDFMarkdownBlockKindPageBreak) return;
     [context.output addAttribute:SPDFMarkdownBlockIndexAttribute value:@(block.blockIndex) range:range];
     [context.output addAttribute:SPDFMarkdownBlockKindAttribute value:@(block.kind) range:range];
     [context.blocks addObject:[[SPDFMarkdownRenderedBlock alloc] initWithBlockIndex:block.blockIndex
@@ -330,7 +330,9 @@ static void SPDFRenderLeaf(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock
 static void SPDFRenderBlock(SPDFMarkdownRenderContext* context, SPDFMarkdownBlock* block, NSUInteger depth,
                             BOOL record) {
     if (context.cancellationToken.isCancelled) return;
-    if (block.kind == SPDFMarkdownBlockKindUnorderedList || block.kind == SPDFMarkdownBlockKindOrderedList) {
+    if (block.kind == SPDFMarkdownBlockKindPageBreak) {
+        if (record) SPDFRecord(context, block, NSMakeRange(context.output.length, 0), depth);
+    } else if (block.kind == SPDFMarkdownBlockKindUnorderedList || block.kind == SPDFMarkdownBlockKindOrderedList) {
         SPDFRenderList(context, block, depth, record);
     } else if (block.kind == SPDFMarkdownBlockKindTable) {
         SPDFRenderTable(context, block, depth, record);

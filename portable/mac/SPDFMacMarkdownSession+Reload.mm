@@ -29,6 +29,7 @@
     NSURL* URL = self.documentURL;
     SPDFMarkdownRenderOptions* renderOptions = [self renderOptionsForCurrentScale];
     SPDFMarkdownPageOrientation orientation = _pageOrientation;
+    NSDictionary* previousFrontMatter = self.document.model.frontMatter;
     CGFloat fontScale = _fontScale;
     SPDFMarkdownThemeVariant themeVariant = _themeVariant;
     BOOL preservesImageColors = _preservesImageColors;
@@ -36,13 +37,15 @@
     __weak SPDFMacMarkdownSession* weakSelf = self;
     dispatch_async(workQueue, ^{
       NSError* error = nil;
-      SPDFMarkdownDocument* document = [SPDFMarkdownDocument documentWithURL:URL options:renderOptions error:&error];
+      SPDFMarkdownPageConfiguration* paper = nil;
+      SPDFMarkdownDocument* document = SPDFMacMarkdownLoadDocument(URL, renderOptions, orientation,
+          previousFrontMatter, &paper, &error);
       // A failed read (deleted, or caught mid-write by an editor that truncates
       // before writing) keeps the last good render on screen. The watcher's
       // missing-file handling owns a document that is really gone.
       if (!document || !document.renderedDocument) return;
       SPDFMarkdownPaginationPlan* plan =
-          SPDFMacMarkdownPlanForRendition(document.renderedDocument, themeVariant, preservesImageColors, orientation);
+          SPDFMacMarkdownPlanForConfiguration(document.renderedDocument, themeVariant, preservesImageColors, paper);
       NSAttributedString* interactive = SPDFMacMarkdownInteractiveString(document.model, document.renderedDocument);
       if (!plan || !interactive) return;
       dispatch_async(dispatch_get_main_queue(), ^{
@@ -55,7 +58,8 @@
         mainSelf->_interactiveString = interactive;
         mainSelf->_renderedFontScale = fontScale;
         mainSelf->_renderedThemeVariant = themeVariant;
-        mainSelf->_renderedOrientation = orientation;
+        mainSelf->_renderedOrientation = paper.orientation;
+        if (mainSelf->_pageOrientation == orientation) mainSelf->_pageOrientation = paper.orientation;
         [mainSelf installRenderedDocument:document.renderedDocument
                            paginationPlan:plan
                         interactiveString:interactive
