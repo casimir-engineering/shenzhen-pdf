@@ -3,6 +3,7 @@
 #include "shenzhen_pdf_core.h"
 
 @class SPDFMacMarkdownSession;
+@class SPDFTabGroup;
 
 typedef NS_ENUM(NSInteger, SPDFFitMode) {
     SPDFFitModeCustom = 0,
@@ -61,6 +62,7 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @end
 
 @interface SPDFDocumentTab : NSObject
+@property(nonatomic, strong) SPDFTabGroup* group;
 @property(nonatomic, copy) NSString* path;
 @property(nonatomic, copy) NSString* title;
 @property(nonatomic) NSInteger pageIndex;

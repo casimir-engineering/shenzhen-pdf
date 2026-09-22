@@ -1,10 +1,12 @@
 #import <Cocoa/Cocoa.h>
 
 #import "SPDFMacTabStripGeometry.h"
+#import "SPDFMacTabGroups.h"
 #import "SPDFMacTabStripView.h"
 #import "SPDFMacWindowChrome.h"
 
 @interface SPDFFakeTab : NSObject
+@property(nonatomic, strong) SPDFTabGroup* group;
 @property(nonatomic, copy) NSString* path;
 @property(nonatomic, copy) NSString* title;
 @property(nonatomic) BOOL readOnly;

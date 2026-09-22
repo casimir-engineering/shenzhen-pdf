@@ -2,6 +2,7 @@
 
 #import "SPDFMacLaunchPrerenderPrivate.h"
 #import "SPDFMacModels.h"
+#import "SPDFMacTabGroups.h"
 #import "SPDFMacSupport.h"
 
 // Defined in ShenzhenPDFMac.mm.
@@ -64,6 +65,32 @@ static const NSTimeInterval kSPDFDetachHandoffMaxAge = 120.0;
     [NSFileManager.defaultManager removeItemAtPath:file error:nil];
     if (!attributes || ![stored isKindOfClass:NSDictionary.class]) return;
     if (fabs([attributes.fileModificationDate timeIntervalSinceNow]) > kSPDFDetachHandoffMaxAge) return;
+
+    NSArray* groupTabs = ((NSDictionary*)stored)[@"tabs"];
+    if ([groupTabs isKindOfClass:NSArray.class]) {
+        [_tabs removeAllObjects];
+        for (id item in groupTabs) {
+            SPDFDocumentTab* member = spdf_tab_from_dictionary(item);
+            if (member) [_tabs addObject:member];
+        }
+        spdf_tab_groups_normalize(_tabs);
+        _selectedTabIndex = 0;
+        for (NSUInteger i = 0; i < _tabs.count; ++i)
+            if ([_tabs[i].path isEqualToString:_tabs[i].group.lastUsedPath]) _selectedTabIndex = i;
+        NSString* frame = ((NSDictionary*)stored)[@"frame"];
+        if ([frame isKindOfClass:NSString.class]) {
+            NSRect rect = NSRectFromString(frame);
+            if (rect.size.width > 100 && rect.size.height > 100) {
+                _restoredWindowFrame = rect;
+                _restoredWindowContentSize = rect.size;
+                _hasRestoredWindowFrame = YES;
+            }
+        }
+        // The launch open must target the remembered document, not always the
+        // first group's tab used to name the handoff file.
+        if (_tabs.count) self.initialPath = _tabs[(NSUInteger)_selectedTabIndex].path;
+        return;
+    }
 
     SPDFDocumentTab* tab = spdf_tab_from_dictionary((NSDictionary*)stored);
     if (!tab.path.length) return;

@@ -26,6 +26,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 <p align="center"><img src="docs/images/portable/macos-multi-window.webp" alt="Two ShenzhenPDF windows side by side: a Markdown document with a gantt chart and nested chapters on the left, a PDF with a results table, a scatter plot and the document map on the right" width="880"></p>
 
 - **Tabs and windows** — compact outlined tabs, drag to reorder, pull one out into its own window. Quit and relaunch to get every window back: its tabs, size, position, **the display it was on**, and the one you were using in front.
+- **Tab groups** <sub>macOS</sub> — rounded colored groups with clear selected tabs. Rename, recolor, collapse, or drag an entire group by its left handle into another window. Membership, order, colors, names, and collapse state survive relaunch.
 - **Resume where you left off** — page, zoom, scroll, search, and (for Markdown) page orientation, per document.
 - **Option + scroll turns pages** <sub>macOS</sub> — anywhere in the window, at the speed you spin.
 - **Presentation mode** (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>), favorites and a command palette (<kbd>Cmd+K</kbd>), reopen-last-closed (<kbd>Cmd+Shift+T</kbd>).
@@ -39,9 +40,12 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 <td width="50%" valign="top"><img src="docs/images/portable/macos-markdown-gantt.webp" alt="A mermaid gantt chart drawn as vector art, taking the width of the page" width="100%"></td>
 </tr></table>
 
+- **Paper and editing** — choose A3, A4, A5, Letter, or Legal, margins, and explicit page breaks in Markdown front matter. Open the source in your remembered editor from its tab or page menu.
 - **Real sheets, same reader** — GitHub-flavored typography, paginated onto numbered A4 sheets ("Page 2 of 10" in every footer); same tabs, chapters, map, search, zoom and export as a PDF. Rotate turns the paper landscape, and each file reopens on the sheet you last read it on.
 - **Live update** — edit the file elsewhere and the page re-renders in the background and swaps in whole. Nothing blanks.
 - **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine, no JavaScript, no network.
+
+Agents can inspect PDF and Markdown through the optional [native CLI and MCP adapter](portable/docs/agent-interface.md), review page images and layout reports, and navigate to highlighted passages.
 
 ## <a id="search"></a>Search-oriented architecture
 

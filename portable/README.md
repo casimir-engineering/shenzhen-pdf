@@ -166,6 +166,12 @@ from `.release.env.example`. Team ID `66LJ4BV7Q3`, bundle ID
 are pinned by the release path. Release notes are tracked under
 `portable/docs/releases/`.
 
+## Agent tools (macOS)
+
+The optional [native CLI and MCP adapter](docs/agent-interface.md) inspect
+documents and navigate to pages or highlighted passages. They are invoked
+explicitly and add no service to normal reader startup.
+
 ## Notes For Contributors
 
 - Keep cross-platform reader behavior in `core/` when possible, and keep
