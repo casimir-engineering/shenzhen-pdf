@@ -141,8 +141,6 @@ static int SPDFEnterBlock(MD_BLOCKTYPE type, void* detail, void* opaque) {
         block.htmlIsland = YES;
         block.htmlText = [NSMutableString string];
     }
-    // Inline HTML tags never leak styling or suppression across blocks; the
-    // block-format container stack (alignment) intentionally survives.
     [context.html resetInlineState];
     if ((type == MD_BLOCK_P || type == MD_BLOCK_H) &&
         context.html.currentAlignment != SPDFMarkdownTableAlignmentDefault)
@@ -159,9 +157,12 @@ static int SPDFLeaveBlock(MD_BLOCKTYPE type, void* detail, void* opaque) {
     SPDFMarkdownBlockBuilder* block = context.stack.lastObject;
     [context.stack removeLastObject];
     if (type != MD_BLOCK_HTML || !block.htmlIsland) return 0;
-    // Replace the raw island with its whitelisted translation (possibly
-    // nothing: dropped elements, or a container push/pop applying to the
-    // markdown blocks that follow). Raw tag text never reaches the model.
+    // A standalone directive stays structural; fenced/inline examples do not.
+    if ([[block.htmlText stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+            isEqualToString:@"<!-- pagebreak -->"]) {
+        block.kind = SPDFMarkdownBlockKindPageBreak;
+        return 0;
+    }
     [context.stack.lastObject.children removeObjectIdenticalTo:block];
     NSUInteger nextIndex = context.nextIndex;
     NSUInteger nodeCount = context.nodeCount;
@@ -473,8 +474,7 @@ static NSString* SPDFExtractFrontMatter(NSString* input, NSDictionary** metadata
     context.maximumNestingDepth = self.maximumNestingDepth;
     MD_PARSER parser = {};
     parser.abi_version = 0;
-    // Raw HTML is enabled but never evaluated: islands go through the
-    // sanitizing whitelist in SPDFMarkdownHTML.mm / SPDFMarkdownHTMLBlocks.mm.
+    // HTML islands pass through the native sanitizing whitelist.
     parser.flags = MD_DIALECT_GITHUB | MD_FLAG_WIKILINKS | MD_FLAG_LATEXMATHSPANS;
     parser.enter_block = SPDFEnterBlock;
     parser.leave_block = SPDFLeaveBlock;

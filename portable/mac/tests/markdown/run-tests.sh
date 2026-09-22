@@ -53,6 +53,8 @@ done
 
 SOURCES="
 $ROOT/portable/mac/markdown/SPDFMarkdownModel.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownAuthoring.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownLayoutReport.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownMathTypesetter.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownParser.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownHTML.mm
@@ -118,6 +120,7 @@ for TEST in \
     SPDFMarkdownTableLayoutTests \
     SPDFMarkdownAsyncTests \
     SPDFMarkdownPDFAdapterTests \
+    SPDFMarkdownAuthoringTests \
     SPDFMarkdownPerformanceTests
 do
     TESTS="$TESTS $TEST"

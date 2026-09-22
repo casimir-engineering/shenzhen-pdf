@@ -23,9 +23,14 @@ SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(SPDFMarkdownRendered
                                                             SPDFMarkdownThemeVariant variant,
                                                             BOOL preservesImageColors,
                                                             SPDFMarkdownPageOrientation orientation) {
+    return SPDFMacMarkdownPlanForConfiguration(rendered, variant, preservesImageColors,
+        [SPDFMarkdownPageConfiguration A4ConfigurationForOrientation:orientation]);
+}
+
+SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForConfiguration(SPDFMarkdownRenderedDocument* rendered,
+    SPDFMarkdownThemeVariant variant, BOOL preservesImageColors, SPDFMarkdownPageConfiguration* paper) {
     SPDFMarkdownPaginator* paginator = [SPDFMarkdownPaginator new];
-    SPDFMarkdownPageConfiguration* configuration =
-        [SPDFMarkdownPageConfiguration A4ConfigurationForOrientation:orientation];
+    SPDFMarkdownPageConfiguration* configuration = [paper copy];
     configuration.includesCodeLanguageControlSpacing = YES;
     configuration.themeVariant = variant;
     configuration.preservesImageColors = preservesImageColors;
@@ -49,7 +54,7 @@ SPDFMarkdownPaginationPlan* SPDFMacMarkdownPlanForRendition(SPDFMarkdownRendered
         [self.document renderedDocumentWithOptions:options languageOverrides:[_languageOverrides copy]];
     if (!rendered) return;
     // Light never recolors, so the flag is immaterial here; stated, not inferred.
-    _exportPlan = SPDFMacMarkdownPlanForRendition(rendered, SPDFMarkdownThemeVariantLight, YES, _pageOrientation);
+    _exportPlan = SPDFMacMarkdownPlanForConfiguration(rendered, SPDFMarkdownThemeVariantLight, YES, self.currentPageConfiguration);
     _exportAttributedString = rendered.attributedString;
     _exportRenditionSource = source;
 }

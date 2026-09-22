@@ -22,7 +22,7 @@ CGFloat SPDFMacMarkdownClampFontScale(CGFloat scale) {
     // The paper the pagination pass is about to use, so figures (diagrams) are
     // sized against the page they will actually land on. This is why turning the
     // paper is a RERENDER and not only a re-paginate.
-    options.pageContentSize = SPDFMacMarkdownPageContentSize(_pageOrientation);
+    options.pageContentSize = self.currentPageConfiguration.printableRect.size;
     options.diagramCache = _diagramCache;  // one diagram-layout cache for the session
     [self applyRemoteImageState:options];  // already-fetched remote image bytes
     return options;

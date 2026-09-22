@@ -23,6 +23,7 @@ typedef NS_ENUM(NSInteger, SPDFMarkdownBlockKind) {
     SPDFMarkdownBlockKindTableRow,
     SPDFMarkdownBlockKindTableHeaderCell,
     SPDFMarkdownBlockKindTableCell,
+    SPDFMarkdownBlockKindPageBreak, // Structural only: no canonical text.
 };
 
 typedef NS_ENUM(NSInteger, SPDFMarkdownTableAlignment) {

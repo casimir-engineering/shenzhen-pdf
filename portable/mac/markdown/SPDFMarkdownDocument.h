@@ -12,6 +12,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) SPDFMarkdownDocumentModel* model;
 @property(nonatomic, readonly) SPDFMarkdownRenderedDocument* renderedDocument;
 @property(nonatomic, readonly) SPDFMarkdownRenderOptions* renderOptions;
+// Nil unless the source requests paper geometry. Callers still pass the actual
+// destination explicitly to the renderer/paginator, including manual rotation.
+@property(nonatomic, readonly, nullable) SPDFMarkdownPageConfiguration* authoredPageConfiguration;
 @property(nonatomic, readonly, copy) NSDictionary<NSNumber*, NSString*>* languageOverrides;
 
 + (nullable instancetype)documentWithURL:(NSURL*)URL

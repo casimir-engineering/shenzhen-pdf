@@ -39,6 +39,8 @@ done
 
 FOUNDATION_SOURCES="
 $PORTABLE/mac/markdown/SPDFMarkdownModel.mm
+$PORTABLE/mac/markdown/SPDFMarkdownAuthoring.mm
+$PORTABLE/mac/markdown/SPDFMarkdownLayoutReport.mm
 $PORTABLE/mac/markdown/SPDFMarkdownMathTypesetter.mm
 $PORTABLE/mac/markdown/SPDFMarkdownParser.mm
 $PORTABLE/mac/markdown/SPDFMarkdownHTML.mm
