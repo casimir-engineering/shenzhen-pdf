@@ -1,4 +1,5 @@
 #import "SPDFMacModels.h"
+#import "SPDFMacTabGroups.h"
 
 #import "SPDFMacMarkdownSession.h"
 
@@ -67,6 +68,7 @@
 
 SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     SPDFDocumentTab* copy = [[SPDFDocumentTab alloc] init];
+    copy.group = [source.group copy];
     copy.path = source.path;
     copy.title = source.title;
     copy.pageIndex = source.pageIndex;
@@ -97,7 +99,7 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
 
 NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWindowNumber) {
     if (!tab) return @{};
-    return @{
+    NSDictionary* result = @{
         @"path" : tab.path ?: @"",
         @"title" : tab.title ?: @"",
         @"page" : @(tab.pageIndex),
@@ -129,6 +131,10 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
         @"roCopyModifiedAt" :
             @(tab.copiedSourceModificationDate ? tab.copiedSourceModificationDate.timeIntervalSince1970 : 0.0)
     };
+    if (!tab.group) return result;
+    NSMutableDictionary* grouped = [result mutableCopy];
+    grouped[@"group"] = tab.group.dictionary;
+    return grouped;
 }
 
 SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
@@ -136,6 +142,7 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     NSString* path = item[@"path"];
     if (![path isKindOfClass:NSString.class] || path.length == 0) return nil;
     SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
+    if (item[@"group"]) tab.group = [SPDFTabGroup fromDictionary:item[@"group"]];
     tab.path = path;
     if ([item[@"title"] isKindOfClass:NSString.class]) tab.title = item[@"title"];
     tab.pageIndex = MAX(0, [item[@"page"] integerValue]);

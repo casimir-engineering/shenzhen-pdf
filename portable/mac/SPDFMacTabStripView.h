@@ -9,7 +9,6 @@
 @property(nonatomic) NSInteger selectedIndex;
 @property(nonatomic) CGFloat reservedLeadingInset;
 - (BOOL)containsTabOrControlAtPoint:(NSPoint)point;
-- (void)dismissHoverPanel;
 // Tab-activation focus claim, shared by the reader's selection chokepoint:
 // moves keyboard focus to documentKeyView so typing right after a tab
 // selection searches the document — but only when the current first responder
@@ -22,4 +21,8 @@
                              window:(NSWindow*)window
                            tabStrip:(NSView*)tabStrip
                    parkedResponders:(NSArray<NSResponder*>*)parkedResponders;
+@end
+
+@interface SPDFTabStripView (Hover)
+- (void)dismissHoverPanel;
 @end

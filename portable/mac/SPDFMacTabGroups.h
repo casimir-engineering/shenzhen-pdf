@@ -1,0 +1,42 @@
+#import <Cocoa/Cocoa.h>
+@class SPDFDocumentTab;
+
+// Nil on ordinary tabs: no registry, palette, or group layout is created until
+// the reader groups a tab or restores a session that actually contains groups.
+@interface SPDFTabGroup : NSObject <NSCopying>
+@property(nonatomic, copy) NSString* identifier;
+@property(nonatomic, copy) NSString* name;
+@property(nonatomic, copy) NSString* colorName;
+@property(nonatomic, copy) NSString* lastUsedPath;
+@property(nonatomic) BOOL collapsed;
+@property(nonatomic, readonly) BOOL general;
+@property(nonatomic, readonly) NSString* displayName;
++ (instancetype)generalGroup;
++ (instancetype)groupWithColor:(NSString*)color;
+- (NSDictionary*)dictionary;
++ (instancetype)fromDictionary:(id)value;
+@end
+
+NSArray<NSString*>* spdf_tab_group_colors(void);
+NSColor* spdf_tab_group_accent(NSString* color);
+NSColor* spdf_tab_group_selected_fill(NSString* color, BOOL dark);
+NSString* spdf_tab_group_unused_color(NSArray<SPDFDocumentTab*>* tabs);
+// Canonicalizes decoded identities and keeps each group's tabs contiguous,
+// preserving first-occurrence group order and intra-group tab order.
+void spdf_tab_groups_normalize(NSMutableArray<SPDFDocumentTab*>* tabs);
+void spdf_tab_groups_activate(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* selected);
+NSArray<SPDFDocumentTab*>* spdf_tab_group_members(NSArray<SPDFDocumentTab*>* tabs, SPDFTabGroup* group);
+
+@protocol SPDFTabGroupReader <NSObject>
+- (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color;
+- (void)toggleTabGroup:(SPDFTabGroup*)group;
+- (void)renameTabGroup:(SPDFTabGroup*)group name:(NSString*)name;
+- (void)recolorTabGroup:(SPDFTabGroup*)group color:(NSString*)color;
+- (void)ungroupTabs:(SPDFTabGroup*)group;
+- (void)closeTabGroup:(SPDFTabGroup*)group;
+- (void)moveTabGroup:(SPDFTabGroup*)group toIndex:(NSInteger)index;
+- (void)moveTabAtIndex:(NSInteger)index toGroup:(SPDFTabGroup*)group atIndex:(NSInteger)destination;
+- (NSArray<NSDictionary*>*)snapshotTabGroup:(SPDFTabGroup*)group;
+- (void)insertDraggedGroup:(NSArray<NSDictionary*>*)tabs atIndex:(NSInteger)index;
+- (void)detachTabGroup:(SPDFTabGroup*)group atScreenPoint:(NSPoint)point;
+@end

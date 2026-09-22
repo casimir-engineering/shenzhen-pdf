@@ -34,6 +34,10 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacOCRValidation.h"
 #import "SPDFMacReadingTheme.h"
 #import "SPDFMacTabDetach.h"
+#import "SPDFMacTabGroupIntegration.h"
+#import "SPDFMacAgentCommand.h"
+#import "SPDFMacAgentIntegration.h"
+#import "SPDFMacMarkdownEditor.h"
 #import "SPDFMacTranslationInstall.h"
 #import "SPDFMacToolEnvironment.h"
 #import "SPDFMacMinimapView.h"
@@ -1348,6 +1352,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         if (item[@"showSidebar"] == nil || item[@"showMinimap"] == nil) [self applyStoredDocumentStateToTab:tab];
         [_tabs addObject:tab];
     }
+    spdf_tab_groups_normalize(_tabs);
     if (_tabs.count > 0)
         _selectedTabIndex = MIN(MAX(0, [windowState[@"selectedTab"] integerValue]), MAX(0, (NSInteger)_tabs.count - 1));
     else
@@ -1669,6 +1674,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
 - (BOOL)canOpenDocumentAtPath:(NSString*)path showError:(BOOL)showError {
     if (path.length == 0) return NO;
+    if ([path.pathExtension isEqualToString:@"spdf-command"]) { [self acceptAgentCommandAtPath:path]; return NO; }
     BOOL isDirectory = NO;
     BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory];
     if (!fileExists || isDirectory) {
@@ -2113,6 +2119,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     nearestSearchItem.target = self;
     [settingsMenu addItem:[NSMenuItem separatorItem]];
     SPDFMacInstallFileExplorerSettingsMenu(settingsMenu);
+    SPDFMacInstallMarkdownEditorSettingsMenu(settingsMenu);
     [settingsMenu addItem:[NSMenuItem separatorItem]];
     NSArray<NSString*>* stateFiles =
         @[ @"settings.yaml", @"session.yaml", @"documents.yaml", @"favorites.yaml", @"bookmarks.yaml" ];
@@ -7003,6 +7010,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)updateTabStrip {
+    [self normalizeTabGroups];
     _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
     [self updateTabStripFrame];
@@ -8733,8 +8741,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
             continue;
         }
         SPDFDocumentTab* tab = [self newTabForPath:path];
-        [_tabs addObject:tab];
-        targetIndex = (NSInteger)_tabs.count - 1;
+        targetIndex = [self appendNewTabToActiveGroup:tab];
     }
 
     if (targetIndex >= 0) {
@@ -8776,6 +8783,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     index = MAX(0, MIN(index, (NSInteger)_tabs.count));
     [_tabs insertObject:tab atIndex:(NSUInteger)index];
     _selectedTabIndex = index;
+    [self normalizeTabGroups];
+    [self activateSelectedTabGroup];
     [self loadSelectedTab];
     if ([self hasActiveDocument] && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
     [self savePersistentState];
@@ -8784,17 +8793,22 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)selectTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
+    if (index != _selectedTabIndex || [self hasActiveDocument])
+        spdf_tab_groups_activate(_tabs, _tabs[(NSUInteger)index]);
+    [self updateTabStrip];
     if (index == _selectedTabIndex && [self hasActiveDocument]) {
         // A stranded Loading markdown session still counts as an active
         // document: re-kick it instead of early-returning into the strand.
         [self ensureActiveMarkdownTabHasContent];
         // Re-clicking the active tab still plants keyboard focus on the document.
         [self focusActiveDocumentViewAfterTabSelection];
+        if (_tabs[(NSUInteger)index].group) [self savePersistentState];
         return;
     }
     [self clearToolbarFieldFocusForTabSwitch];
     [self rememberActiveTabState];
     _selectedTabIndex = index;
+    [self normalizeTabGroups];
     [self loadSelectedTab];
     [self savePersistentState];
     [self focusActiveDocumentViewAfterTabSelection];
@@ -8869,6 +8883,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (closingActive) {
         NSInteger replacementIndex = [_tabs indexOfObjectIdenticalTo:replacementTab];
         _selectedTabIndex = replacementIndex == NSNotFound ? MIN(index, (NSInteger)_tabs.count - 1) : replacementIndex;
+        [self normalizeTabGroups];
+        [self activateSelectedTabGroup];
         [self loadSelectedTab];
         [self focusActiveDocumentViewAfterTabSelection];
     } else {
@@ -8876,71 +8892,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self scheduleNearbyPageRendersAfterFirstPaintForGeneration:_renderGeneration preferredPage:_pageIndex];
         [self savePersistentState];
     }
-}
-
-- (void)showTabInFolderAtIndex:(NSInteger)index {
-    if (index < 0 || index >= (NSInteger)_tabs.count) {
-        NSBeep();
-        return;
-    }
-    SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
-    [self showPathInFolder:tab.path];
-}
-
-- (void)copyPathStringToPasteboard:(NSString*)path statusMessage:(NSString*)statusMessage {
-    if (!path.length) {
-        NSBeep();
-        return;
-    }
-
-    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
-    [pasteboard clearContents];
-    if (![pasteboard setString:path forType:NSPasteboardTypeString]) {
-        NSBeep();
-        return;
-    }
-    _statusLabel.stringValue = statusMessage ?: @"Path copied.";
-}
-
-- (void)copyTabFileToPasteboardAtIndex:(NSInteger)index {
-    if (index < 0 || index >= (NSInteger)_tabs.count) {
-        NSBeep();
-        return;
-    }
-    SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
-    if (!tab.path.length) {
-        NSBeep();
-        return;
-    }
-
-    NSURL* fileURL = [NSURL fileURLWithPath:tab.path];
-    NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
-    [pasteboard clearContents];
-    if (![pasteboard writeObjects:@[ fileURL ]]) {
-        NSBeep();
-        return;
-    }
-    _statusLabel.stringValue = @"File copied.";
-}
-
-- (void)copyTabPathToPasteboardAtIndex:(NSInteger)index {
-    if (index < 0 || index >= (NSInteger)_tabs.count) {
-        NSBeep();
-        return;
-    }
-    SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
-    [self copyPathStringToPasteboard:tab.path statusMessage:@"Path copied."];
-}
-
-// Copy the tab's title — the document name without its .pdf extension.
-- (void)copyTabTitleToPasteboardAtIndex:(NSInteger)index {
-    if (index < 0 || index >= (NSInteger)_tabs.count) {
-        NSBeep();
-        return;
-    }
-    SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
-    NSString* title = tab.path.length ? spdf_display_name_for_path(tab.path) : tab.title;
-    [self copyPathStringToPasteboard:title ?: @"" statusMessage:@"Title copied."];
 }
 
 - (void)moveTabFromIndex:(NSInteger)fromIndex toIndex:(NSInteger)toIndex {
@@ -16247,6 +16198,8 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter (spawn @%.1f, +%.1fms)", spdf_process_spawn_time_ms(),
                                 spdf_zoom_profile_now_ms() - spdf_process_spawn_time_ms());
         for (int i = 1; i < argc; ++i) {
+            if (strcmp(argv[i], "--agent-command") == 0)
+                return SPDFMacRunAgentCommand(i + 1 < argc ? argv[i + 1] : NULL);
             if (strcmp(argv[i], "--version") == 0) {
                 NSDictionary* info = NSBundle.mainBundle.infoDictionary;
                 NSString* shortVersion = info[@"CFBundleShortVersionString"] ?: @"";

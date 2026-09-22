@@ -1,0 +1,163 @@
+#import "SPDFMacTabStripViewPrivate.h"
+
+@implementation SPDFTabStripView (GroupInteraction)
+- (id<SPDFTabGroupReader>)groupReader { return (id<SPDFTabGroupReader>)self.reader; }
+- (void)tabContextNewGroup:(NSMenuItem*)sender {
+    [self.groupReader createGroupForTabAtIndex:[sender.representedObject integerValue] withTabAtIndex:-1 color:nil];
+}
+- (void)renameGroup:(SPDFTabGroup*)group {
+    if (!group || !self.window) return;
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = @"Rename Group";
+    alert.informativeText = @"Leave the name empty to use the color name.";
+    [alert addButtonWithTitle:@"Rename"];
+    [alert addButtonWithTitle:@"Cancel"];
+    NSTextField* field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 260, 24)];
+    field.stringValue = group.name ?: @"";
+    field.placeholderString = group.general ? @"General" : group.colorName;
+    alert.accessoryView = field;
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        if (response == NSAlertFirstButtonReturn) [self.groupReader renameTabGroup:group name:field.stringValue];
+    }];
+    [alert.window makeFirstResponder:field];
+}
+- (void)groupRenameMenu:(NSMenuItem*)sender { [self renameGroup:sender.representedObject]; }
+- (void)groupColorMenu:(NSMenuItem*)sender {
+    [self.groupReader recolorTabGroup:sender.representedObject color:sender.title];
+}
+- (void)groupToggleMenu:(NSMenuItem*)sender { [self.groupReader toggleTabGroup:sender.representedObject]; }
+- (void)groupUngroupMenu:(NSMenuItem*)sender { [self.groupReader ungroupTabs:sender.representedObject]; }
+- (void)groupCloseMenu:(NSMenuItem*)sender { [self.groupReader closeTabGroup:sender.representedObject]; }
+- (BOOL)handleGroupRightMouseDown:(NSEvent*)event {
+    SPDFTabGroup* group = [self groupAtPoint:[self convertPoint:event.locationInWindow fromView:nil] headerOnly:YES];
+    if (!group) return NO;
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:group.displayName];
+    {
+        NSMenuItem* rename = [menu addItemWithTitle:@"Rename Group…" action:@selector(groupRenameMenu:) keyEquivalent:@""];
+        rename.target = self;
+        rename.representedObject = group;
+    }
+    if (!group.general) {
+        // Colors sit directly below Rename, as requested. Text and checkmarks
+        // make the palette usable without relying on color discrimination.
+        for (NSString* color in spdf_tab_group_colors()) {
+            NSMenuItem* item = [menu addItemWithTitle:color action:@selector(groupColorMenu:) keyEquivalent:@""];
+            item.target = self;
+            item.representedObject = group;
+            item.state = [group.colorName isEqualToString:color] ? NSControlStateValueOn : NSControlStateValueOff;
+            item.image = [NSImage imageWithSize:NSMakeSize(12, 12) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+                [spdf_tab_group_accent(color) setFill];
+                [[NSBezierPath bezierPathWithOvalInRect:NSInsetRect(rect, 1, 1)] fill];
+                return YES;
+            }];
+        }
+        [menu addItem:NSMenuItem.separatorItem];
+    }
+    NSMenuItem* toggle = [menu addItemWithTitle:group.collapsed ? @"Expand Group" : @"Collapse Group"
+        action:@selector(groupToggleMenu:) keyEquivalent:@""];
+    toggle.target = self;
+    toggle.representedObject = group;
+    if (!group.general) {
+        NSMenuItem* ungroup = [menu addItemWithTitle:@"Ungroup Tabs" action:@selector(groupUngroupMenu:) keyEquivalent:@""];
+        ungroup.target = self;
+        ungroup.representedObject = group;
+    }
+    NSMenuItem* close = [menu addItemWithTitle:@"Close Group" action:@selector(groupCloseMenu:) keyEquivalent:@""];
+    close.target = self;
+    close.representedObject = group;
+    [self dismissHoverPanel];
+    [NSMenu popUpContextMenu:menu withEvent:event forView:self];
+    return YES;
+}
+- (BOOL)handleGroupMouseDown:(NSEvent*)event {
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    SPDFTabGroup* group = [self groupAtPoint:point headerOnly:YES];
+    _pressedGroup = group;
+    if (!group) return NO;
+    [self suppressWindowMovementForTabGesture];
+    _dragStartPoint = point;
+    [self dismissHoverPanel];
+    return YES;
+}
+- (BOOL)handleGroupMouseDragged:(NSEvent*)event {
+    if (!_pressedGroup) return NO;
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    if (hypot(point.x - _dragStartPoint.x, point.y - _dragStartPoint.y) >= 4 && !_dragSessionGroup)
+        [self startGroupDragSessionWithEvent:event];
+    return YES;
+}
+- (BOOL)handleGroupMouseUp:(NSEvent*)event {
+    SPDFTabGroup* group = _pressedGroup;
+    if (event.clickCount > 1) { _pressedGroup = nil; [self restoreWindowMovementForTabGesture]; return group != nil; }
+    _pressedGroup = nil;
+    if (!group) return NO;
+    [self restoreWindowMovementForTabGesture];
+    NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    if ([self groupAtPoint:point headerOnly:YES] != group) return YES;
+    // The first 26 points are the chevron. Expanded groups have no name.
+    NSPoint left = point;
+    left.x -= 26;
+    BOOL onName = group.collapsed && [self groupAtPoint:left headerOnly:YES] == group;
+    if (onName && event.clickCount < 2) [self renameGroup:group];
+    else [self.groupReader toggleTabGroup:group];
+    return YES;
+}
+- (void)updateGroupDropForPoint:(NSPoint)point sourceIndex:(NSInteger)source {
+    _groupDropGroup = [self groupAtPoint:point headerOnly:YES];
+    NSInteger target = [self tabIndexAtPoint:point];
+    if (target == source) target = -1;
+    if (target >= 0) {
+        NSRect rect = [self rectForTabAtIndex:target];
+        // The center creates a pair; either edge remains a reorder target.
+        if (point.x < NSMinX(rect) + NSWidth(rect) * 0.28 ||
+            point.x > NSMaxX(rect) - NSWidth(rect) * 0.28) target = -1;
+    }
+    if (target != _groupHoverIndex) {
+        _groupHoverIndex = target;
+        _groupHoverBegan = NSDate.timeIntervalSinceReferenceDate;
+        if (target >= 0 && _draggingTab && !_detachedTabDrag) {
+            NSInteger expected = target;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.36 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if (self->_draggingTab && !self->_detachedTabDrag && self->_groupHoverIndex == expected)
+                    [self updateGroupDropForPoint:point sourceIndex:source];
+            });
+        }
+    }
+    _groupDropTabIndex = -1;
+    if (target >= 0 && NSDate.timeIntervalSinceReferenceDate - _groupHoverBegan >= 0.35) {
+        SPDFTabGroup* group = self.tabs[(NSUInteger)target].group;
+        if (group && !group.general) _groupDropGroup = group;
+        else {
+            _groupDropTabIndex = target;
+            if (!_groupPreviewColor) _groupPreviewColor = spdf_tab_group_unused_color(self.tabs);
+        }
+    }
+    if (_groupDropGroup || _groupDropTabIndex >= 0) _dropIndicatorSlot = -1;
+    [self setNeedsDisplay:YES];
+}
+- (BOOL)performGroupDropWithTab:(SPDFDocumentTab*)tab sourceIndex:(NSInteger)source atPoint:(NSPoint)point {
+    if (!_groupDropGroup && _groupDropTabIndex < 0) return NO;
+    SPDFTabGroup* destination = _groupDropGroup;
+    SPDFDocumentTab* target = _groupDropTabIndex >= 0 ? self.tabs[(NSUInteger)_groupDropTabIndex] : nil;
+    NSString* color = _groupPreviewColor;
+    if (source < 0) {
+        // Seed destination membership before inserting: normalization must not
+        // briefly create an unrelated source group in the destination window.
+        tab.group = destination ?: target.group;
+        [self.reader insertDraggedTab:tab atIndex:[self dropIndexForPoint:point]];
+        for (NSUInteger i = 0; i < self.tabs.count; ++i)
+            if ([self.tabs[i].path isEqualToString:tab.path]) { source = i; break; }
+    }
+    if (source < 0) return NO;
+    if (destination) {
+        NSArray* members = spdf_tab_group_members(self.tabs, destination);
+        NSUInteger last = [self.tabs indexOfObjectIdenticalTo:members.lastObject];
+        [self.groupReader moveTabAtIndex:source toGroup:destination atIndex:last == NSNotFound ? self.tabs.count : last + 1];
+    } else {
+        NSUInteger other = [self.tabs indexOfObjectIdenticalTo:target];
+        if (other != NSNotFound)
+            [self.groupReader createGroupForTabAtIndex:source withTabAtIndex:other color:color];
+    }
+    return YES;
+}
+@end
