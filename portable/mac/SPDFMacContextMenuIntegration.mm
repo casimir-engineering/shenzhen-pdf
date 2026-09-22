@@ -1,6 +1,20 @@
 #import "SPDFMacDelegatePrivate.h"
+#import "SPDFMacMarkdownPageCanvas.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacTranslationEnablement.h"
+
+#import <objc/runtime.h>
+
+@interface SPDFMacContextMenuCloseTarget : NSObject <NSMenuDelegate>
+@property(nonatomic, copy) void (^closeHandler)(void);
+@end
+
+@implementation SPDFMacContextMenuCloseTarget
+- (void)menuDidClose:(NSMenu*)menu {
+    (void)menu;
+    if (self.closeHandler) self.closeHandler();
+}
+@end
 
 @interface ShenzhenMacDelegate (SPDFMacContextMenuPrivate)
 - (NSInteger)commentIndexAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
@@ -19,12 +33,27 @@
         NSPoint point = [documentView convertPoint:event.locationInWindow fromView:nil];
         [documentView point:point fallsInPage:&_contextPageIndex pagePoint:&_contextPagePoint];
         _contextCommentIndex = [self commentIndexAtPageIndex:_contextPageIndex pagePoint:_contextPagePoint];
+    } else if ([view isKindOfClass:SPDFMacMarkdownPageCanvas.class]) {
+        SPDFMacMarkdownPageCanvas* canvas = (SPDFMacMarkdownPageCanvas*)view;
+        NSPoint point = [canvas convertPoint:event.locationInWindow fromView:nil];
+        _contextPageIndex = [canvas pageIndexAtPoint:point];
     }
 
     BOOL markdown = [self isMarkdownActive];
     NSString* selectedText = markdown ? [self markdownSelectedText] : (_selectedText ?: @"");
-    if (markdown) _contextPageIndex = self.activeMarkdownSession.currentPageIndex;
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
+    SPDFMacContextMenuCloseTarget* closeTarget = [SPDFMacContextMenuCloseTarget new];
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    closeTarget.closeHandler = ^{
+      ShenzhenMacDelegate* strongSelf = weakSelf;
+      if (!strongSelf) return;
+      strongSelf->_contextPageIndex = -1;
+      strongSelf->_contextPagePoint = NSZeroPoint;
+      strongSelf->_contextCommentIndex = -1;
+    };
+    menu.delegate = closeTarget;
+    objc_setAssociatedObject(menu, @selector(contextMenuForDocumentView:event:), closeTarget,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (selectedText.length > 0) {
         NSString* preview = [self shortSelectedTextForMenuTitle];
         NSMenuItem* translateSelection =
@@ -74,6 +103,13 @@
                                                action:@selector(showInFolder:)
                                         keyEquivalent:@""];
     showInFolder.enabled = [self hasActiveDocument] && _path.length > 0;
+    if (markdown) {
+        NSMenuItem* openInEditor = [menu addItemWithTitle:@"Open in Editor"
+                                                   action:@selector(openMarkdownInEditor:)
+                                            keyEquivalent:@""];
+        openInEditor.target = self;
+        openInEditor.enabled = _path.length > 0;
+    }
     NSMenuItem* copyDocument = [menu addItemWithTitle:@"Copy Document"
                                                action:@selector(copyCurrentDocumentFile:)
                                         keyEquivalent:@""];
@@ -83,13 +119,15 @@
                                     keyEquivalent:@""];
     copyPage.enabled = markdown ? [self canCopyCurrentPageAsPDF]
                                 : _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
+    if (_contextPageIndex >= 0) copyPage.representedObject = @(_contextPageIndex);
     NSMenuItem* copyImage = [menu addItemWithTitle:@"Copy Page Image"
                                             action:@selector(copyCurrentPageImage:)
                                      keyEquivalent:@""];
+    NSInteger imagePageIndex = _contextPageIndex >= 0 ? _contextPageIndex : _pageIndex;
     copyImage.enabled = markdown ? [self canCopyCurrentPageImage]
-                                 : _pageIndex >= 0 &&
-                                       _pageIndex < (NSInteger)_renderedPages.count &&
-                                       _renderedPages[(NSUInteger)_pageIndex].image != nil;
+                                 : imagePageIndex >= 0 && imagePageIndex < (NSInteger)_renderedPages.count &&
+                                       _renderedPages[(NSUInteger)imagePageIndex].image != nil;
+    if (_contextPageIndex >= 0) copyImage.representedObject = @(_contextPageIndex);
     NSMenuItem* copyPath = [menu addItemWithTitle:@"Copy Path"
                                            action:@selector(copyCurrentDocumentPath:)
                                     keyEquivalent:@""];
