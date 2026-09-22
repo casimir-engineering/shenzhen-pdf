@@ -63,6 +63,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 
 @interface SPDFDocumentTab : NSObject
 @property(nonatomic, strong) SPDFTabGroup* group;
+@property(nonatomic, copy) NSString* collectionHistoryDocumentID;
+@property(nonatomic, copy) NSString* collectionVersionLabel;
 @property(nonatomic, copy) NSString* path;
 @property(nonatomic, copy) NSString* title;
 @property(nonatomic) NSInteger pageIndex;

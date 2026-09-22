@@ -60,11 +60,12 @@
         NSArray<NSNumber*>* members = layout.members;
         if (members.count) {
             CGFloat space = MAX(0, right - x - remainingHeaders - 4);
-            NSInteger capacity = MIN((NSInteger)members.count, MAX(0, (NSInteger)floor(space / (width + 4))));
+            NSInteger capacity = MAX(0, (NSInteger)floor(space / (width + 4)));
             // Reserve one tab per later expanded group; the active group's
             // selected tab is then centered in its own visible slice.
             NSInteger laterTabs = remainingTabs - members.count;
-            if (laterTabs && capacity > 1) capacity = MAX(1, capacity - 1);
+            if (laterTabs && capacity > 1) capacity = MAX(1, capacity - MIN(laterTabs, (NSInteger)(groups.count - g - 1)));
+            capacity = MIN((NSInteger)members.count, capacity);
             NSUInteger selected = [members indexOfObject:@(self.selectedIndex)];
             NSInteger first = selected == NSNotFound ? 0 : MAX(0, (NSInteger)selected - (capacity - 1) / 2);
             first = MIN(first, MAX(0, (NSInteger)members.count - capacity));

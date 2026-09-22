@@ -14,6 +14,9 @@ typedef void (^SPDFMacEditorPreferenceWriter)(NSString* bundleIdentifier);
 
 FOUNDATION_EXPORT NSString* const SPDFMacMarkdownEditorPreferenceDefaultsKey;
 
+// Native editor discovery starts where applications are actually selectable,
+// rather than beside the Markdown document where every row is disabled.
+NSURL* SPDFMacMarkdownEditorPickerDirectoryURL(void);
 NSString* _Nullable SPDFMacStoredMarkdownEditorBundleIdentifier(void);
 void SPDFMacSetMarkdownEditorBundleIdentifier(NSString* _Nullable bundleIdentifier);
 

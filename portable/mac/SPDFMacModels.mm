@@ -69,6 +69,8 @@
 SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     SPDFDocumentTab* copy = [[SPDFDocumentTab alloc] init];
     copy.group = [source.group copy];
+    copy.collectionHistoryDocumentID = source.collectionHistoryDocumentID;
+    copy.collectionVersionLabel = source.collectionVersionLabel;
     copy.path = source.path;
     copy.title = source.title;
     copy.pageIndex = source.pageIndex;
@@ -131,9 +133,11 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
         @"roCopyModifiedAt" :
             @(tab.copiedSourceModificationDate ? tab.copiedSourceModificationDate.timeIntervalSince1970 : 0.0)
     };
-    if (!tab.group) return result;
+    if (!tab.group && !tab.collectionHistoryDocumentID.length && !tab.collectionVersionLabel.length) return result;
     NSMutableDictionary* grouped = [result mutableCopy];
-    grouped[@"group"] = tab.group.dictionary;
+    if (tab.group) grouped[@"group"] = tab.group.dictionary;
+    if (tab.collectionVersionLabel.length) grouped[@"collectionVersionLabel"] = tab.collectionVersionLabel;
+    if (tab.collectionHistoryDocumentID.length) grouped[@"collectionHistoryID"] = tab.collectionHistoryDocumentID;
     return grouped;
 }
 
@@ -144,6 +148,8 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
     if (item[@"group"]) tab.group = [SPDFTabGroup fromDictionary:item[@"group"]];
     tab.path = path;
+    if ([item[@"collectionVersionLabel"] isKindOfClass:NSString.class]) tab.collectionVersionLabel = item[@"collectionVersionLabel"];
+    if ([item[@"collectionHistoryID"] isKindOfClass:NSString.class]) tab.collectionHistoryDocumentID = item[@"collectionHistoryID"];
     if ([item[@"title"] isKindOfClass:NSString.class]) tab.title = item[@"title"];
     tab.pageIndex = MAX(0, [item[@"page"] integerValue]);
     tab.zoom = [item[@"zoom"] doubleValue] > 0 ? [item[@"zoom"] doubleValue] : 1.0;

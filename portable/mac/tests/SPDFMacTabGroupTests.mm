@@ -120,7 +120,11 @@ int main(void) {
         Expect(@"palette has ten choices", spdf_tab_group_colors().count == 10);
         for (NSString* color in [spdf_tab_group_colors() arrayByAddingObject:@"Gray"]) {
             for (NSNumber* dark in @[@NO, @YES]) {
-                double contrast = 1.05 / (Luminance(spdf_tab_group_selected_fill(color, dark.boolValue)) + .05);
+                double fillLuminance = Luminance(spdf_tab_group_selected_fill(color, dark.boolValue));
+                // labelColor is the SAME foreground on selected/unselected
+                // titles: black in Aqua and white in Dark Aqua.
+                double contrast = dark.boolValue ? 1.05 / (fillLuminance + .05)
+                                                  : (fillLuminance + .05) / .05;
                 Expect([NSString stringWithFormat:@"%@ selected label contrast exceeds 4.5:1", color], contrast >= 4.5);
             }
         }

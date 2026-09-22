@@ -88,6 +88,17 @@ does not re-trigger the macOS access prompt.
 - **Per-document view state** — page, zoom, fit mode, scroll position, search
   text, and (for Markdown) page orientation come back per file.
 
+## Collection and version history **mac**
+
+- First-use choice to keep local copies and history, with on/off, location, storage cap and management in Settings. Reading continues from original paths.
+- Background capture after opening; reachable recent documents are imported when Collection is enabled. Identical content shares storage, while distinct documents retain separate histories.
+- Immutable original and version copies, pre-edit protection, saved milestones, exclusions and deliberate deletion of copies. Deleting Collection history never deletes source documents.
+- Read-only version previews and a history view; Save a Copy creates a separate editable document.
+- PDF and Markdown comparison with old/new panes, red removals, green additions, linked scrolling/zoom, and clickable change markers. Inserted and deleted pages have blank counterparts.
+- Missing-original recovery from protected copies. Locate Original offers manual selection or a cancellable exact-hash search, sorted by modification date from oldest to newest.
+- Manage Collection uses views on the left and document actions/settings on the right. Choices persist across launches.
+- Markdown copies include bounded local dependencies; unavailable assets are reported. Encrypted PDF bytes remain encrypted and are not indexed as plaintext.
+
 ## <a id="reading"></a>Reading and navigation
 
 - **Continuous scrolling** with page stepping that keeps your zoom and position.
@@ -114,6 +125,9 @@ does not re-trigger the macOS access prompt.
   complete, so nothing blanks or flashes.
 
 ## <a id="search"></a>Search
+
+- **Cmd+K on Mac:** open document names, group names, first five open-text results, first five Collection names (excluding open documents), then first five Collection-text results. `col:` searches Collection names and text directly.
+- **Cmd+Backspace on Mac:** return to the previous active document, including a recently closed tab; press twice to switch back. Editable text controls retain their normal shortcut behavior.
 
 <p align="center"><img src="images/portable/macos-search-highlights.webp" alt="A search with in-page highlights, chapter-grouped results and a current / total counter" width="880"></p>
 

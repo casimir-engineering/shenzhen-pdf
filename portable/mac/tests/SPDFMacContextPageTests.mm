@@ -26,6 +26,9 @@ int main(void) {
         contextCopy.representedObject = @1;
         assert(SPDFMacPageIndexForActionSender(contextCopy, -1, 0) == 1);
         assert(SPDFMacPageIndexForActionSender(nil, -1, 2) == 2);
+        assert([SPDFMacCopyPageMenuTitle(2, NO) isEqualToString:@"Copy Page 3 as PDF"]);
+        assert([SPDFMacCopyPageMenuTitle(2, YES) isEqualToString:@"Copy Page 3 as Image"]);
+        assert([SPDFMacCopyPageMenuTitle(-1, NO) isEqualToString:@"Copy Page as PDF"]);
     }
     puts("SPDF mac context-page tests passed");
     return 0;

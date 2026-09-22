@@ -83,6 +83,26 @@ $PORTABLE/mac/markdown/SPDFMarkdownAsync.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDocument.mm
 "
 UI_SOURCES="
+$PORTABLE/mac/SPDFMacCollectionWindow.mm
+$PORTABLE/mac/SPDFMacCollectionWindowActions.mm
+$PORTABLE/mac/SPDFMacCollectionWindowGrid.mm
+$PORTABLE/mac/SPDFMacCollectionHistory.mm
+$PORTABLE/mac/SPDFMacCollectionSavePanel.mm
+$PORTABLE/mac/SPDFMacCollectionCompareViews.mm
+$PORTABLE/mac/SPDFMacCollectionCompareWindow.mm
+$PORTABLE/mac/SPDFMacCollectionLocate.mm
+$PORTABLE/mac/SPDFMacCollectionStore.mm
+$PORTABLE/mac/SPDFMacCollectionStoreAccess.mm
+$PORTABLE/mac/SPDFMacCollectionStoreAssets.mm
+$PORTABLE/mac/SPDFMacCollectionStoreCapture.mm
+$PORTABLE/mac/SPDFMacCollectionStoreExport.mm
+$PORTABLE/mac/SPDFMacCollectionStoreFingerprint.mm
+$PORTABLE/mac/SPDFMacCollectionStoreLocation.mm
+$PORTABLE/mac/SPDFMacCollectionStoreMarkdown.mm
+$PORTABLE/mac/SPDFMacCollectionStoreSearch.mm
+$PORTABLE/mac/SPDFMacCollectionStoreScheduling.mm
+$PORTABLE/mac/SPDFMacCollectionCompareEngine.mm
+$PORTABLE/mac/SPDFMacCollectionCompareLoad.mm
 $PORTABLE/mac/tests/SPDFMacMarkdownScrollViewTestSupport.mm
 $PORTABLE/mac/SPDFMacMarkdownCache.mm
 $PORTABLE/mac/SPDFMacMarkdownKeyboardPolicy.mm
@@ -121,6 +141,10 @@ $PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
 "
 
 TESTS="
+SPDFMacCollectionComparePresentationTests
+SPDFMacCollectionWindowTests
+SPDFMacCollectionMarkdownIndexTests
+SPDFMacCollectionCompareLoadTests
 SPDFMacMarkdownKeyboardPolicyTests
 SPDFMacMarkdownRoutingTests
 SPDFMacMarkdownPagedViewTests
@@ -140,7 +164,8 @@ SPDFMacMarkdownOrientationTests
 SPDFMacMarkdownNavigationReadinessTests
 "
 
-CXXFLAGS="-isysroot $SDKROOT -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror $SANITIZER_FLAGS \
+# Match production ARC lifetime optimization; unoptimized outlets can mask weak-reference bugs.
+CXXFLAGS="-isysroot $SDKROOT -std=c++17 -fobjc-arc -O2 -g -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation $SANITIZER_FLAGS \
 -I$PORTABLE/core -I$PORTABLE/mac -I$PORTABLE/mac/markdown"
 
 # The foundation and UI sources are identical for every test binary, so compile
@@ -170,7 +195,7 @@ do
     spdf_job "$CXX" -isysroot "$SDKROOT" $SANITIZER_FLAGS \
         $SHARED_OBJS "$BUILD_DIR/test-$TEST.o" "$BUILD_DIR/md4c.o" "$BUILD_DIR/spdf_recolor.o" $GUMBO_OBJS \
         -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
-        -framework UniformTypeIdentifiers -o "$BUILD_DIR/$TEST"
+        -framework UniformTypeIdentifiers -framework QuartzCore -o "$BUILD_DIR/$TEST"
 done
 spdf_join
 

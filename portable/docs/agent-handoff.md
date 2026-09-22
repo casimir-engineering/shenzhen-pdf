@@ -141,6 +141,32 @@ while the app is closed. `spdf_dictionary_from_tab` / `spdf_tab_from_dictionary`
 in `SPDFMacModels.mm` are the ONLY tab codecs — a second inline writer once
 silently dropped a field for a release.
 
+### Collection and version history (macOS)
+
+`SPDFMacCollectionStore*` owns a lazy immutable blob store, atomic locked manifest,
+identity and per-revision text indexes. No store work belongs on the empty launch
+path. Capture follows first-use consent and a successful document open. Protection
+before source writes must succeed or receive explicit Continue Without History.
+Generic opens treat an unrelated replacement as a new document; observed changes
+and successful app saves supply an explicit document ID. Per-path generations and
+a durable protection epoch, checked under the shared lock, prevent older queued
+captures in any window from superseding a newer edit. Keep those paths distinct.
+
+`SPDFMacCollectionIntegration` wires consent and deferred capture; sidebar/export
+integration, palette and manager are separate files. Save a Copy creates a new file
+and cannot overwrite originals. `SPDFMacCollectionCompare*` aligns actual rendered
+PDF/Markdown pages and presents independent PDFKit readers with red/green changes.
+Markdown assets come from the reader parser's actual image nodes, never regexes over
+source examples. Archives carry a persisted display label and cannot be edited.
+
+Focused tests: `mac-collection-store-tests`, `mac-collection-asset-tests`,
+`mac-collection-compare-tests`, `mac-collection-palette-tests`; the Markdown integration
+runner compiles at production `-O2`, constructs manager/history/comparison windows
+headlessly, and checks real Markdown indexing, mixed text/image page alignment and
+PDFKit accessibility ownership. Aligned comparison PDFs are serialized and reopened
+on the worker queue before installing independent backed documents in the readers. The implementation
+and critic evidence live in `docs/journals/collection-implementation/`.
+
 ### Windows are processes
 
 A multi-window session restores as **one process per window**: the process that

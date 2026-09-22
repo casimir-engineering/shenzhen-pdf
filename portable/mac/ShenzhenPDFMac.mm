@@ -37,6 +37,9 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacTabGroupIntegration.h"
 #import "SPDFMacAgentCommand.h"
 #import "SPDFMacAgentIntegration.h"
+#import "SPDFMacCollectionPalette.h"
+#import "SPDFMacCollectionPathPolicy.h"
+#import "SPDFMacPreviousTabIntegration.h"
 #import "SPDFMacMarkdownEditor.h"
 #import "SPDFMacTranslationInstall.h"
 #import "SPDFMacToolEnvironment.h"
@@ -1837,7 +1840,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 }
 
 - (void)rememberRecentlyOpenedPath:(NSString*)path {
-    if (path.length == 0) return;
+    if (path.length == 0 || SPDFMacPathIsCollectionArchive(path)) return;
     NSString* standardized = path.stringByStandardizingPath;
     for (NSInteger i = (NSInteger)_recentlyOpenedPaths.count - 1; i >= 0; --i) {
         NSString* existingPath = _recentlyOpenedPaths[(NSUInteger)i];
@@ -1973,6 +1976,9 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                    keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSRightArrowFunctionKey)]];
     nextTabItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     for (NSMenuItem* item in @[ previousTabItem, nextTabItem ]) item.target = self;
+    NSMenuItem* lastActive = [goMenu addItemWithTitle:@"Previous Active Tab" action:@selector(returnToPreviousTab:)
+        keyEquivalent:[NSString stringWithFormat:@"%C", (unichar)NSBackspaceCharacter]];
+    lastActive.keyEquivalentModifierMask = NSEventModifierFlagCommand; lastActive.target = self;
     goItem.submenu = goMenu;
 
     NSMenuItem* zoomItem = [[NSMenuItem alloc] initWithTitle:@"Zoom" action:nil keyEquivalent:@""];
@@ -2120,6 +2126,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     [settingsMenu addItem:[NSMenuItem separatorItem]];
     SPDFMacInstallFileExplorerSettingsMenu(settingsMenu);
     SPDFMacInstallMarkdownEditorSettingsMenu(settingsMenu);
+    [self installCollectionSettingsMenu:settingsMenu];
     [settingsMenu addItem:[NSMenuItem separatorItem]];
     NSArray<NSString*>* stateFiles =
         @[ @"settings.yaml", @"session.yaml", @"documents.yaml", @"favorites.yaml", @"bookmarks.yaml" ];
@@ -6641,6 +6648,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (!attributes) {
         // File temporarily absent (atomic replace in flight) or genuinely gone.
         // Retry briefly before surfacing the missing-file UI.
+        [self collectionRecordObservedChangeAtPath:tab.path];
         [self handleActiveTabFileTemporarilyMissing:tab path:[tab.path copy] attempt:0];
         return;
     }
@@ -6673,6 +6681,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
+    [self collectionRecordObservedChangeAtPath:tab.path];
     // Changed: reload. For a read-only tab this re-runs loadSelectedTab, which
     // recreates the copy from the new source content (the one allowed prompt) via
     // -ensureWorkingPathForTab: and re-renders the open document.
@@ -6747,6 +6756,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                 NSFileSize : @(tab.copiedSourceFileSize)
                             }];
             if (matches) continue;
+            [self collectionRecordObservedChangeAtPath:tab.path];
             // Source changed: the active tab reloads (recreates the copy from the
             // new content + re-renders); an inactive tab drops its cache so the
             // next activation reopens and refreshes the copy via loadSelectedTab.
@@ -6767,6 +6777,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                             NSFileSize : @(tab.cachedFileSize)
                         }];
         if (matches) continue;
+        [self collectionRecordObservedChangeAtPath:tab.path];
 
         if (tab == activeTab) {
             [self reloadSelectedTabFromDiskChange];
@@ -6980,6 +6991,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // a stale path. A later reappearance is handled by the focus-time sweep.
     [self teardownActiveFileWatcher];
     [self savePersistentState];
+    [self collectionPresentMissingPath:path];
     if (showOpenError) {
         [self showError:@"Could not open document"
                  detail:[NSString stringWithUTF8String:err && *err ? err : "Unknown error"]];
@@ -7000,6 +7012,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (NSString*)displayNameForPathConsideringOpenTabs:(NSString*)path {
     if (!path.length) return @"";
+    for (SPDFDocumentTab* tab in _tabs) if ([tab.path isEqual:path] && tab.collectionVersionLabel.length) return tab.collectionVersionLabel;
     NSString* standardized = path.stringByStandardizingPath;
     NSArray<NSString*>* paths = [self openTabPaths];
     NSArray<NSString*>* names = spdf_disambiguated_display_names_for_paths(paths);
@@ -7156,6 +7169,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
             continue;
         }
 
+        if (tab.cachedDocument) [self collectionRecordObservedChangeAtPath:path];
         [_preloadingPaths addObject:standardized];
         NSString* preloadToken = NSUUID.UUID.UUIDString;
         _preloadTokens[standardized] = preloadToken;
@@ -7956,6 +7970,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return NO;
     }
 
+    if ([NSFileManager.defaultManager fileExistsAtPath:destinationPath] &&
+        ![self collectionProtectPath:destinationPath operation:@"saving"]) return NO;
     char err[1024];
     if (!spdf_save_document(_doc, destinationPath.fileSystemRepresentation, err, sizeof(err))) {
         [self showError:@"Could not save document"
@@ -7987,6 +8003,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self saveDocumentStateForTab:tab];
     }
     [self rememberRecentlyOpenedPath:_path];
+    [self collectionDidSavePath:_path];
     [self updateTabStrip];
     [self updateControls];
     [self savePersistentState];
@@ -8022,6 +8039,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)saveDocumentAs:(id)sender {
     (void)sender;
+    if (SPDFMacPathIsCollectionArchive(_path)) { [self collectionSaveArchiveCopy:sender]; return; }
     if ([self isMarkdownActive]) {
         [self saveActiveMarkdownAsPDF];
         return;
@@ -8030,6 +8048,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (BOOL)ensureActivePDFCanBeModifiedForOperation:(NSString*)operationName {
+    if (SPDFMacPathIsCollectionArchive(_path)) return [self collectionProtectPath:_path operation:operationName];
     if (spdf_is_password_protected(_doc)) {
         BOOL annotationOperation =
             [operationName rangeOfString:@"comment" options:NSCaseInsensitiveSearch].location != NSNotFound;
@@ -8043,7 +8062,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
         }
     }
     NSString* reason = nil;
-    if (![self activePDFNeedsSaveAsBeforeModificationWithReason:&reason]) return YES;
+    if (![self activePDFNeedsSaveAsBeforeModificationWithReason:&reason])
+        return [self collectionProtectPath:_path operation:operationName];
 
     while (YES) {
         NSAlert* alert = [[NSAlert alloc] init];
@@ -8059,7 +8079,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSString* status = [NSString stringWithFormat:@"Writable copy saved for %@.", operationName ?: @"modification"];
         if (![self saveActiveDocumentAsWithPanelTitle:@"Save Writable PDF As" statusMessage:status]) return NO;
         reason = nil;
-        if (![self activePDFNeedsSaveAsBeforeModificationWithReason:&reason]) return YES;
+        if (![self activePDFNeedsSaveAsBeforeModificationWithReason:&reason])
+        return [self collectionProtectPath:_path operation:operationName];
         [self showError:@"Choose another location"
                  detail:[NSString stringWithFormat:@"%@ Save the PDF outside temporary or read-only folders.",
                                                    reason ?: @"The saved PDF is still not writable."]];
@@ -8075,6 +8096,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
     tab.missingFile = NO;
     tab.missingMessage = @"";
+    [self collectionDidOpenPath:path];
     [self recordFileAttributes:attributes forTab:tab];
     NSInteger pageCount = spdf_page_count(_doc);
     [self applySinglePageMinimapDefaultToTab:tab pageCount:pageCount];
@@ -8449,6 +8471,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
     if (!tab.path.length) return;
     NSString* path = [tab.path copy];
+    [self collectionPrepareForTabPath:path];
     NSString* standardizedPath = path.stringByStandardizingPath;
     SPDFMacInactivePreload* selectedPreload = _preloadResults[standardizedPath];
     if (selectedPreload && ![selectedPreload claimForForeground]) selectedPreload = nil;
@@ -8516,6 +8539,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
+    if (tab.cachedDocument) [self collectionRecordObservedChangeAtPath:path];
     [self discardCachedRuntimeForTab:tab];
     [self clearActiveMetadata];
 
@@ -8577,6 +8601,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     tab.missingMessage = @"";
     objc_setAssociatedObject(tab, &kSPDFPasswordPromptClosesNewTabKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     tab.cachedDocument = newDoc;
+    [self collectionDidOpenPath:path];
     [self recordFileAttributes:attributes forTab:tab];
     [self primePageGeometryCacheForDocument:newDoc
                           pageGeometryState:[self pageGeometryStateForPath:path]
@@ -8807,6 +8832,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
     [self clearToolbarFieldFocusForTabSwitch];
     [self rememberActiveTabState];
+    [self notePreviousTabTransitionFrom:[self selectedTab] to:_tabs[(NSUInteger)index]];
     _selectedTabIndex = index;
     [self normalizeTabGroups];
     [self loadSelectedTab];
@@ -8823,12 +8849,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
     BOOL closingActive = index == _selectedTabIndex;
     if (closingActive) [self cancelDocumentTransientInteraction];
     SPDFDocumentTab* closingTab = _tabs[(NSUInteger)index];
+    if (closingActive) [self rememberActiveTabState];
+    [self updatePreviousTabSnapshotForTab:closingTab];
     if (_selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count)
         [self.tabLifecycle recordActivationOfIdentifier:_tabs[(NSUInteger)_selectedTabIndex]];
     SPDFDocumentTab* replacementTab = [self.tabLifecycle removeIdentifier:closingTab
                                                    fromOrderedIdentifiers:[_tabs copy]
                                                    preferMostRecentActive:preferMostRecentActive];
+    if (closingActive && replacementTab) [self notePreviousTabTransitionFrom:closingTab to:replacementTab];
     NSString* closedPath = [closingTab.path copy];
+    [self collectionClearObservedChangeAtPath:closedPath];
     // Read-only shadow copy: a deliberately-closed tab's private temp copy is
     // deleted here (NOT in -discardCachedRuntimeForTab:, which runs on reopen).
     // Skip if another tab in this window still uses the same copy (shared
@@ -11656,6 +11686,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
                                    comment.UTF8String, [self currentCommentAuthor].UTF8String, err, sizeof(err));
     }
     if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
+    if (ok) [self collectionDidSavePath:_path];
     if (!ok) {
         [self showError:@"Could not add comment" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
         return;
@@ -11758,6 +11789,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     BOOL ok = spdf_update_comment(_doc, (int)commentIndex, [result[@"text"] UTF8String], [result[@"author"] UTF8String],
                                   err, sizeof(err));
     if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
+    if (ok) [self collectionDidSavePath:_path];
     if (!ok) {
         [self showError:@"Could not edit comment"
                  detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
@@ -11804,6 +11836,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     char err[1024];
     BOOL ok = spdf_delete_comment(_doc, (int)commentIndex, err, sizeof(err));
     if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
+    if (ok) [self collectionDidSavePath:_path];
     if (!ok) {
         [self showError:@"Could not delete comment"
                  detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
@@ -12110,7 +12143,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
     _palettePanel.title = title;
     _paletteSearchField.stringValue = @"";
-    _paletteSearchField.placeholderString = @"Favorites, open documents, and commands";
+    _paletteSearchField.placeholderString = @"Documents, groups, text, or col: for Collection";
     _paletteAllDocsCheckbox.hidden = YES;
     _paletteFavoritePendingDelete = nil;
     _paletteMenuCommandCandidates = [self paletteMenuCommandCandidates];
@@ -12274,105 +12307,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     return commands;
 }
 
-- (void)refreshPaletteResults {
-    _paletteSearchGeneration++;
-    NSUInteger generation = _paletteSearchGeneration;
-    [_paletteResults removeAllObjects];
-    NSString* query = _paletteSearchField.stringValue.lowercaseString ?: @"";
-
-    // Open documents come first: with a query they are the strongest match for
-    // "take me to that document" (the live tab beats reopening a favorite);
-    // with an empty query they make the palette a quick tab switcher before
-    // the browsing groups (Favorites, Actions) below.
-    NSArray<NSDictionary*>* openDocuments =
-        spdf_palette_open_document_results([self openDocumentPaletteCandidates], query);
-    NSMutableSet<NSString*>* openShownPaths = [NSMutableSet setWithCapacity:openDocuments.count];
-    if (openDocuments.count > 0) {
-        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Open documents", @"subtitle" : @""}];
-        for (NSDictionary* entry in openDocuments) {
-            NSString* path = entry[@"path"] ?: @"";
-            [openShownPaths addObject:path.stringByStandardizingPath ?: path];
-            [_paletteResults addObject:@{
-                @"kind" : @"openDoc",
-                @"title" : entry[@"title"] ?: @"",
-                @"subtitle" : [self shortProvenanceForPath:path],
-                @"path" : path,
-                @"page" : @(-1)
-            }];
-        }
-    }
-
-    // "fav" (any >= 3 character prefix of "favorites") is a browse keyword:
-    // reveal every favorite, bypassing title matching and the open-document
-    // dedupe so the group is complete rather than filtered by the keyword.
-    BOOL revealAllFavorites = spdf_palette_query_reveals_all_favorites(query);
-    NSArray<NSDictionary*>* favorites = [self favoriteResultsForQuery:revealAllFavorites ? @"" : query prefix:@""];
-    if (!revealAllFavorites) favorites = spdf_palette_favorites_without_open_documents(favorites, openShownPaths);
-    if (favorites.count > 0) {
-        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Favorites", @"subtitle" : @""}];
-        [_paletteResults addObjectsFromArray:favorites];
-    }
-
-    // Actions: the curated favorite-current shortcuts plus every menu-bar
-    // command captured when the palette opened. A curated action wins over
-    // the menu item with the same selector (it carries the live document
-    // name), so the two never show as duplicate rows.
-    NSMutableArray<NSDictionary*>* actionRows = [NSMutableArray array];
-    NSMutableSet<NSString*>* curatedSelectors = [NSMutableSet set];
-    if (_doc && _path.length) {
-        NSString* displayName = spdf_display_name_for_path(_path);
-        if (spdf_palette_menu_command_matches_query(query, @"Favorite current page", @"")) {
-            [actionRows addObject:@{
-                @"kind" : @"addPage",
-                @"title" : @"Favorite current page",
-                @"subtitle" : displayName ?: @""
-            }];
-            [curatedSelectors addObject:NSStringFromSelector(@selector(favoriteCurrentPage:))];
-        }
-        if (spdf_palette_menu_command_matches_query(query, @"Favorite current document", @"")) {
-            [actionRows addObject:@{
-                @"kind" : @"addDoc",
-                @"title" : @"Favorite current document",
-                @"subtitle" : displayName ?: @""
-            }];
-            [curatedSelectors addObject:NSStringFromSelector(@selector(favoriteCurrentDocument:))];
-        }
-    }
-    NSMutableArray<NSDictionary*>* menuCommands = [NSMutableArray array];
-    for (NSDictionary* command in _paletteMenuCommandCandidates ?: @[]) {
-        if (spdf_palette_menu_command_matches_query(query, command[@"title"], command[@"breadcrumb"]))
-            [menuCommands addObject:command];
-    }
-    [actionRows addObjectsFromArray:spdf_palette_menu_commands_excluding_selectors(menuCommands, curatedSelectors)];
-    if (actionRows.count > 0) {
-        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Actions", @"subtitle" : @""}];
-        [_paletteResults addObjectsFromArray:actionRows];
-    }
-
-    if (query.length > 0 && _tabs.count > 0) {
-        [_preloadQueue cancelAllOperations];
-        [self cancelInactiveTabPreloads];
-        [_paletteResults addObject:@{@"kind" : @"header", @"title" : @"Text in open documents", @"subtitle" : @""}];
-        [_paletteResults
-            addObject:@{@"kind" : @"status", @"title" : @"Searching open documents...", @"subtitle" : @""}];
-        [self runFindPaletteSearchForQuery:query generation:generation searchAll:YES];
-    } else if (_paletteResults.count == 0) {
-        [_paletteResults addObject:@{
-            @"kind" : @"status",
-            @"title" : @"No favorites yet",
-            @"subtitle" : @"Use Cmd+B or Cmd+Shift+B to add one."
-        }];
-    }
-
-    [_paletteTable reloadData];
-    if (_paletteResults.count > 0)
-        [_paletteTable
-            noteHeightOfRowsWithIndexesChanged:[NSIndexSet
-                                                   indexSetWithIndexesInRange:NSMakeRange(0, _paletteResults.count)]];
-    [self updatePalettePanelFramePreservingTop:_palettePanel.visible];
-    [self selectFirstPaletteResult];
-}
-
 - (NSArray<NSDictionary*>*)favoriteResultsForQuery:(NSString*)query prefix:(NSString*)prefix {
     NSMutableArray<NSDictionary*>* results = [NSMutableArray array];
     NSString* lowerQuery = query.lowercaseString ?: @"";
@@ -12408,12 +12342,10 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     NSMutableArray<NSDictionary*>* candidates = [NSMutableArray array];
     for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
         NSArray<NSString*>* paths = [controller openTabPaths];
-        NSArray<NSString*>* names = spdf_disambiguated_display_names_for_paths(paths);
         for (NSUInteger i = 0; i < paths.count; ++i) {
-            if (controller == self && (NSInteger)i == controller->_selectedTabIndex) continue;
             NSString* path = paths[i];
             if (!path.length) continue;
-            NSString* title = i < names.count && names[i].length ? names[i] : spdf_display_name_for_path(path);
+            NSString* title = [controller displayNameForPathConsideringOpenTabs:path];
             [candidates addObject:@{@"path" : path, @"title" : title ?: @""}];
         }
     }
@@ -12572,89 +12504,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     return attributed;
 }
 
-- (void)runFindPaletteSearchForQuery:(NSString*)query generation:(NSUInteger)generation searchAll:(BOOL)searchAll {
-    NSString* currentPath = [_path copy];
-    NSArray<SPDFDocumentTab*>* tabs = [_tabs copy];
-    NSDictionary<NSString*, NSString*>* tabTitles = [self openDocumentPaletteTitlesByStandardizedPath];
-    [_preloadQueue addOperationWithBlock:^{
-      @autoreleasepool {
-          NSMutableArray<NSDictionary*>* results = [NSMutableArray array];
-          NSMutableSet<NSString*>* searchedPaths = [NSMutableSet set];
-          for (SPDFDocumentTab* tab in tabs) {
-              if (generation != self->_paletteSearchGeneration) return;
-              if (results.count >= 220) break;
-              BOOL isCurrent =
-                  [tab.path.stringByStandardizingPath isEqualToString:currentPath.stringByStandardizingPath];
-              if (!isCurrent && !searchAll) continue;
-              NSString* path = tab.path;
-              if (!path.length || [searchedPaths containsObject:path.stringByStandardizingPath]) continue;
-              [searchedPaths addObject:path.stringByStandardizingPath];
-
-              // Read-only shadow copy: open the per-tab temp copy when present so
-              // a read-only source is not read (no prompt); searchedPaths dedup
-              // and the result identity stay keyed to the SOURCE path.
-              NSString* openPath = tab.workingPath.length ? tab.workingPath : path;
-              char openErr[512];
-              spdf_document* doc = [self openSpdfDocumentAtPath:openPath
-                                                     sourcePath:path
-                                                         status:NULL
-                                                          error:openErr
-                                                    errorLength:sizeof(openErr)];
-              if (!doc) continue;
-              NSInteger pageCount = spdf_page_count(doc);
-              for (NSInteger page = 0; page < pageCount && results.count < 220; ++page) {
-                  if (generation != self->_paletteSearchGeneration) break;
-                  char err[512];
-                  int hits = spdf_search_page(doc, (int)page, query.UTF8String, err, sizeof(err));
-                  if (hits > 0) {
-                      NSString* title = tabTitles[path.stringByStandardizingPath] ?: spdf_display_name_for_path(path);
-                      title = title.length ? title : @"Document";
-                      NSString* suffix = [NSString stringWithFormat:@" - page %ld : %d matches", (long)page + 1, hits];
-                      NSString* context = [self paletteContextForQuery:query document:doc page:page hitCount:hits];
-                      [results addObject:@{
-                          @"kind" : @"find",
-                          @"title" : [title stringByAppendingString:suffix],
-                          @"titleBoldLength" : @(title.length),
-                          @"subtitle" : context.length ? context : [self shortProvenanceForPath:path],
-                          @"path" : path,
-                          @"page" : @(page),
-                          @"query" : query
-                      }];
-                  }
-              }
-              spdf_close(doc);
-          }
-
-          [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-            if (generation != self->_paletteSearchGeneration || !self->_palettePanel.visible) return;
-            NSInteger selectedRow = self->_paletteTable.selectedRow;
-            NSIndexSet* statusRows = [self->_paletteResults
-                indexesOfObjectsPassingTest:^BOOL(NSDictionary* obj, NSUInteger idx, BOOL* stop) {
-                  (void)idx;
-                  (void)stop;
-                  return [obj[@"kind"] isEqualToString:@"status"];
-                }];
-            if (statusRows.count) [self->_paletteResults removeObjectsAtIndexes:statusRows];
-            if (results.count > 0)
-                [self->_paletteResults addObjectsFromArray:results];
-            else if (query.length > 0) {
-                [self->_paletteResults
-                    addObject:@{@"kind" : @"status", @"title" : @"No open-document matches", @"subtitle" : @""}];
-            }
-            [self->_paletteTable reloadData];
-            if (self->_paletteResults.count > 0)
-                [self->_paletteTable
-                    noteHeightOfRowsWithIndexesChanged:[NSIndexSet
-                                                           indexSetWithIndexesInRange:NSMakeRange(0,
-                                                                                                  self->_paletteResults
-                                                                                                      .count)]];
-            [self updatePalettePanelFramePreservingTop:YES];
-            [self restorePaletteSelectionAfterReloadFromRow:selectedRow];
-          }];
-      }
-    }];
-}
-
 // Open-document palette entries switch to the live tab (never a duplicate):
 // find the owning window controller, bring its window forward, and select the
 // tab. Falls back to a regular open when the tab was closed while the palette
@@ -12685,6 +12534,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 - (void)openPaletteResult:(NSDictionary*)result {
     NSString* kind = result[@"kind"];
     if (![self isSelectablePaletteResult:result]) return;
+    if ([self openCollectionPaletteResult:result]) return;
     if ([kind isEqualToString:@"addPage"]) {
         [self favoriteCurrentPage:nil];
         return;
@@ -12881,6 +12731,15 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
         [self markdownLastPage];
     else if (_doc)
         [self goToPage:spdf_page_count(_doc) - 1 preserveSinglePagePosition:NO];
+}
+
+- (void)returnToPreviousTab:(id)sender {
+    (void)sender; if ([self firstResponderIsEditingText]) return;
+    [self rememberActiveTabState];
+    SPDFMacPreviousTabActivation* target = [self takePreviousTabActivationFromCurrent:[self selectedTab] openTabs:_tabs];
+    if (!target) return;
+    if (target.existingIndex >= 0) [self selectTabAtIndex:target.existingIndex];
+    else if (target.tabToReopen) [self insertDraggedTab:target.tabToReopen atIndex:target.insertionIndex];
 }
 
 - (void)selectPreviousTab:(id)sender {
@@ -14567,6 +14426,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     char err[1024];
     BOOL ok = spdf_rotate_page(_doc, (int)pageIndex, degrees, err, sizeof(err));
     if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
+    if (ok) [self collectionDidSavePath:_path];
     if (!ok) {
         [self discardCachedRuntimeForTab:[self selectedTab]];
         [self loadSelectedTab];
@@ -14807,6 +14667,11 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
             return;
         }
 
+        if (![strongSelf collectionProtectPath:originalPath operation:@"installing OCR output"]) {
+            [strongSelf finishOCRProgressWithDetail:@"OCR output was not installed."];
+            [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
+            return;
+        }
         [strongSelf->_renderQueue cancelAllOperations];
         [strongSelf cancelCacheRenderOperations];
         [strongSelf->_minimapQueue cancelAllOperations];
@@ -14837,6 +14702,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
             SPDFDocumentTab* tab = strongSelf->_tabs[(NSUInteger)strongSelf->_selectedTabIndex];
             tab.pageIndex = originalPage;
         }
+        [strongSelf collectionDidSavePath:originalPath];
         [strongSelf loadSelectedTab];
         strongSelf->_ocrButton.enabled =
             strongSelf->_doc != NULL && [strongSelf->_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
@@ -16054,6 +15920,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     SEL action = menuItem.action;
     BOOL hasDoc = [self hasActiveDocument];
     BOOL markdown = [self isMarkdownActive];
+    if (action == @selector(showCollectionManager:) || action == @selector(showCollectionHistory:) ||
+        action == @selector(showCollectionPreviousVersion:) || action == @selector(showCollectionRecovery:)) return YES;
     if (action == @selector(closeDocument:))
         return spdf_mac_tab_close_action_enabled((NSInteger)_tabs.count, _selectedTabIndex, hasDoc);
     if (action == @selector(paste:))
@@ -16098,6 +15966,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         action == @selector(moveWindowToLeftHalf:) || action == @selector(moveWindowToRightHalf:) ||
         action == @selector(moveWindowToTopHalf:) || action == @selector(moveWindowToBottomHalf:))
         return _window != nil && !_presentationMode && ![self firstResponderIsEditingText];
+    if (action == @selector(returnToPreviousTab:))
+        return ![self firstResponderIsEditingText] && [self hasPreviousTabTargetFromCurrent:[self selectedTab]];
     if (action == @selector(reopenLastClosedDocument:))
         return _closedDocumentPaths.count > 0 || [self firstRecentlyOpenedPathNotOpen].length > 0;
     if (action == @selector(toggleSidebar:)) {

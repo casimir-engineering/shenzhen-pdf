@@ -9,6 +9,7 @@
 @property(nonatomic, strong) SPDFTabGroup* group;
 @property(nonatomic, copy) NSString* path;
 @property(nonatomic, copy) NSString* title;
+@property(nonatomic, copy) NSString* collectionVersionLabel;
 @property(nonatomic) BOOL readOnly;
 @property(nonatomic) BOOL missingFile;
 @end
