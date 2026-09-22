@@ -110,6 +110,29 @@ static NSBitmapImageRep* render_strip(SPDFTabStripView* strip, NSAppearance* app
     [strip cacheDisplayInRect:strip.bounds toBitmapImageRep:bitmap];
     NSData* png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
     expect([png writeToFile:path atomically:YES], [@"could not write " stringByAppendingString:path]);
+    NSBitmapImageRep* compositedBitmap = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)NSWidth(strip.bounds)
+        pixelsHigh:(NSInteger)NSHeight(strip.bounds) bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO
+        colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    [appearance performAsCurrentDrawingAppearance:^{
+      [NSGraphicsContext saveGraphicsState];
+      NSGraphicsContext* context = [NSGraphicsContext graphicsContextWithBitmapImageRep:compositedBitmap];
+      NSGraphicsContext.currentContext = context;
+      NSColor* background = [NSColor.windowBackgroundColor colorUsingColorSpace:NSColorSpace.deviceRGBColorSpace];
+      CGFloat red = 0, green = 0, blue = 0, alpha = 1;
+      [background getRed:&red green:&green blue:&blue alpha:&alpha];
+      CGContextRef graphicsPort = context.CGContext;
+      CGContextSetRGBFillColor(graphicsPort, red, green, blue, alpha);
+      CGContextFillRect(graphicsPort, NSRectToCGRect(strip.bounds));
+      [bitmap drawInRect:NSMakeRect(0, 0, strip.bounds.size.width, strip.bounds.size.height)
+                fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1
+          respectFlipped:YES hints:nil];
+      [NSGraphicsContext restoreGraphicsState];
+    }];
+    NSString* compositedPath = [path.stringByDeletingPathExtension stringByAppendingString:@"-composited.png"];
+    NSData* compositedPNG = [compositedBitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    expect([compositedPNG writeToFile:compositedPath atomically:YES],
+           [@"could not write " stringByAppendingString:compositedPath]);
     return bitmap;
 }
 
@@ -163,6 +186,11 @@ int main(void) {
                @"group background was not painted behind its header");
         render_strip(strip, [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],
                      @"/tmp/spdf-tab-groups-dark.png");
+        spdf_tab_groups_activate((id)tabs, (id)tabs[0]);
+        strip.tabs = (id)tabs;
+        strip.selectedIndex = 0;
+        render_strip(strip, [NSAppearance appearanceNamed:NSAppearanceNameAqua],
+                     @"/tmp/spdf-tab-groups-general.png");
 
         // A collapsed custom group's name opens rename; its chevron toggles.
         blue.collapsed = YES;
@@ -180,14 +208,17 @@ int main(void) {
         [strip handleGroupMouseUp:mouse(window, NSEventTypeLeftMouseUp, chevronPoint)];
         expect(reader.toggles == 1, @"group chevron did not toggle collapse");
 
-        // General has no rename behavior: even its expanded name area toggles.
+        // General keeps its special collapse policy, but its visible name is
+        // still renameable like every other group.
         general.collapsed = YES;
         strip.tabs = (id)tabs;
         NSRect generalHeader = [[layout_for_group(strip, general) valueForKey:@"header"] rectValue];
         NSPoint generalName = NSMakePoint(NSMinX(generalHeader) + 34, NSMidY(generalHeader));
         [strip handleGroupMouseDown:mouse(window, NSEventTypeLeftMouseDown, generalName)];
         [strip handleGroupMouseUp:mouse(window, NSEventTypeLeftMouseUp, generalName)];
-        expect(reader.toggles == 2 && strip.renameRequests == 1, @"General name entered rename behavior");
+        expect(reader.toggles == 1 && strip.renameRequests == 2,
+               [NSString stringWithFormat:@"General name routing: toggles=%ld renames=%ld",
+                                          (long)reader.toggles, (long)strip.renameRequests]);
 
         // A header drag routes the whole group once it crosses the threshold.
         strip.tabs = (id)tabs;
@@ -203,6 +234,7 @@ int main(void) {
         general.collapsed = NO;
         blue.collapsed = NO;
         strip.tabs = (id)tabs;
+        strip.selectedIndex = 9;
         NSRect generalTab = [strip groupedRectForTabAtIndex:0];
         NSPoint center = NSMakePoint(NSMidX(generalTab), NSMidY(generalTab));
         [strip updateGroupDropForPoint:center sourceIndex:2];
