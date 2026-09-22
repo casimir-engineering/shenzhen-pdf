@@ -1,6 +1,8 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 
+#import "SPDFMacContextPage.h"
 #import "SPDFMacFileExplorerPreference.h"
+#import "SPDFMacMarkdownEditor.h"
 #import "SPDFMacMarkdownPrinting.h"
 #import "markdown/SPDFMarkdown.h"
 
@@ -18,12 +20,13 @@
 
 // Copy Page honors the context-clicked page when the context menu set one,
 // falling back to the current page — mirroring the PDF tab's behavior.
-- (NSInteger)markdownCopyPageIndex {
-    return _contextPageIndex >= 0 ? _contextPageIndex : self.activeMarkdownSession.currentPageIndex;
+- (NSInteger)markdownCopyPageIndexForSender:(id)sender {
+    return SPDFMacPageIndexForActionSender(sender, _contextPageIndex, self.activeMarkdownSession.currentPageIndex);
 }
 
 - (BOOL)canCopyCurrentPageAsPDF {
-    if ([self isMarkdownActive]) return [self markdownSessionCanCopyPageAtIndex:[self markdownCopyPageIndex]];
+    if ([self isMarkdownActive])
+        return [self markdownSessionCanCopyPageAtIndex:self.activeMarkdownSession.currentPageIndex];
     return _doc != NULL && _path.length > 0;
 }
 
@@ -87,11 +90,18 @@
     [self copyTabFileToPasteboardAtIndex:_selectedTabIndex];
 }
 
+- (void)openMarkdownInEditor:(id)sender {
+    NSString* path = [sender isKindOfClass:NSMenuItem.class] &&
+                             [((NSMenuItem*)sender).representedObject isKindOfClass:NSString.class]
+                         ? ((NSMenuItem*)sender).representedObject
+                         : _path;
+    if (!SPDFMacOpenMarkdownSourceInEditor(path, _window)) NSBeep();
+}
+
 - (void)copyCurrentPageImage:(id)sender {
-    (void)sender;
     if ([self isMarkdownActive]) {
         SPDFMacMarkdownSession* session = self.activeMarkdownSession;
-        NSInteger pageIndex = session.currentPageIndex;
+        NSInteger pageIndex = [self markdownCopyPageIndexForSender:sender];
         if (![self markdownSessionCanCopyPageAtIndex:pageIndex] ||
             ![SPDFMacMarkdownPrintAdapter copyPageImageAtIndex:(NSUInteger)pageIndex
                                                 paginationPlan:session.exportPaginationPlan
@@ -103,8 +113,9 @@
         _statusLabel.stringValue = @"Page image copied.";
         return;
     }
-    if (!_doc || _pageIndex < 0 || _pageIndex >= (NSInteger)_renderedPages.count ||
-        !_renderedPages[(NSUInteger)_pageIndex].image) {
+    NSInteger pageIndex = SPDFMacPageIndexForActionSender(sender, _contextPageIndex, _pageIndex);
+    if (!_doc || pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count ||
+        !_renderedPages[(NSUInteger)pageIndex].image) {
         NSBeep();
         return;
     }
@@ -112,13 +123,13 @@
     // image may be recolored for the dark reading theme, and a pasted page
     // carrying our dark paper would be wrong wherever it lands. Re-render at
     // the cached page's own zoom and scale when that is the case.
-    SPDFRenderedPage* cached = _renderedPages[(NSUInteger)_pageIndex];
+    SPDFRenderedPage* cached = _renderedPages[(NSUInteger)pageIndex];
     NSImage* image = cached.image;
     if (cached.imageDarkTheme) {
         char err[512];
         BOOL darkTheme = _darkReadingTheme;
         _darkReadingTheme = NO;
-        SPDFRenderedPage* original = [self renderedPageAtIndex:_pageIndex
+        SPDFRenderedPage* original = [self renderedPageAtIndex:pageIndex
                                                       document:_doc
                                                           zoom:cached.imageZoom
                                                   displayScale:cached.imageScale
@@ -139,10 +150,9 @@
 }
 
 - (void)copyCurrentPageAsPDF:(id)sender {
-    (void)sender;
     if ([self isMarkdownActive]) {
         SPDFMacMarkdownSession* session = self.activeMarkdownSession;
-        NSInteger pageIndex = [self markdownCopyPageIndex];
+        NSInteger pageIndex = [self markdownCopyPageIndexForSender:sender];
         if (![self markdownSessionCanCopyPageAtIndex:pageIndex]) {
             NSBeep();
             return;
@@ -161,7 +171,7 @@
         _statusLabel.stringValue = @"Page copied.";
         return;
     }
-    NSInteger pageIndex = _contextPageIndex >= 0 ? _contextPageIndex : _pageIndex;
+    NSInteger pageIndex = SPDFMacPageIndexForActionSender(sender, _contextPageIndex, _pageIndex);
     if (!_doc || !_path.length || pageIndex < 0 || pageIndex >= spdf_page_count(_doc)) {
         NSBeep();
         return;

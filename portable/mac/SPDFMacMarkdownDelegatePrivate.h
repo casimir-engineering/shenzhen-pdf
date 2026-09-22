@@ -170,6 +170,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)showInFolder:(nullable id)sender;
 - (void)copyCurrentDocumentPath:(nullable id)sender;
 - (void)copyCurrentDocumentFile:(nullable id)sender;
+- (void)openMarkdownInEditor:(nullable id)sender;
 - (void)copyCurrentPageImage:(nullable id)sender;
 - (void)copyCurrentPageAsPDF:(nullable id)sender;
 // Shared enablement for the copy-page actions: PDF tabs need a saved path,

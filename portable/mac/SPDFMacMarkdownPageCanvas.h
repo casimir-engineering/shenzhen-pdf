@@ -39,6 +39,7 @@ NS_ASSUME_NONNULL_BEGIN
 // vertically. NSZeroSize (standalone canvases) keeps the full decorative inset.
 @property(nonatomic) NSSize layoutViewportSize;
 - (NSRect)frameForPageAtIndex:(NSUInteger)pageIndex;
+- (NSInteger)pageIndexAtPoint:(NSPoint)point;
 - (void)resizeForWidth:(CGFloat)width;
 - (NSInteger)pageIndexForVisibleRect:(NSRect)visibleRect;
 - (NSUInteger)attributedLocationNearestToPoint:(NSPoint)point;

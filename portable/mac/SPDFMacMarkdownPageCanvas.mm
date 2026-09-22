@@ -2,6 +2,7 @@
 
 #import <CoreText/CoreText.h>
 
+#import "SPDFMacContextPage.h"
 #import "SPDFMacFitGeometry.h"
 #import "SPDFMacUIHelpers.h"
 #import "SPDFMacMarkdownPanController.h"
@@ -112,6 +113,11 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     CGFloat x = floor(MAX(kSPDFMarkdownCanvasInset, (NSWidth(self.bounds) - paper.width) * 0.5));
     CGFloat y = [self verticalCanvasInset] + pageIndex * (paper.height + kSPDFMarkdownPageGap);
     return NSMakeRect(x, y, paper.width, paper.height);
+}
+
+- (NSInteger)pageIndexAtPoint:(NSPoint)point {
+    return SPDFMacMarkdownPageIndexAtPoint(point, self.pageCount, [self frameForPageAtIndex:0],
+                                           kSPDFMarkdownPageGap);
 }
 
 - (void)resizeForWidth:(CGFloat)width {
