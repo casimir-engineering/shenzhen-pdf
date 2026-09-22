@@ -27,7 +27,7 @@ NSArray<NSNumber*>* SPDFMarkdownTableColumnWidths(NSArray<NSNumber*>* naturalWid
     // Cap at the printable width with a fair-share waterfall: walking the
     // columns narrowest first, a column at or below its fair share of the
     // remaining budget keeps its natural width; the over-wide columns split
-    // the rest proportionally to their natural widths (their cells wrap).
+    // the rest equally (their cells wrap).
     // The fair share never drops below the minimum because the even-split
     // branch above already handled availableWidth <= minimum * count.
     NSMutableArray<NSNumber*>* order = [NSMutableArray arrayWithCapacity:count];
@@ -49,16 +49,12 @@ NSArray<NSNumber*>* SPDFMarkdownTableColumnWidths(NSArray<NSNumber*>* naturalWid
             budget -= natural;
             continue;
         }
-        // Every column from here on exceeds the fair share: split the budget
-        // proportionally among them.
-        CGFloat wideSum = 0;
+        // Water filling must keep the same floor for every remaining column.
+        // Proportional sharing lets one huge description starve another column
+        // below the minimum (even below one glyph plus its insets).
+        CGFloat share = budget / remaining;
         for (NSUInteger rest = position; rest < count; ++rest)
-            wideSum += MAX(naturalWidths[order[rest].unsignedIntegerValue].doubleValue, minimum);
-        for (NSUInteger rest = position; rest < count; ++rest) {
-            NSUInteger wideColumn = order[rest].unsignedIntegerValue;
-            CGFloat wideNatural = MAX(naturalWidths[wideColumn].doubleValue, minimum);
-            widths[wideColumn] = @(budget * wideNatural / wideSum);
-        }
+            widths[order[rest].unsignedIntegerValue] = @(share);
         break;
     }
     return widths;

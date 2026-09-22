@@ -90,6 +90,14 @@ int main(void) {
         SPDFExpect(even.count == 3 && fabs(even[1].doubleValue - 100.0 / 3) < 0.01,
                    @"a page narrower than the per-column minimum splits evenly");
 
+        NSArray<NSNumber*>* decision = SPDFMarkdownTableColumnWidths(@[@44, @260, @6000], 523);
+        SPDFExpect(fabs(decision[0].doubleValue - 44) < 0.01 && decision[1].doubleValue >= 200 &&
+            fabs(decision[1].doubleValue - decision[2].doubleValue) < 0.01,
+            @"one huge reason cell cannot starve the Choice column into character-by-character wrapping");
+        for (NSNumber* width in decision)
+            SPDFExpect(width.doubleValue >= SPDFMarkdownTableMinimumColumnWidth,
+                @"all columns retain their width floor whenever the page can fit it");
+
         NSError* error = nil;
         SPDFMarkdownDocument* document = [SPDFMarkdownDocument documentWithURL:SPDFFixtureURL(@"tables-long-cells.md")
                                                                        options:nil
