@@ -51,3 +51,6 @@ docs/md/.obsidian
 *.cer
 # per-agent git worktrees created by the coding assistant
 .claude/worktrees/
+
+# Local-only agent handoff: the owner and machine notes, not the codebase.
+portable/docs/agent-handoff-private.md
