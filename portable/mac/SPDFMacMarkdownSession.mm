@@ -71,6 +71,12 @@
     if (_active && self.document) [self rerenderDocumentWithStatus:@"Markdown reading theme updated."];
 }
 
+- (BOOL)isNavigationReady {
+    return _active && !_loadInFlight && !_reloadInFlight && !_renderToken &&
+        self.state == SPDFMacMarkdownSessionReady && !self.renderTrailsPreferences &&
+        _pagedView.superview && _pagedView.alphaValue >= 1;
+}
+
 - (SPDFMarkdownPaginationPlan*)paginationPlan {
     return _paginationPlan;
 }
@@ -321,6 +327,7 @@
     _searchToken = nil;
     _renderToken = nil;
     _loadInFlight = NO;
+    _reloadInFlight = NO;
     _activationGeneration++;
     _searchGeneration++;
     _renderGeneration++;
@@ -347,6 +354,7 @@
 // orientation so any kind of change survives the others. A nil/empty status
 // skips the status callback.
 - (void)rerenderDocumentWithStatus:(NSString*)status {
+    _reloadInFlight = NO; // This generation supersedes any source reload.
     [_renderToken cancel];
     _renderGeneration++;
     NSUInteger renderGeneration = _renderGeneration;

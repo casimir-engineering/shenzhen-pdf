@@ -137,6 +137,7 @@ SPDFMacMarkdownLanguagePickerTests
 SPDFMacMarkdownCodeControlsTests
 SPDFMacMarkdownPrintingTests
 SPDFMacMarkdownOrientationTests
+SPDFMacMarkdownNavigationReadinessTests
 "
 
 CXXFLAGS="-isysroot $SDKROOT -std=c++17 -fobjc-arc -O0 -g -Wall -Wextra -Werror $SANITIZER_FLAGS \
