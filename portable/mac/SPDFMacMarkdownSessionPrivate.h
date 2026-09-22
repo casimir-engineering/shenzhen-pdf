@@ -86,6 +86,7 @@ NS_ASSUME_NONNULL_BEGIN
     NSUInteger _searchGeneration;
     dispatch_queue_t _Nullable _workQueue;
     BOOL _active;
+    BOOL _reloadInFlight; // A source reload also delays external navigation.
     // Lazily created by the RemoteImages half; nil until the document's first
     // active render encounters a remote image target.
     SPDFMacMarkdownSessionImageLoader* _Nullable _imageLoader;

@@ -54,6 +54,9 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @property(nonatomic, readonly, nullable) SPDFMarkdownPaginationPlan* exportPaginationPlan;
 @property(nonatomic, readonly, nullable) NSAttributedString* exportAttributedString;
 @property(nonatomic, readonly) SPDFMacMarkdownSessionState state;
+// Main-thread, side-effect-free readiness for external navigation. Ready state
+// alone precedes deferred viewport restoration and may cover a cached rerender.
+@property(nonatomic, readonly, getter=isNavigationReady) BOOL navigationReady;
 @property(nonatomic, readonly, copy) NSArray<SPDFMarkdownSearchMatch*>* searchMatches;
 @property(nonatomic, readonly) NSInteger currentMatchIndex;
 @property(nonatomic, readonly) NSPoint scrollOrigin;

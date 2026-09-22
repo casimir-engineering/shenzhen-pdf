@@ -25,6 +25,7 @@
     [_renderToken cancel];
     _renderToken = nil;
     _renderGeneration++;
+    _reloadInFlight = YES;
     NSUInteger renderGeneration = _renderGeneration;
     NSURL* URL = self.documentURL;
     SPDFMarkdownRenderOptions* renderOptions = [self renderOptionsForCurrentScale];
@@ -43,14 +44,14 @@
       // A failed read (deleted, or caught mid-write by an editor that truncates
       // before writing) keeps the last good render on screen. The watcher's
       // missing-file handling owns a document that is really gone.
-      if (!document || !document.renderedDocument) return;
-      SPDFMarkdownPaginationPlan* plan =
-          SPDFMacMarkdownPlanForConfiguration(document.renderedDocument, themeVariant, preservesImageColors, paper);
-      NSAttributedString* interactive = SPDFMacMarkdownInteractiveString(document.model, document.renderedDocument);
-      if (!plan || !interactive) return;
+      SPDFMarkdownPaginationPlan* plan = document ?
+          SPDFMacMarkdownPlanForConfiguration(document.renderedDocument, themeVariant, preservesImageColors, paper) : nil;
+      NSAttributedString* interactive = document ? SPDFMacMarkdownInteractiveString(document.model, document.renderedDocument) : nil;
       dispatch_async(dispatch_get_main_queue(), ^{
         SPDFMacMarkdownSession* mainSelf = weakSelf;
         if (!mainSelf || !mainSelf->_active || renderGeneration != mainSelf->_renderGeneration) return;
+        mainSelf->_reloadInFlight = NO;
+        if (!document || !plan || !interactive) return;
         mainSelf->_renderToken = nil;
         mainSelf.document = document;
         mainSelf.renderedDocument = document.renderedDocument;
