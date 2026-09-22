@@ -1,9 +1,11 @@
 # Agent handoff — how this codebase works and how to work in it
 
-Written 2026-09-08 after a long run of releases (26.9.1-1 → 26.9.7-1). It is the
-document I wish I had had on day one: the shape of the code, the reasons behind
-its rules, where the tools are, and the traps that cost hours. Read `AGENTS.md`
-first (the rules), then this, then the deeper docs it points at.
+Written 2026-09-08, revised 2026-09-22 (releases 26.9.1-1 → 26.9.15-1). It is
+the document I wish I had had on day one: the shape of the code, the reasons
+behind its rules, where the tools are, and the traps that cost hours. Read
+`agents.md` first (the rules — lowercase, and the filesystem here is
+case-insensitive while git is not), then this, then the deeper docs it points
+at.
 
 - [What you are working on](#what)
 - [Philosophy — the rules and why they exist](#philosophy)
@@ -11,7 +13,7 @@ first (the rules), then this, then the deeper docs it points at.
 - [Mechanisms you will touch](#mechanisms)
 - [Tools and commands](#tools)
 - [The release pipeline](#release)
-- [Working with the owner](#owner)
+- [Working conventions](#conventions)
 - [Traps, each one paid for](#traps)
 - [Open threads](#open)
 - [First hour checklist](#first-hour)
@@ -21,9 +23,13 @@ first (the rules), then this, then the deeper docs it points at.
 ShenzhenPDF: a native macOS reader (AppKit, Objective-C++) for PDF and Markdown,
 on a portable C core wrapping MuPDF. A GTK4 Linux frontend and a native Win32
 frontend (`portable/win/`, in progress on a separate track, no binary shipped)
-share the core and the on-disk formats. The inherited SumatraPDF tree in `src/`
-is legacy and not built. The product is described in `readme.md` (short) and
-`docs/features.md` (exhaustive — keep it current when you ship a feature).
+share the core and the on-disk formats. The inherited SumatraPDF tree (`src/`,
+`vs2022/`, `cmd/`, `bin/`, `appx/`, `packages/`, `translations/`, premake, and
+the three GitHub Actions workflows that built it) was deleted on 2026-09-15 —
+523 files. `ext/` and `mupdf/` stay because the portable build compiles against
+them, and `gfx/` because the macOS icon is built from it. The app is described
+in `readme.md` (short) and `docs/features.md` (exhaustive — keep it current when
+you ship a feature).
 
 The owner uses the app all day on the same Mac you run on. Everything below is
 shaped by that fact.
@@ -34,11 +40,11 @@ shaped by that fact.
 enforces 500 lines per maintained source file; 501–1000 needs an `exception`
 entry with a justification in `tools/file-size-limits.tsv`; anything larger is
 `legacy` with an *exact* cap that may only shrink. Several files sit exactly at
-their cap (`ShenzhenPDFMac.mm` at 16494, `SPDFMacDelegatePrivate.h` at 642,
+their cap (`ShenzhenPDFMac.mm` at 16297, `SPDFMacDelegatePrivate.h` at 641,
 `SPDFMacUIHelpers.mm` at 744). Adding one line to those means removing one, and
 the sanctioned way to pay is **extraction**: move a coherent unit into a new
 file and lower the cap in the same change. Never raise a cap to pass. This is why
-the mac frontend is ~90 small files and categories rather than one coordinator.
+the mac frontend is ~143 small files and categories rather than one coordinator.
 Read `tools/file-size-limits.md`.
 
 **Every fix ships with a test that fails on the old code.** Prefer a pure
@@ -155,9 +161,9 @@ even when the app is not active (hence `NSApp.isActive &&` on the focus stamp).
 - **Markdown magnification.** The clip view's bounds are in unmagnified document
   units. Any pointer delta must be divided by `magnification`; any scroll origin
   must land on a device pixel or live text wobbles (`SPDFMacMarkdownClipView`).
-- **Option + wheel = page arrows.** `SPDFMacPageWheel.mm`, distance-based so
-  LinearMouse-style precise deltas page at the right rate; routed from
-  `SPDFWindow -sendEvent:` so pointer location does not matter.
+- **Option + wheel = page arrows.** `SPDFMacPageWheel.mm`, distance-based rather
+  than notch-based so that mice delivering precise deltas page at the right rate;
+  routed from `SPDFWindow -sendEvent:` so pointer location does not matter.
 - **Chapter nesting** is modelled on table rows (`level`), not an
   `NSOutlineView`; collapsed keys are positional (`"0.2.1"`) in `documents.yaml`.
   Removing a segment from the sidebar `NSSegmentedControl` clears its selection
@@ -169,6 +175,34 @@ even when the app is not active (hence `NSApp.isActive &&` on the focus stamp).
   changes bump the render generation. PDFs are luma-remapped in the core with
   chroma kept; Markdown swaps to a concrete dark palette; the minimap has its own
   variant. Print/export/copy-page never carry it.
+- **External tools run in an environment the app controls.** ocrmypdf and Argos
+  are Python programs and are **never installed globally**: Homebrew provides
+  only the C programs ocrmypdf shells out to (tesseract, ghostscript), and the
+  Python side goes into a virtualenv under Application Support. Every `NSTask`
+  goes through `spdf_mac_tool_environment` (`SPDFMacToolEnvironment.h`), which
+  drops `PYTHON*`, `CONDA*`, `VIRTUAL_ENV*`, `PYENV*`, `PIP_*`, `DYLD_*` and
+  `__PYVENV_LAUNCHER__` — a leaked `PYTHONHOME` killed Homebrew's ocrmypdf
+  outright — and builds a deterministic PATH. Installers do **not** use a login
+  shell. A machine with no virtualenv is sent to the installer rather than
+  adopted silently, once per session so a machine with no usable Python is not
+  asked on every run.
+- **The OCR command line is a pure function** (`SPDFMacOCRCommand.h`), and each
+  flag is justified by a measurement written beside it: `--tesseract-pagesegmode
+  11` because a dimension number alone among line art is not a column of prose
+  (4 of 5 recovered against 2); `--oversample 400` because small text dies at low
+  DPI. A source whose every page is a full-page image is re-recognised
+  (`--force-ocr`) rather than trusted (`--redo-ocr`), because its "text" is a
+  previous OCR pass. Verdicts about a finished run live in
+  `SPDFMacOCRValidation.h`: a run that skipped pages, and a refusal ocrmypdf
+  itself explains (a tagged PDF), both retry forced once.
+- **Detaching a tab is a new process**, and the reading position crosses the
+  boundary in a handoff file named from the document's path
+  (`SPDFMacTabDetach.h`, `spdf_mac_detach_handoff_name`). The child adopts it
+  before opening anything; `-openPaths:` reuses a tab that already exists for a
+  path, which is what makes the seeded tab win.
+- **Whole-document translation is PDF-shaped.** A Markdown document has no page
+  geometry to write translated lines into, so it is rendered to a PDF beside
+  itself and that is translated (`SPDFMacMarkdownTranslate.h`).
 - **Launch prerender.** Starts in `main()` before `applicationDidFinishLaunching`,
   reads `settings.yaml` early, speculates on the session's focused window's
   selected tab, bails for Markdown and cloud paths. Ownership state machine in
@@ -177,7 +211,7 @@ even when the app is not active (hence `NSApp.isActive &&` on the focus stamp).
 ## <a id="tools"></a>Tools and commands
 
 ```sh
-make -C portable mac-app                 # builds dist/ShenzhenPDF.app (ad-hoc signed)
+make -C portable mac                     # alias for mac-app; builds dist/ShenzhenPDF.app (ad-hoc signed)
 make -C portable <name>-tests            # one suite; names: grep -oE '^[a-z0-9-]+-tests:' portable/Makefile
 make -C portable mac-markdown-tests      # engine suites (mac/tests/markdown/run-tests.sh)
                                          # + UI suites (mac/tests/run-markdown-integration-tests.sh)
@@ -212,8 +246,10 @@ only when its tag reaches origin. Flow:
 1. Write `portable/docs/releases/<tag>.md`: highlights above one `---` (≤500
    chars, direct, one line each), detail bullets below. The owner reads the
    highlights before every release — show them first.
-2. `./portable/cut-release.sh --prepare-only "summary"`: validates the notes,
-   runs every `*-tests` target (35 at the time of writing), enforces the README
+2. `./portable/cut-release.sh --prepare-only "summary"`: the summary **must** be
+   passed positionally — without it the script falls to `read -p`, which has no
+   TTY here and exits 1 silently. It validates the notes,
+   runs every `*-tests` target (41 at the time of writing), enforces the README
    gate (`readme.md` must change for a feature release; a pure bugfix sets
    `SPDF_README_UNCHANGED=1` deliberately), commits the metadata. The working
    tree must be clean except for the notes file.
@@ -227,32 +263,33 @@ only when its tag reaches origin. Flow:
 The script blocks on nothing — if it seems hung, the shell is (see traps). Poll
 `pgrep -f cut-release.sh` and read its log; never sit on a 600 s timeout.
 
-## <a id="owner"></a>Working with the owner
+## <a id="conventions"></a>Working conventions
 
-- **Same Mac, same screen.** Do not launch the app while they are testing; when
-  they say "let me test", build and hand over. They will tell you what they see.
-- **Never `--publish` without a fresh, explicit yes** for that exact build. "Make
-  a release" authorizes the prepare; "publish" authorizes the push. Approval for
-  one build does not carry to the next.
 - **A reported bug is a fix request.** Diagnose, fix, test, then report — do not
   stop at the diagnosis. If you cannot reproduce, say so with the evidence and
   what you ruled out; do not guess a fix.
-- **Be direct and brief.** Release notes and reports in plain language, no
-  hedging, numbers only when they change a decision. They asked for "one picture
-  is better than a thousand words" in the readme.
 - **Stage explicit paths, never `git add -A`.** Other agents share the worktree.
   Commit each tested change set with a message that explains the failure and the
   fix; end with `Co-Authored-By`.
-- Their shortcut tooling: LinearMouse is installed (wheel deltas arrive as
-  precise deltas), two displays (built-in Retina main + external 3440×1440 at
-  1×), Shenzhen Files as file manager.
+- **Be direct and brief** in release notes and reports: plain language, no
+  hedging, numbers only where they change a decision.
+- **User-facing docs are not your notebook.** `readme.md` and `docs/features.md`
+  describe what the app does, in the present tense, for someone deciding whether
+  to use it — never how a bug was fixed. A reader assumes it works, so "it now
+  handles X correctly" only tells them it used to be broken. Fixes belong in the
+  release notes as one brief line each, and the reasoning belongs in the commit
+  message. A release that changes nothing a new reader would care about should
+  pass `SPDF_README_UNCHANGED=1` rather than invent a readme edit.
+- There is a second handoff, `portable/docs/agent-handoff-private.md`, that is
+  deliberately untracked: it holds how the owner prefers to work and their
+  machine's setup. If it is on disk, read it too; if it is not, ask rather than
+  guess at approval boundaries.
 
 ## <a id="traps"></a>Traps, each one paid for
 
 - A Bash command that produces no output for minutes is a **shell blocked on a
-  prompt**, not a slow build — `~/.zshrc` once asked "[oh-my-zsh] Would you like
-  to update?" (now `zstyle ':omz:update' mode auto`). Check
-  `pgrep clang|make|codesign` before waiting.
+  prompt**, not a slow build — an interactive prompt in a shell startup file will
+  do it. Check `pgrep clang|make|codesign` before waiting.
 - A **multi-line regex** stripping debug lines deleted four load-bearing lines
   of window setup and shipped. Delete code with exact-string edits only.
 - `initWithContentRect:` takes a content rect and AppKit repositions oversized
@@ -269,6 +306,27 @@ The script blocks on nothing — if it seems hung, the shell is (see traps). Pol
   next publish refuses until you `git tag -d` it.
 - The prepare's version is today's date: notes written yesterday under
   yesterday's tag are "changes outside the release notes" — rename the file.
+- **zsh does not word-split unquoted variables.** `for d in $CANDIDATES` runs
+  *once* with the whole string as one word, and `make $TARGETS` hands make one
+  malformed goal. Both produced confident, meaningless results here — one
+  "nothing references these directories" answer that was simply a single bogus
+  iteration. Use an array and `"${arr[@]}"`, and sanity-check the count.
+- **A build tool's silence is not evidence.** `make mac` had no such target, so
+  make matched the `mac/` *directory*, printed "Nothing to be done for `mac'"
+  and exited 0 — read as a successful no-op for a whole evening while the binary
+  was never relinked, and a committed, tested fix never reached the app. There is
+  a `mac` alias now, but the habit is the point: confirm the **artifact**
+  changed (mtime, or `strings <binary> | grep '<a string only the new code has>'`),
+  never a grep of build output that would also swallow "nothing to be done".
+- **A test can encode the bug.** Markdown page stepping asserted `page top - 12`,
+  which was the defect; fixing the code failed the test. Before "fixing" a test
+  that a correct change broke, work out which one is wrong — here the fixture's
+  page height equalled the viewport height, so flush was right and the constant
+  was wrong.
+- **Substring matching is not verification.** "Is `0.50` in the OCR output?"
+  answered yes from an unrelated table cell and inflated a 3-of-5 result to
+  4-of-5. Check *positions* (the core's `spdf_extract_page_text_lines` returns
+  bounds) when the question is whether a specific thing on the page was read.
 
 ## <a id="open"></a>Open threads
 
@@ -287,6 +345,15 @@ The script blocks on nothing — if it seems hung, the shell is (see traps). Pol
   (copying is always allowed now).
 - The Windows track (`portable/win/`, `portable/docs/windows-*.md`) is another
   agent's; coordinate through master, do not edit its files.
+- **One OCR dimension still resists.** On a USB-C footprint, `3.50` is read by
+  tesseract directly at 600 dpi but lost through ocrmypdf at any oversample;
+  something in its preprocessing drops it. Four of the five recover.
+- **The repository is no longer a fork.** It was detached from
+  `sumatrapdfreader/sumatrapdf` on 2026-09-15, which is what made it findable:
+  GitHub excludes forks from repository search by default, so searching its own
+  name returned six unrelated repositories and none of them this one. It now has
+  a real description and 15 topics. Do not re-fork it, and remember that
+  detaching is permanent.
 
 ## <a id="first-hour"></a>First hour checklist
 
