@@ -6,6 +6,8 @@ paper-margin: 30
 
 23 September 2026 · ShenzhenPDF
 
+**Prepared: 26.9.23-1. Technical 9.1/10 · UX 9.0/10.** No major or medium findings remain after three review rounds. All 53 release test targets passed.
+
 ## Implemented behavior
 
 Keep local, immutable copies and history while continuing to read original documents. Search open documents, groups and Collection from one palette; recover missing originals; compare PDF and Markdown revisions in two coordinated readers.
@@ -103,7 +105,7 @@ Cmd+Backspace returned from Design Review to Project Notes at page 2; a second p
 
 ## Release preparation
 
-Independent reviews met the requested threshold within three rounds. Release 26.9.23-1 is being prepared on `codex/collection-history-release`, with no publication requested. The journal will be opened in the final dated build; the installed reader remains untouched.
+Independent reviews met the requested threshold within three rounds. Release 26.9.23-1 was prepared on `codex/collection-history-release` at metadata commit `418cb5b`. The release workflow reran all 53 test targets successfully and committed validated version metadata. No tag, push, notarization or publication was performed. The journal is delivered in the final dated build; the installed reader remains untouched.
 
 ### Review round 1 · Repair decisions
 
@@ -170,3 +172,17 @@ The optimized full release test sweep completed with exit 0, including all 53 di
 The native inspection command rendered this journal successfully with no layout diagnostics after adding deliberate page breaks before its summary tables. Screenshots are actual app captures; the explicitly labeled engine figure is a headless render. The reviews retain their earlier failures and state where checks were live, headless or source-only.
 
 Both critics leave only minor follow-ups: start search snippets at word boundaries, make capture reasons more specific, and add direct coordinator tests around externally edited inactive tabs. No major or medium improvements remain in their reviewed scope. The live review used isolated generated documents and state; whole-computer recovery scanning and destructive Collection deletion were covered by bounded tests rather than exercised against personal files.
+
+### Release record
+
+- Implementation: `daf065f0a` — Collection, comparison, navigation and regression tests.
+- Visual journal and independent reviews: `77ba17824`.
+- Release metadata: `418cb5b` — version 26.9.23, build 1.
+- Release preparation command: `./portable/cut-release.sh --prepare-only "Collection history and persistent tab groups"`; exit 0.
+- Release notes: [26.9.23-1](../../releases/26.9.23-1.md). Publication remains a separate action.
+
+### Delivered in the reader
+
+The final native app build completed with exit 0. Its bundle reports version 26.9.23, build 1, and passes local ad-hoc code-signature verification; this is a local validation build, not a notarized distribution artifact. The journal was opened and visually checked on page 1 in that build with its chapters, screenshots and minimap visible. The app remains open for inspection, using the isolated validation state.
+
+![Journal open in the final 26.9.23-1 reader, with persistent groups and uniform tab-title color](assets/final-journal-open.png)
