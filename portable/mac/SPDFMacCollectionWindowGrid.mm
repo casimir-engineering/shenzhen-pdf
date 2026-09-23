@@ -1,4 +1,5 @@
 #import "SPDFMacCollectionWindowPrivate.h"
+#import "SPDFMacCollectionStyle.h"
 #import "SPDFMacMarkdownPrinting.h"
 #import "markdown/SPDFMarkdownDocument.h"
 #import <PDFKit/PDFKit.h>
@@ -71,7 +72,7 @@
     caption.lineBreakMode = NSLineBreakByTruncatingMiddle;
     caption.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:caption];
-    self.historyButton = [NSButton buttonWithTitle:@"History" target:nil action:nil];
+    self.historyButton = SPDFCollectionButton(@"History",nil,nil,@"normal");
     self.historyButton.frame = NSMakeRect(108,58,64,24); [self.view addSubview:self.historyButton];
     self.textField = caption; // NSCollectionViewItem outlets are weak; the view owns it first.
     [NSLayoutConstraint activateConstraints:@[
@@ -101,7 +102,7 @@
     self.grid = [SPDFCollectionThumbnailGrid new];
     self.grid.dataSource = self; self.grid.delegate = self;
     self.grid.selectable = YES; self.grid.allowsMultipleSelection = YES;
-    self.grid.backgroundColors = @[NSColor.controlBackgroundColor];
+    self.grid.backgroundColors = @[SPDFCollectionColor(@"window")];
     NSCollectionViewFlowLayout* flow = [NSCollectionViewFlowLayout new];
     flow.itemSize = NSMakeSize(180,238); flow.minimumInteritemSpacing = 10; flow.minimumLineSpacing = 12;
     flow.sectionInset = NSEdgeInsetsMake(12,12,12,12); self.grid.collectionViewLayout = flow;
@@ -109,7 +110,7 @@
     NSClickGestureRecognizer* doubleClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(preview:)];
     doubleClick.numberOfClicksRequired = 2; [self.grid addGestureRecognizer:doubleClick];
     self.gridScroll = [NSScrollView new]; self.gridScroll.hasVerticalScroller = YES;
-    self.gridScroll.documentView = self.grid; self.gridScroll.borderType = NSBezelBorder;
+    self.gridScroll.documentView = self.grid; self.gridScroll.borderType = NSNoBorder;
     self.gridScroll.translatesAutoresizingMaskIntoConstraints = NO;
     [host addSubview:self.gridScroll];
     [NSLayoutConstraint activateConstraints:@[

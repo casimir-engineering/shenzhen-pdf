@@ -147,7 +147,7 @@
 - (void)changeLimit:(id)sender {
     (void)sender;
     double amount = 0;
-    NSScanner* scanner = [NSScanner scannerWithString:self.limitField.stringValue];
+    NSScanner* scanner = [NSScanner scannerWithString:self.limitPicker.indexOfSelectedItem == 0 ? @"0" : self.limitField.stringValue];
     if (![scanner scanDouble:&amount] || !scanner.isAtEnd || !isfinite(amount) || amount < 0 || amount > 1e8) {
         [self showError:[NSError errorWithDomain:@"ShenzhenPDF.Collection" code:1 userInfo:@{
             NSLocalizedDescriptionKey:@"Enter a nonnegative storage limit in GB. Zero keeps all versions."}]];

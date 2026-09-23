@@ -28,8 +28,11 @@
 @property(nonatomic) NSMutableSet<NSString*>* pendingThumbnails;
 @property(nonatomic) NSTextField* details;
 @property(nonatomic) NSTextField* storage;
+@property(nonatomic) NSTextField* storagePolicy;
 @property(nonatomic) NSButton* enabled;
 @property(nonatomic) NSTextField* limitField;
+@property(nonatomic) NSPopUpButton* limitPicker;
+@property(nonatomic) NSTextField* limitUnit;
 @property(nonatomic) NSArray<NSDictionary*>* rows;
 @property(nonatomic) NSArray<NSDictionary*>* documents;
 @property(nonatomic) NSString* documentID;
@@ -44,6 +47,9 @@
 @property(nonatomic) NSMutableArray<NSButton*>* selectionButtons;
 - (void)buildManagerLayout;
 - (void)buildSettingsPane;
+- (void)updateStoragePolicy;
+- (void)showDocumentMenu:(NSControl*)sender;
+- (void)populateDocumentMenu:(NSMenu*)menu;
 - (void)showDestination:(NSString*)destination;
 - (void)navigate:(id)sender;
 - (void)persistManagerPreferences;
