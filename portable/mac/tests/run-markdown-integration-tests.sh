@@ -95,6 +95,8 @@ $PORTABLE/mac/SPDFMacCollectionWindowSearch.mm
 $PORTABLE/mac/SPDFMacCollectionWindowHistory.mm
 $PORTABLE/mac/SPDFMacCollectionUsage.mm
 $PORTABLE/mac/SPDFMacCollectionHistory.mm
+$PORTABLE/mac/SPDFMacSidebarModeControl.mm
+$PORTABLE/mac/SPDFMacSidebarNavigation.mm
 $PORTABLE/mac/SPDFMacFileExplorerPreference.mm
 $PORTABLE/mac/SPDFMacCollectionSavePanel.mm
 $PORTABLE/mac/SPDFMacCollectionCompareViews.mm
