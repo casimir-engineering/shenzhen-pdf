@@ -25,6 +25,21 @@ int main(void) {
         assert(!parse(@[@1]));
         assert(!SPDFMacValidateAgentCommand([NSMutableData dataWithLength:65537], nil));
         assert(!SPDFMacValidateAgentCommand([@"not json" dataUsingEncoding:NSUTF8StringEncoding], nil));
+        assert(parse(@{@"action":@"list-groups"}));
+        assert(parse(@{@"action":@"create-group",@"paths":@[@"/a.md",@"/b.pdf"],@"name":@"Research"}));
+        assert(parse(@{@"action":@"update-group",@"groupID":@"general",@"collapsed":@NO}));
+        assert(parse(@{@"action":@"move-tab",@"groupID":@"general",@"path":@"/a.md",@"beforePath":@"/b.pdf"}));
+        assert(parse(@{@"action":@"move-group",@"groupID":@"id",@"beforeGroupID":@"general"}));
+        assert(parse(@{@"action":@"ungroup",@"groupID":@"id",@"windowSessionID":@"window"}));
+        assert(!parse(@{@"action":@"create-group",@"paths":@[]}));
+        assert(!parse(@{@"action":@"create-group",@"paths":@[@"/a.md",@"/x/../a.md"]}));
+        assert(!parse(@{@"action":@"create-group",@"paths":@[@"/a.md",@1]}));
+        assert(!parse(@{@"action":@"update-group",@"groupID":@"id"}));
+        assert(!parse(@{@"action":@"update-group",@"groupID":@"id",@"collapsed":@1}));
+        assert(!parse(@{@"action":@"list-groups",@"path":@"/a.md"}));
+        assert(!parse(@{@"action":@"move-tab",@"groupID":@"general"}));
+        assert(!parse(@{@"action":@"ungroup",@"groupID":@""}));
+        assert(!parse(@{@"action":@1}));
         NSArray* matches = @[@{@"page":@1, @"context":@"alpha quote"},
                              @{@"page":@2, @"context":@"beta quote"},
                              @{@"page":@2, @"context":@"alpha quote"}];

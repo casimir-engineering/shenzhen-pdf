@@ -10,6 +10,7 @@
 static NSString* supportDirectory;
 static NSInteger visiblePage, savedPage;
 static BOOL markdown, loading;
+static NSUInteger groupRequests;
 static SPDFMacMarkdownSession* cachedSession;
 NSString* spdf_mac_support_directory(void) { return supportDirectory; }
 int spdf_page_count(spdf_document* doc) { (void)doc; return 8; }
@@ -32,6 +33,10 @@ int spdf_page_count(spdf_document* doc) { (void)doc; return 8; }
         _findMatches = [NSMutableArray array];
     }
     return self;
+}
+- (NSDictionary*)performAgentGroupCommand:(NSDictionary*)command {
+    assert([command[@"action"] isEqual:@"list-groups"]); groupRequests++;
+    return @{@"groups":@[],@"tabs":@[]};
 }
 - (BOOL)isMarkdownActive { return markdown; }
 - (SPDFMacMarkdownSession*)activeMarkdownSession { return cachedSession; }
@@ -113,12 +118,18 @@ int main(void) {
         [host acceptAgentCommandAtPath:first];
         [host acceptAgentCommandAtPath:second];
         assert(response(second)[@"error"]); // no interleaved commands
+        NSString* busyGroups=writeRequest(@{@"action":@"list-groups"});
+        [host acceptAgentCommandAtPath:busyGroups];
+        assert(response(busyGroups)[@"error"] && groupRequests==0);
         [NSFileManager.defaultManager removeItemAtPath:first error:nil];
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
         loading = NO;
         NSString* afterCancel = writeRequest(@{@"action":@"open", @"path":doc, @"page":@4});
         [host acceptAgentCommandAtPath:afterCancel];
         assert([response(afterCancel)[@"page"] integerValue] == 4);
+        NSString* groups=writeRequest(@{@"action":@"list-groups"});
+        [host acceptAgentCommandAtPath:groups];
+        assert(response(groups)[@"groups"] && groupRequests==1 && savedPage==3);
         [NSFileManager.defaultManager removeItemAtPath:supportDirectory error:nil];
         puts("SPDFMacAgentNavigationTests passed");
     }

@@ -6,11 +6,65 @@ static void fail(NSError** error, NSString* message) {
                                       userInfo:@{NSLocalizedDescriptionKey: message}];
 }
 
+static NSDictionary* validateGroups(NSDictionary* command, NSError** error) {
+    NSDictionary* fields=@{@"list-groups":@[],@"create-group":@[@"paths",@"name",@"color",@"beforeGroupID"],
+        @"update-group":@[@"groupID",@"name",@"color",@"collapsed"],
+        @"move-tab":@[@"path",@"groupID",@"beforePath"],@"move-group":@[@"groupID",@"beforeGroupID"],
+        @"ungroup":@[@"groupID"]};
+    NSString* action=command[@"action"]; NSArray* allowed=fields[action];
+    if (!allowed) { fail(error,@"Unknown action."); return nil; }
+    for (NSString* key in command) if (![@[@"action",@"windowSessionID"] containsObject:key] && ![allowed containsObject:key]) {
+        fail(error,@"Unknown field for this group action."); return nil;
+    }
+    for (NSString* key in @[@"path",@"beforePath",@"groupID",@"beforeGroupID",@"windowSessionID",@"name",@"color"]) {
+        id value=command[key]; if (!value) continue;
+        if (![value isKindOfClass:NSString.class] || [value length]>4096 || [value rangeOfString:@"\0"].location!=NSNotFound ||
+            (![key isEqual:@"name"] && ![value length])) { fail(error,@"Invalid group command string."); return nil; }
+    }
+    NSMutableDictionary* normalized=[command mutableCopy];
+    for (NSString* key in @[@"path",@"beforePath"]) if (command[key]) {
+        if (![command[key] isAbsolutePath] || [[command[key] pathExtension] isEqual:@"spdf-command"]) {
+            fail(error,@"Document paths must be absolute."); return nil;
+        }
+        normalized[key]=[command[key] stringByStandardizingPath];
+    }
+    if ([action isEqual:@"create-group"]) {
+        id paths=command[@"paths"];
+        if (![paths isKindOfClass:NSArray.class] || ![paths count] || [paths count]>256) {
+            fail(error,@"Create requires 1–256 distinct open-document paths."); return nil;
+        }
+        NSMutableArray* clean=[NSMutableArray array];
+        for (id path in paths) {
+            if (![path isKindOfClass:NSString.class] || ![path isAbsolutePath] || [path length]>4096 ||
+                [path rangeOfString:@"\0"].location!=NSNotFound || [[path pathExtension] isEqual:@"spdf-command"]) {
+                fail(error,@"Invalid document path."); return nil;
+            }
+            NSString* value=[path stringByStandardizingPath];
+            if ([clean containsObject:value]) { fail(error,@"Document paths must be distinct."); return nil; }
+            [clean addObject:value];
+        }
+        normalized[@"paths"]=clean;
+    } else if (![action isEqual:@"list-groups"] && ![command[@"groupID"] length]) {
+        fail(error,@"groupID is required. Obtain it from list-groups."); return nil;
+    }
+    if ([action isEqual:@"move-tab"] && !command[@"path"]) { fail(error,@"path is required."); return nil; }
+    if ([action isEqual:@"update-group"] && !command[@"name"] && !command[@"color"] && !command[@"collapsed"]) {
+        fail(error,@"Update requires name, color, or collapsed."); return nil;
+    }
+    id collapsed=command[@"collapsed"];
+    if (collapsed && CFGetTypeID((__bridge CFTypeRef)collapsed)!=CFBooleanGetTypeID()) {
+        fail(error,@"collapsed must be a Boolean."); return nil;
+    }
+    return normalized;
+}
+
 NSDictionary* SPDFMacValidateAgentCommand(NSData* data, NSError** error) {
     if (!data || data.length > 65536) { fail(error, @"Command must be JSON of at most 64 KiB."); return nil; }
     id value = [NSJSONSerialization JSONObjectWithData:data options:0 error:error];
     if (![value isKindOfClass:NSDictionary.class]) { fail(error, @"Command must be an object."); return nil; }
     NSDictionary* command = value;
+    if (![command[@"action"] isKindOfClass:NSString.class]) { fail(error,@"Action must be a string."); return nil; }
+    if (![@[@"inspect",@"open"] containsObject:command[@"action"]]) return validateGroups(command,error);
     NSSet* keys = [NSSet setWithArray:@[@"action", @"path", @"page", @"query", @"context", @"occurrence", @"paper", @"renderDirectory"]];
     for (id key in command) if (![keys containsObject:key]) { fail(error, @"Unknown command field."); return nil; }
     NSString* action = command[@"action"];

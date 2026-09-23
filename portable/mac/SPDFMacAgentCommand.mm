@@ -99,7 +99,7 @@ static NSDictionary* navigate(NSDictionary* command, NSError** error) {
     }
     [fm removeItemAtPath:path error:nil];
     [fm removeItemAtPath:responsePath error:nil];
-    if (!response) *error = agentError(@"Reader did not complete navigation within 30 seconds.");
+    if (!response) *error = agentError(@"Reader did not complete the command within 30 seconds.");
     return response;
 }
 
