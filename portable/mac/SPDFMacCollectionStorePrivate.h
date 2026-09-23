@@ -23,6 +23,10 @@ FOUNDATION_EXPORT NSDictionary* SPDFCollectionAssets(NSString* sourcePath, NSDat
 - (NSMutableDictionary*)readManifest;
 
 - (BOOL)transaction:(BOOL (^)(NSMutableDictionary*, NSError**))body error:(NSError**)error;
+// Retain the same cross-process lock and integrity checks without writing metadata.
+- (BOOL)withLockedManifest:(BOOL (^)(NSMutableDictionary*, NSError**))body error:(NSError**)error;
+- (BOOL)manifestTransaction:(BOOL (^)(NSMutableDictionary*, NSError**))body
+                 writeBack:(BOOL)writeBack error:(NSError**)error;
 - (NSDictionary*)versionID:(NSString*)versionID document:(NSDictionary*)document;
 - (NSURL*)blobURL:(NSString*)hash;
 - (NSDictionary*)textIndexForVersion:(NSDictionary*)version;
