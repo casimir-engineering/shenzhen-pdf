@@ -74,6 +74,7 @@
         [scroll.heightAnchor constraintGreaterThanOrEqualToConstant:80]]];
     [self reload];
 }
+- (void)cancelPendingPreviews { ++_previewGeneration; }
 - (void)reload {
     NSUInteger generation = ++_generation;
     NSString* identifier = _documentID;

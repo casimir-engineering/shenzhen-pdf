@@ -2,9 +2,13 @@
 #import "SPDFMacCollectionReaderNavigation.h"
 #import "SPDFMacCollectionHistory.h"
 #import "SPDFMacCollectionStore.h"
+#import "SPDFMacCollectionRestoreTab.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacSidebarModeControl.h"
 #import <objc/runtime.h>
+@interface ShenzhenMacDelegate (CollectionRestoreHost)
+- (void)rememberActiveTabState;
+@end
 static char historyControllerKey, historyWrapperKey, historyDocumentKey;
 @implementation ShenzhenMacDelegate (SPDFMacCollectionSidebar)
 - (void)showCollectionHistory:(id)sender {
@@ -29,6 +33,7 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
     [self savePersistentState];
 }
 - (void)collectionRemoveHistoryView {
+    [(SPDFMacCollectionHistoryController*)objc_getAssociatedObject(self, &historyControllerKey) cancelPendingPreviews];
     [objc_getAssociatedObject(self, &historyWrapperKey) removeFromSuperview];
     objc_setAssociatedObject(self, &historyControllerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &historyWrapperKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -43,7 +48,10 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
         [self collectionRemoveHistoryView]; wrapper = nil;
     }
     _sidebarTable.enclosingScrollView.hidden = visible;
-    if (!visible) { wrapper.hidden = YES; return NO; }
+    if (!visible) {
+        [(SPDFMacCollectionHistoryController*)objc_getAssociatedObject(self, &historyControllerKey) cancelPendingPreviews];
+        wrapper.hidden = YES; return NO;
+    }
     _sidebarFilterField.hidden = YES;
     [_sidebarContainer viewWithTag:8801].hidden = YES;
     if (!wrapper) {
@@ -55,13 +63,21 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
             }];
         controller.restoreLinkHandler = ^(NSString* previousPath, NSString* restoredPath) {
             ShenzhenMacDelegate* reader = weakSelf; if (!reader) return;
-            NSInteger index = [reader indexOfTabForPath:previousPath];
-            if (index >= 0) {
-                SPDFDocumentTab* tab = reader->_tabs[(NSUInteger)index];
-                tab.path = restoredPath; tab.title = restoredPath.lastPathComponent.stringByDeletingPathExtension;
-                tab.missingFile = NO; tab.missingMessage = @""; tab.readOnly = NO;
-                if (index == reader->_selectedTabIndex) [reader loadSelectedTab];
-                else [reader selectTabAtIndex:index];
+            SPDFDocumentTab* missing = SPDFCollectionMissingTab(reader->_tabs,identifier,previousPath);
+            SPDFDocumentTab* existing = SPDFCollectionExistingRestoredTab(reader->_tabs,restoredPath);
+            if (missing && existing && missing != existing) {
+                [reader rememberActiveTabState];
+                SPDFDocumentTab* position = spdf_copy_document_tab(missing);
+                [reader closeTabAtIndex:[reader->_tabs indexOfObjectIdenticalTo:missing]];
+                SPDFCollectionRestoreReadingPosition(position,existing);
+                NSInteger index = [reader->_tabs indexOfObjectIdenticalTo:existing];
+                if (index == reader->_selectedTabIndex) [reader loadSelectedTab]; else [reader selectTabAtIndex:index];
+                [reader savePersistentState];
+            } else if (missing) {
+                missing.path = restoredPath; missing.title = restoredPath.lastPathComponent.stringByDeletingPathExtension;
+                missing.missingFile = NO; missing.missingMessage = @""; missing.readOnly = NO;
+                NSInteger index = [reader->_tabs indexOfObjectIdenticalTo:missing];
+                if (index == reader->_selectedTabIndex) [reader loadSelectedTab]; else [reader selectTabAtIndex:index];
                 [reader savePersistentState];
             } else [reader collectionOpenPath:restoredPath archived:NO];
             if ([[reader selectedTab].path isEqual:restoredPath]) [reader showCollectionHistory:nil];
@@ -86,6 +102,7 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
     return YES;
 }
 - (void)collectionPrepareForTabPath:(NSString*)path {
+    [(SPDFMacCollectionHistoryController*)objc_getAssociatedObject(self, &historyControllerKey) cancelPendingPreviews];
     // No store access on launch: the persisted tab ID is enough to restore the mode.
     NSString* key = [self documentStateKeyForPath:path];
     BOOL history = [_documentStates[key][@"collectionHistorySelected"] boolValue];

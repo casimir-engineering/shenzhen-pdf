@@ -1,5 +1,6 @@
 #import "SPDFMacCollectionReaderNavigation.h"
 #import "SPDFMacCollectionPalette.h"
+#import "SPDFMacCollectionRestoreTab.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacCollectionWindow.h"
 #import <objc/runtime.h>
@@ -96,6 +97,26 @@ int main(void) {
         Method init = class_getInstanceMethod(SPDFMacCollectionStore.class,@selector(initWithRootURL:));
         oldInit = method_setImplementation(init,(IMP)CountInit);
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        SPDFDocumentTab* unrelated = [SPDFDocumentTab new]; unrelated.path = @"/old.md";
+        unrelated.collectionHistoryDocumentID = @"other";
+        SPDFDocumentTab* missing = [SPDFDocumentTab new]; missing.path = @"/old.md";
+        missing.collectionHistoryDocumentID = @"recover"; missing.missingFile = YES;
+        missing.pageIndex = 8; missing.zoom = 1.4; missing.scrollOrigin = NSMakePoint(23,456); missing.hasScrollOrigin = YES;
+        SPDFDocumentTab* preview = [SPDFDocumentTab new]; preview.path = @"/found.md";
+        NSArray* tabs = @[unrelated,missing,preview];
+        Expect(SPDFCollectionMissingTab(@[unrelated],@"recover",@"/old.md") == nil,
+            "unrelated occupant at old path is never retargeted");
+        unrelated.missingFile = YES;
+        Expect(SPDFCollectionMissingTab(@[unrelated],@"recover",@"/old.md") == nil,
+            "missing placeholder for different history is never retargeted");
+        Expect(SPDFCollectionMissingTab(tabs,@"recover",@"/old.md") == missing,
+            "recovery requires both missing placeholder and matching history identity");
+        Expect(SPDFCollectionExistingRestoredTab(tabs,@"/found.md") == preview,
+            "Locator Preview existing destination wins instead of duplicate retarget");
+        SPDFCollectionRestoreReadingPosition(missing,preview);
+        Expect(preview.pageIndex == 8 && preview.zoom == 1.4 && preview.hasScrollOrigin &&
+            NSEqualPoints(preview.scrollOrigin,missing.scrollOrigin) && [unrelated.path isEqual:@"/old.md"],
+            "deduplicated recovery transfers reading position and leaves unrelated tab alone");
         NavigationProbe* reader = [NavigationProbe new]; [reader seed];
         for (NSUInteger i=0;i<10;i++) [reader collectionUpdateVersionIndicator];
         Expect(storeInitializations == 0,"ordinary toolbar never constructs Collection store");

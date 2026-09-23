@@ -22,6 +22,7 @@ static NSUInteger Badges(NSView* view) {
 }
 @interface HistoryFixtureStore : SPDFMacCollectionStore
 @property NSString* fixturePath;
+@property NSUInteger materializations;
 @end
 @implementation HistoryFixtureStore
 - (NSArray*)documents {
@@ -30,6 +31,7 @@ static NSUInteger Badges(NSView* view) {
 }
 - (NSURL*)materializeVersionID:(NSString*)version documentID:(NSString*)document error:(NSError**)error {
     (void)document; (void)error;
+    dispatch_async(dispatch_get_main_queue(), ^{ self.materializations++; });
     return [self.rootURL URLByAppendingPathComponent:[version stringByAppendingString:@".md"]];
 }
 @end
@@ -139,10 +141,19 @@ int main(void) {
         [history showVersionInExplorer:reveal];
         Expect(Await(^BOOL { return history.revealedPath != nil; }) && [history.revealedPath isEqual:store.fixturePath],
             "Latest reveal uses live original");
+        store.fixturePath = @"/missing/Notes.md";
+        NSUInteger materializations = store.materializations;
+        [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+        [history cancelPendingPreviews];
+        Expect(Await(^BOOL { return store.materializations > materializations; }),"pending preview actually materializes");
+        NSDate* drained = [NSDate dateWithTimeIntervalSinceNow:.1];
+        while (drained.timeIntervalSinceNow > 0)
+            [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:drained];
+        Expect(opens == 3,"leaving History cancels stale preview navigation");
         __block NSString* retainedSource; __block NSString* restoredSource;
         history.restoreLinkHandler = ^(NSString* previous, NSString* restored) { retainedSource = previous; restoredSource = restored; };
         [history didRestorePath:@"/restored/Notes.md"];
-        Expect([retainedSource isEqual:store.fixturePath] && [restoredSource isEqual:@"/restored/Notes.md"] && opens == 3,
+        Expect([retainedSource hasSuffix:@"Original.md"] && [restoredSource isEqual:@"/restored/Notes.md"] && opens == 3,
             "recovery routes old and new identities to retain existing reader tab instead of opening a duplicate");
         Expect(!host.visible,"all History interaction tests remain headless");
         [NSFileManager.defaultManager removeItemAtURL:root error:nil];
