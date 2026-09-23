@@ -10,6 +10,10 @@
 - (void)collectionDidSavePath:(NSString*)path;
 - (void)collectionClearObservedChangeAtPath:(NSString*)path;
 - (void)collectionDidOpenPath:(NSString*)path;
+- (void)collectionWillOpenPaths:(NSArray<NSString*>*)paths;
+- (void)collectionRecordUserOpenForPath:(NSString*)path document:(NSDictionary*)document;
+- (NSUInteger)collectionConsumeUserOpenForPath:(NSString*)path;
+- (void)collectionRecordUserOpenCount:(NSUInteger)count document:(NSDictionary*)document;
 - (BOOL)collectionProtectPath:(NSString*)path operation:(NSString*)operation;
 - (void)installCollectionSettingsMenu:(NSMenu*)menu;
 - (void)addCollectionItemsToTabMenu:(NSMenu*)menu path:(NSString*)path;

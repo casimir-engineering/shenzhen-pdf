@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 NSArray<NSArray<NSNumber*>*>* SPDFCollectionAlignPages(NSArray<NSString*>* oldKeys,
                                                      NSArray<NSString*>* newKeys);
 // No queues, files, or services are created until explicitly requested.
+PDFDocument* _Nullable SPDFCollectionLoadPreviewDocument(NSURL* URL, NSProgress* progress, NSError** error);
 SPDFCollectionComparison* _Nullable SPDFCollectionBuildComparison(NSURL* oldURL, NSURL* newURL,
                                                                 NSProgress* progress, NSError** error);
 void SPDFMacShowCollectionComparison(NSURL* oldURL, NSURL* newURL, NSString* oldLabel,

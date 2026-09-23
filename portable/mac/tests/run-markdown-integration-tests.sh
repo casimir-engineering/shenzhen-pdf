@@ -84,8 +84,18 @@ $PORTABLE/mac/markdown/SPDFMarkdownDocument.mm
 "
 UI_SOURCES="
 $PORTABLE/mac/SPDFMacCollectionWindow.mm
+$PORTABLE/mac/SPDFMacCollectionManagerWindow.mm
+$PORTABLE/mac/SPDFMacCollectionStyle.mm
 $PORTABLE/mac/SPDFMacCollectionWindowActions.mm
 $PORTABLE/mac/SPDFMacCollectionWindowGrid.mm
+$PORTABLE/mac/SPDFMacCollectionWindowLayout.mm
+$PORTABLE/mac/SPDFMacCollectionWindowSettings.mm
+$PORTABLE/mac/SPDFMacCollectionWindowState.mm
+$PORTABLE/mac/SPDFMacCollectionWindowSearch.mm
+$PORTABLE/mac/SPDFMacCollectionWindowHistory.mm
+$PORTABLE/mac/SPDFMacCollectionHistoryDetail.mm
+$PORTABLE/mac/SPDFMacCollectionPreviewSearch.mm
+$PORTABLE/mac/SPDFMacCollectionUsage.mm
 $PORTABLE/mac/SPDFMacCollectionHistory.mm
 $PORTABLE/mac/SPDFMacCollectionSavePanel.mm
 $PORTABLE/mac/SPDFMacCollectionCompareViews.mm
@@ -95,6 +105,8 @@ $PORTABLE/mac/SPDFMacCollectionStore.mm
 $PORTABLE/mac/SPDFMacCollectionStoreAccess.mm
 $PORTABLE/mac/SPDFMacCollectionStoreAssets.mm
 $PORTABLE/mac/SPDFMacCollectionStoreCapture.mm
+$PORTABLE/mac/SPDFMacCollectionStoreCleanup.mm
+$PORTABLE/mac/SPDFMacCollectionStoreContextSearch.mm
 $PORTABLE/mac/SPDFMacCollectionStoreExport.mm
 $PORTABLE/mac/SPDFMacCollectionStoreFingerprint.mm
 $PORTABLE/mac/SPDFMacCollectionStoreLocation.mm
@@ -145,6 +157,8 @@ SPDFMacCollectionComparePresentationTests
 SPDFMacCollectionWindowTests
 SPDFMacCollectionMarkdownIndexTests
 SPDFMacCollectionCompareLoadTests
+SPDFMacCollectionContextSearchMarkdownTests
+SPDFMacCollectionHistoryDetailTests
 SPDFMacMarkdownKeyboardPolicyTests
 SPDFMacMarkdownRoutingTests
 SPDFMacMarkdownPagedViewTests

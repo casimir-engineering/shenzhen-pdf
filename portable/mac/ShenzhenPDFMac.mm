@@ -8752,7 +8752,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
 
-    [self rememberActiveTabState];
+    [self rememberActiveTabState]; [self collectionWillOpenPaths:paths];
     NSInteger targetIndex = -1;
     for (NSString* path in paths) {
         if (![path isKindOfClass:NSString.class] || path.length == 0) continue;
@@ -8770,7 +8770,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         if (targetIndex == _selectedTabIndex && [self hasActiveDocument]) {
             // A stranded Loading markdown session still counts as an active
             // document: re-kick it instead of early-returning into the strand.
-            [self ensureActiveMarkdownTabHasContent];
+            [self ensureActiveMarkdownTabHasContent]; [self collectionDidOpenPath:_path];
             if (_path.length > 0) [self rememberRecentlyOpenedPath:_path];
             [self savePersistentState];
             [self focusActiveDocumentViewAfterTabSelection];
