@@ -33,6 +33,11 @@
 @property(nonatomic) NSArray<NSDictionary*>* rows;
 @property(nonatomic) NSArray<NSDictionary*>* documents;
 @property(nonatomic) NSString* documentID;
+@property(nonatomic) NSString* restoreHistoryVersionID;
+@property(nonatomic) NSDictionary* initialBrowseState;
+@property(nonatomic) BOOL hasLoadedResults;
+@property(nonatomic) NSString* resultQuery;
+@property(nonatomic) BOOL reloadingResults;
 @property(nonatomic) NSUInteger generation;
 @property(nonatomic) dispatch_queue_t preferenceQueue;
 @property(nonatomic) BOOL mutationPending;
@@ -42,6 +47,9 @@
 - (void)showDestination:(NSString*)destination;
 - (void)navigate:(id)sender;
 - (void)persistManagerPreferences;
+- (NSDictionary*)captureBrowseState;
+- (void)restoreBrowseState:(NSDictionary*)state toRows:(NSMutableArray*)rows query:(NSString*)query;
+- (void)restoreBrowseSelectionAndScroll:(NSDictionary*)state;
 - (void)showHistoryForDocument:(NSDictionary*)document version:(NSDictionary*)version;
 - (void)historyForRow:(id)sender;
 - (NSView*)resultCellForRow:(NSInteger)row;
