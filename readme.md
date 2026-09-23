@@ -37,6 +37,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Keep local copies and history** — choose at first use, then continue opening the originals. Protected versions stay read-only; copies and history can be turned off in Settings.
 - **Find and recover documents** — <kbd>Cmd+K</kbd> searches open names, groups, open text, and Collection. Use `col:` for Collection alone. A missing original can be recovered from its protected copy or located by an exact content match.
+- **Browse saved history** — Collection combines document search, page thumbnails and highlighted context. Open History to preview a saved PDF or Markdown version. Settings includes location and optional storage limits; storage is unlimited by default.
 - **Compare revisions** — PDF and Markdown versions open side by side, with removed content in red and added content in green. Change markers and paired navigation help inspect revisions.
 - **Return to the previous tab** — <kbd>Cmd+Backspace</kbd> toggles between the last two documents, reopening a closed tab with its reading position.
 

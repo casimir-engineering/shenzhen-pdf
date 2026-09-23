@@ -96,7 +96,8 @@ does not re-trigger the macOS access prompt.
 - Read-only version previews and a history view; Save a Copy creates a separate editable document.
 - PDF and Markdown comparison with old/new panes, red removals, green additions, linked scrolling/zoom, and clickable change markers. Inserted and deleted pages have blank counterparts.
 - Missing-original recovery from protected copies. Locate Original offers manual selection or a cancellable exact-hash search, sorted by modification date from oldest to newest.
-- Manage Collection uses views on the left and document actions/settings on the right. Choices persist across launches.
+- Manage Collection has Documents and Settings in the left sidebar. Search stays inside Documents, with page thumbnails and contextual highlighted matches for the exact saved version. History shows real read-only PDF/Markdown previews, Keep, comparison and copy export. Query, selected version/page, expanded matches and browsing positions persist.
+- Storage is unlimited by default. Set location and Open location expose the current folder. With a cap, cleanup ranks least-opened documents, prunes their oldest previous versions first, and only then removes final Collection copies. A kept version protects the entire history; originals are never deleted.
 - Markdown copies include bounded local dependencies; unavailable assets are reported. Encrypted PDF bytes remain encrypted and are not indexed as plaintext.
 
 ## <a id="reading"></a>Reading and navigation
