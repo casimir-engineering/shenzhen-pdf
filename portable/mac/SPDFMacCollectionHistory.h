@@ -7,4 +7,5 @@
 - (instancetype)initWithStore:(SPDFMacCollectionStore*)store documentID:(NSString*)documentID
                          open:(SPDFCollectionOpenHandler)open;
 - (void)reload;
+- (void)cancelPendingPreviews;
 @end
