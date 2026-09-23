@@ -491,3 +491,27 @@ These are production native-view renders using temporary fixture documents. Addi
 Validation: the final focused suites cover navigation keyboard/accessibility behavior, Group Management action separation and name-only filtering, unchanged-refresh editor selection, delayed/constrained scroll restoration, full workspace YAML round trips, group model/strip behavior, agent mutations and MCP protocol. All 25 existing native Markdown/UI suites, state/YAML/launch-policy checks and release-pipeline checks also pass.
 
 The final native build passed. Strict signature checks verified both reader and nested Collection bundles. `dist/ShenzhenPDF.app` now matches the tested candidate’s reader/helper executable hashes, with the prior bundle preserved under `portable/build`. Source-size and whitespace checks pass; the coordinator ratchet decreased by two lines. The running user app was not launched, quit or screenshotted.
+
+
+### Speed, size and regression pass
+
+Speed was prioritized before size. Independent agents measured group/Collection paths and audited History/comparison while the coordinator checked packaging and ran the broad regression suite.
+
+| Measured path | Before | After |
+|---|---:|---:|
+| Group normalization, 1,000 tabs in 1,000 groups | 11.34 ms | 0.107 ms |
+| Group normalization, 200 tabs in 20 groups | 52.82 µs | 6.91 µs |
+| Twenty Collection materializations, 501-document / 5,001-version fixture | 533.52 ms median | 172.55 ms median |
+| App bundle, including signatures/resources | 86.64 MiB | 45.92 MiB |
+
+These are bounded generated-fixture measurements, not end-to-end launch or every-document guarantees. The ordinary ungrouped path remains unchanged. Closed Group Management skips snapshots, and hidden History defers its controller/store work until reveal. No cache invalidation scheme or new startup/background task was introduced. Details and reproduction: [group/workspace performance](group-workspace-performance.md), [Collection preview performance](collection-preview-performance.md), and [bundle optimization](bundle-optimization.md).
+
+**Regression correction.** Replacing the obsolete horizontal-selector fixture with the real vertical navigation exposed History's excessive minimum height. Its content now scrolls in short windows, so recovery and version actions remain reachable. Hidden History refreshes also defer work until shown. [Audit and focused checks](history-compare-regression-audit.md).
+
+![History content remains scrollable below navigation in a short native fixture](assets/history-short-window.png)
+
+This image is a hidden native-view render; its initial scroll position is shown. The test separately scrolls every lower recovery/action control fully into view.
+
+**Validation.** All 25 native Markdown/UI suites and the Markdown engine suite passed. The broad headless pass also passed core document/password/render/selection tests; reader chrome, shortcut, tab/group/drag/state/YAML tests; sidebar/navigation/workspace tests; Collection store/integrity/cleanup/search/assets/compare/reader-navigation/credentials tests; agent commands, PDF inspection and eight MCP checks; previous-tab, viewport, minimap, cursor, explorer, translation, OCR and launch-laziness checks; release common/workflow checks (56 workflow checks); and the source-size ratchet. Test process exit codes were checked directly. New complexity, unchanged-manifest and hidden-panel regressions pin the removed work; existing archive integrity and encrypted-byte checks remain intact.
+
+The smaller helper's exact optimized source graph passes real Markdown and encrypted-PDF preview tests, including private-pipe password transfer. Independent packaging review found no missing runtime dependency. The final native candidate built successfully; nested and outer strict signature checks, architecture/minimum-OS checks and system-library checks passed. Both executable hashes in `dist/ShenzhenPDF.app` match the candidate. The previous bundle is preserved, and the user's running app was not restarted. Release notes include the reader-visible performance and short-window fixes; AI commands/configuration remain unchanged by this optimization pass.
