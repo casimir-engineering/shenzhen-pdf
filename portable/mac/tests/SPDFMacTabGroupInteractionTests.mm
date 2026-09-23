@@ -270,12 +270,12 @@ int main(void) {
         expect(!NSIsEmptyRect([strip groupedRectForTabAtIndex:9]), @"selected tab has no grouped frame");
         expect(strip.groupedHasOverflow, @"crowded grouped strip did not report overflow");
 
-        // Activating a custom group collapses other custom groups but leaves
-        // General alone; the selected group is always expanded and visible.
+        // Activating a group collapses every other group, including General.
+        // The selected group is always expanded and visible.
         general.collapsed = NO;
         green.collapsed = NO;
         spdf_tab_groups_activate((id)tabs, (id)tabs[9]);
-        expect(!general.collapsed, @"automatic activation collapsed General");
+        expect(general.collapsed, @"automatic activation left inactive General expanded");
         expect(!blue.collapsed, @"automatic activation collapsed the selected group");
         expect(green.collapsed, @"automatic activation left an inactive custom group expanded");
         strip.tabs = (id)tabs;

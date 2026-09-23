@@ -37,8 +37,8 @@ Right-click a tab to create or join a group. Dragging over a tab center previews
 grouping; edges retain insertion/reorder behavior. Drag the group separator to
 reorder the group or move it into another/new window. The group menu puts the
 color choices directly beneath Rename. Rename, color, collapse, ungroup, and
-close are available without dragging. Selecting a group collapses other custom
-groups; General retains its explicit collapsed state.
+close are available without dragging. Selecting a group collapses all other
+groups, including General.
 
 Persist group identity, name, color, order, collapsed state, last-used tab, tab
 membership/order, and all existing reading/window positions. Transfer the same

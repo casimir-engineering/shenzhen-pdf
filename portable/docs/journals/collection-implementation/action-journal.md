@@ -431,3 +431,10 @@ Persistence runs after authentication and again after initial capture, covering 
 Validation uses an injected in-memory Keychain adapter with the production credential backend and real encrypted PDF/core/store integration. It covers fresh-backend retrieval, updates, malformed entries, denied access, cleared-session reopening of original and archive, unchanged encrypted archive bytes, replaced-file isolation, and zero Keychain queries for ordinary PDFs or disabled/untracked documents. Existing password and companion suites pass. The native build and strict bundle signature checks pass. Tests do not access the user’s Keychain, so OS Keychain access-control behavior across signing-identity changes is not claimed as verified.
 
 The verified candidate is copied into `dist/ShenzhenPDF.app`, with the previous bundle preserved under `portable/build`. No app is launched or quit. This change adds no visual interface; the prior screenshots remain representative.
+
+
+### General follows group focus
+
+Removed General’s exemption from automatic collapse. Selecting a tab now expands its group and collapses all others, including General; returning to General expands it and collapses the custom groups. This uses the existing activation and persistence paths without additional launch work.
+
+The model regression starts with General expanded and fails against the old implementation. With the fix, model, integration and native strip interaction suites pass, including returning to General and existing group persistence coverage. The native candidate build, signature verification, source-size and whitespace checks pass. The verified bundle replaces `dist/ShenzhenPDF.app`; the previous bundle is preserved and no app is launched or quit.

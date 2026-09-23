@@ -133,7 +133,7 @@ void spdf_tab_groups_normalize(NSMutableArray<SPDFDocumentTab*>* tabs) {
 void spdf_tab_groups_activate(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* selected) {
     if (!selected.group) return;
     for (SPDFDocumentTab* tab in tabs)
-        if (!tab.group.general) tab.group.collapsed = tab.group != selected.group;
+        tab.group.collapsed = tab.group != selected.group;
     selected.group.collapsed = NO;
     selected.group.lastUsedPath = selected.path;
 }
