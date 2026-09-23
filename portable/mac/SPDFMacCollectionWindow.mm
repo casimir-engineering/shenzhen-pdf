@@ -3,6 +3,22 @@
 #import "SPDFMacCollectionStoreContextSearch.h"
 #import "SPDFMacCollectionWindowHistory.h"
 #import "SPDFMacCollectionManagerWindow.h"
+#import "SPDFMacCollectionStyle.h"
+
+static BOOL MatchesDocumentView(NSDictionary* doc, NSInteger view) {
+    if (view == 2) return !SPDFCollectionOriginalAvailable(doc);
+    if (view == 4) return [doc[@"excluded"] boolValue];
+    if (view == 3) {
+        for (NSDictionary* version in doc[@"versions"]) if ([version[@"keep"] boolValue]) return YES;
+        return NO;
+    }
+    return YES;
+}
+static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
+    for (NSDictionary* version in [doc[@"versions"] reverseObjectEnumerator])
+        if (SPDFCollectionVersionIsLatest(doc,version)) return version;
+    return @{};
+}
 @implementation SPDFMacCollectionWindow
 - (instancetype)initWithStore:(SPDFMacCollectionStore*)store open:(SPDFCollectionOpenHandler)open {
     NSWindow* window = [[SPDFCollectionManagerWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1100, 690)
@@ -36,42 +52,32 @@
     [self reload:nil]; [self showWindow:nil]; [self.window makeKeyAndOrderFront:nil];
 }
 - (void)reload:(id)sender {
-    if (sender == _search || sender == _scopePicker || sender == _viewPicker) {
+    if (sender == _search || sender == _viewPicker) {
         _documentID = nil; _restoreHistoryVersionID = nil;
     }
     [self persistManagerPreferences];
     NSDictionary* browseState = [self captureBrowseState];
-    BOOL allVersions = self.scopePicker.indexOfSelectedItem == 1;
     NSUInteger generation = ++_generation;
-    NSInteger view = _viewPicker.indexOfSelectedItem, sort = _sortPicker.indexOfSelectedItem;
+    NSInteger view = _viewPicker.selectedItem.tag, sort = _sortPicker.indexOfSelectedItem;
     NSString* query = [_search.stringValue copy]; NSString* selectedID = [_documentID copy];
     _storage.stringValue = @"Loading local history…";
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSArray* docs = [self.store documents]; NSMutableArray* rows = [NSMutableArray array];
-        for (NSDictionary* doc in docs) {
-            BOOL missing = !SPDFCollectionOriginalAvailable(doc);
-            if (view == 2 && !missing) continue;
-            if (view == 4 && ![doc[@"excluded"] boolValue]) continue;
-            NSArray* versions = doc[@"versions"] ?: @[];
-            if (view == 1 || view == 3) {
-                for (NSDictionary* version in versions) {
-                    if (view == 3 && ![version[@"keep"] boolValue]) continue;
-                    [rows addObject:@{@"document":doc, @"version":version}];
-                }
-            } else [rows addObject:@{@"document":doc, @"version":versions.lastObject ?: @{}}];
-        }
         if (query.length) {
-            [rows removeAllObjects];
-            for (NSDictionary* group in [self.store searchGroups:query allVersions:allVersions]) {
+            // Documents always searches and displays one current saved copy per document.
+            // Historical versions are available exclusively through that document's History.
+            for (NSDictionary* group in [self.store searchGroups:query allVersions:NO]) {
                 NSDictionary* doc = group[@"document"];
-                if (view == 2 && SPDFCollectionOriginalAvailable(doc)) continue;
-                if (view == 4 && ![doc[@"excluded"] boolValue]) continue;
+                if (!MatchesDocumentView(doc,view)) continue;
                 for (NSDictionary* result in group[@"versions"]) {
-                    if (view == 3 && ![result[@"version"][@"keep"] boolValue]) continue;
+                    if (!SPDFCollectionVersionIsLatest(doc,result[@"version"])) continue;
                     NSMutableDictionary* row = [result mutableCopy]; row[@"document"] = doc;
-                    [rows addObject:row];
+                    [rows addObject:row]; break;
                 }
             }
+        } else {
+            for (NSDictionary* doc in docs) if (MatchesDocumentView(doc,view))
+                [rows addObject:@{@"document":doc,@"version":LatestSavedVersion(doc)}];
         }
         [rows sortUsingComparator:^NSComparisonResult(NSDictionary* a, NSDictionary* b) {
             if (sort == 2) return [a[@"document"][@"title"] localizedStandardCompare:b[@"document"][@"title"]];
@@ -90,7 +96,7 @@
             [self reloadGrid];
             [self restoreBrowseSelectionAndScroll:browseState];
             self.reloadingResults = NO;
-            self.resultSummary.stringValue = [NSString stringWithFormat:@"%lu %@",(unsigned long)rows.count,query.length ? (rows.count==1 ? @"matching saved copy" : @"matching saved copies") : (rows.count==1 ? @"item" : @"items")];
+            self.resultSummary.stringValue = [NSString stringWithFormat:@"%lu %@",(unsigned long)rows.count,query.length ? (rows.count==1 ? @"matching document" : @"matching documents") : (rows.count==1 ? @"document" : @"documents")];
             self.locationField.stringValue = self.store.rootURL.path;
             [self updateStoragePolicy];
             self.enabled.state = self.store.isEnabled ? NSControlStateValueOn : NSControlStateValueOff;

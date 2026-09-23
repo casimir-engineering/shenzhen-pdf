@@ -121,8 +121,7 @@
 - (void)deleteSelected:(id)sender {
     (void)sender;
     NSArray* rows = [self selectedRowsSnapshot]; if (!rows.count) return;
-    BOOL versionsOnly = [self.destination isEqual:@"History"] || self.search.stringValue.length ||
-        self.viewPicker.indexOfSelectedItem == 1 || self.viewPicker.indexOfSelectedItem == 3;
+    BOOL versionsOnly = [self.destination isEqual:@"History"];
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = versionsOnly ? @"Delete selected versions permanently?" : @"Delete all history for selected documents?";
     alert.informativeText = [NSString stringWithFormat:@"%lu selected %@, including any kept versions. This cannot be undone. Original documents are kept. Exclude separately to prevent future capture.",
