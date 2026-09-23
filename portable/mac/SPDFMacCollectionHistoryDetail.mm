@@ -232,18 +232,25 @@ static NSTextField* Label(NSString* text, CGFloat size) {
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)table { (void)table; return _versions.count; }
 - (NSView*)tableView:(NSTableView*)table viewForTableColumn:(NSTableColumn*)column row:(NSInteger)row {
     (void)table;(void)column; NSDictionary* v = _versions[(NSUInteger)row];
-    NSString* text = [NSString stringWithFormat:@"%@\n%@%@ · %@\n%@",CaptureDate(v),row==0?@"Latest copy":@"Earlier version",
-        [v[@"keep"] boolValue]?@" · Kept":@"",[NSByteCountFormatter stringFromByteCount:[v[@"size"] longLongValue]
-            countStyle:NSByteCountFormatterCountStyleFile],v[@"reason"]?:@"Saved version"];
-    NSView* cell=[NSView new];
-    NSTextField* label = Label(text,12); label.accessibilityLabel = text;
-    label.translatesAutoresizingMaskIntoConstraints=NO; [cell addSubview:label];
-    NSMutableAttributedString* caption=[[NSMutableAttributedString alloc] initWithString:text];
-    [caption addAttribute:NSFontAttributeName value:[NSFont systemFontOfSize:12 weight:NSFontWeightSemibold]
-        range:NSMakeRange(0,CaptureDate(v).length)]; label.attributedStringValue=caption;
-    [NSLayoutConstraint activateConstraints:@[[label.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:10],
-        [label.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-10],
-        [label.topAnchor constraintEqualToAnchor:cell.topAnchor constant:10]]];
+    BOOL latest = SPDFCollectionVersionIsLatest(_document,v);
+    NSTextField* date = Label(CaptureDate(v),12); date.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
+    NSString* size = [NSByteCountFormatter stringFromByteCount:[v[@"size"] longLongValue]
+        countStyle:NSByteCountFormatterCountStyleFile];
+    NSString* status = [NSString stringWithFormat:@"%@%@",[v[@"keep"] boolValue] ? @"Kept · " : @"",size];
+    NSStackView* metadata = [NSStackView stackViewWithViews:latest ? @[SPDFCollectionLatestBadge(),Label(status,12)] :
+        @[Label([@"Earlier version · " stringByAppendingString:status],12)]];
+    metadata.spacing = 6; metadata.alignment = NSLayoutAttributeCenterY;
+    NSTextField* reason = Label(v[@"reason"] ?: @"Saved version",12);
+    reason.maximumNumberOfLines = 1; reason.lineBreakMode = NSLineBreakByTruncatingTail; reason.toolTip = reason.stringValue;
+    NSStackView* content = [NSStackView stackViewWithViews:@[date,metadata,reason]];
+    content.orientation = NSUserInterfaceLayoutOrientationVertical; content.alignment = NSLayoutAttributeLeading;
+    content.spacing = 3; content.translatesAutoresizingMaskIntoConstraints = NO;
+    NSView* cell = [NSView new]; [cell addSubview:content];
+    [NSLayoutConstraint activateConstraints:@[[content.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:10],
+        [content.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-10],
+        [content.topAnchor constraintEqualToAnchor:cell.topAnchor constant:8],
+        [date.widthAnchor constraintEqualToAnchor:content.widthAnchor],
+        [reason.widthAnchor constraintEqualToAnchor:content.widthAnchor]]];
     return cell;
 }
 - (void)tableViewSelectionDidChange:(NSNotification*)notification {
