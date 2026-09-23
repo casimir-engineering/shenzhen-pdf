@@ -29,6 +29,7 @@
 @property(nonatomic) NSTextField* details;
 @property(nonatomic) NSTextField* storage;
 @property(nonatomic) NSTextField* storagePolicy;
+@property(nonatomic) NSTextField* settingsStatus;
 @property(nonatomic) NSButton* enabled;
 @property(nonatomic) NSTextField* limitField;
 @property(nonatomic) NSPopUpButton* limitPicker;

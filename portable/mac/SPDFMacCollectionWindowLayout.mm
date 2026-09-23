@@ -41,6 +41,7 @@ static void Fill(NSView* child, NSView* parent) {
     self.settingsButton = SPDFCollectionButton(@"Settings",self,@selector(navigate:),@"nav");
     self.documentsButton.image = [NSImage imageWithSystemSymbolName:@"doc.on.doc" accessibilityDescription:nil];
     self.settingsButton.image = [NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:nil];
+    self.documentsButton.accessibilityLabel = @"Documents"; self.settingsButton.accessibilityLabel = @"Settings";
     for (NSButton* button in @[self.documentsButton,self.settingsButton]) {
         button.buttonType = NSButtonTypePushOnPushOff; [navigation addArrangedSubview:button];
         [button.widthAnchor constraintEqualToAnchor:navigation.widthAnchor].active = YES;

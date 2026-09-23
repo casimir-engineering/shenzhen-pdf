@@ -90,6 +90,38 @@ NSColor* SPDFCollectionColor(NSString* token) {
     if (self.window.firstResponder == self) { [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState]; }
 }
 @end
+@interface SPDFCollectionSearchCell : NSSearchFieldCell
+@property(nonatomic) BOOL editingRectPrepared;
+@end
+@implementation SPDFCollectionSearchCell
+// Borderless search chrome needs the same inset for static text and the AppKit field editor.
+// The inherited editing methods otherwise use the entire 31-point control bounds.
+- (void)selectWithFrame:(NSRect)frame inView:(NSView*)view editor:(NSText*)editor delegate:(id)delegate
+                  start:(NSInteger)start length:(NSInteger)length {
+    BOOL prepared = self.editingRectPrepared; self.editingRectPrepared = YES;
+    [super selectWithFrame:prepared ? frame : [self searchTextRectForBounds:frame] inView:view
+        editor:editor delegate:delegate start:start length:length];
+    self.editingRectPrepared = prepared;
+}
+- (void)editWithFrame:(NSRect)frame inView:(NSView*)view editor:(NSText*)editor delegate:(id)delegate event:(NSEvent*)event {
+    BOOL prepared = self.editingRectPrepared; self.editingRectPrepared = YES;
+    [super editWithFrame:prepared ? frame : [self searchTextRectForBounds:frame] inView:view
+        editor:editor delegate:delegate event:event];
+    self.editingRectPrepared = prepared;
+}
+- (NSRect)searchTextRectForBounds:(NSRect)bounds {
+    CGFloat height = ceil((self.font ?: [NSFont systemFontOfSize:13]).ascender - (self.font ?: [NSFont systemFontOfSize:13]).descender + 2);
+    return NSMakeRect(NSMinX(bounds)+29,floor(NSMidY(bounds)-height/2),MAX(0,NSWidth(bounds)-54),height);
+}
+- (NSRect)drawingRectForBounds:(NSRect)bounds { return [self searchTextRectForBounds:bounds]; }
+- (NSRect)titleRectForBounds:(NSRect)bounds { return [self searchTextRectForBounds:bounds]; }
+- (NSRect)searchButtonRectForBounds:(NSRect)bounds {
+    return NSMakeRect(NSMinX(bounds)+9,floor(NSMidY(bounds)-7.5),15,15);
+}
+- (NSRect)cancelButtonRectForBounds:(NSRect)bounds {
+    return NSMakeRect(NSMaxX(bounds)-24,floor(NSMidY(bounds)-7.5),15,15);
+}
+@end
 @interface SPDFCollectionFlatSearch : NSSearchField
 @end
 @implementation SPDFCollectionFlatSearch
@@ -111,7 +143,9 @@ NSPopUpButton* SPDFCollectionPopUp(void) {
     button.font = [NSFont systemFontOfSize:13]; [button.heightAnchor constraintEqualToConstant:26].active = YES; return button;
 }
 NSSearchField* SPDFCollectionSearchField(void) {
-    SPDFCollectionFlatSearch* field = [SPDFCollectionFlatSearch new]; field.bordered = NO; field.bezeled = NO;
+    SPDFCollectionFlatSearch* field = [SPDFCollectionFlatSearch new];
+    field.cell = [[SPDFCollectionSearchCell alloc] initTextCell:@""]; field.bordered = NO; field.bezeled = NO;
+    field.editable = YES; field.selectable = YES; field.cell.usesSingleLineMode = YES; field.cell.scrollable = YES;
     field.drawsBackground = NO; field.font = [NSFont systemFontOfSize:13]; field.textColor = SPDFCollectionColor(@"text"); return field;
 }
 NSTextField* SPDFCollectionText(NSString* text,CGFloat size,NSFontWeight weight,BOOL secondary) {
