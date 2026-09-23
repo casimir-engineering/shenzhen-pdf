@@ -9,6 +9,8 @@ paper-size: A4
 
 ## Implemented behavior
 
+**Current Collection rule:** Documents and search show each document once using its latest saved copy. Older versions and the Latest pill belong only in History. This supersedes the earlier all-version browser and badge placements documented below.
+
 Keep local, immutable copies and history while continuing to read original documents. Search open documents, groups and Collection from one palette; recover missing originals; compare PDF and Markdown revisions in two coordinated readers.
 
 The approved proposal is [Reader review and Collection](../../proposals/reader-review-and-collections.md). The latest visual correction is uniform title text on every tab: selection is communicated by fill, outline and weight, without fading other document names.
@@ -327,3 +329,22 @@ The critic then used the fresh isolated Latest Review app: list and thumbnail ba
 ![Latest remains attached to the current revision while an older one is selected](assets/control-review-latest-history-older-selected.jpg)
 
 ![Thumbnail badges identify current saved versions even with oldest-first sorting](assets/control-review-latest-grid-oldest-first.jpg)
+
+
+### Correcting Documents versus History
+
+The user clarified that Collection's document browser should never contain separate rows for historical versions. The previous implementation and critic acceptance had misunderstood that product boundary: a Versions filter and all-version search exposed history in Documents, then pills distinguished the resulting duplicates. That was not the requested behavior.
+
+Documents now lists one canonical latest saved copy per document, in both list and thumbnail layouts. Its search reads only those latest copies. The Versions filter and all-version search selector are removed, and saved legacy preferences migrate to All Documents/latest-only search. Kept filtering selects documents with any protected historical version but still displays their latest copy. History retains all previous versions and is the only place with a Latest pill. Document-level deletion continues to confirm deletion of whole histories; individual-version deletion remains in History.
+
+Native regression tests use two actual revisions of one document to prove migration, one-row browsing, old-only query exclusion, latest-text search, older-version Keep protection and badge absence outside History. All **24 native UI suites**, the native app build and the source-size ratchet passed after the correction.
+
+
+The critic verified the corrected behavior in a fresh isolated Documents Review app seeded with the old Versions/all-history preferences. It opened three latest-only document rows. Kept showed the current Garden notes copy even though its earlier revision supplied the protection. Searching Kept for the old-only “east” returned no result; “south” returned the latest revision on page 2. Thumbnail browsing also showed each document once without a pill.
+
+![Corrected Collection: one latest saved copy per document](assets/control-review-documents-latest-only.jpg)
+
+![A protected history still displays its current document copy](assets/control-review-documents-kept-latest.jpg)
+
+
+History was checked separately: both Garden revisions remain available, with the old kept copy showing three plants/east and the newer copy seven plants/south. Only the newer History row has the Latest pill, and selecting the older revision does not move it. Escape restores the latest-only Documents context. The corrected Collection view is left visible in the isolated app.
