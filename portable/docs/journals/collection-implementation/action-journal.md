@@ -5,7 +5,7 @@ paper-size: A4
 
 23 September 2026 · ShenzhenPDF
 
-**Earlier prepared baseline: 26.9.23-1. Technical 9.1/10 · UX 9.0/10.** Those scores and the 53-target sweep cover the earlier implementation. The native Collection redesign below is undergoing its own tests and independent reviews.
+**Native Collection redesign: technical 9.2/10 · UX 9.2/10.** Independent native reviews have no remaining major or medium findings in their stated scopes. The final section records the implemented mockup, corrections and release validation. Earlier scores and the 53-target sweep below describe the previous baseline.
 
 ## Implemented behavior
 
@@ -267,3 +267,24 @@ The second live UX round confirmed the new visual direction, Cmd+F, Escape, high
 The custom search control also needed its own field-editor geometry, not only painted geometry. Its focused editor now reserves the same icon space and vertical alignment as its unfocused text. Tests use the actual AppKit field editor. Sidebar accessibility names are explicit, and a proposed finite limit immediately explains its pending cleanup policy while showing the currently applied limit. Draft settings do not write to storage.
 
 The third technical review scores storage, accounting, search and History lifecycle **9.2/10**, with no major or medium findings in that scope. The updated native app and focused manager/History suites pass; the final live visual review is separate.
+
+
+### Final native visual acceptance
+
+The third hands-on UX review reached **9.2/10**, matching the independent technical review. The native browser now follows the approved mockup: Documents and Settings in a quiet sidebar, full-width contextual results, actual page thumbnails, compact flat controls, and secondary actions collected in More. The ten-button options tower is gone. History places version identity, read-only preview and protection together; Settings separates Collection, Storage and Location.
+
+![Final native Documents browser](assets/native-final-documents-dark.jpg)
+
+![Final native contextual search](assets/native-final-search-dark.jpg)
+
+![Final native History in the reviewed application](assets/native-final-history-dark.jpg)
+
+![Final native Settings with unlimited storage](assets/native-final-settings-dark.jpg)
+
+![A proposed finite limit explains cleanup without changing the applied limit](assets/native-final-pending-limit-dark.jpg)
+
+The two minor residuals were corrected after the live review: one result now uses singular wording, and the History table is constrained to its scroll viewport so the selected row retains both rounded corners even with a permanent scrollbar. The new geometry regression failed before the fix and passed afterward. This final image is a headless rendering of the actual History view and generated PDF fixture, not a mockup.
+
+![Corrected History row corners and actual read-only PDF preview](assets/history-rounded-headless.png)
+
+The [technical round-three report](native-technical-review-round-3.md) and [UX round-three report](native-ux-review-round-3.md) give evidence and coverage limits. Live review used generated files, a separate bundle identifier and isolated state. The installed app and personal Collection were untouched. Live light appearance, completed relocation/export and destructive cleanup were not exercised; automated store tests cover cleanup and protected-cap refusal.
