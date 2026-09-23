@@ -39,9 +39,13 @@ static NSString* DateLabel(NSDictionary* version) {
     NSButton* more = SPDFCollectionButton(@"…",self,@selector(showDocumentMenu:),@"quiet"); more.tag = index;
     more.accessibilityLabel = [@"More actions for " stringByAppendingString:doc[@"title"] ?: @"document"];
     more.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:more];
-    NSString* latest = [version[@"id"] isEqual:doc[@"latestVersionID"]] || [row[@"latest"] boolValue] ? @"Latest saved copy" : @"Older saved version";
-    NSTextField* meta = SPDFCollectionText([NSString stringWithFormat:@"%@ · %@%@",latest,DateLabel(version),
+    BOOL isLatest = SPDFCollectionVersionIsLatest(doc,version);
+    NSString* identity = isLatest ? @"" : @"Older saved version · ";
+    NSTextField* metadata = SPDFCollectionText([NSString stringWithFormat:@"%@%@%@",identity,DateLabel(version),
         [version[@"keep"] boolValue] ? @" · Kept" : @""],12,NSFontWeightRegular,YES);
+    NSArray* metadataViews = isLatest ? @[SPDFCollectionLatestBadge(),metadata] : @[metadata];
+    NSStackView* meta = [NSStackView stackViewWithViews:metadataViews]; meta.spacing = 8;
+    meta.alignment = NSLayoutAttributeCenterY;
     meta.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:meta];
     NSImageView* image = [NSImageView new]; image.translatesAutoresizingMaskIntoConstraints = NO;
     image.imageScaling = NSImageScaleProportionallyUpOrDown;
@@ -106,7 +110,7 @@ static NSString* DateLabel(NSDictionary* version) {
         [history.trailingAnchor constraintEqualToAnchor:more.leadingAnchor constant:-6],[history.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
         [more.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-20],[more.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
         [meta.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[meta.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:4],
-        [meta.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-20],
+        [meta.trailingAnchor constraintLessThanOrEqualToAnchor:cell.trailingAnchor constant:-20],
         [image.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[image.topAnchor constraintEqualToAnchor:meta.bottomAnchor constant:10],
         [image.widthAnchor constraintEqualToConstant:84],[image.heightAnchor constraintEqualToConstant:110],
         [text.leadingAnchor constraintEqualToAnchor:image.trailingAnchor constant:16],[text.topAnchor constraintEqualToAnchor:image.topAnchor],

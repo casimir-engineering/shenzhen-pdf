@@ -6,6 +6,7 @@
 
 @interface SPDFCollectionThumbnailItem : NSCollectionViewItem
 @property(nonatomic) NSButton* historyButton;
+@property(nonatomic) NSView* latestBadge;
 @end
 @interface SPDFCollectionThumbnailGrid : NSCollectionView
 @end
@@ -74,6 +75,8 @@
     [self.view addSubview:caption];
     self.historyButton = SPDFCollectionButton(@"History",nil,nil,@"normal");
     self.historyButton.frame = NSMakeRect(108,58,64,24); [self.view addSubview:self.historyButton];
+    self.latestBadge = SPDFCollectionLatestBadge(); self.latestBadge.frame = NSMakeRect(9,60,49,20);
+    [self.view addSubview:self.latestBadge];
     self.textField = caption; // NSCollectionViewItem outlets are weak; the view owns it first.
     [NSLayoutConstraint activateConstraints:@[
         [caption.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:9],
@@ -140,6 +143,8 @@
     item.representedObject = key;
     item.historyButton.target = self; item.historyButton.action = @selector(historyForRow:);
     item.historyButton.tag = indexPath.item;
+    BOOL isLatest = SPDFCollectionVersionIsLatest(doc,version);
+    item.latestBadge.hidden = !isLatest;
     NSString* date = version[@"capturedAt"] ? [NSDateFormatter localizedStringFromDate:
         [NSDate dateWithTimeIntervalSince1970:[version[@"capturedAt"] doubleValue]]
         dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle] : @"No protected copy";
@@ -150,7 +155,7 @@
     item.textField.stringValue = caption;
     item.view.toolTip = doc[@"path"];
     SPDFCollectionThumbnailView* itemView = (id)item.view;
-    itemView.caption = caption;
+    itemView.caption = isLatest ? [caption stringByAppendingString:@" · Latest saved version"] : caption;
     itemView.accessibilityHelp = doc[@"path"];
     item.imageView.image = [self.thumbnailCache objectForKey:key] ?: [NSImage imageWithSystemSymbolName:
         [version[@"encrypted"] boolValue] ? @"lock.doc" : @"doc" accessibilityDescription:@"Document preview"];
