@@ -29,6 +29,11 @@ static void CheckHistoryBounds(NSView* view, NSView* host) {
     }
     for (NSView* child in view.subviews) CheckHistoryBounds(child,host);
 }
+static NSUInteger LatestBadges(NSView* view) {
+    NSUInteger count = [view.identifier isEqual:@"CollectionLatestBadge"] && !view.hidden ? 1 : 0;
+    for (NSView* child in view.subviews) count += LatestBadges(child);
+    return count;
+}
 static NSData* TwoPages(void) {
     NSMutableData* data=[NSMutableData data];
     CGDataConsumerRef consumer=CGDataConsumerCreateWithCFData((__bridge CFMutableDataRef)data);
@@ -159,6 +164,10 @@ int main(void) {
                 [text containsString:@"two flowers"] && ![text containsString:@"Older version"];
         }));
         [markdownHistory selectVersionID:firstID];
+        NSView* latestRow = [markdownHistory tableView:markdownHistory.table viewForTableColumn:markdownHistory.table.tableColumns.firstObject row:0];
+        NSView* olderRow = [markdownHistory tableView:markdownHistory.table viewForTableColumn:markdownHistory.table.tableColumns.firstObject row:1];
+        Expect(@"History keeps the Latest pill on the current version while viewing an older revision",
+            LatestBadges(latestRow)==1 && LatestBadges(olderRow)==0);
         Expect(@"selecting older Markdown replaces the actual preview",Await(^BOOL{
             NSString* text=markdownHistory.reader.document.string;
             return [markdownHistory.selectedVersion[@"id"] isEqual:firstID] &&

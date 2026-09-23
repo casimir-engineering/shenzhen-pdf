@@ -164,3 +164,37 @@ NSTextField* SPDFCollectionText(NSString* text,CGFloat size,NSFontWeight weight,
 }
 NSView* SPDFCollectionSurface(NSString* token) { SPDFCollectionSurfaceView* view = [SPDFCollectionSurfaceView new]; view.token = token; return view; }
 NSView* SPDFCollectionDivider(void) { NSView* line = SPDFCollectionSurface(@"line"); [line.heightAnchor constraintEqualToConstant:1].active = YES; return line; }
+
+BOOL SPDFCollectionVersionIsLatest(NSDictionary* document, NSDictionary* version) {
+    NSString* latest = document[@"latestVersionID"] ?: [document[@"versions"] lastObject][@"id"];
+    return [version[@"id"] length] && [version[@"id"] isEqual:latest];
+}
+@interface SPDFCollectionLatestBadgeView : NSView
+@end
+@implementation SPDFCollectionLatestBadgeView
+- (instancetype)initWithFrame:(NSRect)frame {
+    if (!(self = [super initWithFrame:frame])) return nil;
+    self.identifier = @"CollectionLatestBadge";
+    NSTextField* title = SPDFCollectionText(@"Latest",11,NSFontWeightSemibold,NO);
+    title.textColor = SPDFCollectionColor(@"accent"); title.translatesAutoresizingMaskIntoConstraints = NO;
+    [self addSubview:title];
+    [NSLayoutConstraint activateConstraints:@[[title.centerXAnchor constraintEqualToAnchor:self.centerXAnchor],
+        [title.centerYAnchor constraintEqualToAnchor:self.centerYAnchor]]];
+    [self setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [self setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    return self;
+}
+- (NSSize)intrinsicContentSize { return NSMakeSize(49,20); }
+- (BOOL)isAccessibilityElement { return YES; }
+- (NSString*)accessibilityRole { return NSAccessibilityStaticTextRole; }
+- (NSString*)accessibilityLabel { return @"Latest saved version"; }
+- (NSArray*)accessibilityChildren { return @[]; }
+- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,.5,.5) xRadius:10 yRadius:10];
+    [SPDFCollectionColor(@"pane") setFill]; [shape fill];
+    [[SPDFCollectionColor(@"accent") colorWithAlphaComponent:.5] setStroke]; [shape stroke];
+}
+@end
+NSView* SPDFCollectionLatestBadge(void) { return [SPDFCollectionLatestBadgeView new]; }
