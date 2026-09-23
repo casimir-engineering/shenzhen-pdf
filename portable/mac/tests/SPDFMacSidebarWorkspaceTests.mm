@@ -16,10 +16,12 @@
 @interface WorkspaceProbe : ShenzhenMacDelegate
 @property NSInteger saves;
 @property NSInteger collectionPanelChecks;
+@property NSInteger snapshotCount;
 - (void)seed:(NSArray*)tabs;
 - (NSArray*)tabs;
 - (NSSegmentedControl*)navigation;
 - (CGFloat)sidebarWidth;
+- (void)preferSidebarVisible:(BOOL)visible;
 @end
 @implementation WorkspaceProbe
 - (void)seed:(NSArray*)tabs {
@@ -37,6 +39,8 @@
 - (NSArray*)tabs { return _tabs; }
 - (NSSegmentedControl*)navigation { return _sidebarModeControl; }
 - (CGFloat)sidebarWidth { return _sidebarWidth; }
+- (void)preferSidebarVisible:(BOOL)visible { _sidebarPreferredVisible=visible; }
+- (NSArray*)sidebarGroupSnapshots { self.snapshotCount++; return [super sidebarGroupSnapshots]; }
 - (SPDFDocumentTab*)selectedTab { return _selectedTabIndex >= 0 ? _tabs[_selectedTabIndex] : nil; }
 - (void)savePersistentState { self.saves++; }
 - (void)updateTabStrip {}
@@ -64,12 +68,44 @@ static NSDictionary* YAML(NSDictionary* value) {
     NSDictionary* result = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:decoded length:strlen(decoded)] options:0 error:nil];
     free(decoded); return result;
 }
-int main(void) {
+static void BenchmarkWorkspace(void) {
+    for (NSNumber* countValue in @[@20,@200,@1000]) {
+        NSUInteger count=countValue.unsignedIntegerValue;
+        NSMutableArray* tabs=[NSMutableArray array]; SPDFTabGroup* group=nil;
+        for (NSUInteger i=0;i<count;i++) {
+            if (i%10==0) group=[SPDFTabGroup groupWithColor:@"Blue"];
+            SPDFDocumentTab* tab=Tab([NSString stringWithFormat:@"benchmark-%lu.pdf",(unsigned long)i]);
+            tab.group=group; [tabs addObject:tab];
+        }
+        WorkspaceProbe* reader=[WorkspaceProbe new]; [reader seed:tabs];
+        reader.navigation.spdf_selectedSidebarMode=SPDFSidebarModeGroups;
+        [reader showSidebarWorkspacePanel];
+        for (NSUInteger phase=0;phase<4;phase++) {
+            if (phase==3) [reader preferSidebarVisible:NO];
+            CFAbsoluteTime start=CFAbsoluteTimeGetCurrent();
+            const NSUInteger repeats=250;
+            for (NSUInteger i=0;i<repeats;i++) { @autoreleasepool {
+                if (phase==0) (void)[reader sidebarGroupSnapshots];
+                else if (phase==1 || phase==3) [reader refreshSidebarWorkspacePanel];
+                else [reader showSidebarWorkspacePanel];
+            } }
+            printf("workspace_tabs=%lu %s_us=%.3f\n",(unsigned long)count,
+                phase==0 ? "snapshot" : phase==1 ? "unchanged_refresh" : phase==2 ? "unchanged_show" : "hidden_refresh",
+                (CFAbsoluteTimeGetCurrent()-start)*1e6/repeats);
+        }
+    }
+}
+int main(int argc, const char* argv[]) {
     @autoreleasepool {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        if (argc>1 && strcmp(argv[1],"--benchmark")==0) { BenchmarkWorkspace(); return 0; }
         WorkspaceProbe* reader = [WorkspaceProbe new]; [reader seed:@[Tab(@"Alpha.pdf"),Tab(@"Beta.md")]];
         Check(![reader showSidebarWorkspacePanel] && reader.collectionPanelChecks == 0,
             @"ordinary chapter sidebar starts no management or Collection work");
+        reader.navigation.spdf_selectedSidebarMode=SPDFSidebarModeGroups; [reader preferSidebarVisible:NO];
+        Check([reader showSidebarWorkspacePanel] && reader.snapshotCount==0 && reader.collectionPanelChecks==0,
+            @"restored hidden manager starts no snapshot or Collection work");
+        [reader preferSidebarVisible:YES]; reader.navigation.spdf_selectedSidebarMode=SPDFSidebarModeChapters;
         Check([reader sidebarGroupSnapshots].count == 1 && !((SPDFDocumentTab*)reader.tabs.firstObject).group,
             @"manager snapshot shows virtual General without mutating ordinary tabs");
         [reader performSidebarGroupAction:@"visibility" identifier:@"general" value:@""];
@@ -106,6 +142,11 @@ int main(void) {
             @"jump restores hidden group and selects its document");
         Check(reopened.navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups &&
             [reopened.sidebarWorkspaceSnapshot[@"visible"] boolValue],@"jump preserves manager navigation and visibility despite target tab preference");
+        [reopened preferSidebarVisible:NO]; NSInteger snapshots=reopened.snapshotCount;
+        [reopened refreshSidebarWorkspacePanel];
+        Check(reopened.snapshotCount==snapshots,@"hidden sidebar refresh performs no group snapshot work");
+        [reopened preferSidebarVisible:YES]; [reopened showSidebarWorkspacePanel];
+        Check(reopened.snapshotCount==snapshots+1,@"revealing sidebar refreshes current group state");
         reopened.navigation.spdf_selectedSidebarMode = SPDFSidebarModeHistory; [reopened rememberSidebarWorkspaceMode];
         reopened.navigation.spdf_selectedSidebarMode = SPDFSidebarModeChapters; [reopened applySidebarWorkspaceState];
         Check(reopened.navigation.spdf_selectedSidebarMode == SPDFSidebarModeHistory,@"explicit new mode replaces prior sticky Groups state");

@@ -80,6 +80,9 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
     [self rememberSidebarWorkspaceMode]; [self rebuildSidebar];
 }
 - (void)refreshSidebarWorkspacePanel {
+    // The panel's own hidden flag tracks its mode, not its hidden ancestor.
+    // Defer snapshots until reveal when the whole sidebar is closed.
+    if (!_sidebarPreferredVisible) return;
     SPDFGroupManagementController* controller = objc_getAssociatedObject(self,&groupsControllerKey);
     if (controller && !controller.view.hidden)
         [controller updateGroups:[self sidebarGroupSnapshots] state:[self sidebarWorkspaceState]];
@@ -101,6 +104,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
     NSView* searchView = objc_getAssociatedObject(self,&emptySearchKey);
     controller.view.hidden = !groups; searchView.hidden = !emptySearch;
     if (!groups && !emptySearch) return NO;
+    if (!_sidebarPreferredVisible) { [self setSidebarActuallyVisible:NO]; return YES; }
     [self collectionShowSelectedHistoryPanel];
     _sidebarTable.enclosingScrollView.hidden = YES; _sidebarFilterField.hidden = YES;
     [_sidebarContainer viewWithTag:8801].hidden = YES;
