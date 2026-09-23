@@ -109,15 +109,20 @@ void spdf_tab_groups_normalize(NSMutableArray<SPDFDocumentTab*>* tabs) {
     if (!hasAny) return;
     if (!hasCustom && !retainGeneral) { for (SPDFDocumentTab* tab in tabs) tab.group = nil; return; }
     // Strip refreshes also happen while reading. Already canonical, contiguous
-    // groups need no buckets, arrays, or identity dictionaries on that path.
+    // groups need no rebuilding. Only multiple groups need an identifier set;
+    // scanning every preceding tab at each boundary makes refresh quadratic.
     BOOL needsNormalization = NO;
     SPDFTabGroup* previous = nil;
+    NSMutableSet<NSString*>* seen = nil;
     for (NSUInteger i = 0; i < tabs.count && !needsNormalization; ++i) {
         SPDFTabGroup* group = tabs[i].group;
         if (!group) { needsNormalization = YES; break; }
         if (group == previous) continue;
-        for (NSUInteger j = 0; j < i; ++j)
-            if ([tabs[j].group.identifier isEqualToString:group.identifier]) { needsNormalization = YES; break; }
+        if (previous) {
+            if (!seen) seen = [NSMutableSet setWithObject:previous.identifier];
+            if ([seen containsObject:group.identifier]) { needsNormalization = YES; break; }
+            [seen addObject:group.identifier];
+        }
         previous = group;
     }
     if (!needsNormalization) return;
