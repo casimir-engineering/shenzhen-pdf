@@ -48,3 +48,8 @@ Neither residual prevents finding a document, identifying its revision, navigati
 Round two already exercised actual export-sheet cancellation, all secondary menu actions' availability, protected-cap refusal, explicit cleanup review/cancellation and restoration of fixture Keep. It also confirmed the resize fix preserves the highlighted matching sentence in a shortened History viewport. Those flows were not needlessly repeated after the targeted changes.
 
 I inspected app menus for a local Collection appearance switch. They expose a reader theme switch, not a Collection UI appearance override; I did not change the Mac's global appearance. Live light-appearance review remains outside coverage. Live PDF History, completed comparison rendering, completed relocation/export, destructive cleanup, exhaustive keyboard traversal and a same-bundle quit/relaunch cycle also remain outside this review. Fresh-process persisted destination restoration and actual on-disk cap persistence were observed. The accepted **9.2 / 10** reflects the exercised native experience and stated limits, not exhaustive product validation.
+
+
+## Final candidate polish follow-up
+
+After the two minor fixes, the critic launched the separate V4 candidate and confirmed the earlier version and Page 2 restored in a fresh process. Both right selection corners render fully; a single Documents result reads **1 item**. Both minor residuals above are closed. This targeted live follow-up leaves the **9.2/10** acceptance unchanged. The final Documents and History images in the action journal reflect V4.

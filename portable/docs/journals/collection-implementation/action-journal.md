@@ -288,3 +288,12 @@ The two minor residuals were corrected after the live review: one result now use
 ![Corrected History row corners and actual read-only PDF preview](assets/history-rounded-headless.png)
 
 The [technical round-three report](native-technical-review-round-3.md) and [UX round-three report](native-ux-review-round-3.md) give evidence and coverage limits. Live review used generated files, a separate bundle identifier and isolated state. The installed app and personal Collection were untouched. Live light appearance, completed relocation/export and destructive cleanup were not exercised; automated store tests cover cleanup and protected-cap refusal.
+
+
+### Final validation and prepared release
+
+The final isolated candidate received a targeted live follow-up after the two polish fixes: the selected earlier version and page restored in a fresh process, both History selection corners are visible, and Documents reports “1 item.” The final Documents and History images above now show that candidate. The UX acceptance remains **9.2/10**.
+
+The complete release preparation exited **0** on 23 September 2026: **54 discovered test targets** passed, including all 23 native Markdown/UI integration suites and 56 release-workflow checks. The final native app build exited 0; the source-size ratchet passed for 1,034 maintained files and 35 exact caps. Release notes passed strict validation. Release **26.9.23-1** was prepared on `codex/collection-history-release` in commit `9234a1dbd`; no tag, push, signing for distribution, notarization or publication was performed.
+
+The journal is opened in the final isolated candidate using its separate generated-fixture state. The installed ShenzhenPDF application is unchanged.
