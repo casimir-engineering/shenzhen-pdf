@@ -312,3 +312,18 @@ Live validation in the isolated Controls candidate confirmed empty and populated
 ![Corrected icon alignment and rounded focus outline while editing](assets/controls-focused.png)
 
 ![The same search field after focus moves away](assets/controls-unfocused.png)
+
+
+### Additional UX loop and Latest version pills
+
+At the user's request, the UX critic performed another live review after the alignment/focus correction. Empty and populated search, Tab away and Cmd+F refocus, Settings numeric editing, History page editing, version selection, Escape back and secondary menus were exercised. The final scoped score is **9.1/10**, with no observed major or medium finding. The [review report](native-ux-control-review.md) states the remaining coverage boundaries: the host's Tab settings skip buttons, and native window resize automation failed in this round. Neither was represented as a pass.
+
+During that review the user requested a pill identifying the latest saved version for every document. A shared, noninteractive **Latest** capsule now appears in list/search metadata, thumbnail captions and History. Its accessible name is “Latest saved version.” The badge follows the document's canonical latest-version identifier, never the selected row, filter result order or sort order. Older versions retain their identity and cannot receive the badge merely because a search returns them first. The outline and fill remain distinct on selected rows.
+
+A manager agent implemented list/grid integration while the coordinator handled the shared badge and History. Regression checks cover older-first results, a stale row flag, legacy version identity, grid accessibility, no overlap, and keeping the badge on the current version while previewing an older revision. All **24 native UI suites**, the app build and the source-size ratchet passed after this change.
+
+The critic then used the fresh isolated Latest Review app: list and thumbnail badges were correct, reversing the sort preserved their identity, and History retained the Latest pill on the current version while an older version was selected. The same **9.1/10** acceptance includes this follow-up.
+
+![Latest remains attached to the current revision while an older one is selected](assets/control-review-latest-history-older-selected.jpg)
+
+![Thumbnail badges identify current saved versions even with oldest-first sorting](assets/control-review-latest-grid-oldest-first.jpg)
