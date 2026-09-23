@@ -26,7 +26,7 @@
 - (void)showCollectionHistory:(id)sender;
 - (void)showCollectionPreviousVersion:(id)sender;
 - (void)showCollectionRecovery:(id)sender;
-- (void)collectionPresentMissingPath:(NSString*)path;
+- (BOOL)collectionPresentMissingPath:(NSString*)path;
 - (void)collectionOpenPath:(NSString*)path archived:(BOOL)archived;
 - (BOOL)openCollectionPaletteResult:(NSDictionary*)result;
 @end

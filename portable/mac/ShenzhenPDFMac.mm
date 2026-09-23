@@ -6989,8 +6989,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // a stale path. A later reappearance is handled by the focus-time sweep.
     [self teardownActiveFileWatcher];
     [self savePersistentState];
-    [self collectionPresentMissingPath:path];
-    if (showOpenError) {
+    BOOL recoveryAvailable = [self collectionPresentMissingPath:path];
+    if (showOpenError && !recoveryAvailable) {
         [self showError:@"Could not open document"
                  detail:[NSString stringWithUTF8String:err && *err ? err : "Unknown error"]];
     }
