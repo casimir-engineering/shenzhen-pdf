@@ -40,6 +40,8 @@ The scope dropdown opens and dismisses with Escape. More exposes the existing se
 
 ### 3. Latest pills — passed in list, grid and History
 
+**Superseded by the product-intent correction below:** this records the V6 implementation tested at that time. Documents must show only each document's latest copy, with Latest pills confined to History.
+
 The new Latest pill is small, legible and visibly distinct from a button. Its outlined capsule fits beside capture metadata without competing with History. The native accessibility tree exposes static text named **Latest saved version**, rather than another actionable control.
 
 List browsing and content-search results badge the actual newest saved version; older revisions retain their Older label and no pill. In History the badge remains on the newest row when an older row is selected. It is legible both against the normal pane and the muted selected background. In the thumbnail grid it sits in the caption/action area outside the page image.
@@ -63,3 +65,25 @@ There are no new ranked defect findings from the states exercised in this loop. 
 - This pass reviewed dark appearance. Light appearance, exhaustive keyboard traversal and all unrelated storage/comparison behavior were not rerun.
 
 The focused control matrix and the actual Latest-badge checks justify **9.1 / 10** for this scoped follow-up. The lower, narrower score is deliberate: the earlier review missed user-visible detail, and the coverage limits above remain explicit. The observed alignment, focus shape and badge behavior meet the current requested corrections.
+
+## Addendum — Documents semantics corrected and retested
+
+The user clarified that Documents means **one entry per document, showing its latest saved copy**. Multiple versions and Latest pills belong only in History. My V6 acceptance above did not establish the correct product semantics and is superseded by this bounded V7 retest.
+
+I reviewed the actual isolated `ShenzhenPDF Documents Review.app` (bundle suffix `v7`, `state-v7`), whose cloned state was deliberately seeded with the legacy Versions view and all-versions search preference. It opened All Documents with exactly three documents, each represented once by its latest capture. The Versions filter and search-scope selector were absent. List and thumbnail layouts contained no Latest pills.
+
+![Migrated Documents view shows one latest entry per document](assets/control-review-documents-latest-only.jpg)
+
+![Thumbnail view also shows exactly three latest document copies](assets/control-review-documents-latest-grid.jpg)
+
+Kept showed Garden notes at **13:44**, its latest unkept copy, because the earlier **13:42** version is kept. Searching this isolated Kept result for **east**, which occurs only in its earlier saved text, returned zero matches. Searching **south** returned one Garden result with the latest version's page 2 context and thumbnail. Its accessible preview ID matched latest version `8C8EFDC0-F3B9-4A0F-A4B2-D2EFB8844925`.
+
+![Kept includes the document while showing its latest capture](assets/control-review-documents-kept-latest.jpg)
+
+![Search uses the latest saved text and contextual page preview](assets/control-review-documents-latest-search.jpg)
+
+History still contained both saved versions. The newest preview read “seven plants” and “south”; selecting the older kept version read “three plants” and “east”. Latest remained a static capsule on the newest History row when the earlier row was selected. Escape returned to Documents with its prior presentation and selection.
+
+![Only History displays the Latest pill, on the actual newest version](assets/control-review-history-only-latest.jpg)
+
+**Result: passed, with no new defect finding in this bounded retest.** No new broad score is assigned. The isolated app was left on All Documents, List, with an empty query. No regular app was operated or quit, and no saved version or Keep state was changed.
