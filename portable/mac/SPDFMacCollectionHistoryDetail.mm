@@ -111,8 +111,10 @@ static NSTextField* Label(NSString* text, CGFloat size) {
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"version"];
     column.width = 205; column.minWidth=0; column.resizingMask=NSTableColumnAutoresizingMask;
     [_table addTableColumn:column];
-    NSScrollView* versions = [NSScrollView new]; versions.hasVerticalScroller = YES; versions.drawsBackground=NO;
+    NSScrollView* versions = [NSScrollView new]; versions.hasVerticalScroller = YES; versions.autohidesScrollers=YES; versions.drawsBackground=NO;
     versions.documentView = _table; [versions.widthAnchor constraintEqualToConstant:225].active = YES;
+    _table.translatesAutoresizingMaskIntoConstraints=NO;
+    [_table.widthAnchor constraintEqualToAnchor:versions.contentView.widthAnchor].active=YES;
     _identity = Label(@"",12); _identity.textColor=SPDFCollectionColor(@"secondary");
     _keepButton = [NSButton checkboxWithTitle:@"Keep this version" target:self action:@selector(changeKeep:)];
     _protection = Label(@"",12); _protection.textColor = SPDFCollectionColor(@"secondary");
