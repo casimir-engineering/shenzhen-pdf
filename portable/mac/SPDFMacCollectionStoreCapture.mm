@@ -12,28 +12,38 @@ static NSString* BytesHash(NSData* bytes) {
     for (int i=0;i<CC_SHA256_DIGEST_LENGTH;++i) [hash appendFormat:@"%02x",digest[i]];
     return hash;
 }
-static BOOL DefinitivelyMissing(NSString* path) {
+static BOOL OriginalIsProvablyLost(NSDictionary* document) {
+    NSString* path=document[@"path"];
     if (!path.length) return NO;
     struct stat info = {};
     // Permission failures and existing symlinks must not be mistaken for a lost original.
-    if (lstat(path.fileSystemRepresentation,&info)==0) return NO;
-    return errno==ENOENT || errno==ENOTDIR;
+    if (lstat(path.fileSystemRepresentation,&info)!=0) return errno==ENOENT || errno==ENOTDIR;
+    // A replaced original can be lost while an unrelated file occupies its old
+    // address. Require both explicit provenance and a different regular-file identity.
+    if (!S_ISREG(info.st_mode) || (![document[@"sourceReplaced"] boolValue] &&
+                                  ![document[@"originalUnavailable"] boolValue])) return NO;
+    NSString* identity=[NSString stringWithFormat:@"%llu:%llu",(unsigned long long)info.st_dev,
+                        (unsigned long long)info.st_ino];
+    return [document[@"fileIdentity"] length] && ![document[@"fileIdentity"] isEqual:identity];
 }
-static NSMutableDictionary* UniqueLostHistory(NSDictionary* rows, NSString* hash) {
+static NSMutableDictionary* UniqueLostHistory(NSDictionary* rows, NSString* hash, NSString* openedPath) {
     NSMutableDictionary* match=nil;
     for (NSMutableDictionary* row in rows.allValues) {
+        // Replacing a file at the same path without continuity remains a new
+        // history; content-based relocation applies only to a different path.
+        if ([row[@"path"] isEqual:openedPath]) continue;
         BOOL known=NO;
         for (NSDictionary* version in row[@"versions"])
             if ([version[@"hash"] isEqual:hash]) { known=YES; break; }
-        if (!known || !DefinitivelyMissing(row[@"path"])) continue;
+        if (!known || !OriginalIsProvablyLost(row)) continue;
         // Equal bytes cannot establish which of two lost documents was opened.
         if (match) return nil;
         match=row;
     }
     return [match[@"excluded"] boolValue] ? nil : match;
 }
-static BOOL RelinkSourceStillMissing(NSString* path, NSError** error) {
-    if (!path || DefinitivelyMissing(path)) return YES;
+static BOOL RelinkSourceStillLost(NSDictionary* document, NSError** error) {
+    if (!document || OriginalIsProvablyLost(document)) return YES;
     if (error) *error=SPDFCollectionError(5,@"The original reappeared while linking its history. Retrying the opened document.");
     return NO;
 }
@@ -104,12 +114,12 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
     }
     if ([doc[@"excluded"] boolValue]) return nil;
     NSString* hash = BytesHash(bytes);
-    NSString* relinkedSource=nil;
+    NSDictionary* relinkedSource=nil;
     if (!doc) {
         // The normal capture already read stable bytes on its background worker.
         // Reuse history only when those bytes identify exactly one lost source.
-        doc=UniqueLostHistory(rows,hash);
-        relinkedSource=doc[@"path"];
+        doc=UniqueLostHistory(rows,hash,path);
+        relinkedSource=[doc copy];
     }
     NSDictionary* dependencies = SPDFCollectionAssets(path,bytes);
     NSDictionary* capturedSource=SPDFCollectionFingerprintFromStat(&after);
@@ -130,7 +140,7 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
             if (![SPDFCollectionHashURL([self blobURL:asset[@"hash"]],error) isEqual:asset[@"hash"]]) {
                 if(error && !*error)*error=SPDFCollectionError(3,@"A retained asset failed its integrity check."); return nil;
             }
-        if (!RelinkSourceStillMissing(relinkedSource,error)) return nil;
+        if (!RelinkSourceStillLost(relinkedSource,error)) return nil;
         NSMutableArray* aliases=[doc[@"aliases"] mutableCopy] ?: [NSMutableArray array];
         if (doc[@"path"] && ![aliases containsObject:doc[@"path"]]) [aliases addObject:doc[@"path"]];
         if (![aliases containsObject:path]) [aliases addObject:path];
@@ -172,7 +182,7 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
             !SPDFCollectionAtomicData(indexBytes,indexURL,0400,error)) return nil;
         version[@"indexFile"]=indexFile;
     }
-    if (!RelinkSourceStillMissing(relinkedSource,error)) return nil;
+    if (!RelinkSourceStillLost(relinkedSource,error)) return nil;
     if (!doc) {
         doc = [@{@"id":NSUUID.UUID.UUIDString,@"path":path,@"aliases":[NSMutableArray array],
                  @"versions":[NSMutableArray array],@"excluded":@NO} mutableCopy]; rows[doc[@"id"]]=doc;

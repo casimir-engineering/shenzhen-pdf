@@ -62,11 +62,16 @@ static void CheckAutomaticRelink(void) {
     NSString* found=[sandbox stringByAppendingPathComponent:@"Found original.md"];
     Write(replaced,@"# Unique replaced original"); NSDictionary* replacedDoc=Capture(store,replaced,@"Opened");
     [files copyItemAtPath:replaced toPath:found error:nil];
-    Write(replaced,@"# Different document occupying the original path"); Capture(store,replaced,@"Opened");
-    [files removeItemAtPath:replaced error:nil]; NSDictionary* foundDoc=Capture(store,found,@"Opened");
+    Write(replaced,@"# Different document occupying the original path");
+    NSDictionary* occupying=Capture(store,replaced,@"Opened");
+    NSDictionary* foundDoc=Capture(store,found,@"Opened");
     Expect(@"found original restores replaced history without stale unavailable flags",
         [foundDoc[@"id"] isEqual:replacedDoc[@"id"]] && ![foundDoc[@"sourceReplaced"] boolValue] &&
         ![foundDoc[@"originalUnavailable"] boolValue] && [foundDoc[@"status"] isEqual:@"Protected"]);
+    Expect(@"relink leaves the unrelated occupant and its history untouched",
+        [[store documentForPath:replaced][@"id"] isEqual:occupying[@"id"]] &&
+        [[NSString stringWithContentsOfFile:replaced encoding:NSUTF8StringEncoding error:nil]
+            isEqual:@"# Different document occupying the original path"]);
 
     // Permission failures are not evidence that the original is gone.
     NSString* restricted=[sandbox stringByAppendingPathComponent:@"Restricted"];
