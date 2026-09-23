@@ -43,9 +43,8 @@ static char versionInfoKey, versionIndicatorKey, navigationGenerationKey;
         for (NSDictionary* candidate in document[@"versions"])
             if ([candidate[@"id"] isEqual:document[@"latestVersionID"]]) { version = candidate; break; }
     }
-    // History starts with the current original; search matches belong to the
-    // indexed, immutable saved version, whose page coordinates are authoritative.
-    BOOL original = history && SPDFCollectionOriginalAvailable(document);
+    // Latest is always the live document. Earlier indexed matches retain their immutable copy.
+    BOOL original = (history || SPDFCollectionVersionIsLatest(document,version)) && SPDFCollectionOriginalAvailable(document);
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         NSError* error = nil;
         NSURL* URL = original ? [NSURL fileURLWithPath:document[@"path"]] :

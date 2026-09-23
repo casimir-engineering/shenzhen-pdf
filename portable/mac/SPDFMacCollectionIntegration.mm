@@ -105,7 +105,6 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
             [self collectionRecordUserOpenForPath:source document:[store documentForPath:source]];
             return;
         }
-        if ([self->_path isEqual:source]) self->_statusLabel.stringValue = @"Collection: saving local copy…";
         NSUInteger userOpenCount = [self collectionConsumeUserOpenForPath:source];
         [store capturePath:source reason:continuingID ? @"Observed save" : @"Opened"
             continuingDocumentID:continuingID userOpenCount:userOpenCount
@@ -119,7 +118,6 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
                 if (![self->_path isEqual:source]) return;
                 [self collectionRefreshHistory];
                 if (error) self->_statusLabel.stringValue = [NSString stringWithFormat:@"Collection: copy failed — %@", error.localizedDescription];
-                else if (doc) self->_statusLabel.stringValue = @"Collection: protected local copy · Version History in the tab menu";
             });
         }];
         if (!objc_getAssociatedObject(self, &kCollectionImported)) {
@@ -211,44 +209,15 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
         _statusLabel.stringValue = @"Read-only Collection copy · the original document is unchanged";
     }
 }
-- (void)collectionPresentMissingPath:(NSString*)path {
-    if ([objc_getAssociatedObject(self, &kCollectionRecoveryPath) isEqual:path]) return;
-    if (![[SPDFMacCollectionStore defaultStore] documentForPath:path]) return;
+- (BOOL)collectionPresentMissingPath:(NSString*)path {
+    if (![[SPDFMacCollectionStore defaultStore] documentForPath:path]) return NO;
+    if ([objc_getAssociatedObject(self, &kCollectionRecoveryPath) isEqual:path]) return YES;
     objc_setAssociatedObject(self, &kCollectionRecoveryPath, path, OBJC_ASSOCIATION_COPY_NONATOMIC);
-    dispatch_async(dispatch_get_main_queue(), ^{ if ([self->_path isEqual:path]) [self showCollectionRecovery:nil]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ if ([self->_path isEqual:path]) [self showCollectionHistory:nil]; });
+    return YES;
 }
 - (void)showCollectionRecovery:(id)sender {
-    NSString* path = [self collectionPathForSender:sender];
-    SPDFMacCollectionStore* store = [SPDFMacCollectionStore defaultStore];
-    NSDictionary* doc = [store documentForPath:path] ?: [store archiveInfoForPath:path][@"document"];
-    if (!doc) { [self showCollectionManager:nil]; return; }
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = SPDFCollectionOriginalAvailable(doc) ? @"Original document and protected history" : @"Original document unavailable";
-    NSDictionary* latest = [doc[@"versions"] lastObject];
-    NSString* date = latest[@"capturedAt"] ? [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:[latest[@"capturedAt"] doubleValue]]
-        dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle] : @"None — the first capture did not complete";
-    alert.informativeText = [NSString stringWithFormat:@"%@\n%@\n\nLatest protected copy: %@. Open it read-only, locate the original, or save a separate copy. The original tab is retained.", doc[@"title"], doc[@"path"], date];
-    [alert addButtonWithTitle:@"Open Archived Copy"].enabled = latest[@"id"] != nil; [alert addButtonWithTitle:@"Locate Original…"];
-    [alert addButtonWithTitle:@"Manage / Save a Copy…"]; [alert addButtonWithTitle:@"Retry Original"]; [alert addButtonWithTitle:@"Cancel"];
-    [alert beginSheetModalForWindow:_window completionHandler:^(NSModalResponse result) {
-        if (result == NSAlertFirstButtonReturn) {
-            NSError* error = nil;
-            NSURL* URL = [store materializeVersionID:doc[@"latestVersionID"] documentID:doc[@"id"] error:&error];
-            if (URL) [self collectionOpenPath:URL.path archived:YES]; else [self->_window presentError:error];
-        } else if (result == NSAlertSecondButtonReturn) {
-            SPDFMacLocateCollectionOriginal(store, doc[@"id"], self->_window, ^(NSString* previewPath) {
-                [self collectionOpenPath:previewPath archived:NO];
-            }, ^(NSString* newPath) {
-                NSInteger index = [self indexOfTabForPath:path];
-                if (index >= 0) {
-                    SPDFDocumentTab* tab = self->_tabs[(NSUInteger)index];
-                    tab.path = newPath; tab.title = newPath.lastPathComponent.stringByDeletingPathExtension;
-                    tab.missingFile = NO; tab.missingMessage = @"";
-                    [self selectTabAtIndex:index]; [self loadSelectedTab]; [self savePersistentState];
-                } else [self openPath:newPath];
-            });
-        } else if (result == NSAlertThirdButtonReturn) [self showCollectionManagerForDocumentID:doc[@"id"] query:nil];
-        else if (result == NSAlertThirdButtonReturn + 1) [self loadSelectedTab];
-    }];
+    // Missing sources remain readable through History, with inline recovery actions.
+    [self showCollectionHistory:sender];
 }
 @end

@@ -51,8 +51,21 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
         SPDFMacCollectionHistoryController* controller = [[SPDFMacCollectionHistoryController alloc]
             initWithStore:SPDFMacCollectionStore.defaultStore documentID:identifier open:^(NSString* path, BOOL archived) {
                 [weakSelf collectionOpenPath:path archived:archived];
-                if (archived && [[weakSelf selectedTab].path isEqual:path]) [weakSelf showCollectionHistory:nil];
+                if ([[weakSelf selectedTab].path isEqual:path]) [weakSelf showCollectionHistory:nil];
             }];
+        controller.restoreLinkHandler = ^(NSString* previousPath, NSString* restoredPath) {
+            ShenzhenMacDelegate* reader = weakSelf; if (!reader) return;
+            NSInteger index = [reader indexOfTabForPath:previousPath];
+            if (index >= 0) {
+                SPDFDocumentTab* tab = reader->_tabs[(NSUInteger)index];
+                tab.path = restoredPath; tab.title = restoredPath.lastPathComponent.stringByDeletingPathExtension;
+                tab.missingFile = NO; tab.missingMessage = @""; tab.readOnly = NO;
+                if (index == reader->_selectedTabIndex) [reader loadSelectedTab];
+                else [reader selectTabAtIndex:index];
+                [reader savePersistentState];
+            } else [reader collectionOpenPath:restoredPath archived:NO];
+            if ([[reader selectedTab].path isEqual:restoredPath]) [reader showCollectionHistory:nil];
+        };
         controller.manageHandler = ^(NSString* documentID) {
             [weakSelf showCollectionManagerForDocumentID:documentID query:@""];
         };

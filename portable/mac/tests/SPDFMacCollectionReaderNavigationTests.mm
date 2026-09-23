@@ -120,6 +120,10 @@ int main(void) {
         Expect([reader.result[@"page"] integerValue] == 2 && [reader.result[@"query"] isEqual:@"old"],
             "search preserves query and converts one-based page");
         Expect(reader.histories == 1,"search does not open History");
+        reader.result = nil; reader.opened = nil;
+        [reader collectionNavigateDocument:doc version:[doc[@"versions"] lastObject] page:2 query:@"new" history:NO];
+        Expect(Await(^BOOL { return reader.result != nil; }) && [reader.opened isEqual:path] && !reader.archived,
+            "latest Collection result opens editable original rather than collected copy");
         // Submit both intentions before dispatching either main-queue completion.
         // Every completion (including the superseded request) gets a chance to run.
         NSUInteger priorOpens = reader.opens;
