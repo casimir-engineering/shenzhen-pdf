@@ -12,6 +12,31 @@ static NSString* BytesHash(NSData* bytes) {
     for (int i=0;i<CC_SHA256_DIGEST_LENGTH;++i) [hash appendFormat:@"%02x",digest[i]];
     return hash;
 }
+static BOOL DefinitivelyMissing(NSString* path) {
+    if (!path.length) return NO;
+    struct stat info = {};
+    // Permission failures and existing symlinks must not be mistaken for a lost original.
+    if (lstat(path.fileSystemRepresentation,&info)==0) return NO;
+    return errno==ENOENT || errno==ENOTDIR;
+}
+static NSMutableDictionary* UniqueLostHistory(NSDictionary* rows, NSString* hash) {
+    NSMutableDictionary* match=nil;
+    for (NSMutableDictionary* row in rows.allValues) {
+        BOOL known=NO;
+        for (NSDictionary* version in row[@"versions"])
+            if ([version[@"hash"] isEqual:hash]) { known=YES; break; }
+        if (!known || !DefinitivelyMissing(row[@"path"])) continue;
+        // Equal bytes cannot establish which of two lost documents was opened.
+        if (match) return nil;
+        match=row;
+    }
+    return [match[@"excluded"] boolValue] ? nil : match;
+}
+static BOOL RelinkSourceStillMissing(NSString* path, NSError** error) {
+    if (!path || DefinitivelyMissing(path)) return YES;
+    if (error) *error=SPDFCollectionError(5,@"The original reappeared while linking its history. Retrying the opened document.");
+    return NO;
+}
 static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NSURL* root) {
     NSString* extension=path.pathExtension.lowercaseString;
     NSMutableArray* pages = [NSMutableArray array]; BOOL encrypted = NO;
@@ -78,7 +103,15 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
             ![NSFileManager.defaultManager fileExistsAtPath:row[@"path"]]) { doc=row; break; }
     }
     if ([doc[@"excluded"] boolValue]) return nil;
-    NSString* hash = BytesHash(bytes); NSDictionary* dependencies = SPDFCollectionAssets(path,bytes);
+    NSString* hash = BytesHash(bytes);
+    NSString* relinkedSource=nil;
+    if (!doc) {
+        // The normal capture already read stable bytes on its background worker.
+        // Reuse history only when those bytes identify exactly one lost source.
+        doc=UniqueLostHistory(rows,hash);
+        relinkedSource=doc[@"path"];
+    }
+    NSDictionary* dependencies = SPDFCollectionAssets(path,bytes);
     NSDictionary* capturedSource=SPDFCollectionFingerprintFromStat(&after);
     NSMutableDictionary* capturedDependencies=[NSMutableDictionary dictionary];
     NSMutableArray* assets = [NSMutableArray array];
@@ -97,11 +130,13 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
             if (![SPDFCollectionHashURL([self blobURL:asset[@"hash"]],error) isEqual:asset[@"hash"]]) {
                 if(error && !*error)*error=SPDFCollectionError(3,@"A retained asset failed its integrity check."); return nil;
             }
+        if (!RelinkSourceStillMissing(relinkedSource,error)) return nil;
         NSMutableArray* aliases=[doc[@"aliases"] mutableCopy] ?: [NSMutableArray array];
         if (doc[@"path"] && ![aliases containsObject:doc[@"path"]]) [aliases addObject:doc[@"path"]];
         if (![aliases containsObject:path]) [aliases addObject:path];
         doc[@"aliases"]=aliases; doc[@"path"]=path; doc[@"title"]=path.lastPathComponent;
         doc[@"fileIdentity"]=identity;
+        [doc removeObjectForKey:@"sourceReplaced"]; [doc removeObjectForKey:@"originalUnavailable"];
         doc[@"status"] = @"Protected"; [doc removeObjectForKey:@"captureError"];
         [self recordFingerprints:doc source:capturedSource dependencies:capturedDependencies];
         [self recordCaptureUserOpenInDocument:doc path:path]; return doc;
@@ -137,6 +172,7 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
             !SPDFCollectionAtomicData(indexBytes,indexURL,0400,error)) return nil;
         version[@"indexFile"]=indexFile;
     }
+    if (!RelinkSourceStillMissing(relinkedSource,error)) return nil;
     if (!doc) {
         doc = [@{@"id":NSUUID.UUID.UUIDString,@"path":path,@"aliases":[NSMutableArray array],
                  @"versions":[NSMutableArray array],@"excluded":@NO} mutableCopy]; rows[doc[@"id"]]=doc;
@@ -147,6 +183,7 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
     doc[@"aliases"]=aliases; doc[@"path"]=path; doc[@"title"]=path.lastPathComponent; doc[@"fileIdentity"]=identity;
     NSMutableArray* versions = [doc[@"versions"] mutableCopy]; [versions addObject:version]; doc[@"versions"]=versions;
     doc[@"latestVersionID"]=version[@"id"]; doc[@"capturedAt"]=now; doc[@"status"]=@"Protected";
+    [doc removeObjectForKey:@"sourceReplaced"]; [doc removeObjectForKey:@"originalUnavailable"];
     [doc removeObjectForKey:@"captureError"]; [self recordFingerprints:doc source:capturedSource dependencies:capturedDependencies];
     [self recordCaptureUserOpenInDocument:doc path:path];
     if (![self enforceStorageLimitInManifest:manifest protectedVersionID:version[@"id"] error:error]) return nil;

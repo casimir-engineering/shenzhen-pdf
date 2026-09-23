@@ -19,12 +19,15 @@ static NSDictionary* Capture(SPDFMacCollectionStore* store,NSString* path,NSStri
     NSDictionary* row=[store capturePath:path reason:reason continuingDocumentID:continuation error:&error];
     Expect([NSString stringWithFormat:@"capture %@: %@",path,error ?: @""],row!=nil); return row;
 }
+#include "SPDFMacCollectionRelinkChecks.h"
+
 int main(int argc,const char* argv[]) {
     @autoreleasepool {
         if(argc==4 && strcmp(argv[1],"--child")==0) {
             SPDFMacCollectionStore* s=[[SPDFMacCollectionStore alloc] initWithRootURL:[NSURL fileURLWithPath:@(argv[2])]];
             return [s capturePath:@(argv[3]) reason:@"Other window" error:nil] ? 0 : 1;
         }
+        CheckAutomaticRelink();
         NSString* sandbox=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         [NSFileManager.defaultManager createDirectoryAtPath:sandbox withIntermediateDirectories:YES attributes:nil error:nil];
         NSURL* root=[NSURL fileURLWithPath:[sandbox stringByAppendingPathComponent:@"Collection"]];
