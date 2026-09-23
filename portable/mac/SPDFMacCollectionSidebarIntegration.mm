@@ -1,9 +1,11 @@
 #import "SPDFMacCollectionIntegration.h"
+#import "SPDFMacCollectionReaderNavigation.h"
 #import "SPDFMacCollectionHistory.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacSidebarModeControl.h"
 #import <objc/runtime.h>
-static char historyControllerKey, historyWrapperKey, historyHiddenKey, historyDocumentKey;
+static char historyControllerKey, historyWrapperKey, historyDocumentKey;
 @implementation ShenzhenMacDelegate (SPDFMacCollectionSidebar)
 - (void)showCollectionHistory:(id)sender {
     NSString* path = [sender respondsToSelector:@selector(representedObject)] && [[sender representedObject] isKindOfClass:NSString.class]
@@ -11,60 +13,83 @@ static char historyControllerKey, historyWrapperKey, historyHiddenKey, historyDo
     SPDFMacCollectionStore* store = [SPDFMacCollectionStore defaultStore];
     NSDictionary* doc = [store documentForPath:path] ?: [store archiveInfoForPath:path][@"document"];
     if (!doc[@"id"]) { [self showCollectionManager:nil]; return; }
-    [self collectionRemoveHistoryView];
-    __weak ShenzhenMacDelegate* weakSelf = self;
-    SPDFMacCollectionHistoryController* controller = [[SPDFMacCollectionHistoryController alloc]
-        initWithStore:store documentID:doc[@"id"] open:^(NSString* openPath, BOOL archived) {
-            [weakSelf collectionOpenPath:openPath archived:archived];
-        }];
-    objc_setAssociatedObject(self, &historyControllerKey, controller, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(self, &historyDocumentKey, doc[@"id"], OBJC_ASSOCIATION_COPY_NONATOMIC);
-    NSMutableArray* hidden = [NSMutableArray array];
-    for (NSView* view in _sidebarContainer.subviews) { [hidden addObject:@{@"view":view,@"hidden":@(view.hidden)}]; view.hidden = YES; }
-    objc_setAssociatedObject(self, &historyHiddenKey, hidden, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    NSVisualEffectView* wrapper = [[NSVisualEffectView alloc] initWithFrame:_sidebarContainer.bounds];
-    wrapper.material = NSVisualEffectMaterialSidebar; wrapper.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-    wrapper.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    NSButton* close = [NSButton buttonWithTitle:@"‹ Back to document panels" target:self action:@selector(closeCollectionHistory:)];
-    close.translatesAutoresizingMaskIntoConstraints = NO; [wrapper addSubview:close];
-    NSView* content = controller.view; content.translatesAutoresizingMaskIntoConstraints = NO; [wrapper addSubview:content];
-    [NSLayoutConstraint activateConstraints:@[
-        [close.leadingAnchor constraintEqualToAnchor:wrapper.leadingAnchor constant:8],
-        [close.topAnchor constraintEqualToAnchor:wrapper.topAnchor constant:8],
-        [content.leadingAnchor constraintEqualToAnchor:wrapper.leadingAnchor],
-        [content.trailingAnchor constraintEqualToAnchor:wrapper.trailingAnchor],
-        [content.topAnchor constraintEqualToAnchor:close.bottomAnchor constant:4],
-        [content.bottomAnchor constraintEqualToAnchor:wrapper.bottomAnchor]]];
-    [_sidebarContainer addSubview:wrapper];
-    objc_setAssociatedObject(self, &historyWrapperKey, wrapper, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [self selectedTab].collectionHistoryDocumentID = doc[@"id"];
+    [self syncSidebarModeControlSegmentsForSearchAvailability:[self hasSearchSidebar]];
+    _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeHistory;
     _sidebarPreferredVisible = YES; _sidebarWidth = MAX(280, _sidebarWidth);
-    [self setSidebarActuallyVisible:YES]; [self savePersistentState];
+    [self collectionRememberSidebarMode]; [self rebuildSidebar];
+}
+- (void)collectionRememberSidebarMode {
+    if (![self selectedTab].collectionHistoryDocumentID.length) return;
+    NSString* path = [self selectedTab].path; if (!path.length) return;
+    NSString* key = [self documentStateKeyForPath:path];
+    NSMutableDictionary* state = [_documentStates[key] mutableCopy] ?: [NSMutableDictionary dictionary];
+    state[@"collectionHistorySelected"] = @(_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeHistory);
+    state[@"path"] = path; _documentStates[key] = state;
+    [self savePersistentState];
 }
 - (void)collectionRemoveHistoryView {
-    NSView* wrapper = objc_getAssociatedObject(self, &historyWrapperKey); [wrapper removeFromSuperview];
-    for (NSDictionary* item in objc_getAssociatedObject(self, &historyHiddenKey)) [(NSView*)item[@"view"] setHidden:[item[@"hidden"] boolValue]];
+    [objc_getAssociatedObject(self, &historyWrapperKey) removeFromSuperview];
     objc_setAssociatedObject(self, &historyControllerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &historyWrapperKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(self, &historyHiddenKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &historyDocumentKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
-- (void)closeCollectionHistory:(id)sender {
-    (void)sender; [self selectedTab].collectionHistoryDocumentID = nil;
-    [self collectionRemoveHistoryView]; [self rebuildSidebar]; [self savePersistentState];
+- (BOOL)collectionShowSelectedHistoryPanel {
+    NSString* identifier = [self selectedTab].collectionHistoryDocumentID;
+    [self syncSidebarModeControlSegmentsForSearchAvailability:[self hasSearchSidebar]];
+    BOOL visible = identifier.length && _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeHistory;
+    NSView* wrapper = objc_getAssociatedObject(self, &historyWrapperKey);
+    if (wrapper && ![identifier isEqual:objc_getAssociatedObject(self, &historyDocumentKey)]) {
+        [self collectionRemoveHistoryView]; wrapper = nil;
+    }
+    _sidebarTable.enclosingScrollView.hidden = visible;
+    if (!visible) { wrapper.hidden = YES; return NO; }
+    _sidebarFilterField.hidden = YES;
+    [_sidebarContainer viewWithTag:8801].hidden = YES;
+    if (!wrapper) {
+        __weak ShenzhenMacDelegate* weakSelf = self;
+        SPDFMacCollectionHistoryController* controller = [[SPDFMacCollectionHistoryController alloc]
+            initWithStore:SPDFMacCollectionStore.defaultStore documentID:identifier open:^(NSString* path, BOOL archived) {
+                [weakSelf collectionOpenPath:path archived:archived];
+                if (archived && [[weakSelf selectedTab].path isEqual:path]) [weakSelf showCollectionHistory:nil];
+            }];
+        controller.manageHandler = ^(NSString* documentID) {
+            [weakSelf showCollectionManagerForDocumentID:documentID query:@""];
+        };
+        wrapper = controller.view; wrapper.translatesAutoresizingMaskIntoConstraints = NO;
+        [_sidebarContainer addSubview:wrapper];
+        [NSLayoutConstraint activateConstraints:@[
+            [wrapper.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor],
+            [wrapper.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor],
+            [wrapper.topAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor constant:8],
+            [wrapper.bottomAnchor constraintEqualToAnchor:_sidebarContainer.bottomAnchor]]];
+        objc_setAssociatedObject(self, &historyControllerKey, controller, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, &historyWrapperKey, wrapper, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, &historyDocumentKey, identifier, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    }
+    wrapper.hidden = NO;
+    [self setSidebarActuallyVisible:_sidebarPreferredVisible];
+    if (_sidebarVisible) [self restoreSidebarWidth];
+    return YES;
 }
 - (void)collectionPrepareForTabPath:(NSString*)path {
-    NSString* identifier = objc_getAssociatedObject(self, &historyDocumentKey); if (!identifier) return;
-    SPDFMacCollectionStore* store = [SPDFMacCollectionStore defaultStore];
-    NSDictionary* doc = [store documentForPath:path] ?: [store archiveInfoForPath:path][@"document"];
-    if ([identifier isEqual:doc[@"id"]]) [self selectedTab].collectionHistoryDocumentID = identifier;
-    else [self collectionRemoveHistoryView];
+    // No store access on launch: the persisted tab ID is enough to restore the mode.
+    NSString* key = [self documentStateKeyForPath:path];
+    BOOL history = [_documentStates[key][@"collectionHistorySelected"] boolValue];
+    [self syncSidebarModeControlSegmentsForSearchAvailability:NO];
+    if (history && [self selectedTab].collectionHistoryDocumentID.length)
+        _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeHistory;
+    else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeHistory)
+        _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
 }
 - (void)collectionRefreshHistory {
+    // The normal capture completion calls this after opening; do not add store work to launch.
+    SPDFMacCollectionStore* store = SPDFMacCollectionStore.defaultStore;
+    NSDictionary* doc = [store documentForPath:_path] ?: [store archiveInfoForPath:_path][@"document"];
+    [self collectionRefreshVersionInfoForDocument:doc];
+    [self selectedTab].collectionHistoryDocumentID = doc[@"id"];
     SPDFMacCollectionHistoryController* controller = objc_getAssociatedObject(self, &historyControllerKey);
-    if (controller) {
-        [controller reload];
-        [self setSidebarActuallyVisible:YES];
-    } else if ([self selectedTab].collectionHistoryDocumentID.length) [self showCollectionHistory:nil];
+    if ([doc[@"id"] isEqual:objc_getAssociatedObject(self, &historyDocumentKey)]) [controller reload];
+    [self rebuildSidebar];
 }
 @end

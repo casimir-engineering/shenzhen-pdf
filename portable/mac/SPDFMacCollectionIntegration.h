@@ -5,6 +5,8 @@
 @interface ShenzhenMacDelegate (SPDFMacCollectionAPI)
 - (void)collectionPrepareForTabPath:(NSString*)path;
 - (void)collectionRefreshHistory;
+- (BOOL)collectionShowSelectedHistoryPanel;
+- (void)collectionRememberSidebarMode;
 - (void)collectionSaveArchiveCopy:(id)sender;
 - (void)collectionRecordObservedChangeAtPath:(NSString*)path;
 - (void)collectionDidSavePath:(NSString*)path;
@@ -19,6 +21,7 @@
 - (void)addCollectionItemsToTabMenu:(NSMenu*)menu path:(NSString*)path;
 - (void)showCollectionManager:(id)sender;
 - (void)showCollectionManagerForQuery:(NSString*)query;
+- (void)showCollectionManagerForDocumentID:(NSString*)documentID query:(NSString*)query;
 - (void)showCollectionHistory:(id)sender;
 - (void)showCollectionPreviousVersion:(id)sender;
 - (void)showCollectionRecovery:(id)sender;

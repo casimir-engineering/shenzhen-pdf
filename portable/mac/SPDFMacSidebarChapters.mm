@@ -67,7 +67,8 @@ static NSString* const kSPDFCollapsedChaptersKey = @"collapsedChapters";
 // the reader is in its results -- rebuilds the chapters flat and takes the
 // expand/collapse button away with them.
 - (void)syncSidebarModeControlSegmentsForSearchAvailability:(BOOL)hasSearch {
-    spdf_sidebar_mode_control_configure(_sidebarModeControl, ![self isMarkdownActive], hasSearch);
+    spdf_sidebar_mode_control_configure_history(_sidebarModeControl, ![self isMarkdownActive], hasSearch,
+        [self selectedTab].collectionHistoryDocumentID.length > 0);
     [self normalizeSidebarModeControlWidths];
 }
 

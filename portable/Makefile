@@ -70,6 +70,7 @@ CORE_SELECTION_TEST := $(BUILD)/SPDFCoreSelectionTests
 CORE_CJK_SELECTION_TEST := $(BUILD)/SPDFCoreCJKSelectionTests
 MAC_APP := $(DIST)/ShenzhenPDF.app
 MAC_BIN := $(MAC_APP)/Contents/MacOS/ShenzhenPDF
+MAC_COLLECTION_APP := $(MAC_APP)/Contents/Helpers/ShenzhenPDF Collection.app
 MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
 MAC_ICON_SRCS := $(addprefix ../gfx/ShenzhenPDF-,$(addsuffix x32.png,16x16 32x32 64x64 128x128 256x256 512x512 1024x1024))
 MAC_WINDOW_SHORTCUT_TEST := $(BUILD)/SPDFMacWindowShortcutsTests
@@ -448,7 +449,7 @@ $(MAC_STATE_YAML_TEST): mac/tests/SPDFStateYamlTests.mm $(YAML_OBJ) | $(BUILD)
 mac-state-yaml-tests: $(MAC_STATE_YAML_TEST)
 	"$(MAC_STATE_YAML_TEST)"
 
-$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) mac/Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
+$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) mac/Info.plist mac/CollectionCompanion-Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
@@ -485,7 +486,15 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS
 		otool -L "$(MAC_BIN)" >&2; \
 		exit 1; \
 	fi
+	mkdir -p "$(MAC_COLLECTION_APP)/Contents/MacOS" "$(MAC_COLLECTION_APP)/Contents/Resources"
+	cp "$(MAC_BIN)" "$(MAC_COLLECTION_APP)/Contents/MacOS/ShenzhenPDFCollection"
+	cp mac/CollectionCompanion-Info.plist "$(MAC_COLLECTION_APP)/Contents/Info.plist"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $(MAC_BUNDLE_ID).collection" "$(MAC_COLLECTION_APP)/Contents/Info.plist"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(MAC_VERSION)" "$(MAC_COLLECTION_APP)/Contents/Info.plist"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(MAC_BUILD)" "$(MAC_COLLECTION_APP)/Contents/Info.plist"
+	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_COLLECTION_APP)/Contents/Resources/AppIcon.icns"
 	xattr -cr "$(MAC_APP)"
+	$(subst $(MAC_APP),$(MAC_COLLECTION_APP),$(MAC_CODESIGN_APP))
 	$(MAC_CODESIGN_APP)
 
 dmg: mac-app
@@ -626,3 +635,13 @@ mac-viewport-checkpoint-tests: | $(BUILD)
 mac-collection-palette-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacCollectionPaletteTests.mm mac/SPDFMacCollectionPaletteModel.mm -framework Cocoa -o "$(BUILD)/SPDFMacCollectionPaletteTests"
 	"$(BUILD)/SPDFMacCollectionPaletteTests"
+
+.PHONY: mac-collection-reader-navigation-tests
+mac-collection-reader-navigation-tests: $(MAC_COLLECTION_PARSER_LIBS) | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionReaderNavigationTests.mm mac/SPDFMacCollectionReaderNavigation.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionReaderNavigationTests"
+	"$(BUILD)/SPDFMacCollectionReaderNavigationTests"
+
+.PHONY: mac-collection-companion-tests
+mac-collection-companion-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacCollectionCompanionTests.mm mac/SPDFMacCollectionPipe.mm -framework Foundation -o "$(BUILD)/SPDFMacCollectionCompanionTests"
+	"$(BUILD)/SPDFMacCollectionCompanionTests"

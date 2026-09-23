@@ -3,6 +3,7 @@
 #import "SPDFMacCollectionHistory.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacCollectionCompare.h"
+#import "SPDFMacCollectionStyle.h"
 
 @implementation SPDFMacCollectionHistoryController {
     SPDFMacCollectionStore* _store;
@@ -17,7 +18,6 @@
     NSUInteger _generation;
     NSUInteger _previewGeneration;
     BOOL _restoringSelection;
-    SPDFMacCollectionWindow* _manager;
 }
 - (instancetype)initWithStore:(SPDFMacCollectionStore*)store documentID:(NSString*)documentID
                          open:(SPDFCollectionOpenHandler)open {
@@ -34,7 +34,7 @@
     _status = [NSTextField wrappingLabelWithString:@"Archived copies are read-only."];
     _status.font = [NSFont systemFontOfSize:11];
     _status.textColor = NSColor.secondaryLabelColor;
-    _table = [NSTableView new]; _table.headerView = nil; _table.rowHeight = 65;
+    _table = [NSTableView new]; _table.headerView = nil; _table.rowHeight = 82;
     _table.dataSource = self; _table.delegate = self;
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"version"]; column.width = 240;
     [_table addTableColumn:column];
@@ -100,7 +100,11 @@
     NSTextField* label = [NSTextField wrappingLabelWithString:[NSString stringWithFormat:@"%@%@\n%@ · %@",
         [version[@"keep"] boolValue] ? @"★ " : @"",date,version[@"reason"] ?: @"Saved version",size]];
     label.font = [NSFont systemFontOfSize:12]; label.maximumNumberOfLines = 3;
-    return label;
+    NSStackView* rowView = [NSStackView stackViewWithViews:SPDFCollectionVersionIsLatest(_document, version)
+        ? @[SPDFCollectionLatestBadge(), label] : @[label]];
+    rowView.orientation = NSUserInterfaceLayoutOrientationVertical;
+    rowView.alignment = NSLayoutAttributeLeading; rowView.spacing = 3;
+    return rowView;
 }
 - (NSDictionary*)selectedVersion {
     NSInteger row = _table.selectedRow;
@@ -182,7 +186,6 @@
 }
 - (void)manage:(id)sender {
     (void)sender;
-    if (!_manager) _manager = [[SPDFMacCollectionWindow alloc] initWithStore:_store open:_open];
-    [_manager showDocumentID:_documentID query:@""];
+    if (self.manageHandler) self.manageHandler(_documentID);
 }
 @end

@@ -7,7 +7,8 @@ NS_ASSUME_NONNULL_BEGIN
 typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     SPDFSidebarModeChapters = 0,
     SPDFSidebarModeComments = 1,
-    SPDFSidebarModeSearch = 2
+    SPDFSidebarModeSearch = 2,
+    SPDFSidebarModeHistory = 3
 };
 
 // Mode tags stay stable when Markdown omits the Comments segment.
@@ -17,6 +18,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 @end
 
 void spdf_sidebar_mode_control_configure(NSSegmentedControl* control, BOOL supportsComments, BOOL hasSearch);
+
+void spdf_sidebar_mode_control_configure_history(NSSegmentedControl* control, BOOL supportsComments, BOOL hasSearch, BOOL hasHistory);
 
 // The sidebar's Chapters / Comments / Search control, which grows a Search
 // segment while a search is live and drops it again when the search ends.

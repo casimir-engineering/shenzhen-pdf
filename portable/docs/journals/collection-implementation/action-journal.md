@@ -395,3 +395,28 @@ The sorter now checks for numeric dates before comparing them. Undated entries r
 The regression uses the real store APIs to create an excluded document and a failed initial capture alongside saved documents, then asynchronously reloads the actual manager under all three sort modes. It verifies loading completes, all documents remain present, and undated entries follow saved versions in both date orders. All **24 native Markdown/UI integration suites** passed, as did the native build, source-size ratchet and whitespace check.
 
 The signed candidate in `portable/build/collection-sort-fix/ShenzhenPDF.app` was copied into **`dist/ShenzhenPDF.app`**. Strict signature checks and an executable hash comparison verified the replacement. The previous bundle was preserved under `portable/build`; no app was launched or quit.
+
+
+### One reader History, readable previews, and Collection switching
+
+The user requested normal Cmd+Tab switching, previews for readable collected documents, direct search-result navigation, a single persistent reader History tab, a dated older-version indicator, and automatic relinking when an opened document matches lost-source history. Work was split between preview/companion, sidebar/navigation, and store-identity agents, with the coordinator integrating navigation and the toolbar indicator.
+
+**Why the pictured preview was missing.** Collection treated `PDFDocument.isEncrypted` as if it meant the document was locked. Permission-encrypted PDFs can be readable with no password. Previews now check the actual lock state and use existing transient credentials when needed. Preview pixels and passwords are not persisted. Reusing an unchanged materialized copy also preserves the file identity to which remembered credentials are bound. Truly locked documents still need unlocking; invalid or empty PDFs cannot supply page images.
+
+**One History surface.** The obsolete Collection-only History controller and its rendering helpers were removed. Collection search opens the exact saved version and matching page in the reader, with the query highlighted. History actions open the current original when available, or its latest saved copy when unavailable, and select the reader's regular History sidebar tab. Chapters/Search/History remain available while changing panels. The newest version alone has the Latest badge. History selection is saved per document.
+
+![Persistent reader History tab and Latest version badge](assets/unified-history-sidebar.png)
+
+**Version identity stays visible.** Archived documents show a compact rounded indicator after Regex. Older versions include their capture date. Missing originals add “Original missing”; that indicator opens Locate Original, including automatic and manual search. Capture and relink completions refresh open archived tabs' metadata so the status does not become stale.
+
+![Older saved version and missing-source indicator after Regex](assets/older-version-indicator.png)
+
+These images are hidden native-view test renders using generated fixtures, not screenshots of a user's running reader.
+
+**Cmd+Tab.** Collection is an on-demand nested app with a separate bundle identity and application menu. It sends navigation back to its owning reader through private anonymous pipes. Needed PDF credentials travel over those same pipes and stay transient. Closing or quitting Collection cannot invoke the reader's quit/session-shutdown path. No companion starts on normal reader launch. The native package contains the signed helper inside the reader bundle; no separate install is needed.
+
+**Automatic recovery.** Background capture matches the opened bytes against retained versions. A uniquely matching lost history is relinked without losing versions, Keep flags, preferences, or usage counts. Opening older known content records it as the current revision. Available originals, excluded histories, and ambiguous matches are not automatically reassigned. An explicitly replaced original also qualifies when filesystem identity proves that another file occupies its old path; that occupying file and its history remain untouched.
+
+Agent review added protections for out-of-order materialization after rapid result clicks, failed opens affecting unrelated tabs, stale toolbar indicators, and an unrelated file occupying an original pathname. The new last-intent navigation regression fails with the generation guard removed and passes with it restored.
+
+Validation: all **24 native Markdown/UI suites** passed after replacing the obsolete embedded-History suite with reader-History coverage. Focused reader-navigation, companion pipe/lifecycle, and sidebar-mode tests passed. Store, integrity, and cleanup suites passed with latest-hash, historical-hash, ambiguous, excluded, and replaced-original relinking cases. The native build, strict verification of both signed bundles, release-note validation, source-size checks, and whitespace checks passed. The tested candidate was copied into `dist/ShenzhenPDF.app`; hashes of both the reader and nested Collection executable match the candidate. The previous bundle was preserved. The graphical Cmd+Tab interaction itself has not been exercised; no graphical app was launched or quit during this work.

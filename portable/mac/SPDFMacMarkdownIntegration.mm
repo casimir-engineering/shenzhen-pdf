@@ -397,7 +397,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     BOOL loading = !model && session.state == SPDFMacMarkdownSessionLoading;
     BOOL hasChapters = model.chapterItems.count > 0;
     BOOL hasSearch = [self markdownHasSearchSidebar];
-    BOOL hasSidebar = loading || (model && (hasChapters || hasSearch));
+    BOOL hasSidebar = loading || (model && (hasChapters || hasSearch || [self selectedTab].collectionHistoryDocumentID.length));
 
     [self syncSidebarModeControlSegmentsForSearchAvailability:hasSearch];
     if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && !hasSearch)

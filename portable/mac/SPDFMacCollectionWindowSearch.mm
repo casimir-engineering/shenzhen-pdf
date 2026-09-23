@@ -22,12 +22,15 @@ static NSString* DateLabel(NSDictionary* version) {
     (void)tableView; (void)row; return [SPDFCollectionResultRow new];
 }
 - (CGFloat)tableView:(NSTableView*)tableView heightOfRow:(NSInteger)index {
-    (void)tableView; NSDictionary* row = self.rows[(NSUInteger)index];
+    (void)tableView;
+    if (index < 0 || index >= (NSInteger)self.rows.count) return 100;
+    NSDictionary* row = self.rows[(NSUInteger)index];
     NSUInteger count = [row[@"matches"] count];
     NSUInteger visible = [self.expandedResults containsObject:RowKey(row)] ? count : MIN(3,count);
     return 78 + MAX(110,visible*68) + (count>3 ? 30 : 0) + ([row[@"truncated"] boolValue] ? 36 : 0);
 }
 - (NSView*)resultCellForRow:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.rows.count) return [NSView new];
     NSDictionary* row = self.rows[(NSUInteger)index], *doc = row[@"document"], *version = row[@"version"];
     NSView* cell = [NSView new];
     NSTextField* title = SPDFCollectionText(version[@"filename"] ?: doc[@"title"] ?: @"Document",13,NSFontWeightSemibold,NO);
@@ -50,10 +53,10 @@ static NSString* DateLabel(NSDictionary* version) {
     if (!page && [row[@"matches"] count]) page = [row[@"matches"][0][@"page"] integerValue];
     NSString* key = [RowKey(row) stringByAppendingFormat:@"/%ld",(long)page];
     image.identifier = key; image.image = [self.thumbnailCache objectForKey:key] ?: [NSImage imageWithSystemSymbolName:
-        [version[@"encrypted"] boolValue] ? @"lock.doc" : @"doc" accessibilityDescription:@"Saved page preview"];
+        @"doc" accessibilityDescription:@"Saved page preview"];
     image.accessibilityLabel = page>0 ? [NSString stringWithFormat:@"Page %ld preview",(long)page] : @"Saved copy preview";
     [cell addSubview:image];
-    if (version[@"id"] && ![version[@"encrypted"] boolValue]) {
+    if (version[@"id"]) {
         NSMutableDictionary* thumbnailRow = [row mutableCopy]; thumbnailRow[@"selectedPage"] = @(page);
         [self requestThumbnail:thumbnailRow key:key];
     }
@@ -162,6 +165,9 @@ static NSString* DateLabel(NSDictionary* version) {
     NSMutableArray* rows = [self.rows mutableCopy]; rows[(NSUInteger)index] = row; self.rows = rows;
     [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];
     [self.table reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:index] columnIndexes:[NSIndexSet indexSetWithIndex:0]];
-    [self showHistoryForDocument:row[@"document"] version:row[@"version"]];
+    [self persistManagerPreferences];
+    if (self.navigateHandler) self.navigateHandler(row[@"document"],row[@"version"],
+        [row[@"selectedPage"] unsignedIntegerValue],self.search.stringValue,NO);
+    else [self preview:nil];
 }
 @end
