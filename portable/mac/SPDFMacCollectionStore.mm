@@ -77,6 +77,13 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
               @"documents":[NSMutableDictionary dictionary]} mutableCopy];
 }
 - (BOOL)transaction:(BOOL (^)(NSMutableDictionary*, NSError**))body error:(NSError**)error {
+    return [self manifestTransaction:body writeBack:YES error:error];
+}
+- (BOOL)withLockedManifest:(BOOL (^)(NSMutableDictionary*, NSError**))body error:(NSError**)error {
+    return [self manifestTransaction:body writeBack:NO error:error];
+}
+- (BOOL)manifestTransaction:(BOOL (^)(NSMutableDictionary*, NSError**))body
+                 writeBack:(BOOL)writeBack error:(NSError**)error {
     [self.localLock lock];
     NSURL* lockedRoot=self.rootURL;
     if (![lockedRoot isEqual:self.originalRootURL] &&
@@ -94,21 +101,24 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
     }
     if (![lockedRoot isEqual:self.rootURL]) {
         flock(fd,LOCK_UN); close(fd); [self.localLock unlock];
-        return [self transaction:body error:error];
+        return [self manifestTransaction:body writeBack:writeBack error:error];
     }
     NSURL* manifestURL = [lockedRoot URLByAppendingPathComponent:@"manifest.json"];
     NSData* existing = [NSData dataWithContentsOfURL:manifestURL];
     // Never overwrite an unreadable/corrupt index with an empty one.
-    id decoded = existing ? [NSJSONSerialization JSONObjectWithData:existing options:0 error:nil] : nil;
+    id decoded = existing ? [NSJSONSerialization JSONObjectWithData:existing options:NSJSONReadingMutableContainers error:nil] : nil;
     BOOL valid = (![NSFileManager.defaultManager fileExistsAtPath:manifestURL.path] || existing) &&
                  (!existing || ([decoded isKindOfClass:NSDictionary.class] &&
                               [decoded[@"documents"] isKindOfClass:NSDictionary.class]));
     BOOL ok = NO;
     if (!valid) { if (error) *error = SPDFCollectionError(2,@"Collection index is damaged; retained snapshots are untouched."); }
     else {
-        NSMutableDictionary* manifest = [self readManifest];
+        // Decode once while holding the file lock. Re-reading here doubled the
+        // parse cost for every capture and every visible Collection thumbnail.
+        NSMutableDictionary* manifest = decoded ?: [@{@"format":@1,
+            @"settings":[NSMutableDictionary dictionary],@"documents":[NSMutableDictionary dictionary]} mutableCopy];
         ok = body(manifest,error);
-        if (ok && [lockedRoot isEqual:self.rootURL]) {
+        if (ok && writeBack && [lockedRoot isEqual:self.rootURL]) {
             BOOL collect=[manifest[@"_collectUnreferencedFiles"] boolValue];
             [manifest removeObjectForKey:@"_collectUnreferencedFiles"];
             NSData* bytes = [NSJSONSerialization dataWithJSONObject:manifest options:0 error:error];

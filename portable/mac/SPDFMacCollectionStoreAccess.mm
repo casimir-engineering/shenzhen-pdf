@@ -62,7 +62,9 @@
 }
 - (NSURL*)materializeVersionID:(NSString*)versionID documentID:(NSString*)documentID error:(NSError**)error {
     __block NSURL* result;
-    BOOL ok=[self transaction:^BOOL(NSMutableDictionary* m,NSError** e) {
+    // Preview files may be created/repaired, but no library metadata changes.
+    // Avoid serializing and fsyncing the whole history for every thumbnail.
+    BOOL ok=[self withLockedManifest:^BOOL(NSMutableDictionary* m,NSError** e) {
         NSDictionary* doc=m[@"documents"][documentID]; NSDictionary* version=[self versionID:versionID document:doc];
         if (!version) { if(e)*e=SPDFCollectionError(8,@"Version no longer exists."); return NO; }
         NSURL* directory=[[[self.rootURL URLByAppendingPathComponent:@"previews"] URLByAppendingPathComponent:documentID]
