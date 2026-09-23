@@ -156,6 +156,7 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
                            tabStrip:(NSView*)tabStrip
                    parkedResponders:(NSArray<NSResponder*>*)parkedResponders;
 - (id<SPDFTabGroupReader>)groupReader;
+- (BOOL)newGroupGoesBeforeTargetAtIndex:(NSInteger)index;
 - (BOOL)hasTabGroups;
 - (NSArray*)groupLayouts;
 - (NSInteger)groupInsertionIndexForPoint:(NSPoint)point;

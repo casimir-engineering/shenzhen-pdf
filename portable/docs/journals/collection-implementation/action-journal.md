@@ -355,3 +355,21 @@ History was checked separately: both Garden revisions remain available, with the
 At the user's request, the unchanged application code was prepared again as **26.9.23-1** in release commit `119d3e1b5`. The complete release sweep passed all **54 targets**, including **24 native UI integration suites** and **56 release-workflow checks**. The native app bundle rebuilt successfully and passed strict code-signature verification.
 
 The actual `dist/ShenzhenPDF.app` build was launched with its normal state, and its process and visible reader window were verified. Existing applications were not quit. This was release preparation and a local launch; no tag, push, notarization or publication was performed.
+
+### Crowded tab groups: visibility and placement
+
+The user reported that dropping a tab onto another in a crowded window appeared to lose one member into overflow, and that a group created on the left could jump to the right of General. Both were ordering defects: the layout allocated space from left to right, letting General consume it first, while creation relied on the first occurrence of group members in the full tab array. Hidden General tabs could therefore determine the placement instead of the visible drop.
+
+An implementation agent changed the layout to allocate visibility before drawing positions. Selection is protected, then custom-group tabs receive space before General. Drawing retains the actual group order. When many collapsed group headers compete for space, the active pair receives priority; at widths that physically fit only one tab, selection remains the priority.
+
+The coordinator changed creation to use the target's position among its visible siblings. A left-side group is inserted before its remaining parent tabs; a right-side group goes after them. General stays contiguous on the opposite side. The operation preserves tab objects, active-document identity and reading positions, and the existing session codec persists the resulting order.
+
+The images below are headless renders of the production tab strip, each containing **100 General documents and a two-document Purple group** in a 900-point strip. Both grouped documents remain visible; General's remaining documents are accessible through overflow. These are generated fixtures, not screenshots of the user's app.
+
+![Group on the left, General yielding space on the right](assets/group-overflow-left.png)
+
+![General on the left, group retaining its place on the right](assets/group-overflow-right.png)
+
+The overflow agent reproduced the failure with the previous layout. The placement regression also fails against the previous implementation for both left and right creation and restored order. The corrected code passes **eight tab test suites**: group model, group integration, group interaction, strip geometry, strip interaction, strip style, lifecycle and state. Fixtures cover 50/100 General documents, 700/900-point widths, selection in either group, 12 competing collapsed headers, visible targets near the end of a 66-tab array, and save/restore of 60-tab order and reading state. Source-size checks and whitespace validation pass.
+
+A separate native candidate was built at `portable/build/tab-group-candidate/ShenzhenPDF.app` and passed strict code-signature verification. The currently running `dist` app was neither replaced nor restarted. This fix did not repeat the full release sweep or publish a release.

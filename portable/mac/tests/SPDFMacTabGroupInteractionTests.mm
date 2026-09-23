@@ -17,6 +17,7 @@
 @interface SPDFGroupFakeReader : NSObject <SPDFTabGroupReader>
 @property(nonatomic) NSInteger toggles;
 @property(nonatomic) NSInteger createdGroups;
+@property(nonatomic) BOOL createdBeforeTarget;
 @property(nonatomic) NSInteger movedToGroup;
 @property(nonatomic) NSInteger lastInsertionIndex;
 @property(nonatomic) NSInteger selectedTab;
@@ -32,6 +33,11 @@
     (void)index, (void)other;
     self.createdGroups++;
     self.lastColor = color;
+}
+- (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color
+             beforeTargetGroup:(BOOL)before {
+    self.createdBeforeTarget = before;
+    [self createGroupForTabAtIndex:index withTabAtIndex:other color:color];
 }
 - (void)moveTabAtIndex:(NSInteger)index toGroup:(SPDFTabGroup*)group atIndex:(NSInteger)destination {
     (void)index;
@@ -104,8 +110,8 @@ static id layout_for_group(SPDFTabStripView* strip, SPDFTabGroup* group) {
 }
 
 static unsigned char alpha_at(NSBitmapImageRep* bitmap, NSPoint point) {
-    NSInteger x = MAX(0, MIN(bitmap.pixelsWide - 1, (NSInteger)floor(point.x)));
-    NSInteger y = MAX(0, MIN(bitmap.pixelsHigh - 1, (NSInteger)floor(point.y)));
+    NSInteger x = MAX(0, MIN(bitmap.pixelsWide - 1, (NSInteger)floor(point.x * bitmap.pixelsWide / bitmap.size.width)));
+    NSInteger y = MAX(0, MIN(bitmap.pixelsHigh - 1, (NSInteger)floor(point.y * bitmap.pixelsHigh / bitmap.size.height)));
     NSColor* color = [bitmap colorAtX:x y:y];
     return (unsigned char)lrint(color.alphaComponent * 255.0);
 }
@@ -222,11 +228,15 @@ static void check_group_reorder(BOOL useGeneral) {
            @"source handle drop appended instead of using the group's first slot");
 }
 
+#include "SPDFMacTabGroupOverflowChecks.h"
+
 int main(void) {
     @autoreleasepool {
         (void)NSApplication.sharedApplication;
         check_group_reorder(YES);
         check_group_reorder(NO);
+        check_group_overflow();
+        check_group_creation_side();
         NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 900, 42)
                                                        styleMask:NSWindowStyleMaskBorderless
                                                          backing:NSBackingStoreBuffered defer:NO];
@@ -328,6 +338,7 @@ int main(void) {
 
         // Hovering a tab center creates a stable-color pair preview; its edge
         // remains ordinary reorder territory. Centering on a custom tab joins it.
+        strip.frame = NSMakeRect(0,0,1800,42); // Hover checks require their General target to be visible.
         general.collapsed = NO;
         blue.collapsed = NO;
         strip.tabs = (id)tabs;
@@ -384,6 +395,7 @@ int main(void) {
         // When headers alone exceed the window, whole groups move into the
         // existing overflow path. Every hidden member remains addressable,
         // including the selected tab in a late group.
+        strip.frame = NSMakeRect(0,0,900,42);
         NSMutableArray* crowdedTabs = [NSMutableArray array];
         NSMutableArray* crowdedGroups = [NSMutableArray array];
         for (NSInteger i = 0; i < 12; ++i) {
@@ -400,9 +412,9 @@ int main(void) {
         strip.selectedIndex = crowdedSelected;
         NSArray<NSNumber*>* crowdedVisible = strip.groupedVisibleTabIndexes;
         NSArray<NSNumber*>* crowdedHidden = strip.hiddenTabIndexes;
-        expect([crowdedVisible containsObject:@(crowdedSelected)] ||
-                   ([crowdedHidden containsObject:@(crowdedSelected)] && !NSIsEmptyRect(strip.overflowRect)),
-               @"selected tab in an overflowed late group became unreachable");
+        expect([crowdedVisible containsObject:@(crowdedSelected)] &&
+                   [crowdedVisible containsObject:@(crowdedSelected-1)],
+               @"collapsed headers hid a member of the active pair in a late group");
         expect([crowdedHidden containsObject:@0] && [crowdedHidden containsObject:@1],
                @"collapsed group members were omitted from overflow");
         NSMenu* groupedOverflow = [strip overflowMenu];

@@ -5,6 +5,8 @@
 @property(nonatomic) NSRect frame;
 @property(nonatomic) NSRect header;
 @property(nonatomic) NSInteger firstIndex;
+@property(nonatomic) NSInteger capacity;
+@property(nonatomic) BOOL visible;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber*, NSValue*>* tabRects;
 @property(nonatomic, strong) NSMutableArray<NSNumber*>* members;
 @end
@@ -41,49 +43,71 @@
         }
         if (!tab.group.collapsed) { ++expandedCount; [current.members addObject:@(i)]; }
     }
+    CGFloat gaps = MAX(0, (NSInteger)groups.count - 1) * 10;
     CGFloat available = [self tabAreaRightWithOverflow:NO] - [self leftInset];
-    BOOL overflow = headers + (groups.count - 1) * 10 + expandedCount * 118 > available;
-    available = [self tabAreaRightWithOverflow:overflow] - [self leftInset];
-    CGFloat usable = available - headers - (groups.count - 1) * 10;
-    CGFloat width = MIN(260.0, MAX(112.0, floor(usable / MAX(1, expandedCount)) - 4));
+    BOOL overflow = headers + gaps + expandedCount * 116 > available;
+    available = MAX(0, [self tabAreaRightWithOverflow:overflow] - [self leftInset]);
+    CGFloat width = MIN(260.0, MAX(112.0, floor((available - headers - gaps) / MAX(1, expandedCount)) - 4));
+    CGFloat pitch = width + 4;
+    SPDFTabGroupLayout* selectedGroup = nil;
+    for (SPDFTabGroupLayout* layout in groups)
+        if ([layout.members containsObject:@(self.selectedIndex)]) selectedGroup = layout;
+
+    // Allocate slots before positioning groups. Left-to-right allocation lets
+    // General consume a new group's second tab even though both would fit.
+    // Preserve selection, then custom-group members, then General documents.
+    NSMutableArray<SPDFTabGroupLayout*>* priority = [NSMutableArray array];
+    if (selectedGroup) [priority addObject:selectedGroup];
+    for (SPDFTabGroupLayout* layout in groups)
+        if (layout != selectedGroup && !layout.group.general) [priority addObject:layout];
+    for (SPDFTabGroupLayout* layout in groups)
+        if (layout != selectedGroup && layout.group.general) [priority addObject:layout];
+    NSInteger protectedTabs = selectedGroup.group.general ? 1 : MIN(2, selectedGroup.members.count);
+    // A narrow strip may fit only the active tab, rather than its whole pair.
+    if (selectedGroup) protectedTabs = MIN(protectedTabs, MAX(0, (NSInteger)floor(
+        (available - NSWidth(selectedGroup.header) - 8) / pitch)));
+    CGFloat reserved = protectedTabs * pitch;
+    CGFloat admittedHeaders = 0;
+    NSInteger admittedCount = 0;
+    for (SPDFTabGroupLayout* layout in priority) {
+        CGFloat cost = NSWidth(layout.header) + 8 + (admittedCount ? 10 : 0);
+        if (admittedHeaders + cost + reserved > available) continue;
+        layout.visible = YES;
+        admittedHeaders += cost;
+        ++admittedCount;
+    }
+    NSInteger slots = MAX(0, (NSInteger)floor((available - admittedHeaders) / pitch));
+    if (selectedGroup.visible && slots) { selectedGroup.capacity = 1; --slots; }
+    for (SPDFTabGroupLayout* layout in priority) {
+        if (!layout.visible || layout.group.general) continue;
+        NSInteger extra = MIN(slots, (NSInteger)layout.members.count - layout.capacity);
+        layout.capacity += extra;
+        slots -= extra;
+    }
+    for (SPDFTabGroupLayout* layout in priority) {
+        if (!layout.visible || !layout.group.general) continue;
+        NSInteger extra = MIN(slots, (NSInteger)layout.members.count - layout.capacity);
+        layout.capacity += extra;
+        slots -= extra;
+    }
+
     CGFloat x = [self leftInset];
-    CGFloat right = [self tabAreaRightWithOverflow:overflow];
-    NSInteger remainingTabs = expandedCount;
-    for (NSUInteger g = 0; g < groups.count; ++g) {
-        SPDFTabGroupLayout* layout = groups[g];
-        CGFloat remainingHeaders = 0;
-        for (NSUInteger next = g + 1; next < groups.count; ++next)
-            remainingHeaders += NSWidth(groups[next].header) + 18;
+    for (SPDFTabGroupLayout* layout in groups) {
+        if (!layout.visible) { layout.header = NSZeroRect; continue; }
         CGFloat start = x;
         layout.header = NSMakeRect(x + 4, 6, NSWidth(layout.header), 30);
         x += NSWidth(layout.header) + 4;
         NSArray<NSNumber*>* members = layout.members;
-        if (members.count) {
-            CGFloat space = MAX(0, right - x - remainingHeaders - 4);
-            NSInteger capacity = MAX(0, (NSInteger)floor(space / (width + 4)));
-            // Reserve one tab per later expanded group; the active group's
-            // selected tab is then centered in its own visible slice.
-            NSInteger laterTabs = remainingTabs - members.count;
-            if (laterTabs && capacity > 1) capacity = MAX(1, capacity - MIN(laterTabs, (NSInteger)(groups.count - g - 1)));
-            capacity = MIN((NSInteger)members.count, capacity);
-            NSUInteger selected = [members indexOfObject:@(self.selectedIndex)];
-            NSInteger first = selected == NSNotFound ? 0 : MAX(0, (NSInteger)selected - (capacity - 1) / 2);
-            first = MIN(first, MAX(0, (NSInteger)members.count - capacity));
-            for (NSInteger j = 0; j < capacity; ++j) {
-                layout.tabRects[members[(NSUInteger)(first + j)]] =
-                    [NSValue valueWithRect:NSMakeRect(x, 7, width, 28)];
-                x += width + 4;
-            }
-            remainingTabs -= members.count;
+        NSInteger capacity = layout.capacity;
+        NSUInteger selected = [members indexOfObject:@(self.selectedIndex)];
+        NSInteger first = selected == NSNotFound ? 0 : MAX(0, (NSInteger)selected - (capacity - 1) / 2);
+        first = MIN(first, MAX(0, (NSInteger)members.count - capacity));
+        for (NSInteger j = 0; j < capacity; ++j) {
+            layout.tabRects[members[(NSUInteger)(first + j)]] =
+                [NSValue valueWithRect:NSMakeRect(x, 7, width, 28)];
+            x += pitch;
         }
         layout.frame = NSMakeRect(start, 3, MAX(34, x - start + 4), 36);
-        // A crowded strip puts complete groups in the existing overflow menu;
-        // never paints a partial header underneath the plus/overflow controls.
-        if (NSMaxX(layout.frame) > right) {
-            layout.frame = NSZeroRect;
-            layout.header = NSZeroRect;
-            [layout.tabRects removeAllObjects];
-        }
         x += 14;
     }
     _groupLayout = groups;
