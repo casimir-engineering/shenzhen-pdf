@@ -155,6 +155,7 @@ $PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
 TESTS="
 SPDFMacCollectionComparePresentationTests
 SPDFMacCollectionWindowTests
+SPDFMacCollectionStyleTests
 SPDFMacCollectionMarkdownIndexTests
 SPDFMacCollectionCompareLoadTests
 SPDFMacCollectionContextSearchMarkdownTests

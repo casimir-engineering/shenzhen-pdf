@@ -90,10 +90,15 @@ NSColor* SPDFCollectionColor(NSString* token) {
     if (self.window.firstResponder == self) { [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState]; }
 }
 @end
+static NSBezierPath* SearchShape(NSRect bounds) {
+    return [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(bounds,.5,.5) xRadius:6 yRadius:6];
+}
 @interface SPDFCollectionSearchCell : NSSearchFieldCell
 @property(nonatomic) BOOL editingRectPrepared;
 @end
 @implementation SPDFCollectionSearchCell
+- (NSRect)focusRingMaskBoundsForFrame:(NSRect)frame inView:(NSView*)view { (void)view; return frame; }
+- (void)drawFocusRingMaskWithFrame:(NSRect)frame inView:(NSView*)view { (void)view; [SearchShape(frame) fill]; }
 // Borderless search chrome needs the same inset for static text and the AppKit field editor.
 // The inherited editing methods otherwise use the entire 31-point control bounds.
 - (void)selectWithFrame:(NSRect)frame inView:(NSView*)view editor:(NSText*)editor delegate:(id)delegate
@@ -125,9 +130,11 @@ NSColor* SPDFCollectionColor(NSString* token) {
 @interface SPDFCollectionFlatSearch : NSSearchField
 @end
 @implementation SPDFCollectionFlatSearch
+- (NSRect)focusRingMaskBounds { return self.bounds; }
+- (void)drawFocusRingMask { [SearchShape(self.bounds) fill]; }
 - (NSEdgeInsets)alignmentRectInsets { return NSEdgeInsetsMake(0,0,0,0); }
 - (void)drawRect:(NSRect)dirty {
-    NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,.5,.5) xRadius:6 yRadius:6];
+    NSBezierPath* shape = SearchShape(self.bounds);
     [SPDFCollectionColor(@"pane") setFill]; [shape fill]; [SPDFCollectionColor(@"line") setStroke]; [shape stroke];
     [super drawRect:dirty];
 }
@@ -136,6 +143,9 @@ NSButton* SPDFCollectionButton(NSString* title,id target,SEL action,NSString* ki
     SPDFCollectionFlatButton* button = [[SPDFCollectionFlatButton alloc] init]; button.kind = kind;
     button.title = title; button.target = target; button.action = action; button.bordered = NO;
     button.font = [NSFont systemFontOfSize:13]; button.alignment = NSTextAlignmentCenter;
+    // AppKit defaults to wrapping, which pins a single label to the top inset.
+    // Contextual match buttons opt into multiline wrapping after construction.
+    button.cell.wraps = NO;
     button.focusRingType = NSFocusRingTypeExterior; return button;
 }
 NSPopUpButton* SPDFCollectionPopUp(void) {

@@ -297,3 +297,18 @@ The final isolated candidate received a targeted live follow-up after the two po
 The complete release preparation exited **0** on 23 September 2026: **54 discovered test targets** passed, including all 23 native Markdown/UI integration suites and 56 release-workflow checks. The final native app build exited 0; the source-size ratchet passed for 1,034 maintained files and 35 exact caps. Release notes passed strict validation. Release **26.9.23-1** was prepared on `codex/collection-history-release` in commit `9234a1dbd`; no tag, push, signing for distribution, notarization or publication was performed.
 
 The journal is opened in the final isolated candidate using its separate generated-fixture state. The installed ShenzhenPDF application is unchanged.
+
+
+### Control alignment and focus correction
+
+The user identified two visual defects missed by the prior review: sidebar symbols sat below their labels, and focusing the search field replaced its rounded outline with a rectangular ring. The previous 9.2 rating did not catch these interaction details.
+
+Single-line buttons inherited AppKit's wrapping mode, so their labels used the top inset while icons used the vertical center. The shared button factory now disables wrapping; contextual search matches explicitly retain multiline wrapping. Search chrome and both AppKit focus-mask entry points now share the same rounded path.
+
+A separate agent added rendered light/dark regression checks. The old code fails: Documents and Settings labels differ from their icons by 4.25 and 3.5 points. The corrected controls pass, along with transparent-corner and filled-edge focus-mask checks. All **24 native UI suites**, the native app build and source-size check passed. This follow-up did not repeat the earlier 54-target release sweep.
+
+Live validation in the isolated Controls candidate confirmed empty and populated focused search, typing, Tab away, and Cmd+F refocus. The installed app remains untouched. The earlier journal is already open in this candidate; Collection is left visible for inspection.
+
+![Corrected icon alignment and rounded focus outline while editing](assets/controls-focused.png)
+
+![The same search field after focus moves away](assets/controls-unfocused.png)
