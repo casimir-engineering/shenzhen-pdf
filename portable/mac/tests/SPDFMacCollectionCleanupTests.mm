@@ -206,9 +206,9 @@ int main(void) { @autoreleasepool {
     Check([rankedStore versionsForDocumentID:docA[@"id"]].count==2,@"counting reuse creates no revision");
     [rankedStore setExcluded:YES documentID:docA[@"id"] error:nil];
     counted=OpenCapture(rankedStore,pathA,nil,4);
-    Check(![counted[@"recorded"] boolValue] && ![counted[@"document"] count],@"excluded capture identifies unrecorded successful reading");
-    [rankedStore recordUserOpenCount:4 forDocumentID:docA[@"id"] error:nil];
-    Check([[rankedStore documentForPath:pathA][@"openCount"] unsignedIntegerValue]==7,@"batch fallback records excluded reading without a new version");
+    Check([counted[@"recorded"] boolValue] && ![counted[@"document"] count],@"excluded capture records successful reading before completion");
+    if (![counted[@"recorded"] boolValue]) [rankedStore recordUserOpenCount:4 forDocumentID:docA[@"id"] error:nil];
+    Check([[rankedStore documentForPath:pathA][@"openCount"] unsignedIntegerValue]==7,@"excluded worker fallback counts once without a new version");
     // A rollback may retry with the count; a committed capture may retry without it.
     CountRetryCollectionStore* retryStore=[[CountRetryCollectionStore alloc] initWithRootURL:[sandbox URLByAppendingPathComponent:@"CountRetries"]];
     [retryStore updateSettings:@{@"choice":@"enabled"} error:nil];
@@ -250,14 +250,45 @@ int main(void) { @autoreleasepool {
     queued.captureQueue.suspended=YES; completions=0;
     [queued capturePath:pathA reason:@"Explicit opened" continuingDocumentID:nil userOpenCount:2
         completion:^(NSDictionary* row,NSError* error,BOOL recorded) {
-            (void)error; Check(!row && !recorded,@"stale explicit job still honors edit protection epoch");
-            [queued recordUserOpenCount:2 forDocumentID:[queued documentForPath:pathA][@"id"] error:nil]; ++completions;
+            (void)error; Check(!row && recorded,@"stale explicit job honors edit protection epoch but records reading");
+            if (!recorded) [queued recordUserOpenCount:2 forDocumentID:[queued documentForPath:pathA][@"id"] error:nil];
+            ++completions;
         }];
     [queued ensureProtectedPath:pathA reason:@"Edit gate" error:nil];
     queued.captureQueue.suspended=NO;
     Wait(^BOOL { return completions==1; });
     Check([[queued documentForPath:pathA][@"openCount"] unsignedIntegerValue]==5 && queued.documents.count==1,
-          @"epoch cancellation lets caller record reading without splitting history");
+          @"epoch cancellation records reading exactly once without splitting history");
+    // Busy main thread: excluded A must count before the queued B watcher prunes.
+    SPDFMacCollectionStore* excludedQueue=[[SPDFMacCollectionStore alloc] initWithRootURL:[sandbox URLByAppendingPathComponent:@"ExcludedOrdering"]];
+    [excludedQueue updateSettings:@{@"choice":@"enabled"} error:nil];
+    [@"aaaaaaaaaa" writeToFile:pathA atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    NSDictionary* excludedA=[excludedQueue capturePath:pathA reason:@"Imported" error:nil];
+    [@"bbbbbbbbbb" writeToFile:pathB atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    NSDictionary* watchedB=[excludedQueue capturePath:pathB reason:@"Imported" error:nil];
+    [@"cccccccccc" writeToFile:pathA atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    [excludedQueue capturePath:pathA reason:@"Saved" continuingDocumentID:excludedA[@"id"] error:nil];
+    [excludedQueue recordUserOpenForDocumentID:watchedB[@"id"] error:nil];
+    unsigned long long excludedCap=excludedQueue.storageUsedBytes;
+    [excludedQueue applyStorageLimit:excludedCap reviewedPlan:[excludedQueue previewStorageLimit:excludedCap] error:nil];
+    [excludedQueue setExcluded:YES documentID:excludedA[@"id"] error:nil];
+    completions=0;
+    [excludedQueue capturePath:pathA reason:@"Explicit opened" continuingDocumentID:nil userOpenCount:1
+        completion:^(NSDictionary* row,NSError* error,BOOL recorded) {
+            (void)row;(void)error; Check(recorded,@"excluded open was counted on worker while main was busy");
+            if (!recorded) [excludedQueue recordUserOpenCount:1 forDocumentID:excludedA[@"id"] error:nil];
+            ++completions;
+        }];
+    [@"dddddddddd" writeToFile:pathB atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    [excludedQueue capturePath:pathB reason:@"Observed save" continuingDocumentID:watchedB[@"id"]
+        completion:^(NSDictionary* row,NSError* error) { Check(row && !error,@"watcher capture succeeds after excluded open"); ++completions; }];
+    [excludedQueue.captureQueue waitUntilAllOperationsAreFinished];
+    Check(completions==0 && [excludedQueue versionsForDocumentID:excludedA[@"id"]].count==2 &&
+          [excludedQueue versionsForDocumentID:watchedB[@"id"]].count==1,
+          @"excluded open updates eviction priority before callbacks or next worker cleanup");
+    Wait(^BOOL { return completions==2; });
+    Check([[excludedQueue documentForPath:pathA][@"openCount"] unsignedIntegerValue]==1,
+          @"delayed main completion never double-counts excluded reading");
     SPDFMacCollectionStore* unused=[[SPDFMacCollectionStore alloc] initWithRootURL:[sandbox URLByAppendingPathComponent:@"UnusedCounted"]];
     counted=OpenCapture(unused,pathA,nil,3);
     [unused recordUserOpenCount:3 forDocumentID:@"absent" error:nil];
