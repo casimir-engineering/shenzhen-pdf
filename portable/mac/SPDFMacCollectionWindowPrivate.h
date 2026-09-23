@@ -10,7 +10,6 @@
 @property(nonatomic) NSView* historyPane;
 @property(nonatomic) NSButton* documentsButton;
 @property(nonatomic) NSButton* settingsButton;
-@property(nonatomic) NSPopUpButton* scopePicker;
 @property(nonatomic) NSTextField* resultSummary;
 @property(nonatomic) NSTextField* locationField;
 @property(nonatomic, copy) NSString* destination;

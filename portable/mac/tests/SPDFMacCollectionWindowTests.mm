@@ -158,41 +158,14 @@ int main(void) {
                 [manager.details.stringValue containsString:@"Bridge Notes.pdf"] &&
                     manager.selectionButtons[1].enabled);
             NSMutableDictionary* latestDoc = [fixtureDocument mutableCopy]; latestDoc[@"latestVersionID"] = fixtureVersion[@"id"];
-            NSMutableDictionary* oldBadgeVersion = [fixtureVersion mutableCopy]; oldBadgeVersion[@"id"] = @"older-version";
-            latestDoc[@"versions"] = @[oldBadgeVersion,fixtureVersion];
-            manager.rows = @[@{@"document":latestDoc,@"version":oldBadgeVersion,@"latest":@YES},
-                @{@"document":latestDoc,@"version":fixtureVersion}];
-            NSView* oldCell = [manager resultCellForRow:0]; NSView* latestCell = [manager resultCellForRow:1];
-            Expect(@"old search hit never gets Latest from its order or stale row flag",!Identified(oldCell,@"CollectionLatestBadge"));
-            NSView* latestBadge = Identified(latestCell,@"CollectionLatestBadge");
-            Expect(@"canonical latest list version has the accessible pill",latestBadge &&
-                [latestBadge.accessibilityLabel isEqual:@"Latest saved version"]);
-            latestCell.frame = NSMakeRect(0,0,NSWidth(manager.listScroll.bounds),
-                [manager tableView:manager.table heightOfRow:1]); [latestCell layoutSubtreeIfNeeded];
-            NSImageView* latestThumbnail = (id)Descendant(latestCell,NSImageView.class);
-            NSRect listBadgeRect = [latestBadge convertRect:latestBadge.bounds toView:latestCell];
-            Expect(@"list latest pill and thumbnail fit without overlap",NSContainsRect(latestCell.bounds,listBadgeRect) &&
-                NSContainsRect(latestCell.bounds,latestThumbnail.frame) && !NSIntersectsRect(listBadgeRect,latestThumbnail.frame));
-            NSMutableDictionary* legacyDoc = [latestDoc mutableCopy]; [legacyDoc removeObjectForKey:@"latestVersionID"];
-            manager.rows = @[@{@"document":legacyDoc,@"version":fixtureVersion}];
-            Expect(@"legacy latest badge uses the last canonical version",Identified([manager resultCellForRow:0],@"CollectionLatestBadge") != nil);
-            manager.rows = @[@{@"document":latestDoc,@"version":oldBadgeVersion,@"latest":@YES},
-                @{@"document":latestDoc,@"version":fixtureVersion}];
+            latestDoc[@"versions"] = @[fixtureVersion];
+            manager.rows = @[@{@"document":latestDoc,@"version":fixtureVersion}];
+            Expect(@"Documents never displays the History-only Latest pill",!Identified([manager resultCellForRow:0],@"CollectionLatestBadge"));
             [manager.table reloadData]; [manager reloadGrid]; [manager.window.contentView layoutSubtreeIfNeeded];
             [manager.grid layoutSubtreeIfNeeded]; [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]];
             [manager.grid layoutSubtreeIfNeeded];
-            NSCollectionViewItem* oldItem = [manager.grid itemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
-            NSCollectionViewItem* latestItem = [manager.grid itemAtIndexPath:[NSIndexPath indexPathForItem:1 inSection:0]];
-            NSView* gridBadge = Identified(latestItem.view,@"CollectionLatestBadge");
-            NSButton* historyButton = (id)Descendant(latestItem.view,NSButton.class);
-            Expect(@"grid shows Latest only for the canonical newest saved version",gridBadge && !gridBadge.hidden &&
-                Identified(oldItem.view,@"CollectionLatestBadge").hidden);
-            Expect(@"grid Latest pill does not overlap thumbnail, caption, or History",historyButton &&
-                !NSIntersectsRect(gridBadge.frame,latestItem.imageView.frame) &&
-                !NSIntersectsRect(gridBadge.frame,latestItem.textField.frame) && !NSIntersectsRect(gridBadge.frame,historyButton.frame));
-            Expect(@"grid accessibility announces Latest along with the filename",
-                [latestItem.view.accessibilityLabel containsString:@"Latest saved version"] &&
-                ![oldItem.view.accessibilityLabel containsString:@"Latest saved version"]);
+            NSCollectionViewItem* latestItem = [manager.grid itemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
+            Expect(@"thumbnail browsing has no History-only Latest pill",latestItem && !Identified(latestItem.view,@"CollectionLatestBadge"));
             Expect(@"manager construction starts no capture or thumbnail work",manager.thumbnailQueue.operationCount == 0 &&
                 ![NSFileManager.defaultManager fileExistsAtPath:root.path]);
             NSString* indexedPath = [root.path stringByAppendingString:@"-Field Notes.md"];
@@ -200,7 +173,6 @@ int main(void) {
                 encoding:NSUTF8StringEncoding error:nil];
             [store updateSettings:@{@"choice":@"enabled"} error:nil];
             NSDictionary* indexed = [store capturePath:indexedPath reason:@"Opened" error:nil];
-            [manager.viewPicker selectItemAtIndex:1];
             [manager.viewPicker selectItemAtIndex:0]; manager.search.stringValue = @"orchid"; manager.rows = @[];
             [manager reload:nil];
             NSDate* filterDeadline = [NSDate dateWithTimeIntervalSinceNow:2];
@@ -275,8 +247,41 @@ int main(void) {
             Expect(@"changed searches never inherit an unrelated hit",!changedQuery.firstObject[@"selectedMatch"]);
             dispatch_sync(manager.preferenceQueue,^{});
             [@"# Greenhouse log\nThe orchid has a new leaf.\n" writeToFile:indexedPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-            NSDictionary* newer = [store capturePath:indexedPath reason:@"Modified" error:nil];
+            NSDictionary* newer = [store capturePath:indexedPath reason:@"Modified" continuingDocumentID:indexed[@"id"] error:nil];
+            Expect(@"latest-only fixture contains two versions of one document",[newer[@"id"] isEqual:indexed[@"id"]] && [newer[@"versions"] count] == 2);
             NSString* oldVersion = remembered[@"version"][@"id"];
+            [store updateSettings:@{@"managerDestination":@"Documents",@"managerView":@1,@"managerSearchScope":@1,@"managerQuery":@""} error:nil];
+            SPDFMacCollectionWindow* latestOnly = [[SPDFMacCollectionWindow alloc] initWithStore:store open:^(NSString* path,BOOL archived) {
+                (void)path; (void)archived;
+            }];
+            Expect(@"legacy Versions preference migrates to All Documents with no version controls",
+                latestOnly.viewPicker.selectedItem.tag == 0 && ![latestOnly.viewPicker.itemTitles containsObject:@"Versions"] &&
+                !Label(latestOnly.window.contentView,@"All saved versions"));
+            void (^refreshLatest)(id) = ^(id sender) {
+                NSArray* previous = latestOnly.rows; [latestOnly reload:sender];
+                NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:3];
+                while (latestOnly.rows == previous && deadline.timeIntervalSinceNow>0)
+                    [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+                Expect(@"latest-only manager refresh completes",latestOnly.rows != previous);
+            };
+            refreshLatest(nil);
+            Expect(@"Documents shows exactly one canonical latest version despite legacy all-version preferences",latestOnly.rows.count == 1 &&
+                [latestOnly.rows.firstObject[@"version"][@"id"] isEqual:newer[@"latestVersionID"]]);
+            [store setKeep:YES versionID:oldVersion documentID:indexed[@"id"] error:nil];
+            [latestOnly.viewPicker selectItemWithTag:3]; refreshLatest(latestOnly.viewPicker);
+            Expect(@"Kept filter shows the latest document when only an older version is kept",latestOnly.rows.count == 1 &&
+                [latestOnly.rows.firstObject[@"version"][@"id"] isEqual:newer[@"latestVersionID"]] &&
+                ![latestOnly.rows.firstObject[@"version"][@"keep"] boolValue]);
+            latestOnly.search.stringValue = @"bloomed"; refreshLatest(latestOnly.search);
+            Expect(@"Documents search excludes text found only in an older version",latestOnly.rows.count == 0);
+            latestOnly.search.stringValue = @"new leaf"; refreshLatest(latestOnly.search);
+            Expect(@"Documents search finds the latest version only once",latestOnly.rows.count == 1 &&
+                [latestOnly.rows.firstObject[@"version"][@"id"] isEqual:newer[@"latestVersionID"]]);
+            dispatch_sync(latestOnly.preferenceQueue,^{});
+            Expect(@"tagged filters preserve existing preference identifiers",[store.settings[@"managerView"] integerValue] == 3 &&
+                [store.settings[@"managerSearchScope"] integerValue] == 0);
+            [latestOnly.window close]; dispatch_sync(latestOnly.preferenceQueue,^{});
+
             [store updateSettings:@{@"managerDestination":@"History",@"managerHistoryDocumentID":indexed[@"id"],
                 @"managerHistoryVersionID":oldVersion,@"managerHistoryPage":@1,@"managerQuery":@"orchid",
                 @"managerBrowseState":browsing} error:nil];
