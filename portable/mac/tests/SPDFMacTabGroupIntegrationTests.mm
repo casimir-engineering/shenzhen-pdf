@@ -65,8 +65,40 @@ static SPDFDocumentTab* Tab(NSString* path) {
     tab.path = path; tab.title = path.lastPathComponent;
     return tab;
 }
+static void CheckCreationPlacement(BOOL before, BOOL explicitPlacement) {
+    GroupReaderProbe* reader = [GroupReaderProbe new];
+    NSMutableArray* tabs = [NSMutableArray array];
+    for (NSUInteger i=0;i<60;i++) [tabs addObject:Tab([NSString stringWithFormat:@"/placement-%lu.md",(unsigned long)i])];
+    // With overflow, a left-side visible target can be near the end of the model.
+    NSInteger source = explicitPlacement ? 59 : before ? 10 : 0;
+    NSInteger target = explicitPlacement ? 54 : before ? 11 : 55;
+    SPDFDocumentTab* dragged = tabs[source]; SPDFDocumentTab* destination = tabs[target];
+    dragged.pageIndex = 9; destination.pageIndex = 17;
+    [reader seed:tabs selected:source];
+    if (explicitPlacement) {
+        BOOL supported = [reader respondsToSelector:@selector(createGroupForTabAtIndex:withTabAtIndex:color:beforeTargetGroup:)];
+        Expect(@"creation accepts an explicit visible-side placement",supported);
+        if (!supported) return;
+        [reader createGroupForTabAtIndex:source withTabAtIndex:target color:@"Blue" beforeTargetGroup:before];
+    } else [reader createGroupForTabAtIndex:source withTabAtIndex:target color:@"Blue"];
+    Expect(before ? @"left-side creation precedes General" : @"right-side creation follows General",
+        ((SPDFDocumentTab*)(before ? reader.tabs.firstObject : reader.tabs.lastObject)).group == dragged.group &&
+        ((SPDFDocumentTab*)(before ? reader.tabs.lastObject : reader.tabs.firstObject)).group.general);
+    Expect(@"creation keeps both documents and all other tabs",reader.tabs.count == 60 &&
+        dragged.group == destination.group && [NSSet setWithArray:reader.tabs].count == 60);
+    Expect(@"creation preserves active document and reading state",[reader.activePath isEqual:dragged.path] &&
+        ((SPDFDocumentTab*)reader.tabs[reader.selectedIndex]) == dragged && dragged.pageIndex == 9 && destination.pageIndex == 17);
+    NSMutableArray* restored = [NSMutableArray array];
+    for (NSDictionary* encoded in reader.savedTabs) [restored addObject:spdf_tab_from_dictionary(encoded)];
+    spdf_tab_groups_normalize(restored);
+    Expect(@"created side and document order survive session restore",
+        [[restored valueForKey:@"path"] isEqual:[reader.tabs valueForKey:@"path"]] &&
+        ((SPDFDocumentTab*)(before ? restored.lastObject : restored.firstObject)).group.general);
+}
 int main(void) {
     @autoreleasepool {
+        CheckCreationPlacement(YES,NO); CheckCreationPlacement(NO,NO);
+        CheckCreationPlacement(YES,YES); CheckCreationPlacement(NO,YES);
         GroupReaderProbe* reader = [[GroupReaderProbe alloc] init];
         SPDFDocumentTab* a = Tab(@"/a.pdf");
         SPDFDocumentTab* b = Tab(@"/b.md");

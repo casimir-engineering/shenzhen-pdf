@@ -3,7 +3,24 @@
 @implementation SPDFTabStripView (GroupInteraction)
 - (id<SPDFTabGroupReader>)groupReader { return (id<SPDFTabGroupReader>)self.reader; }
 - (void)tabContextNewGroup:(NSMenuItem*)sender {
-    [self.groupReader createGroupForTabAtIndex:[sender.representedObject integerValue] withTabAtIndex:-1 color:nil];
+    NSInteger index = [sender.representedObject integerValue];
+    [self.groupReader createGroupForTabAtIndex:index withTabAtIndex:-1 color:nil
+        beforeTargetGroup:[self newGroupGoesBeforeTargetAtIndex:index]];
+}
+- (BOOL)newGroupGoesBeforeTargetAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.tabs.count) return NO;
+    SPDFTabGroup* parent = self.tabs[(NSUInteger)index].group;
+    NSRect visible = NSZeroRect, target = [self rectForTabAtIndex:index];
+    NSInteger first = -1, last = -1;
+    for (NSUInteger i=0;i<self.tabs.count;i++) if (self.tabs[i].group == parent) {
+        if (first < 0) first = i;
+        last = i;
+        NSRect rect = [self rectForTabAtIndex:i];
+        if (!NSIsEmptyRect(rect)) visible = NSIsEmptyRect(visible) ? rect : NSUnionRect(visible,rect);
+    }
+    // Visible coordinates matter when most General tabs are in overflow.
+    if (!NSIsEmptyRect(target) && !NSIsEmptyRect(visible)) return NSMidX(target) < NSMidX(visible);
+    return first >= 0 && index-first < (last-first+1)/2;
 }
 - (NSMenu*)moveToGroupMenuForTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)self.tabs.count || ![self hasTabGroups]) return nil;
@@ -192,6 +209,7 @@
     SPDFTabGroup* destination = _groupDropGroup;
     SPDFDocumentTab* target = _groupDropTabIndex >= 0 ? self.tabs[(NSUInteger)_groupDropTabIndex] : nil;
     NSString* color = _groupPreviewColor;
+    BOOL before = target ? [self newGroupGoesBeforeTargetAtIndex:_groupDropTabIndex] : NO;
     if (source < 0) {
         // Seed destination membership before inserting: normalization must not
         // briefly create an unrelated source group in the destination window.
@@ -208,7 +226,7 @@
     } else {
         NSUInteger other = [self.tabs indexOfObjectIdenticalTo:target];
         if (other != NSNotFound)
-            [self.groupReader createGroupForTabAtIndex:source withTabAtIndex:other color:color];
+            [self.groupReader createGroupForTabAtIndex:source withTabAtIndex:other color:color beforeTargetGroup:before];
     }
     return YES;
 }

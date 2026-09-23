@@ -30,6 +30,8 @@ NSArray<SPDFDocumentTab*>* spdf_tab_group_members(NSArray<SPDFDocumentTab*>* tab
 
 @protocol SPDFTabGroupReader <NSObject>
 - (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color;
+- (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color
+             beforeTargetGroup:(BOOL)before;
 - (void)toggleTabGroup:(SPDFTabGroup*)group;
 - (void)renameTabGroup:(SPDFTabGroup*)group name:(NSString*)name;
 - (void)recolorTabGroup:(SPDFTabGroup*)group color:(NSString*)color;

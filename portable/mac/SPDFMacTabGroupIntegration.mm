@@ -43,11 +43,44 @@
     [self savePersistentState];
 }
 - (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color {
+    NSInteger target = other >= 0 && other < (NSInteger)_tabs.count ? other : index;
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
-    SPDFTabGroup* group = [SPDFTabGroup groupWithColor:color ?: spdf_tab_group_unused_color(_tabs)];
+    SPDFTabGroup* parent = _tabs[(NSUInteger)target].group;
+    NSInteger first = target, last = target;
+    while (first > 0 && _tabs[(NSUInteger)first-1].group == parent) --first;
+    while (last+1 < (NSInteger)_tabs.count && _tabs[(NSUInteger)last+1].group == parent) ++last;
+    [self createGroupForTabAtIndex:index withTabAtIndex:other color:color
+        beforeTargetGroup:target-first < (last-first+1)/2];
+}
+- (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color
+             beforeTargetGroup:(BOOL)before {
+    if (index < 0 || index >= (NSInteger)_tabs.count) return;
     SPDFDocumentTab* selected = _tabs[(NSUInteger)index];
-    selected.group = group;
-    if (other >= 0 && other < (NSInteger)_tabs.count) _tabs[(NSUInteger)other].group = group;
+    SPDFDocumentTab* target = other >= 0 && other < (NSInteger)_tabs.count ? _tabs[(NSUInteger)other] : selected;
+    SPDFDocumentTab* active = _selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count
+        ? _tabs[(NSUInteger)_selectedTabIndex] : nil;
+    SPDFTabGroup* parent = target.group;
+    NSMutableArray* members = [NSMutableArray array];
+    NSUInteger fallback = 0;
+    NSUInteger targetIndex = [_tabs indexOfObjectIdenticalTo:target];
+    for (NSUInteger i=0;i<_tabs.count;i++) {
+        SPDFDocumentTab* tab = _tabs[i];
+        if (tab == selected || tab == target) [members addObject:tab];
+        else if (i < targetIndex) ++fallback;
+    }
+    [_tabs removeObjectsInArray:members];
+    NSUInteger insertion = fallback;
+    // General remains contiguous, on the opposite side from the visible drop.
+    // Establish that boundary before normalization; first occurrence alone
+    // would move a left-side group behind every hidden General tab.
+    for (NSUInteger i=0;i<_tabs.count;i++) if (_tabs[i].group == parent) {
+        insertion = before ? i : i+1;
+        if (before) break;
+    }
+    SPDFTabGroup* group = [SPDFTabGroup groupWithColor:color ?: spdf_tab_group_unused_color(_tabs)];
+    for (SPDFDocumentTab* tab in members) tab.group = group;
+    [_tabs insertObjects:members atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(insertion,members.count)]];
+    if (active) _selectedTabIndex = [_tabs indexOfObjectIdenticalTo:active];
     [self normalizeTabGroups];
     spdf_tab_groups_activate(_tabs, selected);
     [self selectTabAtIndex:[_tabs indexOfObjectIdenticalTo:selected]];
