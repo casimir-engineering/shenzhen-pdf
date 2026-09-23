@@ -144,8 +144,17 @@ int main(void) {
         one.group.lastUsedPath = two.path;
         [source toggleTabGroup:one.group];
         [source toggleTabGroup:one.group];
-        Expect(@"expanding a group opens its last-used document at its reading position",
-            !one.group.collapsed && [source.activePath isEqual:two.path] && two.pageIndex == 11);
+        Expect(@"expanding a group preserves the selected document and reading positions",
+            !one.group.collapsed && [source.activePath isEqual:one.path] && one.pageIndex == 7 && two.pageIndex == 11);
+        GroupReaderProbe* browsing = [GroupReaderProbe new];
+        SPDFDocumentTab* outside = Tab(@"/outside.pdf");
+        [browsing seed:@[outside, one, two] selected:0];
+        [browsing normalizeTabGroups];
+        one.group.collapsed = YES;
+        [browsing toggleTabGroup:one.group];
+        Expect(@"browsing another group never selects one of its tabs",
+            !one.group.collapsed && [browsing.activePath isEqual:outside.path] && browsing.selectedIndex == 0);
+        Expect(@"manual expansion is persisted", ![browsing.savedTabs[1][@"group"][@"collapsed"] boolValue]);
         [source detachTabGroup:one.group atScreenPoint:NSMakePoint(300, 500)];
         Expect(@"failed handoff write leaves the source tabs open and reports the failure",
                source.handoffWriteCount == 1 && source.errorCount == 1 && source.tabs.count == 2);
