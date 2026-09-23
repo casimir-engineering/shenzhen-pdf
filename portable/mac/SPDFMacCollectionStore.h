@@ -32,6 +32,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)capturePath:(NSString*)path reason:(NSString*)reason
         continuingDocumentID:(nullable NSString*)documentID
         completion:(nullable void (^)(NSDictionary* _Nullable, NSError* _Nullable))completion;
+// Counts explicit opens atomically before cap cleanup. The completion flag remains
+// YES if the count committed but a later source change caused retries/failure.
+// When NO, callers may record successful reading against an existing history.
+- (void)capturePath:(NSString*)path reason:(NSString*)reason
+        continuingDocumentID:(nullable NSString*)documentID userOpenCount:(NSUInteger)count
+        completion:(nullable void (^)(NSDictionary* _Nullable, NSError* _Nullable, BOOL userOpenCountRecorded))completion;
 - (void)importRecentPaths:(NSArray<NSString*>*)paths;
 - (BOOL)ensureProtectedPath:(NSString*)path reason:(NSString*)reason error:(NSError**)error;
 - (BOOL)ensureProtectedPath:(NSString*)path reason:(NSString*)reason
@@ -74,5 +80,6 @@ NS_ASSUME_NONNULL_BEGIN
 // Explicit user opens only; callers exclude restoration, capture and history previews.
 // Missing histories are a lazy no-op; this never creates an unused Collection.
 - (BOOL)recordUserOpenForDocumentID:(NSString*)documentID error:(NSError**)error;
+- (BOOL)recordUserOpenCount:(NSUInteger)count forDocumentID:(NSString*)documentID error:(NSError**)error;
 @end
 NS_ASSUME_NONNULL_END

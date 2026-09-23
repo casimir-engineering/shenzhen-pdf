@@ -37,7 +37,12 @@ FOUNDATION_EXPORT NSDictionary* SPDFCollectionAssets(NSString* sourcePath, NSDat
 - (BOOL)captureRequestIsCurrentForPath:(NSString*)path;
 - (BOOL)captureEpochIsCurrentForPath:(NSString*)path document:(nullable NSDictionary*)document;
 - (void)enqueueCapturePath:(NSString*)path reason:(NSString*)reason continuingDocumentID:(nullable NSString*)documentID
-                  attempt:(NSUInteger)attempt generation:(NSNumber*)generation epoch:(NSString*)epoch completion:(nullable void (^)(NSDictionary* _Nullable,NSError* _Nullable))completion;
+                  attempt:(NSUInteger)attempt generation:(NSNumber*)generation epoch:(NSString*)epoch
+                 userOpenState:(NSMutableDictionary*)state
+                 completion:(nullable void (^)(NSDictionary* _Nullable,NSError* _Nullable,BOOL))completion;
+- (NSUInteger)captureUserOpenCountForPath:(NSString*)path;
+- (void)recordCaptureUserOpenInDocument:(NSMutableDictionary*)document path:(NSString*)path;
+- (void)markCaptureUserOpenRecordedForPath:(NSString*)path;
 - (nullable NSDictionary*)captureLockedPath:(NSString*)path reason:(NSString*)reason
                      continuingDocumentID:(nullable NSString*)documentID
                                   manifest:(NSMutableDictionary*)manifest error:(NSError**)error;

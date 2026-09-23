@@ -44,7 +44,9 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
         if ([row[@"path"] isEqual:path] && ![row[@"sourceReplaced"] boolValue]) { doc = row; break; }
     if (![self captureEpochIsCurrentForPath:path document:doc]) return nil;
     if ([doc[@"excluded"] boolValue]) return nil;
-    if ((!documentID.length || [doc[@"id"] isEqual:documentID]) && [self canReuseProtection:doc path:path]) return doc;
+    if ((!documentID.length || [doc[@"id"] isEqual:documentID]) && [self canReuseProtection:doc path:path]) {
+        [self recordCaptureUserOpenInDocument:doc path:path]; return doc;
+    }
     NSData* bytes; struct stat before = {}, after = {}; BOOL stable = NO;
     for (NSUInteger retry=0; retry<3; ++retry) {
         if (stat(path.fileSystemRepresentation,&before) != 0 || !S_ISREG(before.st_mode)) break;
@@ -101,7 +103,8 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
         doc[@"aliases"]=aliases; doc[@"path"]=path; doc[@"title"]=path.lastPathComponent;
         doc[@"fileIdentity"]=identity;
         doc[@"status"] = @"Protected"; [doc removeObjectForKey:@"captureError"];
-        [self recordFingerprints:doc source:capturedSource dependencies:capturedDependencies]; return doc;
+        [self recordFingerprints:doc source:capturedSource dependencies:capturedDependencies];
+        [self recordCaptureUserOpenInDocument:doc path:path]; return doc;
     }
     if (![self installBytes:bytes hash:hash error:error]) return nil;
     for (NSDictionary* asset in dependencies[@"entries"])
@@ -145,6 +148,7 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
     NSMutableArray* versions = [doc[@"versions"] mutableCopy]; [versions addObject:version]; doc[@"versions"]=versions;
     doc[@"latestVersionID"]=version[@"id"]; doc[@"capturedAt"]=now; doc[@"status"]=@"Protected";
     [doc removeObjectForKey:@"captureError"]; [self recordFingerprints:doc source:capturedSource dependencies:capturedDependencies];
+    [self recordCaptureUserOpenInDocument:doc path:path];
     if (![self enforceStorageLimitInManifest:manifest protectedVersionID:version[@"id"] error:error]) return nil;
     if (![capturedSource isEqual:SPDFCollectionFingerprint(path)]) {
         if(error)*error=SPDFCollectionError(5,@"Source changed before committing its snapshot; retry capture."); return nil;
@@ -161,12 +165,14 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
     if (![self isEnabled] || [self isArchivePath:path] || [[self documentForPath:path][@"excluded"] boolValue]) return nil;
     NSDictionary* existing=[self documentForPath:path];
     if (![self captureEpochIsCurrentForPath:path document:existing]) return nil;
-    if ((!documentID.length || [existing[@"id"] isEqual:documentID]) && [self canReuseProtection:existing path:path]) return existing;
+    if (![self captureUserOpenCountForPath:path] && (!documentID.length || [existing[@"id"] isEqual:documentID]) &&
+        [self canReuseProtection:existing path:path]) return existing;
     __block NSDictionary* result; NSError* failure;
     BOOL ok = [self transaction:^BOOL(NSMutableDictionary* m,NSError** e) {
         if (![self captureRequestIsCurrentForPath:path]) return NO;
         result = [self captureLockedPath:path reason:reason continuingDocumentID:documentID manifest:m error:e]; return result != nil;
     } error:&failure];
+    if (ok) [self markCaptureUserOpenRecordedForPath:path];
     if (ok && ![result[@"sourceFingerprint"] isEqual:SPDFCollectionFingerprint(path)]) {
         ok=NO;
         failure=[NSError errorWithDomain:@"SPDFCollection" code:5 userInfo:@{
