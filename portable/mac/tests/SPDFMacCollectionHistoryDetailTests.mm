@@ -160,6 +160,13 @@ int main(void) {
                 [text containsString:@"Older version"] && [text containsString:@"orchid in the garden"] &&
                 ![text containsString:@"Latest version"] && ![text containsString:@"two flowers"];
         }));
+        SPDFMacCollectionHistoryDetailController* directOlder=[[SPDFMacCollectionHistoryDetailController alloc]
+            initWithStore:store document:latest version:[latest[@"versions"] firstObject] page:1 actionTarget:nil];
+        NSView* directView=directOlder.view; (void)directView;
+        Expect(@"entering History on an older search hit keeps that exact version",Await(^BOOL{
+            return [directOlder.selectedVersion[@"id"] isEqual:firstID] &&
+                [directOlder.reader.document.string containsString:@"Older version"];
+        }));
         Expect(@"History preview does not increment document opens",[[store documentForPath:markdown.path][@"openCount"] integerValue]==0);
         SPDFMacCollectionWindow* manager=[[SPDFMacCollectionWindow alloc] initWithStore:store open:nil];
         [manager.window setFrame:NSMakeRect(0,0,940,560) display:NO];

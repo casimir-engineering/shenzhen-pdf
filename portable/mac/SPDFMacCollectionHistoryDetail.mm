@@ -82,6 +82,7 @@ static NSTextField* Label(NSString* text, CGFloat size) {
 - (void)dealloc { [_previewProgress cancel]; [_work cancelAllOperations]; [NSNotificationCenter.defaultCenter removeObserver:self]; }
 - (void)invalidate {
     _invalidated=YES; ++_generation; [_previewProgress cancel]; [_work cancelAllOperations];
+    _reader.document=nil;
 }
 - (NSDictionary*)document { return _document; }
 - (PDFView*)reader { return _reader; }
@@ -93,6 +94,9 @@ static NSTextField* Label(NSString* text, CGFloat size) {
     return nil;
 }
 - (void)loadView {
+    // AppKit can select row zero as soon as empty selection is forbidden.
+    // Suppress that construction callback until the requested version is restored.
+    _restoringSelection=YES;
     self.view = SPDFCollectionSurface(@"window"); self.view.frame=NSMakeRect(0,0,880,640);
     NSButton* back = SPDFCollectionButton(@"‹ Back to Documents",self,@selector(goBack:),@"normal");
     back.keyEquivalent=@"\e"; back.keyEquivalentModifierMask=0;
