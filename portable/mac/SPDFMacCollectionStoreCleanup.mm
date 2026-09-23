@@ -188,12 +188,15 @@ static void RemoveVersion(NSMutableDictionary* manifest,NSString* documentID,NSS
     } error:error];
 }
 - (BOOL)recordUserOpenForDocumentID:(NSString*)documentID error:(NSError**)error {
-    if (!documentID.length || ![self readManifest][@"documents"][documentID]) return YES;
+    return [self recordUserOpenCount:1 forDocumentID:documentID error:error];
+}
+- (BOOL)recordUserOpenCount:(NSUInteger)count forDocumentID:(NSString*)documentID error:(NSError**)error {
+    if (!count || !documentID.length || ![self readManifest][@"documents"][documentID]) return YES;
     return [self transaction:^BOOL(NSMutableDictionary* manifest,NSError** failure) {
         (void)failure; NSMutableDictionary* doc=manifest[@"documents"][documentID];
         if (doc) {
-            unsigned long long count=[doc[@"openCount"] unsignedLongLongValue];
-            doc[@"openCount"]=@(count==ULLONG_MAX ? count : count+1);
+            unsigned long long previous=[doc[@"openCount"] unsignedLongLongValue];
+            doc[@"openCount"]=@(ULLONG_MAX-previous<count ? ULLONG_MAX : previous+count);
             doc[@"lastOpenedAt"]=@(NSDate.date.timeIntervalSince1970);
         }
         return YES;

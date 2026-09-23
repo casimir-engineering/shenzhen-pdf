@@ -24,6 +24,49 @@ static void Save(NSURL* root,NSDictionary* docs) {
         @{@"format":@1,@"settings":@{@"choice":@"enabled"},@"documents":docs} options:0 error:nil]);
 }
 static NSString* IDs(NSDictionary* plan) { return [[plan[@"removals"] valueForKey:@"versionID"] componentsJoinedByString:@","]; }
+static void Wait(BOOL (^done)(void)) {
+    NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:8];
+    while (!done() && deadline.timeIntervalSinceNow>0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    Check(done(),@"async capture completed");
+}
+static NSDictionary* OpenCapture(SPDFMacCollectionStore* store,NSString* path,NSString* documentID,NSUInteger count) {
+    __block NSDictionary* result=nil;
+    [store capturePath:path reason:@"Explicit opened" continuingDocumentID:documentID userOpenCount:count
+          completion:^(NSDictionary* doc,NSError* error,BOOL recorded) {
+              result=@{@"document":doc ?: @{},@"recorded":@(recorded),@"error":error ?: NSNull.null};
+              Check(NSThread.isMainThread,@"counted completion is on main queue");
+          }];
+    Wait(^BOOL { return result!=nil; }); return result;
+}
+@interface CountRetryCollectionStore : SPDFMacCollectionStore
+@property NSString* changeBeforeCommitPath;
+@property NSString* changeAfterCommitPath;
+@property BOOL failAfterCommit;
+@property BOOL forceFailure;
+@end
+@implementation CountRetryCollectionStore
+- (NSDictionary*)capturePath:(NSString*)path reason:(NSString*)reason continuingDocumentID:(NSString*)documentID error:(NSError**)error {
+    if (self.forceFailure) { if(error)*error=SPDFCollectionError(4,@"Injected permanent retry failure"); return nil; }
+    return [super capturePath:path reason:reason continuingDocumentID:documentID error:error];
+}
+- (void)recordFingerprints:(NSMutableDictionary*)doc source:(NSDictionary*)source dependencies:(NSDictionary*)dependencies {
+    if (self.changeBeforeCommitPath) {
+        [@"changed before commit" writeToFile:self.changeBeforeCommitPath atomically:NO encoding:NSUTF8StringEncoding error:nil];
+        self.changeBeforeCommitPath=nil;
+    }
+    [super recordFingerprints:doc source:source dependencies:dependencies];
+}
+- (BOOL)transaction:(BOOL (^)(NSMutableDictionary*,NSError**))body error:(NSError**)error {
+    BOOL ok=[super transaction:body error:error];
+    if (ok && self.changeAfterCommitPath) {
+        [@"changed after commit" writeToFile:self.changeAfterCommitPath atomically:NO encoding:NSUTF8StringEncoding error:nil];
+        self.changeAfterCommitPath=nil;
+        if (self.failAfterCommit) self.forceFailure=YES;
+    }
+    return ok;
+}
+@end
 @interface FailingCollectionStore : SPDFMacCollectionStore
 @property BOOL failInstall;
 @property BOOL failCommit;
@@ -137,6 +180,89 @@ int main(void) { @autoreleasepool {
     });
     NSDictionary* opened=nil; for(NSDictionary* row in capture.documents) if([row[@"id"] isEqual:documentID])opened=row;
     Check(openFailures==0 && [opened[@"openCount"] unsignedIntegerValue]==20,@"multi-instance explicit open counts persist without lost updates");
+    // The incoming explicit open participates in the eviction ordering itself.
+    NSURL* rankedRoot=[sandbox URLByAppendingPathComponent:@"OpenRank"];
+    SPDFMacCollectionStore* rankedStore=[[SPDFMacCollectionStore alloc] initWithRootURL:rankedRoot];
+    [rankedStore updateSettings:@{@"choice":@"enabled"} error:nil];
+    NSString* pathA=[[sandbox URLByAppendingPathComponent:@"A.txt"] path];
+    NSString* pathB=[[sandbox URLByAppendingPathComponent:@"B.txt"] path];
+    [@"aaaaaaaaaa" writeToFile:pathA atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    NSDictionary* docA=[rankedStore capturePath:pathA reason:@"Imported" error:nil];
+    [@"bbbbbbbbbb" writeToFile:pathB atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    NSDictionary* docB=[rankedStore capturePath:pathB reason:@"Imported" error:nil];
+    [@"cccccccccc" writeToFile:pathB atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    [rankedStore capturePath:pathB reason:@"Saved" continuingDocumentID:docB[@"id"] error:nil];
+    [rankedStore recordUserOpenForDocumentID:docB[@"id"] error:nil];
+    unsigned long long rankedLimit=rankedStore.storageUsedBytes;
+    [rankedStore applyStorageLimit:rankedLimit reviewedPlan:[rankedStore previewStorageLimit:rankedLimit] error:nil];
+    [@"dddddddddd" writeToFile:pathA atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    NSDictionary* counted=OpenCapture(rankedStore,pathA,nil,1);
+    Check([counted[@"recorded"] boolValue] && [counted[@"document"] count],@"explicit count commits with capture");
+    Check([rankedStore versionsForDocumentID:docA[@"id"]].count==2 &&
+          [rankedStore versionsForDocumentID:docB[@"id"]].count==1,@"opening A updates priority before pruning B's older version");
+    counted=OpenCapture(rankedStore,pathA,nil,2);
+    Check([counted[@"recorded"] boolValue] && [[rankedStore documentForPath:pathA][@"openCount"] unsignedIntegerValue]==3,
+          @"fingerprint fast reuse counts batched opens exactly once");
+    Check([rankedStore versionsForDocumentID:docA[@"id"]].count==2,@"counting reuse creates no revision");
+    [rankedStore setExcluded:YES documentID:docA[@"id"] error:nil];
+    counted=OpenCapture(rankedStore,pathA,nil,4);
+    Check(![counted[@"recorded"] boolValue] && ![counted[@"document"] count],@"excluded capture identifies unrecorded successful reading");
+    [rankedStore recordUserOpenCount:4 forDocumentID:docA[@"id"] error:nil];
+    Check([[rankedStore documentForPath:pathA][@"openCount"] unsignedIntegerValue]==7,@"batch fallback records excluded reading without a new version");
+    // A rollback may retry with the count; a committed capture may retry without it.
+    CountRetryCollectionStore* retryStore=[[CountRetryCollectionStore alloc] initWithRootURL:[sandbox URLByAppendingPathComponent:@"CountRetries"]];
+    [retryStore updateSettings:@{@"choice":@"enabled"} error:nil];
+    [@"base retry" writeToFile:pathA atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    NSDictionary* retryDoc=[retryStore capturePath:pathA reason:@"Imported" error:nil];
+    [@"new retry" writeToFile:pathA atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    retryStore.changeBeforeCommitPath=pathA;
+    counted=OpenCapture(retryStore,pathA,retryDoc[@"id"],1);
+    Check([counted[@"recorded"] boolValue] && [[retryStore documentForPath:pathA][@"openCount"] unsignedIntegerValue]==1 &&
+          [retryStore versionsForDocumentID:retryDoc[@"id"]].count==2,@"precommit failure rolls count back before automatic retry");
+    [@"second retry" writeToFile:pathA atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    retryStore.changeAfterCommitPath=pathA;
+    counted=OpenCapture(retryStore,pathA,retryDoc[@"id"],1);
+    Check([counted[@"recorded"] boolValue] && [[retryStore documentForPath:pathA][@"openCount"] unsignedIntegerValue]==2 &&
+          [retryStore versionsForDocumentID:retryDoc[@"id"]].count==4,@"postcommit retry retains exactly-once count metadata");
+    [@"third retry" writeToFile:pathA atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    retryStore.changeAfterCommitPath=pathA; retryStore.failAfterCommit=YES;
+    counted=OpenCapture(retryStore,pathA,retryDoc[@"id"],2);
+    Check([counted[@"recorded"] boolValue] && ![counted[@"document"] count] && counted[@"error"]!=NSNull.null &&
+          [[retryStore documentForPath:pathA][@"openCount"] unsignedIntegerValue]==4,
+          @"completion reports committed count even when subsequent retry permanently fails");
+    // A newer generation cannot discard an earlier explicit-open event.
+    SPDFMacCollectionStore* queued=[[SPDFMacCollectionStore alloc] initWithRootURL:[sandbox URLByAppendingPathComponent:@"QueuedOpens"]];
+    [queued updateSettings:@{@"choice":@"enabled"} error:nil];
+    queued.captureQueue=[NSOperationQueue new]; queued.captureQueue.maxConcurrentOperationCount=1; queued.captureQueue.suspended=YES;
+    __block NSUInteger completions=0;
+    for (NSNumber* count in @[@1,@2])
+        [queued capturePath:pathA reason:@"Explicit opened" continuingDocumentID:nil userOpenCount:count.unsignedIntegerValue
+                completion:^(NSDictionary* row,NSError* error,BOOL recorded) {
+                    Check(row && !error && recorded,@"superseded explicit request retains its count"); ++completions;
+                }];
+    [queued capturePath:pathA reason:@"Background" completion:^(NSDictionary* row,NSError* error) {
+        (void)row;(void)error; ++completions;
+    }];
+    queued.captureQueue.suspended=NO;
+    Wait(^BOOL { return completions==3; });
+    Check([[queued documentForPath:pathA][@"openCount"] unsignedIntegerValue]==3 && queued.documents.count==1,
+          @"separate superseded counted requests aggregate exactly once");
+    queued.captureQueue.suspended=YES; completions=0;
+    [queued capturePath:pathA reason:@"Explicit opened" continuingDocumentID:nil userOpenCount:2
+        completion:^(NSDictionary* row,NSError* error,BOOL recorded) {
+            (void)error; Check(!row && !recorded,@"stale explicit job still honors edit protection epoch");
+            [queued recordUserOpenCount:2 forDocumentID:[queued documentForPath:pathA][@"id"] error:nil]; ++completions;
+        }];
+    [queued ensureProtectedPath:pathA reason:@"Edit gate" error:nil];
+    queued.captureQueue.suspended=NO;
+    Wait(^BOOL { return completions==1; });
+    Check([[queued documentForPath:pathA][@"openCount"] unsignedIntegerValue]==5 && queued.documents.count==1,
+          @"epoch cancellation lets caller record reading without splitting history");
+    SPDFMacCollectionStore* unused=[[SPDFMacCollectionStore alloc] initWithRootURL:[sandbox URLByAppendingPathComponent:@"UnusedCounted"]];
+    counted=OpenCapture(unused,pathA,nil,3);
+    [unused recordUserOpenCount:3 forDocumentID:@"absent" error:nil];
+    Check(![counted[@"recorded"] boolValue] && !unused.captureQueue &&
+          ![NSFileManager.defaultManager fileExistsAtPath:unused.rootURL.path],@"disabled counted opens allocate no queue or storage");
     [NSFileManager.defaultManager removeItemAtURL:sandbox error:nil];
     fprintf(stderr,"Collection cleanup: %s\n",failures ? "FAILED" : "passed"); return failures ? 1 : 0;
 } }
