@@ -348,3 +348,10 @@ The critic verified the corrected behavior in a fresh isolated Documents Review 
 
 
 History was checked separately: both Garden revisions remain available, with the old kept copy showing three plants/east and the newer copy seven plants/south. Only the newer History row has the Latest pill, and selecting the older revision does not move it. Escape restores the latest-only Documents context. The corrected Collection view is left visible in the isolated app.
+
+
+### Release prepared and current app launched
+
+At the user's request, the unchanged application code was prepared again as **26.9.23-1** in release commit `119d3e1b5`. The complete release sweep passed all **54 targets**, including **24 native UI integration suites** and **56 release-workflow checks**. The native app bundle rebuilt successfully and passed strict code-signature verification.
+
+The actual `dist/ShenzhenPDF.app` build was launched with its normal state, and its process and visible reader window were verified. Existing applications were not quit. This was release preparation and a local launch; no tag, push, notarization or publication was performed.
