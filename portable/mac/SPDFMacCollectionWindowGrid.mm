@@ -4,6 +4,7 @@
 #import <PDFKit/PDFKit.h>
 
 @interface SPDFCollectionThumbnailItem : NSCollectionViewItem
+@property(nonatomic) NSButton* historyButton;
 @end
 @interface SPDFCollectionThumbnailGrid : NSCollectionView
 @end
@@ -58,7 +59,7 @@
     root.item = self; self.view = root;
     self.view.wantsLayer = YES;
     self.view.layer.cornerRadius = 9;
-    NSImageView* imageView = [[NSImageView alloc] initWithFrame:NSMakeRect(9,64,162,165)];
+    NSImageView* imageView = [[NSImageView alloc] initWithFrame:NSMakeRect(9,86,162,143)];
     [self.view addSubview:imageView]; self.imageView = imageView;
     self.imageView.imageScaling = NSImageScaleProportionallyUpOrDown;
     NSTextField* caption = [NSTextField wrappingLabelWithString:@""];
@@ -70,6 +71,8 @@
     caption.lineBreakMode = NSLineBreakByTruncatingMiddle;
     caption.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:caption];
+    self.historyButton = [NSButton buttonWithTitle:@"History" target:nil action:nil];
+    self.historyButton.frame = NSMakeRect(108,58,64,24); [self.view addSubview:self.historyButton];
     self.textField = caption; // NSCollectionViewItem outlets are weak; the view owns it first.
     [NSLayoutConstraint activateConstraints:@[
         [caption.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:9],
@@ -116,7 +119,7 @@
         [self.gridScroll.bottomAnchor constraintEqualToAnchor:host.bottomAnchor]]];
 }
 - (void)reloadGrid {
-    BOOL grid = self.layoutPicker.indexOfSelectedItem == 1;
+    BOOL grid = self.layoutPicker.indexOfSelectedItem == 1 && !self.search.stringValue.length;
     self.listScroll.hidden = grid; self.gridScroll.hidden = !grid;
     [self.grid reloadData];
     [self synchronizeGridSelection];
@@ -134,6 +137,8 @@
     NSDictionary* doc = row[@"document"], *version = row[@"version"];
     NSString* key = [NSString stringWithFormat:@"%@/%@",doc[@"id"],version[@"id"] ?: @""];
     item.representedObject = key;
+    item.historyButton.target = self; item.historyButton.action = @selector(historyForRow:);
+    item.historyButton.tag = indexPath.item;
     NSString* date = version[@"capturedAt"] ? [NSDateFormatter localizedStringFromDate:
         [NSDate dateWithTimeIntervalSince1970:[version[@"capturedAt"] doubleValue]]
         dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle] : @"No protected copy";
@@ -166,18 +171,24 @@
                 SPDFMarkdownDocument* markdown = [SPDFMarkdownDocument documentWithURL:URL options:nil error:&error];
                 SPDFMarkdownPageConfiguration* config = markdown.authoredPageConfiguration ?: [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
                 SPDFMarkdownPaginationPlan* plan = [markdown paginationPlanForConfiguration:config];
-                NSBitmapImageRep* bitmap = [SPDFMacMarkdownPrintAdapter imageRepForPageAtIndex:0 paginationPlan:plan
+                NSBitmapImageRep* bitmap = [SPDFMacMarkdownPrintAdapter imageRepForPageAtIndex:MIN(MAX(0,[row[@"selectedPage"] integerValue]-1),(NSInteger)plan.pages.count-1) paginationPlan:plan
                     attributedString:markdown.renderedDocument.attributedString scale:MIN(300/config.paperSize.width,300/config.paperSize.height)];
                 if (bitmap) { image = [[NSImage alloc] initWithSize:bitmap.size]; [image addRepresentation:bitmap]; }
             } else if (URL) {
                 PDFDocument* pdf = [[PDFDocument alloc] initWithURL:URL];
-                image = [[pdf pageAtIndex:0] thumbnailOfSize:NSMakeSize(260,300) forBox:kPDFDisplayBoxMediaBox];
+                image = [[pdf pageAtIndex:MIN(MAX(0,[row[@"selectedPage"] integerValue]-1),(NSInteger)pdf.pageCount-1)] thumbnailOfSize:NSMakeSize(260,300) forBox:kPDFDisplayBoxMediaBox];
             }
             dispatch_async(dispatch_get_main_queue(), ^{
                 SPDFMacCollectionWindow* owner = weakSelf;
                 if (!owner) return;
                 [owner.pendingThumbnails removeObject:key];
                 if (image) [owner.thumbnailCache setObject:image forKey:key cost:260*300*4];
+                for (NSInteger index = 0; index < (NSInteger)owner.rows.count; index++) {
+                    NSView* cell = [owner.table viewAtColumn:0 row:index makeIfNecessary:NO];
+                    for (NSView* child in cell.subviews) if ([child isKindOfClass:NSImageView.class] && [child.identifier isEqual:key]) {
+                        if (image) ((NSImageView*)child).image = image;
+                    }
+                }
                 for (NSCollectionViewItem* item in owner.grid.visibleItems) if ([item.representedObject isEqual:key]) {
                     if (image) item.imageView.image = image;
                     else item.imageView.toolTip = error.localizedDescription ?: @"Preview unavailable; the archived copy can still be opened.";

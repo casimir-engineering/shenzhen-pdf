@@ -22,7 +22,7 @@
 }
 - (void)history:(id)sender {
     (void)sender; NSDictionary* doc = [self selectedDocument];
-    if (doc) [self showDocumentID:doc[@"id"] query:@""];
+    if (doc) [self showHistoryForDocument:doc version:[self selectedVersion]];
 }
 - (void)compareVersionWithPrevious:(BOOL)previous {
     NSDictionary* doc = [self selectedDocument], *version = [self selectedVersion];
@@ -76,6 +76,10 @@
     }];
 }
 - (NSArray<NSDictionary*>*)selectedRowsSnapshot {
+    if ([self.destination isEqual:@"History"]) {
+        NSDictionary* doc = [self selectedDocument], *version = [self selectedVersion];
+        return doc && version ? @[@{@"document":doc,@"version":version}] : @[];
+    }
     NSMutableArray* selected = [NSMutableArray array];
     [self.table.selectedRowIndexes enumerateIndexesUsingBlock:^(NSUInteger index, BOOL* stop) {
         (void)stop; if (index < self.rows.count) [selected addObject:self.rows[index]];
@@ -117,7 +121,8 @@
 - (void)deleteSelected:(id)sender {
     (void)sender;
     NSArray* rows = [self selectedRowsSnapshot]; if (!rows.count) return;
-    BOOL versionsOnly = self.viewPicker.indexOfSelectedItem == 1 || self.viewPicker.indexOfSelectedItem == 3;
+    BOOL versionsOnly = [self.destination isEqual:@"History"] || self.search.stringValue.length ||
+        self.viewPicker.indexOfSelectedItem == 1 || self.viewPicker.indexOfSelectedItem == 3;
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = versionsOnly ? @"Delete selected versions permanently?" : @"Delete all history for selected documents?";
     alert.informativeText = [NSString stringWithFormat:@"%lu selected %@, including any kept versions. This cannot be undone. Original documents are kept. Exclude separately to prevent future capture.",
@@ -140,7 +145,7 @@
     [self showError:error]; [self reload:nil];
 }
 - (void)changeLimit:(id)sender {
-    (void)sender; NSError* error = nil;
+    (void)sender;
     double amount = 0;
     NSScanner* scanner = [NSScanner scannerWithString:self.limitField.stringValue];
     if (![scanner scanDouble:&amount] || !scanner.isAtEnd || !isfinite(amount) || amount < 0 || amount > 1e8) {
@@ -148,8 +153,34 @@
             NSLocalizedDescriptionKey:@"Enter a nonnegative storage limit in GB. Zero keeps all versions."}]];
         return;
     }
-    [self.store updateSettings:@{@"storageLimitBytes":@((unsigned long long)(amount * 1e9))} error:&error];
-    [self showError:error]; [self reload:nil];
+    unsigned long long bytes = (unsigned long long)(amount * 1e9);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
+        NSDictionary* plan = [self.store previewStorageLimit:bytes];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (![plan[@"canApply"] boolValue]) {
+                [self showError:[NSError errorWithDomain:@"ShenzhenPDF.Collection" code:1 userInfo:@{
+                    NSLocalizedDescriptionKey:plan[@"error"] ?: @"Kept histories prevent this limit. Increase it or review Keep selections."}]];
+                return;
+            }
+            void (^apply)(void) = ^{
+                [self performMutation:^(NSError** error) {
+                    [self.store applyStorageLimit:bytes reviewedPlan:plan error:error];
+                }];
+            };
+            if (![plan[@"removedVersionCount"] unsignedIntegerValue] && ![plan[@"removedDocumentCount"] unsignedIntegerValue]) {
+                apply(); return;
+            }
+            NSAlert* alert = [NSAlert new]; alert.messageText = @"Apply storage limit and clean up copies?";
+            alert.informativeText = [NSString stringWithFormat:
+                @"This removes %@ saved versions, including the final copies of %@ document histories, recovering %@. Least-opened documents are considered first; older versions go before final copies. Kept histories and originals remain untouched. This cannot be undone.",
+                plan[@"removedVersionCount"],plan[@"removedDocumentCount"],
+                [NSByteCountFormatter stringFromByteCount:[plan[@"reclaimedBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile]];
+            [alert addButtonWithTitle:@"Cancel"]; [alert addButtonWithTitle:@"Apply and Clean Up"];
+            [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+                if (response == NSAlertSecondButtonReturn) apply();
+            }];
+        });
+    });
 }
 - (void)changeLocation:(id)sender {
     (void)sender; NSOpenPanel* panel = [NSOpenPanel openPanel]; panel.title = @"Move Collection to Folder";

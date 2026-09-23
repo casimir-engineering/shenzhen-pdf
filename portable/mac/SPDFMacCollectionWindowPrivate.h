@@ -4,6 +4,17 @@
 @interface SPDFMacCollectionWindow ()
 @property(nonatomic) SPDFMacCollectionStore* store;
 @property(nonatomic, copy) SPDFCollectionOpenHandler openHandler;
+@property(nonatomic) NSView* contentHost;
+@property(nonatomic) NSView* documentsPane;
+@property(nonatomic) NSView* settingsPane;
+@property(nonatomic) NSView* historyPane;
+@property(nonatomic) NSButton* documentsButton;
+@property(nonatomic) NSButton* settingsButton;
+@property(nonatomic) NSPopUpButton* scopePicker;
+@property(nonatomic) NSTextField* resultSummary;
+@property(nonatomic) NSTextField* locationField;
+@property(nonatomic, copy) NSString* destination;
+@property(nonatomic) NSMutableSet<NSString*>* expandedResults;
 @property(nonatomic) NSPopUpButton* viewPicker;
 @property(nonatomic) NSPopUpButton* layoutPicker;
 @property(nonatomic) NSPopUpButton* sortPicker;
@@ -23,8 +34,17 @@
 @property(nonatomic) NSArray<NSDictionary*>* documents;
 @property(nonatomic) NSString* documentID;
 @property(nonatomic) NSUInteger generation;
+@property(nonatomic) dispatch_queue_t preferenceQueue;
 @property(nonatomic) BOOL mutationPending;
 @property(nonatomic) NSMutableArray<NSButton*>* selectionButtons;
+- (void)buildManagerLayout;
+- (void)buildSettingsPane;
+- (void)showDestination:(NSString*)destination;
+- (void)navigate:(id)sender;
+- (void)persistManagerPreferences;
+- (void)showHistoryForDocument:(NSDictionary*)document version:(NSDictionary*)version;
+- (void)historyForRow:(id)sender;
+- (NSView*)resultCellForRow:(NSInteger)row;
 - (void)reload:(id)sender;
 - (NSDictionary*)selectedDocument;
 - (NSDictionary*)selectedVersion;
@@ -45,9 +65,11 @@
 - (void)changeEnabled:(id)sender;
 - (void)changeLimit:(id)sender;
 - (void)changeLocation:(id)sender;
+- (void)openLocation:(id)sender;
 @end
 @interface SPDFMacCollectionWindow (Grid)
 - (void)installGridInView:(NSView*)host;
+- (void)requestThumbnail:(NSDictionary*)row key:(NSString*)key;
 - (void)reloadGrid;
 - (void)synchronizeGridSelection;
 @end

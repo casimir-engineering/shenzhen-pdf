@@ -60,8 +60,21 @@ int main(void) {
                 (void)path; (void)archived;
             }];
             Layout(manager.window,NSMakeSize(1100,690));
+            Expect(@"document pane uses the available window width",NSWidth(manager.documentsPane.frame) > 850);
             Expect(@"manager list has a readable viewport",manager.listScroll.frame.size.width > 300 &&
                 manager.listScroll.frame.size.height > 350);
+            Expect(@"Collection navigation has only Documents and Settings",manager.documentsButton && manager.settingsButton &&
+                ![manager.viewPicker.itemTitles containsObject:@"Storage"] && manager.documentsPane && manager.settingsPane);
+            Expect(@"unlimited is the default storage setting",manager.limitField.doubleValue == 0);
+            Expect(@"location is displayed before loading documents",[manager.locationField.stringValue isEqual:root.path]);
+            [manager showDestination:@"Settings"];
+            Layout(manager.window,NSMakeSize(940,560));
+            Expect(@"Settings replaces the document pane",manager.documentsPane.hidden && !manager.settingsPane.hidden);
+            Expect(@"storage controls belong exclusively to Settings",[manager.limitField isDescendantOf:manager.settingsPane] &&
+                ![manager.limitField isDescendantOf:manager.documentsPane]);
+            Expect(@"settings controls fit the minimum window",NSContainsRect(manager.settingsPane.bounds,
+                [manager.limitField convertRect:manager.limitField.bounds toView:manager.settingsPane]));
+            [manager showDestination:@"Documents"]; Layout(manager.window,NSMakeSize(1100,690));
             NSView* optionsHeading = Label(manager.window.contentView,@"Document options");
             Expect(@"document options start visible at the top",optionsHeading &&
                 NSIntersectsRect(optionsHeading.bounds,optionsHeading.visibleRect));
@@ -123,6 +136,17 @@ int main(void) {
             Expect(@"manager content search includes an indexed document whose title does not match",
                 indexed && manager.rows.count == 1 &&
                 [manager.rows.firstObject[@"document"][@"id"] isEqual:indexed[@"id"]]);
+            Expect(@"search uses list results even if thumbnail browsing was selected",!manager.listScroll.hidden && manager.gridScroll.hidden);
+            NSDictionary* result = manager.rows.firstObject;
+            Expect(@"native search retains exact text contexts and version identity",[result[@"matches"] count] > 0 && result[@"version"][@"id"]);
+            NSView* resultCell = [manager resultCellForRow:0];
+            NSImageView* thumbnail = (id)Descendant(resultCell,NSImageView.class);
+            Expect(@"text results include a saved-page thumbnail",thumbnail != nil);
+            NSArray* matches = result[@"matches"];
+            Expect(@"context highlights are available",[matches.firstObject[@"ranges"] count] > 0);
+            manager.search.stringValue = @"orchid";
+            [manager showDestination:@"Settings"]; [manager showDestination:@"Documents"];
+            Expect(@"settings navigation preserves query and document rows",[manager.search.stringValue isEqual:@"orchid"] && manager.rows.count == 1);
             [NSFileManager.defaultManager removeItemAtPath:indexedPath error:nil];
         } @catch (NSException* exception) {
             fprintf(stderr,"FAIL: manager constructor/layout raised %s\n",exception.description.UTF8String); failures++;
