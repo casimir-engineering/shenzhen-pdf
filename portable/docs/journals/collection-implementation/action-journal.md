@@ -373,3 +373,15 @@ The images below are headless renders of the production tab strip, each containi
 The overflow agent reproduced the failure with the previous layout. The placement regression also fails against the previous implementation for both left and right creation and restored order. The corrected code passes **eight tab test suites**: group model, group integration, group interaction, strip geometry, strip interaction, strip style, lifecycle and state. Fixtures cover 50/100 General documents, 700/900-point widths, selection in either group, 12 competing collapsed headers, visible targets near the end of a 66-tab array, and save/restore of 60-tab order and reading state. Source-size checks and whitespace validation pass.
 
 A separate native candidate was built at `portable/build/tab-group-candidate/ShenzhenPDF.app` and passed strict code-signature verification. The currently running `dist` app was neither replaced nor restarted. This fix did not repeat the full release sweep or publish a release.
+
+### Group activation and centered labels
+
+The user clarified that clicking a collapsed group should open it, and that renaming belongs only in the right-click menu. Previously the name area launched Rename while the arrow expanded the group. The whole header now uses the expand/collapse action, which returns to the group's last-used document. Rename remains an explicit context-menu item for both General and custom groups.
+
+Collapsed labels now use centered paragraph alignment and measured font height instead of a fixed drawing box. Document titles use equal left/right clearance, keeping their text centered in the tab while avoiding the close button and read-only indicator.
+
+![Centered group labels rendered headlessly](assets/group-labels-centered.png)
+
+Five targeted suites passed: group model, group integration, group interaction, strip interaction and strip style. Updated interaction checks cover name clicks, arrow clicks, General, explicit menu rename and group dragging; an integration check verifies expanding a group opens its last-used document without losing its page position. The image above is a production-view render from the headless test, not a screenshot of a running reader. Source-size and whitespace checks pass.
+
+The native candidate at `portable/build/tab-group-click-candidate/ShenzhenPDF.app` built successfully and passed strict signature verification. Running application bundles were left untouched.

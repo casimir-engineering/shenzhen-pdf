@@ -157,12 +157,9 @@
     [self restoreWindowMovementForTabGesture];
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     if ([self groupAtPoint:point headerOnly:YES] != group) return YES;
-    // The first 26 points are the chevron. Expanded groups have no name.
-    NSPoint left = point;
-    left.x -= 26;
-    BOOL onName = group.collapsed && [self groupAtPoint:left headerOnly:YES] == group;
-    if (onName && event.clickCount < 2) [self renameGroup:group];
-    else [self.groupReader toggleTabGroup:group];
+    // The name and disclosure share one activation target. Rename is an
+    // explicit context-menu action, never a side effect of opening a group.
+    [self.groupReader toggleTabGroup:group];
     return YES;
 }
 - (void)updateGroupDropForPoint:(NSPoint)point sourceIndex:(NSInteger)source {

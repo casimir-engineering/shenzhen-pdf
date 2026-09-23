@@ -184,11 +184,14 @@
         [chevron stroke];
         if (layout.group.collapsed) {
             NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
+            style.alignment = NSTextAlignmentCenter;
             style.lineBreakMode = NSLineBreakByTruncatingTail;
-            [layout.group.displayName drawInRect:NSMakeRect(cx + 13, cy - 7, NSWidth(layout.header) - 29, 17)
-                withAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightMedium],
-                                 NSForegroundColorAttributeName: NSColor.labelColor,
-                                 NSParagraphStyleAttributeName: style}];
+            NSDictionary* attributes = @{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightMedium],
+                                        NSForegroundColorAttributeName: NSColor.labelColor,
+                                        NSParagraphStyleAttributeName: style};
+            CGFloat height = [layout.group.displayName sizeWithAttributes:attributes].height;
+            [layout.group.displayName drawInRect:NSMakeRect(cx + 13, cy - height / 2,
+                NSWidth(layout.header) - 29, height) withAttributes:attributes];
         }
     }
 }
