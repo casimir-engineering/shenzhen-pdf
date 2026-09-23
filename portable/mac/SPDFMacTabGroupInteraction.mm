@@ -151,7 +151,13 @@
 - (void)updateGroupDropForPoint:(NSPoint)point sourceIndex:(NSInteger)source {
     _groupDropGroup = [self groupAtPoint:point headerOnly:YES];
     NSInteger target = [self tabIndexAtPoint:point];
-    if (target == source) target = -1;
+    SPDFTabGroup* sourceGroup = source >= 0 && source < (NSInteger)self.tabs.count
+                                   ? self.tabs[(NSUInteger)source].group : nil;
+    // Sliding within an existing group is always a reorder, even while paused
+    // over a sibling or the group's own handle. A join would append instead.
+    if (sourceGroup && _groupDropGroup == sourceGroup) _groupDropGroup = nil;
+    if (target == source || (sourceGroup && target >= 0 && self.tabs[(NSUInteger)target].group == sourceGroup))
+        target = -1;
     if (target >= 0) {
         NSRect rect = [self rectForTabAtIndex:target];
         // The center creates a pair; either edge remains a reorder target.
