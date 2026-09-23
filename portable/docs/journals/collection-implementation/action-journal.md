@@ -5,7 +5,7 @@ paper-size: A4
 
 23 September 2026 · ShenzhenPDF
 
-**Prepared: 26.9.23-1. Technical 9.1/10 · UX 9.0/10.** No major or medium findings remain after three review rounds. All 53 release test targets passed.
+**Earlier prepared baseline: 26.9.23-1. Technical 9.1/10 · UX 9.0/10.** Those scores and the 53-target sweep cover the earlier implementation. The native Collection redesign below is undergoing its own tests and independent reviews.
 
 ## Implemented behavior
 
@@ -225,3 +225,45 @@ This revision completed two independent review rounds, **8.9/10 → 9.3/10**. Th
 ![Integrated Documents search and direct History actions](../../proposals/assets/collection-mockup/history/final-documents.png)
 
 ![Revised History with selected version and nearby Keep explanation](../../proposals/assets/collection-mockup/history/round2-history.png)
+
+
+<!-- pagebreak -->
+
+## Native Collection redesign implementation
+
+The reviewed design is now implemented by separate storage, search and manager agents, with History and reader integration handled centrally. Collection has Documents and Settings destinations. Search remains in Documents, beside real page thumbnails; every result identifies its saved version and leads directly to History. Settings shows the location, Set location, Open location, and an unlimited default.
+
+The cleanup policy uses two passes. It ranks histories by explicit user opens, ties by oldest last-open time, and removes previous versions before considering any final document copies. A kept version protects the whole history. Previewing, searching, indexing and restoring a session do not increase open counts. Storage estimates count shared content once; cleanup must fit before it is applied, and unreferenced bytes are removed only after the replacement manifest is durable.
+
+History renders saved PDFs directly and Markdown through the existing canonical renderer. Selecting a saved version changes the actual read-only preview. Its Keep explanation sits next to the checkbox. Browsing state includes search scope, query, selected result, expanded matches, scroll positions and the historical version/page. No Markdown margin changes were made.
+
+### Evidence and decisions during implementation
+
+- Storage, integrity, cleanup, assets and grouped-search suites passed. The native app build and all 23 Markdown/UI integration suites passed with optimized ARC compilation.
+- An initial History test created two separate documents by atomically replacing its source without an observed-save continuity ID. Correcting that fixture now proves that distinct latest and older texts appear in the same history.
+- The independent technical critic identified a quota ordering issue: counting an explicit open after capture meant cleanup could use an outdated rank. The store agent is integrating the count into capture's transaction before cleanup.
+- The critic also demonstrated a real Markdown search phrase split by a generated PDF line break. Preview matching now collapses whitespace and maps highlights back to the original page text; accent-insensitive search and surrounding whitespace follow the same semantics as contextual results.
+- Preview and comparison have separate resource limits. History supports PDF copies through the store's 512 MB limit and up to 2,000 rendered Markdown pages. Larger Markdown previews offer Save a Copy; comparison retains its existing 256 MB / 1,000-page budget.
+- The UX critic is using a separate app bundle and state with generated garden documents. The installed application and personal Collection remain untouched.
+
+The first independent technical review scored the candidate 7.9/10 before the remaining corrections. This is recorded separately from the earlier mockup's 9.3/10; a new native score follows verification of fixes.
+
+
+### Native review and visual correction
+
+Actual app use caught an unacceptable gap between the approved mockup and the first native pass. The user called out the buttons. The UX critic scored that candidate **7.3/10**, identifying the permanent ten-button options column, bright navigation buttons and compressed search results as a major visual mismatch. Functional correctness alone was not enough. The visual implementation is being rebuilt around the approved mockup's full-width rows, quiet sidebar, restrained controls and secondary action menu.
+
+The same hands-on review found that Cmd+F did not focus Collection search and shrinking History could scroll its highlighted match out of view. The window now owns its search shortcut; the History reader retains its selected match or reading destination when resized. These fixes receive native regression tests and another live review.
+
+![First native pass: the right-hand button tower crowded the requested full-width search layout](assets/native-round1-search.jpg)
+
+The technical review also reproduced an obsolete preview finishing after navigation and overwriting the newer saved History position. Outgoing controllers now invalidate their preview work, and History preference writes share a lazy serial queue. A semaphore-controlled test proves that a delayed old preview cannot replace the current document's saved position.
+
+
+### Exact version routing and focused controls
+
+The second live UX round confirmed the new visual direction, Cmd+F, Escape, highlighted-match anchoring on resize, export cancellation and safe cleanup cancellation. It also found an older-version hit opening the latest revision. A new direct-entry regression reproduced this: AppKit selected row zero while constructing a table that forbids an empty selection. The construction guard now starts before the table is configured, preserving the requested historical version and page. The regression failed before the correction and passes afterward.
+
+The custom search control also needed its own field-editor geometry, not only painted geometry. Its focused editor now reserves the same icon space and vertical alignment as its unfocused text. Tests use the actual AppKit field editor. Sidebar accessibility names are explicit, and a proposed finite limit immediately explains its pending cleanup policy while showing the currently applied limit. Draft settings do not write to storage.
+
+The third technical review scores storage, accounting, search and History lifecycle **9.2/10**, with no major or medium findings in that scope. The updated native app and focused manager/History suites pass; the final live visual review is separate.
