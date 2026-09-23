@@ -79,15 +79,10 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
     NSString* hash = BytesHash(bytes); NSDictionary* dependencies = SPDFCollectionAssets(path,bytes);
     NSDictionary* capturedSource=SPDFCollectionFingerprintFromStat(&after);
     NSMutableDictionary* capturedDependencies=[NSMutableDictionary dictionary];
-    NSMutableArray* assets = [NSMutableArray array]; unsigned long long needed = 0;
-    if (![NSFileManager.defaultManager fileExistsAtPath:[self blobURL:hash].path]) needed = bytes.length;
-    NSMutableSet* counted = [NSMutableSet setWithObject:hash];
+    NSMutableArray* assets = [NSMutableArray array];
     for (NSDictionary* asset in dependencies[@"entries"]) {
         capturedDependencies[asset[@"relativePath"]]=asset[@"captureFingerprint"];
         NSMutableDictionary* metadata = [asset mutableCopy]; [metadata removeObjectForKey:@"data"]; [metadata removeObjectForKey:@"captureFingerprint"]; [assets addObject:metadata];
-        if (![counted containsObject:asset[@"hash"]] &&
-            ![NSFileManager.defaultManager fileExistsAtPath:[self blobURL:asset[@"hash"]].path]) needed += [asset[@"size"] unsignedLongLongValue];
-        [counted addObject:asset[@"hash"]];
     }
     NSDictionary* last = [doc[@"versions"] lastObject];
     if ([last[@"hash"] isEqual:hash] && [last[@"assets"] isEqual:assets] &&
@@ -107,11 +102,6 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
         doc[@"fileIdentity"]=identity;
         doc[@"status"] = @"Protected"; [doc removeObjectForKey:@"captureError"];
         [self recordFingerprints:doc source:capturedSource dependencies:capturedDependencies]; return doc;
-    }
-    unsigned long long limit = [manifest[@"settings"][@"storageLimitBytes"] unsignedLongLongValue];
-    if (limit && needed && (needed > limit || [self storageUsedBytes] > limit-needed)) {
-        if (error) *error = SPDFCollectionError(6,@"Collection storage limit reached. Increase the limit or remove archived data.");
-        return nil;
     }
     if (![self installBytes:bytes hash:hash error:error]) return nil;
     for (NSDictionary* asset in dependencies[@"entries"])
@@ -138,9 +128,6 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
     version[@"encrypted"]=index[@"encrypted"];
     if (![index[@"encrypted"] boolValue]) {
         NSData* indexBytes=[NSJSONSerialization dataWithJSONObject:index options:0 error:error];
-        if (limit && indexBytes.length && (indexBytes.length>limit || [self storageUsedBytes]>limit-indexBytes.length)) {
-            if(error)*error=SPDFCollectionError(6,@"Collection storage limit reached while indexing. Earlier versions remain protected."); return nil;
-        }
         NSString* indexFile=[version[@"id"] stringByAppendingPathExtension:@"json"];
         NSURL* indexURL=[[self.rootURL URLByAppendingPathComponent:@"indexes"] URLByAppendingPathComponent:indexFile];
         if (!indexBytes || !SPDFCollectionMakeDirectory(indexURL.URLByDeletingLastPathComponent,error) ||
@@ -157,7 +144,12 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
     doc[@"aliases"]=aliases; doc[@"path"]=path; doc[@"title"]=path.lastPathComponent; doc[@"fileIdentity"]=identity;
     NSMutableArray* versions = [doc[@"versions"] mutableCopy]; [versions addObject:version]; doc[@"versions"]=versions;
     doc[@"latestVersionID"]=version[@"id"]; doc[@"capturedAt"]=now; doc[@"status"]=@"Protected";
-    [doc removeObjectForKey:@"captureError"]; [self recordFingerprints:doc source:capturedSource dependencies:capturedDependencies]; return doc;
+    [doc removeObjectForKey:@"captureError"]; [self recordFingerprints:doc source:capturedSource dependencies:capturedDependencies];
+    if (![self enforceStorageLimitInManifest:manifest protectedVersionID:version[@"id"] error:error]) return nil;
+    if (![capturedSource isEqual:SPDFCollectionFingerprint(path)]) {
+        if(error)*error=SPDFCollectionError(5,@"Source changed before committing its snapshot; retry capture."); return nil;
+    }
+    return doc;
 }
 - (NSDictionary*)capturePath:(NSString*)path reason:(NSString*)reason error:(NSError**)error {
     return [self capturePath:path reason:reason continuingDocumentID:nil error:error];
@@ -198,7 +190,10 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
                        @"aliases":@[path],@"versions":@[]} mutableCopy]; m[@"documents"][row[@"id"]]=row;
                 if(currentIdentity)row[@"fileIdentity"]=currentIdentity;
             }
-            row[@"status"]=@"Capture failed"; row[@"captureError"]=failure.localizedDescription; return YES;
+            row[@"status"]=@"Capture failed"; row[@"captureError"]=failure.localizedDescription;
+            // Discard failed, unpublished capture bytes only after old references
+            // are durably preserved. This never prunes a retained revision.
+            m[@"_collectUnreferencedFiles"]=@YES; return YES;
         } error:nil];
     }
     if (error) *error=failure; return ok ? result : nil;
