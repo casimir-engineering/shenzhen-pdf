@@ -95,9 +95,11 @@ $PORTABLE/mac/SPDFMacCollectionWindowSearch.mm
 $PORTABLE/mac/SPDFMacCollectionWindowHistory.mm
 $PORTABLE/mac/SPDFMacCollectionUsage.mm
 $PORTABLE/mac/SPDFMacCollectionHistory.mm
+$PORTABLE/mac/SPDFMacFileExplorerPreference.mm
 $PORTABLE/mac/SPDFMacCollectionSavePanel.mm
 $PORTABLE/mac/SPDFMacCollectionCompareViews.mm
 $PORTABLE/mac/SPDFMacCollectionCompareWindow.mm
+$PORTABLE/mac/SPDFMacCollectionCompareLatest.mm
 $PORTABLE/mac/SPDFMacCollectionLocate.mm
 $PORTABLE/mac/SPDFMacCollectionStore.mm
 $PORTABLE/mac/SPDFMacCollectionStoreAccess.mm
@@ -151,6 +153,7 @@ $PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
 "
 
 TESTS="
+SPDFMacCollectionCompareLatestTests
 SPDFMacCollectionComparePresentationTests
 SPDFMacCollectionWindowTests
 SPDFMacCollectionStyleTests

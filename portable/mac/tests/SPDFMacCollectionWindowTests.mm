@@ -262,8 +262,10 @@ int main(void) {
             Expect(@"latest-only fixture contains two versions of one document",[newer[@"id"] isEqual:indexed[@"id"]] && [newer[@"versions"] count] == 2);
             NSString* oldVersion = remembered[@"version"][@"id"];
             [store updateSettings:@{@"managerDestination":@"Documents",@"managerView":@1,@"managerSearchScope":@1,@"managerQuery":@""} error:nil];
+            __block NSString* openedPath = nil;
+            __block BOOL openedArchive = YES;
             SPDFMacCollectionWindow* latestOnly = [[SPDFMacCollectionWindow alloc] initWithStore:store open:^(NSString* path,BOOL archived) {
-                (void)path; (void)archived;
+                openedPath = path; openedArchive = archived;
             }];
             Expect(@"legacy Versions preference migrates to All Documents with no version controls",
                 latestOnly.viewPicker.selectedItem.tag == 0 && ![latestOnly.viewPicker.itemTitles containsObject:@"Versions"] &&
@@ -278,6 +280,19 @@ int main(void) {
             refreshLatest(nil);
             Expect(@"Documents shows exactly one canonical latest version despite legacy all-version preferences",latestOnly.rows.count == 1 &&
                 [latestOnly.rows.firstObject[@"version"][@"id"] isEqual:newer[@"latestVersionID"]]);
+            [latestOnly.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+            [latestOnly preview:nil];
+            Expect(@"opening latest Collection document uses the editable original",
+                [openedPath isEqual:indexedPath] && !openedArchive);
+            NSString* displaced = [indexedPath stringByAppendingString:@".moved"];
+            [NSFileManager.defaultManager moveItemAtPath:indexedPath toPath:displaced error:nil];
+            openedPath = nil; [latestOnly preview:nil];
+            NSDate* previewDeadline = [NSDate dateWithTimeIntervalSinceNow:3];
+            while (!openedPath && previewDeadline.timeIntervalSinceNow>0)
+                [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+            Expect(@"missing original opens latest saved copy without a blocking locate prompt",
+                openedArchive && [store isArchivePath:openedPath]);
+            [NSFileManager.defaultManager moveItemAtPath:displaced toPath:indexedPath error:nil];
             [store setKeep:YES versionID:oldVersion documentID:indexed[@"id"] error:nil];
             [latestOnly.viewPicker selectItemWithTag:3]; refreshLatest(latestOnly.viewPicker);
             Expect(@"Kept filter shows the latest document when only an older version is kept",latestOnly.rows.count == 1 &&
