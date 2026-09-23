@@ -2,6 +2,7 @@
 #import "SPDFMacCollectionPipe.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacPassword.h"
+#import "SPDFMacCollectionCredentialIntegration.h"
 @implementation SPDFCollectionCompanionHost {
     SPDFMacCollectionStore* _store;
     SPDFCollectionOpenHandler _open;
@@ -23,6 +24,7 @@
             if (![path isKindOfClass:NSString.class]) continue;
             if (![_store documentForPath:path] && ![_store archiveInfoForPath:path]) continue;
             SPDFPasswordCredential* credential=[SPDFPasswordCredentialStore.sharedStore credentialForSourcePath:path];
+            if (!credential) credential=[SPDFMacCollectionCredentials credentialForSourcePath:path];
             __block NSString* value=nil;
             [credential withUTF8Password:^(const char* bytes) { value=[NSString stringWithUTF8String:bytes]; }];
             if (value) { password=value; break; }

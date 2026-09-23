@@ -8274,8 +8274,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
                           detail);
                       return;
                   }
-
                   [SPDFPasswordCredentialStore.sharedStore setCredential:credential forSourcePath:sourcePath];
+                  [self collectionRememberPasswordForPath:sourcePath];
                   objc_setAssociatedObject(tab, &kSPDFPasswordPromptClosesNewTabKey, @NO,
                                            OBJC_ASSOCIATION_RETAIN_NONATOMIC);
                   completion(SPDFPasswordAttemptSucceeded, nil);

@@ -1,4 +1,5 @@
 #import "SPDFMacPassword.h"
+#import "SPDFMacCollectionCredentialIntegration.h"
 
 #include <sys/stat.h>
 
@@ -190,6 +191,15 @@ spdf_document* SPDFOpenDocumentWithStoredCredential(NSString* openPath, NSString
     spdf_document* document = SPDFOpenDocumentWithCredential(openPath, credential, &localStatus, authentication, error,
                                                              errorLength);
     if (credential && localStatus == SPDF_OPEN_BAD_PASSWORD) [store invalidateCredentialForSourcePath:sourcePath];
+    if (!document && (localStatus == SPDF_OPEN_PASSWORD_REQUIRED || localStatus == SPDF_OPEN_BAD_PASSWORD)) {
+        // Resolve only after a real locked-PDF failure; ordinary opens and
+        // startup never initialize Collection or access Keychain.
+        SPDFPasswordCredential* remembered = [NSClassFromString(@"SPDFMacCollectionCredentials") credentialForSourcePath:sourcePath];
+        if (remembered) {
+            document = SPDFOpenDocumentWithCredential(openPath,remembered,&localStatus,authentication,error,errorLength);
+            if (document) [store setCredential:remembered forSourcePath:sourcePath];
+        }
+    }
     if (status) *status = localStatus;
     return document;
 }

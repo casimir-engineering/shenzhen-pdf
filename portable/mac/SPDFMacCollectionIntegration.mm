@@ -114,6 +114,7 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
             if (!userOpenCountRecorded)
                 [self collectionRecordUserOpenCount:userOpenCount document:doc ?: [store documentForPath:source]];
             dispatch_async(dispatch_get_main_queue(), ^{
+                if (doc) [self collectionRememberPasswordForPath:source];
                 [self collectionRefreshVersionInfoForDocument:doc];
                 if (![self->_path isEqual:source]) return;
                 [self collectionRefreshHistory];
