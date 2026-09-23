@@ -140,6 +140,35 @@ int main(void) {
         spdf_sidebar_mode_control_set_segment_count(unset, 2, kSearchSegment);
         Expect("the fallback is clamped to a segment that exists", unset.selectedSegment == kCommentsSegment);
 
+        // Markdown has no Comments segment. Search keeps its logical identity
+        // while moving between physical segment 1 (Markdown) and 2 (PDF).
+        NSSegmentedControl* switching = [NSSegmentedControl new];
+        spdf_sidebar_mode_control_configure(switching, YES, YES);
+        switching.spdf_selectedSidebarMode = SPDFSidebarModeComments;
+        spdf_sidebar_mode_control_configure(switching, NO, NO);
+        Expect("Markdown removes Comments and falls back from it to Chapters",
+               switching.segmentCount == 1 && [switching labelForSegment:0].length &&
+               switching.spdf_selectedSidebarMode == SPDFSidebarModeChapters);
+        spdf_sidebar_mode_control_configure(switching, NO, YES);
+        Expect("Markdown search has only Chapters and Search",
+               switching.segmentCount == 2 && [[switching labelForSegment:1] isEqual:@"Search"]);
+        switching.selectedSegment = 1; // A real click uses the physical segment.
+        Expect("clicking Markdown Search cannot select Comments",
+               switching.spdf_selectedSidebarMode == SPDFSidebarModeSearch);
+        [switching spdf_setEnabled:NO forSidebarMode:SPDFSidebarModeComments];
+        [switching spdf_setEnabled:YES forSidebarMode:SPDFSidebarModeSearch];
+        Expect("absent Comments cannot disable Search", [switching isEnabledForSegment:1]);
+        spdf_sidebar_mode_control_configure(switching, YES, YES);
+        Expect("PDF restores Comments without losing the selected Search mode",
+               switching.segmentCount == 3 && switching.selectedSegment == 2 &&
+               [[switching labelForSegment:1] isEqual:@"Comments"]);
+        spdf_sidebar_mode_control_configure(switching, NO, YES);
+        Expect("returning to Markdown preserves Search at its compact position",
+               switching.selectedSegment == 1 && switching.spdf_selectedSidebarMode == SPDFSidebarModeSearch);
+        spdf_sidebar_mode_control_configure(switching, NO, NO);
+        Expect("clearing Markdown search restores Chapters",
+               switching.selectedSegment == 0 && switching.spdf_selectedSidebarMode == SPDFSidebarModeChapters);
+
         if (gFailures == 0) fprintf(stderr, "SPDFMacSidebarOutlineTests passed\n");
     }
     return gFailures == 0 ? 0 : 1;
