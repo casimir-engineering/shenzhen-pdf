@@ -193,3 +193,11 @@ Removed the unsolicited 30-point margin overrides from this journal and the prop
 Markdown now omits the Comments sidebar tab entirely. Sidebar modes have stable tags so Search keeps its identity when moving between the compact Markdown control and the PDF control. Comment actions remain gray through AppKit menu validation, which previously could re-enable Add Comment. Focused sidebar tests cover switching document types, search activation/clearing and PDF Comments restoration. These follow-up checks are separate from the earlier 53-target release sweep and critic scores.
 
 The sidebar, tab-state and file-size checks passed, as did the rebuilt native app. The build is available in `dist/ShenzhenPDF.app`; the running reader was not restarted.
+
+### Live feedback while reordering grouped tabs
+
+Removed the grouped-tab exclusion from the existing moving-tab preview. The grabbed tab now follows the pointer above its siblings; crossed siblings exchange slots while group headers and other groups remain anchored. Drop uses that same insertion position. A pause over the source group's own tabs or handle remains a reorder, preventing an accidental append or new group. Joining another group still shows its destination outline and the moving tab.
+
+Focused tests cover both directions in General and colored groups, the pointer grab offset, pause behavior, release/reset, and a later group's first slot. The pre-fix code fails the new moving-preview regression. The image below is a headless render of the actual native tab strip during a drag, not a mockup or an app screenshot.
+
+![Moving tab follows the pointer while its preceding sibling occupies the vacated slot](assets/group-reorder-preview.png)

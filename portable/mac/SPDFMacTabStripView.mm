@@ -163,9 +163,12 @@
 
     NSInteger sourceIndex = _dragSourceTabIndex >= 0 ? _dragSourceTabIndex : _draggedTabIndex;
     NSInteger targetIndex = sourceIndex;
+    SPDFTabGroup* sourceGroup = sourceIndex >= 0 && sourceIndex < (NSInteger)self.tabs.count
+                                   ? self.tabs[(NSUInteger)sourceIndex].group : nil;
+    BOOL withinGroup = sourceGroup && [self groupAtPoint:point headerOnly:NO] == sourceGroup;
     for (NSNumber* indexNumber in visibleIndexes) {
         NSInteger index = indexNumber.integerValue;
-        if (index == sourceIndex) continue;
+        if (index == sourceIndex || (withinGroup && self.tabs[(NSUInteger)index].group != sourceGroup)) continue;
         NSRect tabRect = [self rectForTabAtIndex:index];
         if (NSIsEmptyRect(tabRect)) continue;
         if (index < sourceIndex && point.x < NSMidX(tabRect)) {
@@ -248,8 +251,9 @@
 }
 
 - (BOOL)isVisuallyReorderingTabs {
-    return ![self hasTabGroups] && _groupDropTabIndex < 0 && _draggingTab && !_detachedTabDrag && _dragSourceTabIndex >= 0 &&
-           _dragSourceTabIndex < (NSInteger)self.tabs.count && _dragTargetTabIndex >= 0;
+    return _draggingTab && !_detachedTabDrag && _dragSourceTabIndex >= 0 &&
+           _dragSourceTabIndex < (NSInteger)self.tabs.count && _dragTargetTabIndex >= 0 &&
+           _dragTargetTabIndex < (NSInteger)self.tabs.count;
 }
 
 - (NSRect)visualRectForTabAtIndex:(NSInteger)index {
@@ -264,6 +268,14 @@
         CGFloat maxX = MAX(minX, [self tabAreaRightWithOverflow:[self hasOverflowTabs]] - width);
         return NSMakeRect(floor(MAX(minX, MIN(_dragCurrentX, maxX))), NSMinY(baseRect), width, NSHeight(baseRect));
     }
+
+    // Group contours and headers stay anchored. Only siblings exchange slots;
+    // joining another group retains its existing drop outline while the tab
+    // itself continues to follow the pointer above the strip.
+    SPDFTabGroup* sourceGroup = self.tabs[(NSUInteger)source].group;
+    if (_groupDropGroup || _groupDropTabIndex >= 0 ||
+        self.tabs[(NSUInteger)target].group != sourceGroup || self.tabs[(NSUInteger)index].group != sourceGroup)
+        return baseRect;
 
     if (source < target && index > source && index <= target) {
         NSRect shifted = [self rectForTabAtIndex:index - 1];
