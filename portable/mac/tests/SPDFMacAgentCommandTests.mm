@@ -26,6 +26,9 @@ int main(void) {
         assert(!SPDFMacValidateAgentCommand([NSMutableData dataWithLength:65537], nil));
         assert(!SPDFMacValidateAgentCommand([@"not json" dataUsingEncoding:NSUTF8StringEncoding], nil));
         assert(parse(@{@"action":@"list-groups"}));
+        assert(parse(@{@"action":@"jump-group",@"groupID":@"general"}));
+        assert(parse(@{@"action":@"update-group",@"groupID":@"general",@"hidden":@YES}));
+        assert(!parse(@{@"action":@"update-group",@"groupID":@"general",@"hidden":@1}));
         assert(parse(@{@"action":@"create-group",@"paths":@[@"/a.md",@"/b.pdf"],@"name":@"Research"}));
         assert(parse(@{@"action":@"update-group",@"groupID":@"general",@"collapsed":@NO}));
         assert(parse(@{@"action":@"move-tab",@"groupID":@"general",@"path":@"/a.md",@"beforePath":@"/b.pdf"}));

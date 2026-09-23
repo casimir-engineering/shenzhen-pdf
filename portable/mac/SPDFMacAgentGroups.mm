@@ -1,5 +1,6 @@
 #import "SPDFMacAgentGroups.h"
 #import "SPDFMacTabGroupIntegration.h"
+#import "SPDFMacSidebarWorkspace.h"
 
 static NSDictionary* GroupError(NSString* message) { return @{@"error":message}; }
 @implementation ShenzhenMacDelegate (SPDFMacAgentGroups)
@@ -31,7 +32,8 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
         [row[@"paths"] addObject:tab.path ?: @""];
     }
     return @{@"windowSessionID":_windowSessionID ?: @"",@"groups":groups,@"tabs":tabs,
-             @"colors":spdf_tab_group_colors()};
+             @"colors":spdf_tab_group_colors(),
+             @"newDocumentsInGeneral":@([[self sidebarWorkspaceState][@"newDocumentsInGeneral"] boolValue])};
 }
 - (NSDictionary*)performAgentGroupCommand:(NSDictionary*)command {
     if ([command[@"windowSessionID"] length] && ![command[@"windowSessionID"] isEqual:_windowSessionID])
@@ -40,10 +42,15 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
     if ([action isEqual:@"list-groups"]) return [self agentGroupSnapshot];
     SPDFTabGroup* group=[self agentGroupWithID:command[@"groupID"]];
     SPDFTabGroup* before=[self agentGroupWithID:command[@"beforeGroupID"]];
-    if (command[@"groupID"] && !group) return GroupError(@"Group no longer exists. List groups again.");
+    BOOL implicitGeneral=!group && [command[@"groupID"] isEqual:@"general"] && _tabs.count && !_tabs.firstObject.group &&
+        ([@[@"update-group",@"jump-group"] containsObject:action]);
+    if (command[@"groupID"] && !group && !implicitGeneral) return GroupError(@"Group no longer exists. List groups again.");
     if (command[@"beforeGroupID"] && !before) return GroupError(@"Destination group no longer exists. List groups again.");
-    if (command[@"color"] && (![spdf_tab_group_colors() containsObject:command[@"color"]] || group.general))
+    NSString* name=[command[@"name"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    BOOL promotesGeneral=(group.general || implicitGeneral) && name.length && ![name isEqual:@"General"];
+    if (command[@"color"] && (![spdf_tab_group_colors() containsObject:command[@"color"]] || ((group.general || implicitGeneral) && !promotesGeneral)))
         return GroupError(@"Use a color returned by list-groups. General keeps its fixed gray color.");
+    if (implicitGeneral) group=[self ensureGeneralTabGroup];
     NSString* affected=nil;
     if ([action isEqual:@"create-group"]) {
         NSMutableArray<SPDFDocumentTab*>* members=[NSMutableArray array];
@@ -73,6 +80,7 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
         if (command[@"name"]) [self renameTabGroup:group name:command[@"name"]];
         if (command[@"color"]) [self recolorTabGroup:group color:command[@"color"]];
         if (command[@"collapsed"] && group.collapsed != [command[@"collapsed"] boolValue]) [self toggleTabGroup:group];
+        if (command[@"hidden"]) [self setTabGroup:group hidden:[command[@"hidden"] boolValue]];
         affected=group.identifier;
     } else if ([action isEqual:@"move-tab"]) {
         SPDFDocumentTab* tab=[self agentTabWithPath:command[@"path"]];
@@ -89,6 +97,8 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
         if (before!=group) [self moveTabGroup:group toIndex:before ?
             [_tabs indexOfObjectIdenticalTo:spdf_tab_group_members(_tabs,before).firstObject] : _tabs.count];
         affected=group.identifier;
+    } else if ([action isEqual:@"jump-group"]) {
+        [self jumpTabGroup:group]; affected=group.identifier;
     } else if ([action isEqual:@"ungroup"]) {
         if (group.general) return GroupError(@"General cannot be ungrouped.");
         [self ungroupTabs:group];

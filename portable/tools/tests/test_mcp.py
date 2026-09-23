@@ -18,7 +18,7 @@ class MCPTests(unittest.TestCase):
             initialized = mcp.dispatch({"jsonrpc": "2.0", "id": 1, "method": "initialize"}, "/reader")
             self.assertEqual(initialized["result"]["protocolVersion"], "2025-11-25")
             tools = mcp.dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, "/reader")
-            self.assertEqual(len(tools["result"]["tools"]), 8)
+            self.assertEqual(len(tools["result"]["tools"]), 9)
             self.assertIsNone(mcp.dispatch({"jsonrpc": "2.0", "method": "notifications/initialized"}, "/reader"))
             run.assert_not_called()
 
@@ -56,7 +56,8 @@ class MCPTests(unittest.TestCase):
     def test_group_tools_use_native_actions_and_preserve_ids(self):
         calls = [("list_tab_groups", {}),
                  ("create_tab_group", {"paths": ["/a.pdf", "/b.md"], "name": "Research", "color": "Blue"}),
-                 ("update_tab_group", {"groupID": "stable-id", "collapsed": False, "name": ""}),
+                 ("update_tab_group", {"groupID": "stable-id", "collapsed": False, "hidden": True, "name": ""}),
+                 ("jump_to_tab_group", {"groupID": "stable-id"}),
                  ("move_tab_to_group", {"path": "/a.pdf", "groupID": "general", "beforePath": "/b.md"}),
                  ("move_tab_group", {"groupID": "stable-id", "beforeGroupID": "general"}),
                  ("ungroup_tabs", {"groupID": "stable-id", "windowSessionID": "window-id"})]
@@ -73,6 +74,7 @@ class MCPTests(unittest.TestCase):
                  ("create_tab_group", {"paths": ["/a.pdf", {}]}),
                  ("update_tab_group", {"groupID": "id"}),
                  ("update_tab_group", {"groupID": "id", "collapsed": 1}),
+                 ("update_tab_group", {"groupID": "id", "hidden": 1}),
                  ("move_tab_to_group", {"path": "/a.pdf"}), ("ungroup_tabs", {"groupID": ""})]
         with patch.object(mcp.subprocess, "run") as run:
             for name, arguments in calls:

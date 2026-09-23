@@ -68,3 +68,21 @@ static void check_group_creation_side(void) {
         }
     }
 }
+
+static void check_hidden_groups(void) {
+    SPDFGroupTestStrip* strip=[[SPDFGroupTestStrip alloc] initWithFrame:NSMakeRect(0,0,900,42)];
+    SPDFTabGroup* general=SPDFTabGroup.generalGroup;
+    SPDFTabGroup* custom=[SPDFTabGroup groupWithColor:@"Blue"];
+    strip.tabs=(id)@[tab(@"General one",general),tab(@"General two",general),tab(@"Hidden one",custom),tab(@"Hidden two",custom)];
+    custom.hidden=YES; strip.selectedIndex=3;
+    expect([strip.groupedVisibleTabIndexes isEqual:@[@0,@1]],@"hidden custom tabs consume strip space");
+    expect(!strip.groupedHasOverflow && !strip.hiddenTabIndexes.count,@"hidden group leaks into overflow");
+    for (id child in strip.accessibilityChildren)
+        expect(![[child accessibilityLabel] hasPrefix:@"Hidden"],@"hidden group leaks into strip accessibility");
+    general.hidden=YES; strip.tabs=strip.tabs;
+    expect(!strip.groupLayouts.count && !strip.visibleTabIndexes.count && !strip.groupedHasOverflow,
+        @"all hidden groups leave only controls in the strip");
+    expect(strip.tabs.count==4 && strip.selectedIndex==3,@"hiding groups removes tabs or changes selection");
+    general.hidden=NO; strip.tabs=strip.tabs;
+    expect([strip.groupedVisibleTabIndexes isEqual:@[@0,@1]],@"showing General does not restore its original member order");
+}

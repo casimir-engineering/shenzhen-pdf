@@ -5,6 +5,7 @@
 #import "SPDFMacCollectionRestoreTab.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacSidebarModeControl.h"
+#import "SPDFMacSidebarWorkspace.h"
 #import <objc/runtime.h>
 @interface ShenzhenMacDelegate (CollectionRestoreHost)
 - (void)rememberActiveTabState;
@@ -21,7 +22,7 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
     [self syncSidebarModeControlSegmentsForSearchAvailability:[self hasSearchSidebar]];
     _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeHistory;
     _sidebarPreferredVisible = YES; _sidebarWidth = MAX(280, _sidebarWidth);
-    [self collectionRememberSidebarMode]; [self rebuildSidebar];
+    [self rememberSidebarWorkspaceMode]; [self collectionRememberSidebarMode]; [self rebuildSidebar];
 }
 - (void)collectionRememberSidebarMode {
     if (![self selectedTab].collectionHistoryDocumentID.length) return;
@@ -111,6 +112,7 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
         _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeHistory;
     else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeHistory)
         _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
+    [self applySidebarWorkspaceState];
 }
 - (void)collectionRefreshHistory {
     // The normal capture completion calls this after opening; do not add store work to launch.

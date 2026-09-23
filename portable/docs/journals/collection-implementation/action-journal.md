@@ -466,3 +466,28 @@ Technical review found and corrected recovery identity and cancellation edges: a
 Validation: all **25 native Markdown/UI suites** passed, along with Collection store/integrity/cleanup, group model/integration/interaction, reader navigation, agent command/routing/group persistence and eight MCP checks. Focused comparison tests exercise 160 fractional scroll samples in both directions across page boundaries; the old synchronization code fails the regression with driver movement and reciprocal publications. Tests use hidden native views and temporary fixtures. Subjective trackpad feel in a running user app was not tested.
 
 The final frozen-source native build passed. Strict signature checks verified the reader and nested Collection bundle. The staged replacement in `dist/ShenzhenPDF.app` matches both candidate executables by SHA-256; the preceding bundle is preserved under `portable/build`. Source-size and whitespace checks pass. No user application was launched, quit, or screenshotted.
+
+
+### Vertical navigation and persistent Group Management
+
+**For readers.** The horizontal sidebar selector is replaced by vertical icon-labelled rows. Chapters, Comments where supported, Search, History where available and Group Management remain readable at narrow widths. Search and Group Management stay reachable even with an empty reader or a document without an outline. Group Management filters group names only, as clarified by the user; disclosure reveals member documents, a row activates the group, and a separate eye control changes tab-bar visibility without navigating or closing documents. Hidden/current status stays explicit.
+
+General follows the same visibility controls. Renaming it creates a regular named group and records that subsequent new documents belong to a fresh General. The renamed group retains its documents, hidden/collapsed state and manager expansion, and receives a regular group accent color. Tab-bar group headers still only browse contents, while Group Management explicitly jumps to a group.
+
+**For AI agents.** Group snapshots expose visibility and the new-document routing policy. Update-group accepts hidden state and jump-group explicitly reveals/activates a group. Native JSON commands and MCP use the same validated model mutations as the UI and the same session YAML; no second configuration or background service is introduced. See [agent interface](../../agent-interface.md).
+
+**Persistence and performance.** Per-window sidebar state lives under `sidebar` in session.yaml: mode, width, visibility, group query, expanded group IDs, list scroll, and new-documents-in-General policy. Tab dictionaries retain group identity/order/hidden state and reading positions. The production YAML codec round trip verifies these fields and the next-open behavior after General is renamed. Normal document reading constructs no management controller and performs no additional Collection work; tests cover this lazy boundary. Group search/scroll changes update memory immediately and coalesce disk saves.
+
+**Review-driven improvements.** The UX designer and independent critic completed four cycles: two on the navigation shell, then two on the integrated manager. Keyboard focus, rounded selection clipping, short-window spacing, hidden/active states, long names and no-match states were refined. Final integrated scores: **9.2/10 appearance and 9.2/10 usability**, with no remaining design blockers in the reviewed native renders and headless interactions. Review documents state the limits: subjective pointing/scrolling and full on-screen keyboard traversal were not tested in a running user app.
+
+Technical review also caught and fixed sidebar reopening on empty/outline-free documents, keeping Group Management visible when jumping to a tab that had its sidebar hidden, stale programmatic mode restoration, and preserving hidden General metadata when merging ungrouped tabs.
+
+![Final vertical navigation and Group Management in a narrow panel](assets/groups-narrow.png)
+
+![Final Group Management in dark appearance](assets/groups-dark.png)
+
+These are production native-view renders using temporary fixture documents. Additional reviewed evidence covers hidden active groups, long names, no matches, search editing, and a short PDF window with all five navigation entries.
+
+Validation: the final focused suites cover navigation keyboard/accessibility behavior, Group Management action separation and name-only filtering, unchanged-refresh editor selection, delayed/constrained scroll restoration, full workspace YAML round trips, group model/strip behavior, agent mutations and MCP protocol. All 25 existing native Markdown/UI suites, state/YAML/launch-policy checks and release-pipeline checks also pass.
+
+The final native build passed. Strict signature checks verified both reader and nested Collection bundles. `dist/ShenzhenPDF.app` now matches the tested candidate’s reader/helper executable hashes, with the prior bundle preserved under `portable/build`. Source-size and whitespace checks pass; the coordinator ratchet decreased by two lines. The running user app was not launched, quit or screenshotted.

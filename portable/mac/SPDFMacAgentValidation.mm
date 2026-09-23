@@ -8,9 +8,9 @@ static void fail(NSError** error, NSString* message) {
 
 static NSDictionary* validateGroups(NSDictionary* command, NSError** error) {
     NSDictionary* fields=@{@"list-groups":@[],@"create-group":@[@"paths",@"name",@"color",@"beforeGroupID"],
-        @"update-group":@[@"groupID",@"name",@"color",@"collapsed"],
+        @"update-group":@[@"groupID",@"name",@"color",@"collapsed",@"hidden"],
         @"move-tab":@[@"path",@"groupID",@"beforePath"],@"move-group":@[@"groupID",@"beforeGroupID"],
-        @"ungroup":@[@"groupID"]};
+        @"ungroup":@[@"groupID"],@"jump-group":@[@"groupID"]};
     NSString* action=command[@"action"]; NSArray* allowed=fields[action];
     if (!allowed) { fail(error,@"Unknown action."); return nil; }
     for (NSString* key in command) if (![@[@"action",@"windowSessionID"] containsObject:key] && ![allowed containsObject:key]) {
@@ -48,12 +48,14 @@ static NSDictionary* validateGroups(NSDictionary* command, NSError** error) {
         fail(error,@"groupID is required. Obtain it from list-groups."); return nil;
     }
     if ([action isEqual:@"move-tab"] && !command[@"path"]) { fail(error,@"path is required."); return nil; }
-    if ([action isEqual:@"update-group"] && !command[@"name"] && !command[@"color"] && !command[@"collapsed"]) {
-        fail(error,@"Update requires name, color, or collapsed."); return nil;
+    if ([action isEqual:@"update-group"] && !command[@"name"] && !command[@"color"] && !command[@"collapsed"] && !command[@"hidden"]) {
+        fail(error,@"Update requires name, color, collapsed, or hidden."); return nil;
     }
-    id collapsed=command[@"collapsed"];
-    if (collapsed && CFGetTypeID((__bridge CFTypeRef)collapsed)!=CFBooleanGetTypeID()) {
-        fail(error,@"collapsed must be a Boolean."); return nil;
+    for (NSString* key in @[@"collapsed",@"hidden"]) {
+        id flag=command[key];
+        if (flag && CFGetTypeID((__bridge CFTypeRef)flag)!=CFBooleanGetTypeID()) {
+            fail(error,[key stringByAppendingString:@" must be a Boolean."]); return nil;
+        }
     }
     return normalized;
 }

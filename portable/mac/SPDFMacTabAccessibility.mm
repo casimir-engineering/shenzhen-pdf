@@ -110,6 +110,7 @@ NSArray<NSAccessibilityElement*>* SPDFMacTabAccessibilityChildren(SPDFTabStripVi
     NSRect overflowFrame = [strip overflowRect];
     for (NSInteger index = 0; index < (NSInteger)strip.tabs.count; ++index) {
         SPDFDocumentTab* tab = strip.tabs[(NSUInteger)index];
+        if (tab.group.hidden) continue;
         NSRect frame = [strip rectForTabAtIndex:index];
         BOOL hiddenInOverflow = NSIsEmptyRect(frame) || [hidden containsObject:@(index)];
         if (hiddenInOverflow) frame = overflowFrame;

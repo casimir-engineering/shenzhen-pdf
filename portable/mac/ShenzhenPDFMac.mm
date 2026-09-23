@@ -1,10 +1,10 @@
 #import "SPDFMacCollectionCompanion.h"
+#import "SPDFMacSidebarWorkspace.h"
 #import <Cocoa/Cocoa.h>
 #import <PDFKit/PDFKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
 #import <os/log.h>
-
 #include <CommonCrypto/CommonDigest.h>
 #include <sys/stat.h>
 
@@ -1334,6 +1334,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
 - (void)loadSessionWindowState:(NSDictionary*)windowState {
     if (![windowState isKindOfClass:NSDictionary.class]) return;
+    [self restoreSidebarWorkspaceState:windowState[@"sidebar"]];
     NSString* windowID = [windowState[@"id"] isKindOfClass:NSString.class] ? windowState[@"id"] : nil;
     if (windowID.length > 0) _windowSessionID = [windowID copy];
     NSRect frame;
@@ -1342,7 +1343,6 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         _hasRestoredWindowFrame = YES;
         _restoredWindowContentSize = _restoredWindowFrame.size;
     }
-
     NSArray* tabs = [windowState[@"tabs"] isKindOfClass:NSArray.class] ? windowState[@"tabs"] : @[];
     [self.tabLifecycle reset];
     [_tabs removeAllObjects];
@@ -1605,7 +1605,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         @"id" : _windowSessionID,
         @"frame" : spdf_dictionary_from_window_frame(frame),
         @"selectedTab" : @(_selectedTabIndex),
-        @"tabs" : tabs
+        @"tabs" : tabs, @"sidebar" : [self sidebarWorkspaceSnapshot]
     } mutableCopy];
 }
 
@@ -2863,8 +2863,8 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
     _sidebarContainer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 240, 600)];
     _sidebarContainer.translatesAutoresizingMaskIntoConstraints = NO;
-    _sidebarModeControl = [[NSSegmentedControl alloc] init];
-    spdf_sidebar_mode_control_configure(_sidebarModeControl, YES, NO);
+    _sidebarModeControl = [[SPDFSidebarNavigationControl alloc] init];
+    spdf_sidebar_mode_control_configure(_sidebarModeControl, YES, NO); [self applySidebarWorkspaceState];
     _sidebarModeControl.target = self;
     _sidebarModeControl.action = @selector(sidebarModeChanged:);
     _sidebarModeControl.translatesAutoresizingMaskIntoConstraints = NO;
@@ -9415,7 +9415,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)rebuildSidebar {
-    if ([self collectionShowSelectedHistoryPanel]) return;
+    if ([self showSidebarWorkspacePanel] || [self collectionShowSelectedHistoryPanel]) return;
     if ([self isMarkdownActive]) {
         [self rebuildMarkdownSidebar];
         return;
@@ -9424,7 +9424,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     BOOL hasChapters = _outline.count > 0;
     BOOL hasComments = _comments.count > 0;
     BOOL hasSearch = [self hasSearchSidebar];
-    BOOL hasSidebar = _doc && (hasChapters || hasComments || hasSearch || [self selectedTab].collectionHistoryDocumentID.length);
+    BOOL hasSidebar = _sidebarModeControl != nil;
 
     [self syncSidebarModeControlSegmentsForSearchAvailability:hasSearch];
     if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && !hasSearch)
@@ -9522,7 +9522,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self selectCurrentSidebarRow];
 }
 - (void)sidebarModeChanged:(id)sender {
-    (void)sender; [self collectionRememberSidebarMode];
+    (void)sender; [self rememberSidebarWorkspaceMode]; [self collectionRememberSidebarMode];
     [self syncSidebarFilterField];
     [self rebuildSidebar];
 }
@@ -9532,7 +9532,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self syncSidebarModeControlSegmentsForSearchAvailability:YES];
     _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
     _sidebarPreferredVisible = YES;
-    [self rebuildSidebar];
+    [self rememberSidebarWorkspaceMode]; [self rebuildSidebar];
 }
 
 - (void)goToAdjacentPagePreservingRelativePosition:(NSInteger)delta {
@@ -10171,7 +10171,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     NSInteger pageCount = spdf_page_count(_doc);
     BOOL hasDoc = _doc != NULL;
     [self updatePageIndicatorControls];
-    _sidebarToggleButton.enabled = hasDoc;
+    _sidebarToggleButton.enabled = _sidebarModeControl != nil;
     _pageField.enabled = hasDoc;
     [_zoomSegments setEnabled:hasDoc forSegment:0];
     [_zoomSegments setEnabled:hasDoc forSegment:1];
@@ -12869,9 +12869,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
 - (void)toggleSidebar:(id)sender {
     (void)sender;
-    BOOL canShowSidebar = [self isMarkdownActive]
-                              ? ([self markdownHasChapters] || [self markdownHasSearchSidebar])
-                              : (_doc && (_outline.count > 0 || _comments.count > 0 || [self hasSearchSidebar]));
+    BOOL canShowSidebar = _sidebarModeControl != nil;
     if (!_sidebarVisible && !canShowSidebar) {
         [self syncToolbarState];
         [self updateControls];
@@ -12897,7 +12895,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     BOOL sameVisibleMode = _sidebarVisible && _sidebarModeControl.spdf_selectedSidebarMode == mode;
     _sidebarPreferredVisible = !sameVisibleMode;
     if (_sidebarPreferredVisible) _sidebarModeControl.spdf_selectedSidebarMode = mode;
-    [self rebuildSidebar];
+    [self rememberSidebarWorkspaceMode]; [self rebuildSidebar];
     [self persistActiveState];
 }
 
@@ -15971,7 +15969,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(toggleSidebar:)) {
         menuItem.title = _sidebarVisible ? @"Hide Side Panel" : @"Show Side Panel";
         menuItem.state = _sidebarVisible ? NSControlStateValueOn : NSControlStateValueOff;
-        return hasDoc;
+        return _sidebarModeControl != nil;
     }
     if (action == @selector(toggleChaptersPanel:) || action == @selector(toggleCommentsPanel:)) {
         BOOL chapters = action == @selector(toggleChaptersPanel:);
