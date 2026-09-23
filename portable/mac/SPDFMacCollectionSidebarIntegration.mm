@@ -10,7 +10,7 @@
 @interface ShenzhenMacDelegate (CollectionRestoreHost)
 - (void)rememberActiveTabState;
 @end
-static char historyControllerKey, historyWrapperKey, historyDocumentKey;
+static char historyControllerKey, historyWrapperKey, historyDocumentKey, historyDirtyKey;
 @implementation ShenzhenMacDelegate (SPDFMacCollectionSidebar)
 - (void)showCollectionHistory:(id)sender {
     NSString* path = [sender respondsToSelector:@selector(representedObject)] && [[sender representedObject] isKindOfClass:NSString.class]
@@ -39,6 +39,7 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
     objc_setAssociatedObject(self, &historyControllerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &historyWrapperKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, &historyDocumentKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(self, &historyDirtyKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 - (BOOL)collectionShowSelectedHistoryPanel {
     NSString* identifier = [self selectedTab].collectionHistoryDocumentID;
@@ -52,6 +53,11 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
     if (!visible) {
         [(SPDFMacCollectionHistoryController*)objc_getAssociatedObject(self, &historyControllerKey) cancelPendingPreviews];
         wrapper.hidden = YES; return NO;
+    }
+    if (!_sidebarPreferredVisible) {
+        [(SPDFMacCollectionHistoryController*)objc_getAssociatedObject(self, &historyControllerKey) cancelPendingPreviews];
+        [self setSidebarActuallyVisible:NO];
+        return YES;
     }
     _sidebarFilterField.hidden = YES;
     [_sidebarContainer viewWithTag:8801].hidden = YES;
@@ -97,6 +103,10 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
         objc_setAssociatedObject(self, &historyWrapperKey, wrapper, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(self, &historyDocumentKey, identifier, OBJC_ASSOCIATION_COPY_NONATOMIC);
     }
+    if ([objc_getAssociatedObject(self, &historyDirtyKey) boolValue]) {
+        [(SPDFMacCollectionHistoryController*)objc_getAssociatedObject(self, &historyControllerKey) reload];
+        objc_setAssociatedObject(self, &historyDirtyKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     wrapper.hidden = NO;
     [self setSidebarActuallyVisible:_sidebarPreferredVisible];
     if (_sidebarVisible) [self restoreSidebarWidth];
@@ -121,7 +131,10 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey;
     [self collectionRefreshVersionInfoForDocument:doc];
     [self selectedTab].collectionHistoryDocumentID = doc[@"id"];
     SPDFMacCollectionHistoryController* controller = objc_getAssociatedObject(self, &historyControllerKey);
-    if ([doc[@"id"] isEqual:objc_getAssociatedObject(self, &historyDocumentKey)]) [controller reload];
+    if ([doc[@"id"] isEqual:objc_getAssociatedObject(self, &historyDocumentKey)]) {
+        if (_sidebarPreferredVisible && _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeHistory) [controller reload];
+        else objc_setAssociatedObject(self, &historyDirtyKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     [self rebuildSidebar];
 }
 @end

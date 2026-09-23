@@ -2,6 +2,38 @@
 #import "SPDFMacCollectionHistory.h"
 #import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacCollectionStore.h"
+#import "../SPDFMacCollectionSidebarIntegration.mm"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wincomplete-implementation"
+#pragma clang diagnostic ignored "-Wprotocol"
+@implementation ShenzhenMacDelegate
+@end
+@implementation SPDFDocumentTab
+@end
+SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* tab) {
+    (void)tab; abort(); // Recovery is exercised by the reader-navigation suite, never this layout probe.
+}
+#pragma clang diagnostic pop
+@interface HistorySidebarProbe : ShenzhenMacDelegate
+- (void)seed;
+- (void)reveal;
+@end
+@implementation HistorySidebarProbe
+- (void)seed {
+    SPDFDocumentTab* tab = [SPDFDocumentTab new]; tab.collectionHistoryDocumentID = @"fixture";
+    _tabs = [NSMutableArray arrayWithObject:tab]; _selectedTabIndex = 0;
+    _sidebarContainer = [NSView new]; _sidebarModeControl = [SPDFSidebarNavigationControl new];
+    spdf_sidebar_mode_control_configure_navigation(_sidebarModeControl, YES, YES);
+    _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeHistory;
+    [_sidebarContainer addSubview:_sidebarModeControl];
+}
+- (SPDFDocumentTab*)selectedTab { return _tabs.firstObject; }
+- (BOOL)hasSearchSidebar { return NO; }
+- (void)syncSidebarModeControlSegmentsForSearchAvailability:(BOOL)available { (void)available; }
+- (void)setSidebarActuallyVisible:(BOOL)visible { _sidebarVisible = visible; }
+- (void)restoreSidebarWidth {}
+- (void)reveal { _sidebarPreferredVisible = YES; }
+@end
 @interface CollectionEvidenceSurface : NSView
 @end
 @implementation CollectionEvidenceSurface
@@ -67,6 +99,21 @@ int main(void) {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         NSURL* root = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
         HistoryFixtureStore* store = [[HistoryFixtureStore alloc] initWithRootURL:root];
+        __block NSUInteger storeRequests = 0;
+        Method defaultStore = class_getClassMethod(SPDFMacCollectionStore.class,@selector(defaultStore));
+        IMP originalDefaultStore = method_setImplementation(defaultStore,imp_implementationWithBlock(^id(id receiver) {
+            (void)receiver; ++storeRequests; return store;
+        }));
+        HistorySidebarProbe* sidebar = [HistorySidebarProbe new]; [sidebar seed];
+        Expect([sidebar collectionShowSelectedHistoryPanel] && storeRequests == 0,
+            "restored hidden History does not initialize Collection or build a controller");
+        [sidebar reveal];
+        Expect([sidebar collectionShowSelectedHistoryPanel] && storeRequests == 1,
+            "revealing History lazily creates exactly one controller");
+        [sidebar collectionShowSelectedHistoryPanel];
+        Expect(storeRequests == 1,"visible History reuses its controller");
+        [sidebar collectionRemoveHistoryView];
+        method_setImplementation(defaultStore,originalDefaultStore);
         __block NSUInteger opens = 0;
         __block NSString* openedPath; __block BOOL archivedOpen;
         HistoryProbe* history = [[HistoryProbe alloc]
@@ -162,6 +209,13 @@ int main(void) {
         [host setContentSize:NSMakeSize(220,300)];
         [container layoutSubtreeIfNeeded];
         Expect(container.bounds.size.height == 300,"History does not force a short reader window to grow");
+        if (evidence.length) {
+            NSBitmapImageRep* bitmap = [container bitmapImageRepForCachingDisplayInRect:container.bounds];
+            [container cacheDisplayInRect:container.bounds toBitmapImageRep:bitmap];
+            NSString* shortPath = [[evidence stringByDeletingPathExtension] stringByAppendingString:@"-short.png"];
+            Expect([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:shortPath atomically:YES],
+                "short History evidence writes a headless PNG");
+        }
         NSScrollView* viewport = (id)Find(history.view,NSScrollView.class);
         Expect(viewport.documentView.bounds.size.height > viewport.contentView.bounds.size.height,
             "short History scrolls its actions instead of clipping them");
