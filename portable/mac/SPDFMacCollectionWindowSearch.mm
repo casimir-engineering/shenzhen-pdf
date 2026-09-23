@@ -91,7 +91,8 @@ static NSString* DateLabel(NSDictionary* version) {
             @"Title match · no matching saved text" : @"Title match · saved text is not indexed") :
             (SPDFCollectionOriginalAvailable(doc) ? @"Original available. Saved copies are read-only." : @"Original unavailable. Saved copies are read-only.");
         NSTextField* label = SPDFCollectionText(status,12,NSFontWeightRegular,YES); [text addArrangedSubview:label];
-        NSButton* preview = SPDFCollectionButton(@"Preview saved copy",self,@selector(previewForRow:),@"normal");
+        BOOL live = SPDFCollectionVersionIsLatest(doc,version) && SPDFCollectionOriginalAvailable(doc);
+        NSButton* preview = SPDFCollectionButton(live ? @"Open document" : @"Open saved copy",self,@selector(previewForRow:),@"normal");
         preview.tag = index; preview.enabled = [version[@"id"] length]>0; [text addArrangedSubview:preview];
     }
     if (matches.count>3) {
