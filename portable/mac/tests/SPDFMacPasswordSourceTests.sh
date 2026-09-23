@@ -3,6 +3,7 @@ set -eu
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)"
 password_impl="$root/portable/mac/SPDFMacPassword.mm"
+credential_impl="$root/portable/mac/SPDFMacPasswordCredentials.mm"
 password_header="$root/portable/mac/SPDFMacPassword.h"
 app_impl="$root/portable/mac/ShenzhenPDFMac.mm"
 properties_impl="$root/portable/mac/SPDFMacPropertiesPanel.mm"
@@ -18,7 +19,7 @@ if grep -q 'runModal' "$password_impl"; then
     echo "password prompt must remain asynchronous" >&2
     exit 1
 fi
-if grep -Eiq 'NSUserDefaults|settings\.json|session\.json|bookmarks\.json|NSLog|os_log' "$password_impl"; then
+if grep -Eiq 'NSUserDefaults|settings\.json|session\.json|bookmarks\.json|NSLog|os_log' "$password_impl" "$credential_impl"; then
     echo "password implementation contains persistence or logging" >&2
     exit 1
 fi

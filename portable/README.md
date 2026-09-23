@@ -88,6 +88,13 @@ Readable state files live under:
 ~/Library/Application Support/ShenzhenPDF/
 ```
 
+Collection is packaged as a small, separately signed helper in
+`Contents/Helpers/ShenzhenPDF Collection.app`. Its source list lives in
+`mac/companion/sources.mk`: it shares PDFKit and the Markdown renderer, without
+linking the reader or MuPDF. `make -C portable mac-collection-companion-link-tests`
+checks this exact source set headlessly, including encrypted previews over the
+private credential pipe. The helper starts only when Collection is opened.
+
 Local development builds are ad-hoc signed. Public direct-download releases
 should be Developer ID signed and notarized.
 

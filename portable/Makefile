@@ -70,6 +70,7 @@ CORE_SELECTION_TEST := $(BUILD)/SPDFCoreSelectionTests
 CORE_CJK_SELECTION_TEST := $(BUILD)/SPDFCoreCJKSelectionTests
 MAC_APP := $(DIST)/ShenzhenPDF.app
 MAC_BIN := $(MAC_APP)/Contents/MacOS/ShenzhenPDF
+MAC_COLLECTION_BIN := $(BUILD)/ShenzhenPDFCollection
 MAC_COLLECTION_APP := $(MAC_APP)/Contents/Helpers/ShenzhenPDF Collection.app
 MAC_DMG := $(DIST)/ShenzhenPDF-mac-arm64.dmg
 MAC_ICON_SRCS := $(addprefix ../gfx/ShenzhenPDF-,$(addsuffix x32.png,16x16 32x32 64x64 128x128 256x256 512x512 1024x1024))
@@ -100,6 +101,7 @@ MAC_STATE_YAML_TEST := $(BUILD)/SPDFStateYamlTests
 MAC_RELEASE_NOTES_PREVIEW := $(BUILD)/SPDFReleaseNotesPreview
 # Exclude standalone test translation units (each defines its own main()).
 MAC_MARKDOWN_SRCS := $(sort $(wildcard mac/markdown/*.mm))
+include mac/companion/sources.mk
 MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm))) $(MAC_MARKDOWN_SRCS)
 MAC_HDRS := $(sort $(wildcard mac/*.h) $(wildcard mac/markdown/*.h))
 MAC_VERSION ?= 26.9.23
@@ -248,8 +250,8 @@ $(MAC_WINDOW_CHROME_TEST): mac/tests/SPDFMacWindowChromeTests.mm mac/SPDFMacWind
 mac-window-chrome-tests: $(MAC_WINDOW_CHROME_TEST)
 	"$(MAC_WINDOW_CHROME_TEST)"
 
-$(MAC_PASSWORD_TEST): mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm mac/SPDFMacPassword.h $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(MAC_PASSWORD_TEST)"
+$(MAC_PASSWORD_TEST): mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm mac/SPDFMacPasswordCredentials.mm mac/SPDFMacPassword.h $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPasswordTests.mm mac/SPDFMacPassword.mm mac/SPDFMacPasswordCredentials.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(MAC_PASSWORD_TEST)"
 
 mac-password-tests: $(MAC_PASSWORD_TEST)
 	"$(MAC_PASSWORD_TEST)"
@@ -449,7 +451,7 @@ $(MAC_STATE_YAML_TEST): mac/tests/SPDFStateYamlTests.mm $(YAML_OBJ) | $(BUILD)
 mac-state-yaml-tests: $(MAC_STATE_YAML_TEST)
 	"$(MAC_STATE_YAML_TEST)"
 
-$(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) mac/Info.plist mac/CollectionCompanion-Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
+$(MAC_BIN): $(MAC_COLLECTION_BIN) mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) $(MAC_COLLECTION_SRCS) mac/companion/main.mm mac/companion/sources.mk mac/Info.plist mac/CollectionCompanion-Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
@@ -479,7 +481,6 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS
 		echo "warning: actool not found; using .icns app icon fallback"; \
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
-	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_APP)/Contents/Resources/ShenzhenPDF.icns"
 	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) "$(YAML_OBJ)" $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -Eq 'libcrypto|/opt/homebrew|/usr/local'; then \
 		echo "unexpected mutable runtime dependency in $(MAC_BIN)" >&2; \
@@ -487,7 +488,7 @@ $(MAC_BIN): mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS
 		exit 1; \
 	fi
 	mkdir -p "$(MAC_COLLECTION_APP)/Contents/MacOS" "$(MAC_COLLECTION_APP)/Contents/Resources"
-	cp "$(MAC_BIN)" "$(MAC_COLLECTION_APP)/Contents/MacOS/ShenzhenPDFCollection"
+	cp "$(MAC_COLLECTION_BIN)" "$(MAC_COLLECTION_APP)/Contents/MacOS/ShenzhenPDFCollection"
 	cp mac/CollectionCompanion-Info.plist "$(MAC_COLLECTION_APP)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $(MAC_BUNDLE_ID).collection" "$(MAC_COLLECTION_APP)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(MAC_VERSION)" "$(MAC_COLLECTION_APP)/Contents/Info.plist"
@@ -648,12 +649,12 @@ mac-collection-companion-tests: | $(BUILD)
 
 .PHONY: mac-collection-credentials-tests
 mac-collection-credentials-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionCredentialsTests.mm mac/SPDFMacCollectionCredentials.mm mac/SPDFMacPassword.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework Security -framework LocalAuthentication -lm -o "$(BUILD)/SPDFMacCollectionCredentialsTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionCredentialsTests.mm mac/SPDFMacCollectionCredentials.mm mac/SPDFMacPassword.mm mac/SPDFMacPasswordCredentials.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework Security -framework LocalAuthentication -lm -o "$(BUILD)/SPDFMacCollectionCredentialsTests"
 	"$(BUILD)/SPDFMacCollectionCredentialsTests"
 
 .PHONY: mac-collection-password-open-tests
 mac-collection-password-open-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(MAC_COLLECTION_PARSER_LIBS) mupdf-libs | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionPasswordOpenTests.mm mac/SPDFMacCollectionCredentials.mm mac/SPDFMacCollectionCredentialIntegration.mm mac/SPDFMacPassword.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -framework Security -framework LocalAuthentication -lm -o "$(BUILD)/SPDFMacCollectionPasswordOpenTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionPasswordOpenTests.mm mac/SPDFMacCollectionCredentials.mm mac/SPDFMacCollectionCredentialIntegration.mm mac/SPDFMacPassword.mm mac/SPDFMacPasswordCredentials.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -framework Security -framework LocalAuthentication -lm -o "$(BUILD)/SPDFMacCollectionPasswordOpenTests"
 	"$(BUILD)/SPDFMacCollectionPasswordOpenTests"
 
 .PHONY: mac-agent-group-tests
@@ -675,3 +676,16 @@ mac-group-management-tests: | $(BUILD)
 mac-sidebar-workspace-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(YAML_OBJ) mupdf-libs | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacSidebarWorkspaceTests.mm mac/SPDFMacSidebarWorkspace.mm mac/SPDFMacGroupManagement.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabGroupIntegration.mm "$(YAML_OBJ)" "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacSidebarWorkspaceTests"
 	"$(BUILD)/SPDFMacSidebarWorkspaceTests"
+
+.PHONY: mac-tab-group-performance
+mac-tab-group-performance: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -O2 -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabGroupPerformance.mm mac/SPDFMacTabGroups.mm -framework Cocoa -o "$(BUILD)/SPDFMacTabGroupPerformance"
+	"$(BUILD)/SPDFMacTabGroupPerformance" --verify
+
+$(MAC_COLLECTION_BIN): mac/companion/main.mm mac/companion/sources.mk $(MAC_COLLECTION_SRCS) $(MAC_HDRS) $(YAML_OBJ) $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) | $(BUILD)
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include mac/companion/main.mm $(MAC_COLLECTION_SRCS) "$(YAML_OBJ)" $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_COLLECTION_FRAMEWORKS) -Wl,-dead_strip -Wl,-x -o "$(MAC_COLLECTION_BIN)"
+
+.PHONY: mac-collection-companion-link-tests
+mac-collection-companion-link-tests: $(MAC_COLLECTION_SRCS) $(YAML_OBJ) $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) | $(BUILD)
+	clang++ $(PORTABLE_TEST_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionCompanionLinkTests.mm $(MAC_COLLECTION_SRCS) "$(YAML_OBJ)" $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_COLLECTION_FRAMEWORKS) -Wl,-dead_strip -Wl,-x -o "$(BUILD)/SPDFMacCollectionCompanionLinkTests"
+	"$(BUILD)/SPDFMacCollectionCompanionLinkTests"
