@@ -445,3 +445,24 @@ The model regression starts with General expanded and fails against the old impl
 Group headers now only expand or collapse their contents. They no longer select the last-used tab or load a different document. Automatic collapse still occurs when the user actually selects a document tab; manually inspecting another group preserves the active tab and reading position. The existing session writer persists manual expansion.
 
 The updated headless integration regression fails twice against the old behavior (last-used navigation and browsing another group) and passes with the fix. Group model, integration and native interaction suites pass.
+
+
+### Latest means the linked original; recovery stays inline
+
+History and Collection now resolve the latest entry to its linked on-disk original whenever available. Older entries still open immutable saved versions. Existing internal-save and file-watcher capture hooks continue recording revisions; successful background captures no longer replace the reader status with routine Collection messages. Actual capture failures remain visible.
+
+When an original disappears, the reader offers Find Document and Save New Copy As inside History instead of automatically opening a recovery/error sheet. Both recovery actions retain the original tab and its reading position. History’s version context menu uses the configured file explorer to reveal the live original for Latest or the selected materialized historical file.
+
+![Inline missing-original recovery in the native History sidebar](assets/history-inline-recovery.png)
+
+This is a hidden native-view test render, not a screenshot or launch of the user’s app.
+
+Compare with Latest resolves the document’s current Collection identity at action time, so a newly relinked original or an uncaptured live edit is compared correctly. If the original is missing, comparison uses the latest retained version. The scrolling fix removes reciprocal PDFKit destination jumps: source events are coalesced, the peer viewport is moved directly, and delayed peer notifications cannot move the driving pane. Genuine input on either pane makes it the driver.
+
+AI group commands use existing tab-group operations and session serialization. They expose stable group IDs, names, colors, order, collapsed state and membership, with validation before mutation and an optional window-session guard. No background service or new launch-path work is introduced. See [agent interface](../../agent-interface.md) for the API and MCP configuration.
+
+Technical review found and corrected recovery identity and cancellation edges: an unrelated occupant at the old path is never retargeted, previewing a recovery candidate cannot produce duplicate tabs, and delayed History selections are invalidated when the panel hides or the reader switches tabs.
+
+Validation: all **25 native Markdown/UI suites** passed, along with Collection store/integrity/cleanup, group model/integration/interaction, reader navigation, agent command/routing/group persistence and eight MCP checks. Focused comparison tests exercise 160 fractional scroll samples in both directions across page boundaries; the old synchronization code fails the regression with driver movement and reciprocal publications. Tests use hidden native views and temporary fixtures. Subjective trackpad feel in a running user app was not tested.
+
+The final frozen-source native build passed. Strict signature checks verified the reader and nested Collection bundle. The staged replacement in `dist/ShenzhenPDF.app` matches both candidate executables by SHA-256; the preceding bundle is preserved under `portable/build`. Source-size and whitespace checks pass. No user application was launched, quit, or screenshotted.
