@@ -1,3 +1,4 @@
+#import "SPDFMacCollectionCompanion.h"
 #import <Cocoa/Cocoa.h>
 #import <PDFKit/PDFKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -17,9 +18,9 @@ static os_log_t SPDFReadOnlyLog(void) {
     });
     return log;
 }
-
 #import "SPDFMacDefaultReader.h"
 #import "SPDFMacDelegatePrivate.h"
+#import "SPDFMacCollectionReaderNavigation.h"
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacFileBrowsing.h"
 #import "SPDFMacFileExplorerPreference.h"
@@ -2591,10 +2592,10 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     else
         [_toolbarOverflowMenu popUpMenuPositioningItem:nil atLocation:point inView:_toolbarOverflowButton];
 }
-
 - (void)updateToolbarOverflow {
     if (!_toolbar || !_toolbarOverflowButton) return;
     if (_suppressToolbarOverflowUpdates) return;
+    [self collectionUpdateVersionIndicator];
     NSArray<NSArray<NSView*>*>* groups = @[
         @[ _ocrButton, _translateButton, _ocrSeparator ],
         @[ _findCountLabel ],
@@ -9414,6 +9415,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)rebuildSidebar {
+    if ([self collectionShowSelectedHistoryPanel]) return;
     if ([self isMarkdownActive]) {
         [self rebuildMarkdownSidebar];
         return;
@@ -9422,7 +9424,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     BOOL hasChapters = _outline.count > 0;
     BOOL hasComments = _comments.count > 0;
     BOOL hasSearch = [self hasSearchSidebar];
-    BOOL hasSidebar = _doc && (hasChapters || hasComments || hasSearch);
+    BOOL hasSidebar = _doc && (hasChapters || hasComments || hasSearch || [self selectedTab].collectionHistoryDocumentID.length);
 
     [self syncSidebarModeControlSegmentsForSearchAvailability:hasSearch];
     if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && !hasSearch)
@@ -9519,9 +9521,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     }
     [self selectCurrentSidebarRow];
 }
-
 - (void)sidebarModeChanged:(id)sender {
-    (void)sender;
+    (void)sender; [self collectionRememberSidebarMode];
     [self syncSidebarFilterField];
     [self rebuildSidebar];
 }
@@ -16056,7 +16057,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 }
 
 @end
-
 int main(int argc, const char* argv[]) {
     @autoreleasepool {
         // Anchor the whole timeline on the kernel spawn time, so every later
@@ -16065,6 +16065,7 @@ int main(int argc, const char* argv[]) {
         spdf_launch_profile_log(@"main enter (spawn @%.1f, +%.1fms)", spdf_process_spawn_time_ms(),
                                 spdf_zoom_profile_now_ms() - spdf_process_spawn_time_ms());
         for (int i = 1; i < argc; ++i) {
+            if (strcmp(argv[i], "--collection-companion") == 0) return SPDFRunCollectionCompanion();
             if (strcmp(argv[i], "--agent-command") == 0)
                 return SPDFMacRunAgentCommand(i + 1 < argc ? argv[i + 1] : NULL);
             if (strcmp(argv[i], "--version") == 0) {
@@ -16083,7 +16084,6 @@ int main(int argc, const char* argv[]) {
                 return spdf_run_post_update_helper(staged, target);
             }
         }
-
         ShenzhenMacDelegate* delegate = [[ShenzhenMacDelegate alloc] init];
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--detached-tab") == 0) {

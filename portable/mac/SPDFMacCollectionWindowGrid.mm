@@ -4,6 +4,7 @@
 #import "markdown/SPDFMarkdownDocument.h"
 #import "SPDFMacCollectionThumbnail.h"
 #import "SPDFMacPassword.h"
+#import "SPDFMacCollectionCompanion.h"
 
 @interface SPDFCollectionThumbnailItem : NSCollectionViewItem
 @property(nonatomic) NSButton* historyButton;
@@ -186,6 +187,13 @@
                             [pdf unlockWithPassword:[NSString stringWithUTF8String:password]];
                         }];
                         if (!pdf.isLocked) break;
+                    }
+                    if (pdf.isLocked) {
+                        SPDFCollectionCompanionRuntime* runtime=[NSClassFromString(@"SPDFCollectionCompanionRuntime") activeRuntime];
+                        SPDFPasswordCredential* credential=[runtime credentialForPaths:@[URL.path,row[@"document"][@"path"] ?: @""]];
+                        [credential withUTF8Password:^(const char* password) {
+                            [pdf unlockWithPassword:[NSString stringWithUTF8String:password]];
+                        }];
                     }
                 },&error);
             }

@@ -93,8 +93,6 @@ $PORTABLE/mac/SPDFMacCollectionWindowSettings.mm
 $PORTABLE/mac/SPDFMacCollectionWindowState.mm
 $PORTABLE/mac/SPDFMacCollectionWindowSearch.mm
 $PORTABLE/mac/SPDFMacCollectionWindowHistory.mm
-$PORTABLE/mac/SPDFMacCollectionHistoryDetail.mm
-$PORTABLE/mac/SPDFMacCollectionPreviewSearch.mm
 $PORTABLE/mac/SPDFMacCollectionUsage.mm
 $PORTABLE/mac/SPDFMacCollectionHistory.mm
 $PORTABLE/mac/SPDFMacCollectionSavePanel.mm
@@ -159,7 +157,7 @@ SPDFMacCollectionStyleTests
 SPDFMacCollectionMarkdownIndexTests
 SPDFMacCollectionCompareLoadTests
 SPDFMacCollectionContextSearchMarkdownTests
-SPDFMacCollectionHistoryDetailTests
+SPDFMacCollectionHistorySidebarTests
 SPDFMacMarkdownKeyboardPolicyTests
 SPDFMacMarkdownRoutingTests
 SPDFMacMarkdownPagedViewTests

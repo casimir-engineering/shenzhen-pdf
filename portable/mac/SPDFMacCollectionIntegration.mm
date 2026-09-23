@@ -1,10 +1,12 @@
 #import "SPDFMacCollectionIntegration.h"
+#import "SPDFMacCollectionReaderNavigation.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacCollectionAvailability.h"
 #import "SPDFMacCollectionWindow.h"
+#import "SPDFMacCollectionCompanion.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import <objc/runtime.h>
-static char kCollectionManager, kCollectionPromptPending, kCollectionImported, kCollectionRecoveryPath, kCollectionSettingsObserver, kCollectionContinuity, kCollectionPendingSave;
+static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported, kCollectionRecoveryPath, kCollectionSettingsObserver, kCollectionContinuity, kCollectionPendingSave;
 @implementation ShenzhenMacDelegate (SPDFMacCollectionIntegration)
 - (void)collectionObserveSettings {
     if (objc_getAssociatedObject(self, &kCollectionSettingsObserver)) return;
@@ -60,6 +62,7 @@ static char kCollectionManager, kCollectionPromptPending, kCollectionImported, k
             NSInteger index = [self indexOfTabForPath:source];
             if (index >= 0) {
                 SPDFDocumentTab* tab = self->_tabs[(NSUInteger)index]; tab.readOnly = YES;
+                [self collectionSetVersionInfo:info forTab:tab];
                 NSNumber* capturedAt = info[@"version"][@"capturedAt"];
                 NSString* label = capturedAt ? [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:capturedAt.doubleValue]
                     dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterShortStyle] : @"date unavailable";
@@ -111,6 +114,7 @@ static char kCollectionManager, kCollectionPromptPending, kCollectionImported, k
             if (!userOpenCountRecorded)
                 [self collectionRecordUserOpenCount:userOpenCount document:doc ?: [store documentForPath:source]];
             dispatch_async(dispatch_get_main_queue(), ^{
+                [self collectionRefreshVersionInfoForDocument:doc];
                 if (![self->_path isEqual:source]) return;
                 [self collectionRefreshHistory];
                 if (error) self->_statusLabel.stringValue = [NSString stringWithFormat:@"Collection: copy failed — %@", error.localizedDescription];
@@ -159,23 +163,27 @@ static char kCollectionManager, kCollectionPromptPending, kCollectionImported, k
         item.target = self; item.representedObject = path;
     }
 }
-- (SPDFMacCollectionWindow*)collectionManager {
-    [self collectionObserveSettings];
-    SPDFMacCollectionWindow* manager = objc_getAssociatedObject(self, &kCollectionManager);
-    if (!manager) {
-        __weak ShenzhenMacDelegate* weakSelf = self;
-        manager = [[SPDFMacCollectionWindow alloc] initWithStore:[SPDFMacCollectionStore defaultStore]
-            open:^(NSString* path, BOOL archived) { [weakSelf collectionOpenPath:path archived:archived]; }];
-        objc_setAssociatedObject(self, &kCollectionManager, manager, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    return manager;
-}
 - (NSString*)collectionPathForSender:(id)sender {
     return [sender respondsToSelector:@selector(representedObject)] && [[sender representedObject] isKindOfClass:NSString.class]
         ? [sender representedObject] : _path;
 }
 - (void)showCollectionManager:(id)sender { (void)sender; [self showCollectionManagerForQuery:nil]; }
-- (void)showCollectionManagerForQuery:(NSString*)query { [[self collectionManager] showDocumentID:nil query:query]; }
+- (void)showCollectionManagerForQuery:(NSString*)query { [self showCollectionManagerForDocumentID:nil query:query]; }
+- (void)showCollectionManagerForDocumentID:(NSString*)documentID query:(NSString*)query {
+    [self collectionObserveSettings];
+    SPDFCollectionCompanionHost* companion=objc_getAssociatedObject(self,&kCollectionCompanion);
+    if (!companion) {
+        __weak ShenzhenMacDelegate* weakSelf=self;
+        companion=[[SPDFCollectionCompanionHost alloc] initWithStore:SPDFMacCollectionStore.defaultStore
+            open:^(NSString* path,BOOL archived) { [weakSelf collectionOpenPath:path archived:archived]; }
+            navigate:^(NSDictionary* doc,NSDictionary* version,NSUInteger page,NSString* text,BOOL history) {
+                [weakSelf collectionNavigateDocument:doc version:version page:page query:text history:history];
+            }];
+        objc_setAssociatedObject(self,&kCollectionCompanion,companion,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    NSError* error=nil;
+    if (![companion showDocumentID:documentID query:query error:&error] && error) [_window presentError:error];
+}
 - (void)showCollectionPreviousVersion:(id)sender {
     SPDFMacCollectionStore* store = [SPDFMacCollectionStore defaultStore];
     NSString* path = [self collectionPathForSender:sender];
@@ -193,7 +201,9 @@ static char kCollectionManager, kCollectionPromptPending, kCollectionImported, k
 }
 - (void)collectionOpenPath:(NSString*)path archived:(BOOL)archived {
     [self openPath:path];
-    if (archived) {
+    [_window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    if (archived && [[self selectedTab].path isEqual:path]) {
         SPDFDocumentTab* tab = [self selectedTab]; tab.readOnly = YES;
         tab.title = [NSString stringWithFormat:@"%@ · Collection copy", path.lastPathComponent.stringByDeletingPathExtension];
         [self updateTabStrip]; [self savePersistentState];
@@ -236,7 +246,7 @@ static char kCollectionManager, kCollectionPromptPending, kCollectionImported, k
                     [self selectTabAtIndex:index]; [self loadSelectedTab]; [self savePersistentState];
                 } else [self openPath:newPath];
             });
-        } else if (result == NSAlertThirdButtonReturn) [[self collectionManager] showDocumentID:doc[@"id"] query:nil];
+        } else if (result == NSAlertThirdButtonReturn) [self showCollectionManagerForDocumentID:doc[@"id"] query:nil];
         else if (result == NSAlertThirdButtonReturn + 1) [self loadSelectedTab];
     }];
 }

@@ -169,6 +169,28 @@ int main(void) {
         Expect("clearing Markdown search restores Chapters",
                switching.selectedSegment == 0 && switching.spdf_selectedSidebarMode == SPDFSidebarModeChapters);
 
+        spdf_sidebar_mode_control_configure(switching, YES, NO);
+        [switching spdf_setEnabled:NO forSidebarMode:SPDFSidebarModeComments];
+        spdf_sidebar_mode_control_configure_history(switching, NO, NO, YES);
+        Expect("History reuses a disabled Comments position safely", [switching isEnabledForSegment:1]);
+        Expect("History stays available without search", switching.segmentCount == 2 &&
+            [[switching labelForSegment:1] isEqual:@"History"]);
+        switching.spdf_selectedSidebarMode = SPDFSidebarModeHistory;
+        spdf_sidebar_mode_control_configure_history(switching, YES, YES, YES);
+        Expect("History selection survives comments and search being inserted",
+            switching.spdf_selectedSidebarMode == SPDFSidebarModeHistory && switching.selectedSegment == 3);
+        switching.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
+        spdf_sidebar_mode_control_configure_history(switching, NO, YES, YES);
+        Expect("Search and History remain separate selectable modes",
+            switching.spdf_selectedSidebarMode == SPDFSidebarModeSearch && switching.segmentCount == 3);
+        switching.spdf_selectedSidebarMode = SPDFSidebarModeHistory;
+        spdf_sidebar_mode_control_configure_history(switching, NO, NO, YES);
+        Expect("Ending search preserves History selection",
+            switching.spdf_selectedSidebarMode == SPDFSidebarModeHistory && switching.selectedSegment == 1);
+        spdf_sidebar_mode_control_configure_history(switching, NO, NO, NO);
+        Expect("Uncollected document drops History safely", switching.segmentCount == 1 &&
+            switching.spdf_selectedSidebarMode == SPDFSidebarModeChapters);
+
         if (gFailures == 0) fprintf(stderr, "SPDFMacSidebarOutlineTests passed\n");
     }
     return gFailures == 0 ? 0 : 1;

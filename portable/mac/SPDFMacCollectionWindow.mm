@@ -32,10 +32,8 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
     _initialBrowseState = [preferences[@"managerBrowseState"] isKindOfClass:NSDictionary.class] ? preferences[@"managerBrowseState"] : @{};
     NSArray* expanded = [_initialBrowseState[@"expanded"] isKindOfClass:NSArray.class] ? _initialBrowseState[@"expanded"] : @[];
     _expandedResults = [NSMutableSet setWithArray:expanded];
-    if ([preferences[@"managerDestination"] isEqual:@"History"]) {
-        _documentID = preferences[@"managerHistoryDocumentID"];
-        _restoreHistoryVersionID = preferences[@"managerHistoryVersionID"];
-    }
+    // Legacy embedded-History preferences resume Documents. History now lives
+    // exclusively in the reader and is opened only by an explicit action.
     _preferenceQueue = dispatch_queue_create("engineering.casimir.collection.manager-preferences", DISPATCH_QUEUE_SERIAL);
     [self buildManagerLayout];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(managerWindowWillClose:)
@@ -48,6 +46,10 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
         _restoreHistoryVersionID = nil;
     }
     if (query != nil) { _search.stringValue = query; [self showDestination:@"Documents"]; }
+    if (documentID.length) {
+        _search.stringValue = query ?: @""; [_viewPicker selectItemWithTag:0];
+        [self showDestination:@"Documents"];
+    }
 
     [self reload:nil]; [self showWindow:nil]; [self.window makeKeyAndOrderFront:nil];
 }
@@ -108,11 +110,9 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
             self.enabled.state = self.store.isEnabled ? NSControlStateValueOn : NSControlStateValueOff;
             if (selectedID.length) {
                 self.documentID = nil;
-                for (NSDictionary* doc in docs) if ([doc[@"id"] isEqual:selectedID]) {
-                    NSDictionary* chosen = [doc[@"versions"] lastObject];
-                    for (NSDictionary* version in doc[@"versions"])
-                        if ([version[@"id"] isEqual:self.restoreHistoryVersionID]) { chosen = version; break; }
-                    [self showHistoryForDocument:doc version:chosen];
+                for (NSUInteger index=0;index<rows.count;index++) if ([rows[index][@"document"][@"id"] isEqual:selectedID]) {
+                    [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];
+                    [self.table scrollRowToVisible:index]; [self synchronizeGridSelection]; break;
                 }
                 self.restoreHistoryVersionID = nil;
             }

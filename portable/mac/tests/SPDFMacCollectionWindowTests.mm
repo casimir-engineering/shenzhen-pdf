@@ -14,6 +14,7 @@ static int failures;
 static void Expect(NSString* label, BOOL value) {
     if (!value) { fprintf(stderr,"FAIL: %s\n",label.UTF8String); failures++; }
 }
+#import "SPDFMacCollectionThumbnailChecks.h"
 static void Layout(NSWindow* window, NSSize size) {
     [window setContentSize:size];
     [window.contentView layoutSubtreeIfNeeded];
@@ -58,6 +59,7 @@ int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        CheckCollectionThumbnails();
         NSURL* root = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
         SPDFMacCollectionStore* store = [[SPDFMacCollectionStore alloc] initWithRootURL:root];
         SPDFMacCollectionWindow* manager = nil;
@@ -66,6 +68,8 @@ int main(void) {
                 (void)path; (void)archived;
             }];
             Layout(manager.window,NSMakeSize(1100,690));
+            Expect(@"manager construction starts no capture or thumbnail work",manager.thumbnailQueue.operationCount == 0 &&
+                ![NSFileManager.defaultManager fileExistsAtPath:root.path]);
             Expect(@"document pane uses the available window width",fabs(NSWidth(manager.documentsPane.frame)-(NSWidth(manager.window.contentView.bounds)-154)) < 1);
             Expect(@"manager list has a readable viewport",manager.listScroll.frame.size.width > 300 &&
                 manager.listScroll.frame.size.height > 350);
@@ -166,14 +170,15 @@ int main(void) {
             [manager.grid layoutSubtreeIfNeeded];
             NSCollectionViewItem* latestItem = [manager.grid itemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
             Expect(@"thumbnail browsing has no History-only Latest pill",latestItem && !Identified(latestItem.view,@"CollectionLatestBadge"));
-            Expect(@"manager construction starts no capture or thumbnail work",manager.thumbnailQueue.operationCount == 0 &&
-                ![NSFileManager.defaultManager fileExistsAtPath:root.path]);
+            CheckCollectionThumbnailRequests(manager);
             NSString* indexedPath = [root.path stringByAppendingString:@"-Field Notes.md"];
             [@"# Greenhouse log\nThe orchid bloomed overnight.\n" writeToFile:indexedPath atomically:YES
                 encoding:NSUTF8StringEncoding error:nil];
             [store updateSettings:@{@"choice":@"enabled"} error:nil];
             NSDictionary* indexed = [store capturePath:indexedPath reason:@"Opened" error:nil];
             [manager.viewPicker selectItemAtIndex:0]; manager.search.stringValue = @"orchid"; manager.rows = @[];
+            Expect(@"stale AppKit row-height requests are safe during a result refresh",[manager tableView:manager.table heightOfRow:0] == 100);
+            [manager.table reloadData];
             [manager reload:nil];
             NSDate* filterDeadline = [NSDate dateWithTimeIntervalSinceNow:2];
             while (!manager.rows.count && filterDeadline.timeIntervalSinceNow > 0)
@@ -212,13 +217,19 @@ int main(void) {
             NSString* resultKey = [NSString stringWithFormat:@"%@/%@",remembered[@"document"][@"id"],remembered[@"version"][@"id"]];
             [manager.expandedResults addObject:resultKey];
             [manager.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+            __block NSDictionary* navigation = nil;
+            manager.navigateHandler = ^(NSDictionary* doc, NSDictionary* version, NSUInteger page, NSString* query, BOOL history) {
+                navigation = @{@"document":doc,@"version":version ?: @{},@"page":@(page),@"query":query,@"history":@(history)};
+            };
             [manager showHistoryForDocument:remembered[@"document"] version:remembered[@"version"]];
-            [manager returnFromCollectionHistory:nil];
-            NSDate* returnDeadline = [NSDate dateWithTimeIntervalSinceNow:2];
-            NSArray* previousRows = manager.rows;
-            while (manager.rows == previousRows && returnDeadline.timeIntervalSinceNow > 0)
-                [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
-            Expect(@"History return refresh keeps the selected context and expanded result",
+            Expect(@"History requests reader navigation without a second history view",[navigation[@"history"] boolValue] &&
+                [navigation[@"version"][@"id"] isEqual:remembered[@"version"][@"id"]] && !manager.historyPane &&
+                [manager.destination isEqual:@"Documents"]);
+            NSButton* matchButton = [NSButton new]; matchButton.tag = 0; matchButton.identifier = @"0";
+            [manager selectSearchMatch:matchButton];
+            Expect(@"search result opens its saved page in the reader without History",navigation && ![navigation[@"history"] boolValue] &&
+                [navigation[@"page"] isEqual:matches.firstObject[@"page"]] && [navigation[@"query"] isEqual:@"orchid"] && !manager.historyPane);
+            Expect(@"reader navigation keeps the selected context and expanded result",
                 manager.table.selectedRow == 0 && manager.rows.firstObject[@"selectedMatch"] &&
                 [manager.rows.firstObject[@"selectedPage"] isEqual:remembered[@"selectedPage"]] &&
                 [manager.expandedResults containsObject:resultKey] && [manager.search.stringValue isEqual:@"orchid"]);
@@ -291,11 +302,10 @@ int main(void) {
             Expect(@"constructing a restored manager defers history loading",!restored.historyPane && !restored.hasLoadedResults);
             [restored reload:nil];
             NSDate* restoreDeadline = [NSDate dateWithTimeIntervalSinceNow:3];
-            while (![restored.destination isEqual:@"History"] && restoreDeadline.timeIntervalSinceNow > 0)
+            while (!restored.hasLoadedResults && restoreDeadline.timeIntervalSinceNow > 0)
                 [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
-            Expect(@"manager relaunch resumes the saved historical version rather than latest",newer &&
-                [[restored historySelectedVersion][@"id"] isEqual:oldVersion] &&
-                ![oldVersion isEqual:[newer[@"versions"] lastObject][@"id"]]);
+            Expect(@"legacy embedded History resumes Documents without opening another history view",restored.hasLoadedResults &&
+                [restored.destination isEqual:@"Documents"] && !restored.historyPane && ![restored historySelectedVersion]);
             Expect(@"history restoration never shows a window",!restored.window.visible);
             [restored.window close]; dispatch_sync(restored.preferenceQueue,^{});
             NSString* mdownPath = [root.path stringByAppendingString:@"-Thumbnail.mdown"];
