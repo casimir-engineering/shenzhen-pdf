@@ -31,6 +31,11 @@ static NSView* Descendant(NSView* view, Class cls) {
     }
     return nil;
 }
+static NSView* Identified(NSView* view,NSString* identifier) {
+    if ([view.identifier isEqual:identifier]) return view;
+    for (NSView* child in view.subviews) { NSView* found = Identified(child,identifier); if (found) return found; }
+    return nil;
+}
 static BOOL CaptionHasInk(NSCollectionViewItem* item) {
     [item.view layoutSubtreeIfNeeded];
     NSBitmapImageRep* bitmap = [item.view bitmapImageRepForCachingDisplayInRect:item.view.bounds];
@@ -152,6 +157,42 @@ int main(void) {
             Expect(@"thumbnail accessibility press updates document actions",manager.table.selectedRow == 0 &&
                 [manager.details.stringValue containsString:@"Bridge Notes.pdf"] &&
                     manager.selectionButtons[1].enabled);
+            NSMutableDictionary* latestDoc = [fixtureDocument mutableCopy]; latestDoc[@"latestVersionID"] = fixtureVersion[@"id"];
+            NSMutableDictionary* oldBadgeVersion = [fixtureVersion mutableCopy]; oldBadgeVersion[@"id"] = @"older-version";
+            latestDoc[@"versions"] = @[oldBadgeVersion,fixtureVersion];
+            manager.rows = @[@{@"document":latestDoc,@"version":oldBadgeVersion,@"latest":@YES},
+                @{@"document":latestDoc,@"version":fixtureVersion}];
+            NSView* oldCell = [manager resultCellForRow:0]; NSView* latestCell = [manager resultCellForRow:1];
+            Expect(@"old search hit never gets Latest from its order or stale row flag",!Identified(oldCell,@"CollectionLatestBadge"));
+            NSView* latestBadge = Identified(latestCell,@"CollectionLatestBadge");
+            Expect(@"canonical latest list version has the accessible pill",latestBadge &&
+                [latestBadge.accessibilityLabel isEqual:@"Latest saved version"]);
+            latestCell.frame = NSMakeRect(0,0,NSWidth(manager.listScroll.bounds),
+                [manager tableView:manager.table heightOfRow:1]); [latestCell layoutSubtreeIfNeeded];
+            NSImageView* latestThumbnail = (id)Descendant(latestCell,NSImageView.class);
+            NSRect listBadgeRect = [latestBadge convertRect:latestBadge.bounds toView:latestCell];
+            Expect(@"list latest pill and thumbnail fit without overlap",NSContainsRect(latestCell.bounds,listBadgeRect) &&
+                NSContainsRect(latestCell.bounds,latestThumbnail.frame) && !NSIntersectsRect(listBadgeRect,latestThumbnail.frame));
+            NSMutableDictionary* legacyDoc = [latestDoc mutableCopy]; [legacyDoc removeObjectForKey:@"latestVersionID"];
+            manager.rows = @[@{@"document":legacyDoc,@"version":fixtureVersion}];
+            Expect(@"legacy latest badge uses the last canonical version",Identified([manager resultCellForRow:0],@"CollectionLatestBadge") != nil);
+            manager.rows = @[@{@"document":latestDoc,@"version":oldBadgeVersion,@"latest":@YES},
+                @{@"document":latestDoc,@"version":fixtureVersion}];
+            [manager.table reloadData]; [manager reloadGrid]; [manager.window.contentView layoutSubtreeIfNeeded];
+            [manager.grid layoutSubtreeIfNeeded]; [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]];
+            [manager.grid layoutSubtreeIfNeeded];
+            NSCollectionViewItem* oldItem = [manager.grid itemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
+            NSCollectionViewItem* latestItem = [manager.grid itemAtIndexPath:[NSIndexPath indexPathForItem:1 inSection:0]];
+            NSView* gridBadge = Identified(latestItem.view,@"CollectionLatestBadge");
+            NSButton* historyButton = (id)Descendant(latestItem.view,NSButton.class);
+            Expect(@"grid shows Latest only for the canonical newest saved version",gridBadge && !gridBadge.hidden &&
+                Identified(oldItem.view,@"CollectionLatestBadge").hidden);
+            Expect(@"grid Latest pill does not overlap thumbnail, caption, or History",historyButton &&
+                !NSIntersectsRect(gridBadge.frame,latestItem.imageView.frame) &&
+                !NSIntersectsRect(gridBadge.frame,latestItem.textField.frame) && !NSIntersectsRect(gridBadge.frame,historyButton.frame));
+            Expect(@"grid accessibility announces Latest along with the filename",
+                [latestItem.view.accessibilityLabel containsString:@"Latest saved version"] &&
+                ![oldItem.view.accessibilityLabel containsString:@"Latest saved version"]);
             Expect(@"manager construction starts no capture or thumbnail work",manager.thumbnailQueue.operationCount == 0 &&
                 ![NSFileManager.defaultManager fileExistsAtPath:root.path]);
             NSString* indexedPath = [root.path stringByAppendingString:@"-Field Notes.md"];
