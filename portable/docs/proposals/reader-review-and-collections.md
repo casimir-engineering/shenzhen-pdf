@@ -1,6 +1,5 @@
 ---
 paper-size: A4
-paper-margin: 30
 ---
 # Reader review and Collection
 
