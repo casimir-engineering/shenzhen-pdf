@@ -89,13 +89,6 @@
 - (void)toggleTabGroup:(SPDFTabGroup*)group {
     if (!group) return;
     group.collapsed = !group.collapsed;
-    if (!group.collapsed) {
-        NSArray* members = spdf_tab_group_members(_tabs, group);
-        SPDFDocumentTab* target = members.firstObject;
-        for (SPDFDocumentTab* tab in members)
-            if ([tab.path isEqualToString:group.lastUsedPath]) { target = tab; break; }
-        if (target) [self selectTabAtIndex:[_tabs indexOfObjectIdenticalTo:target]];
-    }
     [self finishTabGroupChange];
 }
 - (void)renameTabGroup:(SPDFTabGroup*)group name:(NSString*)name {

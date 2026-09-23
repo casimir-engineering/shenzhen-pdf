@@ -438,3 +438,10 @@ The verified candidate is copied into `dist/ShenzhenPDF.app`, with the previous 
 Removed General’s exemption from automatic collapse. Selecting a tab now expands its group and collapses all others, including General; returning to General expands it and collapses the custom groups. This uses the existing activation and persistence paths without additional launch work.
 
 The model regression starts with General expanded and fails against the old implementation. With the fix, model, integration and native strip interaction suites pass, including returning to General and existing group persistence coverage. The native candidate build, signature verification, source-size and whitespace checks pass. The verified bundle replaces `dist/ShenzhenPDF.app`; the previous bundle is preserved and no app is launched or quit.
+
+
+### Browse group contents without navigating
+
+Group headers now only expand or collapse their contents. They no longer select the last-used tab or load a different document. Automatic collapse still occurs when the user actually selects a document tab; manually inspecting another group preserves the active tab and reading position. The existing session writer persists manual expansion.
+
+The updated headless integration regression fails twice against the old behavior (last-used navigation and browsing another group) and passes with the fix. Group model, integration and native interaction suites pass.
