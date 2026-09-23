@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import "SPDFMacCollectionHistory.h"
+#import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacCollectionStore.h"
 @interface CollectionEvidenceSurface : NSView
 @end
@@ -77,9 +78,10 @@ int main(void) {
         host.releasedWhenClosed = NO;
         host.contentView = [[CollectionEvidenceSurface alloc] initWithFrame:NSMakeRect(0,0,280,620)];
         NSView* container = host.contentView;
-        NSSegmentedControl* modes = [NSSegmentedControl segmentedControlWithLabels:@[@"Chapters",@"Search",@"History"]
-            trackingMode:NSSegmentSwitchTrackingSelectOne target:nil action:nil];
-        modes.selectedSegment = 2; modes.translatesAutoresizingMaskIntoConstraints = NO;
+        SPDFSidebarNavigationControl* modes = [SPDFSidebarNavigationControl new];
+        spdf_sidebar_mode_control_configure_navigation(modes, YES, YES);
+        modes.spdf_selectedSidebarMode = SPDFSidebarModeHistory;
+        modes.translatesAutoresizingMaskIntoConstraints = NO;
         history.view.translatesAutoresizingMaskIntoConstraints = NO;
         [container addSubview:modes]; [container addSubview:history.view];
         [NSLayoutConstraint activateConstraints:@[
@@ -155,6 +157,21 @@ int main(void) {
         [history didRestorePath:@"/restored/Notes.md"];
         Expect([retainedSource hasSuffix:@"Original.md"] && [restoredSource isEqual:@"/restored/Notes.md"] && opens == 3,
             "recovery routes old and new identities to retain existing reader tab instead of opening a duplicate");
+        Expect(Await(^BOOL { return !Button(history.view,@"Find Document…").superview.hidden; }),
+            "missing-link recovery reload finishes before short-window layout");
+        [host setContentSize:NSMakeSize(220,300)];
+        [container layoutSubtreeIfNeeded];
+        Expect(container.bounds.size.height == 300,"History does not force a short reader window to grow");
+        NSScrollView* viewport = (id)Find(history.view,NSScrollView.class);
+        Expect(viewport.documentView.bounds.size.height > viewport.contentView.bounds.size.height,
+            "short History scrolls its actions instead of clipping them");
+        for (NSString* title in @[@"Compare with Latest",@"Manage Collection…",@"Find Document…",@"Save New Copy As…"]) {
+            NSButton* button = Button(history.view,title);
+            [button scrollRectToVisible:button.bounds];
+            NSRect frame = [button convertRect:button.bounds toView:viewport.documentView];
+            Expect(!button.hiddenOrHasHiddenAncestor && button.bounds.size.height >= 20 &&
+                NSContainsRect(viewport.documentVisibleRect,frame),"History actions are reachable at minimum window size");
+        }
         Expect(!host.visible,"all History interaction tests remain headless");
         [NSFileManager.defaultManager removeItemAtURL:root error:nil];
         if (!failures) puts("SPDFMacCollectionHistorySidebarTests passed");

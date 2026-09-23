@@ -7,6 +7,12 @@
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacFileExplorerPreference.h"
 
+@interface SPDFHistoryContentView : NSView
+@end
+@implementation SPDFHistoryContentView
+- (BOOL)isFlipped { return YES; }
+@end
+
 @implementation SPDFMacCollectionHistoryController {
     SPDFMacCollectionStore* _store;
     NSString* _documentID;
@@ -62,12 +68,28 @@
     NSStackView* stack = [NSStackView stackViewWithViews:@[heading,_title,_status,_recoveryActions,scroll,actions]];
     stack.orientation = NSUserInterfaceLayoutOrientationVertical; stack.alignment = NSLayoutAttributeLeading;
     stack.spacing = 10; stack.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:stack];
+    // Keep all recovery and version actions reachable below the vertical mode list,
+    // including at the reader's minimum window height.
+    NSScrollView* viewport = [NSScrollView new];
+    viewport.identifier = @"HistoryContentViewport";
+    viewport.hasVerticalScroller = YES; viewport.drawsBackground = NO;
+    viewport.translatesAutoresizingMaskIntoConstraints = NO;
+    NSView* content = [SPDFHistoryContentView new];
+    content.translatesAutoresizingMaskIntoConstraints = NO; viewport.documentView = content;
+    [content addSubview:stack]; [self.view addSubview:viewport];
+    NSLayoutConstraint* fill = [content.heightAnchor constraintEqualToAnchor:viewport.contentView.heightAnchor];
+    fill.priority = NSLayoutPriorityDefaultLow - 1;
     [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:10],
-        [stack.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-10],
-        [stack.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:12],
-        [stack.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor constant:-10],
+        [viewport.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [viewport.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [viewport.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [viewport.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [content.widthAnchor constraintEqualToAnchor:viewport.contentView.widthAnchor],
+        [content.heightAnchor constraintGreaterThanOrEqualToAnchor:viewport.contentView.heightAnchor], fill,
+        [stack.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:10],
+        [stack.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-10],
+        [stack.topAnchor constraintEqualToAnchor:content.topAnchor constant:12],
+        [stack.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-10],
         [_title.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
         [_status.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
         [scroll.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
