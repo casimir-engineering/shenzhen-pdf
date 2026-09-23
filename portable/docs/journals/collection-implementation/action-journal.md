@@ -213,3 +213,15 @@ The second critique scored 9.2/10 with no major or medium findings remaining in 
 ![Reviewed search proposal: document thumbnails beside contextual matches](../../proposals/assets/collection-mockup/final-search-dark.png)
 
 ![Reviewed settings proposal: storage policy and explicit location actions](../../proposals/assets/collection-mockup/final-settings-dark.png)
+
+### Integrated Documents search and Collection history revision
+
+The user simplified the navigation: search belongs inside Documents, and storage should default to unlimited. They also replaced whole-history-first cleanup with usage-based cleanup: least-opened documents first, old versions before the documents themselves. The revised proposal uses two passes, first pruning previous versions in usage order and only then removing final Collection copies when necessary. Histories containing a kept version stay protected; originals remain untouched.
+
+The UX designer added a visible History action to each document and a detail view with version dates, capture reasons, protection state and read-only previews. Browser checks confirmed that returning preserves query, scope, expansion, selected preview and focus on the originating action. Cleanup uses the same sample versions as Documents and History: a 2.5 GB limit prunes two previous versions; a 2 GB limit then also removes the least-opened document's final copy and entry. Protected capacity is checked before any removal.
+
+This revision completed two independent review rounds, **8.9/10 → 9.3/10**. The sole medium finding concerned Keep: its whole-history effect was explained below the page preview. Moving that explanation directly beneath the checkbox, connecting its accessible description, and announcing protection changes resolved it. Tests covered current-version protection, protection retained by another version, and the last kept version being unkept. The final critic leaves no major or medium findings in the mockup scope. Native app behavior is unchanged by this design task.
+
+![Integrated Documents search and direct History actions](../../proposals/assets/collection-mockup/history/final-documents.png)
+
+![Revised History with selected version and nearby Keep explanation](../../proposals/assets/collection-mockup/history/round2-history.png)
