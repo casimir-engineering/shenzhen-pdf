@@ -33,7 +33,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 ## Collection and history <sub>macOS</sub>
 
-<p align="center"><img src="docs/images/portable/macos-collection.png" alt="Collection showing dated document versions, thumbnail selection, recovery actions and local storage settings" width="880"></p>
+<p align="center"><img src="docs/images/portable/macos-collection.jpg" alt="Collection showing integrated search with page thumbnails, highlighted context and direct History actions" width="880"></p>
 
 - **Keep local copies and history** — choose at first use, then continue opening the originals. Protected versions stay read-only; copies and history can be turned off in Settings.
 - **Find and recover documents** — <kbd>Cmd+K</kbd> searches open names, groups, open text, and Collection. Use `col:` for Collection alone. A missing original can be recovered from its protected copy or located by an exact content match.
