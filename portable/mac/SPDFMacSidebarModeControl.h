@@ -8,8 +8,14 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     SPDFSidebarModeChapters = 0,
     SPDFSidebarModeComments = 1,
     SPDFSidebarModeSearch = 2,
-    SPDFSidebarModeHistory = 3
+    SPDFSidebarModeHistory = 3,
+    SPDFSidebarModeGroups = 4
 };
+
+@interface SPDFSidebarNavigationControl : NSSegmentedControl
+@end
+
+void spdf_sidebar_mode_control_configure_navigation(NSSegmentedControl* control, BOOL supportsComments, BOOL hasHistory);
 
 // Mode tags stay stable when Markdown omits the Comments segment.
 @interface NSSegmentedControl (SPDFSidebarModes)

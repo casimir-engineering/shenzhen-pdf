@@ -32,22 +32,32 @@ void spdf_sidebar_mode_control_configure(NSSegmentedControl* control, BOOL suppo
     spdf_sidebar_mode_control_configure_history(control, supportsComments, hasSearch, NO);
 }
 
-void spdf_sidebar_mode_control_configure_history(NSSegmentedControl* control, BOOL supportsComments, BOOL hasSearch, BOOL hasHistory) {
+static void Configure(NSSegmentedControl* control, BOOL supportsComments, BOOL hasSearch, BOOL hasHistory, BOOL hasGroups) {
     if (!control) return;
     NSInteger selectedMode = control.spdf_selectedSidebarMode;
-    NSInteger count = 1 + supportsComments + hasSearch + hasHistory;
+    NSInteger count = 1 + supportsComments + hasSearch + hasHistory + hasGroups;
     if (control.segmentCount != count) control.segmentCount = count;
     NSInteger segment = 0;
-    for (NSInteger mode = SPDFSidebarModeChapters; mode <= SPDFSidebarModeHistory; ++mode) {
+    for (NSInteger mode = SPDFSidebarModeChapters; mode <= SPDFSidebarModeGroups; ++mode) {
         if ((mode == SPDFSidebarModeComments && !supportsComments) ||
             (mode == SPDFSidebarModeSearch && !hasSearch) ||
-            (mode == SPDFSidebarModeHistory && !hasHistory)) continue;
+            (mode == SPDFSidebarModeHistory && !hasHistory) ||
+            (mode == SPDFSidebarModeGroups && !hasGroups)) continue;
         [control setTag:mode forSegment:segment];
-        if (mode == SPDFSidebarModeHistory) [control setEnabled:YES forSegment:segment];
+        if (mode >= SPDFSidebarModeSearch) [control setEnabled:YES forSegment:segment];
         [control setLabel:mode == SPDFSidebarModeChapters ? @"Chapters" :
                          (mode == SPDFSidebarModeComments ? @"Comments" :
-                          (mode == SPDFSidebarModeSearch ? @"Search" : @"History")) forSegment:segment];
+                          (mode == SPDFSidebarModeSearch ? @"Search" :
+                           (mode == SPDFSidebarModeHistory ? @"History" : @"Group Management"))) forSegment:segment];
         ++segment;
     }
     control.spdf_selectedSidebarMode = selectedMode;
+}
+
+void spdf_sidebar_mode_control_configure_history(NSSegmentedControl* control, BOOL supportsComments, BOOL hasSearch, BOOL hasHistory) {
+    BOOL vertical = [control isKindOfClass:SPDFSidebarNavigationControl.class];
+    Configure(control,supportsComments,hasSearch || vertical,hasHistory,vertical);
+}
+void spdf_sidebar_mode_control_configure_navigation(NSSegmentedControl* control, BOOL supportsComments, BOOL hasHistory) {
+    Configure(control,supportsComments,YES,hasHistory,YES);
 }

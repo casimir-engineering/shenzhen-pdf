@@ -407,8 +407,8 @@ $(MAC_TAB_STATE_TEST): mac/tests/SPDFMacTabStateTests.mm mac/SPDFMacTabGroups.mm
 mac-tab-state-tests: $(MAC_TAB_STATE_TEST)
 	"$(MAC_TAB_STATE_TEST)"
 
-$(MAC_SIDEBAR_OUTLINE_TEST): mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm mac/SPDFMacSidebarOutline.h mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarModeControl.h | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm mac/SPDFMacSidebarModeControl.mm -framework Cocoa -o "$(MAC_SIDEBAR_OUTLINE_TEST)"
+$(MAC_SIDEBAR_OUTLINE_TEST): mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm mac/SPDFMacSidebarOutline.h mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacSidebarModeControl.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacSidebarOutlineTests.mm mac/SPDFMacSidebarOutline.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm -framework Cocoa -o "$(MAC_SIDEBAR_OUTLINE_TEST)"
 
 mac-sidebar-outline-tests: $(MAC_SIDEBAR_OUTLINE_TEST)
 	"$(MAC_SIDEBAR_OUTLINE_TEST)"
@@ -660,3 +660,8 @@ mac-collection-password-open-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(MAC_COLLEC
 mac-agent-group-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacAgentGroupTests.mm mac/SPDFMacAgentGroups.mm mac/SPDFMacAgentValidation.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabGroupIntegration.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacAgentGroupTests"
 	"$(BUILD)/SPDFMacAgentGroupTests"
+
+.PHONY: mac-sidebar-navigation-tests
+mac-sidebar-navigation-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacSidebarNavigationTests.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm -framework Cocoa -o "$(BUILD)/SPDFMacSidebarNavigationTests"
+	"$(BUILD)/SPDFMacSidebarNavigationTests"
