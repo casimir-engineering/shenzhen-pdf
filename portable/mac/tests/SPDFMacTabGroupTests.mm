@@ -87,9 +87,9 @@ int main(void) {
         Expect(@"tab snapshots copy metadata without mutating the source group",
                copy.group != nil && copy.group != c.group && [copy.group.identifier isEqualToString:c.group.identifier]
                && [c.group.name isEqualToString:@"Research"] && copy.pageIndex == c.pageIndex);
-        a.group.collapsed = YES;
+        a.group.collapsed = NO;
         spdf_tab_groups_activate(tabs, c);
-        Expect(@"entering a custom group collapses others but leaves General manual state",
+        Expect(@"entering a custom group collapses every other group including General",
                !purple.collapsed && green.collapsed && a.group.collapsed);
         Expect(@"activation remembers last used tab", [purple.lastUsedPath isEqualToString:c.path]);
         spdf_tab_groups_activate(tabs, a);
