@@ -109,8 +109,11 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
         NSMutableDictionary* manifest = [self readManifest];
         ok = body(manifest,error);
         if (ok && [lockedRoot isEqual:self.rootURL]) {
+            BOOL collect=[manifest[@"_collectUnreferencedFiles"] boolValue];
+            [manifest removeObjectForKey:@"_collectUnreferencedFiles"];
             NSData* bytes = [NSJSONSerialization dataWithJSONObject:manifest options:0 error:error];
             ok = bytes && SPDFCollectionAtomicData(bytes,manifestURL,0600,error);
+            if (ok && collect) [self collectUnreferencedFilesInManifest:manifest];
         }
     }
     flock(fd,LOCK_UN); close(fd); [self.localLock unlock]; return ok;
@@ -180,13 +183,7 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
     return [value isKindOfClass:NSDictionary.class] ? value : @{};
 }
 - (unsigned long long)storageUsedBytes {
-    unsigned long long size = 0;
-    for (NSString* folder in @[@"objects",@"indexes"]) {
-        NSDirectoryEnumerator* e = [NSFileManager.defaultManager enumeratorAtURL:
-           [self.rootURL URLByAppendingPathComponent:folder] includingPropertiesForKeys:@[NSURLFileSizeKey] options:0 errorHandler:nil];
-        for (NSURL* URL in e) { NSNumber* n; [URL getResourceValue:&n forKey:NSURLFileSizeKey error:nil]; size += n.unsignedLongLongValue; }
-    }
-    return size;
+    return [self retainedBytesInManifest:[self readManifest]];
 }
 - (BOOL)isArchivePath:(NSString*)path {
     NSString* root = self.rootURL.path.stringByResolvingSymlinksInPath;

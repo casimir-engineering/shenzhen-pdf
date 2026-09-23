@@ -64,4 +64,15 @@ NS_ASSUME_NONNULL_BEGIN
 // Copies/verifies existing storage, then durably redirects running windows. Destination must be empty.
 - (BOOL)relocateToURL:(NSURL*)URL error:(NSError**)error;
 @end
+@interface SPDFMacCollectionStore (Cleanup)
+// Preview does not create storage. Applying rejects a stale review without deleting anything.
+// Plan: storageLimitBytes, usedBytes, projectedBytes, reclaimedBytes, canApply,
+// removedVersionCount, removedDocumentCount, reviewToken, removals (documentID,
+// versionID, title, capturedAt, openCount, stage: previousVersion/document).
+- (NSDictionary*)previewStorageLimit:(unsigned long long)limit;
+- (BOOL)applyStorageLimit:(unsigned long long)limit reviewedPlan:(NSDictionary*)plan error:(NSError**)error;
+// Explicit user opens only; callers exclude restoration, capture and history previews.
+// Missing histories are a lazy no-op; this never creates an unused Collection.
+- (BOOL)recordUserOpenForDocumentID:(NSString*)documentID error:(NSError**)error;
+@end
 NS_ASSUME_NONNULL_END

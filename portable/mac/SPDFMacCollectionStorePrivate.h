@@ -43,4 +43,10 @@ FOUNDATION_EXPORT NSDictionary* SPDFCollectionAssets(NSString* sourcePath, NSDat
                                   manifest:(NSMutableDictionary*)manifest error:(NSError**)error;
 @end
 
+@interface SPDFMacCollectionStore (CleanupPrivate)
+- (unsigned long long)retainedBytesInManifest:(NSDictionary*)manifest;
+- (BOOL)enforceStorageLimitInManifest:(NSMutableDictionary*)manifest
+                  protectedVersionID:(nullable NSString*)versionID error:(NSError**)error;
+- (void)collectUnreferencedFilesInManifest:(NSDictionary*)manifest;
+@end
 NS_ASSUME_NONNULL_END

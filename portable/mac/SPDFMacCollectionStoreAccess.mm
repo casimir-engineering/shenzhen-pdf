@@ -30,7 +30,7 @@
 }
 - (BOOL)deleteDocumentID:(NSString*)documentID versionID:(NSString*)versionID error:(NSError**)error {
     // First atomically remove references. Unreferenced objects are harmless if cleanup is interrupted.
-    BOOL ok=[self transaction:^BOOL(NSMutableDictionary* m,NSError** e) {
+    return [self transaction:^BOOL(NSMutableDictionary* m,NSError** e) {
         (void)e; NSMutableDictionary* docs=m[@"documents"];
         if (!documentID) {
             for (NSString* key in [docs.allKeys copy]) {
@@ -56,36 +56,7 @@
                 doc[@"capturedAt"]=[versions lastObject][@"capturedAt"]; }
             else { [doc removeObjectForKey:@"latestVersionID"]; doc[@"status"]=@"Not protected"; }
         }
-        return YES;
-    } error:error];
-    if (!ok) return NO;
-    // Cleanup takes the same lock so a concurrent window cannot publish a soon-to-be-deleted object.
-    return [self transaction:^BOOL(NSMutableDictionary* m,NSError** e) {
-        (void)e; NSMutableSet* live=[NSMutableSet set];
-        for (NSDictionary* d in [m[@"documents"] allValues]) for (NSDictionary* v in d[@"versions"]) {
-            [live addObject:v[@"hash"]]; for (NSDictionary* a in v[@"assets"]) [live addObject:a[@"hash"]];
-        }
-        NSFileManager* fm=NSFileManager.defaultManager;
-        NSURL* objects=[self.rootURL URLByAppendingPathComponent:@"objects"];
-        for (NSURL* URL in [fm contentsOfDirectoryAtURL:objects includingPropertiesForKeys:nil options:0 error:nil])
-            if (![live containsObject:URL.lastPathComponent] && ![fm removeItemAtURL:URL error:e]) return NO;
-        NSMutableSet* liveIndexes=[NSMutableSet set];
-        for (NSDictionary* d in [m[@"documents"] allValues]) for (NSDictionary* v in d[@"versions"])
-            if (v[@"indexFile"]) [liveIndexes addObject:v[@"indexFile"]];
-        NSURL* indexes=[self.rootURL URLByAppendingPathComponent:@"indexes"];
-        for (NSURL* URL in [fm contentsOfDirectoryAtURL:indexes includingPropertiesForKeys:nil options:0 error:nil])
-            if (![liveIndexes containsObject:URL.lastPathComponent] && ![fm removeItemAtURL:URL error:e]) return NO;
-        // Retain other open previews: deleting one historical version must not break another reader.
-        NSURL* previews=[self.rootURL URLByAppendingPathComponent:@"previews"];
-        for (NSURL* docURL in [fm contentsOfDirectoryAtURL:previews includingPropertiesForKeys:nil options:0 error:nil]) {
-            NSDictionary* doc=m[@"documents"][docURL.lastPathComponent];
-            if (!doc) { if(![fm removeItemAtURL:docURL error:e])return NO; continue; }
-            NSMutableSet* versionIDs=[NSMutableSet set];
-            for (NSDictionary* v in doc[@"versions"]) [versionIDs addObject:v[@"id"]];
-            for (NSURL* versionURL in [fm contentsOfDirectoryAtURL:docURL includingPropertiesForKeys:nil options:0 error:nil])
-                if (![versionIDs containsObject:versionURL.lastPathComponent] &&
-                    ![fm removeItemAtURL:versionURL error:e]) return NO;
-        }
+        m[@"_collectUnreferencedFiles"]=@YES;
         return YES;
     } error:error];
 }

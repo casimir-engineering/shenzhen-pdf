@@ -92,8 +92,8 @@ int main(void) {
                   continuingDocumentID:raceDoc[@"id"] error:nil]);
         NSDictionary* protectedVersion=[racing versionsForDocumentID:raceDoc[@"id"]].lastObject;
         NSURL* protectedURL=[racing materializeVersionID:protectedVersion[@"id"] documentID:raceDoc[@"id"] error:nil];
-        Expect(@"latest archived revision matches source B",[[NSData dataWithContentsOfURL:protectedURL] isEqual:[NSData dataWithContentsOfFile:racePath]] &&
-               [racing versionsForDocumentID:raceDoc[@"id"]].count==2);
+        Expect(@"only committed revision matches source B",[[NSData dataWithContentsOfURL:protectedURL] isEqual:[NSData dataWithContentsOfFile:racePath]] &&
+               [racing versionsForDocumentID:raceDoc[@"id"]].count==1);
         NSString* identityPath=[sandbox stringByAppendingPathComponent:@"Identity.md"];
         [@"document one" writeToFile:identityPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
         NSDictionary* identityOne=[racing capturePath:identityPath reason:@"Opened" error:nil];
