@@ -68,8 +68,9 @@
         leftInset = kReadOnlyDotLeftInset + kReadOnlyDotDiameter + kReadOnlyDotTitleGap;
     }
 
-    NSRect titleRect = NSMakeRect(NSMinX(tabRect) + leftInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
-                                  MAX(1.0, NSWidth(tabRect) - leftInset - rightInset), titleHeight + 2);
+    CGFloat titleInset = MAX(leftInset, rightInset);
+    NSRect titleRect = NSMakeRect(NSMinX(tabRect) + titleInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
+                                  MAX(1.0, NSWidth(tabRect) - 2 * titleInset), titleHeight + 2);
     [title drawWithRect:titleRect
                 options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
              attributes:titleAttrs];

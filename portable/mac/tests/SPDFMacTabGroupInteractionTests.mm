@@ -299,7 +299,7 @@ int main(void) {
         render_strip(strip, [NSAppearance appearanceNamed:NSAppearanceNameAqua],
                      @"/tmp/spdf-tab-groups-general.png");
 
-        // A collapsed custom group's name opens rename; its chevron toggles.
+        // Both the collapsed name and chevron open the group, never rename it.
         blue.collapsed = YES;
         strip.tabs = (id)tabs;
         blueHeader = [[layout_for_group(strip, blue) valueForKey:@"header"] rectValue];
@@ -308,24 +308,28 @@ int main(void) {
                @"collapsed group name was not a hit zone");
         expect([strip handleGroupMouseUp:mouse(window, NSEventTypeLeftMouseUp, namePoint)],
                @"collapsed group name mouse-up was not handled");
-        expect(strip.renameRequests == 1 && reader.toggles == 0,
-               @"collapsed custom-group name did not route to rename only");
+        expect(strip.renameRequests == 0 && reader.toggles == 1,
+               @"collapsed custom-group name did not open the group");
         NSPoint chevronPoint = NSMakePoint(NSMinX(blueHeader) + 13, NSMidY(blueHeader));
         [strip handleGroupMouseDown:mouse(window, NSEventTypeLeftMouseDown, chevronPoint)];
         [strip handleGroupMouseUp:mouse(window, NSEventTypeLeftMouseUp, chevronPoint)];
-        expect(reader.toggles == 1, @"group chevron did not toggle collapse");
+        expect(reader.toggles == 2, @"group chevron did not toggle collapse");
 
-        // General keeps its special collapse policy, but its visible name is
-        // still renameable like every other group.
+        // General uses the same activation behavior; rename stays in its menu.
         general.collapsed = YES;
         strip.tabs = (id)tabs;
+        render_strip(strip, [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],
+                     @"/tmp/spdf-tab-group-labels-centered.png");
         NSRect generalHeader = [[layout_for_group(strip, general) valueForKey:@"header"] rectValue];
         NSPoint generalName = NSMakePoint(NSMinX(generalHeader) + 34, NSMidY(generalHeader));
         [strip handleGroupMouseDown:mouse(window, NSEventTypeLeftMouseDown, generalName)];
         [strip handleGroupMouseUp:mouse(window, NSEventTypeLeftMouseUp, generalName)];
-        expect(reader.toggles == 1 && strip.renameRequests == 2,
+        expect(reader.toggles == 3 && strip.renameRequests == 0,
                [NSString stringWithFormat:@"General name routing: toggles=%ld renames=%ld",
                                           (long)reader.toggles, (long)strip.renameRequests]);
+        NSMenuItem* rename = [[strip contextMenuForGroup:general] itemWithTitle:@"Rename Group…"];
+        [NSApp sendAction:rename.action to:rename.target from:rename];
+        expect(strip.renameRequests == 1, @"context menu must retain explicit group rename");
 
         // A header drag routes the whole group once it crosses the threshold.
         strip.tabs = (id)tabs;

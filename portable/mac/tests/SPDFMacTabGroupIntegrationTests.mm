@@ -142,6 +142,10 @@ int main(void) {
         [source createGroupForTabAtIndex:0 withTabAtIndex:1 color:@"Rose"];
         one.pageIndex = 7; two.pageIndex = 11;
         one.group.lastUsedPath = two.path;
+        [source toggleTabGroup:one.group];
+        [source toggleTabGroup:one.group];
+        Expect(@"expanding a group opens its last-used document at its reading position",
+            !one.group.collapsed && [source.activePath isEqual:two.path] && two.pageIndex == 11);
         [source detachTabGroup:one.group atScreenPoint:NSMakePoint(300, 500)];
         Expect(@"failed handoff write leaves the source tabs open and reports the failure",
                source.handoffWriteCount == 1 && source.errorCount == 1 && source.tabs.count == 2);
