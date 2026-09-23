@@ -201,3 +201,15 @@ Removed the grouped-tab exclusion from the existing moving-tab preview. The grab
 Focused tests cover both directions in General and colored groups, the pointer grab offset, pause behavior, release/reset, and a later group's first slot. The pre-fix code fails the new moving-preview regression. The image below is a headless render of the actual native tab strip during a drag, not a mockup or an app screenshot.
 
 ![Moving tab follows the pointer while its preceding sibling occupies the vacated slot](assets/group-reorder-preview.png)
+
+### Collection settings and search design review
+
+The next request was for mockups before implementation: move Collection settings to the left sidebar, display the storage path with Set location and Open location, and place contextual highlighted search matches to the right of each thumbnail. Reading the existing capture code confirmed that the current cap refuses additional storage; it does not prune old documents. The user chose a proposed cleanup policy that removes whole oldest unkept histories. The proposal orders histories by their latest capture, protects every history containing a kept version, and never deletes originals.
+
+A UX designer produced an interactive mockup. The independent Astra critic scored the first round 7.8/10, identifying offscreen previews, lost focus, misleading title-only snippets, and inconsistent post-cleanup totals. Browser validation then caught a state-update echo that rebuilt focused controls, and an iframe resize that happened after the initial scroll request. The revised mockup preserves focus and reveals the correct preview after layout settles.
+
+The second critique scored 9.2/10 with no major or medium findings remaining in the design scope. Dark/light appearances, narrow layouts, search states, version identity, keyboard navigation, settings persistence, cleanup cancellation/protection, and location simulations were exercised. No reader restart or application changes were made for this mockup task. The [proposal and both critiques](../../proposals/collection-settings-search.md) preserve the decisions and verification limits.
+
+![Reviewed search proposal: document thumbnails beside contextual matches](../../proposals/assets/collection-mockup/final-search-dark.png)
+
+![Reviewed settings proposal: storage policy and explicit location actions](../../proposals/assets/collection-mockup/final-settings-dark.png)
