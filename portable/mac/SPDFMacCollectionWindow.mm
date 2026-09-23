@@ -2,9 +2,10 @@
 #import "SPDFMacCollectionWindowPrivate.h"
 #import "SPDFMacCollectionStoreContextSearch.h"
 #import "SPDFMacCollectionWindowHistory.h"
+#import "SPDFMacCollectionManagerWindow.h"
 @implementation SPDFMacCollectionWindow
 - (instancetype)initWithStore:(SPDFMacCollectionStore*)store open:(SPDFCollectionOpenHandler)open {
-    NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1100, 690)
+    NSWindow* window = [[SPDFCollectionManagerWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1100, 690)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
     if (!(self = [super initWithWindow:window])) return nil;
@@ -91,6 +92,8 @@
             self.reloadingResults = NO;
             self.resultSummary.stringValue = [NSString stringWithFormat:@"%lu %@",(unsigned long)rows.count,query.length ? @"matching saved copies" : @"items"];
             self.locationField.stringValue = self.store.rootURL.path;
+            [self updateStoragePolicy];
+            self.enabled.state = self.store.isEnabled ? NSControlStateValueOn : NSControlStateValueOff;
             if (selectedID.length) {
                 self.documentID = nil;
                 for (NSDictionary* doc in docs) if ([doc[@"id"] isEqual:selectedID]) {
@@ -101,9 +104,9 @@
                 }
                 self.restoreHistoryVersionID = nil;
             }
-            self.storage.stringValue = [NSString stringWithFormat:@"%@ used · %@\n%@\nOriginals are never deleted by Collection.",
+            self.storage.stringValue = [NSString stringWithFormat:@"%@ used · %@",
                 [NSByteCountFormatter stringFromByteCount:(long long)used countStyle:NSByteCountFormatterCountStyleFile],
-                self.store.isEnabled ? @"Capturing" : @"Capture off",self.store.rootURL.path];
+                self.store.isEnabled ? @"Capturing" : @"Capture off"];
             [self updateDetails];
         });
     });

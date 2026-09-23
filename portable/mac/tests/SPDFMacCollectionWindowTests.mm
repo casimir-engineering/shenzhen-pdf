@@ -61,7 +61,7 @@ int main(void) {
                 (void)path; (void)archived;
             }];
             Layout(manager.window,NSMakeSize(1100,690));
-            Expect(@"document pane uses the available window width",NSWidth(manager.documentsPane.frame) > 850);
+            Expect(@"document pane uses the available window width",fabs(NSWidth(manager.documentsPane.frame)-(NSWidth(manager.window.contentView.bounds)-154)) < 1);
             Expect(@"manager list has a readable viewport",manager.listScroll.frame.size.width > 300 &&
                 manager.listScroll.frame.size.height > 350);
             Expect(@"Collection navigation has only Documents and Settings",manager.documentsButton && manager.settingsButton &&
@@ -74,11 +74,16 @@ int main(void) {
             Expect(@"storage controls belong exclusively to Settings",[manager.limitField isDescendantOf:manager.settingsPane] &&
                 ![manager.limitField isDescendantOf:manager.documentsPane]);
             Expect(@"settings controls fit the minimum window",NSContainsRect(manager.settingsPane.bounds,
-                [manager.limitField convertRect:manager.limitField.bounds toView:manager.settingsPane]));
+                [manager.limitPicker convertRect:manager.limitPicker.bounds toView:manager.settingsPane]));
             [manager showDestination:@"Documents"]; Layout(manager.window,NSMakeSize(1100,690));
-            NSView* optionsHeading = Label(manager.window.contentView,@"Document options");
-            Expect(@"document options start visible at the top",optionsHeading &&
-                NSIntersectsRect(optionsHeading.bounds,optionsHeading.visibleRect));
+            Expect(@"Documents removes the permanent options tower",!Label(manager.window.contentView,@"Document options") &&
+                fabs(manager.listScroll.frame.size.width-NSWidth(manager.documentsPane.bounds)) < 1);
+            Expect(@"navigation uses the mockup compact type and height",manager.documentsButton.font.pointSize == 13 &&
+                fabs(manager.documentsButton.frame.size.height-32)<1);
+            Expect(@"storage defaults to an explicit Unlimited choice",[manager.limitPicker.title containsString:@"Unlimited"] && manager.limitField.hidden);
+            NSMenu* actions = [NSMenu new]; [manager populateDocumentMenu:actions];
+            Expect(@"all secondary document commands remain accessible in More",actions.numberOfItems == 10 &&
+                [actions itemWithTitle:@"Save a Copy…"] && [actions itemWithTitle:@"Delete Selected Copies…"]);
             NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_COLLECTION_WINDOW_EVIDENCE"];
             if (evidence.length) {
                 NSBitmapImageRep* bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];
@@ -145,6 +150,18 @@ int main(void) {
             Expect(@"text results include a saved-page thumbnail",thumbnail != nil);
             NSArray* matches = result[@"matches"];
             Expect(@"context highlights are available",[matches.firstObject[@"ranges"] count] > 0);
+            if (evidence.length) {
+                [manager.window.contentView layoutSubtreeIfNeeded];
+                NSBitmapImageRep* bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];
+                [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
+                [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:
+                    [[evidence stringByDeletingPathExtension] stringByAppendingString:@"-search.png"] atomically:YES];
+                [manager showDestination:@"Settings"]; [manager.window.contentView layoutSubtreeIfNeeded];
+                [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
+                [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:
+                    [[evidence stringByDeletingPathExtension] stringByAppendingString:@"-settings.png"] atomically:YES];
+                [manager showDestination:@"Documents"];
+            }
             manager.search.stringValue = @"orchid";
             [manager showDestination:@"Settings"]; [manager showDestination:@"Documents"];
             Expect(@"settings navigation preserves query and document rows",[manager.search.stringValue isEqual:@"orchid"] && manager.rows.count == 1);
