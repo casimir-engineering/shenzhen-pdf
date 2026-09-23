@@ -11,24 +11,25 @@ static BOOL fail(NSString* message, NSError** error) {
     return NO;
 }
 
-static PDFDocument* loadDocument(NSURL* URL, NSProgress* progress, NSError** error) {
+static PDFDocument* LoadDocument(NSURL* URL, NSProgress* progress, BOOL comparison, NSError** error) {
     if (progress.cancelled) return nil;
-    if (!URL.isFileURL) { fail(@"Comparison requires local documents.", error); return nil; }
+    if (!URL.isFileURL) { fail(@"Preview requires a local document.", error); return nil; }
     NSNumber* byteCount = nil;
     [URL getResourceValue:&byteCount forKey:NSURLFileSizeKey error:nil];
-    if (byteCount.unsignedLongLongValue > 256ULL*1024*1024) {
-        fail(@"Comparison is limited to 256 MB per version. Save a smaller page range and compare that.",error);
+    if (byteCount.unsignedLongLongValue > (comparison ? 256ULL : 512ULL)*1024*1024) {
+        fail(comparison ? @"Comparison is limited to 256 MB per version. Save a smaller page range and compare that."
+             : @"Preview is limited to 512 MB. Use Save a Copy to open the document separately.",error);
         return nil;
     }
     NSString* extension = URL.pathExtension.lowercaseString;
-    if (![@[@"md", @"markdown"] containsObject:extension]) {
+    if (![@[@"md", @"markdown", @"mdown"] containsObject:extension]) {
         // Own the bytes: a live source can be replaced while this window is
         // open. A URL-backed PDFDocument could otherwise change beneath it.
         NSData* data = [NSData dataWithContentsOfURL:URL options:0 error:error];
         PDFDocument* pdf = data ? [[PDFDocument alloc] initWithData:data] : nil;
         if (!pdf || pdf.isLocked) {
-            fail(pdf.isLocked ? @"Unlock and export the protected document before comparing it."
-                              : @"The document could not be read for comparison.", error);
+            fail(pdf.isLocked ? @"Unlock and export the protected document before previewing it."
+                              : @"The document could not be read for preview.", error);
             return nil;
         }
         return pdf;
@@ -38,13 +39,17 @@ static PDFDocument* loadDocument(NSURL* URL, NSProgress* progress, NSError** err
     SPDFMarkdownPageConfiguration* configuration = markdown.authoredPageConfiguration ?:
         [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
     SPDFMarkdownPaginationPlan* plan = [markdown paginationPlanForConfiguration:configuration];
-    if (plan.pages.count > 1000) { fail(@"Comparison is limited to 1,000 pages per version.", error); return nil; }
+    if (plan.pages.count > (comparison ? 1000UL : 2000UL)) {
+        fail(comparison ? @"Comparison is limited to 1,000 pages per version."
+            : @"Preview is limited to 2,000 pages. Use Save a Copy to open the complete document separately.",error);
+        return nil;
+    }
     NSMutableData* data = [NSMutableData data];
     CGDataConsumerRef consumer = CGDataConsumerCreateWithCFData((__bridge CFMutableDataRef)data);
     CGRect mediaBox = CGRectMake(0, 0, configuration.paperSize.width, configuration.paperSize.height);
     CGContextRef context = CGPDFContextCreate(consumer, &mediaBox, NULL);
     CGDataConsumerRelease(consumer);
-    if (!context) { fail(@"Could not prepare the Markdown comparison pages.", error); return nil; }
+    if (!context) { fail(@"Could not prepare the Markdown preview pages.", error); return nil; }
     for (NSUInteger index = 0; index < plan.pages.count && !progress.cancelled; index++) {
         CGPDFContextBeginPage(context, NULL);
         [plan drawPageAtIndex:index attributedString:markdown.renderedDocument.attributedString inContext:context];
@@ -53,6 +58,10 @@ static PDFDocument* loadDocument(NSURL* URL, NSProgress* progress, NSError** err
     CGPDFContextClose(context);
     CGContextRelease(context);
     return progress.cancelled ? nil : [[PDFDocument alloc] initWithData:data];
+}
+
+PDFDocument* SPDFCollectionLoadPreviewDocument(NSURL* URL, NSProgress* progress, NSError** error) {
+    return LoadDocument(URL,progress,NO,error);
 }
 
 static NSString* digest(NSData* data) {
@@ -107,9 +116,9 @@ static NSArray<NSString*>* pageKeys(PDFDocument* document, NSProgress* progress)
 
 SPDFCollectionComparison* SPDFCollectionBuildComparison(NSURL* oldURL, NSURL* newURL,
                                                        NSProgress* progress, NSError** error) {
-    PDFDocument* oldDocument = loadDocument(oldURL, progress, error);
+    PDFDocument* oldDocument = LoadDocument(oldURL, progress, YES, error);
     if (!oldDocument || progress.cancelled) return nil;
-    PDFDocument* updatedDocument = loadDocument(newURL, progress, error);
+    PDFDocument* updatedDocument = LoadDocument(newURL, progress, YES, error);
     if (!updatedDocument || progress.cancelled) return nil;
     if (MAX(oldDocument.pageCount, updatedDocument.pageCount) > 1000) {
         fail(@"Comparison is limited to 1,000 pages per version. Save a smaller page range and compare that.", error);

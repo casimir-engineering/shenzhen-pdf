@@ -98,10 +98,18 @@ static char kCollectionManager, kCollectionPromptPending, kCollectionImported, k
             }];
             return;
         }
-        if (!store.isEnabled) return;
+        if (!store.isEnabled) {
+            [self collectionRecordUserOpenForPath:source document:[store documentForPath:source]];
+            return;
+        }
         if ([self->_path isEqual:source]) self->_statusLabel.stringValue = @"Collection: saving local copy…";
+        NSUInteger userOpenCount = [self collectionConsumeUserOpenForPath:source];
         [store capturePath:source reason:continuingID ? @"Observed save" : @"Opened"
-            continuingDocumentID:continuingID completion:^(NSDictionary* doc, NSError* error) {
+            continuingDocumentID:continuingID userOpenCount:userOpenCount
+            completion:^(NSDictionary* doc, NSError* error, BOOL userOpenCountRecorded) {
+            // Reading succeeded even when capture was excluded or could not save a new version.
+            if (!userOpenCountRecorded)
+                [self collectionRecordUserOpenCount:userOpenCount document:doc ?: [store documentForPath:source]];
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (![self->_path isEqual:source]) return;
                 [self collectionRefreshHistory];
